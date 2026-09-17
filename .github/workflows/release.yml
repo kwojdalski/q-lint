@@ -108,3 +108,31 @@ jobs:
             --title "qlinter $GITHUB_REF_NAME" \
             --generate-notes \
             $(find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.vsix' \) -print)
+
+  marketplace:
+    name: marketplace
+    # After the release, so a tag that failed to produce binaries does not put
+    # an extension on the Marketplace pointing at downloads that do not exist.
+    needs: [release]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: vsix
+          path: vsix
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Publish to the VS Code Marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          set -euo pipefail
+          # Skipping rather than failing: the Marketplace is one distribution
+          # channel for this tag, not the definition of a successful release.
+          # A fork, or this repository before the token exists, still releases.
+          if [ -z "${VSCE_PAT:-}" ]; then
+            echo "VSCE_PAT is not set - skipping the Marketplace publish." >&2
+            exit 0
+          fi
+          npx --yes @vscode/vsce publish --packagePath vsix/*.vsix

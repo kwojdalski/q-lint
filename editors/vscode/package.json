@@ -3,9 +3,8 @@
   "displayName": "q-lint",
   "description": "Diagnostics for q/kdb+ source, from the q-lint language server",
   "icon": "icon.png",
-  "version": "0.1.0",
-  "private": true,
-  "publisher": "uqf",
+  "version": "0.1.1",
+  "publisher": "kwojdalski",
   "license": "MIT",
   "engines": {
     "vscode": "^1.90.0"
