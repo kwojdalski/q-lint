@@ -9,7 +9,6 @@
 import { workspace, window, type ExtensionContext } from "vscode";
 import {
   LanguageClient,
-  TransportKind,
   type LanguageClientOptions,
   type ServerOptions,
 } from "vscode-languageclient/node";
@@ -21,11 +20,16 @@ export async function activate(context: ExtensionContext): Promise<void> {
   const command = settings.get<string>("serverPath", "qlinter");
   const profile = settings.get<string>("profile", "general");
 
+  const args = ["--lsp", "--profile", profile];
   const server: ServerOptions = {
     // One entry, used for both: this server has no separate debug mode, and
     // giving it a fabricated one would mean a second thing to keep in step.
-    run: { command, args: ["--lsp", "--profile", profile], transport: TransportKind.stdio },
-    debug: { command, args: ["--lsp", "--profile", profile], transport: TransportKind.stdio },
+    //
+    // No `transport` field. stdio is already the default for an executable,
+    // and naming it explicitly makes the client append `--stdio` to argv -
+    // a flag qlinter does not accept, so it exits 2 before the handshake.
+    run: { command, args },
+    debug: { command, args },
   };
 
   const options: LanguageClientOptions = {
@@ -45,7 +49,7 @@ export async function activate(context: ExtensionContext): Promise<void> {
     client = undefined;
     window.showErrorMessage(
       `q-lint: could not start "${command}". Set q-lint.serverPath to the qlinter binary ` +
-        `(cargo build --release leaves it in tools/q-lint-rs/target/release/qlinter). ${error}`,
+        `(cargo build --release leaves it in target/release/qlinter). ${error}`,
     );
   }
   context.subscriptions.push({ dispose: () => void client?.stop() });

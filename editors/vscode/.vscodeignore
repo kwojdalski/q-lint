@@ -9,3 +9,7 @@ tsconfig.json
 node_modules/typescript/**
 node_modules/@types/**
 node_modules/.bin/**
+
+# Not needed at runtime; they only describe the build.
+package-lock.json
+.vscodeignore
