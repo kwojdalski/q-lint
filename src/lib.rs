@@ -93,6 +93,20 @@ impl Finding {
         }
     }
 }
+impl Finding {
+    /// A finding at byte offset `at` of `source`, with its line and column.
+    /// The column is what an editor wants: 1-based, in UTF-16 units, and at
+    /// the first non-blank character when `at` is the start of a line - a
+    /// rule that reports a line reports the statement on it, not the
+    /// indentation before it.
+    pub fn at(path: &str, source: &str, at: usize, code: &str, detail: String) -> Self {
+        let at = at + source[at..].len() - source[at..].trim_start_matches([' ', '\t']).len();
+        let start = source[..at].rfind('\n').map_or(0, |p| p + 1);
+        let mut f = Self::new(path, line_at(source, at), code, detail);
+        f.column = Some(source[start..at].encode_utf16().count() + 1);
+        f
+    }
+}
 fn line_at(s: &str, at: usize) -> usize {
     s.as_bytes()[..at].iter().filter(|&&b| b == b'\n').count() + 1
 }
@@ -384,12 +398,7 @@ pub(crate) fn signature<'a>(code: &'a str, raw: &str, brace: usize) -> Signature
 fn structure(path: &str, source: &str, v: &Views) -> Option<Finding> {
     let mut stack = vec![];
     let mut offset = 0;
-    let make = |at, detail| {
-        let mut f = Finding::new(path, line_at(source, at), "QE001", detail);
-        let start = source[..at].rfind('\n').map_or(0, |p| p + 1);
-        f.column = Some(source[start..at].encode_utf16().count() + 1);
-        f
-    };
+    let make = |at, detail| Finding::at(path, source, at, "QE001", detail);
     for line in v.code.split_inclusive('\n') {
         if !line.starts_with('\\') {
             for (i, c) in line.bytes().enumerate() {
@@ -432,18 +441,18 @@ pub fn lint(source: &str, path: &str, uqf: bool) -> Vec<Finding> {
     let code = &v.code;
     let mut out = semantics::check(path, code, source);
     if let Some(at) = v.open_block {
-        out.push(Finding::new(
+        out.push(Finding::at(
             path,
-            line_at(code, at),
+            source,
+            at,
             "QE003",
             "This bare slash opens a block comment that no later backslash \
              closes, so the rest of the file is comment"
                 .into(),
         ));
     }
-    let mut add = |at: usize, id: &str, detail: String| {
-        out.push(Finding::new(path, line_at(code, at), id, detail))
-    };
+    let mut add =
+        |at: usize, id: &str, detail: String| out.push(Finding::at(path, source, at, id, detail));
     for brace in code.match_indices('{').map(|(i, _)| i) {
         let sig = signature(code, source, brace);
         let at = brace;

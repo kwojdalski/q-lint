@@ -197,3 +197,21 @@ f:{[x] if[x; :([] range_from:`timestamp$())]; range_from:1}
 
 === clean | a parameter named like a keyword is a name
 f:{[func;return] if[()~return; 1]}
+
+=== clean | call arguments run right to left, so the later slot assigns first
+f:{[x] g[c-1; c:count x]}
+
+=== clean | two expressions side by side: the right one runs first
+f:{[y] $[1=n; first; flip] $[1=n:depth y; enlist; flip] y}
+
+=== clean | a control bracket nested in a call slot still runs left to right within itself
+f:{[x] g[$[c;1;2]; c:1]}
+
+=== QF014 | but a control bracket orders its own slots
+f:{[x] g[if[c; c:1]]}
+
+=== clean | multiple assignment binds its names
+f:{[x;y] (tx;ty):type each (x;y); if[tx=11h; tx:0h]; tx+ty}
+
+=== QF005 | the names a multiple assignment binds are locals, which a nested lambda cannot see
+f:{[x] (a;b):x; g:{[v] v+a}; g 1}

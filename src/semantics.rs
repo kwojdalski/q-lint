@@ -1,4 +1,4 @@
-use crate::{Finding, boundary, line_at, matching, signature};
+use crate::{Finding, boundary, matching, signature};
 use std::collections::{HashMap, HashSet};
 
 struct Scope {
@@ -18,6 +18,69 @@ fn qualify(name: &str, ns: &str) -> String {
     } else {
         format!("{ns}.{name}")
     }
+}
+/// The names a multiple assignment `(a;b):...` binds, with where it starts.
+fn multi_assignments(text: &str) -> impl Iterator<Item = (usize, &str)> {
+    re!(r"\(([A-Za-z0-9_;\s]+)\)\s*:[^:]")
+        .captures_iter(text)
+        .flat_map(|m| {
+            let at = m.get(0).unwrap().start();
+            m.get(1)
+                .unwrap()
+                .as_str()
+                .split(';')
+                .map(str::trim)
+                .filter(|n| !n.is_empty() && n.starts_with(|c: char| c.is_ascii_alphabetic()))
+                .map(move |n| (at, n))
+                .collect::<Vec<_>>()
+        })
+}
+/// Whether q runs the expression at `read` before the one at `assign`, both
+/// offsets into one lambda body. Statements run top to bottom, and the slots
+/// of `if`, `while`, `do` and `$[...]` left to right; everything else -
+/// the arguments of a call, the items of a list, the two sides of an infix -
+/// runs right to left. So two positions are ordered by their text only when
+/// the nearest bracket enclosing both is a control bracket or the body
+/// itself. `f[c-1; c:count x]` and `g[c] h[c:1]` both assign before they
+/// read; `if[c; c:1]` and `r:c; c:1` do not.
+fn runs_before(text: &str, read: usize, assign: usize) -> bool {
+    let path = |pos: usize| {
+        let (mut seq, mut stack): (usize, Vec<(usize, usize, bool)>) = (0, vec![]);
+        for (i, &c) in text.as_bytes()[..pos].iter().enumerate() {
+            match c {
+                b'[' | b'(' | b'{' => {
+                    let control = c == b'['
+                        && re!(r"(?:^|[^A-Za-z0-9_.])(?:if|while|do)\s*$|\$\s*$")
+                            .is_match(&text[..i]);
+                    stack.push((i, 0, control));
+                }
+                b']' | b')' | b'}' => {
+                    stack.pop();
+                }
+                b';' => match stack.last_mut() {
+                    Some(top) => top.1 += 1,
+                    None => seq += 1,
+                },
+                b'\n' if stack.is_empty() => seq += 1,
+                _ => {}
+            }
+        }
+        (seq, stack)
+    };
+    let (read_seq, read_path) = path(read);
+    let (assign_seq, assign_path) = path(assign);
+    if read_seq != assign_seq {
+        return read_seq < assign_seq;
+    }
+    for (r, a) in read_path.iter().zip(&assign_path) {
+        if r.0 != a.0 {
+            return false;
+        }
+        if r.1 != a.1 {
+            return r.2 && r.1 < a.1;
+        }
+    }
+    false
 }
 fn scope_at(scopes: &[Scope], at: usize) -> Option<usize> {
     scopes.iter().rposition(|s| s.start < at && at < s.end)
@@ -67,9 +130,10 @@ pub fn check(path: &str, code: &str, raw: &str) -> Vec<Finding> {
         if let (Some(keys), Some(values)) = (shape(&m[1]), shape(&code[start.end()..end]))
             && keys != values
         {
-            out.push(Finding::new(
+            out.push(Finding::at(
                 path,
-                line_at(code, start.start()),
+                raw,
+                start.start(),
                 "QT001",
                 format!("Literal dictionary has {keys} keys and {values} values"),
             ));
@@ -99,9 +163,10 @@ pub fn check(path: &str, code: &str, raw: &str) -> Vec<Finding> {
         if let (Some(l), Some(r)) = (shape(&m["l"]), shape(&m["r"]))
             && l != r
         {
-            out.push(Finding::new(
+            out.push(Finding::at(
                 path,
-                line_at(code, whole.start()),
+                raw,
+                whole.start(),
                 "QT006",
                 format!(
                     "`{}` pairs a {l}-vector with a {r}-vector; that is a 'length error",
@@ -110,28 +175,49 @@ pub fn check(path: &str, code: &str, raw: &str) -> Vec<Finding> {
             ));
         }
     }
-    // Dynamic evaluation is where this file stops being analysable: the
-    // scope checks below would need to resolve names that only exist at
-    // runtime. That limit is worth a finding of its own, so a reader knows
-    // the silence after it is a skipped analysis, not a clean one.
-    let dynamic = re!(r"(?m)^\\l\b")
+    // Dynamic evaluation is where the global-name checks stop being
+    // reliable: `\l`, `eval`, `system "l ..."` and `value` on a string can
+    // all define globals this file never spells out, and QF005, QF010 and
+    // QT002 would report a name as undefined that is not. That limit is
+    // worth a finding of its own, so a reader knows the silence after it is
+    // a skipped analysis, not a clean one. It is only those checks that are
+    // skipped: the local-scope rule QF014 does not depend on what globals
+    // exist, and runs regardless. Nor is every `value` dynamic - `value d`
+    // reads a dictionary and `value f` decomposes a lambda; only a string
+    // in the statement makes it evaluation. And `` `name set v `` defines
+    // a name the file does spell out: it counts as an assignment below
+    // rather than as a reason to stop.
+    let mut dynamic = re!(r"(?m)^\\l\b")
         .find(code)
-        .map(|m| (m.start(), "\\l".into()))
-        .or_else(|| {
-            re!(r"\b(?:set|value|eval|system)\b")
-                .find_iter(code)
-                .find(|m| boundary(code, m.start()))
-                .map(|m| (m.start(), m.as_str().to_string()))
-        });
-    if let Some((at, what)) = dynamic {
-        out.push(Finding::new(
-            path,
-            line_at(code, at),
-            "QP004",
-            format!("`{what}` evaluates dynamically; name-scope checks were skipped for this file"),
-        ));
-        return out;
+        .map(|m| (m.start(), "\\l".to_string()));
+    if dynamic.is_none() {
+        dynamic = re!(r"\b(?:eval|value|system)\b")
+            .find_iter(code)
+            .filter(|m| boundary(code, m.start()))
+            .find(|m| {
+                let rest = &raw[m.end()..];
+                let statement = &rest[..rest.find([';', '\n']).unwrap_or(rest.len())];
+                match m.as_str() {
+                    "eval" => true,
+                    "value" => statement.contains('"'),
+                    _ => re!(r#"^\s*"[ld]\b"#).is_match(statement),
+                }
+            })
+            .map(|m| (m.start(), m.as_str().to_string()));
     }
+    let dynamic = dynamic.inspect(|(at, what)| {
+        out.push(Finding::at(
+            path,
+            raw,
+            *at,
+            "QP004",
+            format!(
+                "`{what}` evaluates dynamically; the checks for undefined globals were skipped \
+                 for this file"
+            ),
+        ));
+    });
+    let dynamic = dynamic.is_some();
     let assignment = re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*:(:)?");
     let mut scopes: Vec<Scope> = vec![];
     let mut stack: Vec<usize> = vec![];
@@ -203,6 +289,7 @@ pub fn check(path: &str, code: &str, raw: &str) -> Vec<Finding> {
                 locals.insert(a[1].into());
             }
         }
+        locals.extend(multi_assignments(&direct).map(|(_, n)| n.to_string()));
         scopes[i].direct = direct;
         scopes[i].locals = locals;
     }
@@ -226,6 +313,13 @@ pub fn check(path: &str, code: &str, raw: &str) -> Vec<Finding> {
                 .push(m.end());
         }
     }
+    for m in re!(r"`(\.?[A-Za-z][A-Za-z0-9_.]*)\s+set\b").captures_iter(code) {
+        let whole = m.get(0).unwrap();
+        globals
+            .entry(qualify(&m[1], ns_at(whole.start())))
+            .or_default()
+            .push(whole.end());
+    }
     let mut numeric = HashSet::new();
     for (name, assignments) in &globals {
         if assignments.len() != 1 {
@@ -239,21 +333,20 @@ pub fn check(path: &str, code: &str, raw: &str) -> Vec<Finding> {
                 && scope.params.contains(&m[1]) {numeric.insert(name.clone());}
     }
     for call in re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*\[\s*`[A-Za-z][A-Za-z0-9_.]*\s*\]").captures_iter(code) {
+        if dynamic {break;}
         let at=call.get(0).unwrap().start();let name=&call[1];if !boundary(code,at){continue;}
         if scope_at(&scopes,at).is_some_and(|s|scopes[s].locals.contains(name)){continue;}
-        if numeric.contains(&qualify(name,ns_at(at))) {out.push(Finding::new(path,line_at(code,at),"QT002",format!("Symbol literal passed to numeric function {name}")));}
+        if numeric.contains(&qualify(name,ns_at(at))) {out.push(Finding::at(path, raw, at,"QT002",format!("Symbol literal passed to numeric function {name}")));}
     }
     // An assignment anywhere in a lambda body makes the name local for the
-    // whole body, including the statements above it - so a read in an
-    // earlier statement finds an unset local, never the global, and q throws
-    // the name. Verified: `{r:cfg; cfg:1; r}[]` is 'cfg, `{if[a;a:1]}[]` is
-    // 'a. Within one statement q evaluates right to left, so `x#a where
-    // (a:...)` assigns before it reads and is fine: only a read in a strictly
-    // earlier statement counts, where "statement" is what a `;` at body level
-    // separates - or one inside `if`, `while`, `do` or `$`, whose slots run
-    // left to right. A column in a table literal is not an assignment, and
-    // column names inside a query resolve to the table first, so both are
-    // out of scope here.
+    // whole body, including the statements above it - so a read that q runs
+    // before the first assignment finds an unset local, never the global,
+    // and throws the name. Verified: `{r:cfg; cfg:1; r}[]` is 'cfg,
+    // `{if[a;a:1]}[]` is 'a. What "before" means is `runs_before`'s
+    // business: within one statement q evaluates right to left, so
+    // `x#a where (a:...)` assigns first and is fine. A column in a table
+    // literal is not an assignment, and column names inside a query resolve
+    // to the table first, so both are out of scope here.
     for scope in &scopes {
         if re!(r"\b(?:select|exec|update|delete)\b").is_match(&scope.direct) {
             continue;
@@ -269,30 +362,6 @@ pub fn check(path: &str, code: &str, raw: &str) -> Vec<Finding> {
             }
         }
         let direct = String::from_utf8(direct).unwrap();
-        // The statement each byte belongs to.
-        let mut statement = vec![0usize; direct.len() + 1];
-        let (mut seq, mut control) = (0usize, vec![]);
-        let bytes = direct.as_bytes();
-        for (i, &c) in bytes.iter().enumerate() {
-            statement[i] = seq;
-            match c {
-                b'[' => {
-                    let head = direct[..i].trim_end();
-                    control.push(
-                        head.ends_with("if")
-                            || head.ends_with("while")
-                            || head.ends_with("do")
-                            || head.ends_with('$'),
-                    );
-                }
-                b'(' | b'{' => control.push(false),
-                b')' | b']' | b'}' => {
-                    control.pop();
-                }
-                b';' | b'\n' if control.last().is_none_or(|&c| c) => seq += 1,
-                _ => {}
-            }
-        }
         let mut first: HashMap<&str, usize> = HashMap::new();
         for a in assignment.captures_iter(&direct) {
             let m = a.get(0).unwrap();
@@ -301,6 +370,10 @@ pub fn check(path: &str, code: &str, raw: &str) -> Vec<Finding> {
                 first.entry(name).or_insert(m.start());
             }
         }
+        for (at, name) in multi_assignments(&direct) {
+            let entry = first.entry(name).or_insert(at);
+            *entry = (*entry).min(at);
+        }
         let mut seen = HashSet::new();
         for m in re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(&direct) {
             let name = m.as_str();
@@ -308,18 +381,20 @@ pub fn check(path: &str, code: &str, raw: &str) -> Vec<Finding> {
             let Some(&assigned) = first.get(name) else {
                 continue;
             };
-            if statement[m.start()] >= statement[assigned]
+            if m.start() >= assigned
                 || scope.params.contains(name)
                 || !boundary(&direct, m.start())
                 || after.starts_with(':')
                 || after.starts_with('.')
+                || !runs_before(&direct, m.start(), assigned)
                 || !seen.insert(name)
             {
                 continue;
             }
-            out.push(Finding::new(
+            out.push(Finding::at(
                 path,
-                line_at(code, scope.body + m.start()),
+                raw,
+                scope.body + m.start(),
                 "QF014",
                 format!(
                     "`{name}` is read here but assigned in a later statement, which makes it \
@@ -333,7 +408,10 @@ pub fn check(path: &str, code: &str, raw: &str) -> Vec<Finding> {
     // there is none. Only a name this file never assigns globally is reported,
     // since the global may legitimately live in another file.
     for scope in &scopes {
-        if !scope.named || re!(r"\b(?:select|exec|update|delete)\b").is_match(&scope.direct) {
+        if dynamic
+            || !scope.named
+            || re!(r"\b(?:select|exec|update|delete)\b").is_match(&scope.direct)
+        {
             continue;
         }
         let direct = re!(r"`[A-Za-z0-9_./:]*")
@@ -354,9 +432,10 @@ pub fn check(path: &str, code: &str, raw: &str) -> Vec<Finding> {
             {
                 continue;
             }
-            out.push(Finding::new(
+            out.push(Finding::at(
                 path,
-                line_at(code, scope.body + m.start()),
+                raw,
+                scope.body + m.start(),
                 "QF010",
                 format!(
                     "'{name}' is not an argument here: the lambda declares its parameters, so \
@@ -366,7 +445,8 @@ pub fn check(path: &str, code: &str, raw: &str) -> Vec<Finding> {
         }
     }
     for scope in &scopes {
-        if scope.parent.is_none()
+        if dynamic
+            || scope.parent.is_none()
             || re!(r"\b(?:select|exec|update|delete)\b").is_match(&scope.direct)
         {
             continue;
@@ -395,9 +475,10 @@ pub fn check(path: &str, code: &str, raw: &str) -> Vec<Finding> {
             {
                 continue;
             }
-            out.push(Finding::new(
+            out.push(Finding::at(
                 path,
-                line_at(code, scope.body + m.start()),
+                raw,
+                scope.body + m.start(),
                 "QF005",
                 format!("Nested lambda references enclosing local '{name}' without a parameter"),
             ));

@@ -381,7 +381,7 @@
     "code": "QP004",
     "name": "analysis-skip-disclosure",
     "category": "policy",
-    "summary": "Dynamic evaluation present; name-scope checks were skipped",
+    "summary": "Dynamic evaluation present; undefined-global checks were skipped",
     "scope": "builtin"
   },
   {
