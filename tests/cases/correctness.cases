@@ -18,3 +18,63 @@ p:"/" sv (string a),string b
 
 === clean | sv over a list built elsewhere
 p:"/" sv parts
+
+=== QB005 | match in a filter compares whole vectors, not rows
+select from t where sym~`x
+
+=== clean | each-left match is the row-wise form
+select from t where sym~/:`x
+
+=== clean | equality in a filter is row-wise
+select from t where sym=`x
+
+=== QB006 | a comparison left of and reads as a=(1 and b=0)
+select from t where a=1 and b=0
+
+=== clean | parenthesised, the comparison is said out loud
+select from t where (a=1) and b=0
+
+=== clean | a comparison to the right of and is its operand
+select from t where flag and b=0
+
+=== clean | a comparison alone needs no parentheses
+select from t where a=1
+
+=== QB007 | like with a symbol pattern
+select from t where sym like `a*
+
+=== clean | like with a string pattern
+select from t where sym like "a*"
+
+=== QB008 | equality against a vector literal
+select from t where px=1 2
+
+=== QB008 | a symbol vector likewise
+select from t where sym=`a`b
+
+=== clean | in is the membership operator
+select from t where px in 1 2
+
+=== clean | equality against a scalar
+select from t where px=1
+
+=== QB009 | an empty select phrase under by takes the last row per group
+select by sym from t
+
+=== QB009 | a bare column likewise
+select px by sym from t
+
+=== clean | an aggregated column under by
+select first px by sym from t
+
+=== clean | no by, no grouping trap
+select px from t
+
+=== QB009 | an aliased bare column is still bare
+select last_px:px by sym from t
+
+=== clean | a bracketed aggregate
+select avg[px] by sym from t
+
+=== clean | a user-defined aggregation
+select .my.agg px by sym from t

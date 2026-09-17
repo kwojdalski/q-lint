@@ -14,6 +14,13 @@
     "scope": "builtin"
   },
   {
+    "code": "QE003",
+    "name": "unterminated-block-comment",
+    "category": "syntax",
+    "summary": "Block comment opened but never closed",
+    "scope": "builtin"
+  },
+  {
     "code": "QF001",
     "name": "reserved-parameter",
     "category": "names",
@@ -84,6 +91,27 @@
     "scope": "builtin"
   },
   {
+    "code": "QF011",
+    "name": "namespace-left-open",
+    "category": "names",
+    "summary": "File ends inside a non-root namespace",
+    "scope": "builtin"
+  },
+  {
+    "code": "QF012",
+    "name": "reserved-root-assignment",
+    "category": "names",
+    "summary": "Root-level assignment to a reserved name",
+    "scope": "builtin"
+  },
+  {
+    "code": "QF013",
+    "name": "reserved-table-column",
+    "category": "names",
+    "summary": "Builtin name as a table-literal column",
+    "scope": "builtin"
+  },
+  {
     "code": "QA001",
     "name": "parameter-limit",
     "category": "application",
@@ -112,6 +140,20 @@
     "scope": "builtin"
   },
   {
+    "code": "QA005",
+    "name": "each-on-binary",
+    "category": "application",
+    "summary": "each supplies one argument to a binary function",
+    "scope": "builtin"
+  },
+  {
+    "code": "QA006",
+    "name": "cond-two-slots",
+    "category": "application",
+    "summary": "Two-slot conditional has no else branch and errors at runtime",
+    "scope": "builtin"
+  },
+  {
     "code": "QT001",
     "name": "literal-dictionary-length",
     "category": "types-and-shapes",
@@ -123,6 +165,13 @@
     "name": "literal-argument-type",
     "category": "types-and-shapes",
     "summary": "Symbol passed to a visible numeric function",
+    "scope": "builtin"
+  },
+  {
+    "code": "QT003",
+    "name": "symbol-arithmetic",
+    "category": "types-and-shapes",
+    "summary": "Arithmetic on a symbol literal errors at runtime",
     "scope": "builtin"
   },
   {
@@ -154,6 +203,41 @@
     "scope": "builtin"
   },
   {
+    "code": "QB005",
+    "name": "match-in-where",
+    "category": "correctness",
+    "summary": "Match in a qSQL filter compares whole vectors, not rows",
+    "scope": "builtin"
+  },
+  {
+    "code": "QB006",
+    "name": "comparison-with-logic",
+    "category": "correctness",
+    "summary": "Unparenthesised comparison mixed with and/or reads right-to-left",
+    "scope": "builtin"
+  },
+  {
+    "code": "QB007",
+    "name": "like-symbol-pattern",
+    "category": "correctness",
+    "summary": "like with a symbol pattern is a runtime type error",
+    "scope": "builtin"
+  },
+  {
+    "code": "QB008",
+    "name": "vector-equality-filter",
+    "category": "correctness",
+    "summary": "Column equality against a vector literal in a filter",
+    "scope": "builtin"
+  },
+  {
+    "code": "QB009",
+    "name": "unaggregated-under-by",
+    "category": "correctness",
+    "summary": "Bare column under by silently takes the last row per group",
+    "scope": "builtin"
+  },
+  {
     "code": "QP001",
     "name": "bare-slash-block",
     "category": "policy",
@@ -165,6 +249,27 @@
     "name": "datetime-type",
     "category": "policy",
     "summary": "Legacy datetime precision",
+    "scope": "uqf"
+  },
+  {
+    "code": "QP003",
+    "name": "wall-clock-temporal",
+    "category": "policy",
+    "summary": "Wall-clock timestamp where the convention is UTC",
+    "scope": "uqf"
+  },
+  {
+    "code": "QP004",
+    "name": "analysis-skip-disclosure",
+    "category": "policy",
+    "summary": "Dynamic evaluation present; name-scope checks were skipped",
+    "scope": "builtin"
+  },
+  {
+    "code": "QP005",
+    "name": "mixed-infix-precedence",
+    "category": "policy",
+    "summary": "Unparenthesised * or % mixed with + or - relies on right-to-left order",
     "scope": "uqf"
   },
   {

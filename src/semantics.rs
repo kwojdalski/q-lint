@@ -55,6 +55,12 @@ pub fn check(path: &str, code: &str, raw: &str) -> Vec<Finding> {
                 depth += 1;
             } else if b == b';' && depth == 0 {
                 break;
+            } else if b == b'\n' && depth == 0 {
+                // A dictionary's value stops at the end of its line, as q
+                // reads it; scanning further would take the next statement's
+                // tokens for a continuation of the vector and hide the very
+                // length mismatch the rule exists to catch.
+                break;
             }
             end += 1;
         }
@@ -69,11 +75,26 @@ pub fn check(path: &str, code: &str, raw: &str) -> Vec<Finding> {
             ));
         }
     }
-    if re!(r"(?m)^\\l\b").is_match(code)
-        || re!(r"\b(?:set|value|eval|system)\b")
-            .find_iter(code)
-            .any(|m| boundary(code, m.start()))
-    {
+    // Dynamic evaluation is where this file stops being analysable: the
+    // scope checks below would need to resolve names that only exist at
+    // runtime. That limit is worth a finding of its own, so a reader knows
+    // the silence after it is a skipped analysis, not a clean one.
+    let dynamic = re!(r"(?m)^\\l\b")
+        .find(code)
+        .map(|m| (m.start(), "\\l".into()))
+        .or_else(|| {
+            re!(r"\b(?:set|value|eval|system)\b")
+                .find_iter(code)
+                .find(|m| boundary(code, m.start()))
+                .map(|m| (m.start(), m.as_str().to_string()))
+        });
+    if let Some((at, what)) = dynamic {
+        out.push(Finding::new(
+            path,
+            line_at(code, at),
+            "QP004",
+            format!("`{what}` evaluates dynamically; name-scope checks were skipped for this file"),
+        ));
         return out;
     }
     let assignment = re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*:(:)?");

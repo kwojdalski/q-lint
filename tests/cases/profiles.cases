@@ -7,3 +7,29 @@ t:2024.01.01T00:00:00.000
 
 === clean profile: uqf | a timestamp has the precision uqf wants
 t:2024.01.01D00:00:00.000000000
+
+=== QP001 profile: uqf | a terminated block comment is still policy, not syntax
+/
+text
+\
+
+=== QP003 profile: uqf | the wall-clock timestamp where UTC is the convention
+t:.z.P
+
+=== clean profile: uqf | UTC temporals are what the profile asks for
+t:.z.p
+
+=== QP005 profile: uqf | multiplication mixed with addition relies on evaluation order
+r:2*3+4
+
+=== clean profile: uqf | parenthesised, the order is said out loud
+r:(2*3)+4
+
+=== clean profile: uqf | a single operator family is unambiguous
+r:2*3*4
+
+=== QP004 | dynamic evaluation says which checks were skipped
+v:value "x"
+
+=== QP004 | a load is dynamic too
+\l utils.q

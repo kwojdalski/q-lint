@@ -24,3 +24,18 @@ s:"a\tb\nc\\d\"e"
 
 === clean | a backslash outside a string is not an escape
 \d .ns
+\d .
+
+=== QE003 | a block comment that nothing closes swallows the file
+/
+anything after is comment
+
+=== clean | a closed block comment is only QP001's concern, not a syntax error
+/
+inside
+\
+
+=== QE003 | the closer has to be a bare backslash, not a directive
+/
+text
+\d .

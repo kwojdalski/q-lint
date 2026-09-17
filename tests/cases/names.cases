@@ -25,6 +25,16 @@ f:{[_] x+1}
 === QF004 | a definition inside a namespace that shadows a builtin
 \d .util
 count:{[t] 42}
+\d .
+
+=== QF011 | a file that ends inside a namespace it opened
+\d .util
+helper:{[x] x}
+
+=== clean | a later directive back to the root closes the file
+\d .util
+helper:{[x] x}
+\d .
 
 === clean | the same name written dotted is not inside the namespace block
 .util.count:{[t] 42}
@@ -118,3 +128,23 @@ f:{[count;til] count til}
 
 === clean | a name q does not reserve, however builtin it sounds
 f:{[median] median}
+
+=== QF012 | a reserved name assigned at the root
+count:42
+
+=== QF012 | one q silently accepts, and the linter still flags
+from:1
+
+=== QF003 | a local shadow at column zero is not root scope
+f:{[x]
+count:1
+}
+
+=== QF013 | a builtin column name in a table literal
+t:([] first:1 2 3)
+
+=== QF013 | the second column is checked too
+t:([] px:1 2; last:3 4)
+
+=== clean | ordinary column names
+t:([] px:1 2; qty:3 4)

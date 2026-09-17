@@ -52,7 +52,22 @@ impl Finding {
             detail,
             why: rule.summary.clone(),
             source: "q-lint".into(),
-            severity: if matches!(code, "QE001" | "QA001" | "QA002" | "QT001" | "QT002") {
+            severity: if matches!(
+                code,
+                "QE001"
+                    | "QE003"
+                    | "QA001"
+                    | "QA002"
+                    | "QA005"
+                    | "QA006"
+                    | "QT001"
+                    | "QT002"
+                    | "QT003"
+                    | "QB005"
+                    | "QB007"
+                    | "QB008"
+                    | "QF012"
+            ) {
                 "error"
             } else {
                 "warning"
@@ -82,11 +97,82 @@ fn blank(b: &mut [u8]) {
         }
     }
 }
+/// Whether a top-level statement mixes `*`/`%` with a binary `+`/`-` - the
+/// pair whose right-to-left order readers most often get wrong. A `-` is
+/// binary only when it does not introduce a token: `a -b` is the list
+/// `(a; -b)`, while `a-b`, `a- b` and `a - b` are subtraction. Braces and
+/// `;` start fresh statements rather than nesting, so a lambda body on one
+/// line is still checked.
+/// A filter phrase with parenthesised groups blanked out. The questions the
+/// filter rules ask - which operators sit beside which - are about the
+/// top level only, and `(a=1) and b=0` is correct q that must stay quiet.
+fn flat_filter(phrase: &str) -> String {
+    let b = phrase.as_bytes();
+    let mut flat = b.to_vec();
+    let (mut depth, mut i) = (0i32, 0usize);
+    while i < b.len() {
+        match b[i] {
+            b'(' | b'[' => {
+                depth += 1;
+                flat[i] = b' ';
+            }
+            b')' | b']' => {
+                depth -= 1;
+                flat[i] = b' ';
+            }
+            _ if depth > 0 => flat[i] = b' ',
+            _ => {}
+        }
+        i += 1;
+    }
+    String::from_utf8(flat).unwrap()
+}
+fn mixed_infix(line: &str) -> bool {
+    let b = line.as_bytes();
+    let (mut mul, mut add) = (false, false);
+    let (mut depth, mut prev) = (0i32, b'\0');
+    for (i, &c) in b.iter().enumerate() {
+        match c {
+            b'(' | b'[' => depth += 1,
+            b')' | b']' => depth -= 1,
+            b'{' | b'}' | b';' => {
+                mul = false;
+                add = false;
+            }
+            b',' if depth == 0 => {
+                mul = false;
+                add = false;
+            }
+            b'*' | b'%' if depth == 0 => mul = true,
+            b'+' | b'-' if depth == 0 => {
+                let operand = matches!(
+                    prev,
+                    b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b')' | b']' | b'.'
+                );
+                let introduces = c == b'-'
+                    && prev == b' '
+                    && b.get(i + 1).is_some_and(|&n| !n.is_ascii_whitespace());
+                if operand && !introduces {
+                    add = true;
+                }
+            }
+            _ => {}
+        }
+        if !c.is_ascii_whitespace() {
+            prev = c;
+        }
+    }
+    mul && add
+}
 struct Views {
     comments: String,
     code: String,
     unterminated: Option<usize>,
     foreign_offsets: Vec<usize>,
+    /// Where a `/`-opened block comment that no later `\` closed began. The
+    /// lines after it are blank in both views, so no rule sees them; this is
+    /// the only trace that they were swallowed at all.
+    open_block: Option<usize>,
 }
 fn views(source: &str) -> Views {
     let bytes = source.as_bytes();
@@ -95,6 +181,7 @@ fn views(source: &str) -> Views {
     let (mut string, mut block, mut ended, mut offset) = (None, false, false, 0);
     let mut foreign = false;
     let mut foreign_offsets = Vec::new();
+    let mut open_block = None;
     for line in source.split_inclusive('\n') {
         let end = offset + line.len();
         let stripped = line.trim_end_matches(['\r', '\n', ' ', '\t']);
@@ -123,10 +210,14 @@ fn views(source: &str) -> Views {
             blank(&mut code[offset..end]);
             if block && stripped == "\\" {
                 block = false;
+                open_block = None;
             }
         } else if string.is_none() && matches!(stripped, "/" | "\\") {
             block = stripped == "/";
             ended = stripped == "\\";
+            if block {
+                open_block = Some(offset);
+            }
             blank(&mut comments[offset..end]);
             blank(&mut code[offset..end]);
         } else if !(string.is_none() && line.starts_with('\\')) {
@@ -169,6 +260,7 @@ fn views(source: &str) -> Views {
         code: String::from_utf8(code).unwrap(),
         unterminated: string,
         foreign_offsets,
+        open_block,
     }
 }
 fn matching(s: &str, start: usize, open: u8, close: u8) -> Option<usize> {
@@ -327,6 +419,16 @@ pub fn lint(source: &str, path: &str, uqf: bool) -> Vec<Finding> {
     }
     let code = &v.code;
     let mut out = semantics::check(path, code, source);
+    if let Some(at) = v.open_block {
+        out.push(Finding::new(
+            path,
+            line_at(code, at),
+            "QE003",
+            "This bare slash opens a block comment that no later backslash \
+             closes, so the rest of the file is comment"
+                .into(),
+        ));
+    }
     let mut add = |at: usize, id: &str, detail: String| {
         out.push(Finding::new(path, line_at(code, at), id, detail))
     };
@@ -439,6 +541,25 @@ pub fn lint(source: &str, path: &str, uqf: bool) -> Vec<Finding> {
                     }
                 }
             }
+            // `each` supplies one argument, so a rank-2-or-more lambda
+            // applied under it does not run: it returns projections, which
+            // are silently wrong data rather than an error.
+            let arity = if params.iter().all(|p| p.is_empty()) {
+                0
+            } else {
+                params.len()
+            };
+            let rest = code[end..].trim_start();
+            if arity >= 2 && re!(r"\Aeach\b").is_match(rest) {
+                add(
+                    end,
+                    "QA005",
+                    format!(
+                        "`each` supplies one argument to a {arity}-parameter lambda, so the \
+                         results are projections, not values"
+                    ),
+                );
+            }
         }
     }
     for m in re!(r"@\[\s*\{\s*\[([^\]]*)\]").captures_iter(code) {
@@ -469,6 +590,94 @@ pub fn lint(source: &str, path: &str, uqf: bool) -> Vec<Finding> {
             }
         }
     }
+    // Binary builtins under `each`: verified against q - `cor each 1 2 3`
+    // returns `cor[1;] cor[2;] cor[3;]`, not values. `dev` is unary and
+    // absent from this list for that reason; additions must be verified
+    // against the runtime, not assumed.
+    for m in re!(r"\b(cor|cov|wsum|within|mavg|msum|mmax|mmin|mdev|mcount|cross|bin|binr)\s+each\b")
+        .captures_iter(code)
+    {
+        let at = m.get(0).unwrap().start();
+        add(
+            at,
+            "QA005",
+            format!(
+                "`{}` is binary, so `{} each` yields projections, not values",
+                &m[1], &m[1]
+            ),
+        );
+    }
+    // `$[c;a]`: one slot is a projection and three or more are conditional
+    // expressions, but exactly two is an error q raises only at runtime.
+    for (dollar, _) in code.match_indices("$[") {
+        let Some(close) = matching(code, dollar + 1, b'[', b']') else {
+            continue;
+        };
+        if slots(&code[dollar + 2..close - 1]).len() == 2 {
+            add(
+                dollar,
+                "QA006",
+                "Two-slot $[ ... ] is no conditional q defines; it errors 'nyi' at runtime".into(),
+            );
+        }
+    }
+    // Symbols take no arithmetic: `2+`a`, `` `a*2 `` and `2%`b` are all
+    // 'type errors, and chars pairing with numbers ("a"*3 is 291) are not,
+    // so the rule is a symbol literal next to an infix + - * % and nothing
+    // more.
+    for m in re!(r"(?:`[A-Za-z][A-Za-z0-9_.]*)+\s*[+\-*%]|[+\-*%]\s*(?:`[A-Za-z][A-Za-z0-9_.]*)+")
+        .find_iter(code)
+    {
+        let at = m.start();
+        // `like `a*` is a glob, not a product; QB007 owns that one.
+        if code[..at].trim_end().ends_with("like") {
+            continue;
+        }
+        add(
+            at,
+            "QT003",
+            "Arithmetic on a symbol literal is a 'type error at runtime".into(),
+        );
+    }
+    // like's pattern is a string; a symbol literal is the obvious spelling
+    // of one and a guaranteed 'type error at runtime.
+    for m in re!(r"\blike\s*`").find_iter(code) {
+        add(
+            m.start(),
+            "QB007",
+            "like needs a string pattern; a symbol literal is a 'type error at runtime".into(),
+        );
+    }
+    // A table literal's column named for a builtin: `([] first:1 2)` parses,
+    // but in a where phrase q resolves the bare name as the function, so
+    // `where first>1` is a 'type error and `select first from t` returns
+    // something that is not the column. The definition is the only place
+    // to say so.
+    for (at, _) in code.match_indices("([]") {
+        let Some(close) = matching(code, at, b'(', b')') else {
+            continue;
+        };
+        let inner = &code[at + 3..close.saturating_sub(1)];
+        let mut pos = at + 3;
+        for part in inner.split(';') {
+            let trimmed = part.trim_start();
+            let lead = part.len() - trimmed.len();
+            if let Some(m) = re!(r"^([A-Za-z][A-Za-z0-9_]*)\s*:").captures(trimmed)
+                && RESERVED.iter().any(|n| n == &m[1])
+            {
+                add(
+                    pos + lead,
+                    "QF013",
+                    format!(
+                        "Column `{}` is a builtin name: in a filter q resolves the bare name \
+                         as the function, and the column is unreachable",
+                        &m[1]
+                    ),
+                );
+            }
+            pos += part.len() + 1;
+        }
+    }
     // Match the Python rule's outer-body traversal, including nested assignments.
     for (at, _) in code.match_indices('{') {
         if code[..at].rfind('}') < code[..at].rfind('{') {
@@ -497,17 +706,30 @@ pub fn lint(source: &str, path: &str, uqf: bool) -> Vec<Finding> {
         }
     }
     let mut namespace = false;
+    let mut ns_open: Option<usize> = None;
+    let mut depth = 0i32;
     let mut offset = 0;
     for ((raw, line), literals) in source
         .split_inclusive('\n')
         .zip(code.split_inclusive('\n'))
         .zip(v.comments.split_inclusive('\n'))
     {
+        let line_depth = depth;
+        for c in line.bytes() {
+            if c == b'{' {
+                depth += 1;
+            } else if c == b'}' {
+                depth -= 1;
+            }
+        }
         if uqf && raw.trim() == "/" && !v.foreign_offsets.contains(&offset) {
             add(offset, "QP001", "Bare slash opens a block comment".into());
         }
         if line.trim().starts_with("\\d ") {
             namespace = line.trim() != "\\d .";
+            // Point at the directive that is still in force at EOF, so the
+            // finding names the namespace the file actually ends in.
+            ns_open = namespace.then_some(offset);
             offset += line.len();
             continue;
         }
@@ -520,6 +742,27 @@ pub fn lint(source: &str, path: &str, uqf: bool) -> Vec<Finding> {
             && RESERVED.iter().any(|n| n == &m[1])
         {
             add(offset, "QF004", format!("Namespace-level `{}`", &m[1]));
+        }
+        // The root is where q is inconsistent about reserved names:
+        // `count:1` and `where:1` it refuses ('assign), `select:1` it
+        // cannot parse, but `from:1` and `by:1` it silently accepts. A
+        // lambda body at column 0 must not be mistaken for root scope,
+        // hence the brace depth.
+        if !namespace
+            && line_depth == 0
+            && let Some(m) = re!(r"^([a-z][a-zA-Z0-9_]*)\s*:").captures(line)
+            && !line[m.get(0).unwrap().end()..].starts_with(':')
+            && RESERVED.iter().any(|n| n == &m[1])
+        {
+            add(
+                offset,
+                "QF012",
+                format!(
+                    "Root-level assignment to `{}`: q refuses some reserved names outright and \
+                     silently accepts the rest",
+                    &m[1]
+                ),
+            );
         }
         if re!(r"\.\s*\(\s*\)").is_match(line) {
             add(offset, "QA004", "`. ()`".into());
@@ -537,6 +780,78 @@ pub fn lint(source: &str, path: &str, uqf: bool) -> Vec<Finding> {
                     search = m.get(3).unwrap().start();
                 }
             }
+            // `~` matches whole operands, so a filter gets one boolean for
+            // the entire table where it wanted one per row: a 'type error
+            // against a column, or worse, a single-row result against a
+            // scalar. `~/:` and `~\:` supply the row-wise forms and are
+            // left alone, which the trailing character class encodes: any
+            // next byte that is not those two slash forms is the trap.
+            for m in re!(r"~[^/\\]").find_iter(line) {
+                add(
+                    offset + m.start(),
+                    "QB005",
+                    "Match (`~`) in a filter compares whole operands, not rows".into(),
+                );
+            }
+            if let Some(w) = re!(r"\bwhere\b").find(line) {
+                let phrase = flat_filter(&line[w.end()..]);
+                // q gives every infix the same precedence, so `a=1 and b=0`
+                // reads as `a=(1 and b=0)` - the comparison eats the logic,
+                // and the rows that come back are quietly the wrong ones.
+                // Only a comparison to the LEFT of an and/or is the trap:
+                // `x and b=0` is fine, because the comparison is the
+                // logical's right operand and nothing is left to consume.
+                // Parenthesising either side is the fix, and the blanking
+                // in `flat_filter` is what recognises it.
+                if let Some(logic) = re!(r"\b(?:and|or)\b").find(&phrase)
+                    && re!(r"[<>=]").is_match(&phrase[..logic.start()])
+                {
+                    add(
+                        offset + w.start(),
+                        "QB006",
+                        "Comparison left of and/or without parentheses: right-to-left \
+                         evaluation reads this as `a=(1 and b=0)`, not `(a=1) and b=0`"
+                            .into(),
+                    );
+                }
+                // A column equals one value; against a vector literal the
+                // phrase is a length error at runtime, and `in` is the
+                // operator that was meant.
+                if re!(r"(?:=|<>)\s*(?:-?\d[\w.]*\s+-?\d|`[A-Za-z][A-Za-z0-9_.]*`)")
+                    .is_match(&phrase)
+                {
+                    add(
+                        offset + w.start(),
+                        "QB008",
+                        "Equality against a vector literal in a filter is a 'length error at \
+                         runtime; `in` is the operator for membership"
+                            .into(),
+                    );
+                }
+            }
+            // Under `by`, a column nobody aggregates takes the last value
+            // of its group - not the first, and nothing says which. The
+            // rule is deliberately narrow: only a select phrase that is
+            // empty or made of bare (possibly aliased) column names, so
+            // `sum px`, `avg[px]` and `.my.agg px` all count as having
+            // said the aggregation out loud.
+            if let Some(m) = re!(r"\bselect\b(.*?)\bby\b").captures(line) {
+                let phrase = m[1].trim();
+                let plain = phrase.is_empty()
+                    || phrase.split(',').all(|col| {
+                        re!(r"^(?:[A-Za-z][A-Za-z0-9_]*\s*:\s*)?[A-Za-z][A-Za-z0-9_]*$")
+                            .is_match(col.trim())
+                    });
+                if plain {
+                    add(
+                        offset,
+                        "QB009",
+                        "Bare column under `by` takes the last row of each group; say the \
+                         aggregation (`first`, or another) out loud"
+                            .into(),
+                    );
+                }
+            }
         }
         if uqf && !path.starts_with("tests/") {
             for regex in [
@@ -549,6 +864,34 @@ pub fn lint(source: &str, path: &str, uqf: bool) -> Vec<Finding> {
                 if regex.is_match(literals) {
                     add(offset, "QP002", "Legacy datetime value or cast".into());
                 }
+            }
+            if let Some(m) = re!(r"\.z\.[PTN]\b").find(literals) {
+                let utc: String = m
+                    .as_str()
+                    .chars()
+                    .map(|c| match c {
+                        'P' | 'T' | 'N' => c.to_ascii_lowercase(),
+                        _ => c,
+                    })
+                    .collect();
+                add(
+                    offset,
+                    "QP003",
+                    format!(
+                        "`{}` is the local wall clock; the convention is UTC `{}`",
+                        m.as_str(),
+                        utc
+                    ),
+                );
+            }
+            if mixed_infix(line) {
+                add(
+                    offset,
+                    "QP005",
+                    "`*` or `%` mixed with `+` or `-` without parentheses: q evaluates \
+                     right-to-left, and the line does not say which order was meant"
+                        .into(),
+                );
             }
         }
         for m in re!(r#"\blike\s*"([^"]*)""#).captures_iter(literals) {
@@ -601,6 +944,13 @@ pub fn lint(source: &str, path: &str, uqf: bool) -> Vec<Finding> {
             i += 2;
         }
         offset += line.len();
+    }
+    if let Some(at) = ns_open {
+        add(
+            at,
+            "QF011",
+            "The file ends inside this namespace; a trailing `\\d .` restores the root".into(),
+        );
     }
     let chars: Vec<_> = v.comments.char_indices().collect();
     let mut i = 0;

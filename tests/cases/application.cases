@@ -18,3 +18,27 @@ f:{[] 1};f . ()
 
 === clean | the same shape where the function takes an argument
 f:{[a] 1};f . enlist 1
+
+=== QA005 | each supplies one argument, so a rank-2 lambda projects
+{[a;b]a+b} each 1 2 3
+
+=== clean | each on a unary lambda applies per element
+{[a]a+1} each 1 2 3
+
+=== QA005 | a binary builtin under each projects too
+cor each 1 2 3
+
+=== clean | a unary builtin under each is the idiom
+count each (1 2;3 4 5)
+
+=== QA006 | two slots is the one arity $ has no meaning for
+$[1b;2]
+
+=== clean | three slots is the conditional
+$[1b;2;3]
+
+=== clean | five slots is a multi-way conditional
+$[1b;2;0b;3;4]
+
+=== clean | one slot is a projection, not an error
+$[1b]

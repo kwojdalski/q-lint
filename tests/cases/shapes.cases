@@ -12,3 +12,23 @@ f:{[r] r+1};f[`bad]
 
 === clean | the same function given a number
 f:{[r] r+1};f[2]
+
+=== QT003 | a symbol under arithmetic is a runtime type error
+2+`a
+
+=== QT003 | either side, and vectors likewise
+1 2+`a`b
+
+=== clean | chars are numeric citizens; none of these error
+r1:1.5+"a"
+r2:"a"*3
+r3:2-"x"
+
+=== clean | take builds symbol vectors without arithmetic
+2#`a`b`c
+
+=== QT001 | the value scan stops at the end of the line, as q does
+d:`a`b!1 2 3
+
+=== clean | the same dictionary balanced, with no semicolon after it
+d:`a`b!1 2
