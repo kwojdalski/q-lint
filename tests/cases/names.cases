@@ -1,0 +1,120 @@
+=== QF001 | a builtin used as a parameter
+f:{[count] count+1}
+
+=== QF001 | a q keyword from .Q.res, not just the .q namespace
+f:{[sin] sin*2}
+
+=== QF001 | qSQL keywords are reserved too
+f:{[from] from}
+
+=== clean | a name that merely resembles a builtin is fine
+f:{[cnt] cnt+1}
+
+=== clean | `find` and `fill` are operators in q, not names it reserves
+f:{[find] find}
+
+=== clean | a builtin name inside a longer name is not the builtin
+f:{[counted] counted+1}
+
+=== clean | a builtin as a namespaced field is not a local shadow
+.email.subject:"hi"
+
+=== QF002 | the drop operator cannot be a parameter
+f:{[_] x+1}
+
+=== QF004 | a definition inside a namespace that shadows a builtin
+\d .util
+count:{[t] 42}
+
+=== clean | the same name written dotted is not inside the namespace block
+.util.count:{[t] 42}
+
+=== QF005 | a nested lambda cannot see the enclosing local
+f:{[a] g:{[b] a+b}; g[1]}
+
+=== clean | passing the outer local in explicitly is the fix
+f:{[a] g:{[a;b] a+b}; g[a;1]}
+
+=== QF007 | a call in the parameter slot: q refuses the source outright
+f:{[tables[]] x+1}
+
+=== QF007 | an expression in the parameter slot
+f:{[a+b] 1}
+
+=== QF007 | an integer literal reads as body text, not a parameter
+f:{[1] x+1}
+
+=== QF007 | a symbol literal likewise
+f:{[`s] x+1}
+
+=== QF007 | two names without a separator is one bracket expression
+f:{[a b] a}
+
+=== QF007 | an index in the parameter slot
+f:{[a[0]] a}
+
+=== QF007 | an assignment in the parameter slot
+f:{[a:1] a}
+
+=== QF007 | a string literal, which the rules see only as blanks
+f:{["s"] 1}
+
+=== clean | a dotted name is a legal parameter, surprising as that is
+f:{[.q.z] 1}
+
+=== clean | underscores inside a name are fine
+f:{[a_b] a_b+1}
+
+=== clean | whitespace around the separators
+f:{[ a ; b ] a}
+
+=== QF010 | no space before the body does not hide the global x
+f:{[a]x+1}
+
+=== clean | the same shape where the body uses its parameter
+f:{[a]a+1}
+
+=== clean | the empty parameter list
+f:{[] 42}
+
+=== clean | implicit arguments, with no signature to contradict
+f:{x+y}
+
+=== QF008 | a parameter declared twice
+f:{[a;a] a}
+
+=== QF008 | and not only adjacently
+f:{[a;b;a] a}
+
+=== QF009 | a trailing separator is a third parameter, named `2` by q
+f:{[a;b;] a}
+
+=== QF009 | a leading one likewise
+f:{[;a] a}
+
+=== QF010 | x is a global here, not an argument: q throws 'x
+f:{[a] x+1}
+
+=== QF010 | the same for z
+f:{[a] z*2}
+
+=== clean | a global x that does exist is a legitimate reference
+x:1;f:{[a] x+1}
+
+=== clean | x declared as the parameter is the argument
+f:{[x] x+1}
+
+=== clean | a column named x in qSQL is not the implicit argument
+f:{[t] select x from t}
+
+=== QF001 | a join keyword is reserved even though it reads like a name
+f:{[aj] aj}
+
+=== QF001 | control words are reserved
+f:{[while] while}
+
+=== QF001 | several at once
+f:{[count;til] count til}
+
+=== clean | a name q does not reserve, however builtin it sounds
+f:{[median] median}

@@ -1,0 +1,14 @@
+=== QT001 | a literal dictionary whose sides differ in length
+f:{[] `a`b!1 2 3}
+
+=== clean | a literal dictionary that balances
+f:{[] `a`b!1 2}
+
+=== clean | keys and values built at runtime are not a literal
+f:{[k;v] k!v}
+
+=== QT002 | a symbol passed to a function that is visibly numeric
+f:{[r] r+1};f[`bad]
+
+=== clean | the same function given a number
+f:{[r] r+1};f[2]

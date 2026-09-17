@@ -1,0 +1,9 @@
+=== clean | a bare slash is only a policy question under the uqf profile
+x:1
+/ a comment
+
+=== QP002 profile: uqf | the legacy datetime type
+t:2024.01.01T00:00:00.000
+
+=== clean profile: uqf | a timestamp has the precision uqf wants
+t:2024.01.01D00:00:00.000000000

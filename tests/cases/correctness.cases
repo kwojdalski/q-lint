@@ -1,0 +1,20 @@
+=== QB001 | a qSQL filter comparing a column to itself
+select from t where a=a
+
+=== clean | comparing two different columns
+select from t where a=b
+
+=== QB002 | an interior wildcard, which q's like does not support
+select from t where sym like "a*b"
+
+=== clean | a trailing wildcard is supported
+select from t where sym like "ab*"
+
+=== QB003 | concatenation swallowed by sv
+p:"/" sv string a,b
+
+=== clean | parenthesised, so sv sees both parts
+p:"/" sv (string a),string b
+
+=== clean | sv over a list built elsewhere
+p:"/" sv parts

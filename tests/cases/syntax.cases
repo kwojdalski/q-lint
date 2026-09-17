@@ -1,0 +1,26 @@
+=== QE001 | an unclosed brace
+f:{
+
+=== QE001 | an unclosed bracket
+f:{[a] a[}
+
+=== QE001 | an unterminated string
+s:"abc
+
+=== clean | a brace inside a string is not a delimiter
+s:"{[desc]}"
+
+=== clean | a bracket inside a comment is not a delimiter
+x:1 / (]
+
+=== clean | balanced nesting
+f:{[a] $[a>0;(1;2);()]}
+
+=== QE002 | an escape q does not define
+s:"a\qb"
+
+=== clean | the escapes q does define
+s:"a\tb\nc\\d\"e"
+
+=== clean | a backslash outside a string is not an escape
+\d .ns

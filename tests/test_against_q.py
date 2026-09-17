@@ -112,3 +112,29 @@ def test_an_empty_slot_is_a_parameter(tmp_path):
     answers = q_parameters(["{[a;b;] a}"], tmp_path)
     assert len(answers["{[a;b;] a}"]) == 3
     assert "QF009" in findings("{[a;b;] a}", tmp_path)
+
+
+def test_reserved_names_are_the_ones_q_reserves(tmp_path):
+    """`src/reserved.json` should be q's own answer, not a hand-kept list.
+
+    q knows what it reserves: `.Q.res` holds the keywords the parser owns and
+    ``key `.q`` the functions in the q namespace. A hand-maintained copy drifts
+    in both directions - it had gained `fill` and `find`, which q does not
+    reserve at all, while missing `if`, `sin`, `prd`, the joins and 78 others.
+    """
+    script = tmp_path / "reserved.q"
+    script.write_text(
+        '-1 "RES\\t",("," sv string .Q.res);\n'
+        '-1 "DOTQ\\t",("," sv string key `.q);\n'
+        "exit 0;\n"
+    )
+    out = subprocess.run([Q, str(script), "-q"], capture_output=True, text=True, timeout=60)
+    reserved = set()
+    for line in out.stdout.splitlines():
+        if line.startswith(("RES\t", "DOTQ\t")):
+            reserved |= {w for w in line.split("\t", 1)[1].strip().split(",") if w}
+    # `,` and other glyphs in the .q namespace are not names anyone can shadow.
+    reserved = {w for w in reserved if w[:1].isalpha()}
+    ours = set(json.loads((ROOT / "src/reserved.json").read_text()))
+    assert not reserved - ours, f"q reserves these and the linter does not know: {sorted(reserved - ours)}"
+    assert not ours - reserved, f"the linter treats these as reserved and q does not: {sorted(ours - reserved)}"

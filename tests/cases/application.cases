@@ -1,0 +1,20 @@
+=== QA001 | more than the eight parameters q allows
+f:{[a;b;c;d;e;f;g;h;i] a}
+
+=== clean | exactly eight is legal
+f:{[a;b;c;d;e;f;g;h] a}
+
+=== QA002 | more arguments than the literal lambda takes
+{[a;b]a+b}[1;2;3]
+
+=== clean | the right number
+{[a;b]a+b}[1;2]
+
+=== clean | an elided argument is a projection, not an error
+{[a;b]a+b}[1;]
+
+=== QA004 | applying a niladic function to the empty list
+f:{[] 1};f . ()
+
+=== clean | the same shape where the function takes an argument
+f:{[a] 1};f . enlist 1
