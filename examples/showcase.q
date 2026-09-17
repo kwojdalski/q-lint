@@ -10,7 +10,7 @@
 / with the other findings. The unclosed delimiter lives in syntax-error.q
 / instead: it stops the file being analysed at all and would hide the rest.
 
-/ Coverage: of the 40 rules in the taxonomy, 38 can fire on q source and
+/ Coverage: of the 57 rules in the taxonomy, 55 can fire on q source and
 / every one is marked below, in syntax-error.q or in dynamic-eval.q. The
 / two that cannot are QF006 (python-hook, no raiser in this build) and
 / QLS001 (external qls server, demonstrated in its own section near the
@@ -78,6 +78,16 @@ three:{[a;b;] a+b}
 / column can be defined and never filtered on.
 ledger:([] first:1 2 3; qty:4 5 6)
 
+/ QF014: an assignment anywhere in a body makes the name local throughout,
+/ so the read of `cfg` on the left finds an unset local, not the global,
+/ and throws 'cfg. Within one statement q runs right to left and this does
+/ not apply; across statements it does.
+early:{[x] r:cfg; cfg:1; r}
+
+/ QF015: `return` is not a q keyword. It is an ordinary name, undefined,
+/ and applying it throws 'return. `:x` is how a lambda returns early.
+back:{[x] return x}
+
 / QF010: `x` is not an argument here. Declaring parameters takes the
 / implicit ones out of scope, so q resolves x as a global and throws 'x.
 offset:{[base] x+base}
@@ -108,6 +118,19 @@ corrs: cor each 1 2 3
 / the arity $ has no meaning for, and q says 'nyi only at runtime.
 halfcond: $[1b;2]
 
+/ QA007: four slots pair off as test-and-result with nothing left for an
+/ else. When neither test holds this is `::`, silently. Five slots have an
+/ else.
+pick: $[0b;1;0b;2]
+
+/ QA008: parentheses do not separate arguments; `addp(1;2)` hands `addp` the
+/ single argument `1 2`, and a rank-2 lambda given one argument is a
+/ projection, not a result.
+addp:{[a;b] a+b};both2:addp(1;2)
+
+/ QA009: dot apply wants a list of arguments, and a scalar is a 'type error.
+dot: .[{x+y};1]
+
 / ---------------------------------------------------------- types and shapes
 
 / QT001: two keys, three values. The value scan stops at the end of the
@@ -125,7 +148,51 @@ badsum: 2+`a
 / QT003: the symbol can be on either side, and vectors are no better.
 worse: `a*2
 
+/ QT004: a cast named by symbol converts a string char by char - this is
+/ `49 50 51`, and nothing says so. `"J"$"123"` parses the text.
+num: `long$"123"
+
+/ QT005: a table literal in which every column is a scalar is a 'rank
+/ error; a one-row table needs `enlist`. One vector column would do.
+one: ([] a:1; b:2)
+
+/ QT006: two literal vectors under an infix must agree in length.
+bad3: 1 2 3+4 5
+
+/ QT007: `ssr` is a string function and a symbol is a 'type error. `trim`
+/ and `lower` accept symbols, and stay quiet.
+sub: ssr[`abc;"a";"b"]
+
 / --------------------------------------------------------------- correctness
+
+/ QB010: `n -1` is `n` applied to `-1`, not `n` minus one: with a space
+/ before the minus and none after, it belongs to the literal. Verified:
+/ with n:3 this tries to write to file handle 3.
+off: n -1
+
+/ QB011: `if` is a statement that returns `::`, so `flag` is null however
+/ the condition goes. `$[...]` is the conditional with a value.
+flag: if[1b;1]
+
+/ QB012: the trailing semicolon makes this lambda return null; `r` is
+/ computed and thrown away. A side-effecting last statement stays quiet.
+tail2:{[x] r:x+1; r;}
+
+/ QB013: `type` returns a short, so this comparison is a 'type error, not
+/ false. `7h` is what a long reports.
+islong: type[1]=`long
+
+/ QB014: `/` after a value is the over adverb, not division, and this is a
+/ '/ parse error. Division is `%`.
+half: 10/2
+
+/ QB015: equality against a string in a filter: 'type on a symbol column,
+/ 'length on a string column, and row-wise garbage if the lengths agree.
+eur:select from trades where sym="EUR"
+
+/ QB016: `delete` takes columns or a where phrase, never both: 'nyi.
+pruned:delete size from trades where size>1
+
 
 / QB001: a filter comparing a column to itself keeps every row.
 stale:select from trades where sym=sym
@@ -200,6 +267,9 @@ rows2:{[last] last}
 unused:{[a] 1}
 
 / ------------------------------------------------------------------ syntax
+
+/ QE004: q has no `==`; equality is `=`, and this line does not parse.
+if[a==1;2]
 
 / QE002: backslash-q is not a valid q string escape.
 bad:"\q"

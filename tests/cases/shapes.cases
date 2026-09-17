@@ -32,3 +32,81 @@ d:`a`b!1 2 3
 
 === clean | the same dictionary balanced, with no semicolon after it
 d:`a`b!1 2
+
+=== QT004 | a symbol-named cast on a string converts char codes
+n:`long$"123"
+
+=== QT004 | the date cast is ten dates, not one
+d:`date$"2024.01.01"
+
+=== QT004 | symbol by name is a type error
+s:`symbol$"abc"
+
+=== clean | the uppercase-char cast parses text
+n:"J"$"123"
+
+=== clean | the bare-backtick cast makes a symbol
+s:`$"abc"
+
+=== clean | char and byte are legitimate on a string
+c:`char$"ab";b:`byte$"ab"
+
+=== clean | a cast on a non-string
+n:`long$1.5
+
+=== QT005 | every column scalar is a rank error
+t:([] a:1; b:`x)
+
+=== QT005 | keyed too
+t:([k:1] v:2)
+
+=== clean | one vector column extends the rest
+t:([] a:1; b:2 3)
+
+=== clean | enlist makes the row
+t:([] a:enlist 1)
+
+=== clean | a string column is a vector
+t:([] a:"ab")
+
+=== clean | an empty column
+t:([] a:())
+
+=== QT006 | mismatched literal vectors under plus
+r:1 2 3+4 5
+
+=== QT006 | mismatched symbol vectors under equals
+r:`a`b=`a`b`c
+
+=== QT006 | minus with spaces on both sides is the operator
+r:1 2 3 - 1 2
+
+=== clean | minus with a space before and none after is a negative literal
+r:1 2 3 -1 2
+
+=== clean | same length
+r:1 2 3+4 5 6
+
+=== clean | a scalar extends
+r:1 2 3+4
+
+=== clean | join takes any lengths
+r:1 2,3 4 5
+
+=== QT007 | ssr on a symbol
+r:ssr[`abc;"a";"b"]
+
+=== QT007 | a symbol as the pattern
+r:ssr["abc";`a;"b"]
+
+=== QT007 | infix ss on a symbol
+r:`abc ss "a"
+
+=== clean | ssr on a string
+r:ssr["abc";"a";"b"]
+
+=== clean | trim and lower accept symbols
+r:trim `a;s:lower `A
+
+=== clean | a cast to string is not a symbol literal
+r:ss[`char$x;"a"]

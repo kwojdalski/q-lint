@@ -67,6 +67,18 @@ impl Finding {
                     | "QB007"
                     | "QB008"
                     | "QF012"
+                    | "QE004"
+                    | "QF014"
+                    | "QF015"
+                    | "QA009"
+                    | "QT004"
+                    | "QT005"
+                    | "QT006"
+                    | "QT007"
+                    | "QB013"
+                    | "QB014"
+                    | "QB015"
+                    | "QB016"
             ) {
                 "error"
             } else {
@@ -97,12 +109,6 @@ fn blank(b: &mut [u8]) {
         }
     }
 }
-/// Whether a top-level statement mixes `*`/`%` with a binary `+`/`-` - the
-/// pair whose right-to-left order readers most often get wrong. A `-` is
-/// binary only when it does not introduce a token: `a -b` is the list
-/// `(a; -b)`, while `a-b`, `a- b` and `a - b` are subtraction. Braces and
-/// `;` start fresh statements rather than nesting, so a lambda body on one
-/// line is still checked.
 /// A filter phrase with parenthesised groups blanked out. The questions the
 /// filter rules ask - which operators sit beside which - are about the
 /// top level only, and `(a=1) and b=0` is correct q that must stay quiet.
@@ -127,6 +133,12 @@ fn flat_filter(phrase: &str) -> String {
     }
     String::from_utf8(flat).unwrap()
 }
+/// Whether a top-level statement mixes `*`/`%` with a binary `+`/`-` - the
+/// pair whose right-to-left order readers most often get wrong. A `-` is
+/// binary only when it does not introduce a token: `a -b` applies `a` to
+/// `-b`, while `a-b`, `a- b` and `a - b` are subtraction. Braces and `;`
+/// start fresh statements rather than nesting, so a lambda body on one line
+/// is still checked.
 fn mixed_infix(line: &str) -> bool {
     let b = line.as_bytes();
     let (mut mul, mut add) = (false, false);
@@ -613,11 +625,24 @@ pub fn lint(source: &str, path: &str, uqf: bool) -> Vec<Finding> {
         let Some(close) = matching(code, dollar + 1, b'[', b']') else {
             continue;
         };
-        if slots(&code[dollar + 2..close - 1]).len() == 2 {
+        let n = slots(&code[dollar + 2..close - 1]).len();
+        if n == 2 {
             add(
                 dollar,
                 "QA006",
                 "Two-slot $[ ... ] is no conditional q defines; it errors 'nyi' at runtime".into(),
+            );
+        } else if n >= 4 && n.is_multiple_of(2) {
+            // `$[c1;a;c2;b]` pairs every slot off as test-and-result and has
+            // nothing left for the else: when no test holds it returns `::`,
+            // silently. Verified: `$[0b;1;0b;2]` is `::`, `$[0b;1;0b;2;3]` is 3.
+            add(
+                dollar,
+                "QA007",
+                format!(
+                    "{n}-slot $[ ... ] has no else branch: when no condition holds it \
+                     returns null, not an error"
+                ),
             );
         }
     }
@@ -647,6 +672,262 @@ pub fn lint(source: &str, path: &str, uqf: bool) -> Vec<Finding> {
             "QB007",
             "like needs a string pattern; a symbol literal is a 'type error at runtime".into(),
         );
+    }
+    // The rank of every lambda this file names, for the two call-shape rules
+    // below. An implicit signature's rank is the highest of x, y, z its own
+    // body mentions, with nested lambdas blanked so theirs do not count.
+    let mut ranks: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for m in re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)\s*:\s*\{").captures_iter(code) {
+        let brace = m.get(0).unwrap().end() - 1;
+        let Some(end) = matching(code, brace, b'{', b'}') else {
+            continue;
+        };
+        let sig = signature(code, source, brace);
+        let rank = if sig.named {
+            if sig.slots.iter().all(|p| p.is_empty()) {
+                0
+            } else {
+                sig.slots.len()
+            }
+        } else {
+            let mut body = code.as_bytes()[sig.body..end].to_vec();
+            let mut depth = 0i32;
+            for c in &mut body {
+                match *c {
+                    b'{' => depth += 1,
+                    b'}' => depth -= 1,
+                    _ if depth > 0 => *c = b' ',
+                    _ => {}
+                }
+            }
+            let body = String::from_utf8(body).unwrap();
+            if re!(r"\bz\b").is_match(&body) {
+                3
+            } else if re!(r"\by\b").is_match(&body) {
+                2
+            } else {
+                1
+            }
+        };
+        ranks.insert(m.get(1).unwrap().as_str(), rank);
+    }
+    // `f(1;2)` hands `f` the single argument `1 2`; for a lambda of rank 2 or
+    // more that is a projection, not a call, and it goes on to produce wrong
+    // data downstream. Verified: `f:{x+y}; f(1;2)` is `{x+y}[1 2]`. A rank-1
+    // lambda given a list is an ordinary call and stays quiet.
+    for m in re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)\s*\(").captures_iter(code) {
+        let whole = m.get(0).unwrap();
+        let name = m.get(1).unwrap().as_str();
+        if !boundary(code, whole.start()) || ranks.get(name).is_none_or(|&r| r < 2) {
+            continue;
+        }
+        let open = whole.end() - 1;
+        if let Some(close) = matching(code, open, b'(', b')')
+            && slots(&code[open + 1..close - 1]).len() >= 2
+        {
+            add(
+                whole.start(),
+                "QA008",
+                format!(
+                    "`{name}(...)` passes one list argument to a rank-{} lambda, so this is a \
+                     projection, not a call; square brackets separate arguments",
+                    ranks[name]
+                ),
+            );
+        }
+    }
+    // `a -1` is `a` applied to `-1`, not `a` minus one: with whitespace before
+    // it and none after, the `-` belongs to the literal. Verified: `a:3; a -1`
+    // tries to write to file handle 3. A builtin or a lambda this file defines
+    // on the left is an intended application (`neg -1`, `f -1`) and is left
+    // alone; a numeric literal on the left is a vector (`1 2 -3`) and never
+    // matches. Nor does `sizes -1+n`: a literal that continues into an
+    // expression is `sizes[n-1]`, indexing said on purpose - only a literal
+    // that ends the statement or bracket is the trap.
+    for m in
+        re!(r"(?m)([A-Za-z][A-Za-z0-9_]*)[ \t]+-\d[\w.]*[ \t]*(?:[;\])]|$)").captures_iter(code)
+    {
+        let whole = m.get(0).unwrap();
+        let name = &m[1];
+        if !boundary(code, whole.start())
+            || RESERVED.iter().any(|n| n == name)
+            || ranks.contains_key(name)
+        {
+            continue;
+        }
+        add(
+            whole.start(),
+            "QB010",
+            format!(
+                "`{name} -N` applies `{name}` to a negative literal; `{name}-N` or `{name} - N` \
+                 is subtraction"
+            ),
+        );
+    }
+    // Dot apply wants a list of arguments, and a scalar in that slot is a
+    // 'type error - even when the left side is itself a list to index.
+    // Verified: `.[{x+y};1]`, `.[f;`a]`, `.[1 2 3;0]` all 'type.
+    for m in re!(r"\.\[[^;\[\]]+;\s*(?:-?\d[\w.]*|`[A-Za-z0-9_.]*)\s*[;\]]").find_iter(code) {
+        add(
+            m.start(),
+            "QA009",
+            "Dot apply takes a list of arguments; a scalar here is a 'type error at runtime \
+             (`enlist` it, or use `@`)"
+                .into(),
+        );
+    }
+    // `ss` and `ssr` are string functions and refuse a symbol in either the
+    // subject or the pattern slot. `trim`, `lower` and `like` accept symbols
+    // and are deliberately not here.
+    for m in re!(
+        r"\bssr?\s*\[\s*(?:`[A-Za-z0-9_.]*)+\s*[;\]]|\bssr?\s*\[[^;\]]*;\s*(?:`[A-Za-z0-9_.]*)+\s*[;\]]|(?:`[A-Za-z0-9_.]*)+\s+ssr?\b"
+    )
+    .find_iter(code)
+    {
+        add(
+            m.start(),
+            "QT007",
+            "ss/ssr work on strings; a symbol literal is a 'type error at runtime".into(),
+        );
+    }
+    // Operators borrowed from other languages. None of these parse: q's
+    // equality is `=`, inequality `<>`, and `&&`/`||` are `and`/`or` (or
+    // `&`/`|`). `+=` and friends are `+:`.
+    for m in re!(r"==|!=|&&|\|\||[+\-*]=").find_iter(code) {
+        let (op, meant) = match m.as_str() {
+            "==" => ("==", "`=`"),
+            "!=" => ("!=", "`<>`"),
+            "&&" => ("&&", "`and` (or `&`)"),
+            "||" => ("||", "`or` (or `|`)"),
+            other => (other, "`+:`-style amend"),
+        };
+        add(
+            m.start(),
+            "QE004",
+            format!("q has no `{op}`; the spelling here is {meant}"),
+        );
+    }
+    // Keywords from other languages are plain names to q, and undefined ones:
+    // `return 1` throws 'return. `null` is absent from this list because it
+    // is a q function. A file that declares one of these as a parameter or
+    // assigns it anywhere has made it a name, and its uses are left alone.
+    let mut declared: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for (brace, _) in code.match_indices('{') {
+        declared.extend(signature(code, source, brace).slots);
+    }
+    for m in re!(r"([A-Za-z][A-Za-z0-9_]*)\s*:").captures_iter(code) {
+        declared.insert(m.get(1).unwrap().as_str());
+    }
+    for m in
+        re!(r"\b(return|else|elif|elseif|true|false|None|break|continue)\b").captures_iter(code)
+    {
+        let whole = m.get(0).unwrap();
+        let name = &m[1];
+        let after = code[whole.end()..].trim_start();
+        if !boundary(code, whole.start()) || after.starts_with('.') || declared.contains(name) {
+            continue;
+        }
+        add(
+            whole.start(),
+            "QF015",
+            format!("`{name}` is not a q keyword; it resolves as a global and throws '{name}"),
+        );
+    }
+    // A lambda whose last statement ends in `;` returns `::`, whatever that
+    // statement computed. Verified: `{x+1;}[1]` is `::`. It is common, and
+    // usually meant, after a side-effecting call - and in q a call by
+    // juxtaposition (`f x`, `show x`) has the same shape as any other
+    // expression. So the rule is only for a last statement that is a bare
+    // name or a chain of simple operands joined by infix operators, with no
+    // juxtaposition and no brackets: `x+1`, `r`, `a-b` - shapes that can
+    // only be computing a value, and here throw it away.
+    for (brace, _) in code.match_indices('{') {
+        let Some(end) = matching(code, brace, b'{', b'}') else {
+            continue;
+        };
+        let sig = signature(code, source, brace);
+        let body = &code[sig.body..end - 1];
+        let Some(semi) = body.trim_end().strip_suffix(';').map(str::len) else {
+            continue;
+        };
+        let (mut start, mut depth) = (0, 0i32);
+        for (i, c) in body[..semi].bytes().enumerate() {
+            match c {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => depth -= 1,
+                b';' | b'\n' if depth == 0 => start = i + 1,
+                _ => {}
+            }
+        }
+        let stmt = body[start..semi].trim();
+        let simple = re!(r"^[A-Za-z0-9_.]+(?:\s*(?:<>|<=|>=|[+\-*%=<>&|,#_])\s*[A-Za-z0-9_.]+)*$")
+            .is_match(stmt);
+        let builtin = RESERVED.iter().any(|n| n == stmt);
+        // A string is blank in this view; `f "done"` must not pass for `f`.
+        let quoted = v.comments[sig.body + start..sig.body + semi].contains('"');
+        if simple && !builtin && !quoted {
+            add(
+                sig.body + semi,
+                "QB012",
+                format!(
+                    "Lambda ends with `;`, so it returns null and `{stmt}` is computed and \
+                     discarded"
+                ),
+            );
+        }
+    }
+    // `type` returns a short - 7h, not `long - so a symbol on the other side
+    // of `=` is a 'type error every time. A bare `type=` is a column named
+    // type, which is QF013's business, not this rule's.
+    for m in re!(
+        r"\btype\s*(?:\[[^\]]*\]|\(?[A-Za-z_][A-Za-z0-9_.]*\)?)\s*(?:=|<>)\s*`[a-z]|`[a-z]+\s*(?:=|<>)\s*type\b"
+    )
+    .find_iter(code)
+    {
+        add(
+            m.start(),
+            "QB013",
+            "`type` returns a short (7h, 11h, ...); comparing it to a symbol is a 'type error"
+                .into(),
+        );
+    }
+    // A table literal in which every column is a scalar is a 'rank error:
+    // one row needs `enlist`. One vector column is enough to make the rest
+    // extend (`([]a:1;b:2 3)` is fine), so all of them must be scalar.
+    // Strings are blank in this view and read as non-scalar, correctly -
+    // `([]a:"ab")` is a two-row table.
+    for (at, _) in code.match_indices("([") {
+        let Some(close) = matching(code, at, b'(', b')') else {
+            continue;
+        };
+        let inner = &code[at + 1..close - 1];
+        let scalar = |v: &str| re!(r"^(?:-?\d[\w.:]*|`[A-Za-z0-9_.]*)$").is_match(v.trim());
+        let mut columns = 0;
+        let mut all_scalar = true;
+        for part in inner.split([';', ']']).map(str::trim) {
+            if part.is_empty() || part == "[" {
+                continue;
+            }
+            let part = part.trim_start_matches('[').trim();
+            let Some((_, value)) = part.split_once(':') else {
+                all_scalar = false;
+                break;
+            };
+            columns += 1;
+            if !scalar(value) {
+                all_scalar = false;
+                break;
+            }
+        }
+        if columns > 0 && all_scalar {
+            add(
+                at,
+                "QT005",
+                "Every column of this table literal is a scalar, which is a 'rank error; a \
+                 one-row table needs `enlist`"
+                    .into(),
+            );
+        }
     }
     // A table literal's column named for a builtin: `([] first:1 2)` parses,
     // but in a where phrase q resolves the bare name as the function, so
@@ -766,6 +1047,94 @@ pub fn lint(source: &str, path: &str, uqf: bool) -> Vec<Finding> {
         }
         if re!(r"\.\s*\(\s*\)").is_match(line) {
             add(offset, "QA004", "`. ()`".into());
+        }
+        // `if`, `while` and `do` are statements: each returns `::`, so
+        // assigning one assigns null. `$[...]` is the expression form.
+        if let Some(m) = re!(r"[A-Za-z0-9_\])]\s*:\s*(if|while|do)\s*\[").captures(line) {
+            add(
+                offset + m.get(0).unwrap().start(),
+                "QB011",
+                format!(
+                    "`{}` is a statement and always returns null; `$[...]` is the conditional \
+                     that has a value",
+                    &m[1]
+                ),
+            );
+        }
+        // `/` after a value is the over adverb. `10/2` and `(a+b)/2` are '/
+        // parse errors (with a space before it, `/` opens a comment and the
+        // rest of the line vanishes - the comment view has already removed
+        // that case). Division is `%`.
+        if let Some(m) = re!(r"[\d)]/\s*[\d(]").find(line) {
+            add(
+                offset + m.start(),
+                "QB014",
+                "`/` is the over adverb, not division; q divides with `%`".into(),
+            );
+        }
+        // `delete` takes columns or a where phrase, never both; q says 'nyi.
+        if let Some(m) = re!(
+            r"\bdelete\s+[A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*\s+from\s+`?[A-Za-z_][\w.]*\s+where\b"
+        )
+        .find(line)
+        {
+            add(
+                offset + m.start(),
+                "QB016",
+                "`delete` cannot name columns and filter rows in one phrase; that is 'nyi at \
+                 runtime"
+                    .into(),
+            );
+        }
+        // A cast named by symbol converts a string char by char - `long$"123"`
+        // is `49 50 51`, and `date$"2024.01.01"` is ten dates - with no error
+        // to say so. The uppercase-char cast `"J"$` parses text. `char` and
+        // `byte` are legitimate on a string, and `symbol` is a 'type error
+        // rather than junk, but is still not the `$"..."` that was meant.
+        if let Some(m) = re!(
+            r#"`(long|int|short|float|real|boolean|date|time|timestamp|timespan|month|minute|second|datetime|symbol|guid)\s*\$\s*""#
+        )
+        .captures(literals)
+        {
+            let name = &m[1];
+            let ch = match name {
+                "long" => "J", "int" => "I", "short" => "H", "float" => "F", "real" => "E",
+                "boolean" => "B", "date" => "D", "time" => "T", "timestamp" => "P",
+                "timespan" => "N", "month" => "M", "minute" => "U", "second" => "V",
+                "datetime" => "Z", "guid" => "G", _ => "",
+            };
+            let fix = if name == "symbol" {
+                "`$\"...\"".to_string()
+            } else {
+                format!("\"{ch}\"$\"...\"")
+            };
+            add(
+                offset + m.get(0).unwrap().start(),
+                "QT004",
+                format!(
+                    "`{name}$ on a string casts each character's code, not the text; parsing \
+                     text is {fix}"
+                ),
+            );
+        }
+        // Equality against a string literal in a filter: on a symbol column
+        // it is 'type, on a string column 'length (rows against chars), and
+        // when the lengths happen to agree it compares row-wise and returns
+        // garbage. A one-char string is a char atom and compares fine
+        // against a char column, so only longer literals are the trap.
+        if let Some(w) = re!(r"\bwhere\b").find(literals)
+            && let Some(m) = re!(r#"(?:=|<>)\s*"((?:[^"\\]|\\.)*)""#).captures(&literals[w.end()..])
+        {
+            let chars = re!(r"\\.|[^\\]").find_iter(&m[1]).count();
+            if chars != 1 {
+                add(
+                    offset + w.end() + m.get(0).unwrap().start(),
+                    "QB015",
+                    "Equality against a string in a filter is 'type on a symbol column and \
+                     'length on a string column; `like`, `~` or `in` is the comparison meant"
+                        .into(),
+                );
+            }
         }
         if re!(r"\b(?:where|select|exec|update|delete)\b").is_match(line) {
             let mut search = 0;

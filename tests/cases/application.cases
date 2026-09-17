@@ -42,3 +42,43 @@ $[1b;2;0b;3;4]
 
 === clean | one slot is a projection, not an error
 $[1b]
+
+=== QA007 | four slots pair off with no else
+r:$[a;1;b;2]
+
+=== clean | five slots have an else
+r:$[a;1;b;2;3]
+
+=== clean | three slots is the plain conditional
+r:$[a;1;2]
+
+=== QA008 | parentheses hand a rank-2 lambda one list
+f:{[a;b] a+b}
+r:f(1;2)
+
+=== QA008 | implicit y makes the rank
+g:{x+y}
+r:g(1;2)
+
+=== clean | square brackets separate the arguments
+f:{[a;b] a+b}
+r:f[1;2]
+
+=== clean | a rank-1 lambda takes the list as its argument
+h:{x}
+r:h(1;2)
+
+=== clean | a name the file does not define is not judged
+r:k(1;2)
+
+=== QA009 | dot apply with a scalar argument
+r:.[{x+y};1]
+
+=== QA009 | the trap form is no different
+r:.[f;`a;{x}]
+
+=== clean | a list of arguments
+r:.[{x+y};1 2]
+
+=== clean | enlist makes the list
+r:.[{x};enlist 1]

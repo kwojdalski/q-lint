@@ -78,3 +78,109 @@ select avg[px] by sym from t
 
 === clean | a user-defined aggregation
 select .my.agg px by sym from t
+
+=== QB010 | name, space, negative literal is application
+r:a -1
+
+=== QB010 | in a condition too
+if[n -1;2]
+
+=== clean | subtraction, any spacing
+r:a-1;r:a - 1;r:a- 1
+
+=== clean | a builtin applied to a negative literal is meant
+r:neg -1;r:abs -2
+
+=== clean | so is a lambda the file defines
+f:{x+1}
+r:f -1
+
+=== clean | a numeric literal on the left is a vector
+r:1 2 -3
+
+=== QB011 | if assigned as a value is null
+x:if[a;1]
+
+=== QB011 | while likewise
+x:while[a;1]
+
+=== clean | cond has a value
+x:$[a;1;2]
+
+=== clean | if as a statement
+if[a;x:1]
+
+=== QB012 | a trailing semicolon discards the last expression
+f:{[x] x+1;}
+
+=== QB012 | a bare name at the end likewise
+f:{[x] r:x+1; r;}
+
+=== clean | no trailing semicolon
+f:{[x] x+1}
+
+=== clean | an assignment at the end is not a discarded value
+f:{[x] r:x+1;}
+
+=== clean | a side-effecting call at the end
+f:{[x] .lg.o[x];}
+
+=== clean | a print at the end
+f:{[x] -1 "done";}
+
+=== QB013 | type compared to a symbol
+if[type[x]=`long;1]
+
+=== QB013 | symbol on the left
+if[`long=type x;1]
+
+=== clean | type compared to a short
+if[type[x]=7h;1]
+
+=== clean | a column named type is another rule's business
+select from t where type=`a
+
+=== QB014 | slash between literals is the over adverb
+r:10/2
+
+=== QB014 | after a parenthesised value too
+r:(a+b)/2
+
+=== clean | percent divides
+r:10%2
+
+=== clean | over on a function
+r:+/1 2 3
+
+=== QB015 | a string literal in a filter
+select from t where sym="EUR"
+
+=== QB015 | the empty string is no better
+select from t where sym=""
+
+=== clean | a one-char string is a char atom
+select from t where c="a"
+
+=== clean | like, match and in are the string comparisons
+select from t where sym like "EUR", s~\:"ab", c in "abc"
+
+=== QB016 | delete cannot take columns and a where phrase
+delete a from t where b>3
+
+=== clean | columns alone
+delete a from t
+
+=== clean | a where phrase alone
+delete from t where b>3
+
+=== clean | a literal that continues into an expression is indexing on purpose
+r:sizes -1+count sizes
+
+=== clean | a side effect by juxtaposition at the end is not a discarded value
+f:{[x] show x;}
+
+=== clean | nor is an application of a lambda to a string
+f:{[x] .lg.o "done";}
+
+=== clean | the where phrase belongs to the inner select
+r:delete ok from select from t where not ok

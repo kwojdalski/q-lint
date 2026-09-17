@@ -39,3 +39,21 @@ inside
 /
 text
 \d .
+
+=== QE004 | double equals is not q
+if[a==1;2]
+
+=== QE004 | bang-equals is not q either
+if[a!=1;2]
+
+=== QE004 | and-and
+r:a&&b
+
+=== QE004 | plus-equals
+a+=1
+
+=== clean | the q spellings
+if[a=1;2];if[a<>1;2];r:a and b;a+:1;if[a>=1;2]
+
+=== clean | operators inside a string are text
+s:"a==b"

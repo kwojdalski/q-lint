@@ -21,6 +21,13 @@
     "scope": "builtin"
   },
   {
+    "code": "QE004",
+    "name": "foreign-operator",
+    "category": "syntax",
+    "summary": "Operator from another language; q has no ==, !=, && or ||",
+    "scope": "builtin"
+  },
+  {
     "code": "QF001",
     "name": "reserved-parameter",
     "category": "names",
@@ -112,6 +119,20 @@
     "scope": "builtin"
   },
   {
+    "code": "QF014",
+    "name": "local-read-before-assign",
+    "category": "names",
+    "summary": "Name read before the assignment that makes it local",
+    "scope": "builtin"
+  },
+  {
+    "code": "QF015",
+    "name": "foreign-keyword",
+    "category": "names",
+    "summary": "Keyword from another language resolves as an undefined global",
+    "scope": "builtin"
+  },
+  {
     "code": "QA001",
     "name": "parameter-limit",
     "category": "application",
@@ -154,6 +175,27 @@
     "scope": "builtin"
   },
   {
+    "code": "QA007",
+    "name": "cond-even-slots",
+    "category": "application",
+    "summary": "Even-slot $[ ... ] has no else branch and returns null",
+    "scope": "builtin"
+  },
+  {
+    "code": "QA008",
+    "name": "parenthesised-call",
+    "category": "application",
+    "summary": "f(a;b) passes one list to a lambda of rank 2 or more",
+    "scope": "builtin"
+  },
+  {
+    "code": "QA009",
+    "name": "dot-apply-scalar",
+    "category": "application",
+    "summary": "Dot apply given a scalar where an argument list is required",
+    "scope": "builtin"
+  },
+  {
     "code": "QT001",
     "name": "literal-dictionary-length",
     "category": "types-and-shapes",
@@ -172,6 +214,34 @@
     "name": "symbol-arithmetic",
     "category": "types-and-shapes",
     "summary": "Arithmetic on a symbol literal errors at runtime",
+    "scope": "builtin"
+  },
+  {
+    "code": "QT004",
+    "name": "cast-by-name-on-string",
+    "category": "types-and-shapes",
+    "summary": "Symbol-named cast on a string converts char codes, not text",
+    "scope": "builtin"
+  },
+  {
+    "code": "QT005",
+    "name": "single-row-table",
+    "category": "types-and-shapes",
+    "summary": "Table literal of scalars needs enlist and errors 'rank",
+    "scope": "builtin"
+  },
+  {
+    "code": "QT006",
+    "name": "vector-length-mismatch",
+    "category": "types-and-shapes",
+    "summary": "Infix on two literal vectors of different lengths",
+    "scope": "builtin"
+  },
+  {
+    "code": "QT007",
+    "name": "string-function-on-symbol",
+    "category": "types-and-shapes",
+    "summary": "ss or ssr given a symbol literal is a runtime type error",
     "scope": "builtin"
   },
   {
@@ -235,6 +305,55 @@
     "name": "unaggregated-under-by",
     "category": "correctness",
     "summary": "Bare column under by silently takes the last row per group",
+    "scope": "builtin"
+  },
+  {
+    "code": "QB010",
+    "name": "apply-not-subtract",
+    "category": "correctness",
+    "summary": "Name, space, negative literal applies the name rather than subtracting",
+    "scope": "builtin"
+  },
+  {
+    "code": "QB011",
+    "name": "control-as-value",
+    "category": "correctness",
+    "summary": "if, while or do assigned as a value is always null",
+    "scope": "builtin"
+  },
+  {
+    "code": "QB012",
+    "name": "trailing-semicolon-body",
+    "category": "correctness",
+    "summary": "Lambda ends in ; so its last expression is discarded",
+    "scope": "builtin"
+  },
+  {
+    "code": "QB013",
+    "name": "type-compared-to-symbol",
+    "category": "correctness",
+    "summary": "type returns a short; comparing it to a symbol is a type error",
+    "scope": "builtin"
+  },
+  {
+    "code": "QB014",
+    "name": "slash-division",
+    "category": "correctness",
+    "summary": "/ after a value is the over adverb, not division",
+    "scope": "builtin"
+  },
+  {
+    "code": "QB015",
+    "name": "string-equality-filter",
+    "category": "correctness",
+    "summary": "Equality against a string literal in a filter errors at runtime",
+    "scope": "builtin"
+  },
+  {
+    "code": "QB016",
+    "name": "delete-columns-and-rows",
+    "category": "correctness",
+    "summary": "delete cannot take both columns and a where phrase",
     "scope": "builtin"
   },
   {

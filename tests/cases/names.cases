@@ -148,3 +148,52 @@ t:([] px:1 2; last:3 4)
 
 === clean | ordinary column names
 t:([] px:1 2; qty:3 4)
+
+=== QF014 | read before the assignment that makes it local
+f:{[x] r:cfg; cfg:1; r}
+
+=== QF014 | a read in a condition, assigned in the branch
+f:{[x] if[a;a:1]}
+
+=== QF014 | amend is a read of the unset local
+f:{a+:1;a:2}
+
+=== clean | assigned first, read after
+f:{[x] cfg:1; r:cfg; r}
+
+=== clean | a parameter is set from the start
+f:{[a] b:a; b:b+1; b}
+
+=== clean | a global assignment does not make the name local
+f:{[x] r:cfg; cfg::1; r}
+
+=== clean | column names in a query resolve to the table
+f:{[t] r:select from t where px>1; px:2; r}
+
+=== QF015 | return is not a q keyword
+f:{[x] return x+1}
+
+=== QF015 | else is not either
+if[a;1] else 2
+
+=== QF015 | true and false are undefined names
+f:{[x] $[x;true;false]}
+
+=== clean | null is a q function
+f:{[x] null x}
+
+=== clean | a file that defines the name has made it one
+return:{[x] x}
+f:{[x] return x}
+
+=== clean | a symbol is not a name
+s:`return
+
+=== clean | within one statement q evaluates right to left, so this assigns first
+f:{[x] x#a where (a:x mod 7) in 2 3}
+
+=== clean | a table-literal column is not an assignment
+f:{[x] if[x; :([] range_from:`timestamp$())]; range_from:1}
+
+=== clean | a parameter named like a keyword is a name
+f:{[func;return] if[()~return; 1]}
