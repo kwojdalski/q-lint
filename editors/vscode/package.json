@@ -6,16 +6,29 @@
   "private": true,
   "publisher": "uqf",
   "license": "MIT",
-  "engines": { "vscode": "^1.90.0" },
-  "categories": ["Linters", "Programming Languages"],
-  "activationEvents": ["onLanguage:q"],
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Linters",
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:q"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "languages": [
       {
         "id": "q",
-        "aliases": ["q", "kdb+"],
-        "extensions": [".q", ".k"],
+        "aliases": [
+          "q",
+          "kdb+"
+        ],
+        "extensions": [
+          ".q",
+          ".k"
+        ],
         "configuration": "./language-configuration.json"
       }
     ],
@@ -29,13 +42,20 @@
         },
         "q-lint.profile": {
           "type": "string",
-          "enum": ["general", "uqf"],
+          "enum": [
+            "general",
+            "uqf"
+          ],
           "default": "general",
           "markdownDescription": "Rule profile. `uqf` adds this repository's own conventions on top of the general q rules."
         },
         "q-lint.trace.server": {
           "type": "string",
-          "enum": ["off", "messages", "verbose"],
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
           "default": "off",
           "description": "Log the traffic between VS Code and the server, for debugging the integration itself."
         }
@@ -48,10 +68,20 @@
     "watch": "tsc -watch -p ./",
     "package": "vsce package"
   },
-  "dependencies": { "vscode-languageclient": "^9.0.1" },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/vscode": "^1.90.0",
     "typescript": "^5.6.0"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kwojdalski/q-lint.git"
+  },
+  "bugs": {
+    "url": "https://github.com/kwojdalski/q-lint/issues"
+  },
+  "homepage": "https://github.com/kwojdalski/q-lint#readme"
 }

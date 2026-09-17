@@ -1,0 +1,110 @@
+name: Release
+
+# Tag-driven, so cutting a release is `git tag v0.1.0 && git push --tags` and
+# nothing else. The binaries are built by the same CI that gates every commit,
+# on the platforms they target - cross-compiling four targets from one
+# developer machine is how a release ends up containing something nobody ran.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  binaries:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Every platform is attempted even when one fails, so a broken Windows
+      # build does not hide whether Linux and macOS were fine.
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          - { os: macos-14, target: aarch64-apple-darwin }
+          - { os: macos-13, target: x86_64-apple-darwin }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      # The tests run here too, not just in CI: a tagged build that was never
+      # exercised on the platform it targets is the one that ships broken.
+      - run: cargo test --release --target ${{ matrix.target }}
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="qlinter-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          mkdir -p "dist/$name"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp "target/${{ matrix.target }}/release/qlinter.exe" "dist/$name/"
+          else
+            cp "target/${{ matrix.target }}/release/qlinter" "dist/$name/"
+          fi
+          cp README.md LICENSE "dist/$name/"
+          cd dist
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            7z a "$name.zip" "$name" > /dev/null
+          else
+            tar czf "$name.tar.gz" "$name"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error
+
+  extension:
+    name: vsix
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+      - name: Package the VS Code extension
+        working-directory: editors/vscode
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run compile
+          npx --yes @vscode/vsce package --out "qlinter-${GITHUB_REF_NAME}.vsix"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vsix
+          path: editors/vscode/*.vsix
+          if-no-files-found: error
+
+  release:
+    needs: [binaries, extension]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # --generate-notes gives the commit list; the prose above it says
+          # what the thing IS, which a list of commits never does.
+          gh release create "$GITHUB_REF_NAME" \
+            --title "qlinter $GITHUB_REF_NAME" \
+            --generate-notes \
+            $(find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.vsix' \) -print)

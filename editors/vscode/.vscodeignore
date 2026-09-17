@@ -1,0 +1,11 @@
+# Sources and build config: the compiled out/ is what runs.
+src/**
+tsconfig.json
+.gitignore
+**/*.map
+
+# Dev-only dependencies pulled in by npm ci. vscode-languageclient and its
+# runtime deps must stay - the extension requires them at activation.
+node_modules/typescript/**
+node_modules/@types/**
+node_modules/.bin/**
