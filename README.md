@@ -116,8 +116,8 @@ Then either press <kbd>F5</kbd> in that directory to open an Extension
 Development Host, or package and install it:
 
 ```sh
-npx vsce package                           # produces q-lint-0.1.0.vsix
-code --install-extension q-lint-0.1.0.vsix
+npx vsce package                           # produces q-lint-0.2.0.vsix
+code --install-extension q-lint-0.2.0.vsix
 ```
 
 Two settings: `q-lint.serverPath` (default `qlinter`, looked up on `PATH` —
