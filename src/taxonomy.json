@@ -24,7 +24,7 @@
     "code": "QF002",
     "name": "underscore-parameter",
     "category": "names",
-    "summary": "Drop operator used as a parameter",
+    "summary": "`_` is the drop operator, not a parameter name",
     "scope": "builtin"
   },
   {
@@ -54,6 +54,34 @@
     "category": "names",
     "summary": "Builtin column name in embedded q",
     "scope": "python-hook"
+  },
+  {
+    "code": "QF007",
+    "name": "not-a-parameter-list",
+    "category": "names",
+    "summary": "Brackets after { are body text, not parameters",
+    "scope": "builtin"
+  },
+  {
+    "code": "QF008",
+    "name": "duplicate-parameter",
+    "category": "names",
+    "summary": "Parameter declared more than once",
+    "scope": "builtin"
+  },
+  {
+    "code": "QF009",
+    "name": "empty-parameter-slot",
+    "category": "names",
+    "summary": "Empty slot in a parameter list is still a parameter",
+    "scope": "builtin"
+  },
+  {
+    "code": "QF010",
+    "name": "implicit-argument-with-signature",
+    "category": "names",
+    "summary": "x, y or z used where parameters are declared",
+    "scope": "builtin"
   },
   {
     "code": "QA001",

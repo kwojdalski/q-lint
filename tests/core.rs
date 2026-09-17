@@ -61,3 +61,83 @@ fn language_prefixes_preserve_following_q_diagnostics() {
     assert!(lint("q)/ bad )\nx:1\n", "t.q", false).is_empty());
     assert_eq!(lint("a)x:1\n", "t.q", false)[0].code, "QE001");
 }
+
+/// The cases here were settled by running each one through a real q 4.x and
+/// asking it what the lambda's parameters actually are (`value value`), not by
+/// reading the reference manual. q accepts more in a parameter list than one
+/// would guess - `.q.z` is a legal parameter name, `{[a;b;] ...}` takes three
+/// arguments - and reads the brackets as body text rather than a signature
+/// whenever a slot is not a name, which is the trap QF007 exists for.
+#[test]
+fn parameter_lists_agree_with_q() {
+    // q reports the declared names: these are signatures.
+    for source in [
+        "f:{[a] a+1}",
+        "f:{[a;b] a+b}",
+        "f:{[] 42}",
+        "f:{[a]x+1}",
+        "f:{[ a ; b ] a}",
+        "f:{[a_b] a_b+1}",
+        "f:{[.q.z] 1}",
+        "f:{[a;b;c;d;e;f;g;h] a}",
+        "f:{x+1}",
+    ] {
+        let found = lint(source, "t.q", false);
+        assert!(
+            !found.iter().any(|f| f.code == "QF007"),
+            "{source:?} is a parameter list to q: {found:?}"
+        );
+    }
+    // q falls back to implicit arguments, or refuses the source outright.
+    for source in [
+        "f:{[tables[]] x+1}", // 'nyi
+        "f:{[a+b] 1}",        // 'nyi
+        "f:{[1] x+1}",
+        "f:{[`s] x+1}",
+        "f:{[a b] a}",
+        "f:{[a[0]] a}",
+        "f:{[a:1] a}",
+        "f:{[\"s\"] 1}", // blank once literals are masked; still not a name
+    ] {
+        assert!(
+            lint(source, "t.q", false).iter().any(|f| f.code == "QF007"),
+            "{source:?} is not a parameter list to q"
+        );
+    }
+}
+
+#[test]
+fn parameter_rules_for_lists_q_does_accept() {
+    for (source, code) in [
+        ("f:{[_] x+1}", "QF002"), // `_` is the drop operator, never a parameter
+        ("f:{[a;a] a}", "QF008"), // rank 2, and applying it projects
+        ("f:{[a;b;a] a}", "QF008"),
+        ("f:{[a;b;] a}", "QF009"), // q names the third parameter `2`
+        ("f:{[;a] a}", "QF009"),
+        ("f:{[a] x+1}", "QF010"), // 'x at runtime: x is a global here
+        ("f:{[a] z*2}", "QF010"),
+    ] {
+        assert!(
+            lint(source, "t.q", false).iter().any(|f| f.code == code),
+            "{source:?} should raise {code}"
+        );
+    }
+    // A signature that declares nothing is the one empty slot that is real,
+    // and an implicit-argument lambda has no signature to contradict.
+    for source in [
+        "f:{[] 42}",
+        "f:{x+1}",
+        "f:{[a] a+1}",
+        "f:{[x] x+1}",
+        "x:1;f:{[a] x+1}",         // x is a global that exists
+        "f:{[t] select x from t}", // x is a column, not an argument
+    ] {
+        let found = lint(source, "t.q", false);
+        assert!(
+            !found
+                .iter()
+                .any(|f| matches!(&*f.code, "QF008" | "QF009" | "QF010")),
+            "{source:?} should be clean: {found:?}"
+        );
+    }
+}

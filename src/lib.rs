@@ -208,6 +208,75 @@ fn slots(s: &str) -> Vec<&str> {
     out.push(&s[start..]);
     out
 }
+/// A lambda parameter name. `_` is absent deliberately: q reads `{[_] ...}` as
+/// a body, not a signature, which is what `named` below is about.
+fn is_param_name(s: &str) -> bool {
+    re!(r"^\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*$").is_match(s)
+}
+
+/// What q makes of the `[...]` following a `{`.
+///
+/// q reads those brackets as a parameter list only when every slot is a name.
+/// `{[a+b] ...}`, `{[1] ...}` and `{[_] ...}` are lambdas whose *body* opens
+/// with a bracket expression instead, and they take the implicit x, y and z -
+/// a different rank, from source that looks like a signature. The rules here
+/// and the scope tracking in `semantics` both have to agree with q about
+/// which of the two a given `{` is, so they share this.
+pub(crate) struct Signature<'a> {
+    /// The bracket group, trimmed and split on top-level `;` - empty when
+    /// there is no `[` at all.
+    pub slots: Vec<&'a str>,
+    /// Whether q treats `slots` as parameters rather than as body text.
+    pub named: bool,
+    /// Where the body starts: after `]` for a signature, after `{` otherwise.
+    pub body: usize,
+}
+/// `code` is the masked view and `raw` the source it was masked from, at the
+/// same offsets. Both are needed: a string literal is blank in `code`, and
+/// `{["s"] 1}` would otherwise read as the empty parameter list it is not.
+pub(crate) fn signature<'a>(code: &'a str, raw: &str, brace: usize) -> Signature<'a> {
+    let implicit = |slots| Signature {
+        slots,
+        named: false,
+        body: brace + 1,
+    };
+    let rest = &code[brace + 1..];
+    let bracket = brace + 1 + (rest.len() - rest.trim_start().len());
+    if code.as_bytes().get(bracket) != Some(&b'[') {
+        return implicit(vec![]);
+    }
+    let Some(close) = matching(code, bracket, b'[', b']') else {
+        return implicit(vec![]);
+    };
+    let (mut ranges, mut start, mut depth) = (vec![], bracket + 1, 0i32);
+    for i in bracket + 1..close - 1 {
+        let b = code.as_bytes()[i];
+        if b"([{".contains(&b) {
+            depth += 1;
+        } else if b")]}".contains(&b) {
+            depth -= 1;
+        } else if b == b';' && depth == 0 {
+            ranges.push((start, i));
+            start = i + 1;
+        }
+    }
+    ranges.push((start, close - 1));
+    let slots: Vec<&str> = ranges.iter().map(|&(a, b)| code[a..b].trim()).collect();
+    // An empty slot is still a parameter - q names it by position, so the
+    // trailing `;` in `{[a;b;] ...}` is a third argument rather than nothing.
+    // "Empty" has to be judged on `raw`, or a masked literal passes for one.
+    let names_only = ranges.iter().zip(&slots).all(|(&(a, b), slot)| {
+        (slot.is_empty() && raw[a..b].trim().is_empty()) || is_param_name(slot)
+    });
+    if !names_only {
+        return implicit(slots);
+    }
+    Signature {
+        slots,
+        named: true,
+        body: close,
+    }
+}
 fn structure(path: &str, source: &str, v: &Views) -> Option<Finding> {
     let mut stack = vec![];
     let mut offset = 0;
@@ -257,13 +326,56 @@ pub fn lint(source: &str, path: &str, uqf: bool) -> Vec<Finding> {
         return vec![f];
     }
     let code = &v.code;
-    let mut out = semantics::check(path, code);
+    let mut out = semantics::check(path, code, source);
     let mut add = |at: usize, id: &str, detail: String| {
         out.push(Finding::new(path, line_at(code, at), id, detail))
     };
-    for sig in re!(r"\{\s*\[([^\]]*)\]").captures_iter(code) {
-        let at = sig.get(0).unwrap().start();
-        let params: Vec<_> = sig[1].split(';').map(str::trim).collect();
+    for brace in code.match_indices('{').map(|(i, _)| i) {
+        let sig = signature(code, source, brace);
+        let at = brace;
+        if !sig.named {
+            // Not a parameter list, so none of the rules below apply to it -
+            // and neither does the rank the source appears to declare.
+            if !sig.slots.is_empty() {
+                let offenders: Vec<&str> = sig
+                    .slots
+                    .iter()
+                    .copied()
+                    .filter(|s| !s.is_empty() && !is_param_name(s))
+                    .collect();
+                // `_` has its own code because it has its own cause: it reads
+                // as a name but is the drop operator, so q takes the brackets
+                // for body text exactly as it does for any other expression.
+                if offenders.contains(&"_") {
+                    add(at, "QF002", "`_` as a lambda parameter".into());
+                }
+
+                let underscore = offenders.contains(&"_");
+                let rest: Vec<&str> = offenders.into_iter().filter(|s| *s != "_").collect();
+                // A string literal is blank by the time the rules see it, so
+                // there is nothing to quote back - it is still why q refused
+                // to read the brackets as a signature.
+                let subject = if !rest.is_empty() {
+                    format!("{rest:?} is not a parameter name")
+                } else if underscore {
+                    String::new()
+                } else {
+                    "A literal is not a parameter name".into()
+                };
+                if !subject.is_empty() {
+                    add(
+                        at,
+                        "QF007",
+                        format!(
+                            "{subject}, so q reads these brackets as the start of the body and \
+                             the lambda takes x, y and z instead"
+                        ),
+                    );
+                }
+            }
+            continue;
+        }
+        let params: Vec<_> = sig.slots.clone();
         let bad: Vec<_> = params
             .iter()
             .filter(|p| RESERVED.iter().any(|n| n == **p))
@@ -271,8 +383,29 @@ pub fn lint(source: &str, path: &str, uqf: bool) -> Vec<Finding> {
         if !bad.is_empty() {
             add(at, "QF001", format!("Builtin parameter name(s): {bad:?}"));
         }
-        if params.contains(&"_") {
-            add(at, "QF002", "`_` as a lambda parameter".into());
+        let mut seen = std::collections::HashSet::new();
+        let repeated: Vec<&&str> = params
+            .iter()
+            .filter(|p| !p.is_empty() && !seen.insert(**p))
+            .collect();
+        if !repeated.is_empty() {
+            add(
+                at,
+                "QF008",
+                format!("Parameter {repeated:?} is declared more than once"),
+            );
+        }
+        // `{[] ...}` is the one empty slot that means what it looks like.
+        if params.len() > 1 && params.iter().any(|p| p.is_empty()) {
+            add(
+                at,
+                "QF009",
+                format!(
+                    "An empty slot in the parameter list is still a parameter, so this lambda \
+                     takes {} arguments",
+                    params.len()
+                ),
+            );
         }
         if params.len() > 8 {
             add(
@@ -289,7 +422,7 @@ pub fn lint(source: &str, path: &str, uqf: bool) -> Vec<Finding> {
             if rest.starts_with('[') {
                 let open = code.len() - rest.len();
                 if let Some(close) = matching(code, open, b'[', b']') {
-                    let arity = if sig[1].trim().is_empty() {
+                    let arity = if params.iter().all(|p| p.is_empty()) {
                         0
                     } else {
                         params.len()

@@ -1,10 +1,11 @@
-use crate::{Finding, boundary, line_at, matching};
+use crate::{Finding, boundary, line_at, matching, signature};
 use std::collections::{HashMap, HashSet};
 
 struct Scope {
     start: usize,
     end: usize,
     body: usize,
+    named: bool,
     parent: Option<usize>,
     namespace: String,
     params: HashSet<String>,
@@ -38,7 +39,7 @@ fn shape(s: &str) -> Option<usize> {
     if re!(r"^-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?[bhijef]?(?:\s+-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?[bhijef]?)*$").is_match(s) {return Some(s.split_whitespace().count());}
     None
 }
-pub fn check(path: &str, code: &str) -> Vec<Finding> {
+pub fn check(path: &str, code: &str, raw: &str) -> Vec<Finding> {
     let mut out = vec![];
     for m in re!(r"((?:`[A-Za-z][A-Za-z0-9_.]*)+)\s*!").captures_iter(code) {
         let start = m.get(0).unwrap();
@@ -95,25 +96,24 @@ pub fn check(path: &str, code: &str) -> Vec<Finding> {
         for (i, b) in line.bytes().enumerate() {
             let at = offset + i;
             if b == b'{' {
-                let sig = re!(r"^\s*\[([^\]{}]*)\]").captures(&code[at + 1..]);
-                let (params, body) = match sig {
-                    Some(m) => (
-                        m[1].split(';')
-                            .map(str::trim)
-                            .filter(|p| !p.is_empty())
-                            .map(str::to_string)
-                            .collect(),
-                        at + 1 + m.get(0).unwrap().end(),
-                    ),
-                    None => (
-                        ["x", "y", "z"].into_iter().map(str::to_string).collect(),
-                        at + 1,
-                    ),
+                let sig = signature(code, raw, at);
+                // When the brackets are not a parameter list q binds the
+                // implicit arguments instead, and so must the scope here.
+                let params = if sig.named {
+                    sig.slots
+                        .iter()
+                        .filter(|p| !p.is_empty())
+                        .map(|p| (*p).to_string())
+                        .collect()
+                } else {
+                    ["x", "y", "z"].into_iter().map(str::to_string).collect()
                 };
+                let (named, body) = (sig.named, sig.body);
                 scopes.push(Scope {
                     start: at,
                     end: code.len(),
                     body,
+                    named,
                     parent: stack.last().copied(),
                     namespace: namespace.clone(),
                     params,
@@ -186,6 +186,43 @@ pub fn check(path: &str, code: &str) -> Vec<Finding> {
         let at=call.get(0).unwrap().start();let name=&call[1];if !boundary(code,at){continue;}
         if scope_at(&scopes,at).is_some_and(|s|scopes[s].locals.contains(name)){continue;}
         if numeric.contains(&qualify(name,ns_at(at))) {out.push(Finding::new(path,line_at(code,at),"QT002",format!("Symbol literal passed to numeric function {name}")));}
+    }
+    // A declared signature takes the implicit arguments out of scope: `x` in
+    // `{[a] x+1}` is not an argument, it is a global, and q throws 'x when
+    // there is none. Only a name this file never assigns globally is reported,
+    // since the global may legitimately live in another file.
+    for scope in &scopes {
+        if !scope.named || re!(r"\b(?:select|exec|update|delete)\b").is_match(&scope.direct) {
+            continue;
+        }
+        let direct = re!(r"`[A-Za-z0-9_./:]*")
+            .replace_all(&scope.direct, |m: &regex::Captures| " ".repeat(m[0].len()));
+        let mut seen = HashSet::new();
+        for m in re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(&direct) {
+            let name = m.as_str();
+            if !matches!(name, "x" | "y" | "z")
+                || !boundary(&direct, m.start())
+                || direct[m.end()..].starts_with('.')
+                || scope.locals.contains(name)
+                || !seen.insert(name)
+            {
+                continue;
+            }
+            if globals.contains_key(&qualify(name, &scope.namespace))
+                || globals.contains_key(&format!(".{name}"))
+            {
+                continue;
+            }
+            out.push(Finding::new(
+                path,
+                line_at(code, scope.body + m.start()),
+                "QF010",
+                format!(
+                    "'{name}' is not an argument here: the lambda declares its parameters, so \
+                     q resolves '{name}' as a global"
+                ),
+            ));
+        }
     }
     for scope in &scopes {
         if scope.parent.is_none()
