@@ -184,3 +184,15 @@ f:{[x] .lg.o "done";}
 
 === clean | the where phrase belongs to the inner select
 r:delete ok from select from t where not ok
+
+=== QB003 | a statement continued onto an indented line is still one statement
+p:"/" sv string
+  dir,name
+
+=== QB006 | the filter reads the same split across lines
+t:select from t where
+  a=1 and b=0
+
+=== clean | at column 0 the second line is a separate statement
+p:"/" sv string
+dir:1

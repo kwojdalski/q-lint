@@ -63,3 +63,11 @@ f:{[a] a+x}
 
 === QF010 | without it, the same lambda draws the check
 f:{[a] a+x}
+
+=== QP001 QE003 profile: uqf | a bare slash at column 0 opens a block comment, and nothing closes it
+a:1
+/
+
+=== clean profile: uqf | an indented slash does not: q keeps reading code after it
+a:1
+  /

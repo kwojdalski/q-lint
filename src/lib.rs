@@ -1162,11 +1162,55 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
     let mut namespace = false;
     let mut depth = 0i32;
     let mut offset = 0;
-    for ((raw, line), literals) in source
-        .split_inclusive('\n')
-        .zip(code.split_inclusive('\n'))
-        .zip(v.comments.split_inclusive('\n'))
-    {
+    // Statements, not lines. q continues a line onto the next when that one
+    // begins with whitespace, so `"/" sv string` and an indented `dir,name`
+    // below it are one expression - and a rule that reads a line at a time
+    // sees two fragments and reports nothing. Verified against q: at column 0
+    // the same second line is a separate statement, and an unterminated
+    // string on the first line is an error rather than a continuation.
+    //
+    // Each group is a contiguous byte range, so every `offset + m.start()` in
+    // the rules below still lands where it did.
+    let statements = {
+        let mut out: Vec<(usize, usize)> = vec![];
+        let (mut at, mut open) = (0usize, 0i32);
+        for (l, raw) in code.split_inclusive('\n').zip(source.split_inclusive('\n')) {
+            // Indentation is a fact about the source, not about `code`: a
+            // comment is blanked to spaces, so a bare `/` reads as indented
+            // there and would fold into the line above it, taking the rule
+            // that reports it out of reach. Brackets are counted on `code`,
+            // where the ones inside strings and comments are already gone.
+            //
+            // Only the top level folds. Inside a bracket the newlines are
+            // already insignificant to q, and the rules below have always
+            // read those lines one at a time - folding a table literal or a
+            // lambda body into one unit loses findings inside it.
+            let continues = open == 0 && raw.starts_with([' ', '\t']);
+            match out.last_mut() {
+                Some(last) if continues => last.1 += l.len(),
+                _ => out.push((at, at + l.len())),
+            }
+            for b in l.bytes() {
+                match b {
+                    b'(' | b'[' | b'{' => open += 1,
+                    b')' | b']' | b'}' => open -= 1,
+                    _ => {}
+                }
+            }
+            at += l.len();
+        }
+        out
+    };
+    for (start, end) in statements {
+        let (raw, line, literals) = (
+            &source[start..end],
+            &code[start..end],
+            &v.comments[start..end],
+        );
+        // The directives and the bare-slash rule are about one physical line,
+        // so they read the first of the group rather than the whole of it.
+        let first = line.split_inclusive('\n').next().unwrap_or(line);
+        let first_raw = raw.split_inclusive('\n').next().unwrap_or(raw);
         let line_depth = depth;
         for c in line.bytes() {
             if c == b'{' {
@@ -1175,17 +1219,17 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
                 depth -= 1;
             }
         }
-        if uqf && raw.trim() == "/" && !v.foreign_offsets.contains(&offset) {
+        if uqf && first_raw.trim() == "/" && !v.foreign_offsets.contains(&offset) {
             add(offset, "QP001", "Bare slash opens a block comment".into());
         }
-        if line.trim().starts_with("\\d ") {
-            namespace = line.trim() != "\\d .";
+        if first.trim().starts_with("\\d ") {
+            namespace = first.trim() != "\\d .";
             // Point at the directive that is still in force at EOF, so the
             // finding names the namespace the file actually ends in.
             offset += line.len();
             continue;
         }
-        if line.trim_start().starts_with('\\') {
+        if first.trim_start().starts_with('\\') {
             offset += line.len();
             continue;
         }
