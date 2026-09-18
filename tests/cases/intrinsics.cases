@@ -1,0 +1,415 @@
+=== QA010 | runtime rank
+sum[1;2]
+
+=== clean | valid counterpart for QA010
+sum[1]
+
+=== QT008 | runtime type
+til[1.5]
+
+=== clean | valid counterpart for QT008
+til[2]
+
+=== QT009 | runtime type
+where[1.5 2.5]
+
+=== clean | valid counterpart for QT009
+where[1 2]
+
+=== QT010 | runtime type
+sum[`a`b]
+
+=== clean | valid counterpart for QT010
+sum[1 2]
+
+=== QT011 | runtime rank
+asc[1]
+
+=== clean | valid counterpart for QT011
+asc[enlist 1]
+
+=== QT012 | runtime type
+distinct[1]
+
+=== clean | valid counterpart for QT012
+distinct[enlist 1]
+
+=== QT013 | runtime rank
+flip[1 2]
+
+=== clean | valid counterpart for QT013
+flip[(1 2;3 4)]
+
+=== QT014 | runtime type
+rotate[1.5;1 2]
+
+=== clean | valid counterpart for QT014
+rotate[1;1 2]
+
+=== QD001 | runtime domain
+til[-1]
+
+=== clean | valid counterpart for QD001
+til[0]
+
+=== QD002 | runtime limit
+where[-1 2]
+
+=== clean | valid counterpart for QD002
+where[0 2]
+
+=== clean | boundary
+til[`a]
+
+=== clean | boundary
+til[1h]
+
+=== QT008 | boundary
+til[10b]
+
+=== clean | boundary
+where[10b]
+
+=== clean | boundary
+sum[1;]
+
+=== clean | boundary
+sum[;]
+
+=== clean | boundary
+rotate[1;]
+
+=== clean | boundary
+til[n]
+
+=== clean | boundary
+where[counts]
+
+=== clean | boundary
+asc[values]
+
+=== clean | boundary
+distinct[values]
+
+=== clean | boundary
+flip[matrix]
+
+=== clean | boundary
+rotate[n;items]
+
+=== clean | boundary
+helper.til[-1]
+
+=== clean | boundary
+f:{[x] x[1;2]}
+
+=== clean | boundary
+s:"til[-1]"
+
+=== clean | boundary
+/ til[-1]
+
+=== clean | boundary
+p)til[-1]
+
+
+=== QA010 | nested multiline bad
+outer:{[x]
+  inner:{[y]
+    sum[
+      / literal argument
+      1;
+    / next argument
+    2
+    ]
+  };
+  inner[x]
+}
+
+=== clean | nested multiline good
+outer:{[x]
+  inner:{[y]
+    sum[
+      / literal argument
+      1
+    ]
+  };
+  inner[x]
+}
+
+=== QT008 | nested multiline bad
+outer:{[x]
+  inner:{[y]
+    til[
+      / literal argument
+      1.5
+    ]
+  };
+  inner[x]
+}
+
+=== clean | nested multiline good
+outer:{[x]
+  inner:{[y]
+    til[
+      / literal argument
+      2
+    ]
+  };
+  inner[x]
+}
+
+=== QT009 | nested multiline bad
+outer:{[x]
+  inner:{[y]
+    where[
+      / literal argument
+      1.5 2.5
+    ]
+  };
+  inner[x]
+}
+
+=== clean | nested multiline good
+outer:{[x]
+  inner:{[y]
+    where[
+      / literal argument
+      1 2
+    ]
+  };
+  inner[x]
+}
+
+=== QT010 | nested multiline bad
+outer:{[x]
+  inner:{[y]
+    sum[
+      / literal argument
+      `a`b
+    ]
+  };
+  inner[x]
+}
+
+=== clean | nested multiline good
+outer:{[x]
+  inner:{[y]
+    sum[
+      / literal argument
+      1 2
+    ]
+  };
+  inner[x]
+}
+
+=== QT011 | nested multiline bad
+outer:{[x]
+  inner:{[y]
+    asc[
+      / literal argument
+      1
+    ]
+  };
+  inner[x]
+}
+
+=== clean | nested multiline good
+outer:{[x]
+  inner:{[y]
+    asc[
+      / literal argument
+      enlist 1
+    ]
+  };
+  inner[x]
+}
+
+=== QT012 | nested multiline bad
+outer:{[x]
+  inner:{[y]
+    distinct[
+      / literal argument
+      1
+    ]
+  };
+  inner[x]
+}
+
+=== clean | nested multiline good
+outer:{[x]
+  inner:{[y]
+    distinct[
+      / literal argument
+      enlist 1
+    ]
+  };
+  inner[x]
+}
+
+=== QT013 | nested multiline bad
+outer:{[x]
+  inner:{[y]
+    flip[
+      / literal argument
+      1 2
+    ]
+  };
+  inner[x]
+}
+
+=== clean | nested multiline good
+outer:{[x]
+  inner:{[y]
+    flip[
+      / literal argument
+      (1 2;
+    / next argument
+    3 4)
+    ]
+  };
+  inner[x]
+}
+
+=== QT014 | nested multiline bad
+outer:{[x]
+  inner:{[y]
+    rotate[
+      / literal argument
+      1.5;
+    / next argument
+    1 2
+    ]
+  };
+  inner[x]
+}
+
+=== clean | nested multiline good
+outer:{[x]
+  inner:{[y]
+    rotate[
+      / literal argument
+      1;
+    / next argument
+    1 2
+    ]
+  };
+  inner[x]
+}
+
+=== QD001 | nested multiline bad
+outer:{[x]
+  inner:{[y]
+    til[
+      / literal argument
+      -1
+    ]
+  };
+  inner[x]
+}
+
+=== clean | nested multiline good
+outer:{[x]
+  inner:{[y]
+    til[
+      / literal argument
+      0
+    ]
+  };
+  inner[x]
+}
+
+=== QD002 | nested multiline bad
+outer:{[x]
+  inner:{[y]
+    where[
+      / literal argument
+      -1 2
+    ]
+  };
+  inner[x]
+}
+
+=== clean | nested multiline good
+outer:{[x]
+  inner:{[y]
+    where[
+      / literal argument
+      0 2
+    ]
+  };
+  inner[x]
+}
+
+=== clean | nested enlist is a matrix
+flip[enlist enlist 1]
+
+=== clean | symbol atom is identity for sum
+sum[`a]
+
+=== QT010 | symbol vector is refused by sum
+sum[enlist `a]
+
+=== clean | symbol atom is identity for prd
+prd[`a]
+
+=== QT010 | symbol vector is refused by prd
+prd[enlist `a]
+
+=== clean | symbol atom is identity for sums
+sums[`a]
+
+=== QT010 | symbol vector is refused by sums
+sums[enlist `a]
+
+=== clean | symbol atom is identity for prds
+prds[`a]
+
+=== QT010 | symbol vector is refused by prds
+prds[enlist `a]
+
+=== clean | symbol atom is identity for deltas
+deltas[`a]
+
+=== QT010 | symbol vector is refused by deltas
+deltas[enlist `a]
+
+=== clean | symbol atom is identity for ratios
+ratios[`a]
+
+=== QT010 | symbol vector is refused by ratios
+ratios[enlist `a]
+
+=== clean | sums accepts two arguments
+sums[1;2]
+
+=== clean | prds accepts two arguments
+prds[1;2]
+
+=== clean | deltas accepts two arguments
+deltas[1;2]
+
+=== clean | ratios accepts two arguments
+ratios[1;2]
+
+=== clean | enlist accepts two arguments
+enlist[1;2]
+
+=== clean | enlist is variadic
+enlist[1;2;3;4]
+
+=== clean | masking boundaries
+asc[1 "ab"]
+
+=== clean | masking boundaries
+distinct[1 "ab"]
+
+=== clean | masking boundaries
+flip[1 "ab"]
+
+=== clean | masking boundaries
+s:"sum[1;2]"
+
+=== QA010 | masking boundaries
+sum[1; / a comment mentioning "text"
+ 2]

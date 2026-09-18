@@ -1,0 +1,70 @@
+=== QT005 | multiline bad
+f:{[]
+ (
+ [
+ ]
+ a:1;
+ b:2)
+ }
+
+=== clean | multiline good
+f:{[]
+ (
+ [
+ ]
+ a:enlist 1;
+ b:2)
+ }
+
+=== QA002 | multiline bad
+f:{[]
+ {[a;b]a+b}
+ [1;2;3]
+ }
+
+=== clean | multiline good
+f:{[]
+ {[a;b]a+b}
+ [1;2]
+ }
+
+=== QT001 | multiline bad
+f:{[]
+ `a`b!
+ 1 2 3
+ }
+
+=== clean | multiline good
+f:{[]
+ `a`b!
+ 1 2
+ }
+
+=== QB011 | assignment continued into a statement
+f:{[]
+ result:
+ / continued assignment
+ if[1b;1];
+ result
+ }
+
+=== clean | expression conditional has a value
+f:{[]
+ result:
+ $[1b;1;2];
+ result
+ }
+
+=== QT001 | following unindented statement is not dictionary value
+v:`a`b!1 2 3
+1 2
+
+=== clean | following unindented statement is not appended to dictionary value
+v:`a`b!1 2
+1 2 3
+
+=== clean | an unindented block is a separate script expression
+f:{[a;b]a+b}
+[1;2;3]
+til
+[1.5]

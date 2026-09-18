@@ -9,6 +9,7 @@ macro_rules! re {
         &*RE
     }};
 }
+mod intrinsics;
 mod semantics;
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -79,6 +80,16 @@ impl Finding {
                     | "QB014"
                     | "QB015"
                     | "QB016"
+                    | "QA010"
+                    | "QT008"
+                    | "QT009"
+                    | "QT010"
+                    | "QT011"
+                    | "QT012"
+                    | "QT013"
+                    | "QT014"
+                    | "QD001"
+                    | "QD002"
             ) {
                 "error"
             } else {
@@ -440,6 +451,7 @@ pub fn lint(source: &str, path: &str, uqf: bool) -> Vec<Finding> {
     }
     let code = &v.code;
     let mut out = semantics::check(path, code, source);
+    out.extend(intrinsics::check(path, source, code, &v.comments));
     if let Some(at) = v.open_block {
         out.push(Finding::at(
             path,
@@ -541,8 +553,10 @@ pub fn lint(source: &str, path: &str, uqf: bool) -> Vec<Finding> {
             );
         }
         if let Some(end) = matching(code, at, b'{', b'}') {
-            let rest = code[end..].trim_start_matches([' ', '\t']);
-            if rest.starts_with('[') {
+            let rest = code[end..].trim_start();
+            if rest.starts_with('[')
+                && !re!(r"\n\S").is_match(&code[end..code.len() - rest.len() + 1])
+            {
                 let open = code.len() - rest.len();
                 if let Some(close) = matching(code, open, b'[', b']') {
                     let arity = if params.iter().all(|p| p.is_empty()) {
@@ -905,7 +919,8 @@ pub fn lint(source: &str, path: &str, uqf: bool) -> Vec<Finding> {
     // extend (`([]a:1;b:2 3)` is fine), so all of them must be scalar.
     // Strings are blank in this view and read as non-scalar, correctly -
     // `([]a:"ab")` is a two-row table.
-    for (at, _) in code.match_indices("([") {
+    for table in re!(r"\(\s*\[").find_iter(code) {
+        let at = table.start();
         let Some(close) = matching(code, at, b'(', b')') else {
             continue;
         };
@@ -995,6 +1010,19 @@ pub fn lint(source: &str, path: &str, uqf: bool) -> Vec<Finding> {
             }
         }
     }
+    // `if`, `while` and `do` are statements: each returns `::`, so
+    // assigning one assigns null. `$[...]` is the expression form.
+    for m in re!(r"[A-Za-z0-9_\])]\s*:\s*(if|while|do)\s*\[").captures_iter(code) {
+        add(
+            m.get(0).unwrap().start(),
+            "QB011",
+            format!(
+                "`{}` is a statement and always returns null; `$[...]` is the conditional \
+                     that has a value",
+                &m[1]
+            ),
+        );
+    }
     let mut namespace = false;
     let mut ns_open: Option<usize> = None;
     let mut depth = 0i32;
@@ -1056,19 +1084,6 @@ pub fn lint(source: &str, path: &str, uqf: bool) -> Vec<Finding> {
         }
         if re!(r"\.\s*\(\s*\)").is_match(line) {
             add(offset, "QA004", "`. ()`".into());
-        }
-        // `if`, `while` and `do` are statements: each returns `::`, so
-        // assigning one assigns null. `$[...]` is the expression form.
-        if let Some(m) = re!(r"[A-Za-z0-9_\])]\s*:\s*(if|while|do)\s*\[").captures(line) {
-            add(
-                offset + m.get(0).unwrap().start(),
-                "QB011",
-                format!(
-                    "`{}` is a statement and always returns null; `$[...]` is the conditional \
-                     that has a value",
-                    &m[1]
-                ),
-            );
         }
         // `/` after a value is the over adverb. `10/2` and `(a+b)/2` are '/
         // parse errors (with a space before it, `/` opens a comment and the

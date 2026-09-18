@@ -397,5 +397,75 @@
     "category": "external",
     "summary": "Diagnostic from the external qls server",
     "scope": "qls"
+  },
+  {
+    "code": "QA010",
+    "name": "builtin-excess-arguments",
+    "category": "application",
+    "summary": "Excess arguments in a complete builtin call",
+    "scope": "builtin"
+  },
+  {
+    "code": "QT008",
+    "name": "literal-til-type",
+    "category": "types-and-shapes",
+    "summary": "til called with a float or numeric vector",
+    "scope": "builtin"
+  },
+  {
+    "code": "QT009",
+    "name": "literal-where-type",
+    "category": "types-and-shapes",
+    "summary": "where called with counts other than booleans or longs",
+    "scope": "builtin"
+  },
+  {
+    "code": "QT010",
+    "name": "symbol-numeric-aggregate",
+    "category": "types-and-shapes",
+    "summary": "Numeric aggregate or scan applied to a symbol literal",
+    "scope": "builtin"
+  },
+  {
+    "code": "QT011",
+    "name": "sort-literal-atom",
+    "category": "types-and-shapes",
+    "summary": "Sorting applied to a literal atom instead of a list",
+    "scope": "builtin"
+  },
+  {
+    "code": "QT012",
+    "name": "distinct-literal-atom",
+    "category": "types-and-shapes",
+    "summary": "distinct applied to a literal atom instead of a list",
+    "scope": "builtin"
+  },
+  {
+    "code": "QT013",
+    "name": "flip-flat-numeric",
+    "category": "types-and-shapes",
+    "summary": "flip applied to a numeric atom or flat vector",
+    "scope": "builtin"
+  },
+  {
+    "code": "QT014",
+    "name": "literal-rotate-count",
+    "category": "types-and-shapes",
+    "summary": "rotate count is not an integer atom",
+    "scope": "builtin"
+  },
+  {
+    "code": "QD001",
+    "name": "negative-til",
+    "category": "domain",
+    "summary": "til called with a negative literal count",
+    "scope": "builtin"
+  },
+  {
+    "code": "QD002",
+    "name": "negative-where",
+    "category": "domain",
+    "summary": "where called with negative literal repetition counts",
+    "scope": "builtin"
   }
 ]

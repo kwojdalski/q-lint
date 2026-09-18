@@ -1,0 +1,194 @@
+[
+  {
+    "code": "QA010",
+    "bad": "sum[1;2]",
+    "good": "sum[1]",
+    "error": "rank"
+  },
+  {
+    "code": "QT008",
+    "bad": "til[1.5]",
+    "good": "til[2]",
+    "error": "type"
+  },
+  {
+    "code": "QT009",
+    "bad": "where[1.5 2.5]",
+    "good": "where[1 2]",
+    "error": "type"
+  },
+  {
+    "code": "QT010",
+    "bad": "sum[`a`b]",
+    "good": "sum[1 2]",
+    "error": "type"
+  },
+  {
+    "code": "QT011",
+    "bad": "asc[1]",
+    "good": "asc[enlist 1]",
+    "error": "rank"
+  },
+  {
+    "code": "QT012",
+    "bad": "distinct[1]",
+    "good": "distinct[enlist 1]",
+    "error": "type"
+  },
+  {
+    "code": "QT013",
+    "bad": "flip[1 2]",
+    "good": "flip[(1 2;3 4)]",
+    "error": "rank"
+  },
+  {
+    "code": "QT014",
+    "bad": "rotate[1.5;1 2]",
+    "good": "rotate[1;1 2]",
+    "error": "type"
+  },
+  {
+    "code": "QD001",
+    "bad": "til[-1]",
+    "good": "til[0]",
+    "error": "domain"
+  },
+  {
+    "code": "QD002",
+    "bad": "where[-1 2]",
+    "good": "where[0 2]",
+    "error": "limit"
+  },
+  {
+    "code": "QT005",
+    "bad": "(\n [\n ]\n a:1;\n b:2)",
+    "good": "(\n [\n ]\n a:enlist 1;\n b:2)",
+    "error": "rank"
+  },
+  {
+    "code": "QA002",
+    "bad": "{[a;b]a+b}\n [1;2;3]",
+    "good": "{[a;b]a+b}\n [1;2]",
+    "error": "rank"
+  },
+  {
+    "code": "QT001",
+    "bad": "`a`b!\n 1 2 3",
+    "good": "`a`b!\n 1 2",
+    "error": "length"
+  },
+  {
+    "code": "QT010",
+    "bad": "sum[enlist `a]",
+    "good": "sum[`a]",
+    "error": "type"
+  },
+  {
+    "code": "QT010",
+    "bad": "prd[enlist `a]",
+    "good": "prd[`a]",
+    "error": "type"
+  },
+  {
+    "code": "QT010",
+    "bad": "sums[enlist `a]",
+    "good": "sums[`a]",
+    "error": "type"
+  },
+  {
+    "code": "QT010",
+    "bad": "prds[enlist `a]",
+    "good": "prds[`a]",
+    "error": "type"
+  },
+  {
+    "code": "QT010",
+    "bad": "deltas[enlist `a]",
+    "good": "deltas[`a]",
+    "error": "type"
+  },
+  {
+    "code": "QT010",
+    "bad": "ratios[enlist `a]",
+    "good": "ratios[`a]",
+    "error": "type"
+  },
+  {
+    "code": "QA010",
+    "bad": "where[1;2]",
+    "good": "where[1 2]",
+    "error": "nyi"
+  },
+  {
+    "code": "QA010",
+    "bad": "distinct[1;2]",
+    "good": "distinct[1 2]",
+    "error": "nyi"
+  },
+  {
+    "code": "QA010",
+    "bad": "flip[1;2]",
+    "good": "flip[(1 2;3 4)]",
+    "error": "nyi"
+  },
+  {
+    "code": "QA010",
+    "bad": "count[1;2]",
+    "good": "count[1 2]",
+    "error": "nyi"
+  },
+  {
+    "code": "QA010",
+    "bad": "first[1;2]",
+    "good": "first[1 2]",
+    "error": "nyi"
+  },
+  {
+    "code": "QA010",
+    "bad": "last[1;2]",
+    "good": "last[1 2]",
+    "error": "rank"
+  },
+  {
+    "code": "QA010",
+    "bad": "reverse[1;2]",
+    "good": "reverse[1 2]",
+    "error": "nyi"
+  },
+  {
+    "code": "QA010",
+    "bad": "abs[1;2]",
+    "good": "abs[1 2]",
+    "error": "rank"
+  },
+  {
+    "code": "QA010",
+    "bad": "neg[1;2]",
+    "good": "neg[1 2]",
+    "error": "nyi"
+  },
+  {
+    "code": "QA010",
+    "bad": "sums[1;2;3]",
+    "good": "sums[1;2]",
+    "error": "rank"
+  },
+  {
+    "code": "QA010",
+    "bad": "prds[1;2;3]",
+    "good": "prds[1;2]",
+    "error": "rank"
+  },
+  {
+    "code": "QA010",
+    "bad": "deltas[1;2;3]",
+    "good": "deltas[1;2]",
+    "error": "rank"
+  },
+  {
+    "code": "QA010",
+    "bad": "ratios[1;2;3]",
+    "good": "ratios[1;2]",
+    "error": "rank"
+  }
+]

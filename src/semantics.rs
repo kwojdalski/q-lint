@@ -118,11 +118,10 @@ pub fn check(path: &str, code: &str, raw: &str) -> Vec<Finding> {
                 depth += 1;
             } else if b == b';' && depth == 0 {
                 break;
-            } else if b == b'\n' && depth == 0 {
-                // A dictionary's value stops at the end of its line, as q
-                // reads it; scanning further would take the next statement's
-                // tokens for a continuation of the vector and hide the very
-                // length mismatch the rule exists to catch.
+            } else if b == b'\n' && depth == 0 && !code[end + 1..].starts_with([' ', '\t', '\n']) {
+                // An unindented next line starts a new top-level expression.
+                // Indented continuations (including masked comments) still
+                // belong to this literal, even when they start after `!`.
                 break;
             }
             end += 1;

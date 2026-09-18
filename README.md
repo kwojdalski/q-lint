@@ -201,3 +201,27 @@ language server driven over real LSP framing as a real process. The parity
 harness that used to check this implementation against the Python one is gone
 with it; what it protected is now covered by `tests/core.rs`.
 
+
+### Rule and multiline regression corpus
+
+The taxonomy contains 67 codes. Ten literal-call rules cover excess builtin
+arguments (QA010), invalid literal types/shapes (QT008–QT014), and negative
+`til`/`where` counts (QD001–QD002). These checks leave unknown expressions
+unresolved and account for projections, seeded scans and variadic `enlist`.
+
+`examples/showcase.q` marks each expected diagnostic with `expect-next`.
+`tests/showcase.rs` checks exact code/line pairs under both profiles, including
+silence in the clean section. Together with the two companion examples it
+covers all 65 rules available in this build; QF006 and QLS001 are excluded.
+
+Multiline fixtures cover nested lambdas, split argument lists, comments,
+scalar-only tables, dictionary lengths and assignment from control statements.
+With q on PATH, `tests/test_intrinsic_runtime.py` runs only curated fixture
+expressions in a separate q process and compares runtime failures and valid
+counterparts with the linter. This is an optional development oracle; linting
+itself never executes input. Build the release binary before running it:
+
+```sh
+cargo build --release
+uv run --with pytest pytest tests/test_intrinsic_runtime.py
+```
