@@ -33,3 +33,27 @@ r:g(1;2)
 
 === clean profile: styleq | drop reads as a token once its string is masked, and is not one
 r:count (1_"abc")
+
+=== QS007 profile: styleq | documentation naming a parameter the lambda does not take
+/// Reads a folder.
+//@param folderRoot The root.
+readFolder:{[folderRoots] folderRoots}
+
+=== clean profile: styleq | documentation that matches
+/// Adds two numbers.
+//@param a The first.
+//@param b The second.
+add2:{[a;b] a+b}
+
+=== clean profile: styleq | a blank line separates the comment from the code
+//@param x Something else entirely.
+
+unrelated:{[y] y}
+
+=== clean profile: styleq | prose with no tags is not checked
+/// Adds two numbers.
+sum2:{[a;b] a+b}
+
+=== clean profile: styleq | a lambda with no declared signature has nothing to compare against
+//@param x The argument.
+implicit:{x+1}

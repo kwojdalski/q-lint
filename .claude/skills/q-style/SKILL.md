@@ -12,6 +12,13 @@ on Style" adapted to q: essays on names, whitespace, line length, conditionals,
 de-looping, parentheses. It argues from taste and gives alternatives rather
 than rules, and is usually careful to say a choice is a choice.
 
+The FINOS repository also carries **[qdoc](https://github.com/finos/kdb/tree/main/qdoc)**,
+a javadoc-style comment convention (`///` to open, `//` to continue, `@param`
+and `@return` among the tags). Real q uses the tags widely - 87 `@param` in the
+corpus - while mostly ignoring the `///` opener and adding its own vocabulary
+(`@desc`, `@kind`, `@category`, both `@return` and `@returns`). So QS007 checks
+the tag rather than the dialect.
+
 **[finos/kdb enterprise-best-practices](https://github.com/finos/kdb/blob/main/enterprise-best-practices/q-coding-guidelines.md)**
 is the enterprise counterpart, drawn from Jeff Borror's material, Charlie
 Skelton's guidelines and the same Apter essays. It states rules, which makes it
@@ -50,6 +57,7 @@ Measured over 1296 files of real q, under `--profile styleq`:
 | QS003 `l` as a name | 45 | rare, and each one genuinely hard to read |
 | QS004 a lone token in parentheses | 41 | precise, and the rewrite is always safe |
 | QS006 a lambda over 25 lines | 212 | the guide's second threshold; its first, ten lines, is 11% of all lambdas |
+| QS007 `@param` naming a parameter that is absent | 23 | of 982 documented lambdas, so ~2% - the signature changed and the comment did not |
 
 Three more were measured and not written:
 

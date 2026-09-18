@@ -1214,6 +1214,69 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
             }
         }
     }
+    // Documentation that names a parameter the lambda does not have.
+    //
+    // The FINOS qdoc convention spells this `@param name description`, and
+    // real q uses the tag widely even where it uses a different vocabulary
+    // around it. A documented name absent from the signature is unambiguous:
+    // the signature changed and the comment did not, or the name is a typo -
+    // `folderRoot` above a lambda taking `folderRoots`.
+    //
+    // Only names that are documented and absent. Parameters with no `@param`
+    // are not reported: plenty of q is documented in prose, and demanding a
+    // tag per parameter is a different and much larger opinion.
+    // Read from the source: `v.comments` blanks comments and keeps strings,
+    // so the text of a comment exists only here. A match is a comment rather
+    // than code because `code` has it blanked at the same offsets.
+    for m in re!(r"(?m)^\s*/+\s*@param\s+([A-Za-z][A-Za-z0-9_]*)").captures_iter(source) {
+        let name = m.get(1).unwrap();
+        if !code[name.start()..name.end()].trim().is_empty() {
+            continue;
+        }
+        // The signature this comment sits above: the next `{[` in the code
+        // view, provided only comments and blank lines lie between.
+        let rest = &code[m.get(0).unwrap().end()..];
+        let Some(brace) = rest.find('{') else {
+            continue;
+        };
+        // Every whole line between has to be another comment line, so the
+        // block is describing the lambda directly beneath it. A blank line
+        // separates them, and then the comment is about something else. The
+        // last line is exempt: it carries the name being assigned, which is
+        // what `readFolder:{[...]` looks like from here.
+        // The lambda has to be directly beneath the block. One newline means
+        // the next line carries it; more means there are lines in between, and
+        // each of those has to be another comment line. A blank line among
+        // them separates the two, and then the comment is about something
+        // else entirely.
+        let between = &source[m.get(0).unwrap().end()..m.get(0).unwrap().end() + brace];
+        let mut lines = between.split('\n');
+        lines.next(); // the rest of the `@param` line itself
+        let mut rest_of_block = lines.collect::<Vec<_>>();
+        rest_of_block.pop(); // the line the brace is on, carrying the name
+        if rest_of_block
+            .iter()
+            .any(|l| !l.trim_start().starts_with('/'))
+        {
+            continue;
+        }
+        let at = m.get(0).unwrap().end() + brace;
+        let sig = signature(code, source, at);
+        if !sig.named || sig.slots.is_empty() {
+            continue;
+        }
+        if !sig.slots.contains(&name.as_str()) {
+            add(
+                name.start(),
+                "QS007",
+                format!(
+                    "`@param {}` names a parameter this lambda does not take; it declares {:?}",
+                    name.as_str(),
+                    sig.slots
+                ),
+            );
+        }
+    }
     // `a:a` assigns a name to itself. There is no q in which that is the
     // intention; it is a typo for a different name or for `a:a+...`, and the
     // reader cannot tell which. The right side has to be the whole of the

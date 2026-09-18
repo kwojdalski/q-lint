@@ -175,6 +175,17 @@ l:3
 / expect-next: QS004
 wrapped:(1)+2
 
+/ QS007: documentation naming a parameter the lambda does not take. The
+/ signature changed and the comment did not, or the name is a typo. Only names
+/ that are documented and absent: a parameter with no `@param` is not
+/ reported, since plenty of q is documented in prose and demanding a tag for
+/ each parameter is a much larger opinion than this one.
+/// Reads a folder. The finding lands on the `@param` line, which is where
+/ the name that does not exist is written.
+/ expect-next: QS007
+//@param folderRoot The root.
+readFolder:{[folderRoots] folderRoots}
+
 / QS006: "A function over ten lines is suspect. A function over twenty five
 / lines is certifiable." The second threshold, not the first: over ten is a
 / tenth of the lambdas in real q, and a rule that fires that often is one

@@ -544,5 +544,12 @@
     "category": "style-guide",
     "summary": "Lambda longer than twenty five lines",
     "scope": "styleq"
+  },
+  {
+    "code": "QS007",
+    "name": "documented-parameter-absent",
+    "category": "style-guide",
+    "summary": "`@param` names a parameter the lambda does not take",
+    "scope": "styleq"
   }
 ]

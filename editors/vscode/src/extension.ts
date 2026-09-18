@@ -47,7 +47,7 @@ function bundledServer(context: ExtensionContext): string | undefined {
 export async function activate(context: ExtensionContext): Promise<void> {
   const settings = workspace.getConfiguration("q-lint");
   const configured = settings.get<string>("serverPath", "").trim();
-  const profile = settings.get<string>("profile", "general");
+  const profile = settings.get<string>("profile", "style");
 
   // In order of preference, and the fallback matters: packaging the extension
   // from a clone on Linux picks up the darwin-arm64 binary checked in for

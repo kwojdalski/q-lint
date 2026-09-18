@@ -128,7 +128,7 @@ code --install-extension q-lint-0.2.0.vsix
 
 Two settings: `q-lint.serverPath` (default `qlinter`, looked up on `PATH` —
 point it at `target/release/qlinter` if you have not installed it) and
-`q-lint.profile` (`general`, `style`, `styleq` or `uqf`).
+`q-lint.profile` (`general`, `style`, `styleq` or `uqf`); the default is `style`.
 
 ### Other editors
 

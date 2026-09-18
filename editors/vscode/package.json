@@ -3,7 +3,7 @@
   "displayName": "q-lint",
   "description": "Diagnostics for q/kdb+ source, from the q-lint language server",
   "icon": "icon.png",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "publisher": "wojdalski",
   "license": "MIT",
   "engines": {
@@ -48,8 +48,8 @@
             "styleq",
             "uqf"
           ],
-          "default": "general",
-          "markdownDescription": "Which rules to run. `general` reports only what q itself rejects. `style` adds constructs q accepts but almost nobody means. `styleq` adds the conventions published q style guidance states as rules. `uqf` adds that repository's own conventions."
+          "default": "style",
+          "markdownDescription": "Which rules to run. `style` is the default: everything that reports a real problem in working q. `general` narrows to what q itself rejects. `styleq` adds the conventions published q style guidance states as rules. `uqf` adds that repository's own conventions."
         },
         "q-lint.trace.server": {
           "type": "string",
