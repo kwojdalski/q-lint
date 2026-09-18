@@ -3,7 +3,7 @@
   "displayName": "q-lint",
   "description": "Diagnostics for q/kdb+ source, from the q-lint language server",
   "icon": "icon.png",
-  "version": "0.4.6",
+  "version": "0.4.7",
   "publisher": "wojdalski",
   "license": "MIT",
   "engines": {
@@ -61,7 +61,14 @@
           "description": "Log the traffic between VS Code and the server, for debugging the integration itself."
         }
       }
-    }
+    },
+    "commands": [
+      {
+        "command": "q-lint.restartServer",
+        "title": "Restart Server",
+        "category": "q-lint"
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",

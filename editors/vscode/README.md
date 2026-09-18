@@ -40,6 +40,14 @@ to it even though the same command works in a terminal. The bundled server
 sidesteps this; `q-lint.serverPath` with an absolute path is the fix if you
 are using your own.
 
+## When a finding looks wrong
+
+Open **Output → q-lint**. The first line names the server version and the
+binary it came from, which is usually the answer: the rules live in the
+binary, not the extension, so a replaced binary does not take effect until
+the server restarts. **q-lint: Restart Server** in the command palette does
+that without reloading the window.
+
 ## Settings
 
 | setting | default | |

@@ -6,7 +6,7 @@
 // is why this stays about thirty lines. The same server serves Neovim, Helix
 // and Zed with a comparable amount of their own configuration; nothing in this
 // file is knowledge those editors would have to reimplement.
-import { workspace, window, type ExtensionContext } from "vscode";
+import { commands, workspace, window, type ExtensionContext } from "vscode";
 import { chmodSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -82,6 +82,12 @@ export async function activate(context: ExtensionContext): Promise<void> {
     try {
       await client.start();
       started = undefined;
+      // Which server answered, and where it came from. The rules live in the
+      // binary, so a diagnostic that looks wrong is often a diagnostic from a
+      // server older than the one the user thinks they installed - and until
+      // this line there was no way to tell from inside the editor.
+      const version = client.initializeResult?.serverInfo?.version ?? "unknown version";
+      client.outputChannel.appendLine(`q-lint ${version} from ${command}`);
       break;
     } catch (error) {
       started = error;
@@ -105,6 +111,15 @@ export async function activate(context: ExtensionContext): Promise<void> {
       );
     }
   }
+  // Replacing the binary does not restart the server, and a window reload is
+  // a blunt way to pick up a new one. This is the small way.
+  context.subscriptions.push(
+    commands.registerCommand("q-lint.restartServer", async () => {
+      await client?.stop().catch(() => {});
+      client = undefined;
+      await activate(context);
+    }),
+  );
   context.subscriptions.push({ dispose: () => void client?.stop() });
 }
 

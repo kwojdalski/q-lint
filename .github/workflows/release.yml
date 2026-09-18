@@ -22,6 +22,14 @@ jobs:
     # assets are named from the tag, so nothing else would give it away.
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      # The same gates CI applies to a commit. Without them a tag can ship
+      # from a commit CI has already rejected, since the platform legs run
+      # only the tests.
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
       - name: Compare
         run: |
           set -euo pipefail
