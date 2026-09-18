@@ -79,23 +79,38 @@ fn literal(s: &str) -> Option<Literal> {
     None
 }
 
-pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Finding> {
+/// A call to one of the checked builtins: where it starts, which builtin,
+/// and its argument text - the same shape whether it was written `til[1.5]`
+/// or `til 1.5`, so the rules below never learn which spelling they saw.
+struct Call<'a> {
+    at: usize,
+    name: &'a str,
+    args: Vec<&'a str>,
+}
+
+const BUILTINS: &str = r"til|where|sum|prd|avg|med|dev|var|sums|prds|deltas|ratios|asc|desc|iasc|idesc|distinct|flip|rotate|count|first|last|enlist|reverse|abs|neg|sqrt|log|exp|sin|cos|tan|acos|asin|atan|reciprocal|mavg|msum|mcount|mdev|mmin|mmax|cor|cov|wavg|wsum|within";
+
+/// Every complete call to a checked builtin, in either spelling.
+///
+/// q writes a unary call two ways and they are the same call: `til[1.5]` and
+/// `til 1.5` both raise 'type. Real q uses the second about 150 times as
+/// often as the first, so a rule that only reads brackets checks the spelling
+/// nobody writes.
+///
+/// Arguments are split in the masked view and then read from `comments`,
+/// which keeps strings whole: a `;` inside a string is not a separator.
+fn calls<'a>(code: &'a str, comments: &'a str) -> Vec<Call<'a>> {
     let mut out = vec![];
-    let calls = re!(
-        r"\b(til|where|sum|prd|avg|med|dev|var|sums|prds|deltas|ratios|asc|desc|iasc|idesc|distinct|flip|rotate|count|first|last|enlist|reverse|abs|neg|sqrt|log|exp|sin|cos|tan|acos|asin|atan|reciprocal|mavg|msum|mcount|mdev|mmin|mmax|cor|cov|wavg|wsum|within)\s*\["
-    );
-    for call in calls.captures_iter(code) {
+    // Bracket form: `name[a;b]`.
+    for call in re!(&format!(r"\b({BUILTINS})\s*\[")).captures_iter(code) {
         let at = call.get(0).unwrap().start();
         if !boundary(code, at) || re!(r"\n\S").is_match(call.get(0).unwrap().as_str()) {
             continue;
         }
-        let name = &call[1];
         let open = call.get(0).unwrap().end() - 1;
         let Some(end) = matching(code, open, b'[', b']') else {
             continue;
         };
-        // Split in the masked view, but classify the complete argument text.
-        // This preserves strings without splitting on their semicolons/brackets.
         let mut arg_start = open + 1;
         let args: Vec<_> = slots(&code[open + 1..end - 1])
             .into_iter()
@@ -109,6 +124,47 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
         if args.iter().any(|arg| arg.trim().is_empty()) {
             continue;
         }
+        out.push(Call {
+            at,
+            name: call.get(1).unwrap().as_str(),
+            args,
+        });
+    }
+    // Juxtaposed form: `name arg`, one argument, running to the end of the
+    // expression. Only a literal argument is worth collecting - the rules can
+    // say nothing about a name - so the argument is taken as far as the
+    // literal extends: digits, dots, a type suffix, backtick symbols, spaces
+    // between vector items, or one quoted string.
+    for call in re!(&format!(
+        r#"\b({BUILTINS})[ \t]+((?:-?\d[\w.:]*(?:[ \t]+-?\d[\w.:]*)*)|(?:`[A-Za-z0-9_.]*)+|"[^"]*")"#
+    ))
+    .captures_iter(code)
+    {
+        let whole = call.get(0).unwrap();
+        if !boundary(code, whole.start()) {
+            continue;
+        }
+        // The literal has to be the whole argument. `til 1.5 * x` is not a
+        // call on 1.5 - q reads right to left - and `sum 1 2 3,x` is a call
+        // on a join. Anything that continues the expression disqualifies it.
+        let rest = code[whole.end()..].trim_start_matches([' ', '\t']);
+        if !(rest.is_empty() || rest.starts_with([';', ')', ']', '}', '\n', '\r', '/'])) {
+            continue;
+        }
+        let arg = call.get(2).unwrap();
+        out.push(Call {
+            at: whole.start(),
+            name: call.get(1).unwrap().as_str(),
+            args: vec![&comments[arg.start()..arg.end()]],
+        });
+    }
+    out
+}
+
+pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Finding> {
+    let mut out = vec![];
+    for Call { at, name, args } in calls(code, comments) {
+        let args = &args;
         let arity = match name {
             "rotate" | "mavg" | "msum" | "mcount" | "mdev" | "mmin" | "mmax" | "cor" | "cov"
             | "wavg" | "wsum" | "within" => 2,
