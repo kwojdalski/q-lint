@@ -190,3 +190,32 @@ fn a_byte_order_mark_is_reported_and_analysis_continues() {
     assert_eq!(codes(plain), ["QT003"]);
     assert_eq!(codes(&with_bom), ["QE005", "QT003"]);
 }
+
+/// Lint time should follow the size of the file, not its square.
+///
+/// The work per lambda was once linear in the number of lambdas - three
+/// separate scans over every scope - so a file of a few thousand cost seconds
+/// on every keystroke. This does not assert a duration, which would be a
+/// flaky test on shared hardware; it asserts the shape, by requiring that
+/// four times the input costs well under sixteen times the time.
+#[test]
+fn scope_analysis_does_not_scale_quadratically() {
+    let build = |n: usize| (0..n).map(|i| format!("f{i}:{{[a;b] a+b}}\n")).collect::<String>();
+    let time = |source: &str| {
+        let start = std::time::Instant::now();
+        std::hint::black_box(lint(source, "t.q", Profile::Uqf));
+        start.elapsed().as_secs_f64()
+    };
+    // Four times the input. Measured on the scan-per-scope version this was
+    // 10.5x, and on the indexed one 2.7x, so the threshold sits between with
+    // room on both sides rather than being a stopwatch on shared hardware.
+    let (small, large) = (build(4_000), build(16_000));
+    time(&small); // warm the allocator and the regex caches
+    let (a, b) = (time(&small), time(&large));
+    assert!(
+        b < a * 6.0,
+        "4x the lambdas cost {:.1}x the time ({a:.4}s -> {b:.4}s); \
+         that is the quadratic shape coming back",
+        b / a
+    );
+}

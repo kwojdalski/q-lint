@@ -82,8 +82,22 @@ fn runs_before(text: &str, read: usize, assign: usize) -> bool {
     }
     false
 }
+/// The innermost scope containing `at`.
+///
+/// Scopes are pushed as their `{` is met, so they are ordered by `start` and
+/// nested by containment. The last one to open before `at` either contains it
+/// or has already closed - and if it has closed, anything still open around
+/// `at` opened earlier and is one of its ancestors. So: find that scope by
+/// bisection, then follow parents. A scan instead is linear per call and
+/// quadratic over a file, which a few thousand lambdas make felt.
 fn scope_at(scopes: &[Scope], at: usize) -> Option<usize> {
-    scopes.iter().rposition(|s| s.start < at && at < s.end)
+    let mut i = scopes.partition_point(|s| s.start < at).checked_sub(1)?;
+    loop {
+        if at < scopes[i].end {
+            return Some(i);
+        }
+        i = scopes[i].parent?;
+    }
 }
 fn shape(s: &str) -> Option<usize> {
     let s = s.trim();
@@ -263,13 +277,21 @@ pub fn check(path: &str, code: &str, raw: &str) -> Vec<Finding> {
         }
         offset += line.len();
     }
+    // Children by parent, in one pass. Asking every scope about every scope is
+    // quadratic in the number of lambdas, which a file of a few thousand
+    // reaches on every keystroke.
+    let mut children: Vec<Vec<usize>> = vec![vec![]; scopes.len()];
+    for (i, scope) in scopes.iter().enumerate() {
+        if let Some(parent) = scope.parent {
+            children[parent].push(i);
+        }
+    }
     for i in 0..scopes.len() {
         let scope = &scopes[i];
         let mut direct = code.as_bytes()[scope.body..scope.end].to_vec();
-        for child in &scopes {
-            if child.parent == Some(i) {
-                direct[child.start - scope.body..child.end + 1 - scope.body].fill(b' ');
-            }
+        for &c in &children[i] {
+            let child = &scopes[c];
+            direct[child.start - scope.body..child.end + 1 - scope.body].fill(b' ');
         }
         let direct = String::from_utf8(direct).unwrap();
         let mut locals = scope.params.clone();
@@ -312,15 +334,24 @@ pub fn check(path: &str, code: &str, raw: &str) -> Vec<Finding> {
             .or_default()
             .push(whole.end());
     }
+    // Scopes by the offset they start at. Looking one up by scanning is linear
+    // per global and quadratic over a file whose globals are mostly lambdas,
+    // which is what a q library is.
+    let scope_starting_at: HashMap<usize, usize> = scopes
+        .iter()
+        .enumerate()
+        .map(|(i, s)| (s.start, i))
+        .collect();
     let mut numeric = HashSet::new();
     for (name, assignments) in &globals {
         if assignments.len() != 1 {
             continue;
         }
         let start = code.len() - code[assignments[0]..].trim_start().len();
-        if let Some(scope) = scopes
-            .iter()
-            .find(|s| s.start == start && s.params.len() == 1)
+        if let Some(scope) = scope_starting_at
+            .get(&start)
+            .map(|&i| &scopes[i])
+            .filter(|s| s.params.len() == 1)
             && let Some(m)=re!(r"^\s*([A-Za-z][A-Za-z0-9_]*)\s*[+*%\-]\s*-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?[bhijef]?\s*;?\s*$").captures(&scope.direct)
                 && scope.params.contains(&m[1]) {numeric.insert(name.clone());}
     }
