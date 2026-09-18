@@ -133,6 +133,13 @@
     "scope": "builtin"
   },
   {
+    "code": "QF016",
+    "name": "unused-parameter",
+    "category": "names",
+    "summary": "Declared parameter the body never reads",
+    "scope": "style"
+  },
+  {
     "code": "QA001",
     "name": "parameter-limit",
     "category": "application",

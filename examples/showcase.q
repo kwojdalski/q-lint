@@ -120,8 +120,15 @@ offset:{[base] x+base}
 / -------------------------------------------------------------- application
 
 / QA001: q allows eight parameters; this declares nine.
-/ expect-next: QA001
+/ expect-next: QA001 QF016
 wide:{[a;b;c;d;e;f;g;h;i] a}
+
+/ QF016: a parameter the body never reads. The caller still has to pass
+/ it, so this is usually a call site that changed and a signature that did
+/ not. A lambda that reads none of its parameters is left alone - that is a
+/ callback conforming to a shape someone else chose, not drift.
+/ expect-next: QF016
+spare:{[used;stale] used+1}
 
 / QA002: three arguments to a lambda that takes two.
 / expect-next: QA002

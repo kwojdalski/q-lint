@@ -1,8 +1,8 @@
-=== QA001 | more than the eight parameters q allows
+=== QA001 QF016 | more than the eight parameters q allows
 f:{[a;b;c;d;e;f;g;h;i] a}
 
 === clean | exactly eight is legal
-f:{[a;b;c;d;e;f;g;h] a}
+f:{[a;b;c;d;e;f;g;h] a+b+c+d+e+f+g+h}
 
 === QA002 | more arguments than the literal lambda takes
 {[a;b]a+b}[1;2;3]

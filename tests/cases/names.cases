@@ -76,7 +76,7 @@ f:{[.q.z] 1}
 f:{[a_b] a_b+1}
 
 === clean | whitespace around the separators
-f:{[ a ; b ] a}
+f:{[ a ; b ] a+b}
 
 === QF010 | no space before the body does not hide the global x
 f:{[a]x+1}
@@ -93,10 +93,10 @@ f:{x+y}
 === QF008 | a parameter declared twice
 f:{[a;a] a}
 
-=== QF008 | and not only adjacently
+=== QF008 QF016 | and not only adjacently, and `b` is left unread
 f:{[a;b;a] a}
 
-=== QF009 | a trailing separator is a third parameter, named `2` by q
+=== QF009 QF016 | a trailing separator is a third parameter, named `2` by q
 f:{[a;b;] a}
 
 === QF009 | a leading one likewise
@@ -196,7 +196,7 @@ f:{[x] x#a where (a:x mod 7) in 2 3}
 f:{[x] if[x; :([] range_from:`timestamp$())]; range_from:1}
 
 === clean | a parameter named like a keyword is a name
-f:{[func;return] if[()~return; 1]}
+f:{[func;return] if[()~return; func]}
 
 === clean | call arguments run right to left, so the later slot assigns first
 f:{[x] g[c-1; c:count x]}
@@ -215,3 +215,18 @@ f:{[x;y] (tx;ty):type each (x;y); if[tx=11h; tx:0h]; tx+ty}
 
 === QF005 | the names a multiple assignment binds are locals, which a nested lambda cannot see
 f:{[x] (a;b):x; g:{[v] v+a}; g 1}
+
+=== QF016 | a parameter the body never reads
+f:{[used;stale] used+1}
+
+=== clean | a lambda that reads none of them is conforming to a signature
+f:{[t] 42}
+
+=== clean | every parameter read
+f:{[a;b] a+b}
+
+=== clean | a name that says it is unused is the author saying so
+f:{[a;unusedFlag] a+1}
+
+=== clean | a symbol is not a use of the name it spells
+f:{[a] `a`b}

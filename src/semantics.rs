@@ -426,6 +426,68 @@ pub fn check(path: &str, code: &str, raw: &str) -> Vec<Finding> {
             ));
         }
     }
+    // A parameter the body never mentions. The caller is still required to
+    // pass it, so this is usually a call site that changed and a signature
+    // that did not.
+    //
+    // The whole body counts, nested lambdas included. q will not let an inner
+    // lambda see an outer local - that is QF005 - but a parameter named there
+    // was meant to be used, and reporting it twice helps nobody.
+    for scope in &scopes {
+        if !scope.named {
+            continue;
+        }
+        // Lambdas q calls itself take the arguments q passes, used or not.
+        // `.z.pg`, `.z.ps`, `.z.ws` and the tickerplant's `upd` are the
+        // common ones, and every process defines some of them.
+        let before = &code[..scope.start];
+        if re!(r"(?:\.z\.[a-z]{1,2}|\bupd|\.u\.upd)\s*:\s*$").is_match(before.trim_end_matches(' '))
+        {
+            continue;
+        }
+        // Names the body mentions, with symbols blanked first so `` `a `` does
+        // not count as a use of `a`, and dotted names left whole so `.ns.a`
+        // does not count as one either.
+        let body = re!(r"`[A-Za-z0-9_./:]*")
+            .replace_all(&code[scope.body..scope.end], |m: &regex::Captures| {
+                " ".repeat(m[0].len())
+            });
+        let mut mentioned: HashSet<&str> = HashSet::new();
+        for m in re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(&body) {
+            if boundary(&body, m.start()) && !body[m.end()..].starts_with('.') {
+                mentioned.insert(m.as_str());
+            }
+        }
+        // A lambda that reads none of its parameters is conforming to a
+        // signature someone else chose - a callback, a test the harness calls,
+        // an adapter. Those are not drift and there is nothing to remove. A
+        // lambda that reads some but not others is the one that changed.
+        let named: Vec<&String> = scope.params.iter().filter(|p| !p.is_empty()).collect();
+        let used = named
+            .iter()
+            .filter(|p| mentioned.contains(p.as_str()))
+            .count();
+        if used == 0 {
+            continue;
+        }
+        for param in named {
+            // A name that says it is not used is the author saying so. q has
+            // no `_` to spare for this - that is the drop operator - so the
+            // convention is the word itself.
+            if re!(r"(?i)^(?:unused|ignored?|dummy)").is_match(param) {
+                continue;
+            }
+            if !mentioned.contains(param.as_str()) {
+                out.push(Finding::at(
+                    path,
+                    raw,
+                    scope.start,
+                    "QF016",
+                    format!("Parameter `{param}` is never read; the caller still has to pass it"),
+                ));
+            }
+        }
+    }
     // A declared signature takes the implicit arguments out of scope: `x` in
     // `{[a] x+1}` is not an argument, it is a global, and q throws 'x when
     // there is none. Only a name this file never assigns globally is reported,
