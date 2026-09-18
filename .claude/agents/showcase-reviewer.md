@@ -67,6 +67,16 @@ that a rule is wrong, that is a finding to hand back, not a repair to make
 here. Run `cargo test --test showcase` before you finish, and say whether it
 passes.
 
+## Counting, and a trap
+
+`tests/showcase.rs` compares *sets* of `(line, code)`. The raw finding count
+is higher than the marker count, and that is not a gap: a rule that reports
+once per offending item reports several times on one line. `wide:{[a;...;i] a}`
+gets eight QF016 findings, one per unread parameter, and `$[x;true;false]`
+gets two QF015, one per foreign keyword. Compare distinct pairs to markers, not
+totals to markers, or the first review will report eight missing markers that
+do not exist.
+
 ## What "vanilla" means here
 
 Run with no profile flag, the linter reports everything, because the default
