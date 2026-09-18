@@ -27,7 +27,7 @@ f:{[_] x+1}
 count:{[t] 42}
 \d .
 
-=== QF011 | a file that ends inside a namespace it opened
+=== clean | a file may end inside a namespace it opened
 \d .util
 helper:{[x] x}
 

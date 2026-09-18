@@ -653,7 +653,7 @@ pub fn lint(source: &str, path: &str, uqf: bool) -> Vec<Finding> {
             add(
                 dollar,
                 "QA006",
-                "Two-slot $[ ... ] is no conditional q defines; it errors 'nyi' at runtime".into(),
+                "Two-slot $[ ... ] is no conditional q defines; it errors 'type at runtime".into(),
             );
         } else if n >= 4 && n.is_multiple_of(2) {
             // `$[c1;a;c2;b]` pairs every slot off as test-and-result and has
@@ -681,6 +681,12 @@ pub fn lint(source: &str, path: &str, uqf: bool) -> Vec<Finding> {
         if code[..at].trim_end().ends_with("like") {
             continue;
         }
+        // `` `long$x `` is a cast, and the symbol names the type rather than
+        // being an operand: `` `long$x-`long$y `` is subtraction of two longs,
+        // which q is perfectly happy to evaluate.
+        if code[m.end()..].starts_with('$') {
+            continue;
+        }
         add(
             at,
             "QT003",
@@ -690,6 +696,11 @@ pub fn lint(source: &str, path: &str, uqf: bool) -> Vec<Finding> {
     // like's pattern is a string; a symbol literal is the obvious spelling
     // of one and a guaranteed 'type error at runtime.
     for m in re!(r"\blike\s*`").find_iter(code) {
+        // A backtick before it makes this the symbol `` `like ``, an element of
+        // a list rather than the operator - `` `abs`cor`like`mins `` is data.
+        if !boundary(code, m.start()) {
+            continue;
+        }
         add(
             m.start(),
             "QB007",
@@ -1013,6 +1024,14 @@ pub fn lint(source: &str, path: &str, uqf: bool) -> Vec<Finding> {
     // `if`, `while` and `do` are statements: each returns `::`, so
     // assigning one assigns null. `$[...]` is the expression form.
     for m in re!(r"[A-Za-z0-9_\])]\s*:\s*(if|while|do)\s*\[").captures_iter(code) {
+        // The gap may legitimately span lines - an assignment continued onto
+        // an indented line is ordinary q. What it may not span is a string:
+        // that arrives here as blanks, so `\s*` would otherwise step over
+        // twenty-six lines of one and join an assignment to an unrelated
+        // `if[` far below. The raw source still has the quote that says so.
+        if source[m.get(0).unwrap().range()].contains('"') {
+            continue;
+        }
         add(
             m.get(0).unwrap().start(),
             "QB011",
@@ -1024,7 +1043,6 @@ pub fn lint(source: &str, path: &str, uqf: bool) -> Vec<Finding> {
         );
     }
     let mut namespace = false;
-    let mut ns_open: Option<usize> = None;
     let mut depth = 0i32;
     let mut offset = 0;
     for ((raw, line), literals) in source
@@ -1047,7 +1065,6 @@ pub fn lint(source: &str, path: &str, uqf: bool) -> Vec<Finding> {
             namespace = line.trim() != "\\d .";
             // Point at the directive that is still in force at EOF, so the
             // finding names the namespace the file actually ends in.
-            ns_open = namespace.then_some(offset);
             offset += line.len();
             continue;
         }
@@ -1173,21 +1190,33 @@ pub fn lint(source: &str, path: &str, uqf: bool) -> Vec<Finding> {
                     search = m.get(3).unwrap().start();
                 }
             }
-            // `~` matches whole operands, so a filter gets one boolean for
-            // the entire table where it wanted one per row: a 'type error
-            // against a column, or worse, a single-row result against a
-            // scalar. `~/:` and `~\:` supply the row-wise forms and are
-            // left alone, which the trailing character class encodes: any
-            // next byte that is not those two slash forms is the trap.
-            for m in re!(r"~[^/\\]").find_iter(line) {
-                add(
-                    offset + m.start(),
-                    "QB005",
-                    "Match (`~`) in a filter compares whole operands, not rows".into(),
-                );
-            }
             if let Some(w) = re!(r"\bwhere\b").find(line) {
                 let phrase = flat_filter(&line[w.end()..]);
+                // `~` matches whole operands, so a filter gets one boolean for
+                // the entire table where it wanted one per row: a 'type error
+                // against a column, or worse, a single-row result against a
+                // scalar. `~/:` and `~\:` supply the row-wise forms and are
+                // left alone, which the trailing character class encodes: any
+                // next byte that is not those two slash forms is the trap.
+                //
+                // Only the filter itself is scanned. A `~` elsewhere on the
+                // line is a different expression that happens to share it -
+                // `sel:{$[`~y;x;select from x where sym in y]}` in KX's own
+                // u.q is a conditional, not a filter, and parenthesised parts
+                // are already blanked out of `phrase`.
+                // `where` is also the unary operator that turns a boolean
+                // vector into indices - `first where v~x` is not a filter and
+                // has no rows to compare. Only a qSQL statement brings the
+                // column semantics this rule is about, so one has to be named
+                // to its left before the phrase counts as a filter at all.
+                let qsql = re!(r"\b(?:select|exec|update|delete)\b").is_match(&line[..w.start()]);
+                for m in re!(r"~[^/\\]").find_iter(&phrase).filter(|_| qsql) {
+                    add(
+                        offset + w.end() + m.start(),
+                        "QB005",
+                        "Match (`~`) in a filter compares whole operands, not rows".into(),
+                    );
+                }
                 // q gives every infix the same precedence, so `a=1 and b=0`
                 // reads as `a=(1 and b=0)` - the comparison eats the logic,
                 // and the rows that come back are quietly the wrong ones.
@@ -1230,8 +1259,12 @@ pub fn lint(source: &str, path: &str, uqf: bool) -> Vec<Finding> {
             // said the aggregation out loud.
             if let Some(m) = re!(r"\bselect\b(.*?)\bby\b").captures(line) {
                 let phrase = m[1].trim();
-                let plain = phrase.is_empty()
-                    || phrase.split(',').all(|col| {
+                // An empty phrase is not the trap: `select by sym from t` is
+                // the documented way to ask for the last row of each group,
+                // and it is in every tickerplant and RDB there is. The trap
+                // is naming a column and getting its last value silently.
+                let plain = !phrase.is_empty()
+                    && phrase.split(',').all(|col| {
                         re!(r"^(?:[A-Za-z][A-Za-z0-9_]*\s*:\s*)?[A-Za-z][A-Za-z0-9_]*$")
                             .is_match(col.trim())
                     });
@@ -1337,13 +1370,6 @@ pub fn lint(source: &str, path: &str, uqf: bool) -> Vec<Finding> {
             i += 2;
         }
         offset += line.len();
-    }
-    if let Some(at) = ns_open {
-        add(
-            at,
-            "QF011",
-            "The file ends inside this namespace; a trailing `\\d .` restores the root".into(),
-        );
     }
     let chars: Vec<_> = v.comments.char_indices().collect();
     let mut i = 0;

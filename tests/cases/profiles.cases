@@ -28,16 +28,16 @@ r:(2*3)+4
 === clean profile: uqf | a single operator family is unambiguous
 r:2*3*4
 
-=== QP004 | dynamic evaluation says which checks were skipped
+=== clean | dynamic evaluation turns checks off without that being a defect
 v:value "x"
 
-=== QP004 | a load is dynamic too
+=== clean | a load is dynamic too
 \l utils.q
 
-=== QP004 | eval is dynamic
+=== clean | eval is dynamic
 r:eval parse "1+1"
 
-=== QP004 | a load through system is dynamic
+=== clean | a load through system is dynamic
 system "l utils.q"
 
 === clean | value on a dictionary reads it, nothing is evaluated
@@ -53,11 +53,11 @@ system "mkdir -p out"
 `cfg set 1
 f:{[a] a+cfg}
 
-=== QF014 QP004 | the local-scope rule runs even where the file evaluates dynamically
+=== QF014 | the local-scope rule runs even where the file evaluates dynamically
 v:value "x"
 f:{[x] r:cfg; cfg:1; r}
 
-=== QP004 | dynamic evaluation still skips the undefined-global check that would say 'x
+=== clean | dynamic evaluation still skips the undefined-global check that would say 'x
 v:value "x"
 f:{[a] a+x}
 

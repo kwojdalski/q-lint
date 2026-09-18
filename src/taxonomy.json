@@ -98,13 +98,6 @@
     "scope": "builtin"
   },
   {
-    "code": "QF011",
-    "name": "namespace-left-open",
-    "category": "names",
-    "summary": "File ends inside a non-root namespace",
-    "scope": "builtin"
-  },
-  {
     "code": "QF012",
     "name": "reserved-root-assignment",
     "category": "names",
@@ -376,13 +369,6 @@
     "category": "policy",
     "summary": "Wall-clock timestamp where the convention is UTC",
     "scope": "uqf"
-  },
-  {
-    "code": "QP004",
-    "name": "analysis-skip-disclosure",
-    "category": "policy",
-    "summary": "Dynamic evaluation present; undefined-global checks were skipped",
-    "scope": "builtin"
   },
   {
     "code": "QP005",

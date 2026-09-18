@@ -204,18 +204,11 @@ pub fn check(path: &str, code: &str, raw: &str) -> Vec<Finding> {
             })
             .map(|m| (m.start(), m.as_str().to_string()));
     }
-    let dynamic = dynamic.inspect(|(at, what)| {
-        out.push(Finding::at(
-            path,
-            raw,
-            *at,
-            "QP004",
-            format!(
-                "`{what}` evaluates dynamically; the checks for undefined globals were skipped \
-                 for this file"
-            ),
-        ));
-    });
+    // The file using `value` or `eval` still turns the undefined-global checks
+    // off - it just is not a finding. Nothing is wrong with the line, and a
+    // warning on every file that builds a query dynamically buries the ones
+    // that mean something. What the linter did not check belongs in a report
+    // about the run, not in the margin next to working code.
     let dynamic = dynamic.is_some();
     let assignment = re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*:(:)?");
     let mut scopes: Vec<Scope> = vec![];

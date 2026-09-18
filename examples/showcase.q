@@ -10,12 +10,10 @@
 / with the other findings. The unclosed delimiter lives in syntax-error.q
 / instead: it stops the file being analysed at all and would hide the rest.
 
-/ Coverage: of the 67 rules in the taxonomy, 65 can fire on q source and
-/ every one is marked below, in syntax-error.q or in dynamic-eval.q. The
-/ two that cannot are QF006 (python-hook, no raiser in this build) and
-/ QLS001 (external qls server, demonstrated in its own section near the
-/ end). QP004 has its own file because it discloses that this file's
-/ name-scope checks were skipped - here they demonstrably were not.
+/ Coverage: of the 65 rules in the taxonomy, 63 can fire on q source and
+/ every one is marked below or in syntax-error.q. The two that cannot are
+/ QF006 (python-hook, no raiser in this build) and QLS001 (external qls
+/ server, demonstrated in its own section near the end).
 / Comment spacers here are slash-plus-text on purpose: a line that is only
 / a slash opens a q block comment and would swallow the rest of the file,
 / which is exactly what QP001 (uqf profile) is about.
@@ -27,11 +25,11 @@
 / expect-next: QF012
 from:1
 
-/ expect-next: QF011
+/ Everything from here is inside .demo, which is what makes the QF004
+/ case below a namespace-level shadow rather than a root-level one. A file
+/ may end inside a namespace: q restores the caller's context when the
+/ load finishes, which is why KX's own u.q opens `\d .u` and never closes it.
 \d .demo
-
-/ QF011: there is no closing \d . at the end of this file, so it ends
-/ inside .demo - the finding sits on the directive still in force at EOF.
 
 / ------------------------------------------------------------------- names
 

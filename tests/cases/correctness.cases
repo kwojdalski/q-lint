@@ -58,7 +58,7 @@ select from t where px in 1 2
 === clean | equality against a scalar
 select from t where px=1
 
-=== QB009 | an empty select phrase under by takes the last row per group
+=== clean | an empty select under by is the documented last-row-per-group idiom
 select by sym from t
 
 === QB009 | a bare column likewise

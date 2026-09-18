@@ -31,25 +31,18 @@ fn examples_cover_all_available_rules() {
         .into_iter()
         .map(|f| f.code)
         .collect();
-    for (name, source, code) in [
-        (
-            "syntax-error.q",
-            include_str!("../examples/syntax-error.q"),
-            "QE001",
-        ),
-        (
-            "dynamic-eval.q",
-            include_str!("../examples/dynamic-eval.q"),
-            "QP004",
-        ),
-    ] {
-        let found: BTreeSet<_> = lint(source, name, true)
-            .into_iter()
-            .map(|f| f.code)
-            .collect();
-        assert_eq!(found, BTreeSet::from([code.to_string()]));
-        shown.extend(found);
-    }
+    // An unbalanced delimiter stops the file being analysed at all, so the
+    // one rule that reports it needs a file where it is the only finding.
+    let found: BTreeSet<_> = lint(
+        include_str!("../examples/syntax-error.q"),
+        "syntax-error.q",
+        true,
+    )
+    .into_iter()
+    .map(|f| f.code)
+    .collect();
+    assert_eq!(found, BTreeSet::from(["QE001".to_string()]));
+    shown.extend(found);
     let available: BTreeSet<_> = RULES
         .iter()
         .filter(|r| !["QF006", "QLS001"].contains(&r.code.as_str()))
