@@ -46,6 +46,10 @@ comments blanked in place, offsets preserved - and take structure locally
 where they need it. [docs/design.md](docs/design.md) sets out why, and what
 the approach costs.
 
+[docs/ruff-applicability.md](docs/ruff-applicability.md) asks what a mature
+linter for another language checks, and how little of it means anything in q -
+with [docs/ruff-rules.md](docs/ruff-rules.md) as the reference.
+
 ## Options
 
 `qlinter --version` reports the build, and `--stdio` is accepted and ignored

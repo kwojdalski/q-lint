@@ -40,6 +40,13 @@ process.
 
 `docs/design.md` explains why there is no parser here and what that costs.
 Read it before adding a rule that wants one.
+`docs/ruff-applicability.md` is the survey of what a linter for another
+language checks and what of it ports, which is where a proposed rule should be
+checked against before it is written.
+
+`.claude/skills/torq-developer/` carries the q and TorQ reference this work
+leans on - the language's semantics, the framework's namespaces, and the
+process conventions real q is written against.
 
 ## Where things are
 
