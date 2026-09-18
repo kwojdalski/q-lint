@@ -684,7 +684,27 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
         let Some(close) = matching(code, dollar + 1, b'[', b']') else {
             continue;
         };
-        let n = slots(&code[dollar + 2..close - 1]).len();
+        let parts = slots(&code[dollar + 2..close - 1]);
+        // `$` takes an atom. A vector condition is 'type every time, and it is
+        // reached for by people expecting it to vectorise - `?[...]` is the
+        // form that does. A symbol or a string is 'type for the same reason.
+        // Verified: `$[101b;1;2]`, `$[1 2 3;1;2]`, `$[`a;1;2]` and `$["";1;2]`
+        // all raise, while `$[1b;1;2]` and `$[1;1;2]` return 1.
+        if let Some(cond) = parts.first().map(|c| c.trim())
+            && (re!(r"^`[A-Za-z][A-Za-z0-9_.]*$").is_match(cond)
+                || re!(r#"^"[^"]*"$"#).is_match(cond)
+                || re!(r"^[01]{2,}b$").is_match(cond)
+                || re!(r"^-?\d[\w.]*(?:\s+-?\d[\w.]*)+$").is_match(cond))
+        {
+            add(
+                dollar,
+                "QA011",
+                format!(
+                    "`$[{cond};...]` is 'type: the condition must be an atom, and `?[...]` is the vector conditional"
+                ),
+            );
+        }
+        let n = parts.len();
         if n == 2 {
             add(
                 dollar,
@@ -728,6 +748,62 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
             "QT003",
             "Arithmetic on a symbol literal is a 'type error at runtime".into(),
         );
+    }
+    // A symbol compares with a symbol and nothing else. Against a number or a
+    // string it is 'type, and both spellings appear in real mistakes:
+    // `1=`a` and `"abc"=`abc`. Verified that the neighbours are fine - `1="a"`
+    // is 0b because a char compares by its code, `` `a=`b `` is 0b, and `~`
+    // never raises - so only a symbol facing a non-symbol is reported.
+    {
+        let sym = r"`[A-Za-z][A-Za-z0-9_.]*";
+        let other = r#"-?\d[\w.]*|"[^"]*""#;
+        let op = r"(?:<=|>=|<>|<|>|=|\bin\b)";
+        // A string literal is blanks by the time `code` is built, so the
+        // string half of this has to read `source`. The operator still has to
+        // be present in `code` at the same offset, which is what proves the
+        // match is code rather than the inside of a comment.
+        for (pattern, view) in [
+            (format!(r"({sym})\s*{op}\s*({other})"), code.as_str()),
+            (format!(r"({other})\s*{op}\s*({sym})"), code.as_str()),
+            (format!(r#"("[^"]*")\s*{op}\s*({sym})"#), source),
+            (format!(r#"({sym})\s*{op}\s*("[^"]*")"#), source),
+        ] {
+            for m in regex::Regex::new(&pattern).unwrap().captures_iter(view) {
+                let at = m.get(0).unwrap().start();
+                if !boundary(view, at) {
+                    continue;
+                }
+                if !std::ptr::eq(view, code.as_str())
+                    && code[at..m.get(0).unwrap().end()] == *m.get(0).unwrap().as_str()
+                {
+                    // Unmasked in `code` too, so the other patterns saw it.
+                    continue;
+                }
+                if !std::ptr::eq(view, code.as_str()) && !code[at..].starts_with(['`', '"', ' ']) {
+                    continue;
+                }
+                // Both operands have to be whole. A symbol before `$` names a
+                // cast - `0i=`int$period` compares two ints - and a number
+                // before an operator is the start of something longer, as in
+                // `` `time in 0!select ... ``, which unkeys a table and asks
+                // about a list of symbols. Either way the match is a prefix
+                // of an expression this rule has not understood.
+                let end = m.get(0).unwrap().end();
+                if view[end..]
+                    .starts_with(|c: char| c.is_alphanumeric() || "`$!#@^_.,+-*%~=<>".contains(c))
+                {
+                    continue;
+                }
+                add(
+                    at,
+                    "QT015",
+                    format!(
+                        "`{}` is 'type: a symbol compares with a symbol, not with a number or a string",
+                        m.get(0).unwrap().as_str().trim()
+                    ),
+                );
+            }
+        }
     }
     // like's pattern is a string; a symbol literal is the obvious spelling
     // of one and a guaranteed 'type error at runtime.

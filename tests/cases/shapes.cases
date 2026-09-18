@@ -110,3 +110,42 @@ r:trim `a;s:lower `A
 
 === clean | a cast to string is not a symbol literal
 r:ss[`char$x;"a"]
+
+=== QA011 | a boolean vector cannot be a conditional's test
+r:$[101b;1;2]
+
+=== QA011 | nor a numeric vector
+r:$[1 2 3;1;2]
+
+=== QA011 | nor a symbol
+r:$[`a;1;2]
+
+=== clean | an atom is what $ wants
+r:$[1b;1;2]
+
+=== clean | and a long atom counts
+r:$[1;1;2]
+
+=== QT015 | a symbol against a number is a type error
+r:1=`a
+
+=== QT015 | and against a string
+r:"abc"=`abc
+
+=== QT015 | ordering comparisons too
+r:`x<1
+
+=== clean | symbol against symbol is ordinary
+r:`a=`b
+
+=== clean | a char compares by its code, which q allows
+r:1="a"
+
+=== clean | match never raises, whatever the types
+r:1~`a
+
+=== clean | a symbol naming a cast is not an operand
+r:$[0i=`int$period;1;2]
+
+=== clean | 0! unkeys a table; the 0 is not the operand
+r:`time in 0!t

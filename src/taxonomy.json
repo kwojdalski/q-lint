@@ -453,5 +453,19 @@
     "category": "domain",
     "summary": "where called with negative literal repetition counts",
     "scope": "builtin"
+  },
+  {
+    "code": "QA011",
+    "name": "cond-non-atom-condition",
+    "category": "application",
+    "summary": "$[ ... ] condition must be an atom; a vector or symbol is a type error",
+    "scope": "builtin"
+  },
+  {
+    "code": "QT015",
+    "name": "symbol-comparison",
+    "category": "types-and-shapes",
+    "summary": "Symbol compared with a number or string is a runtime type error",
+    "scope": "builtin"
   }
 ]

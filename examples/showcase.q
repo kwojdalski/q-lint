@@ -387,6 +387,18 @@ til[-1]
 / expect-next: QD002
 where[-1 2]
 
+/ QA011: `$` takes an atom. A vector condition is 'type every time, and the
+/ shape is reached for by people expecting it to vectorise - `?[...]` is the
+/ conditional that does. A symbol condition is 'type for the same reason.
+/ expect-next: QA011
+pick:$[101b;`y;`n]
+
+/ QT015: a symbol compares with a symbol. Against a number or a string it is
+/ 'type. `1="a"` is not this - a char compares by its code - and `~` never
+/ raises, so neither is reported.
+/ expect-next: QT015
+same:1=`a
+
 / ------------------------------------------------ multiline continuations
 
 / QT005: line breaks do not make scalar columns into lists.
