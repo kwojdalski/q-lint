@@ -469,6 +469,13 @@
     "scope": "builtin"
   },
   {
+    "code": "QA012",
+    "name": "named-lambda-rank",
+    "category": "application",
+    "summary": "More arguments than the named lambda takes",
+    "scope": "builtin"
+  },
+  {
     "code": "QT015",
     "name": "symbol-comparison",
     "category": "types-and-shapes",

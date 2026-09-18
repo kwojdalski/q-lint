@@ -82,3 +82,32 @@ r:.[{x+y};1 2]
 
 === clean | enlist makes the list
 r:.[{x};enlist 1]
+
+=== QA012 | more arguments than the named lambda takes
+f:{[a] a+1}
+r:f[1;2]
+
+=== QA012 | an elided slot still counts against the rank
+f:{[a] a+1}
+r:f[1;]
+
+=== clean | the same elision fits a rank-2 lambda, so it is a projection
+f:{[a;b] a+b}
+r:f[1;]
+
+=== clean | no arguments at all is a projection whatever the rank
+f:{[a] a+1}
+r:f[]
+
+=== clean | an implicit lambda's rank comes from the arguments it names
+f:{x+y}
+r:f[1;2]
+
+=== clean | a name assigned the result of applying a lambda is not that lambda
+files:{x+1} each 1 2 3
+r:files[;0]
+
+=== clean | a name defined twice has no single rank to check against
+f:{[a] a+1}
+f:{[a;b] a+b}
+r:f[1;2]

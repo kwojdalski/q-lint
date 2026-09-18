@@ -868,7 +868,67 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
                 1
             }
         };
+        // Only when the name is the lambda, not the result of applying it.
+        // `files:{...} each x` and `bids:{...}'[til n]` both assign a list,
+        // and treating either as a function of the rank its braces declare
+        // makes an ordinary index - `bids[;0]` - look like an over-applied
+        // call. So the statement has to end at the closing brace.
+        if !code[end..]
+            .trim_start_matches([' ', '\t'])
+            .starts_with([';', '\n', '\r'])
+            && !code[end..].trim_start_matches([' ', '\t']).is_empty()
+        {
+            continue;
+        }
         ranks.insert(m.get(1).unwrap().as_str(), rank);
+    }
+    // The same arity check as QA002, for a lambda reached by name. `ranks`
+    // already knows what each `name:{...}` takes, so a call with more slots
+    // than that is 'rank at runtime - the error QA002 reports when the lambda
+    // is written out at the call site.
+    //
+    // Elided slots still count. `f[1;]` looks like a projection and is one
+    // only when the slots fit: against a rank-1 `f` it supplies two and is
+    // 'rank, which q confirms. `f[]` supplies none and is a projection at any
+    // rank. Names defined more than once are dropped rather than guessed at,
+    // since the rank at the call site is whichever definition ran last.
+    let mut redefined: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    {
+        let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for m in re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)\s*:\s*\{").captures_iter(code) {
+            let name = m.get(1).unwrap().as_str();
+            if !seen.insert(name) {
+                redefined.insert(name);
+            }
+        }
+    }
+    for m in re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)\s*\[").captures_iter(code) {
+        let (whole, name) = (m.get(0).unwrap(), m.get(1).unwrap().as_str());
+        if !boundary(code, whole.start()) || redefined.contains(name) {
+            continue;
+        }
+        let Some(&rank) = ranks.get(name) else {
+            continue;
+        };
+        let open = whole.end() - 1;
+        let Some(close) = matching(code, open, b'[', b']') else {
+            continue;
+        };
+        let inner = &code[open + 1..close - 1];
+        let parts = slots(inner);
+        if rank == 0 || inner.trim().is_empty() {
+            continue;
+        }
+        if parts.len() > rank {
+            add(
+                whole.start(),
+                "QA012",
+                format!(
+                    "{} argument slots applied to `{name}`, which takes {rank}: 'rank at runtime",
+                    parts.len()
+                ),
+            );
+        }
     }
     // `f(1;2)` hands `f` the single argument `1 2`; for a lambda of rank 2 or
     // more that is a projection, not a call, and it goes on to produce wrong

@@ -399,6 +399,14 @@ pick:$[101b;`y;`n]
 / expect-next: QT015
 same:1=`a
 
+/ QA012: the same arity error as QA002, reached by name. `takesOne` takes one
+/ argument and is given two, which is 'rank at runtime. An elided slot still
+/ counts - `takesOne[1;]` supplies two and is 'rank as well - while `f[]`
+/ supplies none and is a projection at any rank.
+takesOne:{[a] a+1}
+/ expect-next: QA012
+tooMany:takesOne[1;2]
+
 / ------------------------------------------------ multiline continuations
 
 / QT005: line breaks do not make scalar columns into lists.
