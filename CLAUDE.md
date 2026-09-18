@@ -41,7 +41,14 @@ process.
 
 - **A rule's description lives in `src/taxonomy.json`**, which `--rules` and
   `--explain` print from. Prose that repeats it is a second place to be wrong.
-- **`--profile uqf` encodes another repository's conventions.** It is a
-  named profile rather than the default for that reason; the default is
-  `general`, and a rule that only makes sense for one codebase belongs behind
-  a profile rather than in the general set.
+- **A rule belongs in `general` only if q rejects the construct.** The
+  default answers one question - would q refuse this? - so a rule fires there
+  only when the source fails to parse or fails the moment it runs. A construct
+  q accepts and executes is describing a habit, and belongs in `style`.
+  `--profile uqf` encodes another repository's conventions on top of that, and
+  a rule that only makes sense for one codebase belongs there.
+
+  Which of the three a construct falls into is settled by running it through
+  q, not by reading the manual: `{[count] count+1}` runs perfectly well and is
+  `style`, while `{[a] x+1}` throws 'x the moment it is called and is
+  `general`.

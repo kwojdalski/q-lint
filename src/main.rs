@@ -2,7 +2,7 @@ mod jsonrpc;
 mod lsp;
 mod qls;
 use clap::Parser;
-use q_lint_rs::{RULES, lint};
+use q_lint_rs::{Profile, RULES, lint};
 use std::{
     collections::BTreeSet,
     fs,
@@ -17,7 +17,7 @@ struct Args {
     paths: Vec<String>,
     #[arg(long,default_value="text",value_parser=["text","json"])]
     format: String,
-    #[arg(long,default_value="general",value_parser=["general","uqf"])]
+    #[arg(long,default_value="general",value_parser=["general","style","uqf"])]
     profile: String,
     #[arg(long, default_value = "<stdin>")]
     stdin_filename: String,
@@ -127,7 +127,11 @@ fn run(args: Args) -> Result<u8, String> {
         // streams, and re-locking per message would be pure overhead.
         let stdin = io::stdin();
         let stdout = io::stdout();
-        return lsp::serve(&mut stdin.lock(), &mut stdout.lock(), args.profile == "uqf");
+        return lsp::serve(
+            &mut stdin.lock(),
+            &mut stdout.lock(),
+            profile(&args.profile),
+        );
     }
     if args.rules || args.explain.is_some() {
         let entries: Vec<_> = RULES
@@ -242,7 +246,7 @@ fn run(args: Args) -> Result<u8, String> {
     let mut findings = vec![];
     if args.backend != "qls" {
         for (path, source) in &sources {
-            findings.extend(lint(source, path, args.profile == "uqf"));
+            findings.extend(lint(source, path, profile(&args.profile)));
         }
     }
     if args.backend != "builtin" {
@@ -276,6 +280,17 @@ fn run(args: Args) -> Result<u8, String> {
         matches!(f.severity.as_str(), "error" | "warning")
     })))
 }
+/// The `--profile` flag, as the rule set it selects. clap has already refused
+/// anything not in the list, so the fallback is unreachable rather than a
+/// silent default.
+fn profile(name: &str) -> Profile {
+    match name {
+        "style" => Profile::Style,
+        "uqf" => Profile::Uqf,
+        _ => Profile::General,
+    }
+}
+
 fn main() -> ExitCode {
     match run(Args::parse()) {
         Ok(code) => ExitCode::from(code),

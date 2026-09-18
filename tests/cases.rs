@@ -4,7 +4,7 @@
 //! text file, and so that the negative cases - source that must stay silent -
 //! sit next to the positives they are the counterweight to. See
 //! `tests/cases/README.md` for the format.
-use q_lint_rs::lint;
+use q_lint_rs::{Profile, lint};
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
@@ -13,7 +13,7 @@ struct Case {
     line: usize,
     title: String,
     expected: BTreeSet<String>,
-    profile_uqf: bool,
+    profile: Profile,
     source: String,
 }
 
@@ -23,12 +23,18 @@ fn parse(file: &str, text: &str) -> Vec<Case> {
         if let Some(header) = line.strip_prefix("=== ") {
             let (codes, title) = header.split_once('|').unwrap_or((header, ""));
             let mut expected = BTreeSet::new();
-            let mut profile_uqf = false;
+            let mut profile = Profile::Style;
             let mut tokens = codes.split_whitespace().peekable();
             while let Some(token) = tokens.next() {
                 match token {
                     "clean" => {}
-                    "profile:" => profile_uqf = tokens.next() == Some("uqf"),
+                    "profile:" => {
+                        profile = match tokens.next() {
+                            Some("uqf") => Profile::Uqf,
+                            Some("general") => Profile::General,
+                            _ => Profile::Style,
+                        }
+                    }
                     code => {
                         expected.insert(code.to_string());
                     }
@@ -39,7 +45,7 @@ fn parse(file: &str, text: &str) -> Vec<Case> {
                 line: i + 1,
                 title: title.trim().into(),
                 expected,
-                profile_uqf,
+                profile,
                 source: String::new(),
             });
         } else if let Some(case) = cases.last_mut() {
@@ -69,7 +75,7 @@ fn every_case_says_what_it_means() {
 
     let mut failures = String::new();
     for case in &cases {
-        let found: BTreeSet<String> = lint(&case.source, "t.q", case.profile_uqf)
+        let found: BTreeSet<String> = lint(&case.source, "t.q", case.profile)
             .into_iter()
             .map(|f| f.code.to_string())
             .collect();

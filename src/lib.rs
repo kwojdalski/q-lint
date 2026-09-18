@@ -444,7 +444,43 @@ fn structure(path: &str, source: &str, v: &Views) -> Option<Finding> {
         .map(|&(c, at)| make(at, format!("Unclosed delimiter; expected '{}'", c as char)))
 }
 
-pub fn lint(source: &str, path: &str, uqf: bool) -> Vec<Finding> {
+/// Which rules a run is asking for.
+///
+/// The default answers only one question - would q refuse this? - because
+/// that is the answer a linter can give without arguing about taste. A rule
+/// that fires on source q accepts and runs is describing a habit, not a
+/// defect, and lives a profile up.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Profile {
+    /// Only what q rejects: a parse error, or an error the moment it runs.
+    General,
+    /// Adds the constructs q accepts but almost nobody means - a parameter
+    /// that shadows a builtin, a filter comparing a column to itself.
+    Style,
+    /// Adds another repository's own conventions on top of Style.
+    Uqf,
+}
+impl Profile {
+    /// Whether a rule of this scope runs under this profile. Public because
+    /// the showcase test asks the same question the linter does, rather than
+    /// keeping its own copy of the answer.
+    pub fn allows_scope(self, scope: &str) -> bool {
+        self.allows(scope)
+    }
+    fn allows(self, scope: &str) -> bool {
+        match scope {
+            "builtin" => true,
+            "style" => self != Profile::General,
+            "uqf" => self == Profile::Uqf,
+            // qls and python-hook findings arrive from elsewhere; this is not
+            // the place that decides whether they ran.
+            _ => true,
+        }
+    }
+}
+
+pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
+    let uqf = profile == Profile::Uqf;
     let v = views(source);
     if let Some(f) = structure(path, source, &v) {
         return vec![f];
@@ -1419,6 +1455,15 @@ pub fn lint(source: &str, path: &str, uqf: bool) -> Vec<Finding> {
         }
         i += 1;
     }
+    // One choke point: a rule states its scope in the taxonomy and the profile
+    // decides whether that scope is wanted. Filtering here rather than guarding
+    // sixty emission sites keeps the two from drifting apart.
+    out.retain(|f| {
+        RULES
+            .iter()
+            .find(|r| r.code == f.code)
+            .is_none_or(|r| profile.allows(&r.scope))
+    });
     out.sort_by(|a, b| {
         (&a.path, a.line, &a.rule, &a.detail).cmp(&(&b.path, b.line, &b.rule, &b.detail))
     });

@@ -18,7 +18,7 @@
     "name": "unterminated-block-comment",
     "category": "syntax",
     "summary": "Block comment opened but never closed",
-    "scope": "builtin"
+    "scope": "style"
   },
   {
     "code": "QE004",
@@ -32,14 +32,14 @@
     "name": "reserved-parameter",
     "category": "names",
     "summary": "Builtin name used as a parameter",
-    "scope": "builtin"
+    "scope": "style"
   },
   {
     "code": "QF002",
     "name": "underscore-parameter",
     "category": "names",
     "summary": "`_` is the drop operator, not a parameter name",
-    "scope": "builtin"
+    "scope": "style"
   },
   {
     "code": "QF003",
@@ -81,14 +81,14 @@
     "name": "duplicate-parameter",
     "category": "names",
     "summary": "Parameter declared more than once",
-    "scope": "builtin"
+    "scope": "style"
   },
   {
     "code": "QF009",
     "name": "empty-parameter-slot",
     "category": "names",
     "summary": "Empty slot in a parameter list is still a parameter",
-    "scope": "builtin"
+    "scope": "style"
   },
   {
     "code": "QF010",
@@ -102,7 +102,7 @@
     "name": "reserved-root-assignment",
     "category": "names",
     "summary": "Root-level assignment to a reserved name",
-    "scope": "builtin"
+    "scope": "style"
   },
   {
     "code": "QF013",
@@ -144,7 +144,7 @@
     "name": "multiparam-under-at",
     "category": "application",
     "summary": "Unary protected apply receives a multi-argument function",
-    "scope": "builtin"
+    "scope": "style"
   },
   {
     "code": "QA004",
@@ -158,7 +158,7 @@
     "name": "each-on-binary",
     "category": "application",
     "summary": "each supplies one argument to a binary function",
-    "scope": "builtin"
+    "scope": "style"
   },
   {
     "code": "QA006",
@@ -172,14 +172,14 @@
     "name": "cond-even-slots",
     "category": "application",
     "summary": "Even-slot $[ ... ] has no else branch and returns null",
-    "scope": "builtin"
+    "scope": "style"
   },
   {
     "code": "QA008",
     "name": "parenthesised-call",
     "category": "application",
     "summary": "f(a;b) passes one list to a lambda of rank 2 or more",
-    "scope": "builtin"
+    "scope": "style"
   },
   {
     "code": "QA009",
@@ -214,7 +214,7 @@
     "name": "cast-by-name-on-string",
     "category": "types-and-shapes",
     "summary": "Symbol-named cast on a string converts char codes, not text",
-    "scope": "builtin"
+    "scope": "style"
   },
   {
     "code": "QT005",
@@ -242,7 +242,7 @@
     "name": "self-comparison",
     "category": "correctness",
     "summary": "qSQL filter compares a name to itself",
-    "scope": "builtin"
+    "scope": "style"
   },
   {
     "code": "QB002",
@@ -256,28 +256,28 @@
     "name": "unparenthesised-sv",
     "category": "correctness",
     "summary": "Concatenation is consumed by sv",
-    "scope": "builtin"
+    "scope": "style"
   },
   {
     "code": "QB004",
     "name": "overlong-throw",
     "category": "correctness",
     "summary": "Thrown message risks truncation",
-    "scope": "builtin"
+    "scope": "style"
   },
   {
     "code": "QB005",
     "name": "match-in-where",
     "category": "correctness",
     "summary": "Match in a qSQL filter compares whole vectors, not rows",
-    "scope": "builtin"
+    "scope": "style"
   },
   {
     "code": "QB006",
     "name": "comparison-with-logic",
     "category": "correctness",
     "summary": "Unparenthesised comparison mixed with and/or reads right-to-left",
-    "scope": "builtin"
+    "scope": "style"
   },
   {
     "code": "QB007",
@@ -291,14 +291,14 @@
     "name": "vector-equality-filter",
     "category": "correctness",
     "summary": "Column equality against a vector literal in a filter",
-    "scope": "builtin"
+    "scope": "style"
   },
   {
     "code": "QB009",
     "name": "unaggregated-under-by",
     "category": "correctness",
     "summary": "Bare column under by silently takes the last row per group",
-    "scope": "builtin"
+    "scope": "style"
   },
   {
     "code": "QB010",
@@ -312,14 +312,14 @@
     "name": "control-as-value",
     "category": "correctness",
     "summary": "if, while or do assigned as a value is always null",
-    "scope": "builtin"
+    "scope": "style"
   },
   {
     "code": "QB012",
     "name": "trailing-semicolon-body",
     "category": "correctness",
     "summary": "Lambda ends in ; so its last expression is discarded",
-    "scope": "builtin"
+    "scope": "style"
   },
   {
     "code": "QB013",
@@ -333,7 +333,7 @@
     "name": "slash-division",
     "category": "correctness",
     "summary": "/ after a value is the over adverb, not division",
-    "scope": "builtin"
+    "scope": "style"
   },
   {
     "code": "QB015",

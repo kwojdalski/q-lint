@@ -34,7 +34,7 @@
 //! than not claiming them: an editor that is told a server provides completion
 //! stops offering its own word-based fallback.
 use crate::jsonrpc::{receive, send};
-use q_lint_rs::{Finding, lint};
+use q_lint_rs::{Finding, Profile, lint};
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
@@ -54,7 +54,11 @@ const INVALID_REQUEST: i64 = -32600;
 /// didOpen until didClose, so nothing here reads from disk.
 type Documents = HashMap<String, String>;
 
-pub fn serve(reader: &mut impl BufRead, writer: &mut impl Write, uqf: bool) -> Result<u8, String> {
+pub fn serve(
+    reader: &mut impl BufRead,
+    writer: &mut impl Write,
+    profile: Profile,
+) -> Result<u8, String> {
     let mut docs: Documents = HashMap::new();
     let mut shutdown_requested = false;
     loop {
@@ -88,7 +92,7 @@ pub fn serve(reader: &mut impl BufRead, writer: &mut impl Write, uqf: bool) -> R
             ("textDocument/didOpen", None) => {
                 let uri = uri_of(&params["textDocument"]);
                 let text = params["textDocument"]["text"].as_str().unwrap_or("");
-                publish(writer, &mut docs, uri, text.to_string(), uqf)?;
+                publish(writer, &mut docs, uri, text.to_string(), profile)?;
             }
             ("textDocument/didChange", None) => {
                 let uri = uri_of(&params["textDocument"]);
@@ -100,7 +104,7 @@ pub fn serve(reader: &mut impl BufRead, writer: &mut impl Write, uqf: bool) -> R
                     .and_then(|c| c.last())
                     .and_then(|c| c["text"].as_str())
                 {
-                    publish(writer, &mut docs, uri, text.to_string(), uqf)?;
+                    publish(writer, &mut docs, uri, text.to_string(), profile)?;
                 }
             }
             ("textDocument/didSave", None) => {
@@ -113,7 +117,7 @@ pub fn serve(reader: &mut impl BufRead, writer: &mut impl Write, uqf: bool) -> R
                     .map(str::to_string)
                     .or_else(|| docs.get(&uri).cloned());
                 if let Some(text) = text {
-                    publish(writer, &mut docs, uri, text, uqf)?;
+                    publish(writer, &mut docs, uri, text, profile)?;
                 }
             }
             ("textDocument/didClose", None) => {
@@ -158,10 +162,10 @@ fn publish(
     docs: &mut Documents,
     uri: String,
     text: String,
-    uqf: bool,
+    profile: Profile,
 ) -> Result<(), String> {
     let path = path_of(&uri);
-    let findings = lint(&text, &path, uqf);
+    let findings = lint(&text, &path, profile);
     let diagnostics: Vec<Value> = findings.iter().map(|f| diagnostic(f, &text)).collect();
     send(
         writer,

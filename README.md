@@ -49,7 +49,7 @@ being able to check rather than remember.
 
 ## Options
 
-The CLI supports `--profile general|uqf`, `--format text|json`,
+The CLI supports `--profile general|style|uqf`, `--format text|json`,
 `--exclude`, `--config`, stdin (`-`, `--stdin-filename`) and
 `--backend builtin|qls|all` options. The default is builtin.
 `--qls-executable` chooses the separately installed server;
@@ -122,7 +122,7 @@ code --install-extension q-lint-0.2.0.vsix
 
 Two settings: `q-lint.serverPath` (default `qlinter`, looked up on `PATH` —
 point it at `target/release/qlinter` if you have not installed it) and
-`q-lint.profile` (`general` or `uqf`).
+`q-lint.profile` (`general`, `style` or `uqf`).
 
 ### Other editors
 
@@ -210,7 +210,7 @@ arguments (QA010), invalid literal types/shapes (QT008–QT014), and negative
 unresolved and account for projections, seeded scans and variadic `enlist`.
 
 `examples/showcase.q` marks each expected diagnostic with `expect-next`.
-`tests/showcase.rs` checks exact code/line pairs under both profiles, including
+`tests/showcase.rs` checks exact code/line pairs under every profile, including
 silence in the clean section. Together with the two companion examples it
 covers all 65 rules available in this build; QF006 and QLS001 are excluded.
 

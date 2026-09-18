@@ -9,13 +9,13 @@ fn main() {
         })
         .collect();
     for (p, s) in &sources {
-        std::hint::black_box(q_lint_rs::lint(s, p, false));
+        std::hint::black_box(q_lint_rs::lint(s, p, q_lint_rs::Profile::General));
     }
     let mut samples = vec![];
     for _ in 0..10 {
         let start = Instant::now();
         for (p, s) in &sources {
-            std::hint::black_box(q_lint_rs::lint(s, p, false));
+            std::hint::black_box(q_lint_rs::lint(s, p, q_lint_rs::Profile::General));
         }
         samples.push(start.elapsed().as_secs_f64());
     }

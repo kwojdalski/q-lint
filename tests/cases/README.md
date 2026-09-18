@@ -13,8 +13,10 @@ Several codes are written `QF001 QF010`. A case raising a code it did not
 name fails just as loudly as one missing a code it did: the negatives are the
 point, since a linter nobody trusts is one that cried wolf.
 
-`profile: uqf` in the header runs that case under `--profile uqf` instead of
-the default rule set.
+`profile: general`, `profile: style` or `profile: uqf` in the header chooses
+the rule set. Cases run under `style` unless they say otherwise, since that is
+where most rules live; `general` is the right choice for a case that exists to
+show the default staying quiet.
 
 `tests/cases.rs` runs every file here. Add cases by editing these files; no
 Rust changes are needed.
