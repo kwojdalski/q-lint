@@ -165,6 +165,7 @@ some_name:1
 / QS002 is demonstrated at the foot of this file: it fires only at root, and
 / everything here is inside the namespace opened above.
 
+/ QS003: "never use letter l, looks like number 1 in some fonts." It does.
 / expect-next: QS003
 l:3
 
@@ -256,7 +257,7 @@ pairsum:{[a;b]a+b} each 1 2 3
 corrs: cor each 1 2 3
 
 / QA006: one slot projects, three or more are conditionals - exactly two is
-/ the arity $ has no meaning for, and q says 'nyi only at runtime.
+/ the arity $ has no meaning for, and q says 'type only at runtime.
 / expect-next: QA006
 halfcond: $[1b;2]
 
@@ -426,9 +427,9 @@ pruned:delete size from trades where size>1
 stale:select from trades where sym=sym
 
 / QB005: `~` matches whole operands, so this filter asks one question about
-/ the entire table instead of one per row - a 'type error here, or a
-/ single-row result against a scalar, which is worse. `~/:` is the row-wise
-/ form and stays quiet.
+/ the entire table instead of one per row. Here that is no error at all:
+/ the column is never identical to one symbol, so the result is an empty
+/ table, silently. `~/:` is the row-wise form and stays quiet.
 / expect-next: QB005
 matchw:select from trades where sym~`EUR
 
@@ -443,8 +444,11 @@ both:select from trades where size=1 and side=0
 / expect-next: QB007
 glob:select from trades where sym like `EUR*
 
-/ QB008: a column equals one value. Against a vector literal the filter is
-/ a 'length error at runtime; `in` is the operator for membership.
+/ QB008: a column equals one value. Against a vector literal the comparison
+/ is positional: with a three-row table this is 'length, and with a two-row
+/ one it silently keeps the rows whose position happens to match - `EUR`USD
+/ finds both rows and `USD`EUR finds none. `in` is the operator for
+/ membership.
 / expect-next: QB008
 pair2:select from trades where sym=`EUR`USD
 
@@ -658,6 +662,40 @@ literal:{[a;b]a+b}[1;2]
 elided:{[a;b]a+b}[1;]
 column:{[t] select x from t}
 tail:select from trades where sym like "ab*"
+
+/ One near-miss per rule, roughly: the shape the rule reports, with the one
+/ thing that makes it fine. Each was checked to be silent before it went in.
+eightParams:{[a;b;c;d;e;f;g;h] a+b+c+d+e+f+g+h}
+unaryUnderAt:@[{[a] a+1};1;{`err}]
+eachOverUnary:{x+1} each 1 2 3
+threeSlots:$[1b;2;3]
+oddSlots:$[0b;1;0b;2;3]
+namedCall:takesOne[1]
+namedProjection:takesOne[]
+symbolLike:select from trades where sym like "EUR*"
+rowwiseMatch:select from trades where sym~\:`EUR
+membership:select from trades where sym in `EUR`USD
+scalarEq:select from trades where size=1
+aggregated:select first size by sym from trades
+castNotMath:`long$x-`long$y
+symList:`abs`cor`like`mins
+subtract:n - 1
+condValue:r:$[1b;1;2]
+typeShort:type[1]=-7h
+division:10 % 2
+rowBool:([]a:10b;b:1)
+rowByte:([]a:0x0102;b:1)
+atomBeside:([]a:1;b:2 3)
+ssPattern:ss["abc";"a"]
+fillContinues:0<0^x
+dropContinues:0<1_deltas x
+paramUsed:{[used;alsoUsed] used+alsoUsed}
+localRead:{[a] tmp:1; a+tmp}
+groupedParens:(a+b)*c
+unaryCallParens:takesOne(1)
+docMatches:{[folderRoots] folderRoots}
+xFirst:{[x;y] x+y}
+namedLocal:{[p;q] r:p+q; r}
 
 / QS002: a dot that is not a namespace. It fires only at root, so the file
 / returns there first - inside the `\d .demo` above, the same text names a
