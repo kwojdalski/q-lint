@@ -185,9 +185,13 @@ jobs:
         run: |
           set -euo pipefail
           # --generate-notes gives the commit list; the prose above it says
-          # what the thing IS, which a list of commits never does.
+          # what the thing IS and which of nine files to download, which a
+          # list of commits never does. The comment used to claim this
+          # happened without anything doing it.
+          sed "s/VERSION/${GITHUB_REF_NAME}/g" .github/release-notes.md > notes.md
           gh release create "$GITHUB_REF_NAME" \
             --title "qlinter $GITHUB_REF_NAME" \
+            --notes-file notes.md \
             --generate-notes \
             $(find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.vsix' \) -print)
 
