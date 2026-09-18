@@ -3,7 +3,7 @@
   "displayName": "q-lint",
   "description": "Diagnostics for q/kdb+ source, from the q-lint language server",
   "icon": "icon.png",
-  "version": "0.3.1",
+  "version": "0.3.3",
   "publisher": "wojdalski",
   "license": "MIT",
   "engines": {

@@ -13,7 +13,34 @@ permissions:
   contents: write
 
 jobs:
+  version:
+    name: version matches the tag
+    runs-on: ubuntu-latest
+    # Nothing downstream is worth building if the tag and the sources disagree
+    # about what is being released. v0.3.2 was tagged without bumping any of
+    # them: its assets were named v0.3.2 and every one of them declared 0.3.1,
+    # so installing it over 0.3.1 was a no-op VS Code had no reason to notice.
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare
+        run: |
+          set -euo pipefail
+          want="${GITHUB_REF_NAME#v}"
+          fail=0
+          check() {
+            got=$(sed -n "$2" "$1")
+            if [ "$got" != "$want" ]; then
+              echo "$1 declares '$got', tag says '$want'" >&2
+              fail=1
+            fi
+          }
+          check Cargo.toml                 's/^version = "\(.*\)"/\1/p;'
+          check pyproject.toml             's/^version = "\(.*\)"/\1/p;'
+          check editors/vscode/package.json 's/^  "version": "\(.*\)",/\1/p;'
+          exit $fail
+
   binaries:
+    needs: [version]
     name: ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     strategy:
