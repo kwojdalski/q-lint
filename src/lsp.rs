@@ -165,7 +165,20 @@ fn publish(
     profile: Profile,
 ) -> Result<(), String> {
     let path = path_of(&uri);
-    let findings = lint(&text, &path, profile);
+    // Only q source. A client may open anything - a `.k` file, a console
+    // buffer, an untitled scratch, a `.txt` - and hand it to whichever server
+    // claims the language. The rules here describe q and say nothing true
+    // about k or about a REPL transcript, so a document that is not a `.q`
+    // file gets an empty diagnostic list: that clears anything stale without
+    // asserting something about a file this linter cannot read.
+    let is_q = std::path::Path::new(&path)
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("q"));
+    let findings = if is_q {
+        lint(&text, &path, profile)
+    } else {
+        vec![]
+    };
     let diagnostics: Vec<Value> = findings.iter().map(|f| diagnostic(f, &text)).collect();
     send(
         writer,

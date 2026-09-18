@@ -60,7 +60,12 @@ export async function activate(context: ExtensionContext): Promise<void> {
 
   const args = ["--lsp", "--profile", profile];
   const options: LanguageClientOptions = {
-    documentSelector: [{ scheme: "file", language: "q" }],
+    // A saved `.q` file, and nothing else. `language: "q"` alone would also
+    // match a console buffer or an untitled scratch that some other q
+    // extension has labelled `q`, and this linter has nothing true to say
+    // about a REPL transcript. The server applies the same rule, so an editor
+    // that is not VS Code is protected too.
+    documentSelector: [{ scheme: "file", language: "q", pattern: "**/*.q" }],
     // The output channel the server's own trace goes to, so a user debugging
     // the integration has one place to look.
     outputChannelName: "q-lint",

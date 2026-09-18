@@ -323,3 +323,34 @@ fn colour_appears_only_when_asked_for_and_never_in_a_pipe() {
         false
     )));
 }
+
+/// The server lints q source and nothing else.
+///
+/// A client opens what the user opens. Another q extension labels its console
+/// buffer `q`, an untitled scratch carries whatever language was last picked,
+/// and `.k` is a different language that happens to live beside q. The rules
+/// here describe q; run against any of those they assert something untrue.
+/// A non-`.q` document gets an empty diagnostic list rather than no reply, so
+/// anything stale from a rename is cleared.
+#[test]
+fn only_q_files_are_linted() {
+    for (uri, want) in [
+        ("file:///tmp/a.k", 0),          // k, not q
+        ("output:q-console", 0),         // a REPL transcript
+        ("untitled:Untitled-1", 0),      // an unsaved scratch
+        ("file:///tmp/a.txt", 0),        // not q at all
+        ("file:///tmp/a.q", 1),          // q
+        ("file:///tmp/A.Q", 1),          // q, shouted
+        ("file:///tmp/my%20dir/b.q", 1), // q, with an escaped space
+    ] {
+        let mut server = Server::start();
+        server.initialize();
+        server.open(uri, "f:{[count] count+1}\n");
+        let found = server.diagnostics_for(uri).len();
+        assert_eq!(
+            found, want,
+            "{uri} produced {found} diagnostics, wanted {want}"
+        );
+        server.shutdown_and_exit();
+    }
+}
