@@ -283,3 +283,43 @@ fn the_binary_reports_its_version() {
         );
     }
 }
+
+/// Colour has to stay out of anything that is not a terminal. Every test here
+/// reads stdout through a pipe, which is exactly the case: a stray escape
+/// sequence would break `grep`, an editor's problem matcher, and this test.
+#[test]
+fn colour_appears_only_when_asked_for_and_never_in_a_pipe() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("c.q");
+    std::fs::write(&file, "g:{[a] a+`x}\n").unwrap();
+    let run = |args: &[&str], no_color: bool| {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_qlinter"));
+        cmd.args(args).arg(&file);
+        if no_color {
+            cmd.env("NO_COLOR", "1");
+        } else {
+            cmd.env_remove("NO_COLOR");
+        }
+        String::from_utf8(cmd.output().unwrap().stdout).unwrap()
+    };
+    let esc = |s: &str| s.contains('\x1b');
+    // A pipe, which is what this test is: no colour on auto.
+    assert!(!esc(&run(&[], false)), "auto coloured a pipe");
+    assert!(!esc(&run(&["--color", "never"], false)));
+    assert!(
+        esc(&run(&["--color", "always"], false)),
+        "always did not colour"
+    );
+    // NO_COLOR wins over auto but not over an explicit always.
+    assert!(!esc(&run(&["--color", "auto"], true)));
+    assert!(esc(&run(&["--color", "always"], true)));
+    // The severity is what gets the colour, and the summary tallies it.
+    let coloured = run(&["--color", "always"], false);
+    assert!(coloured.contains("\x1b[1;31merror\x1b[0m"), "{coloured:?}");
+    assert!(coloured.contains("1 error"), "{coloured:?}");
+    // JSON is a data format and never carries an escape, whatever the flag.
+    assert!(!esc(&run(
+        &["--color", "always", "--format", "json"],
+        false
+    )));
+}

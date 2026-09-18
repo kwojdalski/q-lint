@@ -47,6 +47,10 @@ struct Args {
     /// Run as a language server on stdin/stdout instead of linting paths.
     #[arg(long, conflicts_with_all = ["paths", "rules", "explain"])]
     lsp: bool,
+    /// Colour the text output: `auto` (a terminal, and NO_COLOR unset),
+    /// `always`, or `never`.
+    #[arg(long, default_value = "auto", value_parser = ["auto", "always", "never"])]
+    color: String,
     /// Accepted and ignored. Editors conventionally pass this to a language
     /// server, and some LSP clients append it without being asked - stdio is
     /// the only transport here, so there is nothing for it to select. A
@@ -279,15 +283,45 @@ fn run(args: Args) -> Result<u8, String> {
     if args.format == "json" {
         println!("{}", serde_json::to_string(&findings).unwrap());
     } else {
+        let paint = Paint::for_stdout(&args.color);
         for f in &findings {
             let col = f.column.map_or(String::new(), |c| format!(":{c}"));
+            let severity = match f.severity.as_str() {
+                "error" => paint.red_bold(&f.severity),
+                "warning" => paint.yellow_bold(&f.severity),
+                other => other.to_string(),
+            };
             println!(
                 "{}:{}{}: {}: {} [{}/{}] {}\n    {}",
-                f.path, f.line, col, f.severity, f.code, f.category, f.rule, f.detail, f.why
+                paint.bold(&f.path),
+                f.line,
+                col,
+                severity,
+                paint.bold(&f.code),
+                f.category,
+                f.rule,
+                f.detail,
+                paint.dim(&f.why)
             );
         }
+        let errors = findings.iter().filter(|f| f.severity == "error").count();
+        let warnings = findings.iter().filter(|f| f.severity == "warning").count();
+        let tally = match (errors, warnings) {
+            (0, 0) => String::new(),
+            _ => format!(
+                " ({}, {})",
+                paint.red_bold(&format!(
+                    "{errors} error{}",
+                    if errors == 1 { "" } else { "s" }
+                )),
+                paint.yellow_bold(&format!(
+                    "{warnings} warning{}",
+                    if warnings == 1 { "" } else { "s" }
+                )),
+            ),
+        };
         println!(
-            "qlinter: {} file(s), {} finding(s)",
+            "qlinter: {} file(s), {} finding(s){tally}",
             sources.len(),
             findings.len()
         );
@@ -319,5 +353,45 @@ fn main() -> ExitCode {
             eprintln!("qlinter: {error}");
             ExitCode::from(2)
         }
+    }
+}
+
+/// ANSI colour for the text output, or none.
+///
+/// Off unless stdout is a terminal, off whenever `NO_COLOR` is set to anything
+/// (https://no-color.org), and overridable either way by `--color`. A pipe
+/// into grep or a file gets plain text, which is what the tools on the other
+/// end of it expect.
+struct Paint {
+    on: bool,
+}
+impl Paint {
+    fn for_stdout(flag: &str) -> Self {
+        use std::io::IsTerminal;
+        let on = match flag {
+            "always" => true,
+            "never" => false,
+            _ => std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none(),
+        };
+        Self { on }
+    }
+    fn wrap(&self, codes: &str, text: &str) -> String {
+        if self.on {
+            format!("\x1b[{codes}m{text}\x1b[0m")
+        } else {
+            text.to_string()
+        }
+    }
+    fn red_bold(&self, text: &str) -> String {
+        self.wrap("1;31", text)
+    }
+    fn yellow_bold(&self, text: &str) -> String {
+        self.wrap("1;33", text)
+    }
+    fn bold(&self, text: &str) -> String {
+        self.wrap("1", text)
+    }
+    fn dim(&self, text: &str) -> String {
+        self.wrap("2", text)
     }
 }
