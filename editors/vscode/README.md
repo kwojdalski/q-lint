@@ -24,6 +24,16 @@ Anywhere else, the extension needs the server: take an archive from
 Setting `q-lint.serverPath` always wins, bundled server or not - which is how
 to run a build of your own against the extension.
 
+`server/qlinter` is checked in so that packaging the extension from a clone
+produces a working vsix without a release build first. It is **darwin-arm64
+only** - the one this repository's author builds - and is rebuilt by hand, so
+it can lag `src/`. The release workflow ignores it and packages the binary it
+just built for each platform. To refresh it:
+
+```sh
+cargo build --release && install -m 755 target/release/qlinter editors/vscode/server/qlinter
+```
+
 Worth knowing on macOS: an application started from the Dock does not inherit
 the `PATH` from your shell profile, so a binary in `~/.local/bin` is invisible
 to it even though the same command works in a terminal. The bundled server

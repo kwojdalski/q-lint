@@ -112,6 +112,14 @@ jobs:
           found=$(find . -type f \( -name qlinter -o -name qlinter.exe \) | head -1)
           test -n "$found" || { echo "no qlinter in the archive" >&2; exit 1; }
           install -m 755 "$found" "../editors/vscode/server/$(basename "$found")"
+      - name: Drop the committed server from a build that must not carry it
+        if: matrix.target == ''
+        # `editors/vscode/server/` holds a checked-in darwin-arm64 binary for
+        # local packaging. The platform-neutral vsix goes to machines this
+        # matrix does not cover, so shipping one platform's binary in it would
+        # be worse than shipping none: the extension would prefer a server
+        # that cannot run. The platform legs overwrite it with their own.
+        run: rm -rf editors/vscode/server
       - name: Package the VS Code extension
         working-directory: editors/vscode
         run: |
