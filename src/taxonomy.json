@@ -371,6 +371,20 @@
     "scope": "builtin"
   },
   {
+    "code": "QB017",
+    "name": "self-assignment",
+    "category": "correctness",
+    "summary": "A name assigned to itself",
+    "scope": "style"
+  },
+  {
+    "code": "QB018",
+    "name": "constant-comparison",
+    "category": "correctness",
+    "summary": "Two literals compared, so the answer never varies",
+    "scope": "style"
+  },
+  {
     "code": "QP001",
     "name": "bare-slash-block",
     "category": "policy",

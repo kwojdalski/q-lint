@@ -1211,6 +1211,68 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
             }
         }
     }
+    // `a:a` assigns a name to itself. There is no q in which that is the
+    // intention; it is a typo for a different name or for `a:a+...`, and the
+    // reader cannot tell which. The right side has to be the whole of the
+    // expression, so `a:a+1` and `a:a where a>0` are left alone.
+    // Depth zero only, and matched against the real text. Inside a bracket
+    // `([]time:time;...)` names a table column after the variable filling it,
+    // which is ordinary q. Blanking brackets instead was worse: it collapses
+    // `updmeta[`a]:updmeta[`b]` and `res:(f)res` into something that looks
+    // like a name assigned to itself, and neither is.
+    let depth: Vec<bool> = {
+        let mut out = Vec::with_capacity(code.len());
+        let mut open = 0i32;
+        // `(` and `[` only. A lambda body is statement context - `{[x] b:b}`
+        // is the common place to find this - so braces do not count, and the
+        // `[x]` signature opens and closes before the body begins.
+        for b in code.bytes() {
+            if b")]".contains(&b) {
+                open -= 1;
+            }
+            out.push(open <= 0);
+            if b"([".contains(&b) {
+                open += 1;
+            }
+        }
+        out
+    };
+    for m in re!(r"(?m)(\.?[A-Za-z][A-Za-z0-9_.]*)\s*:\s*(\.?[A-Za-z][A-Za-z0-9_.]*)\s*(?:;|$)")
+        .captures_iter(code)
+    {
+        let whole = m.get(0).unwrap();
+        if depth.get(whole.start()) == Some(&true) && boundary(code, whole.start()) && m[1] == m[2]
+        {
+            add(
+                whole.start(),
+                "QB017",
+                format!("`{}` is assigned to itself", &m[1]),
+            );
+        }
+    }
+    // Two literals compared. The answer is fixed before the program runs, so
+    // either the comparison is dead or one side was meant to be a name.
+    for m in re!(r"(-?\d[\w.]*|`[A-Za-z][A-Za-z0-9_.]*)\s*(=|<>|<=|>=|<|>)\s*(-?\d[\w.]*|`[A-Za-z][A-Za-z0-9_.]*)")
+        .captures_iter(code)
+    {
+        let whole = m.get(0).unwrap();
+        // The right operand has to be the whole of one. Saying which
+        // characters may not follow is the wrong way round in q, where almost
+        // any glyph continues an expression - `0<0^x` fills before comparing
+        // and `0<1_x` drops before it, and both look like `0<0` and `0<1` to a
+        // pattern. So: the comparison ends here, or it was never one.
+        let rest = code[whole.end()..].trim_start_matches([' ', '\t']);
+        if !boundary(code, whole.start())
+            || !(rest.is_empty() || rest.starts_with([';', ')', ']', '}', '\n', '\r']))
+        {
+            continue;
+        }
+        add(
+            whole.start(),
+            "QB018",
+            format!("`{}` compares two literals; the answer is the same every run", whole.as_str().trim()),
+        );
+    }
     // `if`, `while` and `do` are statements: each returns `::`, so
     // assigning one assigns null. `$[...]` is the expression form.
     for m in re!(r"[A-Za-z0-9_\])]\s*:\s*(if|while|do)\s*\[").captures_iter(code) {

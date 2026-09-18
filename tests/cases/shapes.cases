@@ -126,16 +126,16 @@ r:$[1b;1;2]
 === clean | and a long atom counts
 r:$[1;1;2]
 
-=== QT015 | a symbol against a number is a type error
+=== QT015 QB018 | a symbol against a number is a type error, and both sides are literals
 r:1=`a
 
 === QT015 | and against a string
 r:"abc"=`abc
 
-=== QT015 | ordering comparisons too
+=== QT015 QB018 | ordering comparisons too, and again both are literals
 r:`x<1
 
-=== clean | symbol against symbol is ordinary
+=== QB018 | symbol against symbol is not a type error, but it is still two literals
 r:`a=`b
 
 === clean | a char compares by its code, which q allows

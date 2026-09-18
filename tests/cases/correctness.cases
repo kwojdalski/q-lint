@@ -202,3 +202,36 @@ f:{'"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 
 === clean | a message short enough to survive
 f:{'"too few rows"}
+
+=== QB017 | a name assigned to itself
+a:a
+
+=== QB017 | and inside a lambda, where it usually is
+f:{[x] b:1; b:b; b}
+
+=== clean | a table column named after the variable filling it
+t:([]time:time;msg:msg)
+
+=== clean | one element assigned from another is not self-assignment
+updmeta[`periodic]:updmeta[`singular]
+
+=== clean | a function applied to the name is not either
+res:(options`postprocessing)res
+
+=== clean | rebinding through an expression
+f:{[x] x:x+1; x}
+
+=== QB018 | two literals compared
+r:1=2
+
+=== QB018 | symbols count as literals
+r:`a=`b
+
+=== clean | one side is a name
+r:x=1
+
+=== clean | fill continues the expression, so this is not two literals
+r:0<0^x
+
+=== clean | and neither is drop
+r:0<1_deltas x

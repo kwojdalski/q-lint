@@ -138,6 +138,20 @@ spare:{[used;stale] used+1}
 / expect-next: QF017
 stale:{[a] tmp:1; a}
 
+/ QB017: a name assigned to itself. There is no q in which that is the
+/ intention, and the reader cannot tell which name was meant. Only at bracket
+/ depth zero - inside `([]time:time;...)` the same text names a table column
+/ after the variable filling it, which is ordinary.
+/ expect-next: QB017
+echoed:{[a] b:1; b:b; b}
+
+/ QB018: two literals compared. The answer is settled before the program runs,
+/ so either the comparison is dead or one side was meant to be a name. The
+/ right operand has to be the whole of one: `0<0^x` fills before comparing and
+/ `0<1_x` drops before it, and neither is this.
+/ expect-next: QB018
+fixed:1=2
+
 / QA002: three arguments to a lambda that takes two.
 / expect-next: QA002
 sum2:{[a;b]a+b}[1;2;3]
@@ -411,7 +425,7 @@ pick:$[101b;`y;`n]
 / QT015: a symbol compares with a symbol. Against a number or a string it is
 / 'type. `1="a"` is not this - a char compares by its code - and `~` never
 / raises, so neither is reported.
-/ expect-next: QT015
+/ expect-next: QT015 QB018
 same:1=`a
 
 / QA012: the same arity error as QA002, reached by name. `takesOne` takes one
