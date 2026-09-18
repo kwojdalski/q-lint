@@ -326,6 +326,17 @@ day: `date$"2024.01.01"
 / expect-next: QT005
 one: ([] a:1; b:2)
 
+/ QT020: vector columns of different lengths. `([]a:1 2;b:3 4 5)` is 'length,
+/ and so is `([]a:enlist 1;b:2 3)` - `enlist` makes a one-item vector, not an
+/ atom that would extend. An atom beside a vector is fine: `([]a:1;b:2 3)`.
+/ expect-next: QT020
+ragged:([]a:1 2;b:3 4 5)
+
+/ QT021: `ss` or `ssr` with an empty pattern. Both are 'length, checked. The
+/ pattern is a string and so is blank in the linter's view; the empty pair of
+/ quotes is read from the source.
+/ expect-next: QT021
+nothing:ss["abc";""]
 / QT005: keyed is no different.
 / expect-next: QT005
 one2: ([k:1] v:2)

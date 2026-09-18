@@ -593,5 +593,19 @@
     "category": "types-and-shapes",
     "summary": "within bounds are not a two-item list",
     "scope": "builtin"
+  },
+  {
+    "code": "QT020",
+    "name": "table-column-length",
+    "category": "types-and-shapes",
+    "summary": "Table literal columns of different lengths",
+    "scope": "builtin"
+  },
+  {
+    "code": "QT021",
+    "name": "empty-search-pattern",
+    "category": "types-and-shapes",
+    "summary": "ss or ssr with an empty pattern is a length error",
+    "scope": "builtin"
   }
 ]

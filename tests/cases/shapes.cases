@@ -191,3 +191,45 @@ r:rotate[1.5;1 2]
 
 === clean | an integer count
 r:rotate[1;1 2 3]
+
+=== QT020 | vector columns of different lengths
+t:([]a:1 2;b:3 4 5)
+
+=== QT020 | enlist makes a one-item vector, which does not extend
+t:([]a:enlist 1;b:2 3)
+
+=== QT020 | on the key side too
+t:([k:1 2]v:3 4 5)
+
+=== clean | an atom beside a vector extends to its length
+t:([]a:1;b:2 3)
+
+=== clean | equal lengths
+t:([]a:1 2;b:3 4)
+
+=== clean | a boolean vector is a vector: two bits, two rows
+t:([]a:10b;b:1)
+
+=== clean | a byte vector likewise
+t:([]a:0x0102;b:1)
+
+=== QT005 | one bit is a boolean atom, so every column here is an atom
+t:([]a:1b;b:1)
+
+=== QT005 | a keyed table needs vectors on both sides
+t:([k:1]v:2 3)
+
+=== QT005 | a single char is an atom, whatever the quotes suggest
+t:([]a:"a";b:1)
+
+=== clean | a two-char string is a two-row column
+t:([]a:"ab";b:1)
+
+=== QT021 | ss with an empty pattern
+r:ss["abc";""]
+
+=== QT021 | ssr likewise
+r:ssr["abc";"";"b"]
+
+=== clean | a pattern with something in it
+r:ss["abc";"a"]

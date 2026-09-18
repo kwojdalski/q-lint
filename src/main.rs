@@ -21,7 +21,7 @@ struct Args {
     paths: Vec<String>,
     #[arg(long,default_value="text",value_parser=["text","json"])]
     format: String,
-    #[arg(long,default_value="style",value_parser=["general","style","styleq","uqf"])]
+    #[arg(long,default_value="uqf",value_parser=["general","style","styleq","uqf"])]
     profile: String,
     #[arg(long, default_value = "<stdin>")]
     stdin_filename: String,
@@ -294,12 +294,16 @@ fn run(args: Args) -> Result<u8, String> {
 /// The `--profile` flag, as the rule set it selects. clap has already refused
 /// anything not in the list, so the fallback is unreachable rather than a
 /// silent default.
+///
+/// The default is the broadest profile. This binary's job is to report
+/// everything it can see; a consumer that wants fewer findings narrows in its
+/// own configuration, where the choice is theirs and stays with their code.
 fn profile(name: &str) -> Profile {
     match name {
         "general" => Profile::General,
+        "style" => Profile::Style,
         "styleq" => Profile::StyleQ,
-        "uqf" => Profile::Uqf,
-        _ => Profile::Style,
+        _ => Profile::Uqf,
     }
 }
 

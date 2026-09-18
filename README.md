@@ -39,6 +39,17 @@ uv sync
 uv run qlinter src/
 ```
 
+## The rules
+
+[docs/rules.md](docs/rules.md) lists every rule, what it reports, and which
+profile turns it on - generated from the same taxonomy `qlinter --rules` prints
+from, so the two cannot disagree. It also says where the rules came from: q
+itself for everything in the default set, the hazards behind another linter's
+rules for most of `style`, and the published q style guides for `styleq`.
+
+The default profile is the broadest. This binary reports everything it can
+see; narrowing belongs in the configuration of the repository being linted.
+
 ## Design
 
 There is no parser here. Rules read a masked view of the source - strings and
@@ -128,7 +139,7 @@ code --install-extension q-lint-0.2.0.vsix
 
 Two settings: `q-lint.serverPath` (default `qlinter`, looked up on `PATH` —
 point it at `target/release/qlinter` if you have not installed it) and
-`q-lint.profile` (`general`, `style`, `styleq` or `uqf`); the default is `style`.
+`q-lint.profile` (`general`, `style`, `styleq` or `uqf`); the default is `uqf`, the broadest.
 
 ### Other editors
 

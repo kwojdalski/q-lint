@@ -1147,42 +1147,184 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
                 .into(),
         );
     }
-    // A table literal in which every column is a scalar is a 'rank error:
-    // one row needs `enlist`. One vector column is enough to make the rest
-    // extend (`([]a:1;b:2 3)` is fine), so all of them must be scalar.
-    // Strings are blank in this view and read as non-scalar, correctly -
-    // `([]a:"ab")` is a two-row table.
+    // Table literals, judged the way q judges them.
+    //
+    // q checked, per literal shape (`type` of the value; negative is an atom):
+    //   `1b` atom, `10b` vector - a boolean literal is an atom only with one
+    //   digit; `0x01` atom, `0x0102` vector - a byte literal is an atom only
+    //   with exactly two hex digits; `"a"` atom, `"ab"` vector.
+    //
+    // And per table, what q raises:
+    //   `([]a:1;b:2)`         'rank   - every column an atom needs `enlist`
+    //   `([]a:1 2;b:3 4 5)`   'length - vector columns of different lengths
+    //   `([]a:enlist 1;b:2 3)` 'length - `enlist` makes a one-item vector
+    //   `([]a:1;b:2 3)`       fine    - an atom extends to the vector's length
+    //   `([k:1]v:2 3)`        'rank   - a keyed table needs vectors both sides
+    //   `([k:1 2]v:3)`        'rank   - and on both sides means both
+    //   `([]a:"a";b:1)`       'rank   - a char is an atom like any other
     for table in re!(r"\(\s*\[").find_iter(code) {
         let at = table.start();
         let Some(close) = matching(code, at, b'(', b')') else {
             continue;
         };
         let inner = &code[at + 1..close - 1];
-        let scalar = |v: &str| re!(r"^(?:-?\d[\w.:]*|`[A-Za-z0-9_.]*)$").is_match(v.trim());
-        let mut columns = 0;
-        let mut all_scalar = true;
-        for part in inner.split([';', ']']).map(str::trim) {
-            if part.is_empty() || part == "[" {
-                continue;
-            }
-            let part = part.trim_start_matches('[').trim();
-            let Some((_, value)) = part.split_once(':') else {
-                all_scalar = false;
-                break;
-            };
-            columns += 1;
-            if !scalar(value) {
-                all_scalar = false;
-                break;
-            }
+        // The key group is `[...]`, the value columns follow it. Whitespace,
+        // newlines included, may sit before the bracket.
+        let bracket = inner.len() - inner.trim_start().len();
+        let Some(key_close) = matching(inner, bracket, b'[', b']') else {
+            continue;
+        };
+        let keys = &inner[bracket + 1..key_close - 1];
+        let values = &inner[key_close..];
+        // What a column value is, or None when the text does not say.
+        #[derive(PartialEq, Clone, Copy)]
+        enum Shape {
+            Atom,
+            Vector(Option<usize>),
         }
-        if columns > 0 && all_scalar {
+        let shape = |v: &str| -> Option<Shape> {
+            let v = v.trim();
+            // Vectors first. The general numeric-atom pattern would otherwise
+            // take `10b` and `0x0102` as atoms, and q says they are not.
+            if let Some(rest) = v.strip_prefix("enlist ") {
+                return shape_of_enlist(rest);
+            }
+            if re!(r"^[01]{2,}b$|^0x(?:[0-9a-fA-F]{2}){2,}$|^0x$").is_match(v) {
+                let n = if v.ends_with('b') {
+                    v.len() - 1
+                } else {
+                    (v.len() - 2) / 2
+                };
+                return Some(Shape::Vector(Some(n)));
+            }
+            if re!(r"^(?:`[A-Za-z0-9_.]*){2,}$").is_match(v) {
+                return Some(Shape::Vector(Some(v.matches('`').count())));
+            }
+            if re!(r"^-?\d[\w.:]*(?:\s+-?\d[\w.:]*)+$").is_match(v) {
+                return Some(Shape::Vector(Some(v.split_whitespace().count())));
+            }
+            if v == "()" {
+                return Some(Shape::Vector(Some(0)));
+            }
+            if re!(r"^[01]b$|^0x[0-9a-fA-F]{2}$|^-?\d[\w.:]*$|^`[A-Za-z0-9_.]*$").is_match(v) {
+                return Some(Shape::Atom);
+            }
+            None
+        };
+        fn shape_of_enlist(_: &str) -> Option<Shape> {
+            Some(Shape::Vector(Some(1)))
+        }
+        // A string column is blank in this view. Its length is in the source.
+        let string_len = |v: &str, offset: usize| -> Option<Shape> {
+            let raw = source[at + 1 + offset..at + 1 + offset + v.len()].trim();
+            if raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2 {
+                let n = raw.len() - 2;
+                return Some(if n == 1 {
+                    Shape::Atom
+                } else {
+                    Shape::Vector(Some(n))
+                });
+            }
+            None
+        };
+        let columns = |group: &str, base: usize| -> Vec<Option<Shape>> {
+            let mut out = vec![];
+            let mut pos = 0;
+            for part in slots(group) {
+                let part_start = base + pos;
+                pos += part.len() + 1;
+                let Some((_, value)) = part.split_once(':') else {
+                    if !part.trim().is_empty() {
+                        out.push(None);
+                    }
+                    continue;
+                };
+                let voff = part_start + part.len() - value.len();
+                out.push(shape(value).or_else(|| string_len(value, voff)));
+            }
+            out
+        };
+        let key_cols = columns(keys, bracket + 1);
+        let val_cols = columns(values, key_close);
+        let all = || key_cols.iter().chain(&val_cols);
+        if all().count() == 0 {
+            continue;
+        }
+        let known = all().all(|c| c.is_some());
+        if !known {
+            continue;
+        }
+        let atoms_only = |cols: &[Option<Shape>]| {
+            !cols.is_empty() && cols.iter().all(|c| *c == Some(Shape::Atom))
+        };
+        // Keyed: both sides have to be vectors. A keyed table is a dictionary
+        // of two tables, and either side being a single row is 'rank.
+        if !key_cols.is_empty() && (atoms_only(&key_cols) || atoms_only(&val_cols)) {
+            add(
+                at,
+                "QT005",
+                "A keyed table literal needs vector columns on both sides of the key; a \
+                 single row on either side is a 'rank error"
+                    .into(),
+            );
+            continue;
+        }
+        if key_cols.is_empty() && atoms_only(&val_cols) {
             add(
                 at,
                 "QT005",
                 "Every column of this table literal is a scalar, which is a 'rank error; a \
                  one-row table needs `enlist`"
                     .into(),
+            );
+            continue;
+        }
+        // Vector columns of different lengths. Atoms extend and are ignored.
+        let lengths: Vec<usize> = all()
+            .filter_map(|c| match c {
+                Some(Shape::Vector(Some(n))) => Some(*n),
+                _ => None,
+            })
+            .collect();
+        if lengths.len() >= 2 && lengths.iter().any(|&n| n != lengths[0]) {
+            add(
+                at,
+                "QT020",
+                format!(
+                    "Table literal columns have different lengths ({}), which is a 'length error",
+                    lengths
+                        .iter()
+                        .map(|n| n.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            );
+        }
+    }
+    // `ss` and `ssr` with an empty search pattern. q raises 'length for both:
+    // `ss["abc";""]` and `ssr["abc";"";"b"]` checked. The pattern is a string,
+    // which is blank in this view, so the check reads the source at the same
+    // offsets - a pair of quotes with nothing between them.
+    for m in re!(r"\b(ss|ssr)\s*\[").find_iter(code) {
+        let open = m.end() - 1;
+        let Some(close) = matching(code, open, b'[', b']') else {
+            continue;
+        };
+        let parts = slots(&code[open + 1..close - 1]);
+        if parts.len() < 2 {
+            continue;
+        }
+        // The second slot's span in the source.
+        let second_start = open + 1 + parts[0].len() + 1;
+        let second = source[second_start..second_start + parts[1].len()].trim();
+        if second == "\"\"" {
+            add(
+                m.start(),
+                "QT021",
+                format!(
+                    "`{}` with an empty pattern is a 'length error",
+                    code[m.start()..m.end() - 1].trim()
+                ),
             );
         }
     }
