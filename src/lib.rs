@@ -325,7 +325,7 @@ fn matching(s: &str, start: usize, open: u8, close: u8) -> Option<usize> {
     }
     None
 }
-fn slots(s: &str) -> Vec<&str> {
+pub(crate) fn slots(s: &str) -> Vec<&str> {
     let (mut start, mut depth) = (0, 0i32);
     let mut out = vec![];
     for (i, b) in s.bytes().enumerate() {
@@ -800,7 +800,9 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
     // is 0b because a char compares by its code, `` `a=`b `` is 0b, and `~`
     // never raises - so only a symbol facing a non-symbol is reported.
     {
-        let sym = r"`[A-Za-z][A-Za-z0-9_.]*";
+        // A symbol, or a symbol vector: `1 in `a`b` is 'type just as `1=`a` is,
+        // and the vector is what `in` is usually given.
+        let sym = r"(?:`[A-Za-z][A-Za-z0-9_.]*)+";
         let other = r#"-?\d[\w.]*|"[^"]*""#;
         let op = r"(?:<=|>=|<>|<|>|=|\bin\b)";
         // A string literal is blanks by the time `code` is built, so the

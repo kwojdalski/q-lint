@@ -135,10 +135,28 @@ fn shape(s: &str) -> Option<usize> {
         return None;
     }
     if s.starts_with('(') && matching(s, 0, b'(', b')') == Some(s.len()) {
-        return shape(&s[1..s.len() - 1]);
+        // `(1;2;3)` is a three-item list, however its items are shaped, and
+        // `(1 2 3)` is the same vector as without the parentheses. Only a
+        // top-level `;` makes a list; so count those.
+        let inner = &s[1..s.len() - 1];
+        let items = crate::slots(inner);
+        if items.len() > 1 {
+            return Some(items.len());
+        }
+        return shape(inner);
     }
     if let Some(rest) = s.strip_prefix("enlist ") {
         return shape(rest).map(|_| 1);
+    }
+    // A byte vector: `0x` and an even run of hex digits, two per item. With
+    // exactly two it is an atom, which `Shape` reports as a one-item vector
+    // the way a lone number is - the length check treats both alike.
+    if let Some(hex) = s.strip_prefix("0x")
+        && !hex.is_empty()
+        && hex.len() % 2 == 0
+        && hex.bytes().all(|b| b.is_ascii_hexdigit())
+    {
+        return Some(hex.len() / 2);
     }
     if re!(r"^(?:`[A-Za-z][A-Za-z0-9_.]*)+$").is_match(s) {
         return Some(s.bytes().filter(|&b| b == b'`').count());
@@ -187,8 +205,11 @@ pub fn check(path: &str, code: &str, raw: &str) -> Vec<Finding> {
     // `` `a`b=`a`b`c `` alike. `,` joins anything and is not in the set. A
     // `-` with space before and none after is a negative literal rather than
     // the operator (`1 2 3 -1 2` is one five-vector), and is skipped.
+    // An operand is a symbol vector, a numeric vector, a byte vector with at
+    // least two items, or a parenthesised list. `shape` decides the length of
+    // each; this pattern only has to find them.
     for m in re!(
-        r"(?P<l>(?:`[A-Za-z0-9_.]*){2,}|-?\d[\w.]*(?:\s+-?\d[\w.]*)+)\s*(?P<op><>|<=|>=|[+*%&|=<>-])\s*(?P<r>(?:`[A-Za-z0-9_.]*){2,}|-?\d[\w.]*(?:\s+-?\d[\w.]*)+)"
+        r"(?P<l>(?:`[A-Za-z0-9_.]*){2,}|-?\d[\w.]*(?:\s+-?\d[\w.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*;[^()]*\))\s*(?P<op><>|<=|>=|[+*%&|=<>-])\s*(?P<r>(?:`[A-Za-z0-9_.]*){2,}|-?\d[\w.]*(?:\s+-?\d[\w.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*;[^()]*\))"
     )
     .captures_iter(code)
     {
