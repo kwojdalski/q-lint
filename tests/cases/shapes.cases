@@ -233,3 +233,42 @@ r:ssr["abc";"";"b"]
 
 === clean | a pattern with something in it
 r:ss["abc";"a"]
+
+=== QT008 | til with a float, written by juxtaposition - the spelling real q uses
+r:til 1.5
+
+=== QT010 | a numeric aggregate over symbols, juxtaposed
+r:sum `a`b
+
+=== QT011 | sorting an atom, juxtaposed
+r:asc 1
+
+=== clean | a name as the argument says nothing about its type
+r:asc x
+
+=== clean | the literal is not the whole argument: q reads right to left, so this is til of a product
+r:til 1.5*x
+
+=== clean | nor here, where the vector is joined to something before sum sees it
+r:sum 1 2 3,x
+
+=== QT006 | a byte vector has one item per pair of hex digits
+r:1 2 3+0x0102
+
+=== QT006 | a parenthesised list has one item per top-level semicolon plus one
+r:(1;2;3)+4 5
+
+=== clean | the same shapes at matching lengths
+r:1 2+0x0102
+
+=== QT001 | a dictionary's values as a parenthesised list, one short
+d:`a`b!(1;2;3)
+
+=== QT015 | a number tested for membership in symbols
+r:1 in `a`b
+
+=== QT015 | and a symbol in numbers
+r:`a in 1 2
+
+=== clean | symbol membership in symbols is what in is for
+r:`a in `a`b
