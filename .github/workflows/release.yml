@@ -17,9 +17,9 @@ jobs:
     name: version matches the tag
     runs-on: ubuntu-latest
     # Nothing downstream is worth building if the tag and the sources disagree
-    # about what is being released. v0.3.2 was tagged without bumping any of
-    # them: its assets were named v0.3.2 and every one of them declared 0.3.1,
-    # so installing it over 0.3.1 was a no-op VS Code had no reason to notice.
+    # about what is being released. A vsix whose manifest declares the version
+    # already installed is a no-op VS Code has no reason to notice, and the
+    # assets are named from the tag, so nothing else would give it away.
     steps:
       - uses: actions/checkout@v4
       - name: Compare
@@ -186,8 +186,7 @@ jobs:
           set -euo pipefail
           # --generate-notes gives the commit list; the prose above it says
           # what the thing IS and which of nine files to download, which a
-          # list of commits never does. The comment used to claim this
-          # happened without anything doing it.
+          # list of commits never does.
           sed "s/VERSION/${GITHUB_REF_NAME}/g" .github/release-notes.md > notes.md
           gh release create "$GITHUB_REF_NAME" \
             --title "qlinter $GITHUB_REF_NAME" \

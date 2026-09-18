@@ -28,15 +28,18 @@ a body of q nobody here wrote:
 python3 scripts/corpus_diff.py /tmp/qlinter-before target/release/qlinter ~/some/q
 ```
 
-Every false positive this repository has withdrawn was found that way and by
-no other means - 648 of them on a file ending inside `\d .ns`, which is what
-KX's own u.q does. `tests/corpus/` pins the shapes that have already gone
-wrong; the diff is for the ones that have not.
+A rule that looks obviously right on the cases its author wrote is exactly
+the kind that reports hundreds of findings on working q. `tests/corpus/` pins
+the shapes already known to be hard; the diff is for the ones nobody has
+thought of.
 
 The LSP suite spawns the real binary and drives it over real protocol
 framing, because the two things most likely to break an editor integration -
 the wire framing and the process not exiting - only exist once there is a
 process.
+
+`docs/design.md` explains why there is no parser here and what that costs.
+Read it before adding a rule that wants one.
 
 ## Where things are
 

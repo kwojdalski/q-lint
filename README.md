@@ -39,13 +39,12 @@ uv sync
 uv run qlinter src/
 ```
 
-## History
+## Design
 
-This was a port of a Python implementation, which it has since replaced. The
-Python version is no longer maintained and is not part of this repository;
-[BENCHMARK.md](BENCHMARK.md) keeps the measurements that motivated the
-rewrite, because "13-39x faster" is the reason the port exists and is worth
-being able to check rather than remember.
+There is no parser here. Rules read a masked view of the source - strings and
+comments blanked in place, offsets preserved - and take structure locally
+where they need it. [docs/design.md](docs/design.md) sets out why, and what
+the approach costs.
 
 ## Options
 
@@ -197,9 +196,7 @@ cargo build --release --example profile               # for profiling the analys
 ```
 
 The Rust tests cover the rule engine, the CLI's black-box behaviour and the
-language server driven over real LSP framing as a real process. The parity
-harness that used to check this implementation against the Python one is gone
-with it; what it protected is now covered by `tests/core.rs`.
+language server driven over real LSP framing as a real process.
 
 
 ### Rule and multiline regression corpus
