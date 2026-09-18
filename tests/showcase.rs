@@ -35,18 +35,28 @@ fn examples_cover_all_available_rules() {
     .into_iter()
     .map(|f| f.code)
     .collect();
-    // An unbalanced delimiter stops the file being analysed at all, so the
-    // one rule that reports it needs a file where it is the only finding.
-    let found: BTreeSet<_> = lint(
-        include_str!("../examples/syntax-error.q"),
-        "syntax-error.q",
-        Profile::Uqf,
-    )
-    .into_iter()
-    .map(|f| f.code)
-    .collect();
-    assert_eq!(found, BTreeSet::from(["QE001".to_string()]));
-    shown.extend(found);
+    // Two rules cannot be shown on a marked line in the showcase: an
+    // unbalanced delimiter stops the file being analysed at all, and a BOM
+    // only exists at the start of a file.
+    for (name, source, code) in [
+        (
+            "syntax-error.q",
+            include_str!("../examples/syntax-error.q"),
+            "QE001",
+        ),
+        (
+            "byte-order-mark.q",
+            include_str!("../examples/byte-order-mark.q"),
+            "QE005",
+        ),
+    ] {
+        let found: BTreeSet<_> = lint(source, name, Profile::Uqf)
+            .into_iter()
+            .map(|f| f.code)
+            .collect();
+        assert_eq!(found, BTreeSet::from([code.to_string()]), "{name}");
+        shown.extend(found);
+    }
     let available: BTreeSet<_> = RULES
         .iter()
         .filter(|r| !["QF006", "QLS001"].contains(&r.code.as_str()))

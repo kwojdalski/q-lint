@@ -174,3 +174,19 @@ fn line_endings_do_not_change_the_findings() {
         assert_eq!(a, b, "CRLF changed the findings ({profile:?})");
     }
 }
+
+/// A BOM is reported without stopping the rest of the analysis: the author of
+/// a file q will not load still wants to know what else is wrong with it.
+#[test]
+fn a_byte_order_mark_is_reported_and_analysis_continues() {
+    let plain = "f:{[a] a+`x}\n";
+    let with_bom = format!("\u{feff}{plain}");
+    let codes = |s: &str| -> Vec<String> {
+        lint(s, "t.q", Profile::General)
+            .into_iter()
+            .map(|f| f.code)
+            .collect()
+    };
+    assert_eq!(codes(plain), ["QT003"]);
+    assert_eq!(codes(&with_bom), ["QE005", "QT003"]);
+}

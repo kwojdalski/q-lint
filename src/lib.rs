@@ -486,7 +486,20 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
         return vec![f];
     }
     let code = &v.code;
+    // A UTF-8 BOM is not something q tolerates: it reports 'char on the first
+    // line and loads nothing. Reported and then carried on past, because the
+    // author still wants to know what else is wrong with a file they are
+    // about to find unloadable.
     let mut out = semantics::check(path, code, source);
+    if source.starts_with('\u{feff}') {
+        out.push(Finding::at(
+            path,
+            source,
+            0,
+            "QE005",
+            "Byte-order mark: q reports 'char on the first line and will not load the file".into(),
+        ));
+    }
     out.extend(intrinsics::check(path, source, code, &v.comments));
     if let Some(at) = v.open_block {
         out.push(Finding::at(

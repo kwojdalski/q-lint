@@ -28,6 +28,13 @@
     "scope": "builtin"
   },
   {
+    "code": "QE005",
+    "name": "byte-order-mark",
+    "category": "syntax",
+    "summary": "File starts with a BOM, which q refuses to load",
+    "scope": "builtin"
+  },
+  {
     "code": "QF001",
     "name": "reserved-parameter",
     "category": "names",
