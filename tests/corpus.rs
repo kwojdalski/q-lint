@@ -47,11 +47,14 @@ fn snapshot() -> String {
 #[test]
 fn idiomatic_q_says_what_it_said_before() {
     let expected_path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/corpus/expected.txt");
-    let expected = std::fs::read_to_string(expected_path).unwrap_or_default();
-    let actual = snapshot();
+    // Git hands this file back with CRLF on a Windows checkout while the
+    // snapshot is built with LF, so the comparison has to ignore which - the
+    // snapshot is about findings, not about how the file was checked out.
+    let normalise = |s: &str| s.replace("\r\n", "\n").trim().to_string();
+    let expected = normalise(&std::fs::read_to_string(expected_path).unwrap_or_default());
+    let actual = normalise(&snapshot());
     assert_eq!(
-        actual.trim(),
-        expected.trim(),
+        actual, expected,
         "\nThe findings on the regression corpus moved.\n\
          If that was the point of the change, rewrite the snapshot with:\n\
            cargo test --test corpus -- --ignored\n"

@@ -1,0 +1,7 @@
+# Fixtures are compared byte for byte, and the linter is expected to give the
+# same answer either way - `tests/core.rs` has a case for that. Checking them
+# out unchanged keeps a Windows clone testing the same bytes as everyone else.
+tests/corpus/*.q    text eol=lf
+tests/corpus/*.txt  text eol=lf
+tests/cases/*.cases text eol=lf
+examples/*.q        text eol=lf
