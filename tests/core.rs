@@ -200,7 +200,11 @@ fn a_byte_order_mark_is_reported_and_analysis_continues() {
 /// four times the input costs well under sixteen times the time.
 #[test]
 fn scope_analysis_does_not_scale_quadratically() {
-    let build = |n: usize| (0..n).map(|i| format!("f{i}:{{[a;b] a+b}}\n")).collect::<String>();
+    let build = |n: usize| {
+        (0..n)
+            .map(|i| format!("f{i}:{{[a;b] a+b}}\n"))
+            .collect::<String>()
+    };
     let time = |source: &str| {
         let start = std::time::Instant::now();
         std::hint::black_box(lint(source, "t.q", Profile::Uqf));
