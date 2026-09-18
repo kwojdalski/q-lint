@@ -1,0 +1,9 @@
+queries.q general: clean
+queries.q style: clean
+queries.q uqf: clean
+tickerplant.q general: clean
+tickerplant.q style: clean
+tickerplant.q uqf: clean
+usage.q general: clean
+usage.q style: clean
+usage.q uqf: clean

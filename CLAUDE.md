@@ -15,10 +15,23 @@ input is a change to the premise, not a feature.
 ## Verify with
 
 ```sh
-cargo test                                  # unit, CLI and LSP suites
+cargo test                                  # unit, CLI, LSP and corpus suites
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 ```
+
+A new rule wants one more thing, because none of the above can catch the way
+rules actually go wrong. Build the binary before and after, and diff them over
+a body of q nobody here wrote:
+
+```sh
+python3 scripts/corpus_diff.py /tmp/qlinter-before target/release/qlinter ~/some/q
+```
+
+Every false positive this repository has withdrawn was found that way and by
+no other means - 648 of them on a file ending inside `\d .ns`, which is what
+KX's own u.q does. `tests/corpus/` pins the shapes that have already gone
+wrong; the diff is for the ones that have not.
 
 The LSP suite spawns the real binary and drives it over real protocol
 framing, because the two things most likely to break an editor integration -
