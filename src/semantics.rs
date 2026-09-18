@@ -90,6 +90,36 @@ fn runs_before(text: &str, read: usize, assign: usize) -> bool {
 /// `at` opened earlier and is one of its ancestors. So: find that scope by
 /// bisection, then follow parents. A scan instead is linear per call and
 /// quadratic over a file, which a few thousand lambdas make felt.
+/// A lambda body with everything that names a column blanked out.
+///
+/// q writes a column name the way it writes an assignment, so `([sym:`s$()]…)`
+/// and `update time:.z.p from t` both look like locals being set. Bracketed
+/// groups go first, then any qSQL phrase through to the end of its statement.
+/// What is left is the assignments the lambda actually makes.
+fn statement_view(direct: &str) -> String {
+    let mut out = crate::flat_filter(direct).into_bytes();
+    let mut i = 0;
+    while let Some(m) =
+        re!(r"\b(?:select|exec|update|delete)\b").find(std::str::from_utf8(&out[i..]).unwrap_or(""))
+    {
+        let start = i + m.start();
+        let end = out[start..]
+            .iter()
+            .position(|&b| b == b';')
+            .map_or(out.len(), |p| start + p);
+        for b in &mut out[start..end] {
+            if !matches!(*b, b'\n' | b'\r') {
+                *b = b' ';
+            }
+        }
+        i = end;
+        if i >= out.len() {
+            break;
+        }
+    }
+    String::from_utf8(out).unwrap_or_default()
+}
+
 fn scope_at(scopes: &[Scope], at: usize) -> Option<usize> {
     let mut i = scopes.partition_point(|s| s.start < at).checked_sub(1)?;
     loop {
@@ -488,6 +518,34 @@ pub fn check(path: &str, code: &str, raw: &str) -> Vec<Finding> {
             }
         }
     }
+    // The other half of the same guidance: "avoid using these letters as local
+    // variables" when the parameters are named. `{[a;b] x:a+b; ...}` works,
+    // but `x` in a q body means the first argument to every reader who has not
+    // yet looked at the signature.
+    for scope in &scopes {
+        if !scope.named || scope.params.iter().any(|p| matches!(&**p, "x" | "y" | "z")) {
+            continue;
+        }
+        let statements = statement_view(&scope.direct);
+        for a in assignment.captures_iter(&statements) {
+            let whole = a.get(0).unwrap();
+            if !boundary(&statements, whole.start()) || a.get(2).is_some() {
+                continue;
+            }
+            if matches!(&a[1], "x" | "y" | "z") {
+                out.push(Finding::at(
+                    path,
+                    raw,
+                    scope.body + whole.start(),
+                    "QS009",
+                    format!(
+                        "`{}` is a local here, but in a q body it reads as an implicit argument",
+                        &a[1]
+                    ),
+                ));
+            }
+        }
+    }
     // From the FINOS q coding guidelines:
     //
     //   "A function over ten lines is suspect. A function over twenty five
@@ -523,32 +581,7 @@ pub fn check(path: &str, code: &str, raw: &str) -> Vec<Finding> {
         // makes a local. Reads are looked for in the whole body, because a
         // local assigned at the top of a lambda is very often read inside a
         // bracket - and blanking those was worse than not blanking at all.
-        let mut statements = crate::flat_filter(&direct).into_bytes();
-        // And qSQL phrases, which name columns the same way outside brackets:
-        // `update time:.z.p from t` declares a column, not a local. Blank from
-        // the keyword to the end of that statement.
-        {
-            let mut i = 0;
-            while let Some(m) = re!(r"\b(?:select|exec|update|delete)\b")
-                .find(std::str::from_utf8(&statements[i..]).unwrap_or(""))
-            {
-                let start = i + m.start();
-                let end = statements[start..]
-                    .iter()
-                    .position(|&b| b == b';')
-                    .map_or(statements.len(), |p| start + p);
-                for b in &mut statements[start..end] {
-                    if !matches!(*b, b'\n' | b'\r') {
-                        *b = b' ';
-                    }
-                }
-                i = end;
-                if i >= statements.len() {
-                    break;
-                }
-            }
-        }
-        let statements = String::from_utf8(statements).unwrap_or_default();
+        let statements = statement_view(&direct);
         // Assignment targets, and every other mention of a name.
         let mut assigned: HashMap<&str, usize> = HashMap::new();
         for a in assignment.captures_iter(&statements) {

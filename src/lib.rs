@@ -562,6 +562,31 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
             }
             continue;
         }
+        // From qbists/style, on default arguments:
+        //
+        //   "Be consistent in your use of `x`, `y`, and `z` to mean the first,
+        //    second, and third arguments to a function. If you don't use the
+        //    default pattern provided by q, avoid using these letters as local
+        //    variables, or as arguments occupying other positions in the
+        //    argument list."
+        //
+        // `{[t;x] ...}` makes `x` the second argument, and every q reader
+        // arrives expecting it to be the first.
+        for (i, slot) in sig.slots.iter().enumerate() {
+            if let Some(expected) = ["x", "y", "z"].iter().position(|n| n == slot)
+                && expected != i
+            {
+                add(
+                    at,
+                    "QS008",
+                    format!(
+                        "`{slot}` is parameter {} here; q gives that name to argument {}",
+                        i + 1,
+                        expected + 1
+                    ),
+                );
+            }
+        }
         let params: Vec<_> = sig.slots.clone();
         let bad: Vec<_> = params
             .iter()

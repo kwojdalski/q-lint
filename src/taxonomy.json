@@ -551,5 +551,19 @@
     "category": "style-guide",
     "summary": "`@param` names a parameter the lambda does not take",
     "scope": "styleq"
+  },
+  {
+    "code": "QS008",
+    "name": "implicit-name-out-of-position",
+    "category": "style-guide",
+    "summary": "`x`, `y` or `z` declared in a position q would not give it",
+    "scope": "styleq"
+  },
+  {
+    "code": "QS009",
+    "name": "implicit-name-as-local",
+    "category": "style-guide",
+    "summary": "`x`, `y` or `z` used as a local beside named parameters",
+    "scope": "styleq"
   }
 ]

@@ -175,6 +175,19 @@ l:3
 / expect-next: QS004
 wrapped:(1)+2
 
+/ QS008: "Be consistent in your use of `x`, `y` and `z` to mean the first,
+/ second and third arguments." Naming a parameter `x` in any other position
+/ means every reader arrives expecting the first argument and finds something
+/ else.
+/ expect-next: QS008
+misplaced:{[t;x] t+x}
+
+/ QS009: the other half of the same guidance - "avoid using these letters as
+/ local variables" when the parameters are named. This works; it just reads as
+/ an implicit argument to anyone who has not looked at the signature yet.
+/ expect-next: QS009
+shadowed:{[p;q] x:p+q; x}
+
 / QS007: documentation naming a parameter the lambda does not take. The
 / signature changed and the comment did not, or the name is a typo. Only names
 / that are documented and absent: a parameter with no `@param` is not

@@ -1,7 +1,13 @@
 # Regression corpus
 
-Idiomatic q that must stay quiet, and a snapshot of exactly what the linter
-says about it. `tests/corpus.rs` fails when a change moves any finding here.
+Idiomatic q, and a snapshot of exactly what the linter says about it.
+
+Under `general` and `style` that snapshot is silence, which is the point: these
+files are working q and nothing in them is a defect. Under `styleq` it is not,
+and that is also the point - `tickerplant.q` is shaped after KX's own u.q,
+which writes `pub:{[t;x] ...}` and so disagrees with the published guidance
+about where `x` belongs. A style guide's conventions are not universally
+followed, and a profile that reports them will say so about real code. `tests/corpus.rs` fails when a change moves any finding here.
 
 The fixtures in `tests/cases/` say what a rule *should* report. They cannot
 say what it should stay silent on, because a rule's author writes both and

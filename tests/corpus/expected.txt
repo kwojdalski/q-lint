@@ -1,9 +1,14 @@
 queries.q general: clean
 queries.q style: clean
+queries.q styleq: clean
 queries.q uqf: clean
 tickerplant.q general: clean
 tickerplant.q style: clean
-tickerplant.q uqf: clean
+tickerplant.q styleq: 12:QS008 `x` is parameter 2 here; q gives that name to argument 1
+tickerplant.q styleq: 13:QS008 `x` is parameter 2 here; q gives that name to argument 1
+tickerplant.q uqf: 12:QS008 `x` is parameter 2 here; q gives that name to argument 1
+tickerplant.q uqf: 13:QS008 `x` is parameter 2 here; q gives that name to argument 1
 usage.q general: clean
 usage.q style: clean
+usage.q styleq: clean
 usage.q uqf: clean

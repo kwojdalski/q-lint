@@ -48,7 +48,7 @@ add2:{[a;b] a+b}
 === clean profile: styleq | a blank line separates the comment from the code
 //@param x Something else entirely.
 
-unrelated:{[y] y}
+unrelated:{[val] val}
 
 === clean profile: styleq | prose with no tags is not checked
 /// Adds two numbers.
@@ -57,3 +57,27 @@ sum2:{[a;b] a+b}
 === clean profile: styleq | a lambda with no declared signature has nothing to compare against
 //@param x The argument.
 implicit:{x+1}
+
+=== QS008 profile: styleq | `x` declared somewhere q would not put it
+f:{[t;x] t+x}
+
+=== QS008 QF016 profile: styleq | further along a longer signature, and the rest go unread
+f:{[a;b;c;x] x}
+
+=== clean profile: styleq | `x` first and `y` second is where q puts them
+f:{[x;y] x+y}
+
+=== clean profile: styleq | `y` second alongside a named first parameter
+f:{[a;y] a+y}
+
+=== clean profile: styleq | no signature at all, so the implicit names are q's own
+f:{x+y}
+
+=== QS009 profile: styleq | `x` as a local beside named parameters
+f:{[p;q] x:p+q; x}
+
+=== clean profile: styleq | a local that is not one of q's argument names
+f:{[p;q] r:p+q; r}
+
+=== clean profile: styleq | a qSQL column alias is not a local
+f:{[t] select y:a+b from t}

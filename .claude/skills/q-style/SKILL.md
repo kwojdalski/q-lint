@@ -58,6 +58,8 @@ Measured over 1296 files of real q, under `--profile styleq`:
 | QS004 a lone token in parentheses | 41 | precise, and the rewrite is always safe |
 | QS006 a lambda over 25 lines | 212 | the guide's second threshold; its first, ten lines, is 11% of all lambdas |
 | QS007 `@param` naming a parameter that is absent | 23 | of 982 documented lambdas, so ~2% - the signature changed and the comment did not |
+| QS008 `x`/`y`/`z` declared out of position | 383 | common, and exactly the confusion the guidance describes: KX's own u.q writes `pub:{[t;x] ...}` |
+| QS009 `x`/`y`/`z` as a local beside named parameters | 39 | the other half of the same sentence |
 
 Three more were measured and not written:
 
@@ -65,6 +67,7 @@ Three more were measured and not written:
 |---|---|---|
 | "a line should rarely exceed 50 characters" | 44% of all lines | q is written densely on purpose and the convention is universally ignored; the rule would be noise at any setting |
 | "use a blank after `;` separators" | 20% of lines | the same |
+| "do not suffix script lines with redundant semicolons" | 44539 | the convention is not observed anywhere; a rule would fire on a third of all lines |
 | "avoid passing `` ` `` as an argument, use `[]`" | 859, with false positives | `` `, `` is a null symbol being joined, not a call with no arguments, and telling those apart needs to know the name is a function |
 
 QS001's volume is the reason the profile is opt-in rather than the reason to

@@ -29,6 +29,7 @@ fn snapshot() -> String {
         for (label, profile) in [
             ("general", Profile::General),
             ("style", Profile::Style),
+            ("styleq", Profile::StyleQ),
             ("uqf", Profile::Uqf),
         ] {
             let found = lint(&source, &name, profile);
