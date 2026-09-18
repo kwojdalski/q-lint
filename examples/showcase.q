@@ -130,6 +130,14 @@ wide:{[a;b;c;d;e;f;g;h;i] a}
 / expect-next: QF016
 spare:{[used;stale] used+1}
 
+/ QF017: a local assigned and never read. The two views this needs are worth
+/ knowing about: assignments are looked for with brackets and qSQL phrases
+/ blanked, because `update mid:...` and `([sym:`symbol$()] ...)` name columns
+/ with the syntax an assignment uses; reads are looked for in the whole body,
+/ because a local is very often read inside a bracket.
+/ expect-next: QF017
+stale:{[a] tmp:1; a}
+
 / QA002: three arguments to a lambda that takes two.
 / expect-next: QA002
 sum2:{[a;b]a+b}[1;2;3]

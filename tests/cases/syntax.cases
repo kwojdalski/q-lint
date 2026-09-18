@@ -57,3 +57,12 @@ if[a=1;2];if[a<>1;2];r:a and b;a+:1;if[a>=1;2]
 
 === clean | operators inside a string are text
 s:"a==b"
+
+=== QD001 | til of a negative count
+r:til[-1]
+
+=== QD002 | where with negative repetition counts
+r:where[-1 2]
+
+=== clean | non-negative counts
+r:where[1 2]

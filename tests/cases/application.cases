@@ -111,3 +111,15 @@ r:files[;0]
 f:{[a] a+1}
 f:{[a;b] a+b}
 r:f[1;2]
+
+=== QA003 | protected apply is unary, so a two-parameter lambda never gets its second
+r:@[{[a;b] a+b};1;2]
+
+=== clean | a unary lambda is what @ wants
+r:@[{[a] a+1};1;{`err}]
+
+=== QA010 | a complete builtin call given more
+r:sum[1;2]
+
+=== clean | the call it was expecting
+r:sum[1 2]

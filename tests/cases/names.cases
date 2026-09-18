@@ -135,7 +135,7 @@ count:42
 === QF012 | one q silently accepts, and the linter still flags
 from:1
 
-=== QF003 | a local shadow at column zero is not root scope
+=== QF003 QF017 | a local shadow at column zero is not root scope, and nothing reads it
 f:{[x]
 count:1
 }
@@ -192,7 +192,7 @@ s:`return
 === clean | within one statement q evaluates right to left, so this assigns first
 f:{[x] x#a where (a:x mod 7) in 2 3}
 
-=== clean | a table-literal column is not an assignment
+=== QF017 | a table-literal column is not an assignment, but the trailing local is unread
 f:{[x] if[x; :([] range_from:`timestamp$())]; range_from:1}
 
 === clean | a parameter named like a keyword is a name
@@ -230,3 +230,24 @@ f:{[a;unusedFlag] a+1}
 
 === clean | a symbol is not a use of the name it spells
 f:{[a] `a`b}
+
+=== QF017 | a local assigned and never read
+f:{[a] b:1; a}
+
+=== clean | read later in the body
+f:{[a] b:1; a+b}
+
+=== clean | read inside a bracket, which is where locals usually are read
+f:{[a] b:1; $[a>0; b; 0]}
+
+=== clean | a qSQL column alias is not a local
+f:{[t] select mid:(bid+ask)%2 from t}
+
+=== clean | a table-literal column is not one either
+f:{[] ([sym:`symbol$()] px:`float$())}
+
+=== clean | a name saying it is unused is the author saying so
+f:{[a] unusedTmp:1; a}
+
+=== clean | rebinding a parameter is ordinary q, not a finding
+f:{[x] x:x where x>0; x}

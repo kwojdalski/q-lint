@@ -137,7 +137,7 @@ fn blank(b: &mut [u8]) {
 /// A filter phrase with parenthesised groups blanked out. The questions the
 /// filter rules ask - which operators sit beside which - are about the
 /// top level only, and `(a=1) and b=0` is correct q that must stay quiet.
-fn flat_filter(phrase: &str) -> String {
+pub(crate) fn flat_filter(phrase: &str) -> String {
     let b = phrase.as_bytes();
     let mut flat = b.to_vec();
     let (mut depth, mut i) = (0i32, 0usize);

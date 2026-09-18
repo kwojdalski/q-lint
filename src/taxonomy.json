@@ -140,6 +140,13 @@
     "scope": "style"
   },
   {
+    "code": "QF017",
+    "name": "unused-local",
+    "category": "names",
+    "summary": "Local assigned and never read",
+    "scope": "style"
+  },
+  {
     "code": "QA001",
     "name": "parameter-limit",
     "category": "application",

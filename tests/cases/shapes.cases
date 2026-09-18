@@ -149,3 +149,45 @@ r:$[0i=`int$period;1;2]
 
 === clean | 0! unkeys a table; the 0 is not the operand
 r:`time in 0!t
+
+=== QT008 | til wants an integer
+r:til[1.5]
+
+=== clean | an integer is what it wants
+r:til[5]
+
+=== QT009 | where wants booleans or counts
+r:where[1.5 2.5]
+
+=== clean | booleans are the usual argument
+r:where[101b]
+
+=== QT010 | a numeric aggregate over symbols
+r:sum[`a`b]
+
+=== clean | the same aggregate over numbers
+r:sum[1 2 3]
+
+=== QT011 | sorting an atom sorts nothing
+r:asc[1]
+
+=== clean | a list is what asc is for
+r:asc[3 1 2]
+
+=== QT012 | distinct of an atom likewise
+r:distinct[1]
+
+=== clean | a list again
+r:distinct[1 1 2]
+
+=== QT013 | flip wants something with two dimensions
+r:flip[1 2]
+
+=== clean | a dictionary of lists has them
+r:flip[`a`b!(1 2;3 4)]
+
+=== QT014 | a rotate count must be an integer atom
+r:rotate[1.5;1 2]
+
+=== clean | an integer count
+r:rotate[1;1 2 3]

@@ -488,6 +488,91 @@ pub fn check(path: &str, code: &str, raw: &str) -> Vec<Finding> {
             }
         }
     }
+    // A local assigned and never read, and a parameter the body reassigns.
+    //
+    // `direct` is the body with nested lambdas blanked, which is what these
+    // want: a name assigned in this lambda and read only by an inner one is
+    // not read at all, because q will not let the inner one see it.
+    for scope in &scopes {
+        let direct = re!(r"`[A-Za-z0-9_./:]*")
+            .replace_all(&scope.direct, |m: &regex::Captures| " ".repeat(m[0].len()));
+        // Two views, because the two halves of this rule want different ones.
+        // Assignments are looked for with bracketed groups blanked, since
+        // `([sym:`symbol$()] qty:...)` names table columns with the syntax an
+        // assignment uses, as do `update x:...` and friends, and none of them
+        // makes a local. Reads are looked for in the whole body, because a
+        // local assigned at the top of a lambda is very often read inside a
+        // bracket - and blanking those was worse than not blanking at all.
+        let mut statements = crate::flat_filter(&direct).into_bytes();
+        // And qSQL phrases, which name columns the same way outside brackets:
+        // `update time:.z.p from t` declares a column, not a local. Blank from
+        // the keyword to the end of that statement.
+        {
+            let mut i = 0;
+            while let Some(m) = re!(r"\b(?:select|exec|update|delete)\b")
+                .find(std::str::from_utf8(&statements[i..]).unwrap_or(""))
+            {
+                let start = i + m.start();
+                let end = statements[start..]
+                    .iter()
+                    .position(|&b| b == b';')
+                    .map_or(statements.len(), |p| start + p);
+                for b in &mut statements[start..end] {
+                    if !matches!(*b, b'\n' | b'\r') {
+                        *b = b' ';
+                    }
+                }
+                i = end;
+                if i >= statements.len() {
+                    break;
+                }
+            }
+        }
+        let statements = String::from_utf8(statements).unwrap_or_default();
+        // Assignment targets, and every other mention of a name.
+        let mut assigned: HashMap<&str, usize> = HashMap::new();
+        for a in assignment.captures_iter(&statements) {
+            let whole = a.get(0).unwrap();
+            if boundary(&statements, whole.start()) && a.get(2).is_none() && !a[1].contains('.') {
+                assigned
+                    .entry(a.get(1).unwrap().as_str())
+                    .or_insert(whole.start());
+            }
+        }
+        if assigned.is_empty() {
+            continue;
+        }
+        let mut read: HashSet<&str> = HashSet::new();
+        for m in re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(&direct) {
+            if !boundary(&direct, m.start()) || direct[m.end()..].starts_with('.') {
+                continue;
+            }
+            // A name followed by `:` is being written, not read. `::` is a
+            // global write and `~:` and friends are not assignments at all.
+            let after = direct[m.end()..].trim_start_matches([' ', '\t']);
+            if after.starts_with(':') && !after.starts_with("::") {
+                continue;
+            }
+            read.insert(m.as_str());
+        }
+        for (name, at) in &assigned {
+            // A parameter rebound to a narrowed version of itself is ordinary
+            // q - `x:sel[x] w 1` is KX's own u.q - so unlike the language this
+            // rule was borrowed from, that is not a finding here.
+            if scope.params.contains(*name) {
+                continue;
+            }
+            if !read.contains(*name) && !re!(r"(?i)^(?:unused|ignored?|dummy)").is_match(name) {
+                out.push(Finding::at(
+                    path,
+                    raw,
+                    scope.body + at,
+                    "QF017",
+                    format!("Local `{name}` is assigned and never read"),
+                ));
+            }
+        }
+    }
     // A declared signature takes the implicit arguments out of scope: `x` in
     // `{[a] x+1}` is not an argument, it is a global, and q throws 'x when
     // there is none. Only a name this file never assigns globally is reported,
