@@ -1377,6 +1377,36 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
             offset += line.len();
             continue;
         }
+        // More from the same guidelines:
+        //
+        //   "Do not use unnecessary parentheses - the compiler doesn't need
+        //    them, they confuse experienced q coders"
+        //
+        // Only a parenthesised single token, which is unnecessary whatever the
+        // precedence around it. Deciding that in general needs q's precedence,
+        // and q's precedence is one rule applied to everything, so "necessary"
+        // is a judgement about the reader rather than the parser.
+        for m in re!(r"\((\s*(?:\.?[A-Za-z][A-Za-z0-9_.]*|-?\d[\w.]*)\s*)\)").captures_iter(line) {
+            let whole = m.get(0).unwrap();
+            // `f(x)` is a call, not a parenthesised operand, and `(x)` after a
+            // name is how q spells one.
+            if line[..whole.start()].ends_with(|c: char| c.is_alphanumeric() || "_.`]".contains(c))
+            {
+                continue;
+            }
+            // `1_` is drop applied to 1, not a token: the string it drops from
+            // is blanks by the time this runs, so the parentheses look empty.
+            // No q number contains an underscore, and a name that does is
+            // QS001's business.
+            if m[1].contains('_') {
+                continue;
+            }
+            add(
+                offset + whole.start(),
+                "QS004",
+                format!("`{}` wraps a single token in parentheses", whole.as_str()),
+            );
+        }
         // Names, from the FINOS q coding guidelines:
         //
         //   "**avoid** underscores `_` in names and expressions - `_` is an

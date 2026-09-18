@@ -48,6 +48,16 @@ Measured over 1296 files of real q, under `--profile styleq`:
 | QS001 avoid `_` in names | 7573 | the convention is widely ignored; real q names contain underscores everywhere |
 | QS002 interior dot at root | 0 | every apparent case was a sub-namespace inside `\d`, which q creates properly |
 | QS003 `l` as a name | 45 | rare, and each one genuinely hard to read |
+| QS004 a lone token in parentheses | 41 | precise, and the rewrite is always safe |
+| QS006 a lambda over 25 lines | 212 | the guide's second threshold; its first, ten lines, is 11% of all lambdas |
+
+Three more were measured and not written:
+
+| guidance | measured | why not |
+|---|---|---|
+| "a line should rarely exceed 50 characters" | 44% of all lines | q is written densely on purpose and the convention is universally ignored; the rule would be noise at any setting |
+| "use a blank after `;` separators" | 20% of lines | the same |
+| "avoid passing `` ` `` as an argument, use `[]`" | 859, with false positives | `` `, `` is a null symbol being joined, not a call with no arguments, and telling those apart needs to know the name is a function |
 
 QS001's volume is the reason the profile is opt-in rather than the reason to
 drop the rule: someone turning on `styleq` is asking for the guide's opinion,

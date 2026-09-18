@@ -18,3 +18,18 @@ len:1
 
 === clean profile: styleq | a name being read rather than assigned is not this file's choice
 r:some_other_lib_call[1]
+
+=== QS004 profile: styleq | a single token wrapped in parentheses
+r:(1)+2
+
+=== QS004 profile: styleq | a name likewise
+r:(t)
+
+=== clean profile: styleq | parentheses that group more than one token
+r:(a+b)*c
+
+=== clean profile: styleq | a call is not a parenthesised operand
+r:g(1;2)
+
+=== clean profile: styleq | drop reads as a token once its string is masked, and is not one
+r:count (1_"abc")

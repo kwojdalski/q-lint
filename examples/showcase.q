@@ -168,6 +168,47 @@ some_name:1
 / expect-next: QS003
 l:3
 
+/ QS004: a single token wrapped in parentheses. "Do not use unnecessary
+/ parentheses - the compiler doesn't need them, they confuse experienced q
+/ coders." Only a lone token, because deciding "unnecessary" in general needs
+/ q's precedence, and q applies one rule to everything.
+/ expect-next: QS004
+wrapped:(1)+2
+
+/ QS006: "A function over ten lines is suspect. A function over twenty five
+/ lines is certifiable." The second threshold, not the first: over ten is a
+/ tenth of the lambdas in real q, and a rule that fires that often is one
+/ nobody leaves on.
+/ expect-next: QS006
+sprawling:{[a]
+  b1:a+1;
+  b2:a+2;
+  b3:a+3;
+  b4:a+4;
+  b5:a+5;
+  b6:a+6;
+  b7:a+7;
+  b8:a+8;
+  b9:a+9;
+  b10:a+10;
+  b11:a+11;
+  b12:a+12;
+  b13:a+13;
+  b14:a+14;
+  b15:a+15;
+  b16:a+16;
+  b17:a+17;
+  b18:a+18;
+  b19:a+19;
+  b20:a+20;
+  b21:a+21;
+  b22:a+22;
+  b23:a+23;
+  b24:a+24;
+  b25:a+25;
+  b26:a+26;
+  b1 + b2 + b3 + b4 + b5 + b6 + b7 + b8 + b9 + b10 + b11 + b12 + b13 + b14 + b15 + b16 + b17 + b18 + b19 + b20 + b21 + b22 + b23 + b24 + b25 + b26}
+
 / QA002: three arguments to a lambda that takes two.
 / expect-next: QA002
 sum2:{[a;b]a+b}[1;2;3]

@@ -488,6 +488,26 @@ pub fn check(path: &str, code: &str, raw: &str) -> Vec<Finding> {
             }
         }
     }
+    // From the FINOS q coding guidelines:
+    //
+    //   "A function over ten lines is suspect. A function over twenty five
+    //    lines is certifiable."
+    //
+    // The second threshold, not the first: over ten is 11% of the lambdas in
+    // real q and over twenty five is 2%, and a rule that fires on a tenth of
+    // everything is one nobody leaves on.
+    for scope in &scopes {
+        let lines = code[scope.start..scope.end].matches('\n').count() + 1;
+        if lines > 25 {
+            out.push(Finding::at(
+                path,
+                raw,
+                scope.start,
+                "QS006",
+                format!("This lambda is {lines} lines; over twenty five is hard to hold in mind"),
+            ));
+        }
+    }
     // A local assigned and never read, and a parameter the body reassigns.
     //
     // `direct` is the body with nested lambdas blanked, which is what these

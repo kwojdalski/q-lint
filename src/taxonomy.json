@@ -530,5 +530,19 @@
     "category": "style-guide",
     "summary": "`l` as a name reads as `1`",
     "scope": "styleq"
+  },
+  {
+    "code": "QS004",
+    "name": "redundant-parentheses",
+    "category": "style-guide",
+    "summary": "A single token wrapped in parentheses",
+    "scope": "styleq"
+  },
+  {
+    "code": "QS006",
+    "name": "lambda-length",
+    "category": "style-guide",
+    "summary": "Lambda longer than twenty five lines",
+    "scope": "styleq"
   }
 ]
