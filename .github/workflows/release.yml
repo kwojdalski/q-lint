@@ -128,6 +128,12 @@ jobs:
         if: matrix.target != ''
         run: |
           set -euo pipefail
+          # Start from empty. `editors/vscode/server/` arrives from the
+          # checkout holding a darwin-arm64 binary, and on macOS and Linux the
+          # unpacked one happens to overwrite it because the filename matches.
+          # Windows names its binary `qlinter.exe`, so it landed alongside and
+          # the win32 vsix shipped a Mach-O binary it could never run.
+          rm -rf editors/vscode/server
           mkdir -p editors/vscode/server
           cd server-archive
           if ls *.zip >/dev/null 2>&1; then
@@ -139,7 +145,7 @@ jobs:
           found=$(find . -type f \( -name qlinter -o -name qlinter.exe \) | head -1)
           test -n "$found" || { echo "no qlinter in the archive" >&2; exit 1; }
           install -m 755 "$found" "../editors/vscode/server/$(basename "$found")"
-      - name: Drop the committed server from a build that must not carry it
+      - name: Drop the committed server from the platform-neutral build
         if: matrix.target == ''
         # `editors/vscode/server/` holds a checked-in darwin-arm64 binary for
         # local packaging. The platform-neutral vsix goes to machines this

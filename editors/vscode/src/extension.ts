@@ -47,21 +47,18 @@ function bundledServer(context: ExtensionContext): string | undefined {
 export async function activate(context: ExtensionContext): Promise<void> {
   const settings = workspace.getConfiguration("q-lint");
   const configured = settings.get<string>("serverPath", "").trim();
-  const command = configured || bundledServer(context) || "qlinter";
   const profile = settings.get<string>("profile", "general");
 
-  const args = ["--lsp", "--profile", profile];
-  const server: ServerOptions = {
-    // One entry, used for both: this server has no separate debug mode, and
-    // giving it a fabricated one would mean a second thing to keep in step.
-    //
-    // No `transport` field. stdio is already the default for an executable,
-    // and naming it explicitly makes the client append `--stdio` to argv -
-    // a flag qlinter does not accept, so it exits 2 before the handshake.
-    run: { command, args },
-    debug: { command, args },
-  };
+  // In order of preference, and the fallback matters: packaging the extension
+  // from a clone on Linux picks up the darwin-arm64 binary checked in for
+  // local macOS builds, and preferring a server that cannot execute would be
+  // worse than not bundling one at all. If the bundled one will not start,
+  // PATH still gets its turn before the user sees an error.
+  const candidates = configured
+    ? [configured]
+    : [bundledServer(context), "qlinter"].filter((c): c is string => !!c);
 
+  const args = ["--lsp", "--profile", profile];
   const options: LanguageClientOptions = {
     documentSelector: [{ scheme: "file", language: "q" }],
     // The output channel the server's own trace goes to, so a user debugging
@@ -69,20 +66,44 @@ export async function activate(context: ExtensionContext): Promise<void> {
     outputChannelName: "q-lint",
   };
 
-  client = new LanguageClient("q-lint", "q-lint", server, options);
-  try {
-    await client.start();
-  } catch (error) {
-    // Say which binary was not found. "Couldn't start the server" sends
-    // someone to the logs; naming the path and the setting tells them what to
-    // fix, and the commonest cause by far is that qlinter is not on PATH.
-    client = undefined;
-    window.showErrorMessage(
-      `q-lint: could not start "${command}". This build of the extension ships no server for ` +
-        `${process.platform}-${process.arch}, so it needs one: install a release archive from ` +
-        `github.com/kwojdalski/q-lint/releases and set q-lint.serverPath to the qlinter ` +
-        `binary, or put it on PATH. ${error}`,
-    );
+  let started: unknown;
+  for (const command of candidates) {
+    const server: ServerOptions = {
+      // One entry, used for both: this server has no separate debug mode, and
+      // giving it a fabricated one would mean a second thing to keep in step.
+      //
+      // No `transport` field. stdio is already the default for an executable,
+      // and naming it explicitly makes the client append `--stdio` to argv -
+      // a flag qlinter does not accept, so it exits 2 before the handshake.
+      run: { command, args },
+      debug: { command, args },
+    };
+    client = new LanguageClient("q-lint", "q-lint", server, options);
+    try {
+      await client.start();
+      started = undefined;
+      break;
+    } catch (error) {
+      started = error;
+      await client.stop().catch(() => {});
+      client = undefined;
+    }
+  }
+
+  {
+    const error = started;
+    const command = candidates.join('", "');
+    if (client === undefined) {
+      // Name every binary that was tried. "Couldn't start the server" sends
+      // someone to the logs; saying what was attempted, and that none of them
+      // ran, tells them what to fix.
+      window.showErrorMessage(
+        `q-lint: could not start "${command}". No server for ${process.platform}-` +
+          `${process.arch} would run: install a release archive from ` +
+          `github.com/kwojdalski/q-lint/releases and set q-lint.serverPath to the qlinter ` +
+          `binary, or put it on PATH. ${error}`,
+      );
+    }
   }
   context.subscriptions.push({ dispose: () => void client?.stop() });
 }
