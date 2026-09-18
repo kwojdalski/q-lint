@@ -12,7 +12,11 @@ use std::{
 };
 
 #[derive(Parser)]
-#[command(about = "Lint q source without executing it")]
+#[command(
+    name = "qlinter",
+    about = "Lint q source without executing it",
+    version
+)]
 struct Args {
     paths: Vec<String>,
     #[arg(long,default_value="text",value_parser=["text","json"])]
@@ -38,6 +42,13 @@ struct Args {
     /// Run as a language server on stdin/stdout instead of linting paths.
     #[arg(long, conflicts_with_all = ["paths", "rules", "explain"])]
     lsp: bool,
+    /// Accepted and ignored. Editors conventionally pass this to a language
+    /// server, and some LSP clients append it without being asked - stdio is
+    /// the only transport here, so there is nothing for it to select. A
+    /// server that exits 2 on an unknown flag gives an editor no diagnostics
+    /// and no reason why.
+    #[arg(long, hide = true)]
+    stdio: bool,
 }
 fn config(explicit: Option<&Path>) -> Result<(PathBuf, Vec<glob::Pattern>), String> {
     let cwd = std::env::current_dir().map_err(|e| e.to_string())?;

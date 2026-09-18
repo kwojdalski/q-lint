@@ -219,3 +219,63 @@ fn exit_without_shutdown_reports_a_nonzero_code() {
     server.send(json!({"jsonrpc":"2.0","method":"exit"}));
     assert_eq!(server.child.wait().unwrap().code().unwrap_or(-1), 1);
 }
+
+/// The client chooses the argv, not the test.
+///
+/// `vscode-languageclient` appends `--stdio` to an executable server's
+/// arguments, and Neovim, Helix and Zed configurations conventionally include
+/// it. A server that rejects an unknown flag exits before the handshake, and
+/// the editor shows no diagnostics and no reason. Every test above spawns the
+/// binary with argv of its own choosing, so none of them can catch that.
+#[test]
+fn the_flags_an_lsp_client_adds_are_accepted() {
+    for args in [
+        vec!["--lsp", "--profile", "general"],
+        vec!["--lsp", "--profile", "general", "--stdio"],
+        vec!["--lsp", "--stdio", "--profile", "general"],
+    ] {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .args(&args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn");
+        let mut stdin = child.stdin.take().unwrap();
+        let mut stdout = BufReader::new(child.stdout.take().unwrap());
+        let body = json!({"jsonrpc":"2.0","id":1,"method":"initialize",
+                          "params":{"processId":null,"rootUri":null,"capabilities":{}}})
+        .to_string();
+        write!(stdin, "Content-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+        stdin.flush().unwrap();
+        let mut header = String::new();
+        stdout.read_line(&mut header).unwrap();
+        assert!(
+            header.starts_with("Content-Length:"),
+            "no reply to initialize with args {args:?}: {header:?}"
+        );
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}
+
+/// The version has to be askable from a shell. It is in `serverInfo`, which
+/// is no help to anyone holding a binary and wondering which one it is.
+#[test]
+fn the_binary_reports_its_version() {
+    let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .arg("--version")
+        .output()
+        .expect("run --version");
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "--version exited {:?}", out.status);
+    assert!(
+        text.starts_with("qlinter ")
+            && text
+                .trim()
+                .split(' ')
+                .nth(1)
+                .is_some_and(|v| v.contains('.')),
+        "expected `qlinter <version>`, got {text:?}"
+    );
+}

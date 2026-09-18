@@ -48,6 +48,9 @@ the approach costs.
 
 ## Options
 
+`qlinter --version` reports the build, and `--stdio` is accepted and ignored
+so a client that appends it gets a server rather than an exit code.
+
 The CLI supports `--profile general|style|uqf`, `--format text|json`,
 `--exclude`, `--config`, stdin (`-`, `--stdin-filename`) and
 `--backend builtin|qls|all` options. The default is builtin.
