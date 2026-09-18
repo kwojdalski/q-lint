@@ -190,5 +190,341 @@
     "bad": "ratios[1;2;3]",
     "good": "ratios[1;2]",
     "error": "rank"
+  },
+  {
+    "code": "QT016",
+    "bad": "sqrt[`a]",
+    "good": "sqrt[1]",
+    "error": "type"
+  },
+  {
+    "code": "QT016",
+    "bad": "log[`a]",
+    "good": "log[1]",
+    "error": "type"
+  },
+  {
+    "code": "QT016",
+    "bad": "exp[`a]",
+    "good": "exp[1]",
+    "error": "type"
+  },
+  {
+    "code": "QT016",
+    "bad": "abs[`a]",
+    "good": "abs[1]",
+    "error": "type"
+  },
+  {
+    "code": "QT016",
+    "bad": "neg[`a]",
+    "good": "neg[1]",
+    "error": "type"
+  },
+  {
+    "code": "QT016",
+    "bad": "sin[`a]",
+    "good": "sin[1]",
+    "error": "type"
+  },
+  {
+    "code": "QT016",
+    "bad": "cos[`a]",
+    "good": "cos[1]",
+    "error": "type"
+  },
+  {
+    "code": "QT016",
+    "bad": "tan[`a]",
+    "good": "tan[1]",
+    "error": "type"
+  },
+  {
+    "code": "QT016",
+    "bad": "acos[`a]",
+    "good": "acos[1]",
+    "error": "type"
+  },
+  {
+    "code": "QT016",
+    "bad": "asin[`a]",
+    "good": "asin[1]",
+    "error": "type"
+  },
+  {
+    "code": "QT016",
+    "bad": "atan[`a]",
+    "good": "atan[1]",
+    "error": "type"
+  },
+  {
+    "code": "QT016",
+    "bad": "reciprocal[`a]",
+    "good": "reciprocal[1]",
+    "error": "type"
+  },
+  {
+    "code": "QT017",
+    "bad": "mavg[1.5;1 2 3]",
+    "good": "mavg[-1;1 2 3]",
+    "error": "type"
+  },
+  {
+    "code": "QT017",
+    "bad": "mavg[1 2;1 2 3]",
+    "good": "mavg[0;1 2 3]",
+    "error": "domain"
+  },
+  {
+    "code": "QT017",
+    "bad": "msum[1.5;1 2 3]",
+    "good": "msum[-1;1 2 3]",
+    "error": "type"
+  },
+  {
+    "code": "QT017",
+    "bad": "msum[1 2;1 2 3]",
+    "good": "msum[0;1 2 3]",
+    "error": "domain"
+  },
+  {
+    "code": "QT017",
+    "bad": "mcount[1.5;1 2 3]",
+    "good": "mcount[-1;1 2 3]",
+    "error": "type"
+  },
+  {
+    "code": "QT017",
+    "bad": "mcount[1 2;1 2 3]",
+    "good": "mcount[0;1 2 3]",
+    "error": "domain"
+  },
+  {
+    "code": "QT017",
+    "bad": "mdev[1.5;1 2 3]",
+    "good": "mdev[-1;1 2 3]",
+    "error": "type"
+  },
+  {
+    "code": "QT017",
+    "bad": "mdev[1 2;1 2 3]",
+    "good": "mdev[0;1 2 3]",
+    "error": "domain"
+  },
+  {
+    "code": "QT017",
+    "bad": "mmin[1.5;1 2 3]",
+    "good": "mmin[-1;1 2 3]",
+    "error": "type"
+  },
+  {
+    "code": "QT017",
+    "bad": "mmin[1 2;1 2 3]",
+    "good": "mmin[0;1 2 3]",
+    "error": "type"
+  },
+  {
+    "code": "QT017",
+    "bad": "mmax[1.5;1 2 3]",
+    "good": "mmax[-1;1 2 3]",
+    "error": "type"
+  },
+  {
+    "code": "QT017",
+    "bad": "mmax[1 2;1 2 3]",
+    "good": "mmax[0;1 2 3]",
+    "error": "type"
+  },
+  {
+    "code": "QT018",
+    "bad": "cor[1 2;3 4 5]",
+    "good": "cor[1 2;3 4]",
+    "error": "length"
+  },
+  {
+    "code": "QT018",
+    "bad": "cov[1 2;3 4 5]",
+    "good": "cov[1 2;3 4]",
+    "error": "length"
+  },
+  {
+    "code": "QT018",
+    "bad": "wavg[1 2;3 4 5]",
+    "good": "wavg[1 2;3 4]",
+    "error": "length"
+  },
+  {
+    "code": "QT018",
+    "bad": "wsum[1 2;3 4 5]",
+    "good": "wsum[1 2;3 4]",
+    "error": "length"
+  },
+  {
+    "code": "QT019",
+    "bad": "within[1;1 2 3]",
+    "good": "within[1;1 2]",
+    "error": "length"
+  },
+  {
+    "code": "QT019",
+    "bad": "within[1;enlist 1]",
+    "good": "within[1;1 2]",
+    "error": "length"
+  },
+  {
+    "code": "QT019",
+    "bad": "within[1;1]",
+    "good": "within[1;1 2]",
+    "error": "type"
+  },
+  {
+    "code": "QT014",
+    "bad": "rotate[1.5;\"abc\"]",
+    "good": "rotate[1;\"abc\"]",
+    "error": "type"
+  },
+  {
+    "code": "QA010",
+    "bad": "sum[\"a\";\"b\"]",
+    "good": "sum[\"a\"]",
+    "error": "rank"
+  },
+  {
+    "code": "QA010",
+    "bad": "sum[\";]\";1]",
+    "good": "enlist[\";]\";1]",
+    "error": "rank"
+  },
+  {
+    "code": "QA010",
+    "bad": "sqrt[1;2]",
+    "good": "sqrt[1]",
+    "error": "rank"
+  },
+  {
+    "code": "QA010",
+    "bad": "log[1;2]",
+    "good": "log[1]",
+    "error": "rank"
+  },
+  {
+    "code": "QA010",
+    "bad": "exp[1;2]",
+    "good": "exp[1]",
+    "error": "rank"
+  },
+  {
+    "code": "QA010",
+    "bad": "sin[1;2]",
+    "good": "sin[1]",
+    "error": "rank"
+  },
+  {
+    "code": "QA010",
+    "bad": "cos[1;2]",
+    "good": "cos[1]",
+    "error": "rank"
+  },
+  {
+    "code": "QA010",
+    "bad": "tan[1;2]",
+    "good": "tan[1]",
+    "error": "rank"
+  },
+  {
+    "code": "QA010",
+    "bad": "acos[1;2]",
+    "good": "acos[1]",
+    "error": "rank"
+  },
+  {
+    "code": "QA010",
+    "bad": "asin[1;2]",
+    "good": "asin[1]",
+    "error": "rank"
+  },
+  {
+    "code": "QA010",
+    "bad": "atan[1;2]",
+    "good": "atan[1]",
+    "error": "rank"
+  },
+  {
+    "code": "QA010",
+    "bad": "reciprocal[1;2]",
+    "good": "reciprocal[1]",
+    "error": "nyi"
+  },
+  {
+    "code": "QA010",
+    "bad": "mavg[1;2;3]",
+    "good": "mavg[1;1 2]",
+    "error": "rank"
+  },
+  {
+    "code": "QA010",
+    "bad": "msum[1;2;3]",
+    "good": "msum[1;1 2]",
+    "error": "rank"
+  },
+  {
+    "code": "QA010",
+    "bad": "mcount[1;2;3]",
+    "good": "mcount[1;1 2]",
+    "error": "rank"
+  },
+  {
+    "code": "QA010",
+    "bad": "mdev[1;2;3]",
+    "good": "mdev[1;1 2]",
+    "error": "rank"
+  },
+  {
+    "code": "QA010",
+    "bad": "mmin[1;2;3]",
+    "good": "mmin[1;1 2]",
+    "error": "rank"
+  },
+  {
+    "code": "QA010",
+    "bad": "mmax[1;2;3]",
+    "good": "mmax[1;1 2]",
+    "error": "rank"
+  },
+  {
+    "code": "QA010",
+    "bad": "cor[1;2;3]",
+    "good": "cor[1 2;3 4]",
+    "error": "rank"
+  },
+  {
+    "code": "QA010",
+    "bad": "cov[1;2;3]",
+    "good": "cov[1 2;3 4]",
+    "error": "rank"
+  },
+  {
+    "code": "QA010",
+    "bad": "wavg[1;2;3]",
+    "good": "wavg[1;1 2]",
+    "error": "rank"
+  },
+  {
+    "code": "QA010",
+    "bad": "wsum[1;2;3]",
+    "good": "wsum[1;1 2]",
+    "error": "rank"
+  },
+  {
+    "code": "QA010",
+    "bad": "within[1;2;3]",
+    "good": "within[1;1 2]",
+    "error": "rank"
+  },
+  {
+    "code": "QT017",
+    "bad": "mavg[enlist 1;1 2 3]",
+    "good": "mavg[1;1 2 3]",
+    "error": "domain"
   }
 ]

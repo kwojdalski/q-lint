@@ -565,5 +565,33 @@
     "category": "style-guide",
     "summary": "`x`, `y` or `z` used as a local beside named parameters",
     "scope": "styleq"
+  },
+  {
+    "code": "QT016",
+    "name": "symbol-math-argument",
+    "category": "types-and-shapes",
+    "summary": "Numeric math applied to a symbol literal",
+    "scope": "builtin"
+  },
+  {
+    "code": "QT017",
+    "name": "literal-moving-window",
+    "category": "types-and-shapes",
+    "summary": "Moving-window size is not an integer atom",
+    "scope": "builtin"
+  },
+  {
+    "code": "QT018",
+    "name": "literal-statistical-length",
+    "category": "types-and-shapes",
+    "summary": "Literal inputs to cor, cov, wavg or wsum have incompatible lengths",
+    "scope": "builtin"
+  },
+  {
+    "code": "QT019",
+    "name": "literal-within-bounds",
+    "category": "types-and-shapes",
+    "summary": "within bounds are not a two-item list",
+    "scope": "builtin"
   }
 ]

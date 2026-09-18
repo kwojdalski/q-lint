@@ -12,6 +12,7 @@ enum Kind {
 struct Literal {
     kind: Kind,
     vector: bool,
+    len: usize,
     negative: bool,
     short_integer: bool,
 }
@@ -26,12 +27,14 @@ fn literal(s: &str) -> Option<Literal> {
             return None;
         } // Nested lists are not flat literals.
         value.vector = true;
+        value.len = 1;
         return Some(value);
     }
     if re!(r"^(?:`[A-Za-z][A-Za-z0-9_.]*)+$").is_match(s) {
         return Some(Literal {
             kind: Kind::Symbol,
             vector: s.bytes().filter(|&b| b == b'`').count() > 1,
+            len: s.bytes().filter(|&b| b == b'`').count(),
             negative: false,
             short_integer: false,
         });
@@ -40,6 +43,7 @@ fn literal(s: &str) -> Option<Literal> {
         return Some(Literal {
             kind: Kind::Bool,
             vector: s.len() > 2,
+            len: s.len() - 1,
             negative: false,
             short_integer: false,
         });
@@ -55,6 +59,7 @@ fn literal(s: &str) -> Option<Literal> {
         return Some(Literal {
             kind: Kind::Integer,
             vector: numbers.len() > 1,
+            len: numbers.len(),
             negative: numbers.iter().any(|&v| v < 0),
             short_integer: s.ends_with(['h', 'i']),
         });
@@ -66,6 +71,7 @@ fn literal(s: &str) -> Option<Literal> {
         return Some(Literal {
             kind: Kind::Float,
             vector: s.split_whitespace().count() > 1,
+            len: s.split_whitespace().count(),
             negative: false,
             short_integer: false,
         });
@@ -76,7 +82,7 @@ fn literal(s: &str) -> Option<Literal> {
 pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Finding> {
     let mut out = vec![];
     let calls = re!(
-        r"\b(til|where|sum|prd|avg|med|dev|var|sums|prds|deltas|ratios|asc|desc|iasc|idesc|distinct|flip|rotate|count|first|last|enlist|reverse|abs|neg)\s*\["
+        r"\b(til|where|sum|prd|avg|med|dev|var|sums|prds|deltas|ratios|asc|desc|iasc|idesc|distinct|flip|rotate|count|first|last|enlist|reverse|abs|neg|sqrt|log|exp|sin|cos|tan|acos|asin|atan|reciprocal|mavg|msum|mcount|mdev|mmin|mmax|cor|cov|wavg|wsum|within)\s*\["
     );
     for call in calls.captures_iter(code) {
         let at = call.get(0).unwrap().start();
@@ -88,16 +94,26 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
         let Some(end) = matching(code, open, b'[', b']') else {
             continue;
         };
-        // Do not mistake the surviving numeric part of a mixed list for an atom.
-        if comments[open + 1..end - 1].contains('"') {
-            continue;
-        }
-        let args = slots(&code[open + 1..end - 1]);
+        // Split in the masked view, but classify the complete argument text.
+        // This preserves strings without splitting on their semicolons/brackets.
+        let mut arg_start = open + 1;
+        let args: Vec<_> = slots(&code[open + 1..end - 1])
+            .into_iter()
+            .map(|slot| {
+                let raw = &comments[arg_start..arg_start + slot.len()];
+                arg_start += slot.len() + 1;
+                raw
+            })
+            .collect();
         // Omitted slots are projections rather than complete applications.
         if args.iter().any(|arg| arg.trim().is_empty()) {
             continue;
         }
-        let arity = if name == "rotate" { 2 } else { 1 };
+        let arity = match name {
+            "rotate" | "mavg" | "msum" | "mcount" | "mdev" | "mmin" | "mmax" | "cor" | "cov"
+            | "wavg" | "wsum" | "within" => 2,
+            _ => 1,
+        };
         let report = |out: &mut Vec<Finding>, id, detail| {
             out.push(Finding::at(path, source, at, id, detail))
         };
@@ -120,10 +136,52 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
         if args.len() != arity {
             continue;
         }
+        if name == "within" {
+            if let Some(bounds) = literal(args[1])
+                && (!bounds.vector || bounds.len != 2)
+            {
+                report(
+                    &mut out,
+                    "QT019",
+                    "within needs a two-item list of bounds".into(),
+                );
+            }
+            continue;
+        }
+        if matches!(name, "cor" | "cov" | "wavg" | "wsum") {
+            if let (Some(left), Some(right)) = (literal(args[0]), literal(args[1]))
+                && left.kind != Kind::Symbol
+                && right.kind != Kind::Symbol
+                && (matches!(name, "cor" | "cov") || (left.vector && right.vector))
+                && left.len != right.len
+            {
+                report(
+                    &mut out,
+                    "QT018",
+                    format!(
+                        "{name} receives literal inputs of lengths {} and {}",
+                        left.len, right.len
+                    ),
+                );
+            }
+            continue;
+        }
         let Some(value) = literal(args[0]) else {
             continue;
         };
         let rule = match name {
+            "sqrt" | "log" | "exp" | "abs" | "neg" | "sin" | "cos" | "tan" | "acos" | "asin"
+            | "atan" | "reciprocal"
+                if value.kind == Kind::Symbol =>
+            {
+                Some(("QT016", "Numeric math cannot operate on a symbol literal"))
+            }
+            "mavg" | "msum" | "mcount" | "mdev" | "mmin" | "mmax"
+                if value.vector || matches!(value.kind, Kind::Float | Kind::Symbol) =>
+            {
+                Some(("QT017", "Moving-window size must be an integer atom"))
+            }
+
             "til" if value.kind == Kind::Float || (value.vector && value.kind != Kind::Symbol) => {
                 Some((
                     "QT008",

@@ -608,6 +608,24 @@ if[a!=1;2]
 / expect-next: QE002
 bad:"\q"
 
+/ ------------------------------------------------ additional literal contracts
+
+/ QT016: a symbol is not an input to numeric math.
+/ expect-next: QT016
+sqrt[`a]
+
+/ QT017: moving-window sizes must be integer atoms.
+/ expect-next: QT017
+mavg[1.5;1 2 3]
+
+/ QT018: both statistical inputs need compatible lengths.
+/ expect-next: QT018
+cor[1 2;3 4 5]
+
+/ QT019: within takes exactly two bounds.
+/ expect-next: QT019
+within[1;1 2 3]
+
 / -------------------------------------------------------------------- clean
 
 / Nothing in this section should be reported. These are the shapes the

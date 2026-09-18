@@ -1,0 +1,374 @@
+=== QT016 profile: general | bad: sqrt[`a]
+sqrt[`a]
+
+=== clean profile: general | good: sqrt[1]
+sqrt[1]
+
+=== QT016 profile: general | bad: log[`a]
+log[`a]
+
+=== clean profile: general | good: log[1]
+log[1]
+
+=== QT016 profile: general | bad: exp[`a]
+exp[`a]
+
+=== clean profile: general | good: exp[1]
+exp[1]
+
+=== QT016 profile: general | bad: abs[`a]
+abs[`a]
+
+=== clean profile: general | good: abs[1]
+abs[1]
+
+=== QT016 profile: general | bad: neg[`a]
+neg[`a]
+
+=== clean profile: general | good: neg[1]
+neg[1]
+
+=== QT016 profile: general | bad: sin[`a]
+sin[`a]
+
+=== clean profile: general | good: sin[1]
+sin[1]
+
+=== QT016 profile: general | bad: cos[`a]
+cos[`a]
+
+=== clean profile: general | good: cos[1]
+cos[1]
+
+=== QT016 profile: general | bad: tan[`a]
+tan[`a]
+
+=== clean profile: general | good: tan[1]
+tan[1]
+
+=== QT016 profile: general | bad: acos[`a]
+acos[`a]
+
+=== clean profile: general | good: acos[1]
+acos[1]
+
+=== QT016 profile: general | bad: asin[`a]
+asin[`a]
+
+=== clean profile: general | good: asin[1]
+asin[1]
+
+=== QT016 profile: general | bad: atan[`a]
+atan[`a]
+
+=== clean profile: general | good: atan[1]
+atan[1]
+
+=== QT016 profile: general | bad: reciprocal[`a]
+reciprocal[`a]
+
+=== clean profile: general | good: reciprocal[1]
+reciprocal[1]
+
+=== QT017 profile: general | bad: mavg[1.5;1 2 3]
+mavg[1.5;1 2 3]
+
+=== clean profile: general | good: mavg[-1;1 2 3]
+mavg[-1;1 2 3]
+
+=== QT017 profile: general | bad: mavg[1 2;1 2 3]
+mavg[1 2;1 2 3]
+
+=== clean profile: general | good: mavg[0;1 2 3]
+mavg[0;1 2 3]
+
+=== QT017 profile: general | bad: msum[1.5;1 2 3]
+msum[1.5;1 2 3]
+
+=== clean profile: general | good: msum[-1;1 2 3]
+msum[-1;1 2 3]
+
+=== QT017 profile: general | bad: msum[1 2;1 2 3]
+msum[1 2;1 2 3]
+
+=== clean profile: general | good: msum[0;1 2 3]
+msum[0;1 2 3]
+
+=== QT017 profile: general | bad: mcount[1.5;1 2 3]
+mcount[1.5;1 2 3]
+
+=== clean profile: general | good: mcount[-1;1 2 3]
+mcount[-1;1 2 3]
+
+=== QT017 profile: general | bad: mcount[1 2;1 2 3]
+mcount[1 2;1 2 3]
+
+=== clean profile: general | good: mcount[0;1 2 3]
+mcount[0;1 2 3]
+
+=== QT017 profile: general | bad: mdev[1.5;1 2 3]
+mdev[1.5;1 2 3]
+
+=== clean profile: general | good: mdev[-1;1 2 3]
+mdev[-1;1 2 3]
+
+=== QT017 profile: general | bad: mdev[1 2;1 2 3]
+mdev[1 2;1 2 3]
+
+=== clean profile: general | good: mdev[0;1 2 3]
+mdev[0;1 2 3]
+
+=== QT017 profile: general | bad: mmin[1.5;1 2 3]
+mmin[1.5;1 2 3]
+
+=== clean profile: general | good: mmin[-1;1 2 3]
+mmin[-1;1 2 3]
+
+=== QT017 profile: general | bad: mmin[1 2;1 2 3]
+mmin[1 2;1 2 3]
+
+=== clean profile: general | good: mmin[0;1 2 3]
+mmin[0;1 2 3]
+
+=== QT017 profile: general | bad: mmax[1.5;1 2 3]
+mmax[1.5;1 2 3]
+
+=== clean profile: general | good: mmax[-1;1 2 3]
+mmax[-1;1 2 3]
+
+=== QT017 profile: general | bad: mmax[1 2;1 2 3]
+mmax[1 2;1 2 3]
+
+=== clean profile: general | good: mmax[0;1 2 3]
+mmax[0;1 2 3]
+
+=== QT018 profile: general | bad: cor[1 2;3 4 5]
+cor[1 2;3 4 5]
+
+=== clean profile: general | good: cor[1 2;3 4]
+cor[1 2;3 4]
+
+=== QT018 profile: general | bad: cov[1 2;3 4 5]
+cov[1 2;3 4 5]
+
+=== clean profile: general | good: cov[1 2;3 4]
+cov[1 2;3 4]
+
+=== QT018 profile: general | bad: wavg[1 2;3 4 5]
+wavg[1 2;3 4 5]
+
+=== clean profile: general | good: wavg[1 2;3 4]
+wavg[1 2;3 4]
+
+=== QT018 profile: general | bad: wsum[1 2;3 4 5]
+wsum[1 2;3 4 5]
+
+=== clean profile: general | good: wsum[1 2;3 4]
+wsum[1 2;3 4]
+
+=== QT019 profile: general | bad: within[1;1 2 3]
+within[1;1 2 3]
+
+=== clean profile: general | good: within[1;1 2]
+within[1;1 2]
+
+=== QT019 profile: general | bad: within[1;enlist 1]
+within[1;enlist 1]
+
+=== clean profile: general | good: within[1;1 2]
+within[1;1 2]
+
+=== QT019 profile: general | bad: within[1;1]
+within[1;1]
+
+=== clean profile: general | good: within[1;1 2]
+within[1;1 2]
+
+=== QT014 profile: general | bad: rotate[1.5;"abc"]
+rotate[1.5;"abc"]
+
+=== clean profile: general | good: rotate[1;"abc"]
+rotate[1;"abc"]
+
+=== QA010 profile: general | bad: sum["a";"b"]
+sum["a";"b"]
+
+=== clean profile: general | good: sum["a"]
+sum["a"]
+
+=== QA010 profile: general | bad: sum[";]";1]
+sum[";]";1]
+
+=== clean profile: general | good: enlist[";]";1]
+enlist[";]";1]
+
+=== clean profile: general | boundary
+wavg[1;1 2 3]
+
+=== clean profile: general | boundary
+wsum[1;1 2 3]
+
+=== clean profile: general | boundary
+sqrt[values]
+
+=== clean profile: general | boundary
+helper.sqrt[`a]
+
+=== clean profile: general | boundary
+within[x;bounds]
+
+=== clean profile: general | boundary
+mavg[n;xs]
+
+=== clean profile: general | boundary
+cor[xs;ys]
+
+=== clean profile: general | boundary
+sum[;";]"]
+
+=== clean profile: general | boundary
+sum[";]";]
+
+=== clean profile: general | boundary
+s:"sqrt[`a]"
+
+=== clean profile: general | boundary
+/ sqrt[`a]
+
+=== clean profile: general | boundary
+p)sqrt[`a]
+
+=== clean profile: general | boundary
+asc[1 "ab"]
+
+=== QA010 profile: general | bad arity or shape
+sqrt[1;2]
+
+=== clean profile: general | good arity or shape
+sqrt[1]
+
+=== QA010 profile: general | bad arity or shape
+log[1;2]
+
+=== clean profile: general | good arity or shape
+log[1]
+
+=== QA010 profile: general | bad arity or shape
+exp[1;2]
+
+=== clean profile: general | good arity or shape
+exp[1]
+
+=== QA010 profile: general | bad arity or shape
+sin[1;2]
+
+=== clean profile: general | good arity or shape
+sin[1]
+
+=== QA010 profile: general | bad arity or shape
+cos[1;2]
+
+=== clean profile: general | good arity or shape
+cos[1]
+
+=== QA010 profile: general | bad arity or shape
+tan[1;2]
+
+=== clean profile: general | good arity or shape
+tan[1]
+
+=== QA010 profile: general | bad arity or shape
+acos[1;2]
+
+=== clean profile: general | good arity or shape
+acos[1]
+
+=== QA010 profile: general | bad arity or shape
+asin[1;2]
+
+=== clean profile: general | good arity or shape
+asin[1]
+
+=== QA010 profile: general | bad arity or shape
+atan[1;2]
+
+=== clean profile: general | good arity or shape
+atan[1]
+
+=== QA010 profile: general | bad arity or shape
+reciprocal[1;2]
+
+=== clean profile: general | good arity or shape
+reciprocal[1]
+
+=== QA010 profile: general | bad arity or shape
+mavg[1;2;3]
+
+=== clean profile: general | good arity or shape
+mavg[1;1 2]
+
+=== QA010 profile: general | bad arity or shape
+msum[1;2;3]
+
+=== clean profile: general | good arity or shape
+msum[1;1 2]
+
+=== QA010 profile: general | bad arity or shape
+mcount[1;2;3]
+
+=== clean profile: general | good arity or shape
+mcount[1;1 2]
+
+=== QA010 profile: general | bad arity or shape
+mdev[1;2;3]
+
+=== clean profile: general | good arity or shape
+mdev[1;1 2]
+
+=== QA010 profile: general | bad arity or shape
+mmin[1;2;3]
+
+=== clean profile: general | good arity or shape
+mmin[1;1 2]
+
+=== QA010 profile: general | bad arity or shape
+mmax[1;2;3]
+
+=== clean profile: general | good arity or shape
+mmax[1;1 2]
+
+=== QA010 profile: general | bad arity or shape
+cor[1;2;3]
+
+=== clean profile: general | good arity or shape
+cor[1 2;3 4]
+
+=== QA010 profile: general | bad arity or shape
+cov[1;2;3]
+
+=== clean profile: general | good arity or shape
+cov[1 2;3 4]
+
+=== QA010 profile: general | bad arity or shape
+wavg[1;2;3]
+
+=== clean profile: general | good arity or shape
+wavg[1;1 2]
+
+=== QA010 profile: general | bad arity or shape
+wsum[1;2;3]
+
+=== clean profile: general | good arity or shape
+wsum[1;1 2]
+
+=== QA010 profile: general | bad arity or shape
+within[1;2;3]
+
+=== clean profile: general | good arity or shape
+within[1;1 2]
+
+=== QT017 profile: general | bad arity or shape
+mavg[enlist 1;1 2 3]
+
+=== clean profile: general | good arity or shape
+mavg[1;1 2 3]
