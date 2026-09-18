@@ -1155,10 +1155,16 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
     // assigning one assigns null. `$[...]` is the expression form.
     for m in re!(r"[A-Za-z0-9_\])]\s*:\s*(if|while|do)\s*\[").captures_iter(code) {
         // The gap may legitimately span lines - an assignment continued onto
-        // an indented line is ordinary q. What it may not span is a string:
-        // that arrives here as blanks, so `\s*` would otherwise step over
-        // twenty-six lines of one and join an assignment to an unrelated
-        // `if[` far below. The raw source still has the quote that says so.
+        // an indented line is ordinary q, inside a lambda body as much as at
+        // the top level. What it may not span is a string: that arrives here
+        // as blanks, so `\s*` would otherwise step over twenty-six lines of
+        // one and join an assignment to an unrelated `if[` far below. The raw
+        // source still has the quote that says which happened.
+        //
+        // This cannot move into the statement loop below to get the bound for
+        // free. That loop folds only at the top level, and the continued
+        // assignments this rule is about are usually inside a lambda body,
+        // where nothing is folded.
         if source[m.get(0).unwrap().range()].contains('"') {
             continue;
         }
