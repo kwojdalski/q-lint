@@ -263,19 +263,23 @@ fn the_flags_an_lsp_client_adds_are_accepted() {
 /// is no help to anyone holding a binary and wondering which one it is.
 #[test]
 fn the_binary_reports_its_version() {
-    let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
-        .arg("--version")
-        .output()
-        .expect("run --version");
-    let text = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "--version exited {:?}", out.status);
-    assert!(
-        text.starts_with("qlinter ")
-            && text
-                .trim()
-                .split(' ')
-                .nth(1)
-                .is_some_and(|v| v.contains('.')),
-        "expected `qlinter <version>`, got {text:?}"
-    );
+    // All three spellings. clap's default short form is `-V`, and `-v` is the
+    // one people type first.
+    for flag in ["--version", "-V", "-v"] {
+        let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .arg(flag)
+            .output()
+            .expect("run version flag");
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(out.status.success(), "{flag} exited {:?}", out.status);
+        assert!(
+            text.starts_with("qlinter ")
+                && text
+                    .trim()
+                    .split(' ')
+                    .nth(1)
+                    .is_some_and(|v| v.contains('.')),
+            "{flag}: expected `qlinter <version>`, got {text:?}"
+        );
+    }
 }

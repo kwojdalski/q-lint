@@ -63,7 +63,7 @@ with [docs/ruff-rules.md](docs/ruff-rules.md) as the reference.
 
 ## Options
 
-`qlinter --version` reports the build, and `--stdio` is accepted and ignored
+`qlinter --version` (or `-v`) reports the build, and `--stdio` is accepted and ignored
 so a client that appends it gets a server rather than an exit code.
 
 The CLI supports `--profile general|style|styleq|uqf`, `--format text|json`,

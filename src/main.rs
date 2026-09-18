@@ -15,9 +15,14 @@ use std::{
 #[command(
     name = "qlinter",
     about = "Lint q source without executing it",
-    version
+    version,
+    // clap's default short form is `-V`. Most people reach for `-v` first and
+    // nothing here means verbose, so both answer.
+    disable_version_flag = true
 )]
 struct Args {
+    #[arg(short = 'v', short_alias = 'V', long, action = clap::ArgAction::Version)]
+    version: (),
     paths: Vec<String>,
     #[arg(long,default_value="text",value_parser=["text","json"])]
     format: String,
