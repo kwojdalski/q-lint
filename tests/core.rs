@@ -141,3 +141,24 @@ fn parameter_rules_for_lists_q_does_accept() {
         );
     }
 }
+
+/// Windows checks files out with CRLF by default, so a rule that is blind to
+/// `\r` reports one thing on the maintainer's machine and another on a user's.
+/// The showcase is the widest q this repository has, which makes it the best
+/// single input to hold both line endings to the same answer.
+#[test]
+fn line_endings_do_not_change_the_findings() {
+    let lf = include_str!("../examples/showcase.q");
+    let crlf = lf.replace('\n', "\r\n");
+    for uqf in [false, true] {
+        let a: Vec<_> = lint(lf, "t.q", uqf)
+            .into_iter()
+            .map(|f| (f.line, f.code))
+            .collect();
+        let b: Vec<_> = lint(&crlf, "t.q", uqf)
+            .into_iter()
+            .map(|f| (f.line, f.code))
+            .collect();
+        assert_eq!(a, b, "CRLF changed the findings (uqf={uqf})");
+    }
+}

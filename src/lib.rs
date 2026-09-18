@@ -779,7 +779,12 @@ pub fn lint(source: &str, path: &str, uqf: bool) -> Vec<Finding> {
     // expression is `sizes[n-1]`, indexing said on purpose - only a literal
     // that ends the statement or bracket is the trap.
     for m in
-        re!(r"(?m)([A-Za-z][A-Za-z0-9_]*)[ \t]+-\d[\w.]*[ \t]*(?:[;\])]|$)").captures_iter(code)
+        // `\r` belongs in the trailing class: with `$` in multiline mode the
+        // anchor sits before the `\n`, so on a CRLF checkout the carriage
+        // return is left between the literal and the anchor and the match is
+        // silently lost. Every file git checks out on Windows is CRLF.
+        re!(r"(?m)([A-Za-z][A-Za-z0-9_]*)[ \t]+-\d[\w.]*[ \t\r]*(?:[;\])]|$)")
+            .captures_iter(code)
     {
         let whole = m.get(0).unwrap();
         let name = &m[1];
