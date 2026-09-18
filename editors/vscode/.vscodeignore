@@ -13,3 +13,6 @@ node_modules/.bin/**
 # Not needed at runtime; they only describe the build.
 package-lock.json
 .vscodeignore
+
+# `server/` is deliberately absent from this list: a platform build puts the
+# matching qlinter there and it must ship.

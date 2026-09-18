@@ -7,6 +7,8 @@
 // and Zed with a comparable amount of their own configuration; nothing in this
 // file is knowledge those editors would have to reimplement.
 import { workspace, window, type ExtensionContext } from "vscode";
+import { chmodSync, existsSync, statSync } from "node:fs";
+import { join } from "node:path";
 import {
   LanguageClient,
   type LanguageClientOptions,
@@ -15,9 +17,37 @@ import {
 
 let client: LanguageClient | undefined;
 
+/// The server this extension was packaged with, if it was packaged with one.
+///
+/// A platform-specific build carries the matching `qlinter` in `server/`, so
+/// the extension works with nothing installed and nothing configured - which
+/// is the whole point, since the commonest failure by far was a binary that
+/// was never on PATH. The platform-neutral build carries none, and falls back
+/// to the setting. An explicit `q-lint.serverPath` always wins: someone who
+/// named a binary meant that one.
+function bundledServer(context: ExtensionContext): string | undefined {
+  const name = process.platform === "win32" ? "qlinter.exe" : "qlinter";
+  const path = join(context.extensionPath, "server", name);
+  if (!existsSync(path)) {
+    return undefined;
+  }
+  // A .vsix is a zip, and the unix executable bit does not reliably survive
+  // the round trip. Restoring it here is cheaper than the support thread that
+  // starts with EACCES.
+  if (process.platform !== "win32" && !(statSync(path).mode & 0o111)) {
+    try {
+      chmodSync(path, 0o755);
+    } catch {
+      // Fall through: the spawn below will report it better than we can.
+    }
+  }
+  return path;
+}
+
 export async function activate(context: ExtensionContext): Promise<void> {
   const settings = workspace.getConfiguration("q-lint");
-  const command = settings.get<string>("serverPath", "qlinter");
+  const configured = settings.get<string>("serverPath", "").trim();
+  const command = configured || bundledServer(context) || "qlinter";
   const profile = settings.get<string>("profile", "general");
 
   const args = ["--lsp", "--profile", profile];
@@ -48,8 +78,10 @@ export async function activate(context: ExtensionContext): Promise<void> {
     // fix, and the commonest cause by far is that qlinter is not on PATH.
     client = undefined;
     window.showErrorMessage(
-      `q-lint: could not start "${command}". Set q-lint.serverPath to the qlinter binary ` +
-        `(cargo build --release leaves it in target/release/qlinter). ${error}`,
+      `q-lint: could not start "${command}". This build of the extension ships no server for ` +
+        `${process.platform}-${process.arch}, so it needs one: install a release archive from ` +
+        `github.com/kwojdalski/q-lint/releases and set q-lint.serverPath to the qlinter ` +
+        `binary, or put it on PATH. ${error}`,
     );
   }
   context.subscriptions.push({ dispose: () => void client?.stop() });

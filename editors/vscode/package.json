@@ -3,7 +3,7 @@
   "displayName": "q-lint",
   "description": "Diagnostics for q/kdb+ source, from the q-lint language server",
   "icon": "icon.png",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "publisher": "wojdalski",
   "license": "MIT",
   "engines": {
@@ -37,8 +37,8 @@
       "properties": {
         "q-lint.serverPath": {
           "type": "string",
-          "default": "qlinter",
-          "markdownDescription": "Path to the `qlinter` binary. Left as `qlinter`, it is looked up on `PATH`."
+          "default": "",
+          "markdownDescription": "Path to the `qlinter` binary. Left empty, the extension uses the server it was packaged with, and falls back to looking up `qlinter` on `PATH` when it was packaged without one."
         },
         "q-lint.profile": {
           "type": "string",

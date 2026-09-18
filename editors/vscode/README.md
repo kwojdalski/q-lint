@@ -12,14 +12,23 @@ a symbol table, and building one means giving up the guarantee.
 
 ## Requirements
 
-The extension is the client only - it needs the `qlinter` binary.
+None, on a platform this extension is built for. macOS (Apple Silicon and
+Intel), Linux x64 and Windows x64 builds carry the matching `qlinter` and run
+with nothing installed and nothing configured.
 
-```sh
-cargo install --path .    # from a clone of the repository
-```
+Anywhere else, the extension needs the server: take an archive from
+[releases](https://github.com/kwojdalski/q-lint/releases), or build one with
+`cargo install --path .` from a clone. Put it on `PATH`, or point
+`q-lint.serverPath` at it.
 
-If `qlinter` is not on your `PATH`, point `q-lint.serverPath` at it. A release
-build leaves it in `target/release/qlinter`.
+Setting `q-lint.serverPath` always wins, bundled server or not - which is how
+to run a build of your own against the extension.
+
+Worth knowing on macOS: an application started from the Dock does not inherit
+the `PATH` from your shell profile, so a binary in `~/.local/bin` is invisible
+to it even though the same command works in a terminal. The bundled server
+sidesteps this; `q-lint.serverPath` with an absolute path is the fix if you
+are using your own.
 
 ## Settings
 

@@ -67,8 +67,24 @@ jobs:
           if-no-files-found: error
 
   extension:
-    name: vsix
+    name: vsix ${{ matrix.vscode || 'any' }}
+    # After the binaries, because each platform build packages the matching
+    # one: an extension that carries its own server is an extension nobody has
+    # to put on PATH, which was the single commonest way this failed.
+    needs: [binaries]
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { vscode: darwin-arm64, target: aarch64-apple-darwin }
+          - { vscode: darwin-x64, target: x86_64-apple-darwin }
+          - { vscode: linux-x64, target: x86_64-unknown-linux-gnu }
+          - { vscode: win32-x64, target: x86_64-pc-windows-msvc }
+          # No target: the platform-neutral build for anything not listed
+          # above. It carries no server and falls back to PATH, which is what
+          # the Marketplace serves a platform it has no build for.
+          - { vscode: "", target: "" }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -76,16 +92,41 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: editors/vscode/package-lock.json
+      - uses: actions/download-artifact@v4
+        if: matrix.target != ''
+        with:
+          name: ${{ matrix.target }}
+          path: server-archive
+      - name: Unpack the server for this platform
+        if: matrix.target != ''
+        run: |
+          set -euo pipefail
+          mkdir -p editors/vscode/server
+          cd server-archive
+          if ls *.zip >/dev/null 2>&1; then
+            unzip -q -o ./*.zip
+          else
+            tar xzf ./*.tar.gz
+          fi
+          # The archive holds a single directory named for the tag and target.
+          found=$(find . -type f \( -name qlinter -o -name qlinter.exe \) | head -1)
+          test -n "$found" || { echo "no qlinter in the archive" >&2; exit 1; }
+          install -m 755 "$found" "../editors/vscode/server/$(basename "$found")"
       - name: Package the VS Code extension
         working-directory: editors/vscode
         run: |
           set -euo pipefail
           npm ci
           npm run compile
-          npx --yes @vscode/vsce package --out "qlinter-${GITHUB_REF_NAME}.vsix"
+          if [ -n "${{ matrix.vscode }}" ]; then
+            npx --yes @vscode/vsce package --target "${{ matrix.vscode }}" \
+              --out "qlinter-${GITHUB_REF_NAME}-${{ matrix.vscode }}.vsix"
+          else
+            npx --yes @vscode/vsce package --out "qlinter-${GITHUB_REF_NAME}.vsix"
+          fi
       - uses: actions/upload-artifact@v4
         with:
-          name: vsix
+          name: vsix-${{ matrix.vscode || 'any' }}
           path: editors/vscode/*.vsix
           if-no-files-found: error
 
@@ -118,7 +159,8 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: vsix
+          pattern: vsix-*
+          merge-multiple: true
           path: vsix
       - uses: actions/setup-node@v4
         with:
@@ -135,4 +177,6 @@ jobs:
             echo "VSCE_PAT is not set - skipping the Marketplace publish." >&2
             exit 0
           fi
+          # Every platform build plus the neutral one, in a single publish so
+          # the Marketplace serves each user the one that matches their machine.
           npx --yes @vscode/vsce publish --packagePath vsix/*.vsix

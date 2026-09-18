@@ -1,3 +1,5 @@
 node_modules/
 out/
 *.vsix
+# Dropped in at package time by the release workflow, never committed.
+server/
