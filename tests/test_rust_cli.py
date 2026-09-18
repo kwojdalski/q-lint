@@ -116,3 +116,42 @@ def test_real_qls():
     )
     assert result.returncode in (0, 1), result.stderr
     assert isinstance(json.loads(result.stdout), list)
+
+
+def test_only_q_files_are_linted_however_the_path_arrives(tmp_path):
+    """`qlinter *` hands over whatever the shell expanded.
+
+    A directory holds a README, a build script and, in at least one real
+    repository, the q interpreter itself. None of those is q source, and the
+    rules say nothing true about them - so the extension decides, whether the
+    path came from a directory walk or from the command line.
+    """
+    (tmp_path / "good.q").write_text("f:{[count] count+1}\n")
+    (tmp_path / "README.md").write_text("Prose mentioning f:{[count] count+1}\n")
+    (tmp_path / "script.py").write_text("x = 1\n")
+    # A binary, which is what broke this: reading it as text used to abort the
+    # whole run, so one unreadable file hid every finding in every other.
+    (tmp_path / "qbinary").write_bytes(b"\x7fELF\x02\x01\x01\x00\xff\xfe\xfd")
+
+    result = run(*sorted(str(p) for p in tmp_path.iterdir()))
+    assert result.returncode in (0, 1), result.stderr
+    assert "did not contain valid UTF-8" not in result.stderr
+    assert "1 file(s)" in result.stdout, result.stdout
+    assert "README.md" not in result.stdout
+    assert "script.py" not in result.stdout
+    assert "good.q" in result.stdout
+
+
+def test_naming_only_non_q_files_says_so(tmp_path):
+    (tmp_path / "README.md").write_text("no q here\n")
+    result = run(str(tmp_path / "README.md"))
+    assert "No .q files among the paths given" in result.stderr, result.stderr
+
+
+def test_an_unreadable_q_file_is_skipped_not_fatal(tmp_path):
+    """One bad file must not hide the findings in the others."""
+    (tmp_path / "fine.q").write_text("f:{[count] count+1}\n")
+    (tmp_path / "broken.q").write_bytes(b"f:{[count] \xff\xfe count+1}\n")
+    result = run(str(tmp_path))
+    assert "broken.q" in result.stderr and "skipped" in result.stderr
+    assert "QF001" in result.stdout, result.stdout

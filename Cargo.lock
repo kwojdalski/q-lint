@@ -233,7 +233,7 @@ dependencies = [
 
 [[package]]
 name = "q-lint-rs"
-version = "0.10.2"
+version = "0.10.3"
 dependencies = [
  "clap",
  "glob",

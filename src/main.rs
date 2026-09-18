@@ -110,6 +110,17 @@ fn config(explicit: Option<&Path>) -> Result<(PathBuf, Vec<glob::Pattern>), Stri
     }
     Ok((cwd, vec![]))
 }
+/// Whether a path names q source.
+///
+/// The extension, and nothing else: this runs before the file is opened, and
+/// a linter that reads a path to decide whether to read it has gained nothing.
+/// `.k` is deliberately absent - k is a different language that happens to
+/// live beside q.
+fn is_q_source(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("q"))
+}
+
 fn absolute(path: &Path) -> PathBuf {
     if let Ok(p) = fs::canonicalize(path) {
         return p;
@@ -205,6 +216,7 @@ fn run(args: Args) -> Result<u8, String> {
     } else {
         let mut files = BTreeSet::new();
         let mut skipped = false;
+        let mut skipped_not_q = false;
         for name in paths {
             let path = Path::new(&name);
             if !path.exists() {
@@ -215,7 +227,17 @@ fn run(args: Args) -> Result<u8, String> {
                 continue;
             }
             if path.is_file() {
-                files.insert(absolute(path));
+                // Only q source, however the path arrived. `qlinter *` makes
+                // every entry in a directory an explicit argument - the shell
+                // expanded it, not the user - and one of them is as likely to
+                // be a README, a Python script or the q interpreter itself as
+                // it is to be q. The rules here describe q and say nothing
+                // true about any of those.
+                if is_q_source(path) {
+                    files.insert(absolute(path));
+                } else {
+                    skipped_not_q = true;
+                }
                 continue;
             }
             if !path.is_dir() {
@@ -249,18 +271,26 @@ fn run(args: Args) -> Result<u8, String> {
                     walk.skip_current_dir();
                     continue;
                 }
-                if p.is_file() && p.extension().is_some_and(|e| e == "q") {
+                if p.is_file() && is_q_source(p) {
                     files.insert(absolute(p));
                 }
             }
         }
         if files.is_empty() && !skipped {
-            return Err("No .q files found".into());
+            return Err(if skipped_not_q {
+                "No .q files among the paths given".into()
+            } else {
+                "No .q files found".to_string()
+            });
         }
         for path in files {
-            let source =
-                fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-            sources.push((path.to_string_lossy().into_owned(), source));
+            // A file that cannot be read as text is reported and passed over.
+            // Aborting here would mean one unreadable file hides every finding
+            // in every other file, which is the opposite of useful.
+            match fs::read_to_string(&path) {
+                Ok(source) => sources.push((path.to_string_lossy().into_owned(), source)),
+                Err(e) => eprintln!("qlinter: {}: {e}, skipped", path.display()),
+            }
         }
     }
     let mut findings = vec![];
