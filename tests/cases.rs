@@ -31,6 +31,7 @@ fn parse(file: &str, text: &str) -> Vec<Case> {
                     "profile:" => {
                         profile = match tokens.next() {
                             Some("uqf") => Profile::Uqf,
+                            Some("styleq") => Profile::StyleQ,
                             Some("general") => Profile::General,
                             _ => Profile::Style,
                         }

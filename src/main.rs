@@ -21,7 +21,7 @@ struct Args {
     paths: Vec<String>,
     #[arg(long,default_value="text",value_parser=["text","json"])]
     format: String,
-    #[arg(long,default_value="general",value_parser=["general","style","uqf"])]
+    #[arg(long,default_value="general",value_parser=["general","style","styleq","uqf"])]
     profile: String,
     #[arg(long, default_value = "<stdin>")]
     stdin_filename: String,
@@ -297,6 +297,7 @@ fn run(args: Args) -> Result<u8, String> {
 fn profile(name: &str) -> Profile {
     match name {
         "style" => Profile::Style,
+        "styleq" => Profile::StyleQ,
         "uqf" => Profile::Uqf,
         _ => Profile::General,
     }

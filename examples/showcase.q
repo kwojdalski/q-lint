@@ -152,6 +152,22 @@ echoed:{[a] b:1; b:b; b}
 / expect-next: QB018
 fixed:1=2
 
+/ ------------------------------------------------------- styleq profile only
+/ .
+/ QS001, QS002 and QS003 fire only with q-lint.profile set to styleq. They
+/ come from the FINOS q coding guidelines rather than from q's behaviour: all
+/ three names below are perfectly good q, and the guidance is about how they
+/ read. The underscore one is widely ignored in practice, which is the reason
+/ the profile is opt-in.
+/ expect-next: QS001
+some_name:1
+
+/ QS002 is demonstrated at the foot of this file: it fires only at root, and
+/ everything here is inside the namespace opened above.
+
+/ expect-next: QS003
+l:3
+
 / QA002: three arguments to a lambda that takes two.
 / expect-next: QA002
 sum2:{[a;b]a+b}[1;2;3]
@@ -548,6 +564,13 @@ literal:{[a;b]a+b}[1;2]
 elided:{[a;b]a+b}[1;]
 column:{[t] select x from t}
 tail:select from trades where sym like "ab*"
+
+/ QS002: a dot that is not a namespace. It fires only at root, so the file
+/ returns there first - inside the `\d .demo` above, the same text names a
+/ sub-namespace, which q creates properly.
+\d .
+/ expect-next: QS002
+myspace.myvar:2
 
 / QE003: the bare slash below opens a block comment that nothing closes,
 / so it swallows the rest of the file - the last line is the only place it

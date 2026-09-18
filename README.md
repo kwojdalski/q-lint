@@ -55,7 +55,7 @@ with [docs/ruff-rules.md](docs/ruff-rules.md) as the reference.
 `qlinter --version` reports the build, and `--stdio` is accepted and ignored
 so a client that appends it gets a server rather than an exit code.
 
-The CLI supports `--profile general|style|uqf`, `--format text|json`,
+The CLI supports `--profile general|style|styleq|uqf`, `--format text|json`,
 `--exclude`, `--config`, stdin (`-`, `--stdin-filename`) and
 `--backend builtin|qls|all` options. The default is builtin.
 `--qls-executable` chooses the separately installed server;
@@ -128,7 +128,7 @@ code --install-extension q-lint-0.2.0.vsix
 
 Two settings: `q-lint.serverPath` (default `qlinter`, looked up on `PATH` —
 point it at `target/release/qlinter` if you have not installed it) and
-`q-lint.profile` (`general`, `style` or `uqf`).
+`q-lint.profile` (`general`, `style`, `styleq` or `uqf`).
 
 ### Other editors
 

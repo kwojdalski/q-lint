@@ -13,7 +13,8 @@ Several codes are written `QF001 QF010`. A case raising a code it did not
 name fails just as loudly as one missing a code it did: the negatives are the
 point, since a linter nobody trusts is one that cried wolf.
 
-`profile: general`, `profile: style` or `profile: uqf` in the header chooses
+`profile: general`, `profile: style`, `profile: styleq` or `profile: uqf` in the
+header chooses
 the rule set. Cases run under `style` unless they say otherwise, since that is
 where most rules live; `general` is the right choice for a case that exists to
 show the default staying quiet.

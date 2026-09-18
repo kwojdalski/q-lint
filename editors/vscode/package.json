@@ -3,7 +3,7 @@
   "displayName": "q-lint",
   "description": "Diagnostics for q/kdb+ source, from the q-lint language server",
   "icon": "icon.png",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "publisher": "wojdalski",
   "license": "MIT",
   "engines": {
@@ -45,10 +45,11 @@
           "enum": [
             "general",
             "style",
+            "styleq",
             "uqf"
           ],
           "default": "general",
-          "markdownDescription": "Which rules to run. `general` reports only what q itself rejects. `style` adds constructs q accepts but almost nobody means. `uqf` adds that repository's own conventions on top of `style`."
+          "markdownDescription": "Which rules to run. `general` reports only what q itself rejects. `style` adds constructs q accepts but almost nobody means. `styleq` adds the conventions published q style guidance states as rules. `uqf` adds that repository's own conventions."
         },
         "q-lint.trace.server": {
           "type": "string",

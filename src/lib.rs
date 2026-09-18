@@ -457,7 +457,9 @@ pub enum Profile {
     /// Adds the constructs q accepts but almost nobody means - a parameter
     /// that shadows a builtin, a filter comparing a column to itself.
     Style,
-    /// Adds another repository's own conventions on top of Style.
+    /// Adds the conventions published q style guidance states as rules.
+    StyleQ,
+    /// Adds another repository's own conventions on top of StyleQ.
     Uqf,
 }
 impl Profile {
@@ -471,6 +473,7 @@ impl Profile {
         match scope {
             "builtin" => true,
             "style" => self != Profile::General,
+            "styleq" => matches!(self, Profile::StyleQ | Profile::Uqf),
             "uqf" => self == Profile::Uqf,
             // qls and python-hook findings arrive from elsewhere; this is not
             // the place that decides whether they ran.
@@ -1373,6 +1376,50 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
         if first.trim_start().starts_with('\\') {
             offset += line.len();
             continue;
+        }
+        // Names, from the FINOS q coding guidelines:
+        //
+        //   "**avoid** underscores `_` in names and expressions - `_` is an
+        //    operator so names containing it can confuse the reader"
+        //
+        //   "don't use `.` in names, as this looks like a namespace but its
+        //    validity is actually a parser bug ... Do `.myspace.myvar`,
+        //    Don't `myspace.myvar`"
+        //
+        //   "`l` never use letter `l`, looks like number `1` in some fonts"
+        //
+        // Assignment targets only: a name being read might be someone else's,
+        // and there is nothing for the reader of this file to act on.
+        if let Some(m) = re!(r"^\s*(\.?[A-Za-z][A-Za-z0-9_.]*)\s*::?(?:[^:=]|$)").captures(line) {
+            let target = m.get(1).unwrap();
+            let text = target.as_str();
+            if text.contains('_') {
+                add(
+                    offset + target.start(),
+                    "QS001",
+                    format!("`{text}` contains `_`, which is also the drop operator"),
+                );
+            }
+            // Only at root. Inside `\d .ns` a dotted name is a sub-namespace -
+            // `i.helper` there is `.ns.i.helper`, which q creates properly -
+            // and the guidance is about the name at root that merely looks
+            // like one.
+            if !namespace && text.trim_start_matches('.').contains('.') && !text.starts_with('.') {
+                add(
+                    offset + target.start(),
+                    "QS002",
+                    format!(
+                        "`{text}` has a dot but does not start with one, so it reads as a namespace it is not"
+                    ),
+                );
+            }
+            if text == "l" {
+                add(
+                    offset + target.start(),
+                    "QS003",
+                    "`l` is hard to tell from `1` in many fonts".into(),
+                );
+            }
         }
         if namespace
             && let Some(m) = re!(r"^([a-z][a-zA-Z0-9_]*)\s*:").captures(line)

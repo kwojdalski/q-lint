@@ -509,5 +509,26 @@
     "category": "types-and-shapes",
     "summary": "Symbol compared with a number or string is a runtime type error",
     "scope": "builtin"
+  },
+  {
+    "code": "QS001",
+    "name": "underscore-in-name",
+    "category": "style-guide",
+    "summary": "Name contains `_`, which is also the drop operator",
+    "scope": "styleq"
+  },
+  {
+    "code": "QS002",
+    "name": "dot-in-name",
+    "category": "style-guide",
+    "summary": "Name has an interior dot but is not a namespace",
+    "scope": "styleq"
+  },
+  {
+    "code": "QS003",
+    "name": "name-l",
+    "category": "style-guide",
+    "summary": "`l` as a name reads as `1`",
+    "scope": "styleq"
   }
 ]

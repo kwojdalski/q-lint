@@ -1,0 +1,20 @@
+=== QS001 profile: styleq | an underscore in a name, which is also the drop operator
+some_name:1
+
+=== clean profile: style | the same name says nothing outside the styleq profile
+some_name:1
+
+=== QS002 profile: styleq | a dot that is not a namespace
+myspace.myvar:1
+
+=== clean profile: styleq | a leading dot is a namespace, which is the spelling the guidance asks for
+.myspace.myvar:1
+
+=== QS003 profile: styleq | `l` reads as `1`
+l:1
+
+=== clean profile: styleq | a name long enough to read
+len:1
+
+=== clean profile: styleq | a name being read rather than assigned is not this file's choice
+r:some_other_lib_call[1]

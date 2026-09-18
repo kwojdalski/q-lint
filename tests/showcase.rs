@@ -5,7 +5,12 @@ use std::collections::BTreeSet;
 #[test]
 fn showcase_reports_exactly_the_marked_lines_in_every_profile() {
     let source = include_str!("../examples/showcase.q");
-    for profile in [Profile::General, Profile::Style, Profile::Uqf] {
+    for profile in [
+        Profile::General,
+        Profile::Style,
+        Profile::StyleQ,
+        Profile::Uqf,
+    ] {
         let mut expected = BTreeSet::new();
         for (i, line) in source.lines().enumerate() {
             if let Some(codes) = line.trim_start().strip_prefix("/ expect-next: ") {
