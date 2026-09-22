@@ -187,6 +187,39 @@ fn closing_a_document_clears_its_diagnostics() {
 }
 
 #[test]
+fn an_undefined_assignment_value_updates_and_clears_while_typing() {
+    let mut server = Server::start();
+    server.initialize();
+    let uri = "file:///tmp/namespace-value.q";
+    server.open(uri, "\\d .example\nf:{[] aa:1; aa}\n\\d .\n");
+    assert!(server.diagnostics_for(uri).is_empty());
+
+    let source = "\\d .example\nf:{[] aa:bb; aa}\n\\d .\n";
+    server.send(json!({"jsonrpc":"2.0","method":"textDocument/didChange",
+        "params":{"textDocument":{"uri":uri,"version":2},
+                  "contentChanges":[{"text":source}]}}));
+    let diagnostics = server.diagnostics_for(uri);
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0]["code"], "QF018");
+    assert_eq!(diagnostics[0]["severity"], 2);
+    assert_eq!(
+        diagnostics[0]["range"],
+        json!({
+            "start":{"line":1,"character":9}, "end":{"line":1,"character":11}
+        })
+    );
+
+    server.send(json!({"jsonrpc":"2.0","method":"textDocument/didChange",
+        "params":{"textDocument":{"uri":uri,"version":3},
+                  "contentChanges":[{"text":source.replace("f:{", "bb:42\nf:{")}]}}));
+    assert!(
+        server.diagnostics_for(uri).is_empty(),
+        "a namespace global must clear the warning without saving or restarting"
+    );
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
 fn a_percent_encoded_uri_reaches_the_rules_as_a_real_path() {
     // Without decoding, a path with a space arrives as %20 and the
     // filename-based rules see a file that does not exist.

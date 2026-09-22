@@ -38,6 +38,7 @@ Arrived at independently rather than ported.
 | `UP` deprecated constructs | **QP002** - the legacy `datetime` type |
 | `EM101` string literal in exception | **QB004** - an overlong thrown message |
 | `F823` local referenced before assignment | **QF014** - in q the assignment makes the name local for the whole lambda, so the read above it finds nothing |
+| `F821` undefined name | **QF018** - a warning rather than an error, and the difference is the language's: Python resolves a global within the module, while q takes them from `\l`, from IPC and from whatever loaded first, so an absent definition here is a suspicion and not a proof |
 
 ## Worth adding
 

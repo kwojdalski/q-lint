@@ -10,7 +10,7 @@
 / with the other findings. The unclosed delimiter lives in syntax-error.q
 / instead: it stops the file being analysed at all and would hide the rest.
 
-/ Coverage: of the 65 rules in the taxonomy, 63 can fire on q source and
+/ Coverage: of the 88 rules in the taxonomy, 86 can fire on q source and
 / every one is marked below or in syntax-error.q. The two that cannot are
 / QF006 (python-hook, no raiser in this build) and QLS001 (external qls
 / server, demonstrated in its own section near the end).
@@ -116,6 +116,11 @@ flag2:{[x] $[x;true;false]}
 / implicit ones out of scope, so q resolves x as a global and throws 'x.
 / expect-next: QF010
 offset:{[base] x+base}
+
+/ QF018: assigning a name reads its value; the source still needs a definition.
+/ A different file could supply it, so this is a possible undefined-name warning.
+/ expect-next: QF018
+unresolved:{[] aa:bb; aa}
 
 / -------------------------------------------------------------- application
 
@@ -696,6 +701,18 @@ unaryCallParens:takesOne(1)
 docMatches:{[folderRoots] folderRoots}
 xFirst:{[x;y] x+y}
 namedLocal:{[p;q] r:p+q; r}
+
+/ QF018 near-misses: a bare read is only suspicious when nothing supplies
+/ the name. Each of the four below is supplied - by a global this file
+/ defines in the same namespace, by one defined further down (q resolves
+/ globals when the function runs, not when it is parsed), by a builtin,
+/ and by a local assigned earlier in the same body.
+suppliedGlobal:1
+readsGlobal:{[] v:suppliedGlobal; v}
+readsGlobalDefinedBelow:{[] v:definedBelow; v}
+definedBelow:2
+readsBuiltin:{[] v:sum; v}
+readsLocal:{[] w:1; v:w; v}
 
 / QS002: a dot that is not a namespace. It fires only at root, so the file
 / returns there first - inside the `\d .demo` above, the same text names a

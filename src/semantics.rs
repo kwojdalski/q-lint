@@ -164,7 +164,7 @@ fn shape(s: &str) -> Option<usize> {
     if re!(r"^-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?[bhijef]?(?:\s+-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?[bhijef]?)*$").is_match(s) {return Some(s.split_whitespace().count());}
     None
 }
-pub fn check(path: &str, code: &str, raw: &str) -> Vec<Finding> {
+pub fn check(path: &str, code: &str, raw: &str, comments: &str) -> Vec<Finding> {
     let mut out = vec![];
     for m in re!(r"((?:`[A-Za-z][A-Za-z0-9_.]*)+)\s*!").captures_iter(code) {
         let start = m.get(0).unwrap();
@@ -384,6 +384,15 @@ pub fn check(path: &str, code: &str, raw: &str) -> Vec<Finding> {
             .entry(qualify(&m[1], ns_at(whole.start())))
             .or_default()
             .push(whole.end());
+    }
+    for (at, name) in multi_assignments(code) {
+        if scope_at(&scopes, at).is_none() {
+            let end = at + code[at..].find(':').unwrap() + 1;
+            globals
+                .entry(qualify(name, ns_at(at)))
+                .or_default()
+                .push(end);
+        }
     }
     // Scopes by the offset they start at. Looking one up by scanning is linear
     // per global and quadratic over a file whose globals are mostly lambdas,
@@ -726,6 +735,52 @@ pub fn check(path: &str, code: &str, raw: &str) -> Vec<Finding> {
                 "QF005",
                 format!("Nested lambda references enclosing local '{name}' without a parameter"),
             ));
+        }
+    }
+    // A bare value read, including `aa:bb`, can expose a misspelled global.
+    // This is deliberately a warning outside the general profile: another
+    // file may supply the name. Loads/dynamic evaluation and qualified names
+    // remain unresolved, as do calls and qSQL, where a name has other roles.
+    if !dynamic {
+        for scope in &scopes {
+            let mut seen = HashSet::new();
+            let mut offset = scope.body;
+            for statement in crate::slots(&scope.direct) {
+                let start = offset;
+                offset += statement.len() + 1;
+                let Some(m) =
+                    re!(r"^\s*(?:[A-Za-z][A-Za-z0-9_]*\s*:{1,2}\s*)?([A-Za-z][A-Za-z0-9_]*)\s*$")
+                        .captures(statement)
+                else {
+                    continue;
+                };
+                let value = m.get(1).unwrap();
+                let name = value.as_str();
+                if comments[start..start + statement.len()].contains(['"', '{'])
+                    || scope.locals.contains(name)
+                    || crate::RESERVED.iter().any(|builtin| builtin == name)
+                    || globals.contains_key(&qualify(name, &scope.namespace))
+                    // QF010 and QF005 already explain these more precisely.
+                    || matches!(name, "x" | "y" | "z")
+                    || std::iter::successors(scope.parent, |&p| scopes[p].parent)
+                        .any(|p| scopes[p].locals.contains(name))
+                    || !seen.insert(name)
+                {
+                    continue;
+                }
+                let mut finding = Finding::at(
+                    path,
+                    raw,
+                    start + value.start(),
+                    "QF018",
+                    format!(
+                        "Possibly undefined name `{name}`: no local or global definition found in this file; \
+                         verify it is supplied before this function runs"
+                    ),
+                );
+                finding.end_column = finding.column.map(|c| c + name.len());
+                out.push(finding);
+            }
         }
     }
     out

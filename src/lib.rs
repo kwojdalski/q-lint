@@ -497,7 +497,7 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
     // line and loads nothing. Reported and then carried on past, because the
     // author still wants to know what else is wrong with a file they are
     // about to find unloadable.
-    let mut out = semantics::check(path, code, source);
+    let mut out = semantics::check(path, code, source, &v.comments);
     if source.starts_with('\u{feff}') {
         out.push(Finding::at(
             path,

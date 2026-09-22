@@ -251,3 +251,119 @@ f:{[a] unusedTmp:1; a}
 
 === clean | rebinding a parameter is ordinary q, not a finding
 f:{[x] x:x where x>0; x}
+
+=== QF018 | assigning an unknown name does not define the source
+f:{[] aa:bb; aa}
+
+=== QF018 | a standalone unknown read is suspicious too
+f:{[] bb; 1}
+
+=== QF018 | returning an unknown name is a read
+f:{[] bb}
+
+=== clean profile: general | unresolved globals are uncertain, not proven runtime errors
+f:{[] aa:bb; aa}
+
+=== clean | a parameter supplies the assignment value
+f:{[bb] aa:bb; aa}
+
+=== clean | an implicit parameter supplies the assignment value
+f:{aa:x; aa}
+
+=== clean | an earlier local supplies the assignment value
+f:{[] bb:1; aa:bb; aa}
+
+=== QF014 | an unset local already has a definite diagnostic
+f:{[] aa:bb; bb:1; aa}
+
+=== clean | a namespace global remains available inside a function
+\d .example
+bb:1
+f:{[] aa:bb; aa}
+\d .
+
+=== clean | a fully qualified definition supplies a namespace global
+.example.bb:1
+\d .example
+f:{[] aa:bb; aa}
+\d .
+
+=== clean | a global defined later is available when the function runs
+\d .example
+f:{[] aa:bb; aa}
+bb:1
+\d .
+
+=== QF018 | the same name in another namespace is not a definition here
+.other.bb:1
+\d .example
+f:{[] aa:bb; aa}
+\d .
+
+=== clean | a global write inside another function supplies the name
+init:{[] bb::1}
+f:{[] aa:bb; aa}
+
+=== clean | literal set defines the global
+`bb set 1
+f:{[] aa:bb; aa}
+
+=== clean | a global multiple assignment defines both names
+(bb;cc):1 2
+f:{[] aa:bb; aa}
+
+=== clean | a builtin is a valid assignment value
+f:{[] aa:sum; aa}
+
+=== clean | a symbol is a literal, not a variable read
+f:{[] aa:`bb; aa}
+
+=== clean | masked strings must not turn an application into a bare read
+f:{[] aa:"J"$bb; aa}
+
+=== clean | qualified references may be supplied by another module
+f:{[] aa:.external.bb; aa}
+
+=== clean | a load can supply globals from another file
+\l globals.q
+f:{[] aa:bb; aa}
+
+=== clean | dynamic evaluation can supply globals
+value "bb:1"
+f:{[] aa:bb; aa}
+
+=== clean | qSQL column aliases are not assignment values in local scope
+f:{[t] select aa:bb from t}
+
+=== QF018 | a query elsewhere in the function does not hide a simple read
+f:{[t] aa:bb; aa; select from t}
+
+=== QF005 | an enclosing local already has a nested-scope diagnostic
+f:{[bb] g:{[] aa:bb; aa}; g[]}
+
+=== QF010 | an undeclared implicit parameter already has a diagnostic
+f:{[] aa:x; aa}
+
+=== QF018 | quoted text in comments does not hide a real read
+f:{[]
+    / a "value" copied from somewhere
+    aa:bb;
+    aa}
+
+=== clean | string application is not a simple value read
+f:{[] "key" bb}
+
+=== clean | applying a nested lambda is not a simple value read
+f:{[] {[v] v} bb}
+
+=== clean | a namespace multiple assignment defines both names
+\d .example
+(bb;cc):1 2
+f:{[] aa:bb; aa}
+\d .
+
+=== QF018 | an unrelated root global does not define a namespace global
+bb:1
+\d .example
+f:{[] aa:bb; aa}
+\d .
