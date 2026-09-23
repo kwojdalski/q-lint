@@ -3,7 +3,7 @@
   "displayName": "q-lint",
   "description": "Syntax colouring and diagnostics for q/kdb+ source, from the q-lint language server",
   "icon": "icon.png",
-  "version": "0.10.4",
+  "version": "0.10.5",
   "publisher": "wojdalski",
   "license": "MIT",
   "engines": {
