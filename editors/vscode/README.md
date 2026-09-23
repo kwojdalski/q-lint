@@ -7,8 +7,26 @@ Diagnostics for q/kdb+ source, as you type, from the
 
 **The linter never executes the source it reads.** That is what makes it safe
 to run on every keystroke, and it is why this extension offers diagnostics and
-nothing else: completion, hover and go-to-definition would need a resolver and
+syntax colouring and nothing else: completion, hover and go-to-definition would need a resolver and
 a symbol table, and building one means giving up the guarantee.
+
+## Syntax colouring
+
+The extension colours q the way VS Code colours Python: a TextMate grammar
+tags each span with a standard scope, so whatever colour theme is active
+paints it. It picks out comments and qdoc tags (`@param name {type}`,
+`@return`, ...), strings and their escapes, symbols and file handles, numbers,
+temporals, nulls and booleans, lambdas with their declared parameters and the
+implicit `x`, `y` and `z`, names assigned a lambda, other assignments, the
+control words and qSQL, the builtins, the `.z`/`.Q`/`.h`/`.j` namespaces,
+system commands, block comments and everything after a closing `\`, and
+`p)` lines as Python.
+
+The grammar is generated, builtins and all, from the name list the rules use:
+
+```sh
+python3 scripts/q_grammar.py > editors/vscode/syntaxes/q.tmLanguage.json
+```
 
 ## Requirements
 

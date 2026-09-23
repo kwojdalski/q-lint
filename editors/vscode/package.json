@@ -1,7 +1,7 @@
 {
   "name": "q-lint",
   "displayName": "q-lint",
-  "description": "Diagnostics for q/kdb+ source, from the q-lint language server",
+  "description": "Syntax colouring and diagnostics for q/kdb+ source, from the q-lint language server",
   "icon": "icon.png",
   "version": "0.10.4",
   "publisher": "wojdalski",
@@ -29,6 +29,16 @@
           ".q"
         ],
         "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "q",
+        "scopeName": "source.q",
+        "path": "./syntaxes/q.tmLanguage.json",
+        "embeddedLanguages": {
+          "meta.embedded.block.python.q": "python"
+        }
       }
     ],
     "configuration": {
