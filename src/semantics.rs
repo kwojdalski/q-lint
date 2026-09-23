@@ -15,12 +15,27 @@ struct Scope {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Convention {
     Camel,
+    Pascal,
     Snake,
     Mixed,
+}
+impl Convention {
+    fn label(self) -> &'static str {
+        match self {
+            Convention::Camel => "camelCase",
+            Convention::Pascal => "PascalCase",
+            Convention::Snake => "snake_case",
+            Convention::Mixed => "mixed",
+        }
+    }
 }
 /// How a name joins its words, judged on its last dotted segment, since a
 /// namespace is usually someone else's. A single word joins nothing, and an
 /// all-capitals name is a constant, so both answer `None`.
+///
+/// Hungarian notation is not among them: `pValue`, `tStat` and `nEpochs` are
+/// what statisticians call those things, and `symEncode` is a verb, so a type
+/// prefix cannot be told from the first word of a camelCase name.
 fn convention(name: &str) -> Option<Convention> {
     let word = name.rsplit('.').next().unwrap_or(name);
     let hump = word
@@ -28,11 +43,11 @@ fn convention(name: &str) -> Option<Convention> {
         .windows(2)
         .any(|w| w[0].is_ascii_lowercase() && w[1].is_ascii_uppercase());
     let joined = word.trim_matches('_').contains('_');
+    let lower_first = word.starts_with(|c: char| c.is_ascii_lowercase());
     match (hump, joined) {
         (true, true) => Some(Convention::Mixed),
-        (true, false) if word.starts_with(|c: char| c.is_ascii_lowercase()) => {
-            Some(Convention::Camel)
-        }
+        (true, false) if lower_first => Some(Convention::Camel),
+        (true, false) => Some(Convention::Pascal),
         (false, true) if !word.bytes().any(|b| b.is_ascii_uppercase()) => Some(Convention::Snake),
         _ => None,
     }
@@ -782,16 +797,12 @@ pub fn check(path: &str, code: &str, raw: &str, comments: &str) -> Vec<Finding> 
             }
         }
     }
-    for scope in &scopes {
-        let statements = statement_view(&scope.direct);
-        for a in assignment.captures_iter(&statements) {
-            let whole = a.get(0).unwrap();
-            if boundary(&statements, whole.start()) && a.get(2).is_none() && !a[1].contains('.') {
-                let at = scope.body + whole.start();
-                chosen.push((at, &code[at..at + a[1].len()]));
-            }
-        }
-    }
+    // Each lambda body and each root line, as the statements it holds, with
+    // the offset it starts at.
+    let mut views: Vec<(usize, String, bool)> = scopes
+        .iter()
+        .map(|scope| (scope.body, statement_view(&scope.direct), false))
+        .collect();
     // The root, one line at a time: `statement_view` blanks a qSQL phrase to
     // the next `;`, and at root a statement ends at the newline instead.
     let mut root = code.as_bytes().to_vec();
@@ -801,15 +812,40 @@ pub fn check(path: &str, code: &str, raw: &str, comments: &str) -> Vec<Finding> 
     let root = crate::flat_filter(std::str::from_utf8(&root).unwrap_or_default());
     let mut offset = 0;
     for line in root.split_inclusive('\n') {
-        let statements = statement_view(line);
-        for a in assignment.captures_iter(&statements) {
+        views.push((offset, statement_view(line), true));
+        offset += line.len();
+    }
+    for (start, statements, at_root) in &views {
+        for a in assignment.captures_iter(statements) {
             let whole = a.get(0).unwrap();
-            if boundary(&statements, whole.start()) {
-                let at = offset + whole.start();
+            if boundary(statements, whole.start())
+                && (*at_root || (a.get(2).is_none() && !a[1].contains('.')))
+            {
+                let at = start + whole.start();
                 chosen.push((at, &code[at..at + a[1].len()]));
             }
         }
-        offset += line.len();
+        // kebab-case is not a spelling q has: `trade-count:5` assigns
+        // `count` and subtracts it from `trade`. Only at the start of a
+        // statement, where nobody writes a subtraction whose right side is
+        // an assignment on purpose.
+        for m in
+            re!(r"(?m)(?:^|;)[ \t]*([A-Za-z][A-Za-z0-9]*(?:-[A-Za-z][A-Za-z0-9_]*)+)[ \t]*:[^:]")
+                .captures_iter(statements)
+        {
+            let name = m.get(1).unwrap();
+            out.push(Finding::at(
+                path,
+                raw,
+                start + name.start(),
+                "QS010",
+                format!(
+                    "`{}` is not a kebab-case name: q reads `-` as subtraction and assigns only `{}`",
+                    name.as_str(),
+                    name.as_str().rsplit('-').next().unwrap_or_default()
+                ),
+            ));
+        }
     }
     chosen.sort();
     let mut seen = HashSet::new();
@@ -831,28 +867,24 @@ pub fn check(path: &str, code: &str, raw: &str, comments: &str) -> Vec<Finding> 
             firsts.push((at, name, convention));
         }
     }
+    // The file's own habit is whichever convention it uses most; on a tie,
+    // whichever it used first.
     let count = |c| firsts.iter().filter(|f| f.2 == c).count();
-    let (camel, snake) = (count(Convention::Camel), count(Convention::Snake));
-    if camel > 0 && snake > 0 {
-        // The file's own habit is whichever it uses more; on a tie, whichever
-        // it used first.
-        let usual = match camel.cmp(&snake) {
-            std::cmp::Ordering::Greater => Convention::Camel,
-            std::cmp::Ordering::Less => Convention::Snake,
-            std::cmp::Ordering::Equal => firsts[0].2,
-        };
-        let (n, usual_name) = match usual {
-            Convention::Camel => (camel, "camelCase"),
-            _ => (snake, "snake_case"),
-        };
-        for &(at, name, _) in firsts.iter().filter(|f| f.2 != usual) {
+    if let Some(&(_, _, usual)) = firsts
+        .iter()
+        .max_by(|a, b| count(a.2).cmp(&count(b.2)).then(b.0.cmp(&a.0)))
+    {
+        let n = count(usual);
+        for &(at, name, found) in firsts.iter().filter(|f| f.2 != usual) {
             out.push(Finding::at(
                 path,
                 raw,
                 at,
                 "QS010",
                 format!(
-                    "`{name}` breaks this file's naming convention: {n} other names here are {usual_name}"
+                    "`{name}` is {}, but {n} other names in this file are {}",
+                    found.label(),
+                    usual.label()
                 ),
             ));
         }

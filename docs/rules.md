@@ -164,7 +164,7 @@ that wants fewer findings narrows in its own configuration.
 | `QS007` | documented-parameter-absent | `@param` names a parameter the lambda does not take | `styleq` and above |
 | `QS008` | implicit-name-out-of-position | `x`, `y` or `z` declared in a position q would not give it | `styleq` and above |
 | `QS009` | implicit-name-as-local | `x`, `y` or `z` used as a local beside named parameters | `styleq` and above |
-| `QS010` | mixed-naming-convention | Names in one file mix camelCase and snake_case | `styleq` and above |
+| `QS010` | mixed-naming-convention | Names in one file mix camelCase, PascalCase and snake_case, or spell one in kebab-case | `styleq` and above |
 
 ## External - findings relayed from another tool
 

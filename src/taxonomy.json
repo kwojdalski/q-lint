@@ -577,7 +577,7 @@
     "code": "QS010",
     "name": "mixed-naming-convention",
     "category": "style-guide",
-    "summary": "Names in one file mix camelCase and snake_case",
+    "summary": "Names in one file mix camelCase, PascalCase and snake_case, or spell one in kebab-case",
     "scope": "styleq"
   },
   {

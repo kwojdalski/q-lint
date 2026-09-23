@@ -94,6 +94,28 @@ lastPrice:0n
 === QS010 QS001 profile: styleq | one name joining words both ways
 load_fooBar:1
 
+=== QS010 profile: styleq | a PascalCase name among camelCase ones
+tradeCount:0
+lastPrice:0n
+TradeBook:1
+
+=== QS010 profile: styleq | on a tie the convention the file used first wins
+TradeBook:1
+tradeCount:0
+
+=== QS010 profile: styleq | kebab-case is subtraction, and assigns only the last word
+trade-count:5
+
+=== QS010 profile: styleq | likewise at the start of a statement in a lambda
+f:{[a] last-price:a; price}
+
+=== clean profile: styleq | a subtraction that assigns nothing is just a subtraction
+r:a-b
+
+=== clean profile: styleq | a capitalised single word joins nothing
+Date:1
+tradeCount:0
+
 === clean profile: styleq | capitals are for constants, which is the convention and not a mix
 MAXROWS:1000
 tradeCount:0
