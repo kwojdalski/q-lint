@@ -17,6 +17,7 @@ enum Convention {
     Camel,
     Pascal,
     Snake,
+    Hungarian,
     Mixed,
 }
 impl Convention {
@@ -25,6 +26,7 @@ impl Convention {
             Convention::Camel => "camelCase",
             Convention::Pascal => "PascalCase",
             Convention::Snake => "snake_case",
+            Convention::Hungarian => "Hungarian notation",
             Convention::Mixed => "mixed",
         }
     }
@@ -33,9 +35,8 @@ impl Convention {
 /// namespace is usually someone else's. A single word joins nothing, and an
 /// all-capitals name is a constant, so both answer `None`.
 ///
-/// Hungarian notation is not among them: `pValue`, `tStat` and `nEpochs` are
-/// what statisticians call those things, and `symEncode` is a verb, so a type
-/// prefix cannot be told from the first word of a camelCase name.
+/// Hungarian notation is decided later, from the whole file: a type prefix
+/// cannot be told from the first word of a camelCase name one name at a time.
 fn convention(name: &str) -> Option<Convention> {
     let word = name.rsplit('.').next().unwrap_or(name);
     let hump = word
@@ -850,8 +851,26 @@ pub fn check(path: &str, code: &str, raw: &str, comments: &str) -> Vec<Finding> 
     chosen.sort();
     let mut seen = HashSet::new();
     chosen.retain(|&(_, name)| seen.insert(name));
-    let mut firsts: Vec<(usize, &str, Convention)> = vec![];
+    let mut firsts: Vec<(usize, &str, Convention, bool)> = vec![];
     for &(at, name) in &chosen {
+        let lambda = re!(r"^\s*::?\s*\{").is_match(&code[at + name.len()..]);
+        let word = name.rsplit('.').next().unwrap_or(name);
+        // Capitals are the guidelines' spelling for a constant, so a function
+        // spelled that way has borrowed the other convention.
+        if lambda
+            && word.len() > 1
+            && word.bytes().any(|b| b.is_ascii_alphabetic())
+            && !word.bytes().any(|b| b.is_ascii_lowercase())
+        {
+            out.push(Finding::at(
+                path,
+                raw,
+                at,
+                "QS010",
+                format!("`{name}` is a function spelled in capitals, which are for constants"),
+            ));
+            continue;
+        }
         let Some(convention) = convention(name) else {
             continue;
         };
@@ -863,19 +882,46 @@ pub fn check(path: &str, code: &str, raw: &str, comments: &str) -> Vec<Finding> 
                 "QS010",
                 format!("`{name}` joins words with both `_` and camelCase"),
             ));
-        } else {
-            firsts.push((at, name, convention));
+            continue;
         }
+        // A type prefix only on data: `symEncode:{...}` is a verb phrase.
+        let hungarian = convention == Convention::Camel
+            && !lambda
+            && re!(r"^(?:str|sym|tbl|tab|dict|lst|list|int|lng|flt|dbl|bool|vec|arr)[A-Z0-9]")
+                .is_match(word);
+        let convention = if hungarian {
+            Convention::Hungarian
+        } else {
+            convention
+        };
+        firsts.push((at, name, convention, lambda));
     }
     // The file's own habit is whichever convention it uses most; on a tie,
     // whichever it used first.
-    let count = |c| firsts.iter().filter(|f| f.2 == c).count();
-    if let Some(&(_, _, usual)) = firsts
-        .iter()
-        .max_by(|a, b| count(a.2).cmp(&count(b.2)).then(b.0.cmp(&a.0)))
-    {
-        let n = count(usual);
-        for &(at, name, found) in firsts.iter().filter(|f| f.2 != usual) {
+    let usual_of = |firsts: &[(usize, &str, Convention, bool)]| {
+        let count = |c| firsts.iter().filter(|f| f.2 == c).count();
+        firsts
+            .iter()
+            .max_by(|a, b| count(a.2).cmp(&count(b.2)).then(b.0.cmp(&a.0)))
+            .map(|f| (f.2, count(f.2)))
+    };
+    // Hungarian notation is the habit only where it plainly is one: at least
+    // three prefixed names, and more than any other spelling. Anywhere else
+    // `dictKeys` and `symList` are ordinary camelCase words, since a type
+    // prefix cannot be told from a first word that happens to name a type.
+    if !matches!(usual_of(&firsts), Some((Convention::Hungarian, n)) if n >= 3) {
+        for f in &mut firsts {
+            if f.2 == Convention::Hungarian {
+                f.2 = Convention::Camel;
+            }
+        }
+    }
+    if let Some((usual, n)) = usual_of(&firsts) {
+        for &(at, name, found, lambda) in firsts.iter().filter(|f| f.2 != usual) {
+            // Functions carry no type prefix even in Hungarian code.
+            if usual == Convention::Hungarian && found == Convention::Camel && lambda {
+                continue;
+            }
             out.push(Finding::at(
                 path,
                 raw,

@@ -60,7 +60,7 @@ Measured over 1296 files of real q, under `--profile styleq`:
 | QS007 `@param` naming a parameter that is absent | 23 | of 982 documented lambdas, so ~2% - the signature changed and the comment did not |
 | QS008 `x`/`y`/`z` declared out of position | 383 | common, and exactly the confusion the guidance describes: KX's own u.q writes `pub:{[t;x] ...}` |
 | QS009 `x`/`y`/`z` as a local beside named parameters | 39 | the other half of the same sentence |
-| QS010 camelCase, PascalCase and snake_case mixed in one file, or a kebab-case name | 5, over 476 files of TorQ, KX's kdb, ml and kdb-tick, FINOS kdb and reQ | files keep to one habit; the five were `sci_ver`-style names in otherwise camelCase files. ALL-CAPS is exempt, being the guidelines' own spelling for constants. Multi-word PascalCase and kebab-case added nothing: neither occurs in the corpus |
+| QS010 names mixing conventions in one file: camelCase, PascalCase, snake_case, Hungarian, kebab-case, a function in capitals | 31, over 476 files of TorQ, KX's kdb, ml and kdb-tick, FINOS kdb and reQ | files mostly keep to one habit. 5 are `sci_ver`-style names in camelCase files; 26 are capitalised functions in three KX files (`csvguess.q`'s `LOAD` beside `cancast`, `adj.q`'s `MSD` beside the table `msd`) - deliberate there, and still two conventions. PascalCase, Hungarian and kebab-case find nothing in this corpus and are kept anyway: a mix nobody has written yet is still a mix. ALL-CAPS data is exempt, being the guidelines' own spelling for constants. Hungarian counts only where at least three names carry a type prefix and outnumber every other spelling, because `pValue`, `tStat` and `symEncode` are words, not prefixes |
 
 These were measured and not written:
 
@@ -69,7 +69,6 @@ These were measured and not written:
 | "a line should rarely exceed 50 characters" | 44% of all lines | q is written densely on purpose and the convention is universally ignored; the rule would be noise at any setting |
 | "use a blank after `;` separators" | 20% of lines | the same |
 | "do not suffix script lines with redundant semicolons" | 44539 | the convention is not observed anywhere; a rule would fire on a third of all lines |
-| Hungarian notation, a type prefix such as `strName` | 29 multi-letter and 35 single-letter candidates | `pValue`, `tStat`, `nEpochs` and `xTrain` are what the words mean, and `symEncode` or `tabToMatrix` is a verb phrase; a type prefix cannot be told from a first word |
 | "avoid passing `` ` `` as an argument, use `[]`" | 859, with false positives | `` `, `` is a null symbol being joined, not a call with no arguments, and telling those apart needs to know the name is a function |
 
 QS001's volume is the reason the profile is opt-in rather than the reason to

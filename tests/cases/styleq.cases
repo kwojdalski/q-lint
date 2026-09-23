@@ -116,6 +116,27 @@ r:a-b
 Date:1
 tradeCount:0
 
+=== QS010 profile: styleq | a function spelled in capitals borrows the constants' convention
+GETDATA:{x}
+MAXROWS:10
+
+=== QS010 profile: styleq | a file written in Hungarian notation, and one name that is not
+strName:"a"
+symList:`a`b
+dictKeys:`a`b!1 2
+tradeCount:0
+
+=== clean profile: styleq | functions carry no type prefix even in Hungarian code
+strName:"a"
+symList:`a`b
+dictKeys:`a`b!1 2
+getTrades:{x}
+
+=== clean profile: styleq | a type-sounding first word in camelCase code is just a word
+dictKeys:`a`b!1 2
+tradeCount:0
+lastPrice:0n
+
 === clean profile: styleq | capitals are for constants, which is the convention and not a mix
 MAXROWS:1000
 tradeCount:0
