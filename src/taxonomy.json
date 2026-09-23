@@ -574,6 +574,13 @@
     "scope": "styleq"
   },
   {
+    "code": "QS010",
+    "name": "mixed-naming-convention",
+    "category": "style-guide",
+    "summary": "Names in one file mix camelCase and snake_case",
+    "scope": "styleq"
+  },
+  {
     "code": "QT016",
     "name": "symbol-math-argument",
     "category": "types-and-shapes",

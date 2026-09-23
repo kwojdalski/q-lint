@@ -164,7 +164,12 @@ fixed:1=2
 / three names below are perfectly good q, and the guidance is about how they
 / read. The underscore one is widely ignored in practice, which is the reason
 / the profile is opt-in.
-/ expect-next: QS001
+/ .
+/ QS010 fires on the same line for a different reason: every other name this
+/ file chooses is camelCase or a single word, so `some_name` is the one a
+/ reader has to remember is spelled the other way. Capitals are left alone,
+/ since the same guidelines reserve them for constants.
+/ expect-next: QS001 QS010
 some_name:1
 
 / QS002 is demonstrated at the foot of this file: it fires only at root, and

@@ -60,6 +60,7 @@ Measured over 1296 files of real q, under `--profile styleq`:
 | QS007 `@param` naming a parameter that is absent | 23 | of 982 documented lambdas, so ~2% - the signature changed and the comment did not |
 | QS008 `x`/`y`/`z` declared out of position | 383 | common, and exactly the confusion the guidance describes: KX's own u.q writes `pub:{[t;x] ...}` |
 | QS009 `x`/`y`/`z` as a local beside named parameters | 39 | the other half of the same sentence |
+| QS010 camelCase and snake_case mixed in one file | 5, over 476 files of TorQ, KX's kdb, ml and kdb-tick, FINOS kdb and reQ | files keep to one habit; the five were `sci_ver`-style names in otherwise camelCase files. ALL-CAPS is exempt, being the guidelines' own spelling for constants |
 
 Three more were measured and not written:
 

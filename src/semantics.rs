@@ -1,4 +1,4 @@
-use crate::{Finding, boundary, matching, signature};
+use crate::{Finding, blank, boundary, matching, signature};
 use std::collections::{HashMap, HashSet};
 
 struct Scope {
@@ -11,6 +11,31 @@ struct Scope {
     params: HashSet<String>,
     locals: HashSet<String>,
     direct: String,
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Convention {
+    Camel,
+    Snake,
+    Mixed,
+}
+/// How a name joins its words, judged on its last dotted segment, since a
+/// namespace is usually someone else's. A single word joins nothing, and an
+/// all-capitals name is a constant, so both answer `None`.
+fn convention(name: &str) -> Option<Convention> {
+    let word = name.rsplit('.').next().unwrap_or(name);
+    let hump = word
+        .as_bytes()
+        .windows(2)
+        .any(|w| w[0].is_ascii_lowercase() && w[1].is_ascii_uppercase());
+    let joined = word.trim_matches('_').contains('_');
+    match (hump, joined) {
+        (true, true) => Some(Convention::Mixed),
+        (true, false) if word.starts_with(|c: char| c.is_ascii_lowercase()) => {
+            Some(Convention::Camel)
+        }
+        (false, true) if !word.bytes().any(|b| b.is_ascii_uppercase()) => Some(Convention::Snake),
+        _ => None,
+    }
 }
 fn qualify(name: &str, ns: &str) -> String {
     if name.starts_with('.') {
@@ -734,6 +759,101 @@ pub fn check(path: &str, code: &str, raw: &str, comments: &str) -> Vec<Finding> 
                 scope.body + m.start(),
                 "QF005",
                 format!("Nested lambda references enclosing local '{name}' without a parameter"),
+            ));
+        }
+    }
+    // One file, one naming convention. The FINOS guidelines ask for functions
+    // "in lower case or camelCase", and the qbists essays for names chosen
+    // consistently; neither picks between `tradeCount` and `trade_count`, but
+    // a file that uses both makes the reader guess which spelling each name
+    // has. ALL-CAPS is left alone: the same guidelines give capitals to
+    // constants, so `MAXROWS` beside `tradeCount` is the convention, not a
+    // departure from it.
+    //
+    // Names this file chooses: parameters, locals and root assignments. A
+    // name being read may be another library's, and a qSQL column may be a
+    // schema's, so neither says anything about this author's habit.
+    let mut chosen: Vec<(usize, &str)> = vec![];
+    for scope in scopes.iter().filter(|s| s.named) {
+        let header = &code[scope.start..scope.body];
+        for m in re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(header) {
+            if scope.params.contains(m.as_str()) {
+                chosen.push((scope.start + m.start(), m.as_str()));
+            }
+        }
+    }
+    for scope in &scopes {
+        let statements = statement_view(&scope.direct);
+        for a in assignment.captures_iter(&statements) {
+            let whole = a.get(0).unwrap();
+            if boundary(&statements, whole.start()) && a.get(2).is_none() && !a[1].contains('.') {
+                let at = scope.body + whole.start();
+                chosen.push((at, &code[at..at + a[1].len()]));
+            }
+        }
+    }
+    // The root, one line at a time: `statement_view` blanks a qSQL phrase to
+    // the next `;`, and at root a statement ends at the newline instead.
+    let mut root = code.as_bytes().to_vec();
+    for scope in scopes.iter().filter(|s| s.parent.is_none()) {
+        blank(&mut root[scope.start..=scope.end.min(code.len() - 1)]);
+    }
+    let root = crate::flat_filter(std::str::from_utf8(&root).unwrap_or_default());
+    let mut offset = 0;
+    for line in root.split_inclusive('\n') {
+        let statements = statement_view(line);
+        for a in assignment.captures_iter(&statements) {
+            let whole = a.get(0).unwrap();
+            if boundary(&statements, whole.start()) {
+                let at = offset + whole.start();
+                chosen.push((at, &code[at..at + a[1].len()]));
+            }
+        }
+        offset += line.len();
+    }
+    chosen.sort();
+    let mut seen = HashSet::new();
+    chosen.retain(|&(_, name)| seen.insert(name));
+    let mut firsts: Vec<(usize, &str, Convention)> = vec![];
+    for &(at, name) in &chosen {
+        let Some(convention) = convention(name) else {
+            continue;
+        };
+        if convention == Convention::Mixed {
+            out.push(Finding::at(
+                path,
+                raw,
+                at,
+                "QS010",
+                format!("`{name}` joins words with both `_` and camelCase"),
+            ));
+        } else {
+            firsts.push((at, name, convention));
+        }
+    }
+    let count = |c| firsts.iter().filter(|f| f.2 == c).count();
+    let (camel, snake) = (count(Convention::Camel), count(Convention::Snake));
+    if camel > 0 && snake > 0 {
+        // The file's own habit is whichever it uses more; on a tie, whichever
+        // it used first.
+        let usual = match camel.cmp(&snake) {
+            std::cmp::Ordering::Greater => Convention::Camel,
+            std::cmp::Ordering::Less => Convention::Snake,
+            std::cmp::Ordering::Equal => firsts[0].2,
+        };
+        let (n, usual_name) = match usual {
+            Convention::Camel => (camel, "camelCase"),
+            _ => (snake, "snake_case"),
+        };
+        for &(at, name, _) in firsts.iter().filter(|f| f.2 != usual) {
+            out.push(Finding::at(
+                path,
+                raw,
+                at,
+                "QS010",
+                format!(
+                    "`{name}` breaks this file's naming convention: {n} other names here are {usual_name}"
+                ),
             ));
         }
     }

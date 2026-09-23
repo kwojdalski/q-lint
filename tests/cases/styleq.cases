@@ -81,3 +81,37 @@ f:{[p;q] r:p+q; r}
 
 === clean profile: styleq | a qSQL column alias is not a local
 f:{[t] select y:a+b from t}
+
+=== QS010 QS001 profile: styleq | a snake_case name in a file that otherwise writes camelCase
+tradeCount:0
+lastPrice:0n
+get_trades:{[t] t}
+
+=== QS010 profile: styleq | a snake_case parameter counts as a name the file chose
+tradeCount:{[symList;start_time] symList,start_time}
+lastPrice:0n
+
+=== QS010 QS001 profile: styleq | one name joining words both ways
+load_fooBar:1
+
+=== clean profile: styleq | capitals are for constants, which is the convention and not a mix
+MAXROWS:1000
+tradeCount:0
+
+=== clean profile: styleq | single words join nothing
+count1:0
+px:1
+tradeCount:2
+
+=== clean profile: styleq | a qSQL column is the schema's name, not this file's
+tradeCount:0
+r:select total_qty:sum qty by sym from trades
+
+=== clean profile: styleq | a table literal's columns likewise
+tradeCount:0
+t:([] some_col:1 2; b:3 4)
+
+=== clean profile: style | the mix says nothing outside the styleq profile
+tradeCount:0
+lastPrice:0n
+get_trades:1
