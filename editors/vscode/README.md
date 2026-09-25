@@ -1,14 +1,22 @@
 # q-lint for VS Code
 
-Diagnostics for q/kdb+ source, as you type, from the
+Diagnostics and selected Quick Fixes for q/kdb+ source, as you type, from the
 [q-lint](https://github.com/kwojdalski/q-lint) language server.
 
 ![the q-lint icon](icon.png)
 
 **The linter never executes the source it reads.** That is what makes it safe
-to run on every keystroke, and it is why this extension offers diagnostics and
-syntax colouring and nothing else: completion, hover and go-to-definition would need a resolver and
-a symbol table, and building one means giving up the guarantee.
+to run on every keystroke, and it is why this extension offers diagnostics,
+Quick Fixes and syntax colouring and nothing else: completion, hover and
+go-to-definition would need a resolver and a symbol table, and building one
+means giving up the guarantee.
+
+Use **Quick Fix** to replace `==` with `=`, `!=` with `<>`, or
+`+=`/`-=`/`*=` with `+:`/`-:`/`*:`, and `&&`/`||` with `&`/`|`.
+It can also remove a leading UTF-8 BOM, and - with `q-lint.profile` set to
+`uqf` - put the brackets back on a call written `f x`, taking in however much
+of the line the application swallowed.
+Other findings are not changed automatically.
 
 ## Syntax colouring
 

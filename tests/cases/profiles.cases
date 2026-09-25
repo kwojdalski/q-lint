@@ -71,3 +71,50 @@ a:1
 === clean profile: uqf | an indented slash does not: q keeps reading code after it
 a:1
   /
+
+=== QP006 profile: uqf | a function this file defines, applied without brackets
+f:{x+1}
+r:f 2
+
+=== clean profile: uqf | the same call with the brackets the convention asks for
+f:{x+1}
+r:f[2]
+
+=== clean | juxtaposition is only a policy question under the uqf profile
+f:{x+1}
+r:f 2
+
+=== clean profile: uqf | a builtin reads better without brackets, and is not this rule's business
+f:{x+1}
+r:count "abc"
+
+=== clean profile: uqf | a name this file never defines as a lambda might be a dictionary or a list
+r:lookup `a
+
+=== clean profile: uqf | a name assigned something other than a lambda is indexed, not called
+t:`a`b!1 2
+r:t `a
+
+=== QP006 profile: uqf | a namespaced function, and the argument runs to the end of the expression
+.ns.scale:{x*2}
+r:.ns.scale 3+4
+
+=== clean profile: uqf | an adverb applies to the function, it does not call it
+f:{x+1}
+r:f each 1 2 3
+
+=== clean profile: uqf | an infix builtin puts the function on the left of an operator
+f:{x+1}
+r:f in `a`b
+
+=== clean profile: uqf | a local of the same name says nothing about the global
+f:{x+1}
+g:{[f] f 2}
+
+=== clean profile: uqf | a system command's argument is not an argument
+d:{x+1}
+\d .ns
+
+=== QP006 profile: uqf | a call at the head of its own line
+step:{x+1}
+step 1

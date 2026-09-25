@@ -1,5 +1,6 @@
 //! Offline q analysis. Unknown expressions are deliberately left unresolved.
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::sync::LazyLock;
 
 macro_rules! re {
@@ -39,6 +40,154 @@ pub struct Finding {
     pub end_column: Option<usize>,
     pub code: String,
     pub category: String,
+}
+
+/// An edit into the original UTF-8 source. `batch_safe` marks edits whose
+/// replacement is sufficiently clear to apply without an editor selection.
+/// The text is owned where a rule builds it from the source - `f x` becomes
+/// `f[x]` with the argument spelled back out - and borrowed where a rule
+/// knows it in advance.
+#[derive(Debug)]
+pub struct Fix {
+    pub start: usize,
+    pub end: usize,
+    pub replacement: Cow<'static, str>,
+    pub title: Cow<'static, str>,
+    pub batch_safe: bool,
+}
+
+/// Where the argument of a prefix application starts.
+///
+/// The first thing after the name that is neither whitespace nor a comment.
+/// It is found in the raw source because `code` blanks a string literal
+/// whole, quotes included - `lg "text"` has nothing left of its argument
+/// there. `comments` is the view that keeps a string and blanks a comment,
+/// so a position non-blank there is something the program will run.
+pub(crate) fn argument_start(raw: &str, comments: &str, after: usize) -> Option<usize> {
+    let at = after + raw.get(after..)?.find(|c: char| !c.is_whitespace())?;
+    (comments.as_bytes().get(at) != Some(&b' ')).then_some(at)
+}
+
+/// Where the argument of a prefix application ends.
+///
+/// q evaluates right to left, so a name applied without brackets takes
+/// everything to its right as its argument: `f x+1` is `f[x+1]`, not
+/// `f[x]+1`. The argument therefore runs to the end of the expression `f`
+/// itself sits in - the next `;` at this bracket depth, the bracket that
+/// closes around it, or the end of the statement. The scan is over the
+/// masked code, where comments and string bodies are blanks, so a `;` inside
+/// either cannot end anything; the trailing trim is over the raw source, so
+/// a string that ends the statement is kept and a comment after it is not.
+pub(crate) fn argument_end(code: &str, comments: &str, raw: &str, from: usize) -> Option<usize> {
+    let bytes = code.as_bytes();
+    let mut depth = 0usize;
+    let mut at = from;
+    while at < bytes.len() {
+        match bytes[at] {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => {
+                if depth == 0 {
+                    break;
+                }
+                depth -= 1;
+            }
+            b';' if depth == 0 => break,
+            // A statement continues onto the next line only where the line is
+            // indented; an unindented one starts a new expression. This is
+            // the rule the dictionary-literal check in `semantics` uses, and
+            // the two have to agree about where an expression stops.
+            b'\n' if depth == 0 && !code[at + 1..].starts_with([' ', '\t']) => break,
+            _ => {}
+        }
+        at += 1;
+    }
+    let (raw, comments) = (raw.as_bytes(), comments.as_bytes());
+    let mut end = at;
+    while end > from && (raw[end - 1].is_ascii_whitespace() || comments[end - 1] == b' ') {
+        end -= 1;
+    }
+    (end > from).then_some(end)
+}
+
+/// The single source of replacements for the CLI and LSP. Findings have UTF-16
+/// positions for editors, while edits use byte offsets to change Rust strings.
+pub fn fix_for(finding: &Finding, source: &str) -> Option<Fix> {
+    let line = finding.line.checked_sub(1)?;
+    let column = finding.column?.checked_sub(1)?;
+    let line_start = if line == 0 {
+        0
+    } else {
+        source.match_indices('\n').nth(line - 1)?.0 + 1
+    };
+    let text = source.get(line_start..)?.split('\n').next()?;
+    let mut units = 0;
+    let mut byte = None;
+    for (at, ch) in text.char_indices() {
+        if units == column {
+            byte = Some(at);
+            break;
+        }
+        units += ch.len_utf16();
+        if units > column {
+            return None;
+        }
+    }
+    let byte = byte.or_else(|| (units == column).then_some(text.len()))?;
+    let start = line_start + byte;
+    let (old, replacement, title, batch_safe): (&str, Cow<str>, Cow<str>, bool) =
+        match finding.code.as_str() {
+            "QE004" => match source.get(start..start + 2)? {
+                "==" => ("==", "=".into(), "Replace `==` with `=`".into(), true),
+                "!=" => ("!=", "<>".into(), "Replace `!=` with `<>`".into(), true),
+                "+=" => ("+=", "+:".into(), "Replace `+=` with `+:`".into(), true),
+                "-=" => ("-=", "-:".into(), "Replace `-=` with `-:`".into(), true),
+                "*=" => ("*=", "*:".into(), "Replace `*=` with `*:`".into(), true),
+                "&&" => ("&&", "&".into(), "Replace `&&` with `&`".into(), false),
+                "||" => ("||", "|".into(), "Replace `||` with `|`".into(), false),
+                _ => return None,
+            },
+            "QE005" if start == 0 && source.starts_with('\u{feff}') => {
+                ("\u{feff}", "".into(), "Remove byte-order mark".into(), true)
+            }
+            // `f x` becomes `f[x]`. The name is what the finding points at;
+            // the argument is everything the application swallows, which the
+            // masked code is the only honest place to measure - a `;` inside
+            // a string or a trailing comment must not end it.
+            "QP006" => {
+                let v = views(source);
+                // A qSQL phrase ends an expression at `from`, `by` or
+                // `where`, and those are words this scan does not read:
+                // `update t:d 0 from rows` would become `d[0 from rows]`.
+                // The finding stands; the rewrite is left to a person.
+                let line_end = source[start..]
+                    .find('\n')
+                    .map_or(source.len(), |at| start + at);
+                if re!(r"\b(?:select|exec|update|delete)\b")
+                    .is_match(&v.code[line_start.min(start)..line_end])
+                {
+                    return None;
+                }
+                let name = re!(r"^\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*")
+                    .find(v.code.get(start..)?)?
+                    .as_str();
+                let argument = argument_start(source, &v.comments, start + name.len())?;
+                let end = argument_end(&v.code, &v.comments, source, argument)?;
+                (
+                    source.get(start..end)?,
+                    format!("{name}[{}]", &source[argument..end]).into(),
+                    format!("Call `{name}` with brackets").into(),
+                    true,
+                )
+            }
+            _ => return None,
+        };
+    Some(Fix {
+        start,
+        end: start + old.len(),
+        replacement,
+        title,
+        batch_safe,
+    })
 }
 impl Finding {
     pub fn new(path: &str, line: usize, code: &str, detail: String) -> Self {
@@ -499,13 +648,15 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
     // about to find unloadable.
     let mut out = semantics::check(path, code, source, &v.comments);
     if source.starts_with('\u{feff}') {
-        out.push(Finding::at(
+        let mut finding = Finding::at(
             path,
             source,
             0,
             "QE005",
             "Byte-order mark: q reports 'char on the first line and will not load the file".into(),
-        ));
+        );
+        finding.end_column = Some(2); // The BOM is one UTF-16 code unit.
+        out.push(finding);
     }
     out.extend(intrinsics::check(path, source, code, &v.comments));
     if let Some(at) = v.open_block {
@@ -519,8 +670,15 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
                 .into(),
         ));
     }
-    let mut add =
-        |at: usize, id: &str, detail: String| out.push(Finding::at(path, source, at, id, detail));
+    let mut add = |at: usize, id: &str, detail: String| {
+        let mut finding = Finding::at(path, source, at, id, detail);
+        // Every QE004 spelling is two ASCII characters. Keep its diagnostic
+        // on the operator so an editor requests the fix for the right one.
+        if id == "QE004" {
+            finding.end_column = finding.column.map(|column| column + 2);
+        }
+        out.push(finding);
+    };
     for brace in code.match_indices('{').map(|(i, _)| i) {
         let sig = signature(code, source, brace);
         let at = brace;

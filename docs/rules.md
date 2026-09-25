@@ -1,6 +1,6 @@
 # Rules
 
-All 89 rules, generated from `src/taxonomy.json` - the same data
+All 90 rules, generated from `src/taxonomy.json` - the same data
 `qlinter --rules` and `qlinter --explain <CODE>` print from. Regenerate with
 `python3 scripts/rules_doc.py > docs/rules.md`; a test fails when this is stale.
 
@@ -68,7 +68,7 @@ that wants fewer findings narrows in its own configuration.
 | `QF015` | foreign-keyword | Keyword from another language resolves as an undefined global | every profile |
 | `QF016` | unused-parameter | Declared parameter the body never reads | `style` and above |
 | `QF017` | unused-local | Local assigned and never read | `style` and above |
-| `QF018` | possibly-undefined-name | Bare value read in a lambda has no local or global definition in this file | `style` and above |
+| `QF018` | possibly-undefined-name | Bare value read has no local or global definition in this file | `style` and above |
 
 ## Application - how many arguments a thing takes and how it is called
 
@@ -151,6 +151,7 @@ that wants fewer findings narrows in its own configuration.
 | `QP002` | datetime-type | Legacy datetime precision | `uqf` |
 | `QP003` | wall-clock-temporal | Wall-clock timestamp where the convention is UTC | `uqf` |
 | `QP005` | mixed-infix-precedence | Unparenthesised * or % mixed with + or - relies on right-to-left order | `uqf` |
+| `QP006` | juxtaposed-application | Function defined in this file applied without brackets | `uqf` |
 
 ## Style guide - conventions from published q guidance
 

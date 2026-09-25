@@ -596,6 +596,23 @@ wall: .z.P
 / expect-next: QP005
 mixed: 2*3+4
 
+/ QP006: `widen` is a function this file defines, applied by writing it
+/ beside its argument. q reads that as widen[3+4]; the brackets the uqf
+/ profile asks for say where the argument ends without the reader having
+/ to apply the right-to-left rule to find out.
+widen:{x*2}
+/ expect-next: QP006
+widened: widen 3+4
+
+/ clean: a builtin beside its argument is how q is meant to read, and
+/ brackets around this one would be noise rather than clarity. `count` is
+/ not the builtin to show it with here - this file redefines it above, and
+/ the rule is right to say so.
+sized: first 1 2 3
+
+/ clean: the same call as above, spelled the way the convention asks.
+doubled: widen[21]
+
 / QP001: the bare slash on the next line opens a block comment that runs
 / to the bare backslash - legal q, and a hazard the uqf profile calls out.
 / expect-next: QP001

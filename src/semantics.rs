@@ -170,6 +170,40 @@ fn scope_at(scopes: &[Scope], at: usize) -> Option<usize> {
         i = scopes[i].parent?;
     }
 }
+
+/// Script expressions end at an outer semicolon or an unindented next line.
+/// Keep bracketed bodies and indented continuations together so a name on a
+/// continuation line is not mistaken for a standalone global read.
+fn top_level_statements<'a>(code: &'a str, raw: &str) -> Vec<(usize, &'a str)> {
+    let mut statements = vec![];
+    let (mut start, mut at, mut depth) = (0, 0, 0);
+    for line in code.split_inclusive('\n') {
+        if depth == 0 && !raw[at..].starts_with([' ', '\t']) {
+            statements.push((start, &code[start..at]));
+            start = at;
+        }
+        if depth == 0 && line.starts_with('\\') {
+            at += line.len();
+            start = at;
+            continue;
+        }
+        for (i, b) in line.bytes().enumerate() {
+            match b {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => depth -= 1,
+                b';' if depth == 0 => {
+                    statements.push((start, &code[start..at + i]));
+                    start = at + i + 1;
+                }
+                _ => {}
+            }
+        }
+        at += line.len();
+    }
+    statements.push((start, &code[start..]));
+    statements
+}
+
 fn shape(s: &str) -> Option<usize> {
     let s = s.trim();
     if re!(r"\n\S").is_match(s) {
@@ -940,45 +974,176 @@ pub fn check(path: &str, code: &str, raw: &str, comments: &str) -> Vec<Finding> 
     // file may supply the name. Loads/dynamic evaluation and qualified names
     // remain unresolved, as do calls and qSQL, where a name has other roles.
     if !dynamic {
-        for scope in &scopes {
-            let mut seen = HashSet::new();
-            let mut offset = scope.body;
-            for statement in crate::slots(&scope.direct) {
-                let start = offset;
-                offset += statement.len() + 1;
-                let Some(m) =
-                    re!(r"^\s*(?:[A-Za-z][A-Za-z0-9_]*\s*:{1,2}\s*)?([A-Za-z][A-Za-z0-9_]*)\s*$")
-                        .captures(statement)
-                else {
-                    continue;
-                };
-                let value = m.get(1).unwrap();
-                let name = value.as_str();
-                if comments[start..start + statement.len()].contains(['"', '{'])
-                    || scope.locals.contains(name)
+        let mut seen = HashSet::new();
+        let function_statements = scopes.iter().enumerate().flat_map(|(index, scope)| {
+            crate::slots(&scope.direct)
+                .into_iter()
+                .scan(scope.body, move |offset, statement| {
+                    let start = *offset;
+                    *offset += statement.len() + 1;
+                    Some((Some(index), start, statement))
+                })
+        });
+        let statements = top_level_statements(code, raw)
+            .into_iter()
+            .map(|(start, statement)| (None, start, statement))
+            .chain(function_statements);
+        for (index, start, statement) in statements {
+            let Some(m) =
+                re!(r"^\s*(?:[A-Za-z][A-Za-z0-9_]*\s*:{1,2}\s*)?([A-Za-z][A-Za-z0-9_]*)\s*$")
+                    .captures(statement)
+            else {
+                continue;
+            };
+            let value = m.get(1).unwrap();
+            let name = value.as_str();
+            let scope = index.map(|i| &scopes[i]);
+            let namespace =
+                scope.map_or_else(|| ns_at(start + value.start()), |s| s.namespace.as_str());
+            let global = qualify(name, namespace);
+            if comments[start..start + statement.len()].contains(['"', '{'])
+                    || scope.is_some_and(|s| s.locals.contains(name))
                     || crate::RESERVED.iter().any(|builtin| builtin == name)
-                    || globals.contains_key(&qualify(name, &scope.namespace))
+                    || globals.contains_key(&global)
                     // QF010 and QF005 already explain these more precisely.
-                    || matches!(name, "x" | "y" | "z")
-                    || std::iter::successors(scope.parent, |&p| scopes[p].parent)
+                    || (scope.is_some() && matches!(name, "x" | "y" | "z"))
+                    || std::iter::successors(scope.and_then(|s| s.parent), |&p| scopes[p].parent)
                         .any(|p| scopes[p].locals.contains(name))
-                    || !seen.insert(name)
-                {
-                    continue;
-                }
-                let mut finding = Finding::at(
-                    path,
-                    raw,
-                    start + value.start(),
-                    "QF018",
-                    format!(
-                        "Possibly undefined name `{name}`: no local or global definition found in this file; \
-                         verify it is supplied before this function runs"
-                    ),
-                );
-                finding.end_column = finding.column.map(|c| c + name.len());
-                out.push(finding);
+                    || !seen.insert((index, global))
+            {
+                continue;
             }
+            let mut finding = Finding::at(
+                path,
+                raw,
+                start + value.start(),
+                "QF018",
+                format!(
+                    "Possibly undefined name `{name}`: no local or global definition found in this file; \
+                         verify it is supplied before this expression runs"
+                ),
+            );
+            finding.end_column = finding.column.map(|c| c + name.len());
+            out.push(finding);
+        }
+    }
+    // Writing a function beside its argument - `f x` where `f[x]` would do -
+    // is valid q, and for a builtin it is how q is meant to be read: `count x`
+    // gains nothing from brackets. For a function this file defines it is a
+    // choice between two spellings of one call, and this repository's
+    // convention is the bracket, which shows where the argument ends without
+    // the reader having to apply q's right-to-left rule. Only a name this file
+    // assigns a lambda is reported: juxtaposition after anything else is
+    // indexing, where brackets would be saying something different about the
+    // code.
+    if !dynamic {
+        // Builtins q accepts infix. `f in x` and `f mod 2` put `f` on the left
+        // of an operator rather than calling it, and `f each x` applies the
+        // adverb to `f` instead of applying `f`. Brackets around what follows
+        // would change the line, not respell it.
+        const INFIX: &[&str] = &[
+            "aj", "aj0", "and", "asof", "bin", "binr", "cor", "cov", "cross", "cut", "div", "each",
+            "except", "ej", "find", "ij", "in", "insert", "inter", "like", "lj", "lsq", "mmu",
+            "mod", "or", "over", "peach", "pj", "prior", "rotate", "scan", "set", "ss", "sublist",
+            "sv", "uj", "union", "upsert", "vs", "wavg", "within", "wsum", "xasc", "xbar", "xcol",
+            "xcols", "xdesc", "xexp", "xgroup", "xkey", "xlog", "xprev", "xrank",
+        ];
+        let lambdas: HashSet<&str> = globals
+            .iter()
+            .filter(|(_, assignments)| {
+                assignments
+                    .iter()
+                    .any(|&at| code[at..].trim_start().starts_with('{'))
+            })
+            .map(|(name, _)| name.as_str())
+            .collect();
+        // Two passes, because the two views disagree about what an argument
+        // looks like. Most arguments are visible in the masked code; a string
+        // literal is not, since `code` blanks it whole - `lg "text"` has only
+        // spaces after the name there - so that one is found in the raw
+        // source and checked back against the views: the name has to be live
+        // code, and the quote has to be blank in both views, which is what
+        // distinguishes a masked string from a comment.
+        let named = re!(
+            "(\\.?[A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z][A-Za-z0-9_]*)*)[ \\t]+([`\"(A-Za-z0-9]|\\.[A-Za-z])"
+        );
+        let mut candidates: Vec<(usize, &str)> = named
+            .captures_iter(code)
+            .map(|m| {
+                let name = m.get(1).unwrap();
+                (name.start(), name.as_str())
+            })
+            .collect();
+        for m in named.captures_iter(raw).filter(|m| &m[2] == "\"") {
+            let name = m.get(1).unwrap();
+            let quote = m.get(2).unwrap().start();
+            if code.get(name.start()..name.end()) == Some(name.as_str())
+                && code.as_bytes()[quote] == b' '
+                && comments.as_bytes()[quote] == b'"'
+            {
+                candidates.push((name.start(), name.as_str()));
+            }
+        }
+        candidates.sort_unstable();
+        candidates.dedup();
+        for (at, bare) in candidates {
+            if !boundary(code, at) {
+                continue;
+            }
+            // A system command is a directive, not an expression: the name
+            // after `\d` is not an argument and `\l` was ruled out above.
+            let line_start = code[..at].rfind('\n').map_or(0, |i| i + 1);
+            if code[line_start..].trim_start().starts_with('\\') {
+                continue;
+            }
+            // Head position only. `x f y` is infix and `sum f x` is a call
+            // whose own argument this rule cannot delimit, so a name is
+            // reported only where it opens the expression it belongs to -
+            // after a separator or an operator, or alone at the left margin.
+            let before = code[..at].trim_end();
+            let head = match before.chars().next_back() {
+                None => true,
+                Some(c) => ";([{:,+-*%&|<>=~!^#$?@".contains(c) || at == line_start,
+            };
+            if !head {
+                continue;
+            }
+            let Some(argument) = crate::argument_start(raw, comments, at + bare.len()) else {
+                continue;
+            };
+            if re!(r"^[A-Za-z][A-Za-z0-9_]*")
+                .find(&code[argument..])
+                .is_some_and(|w| INFIX.contains(&w.as_str()))
+            {
+                continue;
+            }
+            // A local of the same name is a different function, or not a
+            // function at all; either way this file's global says nothing
+            // about it.
+            let scope = scope_at(&scopes, at);
+            if std::iter::successors(scope, |&i| scopes[i].parent)
+                .any(|i| scopes[i].locals.contains(bare))
+            {
+                continue;
+            }
+            let namespace = scope.map_or_else(|| ns_at(at), |i| scopes[i].namespace.as_str());
+            if !lambdas.contains(qualify(bare, namespace).as_str())
+                && !lambdas.contains(format!(".{bare}").as_str())
+            {
+                continue;
+            }
+            let mut finding = Finding::at(
+                path,
+                raw,
+                at,
+                "QP006",
+                format!(
+                    "`{bare}` is a function defined in this file, applied without brackets; \
+                     the convention here is `{bare}[...]`"
+                ),
+            );
+            finding.end_column = finding.column.map(|c| c + bare.chars().count());
+            out.push(finding);
         }
     }
     out

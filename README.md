@@ -78,6 +78,21 @@ The CLI supports `--profile general|style|styleq|uqf`, `--format text|json`,
 `--qls-timeout` bounds a batch, plus at most one second for cleanup.
 The qls server may itself require Python; the Rust builtin backend does not.
 
+To preview mechanical edits, run `qlinter --diff path/to/file.q`; to write
+them, run `qlinter --fix path/to/file.q`. `--fix` re-lints the changed files and
+reports any remaining findings. Batch fixing handles `==`, `!=`, `+=`, `-=`,
+`*=`, a leading UTF-8 BOM, and - under `--profile uqf` - the brackets QP006
+asks for, rewriting `f x` as `f[x]` with whatever the application swallowed.
+The `&&` and `||` replacements remain editor Quick Fixes that you choose
+individually. Both CLI options use the builtin backend (or `--backend all`);
+`--fix` requires file paths rather than stdin.
+
+One pass leaves whatever it could not delimit. A call inside a qSQL phrase is
+not rewritten at all, because `from`, `by` and `where` end an expression there
+and this tool does not parse; and where one juxtaposed call is the argument of
+another, the outer one is bracketed and the inner waits for the next pass.
+Both keep their finding, so nothing is silently dropped.
+
 The same `[tool.q-lint]` exclusion configuration in `pyproject.toml` applies:
 
 ```toml
@@ -110,7 +125,12 @@ qlinter --lsp --profile uqf
 
 It implements `initialize`/`initialized`, `didOpen`/`didChange`/`didSave`/
 `didClose`, `shutdown`/`exit`, and pushes `textDocument/publishDiagnostics`.
-That is the set an editor needs to show squiggles.
+It also offers Quick Fixes through `textDocument/codeAction` for `==` → `=`,
+`!=` → `<>`, `+=`/`-=`/`*=` → `+:`/`-:`/`*:`, and a leading UTF-8 BOM.
+It also fixes `&&` → `&` and `||` → `|` when selected in the editor, and
+`f x` → `f[x]` for QP006 under the uqf profile - where the edit covers the
+whole application, not just the underlined name.
+Other findings remain diagnostic-only.
 
 **The reason it is a server rather than an editor plugin shelling out to the
 CLI**: `didChange` carries the buffer, so what gets linted is what is on

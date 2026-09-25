@@ -150,7 +150,7 @@
     "code": "QF018",
     "name": "possibly-undefined-name",
     "category": "names",
-    "summary": "Bare value read in a lambda has no local or global definition in this file",
+    "summary": "Bare value read has no local or global definition in this file",
     "scope": "style"
   },
   {
@@ -621,5 +621,12 @@
     "category": "types-and-shapes",
     "summary": "ss or ssr with an empty pattern is a length error",
     "scope": "builtin"
+  },
+  {
+    "code": "QP006",
+    "name": "juxtaposed-application",
+    "category": "policy",
+    "summary": "Function defined in this file applied without brackets",
+    "scope": "uqf"
   }
 ]

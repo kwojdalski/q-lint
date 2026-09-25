@@ -1,7 +1,7 @@
 {
   "name": "q-lint",
   "displayName": "q-lint",
-  "description": "Syntax colouring and diagnostics for q/kdb+ source, from the q-lint language server",
+  "description": "Diagnostics, Quick Fixes and syntax colouring for q/kdb+ source, from the q-lint language server",
   "icon": "icon.png",
   "version": "0.10.6",
   "publisher": "wojdalski",

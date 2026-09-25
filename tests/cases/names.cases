@@ -367,3 +367,75 @@ bb:1
 \d .example
 f:{[] aa:bb; aa}
 \d .
+
+=== QF018 | a namespace definition does not supply a misspelled root name
+\d .dasd
+bbb:2;
+\d .
+bb;
+
+=== QF018 | the same spelling in another namespace does not supply a root name
+\d .dasd
+bb:2;
+\d .
+bb;
+
+=== QF018 | a top-level assignment still reads its source
+aa:bb;
+aa;
+
+=== QF018 | a bare root read needs no trailing semicolon
+bb
+
+=== QF018 | a top-level x is not an implicit parameter
+x;
+
+=== clean | a root definition supplies a top-level read
+bb:2;
+bb;
+
+=== clean | a namespace definition supplies a read in that namespace
+\d .dasd
+bb:2;
+bb;
+\d .
+
+=== clean | qualified references remain outside this check
+\d .dasd
+bbb:2;
+\d .
+.dasd.bbb;
+
+=== clean | a multiline expression is not a bare name read
+show
+    bb
+
+=== clean | a multiline bracketed expression is not a bare name read
+r:(
+bb;
+cc)
+
+=== clean | a multiline lambda is checked once in its own scope
+f:{[bb]
+    aa:bb;
+    aa}
+
+=== QF018 | a top-level read after a multiline lambda is checked separately
+f:{[bb]
+    bb}
+bb;
+
+=== clean | text in comments and strings is not a root read
+/ bb;
+"bb;"
+
+=== clean | system commands and their arguments are not q name reads
+\v
+\c 25 80
+
+=== clean | loaded files may supply a root global
+\l globals.q
+bb;
+
+=== clean profile: general | root unresolved names remain uncertain warnings
+bb;

@@ -14,9 +14,9 @@
 //!
 //! SYNCHRONOUS, SINGLE-THREADED, AND NO ASYNC RUNTIME
 //!
-//! tower-lsp is the usual answer and brings tokio with it. This server does
-//! one thing - lint a document and publish the result - and `lint` is measured
-//! in single-digit milliseconds on a whole file, so there is no operation long
+//! tower-lsp is the usual answer and brings tokio with it. This server only
+//! lints and offers code actions; `lint` is measured in single-digit
+//! milliseconds on a whole file, so there is no operation long
 //! enough to be worth yielding for. A request loop that reads, dispatches and
 //! replies in order is the whole design, and it keeps this crate's dependency
 //! tree exactly as it was.
@@ -24,8 +24,8 @@
 //! WHAT IT IMPLEMENTS, AND WHAT IT DELIBERATELY DOES NOT
 //!
 //! initialize/initialized, didOpen/didChange/didSave/didClose, shutdown/exit,
-//! and diagnostics pushed with textDocument/publishDiagnostics. That is the
-//! set an editor needs to show squiggles.
+//! diagnostics pushed with textDocument/publishDiagnostics, and quick fixes
+//! requested with textDocument/codeAction.
 //!
 //! Not here: completion, hover, go-to-definition, formatting. Those need a
 //! resolver and a symbol table this crate does not have - it reads source text
@@ -34,7 +34,7 @@
 //! than not claiming them: an editor that is told a server provides completion
 //! stops offering its own word-based fallback.
 use crate::jsonrpc::{receive, send};
-use q_lint_rs::{Finding, Profile, lint};
+use q_lint_rs::{Finding, Profile, fix_for, lint};
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
@@ -132,6 +132,10 @@ pub fn serve(
                            "params": {"uri": uri, "diagnostics": []}}),
                 )?;
             }
+            ("textDocument/codeAction", Some(id)) => {
+                let actions = code_actions(&params, &docs, profile);
+                send(writer, json!({"id": id, "result": actions}))?;
+            }
 
             // Every other REQUEST gets an error, because a client waiting on a
             // reply that never arrives looks like a hung server.
@@ -147,13 +151,78 @@ pub fn serve(
 
 fn capabilities() -> Value {
     json!({
-        "capabilities": {"textDocumentSync": SYNC_FULL},
+        "capabilities": {"textDocumentSync": SYNC_FULL, "codeActionProvider": true},
         "serverInfo": {"name": "q-lint", "version": env!("CARGO_PKG_VERSION")},
     })
 }
 
 fn uri_of(text_document: &Value) -> String {
     text_document["uri"].as_str().unwrap_or("").to_string()
+}
+
+/// Offer only replacements whose meaning is unambiguous, and verify each
+/// client-supplied diagnostic against the current unsaved buffer. A pending
+/// code-action request can otherwise apply an old fix after another edit.
+fn code_actions(params: &Value, docs: &Documents, profile: Profile) -> Vec<Value> {
+    if let Some(only) = params["context"]["only"].as_array()
+        && !only.iter().any(|kind| {
+            kind.as_str()
+                .is_some_and(|kind| kind == "quickfix" || kind.starts_with("quickfix."))
+        })
+    {
+        return vec![];
+    }
+    let uri = uri_of(&params["textDocument"]);
+    let Some(source) = docs.get(&uri) else {
+        return vec![];
+    };
+    let path = path_of(&uri);
+    if !std::path::Path::new(&path)
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("q"))
+    {
+        return vec![];
+    }
+    let Some(context) = params["context"]["diagnostics"].as_array() else {
+        return vec![];
+    };
+    let mut actions = vec![];
+    for finding in lint(source, &path, profile)
+        .into_iter()
+        .filter(|f| matches!(f.code.as_str(), "QE004" | "QE005" | "QP006"))
+    {
+        let current = diagnostic(&finding, source);
+        let Some(client_diagnostic) = context.iter().find(|d| {
+            d["code"] == current["code"]
+                && d["range"]["start"] == current["range"]["start"]
+                && d["message"] == current["message"]
+        }) else {
+            continue;
+        };
+        let Some(fix) = fix_for(&finding, source) else {
+            continue;
+        };
+        // The edit's range comes from the fix, not from the diagnostic. The
+        // two coincide for an operator swapped in place, but `f x` becomes
+        // `f[x]` by replacing the whole application while the diagnostic
+        // underlines only the name.
+        let range = json!({
+            "start": position_at(source, fix.start),
+            "end": position_at(source, fix.end),
+        });
+        let mut changes = serde_json::Map::new();
+        changes.insert(
+            uri.clone(),
+            json!([{"range": range, "newText": fix.replacement}]),
+        );
+        actions.push(json!({
+            "title": fix.title,
+            "kind": "quickfix",
+            "diagnostics": [client_diagnostic],
+            "edit": {"changes": changes},
+        }));
+    }
+    actions
 }
 
 /// Lint one document and push its diagnostics.
@@ -232,6 +301,14 @@ fn severity(name: &str) -> i64 {
         "hint" => 4,
         _ => 2,
     }
+}
+
+/// A byte offset as the line and UTF-16 character an editor addresses it by.
+fn position_at(source: &str, byte: usize) -> Value {
+    let before = &source[..byte.min(source.len())];
+    let line = before.matches('\n').count();
+    let start = before.rfind('\n').map_or(0, |at| at + 1);
+    json!({"line": line, "character": utf16_len(&before[start..])})
 }
 
 fn line_text(source: &str, line: usize) -> &str {

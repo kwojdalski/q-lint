@@ -41,10 +41,10 @@ scopes, each with the byte range of its body, its parameters and the names
 assigned inside it, and answers questions like "is this name a local of an
 enclosing lambda that q will not let the inner one see".
 
-`QF018` checks simple value reads inside lambdas: `aa:bb`, `bb;`, and a bare
-return value. It warns when the name is neither a parameter/local, a builtin,
-nor a global defined in the same file and namespace. The warning belongs to
-`style` and above because another file may supply the global. Qualified
+`QF018` checks simple value reads at the top level and inside lambdas: `aa:bb`,
+`bb;`, and a bare return value. It warns when the name is neither a
+parameter/local, a builtin, nor a global defined in the same file and namespace.
+The warning belongs to `style` and above because another file may supply the global. Qualified
 references and files using loads or dynamic evaluation are left unresolved.
 Calls, compound expressions and qSQL column references are outside this check.
 

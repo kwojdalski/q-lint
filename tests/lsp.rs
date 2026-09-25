@@ -91,6 +91,17 @@ impl Server {
             "params":{"textDocument":{"uri":uri,"languageId":"q","version":1,"text":text}}}));
     }
 
+    fn code_actions(&mut self, uri: &str, diagnostics: &[Value]) -> Vec<Value> {
+        self.send(
+            json!({"jsonrpc":"2.0","id":20,"method":"textDocument/codeAction",
+            "params":{"textDocument":{"uri":uri},"range":diagnostics[0]["range"],
+                      "context":{"diagnostics":diagnostics}}}),
+        );
+        let reply = self.receive();
+        assert_eq!(reply["id"], 20);
+        reply["result"].as_array().cloned().unwrap()
+    }
+
     fn shutdown_and_exit(&mut self) -> i32 {
         self.send(json!({"jsonrpc":"2.0","id":99,"method":"shutdown"}));
         let reply = self.receive();
@@ -111,7 +122,166 @@ fn initialize_announces_full_document_sync() {
     let mut server = Server::start();
     let reply = server.initialize();
     assert_eq!(reply["result"]["capabilities"]["textDocumentSync"], 1);
+    assert_eq!(reply["result"]["capabilities"]["codeActionProvider"], true);
     assert_eq!(reply["result"]["serverInfo"]["name"], "q-lint");
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn quick_fixes_replace_foreign_operators_at_exact_utf16_positions() {
+    let mut server = Server::start();
+    server.initialize();
+    let uri = "file:///tmp/fixes.q";
+    // The emoji is two UTF-16 code units. An edit based on byte or Unicode
+    // scalar offsets would replace the wrong characters in this line.
+    server.open(uri, "\"😀\"; a:1==1; b:1!=2; c:1&&2\n");
+    let diagnostics = server.diagnostics_for(uri);
+    let operators: Vec<Value> = diagnostics
+        .iter()
+        .filter(|d| d["code"] == "QE004")
+        .cloned()
+        .collect();
+    assert_eq!(operators.len(), 3, "{diagnostics:?}");
+    let equality_diagnostic = operators
+        .iter()
+        .find(|d| d["range"]["start"]["character"] == 9)
+        .unwrap();
+    assert_eq!(
+        equality_diagnostic["range"],
+        json!({"start":{"line":0,"character":9},"end":{"line":0,"character":11}})
+    );
+    assert_eq!(
+        server
+            .code_actions(uri, std::slice::from_ref(equality_diagnostic))
+            .len(),
+        1
+    );
+    let actions = server.code_actions(uri, &operators);
+    assert_eq!(actions.len(), 3, "{actions:?}");
+    let equality = actions
+        .iter()
+        .find(|a| a["edit"]["changes"][uri][0]["newText"] == "=")
+        .unwrap();
+    let inequality = actions
+        .iter()
+        .find(|a| a["edit"]["changes"][uri][0]["newText"] == "<>")
+        .unwrap();
+    let conjunction = actions
+        .iter()
+        .find(|a| a["edit"]["changes"][uri][0]["newText"] == "&")
+        .unwrap();
+    assert_eq!(equality["kind"], "quickfix");
+    assert_eq!(
+        equality["edit"]["changes"][uri][0]["range"],
+        json!({"start":{"line":0,"character":9},"end":{"line":0,"character":11}})
+    );
+    assert_eq!(
+        inequality["edit"]["changes"][uri][0]["range"],
+        json!({"start":{"line":0,"character":17},"end":{"line":0,"character":19}})
+    );
+    assert_eq!(
+        conjunction["edit"]["changes"][uri][0]["range"],
+        json!({"start":{"line":0,"character":25},"end":{"line":0,"character":27}})
+    );
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn logical_operator_fixes_clear_the_diagnostics_after_use() {
+    let mut server = Server::start();
+    server.initialize();
+    let uri = "file:///tmp/logical-fixes.q";
+    server.open(uri, "a:1b; b:0b; r:a&&b; s:a||b\n");
+    let diagnostics = server.diagnostics_for(uri);
+    let operators: Vec<Value> = diagnostics
+        .iter()
+        .filter(|d| d["code"] == "QE004")
+        .cloned()
+        .collect();
+    assert_eq!(operators.len(), 2, "{diagnostics:?}");
+    let actions = server.code_actions(uri, &operators);
+    assert_eq!(actions.len(), 2, "{actions:?}");
+    assert_eq!(
+        actions
+            .iter()
+            .map(|a| a["edit"]["changes"][uri][0]["newText"].as_str().unwrap())
+            .collect::<std::collections::HashSet<_>>(),
+        std::collections::HashSet::from(["&", "|"])
+    );
+    server.send(json!({"jsonrpc":"2.0","method":"textDocument/didChange",
+        "params":{"textDocument":{"uri":uri,"version":2},
+                  "contentChanges":[{"text":"a:1b; b:0b; r:a&b; s:a|b\n"}]}}));
+    assert!(server.diagnostics_for(uri).is_empty());
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn quick_fixes_ignore_stale_and_non_fixable_diagnostics() {
+    let mut server = Server::start();
+    server.initialize();
+    let uri = "file:///tmp/stale-fix.q";
+    server.open(uri, "a:1==1\n");
+    let old = server.diagnostics_for(uri);
+    assert_eq!(server.code_actions(uri, &old).len(), 1);
+    server.send(json!({"jsonrpc":"2.0","method":"textDocument/didChange",
+        "params":{"textDocument":{"uri":uri,"version":2},
+                  "contentChanges":[{"text":"a:1=1\nmissing;\n"}]}}));
+    let current = server.diagnostics_for(uri);
+    assert!(server.code_actions(uri, &old).is_empty());
+    assert!(server.code_actions(uri, &current).is_empty());
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn quick_fixes_convert_assignment_operators() {
+    let mut server = Server::start();
+    server.initialize();
+    let uri = "file:///tmp/assignment-fixes.q";
+    server.open(uri, "a:1; a+=2; a-=1; a*=3\n");
+    let diagnostics = server.diagnostics_for(uri);
+    let operators: Vec<Value> = diagnostics
+        .iter()
+        .filter(|d| d["code"] == "QE004")
+        .cloned()
+        .collect();
+    assert_eq!(operators.len(), 3, "{diagnostics:?}");
+    let actions = server.code_actions(uri, &operators);
+    assert_eq!(actions.len(), 3, "{actions:?}");
+    for (character, replacement) in [(6, "+:"), (12, "-:"), (18, "*:")] {
+        let action = actions
+            .iter()
+            .find(|a| a["edit"]["changes"][uri][0]["newText"] == replacement)
+            .unwrap();
+        assert_eq!(
+            action["edit"]["changes"][uri][0]["range"],
+            json!({"start":{"line":0,"character":character},
+                   "end":{"line":0,"character":character+2}})
+        );
+    }
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn quick_fix_removes_only_the_leading_bom() {
+    let mut server = Server::start();
+    server.initialize();
+    let uri = "file:///tmp/bom-fix.q";
+    server.open(uri, "\u{feff}a:1\n");
+    let diagnostics = server.diagnostics_for(uri);
+    let bom = diagnostics.iter().find(|d| d["code"] == "QE005").unwrap();
+    assert_eq!(
+        bom["range"],
+        json!({"start":{"line":0,"character":0},"end":{"line":0,"character":1}})
+    );
+    let actions = server.code_actions(uri, std::slice::from_ref(bom));
+    assert_eq!(actions.len(), 1);
+    assert_eq!(actions[0]["title"], "Remove byte-order mark");
+    assert_eq!(actions[0]["edit"]["changes"][uri][0]["newText"], "");
+    assert_eq!(actions[0]["edit"]["changes"][uri][0]["range"], bom["range"]);
+    server.send(json!({"jsonrpc":"2.0","method":"textDocument/didChange",
+        "params":{"textDocument":{"uri":uri,"version":2},
+                  "contentChanges":[{"text":"a:1\n"}]}}));
+    assert!(server.diagnostics_for(uri).is_empty());
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 
@@ -228,6 +398,30 @@ fn a_percent_encoded_uri_reaches_the_rules_as_a_real_path() {
     server.open("file:///tmp/a%20folder/probe.q", RESERVED_PARAM);
     let diagnostics = server.diagnostics_for("file:///tmp/a%20folder/probe.q");
     assert_eq!(diagnostics.len(), 1, "the document is still linted");
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn a_namespace_definition_does_not_hide_an_undefined_root_read() {
+    let mut server = Server::start();
+    server.initialize();
+    let uri = "file:///tmp/root-value.q";
+    let source = "\\d .dasd\nbbb:2;\n\\d .\nbb;\n";
+    server.open(uri, source);
+    let diagnostics = server.diagnostics_for(uri);
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0]["code"], "QF018");
+    assert_eq!(
+        diagnostics[0]["range"],
+        json!({
+            "start":{"line":3,"character":0}, "end":{"line":3,"character":2}
+        })
+    );
+
+    server.send(json!({"jsonrpc":"2.0","method":"textDocument/didChange",
+        "params":{"textDocument":{"uri":uri,"version":2},
+                  "contentChanges":[{"text":source.replace("\\d .\n", "\\d .\nbb:2;\n")}]}}));
+    assert!(server.diagnostics_for(uri).is_empty());
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 
@@ -386,4 +580,36 @@ fn only_q_files_are_linted() {
         );
         server.shutdown_and_exit();
     }
+}
+
+/// A Quick Fix for QP006 has to replace the whole application. The
+/// diagnostic underlines only the name, so an edit taking its range would
+/// leave `f[x] x` behind - which is why the range comes from the fix.
+#[test]
+fn the_bracket_quick_fix_covers_the_whole_application() {
+    let mut server = Server::start();
+    let uri = "file:///tmp/calls.q";
+    server.open(uri, "f:{x+1}\nr:f 3+4\n");
+    let diagnostics = server.diagnostics_for(uri);
+    let juxtaposed: Vec<Value> = diagnostics
+        .iter()
+        .filter(|d| d["code"] == "QP006")
+        .cloned()
+        .collect();
+    assert_eq!(juxtaposed.len(), 1, "{diagnostics:?}");
+    // The underline is the name alone.
+    assert_eq!(
+        juxtaposed[0]["range"],
+        json!({"start":{"line":1,"character":2},"end":{"line":1,"character":3}})
+    );
+    let actions = server.code_actions(uri, &juxtaposed);
+    assert_eq!(actions.len(), 1, "{actions:?}");
+    assert_eq!(actions[0]["kind"], "quickfix");
+    assert_eq!(actions[0]["title"], "Call `f` with brackets");
+    assert_eq!(actions[0]["edit"]["changes"][uri][0]["newText"], "f[3+4]");
+    // The edit is `f 3+4`, every character of it.
+    assert_eq!(
+        actions[0]["edit"]["changes"][uri][0]["range"],
+        json!({"start":{"line":1,"character":2},"end":{"line":1,"character":7}})
+    );
 }

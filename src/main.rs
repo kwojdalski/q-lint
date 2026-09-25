@@ -2,7 +2,7 @@ mod jsonrpc;
 mod lsp;
 mod qls;
 use clap::Parser;
-use q_lint_rs::{Profile, RULES, lint};
+use q_lint_rs::{Profile, RULES, fix_for, lint};
 use std::{
     collections::BTreeSet,
     fs,
@@ -38,6 +38,12 @@ struct Args {
     rules: bool,
     #[arg(long)]
     explain: Option<String>,
+    /// Apply mechanical fixes to files, then report remaining findings.
+    #[arg(long, conflicts_with = "diff")]
+    fix: bool,
+    /// Preview mechanical fixes without changing files.
+    #[arg(long, conflicts_with = "fix")]
+    diff: bool,
     #[arg(long,default_value="builtin",value_parser=["builtin","qls","all"])]
     backend: String,
     #[arg(long, default_value = "qls")]
@@ -45,7 +51,7 @@ struct Args {
     #[arg(long, default_value = "30")]
     qls_timeout: f64,
     /// Run as a language server on stdin/stdout instead of linting paths.
-    #[arg(long, conflicts_with_all = ["paths", "rules", "explain"])]
+    #[arg(long, conflicts_with_all = ["paths", "rules", "explain", "fix", "diff"])]
     lsp: bool,
     /// Colour the text output: `auto` (a terminal, and NO_COLOR unset),
     /// `always`, or `never`.
@@ -165,6 +171,9 @@ fn run(args: Args) -> Result<u8, String> {
         );
     }
     if args.rules || args.explain.is_some() {
+        if args.fix || args.diff {
+            return Err("--fix and --diff require q source paths, not --rules or --explain".into());
+        }
         let entries: Vec<_> = RULES
             .iter()
             .filter(|r| args.explain.as_ref().is_none_or(|code| r.code == *code))
@@ -190,6 +199,12 @@ fn run(args: Args) -> Result<u8, String> {
     if !args.qls_timeout.is_finite() || args.qls_timeout <= 0.0 || args.qls_timeout > 1e9 {
         return Err("--qls-timeout must be positive, finite, and at most 1e9 seconds".into());
     }
+    if (args.fix || args.diff) && args.backend == "qls" {
+        return Err("--fix and --diff require the builtin backend".into());
+    }
+    if args.diff && args.format == "json" {
+        return Err("--diff cannot be combined with --format json".into());
+    }
     let (root, mut patterns) = config(args.config.as_deref())?;
     for p in &args.exclude {
         patterns.push(glob::Pattern::new(p.trim_end_matches('/')).map_err(|e| e.to_string())?);
@@ -201,6 +216,9 @@ fn run(args: Args) -> Result<u8, String> {
     };
     let mut sources = vec![];
     if paths.iter().any(|p| p == "-") {
+        if args.fix {
+            return Err("--fix needs file paths; use --diff to preview stdin".into());
+        }
         if paths.len() != 1 {
             return Err("Stdin (-) must be the only input".into());
         }
@@ -293,6 +311,47 @@ fn run(args: Args) -> Result<u8, String> {
             }
         }
     }
+    if args.fix || args.diff {
+        let mut fixed = 0;
+        let mut changed_files = 0;
+        for (path, source) in &mut sources {
+            let mut edits: Vec<_> = lint(source, path, profile(&args.profile))
+                .iter()
+                .filter_map(|finding| fix_for(finding, source))
+                .filter(|fix| fix.batch_safe)
+                .collect();
+            edits.sort_by_key(|fix| (fix.start, fix.end));
+            let mut selected = vec![];
+            let mut end = 0;
+            for edit in edits {
+                if edit.start < end || edit.end > source.len() {
+                    continue;
+                }
+                end = edit.end;
+                selected.push(edit);
+            }
+            if selected.is_empty() {
+                continue;
+            }
+            let mut updated = source.clone();
+            for edit in selected.iter().rev() {
+                updated.replace_range(edit.start..edit.end, &edit.replacement);
+            }
+            if args.diff {
+                print_diff(path, source, &updated);
+            } else {
+                fs::write(path.as_str(), &updated).map_err(|e| format!("{path}: {e}"))?;
+                *source = updated;
+            }
+            fixed += selected.len();
+            changed_files += 1;
+        }
+        if args.diff {
+            eprintln!("qlinter: {fixed} fix(es) available in {changed_files} file(s)");
+            return Ok(u8::from(fixed > 0));
+        }
+        eprintln!("qlinter: fixed {fixed} finding(s) in {changed_files} file(s)");
+    }
     let mut findings = vec![];
     if args.backend != "qls" {
         for (path, source) in &sources {
@@ -359,6 +418,17 @@ fn run(args: Args) -> Result<u8, String> {
     Ok(u8::from(findings.iter().any(|f| {
         matches!(f.severity.as_str(), "error" | "warning")
     })))
+}
+
+/// Zero-context unified diff. Fixes never add or remove a newline, so old and
+/// new lines align and each changed line can be shown as a single hunk.
+fn print_diff(path: &str, before: &str, after: &str) {
+    println!("--- a/{path}\n+++ b/{path}");
+    for (index, (old, new)) in before.split('\n').zip(after.split('\n')).enumerate() {
+        if old != new {
+            println!("@@ -{0},1 +{0},1 @@\n-{old}\n+{new}", index + 1);
+        }
+    }
 }
 /// The `--profile` flag, as the rule set it selects. clap has already refused
 /// anything not in the list, so the fallback is unreachable rather than a
