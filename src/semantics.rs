@@ -284,7 +284,7 @@ pub fn check(path: &str, code: &str, raw: &str, comments: &str) -> Vec<Finding> 
     // least two items, or a parenthesised list. `shape` decides the length of
     // each; this pattern only has to find them.
     for m in re!(
-        r"(?P<l>(?:`[A-Za-z0-9_.]*){2,}|-?\d[\w.]*(?:\s+-?\d[\w.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*;[^()]*\))\s*(?P<op><>|<=|>=|[+*%&|=<>-])\s*(?P<r>(?:`[A-Za-z0-9_.]*){2,}|-?\d[\w.]*(?:\s+-?\d[\w.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*;[^()]*\))"
+        r"(?P<l>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[\w.]*[eE][+-])?[\w.]*(?:\s+-?\d(?:[\w.]*[eE][+-])?[\w.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*;[^()]*\))\s*(?P<op><>|<=|>=|[+*%&|=<>-])\s*(?P<r>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[\w.]*[eE][+-])?[\w.]*(?:\s+-?\d(?:[\w.]*[eE][+-])?[\w.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*;[^()]*\))"
     )
     .captures_iter(code)
     {
@@ -293,7 +293,17 @@ pub fn check(path: &str, code: &str, raw: &str, comments: &str) -> Vec<Finding> 
         let negative = op.as_str() == "-"
             && code[..op.start()].ends_with(char::is_whitespace)
             && !code[op.end()..].starts_with(char::is_whitespace);
+        // `9e-08` is one float in scientific notation, not `9e` minus `08`.
+        // The operand pattern prefers to swallow the exponent, but where the
+        // rest of the line offers no other infix it will back off and leave
+        // the sign looking like one. A digit either side of an `e` says it is
+        // not.
+        let exponent = matches!(op.as_str(), "-" | "+")
+            && code[..op.start()].ends_with(['e', 'E'])
+            && code[..op.start() - 1].ends_with(|c: char| c.is_ascii_digit() || c == '.')
+            && code[op.end()..].starts_with(|c: char| c.is_ascii_digit());
         if negative
+            || exponent
             || !boundary(code, whole.start())
             || code[whole.end()..].starts_with(|c: char| c.is_alphanumeric() || "_.`".contains(c))
         {

@@ -84,6 +84,18 @@ r:1 2 3 - 1 2
 === clean | minus with a space before and none after is a negative literal
 r:1 2 3 -1 2
 
+=== clean | a negative exponent is part of the float, not an infix minus
+r:0.01 0.558313 9e-08 0.3 0.4 0.5
+
+=== clean | nor is a positive one
+r:1.5e+10 2.5e-3 3e4
+
+=== clean | scientific notation either side of an infix, at equal lengths
+r:1e-3 2e-3=3e-3 4e-3
+
+=== QT006 | a mismatch is still a mismatch when an operand uses an exponent
+r:1 2 9e-08+4 5
+
 === clean | same length
 r:1 2 3+4 5 6
 
