@@ -93,14 +93,21 @@ and this tool does not parse; and where one juxtaposed call is the argument of
 another, the outer one is bracketed and the inner waits for the next pass.
 Both keep their finding, so nothing is silently dropped.
 
-The same `[tool.q-lint]` exclusion configuration in `pyproject.toml` applies:
+The same `[tool.q-lint]` configuration in `pyproject.toml` applies:
 
 ```toml
 [tool.q-lint]
 exclude = ["torq/*", "generated/"]
+ignore = ["QS001"]
 ```
 
-Exclusions apply before a file is read or sent to qls. Diagnostics carry a
+Exclusions apply before a file is read or sent to qls. `ignore` drops findings
+with those diagnostic codes - from the report, from `--fix` and `--diff`, and
+from the language server, which reads the same file from the directory it is
+started in. It is for a rule a project has decided against, such as QS001 in a
+codebase whose names are snake_case. `--ignore CODE` (repeatable) adds to it
+for one run. A code no rule has is refused, so a typo cannot quietly ignore
+nothing. Diagnostics carry a
 code and a category; `qlinter --rules` lists them all and `qlinter --explain
 QF005` describes one. Exit codes are 0 (no error or warning), 1 (findings) and
 2 (input or server failure).

@@ -58,6 +58,7 @@ pub fn serve(
     reader: &mut impl BufRead,
     writer: &mut impl Write,
     profile: Profile,
+    ignore: &[String],
 ) -> Result<u8, String> {
     let mut docs: Documents = HashMap::new();
     let mut shutdown_requested = false;
@@ -92,7 +93,7 @@ pub fn serve(
             ("textDocument/didOpen", None) => {
                 let uri = uri_of(&params["textDocument"]);
                 let text = params["textDocument"]["text"].as_str().unwrap_or("");
-                publish(writer, &mut docs, uri, text.to_string(), profile)?;
+                publish(writer, &mut docs, uri, text.to_string(), profile, ignore)?;
             }
             ("textDocument/didChange", None) => {
                 let uri = uri_of(&params["textDocument"]);
@@ -104,7 +105,7 @@ pub fn serve(
                     .and_then(|c| c.last())
                     .and_then(|c| c["text"].as_str())
                 {
-                    publish(writer, &mut docs, uri, text.to_string(), profile)?;
+                    publish(writer, &mut docs, uri, text.to_string(), profile, ignore)?;
                 }
             }
             ("textDocument/didSave", None) => {
@@ -117,7 +118,7 @@ pub fn serve(
                     .map(str::to_string)
                     .or_else(|| docs.get(&uri).cloned());
                 if let Some(text) = text {
-                    publish(writer, &mut docs, uri, text, profile)?;
+                    publish(writer, &mut docs, uri, text, profile, ignore)?;
                 }
             }
             ("textDocument/didClose", None) => {
@@ -133,7 +134,7 @@ pub fn serve(
                 )?;
             }
             ("textDocument/codeAction", Some(id)) => {
-                let actions = code_actions(&params, &docs, profile);
+                let actions = code_actions(&params, &docs, profile, ignore);
                 send(writer, json!({"id": id, "result": actions}))?;
             }
 
@@ -163,7 +164,12 @@ fn uri_of(text_document: &Value) -> String {
 /// Offer only replacements whose meaning is unambiguous, and verify each
 /// client-supplied diagnostic against the current unsaved buffer. A pending
 /// code-action request can otherwise apply an old fix after another edit.
-fn code_actions(params: &Value, docs: &Documents, profile: Profile) -> Vec<Value> {
+fn code_actions(
+    params: &Value,
+    docs: &Documents,
+    profile: Profile,
+    ignore: &[String],
+) -> Vec<Value> {
     if let Some(only) = params["context"]["only"].as_array()
         && !only.iter().any(|kind| {
             kind.as_str()
@@ -190,6 +196,7 @@ fn code_actions(params: &Value, docs: &Documents, profile: Profile) -> Vec<Value
     for finding in lint(source, &path, profile)
         .into_iter()
         .filter(|f| matches!(f.code.as_str(), "QE004" | "QE005" | "QP006"))
+        .filter(|f| !ignore.contains(&f.code))
     {
         let current = diagnostic(&finding, source);
         let Some(client_diagnostic) = context.iter().find(|d| {
@@ -232,6 +239,7 @@ fn publish(
     uri: String,
     text: String,
     profile: Profile,
+    ignore: &[String],
 ) -> Result<(), String> {
     let path = path_of(&uri);
     // Only q source. A client may open anything - a `.k` file, a console
@@ -244,7 +252,9 @@ fn publish(
         .extension()
         .is_some_and(|e| e.eq_ignore_ascii_case("q"));
     let findings = if is_q {
-        lint(&text, &path, profile)
+        let mut found = lint(&text, &path, profile);
+        found.retain(|f| !ignore.contains(&f.code));
+        found
     } else {
         vec![]
     };
