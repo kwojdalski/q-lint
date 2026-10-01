@@ -18,8 +18,16 @@ struct Server {
 
 impl Server {
     fn start() -> Self {
+        Self::start_in(std::env::current_dir().unwrap().as_path(), &[])
+    }
+
+    /// The server started in `dir`, where it looks for `[tool.q-lint]`, with
+    /// extra arguments after the usual ones.
+    fn start_in(dir: &std::path::Path, extra: &[&str]) -> Self {
         let mut child = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .current_dir(dir)
             .args(["--lsp", "--profile", "uqf"])
+            .args(extra)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -612,4 +620,48 @@ fn the_bracket_quick_fix_covers_the_whole_application() {
         actions[0]["edit"]["changes"][uri][0]["range"],
         json!({"start":{"line":1,"character":2},"end":{"line":1,"character":7}})
     );
+}
+
+#[test]
+fn the_server_reads_the_projects_ignore() {
+    // What an editor shows has to match what `qlinter` prints, or the
+    // setting is half a fix.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("pyproject.toml"),
+        "[tool.q-lint]\nignore = [\"QS001\"]\n",
+    )
+    .unwrap();
+    let mut server = Server::start_in(dir.path(), &[]);
+    server.initialize();
+    server.open("file:///tmp/ignored.q", "my_var:1;f:{[desc] desc}");
+    let diagnostics = server.diagnostics_for("file:///tmp/ignored.q");
+    let codes: Vec<_> = diagnostics.iter().map(|d| d["code"].clone()).collect();
+    assert_eq!(codes, ["QF001"], "{diagnostics:?}");
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn the_server_takes_the_ignore_flag_too() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start_in(dir.path(), &["--ignore", "QF001"]);
+    server.initialize();
+    server.open("file:///tmp/flagged.q", "f:{[desc] desc}");
+    assert!(server.diagnostics_for("file:///tmp/flagged.q").is_empty());
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn a_config_the_server_cannot_read_does_not_stop_it() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("pyproject.toml"),
+        "[tool.q-lint]\nignore = [\"QS999\"]\n",
+    )
+    .unwrap();
+    let mut server = Server::start_in(dir.path(), &[]);
+    server.initialize();
+    server.open("file:///tmp/still.q", "f:{[desc] desc}");
+    assert_eq!(server.diagnostics_for("file:///tmp/still.q").len(), 1);
+    assert_eq!(server.shutdown_and_exit(), 0);
 }

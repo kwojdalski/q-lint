@@ -34,6 +34,10 @@ struct Args {
     config: Option<PathBuf>,
     #[arg(long)]
     exclude: Vec<String>,
+    /// Drop findings with this diagnostic code, e.g. `--ignore QS001`.
+    /// Repeatable, and added to `ignore` in `[tool.q-lint]`.
+    #[arg(long)]
+    ignore: Vec<String>,
     #[arg(long)]
     rules: bool,
     #[arg(long)]
@@ -65,7 +69,28 @@ struct Args {
     #[arg(long, hide = true)]
     stdio: bool,
 }
-fn config(explicit: Option<&Path>) -> Result<(PathBuf, Vec<glob::Pattern>), String> {
+/// What `[tool.q-lint]` says: the directory it was found in, the paths it
+/// excludes, and the diagnostic codes it ignores.
+struct Settings {
+    root: PathBuf,
+    exclude: Vec<glob::Pattern>,
+    ignore: Vec<String>,
+}
+
+/// Refuse a code no rule has. An ignore list is read once and then trusted,
+/// so a typo in it would silently ignore nothing - the one way this setting
+/// could fail without anyone noticing.
+fn known_code(code: &str) -> Result<String, String> {
+    if RULES.iter().any(|r| r.code == code) {
+        Ok(code.to_string())
+    } else {
+        Err(format!(
+            "ignore: {code} is not a diagnostic code - `qlinter --rules` lists them"
+        ))
+    }
+}
+
+fn config(explicit: Option<&Path>) -> Result<Settings, String> {
     let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
     let paths: Vec<_> = match explicit {
         Some(p) => vec![p.to_path_buf()],
@@ -83,8 +108,8 @@ fn config(explicit: Option<&Path>) -> Result<(PathBuf, Vec<glob::Pattern>), Stri
         }
         if let Some(settings) = data.get("tool").and_then(|t| t.get("q-lint")) {
             let table = settings.as_table().ok_or("[tool.q-lint] must be a table")?;
-            if table.keys().any(|k| k != "exclude") {
-                return Err("[tool.q-lint] supports only exclude".into());
+            if table.keys().any(|k| k != "exclude" && k != "ignore") {
+                return Err("[tool.q-lint] supports only exclude and ignore".into());
             }
             let empty = vec![];
             let patterns = match table.get("exclude") {
@@ -101,20 +126,49 @@ fn config(explicit: Option<&Path>) -> Result<(PathBuf, Vec<glob::Pattern>), Stri
                     glob::Pattern::new(s.trim_end_matches('/')).map_err(|e| e.to_string())
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            return Ok((
-                fs::canonicalize(path)
+            let ignore = match table.get("ignore") {
+                None => vec![],
+                Some(v) => v
+                    .as_array()
+                    .ok_or("ignore must be an array")?
+                    .iter()
+                    .map(|v| {
+                        v.as_str()
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                            .ok_or_else(|| "ignore must contain nonempty strings".to_string())
+                            .and_then(known_code)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+            };
+            return Ok(Settings {
+                root: fs::canonicalize(path)
                     .map_err(|e| e.to_string())?
                     .parent()
                     .unwrap()
                     .to_path_buf(),
-                patterns,
-            ));
+                exclude: patterns,
+                ignore,
+            });
         }
         if explicit.is_some() {
             return Err("missing [tool.q-lint]".into());
         }
     }
-    Ok((cwd, vec![]))
+    Ok(Settings {
+        root: cwd,
+        exclude: vec![],
+        ignore: vec![],
+    })
+}
+
+/// The codes to drop: the configuration's and the command line's together.
+fn ignored(settings_ignore: &[String], flags: &[String]) -> Result<Vec<String>, String> {
+    let mut codes = settings_ignore.to_vec();
+    for code in flags {
+        codes.push(known_code(code.trim())?);
+    }
+    Ok(codes)
 }
 /// Whether a path names q source.
 ///
@@ -162,12 +216,25 @@ fn run(args: Args) -> Result<u8, String> {
     if args.lsp {
         // Locked once for the life of the process: the server owns both
         // streams, and re-locking per message would be pure overhead.
+        // The server reads the same `ignore` the command line does, so an
+        // editor shows what `qlinter` prints. A configuration it cannot read
+        // is reported and passed over rather than fatal: a server that exits
+        // gives an editor no diagnostics and no reason why.
+        let from_config = match config(args.config.as_deref()) {
+            Ok(settings) => settings.ignore,
+            Err(e) => {
+                eprintln!("qlinter: {e}; serving without [tool.q-lint] ignore");
+                vec![]
+            }
+        };
+        let ignore = ignored(&from_config, &args.ignore)?;
         let stdin = io::stdin();
         let stdout = io::stdout();
         return lsp::serve(
             &mut stdin.lock(),
             &mut stdout.lock(),
             profile(&args.profile),
+            &ignore,
         );
     }
     if args.rules || args.explain.is_some() {
@@ -205,7 +272,9 @@ fn run(args: Args) -> Result<u8, String> {
     if args.diff && args.format == "json" {
         return Err("--diff cannot be combined with --format json".into());
     }
-    let (root, mut patterns) = config(args.config.as_deref())?;
+    let settings = config(args.config.as_deref())?;
+    let ignore = ignored(&settings.ignore, &args.ignore)?;
+    let (root, mut patterns) = (settings.root, settings.exclude);
     for p in &args.exclude {
         patterns.push(glob::Pattern::new(p.trim_end_matches('/')).map_err(|e| e.to_string())?);
     }
@@ -317,6 +386,7 @@ fn run(args: Args) -> Result<u8, String> {
         for (path, source) in &mut sources {
             let mut edits: Vec<_> = lint(source, path, profile(&args.profile))
                 .iter()
+                .filter(|finding| !ignore.contains(&finding.code))
                 .filter_map(|finding| fix_for(finding, source))
                 .filter(|fix| fix.batch_safe)
                 .collect();
@@ -365,6 +435,7 @@ fn run(args: Args) -> Result<u8, String> {
             args.qls_timeout,
         )?);
     }
+    findings.retain(|f| !ignore.contains(&f.code));
     findings.sort_by(|a, b| {
         (&a.path, a.line, a.column, &a.source, &a.rule)
             .cmp(&(&b.path, b.line, b.column, &b.source, &b.rule))
