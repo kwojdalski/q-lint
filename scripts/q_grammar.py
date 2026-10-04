@@ -33,6 +33,11 @@ QSQL = ["select", "exec", "update", "delete", "from", "by", "where"]
 BEFORE = r"(?<![A-Za-z0-9_.`])"
 AFTER = r"(?![A-Za-z0-9_])"
 NAME = r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)*"
+# A dotted name split in two: the namespace `.ns.sub` and the member `.f`.
+# The first group is empty for a name with no leading dot, so `a.b` and `f`
+# stay whole in the second.
+SPLIT = r"(\.[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)*(?=\.))?(" + NAME + ")"
+NAMESPACE = {"name": "entity.name.namespace.q"}
 
 
 def words(names):
@@ -52,6 +57,7 @@ def grammar():
         {"include": "#lambda"},
         {"include": "#number"},
         {"include": "#definition"},
+        {"include": "#flow"},
         {"include": "#keyword"},
         {"include": "#system-namespace"},
         {"include": "#builtin"},
@@ -253,19 +259,46 @@ def grammar():
                 "patterns": [
                     {
                         "comment": "A name assigned a lambda: f:{...} or .ns.f::{...}.",
-                        "match": BEFORE + "(" + NAME + r")\s*(::?)(?=\s*\{)",
+                        "match": BEFORE + SPLIT + r"\s*(::?)(?=\s*\{)",
                         "captures": {
-                            "1": {"name": "entity.name.function.q"},
-                            "2": {"name": "keyword.operator.assignment.q"},
+                            "1": NAMESPACE,
+                            "2": {"name": "entity.name.function.q"},
+                            "3": {"name": "keyword.operator.assignment.q"},
                         },
                     },
                     {
                         "comment": "Any other assignment, a:1 or a::1, but not an iterator such as /: or \\:.",
-                        "match": BEFORE + "(" + NAME + r")\s*(::?)(?![:/\\'])",
+                        "match": BEFORE + SPLIT + r"\s*(::?)(?![:/\\'])",
                         "captures": {
-                            "1": {"name": "variable.other.definition.q"},
-                            "2": {"name": "keyword.operator.assignment.q"},
+                            "1": NAMESPACE,
+                            "2": {"name": "variable.other.definition.q"},
+                            "3": {"name": "keyword.operator.assignment.q"},
                         },
+                    },
+                    {
+                        "comment": "Amend in place, n+:1 or t,:row, which assigns as surely as n:1 does.",
+                        "match": BEFORE + SPLIT + r"\s*([-+*%!&|^=<>~,#_$?@.]:)(?![:/\\'])",
+                        "captures": {
+                            "1": NAMESPACE,
+                            "2": {"name": "variable.other.definition.q"},
+                            "3": {"name": "keyword.operator.assignment.q"},
+                        },
+                    },
+                ],
+            },
+            "flow": {
+                "comment": "Return and signal, q's return and raise. Both open an expression; "
+                "after an operand the same characters are each (f') and assignment (a:).",
+                "patterns": [
+                    {
+                        "comment": "`:x` returns. `;:;` is the assignment function in @[d;i;:;v].",
+                        "match": r"(?:^|(?<=[\[;{]))\s*(:)(?![:/\\'])(?!\s*[;\]])",
+                        "captures": {"1": {"name": "keyword.control.flow.return.q"}},
+                    },
+                    {
+                        "comment": "`'x` signals. A space does not decide it - `{x} '[1 2]` is each.",
+                        "match": r"(?:^|(?<=[\[(;{:]))\s*(')(?![:/\\])",
+                        "captures": {"1": {"name": "keyword.control.flow.signal.q"}},
                     },
                 ],
             },
@@ -282,7 +315,10 @@ def grammar():
                 "match": BEFORE + r"\.[qQzhjo](?:\.[A-Za-z0-9_]+)*" + AFTER,
             },
             "builtin": {"name": "support.function.builtin.q", "match": words(builtins)},
-            "name": {"name": "variable.other.q", "match": BEFORE + NAME + AFTER},
+            "name": {
+                "match": BEFORE + SPLIT + AFTER,
+                "captures": {"1": NAMESPACE, "2": {"name": "variable.other.q"}},
+            },
             "operator": {
                 "patterns": [
                     {"name": "keyword.operator.iterator.q", "match": r"[/\\']:|':|'|/|\\"},

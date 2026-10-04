@@ -31,8 +31,9 @@ tags each span with a standard scope, so whatever colour theme is active
 paints it. It picks out comments and qdoc tags (`@param name {type}`,
 `@return`, ...), strings and their escapes, symbols and file handles, numbers,
 temporals, nulls and booleans, lambdas with their declared parameters and the
-implicit `x`, `y` and `z`, names assigned a lambda, other assignments, the
-control words and qSQL, the builtins, the `.z`/`.Q`/`.h`/`.j` namespaces,
+implicit `x`, `y` and `z`, names assigned a lambda, other assignments
+(amends such as `n+:1` included), the namespace of a dotted name, return
+(`:x`) and signal (`'x`) as control flow, the control words and qSQL, the builtins, the `.z`/`.Q`/`.h`/`.j` namespaces,
 system commands, block comments and everything after a closing `\`, and
 `p)` lines as Python.
 

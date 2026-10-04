@@ -138,6 +138,9 @@
           "include": "#definition"
         },
         {
+          "include": "#flow"
+        },
+        {
           "include": "#keyword"
         },
         {
@@ -319,6 +322,9 @@
           "name": "variable.language.implicit.q"
         },
         {
+          "include": "#flow"
+        },
+        {
           "include": "#keyword"
         },
         {
@@ -363,25 +369,69 @@
       "patterns": [
         {
           "comment": "A name assigned a lambda: f:{...} or .ns.f::{...}.",
-          "match": "(?<![A-Za-z0-9_.`])(\\.?[A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z0-9_]+)*)\\s*(::?)(?=\\s*\\{)",
+          "match": "(?<![A-Za-z0-9_.`])(\\.[A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z0-9_]+)*(?=\\.))?(\\.?[A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z0-9_]+)*)\\s*(::?)(?=\\s*\\{)",
           "captures": {
             "1": {
-              "name": "entity.name.function.q"
+              "name": "entity.name.namespace.q"
             },
             "2": {
+              "name": "entity.name.function.q"
+            },
+            "3": {
               "name": "keyword.operator.assignment.q"
             }
           }
         },
         {
           "comment": "Any other assignment, a:1 or a::1, but not an iterator such as /: or \\:.",
-          "match": "(?<![A-Za-z0-9_.`])(\\.?[A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z0-9_]+)*)\\s*(::?)(?![:/\\\\'])",
+          "match": "(?<![A-Za-z0-9_.`])(\\.[A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z0-9_]+)*(?=\\.))?(\\.?[A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z0-9_]+)*)\\s*(::?)(?![:/\\\\'])",
           "captures": {
             "1": {
-              "name": "variable.other.definition.q"
+              "name": "entity.name.namespace.q"
             },
             "2": {
+              "name": "variable.other.definition.q"
+            },
+            "3": {
               "name": "keyword.operator.assignment.q"
+            }
+          }
+        },
+        {
+          "comment": "Amend in place, n+:1 or t,:row, which assigns as surely as n:1 does.",
+          "match": "(?<![A-Za-z0-9_.`])(\\.[A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z0-9_]+)*(?=\\.))?(\\.?[A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z0-9_]+)*)\\s*([-+*%!&|^=<>~,#_$?@.]:)(?![:/\\\\'])",
+          "captures": {
+            "1": {
+              "name": "entity.name.namespace.q"
+            },
+            "2": {
+              "name": "variable.other.definition.q"
+            },
+            "3": {
+              "name": "keyword.operator.assignment.q"
+            }
+          }
+        }
+      ]
+    },
+    "flow": {
+      "comment": "Return and signal, q's return and raise. Both open an expression; after an operand the same characters are each (f') and assignment (a:).",
+      "patterns": [
+        {
+          "comment": "`:x` returns. `;:;` is the assignment function in @[d;i;:;v].",
+          "match": "(?:^|(?<=[\\[;{]))\\s*(:)(?![:/\\\\'])(?!\\s*[;\\]])",
+          "captures": {
+            "1": {
+              "name": "keyword.control.flow.return.q"
+            }
+          }
+        },
+        {
+          "comment": "`'x` signals. A space does not decide it - `{x} '[1 2]` is each.",
+          "match": "(?:^|(?<=[\\[(;{:]))\\s*(')(?![:/\\\\])",
+          "captures": {
+            "1": {
+              "name": "keyword.control.flow.signal.q"
             }
           }
         }
@@ -413,8 +463,15 @@
       "match": "(?<![A-Za-z0-9_.`])(?:reciprocal|distinct|ceiling|reverse|sublist|ungroup|deltas|differ|enlist|except|getenv|hclose|hcount|insert|mcount|ratios|rotate|setenv|signum|string|system|tables|upsert|within|xgroup|count|cross|dsave|fills|first|fkeys|floor|group|gtime|hopen|idesc|inter|lower|ltime|ltrim|parse|peach|prior|read0|read1|reval|rload|rsave|rtrim|union|upper|value|views|xcols|xdesc|xprev|xrank|acos|ajf0|asin|asof|atan|attr|avgs|binr|cols|desc|each|eval|exit|flip|hdel|hsym|iasc|keys|last|like|load|mavg|maxs|mdev|meta|mins|mmax|mmin|msum|next|null|over|prds|prev|rand|rank|raze|save|scan|scov|sdev|show|sqrt|sums|svar|trim|type|view|wavg|wsum|xasc|xbar|xcol|xexp|xkey|xlog|abs|aj0|ajf|all|and|any|asc|avg|bin|cor|cos|cov|csv|cut|dev|div|ema|exp|fby|get|ijf|inv|key|ljf|log|lsq|max|md5|med|min|mmu|mod|neg|not|prd|set|sin|ssr|sum|tan|til|ujf|use|var|wj1|aj|ej|ij|in|lj|or|pj|ss|sv|uj|vs|wj|ww)(?![A-Za-z0-9_])"
     },
     "name": {
-      "name": "variable.other.q",
-      "match": "(?<![A-Za-z0-9_.`])\\.?[A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z0-9_]+)*(?![A-Za-z0-9_])"
+      "match": "(?<![A-Za-z0-9_.`])(\\.[A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z0-9_]+)*(?=\\.))?(\\.?[A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z0-9_]+)*)(?![A-Za-z0-9_])",
+      "captures": {
+        "1": {
+          "name": "entity.name.namespace.q"
+        },
+        "2": {
+          "name": "variable.other.q"
+        }
+      }
     },
     "operator": {
       "patterns": [
