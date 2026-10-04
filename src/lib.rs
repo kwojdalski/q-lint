@@ -32,7 +32,7 @@ pub struct Rule {
 }
 pub static RULES: LazyLock<Vec<Rule>> =
     LazyLock::new(|| serde_json::from_str(include_str!("taxonomy.json")).unwrap());
-static RESERVED: LazyLock<Vec<String>> =
+pub(crate) static RESERVED: LazyLock<Vec<String>> =
     LazyLock::new(|| serde_json::from_str(include_str!("reserved.json")).unwrap());
 
 #[derive(Debug, Serialize)]
@@ -253,6 +253,8 @@ impl Finding {
                     | "QD001"
                     | "QD002"
                     | "QF019"
+                    | "QF020"
+                    | "QT022"
             ) {
                 "error"
             } else {

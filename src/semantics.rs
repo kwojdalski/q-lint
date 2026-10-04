@@ -1282,5 +1282,267 @@ pub fn check(path: &str, code: &str, raw: &str, comments: &str) -> Vec<Finding> 
             out.push(finding);
         }
     }
+    if !dynamic {
+        out.extend(named_values(path, code, raw, &scopes));
+    }
+    out
+}
+
+/// What a global holds, when the file assigns it once, at the top level, to
+/// a literal. Anything else - assigned twice, amended, `set`, assigned to an
+/// expression - is unknown, and the rules below say nothing about it.
+#[derive(Clone, PartialEq, Debug)]
+enum Held {
+    /// A number, boolean, char, byte or temporal atom. Not a symbol: indexing
+    /// a symbol atom looks up the variable it names, which is not an error.
+    Atom,
+    Vector(usize),
+    Table(Vec<String>),
+}
+
+/// The value text of a top-level `name:...`, judged as a literal.
+fn held(code: &str, raw: &str) -> Option<Held> {
+    let (code, raw) = (code.trim(), raw.trim());
+    if code.starts_with('(') && matching(code, 0, b'(', b')') == Some(code.len()) {
+        let inner = code[1..code.len() - 1].trim_start();
+        if inner.starts_with('[') {
+            let close = matching(inner, 0, b'[', b']')?;
+            let mut columns = vec![];
+            for part in crate::slots(&inner[1..close - 1])
+                .into_iter()
+                .chain(crate::slots(&inner[close..]))
+            {
+                let name = part.split(':').next().unwrap_or("").trim();
+                if name.is_empty() {
+                    continue;
+                }
+                if !re!(r"^[A-Za-z][A-Za-z0-9_]*$").is_match(name) {
+                    return None;
+                }
+                columns.push(name.to_string());
+            }
+            return Some(Held::Table(columns));
+        }
+    }
+    // A string is blank in `code`; its length is in the source.
+    if let Some(body) = re!(r#"^"((?:\\[0-7]{3}|\\.|[^"\\])*)"$"#).captures(raw) {
+        let n = re!(r"\\[0-7]{3}|\\.|[^\\]").find_iter(&body[1]).count();
+        return Some(if n == 1 { Held::Atom } else { Held::Vector(n) });
+    }
+    if re!(r"^(?:-?\d[\w.:]*|0x[0-9a-fA-F]{2})$").is_match(code)
+        && !re!(r"^[01]{2,}b$|^0x(?:[0-9a-fA-F]{2}){2,}$").is_match(code)
+    {
+        return Some(Held::Atom);
+    }
+    match shape(code)? {
+        1 if !code.starts_with(['(', '`']) && !code.starts_with("enlist") => None,
+        n => Some(Held::Vector(n)),
+    }
+}
+
+/// The rules that need to know what a name holds: indexing an atom, two
+/// vectors of different lengths paired by an operator, and a select of a
+/// column the table does not have. Each one only for a name `held` knows.
+fn named_values(path: &str, code: &str, raw: &str, scopes: &[Scope]) -> Vec<Finding> {
+    let mut out = vec![];
+    let name_re = r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*";
+    // Every place a name is written: `a:`, `a::`, `a+:`, `a[i]:`, `a set`,
+    // and `(a;b):`. A name written anywhere but its one plain top-level
+    // assignment is not known.
+    let mut writes: HashMap<&str, Vec<usize>> = HashMap::new();
+    for m in re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*(?:\[[^\]]*\])?\s*[-+*%,&|^#_!~=<>$?@.]?::?")
+        .captures_iter(code)
+    {
+        let whole = m.get(0).unwrap();
+        if !boundary(code, whole.start()) || code[whole.end()..].starts_with(['/', '\\', '\'']) {
+            continue;
+        }
+        writes.entry(m.get(1).unwrap().as_str()).or_default().push(whole.start());
+    }
+    for m in re!(r"`(\.?[A-Za-z][A-Za-z0-9_.]*)\s+set\b").captures_iter(code) {
+        writes
+            .entry(m.get(1).unwrap().as_str())
+            .or_default()
+            .extend([0, 0]);
+    }
+    for (_, name) in multi_assignments(code) {
+        writes.entry(name).or_default().extend([0, 0]);
+    }
+    let mut known: HashMap<&str, (usize, Held)> = HashMap::new();
+    for (name, at) in &writes {
+        let [at] = at[..] else { continue };
+        if scope_at(scopes, at).is_some() || !boundary(code, at) {
+            continue;
+        }
+        let Some(m) = re!(r"^(\.?[A-Za-z][A-Za-z0-9_.]*)\s*:([^:]|$)").captures(&code[at..]) else {
+            continue;
+        };
+        let start = at + m.get(2).unwrap().start();
+        // The value runs to the end of the statement: a top-level `;`, or a
+        // newline the next line does not continue.
+        let mut end = start;
+        let mut depth = 0i32;
+        let bytes = code.as_bytes();
+        while end < bytes.len() {
+            match bytes[end] {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => {
+                    if depth == 0 {
+                        break;
+                    }
+                    depth -= 1
+                }
+                b';' if depth == 0 => break,
+                b'\n' if depth == 0 && !code[end + 1..].starts_with([' ', '\t']) => break,
+                _ => {}
+            }
+            end += 1;
+        }
+        if let Some(value) = held(&code[start..end], &raw[start..end]) {
+            known.insert(name, (end, value));
+        }
+    }
+    if known.is_empty() {
+        return out;
+    }
+    // A read sees the global only after it is assigned, at the top level, and
+    // only where no local of the same name hides it.
+    let visible = |name: &str, at: usize| -> Option<&Held> {
+        let (assigned, value) = known.get(name)?;
+        match scope_at(scopes, at) {
+            Some(s) if scopes[s].locals.contains(name) => None,
+            None if at < *assigned => None,
+            _ => Some(value),
+        }
+    };
+    // Indexing an atom. Verified: 1, 1b, 1.5, "x" and 2020.01.01 bound to a
+    // name and then indexed - `a[0]`, `a[]`, `a[0]:5` - are all 'type.
+    for m in re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\[").captures_iter(code) {
+        let name = m.get(1).unwrap();
+        if boundary(code, name.start()) && visible(name.as_str(), name.start()) == Some(&Held::Atom)
+        {
+            out.push(Finding::at(
+                path,
+                raw,
+                name.start(),
+                "QT022",
+                format!(
+                    "`{}` is an atom here, and an atom has no items to index: 'type",
+                    name.as_str()
+                ),
+            ));
+        }
+    }
+    // Two vectors of known, different lengths under an operator that pairs
+    // items - QT006 for a name rather than a literal. `,` and `~` take any
+    // lengths and are not in the set.
+    let vector = r"-?\d(?:[\w.]*[eE][+-])?[\w.]*(?:\s+-?\d(?:[\w.]*[eE][+-])?[\w.]*)+|(?:`[A-Za-z0-9_.]*){2,}|\([^()]*;[^()]*\)";
+    let pair = regex::Regex::new(&format!(
+        r"(?P<l>{name_re}|{vector})\s*(?P<op><>|<=|>=|[+*%&|=<>-])\s*(?P<r>{name_re}|{vector})"
+    ))
+    .unwrap();
+    let length = |text: &str, at: usize| -> Option<usize> {
+        if re!(r"^\.?[A-Za-z]").is_match(text) {
+            match visible(text, at)? {
+                Held::Vector(n) => Some(*n),
+                _ => None,
+            }
+        } else {
+            shape(text)
+        }
+    };
+    let mut at = 0;
+    while let Some(m) = pair.captures_at(code, at) {
+        let (l, op, r) = (
+            m.name("l").unwrap(),
+            m.name("op").unwrap(),
+            m.name("r").unwrap(),
+        );
+        at = l.end();
+        let named = [l, r].iter().any(|x| {
+            x.as_str()
+                .starts_with(|c: char| c.is_alphabetic() || c == '.')
+        });
+        let negative = op.as_str() == "-"
+            && code[..op.start()].ends_with(char::is_whitespace)
+            && !code[op.end()..].starts_with(char::is_whitespace);
+        if !named || negative || !boundary(code, l.start()) || !operand_ends(code, r.end()) {
+            continue;
+        }
+        if let (Some(a), Some(b)) = (length(l.as_str(), l.start()), length(r.as_str(), r.start()))
+            && a != b
+        {
+            out.push(Finding::at(
+                path,
+                raw,
+                l.start(),
+                "QT006",
+                format!(
+                    "`{}` pairs {} items with {}; that is a 'length error",
+                    op.as_str(),
+                    a,
+                    b
+                ),
+            ));
+        }
+    }
+    // A select or exec naming a column the table literal does not have. q
+    // looks for a column, then a variable, and raises the name when neither
+    // exists - `select b from ([]a:1 2)` is 'b. So only a name nothing in
+    // this file defines: a global or local of that name changes the error
+    // or removes it. `i` is the virtual row index.
+    let defined: HashSet<&str> = writes.keys().copied().collect();
+    for m in re!(r"\b(?:select|exec)\b([^\n;]*?)\bfrom\s+(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\b")
+    .captures_iter(code)
+    {
+        let table = m.get(2).unwrap();
+        let Some(Held::Table(columns)) = visible(table.as_str(), table.start()) else {
+            continue;
+        };
+        let phrase = m.get(1).unwrap();
+        // Items are separated by `,`, and `by` starts the grouping list,
+        // whose columns are looked up the same way.
+        let mut cuts = vec![phrase.start()];
+        for sep in re!(r",|\bby\b").find_iter(phrase.as_str()) {
+            cuts.push(phrase.start() + sep.start());
+            cuts.push(phrase.start() + sep.end());
+        }
+        cuts.push(phrase.end());
+        for pair in cuts.chunks(2) {
+            let (offset, part) = (pair[0], &code[pair[0]..pair[1]]);
+            let item = part.trim();
+            let lead = part.len() - part.trim_start().len();
+            let (bare, skip) = match item.split_once(':') {
+                Some((alias, value)) if re!(r"^[A-Za-z][A-Za-z0-9_]*$").is_match(alias.trim()) => (
+                    value.trim(),
+                    item.len() - item.split_once(':').unwrap().1.trim_start().len(),
+                ),
+                _ => (item, 0),
+            };
+            if re!(r"^[A-Za-z][A-Za-z0-9_]*$").is_match(bare)
+                && bare != "i"
+                && !columns.iter().any(|c| c == bare)
+                && !defined.contains(bare)
+                && !crate::RESERVED.iter().any(|n| n == bare)
+                && !scope_at(scopes, phrase.start())
+                    .is_some_and(|s| scopes[s].locals.contains(bare))
+            {
+                let at = offset + lead + skip + item[skip..].find(bare).unwrap_or(0);
+                out.push(Finding::at(
+                    path,
+                    raw,
+                    at,
+                    "QF020",
+                    format!(
+                        "`{}` is not a column of `{}` ({}), and nothing in this file defines it: '{}",
+                        bare,
+                        table.as_str(),
+                        columns.join(", "),
+                        bare
+                    ),
+                ));
+            }
+        }
+    }
     out
 }

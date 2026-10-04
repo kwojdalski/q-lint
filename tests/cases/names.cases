@@ -464,3 +464,22 @@ f:{.z.p+:1}
 === clean | reading one is what it is for
 t:.z.p
 
+=== QF020 | a column the table literal does not have, and nothing defines
+t:([]a:1 2)
+r:select b from t
+
+=== QF020 QB009 | in the by list as well, where the bare a is also the last of its group
+t:([]a:1 2)
+r:select a by b from t
+
+=== clean | the virtual index, an alias of a real column, and a keyed table's key
+t:([]a:1 2)
+k:([k:1 2]v:3 4)
+r1:select a,i from t
+r2:select c:a from t
+r3:select k from k
+
+=== clean | a global of that name is something q can find
+b:5
+t:([]a:1 2)
+r:select b from t

@@ -349,3 +349,45 @@ r:"abc"=`abc / note
 
 === clean | symbol membership in symbols is what in is for
 r:`a in `a`b
+
+=== QT022 | a name assigned an atom, then indexed
+a:1
+r:a[0]
+
+=== QT022 | with nothing in the brackets too
+a:1.5
+r:a[]
+
+=== clean | a symbol atom indexed looks up the variable it names, which is not this
+a:`x
+r:a[0]
+
+=== clean | a name assigned twice is not known
+a:1
+a:2 3
+r:a[0]
+
+=== clean | a parameter of the same name hides the global
+a:1
+f:{[a] a[0]}
+
+=== QT006 | named vectors of different lengths
+a:1 2 3
+b:1 2
+r:a+b
+
+=== QT006 | a named vector against a literal one
+a:1 2 3
+r:a+1 2
+
+=== clean | join and match take any lengths, and an atom extends
+a:1 2 3
+b:1 2
+r1:a,b
+r2:a~b
+r3:a+1
+
+=== clean | the right operand runs on, so its length is not b's
+a:1 2 3
+b:1 2
+r:a+b,0

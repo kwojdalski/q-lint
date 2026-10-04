@@ -1,6 +1,6 @@
 # Rules
 
-All 91 rules, generated from `src/taxonomy.json` - the same data
+All 93 rules, generated from `src/taxonomy.json` - the same data
 `qlinter --rules` and `qlinter --explain <CODE>` print from. Regenerate with
 `python3 scripts/rules_doc.py > docs/rules.md`; a test fails when this is stale.
 
@@ -70,6 +70,7 @@ that wants fewer findings narrows in its own configuration.
 | `QF017` | unused-local | Local assigned and never read | `style` and above |
 | `QF018` | possibly-undefined-name | Bare value read has no local or global definition in this file | `style` and above |
 | `QF019` | read-only-system-name | Assignment to a single-letter .z name, which q refuses with 'domain | every profile |
+| `QF020` | unknown-column | select or exec names a column the table literal does not have, and nothing defines it | every profile |
 
 ## Application - how many arguments a thing takes and how it is called
 
@@ -97,7 +98,7 @@ that wants fewer findings narrows in its own configuration.
 | `QT003` | symbol-arithmetic | Arithmetic on a symbol literal errors at runtime | every profile |
 | `QT004` | cast-by-name-on-string | Symbol-named cast on a string converts char codes, not text | `style` and above |
 | `QT005` | single-row-table | Table literal of scalars needs enlist and errors 'rank | every profile |
-| `QT006` | vector-length-mismatch | Infix on two literal vectors of different lengths | every profile |
+| `QT006` | vector-length-mismatch | Infix on two vectors of known, different lengths | every profile |
 | `QT007` | string-function-on-symbol | ss or ssr given a symbol literal is a runtime type error | every profile |
 | `QT008` | literal-til-type | til called with something other than an integer atom | every profile |
 | `QT009` | literal-where-type | where called with counts other than booleans or longs | every profile |
@@ -113,6 +114,7 @@ that wants fewer findings narrows in its own configuration.
 | `QT019` | literal-within-bounds | within bounds are not a two-item list | every profile |
 | `QT020` | table-column-length | Table literal columns of different lengths | every profile |
 | `QT021` | empty-search-pattern | ss or ssr with an empty pattern is a length error | every profile |
+| `QT022` | index-into-atom | A name bound to an atom is indexed; an atom has no items, and q raises 'type | every profile |
 
 ## Correctness - q that runs and does the wrong thing
 

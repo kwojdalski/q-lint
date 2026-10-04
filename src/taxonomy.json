@@ -161,6 +161,13 @@
     "scope": "builtin"
   },
   {
+    "code": "QF020",
+    "name": "unknown-column",
+    "category": "names",
+    "summary": "select or exec names a column the table literal does not have, and nothing defines it",
+    "scope": "builtin"
+  },
+  {
     "code": "QA001",
     "name": "parameter-limit",
     "category": "application",
@@ -262,7 +269,7 @@
     "code": "QT006",
     "name": "vector-length-mismatch",
     "category": "types-and-shapes",
-    "summary": "Infix on two literal vectors of different lengths",
+    "summary": "Infix on two vectors of known, different lengths",
     "scope": "builtin"
   },
   {
@@ -627,6 +634,13 @@
     "name": "empty-search-pattern",
     "category": "types-and-shapes",
     "summary": "ss or ssr with an empty pattern is a length error",
+    "scope": "builtin"
+  },
+  {
+    "code": "QT022",
+    "name": "index-into-atom",
+    "category": "types-and-shapes",
+    "summary": "A name bound to an atom is indexed; an atom has no items, and q raises 'type",
     "scope": "builtin"
   },
   {

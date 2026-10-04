@@ -355,6 +355,27 @@ ragged:([]a:1 2;b:3 4 5)
 / quotes is read from the source.
 / expect-next: QT021
 nothing:ss["abc";""]
+
+/ QT022: seed is assigned once, to an atom, and an atom has no items to
+/ index - 'type, checked. A vector bound the same way indexes fine.
+seed:7
+lens:1 2 3
+/ expect-next: QT022
+first1:seed[0]
+first2:lens[0]
+
+/ QT006 by name: lens holds three items and the literal two, so pairing them
+/ is 'length. Join takes any lengths, so the line after stays quiet.
+/ expect-next: QT006
+paired:lens+1 2
+joined:lens,1 2
+
+/ QF020: quotes has no size column, and nothing in this file defines one, so
+/ q raises 'size. The column it does have selects fine.
+quotes:([]px:1 2)
+/ expect-next: QF020
+sized:select size from quotes
+priced:select px from quotes
 / QT005: keyed is no different.
 / expect-next: QT005
 one2: ([k:1] v:2)
