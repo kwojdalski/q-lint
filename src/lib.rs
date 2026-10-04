@@ -2260,33 +2260,6 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
                     );
                 }
             }
-            // Under `by`, a column nobody aggregates takes the last value
-            // of its group - not the first, and nothing says which. The
-            // rule is deliberately narrow: only a select phrase that is
-            // empty or made of bare (possibly aliased) column names, so
-            // `sum px`, `avg[px]` and `.my.agg px` all count as having
-            // said the aggregation out loud.
-            if let Some(m) = re!(r"\bselect\b(.*?)\bby\b").captures(line) {
-                let phrase = m[1].trim();
-                // An empty phrase is not the trap: `select by sym from t` is
-                // the documented way to ask for the last row of each group,
-                // and it is in every tickerplant and RDB there is. The trap
-                // is naming a column and getting its last value silently.
-                let plain = !phrase.is_empty()
-                    && phrase.split(',').all(|col| {
-                        re!(r"^(?:[A-Za-z][A-Za-z0-9_]*\s*:\s*)?[A-Za-z][A-Za-z0-9_]*$")
-                            .is_match(col.trim())
-                    });
-                if plain {
-                    add(
-                        offset,
-                        "QB009",
-                        "Bare column under `by` takes the last row of each group; say the \
-                         aggregation (`first`, or another) out loud"
-                            .into(),
-                    );
-                }
-            }
         }
         if uqf && !path.starts_with("tests/") {
             for regex in [

@@ -468,7 +468,7 @@ t:.z.p
 t:([]a:1 2)
 r:select b from t
 
-=== QF020 QB009 | in the by list as well, where the bare a is also the last of its group
+=== QF020 | in the by list as well
 t:([]a:1 2)
 r:select a by b from t
 

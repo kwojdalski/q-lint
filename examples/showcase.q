@@ -497,12 +497,6 @@ glob:select from trades where sym like `EUR*
 / expect-next: QB008
 pair2:select from trades where sym=`EUR`USD
 
-/ QB009: nothing aggregates `price`, so under `by` it takes the last row
-/ of each group - not the first, and nothing in the query says which.
-/ `select last price by sym` says it out loud and stays quiet.
-/ expect-next: QB009
-lastpx:select price by sym from trades
-
 / QB002: q's like does not support an interior wildcard.
 / expect-next: QB002
 hits:select from trades where sym like "a*b"

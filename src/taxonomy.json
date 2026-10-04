@@ -336,13 +336,6 @@
     "scope": "style"
   },
   {
-    "code": "QB009",
-    "name": "unaggregated-under-by",
-    "category": "correctness",
-    "summary": "Bare column under by silently takes the last row per group",
-    "scope": "style"
-  },
-  {
     "code": "QB010",
     "name": "apply-not-subtract",
     "category": "correctness",
