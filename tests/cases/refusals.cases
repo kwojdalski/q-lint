@@ -55,3 +55,26 @@ f:{'"x"}
 f1:{'"xy"}
 f2:{'`a}
 f3:{x'1}
+
+=== QT026 | lj with an unkeyed table on the right
+t:([]a:1 2;b:3 4)
+r:t lj ([]a:1 2;c:3 4)
+
+=== QT026 | a name holding one is no different
+t:([]a:1 2;b:3 4)
+u:([]a:1 2;c:3 4)
+r:t ij u
+
+=== clean | a keyed right table is what lj wants, and uj takes either
+t:([]a:1 2;b:3 4)
+r1:t lj ([a:1 2]c:3 4)
+r2:t uj ([]a:1 2;c:3 4)
+
+=== QT027 | one value per column
+t:([]a:1 2;b:3 4)
+`t insert (5;6;7)
+
+=== clean | the right number of values
+t:([]a:1 2;b:3 4)
+`t insert (5;6)
+

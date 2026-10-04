@@ -493,3 +493,27 @@ pivotp:{[c;g;d;t]
 === QF017 | a symbol of that name with no parse tree in sight is just a symbol
 f:{[t] u:1; `u}
 
+=== QF020 | a where phrase reads columns too
+t:([]a:1 2;b:3 4)
+r:select from t where c>0
+
+=== QF020 | and update's by list
+t:([]a:1 2;b:3 4)
+r:update c:a by d from t
+
+=== QF020 | a symbol naming a column for xkey and its neighbours
+t:([]a:1 2;b:3 4)
+r:`c xdesc t
+
+=== clean | columns it has, the virtual index, and a lambda's own names
+t:([]a:1 2;b:3 4)
+r1:select from t where a>0, b<3
+r2:select from t where i>0
+r3:`a xasc t
+r4:update c:a by b from t
+
+=== clean | a table updated in place by name gains the column
+t:([]a:1 2;b:3 4)
+update c:1 from `t
+r:select c from t
+

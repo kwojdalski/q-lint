@@ -1295,7 +1295,8 @@ enum Held {
     /// a symbol atom looks up the variable it names, which is not an error.
     Atom,
     Vector(usize),
-    Table(Vec<String>),
+    /// A table literal's columns, keys first, and whether it has a key.
+    Table(Vec<String>, bool),
 }
 
 /// The value text of a top-level `name:...`, judged as a literal.
@@ -1309,6 +1310,7 @@ fn held(code: &str, raw: &str) -> Option<Held> {
             if inner[close..].trim().is_empty() {
                 return None;
             }
+            let keyed = !inner[1..close - 1].trim().is_empty();
             let mut columns = vec![];
             for part in crate::slots(&inner[1..close - 1])
                 .into_iter()
@@ -1323,7 +1325,7 @@ fn held(code: &str, raw: &str) -> Option<Held> {
                 }
                 columns.push(name.to_string());
             }
-            return Some(Held::Table(columns));
+            return Some(Held::Table(columns, keyed));
         }
     }
     // A string is blank in `code`; its length is in the source.
@@ -1376,6 +1378,14 @@ fn named_values(
     }
     for (_, name) in multi_assignments(code) {
         writes.entry(name).or_default().extend([0, 0]);
+    }
+    // A table changed in place by name: `update c:1 from `t` adds a column,
+    // as do `![`t;...]` and `.[`t;...]`, without an assignment to say so.
+    for m in re!(r"(?:\bfrom\s*|[!.]\s*\[\s*)`(\.?[A-Za-z][A-Za-z0-9_.]*)").captures_iter(code) {
+        writes
+            .entry(m.get(1).unwrap().as_str())
+            .or_default()
+            .extend([0, 0]);
     }
     let mut known: HashMap<&str, (usize, Held)> = HashMap::new();
     let mut kinds: HashMap<&str, Arithmetic> = HashMap::new();
@@ -1570,11 +1580,31 @@ fn named_values(
     // this file defines: a global or local of that name changes the error
     // or removes it. `i` is the virtual row index.
     let defined: HashSet<&str> = writes.keys().copied().collect();
-    for m in re!(r"\b(?:select|exec)\b([^\n;]*?)\bfrom\s+(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\b")
+    let is_free = |name: &str, at: usize, columns: &[String]| {
+        re!(r"^[A-Za-z][A-Za-z0-9_]*$").is_match(name)
+            && name != "i"
+            && !columns.iter().any(|c| c == name)
+            && !defined.contains(name)
+            && !crate::RESERVED.iter().any(|n| n == name)
+            && !scope_at(scopes, at).is_some_and(|s| scopes[s].locals.contains(name))
+    };
+    let mut column = |at: usize, name: &str, table: &str, columns: &[String]| {
+        out.push(Finding::at(
+            path,
+            raw,
+            at,
+            "QF020",
+            format!(
+                "`{name}` is not a column of `{table}` ({}), and nothing in this file defines it: '{name}",
+                columns.join(", ")
+            ),
+        ));
+    };
+    for m in re!(r"\b(?:select|exec|update)\b([^\n;]*?)\bfrom\s+(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\b")
     .captures_iter(code)
     {
         let table = m.get(2).unwrap();
-        let Some(Held::Table(columns)) = visible(table.as_str(), table.start()) else {
+        let Some(Held::Table(columns, _)) = visible(table.as_str(), table.start()) else {
             continue;
         };
         let phrase = m.get(1).unwrap();
@@ -1597,29 +1627,123 @@ fn named_values(
                 ),
                 _ => (item, 0),
             };
-            if re!(r"^[A-Za-z][A-Za-z0-9_]*$").is_match(bare)
-                && bare != "i"
-                && !columns.iter().any(|c| c == bare)
-                && !defined.contains(bare)
-                && !crate::RESERVED.iter().any(|n| n == bare)
-                && !scope_at(scopes, phrase.start())
-                    .is_some_and(|s| scopes[s].locals.contains(bare))
-            {
+            if is_free(bare, phrase.start(), columns) {
                 let at = offset + lead + skip + item[skip..].find(bare).unwrap_or(0);
-                out.push(Finding::at(
-                    path,
-                    raw,
-                    at,
-                    "QF020",
-                    format!(
-                        "`{}` is not a column of `{}` ({}), and nothing in this file defines it: '{}",
-                        bare,
-                        table.as_str(),
-                        columns.join(", "),
-                        bare
-                    ),
-                ));
+                column(at, bare, table.as_str(), columns);
             }
+        }
+    }
+    // The where phrase, in any of the four: `select from t where c>0` is 'c
+    // when t has no c and nothing defines one. Names inside a lambda in the
+    // phrase are that lambda's own and are left alone.
+    for m in re!(r"\b(?:select|exec|update|delete)\b[^\n;]*?\bfrom\s+(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s+where\b([^\n;]*)")
+        .captures_iter(code)
+    {
+        let table = m.get(1).unwrap();
+        let Some(Held::Table(columns, _)) = visible(table.as_str(), table.start()) else {
+            continue;
+        };
+        let phrase = m.get(2).unwrap();
+        let mut depth = 0i32;
+        let flat: String = phrase
+            .as_str()
+            .chars()
+            .map(|c| {
+                match c {
+                    '{' => depth += 1,
+                    '}' => depth -= 1,
+                    _ => {}
+                }
+                if depth > 0 || c == '}' { ' ' } else { c }
+            })
+            .collect();
+        for name in re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(&flat) {
+            let at = phrase.start() + name.start();
+            if boundary(code, at) && !flat[name.end()..].starts_with('.') && is_free(name.as_str(), at, columns) {
+                column(at, name.as_str(), table.as_str(), columns);
+            }
+        }
+    }
+    // `` `c xkey t `` and its neighbours name columns by symbol, so a
+    // missing one is the error whatever the file defines.
+    for m in re!(r"((?:`[A-Za-z][A-Za-z0-9_]*)+)\s+(?:xkey|xasc|xdesc|xcols)\s+(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)").captures_iter(code) {
+        let table = m.get(2).unwrap();
+        if !operand_ends(code, table.end()) {
+            continue;
+        }
+        let Some(Held::Table(columns, _)) = visible(table.as_str(), table.start()) else {
+            continue;
+        };
+        let symbols = m.get(1).unwrap();
+        let mut at = symbols.start();
+        for sym in symbols.as_str().split('`').skip(1) {
+            if !columns.iter().any(|c| c == sym) {
+                column(at + 1, sym, table.as_str(), columns);
+            }
+            at += sym.len() + 1;
+        }
+    }
+    // QT026. lj, ij and pj join on the right table's key, so an unkeyed right
+    // table is 'type - checked for all three; uj takes any and is not here.
+    for m in re!(r"\b(lj|ij|pj)\s+(\(\s*\[|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)")
+        .captures_iter(code)
+    {
+        let right = m.get(2).unwrap();
+        let unkeyed = if right.as_str().starts_with('(') {
+            let open = right.start();
+            matching(code, open, b'(', b')').is_some_and(|close| {
+                operand_ends(code, close) && code[open + 1..].trim_start().starts_with("[]")
+            })
+        } else {
+            operand_ends(code, right.end())
+                && matches!(
+                    visible(right.as_str(), right.start()),
+                    Some(Held::Table(_, false))
+                )
+        };
+        if unkeyed {
+            out.push(Finding::at(
+                path,
+                raw,
+                m.get(1).unwrap().start(),
+                "QT026",
+                format!(
+                    "`{}` joins on the right table's key, and this one has none: 'type; key it with `xkey`",
+                    &m[1]
+                ),
+            ));
+        }
+    }
+    // QT027. insert and upsert take one value per column, keys included:
+    // `` `t insert (5;6;7) `` into a two-column table is 'length.
+    for m in re!(r"`(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s+(insert|upsert)\s*\(")
+        .captures_iter(code)
+    {
+        let table = m.get(1).unwrap();
+        let open = m.get(0).unwrap().end() - 1;
+        let Some(close) = matching(code, open, b'(', b')') else {
+            continue;
+        };
+        if !operand_ends(code, close) {
+            continue;
+        }
+        let Some(Held::Table(columns, _)) = visible(table.as_str(), table.start()) else {
+            continue;
+        };
+        let values = crate::slots(&code[open + 1..close - 1]).len();
+        if values > 1 && values != columns.len() {
+            out.push(Finding::at(
+                path,
+                raw,
+                m.get(0).unwrap().start(),
+                "QT027",
+                format!(
+                    "{values} values for the {} columns of `{}`: '{}' raises 'length",
+                    columns.len(),
+                    table.as_str(),
+                    &m[2]
+                ),
+            ));
         }
     }
     out

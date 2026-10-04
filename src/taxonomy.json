@@ -178,7 +178,7 @@
     "code": "QF020",
     "name": "unknown-column",
     "category": "names",
-    "summary": "select or exec names a column the table literal does not have, and nothing defines it",
+    "summary": "A column a table literal does not have, in select, exec, update, a where phrase or xkey, and nothing defines it",
     "scope": "builtin"
   },
   {
@@ -669,6 +669,20 @@
     "name": "signal-non-string",
     "category": "types-and-shapes",
     "summary": "A number or a char atom signalled, which q refuses with 'stype",
+    "scope": "builtin"
+  },
+  {
+    "code": "QT026",
+    "name": "join-unkeyed-right",
+    "category": "types-and-shapes",
+    "summary": "lj, ij or pj with a right table that has no key, which q refuses with 'type",
+    "scope": "builtin"
+  },
+  {
+    "code": "QT027",
+    "name": "insert-value-count",
+    "category": "types-and-shapes",
+    "summary": "insert or upsert given a different number of values than the table has columns",
     "scope": "builtin"
   },
   {

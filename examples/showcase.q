@@ -383,6 +383,20 @@ quotes:([]px:1 2)
 / expect-next: QF020
 sized:select size from quotes
 priced:select px from quotes
+/ The where phrase and xasc name columns too.
+/ expect-next: QF020
+bigones:select from quotes where size>100
+/ expect-next: QF020
+bysize:`size xasc quotes
+
+/ QT026: lj joins on the right table's key, so an unkeyed one is 'type.
+/ expect-next: QT026
+joined:quotes lj ([]px:1 2;venue:`a`b)
+joinedk:quotes lj ([px:1 2]venue:`a`b)
+
+/ QT027: insert takes one value per column, and quotes has one.
+/ expect-next: QT027
+`quotes insert (1;2)
 / QT005: keyed is no different.
 / expect-next: QT005
 one2: ([k:1] v:2)

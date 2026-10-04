@@ -1,6 +1,6 @@
 # Rules
 
-All 105 rules, generated from `src/taxonomy.json` - the same data
+All 107 rules, generated from `src/taxonomy.json` - the same data
 `qlinter --rules` and `qlinter --explain <CODE>` print from. Regenerate with
 `python3 scripts/rules_doc.py > docs/rules.md`; a test fails when this is stale.
 
@@ -72,7 +72,7 @@ that wants fewer findings narrows in its own configuration.
 | `QF017` | unused-local | Local assigned and never read | `style` and above |
 | `QF018` | possibly-undefined-name | Bare value read has no local or global definition in this file | `style` and above |
 | `QF019` | read-only-system-name | Assignment to a single-letter .z name, which q refuses with 'domain | every profile |
-| `QF020` | unknown-column | select or exec names a column the table literal does not have, and nothing defines it | every profile |
+| `QF020` | unknown-column | A column a table literal does not have, in select, exec, update, a where phrase or xkey, and nothing defines it | every profile |
 
 ## Application - how many arguments a thing takes and how it is called
 
@@ -120,6 +120,8 @@ that wants fewer findings narrows in its own configuration.
 | `QT023` | char-integer-arithmetic | Integer arithmetic on a char, which q 5 refuses with 'type | every profile |
 | `QT024` | attribute-literal-fail | An s#, u# or p# attribute applied to a literal it does not describe | every profile |
 | `QT025` | signal-non-string | A number or a char atom signalled, which q refuses with 'stype | every profile |
+| `QT026` | join-unkeyed-right | lj, ij or pj with a right table that has no key, which q refuses with 'type | every profile |
+| `QT027` | insert-value-count | insert or upsert given a different number of values than the table has columns | every profile |
 
 ## Correctness - q that runs and does the wrong thing
 
