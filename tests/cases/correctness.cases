@@ -164,6 +164,13 @@ x:(`:data/2024;10/2)
 === QB014 | after a parenthesised value too
 r:(a+b)/2
 
+=== clean | a bracketed projection with a left operand is over, as meant
+mem:{(3#system"w")%x (1024*)/ 1}
+p:(10000>pi::)(2*)/1000
+
+=== QB014 | without the left operand q refuses it: (2*)/1 is '/
+r:(2*)/1
+
 === clean | percent divides
 r:10%2
 

@@ -2063,7 +2063,39 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
         // as one.
         let unsym = re!(r"`[A-Za-z0-9_.:/]*")
             .replace_all(line, |m: &regex::Captures| " ".repeat(m[0].len()));
-        if let Some(m) = re!(r"[\d)]/\s*[\d(]").find(&unsym) {
+        // A bracketed projection with an operand to its left is over, not a
+        // misspelled division: `x (1024*)/ 1` and `(10>)(2*)/1` run, and
+        // the author meant both. Without that left operand q refuses even
+        // the projection - `(2*)/1` is '/ - so only that pairing is let go.
+        let over = |m: &regex::Match| {
+            if !unsym[m.start()..].starts_with(')') {
+                return false;
+            }
+            let b = unsym.as_bytes();
+            let (mut depth, mut open) = (0i32, None);
+            for i in (0..=m.start()).rev() {
+                match b[i] {
+                    b')' => depth += 1,
+                    b'(' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            open = Some(i);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let Some(open) = open else { return false };
+            let projection = unsym[open + 1..m.start()]
+                .trim_end()
+                .ends_with(|c: char| "+-*%&|^=<>~,#_!?@.$:".contains(c));
+            let operand = unsym[..open]
+                .trim_end()
+                .ends_with(|c: char| c.is_alphanumeric() || ")]}".contains(c));
+            projection && operand
+        };
+        if let Some(m) = re!(r"[\d)]/\s*[\d(]").find_iter(&unsym).find(|m| !over(m)) {
             add(
                 offset + m.start(),
                 "QB014",
