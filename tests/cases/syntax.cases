@@ -66,3 +66,11 @@ r:where[-1 2]
 
 === clean | non-negative counts
 r:where[1 2]
+
+=== QF017 | a string continued inside a lambda leaves the code after it outside the string
+f:{s:"abc
+  def"; +\[x]}
+
+=== QE002 QF017 | while a bad escape on the string's second line is still found
+f:{s:"abc
+  d\ef"; x}

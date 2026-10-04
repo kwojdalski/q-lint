@@ -2134,15 +2134,17 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
                 add(offset, "QB003", m.as_str().trim().into());
             }
         }
-        let b = literals.as_bytes();
-        let (mut i, mut inside) = (0, false);
+        offset += line.len();
+    }
+    // String escapes, over the whole file at once. A backslash is in a string
+    // exactly when `views` blanked it from `code` and kept it in `comments`;
+    // toggling on quotes a statement at a time cannot know that a statement
+    // which starts on the second line of a string starts inside one.
+    {
+        let (b, c) = (v.comments.as_bytes(), code.as_bytes());
+        let mut i = 0;
         while i < b.len() {
-            if b[i] == b'"' {
-                inside = !inside;
-                i += 1;
-                continue;
-            }
-            if !inside || b[i] != b'\\' {
+            if b[i] != b'\\' || c[i] != b' ' {
                 i += 1;
                 continue;
             }
@@ -2158,7 +2160,7 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
                 continue;
             }
             add(
-                offset,
+                i,
                 "QE002",
                 format!(
                     "Invalid escape {}",
@@ -2167,7 +2169,6 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
             );
             i += 2;
         }
-        offset += line.len();
     }
     let chars: Vec<_> = v.comments.char_indices().collect();
     let mut i = 0;
