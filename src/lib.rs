@@ -2143,7 +2143,14 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
                 re!(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\s*(=|~)\s*([a-zA-Z_][a-zA-Z0-9_]*)\b")
                     .captures_at(line, search)
             {
-                if m[1] == m[3] {
+                // The right name has to be the whole operand: `c=c i` compares
+                // a column with an item of itself. In a filter a `,` ends one
+                // condition as well as the statement's own terminators do.
+                let whole = m.get(3).unwrap().end();
+                let rest = line[whole..].trim_start_matches([' ', '\t']);
+                let ends =
+                    rest.is_empty() || rest.starts_with([',', ';', ')', ']', '}', '\n', '\r']);
+                if m[1] == m[3] && ends {
                     add(offset, "QB001", format!("`{}{}{}`", &m[1], &m[2], &m[3]));
                     search = m.get(0).unwrap().end();
                 } else {
