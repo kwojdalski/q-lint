@@ -16,3 +16,8 @@ package-lock.json
 
 # `server/` is deliberately absent from this list: a platform build puts the
 # matching qlinter there and it must ship.
+# The grammar test's engine and the test itself: CI only, never shipped.
+node_modules/vscode-textmate/**
+node_modules/vscode-oniguruma/**
+test/**
+

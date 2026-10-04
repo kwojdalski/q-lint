@@ -40,3 +40,5 @@ jobs:
           cache-dependency-path: editors/vscode/package-lock.json
       - run: npm ci
       - run: npx tsc -p ./ --noEmit
+      # The grammar, tokenized by VS Code's own engine against pinned scopes.
+      - run: npm test
