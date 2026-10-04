@@ -1956,19 +1956,17 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
                 "timespan" => "N", "month" => "M", "minute" => "U", "second" => "V",
                 "datetime" => "Z", "guid" => "G", _ => "",
             };
-            let fix = if name == "symbol" {
-                "`$\"...\"".to_string()
+            // `symbol` is the exception: q refuses it with 'type rather than
+            // converting codes, so the message has to say something else.
+            let detail = if name == "symbol" {
+                "`symbol$ on a string is 'type; the cast to symbol is `$\"...\"".to_string()
             } else {
-                format!("\"{ch}\"$\"...\"")
-            };
-            add(
-                offset + m.get(0).unwrap().start(),
-                "QT004",
                 format!(
                     "`{name}$ on a string casts each character's code, not the text; parsing \
-                     text is {fix}"
-                ),
-            );
+                     text is \"{ch}\"$\"...\""
+                )
+            };
+            add(offset + m.get(0).unwrap().start(), "QT004", detail);
         }
         // Equality against a string literal in a filter: on a symbol column
         // it is 'type, on a string column 'length (rows against chars), and
