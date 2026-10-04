@@ -269,3 +269,7 @@ r:select from t where c=c i
 === clean | a match inside a lambda applied to each row is per row
 r:select from t where {x[`b]~2} each d
 
+=== clean | -1_ is drop, so these compare against data, not two literals
+r1:all 0=-1_es
+r2:where (-1_r=0),0b
+

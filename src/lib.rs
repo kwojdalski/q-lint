@@ -308,8 +308,8 @@ fn boundary(s: &str, at: usize) -> bool {
 /// `any x>1 2 3` - an atom - is not this; and only the operators that pair
 /// items, so `~` and `in`, which return one boolean, are not either.
 fn vector_comparison(cond: &str) -> bool {
-    const VECTOR: &str = r"(?:-?\d[\w.]*(?:[ \t]+-?\d[\w.]*)+|\(\s*-?\d[\w.]*(?:[ \t]+-?\d[\w.]*)+\s*\)|(?:`[A-Za-z0-9_.]*){2,}|[01]{2,}b)";
-    const OPERAND: &str = r"(?:-?\d[\w.]*|`[A-Za-z0-9_.]*|\.?[A-Za-z][A-Za-z0-9_.]*)";
+    const VECTOR: &str = r"(?:-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+|\(\s*-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+\s*\)|(?:`[A-Za-z0-9_.]*){2,}|[01]{2,}b)";
+    const OPERAND: &str = r"(?:-?\d[A-Za-z0-9.]*|`[A-Za-z0-9_.]*|\.?[A-Za-z][A-Za-z0-9_.]*)";
     const OP: &str = r"(?:<=|>=|<>|[=<>+*%&|-])";
     static RE: LazyLock<regex::Regex> = LazyLock::new(|| {
         regex::Regex::new(&format!(
@@ -979,7 +979,7 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
             && (re!(r"^`[A-Za-z][A-Za-z0-9_.]*$").is_match(cond)
                 || re!(r#"^"[^"]*"$"#).is_match(cond)
                 || re!(r"^[01]{2,}b$").is_match(cond)
-                || re!(r"^-?\d[\w.]*(?:\s+-?\d[\w.]*)+$").is_match(cond)
+                || re!(r"^-?\d[A-Za-z0-9.]*(?:\s+-?\d[A-Za-z0-9.]*)+$").is_match(cond)
                 || vector_comparison(cond))
         {
             add(
@@ -1055,7 +1055,7 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
         // A symbol, or a symbol vector: `1 in `a`b` is 'type just as `1=`a` is,
         // and the vector is what `in` is usually given.
         let sym = r"(?:`[A-Za-z][A-Za-z0-9_.]*)+";
-        let num = r"-?\d[\w.:]*(?:[ \t]+-?\d[\w.:]*)*";
+        let num = r"-?\d[A-Za-z0-9.:]*(?:[ \t]+-?\d[A-Za-z0-9.:]*)*";
         let string = r#""(?:[^"\\]|\\.)*""#;
         let op = r"(?:<=|>=|<>|<|>|=|\bin\b)";
         // A string literal is blanks by the time `code` is built, so the
@@ -1534,13 +1534,14 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
             if re!(r"^(?:`[A-Za-z0-9_.]*){2,}$").is_match(v) {
                 return Some(Shape::Vector(Some(v.matches('`').count())));
             }
-            if re!(r"^-?\d[\w.:]*(?:\s+-?\d[\w.:]*)+$").is_match(v) {
+            if re!(r"^-?\d[A-Za-z0-9.:]*(?:\s+-?\d[A-Za-z0-9.:]*)+$").is_match(v) {
                 return Some(Shape::Vector(Some(v.split_whitespace().count())));
             }
             if v == "()" {
                 return Some(Shape::Vector(Some(0)));
             }
-            if re!(r"^[01]b$|^0x[0-9a-fA-F]{2}$|^-?\d[\w.:]*$|^`[A-Za-z0-9_.]*$").is_match(v) {
+            if re!(r"^[01]b$|^0x[0-9a-fA-F]{2}$|^-?\d[A-Za-z0-9.:]*$|^`[A-Za-z0-9_.]*$").is_match(v)
+            {
                 return Some(Shape::Atom);
             }
             None
@@ -1823,7 +1824,7 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
     }
     // Two literals compared. The answer is fixed before the program runs, so
     // either the comparison is dead or one side was meant to be a name.
-    for m in re!(r"(-?\d[\w.]*|`[A-Za-z][A-Za-z0-9_.]*)\s*(=|<>|<=|>=|<|>)\s*(-?\d[\w.]*|`[A-Za-z][A-Za-z0-9_.]*)")
+    for m in re!(r"(-?\d[A-Za-z0-9.]*|`[A-Za-z][A-Za-z0-9_.]*)\s*(=|<>|<=|>=|<|>)\s*(-?\d[A-Za-z0-9.]*|`[A-Za-z][A-Za-z0-9_.]*)")
         .captures_iter(code)
     {
         let whole = m.get(0).unwrap();
@@ -1951,7 +1952,9 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
         // precedence around it. Deciding that in general needs q's precedence,
         // and q's precedence is one rule applied to everything, so "necessary"
         // is a judgement about the reader rather than the parser.
-        for m in re!(r"\((\s*(?:\.?[A-Za-z][A-Za-z0-9_.]*|-?\d[\w.]*)\s*)\)").captures_iter(line) {
+        for m in
+            re!(r"\((\s*(?:\.?[A-Za-z][A-Za-z0-9_.]*|-?\d[A-Za-z0-9.]*)\s*)\)").captures_iter(line)
+        {
             let whole = m.get(0).unwrap();
             // `f(x)` is a call, not a parenthesised operand, and `(x)` after a
             // name is how q spells one.
@@ -2207,7 +2210,7 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
                 // A column equals one value; against a vector literal the
                 // phrase is a length error at runtime, and `in` is the
                 // operator that was meant.
-                if re!(r"(?:=|<>)\s*(?:-?\d[\w.]*\s+-?\d|`[A-Za-z][A-Za-z0-9_.]*`)")
+                if re!(r"(?:=|<>)\s*(?:-?\d[A-Za-z0-9.]*\s+-?\d|`[A-Za-z][A-Za-z0-9_.]*`)")
                     .is_match(&phrase)
                 {
                     add(

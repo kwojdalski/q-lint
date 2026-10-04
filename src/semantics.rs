@@ -429,7 +429,7 @@ pub fn check(path: &str, code: &str, raw: &str, comments: &str) -> Vec<Finding> 
     // numeric or byte vector, or a parenthesised list. Not a numeric atom:
     // `1!t` keys a table and `0!t` unkeys one, which is not a dictionary.
     for m in re!(
-        r"((?:`[A-Za-z][A-Za-z0-9_.]*)+|-?\d[\w.]*(?:[ \t]+-?\d[\w.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*;[^()]*\))\s*!"
+        r"((?:`[A-Za-z][A-Za-z0-9_.]*)+|-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*;[^()]*\))\s*!"
     )
     .captures_iter(code)
     {
@@ -478,7 +478,7 @@ pub fn check(path: &str, code: &str, raw: &str, comments: &str) -> Vec<Finding> 
     // least two items, or a parenthesised list. `shape` decides the length of
     // each; this pattern only has to find them.
     for m in re!(
-        r"(?P<l>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[\w.]*[eE][+-])?[\w.]*(?:\s+-?\d(?:[\w.]*[eE][+-])?[\w.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*;[^()]*\))\s*(?P<op><>|<=|>=|[+*%&|=<>-])\s*(?P<r>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[\w.]*[eE][+-])?[\w.]*(?:\s+-?\d(?:[\w.]*[eE][+-])?[\w.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*;[^()]*\))"
+        r"(?P<l>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*(?:\s+-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*;[^()]*\))\s*(?P<op><>|<=|>=|[+*%&|=<>-])\s*(?P<r>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*(?:\s+-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*;[^()]*\))"
     )
     .captures_iter(code)
     {
@@ -1331,7 +1331,7 @@ fn held(code: &str, raw: &str) -> Option<Held> {
         let n = re!(r"\\[0-7]{3}|\\.|[^\\]").find_iter(&body[1]).count();
         return Some(if n == 1 { Held::Atom } else { Held::Vector(n) });
     }
-    if re!(r"^(?:-?\d[\w.:]*|0x[0-9a-fA-F]{2})$").is_match(code)
+    if re!(r"^(?:-?\d[A-Za-z0-9.:]*|0x[0-9a-fA-F]{2})$").is_match(code)
         && !re!(r"^[01]{2,}b$|^0x(?:[0-9a-fA-F]{2}){2,}$").is_match(code)
     {
         return Some(Held::Atom);
@@ -1448,7 +1448,7 @@ fn named_values(
     // Two vectors of known, different lengths under an operator that pairs
     // items - QT006 for a name rather than a literal. `,` and `~` take any
     // lengths and are not in the set.
-    let vector = r"-?\d(?:[\w.]*[eE][+-])?[\w.]*(?:\s+-?\d(?:[\w.]*[eE][+-])?[\w.]*)+|(?:`[A-Za-z0-9_.]*){2,}|\([^()]*;[^()]*\)";
+    let vector = r"-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*(?:\s+-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*)+|(?:`[A-Za-z0-9_.]*){2,}|\([^()]*;[^()]*\)";
     let pair = regex::Regex::new(&format!(
         r"(?P<l>{name_re}|{vector})\s*(?P<op><>|<=|>=|[+*%&|=<>-])\s*(?P<r>{name_re}|{vector})"
     ))
