@@ -1267,7 +1267,11 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
     for m in re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)\s*\(").captures_iter(code) {
         let whole = m.get(0).unwrap();
         let name = m.get(1).unwrap().as_str();
-        if !boundary(code, whole.start()) || ranks.get(name).is_none_or(|&r| r < 2) {
+        // A name defined twice has whichever rank ran last, as QA012 knows.
+        if !boundary(code, whole.start())
+            || redefined.contains(name)
+            || ranks.get(name).is_none_or(|&r| r < 2)
+        {
             continue;
         }
         let open = whole.end() - 1;

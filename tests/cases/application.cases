@@ -158,3 +158,8 @@ r:qs(1 2;3)
 qs:{$[2>count x;x;raze .z.s each 1_x]}
 r:qs[1;2]
 
+=== clean | a name defined twice is left alone: which definition a call meets depends on when it runs
+f:{x+y+z}
+r:f(1;2)
+f:{x}
+
