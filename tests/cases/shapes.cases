@@ -409,3 +409,8 @@ r3:a+1
 a:1 2 3
 b:1 2
 r:a+b,0
+
+=== clean | brackets with nothing after them are q 5's dictionary literal, not a table
+pkg:([arch:"expat"; ubuntu:"libexpat1"; centos:""])
+env:([a:1;b:2 3])
+

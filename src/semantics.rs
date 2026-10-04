@@ -1305,6 +1305,10 @@ fn held(code: &str, raw: &str) -> Option<Held> {
         let inner = code[1..code.len() - 1].trim_start();
         if inner.starts_with('[') {
             let close = matching(inner, 0, b'[', b']')?;
+            // `([a:1;b:2])` with nothing after the brackets is a dictionary.
+            if inner[close..].trim().is_empty() {
+                return None;
+            }
             let mut columns = vec![];
             for part in crate::slots(&inner[1..close - 1])
                 .into_iter()

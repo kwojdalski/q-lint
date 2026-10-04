@@ -1471,6 +1471,12 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
         };
         let keys = &inner[bracket + 1..key_close - 1];
         let values = &inner[key_close..];
+        // Nothing after the brackets is q 5's dictionary literal, not a
+        // table: `([a:"";b:"xyz"])` is `` `a`b!("";"xyz") ``, and its values
+        // may be any shapes at all.
+        if values.trim().is_empty() {
+            continue;
+        }
         // What a column value is, or None when the text does not say.
         #[derive(PartialEq, Clone, Copy)]
         enum Shape {
