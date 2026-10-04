@@ -428,7 +428,12 @@ fn views(source: &str) -> Views {
             foreign = false;
         }
         if !ended && !block && string.is_none() {
-            if line.starts_with("p)") || line.starts_with("k)") {
+            // Any `x)` line is another language: q hands it to `.x.e`, which
+            // is how `p)` reaches embedPy and `k)` reaches k, and a test
+            // harness may define `.t.e` for `t)`. `q)` is q itself, and its
+            // prefix is stripped below instead.
+            let b = line.as_bytes();
+            if b.len() >= 2 && b[0].is_ascii_lowercase() && b[0] != b'q' && b[1] == b')' {
                 foreign = true;
             }
             if foreign {

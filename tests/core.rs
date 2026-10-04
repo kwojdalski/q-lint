@@ -67,7 +67,11 @@ fn language_prefixes_preserve_following_q_diagnostics() {
         assert_eq!((&*findings[0].code, findings[0].line), ("QF001", 6));
     }
     assert!(lint("q)/ bad )\nx:1\n", "t.q", Profile::Style).is_empty());
-    assert_eq!(lint("a)x:1\n", "t.q", Profile::Style)[0].code, "QE001");
+    // Any `x)` line is handed to `.x.e`, which may be defined in another
+    // file - fusionx's tests define `.t.e` in the harness that loads them.
+    // Without one q raises '.a.e, a missing definition rather than an
+    // unbalanced delimiter, so the line is another language's, not q's.
+    assert!(lint("a)x:1\n", "t.q", Profile::Style).is_empty());
 }
 
 /// The cases here were settled by running each one through a real q 4.x and

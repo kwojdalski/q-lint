@@ -74,3 +74,8 @@ f:{s:"abc
 === QE002 QF017 | while a bad escape on the string's second line is still found
 f:{s:"abc
   d\ef"; x}
+
+=== clean | a t) line belongs to the language .t.e defines, as p) and k) do
+t)"Hello"~r
+t)abs[x]<tol
+
