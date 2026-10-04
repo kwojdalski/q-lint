@@ -144,3 +144,9 @@ d:key(!).("S=;")0:filePath
 r:.[f;(),y]
 r2:f . (),y
 
+=== clean | the first argument is a list with semicolons of its own
+r:.[(1b;`;)f::;inputs]
+
+=== clean | an empty first slot is a projection of dot apply, and 1_x is a drop
+r:$[1=count x;;.[;1_x]]
+

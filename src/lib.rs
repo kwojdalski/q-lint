@@ -1318,9 +1318,35 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
     // Dot apply wants a list of arguments, and a scalar in that slot is a
     // 'type error - even when the left side is itself a list to index.
     // Verified: `.[{x+y};1]`, `.[f;`a]`, `.[1 2 3;0]` all 'type.
-    for m in re!(r"\.\[[^;\[\]]+;\s*(?:-?\d[\w.]*|`[A-Za-z0-9_.]*)\s*[;\]]").find_iter(code) {
+    //
+    // The slots are split at bracket depth zero: in `.[(1b;`;)f::;args]` the
+    // first argument is a list with semicolons of its own, and the second is
+    // `args`, not the `` ` `` inside it.
+    for (at, _) in code.match_indices(".[") {
+        if code[..at].ends_with(|c: char| c.is_alphanumeric() || "_.".contains(c)) {
+            continue;
+        }
+        let Some(close) = matching(code, at + 1, b'[', b']') else {
+            continue;
+        };
+        let parts = slots(&code[at + 2..close - 1]);
+        // An empty slot is a projection - `.[;1_x]` waits for its function -
+        // and judged in the source, where a string is not blank. No `_` in
+        // the number: `1_x` is a drop, not a literal.
+        let mut from = at + 2;
+        let elided = parts.iter().any(|part| {
+            let empty = source[from..from + part.len()].trim().is_empty();
+            from += part.len() + 1;
+            empty
+        });
+        if elided
+            || parts.len() < 2
+            || !re!(r"^(?:-?\d[A-Za-z0-9.]*|`[A-Za-z0-9_.]*)$").is_match(parts[1].trim())
+        {
+            continue;
+        }
         add(
-            m.start(),
+            at,
             "QA009",
             "Dot apply takes a list of arguments; a scalar here is a 'type error at runtime \
              (`enlist` it, or use `@`)"
