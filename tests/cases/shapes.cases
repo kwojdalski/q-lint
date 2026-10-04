@@ -96,6 +96,15 @@ r:1e-3 2e-3=3e-3 4e-3
 === QT006 | a mismatch is still a mismatch when an operand uses an exponent
 r:1 2 9e-08+4 5
 
+=== clean | the right operand runs on past a join, so its length is not the literal's
+r:1 2 3=4 5,6
+
+=== clean | nor when the join is spaced
+r:`a`b`c=`a`b , `c
+
+=== QT006 | a mismatched right operand that ends the statement
+r:1 2 3=4 5;
+
 === clean | same length
 r:1 2 3+4 5 6
 

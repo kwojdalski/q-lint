@@ -302,10 +302,14 @@ pub fn check(path: &str, code: &str, raw: &str, comments: &str) -> Vec<Finding> 
             && code[..op.start()].ends_with(['e', 'E'])
             && code[..op.start() - 1].ends_with(|c: char| c.is_ascii_digit() || c == '.')
             && code[op.end()..].starts_with(|c: char| c.is_ascii_digit());
+        // The right operand is everything to the right of the operator, so it
+        // has to end here for its length to be the one counted: `4 5,6` is
+        // three items, not two. Same test as QB018's.
+        let rest = code[whole.end()..].trim_start_matches([' ', '\t']);
         if negative
             || exponent
             || !boundary(code, whole.start())
-            || code[whole.end()..].starts_with(|c: char| c.is_alphanumeric() || "_.`".contains(c))
+            || !(rest.is_empty() || rest.starts_with([';', ')', ']', '}', '\n', '\r']))
         {
             continue;
         }
