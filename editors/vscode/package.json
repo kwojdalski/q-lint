@@ -85,7 +85,7 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "package": "vsce package",
-    "test": "node --test test/"
+    "test": "node --test test/grammar.test.js"
   },
   "dependencies": {
     "vscode-languageclient": "^9.0.1"
