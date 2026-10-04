@@ -8,6 +8,7 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
     let mut out = vec![];
     query_injection(path, source, code, comments, &mut out);
     credentials(path, source, code, comments, &mut out);
+    simplifications(path, source, code, &mut out);
     out
 }
 
@@ -127,5 +128,64 @@ fn credentials(path: &str, source: &str, code: &str, comments: &str, out: &mut V
                 ),
             ));
         }
+    }
+}
+
+/// #10: doing by hand what a q primitive does. Only rewrites q confirmed give
+/// the same result on every input tried - nulls, symbols, strings, a
+/// dictionary, a table, an atom, the empty list. Others the survey proposed
+/// were dropped because they do not: `first asc x` is not `min x` once there
+/// is a null (asc puts it first, min skips it), and `{x+y}/` is not `sum`,
+/// which skips nulls too.
+fn simplifications(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
+    let mut add = |at: usize, code_: &str, detail: String| {
+        out.push(Finding::at(path, source, at, code_, detail));
+    };
+    // QR001: `reverse asc x` is `desc x`, and `reverse desc x` is `asc x`.
+    for m in re!(r"\breverse\s+(asc|desc)\b").captures_iter(code) {
+        let whole = m.get(0).unwrap();
+        if boundary(code, whole.start()) {
+            let other = if &m[1] == "asc" { "desc" } else { "asc" };
+            add(
+                whole.start(),
+                "QR001",
+                format!("`reverse {}` is `{other}`, in one pass", &m[1]),
+            );
+        }
+    }
+    // QR002: an identity lambda under each gives back what it was given.
+    for m in re!(r"\{\s*x\s*\}\s*(?:each\b|'(?:[^:]|$))").find_iter(code) {
+        add(
+            m.start(),
+            "QR002",
+            "`{x} each` returns its argument unchanged".into(),
+        );
+    }
+    // QR003: sorting the distinct items keeps them distinct.
+    for m in re!(r"\bdistinct\s+asc\s+distinct\b").find_iter(code) {
+        if boundary(code, m.start()) {
+            add(
+                m.start(),
+                "QR003",
+                "`distinct asc distinct x` is `asc distinct x`: sorting adds no duplicates".into(),
+            );
+        }
+    }
+    // QR004: arithmetic is atomic, so a lambda that does one operation with a
+    // number needs no each - `{x+1} each x` is `1+x`, run on the whole list
+    // at once. Only the visibly atomic shape: one of + - * % between x and a
+    // numeric literal.
+    for m in re!(
+        r"\{\s*(?:x\s*[-+*%]\s*-?\d[A-Za-z0-9.]*|-?\d[A-Za-z0-9.]*\s*[-+*%]\s*x)\s*\}\s*(?:each\b|'(?:[^:]|$))"
+    )
+    .find_iter(code)
+    {
+        add(
+            m.start(),
+            "QR004",
+            "Arithmetic is atomic: this applies to the whole list without `each`, and \
+             faster"
+                .into(),
+        );
     }
 }

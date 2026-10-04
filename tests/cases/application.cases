@@ -117,7 +117,7 @@ f:{x+y}
 r:f[1;2]
 
 === clean | a name assigned the result of applying a lambda is not that lambda
-files:{x+1} each 1 2 3
+files:{x,1} each 1 2 3
 r:files[;0]
 
 === clean | a name defined twice has no single rank to check against

@@ -1,0 +1,34 @@
+=== QR001 | reverse asc is desc
+r:{[p] reverse asc p}
+
+=== QR001 | and reverse desc is asc
+r:{[p] reverse desc p}
+
+=== clean | first asc is not min: asc puts a null first and min skips it
+r:{[p] first asc p}
+
+=== QR002 | an identity lambda under each
+r:{[p] {x} each p}
+
+=== QR002 | spelled with the each adverb too
+r:{[p] {x}'[p]}
+
+=== clean | each-prior is something else
+r:{[p] {x}':[p]}
+
+=== QR003 | distinct after sorting distinct items
+r:{[p] distinct asc distinct p}
+
+=== QR004 | one arithmetic operation with a number, which is atomic
+r:{[p] {x+1} each p}
+
+=== QR004 | the number on the left
+r:{[p] {2*x} each p}
+
+=== clean | a lambda that is not one atomic operation needs its each
+r1:{[p] {x,1} each p}
+r2:{[p] {x+y} each p}
+r3:{[p] {sum x} each p}
+
+=== clean | sum is not +/: it skips nulls
+r:{[p] {x+y}/[p]}

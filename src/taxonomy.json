@@ -663,5 +663,33 @@
     "category": "security",
     "summary": "A password, secret or token written into source as a string literal",
     "scope": "style"
+  },
+  {
+    "code": "QR001",
+    "name": "reverse-sort",
+    "category": "simplification",
+    "summary": "reverse asc is desc, and reverse desc is asc",
+    "scope": "style"
+  },
+  {
+    "code": "QR002",
+    "name": "identity-each",
+    "category": "simplification",
+    "summary": "{x} each returns its argument unchanged",
+    "scope": "style"
+  },
+  {
+    "code": "QR003",
+    "name": "distinct-sorted-distinct",
+    "category": "simplification",
+    "summary": "distinct asc distinct x is asc distinct x",
+    "scope": "style"
+  },
+  {
+    "code": "QR004",
+    "name": "atomic-each",
+    "category": "simplification",
+    "summary": "each over one arithmetic operation, which is already atomic",
+    "scope": "style"
   }
 ]

@@ -502,6 +502,26 @@ pair2:select from trades where sym=`EUR`USD
 password:"hunter2"
 dbuser:getenv`DBUSER
 
+/ QR001: reverse asc is desc - checked equal on nulls, symbols and a table.
+/ expect-next: QR001
+ranked:{[p] reverse asc p}
+ranked2:{[p] desc p}
+
+/ QR002: an identity lambda under each gives back what it was given.
+/ expect-next: QR002
+same:{[p] {x} each p}
+
+/ QR003: sorting distinct items adds no duplicates to remove.
+/ expect-next: QR003
+uniq:{[p] distinct asc distinct p}
+uniq2:{[p] asc distinct p}
+
+/ QR004: arithmetic is atomic, so each adds nothing but time. A lambda
+/ that is not one atomic operation, {x,1}, needs its each and stays quiet.
+/ expect-next: QR004
+bumped:{[p] {x+1} each p}
+joined2:{[p] {x,1} each p}
+
 / QB002: q's like does not support an interior wildcard.
 / expect-next: QB002
 hits:select from trades where sym like "a*b"
@@ -728,7 +748,7 @@ tail:select from trades where sym like "ab*"
 / thing that makes it fine. Each was checked to be silent before it went in.
 eightParams:{[a;b;c;d;e;f;g;h] a+b+c+d+e+f+g+h}
 unaryUnderAt:@[{[a] a+1};1;{`err}]
-eachOverUnary:{x+1} each 1 2 3
+eachOverUnary:{x,1} each 1 2 3
 threeSlots:$[1b;2;3]
 oddSlots:$[0b;1;0b;2;3]
 namedCall:takesOne[1]
