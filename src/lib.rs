@@ -1904,7 +1904,12 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
         // parse errors (with a space before it, `/` opens a comment and the
         // rest of the line vanishes - the comment view has already removed
         // that case). Division is `%`.
-        if let Some(m) = re!(r"[\d)]/\s*[\d(]").find(line) {
+        // A file symbol is a path, and `` `:data/2024/01 `` has digits either
+        // side of its slashes; symbols are blanked first so it is not read
+        // as one.
+        let unsym = re!(r"`[A-Za-z0-9_.:/]*")
+            .replace_all(line, |m: &regex::Captures| " ".repeat(m[0].len()));
+        if let Some(m) = re!(r"[\d)]/\s*[\d(]").find(&unsym) {
             add(
                 offset + m.start(),
                 "QB014",

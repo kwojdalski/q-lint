@@ -143,6 +143,12 @@ select from t where type=`a
 === QB014 | slash between literals is the over adverb
 r:10/2
 
+=== clean | the slashes of a file path are not the adverb
+x:`:data/2024/01
+
+=== QB014 | but a path beside a division still has one
+x:(`:data/2024;10/2)
+
 === QB014 | after a parenthesised value too
 r:(a+b)/2
 
