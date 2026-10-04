@@ -116,7 +116,7 @@
     "name": "reserved-table-column",
     "category": "names",
     "summary": "Builtin name as a table-literal column",
-    "scope": "builtin"
+    "scope": "style"
   },
   {
     "code": "QF014",
