@@ -1,6 +1,6 @@
 # Rules
 
-All 93 rules, generated from `src/taxonomy.json` - the same data
+All 95 rules, generated from `src/taxonomy.json` - the same data
 `qlinter --rules` and `qlinter --explain <CODE>` print from. Regenerate with
 `python3 scripts/rules_doc.py > docs/rules.md`; a test fails when this is stale.
 
@@ -145,6 +145,13 @@ that wants fewer findings narrows in its own configuration.
 |---|---|---|---|
 | `QD001` | negative-til | til called with a negative literal count | every profile |
 | `QD002` | negative-where | where called with negative literal repetition counts | every profile |
+
+## Security - q that lets its input decide what it runs, or carries secrets
+
+| code | name | summary | on in |
+|---|---|---|---|
+| `QX001` | query-injection | A qSQL query built by joining strings is run by value, so a spliced value can rewrite it | `style` and above |
+| `QX002` | credential-literal | A password, secret or token written into source as a string literal | `style` and above |
 
 ## Policy - one repository's conventions
 

@@ -649,5 +649,19 @@
     "category": "policy",
     "summary": "Function defined in this file applied without brackets",
     "scope": "uqf"
+  },
+  {
+    "code": "QX001",
+    "name": "query-injection",
+    "category": "security",
+    "summary": "A qSQL query built by joining strings is run by value, so a spliced value can rewrite it",
+    "scope": "style"
+  },
+  {
+    "code": "QX002",
+    "name": "credential-literal",
+    "category": "security",
+    "summary": "A password, secret or token written into source as a string literal",
+    "scope": "style"
   }
 ]

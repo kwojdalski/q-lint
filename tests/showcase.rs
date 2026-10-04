@@ -40,9 +40,10 @@ fn examples_cover_all_available_rules() {
     .into_iter()
     .map(|f| f.code)
     .collect();
-    // Two rules cannot be shown on a marked line in the showcase: an
-    // unbalanced delimiter stops the file being analysed at all, and a BOM
-    // only exists at the start of a file.
+    // Three rules cannot be shown on a marked line in the showcase: an
+    // unbalanced delimiter stops the file being analysed at all, a BOM only
+    // exists at the start of a file, and an injectable query evaluates a
+    // string, which stops the name checks for the whole file.
     for (name, source, code) in [
         (
             "syntax-error.q",
@@ -53,6 +54,13 @@ fn examples_cover_all_available_rules() {
             "byte-order-mark.q",
             include_str!("../examples/byte-order-mark.q"),
             "QE005",
+        ),
+        // Its example evaluates a string, which turns off every name-based
+        // check in the file it is in.
+        (
+            "query-injection.q",
+            include_str!("../examples/query-injection.q"),
+            "QX001",
         ),
     ] {
         let found: BTreeSet<_> = lint(source, name, Profile::Uqf)

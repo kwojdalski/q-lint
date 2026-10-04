@@ -10,6 +10,7 @@ macro_rules! re {
         &*RE
     }};
 }
+mod families;
 mod intrinsics;
 mod semantics;
 pub use semantics::TokenKind;
@@ -716,6 +717,7 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
         out.push(finding);
     }
     out.extend(intrinsics::check(path, source, code, &v.comments));
+    out.extend(families::check(path, source, code, &v.comments));
     if let Some(at) = v.open_block {
         out.push(Finding::at(
             path,

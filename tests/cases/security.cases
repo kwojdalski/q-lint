@@ -1,0 +1,32 @@
+=== QX001 | a query built by joining a value into its text, then run
+q:{[s] value "select from t where sym=`",s}
+
+=== QX001 | the value converted on the way in is still spliced
+q:{[t] value "select from ",string t}
+
+=== clean | a constant query has nothing spliced into it
+q:{value "select from t"}
+
+=== clean | value on a name says nothing about where the text came from
+q:{[s] value s}
+
+=== clean | a conditional choosing between constant queries splices no data
+h:value $[a;"{select from x}";"{x}"],"y",b
+
+=== clean | a string that is not a query
+r:value "1+",string 2
+
+=== QX002 | a password written into the source
+password:"hunter2"
+
+=== QX002 | under a namespace, any of the usual spellings
+.cfg.apiKey:"abc123"
+
+=== clean | a prompt is a message, not a secret
+passwordPrompt:"Enter password"
+
+=== clean | read from the environment, where it belongs
+password:getenv`PASS
+
+=== clean | an empty string holds nothing
+token:""

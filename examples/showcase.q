@@ -497,6 +497,11 @@ glob:select from trades where sym like `EUR*
 / expect-next: QB008
 pair2:select from trades where sym=`EUR`USD
 
+/ QX002: a password in source is in every copy of the source.
+/ expect-next: QX002
+password:"hunter2"
+dbuser:getenv`DBUSER
+
 / QB002: q's like does not support an interior wildcard.
 / expect-next: QB002
 hits:select from trades where sym like "a*b"
