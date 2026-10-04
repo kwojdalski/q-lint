@@ -434,3 +434,31 @@ b6:ratios "ab"
 === clean | a builtin name inside a string followed by a string is not a call
 s:("x til ";"3")
 
+=== QT014 | the infix form, which is how rotate is written
+r:3.5 rotate 1 2
+
+=== QT017 | a char is no window size, infix too
+r:"a" mavg 1 2 3
+
+=== QT019 | within with a three-item right operand
+r:x within 1 2 3
+
+=== QT018 | cor of two literal vectors of different lengths
+r:1 2 cor 1 2 3
+
+=== QT014 | a name before the literal does not change which operand it is
+r:f 1.5 rotate 1 2
+
+=== QT014 | nor does a statement before it on the line
+r:2 mavg 1 2 3;r2:3.5 rotate 1 2
+
+=== clean | the infix forms q accepts
+r1:1 rotate 1 2
+r2:2 mavg 1 2 3
+r3:x within 1 2
+r4:1 2 cor 1 2
+r5:1 rotate 1 2,3
+
+=== clean | an infix right operand that runs on is not the literal
+r:x within 1 2 3,4
+

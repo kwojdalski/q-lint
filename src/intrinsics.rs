@@ -1,6 +1,6 @@
 //! Narrow contracts for explicit calls with complete, known literal arguments.
 //! Unknown expressions and projections are left alone; no input is evaluated.
-use crate::{Finding, boundary, matching, slots};
+use crate::{Finding, argument_end, boundary, matching, slots};
 
 #[derive(Clone, Copy, PartialEq)]
 enum Kind {
@@ -127,7 +127,7 @@ const BUILTINS: &str = r"til|where|sum|prd|avg|med|dev|var|sums|prds|deltas|rati
 ///
 /// Arguments are split in the masked view and then read from `comments`,
 /// which keeps strings whole: a `;` inside a string is not a separator.
-fn calls<'a>(code: &'a str, comments: &'a str) -> Vec<Call<'a>> {
+fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
     let mut out = vec![];
     // Bracket form: `name[a;b]`.
     for call in re!(&format!(r"\b({BUILTINS})\s*\[")).captures_iter(code) {
@@ -192,12 +192,64 @@ fn calls<'a>(code: &'a str, comments: &'a str) -> Vec<Call<'a>> {
             args: vec![&comments[arg.start()..arg.end()]],
         });
     }
+    // Infix form: `left name right`, the way the dyadic builtins are almost
+    // always written - `2 mavg x`, `x within 1 2`. The left operand is the
+    // noun just before the name: q confirms `a 2 mavg x` is `a[2 mavg x]`,
+    // so a name before the literal does not change which value it is. When
+    // that noun is not a literal it is passed as unknown, since `within`
+    // only needs its right operand to be one. The right operand runs to the
+    // end of the expression, as a juxtaposed argument does.
+    for m in re!(r"\b(rotate|mavg|msum|mcount|mdev|mmin|mmax|cor|cov|wavg|wsum|within)\b")
+        .find_iter(comments)
+    {
+        if !boundary(code, m.start()) || code.get(m.range()) != Some(m.as_str()) {
+            continue;
+        }
+        let before = comments[..m.start()].trim_end_matches([' ', '\t']);
+        // Something has to be on the left, or this is the prefix form.
+        if before.len() == m.start()
+            || !before.ends_with(|c: char| c.is_alphanumeric() || "_.`\")]}".contains(c))
+        {
+            continue;
+        }
+        let rest = &comments[m.end()..];
+        let from = m.end() + (rest.len() - rest.trim_start_matches([' ', '\t']).len());
+        if from == m.end() || comments[from..].starts_with(['[', ';', '\n', '\r', ')', ']', '}']) {
+            continue;
+        }
+        let Some(end) = argument_end(code, comments, raw, from) else {
+            continue;
+        };
+        // The leftmost match that reaches the name is not always the
+        // operand: in `r2:3.5 rotate x` it starts at the `2` of `r2`, since
+        // a time literal lets `:` inside one. So the search moves right past
+        // any candidate that does not start on a token boundary.
+        let mut left = "";
+        let mut from_at = 0;
+        while let Some(l) = re!(
+            r#"(?:-?\d[\w.:]*(?:[ \t]+-?\d[\w.:]*)*|(?:`[A-Za-z0-9_.]*)+|"(?:\\.|[^"\\])*"|\([^()]*\))$"#
+        )
+        .find_at(before, from_at)
+        {
+            if boundary(code, l.start()) {
+                left = l.as_str();
+                break;
+            }
+            from_at = l.start() + 1;
+        }
+        let start = before.len() - left.len();
+        out.push(Call {
+            at: if left.is_empty() { m.start() } else { start },
+            name: m.as_str(),
+            args: vec![left, &comments[from..end]],
+        });
+    }
     out
 }
 
 pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Finding> {
     let mut out = vec![];
-    for Call { at, name, args } in calls(code, comments) {
+    for Call { at, name, args } in calls(code, comments, source) {
         let args = &args;
         let arity = match name {
             "rotate" | "mavg" | "msum" | "mcount" | "mdev" | "mmin" | "mmax" | "cor" | "cov"
