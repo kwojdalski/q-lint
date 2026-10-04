@@ -530,6 +530,25 @@ done:1 / TODO check the empty case
 / expect-next: QL002
 / oldfill:{fills x}
 
+/ QT024: an attribute the literal does not satisfy - 's-fail, checked.
+/ expect-next: QT024
+sorted:`s#3 1 2
+sorted2:`s#1 2 3
+
+/ QE006: there is no 30 February, so q refuses the literal.
+/ expect-next: QE006
+when:2024.02.30
+when2:2024.02.29
+
+/ QE007: a select with no from is 'from.
+/ expect-next: QE007
+nofrom:select px by sym trades
+
+/ QT025: q signals a symbol or a string; a number is 'stype.
+/ expect-next: QT025
+fail:{'1}
+fail2:{'"failed"}
+
 / QB002: q's like does not support an interior wildcard.
 / expect-next: QB002
 hits:select from trades where sym like "a*b"

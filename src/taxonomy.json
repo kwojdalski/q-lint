@@ -35,6 +35,20 @@
     "scope": "builtin"
   },
   {
+    "code": "QE006",
+    "name": "impossible-temporal",
+    "category": "syntax",
+    "summary": "A date or month that does not exist, which q refuses to parse",
+    "scope": "builtin"
+  },
+  {
+    "code": "QE007",
+    "name": "qsql-missing-from",
+    "category": "syntax",
+    "summary": "select, exec or update with no from before the statement ends",
+    "scope": "builtin"
+  },
+  {
     "code": "QF001",
     "name": "reserved-parameter",
     "category": "names",
@@ -641,6 +655,20 @@
     "name": "char-integer-arithmetic",
     "category": "types-and-shapes",
     "summary": "Integer arithmetic on a char, which q 5 refuses with 'type",
+    "scope": "builtin"
+  },
+  {
+    "code": "QT024",
+    "name": "attribute-literal-fail",
+    "category": "types-and-shapes",
+    "summary": "An s#, u# or p# attribute applied to a literal it does not describe",
+    "scope": "builtin"
+  },
+  {
+    "code": "QT025",
+    "name": "signal-non-string",
+    "category": "types-and-shapes",
+    "summary": "A number or a char atom signalled, which q refuses with 'stype",
     "scope": "builtin"
   },
   {

@@ -1,6 +1,6 @@
 # Rules
 
-All 101 rules, generated from `src/taxonomy.json` - the same data
+All 105 rules, generated from `src/taxonomy.json` - the same data
 `qlinter --rules` and `qlinter --explain <CODE>` print from. Regenerate with
 `python3 scripts/rules_doc.py > docs/rules.md`; a test fails when this is stale.
 
@@ -47,6 +47,8 @@ that wants fewer findings narrows in its own configuration.
 | `QE003` | unterminated-block-comment | Block comment opened but never closed | `style` and above |
 | `QE004` | foreign-operator | Operator from another language; q has no ==, !=, && or \|\| | every profile |
 | `QE005` | byte-order-mark | File starts with a BOM, which q refuses to load | every profile |
+| `QE006` | impossible-temporal | A date or month that does not exist, which q refuses to parse | every profile |
+| `QE007` | qsql-missing-from | select, exec or update with no from before the statement ends | every profile |
 
 ## Names - parameters, locals, globals and what they shadow
 
@@ -116,6 +118,8 @@ that wants fewer findings narrows in its own configuration.
 | `QT021` | empty-search-pattern | ss or ssr with an empty pattern is a length error | every profile |
 | `QT022` | index-into-atom | A name bound to an atom is indexed; an atom has no items, and q raises 'type | every profile |
 | `QT023` | char-integer-arithmetic | Integer arithmetic on a char, which q 5 refuses with 'type | every profile |
+| `QT024` | attribute-literal-fail | An s#, u# or p# attribute applied to a literal it does not describe | every profile |
+| `QT025` | signal-non-string | A number or a char atom signalled, which q refuses with 'stype | every profile |
 
 ## Correctness - q that runs and does the wrong thing
 

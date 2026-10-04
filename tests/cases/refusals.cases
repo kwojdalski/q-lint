@@ -1,0 +1,57 @@
+=== QT024 | sorted attribute on a literal out of order
+r:`s#3 1 2
+
+=== QT024 | symbols sort by byte, so a lowercase before an uppercase is out of order
+r:`s#`a`B
+
+=== QT024 | unique attribute on a repeated item
+r:`u#1 1 2
+
+=== QT024 | parted attribute on a value that comes back
+r:`p#1 2 1
+
+=== clean | ties, a null first and contiguous runs are what the attributes allow
+r1:`s#1 1 2
+r2:`s#0N 1 2
+r3:`p#1 1 2
+r4:`s#`B`a
+
+=== clean | grouped never fails, and a literal that runs on is not the operand
+r1:`g#1 2 1
+r2:`s#3 1 2,0
+
+=== QE006 | a date that does not exist
+r:2024.02.30
+
+=== QE006 | 1900 was not a leap year
+r:1900.02.29
+
+=== QE006 | nor is there a thirteenth month
+r:2024.13m
+
+=== clean | 2000 was, and a path or a string with a bad date in it is not a literal
+r1:2000.02.29
+p:`:hdb/2024.02.30
+s:"2024.02.30"
+
+=== QE007 | select with no from
+r:select a by b t
+
+=== QE007 | inside a lambda too
+f:{select x}
+
+=== clean | a from anywhere before the statement ends, or the name assigned
+r1:select from t
+r2:update a:1 from t
+.my.select:1
+
+=== QT025 | signalling a number
+f:{'1}
+
+=== QT025 | a one-character string is a char atom, not a string
+f:{'"x"}
+
+=== clean | a string, a symbol, and the each adverb
+f1:{'"xy"}
+f2:{'`a}
+f3:{x'1}
