@@ -5,6 +5,12 @@ Diagnostics and selected Quick Fixes for q/kdb+ source, as you type, from the
 
 ![the q-lint icon](icon.png)
 
+**This is an early version.** The aim was to put out something workable,
+open source, and good enough for agentic development - a linter an agent can
+run on every edit and trust. It already catches the most common problems in
+q; more rules are on the way, and a finding that looks wrong is worth an
+[issue](https://github.com/kwojdalski/q-lint/issues).
+
 **The linter never executes the source it reads.** That is what makes it safe
 to run on every keystroke, and it is why this extension offers diagnostics,
 Quick Fixes and syntax colouring and nothing else: completion, hover and
