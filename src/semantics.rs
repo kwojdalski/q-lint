@@ -242,6 +242,187 @@ fn shape(s: &str) -> Option<usize> {
     if re!(r"^-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?[bhijef]?(?:\s+-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?[bhijef]?)*$").is_match(s) {return Some(s.split_whitespace().count());}
     None
 }
+/// Every lambda in the file, with what it binds, and the namespace in force
+/// at each line. Shared by the checks and by the editor's semantic tokens,
+/// which have to agree about what a name in a body refers to.
+fn scopes(code: &str, raw: &str) -> (Vec<Scope>, Vec<(usize, String)>) {
+    let assignment = re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*:(:)?");
+    let mut scopes: Vec<Scope> = vec![];
+    let mut stack: Vec<usize> = vec![];
+    let mut namespace = String::new();
+    let mut namespaces = vec![];
+    let mut offset = 0;
+    for line in code.split_inclusive('\n') {
+        if stack.is_empty()
+            && let Some(m) = re!(r"^\\d\s+(\.[\w.]*)\s*$").captures(line)
+        {
+            namespace = m[1].trim_end_matches('.').into();
+        }
+        namespaces.push((offset, namespace.clone()));
+        if line.starts_with('\\') {
+            offset += line.len();
+            continue;
+        }
+        for (i, b) in line.bytes().enumerate() {
+            let at = offset + i;
+            if b == b'{' {
+                let sig = signature(code, raw, at);
+                // When the brackets are not a parameter list q binds the
+                // implicit arguments instead, and so must the scope here.
+                let params = if sig.named {
+                    sig.slots
+                        .iter()
+                        .filter(|p| !p.is_empty())
+                        .map(|p| (*p).to_string())
+                        .collect()
+                } else {
+                    ["x", "y", "z"].into_iter().map(str::to_string).collect()
+                };
+                let (named, body) = (sig.named, sig.body);
+                scopes.push(Scope {
+                    start: at,
+                    end: code.len(),
+                    body,
+                    named,
+                    parent: stack.last().copied(),
+                    namespace: namespace.clone(),
+                    params,
+                    locals: HashSet::new(),
+                    direct: String::new(),
+                });
+                stack.push(scopes.len() - 1);
+            } else if b == b'}'
+                && let Some(s) = stack.pop()
+            {
+                scopes[s].end = at;
+            }
+        }
+        offset += line.len();
+    }
+    // Children by parent, in one pass. Asking every scope about every scope is
+    // quadratic in the number of lambdas, which a file of a few thousand
+    // reaches on every keystroke.
+    let mut children: Vec<Vec<usize>> = vec![vec![]; scopes.len()];
+    for (i, scope) in scopes.iter().enumerate() {
+        if let Some(parent) = scope.parent {
+            children[parent].push(i);
+        }
+    }
+    for i in 0..scopes.len() {
+        let scope = &scopes[i];
+        let mut direct = code.as_bytes()[scope.body..scope.end].to_vec();
+        for &c in &children[i] {
+            let child = &scopes[c];
+            direct[child.start - scope.body..child.end + 1 - scope.body].fill(b' ');
+        }
+        let direct = String::from_utf8(direct).unwrap();
+        let mut locals = scope.params.clone();
+        for a in assignment.captures_iter(&direct) {
+            if boundary(&direct, a.get(0).unwrap().start())
+                && a.get(2).is_none()
+                && !a[1].contains('.')
+            {
+                locals.insert(a[1].into());
+            }
+        }
+        locals.extend(multi_assignments(&direct).map(|(_, n)| n.to_string()));
+        scopes[i].direct = direct;
+        scopes[i].locals = locals;
+    }
+    (scopes, namespaces)
+}
+/// What a name in the source means, for an editor's semantic tokens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TokenKind {
+    /// A call site, or any other read, of a lambda this file assigns.
+    Function,
+    /// A declared parameter read inside the body that declares it.
+    Parameter,
+}
+
+/// Names the editor can colour by meaning rather than by shape: the uses of
+/// functions this file defines, and of parameters inside their own body.
+/// Byte offset and byte length into the source, in order.
+///
+/// The same limits as the checks. A function defined in another file, or by
+/// `\l`, is not known here; and q has no closures, so a name read in a nested
+/// lambda is that lambda's own, never the parameter of the one around it.
+pub fn tokens(code: &str, raw: &str) -> Vec<(usize, usize, TokenKind)> {
+    let (scopes, namespaces) = scopes(code, raw);
+    let ns_at = |at: usize| {
+        namespaces[namespaces
+            .partition_point(|(p, _)| *p <= at)
+            .saturating_sub(1)]
+        .1
+        .as_str()
+    };
+    let name = re!(r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*");
+    // A global is a function when every assignment to it is a lambda that
+    // the statement ends with - `f:{...} each x` assigns a list, as QA012's
+    // rank table already knows.
+    let mut lambda: HashMap<String, bool> = HashMap::new();
+    for m in
+        re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*(::?)").captures_iter(code)
+    {
+        let whole = m.get(0).unwrap();
+        let rest = &code[whole.end()..];
+        // `/:` and `\:` are iterators, and `a::` inside a lambda is global.
+        if !boundary(code, whole.start()) || rest.starts_with(['/', '\\', '\'']) {
+            continue;
+        }
+        let local =
+            scope_at(&scopes, whole.start()).is_some() && &m[2] == ":" && !m[1].starts_with('.');
+        if local {
+            continue;
+        }
+        let brace = whole.end() + (rest.len() - rest.trim_start().len());
+        let is_lambda = code.as_bytes().get(brace) == Some(&b'{')
+            && matching(code, brace, b'{', b'}').is_some_and(|end| {
+                let after = code[end..].trim_start_matches([' ', '\t']);
+                after.is_empty() || after.starts_with([';', '\n', '\r'])
+            });
+        let key = qualify(&m[1], ns_at(whole.start()));
+        let entry = lambda.entry(key).or_insert(true);
+        *entry &= is_lambda;
+    }
+    let mut out = vec![];
+    for m in name.find_iter(code) {
+        if !boundary(code, m.start()) {
+            continue;
+        }
+        // The assignment itself is the grammar's to colour, as a definition.
+        if code[m.end()..]
+            .trim_start_matches([' ', '\t'])
+            .starts_with(':')
+        {
+            continue;
+        }
+        // A local or parameter of the same name hides the global.
+        if let Some(s) = scope_at(&scopes, m.start())
+            && scopes[s].locals.contains(m.as_str())
+        {
+            continue;
+        }
+        if lambda.get(&qualify(m.as_str(), ns_at(m.start()))) == Some(&true) {
+            out.push((m.start(), m.len(), TokenKind::Function));
+        }
+    }
+    for scope in scopes.iter().filter(|s| s.named) {
+        let direct = &scope.direct;
+        for m in re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(direct) {
+            if boundary(direct, m.start())
+                && !direct[m.end()..].starts_with('.')
+                && scope.params.contains(m.as_str())
+            {
+                out.push((scope.body + m.start(), m.len(), TokenKind::Parameter));
+            }
+        }
+    }
+    out.sort_by_key(|t| t.0);
+    out.dedup_by_key(|t| t.0);
+    out
+}
+
 pub fn check(path: &str, code: &str, raw: &str, comments: &str) -> Vec<Finding> {
     let mut out = vec![];
     for m in re!(r"((?:`[A-Za-z][A-Za-z0-9_.]*)+)\s*!").captures_iter(code) {
@@ -368,88 +549,7 @@ pub fn check(path: &str, code: &str, raw: &str, comments: &str) -> Vec<Finding> 
     // about the run, not in the margin next to working code.
     let dynamic = dynamic.is_some();
     let assignment = re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*:(:)?");
-    let mut scopes: Vec<Scope> = vec![];
-    let mut stack: Vec<usize> = vec![];
-    let mut namespace = String::new();
-    let mut namespaces = vec![];
-    let mut offset = 0;
-    for line in code.split_inclusive('\n') {
-        if stack.is_empty()
-            && let Some(m) = re!(r"^\\d\s+(\.[\w.]*)\s*$").captures(line)
-        {
-            namespace = m[1].trim_end_matches('.').into();
-        }
-        namespaces.push((offset, namespace.clone()));
-        if line.starts_with('\\') {
-            offset += line.len();
-            continue;
-        }
-        for (i, b) in line.bytes().enumerate() {
-            let at = offset + i;
-            if b == b'{' {
-                let sig = signature(code, raw, at);
-                // When the brackets are not a parameter list q binds the
-                // implicit arguments instead, and so must the scope here.
-                let params = if sig.named {
-                    sig.slots
-                        .iter()
-                        .filter(|p| !p.is_empty())
-                        .map(|p| (*p).to_string())
-                        .collect()
-                } else {
-                    ["x", "y", "z"].into_iter().map(str::to_string).collect()
-                };
-                let (named, body) = (sig.named, sig.body);
-                scopes.push(Scope {
-                    start: at,
-                    end: code.len(),
-                    body,
-                    named,
-                    parent: stack.last().copied(),
-                    namespace: namespace.clone(),
-                    params,
-                    locals: HashSet::new(),
-                    direct: String::new(),
-                });
-                stack.push(scopes.len() - 1);
-            } else if b == b'}'
-                && let Some(s) = stack.pop()
-            {
-                scopes[s].end = at;
-            }
-        }
-        offset += line.len();
-    }
-    // Children by parent, in one pass. Asking every scope about every scope is
-    // quadratic in the number of lambdas, which a file of a few thousand
-    // reaches on every keystroke.
-    let mut children: Vec<Vec<usize>> = vec![vec![]; scopes.len()];
-    for (i, scope) in scopes.iter().enumerate() {
-        if let Some(parent) = scope.parent {
-            children[parent].push(i);
-        }
-    }
-    for i in 0..scopes.len() {
-        let scope = &scopes[i];
-        let mut direct = code.as_bytes()[scope.body..scope.end].to_vec();
-        for &c in &children[i] {
-            let child = &scopes[c];
-            direct[child.start - scope.body..child.end + 1 - scope.body].fill(b' ');
-        }
-        let direct = String::from_utf8(direct).unwrap();
-        let mut locals = scope.params.clone();
-        for a in assignment.captures_iter(&direct) {
-            if boundary(&direct, a.get(0).unwrap().start())
-                && a.get(2).is_none()
-                && !a[1].contains('.')
-            {
-                locals.insert(a[1].into());
-            }
-        }
-        locals.extend(multi_assignments(&direct).map(|(_, n)| n.to_string()));
-        scopes[i].direct = direct;
-        scopes[i].locals = locals;
-    }
+    let (scopes, namespaces) = scopes(code, raw);
     let ns_at = |at| {
         namespaces[namespaces
             .partition_point(|(p, _)| *p <= at)

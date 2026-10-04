@@ -24,8 +24,10 @@
 //! WHAT IT IMPLEMENTS, AND WHAT IT DELIBERATELY DOES NOT
 //!
 //! initialize/initialized, didOpen/didChange/didSave/didClose, shutdown/exit,
-//! diagnostics pushed with textDocument/publishDiagnostics, and quick fixes
-//! requested with textDocument/codeAction.
+//! diagnostics pushed with textDocument/publishDiagnostics, quick fixes
+//! requested with textDocument/codeAction, and semantic tokens - the colour
+//! of a function this file defines at the places it is called, and of a
+//! parameter where its body reads it - with textDocument/semanticTokens/full.
 //!
 //! Not here: completion, hover, go-to-definition, formatting. Those need a
 //! resolver and a symbol table this crate does not have - it reads source text
@@ -34,7 +36,7 @@
 //! than not claiming them: an editor that is told a server provides completion
 //! stops offering its own word-based fallback.
 use crate::jsonrpc::{receive, send};
-use q_lint_rs::{Finding, Profile, fix_for, lint};
+use q_lint_rs::{Finding, Profile, TokenKind, fix_for, lint, semantic_tokens};
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
@@ -133,6 +135,14 @@ pub fn serve(
                            "params": {"uri": uri, "diagnostics": []}}),
                 )?;
             }
+            ("textDocument/semanticTokens/full", Some(id)) => {
+                let uri = uri_of(&params["textDocument"]);
+                let data = docs
+                    .get(&uri)
+                    .filter(|_| is_q_path(&path_of(&uri)))
+                    .map_or_else(Vec::new, |text| encode_tokens(text));
+                send(writer, json!({"id": id, "result": {"data": data}}))?;
+            }
             ("textDocument/codeAction", Some(id)) => {
                 let actions = code_actions(&params, &docs, profile, ignore);
                 send(writer, json!({"id": id, "result": actions}))?;
@@ -152,9 +162,57 @@ pub fn serve(
 
 fn capabilities() -> Value {
     json!({
-        "capabilities": {"textDocumentSync": SYNC_FULL, "codeActionProvider": true},
+        "capabilities": {
+            "textDocumentSync": SYNC_FULL,
+            "codeActionProvider": true,
+            "semanticTokensProvider": {
+                "legend": {"tokenTypes": TOKEN_TYPES, "tokenModifiers": []},
+                "full": true,
+            },
+        },
         "serverInfo": {"name": "q-lint", "version": env!("CARGO_PKG_VERSION")},
     })
+}
+
+/// The legend, in the order `encode_tokens` numbers them. Both are standard
+/// LSP token types, so every theme already has a colour for them.
+const TOKEN_TYPES: [&str; 2] = ["function", "parameter"];
+
+/// Semantic tokens in the protocol's packed form: five integers per token -
+/// line delta, start delta (from the previous token when on the same line),
+/// length, type and modifiers - with positions in UTF-16 code units.
+fn encode_tokens(source: &str) -> Vec<u32> {
+    let mut data = vec![];
+    let (mut prev_line, mut prev_start) = (0usize, 0usize);
+    for (at, len, kind) in semantic_tokens(source) {
+        let line = source[..at].matches('\n').count();
+        let line_start = source[..at].rfind('\n').map_or(0, |p| p + 1);
+        let start = utf16_len(&source[line_start..at]);
+        let delta_start = if line == prev_line {
+            start - prev_start
+        } else {
+            start
+        };
+        let kind = match kind {
+            TokenKind::Function => 0,
+            TokenKind::Parameter => 1,
+        };
+        data.extend([
+            (line - prev_line) as u32,
+            delta_start as u32,
+            utf16_len(&source[at..at + len]) as u32,
+            kind,
+            0,
+        ]);
+        (prev_line, prev_start) = (line, start);
+    }
+    data
+}
+
+fn is_q_path(path: &str) -> bool {
+    std::path::Path::new(path)
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("q"))
 }
 
 fn uri_of(text_document: &Value) -> String {
@@ -421,6 +479,26 @@ mod tests {
         spans.sort();
         // `b` is the unused parameter at column 6, `r` the unused local at 9.
         assert_eq!(spans, vec![("QF016", 6, 7), ("QF017", 9, 10)]);
+    }
+
+    #[test]
+    fn semantic_tokens_mark_calls_and_parameter_reads() {
+        // f is called on line 1 and its parameter a read in its body; the
+        // local r that shadows nothing is left to the grammar. Line 2 calls f
+        // inside a lambda whose own parameter is also named f, so that read
+        // is the parameter, not the function.
+        let source = "f:{[a] a+1}\nr:f[1]\ng:{[f;b] f+b}\n";
+        let data = encode_tokens(source);
+        let tokens: Vec<&[u32]> = data.chunks(5).collect();
+        assert_eq!(
+            tokens,
+            vec![
+                &[0, 7, 1, 1, 0][..], // a, line 0 col 7
+                &[1, 2, 1, 0, 0][..], // f, line 1 col 2: the call
+                &[1, 9, 1, 1, 0][..], // f, line 2 col 9: g's parameter
+                &[0, 2, 1, 1, 0][..], // b, col 11
+            ]
+        );
     }
 
     #[test]

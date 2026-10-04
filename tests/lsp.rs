@@ -434,6 +434,32 @@ fn a_namespace_definition_does_not_hide_an_undefined_root_read() {
 }
 
 #[test]
+fn semantic_tokens_colour_calls_and_parameters_at_utf16_positions() {
+    // The `f` inside the string is text, not a call, and the emoji before the
+    // real call is two UTF-16 units: a server counting bytes or characters
+    // would put the token somewhere else on the line.
+    let mut server = Server::start();
+    let reply = server.initialize();
+    let legend = &reply["result"]["capabilities"]["semanticTokensProvider"]["legend"];
+    assert_eq!(legend["tokenTypes"], json!(["function", "parameter"]));
+    let uri = "file:///tmp/tokens.q";
+    server.open(uri, "f:{[a] a+1}\nr:\"f\u{1F600}\";g:f[1]\n");
+    server.diagnostics_for(uri);
+    server.send(
+        json!({"jsonrpc":"2.0","id":30,"method":"textDocument/semanticTokens/full",
+        "params":{"textDocument":{"uri":uri}}}),
+    );
+    let reply = server.receive();
+    assert_eq!(reply["id"], 30);
+    // `a` read at line 0 col 7 (parameter); `f` called at line 1 col 10.
+    assert_eq!(
+        reply["result"]["data"],
+        json!([0, 7, 1, 1, 0, 1, 10, 1, 0, 0])
+    );
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
 fn an_unsupported_request_is_refused_rather_than_ignored() {
     // A request with no reply looks like a hung server to every client.
     let mut server = Server::start();

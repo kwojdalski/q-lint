@@ -12,6 +12,15 @@ macro_rules! re {
 }
 mod intrinsics;
 mod semantics;
+pub use semantics::TokenKind;
+
+/// The names in `source` an editor can colour by what they refer to, as byte
+/// offset, byte length and kind - in order, and never inside a string or a
+/// comment, since those are blank in the view this reads.
+pub fn semantic_tokens(source: &str) -> Vec<(usize, usize, TokenKind)> {
+    let v = views(source);
+    semantics::tokens(&v.code, source)
+}
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Rule {

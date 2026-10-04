@@ -33,9 +33,15 @@ paints it. It picks out comments and qdoc tags (`@param name {type}`,
 temporals, nulls and booleans, lambdas with their declared parameters and the
 implicit `x`, `y` and `z`, names assigned a lambda, other assignments
 (amends such as `n+:1` included), the namespace of a dotted name, return
-(`:x`) and signal (`'x`) as control flow, the control words and qSQL, the builtins, the `.z`/`.Q`/`.h`/`.j` namespaces,
-system commands, block comments and everything after a closing `\`, and
-`p)` lines as Python.
+(`:x`) and signal (`'x`) as control flow, the control words and qSQL, the
+builtins, the `.z`/`.Q`/`.h`/`.j` namespaces, system commands, block comments
+and everything after a closing `\`, and `p)` lines as Python.
+
+On top of that the server sends semantic tokens, the layer Pylance adds for
+Python: a function this file defines is coloured as one wherever it is
+called, not only where it is assigned, and a parameter keeps its colour where
+the body reads it. A function defined in another file is not known here.
+Unused parameters and locals are faded.
 
 The grammar is generated, builtins and all, from the name list the rules use:
 
