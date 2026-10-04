@@ -19,6 +19,18 @@ f:{[r] r+1};f[2]
 === QT003 | either side, and vectors likewise
 1 2+`a`b
 
+=== clean | the symbols on the right are the start of a find, which returns a long
+r:2*`a`b?`b
+
+=== clean | nor a dictionary built from them
+r:1+`a`b!1 2
+
+=== clean | nor a match, which is a boolean
+r:1+`a~`b
+
+=== QT003 | a symbol on the left is the operand whatever follows
+r:`a+`b?`c
+
 === clean | chars are numeric citizens; none of these error
 r1:1.5+"a"
 r2:"a"*3

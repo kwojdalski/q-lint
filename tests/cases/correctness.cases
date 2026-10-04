@@ -140,6 +140,12 @@ if[type[x]=`long;1]
 === QB013 | symbol on the left
 if[`long=type x;1]
 
+=== clean | the symbols on the right are the start of a find
+r:type[1]=`a`b?`a
+
+=== QB013 | but a symbol vector that ends the comparison is still one
+r:type[x]=`a`b;
+
 === clean | type compared to a short
 if[type[x]=7h;1]
 

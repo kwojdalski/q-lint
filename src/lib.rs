@@ -289,6 +289,19 @@ fn boundary(s: &str, at: usize) -> bool {
         .next_back()
         .is_none_or(|c| !c.is_alphanumeric() && !"_.`".contains(c))
 }
+/// Whether the expression an operand belongs to ends at `at`.
+///
+/// q reads right to left, so a right operand is everything to the right of
+/// its operator, and a literal there is only the whole operand when nothing
+/// follows it but the end of the expression. Naming the characters that may
+/// not follow is the wrong way round: almost any glyph continues one -
+/// `` `a`b?`b `` is a long, `4 5,6` three items, `0^x` a fill. A rule that
+/// judges a literal by its type or length asks this first, or it is judging
+/// the start of an expression it has not read.
+pub(crate) fn operand_ends(code: &str, at: usize) -> bool {
+    let rest = code[at..].trim_start_matches([' ', '\t']);
+    rest.is_empty() || rest.starts_with([';', ')', ']', '}', '\n', '\r'])
+}
 fn blank(b: &mut [u8]) {
     for c in b {
         if !matches!(*c, b'\n' | b'\r') {
@@ -976,6 +989,13 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
         if code[m.end()..].starts_with('$') {
             continue;
         }
+        // A symbol on the right is only the operand when the expression ends
+        // with it: `` 2*`a`b?`b `` multiplies by a long, and `` 1+`a`b!1 2 ``
+        // adds to a dictionary. On the left it is the operand whatever
+        // follows, since everything to the right is evaluated first.
+        if !m.as_str().starts_with('`') && !operand_ends(code, m.end()) {
+            continue;
+        }
         add(
             at,
             "QT003",
@@ -1031,8 +1051,7 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
                 // `` 1=`a`b?`b `` compares two longs. A symbol before `$` names
                 // a cast, and `` `time in 0!t `` unkeys a table. So the
                 // comparison has to end here, or it was never this one.
-                let rest = view[end..].trim_start_matches([' ', '\t']);
-                if !(rest.is_empty() || rest.starts_with([';', ')', ']', '}', '\n', '\r'])) {
+                if !operand_ends(view, end) {
                     continue;
                 }
                 add(
@@ -1345,10 +1364,15 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
     // of `=` is a 'type error every time. A bare `type=` is a column named
     // type, which is QF013's business, not this rule's.
     for m in re!(
-        r"\btype\s*(?:\[[^\]]*\]|\(?[A-Za-z_][A-Za-z0-9_.]*\)?)\s*(?:=|<>)\s*`[a-z]|`[a-z]+\s*(?:=|<>)\s*type\b"
+        r"\btype\s*(?:\[[^\]]*\]|\(?[A-Za-z_][A-Za-z0-9_.]*\)?)\s*(?:=|<>)\s*`[a-z][A-Za-z0-9_.]*(?:`[A-Za-z0-9_.]*)*|`[a-z]+\s*(?:=|<>)\s*type\b"
     )
     .find_iter(code)
     {
+        // The symbol on the right has to be the whole operand:
+        // `` type[1]=`a`b?`a `` compares a short with a long.
+        if m.as_str().starts_with("type") && !operand_ends(code, m.end()) {
+            continue;
+        }
         add(
             m.start(),
             "QB013",
@@ -1707,10 +1731,7 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
         // any glyph continues an expression - `0<0^x` fills before comparing
         // and `0<1_x` drops before it, and both look like `0<0` and `0<1` to a
         // pattern. So: the comparison ends here, or it was never one.
-        let rest = code[whole.end()..].trim_start_matches([' ', '\t']);
-        if !boundary(code, whole.start())
-            || !(rest.is_empty() || rest.starts_with([';', ')', ']', '}', '\n', '\r']))
-        {
+        if !boundary(code, whole.start()) || !operand_ends(code, whole.end()) {
             continue;
         }
         add(
