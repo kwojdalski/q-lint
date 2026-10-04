@@ -163,3 +163,14 @@ f:{x+y+z}
 r:f(1;2)
 f:{x}
 
+=== QA007 | a trailing semicolon makes the else a second test, not an else
+r:{$[x;`a;`b;]}
+
+=== QA007 | and a comment in the empty slot does not fill it
+r:{$[x;`a;`b; / the else
+  ]}
+
+=== clean | two slots with one empty is the projection of $
+r1:{$[;y] x}
+r2:$[`long;]
+

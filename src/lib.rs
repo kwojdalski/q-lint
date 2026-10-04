@@ -971,16 +971,23 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
         if cast {
             continue;
         }
-        // An empty slot makes `$[...]` a projection of `$`, not a conditional:
-        // `$[;y]` and `$[t;]` are casts waiting for an argument, and run. The
-        // slot is judged in the source, where a string is not blank.
+        // Which slots are empty, judged in the view that keeps strings - a
+        // string is blank in `code` - and blanks comments, so a comment in
+        // a slot does not fill it.
         let mut from = dollar + 2;
-        let elided = parts.iter().any(|part| {
-            let empty = source[from..from + part.len()].trim().is_empty();
-            from += part.len() + 1;
-            empty
-        });
-        if elided {
+        let empty: Vec<bool> = parts
+            .iter()
+            .map(|part| {
+                let blank = v.comments[from..from + part.len()].trim().is_empty();
+                from += part.len() + 1;
+                blank
+            })
+            .collect();
+        // Only two slots with one empty is a projection of `$`: `$[;y]` and
+        // `$[t;]` are casts waiting for an argument (type 104, checked). From
+        // three slots up it is a conditional whatever is empty - `$[0b;1;2;]`
+        // runs, and returns null.
+        if parts.len() == 2 && empty.contains(&true) {
             continue;
         }
         // `$` takes an atom. A vector condition is 'type every time, and it is
@@ -1014,14 +1021,22 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
             // `$[c1;a;c2;b]` pairs every slot off as test-and-result and has
             // nothing left for the else: when no test holds it returns `::`,
             // silently. Verified: `$[0b;1;0b;2]` is `::`, `$[0b;1;0b;2;3]` is 3.
-            add(
-                dollar,
-                "QA007",
+            //
+            // A trailing `;` is the common way in: `$[c;a;b;]` reads as an
+            // if-else, but b is the second test and the empty slot its result.
+            // Verified: `$[0b;1;2;]` is `::`, and `$[0b;`a;`b;]` is 'type.
+            let detail = if empty.last() == Some(&true) {
+                format!(
+                    "The trailing `;` makes this a {n}-slot conditional, not an if-else: the \
+                     slot before it is run as another test, and the result is null"
+                )
+            } else {
                 format!(
                     "{n}-slot $[ ... ] has no else branch: when no condition holds it \
                      returns null, not an error"
-                ),
-            );
+                )
+            };
+            add(dollar, "QA007", detail);
         }
     }
     // Symbols take no arithmetic: `2+`a`, `` `a*2 `` and `2%`b` are all
@@ -1352,11 +1367,11 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
         };
         let parts = slots(&code[at + 2..close - 1]);
         // An empty slot is a projection - `.[;1_x]` waits for its function -
-        // and judged in the source, where a string is not blank. No `_` in
+        // judged in the view that keeps strings and blanks comments. No `_` in
         // the number: `1_x` is a drop, not a literal.
         let mut from = at + 2;
         let elided = parts.iter().any(|part| {
-            let empty = source[from..from + part.len()].trim().is_empty();
+            let empty = v.comments[from..from + part.len()].trim().is_empty();
             from += part.len() + 1;
             empty
         });
