@@ -294,6 +294,18 @@ r:(1;2;3)+4 5
 === clean | the same shapes at matching lengths
 r:1 2+0x0102
 
+=== QT001 | the keys need not be symbols: a parenthesised list
+d:(1;2;3)!1 2
+
+=== QT001 | or a numeric vector
+d:1 2!3 4 5
+
+=== clean | an atom on the left keys or unkeys a table instead
+k:1!([]a:1 2;b:3 4)
+
+=== clean | numeric keys and values of one length
+d:1 2!3 4
+
 === QT001 | a dictionary's values as a parenthesised list, one short
 d:`a`b!(1;2;3)
 

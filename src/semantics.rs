@@ -425,8 +425,18 @@ pub fn tokens(code: &str, raw: &str) -> Vec<(usize, usize, TokenKind)> {
 
 pub fn check(path: &str, code: &str, raw: &str, comments: &str) -> Vec<Finding> {
     let mut out = vec![];
-    for m in re!(r"((?:`[A-Za-z][A-Za-z0-9_.]*)+)\s*!").captures_iter(code) {
+    // Keys: symbols, as before, and the other literal lists q takes - a
+    // numeric or byte vector, or a parenthesised list. Not a numeric atom:
+    // `1!t` keys a table and `0!t` unkeys one, which is not a dictionary.
+    for m in re!(
+        r"((?:`[A-Za-z][A-Za-z0-9_.]*)+|-?\d[\w.]*(?:[ \t]+-?\d[\w.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*;[^()]*\))\s*!"
+    )
+    .captures_iter(code)
+    {
         let start = m.get(0).unwrap();
+        if !boundary(code, start.start()) {
+            continue;
+        }
         let mut end = start.end();
         let mut depth = 0;
         for b in code[end..].bytes() {
