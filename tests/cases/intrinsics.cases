@@ -413,3 +413,24 @@ s:"sum[1;2]"
 === QA010 | masking boundaries
 sum[1; / a comment mentioning "text"
  2]
+
+=== QT008 QT009 QT013 | juxtaposed with a string, which the masked view cannot see
+a1:til "3"
+a2:where "ab"
+a3:flip "ab"
+
+=== QT012 QT008 | a one-char string is an atom, and a symbol vector is not a count
+a4:distinct "a"
+a5:til `a`b
+
+=== clean | the string shapes q accepts
+b1:sum "ab"
+b2:distinct "ab"
+b3:where ""
+b4:til `a
+b5:til 0x01
+b6:ratios "ab"
+
+=== clean | a builtin name inside a string followed by a string is not a call
+s:("x til ";"3")
+

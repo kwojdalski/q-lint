@@ -98,12 +98,12 @@ that wants fewer findings narrows in its own configuration.
 | `QT005` | single-row-table | Table literal of scalars needs enlist and errors 'rank | every profile |
 | `QT006` | vector-length-mismatch | Infix on two literal vectors of different lengths | every profile |
 | `QT007` | string-function-on-symbol | ss or ssr given a symbol literal is a runtime type error | every profile |
-| `QT008` | literal-til-type | til called with a float or numeric vector | every profile |
+| `QT008` | literal-til-type | til called with something other than an integer atom | every profile |
 | `QT009` | literal-where-type | where called with counts other than booleans or longs | every profile |
-| `QT010` | symbol-numeric-aggregate | Numeric aggregate or scan applied to a symbol literal | every profile |
+| `QT010` | symbol-numeric-aggregate | Numeric aggregate or scan applied to a symbol, or to a string where q refuses one | every profile |
 | `QT011` | sort-literal-atom | Sorting applied to a literal atom instead of a list | every profile |
 | `QT012` | distinct-literal-atom | distinct applied to a literal atom instead of a list | every profile |
-| `QT013` | flip-flat-numeric | flip applied to a numeric atom or flat vector | every profile |
+| `QT013` | flip-flat-numeric | flip applied to an atom or a flat vector | every profile |
 | `QT014` | literal-rotate-count | rotate count is not an integer atom | every profile |
 | `QT015` | symbol-comparison | Symbol compared with a number or string is a runtime type error | every profile |
 | `QT016` | symbol-math-argument | Numeric math applied to a symbol literal | every profile |

@@ -437,7 +437,7 @@
     "code": "QT008",
     "name": "literal-til-type",
     "category": "types-and-shapes",
-    "summary": "til called with a float or numeric vector",
+    "summary": "til called with something other than an integer atom",
     "scope": "builtin"
   },
   {
@@ -451,7 +451,7 @@
     "code": "QT010",
     "name": "symbol-numeric-aggregate",
     "category": "types-and-shapes",
-    "summary": "Numeric aggregate or scan applied to a symbol literal",
+    "summary": "Numeric aggregate or scan applied to a symbol, or to a string where q refuses one",
     "scope": "builtin"
   },
   {
@@ -472,7 +472,7 @@
     "code": "QT013",
     "name": "flip-flat-numeric",
     "category": "types-and-shapes",
-    "summary": "flip applied to a numeric atom or flat vector",
+    "summary": "flip applied to an atom or a flat vector",
     "scope": "builtin"
   },
   {

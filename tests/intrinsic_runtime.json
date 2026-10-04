@@ -526,5 +526,71 @@
     "bad": "mavg[enlist 1;1 2 3]",
     "good": "mavg[1;1 2 3]",
     "error": "domain"
+  },
+  {
+    "code": "QT008",
+    "bad": "til[\"3\"]",
+    "good": "til[0x01]",
+    "error": "type"
+  },
+  {
+    "code": "QT008",
+    "bad": "til[`a`b]",
+    "good": "til[`a]",
+    "error": "type"
+  },
+  {
+    "code": "QT009",
+    "bad": "where[\"ab\"]",
+    "good": "where[\"\"]",
+    "error": "type"
+  },
+  {
+    "code": "QT009",
+    "bad": "where[0x0102]",
+    "good": "where[01b]",
+    "error": "type"
+  },
+  {
+    "code": "QT010",
+    "bad": "sums[\"ab\"]",
+    "good": "sum[\"ab\"]",
+    "error": "type"
+  },
+  {
+    "code": "QT011",
+    "bad": "asc[0x01]",
+    "good": "asc[0x0102]",
+    "error": "rank"
+  },
+  {
+    "code": "QT012",
+    "bad": "distinct[\"a\"]",
+    "good": "distinct[\"ab\"]",
+    "error": "type"
+  },
+  {
+    "code": "QT013",
+    "bad": "flip[\"ab\"]",
+    "good": "flip[(1 2;3 4)]",
+    "error": "rank"
+  },
+  {
+    "code": "QT014",
+    "bad": "rotate[\"a\";1 2]",
+    "good": "rotate[0x01;1 2]",
+    "error": "type"
+  },
+  {
+    "code": "QT017",
+    "bad": "mavg[\"a\";1 2 3]",
+    "good": "mavg[0x02;1 2 3]",
+    "error": "type"
+  },
+  {
+    "code": "QT019",
+    "bad": "within[1;0x00]",
+    "good": "within[1;0x0003]",
+    "error": "type"
   }
 ]

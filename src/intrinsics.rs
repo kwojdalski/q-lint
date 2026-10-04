@@ -8,6 +8,10 @@ enum Kind {
     Float,
     Symbol,
     Bool,
+    /// A string literal: a char atom with one character, a vector otherwise.
+    Char,
+    /// `0x` and hex digits, two per item; an atom with exactly two.
+    Byte,
 }
 struct Literal {
     kind: Kind,
@@ -35,6 +39,30 @@ fn literal(s: &str) -> Option<Literal> {
             kind: Kind::Symbol,
             vector: s.bytes().filter(|&b| b == b'`').count() > 1,
             len: s.bytes().filter(|&b| b == b'`').count(),
+            negative: false,
+            short_integer: false,
+        });
+    }
+    // Read from `comments`, where a string is still text. Its length counts
+    // an escape as the one character it stands for.
+    if let Some(body) = re!(r#"^"((?:\\[0-7]{3}|\\.|[^"\\])*)"$"#).captures(s) {
+        let len = re!(r"\\[0-7]{3}|\\.|[^\\]").find_iter(&body[1]).count();
+        return Some(Literal {
+            kind: Kind::Char,
+            vector: len != 1,
+            len,
+            negative: false,
+            short_integer: false,
+        });
+    }
+    if let Some(hex) = s.strip_prefix("0x")
+        && hex.len() % 2 == 0
+        && hex.bytes().all(|b| b.is_ascii_hexdigit())
+    {
+        return Some(Literal {
+            kind: Kind::Byte,
+            vector: hex.len() != 2,
+            len: hex.len() / 2,
             negative: false,
             short_integer: false,
         });
@@ -135,13 +163,19 @@ fn calls<'a>(code: &'a str, comments: &'a str) -> Vec<Call<'a>> {
     // say nothing about a name - so the argument is taken as far as the
     // literal extends: digits, dots, a type suffix, backtick symbols, spaces
     // between vector items, or one quoted string.
+    //
+    // Matched in `comments`, not `code`: a string is blanks in `code`, so
+    // `til "3"` would never be seen there. A comment is blank in both, and
+    // `code` still has to hold the builtin's own name at that offset, which
+    // proves the match is not the inside of a string.
     for call in re!(&format!(
-        r#"\b({BUILTINS})[ \t]+((?:-?\d[\w.:]*(?:[ \t]+-?\d[\w.:]*)*)|(?:`[A-Za-z0-9_.]*)+|"[^"]*")"#
+        r#"\b({BUILTINS})[ \t]+((?:-?\d[\w.:]*(?:[ \t]+-?\d[\w.:]*)*)|(?:`[A-Za-z0-9_.]*)+|"(?:\\.|[^"\\])*")"#
     ))
-    .captures_iter(code)
+    .captures_iter(comments)
     {
         let whole = call.get(0).unwrap();
-        if !boundary(code, whole.start()) {
+        let name = call.get(1).unwrap();
+        if !boundary(code, whole.start()) || code.get(name.range()) != Some(name.as_str()) {
             continue;
         }
         // The literal has to be the whole argument. `til 1.5 * x` is not a
@@ -233,21 +267,27 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
                 Some(("QT016", "Numeric math cannot operate on a symbol literal"))
             }
             "mavg" | "msum" | "mcount" | "mdev" | "mmin" | "mmax"
-                if value.vector || matches!(value.kind, Kind::Float | Kind::Symbol) =>
+                if value.vector
+                    || matches!(value.kind, Kind::Float | Kind::Symbol | Kind::Char) =>
             {
                 Some(("QT017", "Moving-window size must be an integer atom"))
             }
 
-            "til" if value.kind == Kind::Float || (value.vector && value.kind != Kind::Symbol) => {
-                Some((
-                    "QT008",
-                    "til needs an integer atom, not this numeric literal",
-                ))
+            // A symbol atom runs - `til` is `key` there and lists a
+            // namespace - and so does a byte atom. Any vector, a string of
+            // any length and a float are 'type.
+            "til" if value.vector || matches!(value.kind, Kind::Float | Kind::Char) => {
+                Some(("QT008", "til needs an integer atom, not this literal"))
             }
             "til" if value.kind == Kind::Integer && value.negative => {
                 Some(("QD001", "til cannot generate a negative number of indices"))
             }
-            "where" if matches!(value.kind, Kind::Float | Kind::Symbol) || value.short_integer => {
+            // `where ""` is the one string q accepts: there is nothing in it.
+            "where"
+                if matches!(value.kind, Kind::Float | Kind::Symbol | Kind::Byte)
+                    || (value.kind == Kind::Char && value.len > 0)
+                    || value.short_integer =>
+            {
                 Some(("QT009", "where requires boolean or long counts"))
             }
             "where" if value.negative => Some((
@@ -256,12 +296,17 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
             )),
             "sum" | "prd" | "avg" | "med" | "dev" | "var" | "sums" | "prds" | "deltas"
             | "ratios"
-                if value.kind == Kind::Symbol
-                    && (value.vector || matches!(name, "avg" | "med" | "dev" | "var")) =>
+                if (value.kind == Kind::Symbol
+                    && (value.vector || matches!(name, "avg" | "med" | "dev" | "var")))
+                    // A string is numeric to `sum`, `avg` and `ratios`, and
+                    // not to these four.
+                    || (value.kind == Kind::Char
+                        && value.vector
+                        && matches!(name, "prd" | "sums" | "prds" | "deltas")) =>
             {
                 Some((
                     "QT010",
-                    "This numeric aggregate or scan rejects this symbol literal",
+                    "This numeric aggregate or scan rejects this literal",
                 ))
             }
             "asc" | "desc" | "iasc" | "idesc" if !value.vector => Some((
@@ -272,11 +317,13 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
                 "QT012",
                 "distinct requires a list rather than a literal atom",
             )),
-            "flip" if value.kind != Kind::Symbol => Some((
-                "QT013",
-                "flip cannot transpose a numeric atom or flat numeric vector",
-            )),
-            "rotate" if value.vector || matches!(value.kind, Kind::Float | Kind::Symbol) => {
+            "flip" if value.kind != Kind::Symbol => {
+                Some(("QT013", "flip cannot transpose an atom or a flat vector"))
+            }
+            "rotate"
+                if value.vector
+                    || matches!(value.kind, Kind::Float | Kind::Symbol | Kind::Char) =>
+            {
                 Some(("QT014", "rotate requires an integer atom for its count"))
             }
             _ => None,
