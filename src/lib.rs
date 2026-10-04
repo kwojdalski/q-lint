@@ -1188,9 +1188,11 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
                 }
             }
             let body = String::from_utf8(body).unwrap();
-            if re!(r"\bz\b").is_match(&body) {
+            // Not as part of a dotted name: `.z.s` is the lambda itself, and
+            // reading it says nothing about a third argument.
+            if re!(r"(?:^|[^A-Za-z0-9_.])z(?:[^A-Za-z0-9_.]|$)").is_match(&body) {
                 3
-            } else if re!(r"\by\b").is_match(&body) {
+            } else if re!(r"(?:^|[^A-Za-z0-9_.])y(?:[^A-Za-z0-9_.]|$)").is_match(&body) {
                 2
             } else {
                 1

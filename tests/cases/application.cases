@@ -150,3 +150,11 @@ r:.[(1b;`;)f::;inputs]
 === clean | an empty first slot is a projection of dot apply, and 1_x is a drop
 r:$[1=count x;;.[;1_x]]
 
+=== clean | .z.s is the lambda itself, not a third argument
+qs:{$[2>count x;x;raze .z.s each 1_x]}
+r:qs(1 2;3)
+
+=== QA012 | so a lambda that reads only x and .z.s takes one argument
+qs:{$[2>count x;x;raze .z.s each 1_x]}
+r:qs[1;2]
+
