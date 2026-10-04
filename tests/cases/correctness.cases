@@ -266,3 +266,6 @@ step:{if[hasvowel -1_x;x[-1+count x]:"i"];x}
 === clean | a column against an item of itself is not a self-comparison
 r:select from t where c=c i
 
+=== clean | a match inside a lambda applied to each row is per row
+r:select from t where {x[`b]~2} each d
+
