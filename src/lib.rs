@@ -997,8 +997,12 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
     // 'type errors. Chars are another matter, version by version - see
     // QT023 - so this rule is a symbol literal next to an infix + - * % and
     // nothing more.
-    for m in re!(r"(?:`[A-Za-z][A-Za-z0-9_.]*)+\s*[+\-*%]|[+\-*%]\s*(?:`[A-Za-z][A-Za-z0-9_.]*)+")
-        .find_iter(code)
+    // Spaces and tabs only between the symbol and the operator: a symbol
+    // ending one line and a `-1"..."` print opening the next are two
+    // statements, not a subtraction - the commonest shape in public q.
+    for m in
+        re!(r"(?:`[A-Za-z][A-Za-z0-9_.]*)+[ \t]*[+\-*%]|[+\-*%][ \t]*(?:`[A-Za-z][A-Za-z0-9_.]*)+")
+            .find_iter(code)
     {
         let at = m.start();
         // `like `a*` is a glob, not a product; QB007 owns that one.

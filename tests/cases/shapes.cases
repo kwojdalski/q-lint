@@ -28,6 +28,10 @@ r:1+`a`b!1 2
 === clean | nor a match, which is a boolean
 r:1+`a~`b
 
+=== clean | a symbol ending one line and a print opening the next are two statements
+y:`c`c`c`j
+-1"next";
+
 === QT003 | a symbol on the left is the operand whatever follows
 r:`a+`b?`c
 
