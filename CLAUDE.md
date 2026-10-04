@@ -25,8 +25,12 @@ rules actually go wrong. Build the binary before and after, and diff them over
 a body of q nobody here wrote:
 
 ```sh
-python3 scripts/corpus_diff.py /tmp/qlinter-before target/release/qlinter ~/some/q
+python3 scripts/fetch_corpus.py ~/q-corpus      # once: 707 files of public q, pinned
+python3 scripts/corpus_diff.py /tmp/qlinter-before target/release/qlinter ~/q-corpus
 ```
+
+A diff that moves nothing is only reassuring if the corpus holds the shape
+the rule reads - check that it does before taking the silence as a pass.
 
 A rule that looks obviously right on the cases its author wrote is exactly
 the kind that reports hundreds of findings on working q. `tests/corpus/` pins
