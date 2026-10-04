@@ -102,7 +102,10 @@ fn runs_before(text: &str, read: usize, assign: usize) -> bool {
                     Some(top) => top.1 += 1,
                     None => seq += 1,
                 },
-                b'\n' if stack.is_empty() => seq += 1,
+                // No newline arm: inside a lambda an indented line continues
+                // the expression above it, so only `;` ends a statement.
+                // Verified: `{r:a\n  +a:5; r}[]` is 10, and `{r:3\n  r}[]`
+                // is 'r - `3 r`, one expression.
                 _ => {}
             }
         }

@@ -152,6 +152,14 @@ t:([] px:1 2; qty:3 4)
 === QF014 | read before the assignment that makes it local
 f:{[x] r:cfg; cfg:1; r}
 
+=== clean | a newline inside a lambda continues the expression, which assigns first
+f:{r:a
+  +a:5; r}
+
+=== QF014 | but a semicolon on the line before does end the statement
+f:{r:a;
+  a:5; r}
+
 === QF014 | a read in a condition, assigned in the branch
 f:{[x] if[a;a:1]}
 
