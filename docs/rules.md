@@ -76,7 +76,7 @@ that wants fewer findings narrows in its own configuration.
 |---|---|---|---|
 | `QA001` | parameter-limit | Lambda declares more than eight parameters | every profile |
 | `QA002` | literal-lambda-rank | Too many arguments for a literal lambda | every profile |
-| `QA003` | multiparam-under-at | Unary protected apply receives a multi-argument function | `style` and above |
+| `QA003` | multiparam-under-at | Protected apply of a multi-argument function returns a projection, and the trap never fires | `style` and above |
 | `QA004` | dot-empty-list | Empty-list application to a niladic function | every profile |
 | `QA005` | each-on-binary | each supplies one argument to a binary function | `style` and above |
 | `QA006` | cond-two-slots | Two-slot conditional has no else branch and errors at runtime | every profile |
@@ -123,7 +123,7 @@ that wants fewer findings narrows in its own configuration.
 | `QB004` | overlong-throw | Thrown message risks truncation | `style` and above |
 | `QB005` | match-in-where | Match in a qSQL filter compares whole vectors, not rows | `style` and above |
 | `QB006` | comparison-with-logic | Unparenthesised comparison mixed with and/or reads right-to-left | `style` and above |
-| `QB007` | like-symbol-pattern | like with a symbol pattern is a runtime type error | every profile |
+| `QB007` | like-symbol-pattern | like with a symbol pattern is a type error, or with a glob a silent projection | every profile |
 | `QB008` | vector-equality-filter | Column equality against a vector literal in a filter | `style` and above |
 | `QB009` | unaggregated-under-by | Bare column under by silently takes the last row per group | `style` and above |
 | `QB010` | apply-not-subtract | Name, space, negative literal applies the name rather than subtracting | every profile |

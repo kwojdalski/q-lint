@@ -874,7 +874,9 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
                     at,
                     "QA003",
                     format!(
-                        "Protected unary apply has {} unbound parameters",
+                        "`@` applies its function to one argument; this lambda still takes {}, \
+                         so the result is a projection rather than a value, and the error \
+                         handler never runs",
                         arity - supplied
                     ),
                 );
@@ -1044,18 +1046,30 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
             }
         }
     }
-    // like's pattern is a string; a symbol literal is the obvious spelling
-    // of one and a guaranteed 'type error at runtime.
-    for m in re!(r"\blike\s*`").find_iter(code) {
+    // like's pattern is a string, and a symbol literal is the obvious wrong
+    // spelling of one. What q does with it depends on what follows. Verified:
+    // `"abc" like `abc` is 'type, but a glob character is not part of a
+    // symbol - `` `a* `` is the symbol `` `a `` and the operator `*`, and
+    // `"abc" like `a*` is `like["abc"]*[`a]`, a projection, returned
+    // silently where a boolean was wanted. That is the worse of the two.
+    for m in re!(r"\blike\s*`[A-Za-z0-9_.:]*").find_iter(code) {
         // A backtick before it makes this the symbol `` `like ``, an element of
         // a list rather than the operator - `` `abs`cor`like`mins `` is data.
         if !boundary(code, m.start()) {
             continue;
         }
+        let glob = code[m.end()..].starts_with(['*', '?', '[']);
         add(
             m.start(),
             "QB007",
-            "like needs a string pattern; a symbol literal is a 'type error at runtime".into(),
+            if glob {
+                "like needs a string pattern: a glob is not part of a symbol, so this parses as \
+                 a symbol and an operator, and returns a projection rather than a boolean, \
+                 silently"
+            } else {
+                "like needs a string pattern; a symbol literal is a 'type error at runtime"
+            }
+            .into(),
         );
     }
     // The rank of every lambda this file names, for the two call-shape rules

@@ -171,7 +171,7 @@
     "code": "QA003",
     "name": "multiparam-under-at",
     "category": "application",
-    "summary": "Unary protected apply receives a multi-argument function",
+    "summary": "Protected apply of a multi-argument function returns a projection, and the trap never fires",
     "scope": "style"
   },
   {
@@ -311,7 +311,7 @@
     "code": "QB007",
     "name": "like-symbol-pattern",
     "category": "correctness",
-    "summary": "like with a symbol pattern is a runtime type error",
+    "summary": "like with a symbol pattern is a type error, or with a glob a silent projection",
     "scope": "builtin"
   },
   {

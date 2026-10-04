@@ -43,6 +43,12 @@ select from t where a=1
 === QB007 | like with a symbol pattern
 select from t where sym like `a*
 
+=== QB007 | a bare symbol pattern is 'type
+r:"abc" like `abc
+
+=== QB007 | and a glob after the symbol parses as an operator, a silent projection
+r:"abc" like `a*
+
 === clean | like with a string pattern
 select from t where sym like "a*"
 
