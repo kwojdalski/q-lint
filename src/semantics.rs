@@ -710,7 +710,7 @@ pub fn check(path: &str, code: &str, raw: &str, comments: &str) -> Vec<Finding> 
             .replace_all(&code[scope.body..scope.end], |m: &regex::Captures| {
                 " ".repeat(m[0].len())
             });
-        let mut mentioned: HashSet<&str> = HashSet::new();
+        let mut mentioned: HashSet<&str> = parse_tree_names(&code[scope.body..scope.end]);
         for m in re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(&body) {
             if boundary(&body, m.start()) && !body[m.end()..].starts_with('.') {
                 mentioned.insert(m.as_str());
@@ -834,7 +834,7 @@ pub fn check(path: &str, code: &str, raw: &str, comments: &str) -> Vec<Finding> 
         if assigned.is_empty() {
             continue;
         }
-        let mut read: HashSet<&str> = HashSet::new();
+        let mut read: HashSet<&str> = parse_tree_names(&scope.direct);
         for m in re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(&direct) {
             if !boundary(&direct, m.start()) || direct[m.end()..].starts_with('.') {
                 continue;
@@ -1649,4 +1649,20 @@ fn arithmetic_kind(text: &str) -> Option<Arithmetic> {
     } else {
         None
     }
+}
+
+/// Names a body reads through a parse tree. In a functional query, or a parse
+/// tree given to `eval`, a symbol is a name: `?[t;();0b;(enlist`x)!enlist
+/// (+;`a;`u)]` reads the local `u`, and q confirms the local wins over a
+/// global of the same name. So where a body builds one, each plain symbol in
+/// it may be a read, and the unused-name rules must not call it unread.
+fn parse_tree_names(body: &str) -> HashSet<&str> {
+    if !re!(r"[?!]\s*\[|\beval\b").is_match(body) {
+        return HashSet::new();
+    }
+    re!(r"`([A-Za-z][A-Za-z0-9_]*)")
+        .captures_iter(body)
+        .filter(|m| !body[m.get(0).unwrap().end()..].starts_with(['.', ':']))
+        .map(|m| m.get(1).unwrap().as_str())
+        .collect()
 }

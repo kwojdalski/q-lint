@@ -483,3 +483,13 @@ r3:select k from k
 b:5
 t:([]a:1 2)
 r:select b from t
+
+=== clean | a local named by a symbol in a functional query is read by it
+pivotp:{[c;g;d;t]
+ u:`$string asc distinct t c;
+ p:?[t;();g!g,:();(pf;`u;c;d)];
+ p}
+
+=== QF017 | a symbol of that name with no parse tree in sight is just a symbol
+f:{[t] u:1; `u}
+
