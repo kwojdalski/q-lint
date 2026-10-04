@@ -299,6 +299,23 @@ fn boundary(s: &str, at: usize) -> bool {
 /// `` `a`b?`b `` is a long, `4 5,6` three items, `0^x` a fill. A rule that
 /// judges a literal by its type or length asks this first, or it is judging
 /// the start of an expression it has not read.
+/// Whether a `$[...]` condition is an infix with a vector literal on one
+/// side, which cannot produce the atom `$` needs: `1 2 3>2`, `x>1 2 3`,
+/// `` `a`b=`a `` are all 'type there. Only the whole condition, so
+/// `any x>1 2 3` - an atom - is not this; and only the operators that pair
+/// items, so `~` and `in`, which return one boolean, are not either.
+fn vector_comparison(cond: &str) -> bool {
+    const VECTOR: &str = r"(?:-?\d[\w.]*(?:[ \t]+-?\d[\w.]*)+|\(\s*-?\d[\w.]*(?:[ \t]+-?\d[\w.]*)+\s*\)|(?:`[A-Za-z0-9_.]*){2,}|[01]{2,}b)";
+    const OPERAND: &str = r"(?:-?\d[\w.]*|`[A-Za-z0-9_.]*|\.?[A-Za-z][A-Za-z0-9_.]*)";
+    const OP: &str = r"(?:<=|>=|<>|[=<>+*%&|-])";
+    static RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(&format!(
+            r"^(?:{VECTOR}\s*{OP}\s*(?:{OPERAND}|{VECTOR})|{OPERAND}\s*{OP}\s*{VECTOR})$"
+        ))
+        .unwrap()
+    });
+    RE.is_match(cond)
+}
 pub(crate) fn operand_ends(code: &str, at: usize) -> bool {
     let rest = code[at..].trim_start_matches([' ', '\t']);
     rest.is_empty() || rest.starts_with([';', ')', ']', '}', '\n', '\r'])
@@ -941,7 +958,8 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
             && (re!(r"^`[A-Za-z][A-Za-z0-9_.]*$").is_match(cond)
                 || re!(r#"^"[^"]*"$"#).is_match(cond)
                 || re!(r"^[01]{2,}b$").is_match(cond)
-                || re!(r"^-?\d[\w.]*(?:\s+-?\d[\w.]*)+$").is_match(cond))
+                || re!(r"^-?\d[\w.]*(?:\s+-?\d[\w.]*)+$").is_match(cond)
+                || vector_comparison(cond))
         {
             add(
                 dollar,

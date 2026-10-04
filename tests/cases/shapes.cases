@@ -153,6 +153,17 @@ r:$[1 2 3;1;2]
 === QA011 | nor a symbol
 r:$[`a;1;2]
 
+=== QA011 | a comparison against a vector literal is a vector too
+r:$[(1 2 3)>2;`y;`n]
+
+=== QA011 | with the vector on either side
+r:$[x>1 2 3;1;2]
+
+=== clean | any, match and in reduce to an atom
+r1:$[any x>1 2 3;1;2]
+r2:$[x~1 2;1;2]
+r3:$[x in 1 2 3;1;2]
+
 === clean | an atom is what $ wants
 r:$[1b;1;2]
 
