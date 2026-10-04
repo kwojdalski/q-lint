@@ -9,6 +9,7 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
     query_injection(path, source, code, comments, &mut out);
     credentials(path, source, code, comments, &mut out);
     simplifications(path, source, code, &mut out);
+    leftovers(path, source, comments, &mut out);
     out
 }
 
@@ -187,5 +188,48 @@ fn simplifications(path: &str, source: &str, code: &str, out: &mut Vec<Finding>)
              faster"
                 .into(),
         );
+    }
+}
+
+/// #11: things left in q that were never meant to ship. Both are taste rather
+/// than defects, so both are `styleq` - off in the default.
+///
+/// A third was tried and dropped: `0N!` mid-expression inside a lambda. On
+/// the corpus six of its seven findings were progress output written on
+/// purpose - a downloader printing its URL, a loader printing its file.
+fn leftovers(path: &str, source: &str, comments: &str, out: &mut Vec<Finding>) {
+    // A comment is blank in both masked views; a string is blank only in
+    // `code`. So a byte blank in `comments` but not in the source is comment.
+    let in_comment = |at: usize| comments.as_bytes()[at] == b' ' && source.as_bytes()[at] != b' ';
+    // QL001: a marker saying the work is unfinished.
+    for m in re!(r"\b(TODO|FIXME|XXX|HACK)\b").find_iter(source) {
+        if in_comment(m.start()) {
+            out.push(Finding::at(
+                path,
+                source,
+                m.start(),
+                "QL001",
+                format!("`{}` marks unfinished work", m.as_str()),
+            ));
+        }
+    }
+    // QL002: a whole comment line that is a lambda definition - code kept
+    // as a comment rather than deleted, which version control already keeps.
+    for m in
+        re!(r"(?m)^[ \t]*/+[ \t]*(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]*:[ \t]*\{").captures_iter(source)
+    {
+        let name = m.get(1).unwrap();
+        if in_comment(name.start()) {
+            out.push(Finding::at(
+                path,
+                source,
+                m.get(0).unwrap().start(),
+                "QL002",
+                format!(
+                    "`{}` is a lambda definition kept as a comment",
+                    name.as_str()
+                ),
+            ));
+        }
     }
 }

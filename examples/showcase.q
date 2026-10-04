@@ -522,6 +522,14 @@ uniq2:{[p] asc distinct p}
 bumped:{[p] {x+1} each p}
 joined2:{[p] {x,1} each p}
 
+/ QL001: a marker of unfinished work; taste, so styleq and above only.
+/ expect-next: QL001
+done:1 / TODO check the empty case
+
+/ QL002: a definition kept as a comment, where version control keeps it.
+/ expect-next: QL002
+/ oldfill:{fills x}
+
 / QB002: q's like does not support an interior wildcard.
 / expect-next: QB002
 hits:select from trades where sym like "a*b"

@@ -1,6 +1,6 @@
 # Rules
 
-All 99 rules, generated from `src/taxonomy.json` - the same data
+All 101 rules, generated from `src/taxonomy.json` - the same data
 `qlinter --rules` and `qlinter --explain <CODE>` print from. Regenerate with
 `python3 scripts/rules_doc.py > docs/rules.md`; a test fails when this is stale.
 
@@ -161,6 +161,13 @@ that wants fewer findings narrows in its own configuration.
 | `QR002` | identity-each | {x} each returns its argument unchanged | `style` and above |
 | `QR003` | distinct-sorted-distinct | distinct asc distinct x is asc distinct x | `style` and above |
 | `QR004` | atomic-each | each over one arithmetic operation, which is already atomic | `style` and above |
+
+## Leftovers - things left in q that were never meant to ship
+
+| code | name | summary | on in |
+|---|---|---|---|
+| `QL001` | unfinished-marker | TODO, FIXME, XXX or HACK in a comment | `styleq` and above |
+| `QL002` | commented-out-definition | A lambda definition kept as a comment rather than deleted | `styleq` and above |
 
 ## Policy - one repository's conventions
 

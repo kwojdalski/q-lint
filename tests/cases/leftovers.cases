@@ -1,0 +1,14 @@
+=== QL001 profile: styleq | a marker saying the work is unfinished
+x:1 / TODO handle the empty case
+
+=== clean profile: style | taste, not a defect, so off below styleq
+x:1 / TODO handle the empty case
+
+=== clean profile: styleq | the word inside a string is data
+s:"TODO later"
+
+=== QL002 profile: styleq | a lambda definition kept as a comment
+/ f:{x+1}
+
+=== clean profile: styleq | a trailing comment after code is not a commented-out line
+f:{x+1} / g:{x} was slower

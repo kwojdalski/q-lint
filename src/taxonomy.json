@@ -691,5 +691,19 @@
     "category": "simplification",
     "summary": "each over one arithmetic operation, which is already atomic",
     "scope": "style"
+  },
+  {
+    "code": "QL001",
+    "name": "unfinished-marker",
+    "category": "leftovers",
+    "summary": "TODO, FIXME, XXX or HACK in a comment",
+    "scope": "styleq"
+  },
+  {
+    "code": "QL002",
+    "name": "commented-out-definition",
+    "category": "leftovers",
+    "summary": "A lambda definition kept as a comment rather than deleted",
+    "scope": "styleq"
   }
 ]
