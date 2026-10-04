@@ -311,7 +311,7 @@
     "code": "QB007",
     "name": "like-symbol-pattern",
     "category": "correctness",
-    "summary": "like with a symbol pattern is a type error, or with a glob a silent projection",
+    "summary": "like with a symbol pattern is a type error or, with a glob, a projection instead of a boolean",
     "scope": "builtin"
   },
   {

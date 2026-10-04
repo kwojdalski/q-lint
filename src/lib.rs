@@ -1051,7 +1051,8 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
     // `"abc" like `abc` is 'type, but a glob character is not part of a
     // symbol - `` `a* `` is the symbol `` `a `` and the operator `*`, and
     // `"abc" like `a*` is `like["abc"]*[`a]`, a projection, returned
-    // silently where a boolean was wanted. That is the worse of the two.
+    // silently where a boolean was wanted - except in a where phrase, which
+    // wants booleans and raises 'type on it.
     for m in re!(r"\blike\s*`[A-Za-z0-9_.:]*").find_iter(code) {
         // A backtick before it makes this the symbol `` `like ``, an element of
         // a list rather than the operator - `` `abs`cor`like`mins `` is data.
@@ -1064,8 +1065,8 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
             "QB007",
             if glob {
                 "like needs a string pattern: a glob is not part of a symbol, so this parses as \
-                 a symbol and an operator, and returns a projection rather than a boolean, \
-                 silently"
+                 a symbol and an operator, and the result is a projection rather than a \
+                 boolean - 'type in a where phrase, silent anywhere else"
             } else {
                 "like needs a string pattern; a symbol literal is a 'type error at runtime"
             }

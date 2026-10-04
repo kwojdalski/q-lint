@@ -123,7 +123,7 @@ that wants fewer findings narrows in its own configuration.
 | `QB004` | overlong-throw | Thrown message risks truncation | `style` and above |
 | `QB005` | match-in-where | Match in a qSQL filter compares whole vectors, not rows | `style` and above |
 | `QB006` | comparison-with-logic | Unparenthesised comparison mixed with and/or reads right-to-left | `style` and above |
-| `QB007` | like-symbol-pattern | like with a symbol pattern is a type error, or with a glob a silent projection | every profile |
+| `QB007` | like-symbol-pattern | like with a symbol pattern is a type error or, with a glob, a projection instead of a boolean | every profile |
 | `QB008` | vector-equality-filter | Column equality against a vector literal in a filter | `style` and above |
 | `QB009` | unaggregated-under-by | Bare column under by silently takes the last row per group | `style` and above |
 | `QB010` | apply-not-subtract | Name, space, negative literal applies the name rather than subtracting | every profile |

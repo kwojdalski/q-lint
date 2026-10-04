@@ -248,8 +248,8 @@ sprawling:{[a]
 / expect-next: QA002
 sum2:{[a;b]a+b}[1;2;3]
 
-/ QA003: protected apply @ is unary; the rank-2 lambda leaves a parameter
-/ unbound and the whole expression does nothing useful.
+/ QA003: protected apply @ is unary; the rank-2 lambda gets one argument, so
+/ the result is a projection, not a value, and the handler never runs.
 / expect-next: QA003
 guarded: @[{[a;b] a+b};1;2]
 
@@ -449,8 +449,8 @@ matchw:select from trades where sym~`EUR
 / expect-next: QB006
 both:select from trades where size=1 and side=0
 
-/ QB007: like takes a string pattern; a symbol literal is a 'type error
-/ the moment the query runs.
+/ QB007: like takes a string pattern. `EUR* is the symbol `EUR and the
+/ operator *, so this is a projection, not booleans - 'type in a where phrase.
 / expect-next: QB007
 glob:select from trades where sym like `EUR*
 
