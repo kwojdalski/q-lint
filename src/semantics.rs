@@ -630,13 +630,24 @@ pub fn check(path: &str, code: &str, raw: &str, comments: &str) -> Vec<Finding> 
                 continue;
             }
             if !mentioned.contains(param.as_str()) {
-                out.push(Finding::at(
+                // On the parameter itself, spanning exactly its name, so an
+                // editor can fade the name rather than the whole signature.
+                let signature = &code[scope.start..scope.body];
+                let at = re!(r"[A-Za-z][A-Za-z0-9_]*")
+                    .find_iter(signature)
+                    .find(|m| m.as_str() == param.as_str())
+                    .map_or(scope.start, |m| scope.start + m.start());
+                let mut finding = Finding::at(
                     path,
                     raw,
-                    scope.start,
+                    at,
                     "QF016",
                     format!("Parameter `{param}` is never read; the caller still has to pass it"),
-                ));
+                );
+                if at != scope.start {
+                    finding.end_column = finding.column.map(|c| c + param.len());
+                }
+                out.push(finding);
             }
         }
     }
@@ -738,13 +749,15 @@ pub fn check(path: &str, code: &str, raw: &str, comments: &str) -> Vec<Finding> 
                 continue;
             }
             if !read.contains(*name) && !re!(r"(?i)^(?:unused|ignored?|dummy)").is_match(name) {
-                out.push(Finding::at(
+                let mut finding = Finding::at(
                     path,
                     raw,
                     scope.body + at,
                     "QF017",
                     format!("Local `{name}` is assigned and never read"),
-                ));
+                );
+                finding.end_column = finding.column.map(|c| c + name.len());
+                out.push(finding);
             }
         }
     }

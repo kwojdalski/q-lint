@@ -292,7 +292,7 @@ fn diagnostic(f: &Finding, source: &str) -> Value {
     } else {
         start_char
     };
-    json!({
+    let mut d = json!({
         "range": {
             "start": {"line": line, "character": start_char},
             "end": {"line": end_line, "character": end_char.max(start_char)},
@@ -301,8 +301,17 @@ fn diagnostic(f: &Finding, source: &str) -> Value {
         "code": f.code,
         "source": f.source,
         "message": f.detail,
-    })
+    });
+    // `Unnecessary` is what makes an editor fade a name, the way unused
+    // Python is faded. Only where the finding spans exactly the name: on a
+    // line-wide range it would fade the code around it too.
+    if matches!(f.code.as_str(), "QF016" | "QF017") && f.end_column.is_some() {
+        d["tags"] = json!([DIAGNOSTIC_TAG_UNNECESSARY]);
+    }
+    d
 }
+
+const DIAGNOSTIC_TAG_UNNECESSARY: i64 = 1;
 
 fn severity(name: &str) -> i64 {
     match name {
@@ -388,6 +397,30 @@ mod tests {
         let d = diagnostic(&f, source);
         assert_eq!(d["range"]["start"]["line"], 0);
         assert_eq!(d["range"]["end"]["character"], utf16_len("a:1 / \u{1F600}"));
+    }
+
+    #[test]
+    fn unused_names_are_tagged_unnecessary_over_exactly_the_name() {
+        let source = "f:{[a;b] r:1; a}\n";
+        let found = lint(source, "x.q", Profile::Style);
+        let tagged: Vec<Value> = found
+            .iter()
+            .map(|f| diagnostic(f, source))
+            .filter(|d| d["tags"] == json!([DIAGNOSTIC_TAG_UNNECESSARY]))
+            .collect();
+        let mut spans: Vec<(&str, u64, u64)> = tagged
+            .iter()
+            .map(|d| {
+                (
+                    d["code"].as_str().unwrap(),
+                    d["range"]["start"]["character"].as_u64().unwrap(),
+                    d["range"]["end"]["character"].as_u64().unwrap(),
+                )
+            })
+            .collect();
+        spans.sort();
+        // `b` is the unused parameter at column 6, `r` the unused local at 9.
+        assert_eq!(spans, vec![("QF016", 6, 7), ("QF017", 9, 10)]);
     }
 
     #[test]
