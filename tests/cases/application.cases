@@ -34,6 +34,10 @@ count each (1 2;3 4 5)
 === QA006 | two slots is the one arity $ has no meaning for
 $[1b;2]
 
+=== clean | an empty slot makes $ a projection, not a conditional
+mm:{$[;y] peach x}
+i:$[t;]@/:(1;2)
+
 === clean | two slots with a type on the left is a cast in bracket form
 r:$[`long;1.5]
 

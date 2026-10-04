@@ -952,6 +952,18 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
         if cast {
             continue;
         }
+        // An empty slot makes `$[...]` a projection of `$`, not a conditional:
+        // `$[;y]` and `$[t;]` are casts waiting for an argument, and run. The
+        // slot is judged in the source, where a string is not blank.
+        let mut from = dollar + 2;
+        let elided = parts.iter().any(|part| {
+            let empty = source[from..from + part.len()].trim().is_empty();
+            from += part.len() + 1;
+            empty
+        });
+        if elided {
+            continue;
+        }
         // `$` takes an atom. A vector condition is 'type every time, and it is
         // reached for by people expecting it to vectorise - `?[...]` is the
         // form that does. A symbol or a string is 'type for the same reason.
