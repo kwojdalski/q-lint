@@ -57,8 +57,8 @@
             "styleq",
             "uqf"
           ],
-          "default": "uqf",
-          "markdownDescription": "Which rules to run. The default, `uqf`, is everything: it reports all the linter can see, and narrowing is done where the code lives rather than here. `styleq` drops one repository's house conventions; `style` drops the published style-guide conventions too; `general` keeps only what q itself rejects."
+          "default": "style",
+          "markdownDescription": "Which rules to run. The default, `style`, reports what q refuses and what q runs but is almost certainly a mistake. `general` keeps only what q itself rejects; `styleq` adds the conventions of published q style guides; `uqf` adds one repository's house conventions on top of those."
         },
         "q-lint.trace.server": {
           "type": "string",

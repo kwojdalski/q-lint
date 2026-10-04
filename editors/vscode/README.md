@@ -92,7 +92,7 @@ that without reloading the window.
 | setting | default | |
 |---|---|---|
 | `q-lint.serverPath` | `qlinter` | Path to the binary; looked up on `PATH` as given. |
-| `q-lint.profile` | `general` | Rule profile. `uqf` adds that repository's own conventions on top of the general q rules. |
+| `q-lint.profile` | `style` | Rule profile. `general` is only what q refuses; `style` adds what q runs but is almost certainly a mistake; `styleq` adds published style-guide conventions; `uqf` adds one repository's house conventions. |
 | `q-lint.trace.server` | `off` | Log the traffic between VS Code and the server, for debugging the integration itself. |
 
 ## The rules
