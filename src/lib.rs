@@ -1295,7 +1295,8 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
         // anchor sits before the `\n`, so on a CRLF checkout the carriage
         // return is left between the literal and the anchor and the match is
         // silently lost. Every file git checks out on Windows is CRLF.
-        re!(r"(?m)([A-Za-z][A-Za-z0-9_]*)[ \t]+-\d[\w.]*[ \t\r]*(?:[;\])]|$)")
+        // No `_` in the literal: no q number has one, and `-1_x` is drop.
+        re!(r"(?m)([A-Za-z][A-Za-z0-9_]*)[ \t]+-\d[A-Za-z0-9.]*[ \t\r]*(?:[;\])]|$)")
             .captures_iter(code)
     {
         let whole = m.get(0).unwrap();

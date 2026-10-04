@@ -259,3 +259,7 @@ r:0<0^x
 
 === clean | and neither is drop
 r:0<1_deltas x
+
+=== clean | -1_x is drop, not a negative literal
+step:{if[hasvowel -1_x;x[-1+count x]:"i"];x}
+
