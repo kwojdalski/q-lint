@@ -173,6 +173,12 @@ select from t where sym like "EUR", s~\:"ab", c in "abc"
 === QB016 | delete cannot take columns and a where phrase
 delete a from t where b>3
 
+=== QB016 | the table may be a literal
+delete a from ([]a:1 2;b:3 4) where b>3
+
+=== clean | a select after from takes the where phrase for itself
+r:delete a from select from t where b>3
+
 === clean | columns alone
 delete a from t
 

@@ -1917,18 +1917,27 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
             );
         }
         // `delete` takes columns or a where phrase, never both; q says 'nyi.
-        if let Some(m) = re!(
-            r"\bdelete\s+[A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*\s+from\s+`?[A-Za-z_][\w.]*\s+where\b"
-        )
-        .find(line)
-        {
-            add(
-                offset + m.start(),
-                "QB016",
-                "`delete` cannot name columns and filter rows in one phrase; that is 'nyi at \
-                 runtime"
-                    .into(),
-            );
+        // The table is a name or a parenthesised expression - a `select`
+        // after `from` would take the `where` for itself, and so is neither.
+        for m in re!(r"\bdelete\s+[A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*\s+from\s+").find_iter(line) {
+            let rest = &line[m.end()..];
+            let after = if rest.starts_with('(') {
+                matching(line, m.end(), b'(', b')').map(|close| &line[close..])
+            } else {
+                re!(r"^`?[A-Za-z_][\w.]*")
+                    .find(rest)
+                    .map(|t| &rest[t.end()..])
+            };
+            if after.is_some_and(|a| re!(r"^\s+where\b").is_match(a)) {
+                add(
+                    offset + m.start(),
+                    "QB016",
+                    "`delete` cannot name columns and filter rows in one phrase; that is 'nyi at \
+                     runtime"
+                        .into(),
+                );
+                break;
+            }
         }
         // A cast named by symbol converts a string char by char - `long$"123"`
         // is `49 50 51`, and `date$"2024.01.01"` is ten dates - with no error
