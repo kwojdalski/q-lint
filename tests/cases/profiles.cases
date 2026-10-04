@@ -127,3 +127,17 @@ types:("datetime";"0Nz";"2006.07.21T09:13:39")
 
 === QP002 profile: uqf | but the "z" cast is the one whose string is the point
 d:"z"$x
+
+=== clean profile: uqf | a function after a function composes: enorm2 (-):: is a new function, not a call
+f:{x}
+g:f (-)::
+
+=== clean profile: uqf | an iterator makes the name its left operand: stop g[d]/x is the while form of over
+stop:{x}
+g:{y}
+r:stop g[1]/0
+
+=== clean profile: uqf | an open each-left composes too
+f:{x}
+h:{[X] f X@\:}
+

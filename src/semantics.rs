@@ -1247,6 +1247,31 @@ pub fn check(path: &str, code: &str, raw: &str, comments: &str) -> Vec<Finding> 
             let Some(argument) = crate::argument_start(raw, comments, at + bare.len()) else {
                 continue;
             };
+            // Two shapes where the name is an operand, not a function being
+            // applied - parse trees checked in q. A top-level iterator makes
+            // it the iterator's left argument: `stop f[d]/x` is
+            // `f[d]/[stop;x]`, the while form of over, and `stop[f[d]/x]`
+            // does not even parse. And a right side that is itself a function
+            // - ending in an operator, an iterator or `::` - composes:
+            // `enorm2 (-)::` and `sse X@\:` are new functions, not calls.
+            if let Some(end) = crate::argument_end(code, comments, raw, argument) {
+                let text = &code[argument..end];
+                let mut depth = 0i32;
+                let iterated = text.bytes().any(|b| {
+                    match b {
+                        b'(' | b'[' | b'{' => depth += 1,
+                        b')' | b']' | b'}' => depth -= 1,
+                        _ => {}
+                    }
+                    depth == 0 && matches!(b, b'/' | b'\\' | b'\'')
+                });
+                let composed = text
+                    .trim_end()
+                    .ends_with(|c: char| "+-*%&|^=<>~,#_!?@.$:'/\\".contains(c));
+                if iterated || composed {
+                    continue;
+                }
+            }
             if re!(r"^[A-Za-z][A-Za-z0-9_]*")
                 .find(&code[argument..])
                 .is_some_and(|w| INFIX.contains(&w.as_str()))
