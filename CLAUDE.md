@@ -32,6 +32,18 @@ python3 scripts/corpus_diff.py /tmp/qlinter-before target/release/qlinter ~/q-co
 A diff that moves nothing is only reassuring if the corpus holds the shape
 the rule reads - check that it does before taking the silence as a pass.
 
+Two more checks over the same corpus catch what a diff cannot:
+
+```sh
+python3 scripts/check_invariance.py target/release/qlinter ~/q-corpus  # CRLF, position, comments
+python3 scripts/check_fixes.py target/release/qlinter ~/q-corpus      # every --fix keeps the program
+```
+
+The first rewrites each file in ways that leave its meaning alone and wants
+the same findings back. The second applies `--fix` and asks q to `parse` both
+sides of every rewrite - reading, not running - and compares what they compile
+to. Run it whenever a fix or the extent of an argument changes.
+
 A rule that looks obviously right on the cases its author wrote is exactly
 the kind that reports hundreds of findings on working q. `tests/corpus/` pins
 the shapes already known to be hard; the diff is for the ones nobody has
