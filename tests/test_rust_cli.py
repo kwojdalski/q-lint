@@ -148,10 +148,12 @@ def test_naming_only_non_q_files_says_so(tmp_path):
     assert "No .q files among the paths given" in result.stderr, result.stderr
 
 
-def test_an_unreadable_q_file_is_skipped_not_fatal(tmp_path):
-    """One bad file must not hide the findings in the others."""
+def test_a_file_that_is_not_utf8_is_linted_and_reported(tmp_path):
+    """q reads bytes, so a file that is not UTF-8 is still q: it is linted,
+    with each invalid byte read as one character, and the reader is told.
+    One such file must not hide the findings in the others either."""
     (tmp_path / "fine.q").write_text("f:{[count] count+1}\n")
-    (tmp_path / "broken.q").write_bytes(b"f:{[count] \xff\xfe count+1}\n")
+    (tmp_path / "broken.q").write_bytes(b"g:{[count] \xff\xfe count+1}\n")
     result = run(str(tmp_path))
-    assert "broken.q" in result.stderr and "skipped" in result.stderr
-    assert "QF001" in result.stdout, result.stdout
+    assert "broken.q" in result.stderr and "not valid UTF-8" in result.stderr
+    assert result.stdout.count("QF001") == 2, result.stdout
