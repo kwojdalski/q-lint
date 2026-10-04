@@ -227,3 +227,23 @@ fn scope_analysis_does_not_scale_quadratically() {
         b / a
     );
 }
+
+#[test]
+fn semantic_tokens_survive_a_half_typed_file() {
+    // The language server asks for tokens on every keystroke, so it sees
+    // every unbalanced state a file passes through on the way to being
+    // written - and the scope pass once panicked on two unclosed lambdas.
+    for text in [
+        "f:{g:{",
+        "f:{g:{x",
+        "f:{[a] g:{[b] h:{",
+        "f:{g:{x}",
+        "f:{[a;b",
+        "{{{",
+        "}}}",
+        "f:{\"",
+        "f:{g:{\u{1F600}",
+    ] {
+        let _ = q_lint_rs::semantic_tokens(text);
+    }
+}

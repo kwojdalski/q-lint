@@ -313,7 +313,13 @@ fn scopes(code: &str, raw: &str) -> (Vec<Scope>, Vec<(usize, String)>) {
         let mut direct = code.as_bytes()[scope.body..scope.end].to_vec();
         for &c in &children[i] {
             let child = &scopes[c];
-            direct[child.start - scope.body..child.end + 1 - scope.body].fill(b' ');
+            // An unclosed lambda runs to the end of the file, and so does an
+            // unclosed one around it: `f:{g:{` is two scopes ending at the
+            // same byte, and the child's closing brace is not there to blank.
+            // The checks never see such a file - QE001 stops them - but the
+            // editor's semantic tokens are asked for mid-keystroke.
+            let end = (child.end + 1).min(scope.end);
+            direct[child.start - scope.body..end - scope.body].fill(b' ');
         }
         let direct = String::from_utf8(direct).unwrap();
         let mut locals = scope.params.clone();

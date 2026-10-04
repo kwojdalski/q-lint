@@ -460,6 +460,25 @@ fn semantic_tokens_colour_calls_and_parameters_at_utf16_positions() {
 }
 
 #[test]
+fn semantic_tokens_on_a_half_typed_lambda_keep_the_server_alive() {
+    // Two unclosed lambdas once panicked in the scope pass and killed the
+    // server; an editor reaches that state just by typing `f:{g:{`.
+    let mut server = Server::start();
+    server.initialize();
+    let uri = "file:///tmp/typing.q";
+    server.open(uri, "f:{g:{");
+    server.diagnostics_for(uri);
+    server.send(
+        json!({"jsonrpc":"2.0","id":31,"method":"textDocument/semanticTokens/full",
+        "params":{"textDocument":{"uri":uri}}}),
+    );
+    let reply = server.receive();
+    assert_eq!(reply["id"], 31);
+    assert!(reply["result"]["data"].is_array());
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
 fn an_unsupported_request_is_refused_rather_than_ignored() {
     // A request with no reply looks like a hung server to every client.
     let mut server = Server::start();
