@@ -2,7 +2,7 @@
 //! linters check for, translated to q and kept only where they survived a
 //! run over a corpus of public q. Every rule here is `style` - q runs all of
 //! it - so each has to earn its place by being right, not by being an error.
-use crate::{Finding, argument_end, argument_start, boundary, matching};
+use crate::{Finding, argument_end, argument_start, boundary, matching, slots};
 
 pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Finding> {
     let mut out = vec![];
@@ -10,6 +10,8 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
     credentials(path, source, code, comments, &mut out);
     simplifications(path, source, code, &mut out);
     leftovers(path, source, comments, &mut out);
+    duplicate_columns(path, source, code, &mut out);
+    unreachable(path, source, code, &mut out);
     out
 }
 
@@ -230,6 +232,102 @@ fn leftovers(path: &str, source: &str, comments: &str, out: &mut Vec<Finding>) {
                     name.as_str()
                 ),
             ));
+        }
+    }
+}
+
+/// QB019. A table literal naming one column twice. q 5 does not refuse it: it
+/// renames the second, so `([]a:1 2;a:3 4)` has columns `a` and `a1`, and
+/// code reading `a` gets the first without a word.
+fn duplicate_columns(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
+    for open in code.match_indices("(").map(|(i, _)| i) {
+        let rest = code[open + 1..].trim_start();
+        if !rest.starts_with('[') {
+            continue;
+        }
+        let Some(close) = matching(code, open, b'(', b')') else {
+            continue;
+        };
+        let inner = &code[open + 1..close - 1];
+        let bracket = inner.len() - inner.trim_start().len();
+        let Some(key_close) = matching(inner, bracket, b'[', b']') else {
+            continue;
+        };
+        // Nothing after the brackets is a dictionary, where a repeated key is
+        // allowed and kept.
+        if inner[key_close..].trim().is_empty() {
+            continue;
+        }
+        let mut seen: Vec<&str> = vec![];
+        for part in slots(&inner[bracket + 1..key_close - 1])
+            .into_iter()
+            .chain(slots(&inner[key_close..]))
+        {
+            let Some((name, _)) = part.split_once(':') else {
+                continue;
+            };
+            let name = name.trim();
+            if !re!(r"^[A-Za-z][A-Za-z0-9_]*$").is_match(name) {
+                continue;
+            }
+            if seen.contains(&name) {
+                out.push(Finding::at(
+                    path,
+                    source,
+                    open,
+                    "QB019",
+                    format!("Column `{name}` is named twice: q keeps both and renames the second, so `{name}` reads the first"),
+                ));
+                break;
+            }
+            seen.push(name);
+        }
+    }
+}
+
+/// QB020. A statement after a return or a signal at a lambda's top level can
+/// never run: `{:1;2}` returns 1 and the 2 is dead. Only the top level - a
+/// `:x` inside `if[...]` or `$[...]` is a branch, and what follows it runs.
+fn unreachable(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
+    for (brace, _) in code.match_indices('{') {
+        let Some(end) = matching(code, brace, b'{', b'}') else {
+            continue;
+        };
+        let sig = crate::signature(code, source, brace);
+        let body_start = sig.body;
+        let body = &code[body_start..end - 1];
+        let (mut depth, mut start) = (0i32, 0usize);
+        let mut statements = vec![];
+        for (i, b) in body.bytes().enumerate() {
+            match b {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => depth -= 1,
+                b';' if depth == 0 => {
+                    statements.push((start, i));
+                    start = i + 1;
+                }
+                _ => {}
+            }
+        }
+        statements.push((start, body.len()));
+        let exits = |text: &str| {
+            let t = text.trim_start();
+            (t.starts_with(':') && !t.starts_with("::"))
+                || (t.starts_with('\'') && !t.starts_with("':"))
+        };
+        if let Some(i) = statements.iter().position(|&(a, b)| exits(&body[a..b]))
+            && let Some(&(a, _)) = statements[i + 1..]
+                .iter()
+                .find(|&&(a, b)| !body[a..b].trim().is_empty())
+        {
+            let at = body_start + a + (body[a..].len() - body[a..].trim_start().len());
+            out.push(Finding::at(
+                    path,
+                    source,
+                    at,
+                    "QB020",
+                    "This statement follows a return or signal at the lambda's top level, so it never runs".into(),
+                ));
         }
     }
 }

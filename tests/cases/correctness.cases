@@ -280,3 +280,20 @@ r:select from t where {x[`b]~2} each d
 r1:all 0=-1_es
 r2:where (-1_r=0),0b
 
+=== QB019 | a column named twice, which q 5 renames rather than refuses
+t:([]a:1 2;a:3 4)
+
+=== clean | a dictionary literal may repeat a key
+d:([a:1;a:2])
+
+=== QB020 | a statement after a top-level return never runs
+f:{:1;2}
+
+=== QB020 | nor after a signal
+f:{'`e;x}
+
+=== clean | a return inside a branch leaves the rest reachable
+f1:{if[x;:1];2}
+f2:{$[x;:1;2]}
+f3:{x+1;:2}
+

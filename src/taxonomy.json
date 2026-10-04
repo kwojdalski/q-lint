@@ -413,6 +413,20 @@
     "scope": "style"
   },
   {
+    "code": "QB019",
+    "name": "duplicate-column",
+    "category": "correctness",
+    "summary": "A table literal names a column twice; q renames the second instead of refusing",
+    "scope": "style"
+  },
+  {
+    "code": "QB020",
+    "name": "unreachable-statement",
+    "category": "correctness",
+    "summary": "A statement after a top-level return or signal in a lambda never runs",
+    "scope": "style"
+  },
+  {
     "code": "QP001",
     "name": "bare-slash-block",
     "category": "policy",

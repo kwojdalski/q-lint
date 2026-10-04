@@ -578,6 +578,17 @@ conn2:hopen `:localhost:5000
 parsed:"Q"$"1"
 parsed2:"J"$"1"
 
+/ QB019: q 5 renames a repeated column to a1 instead of refusing it, and
+/ code reading the name gets the first.
+/ expect-next: QB019
+twice:([]px:1 2;px:3 4)
+once:([]px:1 2;qty:3 4)
+
+/ QB020: the return ends the lambda, so the line after it never runs.
+/ expect-next: QB020
+early:{[p] :p; p*2}
+early2:{[p] if[p<0;:0]; p*2}
+
 / QB002: q's like does not support an interior wildcard.
 / expect-next: QB002
 hits:select from trades where sym like "a*b"
