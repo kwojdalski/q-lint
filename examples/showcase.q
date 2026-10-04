@@ -563,6 +563,21 @@ nofrom:select px by sym trades
 fail:{'1}
 fail2:{'"failed"}
 
+/ QT028: a where phrase wants booleans, so an assignment there is 'type.
+/ expect-next: QT028
+picked:select from quotes where px:1
+picked2:select from quotes where px=1
+
+/ QT029: no handle starts without a colon - 'type.
+/ expect-next: QT029
+conn:hopen `localhost
+conn2:hopen `:localhost:5000
+
+/ QT030: Q is no type, so this cast is 'type.
+/ expect-next: QT030
+parsed:"Q"$"1"
+parsed2:"J"$"1"
+
 / QB002: q's like does not support an interior wildcard.
 / expect-next: QB002
 hits:select from trades where sym like "a*b"

@@ -78,3 +78,36 @@ t:([]a:1 2;b:3 4)
 t:([]a:1 2;b:3 4)
 `t insert (5;6)
 
+=== QT028 | an assignment where a comparison was meant
+r:select from t where a:1
+
+=== clean | times, timestamps and timespans carry colons of their own
+r1:select from t where time>09:35
+r2:select from t where time=2026.01.01D00:00:00.000
+r3:select from t where horizon=0D00:02:00
+
+=== clean | a name ending in where is not the keyword
+registry.util.delete.where:{[a] a}
+
+=== QT029 | hopen on a float
+h:hopen 1.5
+
+=== QT029 | or a symbol without the colon a handle starts with
+h:hopen `abc
+
+=== clean | a port, a handle symbol, and anything only the network can refuse
+h1:hopen 5000
+h2:hopen `:localhost:5000
+
+=== QT030 | a cast to a character that is no type
+r:"Q"$"1"
+
+=== clean | a lowercase type is refused only for some arguments, so it is left alone
+c:([]sym:"s"$())
+
+=== QA010 | a unary builtin given two arguments
+r:string[1;2]
+
+=== clean | deltas and prev take a second argument
+r:deltas[1;1 2 3]
+

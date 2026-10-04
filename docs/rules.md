@@ -1,6 +1,6 @@
 # Rules
 
-All 107 rules, generated from `src/taxonomy.json` - the same data
+All 110 rules, generated from `src/taxonomy.json` - the same data
 `qlinter --rules` and `qlinter --explain <CODE>` print from. Regenerate with
 `python3 scripts/rules_doc.py > docs/rules.md`; a test fails when this is stale.
 
@@ -122,6 +122,9 @@ that wants fewer findings narrows in its own configuration.
 | `QT025` | signal-non-string | A number or a char atom signalled, which q refuses with 'stype | every profile |
 | `QT026` | join-unkeyed-right | lj, ij or pj with a right table that has no key, which q refuses with 'type | every profile |
 | `QT027` | insert-value-count | insert or upsert given a different number of values than the table has columns | every profile |
+| `QT028` | where-assignment | An assignment in a where phrase, where a comparison was meant; q raises 'type | every profile |
+| `QT029` | hopen-literal | hopen given a float, a negative number, or a symbol without its leading colon | every profile |
+| `QT030` | cast-unknown-type | A cast to a type character q does not have | every profile |
 
 ## Correctness - q that runs and does the wrong thing
 

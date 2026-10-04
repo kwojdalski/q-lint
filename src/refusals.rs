@@ -14,6 +14,9 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
     temporals(path, source, &unsym, &mut out);
     missing_from(path, source, code, &unsym, &mut out);
     signals(path, source, code, comments, &mut out);
+    where_assignment(path, source, code, &mut out);
+    hopen_literal(path, source, code, &mut out);
+    cast_character(path, source, code, comments, &mut out);
     out
 }
 
@@ -212,5 +215,127 @@ fn signals(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<F
             "QT025",
             format!("Signalling {what}: q signals only a symbol or a string, and raises 'stype"),
         ));
+    }
+}
+
+/// QT028. An assignment in a where phrase: `select from t where a:1` is
+/// 'type. The phrase wants booleans and the `:` was meant to be `=`. Only at
+/// the phrase's top level - a lambda or a bracket inside it is its own.
+fn where_assignment(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
+    for w in re!(r"\bwhere\b").find_iter(code) {
+        // The keyword, not a name ending in it: `registry.delete.where:{...}`.
+        if !boundary(code, w.start()) {
+            continue;
+        }
+        if !re!(r"\b(?:select|exec|update|delete)\b")
+            .is_match(&code[code[..w.start()].rfind(['\n', ';']).map_or(0, |p| p + 1)..w.start()])
+        {
+            continue;
+        }
+        let bytes = code.as_bytes();
+        let (mut at, mut depth) = (w.end(), 0i32);
+        while at < bytes.len() {
+            match bytes[at] {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => {
+                    if depth == 0 {
+                        break;
+                    }
+                    depth -= 1;
+                }
+                b';' | b'\n' if depth == 0 => break,
+                b':' if depth == 0
+                    && code[..at]
+                        .trim_end()
+                        .ends_with(|c: char| c.is_alphanumeric() || c == '_')
+                    && !code[at + 1..].starts_with([':', '/', '\\', '\''])
+                    && !code[..at].ends_with([':', '/', '\\', '\'']) =>
+                {
+                    let name_start = code[..at]
+                        .trim_end()
+                        .rfind(|c: char| !(c.is_alphanumeric() || c == '_'))
+                        .map_or(0, |p| p + 1);
+                    // A name starts with a letter and stands alone: `09:35`
+                    // and the `D00:00` of a timestamp are literals, and
+                    // their colons are part of them.
+                    if !code[name_start..].starts_with(|c: char| c.is_ascii_alphabetic())
+                        || code[..name_start].ends_with(['.', '`'])
+                    {
+                        at += 1;
+                        continue;
+                    }
+                    out.push(Finding::at(
+                        path,
+                        source,
+                        name_start,
+                        "QT028",
+                        "An assignment in a where phrase: q raises 'type - the comparison is `=`"
+                            .into(),
+                    ));
+                    break;
+                }
+                _ => {}
+            }
+            at += 1;
+        }
+    }
+}
+
+/// QT029. hopen given a literal that can never be a handle: a float, a
+/// negative number, or a symbol without the `:` every handle starts with.
+/// `hopen 1.5` and `` hopen `abc `` are 'type and `hopen -1` 'domain;
+/// anything else can only fail at run time, if nothing is listening.
+fn hopen_literal(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
+    for m in
+        re!(r"\bhopen\s*(?:\[\s*)?(-\d+|\d*\.\d+|\d+\.\d*|`[A-Za-z0-9_.]+)").captures_iter(code)
+    {
+        let whole = m.get(0).unwrap();
+        let value = m.get(1).unwrap();
+        if !boundary(code, whole.start()) {
+            continue;
+        }
+        let rest = code[value.end()..].trim_start_matches([' ', '\t']);
+        if !(rest.is_empty() || rest.starts_with([';', ')', ']', '}', '\n', '\r'])) {
+            continue;
+        }
+        let (what, error) = if value.as_str().starts_with('`') {
+            ("a symbol without the leading `:` a handle needs", "'type")
+        } else if value.as_str().contains('.') {
+            ("a float", "'type")
+        } else {
+            ("a negative number", "'domain")
+        };
+        out.push(Finding::at(
+            path,
+            source,
+            whole.start(),
+            "QT029",
+            format!("hopen given {what}: q raises {error}"),
+        ));
+    }
+}
+
+/// QT030. A cast to a character that is no type at all. Checked letter by
+/// letter against an empty list, a number, a string and a symbol: a k l o q
+/// r w y, in either case, are refused whatever the argument. Others are only
+/// refused for some arguments - `"s"$()` is an empty symbol list, while
+/// `"s"$"abc"` is 'type - and depend on what is cast, so are not here.
+fn cast_character(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<Finding>) {
+    for m in re!(r#""([A-Za-z])"\s*\$"#).captures_iter(comments) {
+        let whole = m.get(0).unwrap();
+        // A string in the source - blank in `code` - and not inside a longer one.
+        if code.as_bytes()[whole.start()] != b' ' || comments[..whole.start()].ends_with('\\') {
+            continue;
+        }
+        let c = &m[1];
+        if "akloqrwyAKLOQRWY".contains(c) {
+            out.push(Finding::at(
+                path,
+                source,
+                whole.start(),
+                "QT030",
+                format!("`\"{c}\"$` casts to a type q does not have: 'type"),
+            ));
+        }
     }
 }

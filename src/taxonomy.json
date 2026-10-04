@@ -686,6 +686,27 @@
     "scope": "builtin"
   },
   {
+    "code": "QT028",
+    "name": "where-assignment",
+    "category": "types-and-shapes",
+    "summary": "An assignment in a where phrase, where a comparison was meant; q raises 'type",
+    "scope": "builtin"
+  },
+  {
+    "code": "QT029",
+    "name": "hopen-literal",
+    "category": "types-and-shapes",
+    "summary": "hopen given a float, a negative number, or a symbol without its leading colon",
+    "scope": "builtin"
+  },
+  {
+    "code": "QT030",
+    "name": "cast-unknown-type",
+    "category": "types-and-shapes",
+    "summary": "A cast to a type character q does not have",
+    "scope": "builtin"
+  },
+  {
     "code": "QP006",
     "name": "juxtaposed-application",
     "category": "policy",
