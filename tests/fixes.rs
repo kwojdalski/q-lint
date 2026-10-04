@@ -129,3 +129,40 @@ fn juxtaposition_is_left_alone_outside_the_uqf_profile() {
     assert!(result.status.success(), "{result:?}");
     assert_eq!(fs::read_to_string(&path).unwrap(), original);
 }
+
+#[test]
+fn a_file_that_is_not_utf8_is_linted_but_never_rewritten() {
+    // Latin-1, as KX's e/c.q is after its closing backslash. q reads bytes,
+    // so the file is q; the linter reads each invalid byte as one character,
+    // which keeps the column of everything after it.
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("latin.q");
+    let original = b"x:1\r\n\xb7 y:1==2\r\n".to_vec();
+    fs::write(&path, &original).unwrap();
+
+    let lint = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .args(["--format", "json"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    let findings: serde_json::Value = serde_json::from_slice(&lint.stdout).unwrap();
+    let foreign: Vec<_> = findings
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|finding| finding["code"] == "QE004")
+        .collect();
+    assert_eq!(foreign.len(), 1, "{findings}");
+    assert_eq!(
+        (foreign[0]["line"].as_u64(), foreign[0]["column"].as_u64()),
+        (Some(2), Some(6))
+    );
+
+    let fix = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .arg("--fix")
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&fix.stderr).contains("not valid UTF-8, skipped"));
+    assert_eq!(fs::read(&path).unwrap(), original);
+}

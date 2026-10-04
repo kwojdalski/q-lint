@@ -374,8 +374,29 @@ fn run(args: Args) -> Result<u8, String> {
             // A file that cannot be read as text is reported and passed over.
             // Aborting here would mean one unreadable file hides every finding
             // in every other file, which is the opposite of useful.
-            match fs::read_to_string(&path) {
-                Ok(source) => sources.push((path.to_string_lossy().into_owned(), source)),
+            //
+            // A file that is not UTF-8 is still q - q reads bytes, and KX's
+            // own e/c.q carries Latin-1 after its closing backslash - so it
+            // is linted with each invalid byte read as one replacement
+            // character, which keeps every line and column where it was.
+            // Never under --fix or --diff: writing the decoded text back
+            // would change the bytes this linter could not read.
+            match fs::read(&path) {
+                Ok(bytes) => match String::from_utf8(bytes) {
+                    Ok(source) => sources.push((path.to_string_lossy().into_owned(), source)),
+                    Err(_) if args.fix || args.diff => eprintln!(
+                        "qlinter: {}: not valid UTF-8, skipped: a fix would rewrite bytes it cannot read",
+                        path.display()
+                    ),
+                    Err(e) => {
+                        eprintln!(
+                            "qlinter: {}: not valid UTF-8; each invalid byte is read as one character",
+                            path.display()
+                        );
+                        let source = String::from_utf8_lossy(e.as_bytes()).into_owned();
+                        sources.push((path.to_string_lossy().into_owned(), source));
+                    }
+                },
                 Err(e) => eprintln!("qlinter: {}: {e}, skipped", path.display()),
             }
         }
