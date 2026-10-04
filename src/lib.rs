@@ -2015,7 +2015,12 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
                 ),
             );
         }
-        if re!(r"\.\s*\(\s*\)").is_match(line) {
+        // The parentheses have to be empty in the source - a string between
+        // them is blank in `line`, so `(!).("S=;")` would pass for `. ()` -
+        // and the whole of the right operand: `. (),y` applies to a list.
+        if re!(r"\.\s*\(\s*\)").find_iter(line).any(|m| {
+            re!(r"\(\s*\)$").is_match(&literals[m.range()]) && operand_ends(code, offset + m.end())
+        }) {
             add(offset, "QA004", "`. ()`".into());
         }
         // `/` after a value is the over adverb. `10/2` and `(a+b)/2` are '/

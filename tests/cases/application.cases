@@ -136,3 +136,11 @@ r:sum[1;2]
 
 === clean | the call it was expecting
 r:sum[1 2]
+
+=== clean | a string inside the parentheses is not an empty list
+d:key(!).("S=;")0:filePath
+
+=== clean | nor is an empty list joined to something
+r:.[f;(),y]
+r2:f . (),y
+
