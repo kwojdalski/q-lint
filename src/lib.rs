@@ -252,6 +252,7 @@ impl Finding {
                     | "QT019"
                     | "QD001"
                     | "QD002"
+                    | "QF019"
             ) {
                 "error"
             } else {
@@ -1064,6 +1065,30 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
                 );
             }
         }
+    }
+    // The single-letter `.z` names are the system's own values - `.z.p` the
+    // time, `.z.i` the pid, `.z.x` the command line - and q refuses every
+    // assignment to one with 'domain, however it is written: `:`, `::`, an
+    // amend, an indexed assignment or `set`. Verified for all 52 letters.
+    // The longer names are the callbacks (`.z.pg`, `.z.ts`, `.z.exit`), and
+    // assigning those is how a process installs a handler.
+    for m in re!(
+        r"(?:^|[^A-Za-z0-9_.`])(\.z\.[A-Za-z])(?:\[[^\]]*\])?\s*[-+*%,&|^#_]?::?|`(\.z\.[A-Za-z])\s+set\b"
+    )
+    .captures_iter(code)
+    {
+        let name = m.get(1).or_else(|| m.get(2)).unwrap();
+        // `.z.p:` must be followed by the value, not be `::`'s first half
+        // read as an iterator such as `/:`.
+        let after = &code[m.get(0).unwrap().end()..];
+        if after.starts_with(['/', '\\', '\'']) || code[name.end()..].starts_with(|c: char| c.is_alphanumeric()) {
+            continue;
+        }
+        add(
+            name.start(),
+            "QF019",
+            format!("`{}` is read-only: q refuses any assignment to it with 'domain", name.as_str()),
+        );
     }
     // like's pattern is a string, and a symbol literal is the obvious wrong
     // spelling of one. What q does with it depends on what follows. Verified:

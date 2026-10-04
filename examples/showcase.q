@@ -112,6 +112,13 @@ back:{[x] return x}
 / expect-next: QF015
 flag2:{[x] $[x;true;false]}
 
+/ QF019: the single-letter .z names are q's own values - .z.p is the clock -
+/ and assigning one is 'domain. The longer names are callbacks, and setting
+/ one is how a handler is installed, so the line after stays quiet.
+/ expect-next: QF019
+.z.p:0
+.z.ts:{show x}
+
 / QF010: `x` is not an argument here. Declaring parameters takes the
 / implicit ones out of scope, so q resolves x as a global and throws 'x.
 / expect-next: QF010

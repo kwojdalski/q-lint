@@ -447,3 +447,20 @@ bb;
 
 === clean profile: general | root unresolved names remain uncertain warnings
 bb;
+
+=== QF019 | a single-letter .z name is the system's own, and q refuses to assign it
+.z.q:1
+
+=== QF019 | however the assignment is spelled
+f:{.z.p+:1}
+
+=== QF019 | set by name too
+`.z.i set 0
+
+=== clean | the longer .z names are callbacks, and setting them installs a handler
+.z.pg:{value x}
+.z.exit:{0N!x}
+
+=== clean | reading one is what it is for
+t:.z.p
+

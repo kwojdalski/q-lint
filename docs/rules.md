@@ -1,6 +1,6 @@
 # Rules
 
-All 90 rules, generated from `src/taxonomy.json` - the same data
+All 91 rules, generated from `src/taxonomy.json` - the same data
 `qlinter --rules` and `qlinter --explain <CODE>` print from. Regenerate with
 `python3 scripts/rules_doc.py > docs/rules.md`; a test fails when this is stale.
 
@@ -69,6 +69,7 @@ that wants fewer findings narrows in its own configuration.
 | `QF016` | unused-parameter | Declared parameter the body never reads | `style` and above |
 | `QF017` | unused-local | Local assigned and never read | `style` and above |
 | `QF018` | possibly-undefined-name | Bare value read has no local or global definition in this file | `style` and above |
+| `QF019` | read-only-system-name | Assignment to a single-letter .z name, which q refuses with 'domain | every profile |
 
 ## Application - how many arguments a thing takes and how it is called
 
