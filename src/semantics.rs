@@ -1282,9 +1282,7 @@ pub fn check(path: &str, code: &str, raw: &str, comments: &str) -> Vec<Finding> 
             out.push(finding);
         }
     }
-    if !dynamic {
-        out.extend(named_values(path, code, raw, &scopes));
-    }
+    out.extend(named_values(path, code, raw, comments, &scopes, dynamic));
     out
 }
 
@@ -1343,7 +1341,14 @@ fn held(code: &str, raw: &str) -> Option<Held> {
 /// The rules that need to know what a name holds: indexing an atom, two
 /// vectors of different lengths paired by an operator, and a select of a
 /// column the table does not have. Each one only for a name `held` knows.
-fn named_values(path: &str, code: &str, raw: &str, scopes: &[Scope]) -> Vec<Finding> {
+fn named_values(
+    path: &str,
+    code: &str,
+    raw: &str,
+    comments: &str,
+    scopes: &[Scope],
+    dynamic: bool,
+) -> Vec<Finding> {
     let mut out = vec![];
     let name_re = r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*";
     // Every place a name is written: `a:`, `a::`, `a+:`, `a[i]:`, `a set`,
@@ -1369,7 +1374,10 @@ fn named_values(path: &str, code: &str, raw: &str, scopes: &[Scope]) -> Vec<Find
         writes.entry(name).or_default().extend([0, 0]);
     }
     let mut known: HashMap<&str, (usize, Held)> = HashMap::new();
-    for (name, at) in &writes {
+    let mut kinds: HashMap<&str, Arithmetic> = HashMap::new();
+    // A file that evaluates strings can define anything, so nothing is known
+    // by name there; the literal-only checks below still hold.
+    for (name, at) in writes.iter().filter(|_| !dynamic) {
         let [at] = at[..] else { continue };
         if scope_at(scopes, at).is_some() || !boundary(code, at) {
             continue;
@@ -1400,10 +1408,10 @@ fn named_values(path: &str, code: &str, raw: &str, scopes: &[Scope]) -> Vec<Find
         }
         if let Some(value) = held(&code[start..end], &raw[start..end]) {
             known.insert(name, (end, value));
+            if let Some(kind) = arithmetic_kind(&raw[start..end]) {
+                kinds.insert(name, kind);
+            }
         }
-    }
-    if known.is_empty() {
-        return out;
     }
     // A read sees the global only after it is assigned, at the top level, and
     // only where no local of the same name hides it.
@@ -1486,6 +1494,72 @@ fn named_values(path: &str, code: &str, raw: &str, scopes: &[Scope]) -> Vec<Find
             ));
         }
     }
+    // Integer arithmetic on a char. On q 5, the reference this linter is
+    // checked against, `+` and `*` refuse a char beside anything integral -
+    // another char, a long, an int, a boolean, a byte - and `-` refuses a
+    // char on its left; a float or a temporal operand is fine, `%` always
+    // is, and so is a char on the right of `-`. Checked exhaustively over
+    // those operand kinds. An older note in this repository had `"a"*3` as
+    // 291, on a version it did not record.
+    // Booleans and bytes before plain integers, or `1b` matches as `1`.
+    let operand = r#""(?:\\.|[^"\\])*"|[01]+b|0x[0-9a-fA-F]+|-?\d+[hij]?(?:[ \t]+-?\d+[hij]?)*|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*"#;
+    let infix = regex::Regex::new(&format!(
+        r"(?P<l>{operand})\s*(?P<op>[-+*])\s*(?P<r>{operand})"
+    ))
+    .unwrap();
+    let kind_of = |text: &str, at: usize| -> Option<Arithmetic> {
+        if text.starts_with(|c: char| c.is_alphabetic() || c == '.') {
+            visible(text, at)?;
+            kinds.get(text).copied()
+        } else {
+            arithmetic_kind(text)
+        }
+    };
+    let mut at = 0;
+    while let Some(m) = infix.captures_at(comments, at) {
+        let (l, op, r) = (
+            m.name("l").unwrap(),
+            m.name("op").unwrap(),
+            m.name("r").unwrap(),
+        );
+        at = l.end();
+        // The operator has to be code - not inside a string or a comment -
+        // and the right operand the whole of one.
+        let negative = op.as_str() == "-"
+            && comments[..op.start()].ends_with(char::is_whitespace)
+            && !comments[op.end()..].starts_with(char::is_whitespace);
+        if code.get(op.range()) != Some(op.as_str())
+            || negative
+            || !boundary(comments, l.start())
+            || !operand_ends(code, r.end())
+        {
+            continue;
+        }
+        let (Some(a), Some(b)) = (
+            kind_of(l.as_str(), l.start()),
+            kind_of(r.as_str(), r.start()),
+        ) else {
+            continue;
+        };
+        let refused = match op.as_str() {
+            "-" => a == Arithmetic::Char,
+            _ => a == Arithmetic::Char || b == Arithmetic::Char,
+        };
+        if refused && a != Arithmetic::Float && b != Arithmetic::Float {
+            out.push(Finding::at(
+                path,
+                raw,
+                l.start(),
+                "QT023",
+                format!(
+                    "`{}{}{}` is 'type: q 5 does no integer arithmetic on a char",
+                    l.as_str(),
+                    op.as_str(),
+                    r.as_str()
+                ),
+            ));
+        }
+    }
     // A select or exec naming a column the table literal does not have. q
     // looks for a column, then a variable, and raises the name when neither
     // exists - `select b from ([]a:1 2)` is 'b. So only a name nothing in
@@ -1545,4 +1619,30 @@ fn named_values(path: &str, code: &str, raw: &str, scopes: &[Scope]) -> Vec<Find
         }
     }
     out
+}
+
+/// What an operand is, for the char-arithmetic rule. `Float` stands for
+/// anything a char may meet under `+`, `-` and `*` on q 5.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Arithmetic {
+    Char,
+    Integral,
+    Float,
+}
+
+/// The arithmetic kind of a literal's source text, or None for anything that
+/// is not plainly one.
+fn arithmetic_kind(text: &str) -> Option<Arithmetic> {
+    let text = text.trim();
+    if re!(r#"^"(?:\\.|[^"\\])*"$"#).is_match(text) {
+        Some(Arithmetic::Char)
+    } else if re!(r"^(?:-?\d+[hij]?(?:\s+-?\d+[hij]?)*|[01]+b|0x[0-9a-fA-F]+)$").is_match(text) {
+        Some(Arithmetic::Integral)
+    } else if re!(r"^-?(?:\d+\.\d*|\.\d+|\d+[ef]|\d+(?:\.\d*)?e[+-]?\d+)(?:\s+-?(?:\d+\.?\d*(?:e[+-]?\d+)?[ef]?))*$|^\d{4}\.\d{2}")
+        .is_match(text)
+    {
+        Some(Arithmetic::Float)
+    } else {
+        None
+    }
 }

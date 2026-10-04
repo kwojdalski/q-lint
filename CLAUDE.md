@@ -72,6 +72,11 @@ process conventions real q is written against.
   a rule that only makes sense for one codebase belongs there.
 
   Which of the three a construct falls into is settled by running it through
-  q, not by reading the manual: `{[count] count+1}` runs perfectly well and is
+  q, not by reading the manual. The reference is q 5 (`.z.K` 5, the `q` on
+  this machine); where versions disagree, q 5's answer is the rule's, and
+  the rule says so. Char arithmetic is the known case: this repository once
+  recorded `"a"*3` as 291, on a version nobody wrote down, and q 5 raises
+  'type. Record the version whenever an answer could depend on it. For
+  example: `{[count] count+1}` runs perfectly well and is
   `style`, while `{[a] x+1}` throws 'x the moment it is called and is
   `general`.

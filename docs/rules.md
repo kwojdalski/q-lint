@@ -1,6 +1,6 @@
 # Rules
 
-All 93 rules, generated from `src/taxonomy.json` - the same data
+All 94 rules, generated from `src/taxonomy.json` - the same data
 `qlinter --rules` and `qlinter --explain <CODE>` print from. Regenerate with
 `python3 scripts/rules_doc.py > docs/rules.md`; a test fails when this is stale.
 
@@ -115,6 +115,7 @@ that wants fewer findings narrows in its own configuration.
 | `QT020` | table-column-length | Table literal columns of different lengths | every profile |
 | `QT021` | empty-search-pattern | ss or ssr with an empty pattern is a length error | every profile |
 | `QT022` | index-into-atom | A name bound to an atom is indexed; an atom has no items, and q raises 'type | every profile |
+| `QT023` | char-integer-arithmetic | Integer arithmetic on a char, which q 5 refuses with 'type | every profile |
 
 ## Correctness - q that runs and does the wrong thing
 

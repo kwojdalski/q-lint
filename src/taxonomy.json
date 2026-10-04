@@ -644,6 +644,13 @@
     "scope": "builtin"
   },
   {
+    "code": "QT023",
+    "name": "char-integer-arithmetic",
+    "category": "types-and-shapes",
+    "summary": "Integer arithmetic on a char, which q 5 refuses with 'type",
+    "scope": "builtin"
+  },
+  {
     "code": "QP006",
     "name": "juxtaposed-application",
     "category": "policy",

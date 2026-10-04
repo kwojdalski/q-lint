@@ -356,6 +356,13 @@ ragged:([]a:1 2;b:3 4 5)
 / expect-next: QT021
 nothing:ss["abc";""]
 
+/ QT023: q 5 does no integer arithmetic on a char - "a"*3 is 'type - while
+/ a float beside one, or a char right of minus, runs. Checked on q 5, the
+/ version this linter is held to; an older note here had 291.
+/ expect-next: QT023
+tripled:"a"*3
+shifted:1.5+"a"
+
 / QT022: seed is assigned once, to an atom, and an atom has no items to
 / index - 'type, checked. A vector bound the same way indexes fine.
 seed:7

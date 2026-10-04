@@ -31,10 +31,24 @@ r:1+`a~`b
 === QT003 | a symbol on the left is the operand whatever follows
 r:`a+`b?`c
 
-=== clean | chars are numeric citizens; none of these error
+=== clean | a char meets a float, or sits right of minus, or is divided: q 5 runs all three
 r1:1.5+"a"
-r2:"a"*3
+r2:"ab"%2
 r3:2-"x"
+
+=== QT023 | but integer arithmetic on a char is 'type on q 5
+r:"a"*3
+
+=== QT023 | a char left of minus too
+r:"a"-1
+
+=== QT023 | and through a name assigned a string
+a:"abc"
+b:a*2
+
+=== clean | a name of the same kind hidden by a parameter is not the string
+a:"x"
+f:{[a] a*2}
 
 === clean | take builds symbol vectors without arithmetic
 2#`a`b`c

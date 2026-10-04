@@ -255,6 +255,7 @@ impl Finding {
                     | "QF019"
                     | "QF020"
                     | "QT022"
+                    | "QT023"
             ) {
                 "error"
             } else {
@@ -993,9 +994,9 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
         }
     }
     // Symbols take no arithmetic: `2+`a`, `` `a*2 `` and `2%`b` are all
-    // 'type errors, and chars pairing with numbers ("a"*3 is 291) are not,
-    // so the rule is a symbol literal next to an infix + - * % and nothing
-    // more.
+    // 'type errors. Chars are another matter, version by version - see
+    // QT023 - so this rule is a symbol literal next to an infix + - * % and
+    // nothing more.
     for m in re!(r"(?:`[A-Za-z][A-Za-z0-9_.]*)+\s*[+\-*%]|[+\-*%]\s*(?:`[A-Za-z][A-Za-z0-9_.]*)+")
         .find_iter(code)
     {
