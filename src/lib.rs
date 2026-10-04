@@ -896,6 +896,17 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
             continue;
         };
         let parts = slots(&code[dollar + 2..close - 1]);
+        // With two slots and a type on the left, `$[...]` is not a
+        // conditional at all but dyadic `$` in bracket form: `$[`long;1.5]`
+        // is 2, `$[7h;2.5]` is 3 and `$["J";"12"]` is 12. A string is blank
+        // in `code`, so its slot is read from the source.
+        let first_raw = source[dollar + 2..dollar + 2 + parts[0].len()].trim();
+        let cast = parts.len() == 2
+            && (re!(r"^`[A-Za-z]*$|^\d+h$").is_match(parts[0].trim())
+                || re!(r#"^"[^"]*"$"#).is_match(first_raw));
+        if cast {
+            continue;
+        }
         // `$` takes an atom. A vector condition is 'type every time, and it is
         // reached for by people expecting it to vectorise - `?[...]` is the
         // form that does. A symbol or a string is 'type for the same reason.
