@@ -17,6 +17,15 @@ jobs:
       # The LSP suite spawns the binary, so it has to exist first.
       - run: cargo build --release
       - run: cargo test
+      # The Python suite drives the release binary the way a user does. The
+      # parts that need q skip themselves when it is not installed, which on
+      # this runner it is not; the CLI tests run regardless. It went unrun
+      # here once, and a failing test sat unnoticed for a release.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pytest
+      - run: python -m pytest -q tests/
   extension:
     runs-on: ubuntu-latest
     defaults:
