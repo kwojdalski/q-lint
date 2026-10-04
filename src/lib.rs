@@ -363,6 +363,11 @@ struct Views {
     /// lines after it are blank in both views, so no rule sees them; this is
     /// the only trace that they were swallowed at all.
     open_block: Option<usize>,
+    /// Where each string literal's opening quote is, in order. A `"` in the
+    /// source is one of these, the closing quote of one, an escaped quote, or
+    /// part of a comment - and only `views` has followed the text closely
+    /// enough to say which.
+    string_starts: Vec<usize>,
 }
 fn views(source: &str) -> Views {
     let bytes = source.as_bytes();
@@ -372,6 +377,7 @@ fn views(source: &str) -> Views {
     let mut foreign = false;
     let mut foreign_offsets = Vec::new();
     let mut open_block = None;
+    let mut string_starts = Vec::new();
     for line in source.split_inclusive('\n') {
         let end = offset + line.len();
         let stripped = line.trim_end_matches(['\r', '\n', ' ', '\t']);
@@ -428,6 +434,7 @@ fn views(source: &str) -> Views {
                     }
                 } else if c == b'"' {
                     string = Some(i);
+                    string_starts.push(i);
                     code[i] = b' ';
                 } else if c == b'/'
                     && (i == offset + prefix
@@ -451,6 +458,7 @@ fn views(source: &str) -> Views {
         unterminated: string,
         foreign_offsets,
         open_block,
+        string_starts,
     }
 }
 fn matching(s: &str, start: usize, open: u8, close: u8) -> Option<usize> {
@@ -961,42 +969,48 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
         // A symbol, or a symbol vector: `1 in `a`b` is 'type just as `1=`a` is,
         // and the vector is what `in` is usually given.
         let sym = r"(?:`[A-Za-z][A-Za-z0-9_.]*)+";
-        let other = r#"-?\d[\w.]*|"[^"]*""#;
+        let num = r"-?\d[\w.:]*(?:[ \t]+-?\d[\w.:]*)*";
+        let string = r#""(?:[^"\\]|\\.)*""#;
         let op = r"(?:<=|>=|<>|<|>|=|\bin\b)";
         // A string literal is blanks by the time `code` is built, so the
-        // string half of this has to read `source`. The operator still has to
-        // be present in `code` at the same offset, which is what proves the
-        // match is code rather than the inside of a comment.
-        for (pattern, view) in [
-            (format!(r"({sym})\s*{op}\s*({other})"), code.as_str()),
-            (format!(r"({other})\s*{op}\s*({sym})"), code.as_str()),
-            (format!(r#"("[^"]*")\s*{op}\s*({sym})"#), source),
-            (format!(r#"({sym})\s*{op}\s*("[^"]*")"#), source),
+        // string half of this reads `v.comments`, which keeps strings and
+        // blanks comments. A quote there is not necessarily one that opens a
+        // string - `("";"=`b")` has `";"` between two - so the string operand
+        // has to start where `views` saw a string start.
+        for (pattern, view, quoted) in [
+            (format!(r"({sym})\s*{op}\s*({num})"), code.as_str(), None),
+            (format!(r"({num})\s*{op}\s*({sym})"), code.as_str(), None),
+            (
+                format!(r"({string})\s*{op}\s*({sym})"),
+                v.comments.as_str(),
+                Some(1),
+            ),
+            (
+                format!(r"({sym})\s*{op}\s*({string})"),
+                v.comments.as_str(),
+                Some(2),
+            ),
         ] {
             for m in regex::Regex::new(&pattern).unwrap().captures_iter(view) {
-                let at = m.get(0).unwrap().start();
+                let (at, end) = (m.get(0).unwrap().start(), m.get(0).unwrap().end());
                 if !boundary(view, at) {
                     continue;
                 }
-                if !std::ptr::eq(view, code.as_str())
-                    && code[at..m.get(0).unwrap().end()] == *m.get(0).unwrap().as_str()
+                if let Some(group) = quoted
+                    && v.string_starts
+                        .binary_search(&m.get(group).unwrap().start())
+                        .is_err()
                 {
-                    // Unmasked in `code` too, so the other patterns saw it.
                     continue;
                 }
-                if !std::ptr::eq(view, code.as_str()) && !code[at..].starts_with(['`', '"', ' ']) {
-                    continue;
-                }
-                // Both operands have to be whole. A symbol before `$` names a
-                // cast - `0i=`int$period` compares two ints - and a number
-                // before an operator is the start of something longer, as in
-                // `` `time in 0!select ... ``, which unkeys a table and asks
-                // about a list of symbols. Either way the match is a prefix
-                // of an expression this rule has not understood.
-                let end = m.get(0).unwrap().end();
-                if view[end..]
-                    .starts_with(|c: char| c.is_alphanumeric() || "`$!#@^_.,+-*%~=<>".contains(c))
-                {
+                // Both operands have to be whole. q reads right to left, so
+                // the right one is everything to the right of the operator:
+                // `` `a in 2 sublist s `` asks about a list of symbols, and
+                // `` 1=`a`b?`b `` compares two longs. A symbol before `$` names
+                // a cast, and `` `time in 0!t `` unkeys a table. So the
+                // comparison has to end here, or it was never this one.
+                let rest = view[end..].trim_start_matches([' ', '\t']);
+                if !(rest.is_empty() || rest.starts_with([';', ')', ']', '}', '\n', '\r'])) {
                     continue;
                 }
                 add(

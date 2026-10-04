@@ -291,5 +291,26 @@ r:1 in `a`b
 === QT015 | and a symbol in numbers
 r:`a in 1 2
 
+=== clean | the number is the start of a longer right operand: sublist builds symbols
+r:`a in 2 sublist `a`b`c
+
+=== clean | nor take, with spaces around it
+r:`a in 1 # `a`b
+
+=== clean | find returns longs, so the symbols are not the operand
+r:1=`a`b?`b
+
+=== QT015 | a symbol against a numeric vector that ends the statement
+r:`a=1 2;
+
+=== clean | a comparison inside a comment is not code
+x:1 / "a"=`b
+
+=== clean | the quotes between two strings do not make a third
+x:("";"=`b")
+
+=== QT015 | a string against a symbol, followed by a comment
+r:"abc"=`abc / note
+
 === clean | symbol membership in symbols is what in is for
 r:`a in `a`b
