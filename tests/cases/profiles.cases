@@ -118,3 +118,12 @@ d:{x+1}
 === QP006 profile: uqf | a call at the head of its own line
 step:{x+1}
 step 1
+
+=== clean profile: uqf | .z.P spelled inside a string is text, not the clock
+doc:(`$".z.P";"local timestamp")
+
+=== clean profile: uqf | nor is a datetime spelled in a help string
+types:("datetime";"0Nz";"2006.07.21T09:13:39")
+
+=== QP002 profile: uqf | but the "z" cast is the one whose string is the point
+d:"z"$x

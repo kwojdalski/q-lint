@@ -1972,6 +1972,11 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
             // is blanks by the time this runs, so the parentheses look empty.
             // No q number contains an underscore, and a name that does is
             // QS001's business.
+            // A string between the parentheses is blank in `line` too, so
+            // `(system "cd")` would read as `(system)`. The source has it.
+            if literals[whole.range()] != *whole.as_str() {
+                continue;
+            }
             if m[1].contains('_') {
                 continue;
             }
@@ -2262,18 +2267,26 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
             }
         }
         if uqf && !path.starts_with("tests/") {
-            for regex in [
-                re!(r#""z"\s*\$"#),
-                re!(r"`datetime\s*\$"),
-                re!(r"\b15h\s*\$"),
-                re!(r"(?:^|[^\w.])-?0[NW]z\b"),
-                re!(r"\b\d{4}\.\d{2}\.\d{2}T\d"),
-            ] {
-                if regex.is_match(literals) {
-                    add(offset, "QP002", "Legacy datetime value or cast".into());
-                }
+            // Every pattern but the first has to match code: a help table
+            // that spells `".z.Z"` or `"0Nz"` in a string uses neither. The
+            // first is the one pattern whose string is the point - `"z"$`.
+            let in_code = |m: regex::Match| line[m.range()] == *m.as_str();
+            if re!(r#""z"\s*\$"#).is_match(literals)
+                || [
+                    re!(r"`datetime\s*\$"),
+                    re!(r"\b15h\s*\$"),
+                    re!(r"(?:^|[^\w.])-?0[NW]z\b"),
+                    re!(r"\b\d{4}\.\d{2}\.\d{2}T\d"),
+                ]
+                .iter()
+                .any(|regex| regex.find_iter(literals).any(in_code))
+            {
+                add(offset, "QP002", "Legacy datetime value or cast".into());
             }
-            if let Some(m) = re!(r"\.z\.[PTN]\b").find(literals) {
+            if let Some(m) = re!(r"\.z\.[PTN]\b")
+                .find_iter(literals)
+                .find(|m| line[m.range()] == *m.as_str())
+            {
                 let utc: String = m
                     .as_str()
                     .chars()

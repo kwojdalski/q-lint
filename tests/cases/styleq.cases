@@ -158,3 +158,6 @@ t:([] some_col:1 2; b:3 4)
 tradeCount:0
 lastPrice:0n
 get_trades:1
+
+=== clean profile: styleq | a string between the parentheses is not a single token
+r:(system "cd")
