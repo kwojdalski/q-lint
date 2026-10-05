@@ -353,7 +353,7 @@ pub enum TokenKind {
 /// The same limits as the checks. A function defined in another file, or by
 /// `\l`, is not known here; and q has no closures, so a name read in a nested
 /// lambda is that lambda's own, never the parameter of the one around it.
-pub fn tokens(code: &str, raw: &str) -> Vec<(usize, usize, TokenKind)> {
+pub fn tokens(code: &str, raw: &str, ws: &crate::Workspace) -> Vec<(usize, usize, TokenKind)> {
     let (scopes, namespaces) = scopes(code, raw);
     let ns_at = |at: usize| {
         namespaces[namespaces
@@ -409,7 +409,14 @@ pub fn tokens(code: &str, raw: &str) -> Vec<(usize, usize, TokenKind)> {
         {
             continue;
         }
-        if lambda.get(&qualify(m.as_str(), ns_at(m.start()))) == Some(&true) {
+        let name = qualify(m.as_str(), ns_at(m.start()));
+        // This file's own assignment decides; failing one, another file's
+        // lambda of that name is the function a call here reaches.
+        let function = match lambda.get(&name) {
+            Some(&is_lambda) => is_lambda,
+            None => ws.is_lambda(&name) || ws.is_lambda(&qualify(m.as_str(), "")),
+        };
+        if function {
             out.push((m.start(), m.len(), TokenKind::Function));
         }
     }
@@ -429,7 +436,77 @@ pub fn tokens(code: &str, raw: &str) -> Vec<(usize, usize, TokenKind)> {
     out
 }
 
-pub fn check(path: &str, code: &str, raw: &str, comments: &str) -> Vec<Finding> {
+/// Every name this file assigns at global scope, qualified by the namespace
+/// in force, with where each assignment's value starts.
+fn global_writes(
+    code: &str,
+    scopes: &[Scope],
+    namespaces: &[(usize, String)],
+) -> HashMap<String, Vec<usize>> {
+    let assignment = re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*:(:)?");
+    let ns_at = |at: usize| {
+        namespaces[namespaces
+            .partition_point(|(p, _)| *p <= at)
+            .saturating_sub(1)]
+        .1
+        .as_str()
+    };
+    let mut globals: HashMap<String, Vec<usize>> = HashMap::new();
+    for a in assignment.captures_iter(code) {
+        let m = a.get(0).unwrap();
+        if !boundary(code, m.start()) {
+            continue;
+        }
+        if scope_at(scopes, m.start()).is_none() || a.get(2).is_some() || a[1].contains('.') {
+            globals
+                .entry(qualify(&a[1], ns_at(m.start())))
+                .or_default()
+                .push(m.end());
+        }
+    }
+    for m in re!(r"`(\.?[A-Za-z][A-Za-z0-9_.]*)\s+set\b").captures_iter(code) {
+        let whole = m.get(0).unwrap();
+        globals
+            .entry(qualify(&m[1], ns_at(whole.start())))
+            .or_default()
+            .push(whole.end());
+    }
+    for (at, name) in multi_assignments(code) {
+        if scope_at(scopes, at).is_none() {
+            let end = at + code[at..].find(':').unwrap() + 1;
+            globals
+                .entry(qualify(name, ns_at(at)))
+                .or_default()
+                .push(end);
+        }
+    }
+    globals
+}
+
+/// What one file defines for the files around it: its global names, and
+/// which of them it assigns a lambda. Read, never run - the same passes the
+/// checks use, stopped before any rule.
+pub fn index(code: &str, raw: &str) -> crate::FileIndex {
+    let (scopes, namespaces) = scopes(code, raw);
+    let globals = global_writes(code, &scopes, &namespaces);
+    let lambdas = globals
+        .iter()
+        .filter(|(_, at)| at.iter().any(|&a| code[a..].trim_start().starts_with('{')))
+        .map(|(name, _)| name.clone())
+        .collect();
+    crate::FileIndex {
+        defined: globals.into_keys().collect(),
+        lambdas,
+    }
+}
+
+pub fn check(
+    path: &str,
+    code: &str,
+    raw: &str,
+    comments: &str,
+    ws: &crate::Workspace,
+) -> Vec<Finding> {
     let mut out = vec![];
     // Keys: symbols, as before, and the other literal lists q takes - a
     // numeric or byte vector, or a parenthesised list. Not a numeric atom:
@@ -569,35 +646,10 @@ pub fn check(path: &str, code: &str, raw: &str, comments: &str) -> Vec<Finding> 
         .1
         .as_str()
     };
-    let mut globals: HashMap<String, Vec<usize>> = HashMap::new();
-    for a in assignment.captures_iter(code) {
-        let m = a.get(0).unwrap();
-        if !boundary(code, m.start()) {
-            continue;
-        }
-        if scope_at(&scopes, m.start()).is_none() || a.get(2).is_some() || a[1].contains('.') {
-            globals
-                .entry(qualify(&a[1], ns_at(m.start())))
-                .or_default()
-                .push(m.end());
-        }
-    }
-    for m in re!(r"`(\.?[A-Za-z][A-Za-z0-9_.]*)\s+set\b").captures_iter(code) {
-        let whole = m.get(0).unwrap();
-        globals
-            .entry(qualify(&m[1], ns_at(whole.start())))
-            .or_default()
-            .push(whole.end());
-    }
-    for (at, name) in multi_assignments(code) {
-        if scope_at(&scopes, at).is_none() {
-            let end = at + code[at..].find(':').unwrap() + 1;
-            globals
-                .entry(qualify(name, ns_at(at)))
-                .or_default()
-                .push(end);
-        }
-    }
+    let globals = global_writes(code, &scopes, &namespaces);
+    // What this file defines itself; the workspace answers for the rest.
+    let own: HashSet<String> = globals.keys().cloned().collect();
+    let elsewhere = |name: &str| ws.defined_elsewhere(name, &own);
     // Scopes by the offset they start at. Looking one up by scanning is linear
     // per global and quadratic over a file whose globals are mostly lambdas,
     // which is what a q library is.
@@ -899,6 +951,8 @@ pub fn check(path: &str, code: &str, raw: &str, comments: &str) -> Vec<Finding> 
             }
             if globals.contains_key(&qualify(name, &scope.namespace))
                 || globals.contains_key(&format!(".{name}"))
+                || elsewhere(&qualify(name, &scope.namespace))
+                || elsewhere(&format!(".{name}"))
             {
                 continue;
             }
@@ -942,6 +996,8 @@ pub fn check(path: &str, code: &str, raw: &str, comments: &str) -> Vec<Finding> 
             }
             if globals.contains_key(&qualify(name, &scope.namespace))
                 || globals.contains_key(&format!(".{name}"))
+                || elsewhere(&qualify(name, &scope.namespace))
+                || elsewhere(&format!(".{name}"))
             {
                 continue;
             }
@@ -1147,6 +1203,8 @@ pub fn check(path: &str, code: &str, raw: &str, comments: &str) -> Vec<Finding> 
                     || scope.is_some_and(|s| s.locals.contains(name))
                     || crate::RESERVED.iter().any(|builtin| builtin == name)
                     || globals.contains_key(&global)
+                    || elsewhere(&global)
+                    || elsewhere(&format!(".{name}"))
                     // QF010 and QF005 already explain these more precisely.
                     || (scope.is_some() && matches!(name, "x" | "y" | "z"))
                     || std::iter::successors(scope.and_then(|s| s.parent), |&p| scopes[p].parent)
@@ -1313,7 +1371,15 @@ pub fn check(path: &str, code: &str, raw: &str, comments: &str) -> Vec<Finding> 
             out.push(finding);
         }
     }
-    out.extend(named_values(path, code, raw, comments, &scopes, dynamic));
+    out.extend(named_values(
+        path,
+        code,
+        raw,
+        comments,
+        &scopes,
+        dynamic,
+        &|name: &str| elsewhere(&qualify(name, "")),
+    ));
     out
 }
 
@@ -1385,6 +1451,7 @@ fn named_values(
     comments: &str,
     scopes: &[Scope],
     dynamic: bool,
+    elsewhere: &dyn Fn(&str) -> bool,
 ) -> Vec<Finding> {
     let mut out = vec![];
     let name_re = r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*";
@@ -1422,8 +1489,13 @@ fn named_values(
     let mut kinds: HashMap<&str, Arithmetic> = HashMap::new();
     // A file that evaluates strings can define anything, so nothing is known
     // by name there; the literal-only checks below still hold.
+    // Nor in a workspace where another file assigns the name too: which of
+    // the two a read meets depends on load order, which the text cannot say.
     for (name, at) in writes.iter().filter(|_| !dynamic) {
         let [at] = at[..] else { continue };
+        if elsewhere(name) {
+            continue;
+        }
         if scope_at(scopes, at).is_some() || !boundary(code, at) {
             continue;
         }
@@ -1616,6 +1688,7 @@ fn named_values(
             && name != "i"
             && !columns.iter().any(|c| c == name)
             && !defined.contains(name)
+            && !elsewhere(name)
             && !crate::RESERVED.iter().any(|n| n == name)
             && !scope_at(scopes, at).is_some_and(|s| scopes[s].locals.contains(name))
     };

@@ -16,12 +16,86 @@ mod refusals;
 mod semantics;
 pub use semantics::TokenKind;
 
+/// What one file defines for the files around it: the global names it
+/// assigns, qualified by namespace (`.ns.f`, or `.f` at the root), and which
+/// of them it assigns a lambda.
+#[derive(Default, Clone, PartialEq, Eq, Debug)]
+pub struct FileIndex {
+    pub defined: std::collections::HashSet<String>,
+    pub lambdas: std::collections::HashSet<String>,
+}
+
+/// The definitions of every file in a workspace, as counts of how many files
+/// define each name. A file asks what is defined *elsewhere* - by subtracting
+/// itself - because its own definitions it reads directly, and because a name
+/// another file also assigns is one whose value this file cannot know.
+///
+/// Building one reads files and never runs them: the same passes the checks
+/// use, stopped before any rule.
+#[derive(Default, Debug)]
+pub struct Workspace {
+    defined: std::collections::HashMap<String, usize>,
+    lambdas: std::collections::HashMap<String, usize>,
+}
+
+impl Workspace {
+    pub fn add(&mut self, file: &FileIndex) {
+        for name in &file.defined {
+            *self.defined.entry(name.clone()).or_default() += 1;
+        }
+        for name in &file.lambdas {
+            *self.lambdas.entry(name.clone()).or_default() += 1;
+        }
+    }
+
+    pub fn remove(&mut self, file: &FileIndex) {
+        for (map, names) in [
+            (&mut self.defined, &file.defined),
+            (&mut self.lambdas, &file.lambdas),
+        ] {
+            for name in names {
+                if let Some(count) = map.get_mut(name) {
+                    *count -= 1;
+                    if *count == 0 {
+                        map.remove(name);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Whether a file other than the one whose own definitions are `own`
+    /// defines `name`. The file asking may or may not have been added.
+    pub(crate) fn defined_elsewhere(
+        &self,
+        name: &str,
+        own: &std::collections::HashSet<String>,
+    ) -> bool {
+        self.defined.get(name).copied().unwrap_or(0) > usize::from(own.contains(name))
+    }
+
+    pub(crate) fn is_lambda(&self, name: &str) -> bool {
+        self.lambdas.contains_key(name)
+    }
+}
+
+/// What `source` defines, for indexing it into a `Workspace`.
+pub fn index(source: &str) -> FileIndex {
+    let v = views(source);
+    semantics::index(&v.code, source)
+}
+
 /// The names in `source` an editor can colour by what they refer to, as byte
 /// offset, byte length and kind - in order, and never inside a string or a
 /// comment, since those are blank in the view this reads.
 pub fn semantic_tokens(source: &str) -> Vec<(usize, usize, TokenKind)> {
+    semantic_tokens_in(source, &Workspace::default())
+}
+
+/// The same, with the functions other files in `ws` define coloured too.
+pub fn semantic_tokens_in(source: &str, ws: &Workspace) -> Vec<(usize, usize, TokenKind)> {
     let v = views(source);
-    semantics::tokens(&v.code, source)
+    semantics::tokens(&v.code, source, ws)
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -704,6 +778,13 @@ impl Profile {
 }
 
 pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
+    lint_in(source, path, profile, &Workspace::default())
+}
+
+/// `lint`, with the definitions of the files around this one. A name another
+/// file defines is not undefined here, and a name another file assigns is not
+/// one whose value this file can know.
+pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Vec<Finding> {
     let uqf = profile == Profile::Uqf;
     let v = views(source);
     if let Some(f) = structure(path, source, &v) {
@@ -714,7 +795,7 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
     // line and loads nothing. Reported and then carried on past, because the
     // author still wants to know what else is wrong with a file they are
     // about to find unloadable.
-    let mut out = semantics::check(path, code, source, &v.comments);
+    let mut out = semantics::check(path, code, source, &v.comments, ws);
     if source.starts_with('\u{feff}') {
         let mut finding = Finding::at(
             path,
