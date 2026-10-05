@@ -711,10 +711,21 @@ fn a_config_the_server_cannot_read_does_not_stop_it() {
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 
+/// A path as the URI an editor sends: `file:///C:/...` on Windows, where the
+/// path does not start at a root, and `file:///tmp/...` elsewhere.
+fn file_uri(path: &std::path::Path) -> String {
+    let path = path.display().to_string().replace('\\', "/");
+    if path.starts_with('/') {
+        format!("file://{path}")
+    } else {
+        format!("file:///{path}")
+    }
+}
+
 /// Initialize with a workspace folder, as an editor that opened `dir` does.
 fn start_with_workspace(dir: &std::path::Path) -> Server {
     let mut server = Server::start();
-    let uri = format!("file://{}", dir.display());
+    let uri = file_uri(dir);
     server.send(json!({"jsonrpc":"2.0","id":1,"method":"initialize",
         "params":{"capabilities":{},"workspaceFolders":[{"uri":uri,"name":"ws"}]}}));
     server.receive();
@@ -735,7 +746,7 @@ fn a_name_another_workspace_file_defines_is_not_undefined() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("lib.q"), "cfg:5\nhelper:{x+1}\n").unwrap();
     let mut server = start_with_workspace(dir.path());
-    let app = format!("file://{}/app.q", dir.path().display());
+    let app = file_uri(&dir.path().join("app.q"));
     server.open(&app, "n:cfg\nr:helper[2]\n");
     let found = codes_of(&server.diagnostics_for(&app));
     assert!(!found.contains(&"QF018".to_string()), "{found:?}");
@@ -754,8 +765,8 @@ fn a_name_another_workspace_file_defines_is_not_undefined() {
 fn editing_one_files_definitions_relints_the_others() {
     let dir = tempfile::tempdir().unwrap();
     let mut server = start_with_workspace(dir.path());
-    let lib = format!("file://{}/lib.q", dir.path().display());
-    let app = format!("file://{}/app.q", dir.path().display());
+    let lib = file_uri(&dir.path().join("lib.q"));
+    let app = file_uri(&dir.path().join("app.q"));
     server.open(&lib, "cfg:5\n");
     server.diagnostics_for(&lib);
     server.open(&app, "n:cfg\n");
@@ -775,14 +786,14 @@ fn a_file_changed_outside_the_editor_is_read_again() {
     let lib_path = dir.path().join("lib.q");
     std::fs::write(&lib_path, "other:1\n").unwrap();
     let mut server = start_with_workspace(dir.path());
-    let app = format!("file://{}/app.q", dir.path().display());
+    let app = file_uri(&dir.path().join("app.q"));
     server.open(&app, "n:cfg\n");
     assert!(codes_of(&server.diagnostics_for(&app)).contains(&"QF018".to_string()));
     // A pull brings cfg in; the editor's watcher reports the change.
     std::fs::write(&lib_path, "cfg:5\n").unwrap();
     server.send(
         json!({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles",
-        "params":{"changes":[{"uri":format!("file://{}", lib_path.display()),"type":2}]}}),
+        "params":{"changes":[{"uri":file_uri(&lib_path),"type":2}]}}),
     );
     assert!(!codes_of(&server.diagnostics_for(&app)).contains(&"QF018".to_string()));
     assert_eq!(server.shutdown_and_exit(), 0);

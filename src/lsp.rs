@@ -89,6 +89,7 @@ impl Index {
     /// Record what `path` defines. Whether it changed is what tells the
     /// caller other open files need linting again.
     fn set(&mut self, path: &str, file: FileIndex) -> bool {
+        let path = &file_key(path);
         if self.files.get(path) == Some(&file) {
             return false;
         }
@@ -101,7 +102,7 @@ impl Index {
     }
 
     fn remove(&mut self, path: &str) -> bool {
-        match self.files.remove(path) {
+        match self.files.remove(&file_key(path)) {
             Some(old) => {
                 self.ws.remove(&old);
                 true
@@ -619,24 +620,52 @@ fn path_of(uri: &str) -> String {
     };
     // Strip the empty authority: file:///a/b has a host of "", so the path
     // begins at the third slash.
-    let rest = rest.strip_prefix('/').map_or(rest, |r| r);
-    let mut out = String::with_capacity(rest.len() + 1);
-    out.push('/');
-    let bytes = rest.as_bytes();
+    let rest = rest.strip_prefix('/').unwrap_or(rest);
+    // Percent-escapes decode to bytes, and the bytes are UTF-8: `%C3%A9` is
+    // one `é`. Pushing each byte as a char read it as two Latin-1 ones, and
+    // a workspace under a folder with a non-ASCII name lost every path.
+    let mut bytes = Vec::with_capacity(rest.len());
+    let raw = rest.as_bytes();
     let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%'
-            && i + 2 < bytes.len()
+    while i < raw.len() {
+        if raw[i] == b'%'
+            && i + 2 < raw.len()
             && let Ok(byte) = u8::from_str_radix(&rest[i + 1..i + 3], 16)
         {
-            out.push(byte as char);
+            bytes.push(byte);
             i += 3;
             continue;
         }
-        out.push(bytes[i] as char);
+        bytes.push(raw[i]);
         i += 1;
     }
-    out
+    let decoded = String::from_utf8_lossy(&bytes).into_owned();
+    // A Windows path is a drive letter, not a root: VS Code sends
+    // `file:///c%3A/Users/...`, and `/c:/Users/...` is no path at all.
+    if re_drive(&decoded) {
+        decoded
+    } else {
+        format!("/{decoded}")
+    }
+}
+
+fn re_drive(path: &str) -> bool {
+    let b = path.as_bytes();
+    b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':'
+}
+
+/// One spelling per file, for the index: the editor's URI and the folder scan
+/// reach the same file as `c:/a/b.q` and `C:\a\b.q` on Windows, and two keys
+/// for one file would count its own definitions as another file's.
+fn file_key(path: &str) -> String {
+    let path = path.replace('\\', "/");
+    if re_drive(&path) {
+        let mut chars = path.chars();
+        let drive = chars.next().unwrap().to_ascii_lowercase();
+        format!("{drive}{}", chars.as_str())
+    } else {
+        path
+    }
 }
 
 #[cfg(test)]
@@ -648,6 +677,16 @@ mod tests {
         assert_eq!(path_of("file:///tmp/a%20b/c.q"), "/tmp/a b/c.q");
         assert_eq!(path_of("file:///tmp/plain.q"), "/tmp/plain.q");
         assert_eq!(path_of("untitled:Untitled-1"), "untitled:Untitled-1");
+        // Escapes are UTF-8 bytes, not one character each.
+        assert_eq!(path_of("file:///Users/Jos%C3%A9/a.q"), "/Users/José/a.q");
+        // A Windows drive is not under a root.
+        assert_eq!(path_of("file:///c%3A/Users/a.q"), "c:/Users/a.q");
+        assert_eq!(path_of("file:///C:/Users/a.q"), "C:/Users/a.q");
+        // And the scan's spelling of the same file is the same key.
+        assert_eq!(
+            file_key("C:\\Users\\a.q"),
+            file_key(&path_of("file:///c%3A/Users/a.q"))
+        );
     }
 
     #[test]
