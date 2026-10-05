@@ -20,11 +20,12 @@ and why there is no completion, hover or go-to-definition.
 
 - **Diagnostics** for what q would refuse, plus likely mistakes and style
   conventions, depending on the profile.
-- **Quick Fixes** for 22 rules, among them operators and keywords
+- **Quick Fixes** for 30 rules, among them operators and keywords
   from other languages (`==`, `&&`, `+=`, `true`, `return`), invalid string
   escapes, symbols where q wants strings, `f(a;b)` calls, one-row tables,
-  dead code and unused locals. Those that cannot change a working program
-  also run in bulk with `qlinter --fix`.
+  dead code, unused locals and comparisons a where phrase groups wrongly.
+  Those that cannot change a working program also run in bulk with
+  `qlinter --fix`; `--unsafe-fixes` adds the rest.
 - **Syntax colouring** from a TextMate grammar, plus semantic tokens: a
   function is coloured wherever it is called, even when another `.q` file in
   the workspace defines it, and a parameter wherever its body reads it.

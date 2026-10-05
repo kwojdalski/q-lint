@@ -645,6 +645,178 @@ pub fn fix_for(finding: &Finding, source: &str) -> Option<Fix> {
                 false,
             )
         }
+        // `a=1 and b=0` grouped the way it was meant: `(a=1) and b=0`. The
+        // rows returned change, so only on request.
+        "QB006" => {
+            let v = views(source);
+            let m = re!(r"^where\b").find(v.code.get(start..)?)?;
+            let phrase = start + m.end();
+            // The phrase ends where its statement does: a `;` or a bracket
+            // closing round it, at its own depth.
+            let (_, group_end) = statement_groups(&v.code, source)
+                .into_iter()
+                .find(|&(a, b)| a <= start && start < b)?;
+            let (mut depth, mut end) = (0i32, phrase);
+            for &b in &v.code.as_bytes()[phrase..group_end] {
+                match b {
+                    b'(' | b'[' | b'{' => depth += 1,
+                    b')' | b']' | b'}' if depth == 0 => break,
+                    b')' | b']' | b'}' => depth -= 1,
+                    b';' if depth == 0 => break,
+                    _ => {}
+                }
+                end += 1;
+            }
+            let groups = swallowed_comparisons(&flat_filter(&v.code[phrase..end]));
+            if groups.is_empty() {
+                return None;
+            }
+            begin = phrase;
+            let mut out = String::new();
+            let mut at = phrase;
+            for (a, b) in groups {
+                out.push_str(&source[at..phrase + a]);
+                out.push('(');
+                out.push_str(&source[phrase + a..phrase + b]);
+                out.push(')');
+                at = phrase + b;
+            }
+            (
+                &source[phrase..at],
+                out.into(),
+                "Parenthesise each comparison".into(),
+                false,
+            )
+        }
+        // `{x+1} each a` is `a+1`. Not unattended: on an empty typed list
+        // `each` returns a general `()` where the arithmetic keeps the type,
+        // and `""*2` is 'type in q 5 where each returns `()`.
+        "QR004" => {
+            let m = re!(
+                r"^\{\s*(?:x\s*([-+*%])\s*(-?\d[A-Za-z0-9.]*)|(-?\d[A-Za-z0-9.]*)\s*([-+*%])\s*x)\s*\}[ \t]*(?:each\b|')[ \t]*"
+            )
+            .captures(source.get(start..)?)?;
+            let v = views(source);
+            let tick = !m.get(0)?.as_str().contains("each");
+            let before = v.code[..start].trim_end();
+            let heads = before.is_empty()
+                || before.ends_with(|c: char| ":;([{,+-*%&|<>=~!^#$?@".contains(c));
+            if tick && !heads {
+                return None;
+            }
+            let from = start + m.get(0)?.end();
+            let end = argument_end(&v.code, &v.comments, source, from)?;
+            let argument = &source[from..end];
+            if argument.trim().is_empty() {
+                return None;
+            }
+            let simple =
+                re!(r"^(?:\.?[A-Za-z][A-Za-z0-9_.]*|-?\d[A-Za-z0-9.]*(?: +-?\d[A-Za-z0-9.]*)*)$")
+                    .is_match(argument);
+            let new = match (m.get(1), m.get(3)) {
+                // x on the left: the argument takes parentheses unless it is
+                // one token, or `a,b+1` would add to `b` alone.
+                (Some(op), _) => {
+                    let arg = if simple {
+                        argument.into()
+                    } else {
+                        format!("({argument})")
+                    };
+                    format!("{arg}{}{}", op.as_str(), &m[2])
+                }
+                // x on the right takes everything to its right anyway.
+                _ => format!("{}{}{argument}", &m[3], &m[4]),
+            };
+            (
+                &source[start..end],
+                new.into(),
+                "Apply the arithmetic to the whole list".into(),
+                false,
+            )
+        }
+        // A commented-out definition on one line: delete the line.
+        "QL002" => {
+            let line_end = source[start..]
+                .find('\n')
+                .map_or(source.len(), |at| start + at + 1);
+            let text = &source[start..line_end];
+            let close = text.rfind('}')?;
+            let open = text.find('{')?;
+            if matching(text, open, b'{', b'}') != Some(close + 1) {
+                return None;
+            }
+            (
+                text,
+                "".into(),
+                "Delete the commented-out definition".into(),
+                false,
+            )
+        }
+        // Match compares whole operands; a filter wants `=` row by row.
+        "QB005" if source.get(start..)?.starts_with('~') => {
+            ("~", "=".into(), "Compare row by row with `=`".into(), false)
+        }
+        // `x` read in a lambda that declares one parameter: read that
+        // parameter, which is almost always what was meant.
+        "QF010" if source.get(start..)?.starts_with('x') => {
+            let v = views(source);
+            let brace = v.code[..start].rfind("{[")?;
+            let sig = signature(&v.code, source, brace);
+            let [param] = sig.slots[..] else {
+                return None;
+            };
+            if param.is_empty() || matching(&v.code, brace, b'{', b'}')? <= start {
+                return None;
+            }
+            let param = param.to_string();
+            (
+                "x",
+                param.clone().into(),
+                format!("Read the parameter `{param}`").into(),
+                false,
+            )
+        }
+        // `f . ()` is 'type; a niladic call is `f[]`.
+        "QA004" => {
+            let v = views(source);
+            let line_end = v.code[start..]
+                .find('\n')
+                .map_or(v.code.len(), |at| start + at);
+            let m = re!(r"\s*\.\s*\(\s*\)").find(&v.code[start..line_end])?;
+            if m.start() == 0 {
+                return None;
+            }
+            (
+                &source[start..start + m.end()],
+                format!("{}[]", &source[start..start + m.start()]).into(),
+                "Call with `[]`".into(),
+                true,
+            )
+        }
+        // `til 5.0` is 'type; a float with no fraction is the long it spells.
+        "QT008" => {
+            let m = re!(r"^til(\s+)(\d+)(?:\.0*[ef]?|[ef])").captures(source.get(start..)?)?;
+            let end = m.get(0)?.end();
+            if source[start + end..].starts_with(|c: char| c.is_ascii_alphanumeric() || c == '.') {
+                return None;
+            }
+            (
+                &source[start..start + end],
+                format!("til{}{}", &m[1], &m[2]).into(),
+                format!("Pass the long {}", &m[2]).into(),
+                true,
+            )
+        }
+        // A number signalled is 'stype; signal it as a string.
+        "QT025" => {
+            let m = re!(r"^'(\s*)(-?\d[A-Za-z0-9.]*)").captures(source.get(start..)?)?;
+            (
+                m.get(0)?.as_str(),
+                format!("'{}\"{}\"", &m[1], &m[2]).into(),
+                format!("Signal the string \"{}\"", &m[2]).into(),
+                true,
+            )
+        }
         "QE005" if start == 0 && source.starts_with('\u{feff}') => {
             ("\u{feff}", "".into(), "Remove byte-order mark".into(), true)
         }
@@ -831,6 +1003,29 @@ fn blank(b: &mut [u8]) {
 }
 /// A filter phrase with parenthesised groups blanked out. The questions the
 /// filter rules ask - which operators sit beside which - are about the
+/// The comparisons in a where phrase that an `and`/`or` to their right
+/// swallows, as byte ranges into `flat` - a phrase `flat_filter` has
+/// flattened. Each is an operand left of an `and`/`or` in its clause; q reads
+/// `a=1 and b=0` as `a=(1 and b=0)`, so parenthesising every such operand is
+/// what the author meant. The last operand of a clause is never swallowed.
+pub(crate) fn swallowed_comparisons(flat: &str) -> Vec<(usize, usize)> {
+    let mut out = vec![];
+    let mut clause_start = 0;
+    for clause in flat.split(',') {
+        let mut from = 0;
+        for logic in re!(r"\b(?:and|or)\b").find_iter(clause) {
+            let operand = &clause[from..logic.start()];
+            if re!(r"[<>=]").is_match(operand) {
+                let lead = operand.len() - operand.trim_start().len();
+                let start = clause_start + from + lead;
+                out.push((start, start + operand.trim().len()));
+            }
+            from = logic.end();
+        }
+        clause_start += clause.len() + 1;
+    }
+    out
+}
 /// top level only, and `(a=1) and b=0` is correct q that must stay quiet.
 /// A lambda is a group too: `where {x[`b]~2} each d` matches per row.
 pub(crate) fn flat_filter(phrase: &str) -> String {
@@ -2911,12 +3106,34 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
                         .find(clause)
                         .is_some_and(|logic| re!(r"[<>=]").is_match(&clause[..logic.start()]))
                 }) {
+                    // Quote the reader's own clause where it is short enough
+                    // to read: `a=1 and b=3` reads as `a=(1 and b=3)`.
+                    let raw_phrase = &raw[w.end()..];
+                    let example = swallowed_comparisons(&phrase).first().and_then(|&(a, b)| {
+                        let operand = &raw_phrase[a..b];
+                        let op = re!(r"<>|<=|>=|[<>=]").find_iter(operand).last()?;
+                        let clause_end = phrase[b..].find(',').map_or(phrase.len(), |c| b + c);
+                        let rest = raw_phrase[b..clause_end].trim_end();
+                        let rest = rest.trim_end_matches(';').trim_end();
+                        let (lhs, rhs) = (operand[..op.start()].trim(), operand[op.end()..].trim());
+                        (operand.len() + rest.len() <= 60 && !rest.contains('\n')).then(|| {
+                            format!(
+                                "`{operand}{rest}` as `{lhs}{}({rhs}{rest})`, not \
+                                 `({operand}){rest}`",
+                                op.as_str()
+                            )
+                        })
+                    });
                     add(
                         offset + w.start(),
                         "QB006",
-                        "Comparison left of and/or without parentheses: right-to-left \
-                         evaluation reads this as `a=(1 and b=0)`, not `(a=1) and b=0`"
-                            .into(),
+                        format!(
+                            "Comparison left of and/or without parentheses: q evaluates right \
+                             to left, so it reads {}",
+                            example.unwrap_or_else(|| "`a=1 and b=0` as `a=(1 and b=0)`, not \
+                                `(a=1) and b=0`"
+                                .into())
+                        ),
                     );
                 }
                 // A column equals one value; against a vector literal the

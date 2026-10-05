@@ -37,6 +37,7 @@ Two more checks over the same corpus catch what a diff cannot:
 ```sh
 python3 scripts/check_invariance.py target/release/qlinter ~/q-corpus  # CRLF, position, comments
 python3 scripts/check_fixes.py target/release/qlinter ~/q-corpus      # every --fix keeps the program
+python3 scripts/check_fixes.py --unsafe target/release/qlinter ~/q-corpus  # editor-only fixes still parse
 ```
 
 The first rewrites each file in ways that leave its meaning alone and wants

@@ -1,6 +1,7 @@
 """Every --fix rewrite has to compile to the program it replaced.
 
     python3 scripts/check_fixes.py target/release/qlinter ~/q-corpus
+    python3 scripts/check_fixes.py --unsafe target/release/qlinter ~/q-corpus
 
 Copies the corpus, applies `--fix --profile uqf`, splits both versions into
 top-level statements, and asks q to `parse` each changed pair. `parse` reads
@@ -12,6 +13,10 @@ positions q keeps for error messages, which a rewrite changes by design.
 The first run found four rewrites that were wrong: `f g::` and `f X@\\:` are
 compositions, not calls, and `stop f/x` is the while form of over, whose
 bracketed rewrite does not parse. Requires `q` on PATH.
+
+With --unsafe the editor-only fixes are applied too. Those may change the
+program by design, so a `changed` verdict is expected there; `broken` - a
+rewrite q cannot parse - is still a failure.
 """
 
 import json
@@ -60,7 +65,10 @@ def statements(text):
 
 
 def main() -> int:
-    binary, corpus = sys.argv[1], Path(sys.argv[2]).expanduser()
+    args = sys.argv[1:]
+    unsafe = "--unsafe" in args
+    args = [a for a in args if a != "--unsafe"]
+    binary, corpus = args[0], Path(args[1]).expanduser()
     sources = sorted(corpus.rglob("*.q"))
     pairs = []
     with tempfile.TemporaryDirectory() as tmp:
@@ -69,7 +77,8 @@ def main() -> int:
             copy = Path(tmp, f"{i}.q")
             shutil.copyfile(path, copy)
             copies.append(copy)
-        subprocess.run([binary, "--profile", "uqf", "--fix", *map(str, copies)], capture_output=True)
+        flags = ["--fix", "--unsafe-fixes"] if unsafe else ["--fix"]
+        subprocess.run([binary, "--profile", "uqf", *flags, *map(str, copies)], capture_output=True)
         for path, copy in zip(sources, copies):
             before = path.read_bytes().decode("utf-8", "replace").replace("\r\n", "\n")
             after = copy.read_bytes().decode("utf-8", "replace").replace("\r\n", "\n")
@@ -95,7 +104,8 @@ def main() -> int:
         verdicts = json.loads(run.stdout.strip().splitlines()[-1]) if checked else []
     counts = {v: verdicts.count(v) for v in set(verdicts)}
     print(f"{len(checked)} rewritten statements: {counts}")
-    bad = [(p, v) for p, v in zip(checked, verdicts) if v in ("changed", "broken")]
+    failing = ("broken",) if unsafe else ("changed", "broken")
+    bad = [(p, v) for p, v in zip(checked, verdicts) if v in failing]
     bad += [(p, p[3]) for p in pairs if p[3]]
     for (path, before, after, _), verdict in bad[:10]:
         print(f"  {verdict}: {path}")

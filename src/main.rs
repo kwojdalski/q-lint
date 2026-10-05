@@ -48,6 +48,11 @@ struct Args {
     /// Preview mechanical fixes without changing files.
     #[arg(long, conflicts_with = "fix")]
     diff: bool,
+    /// With --fix or --diff, also apply the fixes otherwise only offered in an
+    /// editor: those that change what a working program does, or guess at
+    /// what was meant. Ruff's flag of the same name.
+    #[arg(long)]
+    unsafe_fixes: bool,
     #[arg(long,default_value="builtin",value_parser=["builtin","qls","all"])]
     backend: String,
     #[arg(long, default_value = "qls")]
@@ -415,7 +420,7 @@ fn run(args: Args) -> Result<u8, String> {
                 .iter()
                 .filter(|finding| !ignore.contains(&finding.code))
                 .filter_map(|finding| fix_for(finding, source))
-                .filter(|fix| fix.batch_safe)
+                .filter(|fix| fix.batch_safe || args.unsafe_fixes)
                 .collect();
             edits.sort_by_key(|fix| (fix.start, fix.end));
             let mut selected = vec![];
@@ -435,7 +440,7 @@ fn run(args: Args) -> Result<u8, String> {
                 updated.replace_range(edit.start..edit.end, &edit.replacement);
             }
             if args.diff {
-                print_diff(path, source, &updated);
+                print_diff(path, source, &selected);
             } else {
                 fs::write(path.as_str(), &updated).map_err(|e| format!("{path}: {e}"))?;
                 *source = updated;
@@ -518,14 +523,75 @@ fn run(args: Args) -> Result<u8, String> {
     })))
 }
 
-/// Zero-context unified diff. Fixes never add or remove a newline, so old and
-/// new lines align and each changed line can be shown as a single hunk.
-fn print_diff(path: &str, before: &str, after: &str) {
+/// Zero-context unified diff, built from the edits rather than by pairing
+/// lines: a fix may remove a line (a commented-out definition) or join two,
+/// and pairing old and new lines by position would misalign every hunk after
+/// it. Each hunk is the whole lines an edit touches, with edits that share a
+/// line merged into one.
+fn print_diff(path: &str, before: &str, edits: &[q_lint_rs::Fix]) {
     println!("--- a/{path}\n+++ b/{path}");
-    for (index, (old, new)) in before.split('\n').zip(after.split('\n')).enumerate() {
-        if old != new {
-            println!("@@ -{0},1 +{0},1 @@\n-{old}\n+{new}", index + 1);
+    // On bytes: `end - 1` can sit inside a multi-byte character - a BOM is
+    // three - and a newline is one byte wherever it is.
+    let bytes = before.as_bytes();
+    let line_start = |at: usize| {
+        bytes[..at]
+            .iter()
+            .rposition(|&b| b == b'\n')
+            .map_or(0, |i| i + 1)
+    };
+    let line_end = |at: usize| {
+        bytes[at..]
+            .iter()
+            .position(|&b| b == b'\n')
+            .map_or(before.len(), |i| at + i + 1)
+    };
+    let mut hunks: Vec<(usize, usize, Vec<&q_lint_rs::Fix>)> = vec![];
+    for edit in edits {
+        let from = line_start(edit.start);
+        let to = line_end(if edit.end > edit.start {
+            edit.end - 1
+        } else {
+            edit.start
+        });
+        match hunks.last_mut() {
+            Some(last) if from < last.1 => {
+                last.1 = last.1.max(to);
+                last.2.push(edit);
+            }
+            _ => hunks.push((from, to, vec![edit])),
         }
+    }
+    let lines = |text: &str| text.split_inclusive('\n').count();
+    let mut shift = 0isize;
+    for (from, to, group) in hunks {
+        let old = &before[from..to];
+        let mut new = String::new();
+        let mut at = from;
+        for edit in group {
+            new.push_str(&before[at..edit.start]);
+            new.push_str(&edit.replacement);
+            at = edit.end;
+        }
+        new.push_str(&before[at..to]);
+        let first = before[..from].matches('\n').count() + 1;
+        let (old_n, new_n) = (lines(old), lines(&new));
+        // A side with no lines names the line before it, as diff does.
+        let old_at = if old_n == 0 { first - 1 } else { first };
+        let new_first = (first as isize + shift) as usize;
+        let new_at = if new_n == 0 { new_first - 1 } else { new_first };
+        println!("@@ -{old_at},{old_n} +{new_at},{new_n} @@");
+        // The file's last line may have no newline, which `patch` needs told.
+        let show = |sign: char, text: &str| {
+            for line in text.split_inclusive('\n') {
+                println!("{sign}{}", line.trim_end_matches('\n'));
+                if !line.ends_with('\n') {
+                    println!("\\ No newline at end of file");
+                }
+            }
+        };
+        show('-', old);
+        show('+', &new);
+        shift += new_n as isize - old_n as isize;
     }
 }
 /// The `--profile` flag, as the rule set it selects. clap has already refused

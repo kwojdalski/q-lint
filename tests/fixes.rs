@@ -244,6 +244,34 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ("QB020", "f:{[x] :x; x+1}", "f:{[x] :x}", false),
         ("QF017", "f:{[x] a:x+1; x}", "f:{[x] x+1; x}", false),
         ("QP003", "r:.z.P", "r:.z.p", false),
+        (
+            "QB006",
+            "t:([]a:1 2;b:3 4);r:select from t where a=1 and b=3",
+            "t:([]a:1 2;b:3 4);r:select from t where (a=1) and b=3",
+            false,
+        ),
+        (
+            "QB006",
+            "t:([]a:1 2;b:3 4);r:select from t where a>1 or b<=4, a<3;",
+            "t:([]a:1 2;b:3 4);r:select from t where (a>1) or b<=4, a<3;",
+            false,
+        ),
+        ("QR004", "r:{x+1} each 1 2 3", "r:1 2 3+1", false),
+        ("QR004", "r:{2-x} each a,b", "r:2-a,b", false),
+        ("QR004", "r:{x%2} each a,b", "r:(a,b)%2", false),
+        ("QR004", "r:count {x*2} each b", "r:count b*2", false),
+        ("QL002", "a:1\n/ old:{x+1}\nb:2", "a:1\nb:2", false),
+        (
+            "QB005",
+            "t:([]a:1 2);r:select from t where a~1",
+            "t:([]a:1 2);r:select from t where a=1",
+            false,
+        ),
+        ("QF010", "f:{[a] x+1}", "f:{[a] a+1}", false),
+        ("QA004", "f:{1};r:f . ()", "f:{1};r:f[]", true),
+        ("QT008", "r:til 5.0", "r:til 5", true),
+        ("QT008", "r:til 3f", "r:til 3", true),
+        ("QT025", "f:{'5}", "f:{'\"5\"}", true),
     ];
     for (code, source, expected, safe) in cases {
         let finding = lint(source, "probe.q", Profile::Uqf)
@@ -280,6 +308,9 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
         ("QB020", "f:{[x] :x;\n  x+1}"),     // across lines
         ("QP005", "r:select mid:0.5*bid+ask from q"), // qSQL columns
         ("QP005", "tanh:1f-2f%1f+exp 2f*"),  // a composition
+        ("QR004", "r:count {x+1}' b"),       // `{x+1}'` infix
+        ("QF010", "f:{[a;b] x+a}"),          // which parameter?
+        ("QT008", "r:til 2.5"),              // no long it spells
     ] {
         for finding in lint(source, "probe.q", Profile::Uqf)
             .iter()
@@ -288,4 +319,43 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
             assert!(fix_for(finding, source).is_none(), "{code} fixed {source}");
         }
     }
+}
+
+/// `--unsafe-fixes` adds the editor-only fixes to `--diff` and `--fix`, and
+/// `--diff` stays a patch that applies when a fix removes a whole line: the
+/// hunks are built from the edits, not by pairing lines, and a last line
+/// without a newline is marked the way `patch` expects.
+#[test]
+fn unsafe_fixes_and_a_diff_that_survives_a_removed_line() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("lines.q");
+    fs::write(&path, "a:1\n/ old:{x+1}\nb:a==1\nr:reverse asc 3 1 2").unwrap();
+    let run = |flags: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .args(["--profile", "styleq"])
+            .args(flags)
+            .arg(&path)
+            .output()
+            .unwrap();
+        String::from_utf8(output.stdout).unwrap()
+    };
+    let safe = run(&["--diff"]);
+    assert!(safe.contains("@@ -3,1 +3,1 @@\n-b:a==1\n+b:a=1"), "{safe}");
+    assert!(!safe.contains("old:"), "{safe}");
+
+    let all = run(&["--diff", "--unsafe-fixes"]);
+    assert!(all.contains("@@ -2,1 +1,0 @@\n-/ old:{x+1}\n"), "{all}");
+    assert!(all.contains("@@ -3,1 +2,1 @@\n-b:a==1\n+b:a=1"), "{all}");
+    assert!(
+        all.contains(
+            "@@ -4,1 +3,1 @@\n-r:reverse asc 3 1 2\n\\ No newline at end of file\n+r:desc 3 1 2\n\\ No newline at end of file"
+        ),
+        "{all}"
+    );
+
+    run(&["--fix", "--unsafe-fixes"]);
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "a:1\nb:a=1\nr:desc 3 1 2"
+    );
 }

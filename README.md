@@ -85,7 +85,8 @@ reports any remaining findings. Batch fixing handles `==`, `!=`, `+=`, `-=`,
 `"C:\\data"`), `true`/`false`/`None`/`return x` → `1b`/`0b`/`(::)`/`:x`,
 a table literal of scalars (each column enlisted), a symbol used as a `like`
 pattern (`` `a* `` → `"a*"`), a string compared with `=` in a filter →
-`like`, `{x} each y` → `y`, `distinct asc distinct` → `asc distinct`,
+`like`, `f . ()` → `f[]`, `til 5.0` → `til 5`, a number signalled → a
+string, `{x} each y` → `y`, `distinct asc distinct` → `asc distinct`,
 redundant parentheses around one token (styleq), and - under `--profile uqf` -
 parentheses showing the order q already evaluates `a*b+c` in, and the
 brackets QP006 asks for, rewriting `f x` as `f[x]` with whatever the
@@ -98,8 +99,13 @@ Fixes that you choose individually: `&&` → `&`, `||` → `|`, `reverse asc` �
 `ss`/`ssr` → a string, dropping a lambda's trailing `;` so it returns its last
 value, `a -1` → `a - 1`, `=` against a vector in a filter → `in`, `f(a;b)` →
 `f[a;b]`, `` `int$"12" `` → `"I"$"12"`, removing a statement that never runs,
-removing an unused local's name while keeping its expression, and (uqf)
-`.z.P` → `.z.p`. Both CLI options use the builtin backend (or `--backend all`);
+removing an unused local's name while keeping its expression,
+`{x+1} each a` → `a+1` (they differ on an empty typed list), parentheses
+round each comparison an `and`/`or` swallows in a where phrase, `~` → `=` in
+a filter, `x` → the one declared parameter, deleting a commented-out
+definition, and (uqf) `.z.P` → `.z.p`. Add
+`--unsafe-fixes` - Ruff's flag of the same name - to have `--diff` and `--fix`
+include them. Both CLI options use the builtin backend (or `--backend all`);
 `--fix` requires file paths rather than stdin.
 
 One pass leaves whatever it could not delimit. A call inside a qSQL phrase is
