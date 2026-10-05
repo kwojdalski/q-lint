@@ -219,6 +219,9 @@ pub fn fix_for(finding: &Finding, source: &str) -> Option<Fix> {
     }
     let byte = byte.or_else(|| (units == column).then_some(text.len()))?;
     let start = line_start + byte;
+    // Where the edit begins: the finding's own position, unless an arm says
+    // otherwise - removing dead code takes the `;` before it too.
+    let mut begin = start;
     let (old, replacement, title, batch_safe): (&str, Cow<str>, Cow<str>, bool) = match finding
         .code
         .as_str()
@@ -391,6 +394,257 @@ pub fn fix_for(finding: &Finding, source: &str) -> Option<Fix> {
                 true,
             )
         }
+        // An escape q does not define is refused outright, so doubling the
+        // backslash - the text the author typed - changes no working
+        // program: `"C:\data"` becomes `"C:\\data"`.
+        "QE002" if source.get(start..)?.starts_with('\\') => {
+            ("\\", "\\\\".into(), "Escape the backslash".into(), true)
+        }
+        // Keywords from other languages that have one q spelling. Each
+        // throws as an undefined global, so no working program changes.
+        "QF015" => {
+            let rest = source.get(start..)?;
+            let word = re!(r"^[A-Za-z]+").find(rest)?.as_str();
+            let (old, new): (&str, &str) = match word {
+                "true" => ("true", "1b"),
+                "false" => ("false", "0b"),
+                "None" => ("None", "(::)"),
+                // `return x` is `:x`, where `return` opens the statement.
+                "return" => {
+                    let v = views(source);
+                    let before = v.code[..start].trim_end();
+                    let opens = before.is_empty()
+                        || before.ends_with([';', '[', '{'])
+                        || before
+                            .strip_suffix(']')
+                            .and_then(|b| b.rfind('[').map(|at| &b[..at]))
+                            .is_some_and(|b| b.trim_end().ends_with('{'));
+                    let m = re!(r"^return[ \t]*").find(rest)?;
+                    let next = rest[m.end()..].chars().next();
+                    if !opens || next.is_none_or(|c| ";}]\r\n".contains(c)) {
+                        return None;
+                    }
+                    (m.as_str(), ":")
+                }
+                _ => return None,
+            };
+            (
+                old,
+                new.into(),
+                format!("Replace `{word}` with `{new}`").into(),
+                true,
+            )
+        }
+        // A table of scalars is 'rank; enlisting each makes the one row.
+        "QT005" => {
+            let v = views(source);
+            if !v.code.get(start..)?.starts_with("([]") {
+                return None;
+            }
+            let close = matching(&v.code, start, b'(', b')')?;
+            let inner = start + 3..close - 1;
+            let mut out = String::from("([]");
+            let mut at = inner.start;
+            for column in slots(&v.code[inner.clone()]) {
+                let from = column.as_ptr() as usize - v.code.as_ptr() as usize;
+                let colon = re!(r"^\s*[A-Za-z][A-Za-z0-9_]*\s*:").find(column)?;
+                out.push_str(&source[at..from + colon.end()]);
+                out.push_str("enlist ");
+                let value = &source[from + colon.end()..from + column.len()];
+                out.push_str(value.trim_start());
+                at = from + column.len();
+            }
+            out.push_str(&source[at..close]);
+            (
+                &source[start..close],
+                out.into(),
+                "Enlist each column, for a one-row table".into(),
+                true,
+            )
+        }
+        // `col="ab"` is 'type or 'length on every column; `like` is the
+        // comparison that works on a symbol column. A pattern character
+        // in the string would change what it matches, so not then.
+        "QB015" => {
+            let m = re!(r#"^=\s*("[^"\\*?\[\]^]*")"#).captures(source.get(start..)?)?;
+            let pad = if source[..start].ends_with([' ', '\t']) {
+                ""
+            } else {
+                " "
+            };
+            (
+                m.get(0)?.as_str(),
+                format!("{pad}like {}", &m[1]).into(),
+                format!("Compare with `like {}`", &m[1]).into(),
+                true,
+            )
+        }
+        // Parentheses where q already groups: around the right operand of
+        // the operator just before the first change of family. The parse
+        // tree is the same - `2*3+4` and `2*(3+4)` are one program.
+        "QP005" => {
+            let v = views(source);
+            let (_, line_end) = statement_groups(&v.code, source)
+                .into_iter()
+                .find(|&(from, _)| from == start)?;
+            let run = mixed_run(&v.code[start..line_end])?;
+            let k = (1..run.len()).find(|&k| run[k].1 != run[k - 1].1)?;
+            let mut after = start + run[k - 1].0 + 1;
+            while v.code[after..].starts_with([':', '/', '\\', '\'']) {
+                after += 1;
+            }
+            let from = argument_start(source, &v.comments, after)?;
+            let end = argument_end(&v.code, &v.comments, source, from)?;
+            // In qSQL a comma separates columns and `from`, `by` and `where`
+            // end an expression, which this scan does not read. And a right
+            // side ending in an operator or `::` is a composition, not an
+            // operand - `1f%1f+exp neg::` - so parentheses would change it.
+            let statement_end = argument_end(&v.code, &v.comments, source, start)?.max(end);
+            if re!(r"\b(?:select|exec|update|delete|from|by|where)\b")
+                .is_match(&v.code[start..statement_end])
+                || v.code[from..end]
+                    .trim_end()
+                    .ends_with(|c: char| "+-*%&|^=<>~,#_!?@.$:'/\\".contains(c))
+            {
+                return None;
+            }
+            (
+                &source[start..end],
+                format!("{}({})", &source[start..from], &source[from..end]).into(),
+                "Parenthesise to show the order q evaluates in".into(),
+                true,
+            )
+        }
+        // `s=`a`b` compares item by item; membership is `in`. When the
+        // lengths happen to match `=` runs, so only on request.
+        "QB008" => {
+            let m = re!(r"^(?:where\s+)?[A-Za-z][A-Za-z0-9_.]*\s*(=)")
+                .captures(source.get(start..)?)?;
+            let eq = m.get(1)?;
+            (
+                &source[start..start + eq.end()],
+                format!("{} in ", source[start..start + eq.start()].trim_end()).into(),
+                "Test membership with `in`".into(),
+                false,
+            )
+        }
+        // `f(a;b)` passes one list; brackets pass two arguments. The old
+        // form returns a projection rather than failing, so on request.
+        "QA008" => {
+            let v = views(source);
+            let name = re!(r"^\.?[A-Za-z][A-Za-z0-9_.]*").find(v.code.get(start..)?)?;
+            let open = start + name.end();
+            if !v.code[open..].starts_with('(') {
+                return None;
+            }
+            let close = matching(&v.code, open, b'(', b')')?;
+            (
+                &source[start..close],
+                format!("{}[{}]", name.as_str(), &source[open + 1..close - 1]).into(),
+                format!("Call `{}` with brackets", name.as_str()).into(),
+                false,
+            )
+        }
+        // `` `int$"12" `` casts character codes; `"I"$` parses the text.
+        // Both run, so which was meant is the author's to confirm.
+        "QT004" => {
+            let m = re!(r"^`([a-z]+)\s*\$").captures(source.get(start..)?)?;
+            let letter = match &m[1] {
+                "boolean" => "B",
+                "guid" => "G",
+                "byte" => "X",
+                "short" => "H",
+                "int" => "I",
+                "long" => "J",
+                "real" => "E",
+                "float" => "F",
+                "timestamp" => "P",
+                "month" => "M",
+                "date" => "D",
+                "datetime" => "Z",
+                "timespan" => "N",
+                "minute" => "U",
+                "second" => "V",
+                "time" => "T",
+                _ => return None,
+            };
+            (
+                m.get(0)?.as_str(),
+                format!("\"{letter}\"$").into(),
+                format!("Parse the text with `\"{letter}\"$`").into(),
+                false,
+            )
+        }
+        // A statement after a top-level return never runs: remove it and
+        // what follows it up to the closing brace, on one line.
+        "QB020" => {
+            let v = views(source);
+            let semi = v.code[..start].trim_end();
+            if !semi.ends_with(';') {
+                return None;
+            }
+            let semi = semi.len() - 1;
+            begin = semi;
+            let (mut depth, mut at) = (0i32, start);
+            let bytes = v.code.as_bytes();
+            while at < bytes.len() {
+                match bytes[at] {
+                    b'(' | b'[' | b'{' => depth += 1,
+                    b')' | b']' => depth -= 1,
+                    b'}' if depth == 0 => break,
+                    b'}' => depth -= 1,
+                    _ => {}
+                }
+                at += 1;
+            }
+            if at == bytes.len() {
+                return None;
+            }
+            let mut end = at;
+            while end > start && source.as_bytes()[end - 1].is_ascii_whitespace() {
+                end -= 1;
+            }
+            // Across lines the edit would take layout and comments with it;
+            // the single-line case is the one with one right edit.
+            if end <= start || source[semi..end].contains('\n') {
+                return None;
+            }
+            (
+                &source[semi..end],
+                "".into(),
+                "Remove the code that never runs".into(),
+                false,
+            )
+        }
+        // A local nobody reads: keep the expression, drop the name.
+        "QF017" => {
+            let m = re!(r"^[A-Za-z][A-Za-z0-9_]*[ \t]*:").find(source.get(start..)?)?;
+            if source[start + m.end()..].starts_with(':') {
+                return None;
+            }
+            (
+                m.as_str(),
+                "".into(),
+                "Remove the unused assignment, keep the expression".into(),
+                false,
+            )
+        }
+        // The UTC clock the convention asks for. A different value, so
+        // only on request.
+        "QP003" => {
+            let v = views(source);
+            let line_end = v.code[start..]
+                .find('\n')
+                .map_or(v.code.len(), |at| start + at);
+            let m = re!(r"\.z\.[PTN]\b").find(&v.code[start..line_end])?;
+            let clock = format!(".z.{}", m.as_str()[3..].to_ascii_lowercase());
+            (
+                &source[start..start + m.end()],
+                format!("{}{clock}", &source[start..start + m.start()]).into(),
+                format!("Use the UTC `{clock}`").into(),
+                false,
+            )
+        }
         "QE005" if start == 0 && source.starts_with('\u{feff}') => {
             ("\u{feff}", "".into(), "Remove byte-order mark".into(), true)
         }
@@ -427,8 +681,8 @@ pub fn fix_for(finding: &Finding, source: &str) -> Option<Fix> {
         _ => return None,
     };
     Some(Fix {
-        start,
-        end: start + old.len(),
+        start: begin,
+        end: begin + old.len(),
         replacement,
         title,
         batch_safe,
@@ -606,23 +860,21 @@ pub(crate) fn flat_filter(phrase: &str) -> String {
 /// `-b`, while `a-b`, `a- b` and `a - b` are subtraction. Braces and `;`
 /// start fresh statements rather than nesting, so a lambda body on one line
 /// is still checked.
-fn mixed_infix(line: &str) -> bool {
+/// The `*`/`%` and `+`/`-` operators at bracket depth 0 of `line`, as runs
+/// that a `;`, a brace or a depth-0 `,` separates - each operator with its
+/// offset and whether it multiplies. A `+`/`-` counts only after an operand,
+/// and not as the sign of a literal.
+fn infix_runs(line: &str) -> Vec<Vec<(usize, bool)>> {
     let b = line.as_bytes();
-    let (mut mul, mut add) = (false, false);
+    let mut runs = vec![vec![]];
     let (mut depth, mut prev) = (0i32, b'\0');
     for (i, &c) in b.iter().enumerate() {
         match c {
             b'(' | b'[' => depth += 1,
             b')' | b']' => depth -= 1,
-            b'{' | b'}' | b';' => {
-                mul = false;
-                add = false;
-            }
-            b',' if depth == 0 => {
-                mul = false;
-                add = false;
-            }
-            b'*' | b'%' if depth == 0 => mul = true,
+            b'{' | b'}' | b';' => runs.push(vec![]),
+            b',' if depth == 0 => runs.push(vec![]),
+            b'*' | b'%' if depth == 0 => runs.last_mut().unwrap().push((i, true)),
             b'+' | b'-' if depth == 0 => {
                 let operand = matches!(
                     prev,
@@ -635,8 +887,20 @@ fn mixed_infix(line: &str) -> bool {
                 let introduces = c == b'-'
                     && spaced
                     && (digit(i + 1) || b.get(i + 1) == Some(&b'.') && digit(i + 2));
-                if operand && !introduces {
-                    add = true;
+                // The sign of a float's exponent: `1e-9` is one number.
+                let exponent = i > 1 && matches!(b[i - 1], b'e' | b'E') && {
+                    let mantissa = b[..i - 1]
+                        .iter()
+                        .rev()
+                        .take_while(|c| c.is_ascii_digit() || **c == b'.')
+                        .count();
+                    let before = b[..i - 1 - mantissa].last();
+                    mantissa > 0
+                        && b[i - 1 - mantissa].is_ascii_digit()
+                        && !before.is_some_and(|c| c.is_ascii_alphanumeric() || *c == b'_')
+                };
+                if operand && !introduces && !exponent {
+                    runs.last_mut().unwrap().push((i, false));
                 }
             }
             _ => {}
@@ -645,7 +909,50 @@ fn mixed_infix(line: &str) -> bool {
             prev = c;
         }
     }
-    mul && add
+    runs
+}
+/// The run QP005 judges: the line's last. Earlier runs on the line are not
+/// read, which is how the rule has always behaved on the corpus.
+fn mixed_run(line: &str) -> Option<Vec<(usize, bool)>> {
+    infix_runs(line)
+        .pop()
+        .filter(|run| run.iter().any(|o| o.1) && run.iter().any(|o| !o.1))
+}
+/// The top-level statements of a file as byte ranges: a line and the indented
+/// lines q continues it with. Shared by the rules that read a statement and
+/// the fixes that rewrite one, so both see the same text.
+fn statement_groups(code: &str, source: &str) -> Vec<(usize, usize)> {
+    let mut out: Vec<(usize, usize)> = vec![];
+    let (mut at, mut open) = (0usize, 0i32);
+    for (l, raw) in code.split_inclusive('\n').zip(source.split_inclusive('\n')) {
+        // Indentation is a fact about the source, not about `code`: a
+        // comment is blanked to spaces, so a bare `/` reads as indented
+        // there and would fold into the line above it, taking the rule
+        // that reports it out of reach. Brackets are counted on `code`,
+        // where the ones inside strings and comments are already gone.
+        //
+        // Only the top level folds. Inside a bracket the newlines are
+        // already insignificant to q, and the rules below have always
+        // read those lines one at a time - folding a table literal or a
+        // lambda body into one unit loses findings inside it.
+        let continues = open == 0 && raw.starts_with([' ', '\t']);
+        match out.last_mut() {
+            Some(last) if continues => last.1 += l.len(),
+            _ => out.push((at, at + l.len())),
+        }
+        for b in l.bytes() {
+            match b {
+                b'(' | b'[' | b'{' => open += 1,
+                b')' | b']' | b'}' => open -= 1,
+                _ => {}
+            }
+        }
+        at += l.len();
+    }
+    out
+}
+fn mixed_infix(line: &str) -> bool {
+    mixed_run(line).is_some()
 }
 struct Views {
     comments: String,
@@ -2255,36 +2562,7 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
             })
             .collect()
     };
-    let statements = {
-        let mut out: Vec<(usize, usize)> = vec![];
-        let (mut at, mut open) = (0usize, 0i32);
-        for (l, raw) in code.split_inclusive('\n').zip(source.split_inclusive('\n')) {
-            // Indentation is a fact about the source, not about `code`: a
-            // comment is blanked to spaces, so a bare `/` reads as indented
-            // there and would fold into the line above it, taking the rule
-            // that reports it out of reach. Brackets are counted on `code`,
-            // where the ones inside strings and comments are already gone.
-            //
-            // Only the top level folds. Inside a bracket the newlines are
-            // already insignificant to q, and the rules below have always
-            // read those lines one at a time - folding a table literal or a
-            // lambda body into one unit loses findings inside it.
-            let continues = open == 0 && raw.starts_with([' ', '\t']);
-            match out.last_mut() {
-                Some(last) if continues => last.1 += l.len(),
-                _ => out.push((at, at + l.len())),
-            }
-            for b in l.bytes() {
-                match b {
-                    b'(' | b'[' | b'{' => open += 1,
-                    b')' | b']' | b'}' => open -= 1,
-                    _ => {}
-                }
-            }
-            at += l.len();
-        }
-        out
-    };
+    let statements = statement_groups(code, source);
     for (start, end) in statements {
         let (raw, line, literals) = (
             &source[start..end],

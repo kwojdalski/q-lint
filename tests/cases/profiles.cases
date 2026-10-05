@@ -173,3 +173,6 @@ f:{[x] n:x; .app.lg "start"; if[n; .app.lg:"oops"]}
 enorm2:{x wsum x}
 enorm:sqrt enorm2::
 gini:{1f-enorm2 x}
+
+=== clean profile: uqf | the sign of a float's exponent is part of the number
+gap:1e-9*gaps

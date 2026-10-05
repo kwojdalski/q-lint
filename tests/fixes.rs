@@ -202,6 +202,48 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ),
         ("QS004", "a:1;r:(a)+1", "a:1;r:a+1", true),
         ("QS004", "a:1;r:(a)b", "a:1;r:a b", true),
+        ("QE002", "p:\"C:\\data\"", "p:\"C:\\\\data\"", true),
+        (
+            "QF015",
+            "f:{[x] if[x;:true]; x}",
+            "f:{[x] if[x;:1b]; x}",
+            true,
+        ),
+        ("QF015", "r:(1b;false)", "r:(1b;0b)", true),
+        ("QF015", "r:None", "r:(::)", true),
+        ("QF015", "f:{[x] return x+1}", "f:{[x] :x+1}", true),
+        ("QF015", "f:{[x] a:x; return a}", "f:{[x] a:x; :a}", true),
+        (
+            "QT005",
+            "t:([]a:1;b:`x)",
+            "t:([]a:enlist 1;b:enlist `x)",
+            true,
+        ),
+        (
+            "QB015",
+            "t:([]s:`ab`cd);r:select from t where s=\"ab\"",
+            "t:([]s:`ab`cd);r:select from t where s like \"ab\"",
+            true,
+        ),
+        ("QP005", "r:2*3+4", "r:2*(3+4)", true),
+        ("QP005", "a:1;r:a*a*a+1", "a:1;r:a*a*(a+1)", true),
+        ("QP005", "a:1;r:a+a*a-1", "a:1;r:a+(a*a-1)", true),
+        (
+            "QB008",
+            "t:([]s:`a`b`c);r:select from t where s=`a`b",
+            "t:([]s:`a`b`c);r:select from t where s in `a`b",
+            false,
+        ),
+        (
+            "QA008",
+            "f:{[a;b] a+b};r:f(1;2)",
+            "f:{[a;b] a+b};r:f[1;2]",
+            false,
+        ),
+        ("QT004", "r:`int$\"12\"", "r:\"I\"$\"12\"", false),
+        ("QB020", "f:{[x] :x; x+1}", "f:{[x] :x}", false),
+        ("QF017", "f:{[x] a:x+1; x}", "f:{[x] x+1; x}", false),
+        ("QP003", "r:.z.P", "r:.z.p", false),
     ];
     for (code, source, expected, safe) in cases {
         let finding = lint(source, "probe.q", Profile::Uqf)
@@ -226,12 +268,18 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
 fn no_fix_where_the_rewrite_would_change_the_program() {
     use q_lint_rs::{Profile, fix_for, lint};
     for (code, source) in [
-        ("QS004", "r:2 (3)"),          // would become the vector 2 3
-        ("QS004", "r:(2)3"),           // would become the number 23
-        ("QS004", "a:1;r:a -(1)"),     // would become a applied to -1
-        ("QR002", "g:{x} each"),       // a function, with nothing to return
-        ("QR002", "r:count {x}' b"),   // `{x}'` infix, `count` its left argument
-        ("QT007", "r:ss[`a`b;\"b\"]"), // a symbol vector is not one string
+        ("QS004", "r:2 (3)"),                // would become the vector 2 3
+        ("QS004", "r:(2)3"),                 // would become the number 23
+        ("QS004", "a:1;r:a -(1)"),           // would become a applied to -1
+        ("QR002", "g:{x} each"),             // a function, with nothing to return
+        ("QR002", "r:count {x}' b"),         // `{x}'` infix, `count` its left argument
+        ("QT007", "r:ss[`a`b;\"b\"]"),       // a symbol vector is not one string
+        ("QF015", "f:{[x] a:return x}"),     // `return` mid-expression
+        ("QF015", "f:{[x] if[x;break]; x}"), // no q spelling for break
+        ("QB015", "t:([]s:`ab);r:select from t where s=\"a*\""), // a pattern
+        ("QB020", "f:{[x] :x;\n  x+1}"),     // across lines
+        ("QP005", "r:select mid:0.5*bid+ask from q"), // qSQL columns
+        ("QP005", "tanh:1f-2f%1f+exp 2f*"),  // a composition
     ] {
         for finding in lint(source, "probe.q", Profile::Uqf)
             .iter()

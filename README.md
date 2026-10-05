@@ -81,10 +81,14 @@ The qls server may itself require Python; the Rust builtin backend does not.
 To preview mechanical edits, run `qlinter --diff path/to/file.q`; to write
 them, run `qlinter --fix path/to/file.q`. `--fix` re-lints the changed files and
 reports any remaining findings. Batch fixing handles `==`, `!=`, `+=`, `-=`,
-`*=`, a leading UTF-8 BOM, a symbol used as a `like` pattern (`` `a* `` →
-`"a*"`), `{x} each y` → `y`, `distinct asc distinct` → `asc distinct`,
+`*=`, a leading UTF-8 BOM, an invalid string escape (`"C:\data"` →
+`"C:\\data"`), `true`/`false`/`None`/`return x` → `1b`/`0b`/`(::)`/`:x`,
+a table literal of scalars (each column enlisted), a symbol used as a `like`
+pattern (`` `a* `` → `"a*"`), a string compared with `=` in a filter →
+`like`, `{x} each y` → `y`, `distinct asc distinct` → `asc distinct`,
 redundant parentheses around one token (styleq), and - under `--profile uqf` -
-the brackets QP006 asks for, rewriting `f x` as `f[x]` with whatever the
+parentheses showing the order q already evaluates `a*b+c` in, and the
+brackets QP006 asks for, rewriting `f x` as `f[x]` with whatever the
 application swallowed. Each was checked in q 5 to leave the program alone, or
 to replace code that could only fail.
 
@@ -92,7 +96,10 @@ Some rewrites change behaviour or guess at intent, so they remain editor Quick
 Fixes that you choose individually: `&&` → `&`, `||` → `|`, `reverse asc` →
 `desc` (they differ on a dictionary's tied keys), a symbol given to
 `ss`/`ssr` → a string, dropping a lambda's trailing `;` so it returns its last
-value, and `a -1` → `a - 1`. Both CLI options use the builtin backend (or `--backend all`);
+value, `a -1` → `a - 1`, `=` against a vector in a filter → `in`, `f(a;b)` →
+`f[a;b]`, `` `int$"12" `` → `"I"$"12"`, removing a statement that never runs,
+removing an unused local's name while keeping its expression, and (uqf)
+`.z.P` → `.z.p`. Both CLI options use the builtin backend (or `--backend all`);
 `--fix` requires file paths rather than stdin.
 
 One pass leaves whatever it could not delimit. A call inside a qSQL phrase is
