@@ -1,110 +1,55 @@
 # q-lint for VS Code
 
-Diagnostics and selected Quick Fixes for q/kdb+ source, as you type, from the
+Linting, Quick Fixes and syntax colouring for q/kdb+, as you type, from the
 [q-lint](https://github.com/kwojdalski/q-lint) language server.
 
 ![the q-lint icon](icon.png)
 
-**This is an early version.** The aim was to put out something workable,
-open source, and good enough for agentic development - a linter an agent can
-run on every edit and trust. It already catches the most common problems in
-q; more rules are on the way, and a finding that looks wrong is worth an
-[issue](https://github.com/kwojdalski/q-lint/issues).
+**Early version.** Open source, built to be good enough for agentic
+development, and already catching the most common problems. A finding that
+looks wrong is worth an [issue](https://github.com/kwojdalski/q-lint/issues).
 
-**The linter never executes the source it reads.** That is what makes it safe
-to run on every keystroke, and it is why this extension offers diagnostics,
-Quick Fixes and syntax colouring and nothing else: completion, hover and
-go-to-definition would need a resolver and a symbol table, and building one
-means giving up the guarantee.
+**It never executes your code**, which is why it is safe on every keystroke -
+and why there is no completion, hover or go-to-definition.
 
-Use **Quick Fix** to replace `==` with `=`, `!=` with `<>`, or
-`+=`/`-=`/`*=` with `+:`/`-:`/`*:`, and `&&`/`||` with `&`/`|`.
-It can also remove a leading UTF-8 BOM, and - with `q-lint.profile` set to
-`uqf` - put the brackets back on a call written `f x`, taking in however much
-of the line the application swallowed.
-Other findings are not changed automatically.
+## Features
 
-## Syntax colouring
-
-The extension colours q the way VS Code colours Python: a TextMate grammar
-tags each span with a standard scope, so whatever colour theme is active
-paints it. It picks out comments and qdoc tags (`@param name {type}`,
-`@return`, ...), strings and their escapes, symbols and file handles, numbers,
-temporals, nulls and booleans, lambdas with their declared parameters and the
-implicit `x`, `y` and `z`, names assigned a lambda, other assignments
-(amends such as `n+:1` included), the namespace of a dotted name, return
-(`:x`) and signal (`'x`) as control flow, the control words and qSQL, the
-builtins, the `.z`/`.Q`/`.h`/`.j` namespaces, system commands, block comments
-and everything after a closing `\`, and `p)` lines as Python.
-
-On top of that the server sends semantic tokens, the layer Pylance adds for
-Python: a function this file defines is coloured as one wherever it is
-called, not only where it is assigned, and a parameter keeps its colour where
-the body reads it. The server reads every `.q` file in the workspace - reads,
-never runs - so a function another file defines is coloured too, and a name
-another file defines is not reported as undefined. Unused parameters and
-locals are faded.
-
-The grammar is generated, builtins and all, from the name list the rules use:
-
-```sh
-python3 scripts/q_grammar.py > editors/vscode/syntaxes/q.tmLanguage.json
-```
+- **Diagnostics** for what q would refuse, plus likely mistakes and style
+  conventions, depending on the profile.
+- **Quick Fixes** for `==`, `!=`, `+=`-style assignments, `&&`/`||` and a
+  leading BOM; under the `uqf` profile, brackets for a call written `f x`.
+- **Syntax colouring** from a TextMate grammar, plus semantic tokens that
+  colour functions and parameters across every `.q` file in the workspace.
+  Unused parameters and locals are faded.
 
 ## Requirements
 
-None, on a platform this extension is built for. macOS (Apple Silicon and
-Intel), Linux x64 and Windows x64 builds carry the matching `qlinter` and run
-with nothing installed and nothing configured.
-
-Anywhere else, the extension needs the server: take an archive from
-[releases](https://github.com/kwojdalski/q-lint/releases), or build one with
-`cargo install --path .` from a clone. Put it on `PATH`, or point
-`q-lint.serverPath` at it.
-
-Setting `q-lint.serverPath` always wins, bundled server or not - which is how
-to run a build of your own against the extension.
-
-`server/qlinter` is checked in so that packaging the extension from a clone
-produces a working vsix without a release build first. It is **darwin-arm64
-only** - the one this repository's author builds - and is rebuilt by hand, so
-it can lag `src/`. The release workflow ignores it and packages the binary it
-just built for each platform. To refresh it:
-
-```sh
-cargo build --release && install -m 755 target/release/qlinter editors/vscode/server/qlinter
-```
-
-Worth knowing on macOS: an application started from the Dock does not inherit
-the `PATH` from your shell profile, so a binary in `~/.local/bin` is invisible
-to it even though the same command works in a terminal. The bundled server
-sidesteps this; `q-lint.serverPath` with an absolute path is the fix if you
-are using your own.
-
-## When a finding looks wrong
-
-Open **Output → q-lint**. The first line names the server version and the
-binary it came from, which is usually the answer: the rules live in the
-binary, not the extension, so a replaced binary does not take effect until
-the server restarts. **q-lint: Restart Server** in the command palette does
-that without reloading the window.
+None on macOS (Apple Silicon and Intel), Linux x64 or Windows x64: the
+matching `qlinter` binary is bundled. Elsewhere, take one from
+[releases](https://github.com/kwojdalski/q-lint/releases) and put it on
+`PATH` or in `q-lint.serverPath`.
 
 ## Settings
 
 | setting | default | |
 |---|---|---|
-| `q-lint.serverPath` | `qlinter` | Path to the binary; looked up on `PATH` as given. |
-| `q-lint.profile` | `style` | Rule profile. `general` is only what q refuses; `style` adds what q runs but is almost certainly a mistake; `styleq` adds published style-guide conventions; `uqf` adds one repository's house conventions. |
-| `q-lint.trace.server` | `off` | Log the traffic between VS Code and the server, for debugging the integration itself. |
-
-## The rules
-
-`qlinter --rules` prints the catalogue and `qlinter --explain <CODE>` prints one
-entry. Both read from the linter's own taxonomy, so they are current in a way
-this page would not be.
+| `q-lint.profile` | `style` | `general`: only what q refuses. `style`: also likely mistakes. `styleq`: also published style guides. `uqf`: also one repository's conventions. |
+| `q-lint.serverPath` | `qlinter` | Your own binary; always overrides the bundled one. |
+| `q-lint.trace.server` | `off` | Log client-server traffic. |
 
 ## Troubleshooting
 
-Diagnostics not appearing? Open **Output → q-lint**. The server's own stderr is
-forwarded there, so a binary that is missing or refusing its arguments says so
-in that panel.
+Open **Output → q-lint**: the first line names the server version and binary,
+and the server's errors land there. After replacing the binary, run
+**q-lint: Restart Server**. On macOS, apps started from the Dock do not see
+your shell's `PATH`, so give `q-lint.serverPath` an absolute path.
+
+`qlinter --rules` lists every rule; `qlinter --explain <CODE>` explains one.
+
+## Development
+
+`server/qlinter` is a checked-in darwin-arm64 build, so a clone packages
+without a release build; releases bundle their own per platform. Refresh it
+with `cargo build --release && install -m 755 target/release/qlinter
+editors/vscode/server/qlinter`. The grammar is generated:
+`python3 scripts/q_grammar.py > editors/vscode/syntaxes/q.tmLanguage.json`.
