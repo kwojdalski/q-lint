@@ -26,6 +26,22 @@ jobs:
           python-version: "3.12"
       - run: pip install pytest
       - run: python -m pytest -q tests/
+  # The tests on the other platforms the release builds for. Windows in
+  # particular: its paths are drive letters and backslashes, and its file URIs
+  # file:///c%3A/..., and a path bug there once surfaced only as a release
+  # job that hung.
+  platforms:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release
+      - run: cargo test
   extension:
     runs-on: ubuntu-latest
     defaults:

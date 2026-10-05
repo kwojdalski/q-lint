@@ -658,7 +658,13 @@ fn re_drive(path: &str) -> bool {
 /// reach the same file as `c:/a/b.q` and `C:\a\b.q` on Windows, and two keys
 /// for one file would count its own definitions as another file's.
 fn file_key(path: &str) -> String {
-    let path = path.replace('\\', "/");
+    // Only on Windows is a backslash a separator; elsewhere it can be part of
+    // a file name.
+    let path = if cfg!(windows) {
+        path.replace('\\', "/")
+    } else {
+        path.to_string()
+    };
     if re_drive(&path) {
         let mut chars = path.chars();
         let drive = chars.next().unwrap().to_ascii_lowercase();
@@ -682,11 +688,13 @@ mod tests {
         // A Windows drive is not under a root.
         assert_eq!(path_of("file:///c%3A/Users/a.q"), "c:/Users/a.q");
         assert_eq!(path_of("file:///C:/Users/a.q"), "C:/Users/a.q");
-        // And the scan's spelling of the same file is the same key.
-        assert_eq!(
-            file_key("C:\\Users\\a.q"),
-            file_key(&path_of("file:///c%3A/Users/a.q"))
-        );
+        // And on Windows the scan's spelling of the same file is the same key.
+        if cfg!(windows) {
+            assert_eq!(
+                file_key("C:\\Users\\a.q"),
+                file_key(&path_of("file:///c%3A/Users/a.q"))
+            );
+        }
     }
 
     #[test]
