@@ -39,6 +39,13 @@ impl Convention {
 /// cannot be told from the first word of a camelCase name one name at a time.
 fn convention(name: &str) -> Option<Convention> {
     let word = name.rsplit('.').next().unwrap_or(name);
+    // A test framework's hook prefix is the framework's spelling, not the
+    // author's: qunit finds its hooks as `setUp*`, `tearDown*`,
+    // `beforeNamespace*` and `afterNamespace*`, so `setUp_fresh` cannot be
+    // renamed, and only what follows the prefix says how the author names.
+    let word = re!(r"^(?:setUp|tearDown|beforeNamespace|afterNamespace|beforeEach|afterEach|beforeAll|afterAll)_?")
+        .find(word)
+        .map_or(word, |m| &word[m.end()..]);
     let hump = word
         .as_bytes()
         .windows(2)
@@ -531,7 +538,7 @@ pub fn index(code: &str, raw: &str) -> crate::FileIndex {
     let globals = global_writes(code, &scopes, &namespaces);
     let lambdas = globals
         .iter()
-        .filter(|(_, at)| at.iter().any(|&a| code[a..].trim_start().starts_with('{')))
+        .filter(|(_, at)| at.iter().any(|&a| assigns_lambda(code, a)))
         .map(|(name, _)| name.clone())
         .collect();
     crate::FileIndex {
@@ -1296,11 +1303,7 @@ pub fn check(
         ];
         let lambdas: HashSet<&str> = globals
             .iter()
-            .filter(|(_, assignments)| {
-                assignments
-                    .iter()
-                    .any(|&at| code[at..].trim_start().starts_with('{'))
-            })
+            .filter(|(_, assignments)| assignments.iter().any(|&at| assigns_lambda(code, at)))
             .map(|(name, _)| name.as_str())
             .collect();
         // Two passes, because the two views disagree about what an argument
@@ -1939,4 +1942,33 @@ fn parse_tree_names(body: &str) -> HashSet<&str> {
         .filter(|m| !body[m.get(0).unwrap().end()..].starts_with(['.', ':']))
         .map(|m| m.get(1).unwrap().as_str())
         .collect()
+}
+
+/// Whether the value assigned at `at` is a lambda, rather than what applying
+/// one returns. `f:{...}` defines a function; `t:{x!...} (),y` - TorQ's
+/// chainedtp.q - applies one on the spot and assigns the result, a
+/// dictionary there, and calling that a function made `t k` a "call".
+fn assigns_lambda(code: &str, at: usize) -> bool {
+    let rest = code[at..].trim_start();
+    let brace = code.len() - rest.len();
+    let ends = |from: usize| {
+        let after = code[from..].trim_start_matches([' ', '\t']);
+        after.is_empty() || after.starts_with([';', '\n', '\r', ')', ']', '}'])
+    };
+    rest.starts_with('{')
+        && matching(code, brace, b'{', b'}').is_some_and(|end| {
+            if ends(end) {
+                return true;
+            }
+            // A projection is still a function: qbists's klondike writes
+            // `turn:{[g;n] ...}[;TURN]`, one argument fixed and one slot
+            // left open, and `turn g` is a call.
+            code[end..].starts_with('[')
+                && matching(code, end, b'[', b']').is_some_and(|close| {
+                    crate::slots(&code[end + 1..close - 1])
+                        .iter()
+                        .any(|slot| slot.trim().is_empty())
+                        && ends(close)
+                })
+        })
 }

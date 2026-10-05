@@ -180,3 +180,18 @@ ratio:{[tape] tape}
 / @param fromts start of the range
 / @return gaps
 gaps:{[fromts] fromts}
+
+=== clean profile: styleq | the columns of a table literal written across lines are not assignments
+trades:([]
+  trade_price:1.1 1.2;
+  trade_size:1 2)
+
+=== QS001 profile: styleq | a variable of the same spelling still is one
+trade_price:1.1
+
+=== QS001 profile: styleq | qunit finds its hooks by prefix, so the mixed convention is not QS010 - only the underscore is reported
+setUp_fresh:{x}
+tearDown_release:{x}
+beforeNamespace_isolate:{x}
+fooBar:{x}
+bazQux:{x}

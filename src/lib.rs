@@ -2055,6 +2055,23 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
     //
     // Each group is a contiguous byte range, so every `offset + m.start()` in
     // the rules below still lands where it did.
+    // Whether each byte sits inside parentheses. There `name:` is a column of
+    // a table literal or a key of a dictionary one, written across lines the
+    // way TorQ and kdb-parquet write wide tables - not an assignment, and so
+    // not the name the naming rules below are about.
+    let in_parens: Vec<bool> = {
+        let mut depth = 0i32;
+        code.bytes()
+            .map(|b| {
+                match b {
+                    b'(' => depth += 1,
+                    b')' => depth -= 1,
+                    _ => {}
+                }
+                depth > 0
+            })
+            .collect()
+    };
     let statements = {
         let mut out: Vec<(usize, usize)> = vec![];
         let (mut at, mut open) = (0usize, 0i32);
@@ -2173,7 +2190,9 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
         //
         // Assignment targets only: a name being read might be someone else's,
         // and there is nothing for the reader of this file to act on.
-        if let Some(m) = re!(r"^\s*(\.?[A-Za-z][A-Za-z0-9_.]*)\s*::?(?:[^:=]|$)").captures(line) {
+        if let Some(m) = re!(r"^\s*(\.?[A-Za-z][A-Za-z0-9_.]*)\s*::?(?:[^:=]|$)").captures(line)
+            && !in_parens[offset + m.get(1).unwrap().start()]
+        {
             let target = m.get(1).unwrap();
             let text = target.as_str();
             if text.contains('_') {

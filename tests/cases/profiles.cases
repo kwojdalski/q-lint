@@ -141,3 +141,10 @@ r:stop g[1]/0
 f:{x}
 h:{[X] f X@\:}
 
+=== clean profile: uqf | a lambda applied on the spot assigns its result, not a function
+schemas:{x!x} `a`b
+r:schemas `a
+
+=== QP006 profile: uqf | while a projection is still a function
+turn:{[g;n] g+n}[;5]
+r:turn 1
