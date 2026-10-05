@@ -3,7 +3,7 @@
   "displayName": "q-lint",
   "description": "Diagnostics, Quick Fixes and syntax colouring for q/kdb+ source, from the q-lint language server. An early version, open source, that already catches the most common problems.",
   "icon": "icon.png",
-  "version": "0.14.3",
+  "version": "0.14.4",
   "publisher": "wojdalski",
   "license": "MIT",
   "engines": {
