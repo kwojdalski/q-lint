@@ -468,9 +468,13 @@ fn mixed_infix(line: &str) -> bool {
                     prev,
                     b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b')' | b']' | b'.'
                 );
+                // After a space and before a digit, `-` is the sign of a
+                // literal: `2*3 -1` is `6 -2`, a vector and no subtraction.
+                let spaced = i > 0 && b[i - 1].is_ascii_whitespace();
+                let digit = |at: usize| b.get(at).is_some_and(u8::is_ascii_digit);
                 let introduces = c == b'-'
-                    && prev == b' '
-                    && b.get(i + 1).is_some_and(|&n| !n.is_ascii_whitespace());
+                    && spaced
+                    && (digit(i + 1) || b.get(i + 1) == Some(&b'.') && digit(i + 2));
                 if operand && !introduces {
                     add = true;
                 }
@@ -808,7 +812,13 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
         out.push(finding);
     }
     out.extend(intrinsics::check(path, source, code, &v.comments));
-    out.extend(families::check(path, source, code, &v.comments));
+    out.extend(families::check(
+        path,
+        source,
+        code,
+        &v.comments,
+        &v.foreign_offsets,
+    ));
     out.extend(refusals::check(path, source, code, &v.comments));
     if let Some(at) = v.open_block {
         out.push(Finding::at(
@@ -1941,6 +1951,14 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
             continue;
         }
         let at = m.get(0).unwrap().end() + brace;
+        // The lambda has to be the value assigned. In KX ml's
+        // `xv.pcSplit:xv.i.applyIdx{[pc;n;features;target] ...}` it is the
+        // argument of a projection, and the block documents what that
+        // projection takes - `function` among it.
+        let lead = &code[code[..at].rfind('\n').map_or(0, |p| p + 1)..at];
+        if !re!(r"^\s*(?:\.?[A-Za-z][A-Za-z0-9_.]*\s*::?)?\s*$").is_match(lead) {
+            continue;
+        }
         let sig = signature(code, source, at);
         if !sig.named || sig.slots.is_empty() {
             continue;
@@ -2044,6 +2062,11 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
         );
     }
     let mut namespace = false;
+    // A KDB-X module - a file loaded with `use`, which says so by assigning
+    // what it exports - runs in a namespace of its own, so a dotted name in
+    // it is a sub-namespace as it would be under `\d`: KX's Kafka module
+    // defines `i.checkDict` and reads it back as `i.checkDict`.
+    let module = re!(r"\bexport\s*:\s*\(").is_match(code);
     let mut depth = 0i32;
     let mut offset = 0;
     // Statements, not lines. q continues a line onto the next when that one
@@ -2206,7 +2229,11 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
             // `i.helper` there is `.ns.i.helper`, which q creates properly -
             // and the guidance is about the name at root that merely looks
             // like one.
-            if !namespace && text.trim_start_matches('.').contains('.') && !text.starts_with('.') {
+            if !namespace
+                && !module
+                && text.trim_start_matches('.').contains('.')
+                && !text.starts_with('.')
+            {
                 add(
                     offset + target.start(),
                     "QS002",
@@ -2525,20 +2552,6 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
             let core = core.strip_suffix('*').unwrap_or(core);
             if core.contains('*') {
                 add(offset, "QB002", format!("like {pat:?}"));
-            }
-        }
-        for m in
-            re!(r#"\s*"[^"]*"\s+sv\s+string\s+[A-Za-z_][A-Za-z0-9_.]*\s*,"#).find_iter(literals)
-        {
-            // `string procs,()` and `procs,:()` are how a list is made of
-            // what may be an atom: the join is meant to sit inside `string`.
-            let joined = literals[m.end()..].trim_start();
-            if joined.starts_with("()") || joined.starts_with(":()") {
-                continue;
-            }
-            if !literals[..m.start()].ends_with('(') || m.as_str().starts_with(char::is_whitespace)
-            {
-                add(offset, "QB003", m.as_str().trim().into());
             }
         }
         offset += line.len();

@@ -7,6 +7,11 @@ some_name:1
 === QS002 profile: styleq | a dot that is not a namespace
 myspace.myvar:1
 
+=== clean profile: styleq | a KDB-X module runs in its own namespace, so a dotted name is a sub-namespace
+i.checkDict:{[d] d}
+check:{[d] i.checkDict d}
+export:([check])
+
 === clean profile: styleq | a leading dot is a namespace, which is the spelling the guidance asks for
 .myspace.myvar:1
 
@@ -38,6 +43,13 @@ r:count (1_"abc")
 /// Reads a folder.
 //@param folderRoot The root.
 readFolder:{[folderRoots] folderRoots}
+
+=== clean profile: styleq | the block documents a projection, which takes more than the lambda inside it
+apply:{[idx;n;function] function idx n}
+// @param pc Validation share
+// @param n Repetitions
+// @param function Applied to each split
+split:apply{[pc;n] n#pc}
 
 === clean profile: styleq | documentation that matches
 /// Adds two numbers.
@@ -94,6 +106,21 @@ lastPrice:0n
 === QS010 QS001 profile: styleq | one name joining words both ways
 load_fooBar:1
 
+=== clean profile: styleq | PascalCase functions beside camelCase data tell kinds apart
+SessionUp:{[srv] serverIp:first srv; serverIp}
+SessionDown:{[srv] lastSeen:.z.p; lastSeen}
+Update:{[msg] msg}
+
+=== QS010 profile: styleq | in that split, a camelCase function is still the odd one out
+SessionUp:{[srv] serverIp:first srv; serverIp}
+SessionDown:{[srv] lastSeen:.z.p; lastSeen}
+checkDict:{[d] d}
+
+=== QS010 profile: styleq | and where camelCase functions are most, the PascalCase one is
+SessionUp:{[srv] serverIp:first srv; serverIp}
+checkDict:{[d] lastSeen:d; lastSeen}
+readAll:{[d] d}
+
 === QS010 profile: styleq | a PascalCase name among camelCase ones
 tradeCount:0
 lastPrice:0n
@@ -119,6 +146,10 @@ tradeCount:0
 === QS010 profile: styleq | a function spelled in capitals borrows the constants' convention
 GETDATA:{x}
 MAXROWS:10
+
+=== clean profile: styleq | a lambda applied on the spot assigns its result, a constant
+FMTS:"SJF"
+SYMFMTS:{x[where not x="S"]:" ";x}FMTS
 
 === QS010 profile: styleq | a file written in Hungarian notation, and one name that is not
 strName:"a"

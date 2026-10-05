@@ -28,6 +28,12 @@ r:(2*3)+4
 === clean profile: uqf | a single operator family is unambiguous
 r:2*3*4
 
+=== clean profile: uqf | a minus sign after a space is a negative literal, not subtraction
+a:"p"$1234567890123456j*2 3 0N 0w -0w 5 -.5
+
+=== QP005 profile: uqf | a minus between operands, spaced or not, is subtraction
+r:2*b - 1
+
 === clean | dynamic evaluation turns checks off without that being a defect
 v:value "x"
 
@@ -148,3 +154,22 @@ r:schemas `a
 === QP006 profile: uqf | while a projection is still a function
 turn:{[g;n] g+n}[;5]
 r:turn 1
+
+=== clean profile: uqf | a name reassigned to a dictionary is indexed after that, not called
+d2:{[x] x+1}
+d2:`a`b!1 2
+r:d2 `a
+
+=== QP006 profile: uqf | and called before it, while it still holds the lambda
+d2:{[x] x+1}
+r:d2 1
+d2:`a`b!1 2
+
+=== QP006 profile: uqf | inside a lambda the root assignment counts, not one a lambda might make
+.app.lg:{[x] -1 x}
+f:{[x] n:x; .app.lg "start"; if[n; .app.lg:"oops"]}
+
+=== QP006 profile: uqf | a composition naming the function is not an assignment to it
+enorm2:{x wsum x}
+enorm:sqrt enorm2::
+gini:{1f-enorm2 x}

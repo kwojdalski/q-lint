@@ -593,10 +593,6 @@ early2:{[p] if[p<0;:0]; p*2}
 / expect-next: QB002
 hits:select from trades where sym like "a*b"
 
-/ QB003: `,` binds tighter, so sv receives one joined string.
-/ expect-next: QB003
-path:"/" sv string dir,name
-
 / QB004: a thrown message over 200 literal chars risks truncation.
 / expect-next: QB004
 overlong:'"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"

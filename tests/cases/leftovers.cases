@@ -12,3 +12,15 @@ s:"TODO later"
 
 === clean profile: styleq | a trailing comment after code is not a commented-out line
 f:{x+1} / g:{x} was slower
+
+=== clean profile: styleq | a marker in embedded Python is Python's comment, not q's
+p)class> reader(object):
+ def read(self): #TODO handle streams
+  return 1
+
+=== clean profile: styleq | XXX as a placeholder in a namespace is a name, not a marker
+/ Calling .kdb.XXX forwards the call to a service
+
+=== QL001 profile: styleq | the line after an embedded block is q again
+p)x=1
+/ TODO handle the empty case

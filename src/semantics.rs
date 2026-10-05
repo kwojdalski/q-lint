@@ -1138,7 +1138,10 @@ pub fn check(
     chosen.retain(|&(_, name)| seen.insert(name));
     let mut firsts: Vec<(usize, &str, Convention, bool)> = vec![];
     for &(at, name) in &chosen {
-        let lambda = re!(r"^\s*::?\s*\{").is_match(&code[at + name.len()..]);
+        // `{...}LOADFMTS` applies the lambda and assigns what it returns.
+        let lambda = re!(r"^\s*::?")
+            .find(&code[at + name.len()..])
+            .is_some_and(|m| assigns_lambda(code, at + name.len() + m.end()));
         let word = name.rsplit('.').next().unwrap_or(name);
         // Capitals are the guidelines' spelling for a constant, so a function
         // spelled that way has borrowed the other convention.
@@ -1201,10 +1204,27 @@ pub fn check(
             }
         }
     }
+    // PascalCase for functions and camelCase for data is a convention of its
+    // own - KX's Kafka and Bloomberg interfaces write `SessionStarted:{...}`
+    // beside `serverIp:...` - so where every PascalCase name is a function,
+    // the two spellings are telling kinds apart, not disagreeing.
+    let split = firsts.iter().any(|f| f.2 == Convention::Pascal)
+        && firsts
+            .iter()
+            .filter(|f| f.2 == Convention::Pascal)
+            .all(|f| f.3);
     if let Some((usual, n)) = usual_of(&firsts) {
         for &(at, name, found, lambda) in firsts.iter().filter(|f| f.2 != usual) {
             // Functions carry no type prefix even in Hungarian code.
             if usual == Convention::Hungarian && found == Convention::Camel && lambda {
+                continue;
+            }
+            let kinds = [usual, found];
+            if split
+                && kinds.contains(&Convention::Pascal)
+                && kinds.contains(&Convention::Camel)
+                && (found == Convention::Pascal) == lambda
+            {
                 continue;
             }
             out.push(Finding::at(
@@ -1218,6 +1238,34 @@ pub fn check(
                     usual.label()
                 ),
             ));
+        }
+        // With data in camelCase outnumbering everything, the functions are
+        // still one family among themselves: a camelCase one among PascalCase
+        // ones is the departure.
+        if split && usual == Convention::Camel {
+            let functions = |c| firsts.iter().filter(move |f| f.3 && f.2 == c);
+            let (pascal, camel) = (
+                functions(Convention::Pascal).count(),
+                functions(Convention::Camel).count(),
+            );
+            let (odd, usual, n) = if pascal > camel {
+                (Convention::Camel, Convention::Pascal, pascal)
+            } else {
+                (Convention::Pascal, Convention::Camel, camel)
+            };
+            for &(at, name, ..) in functions(odd).filter(|_| pascal > 0 && camel > 0) {
+                out.push(Finding::at(
+                    path,
+                    raw,
+                    at,
+                    "QS010",
+                    format!(
+                        "`{name}` is {}, but {n} other functions in this file are {}",
+                        odd.label(),
+                        usual.label()
+                    ),
+                ));
+            }
         }
     }
     // A bare value read, including `aa:bb`, can expose a misspelled global.
@@ -1301,11 +1349,39 @@ pub fn check(
             "sv", "uj", "union", "upsert", "vs", "wavg", "within", "wsum", "xasc", "xbar", "xcol",
             "xcols", "xdesc", "xexp", "xgroup", "xkey", "xlog", "xprev", "xrank",
         ];
-        let lambdas: HashSet<&str> = globals
-            .iter()
-            .filter(|(_, assignments)| assignments.iter().any(|&at| assigns_lambda(code, at)))
-            .map(|(name, _)| name.as_str())
-            .collect();
+        // Whether `name` holds a lambda where it is used at `at`. A name can be
+        // assigned more than once - qbists's aoc 02.q makes `d2` a function
+        // and later a dictionary, and `d2 inp` after that is indexing - so it
+        // is the assignment in force that decides: at root the last one
+        // above the use, and inside a lambda, which runs once the file has
+        // loaded, the file's last. Only root assignments count for that: one
+        // inside a lambda happens if and when the lambda runs.
+        let holds_lambda = |name: &str, at: usize, in_lambda: bool| {
+            let Some(assignments) = globals.get(name) else {
+                return false;
+            };
+            // `sqrt enorm2::` composes - psaris's funq defines `enorm` so - and
+            // the `::` with nothing after it assigns nothing.
+            let mut root: Vec<usize> = assignments
+                .iter()
+                .copied()
+                .filter(|&a| scope_at(&scopes, a).is_none())
+                .filter(|&a| {
+                    let value = code[a..].trim_start_matches([' ', '\t']);
+                    !(value.is_empty() || value.starts_with([';', '\n', '\r', ')', ']', '}']))
+                })
+                .collect();
+            root.sort_unstable();
+            let live = if in_lambda {
+                root.last()
+            } else {
+                root.iter().rev().find(|&&a| a < at)
+            };
+            match live {
+                Some(&a) => assigns_lambda(code, a),
+                None => assignments.iter().any(|&a| assigns_lambda(code, a)),
+            }
+        };
         // Two passes, because the two views disagree about what an argument
         // looks like. Most arguments are visible in the masked code; a string
         // literal is not, since `code` blanks it whole - `lg "text"` has only
@@ -1401,8 +1477,8 @@ pub fn check(
                 continue;
             }
             let namespace = scope.map_or_else(|| ns_at(at), |i| scopes[i].namespace.as_str());
-            if !lambdas.contains(qualify(bare, namespace).as_str())
-                && !lambdas.contains(format!(".{bare}").as_str())
+            if !holds_lambda(&qualify(bare, namespace), at, scope.is_some())
+                && !holds_lambda(&format!(".{bare}"), at, scope.is_some())
             {
                 continue;
             }

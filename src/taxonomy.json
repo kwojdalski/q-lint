@@ -308,13 +308,6 @@
     "scope": "builtin"
   },
   {
-    "code": "QB003",
-    "name": "unparenthesised-sv",
-    "category": "correctness",
-    "summary": "Concatenation is consumed by sv",
-    "scope": "style"
-  },
-  {
     "code": "QB004",
     "name": "overlong-throw",
     "category": "correctness",

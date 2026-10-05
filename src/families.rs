@@ -4,12 +4,18 @@
 //! it - so each has to earn its place by being right, not by being an error.
 use crate::{Finding, argument_end, argument_start, boundary, matching, slots};
 
-pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Finding> {
+pub fn check(
+    path: &str,
+    source: &str,
+    code: &str,
+    comments: &str,
+    foreign: &[usize],
+) -> Vec<Finding> {
     let mut out = vec![];
     query_injection(path, source, code, comments, &mut out);
     credentials(path, source, code, comments, &mut out);
     simplifications(path, source, code, &mut out);
-    leftovers(path, source, comments, &mut out);
+    leftovers(path, source, comments, foreign, &mut out);
     duplicate_columns(path, source, code, &mut out);
     unreachable(path, source, code, &mut out);
     out
@@ -199,13 +205,20 @@ fn simplifications(path: &str, source: &str, code: &str, out: &mut Vec<Finding>)
 /// A third was tried and dropped: `0N!` mid-expression inside a lambda. On
 /// the corpus six of its seven findings were progress output written on
 /// purpose - a downloader printing its URL, a loader printing its file.
-fn leftovers(path: &str, source: &str, comments: &str, out: &mut Vec<Finding>) {
+fn leftovers(path: &str, source: &str, comments: &str, foreign: &[usize], out: &mut Vec<Finding>) {
     // A comment is blank in both masked views; a string is blank only in
     // `code`. So a byte blank in `comments` but not in the source is comment.
-    let in_comment = |at: usize| comments.as_bytes()[at] == b' ' && source.as_bytes()[at] != b' ';
+    // A `p)` line and its indented continuation are blank in both too, and
+    // are another language's: a `#TODO` in embedded Python is not q's.
+    let in_comment = |at: usize| {
+        let line = source[..at].rfind('\n').map_or(0, |n| n + 1);
+        comments.as_bytes()[at] == b' ' && source.as_bytes()[at] != b' ' && !foreign.contains(&line)
+    };
     // QL001: a marker saying the work is unfinished.
     for m in re!(r"\b(TODO|FIXME|XXX|HACK)\b").find_iter(source) {
-        if in_comment(m.start()) {
+        // `.kdb.XXX` or `` `XXX `` is a placeholder name, not a marker.
+        let named = source[..m.start()].ends_with(['.', '`']);
+        if in_comment(m.start()) && !named {
             out.push(Finding::at(
                 path,
                 source,

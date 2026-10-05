@@ -10,11 +10,8 @@ select from t where sym like "a*b"
 === clean | a trailing wildcard is supported
 select from t where sym like "ab*"
 
-=== QB003 | concatenation swallowed by sv
+=== clean | QB003 withdrawn: string of two joined symbols is two strings, which sv joins
 p:"/" sv string a,b
-
-=== clean | parenthesised, so sv sees both parts
-p:"/" sv (string a),string b
 
 === clean | sv over a list built elsewhere
 p:"/" sv parts
@@ -216,7 +213,7 @@ f:{[x] .lg.o "done";}
 === clean | the where phrase belongs to the inner select
 r:delete ok from select from t where not ok
 
-=== QB003 | a statement continued onto an indented line is still one statement
+=== clean | QB003 withdrawn: the continued form is the same path join
 p:"/" sv string
   dir,name
 
