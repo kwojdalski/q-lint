@@ -272,6 +272,57 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ("QT008", "r:til 5.0", "r:til 5", true),
         ("QT008", "r:til 3f", "r:til 3", true),
         ("QT025", "f:{'5}", "f:{'\"5\"}", true),
+        (
+            "QF005",
+            "f:{[a] {a+x} each 1 2}",
+            "f:{[a] {[a;x] a+x}[a] each 1 2}",
+            false,
+        ),
+        (
+            "QF005",
+            "f:{[a] {[x;y] a+y}'[1 2;3 4]}",
+            "f:{[a] {[a;x;y] a+y}[a]'[1 2;3 4]}",
+            false,
+        ),
+        (
+            "QF005",
+            "f:{[a] {a+y}'[1 2;3 4]}",
+            "f:{[a] {[a;x;y] a+y}[a]'[1 2;3 4]}",
+            false,
+        ),
+        (
+            "QF005",
+            "f:{[a] g:{a}; g 1}",
+            "f:{[a] g:{[a;x] a}[a]; g 1}",
+            false,
+        ),
+        ("QA007", "f:{[c] $[c;1;2;]}", "f:{[c] $[c;1;2]}", false),
+        ("QA006", "f:{[c] $[c;1]}", "f:{[c] if[c;1]}", false),
+        (
+            "QT028",
+            "t:([]a:1 2);r:select from t where a:1",
+            "t:([]a:1 2);r:select from t where a=1",
+            true,
+        ),
+        ("QT014", "r:2.0 rotate 1 2 3", "r:2 rotate 1 2 3", true),
+        ("QT017", "r:3f mavg 1 2 3", "r:3 mavg 1 2 3", true),
+        ("QB014", "r:10/2", "r:10%2", false),
+        ("QB017", "a:1\na:a\nb:2", "a:1\nb:2", false),
+        ("QB017", "a:1;a:a;b:2", "a:1;b:2", false),
+        ("QP002", "r:`datetime$x", "r:`timestamp$x", false),
+        ("QP002", "r:2026.01.01T12:00", "r:2026.01.01D12:00", false),
+        (
+            "QF001",
+            "f:{[count] count+{count x}[count]}",
+            "f:{[countArg] countArg+{count x}[countArg]}",
+            false,
+        ),
+        (
+            "QF020",
+            "t:([]price:1 2);r:select prce from t",
+            "t:([]price:1 2);r:select price from t",
+            false,
+        ),
     ];
     for (code, source, expected, safe) in cases {
         let finding = lint(source, "probe.q", Profile::Uqf)
@@ -311,6 +362,8 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
         ("QR004", "r:count {x+1}' b"),       // `{x+1}'` infix
         ("QF010", "f:{[a;b] x+a}"),          // which parameter?
         ("QT008", "r:til 2.5"),              // no long it spells
+        ("QF020", "t:([]ab:1 2;ac:3 4);r:select a from t"), // two equally close
+        ("QA007", "f:{[c] $[c;1;2;3]}"),     // no empty slot
     ] {
         for finding in lint(source, "probe.q", Profile::Uqf)
             .iter()

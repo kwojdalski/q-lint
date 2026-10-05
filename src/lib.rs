@@ -817,6 +817,238 @@ pub fn fix_for(finding: &Finding, source: &str) -> Option<Fix> {
                 true,
             )
         }
+        // A nested lambda cannot see its parent's locals; the repair q
+        // programmers write is to pass the local in: `{a+x} each l` inside
+        // `{[a] ...}` becomes `{[a;x] a+x}[a] each l`. Verified in q 5. Not
+        // unattended: where a global of that name exists the old code reads
+        // it, and the new one reads the local.
+        "QF005" => {
+            let name = re!(r"'([A-Za-z][A-Za-z0-9_]*)'").captures(&finding.detail)?[1].to_string();
+            let v = views(source);
+            let brace = enclosing_brace(&v.code, start)?;
+            let close = matching(&v.code, brace, b'{', b'}')?;
+            let sig = signature(&v.code, source, brace);
+            let body_text = &v.code[sig.body..close - 1];
+            let mut header = String::new();
+            if sig.named {
+                header.push_str(&format!("{{[{name};"));
+                header.push_str(&source[brace + 2..sig.body]);
+            } else {
+                // Implicit arguments become explicit ones, up to the highest
+                // the body reads - and at least `x`, or the projection would
+                // fill every slot and run on the spot.
+                let used = |p: &str| {
+                    re!(r"[A-Za-z0-9_.`]?\b[xyz]\b")
+                        .find_iter(&top_level(body_text))
+                        .any(|m| m.as_str().ends_with(p) && m.as_str().len() == 1)
+                };
+                let params = if used("z") {
+                    "x;y;z"
+                } else if used("y") {
+                    "x;y"
+                } else {
+                    "x"
+                };
+                header.push_str(&format!("{{[{name};{params}] "));
+            }
+            let rest = &source[sig.body..close];
+            begin = brace;
+            (
+                &source[brace..close],
+                format!("{header}{rest}[{name}]").into(),
+                format!("Pass `{name}` in as a parameter").into(),
+                false,
+            )
+        }
+        // `$[c;a;b;]`: the trailing `;` makes `b` a test. Dropping it gives
+        // the if-else the layout says.
+        "QA007" => {
+            let v = views(source);
+            if !v.code.get(start..)?.starts_with("$[") {
+                return None;
+            }
+            let close = matching(&v.code, start + 1, b'[', b']')?;
+            let inner = &v.code[start + 2..close - 1];
+            let last = slots(inner).last().copied()?;
+            if !last.trim().is_empty() {
+                return None;
+            }
+            let semi = start + 2 + inner.len() - last.len() - 1;
+            begin = semi;
+            (";", "".into(), "Remove the trailing `;`".into(), false)
+        }
+        // `$[c;a]` is 'type; `if[c;a]` runs `a` when `c` holds.
+        "QA006" if source.get(start..)?.starts_with("$[") => {
+            ("$[", "if[".into(), "Use `if[...]`".into(), false)
+        }
+        // `where a:1` is 'type; the comparison is `=`.
+        "QT028" => {
+            let m = re!(r"^[A-Za-z][A-Za-z0-9_.]*\s*:").find(source.get(start..)?)?;
+            if source[start + m.end()..].starts_with(':') {
+                return None;
+            }
+            begin = start + m.end() - 1;
+            (":", "=".into(), "Compare with `=`".into(), true)
+        }
+        // `2.0 rotate x` and `3.0 mavg x` are 'type; a float with no fraction
+        // is the long it spells.
+        "QT014" | "QT017" => {
+            let m = re!(r"^(\d+)(?:\.0*[ef]?|[ef])").captures(source.get(start..)?)?;
+            let end = m.get(0)?.end();
+            if !source[start + end..].starts_with([' ', '\t']) {
+                return None;
+            }
+            (
+                m.get(0)?.as_str(),
+                m[1].to_string().into(),
+                format!("Pass the long {}", &m[1]).into(),
+                true,
+            )
+        }
+        // `10/2` is over, not division. Usually `%` was meant; `(+)/(l)` is
+        // what over looks like, so only on request.
+        "QB014" => {
+            let at = start + source.get(start..)?.find('/')?;
+            if at > start + 1 {
+                return None;
+            }
+            begin = at;
+            ("/", "%".into(), "Divide with `%`".into(), false)
+        }
+        // `a:a` does nothing at best. Remove the statement and its `;`, or
+        // the line when it is alone on one.
+        "QB017" => {
+            let m =
+                re!(r"^(\.?[A-Za-z][A-Za-z0-9_.]*)\s*::?\s*(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]*;?")
+                    .captures(source.get(start..)?)?;
+            if m[1] != m[2] {
+                return None;
+            }
+            let whole = m.get(0)?;
+            let line_start = source[..start].rfind('\n').map_or(0, |i| i + 1);
+            let rest = &source[start + whole.end()..];
+            let line_rest = rest.split('\n').next().unwrap_or("");
+            if source[line_start..start].trim().is_empty() && line_rest.trim().is_empty() {
+                let end = start + whole.end() + line_rest.len();
+                let end = (end + 1).min(source.len());
+                begin = line_start;
+                (
+                    &source[line_start..end],
+                    "".into(),
+                    "Remove the self-assignment".into(),
+                    false,
+                )
+            } else {
+                (
+                    whole.as_str(),
+                    "".into(),
+                    "Remove the self-assignment".into(),
+                    false,
+                )
+            }
+        }
+        // The timestamp the convention asks for in place of datetime. A
+        // different type, so only on request.
+        "QP002" => {
+            let v = views(source);
+            let line_end = v.code[start..]
+                .find('\n')
+                .map_or(v.code.len(), |at| start + at);
+            let line = &source[start..line_end];
+            let swaps: [(&regex::Regex, &str); 5] = [
+                (re!(r"`datetime(\s*\$)"), "`timestamp$1"),
+                (re!(r#""z"(\s*\$)"#), "\"p\"$1"),
+                (re!(r"\b15h(\s*\$)"), "12h$1"),
+                (re!(r"(^|[^\w.])(-?0[NW])z\b"), "$1${2}p"),
+                (re!(r"\b(\d{4}\.\d{2}\.\d{2})T(\d)"), "${1}D$2"),
+            ];
+            let (regex, to) = swaps
+                .iter()
+                .filter_map(|(r, to)| r.find(line).map(|m| (m.start(), *r, *to)))
+                .min_by_key(|s| s.0)
+                .map(|(_, r, to)| (r, to))?;
+            let m = regex.find(line)?;
+            begin = start + m.start();
+            (
+                m.as_str(),
+                regex.replace(m.as_str(), to).into_owned().into(),
+                "Use timestamp, not datetime".into(),
+                false,
+            )
+        }
+        // A parameter named for a builtin: rename it, and its reads in this
+        // lambda's own body - a nested lambda cannot see it, so its uses of
+        // the name are the builtin's and stay.
+        "QF001" => {
+            let v = views(source);
+            if !v.code.get(start..)?.starts_with("{[") {
+                return None;
+            }
+            let name =
+                re!(r#""([A-Za-z][A-Za-z0-9_]*)""#).captures(&finding.detail)?[1].to_string();
+            let close = matching(&v.code, start, b'{', b'}')?;
+            let new = format!("{name}Arg");
+            if re!(r"\b[A-Za-z][A-Za-z0-9_]*\b")
+                .find_iter(&v.code[start..close])
+                .any(|w| w.as_str() == new)
+            {
+                return None;
+            }
+            let text = &v.code[start..close];
+            let mut depth = 0i32;
+            let mut out = String::new();
+            let mut at = 0;
+            let bytes = text.as_bytes();
+            for (i, &b) in bytes.iter().enumerate() {
+                match b {
+                    b'{' => depth += 1,
+                    b'}' => depth -= 1,
+                    _ => {}
+                }
+                let word = depth == 1
+                    && text[i..].starts_with(name.as_str())
+                    && (i == 0
+                        || !(bytes[i - 1].is_ascii_alphanumeric()
+                            || b"_.`".contains(&bytes[i - 1])))
+                    && !bytes
+                        .get(i + name.len())
+                        .is_some_and(|c| c.is_ascii_alphanumeric() || *c == b'_');
+                if word && i >= at {
+                    out.push_str(&source[start + at..start + i]);
+                    out.push_str(&new);
+                    at = i + name.len();
+                }
+            }
+            out.push_str(&source[start + at..close]);
+            (
+                &source[start..close],
+                out.into(),
+                format!("Rename `{name}` to `{new}`").into(),
+                false,
+            )
+        }
+        // A column one edit away from one the table has is a typo.
+        "QF020" => {
+            let m = re!(r"^`([^`]+)` is not a column of `[^`]+` \(([^)]*)\)")
+                .captures(&finding.detail)?;
+            let wrong = &m[1];
+            let close: Vec<&str> = m[2]
+                .split(", ")
+                .filter(|c| edit_distance(c, wrong) == 1)
+                .collect();
+            let [right] = close[..] else {
+                return None;
+            };
+            if !source.get(start..)?.starts_with(wrong) {
+                return None;
+            }
+            (
+                &source[start..start + wrong.len()],
+                right.to_string().into(),
+                format!("Did you mean `{right}`?").into(),
+                false,
+            )
+        }
         "QE005" if start == 0 && source.starts_with('\u{feff}') => {
             ("\u{feff}", "".into(), "Remove byte-order mark".into(), true)
         }
@@ -1003,6 +1235,60 @@ fn blank(b: &mut [u8]) {
 }
 /// A filter phrase with parenthesised groups blanked out. The questions the
 /// filter rules ask - which operators sit beside which - are about the
+/// The `{` of the innermost lambda around `at`, in masked code.
+fn enclosing_brace(code: &str, at: usize) -> Option<usize> {
+    let mut depth = 0i32;
+    for (i, b) in code.as_bytes()[..at].iter().enumerate().rev() {
+        match b {
+            b'}' => depth += 1,
+            b'{' if depth == 0 => return Some(i),
+            b'{' => depth -= 1,
+            _ => {}
+        }
+    }
+    None
+}
+/// A lambda body with any lambda nested in it blanked, so a name read there
+/// is not taken for one read here. Same length as `body`.
+fn top_level(body: &str) -> String {
+    let mut depth = 0i32;
+    let mut out = body.as_bytes().to_vec();
+    for byte in &mut out {
+        let nested = match *byte {
+            b'{' => {
+                depth += 1;
+                true
+            }
+            b'}' => {
+                depth -= 1;
+                true
+            }
+            _ => depth > 0,
+        };
+        if nested {
+            *byte = b' ';
+        }
+    }
+    // Whole characters are blanked or kept, so this stays UTF-8.
+    String::from_utf8(out).unwrap_or_default()
+}
+/// Levenshtein distance, for a name one typo away from another.
+fn edit_distance(a: &str, b: &str) -> usize {
+    let b: Vec<char> = b.chars().collect();
+    let mut row: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.chars().enumerate() {
+        let mut prev = row[0];
+        row[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let next = (prev + usize::from(ca != *cb))
+                .min(row[j] + 1)
+                .min(row[j + 1] + 1);
+            prev = row[j + 1];
+            row[j + 1] = next;
+        }
+    }
+    row[b.len()]
+}
 /// The comparisons in a where phrase that an `and`/`or` to their right
 /// swallows, as byte ranges into `flat` - a phrase `flat_filter` has
 /// flattened. Each is an operand left of an `and`/`or` in its clause; q reads
