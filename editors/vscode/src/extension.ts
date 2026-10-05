@@ -69,6 +69,11 @@ export async function activate(context: ExtensionContext): Promise<void> {
     // The output channel the server's own trace goes to, so a user debugging
     // the integration has one place to look.
     outputChannelName: "q-lint",
+    // The server indexes every `.q` file in the workspace, so a name one file
+    // defines is not undefined in another. It hears about the files the
+    // editor has open; this tells it about the rest changing on disk - a
+    // pull, a checkout, another tool writing.
+    synchronize: { fileEvents: workspace.createFileSystemWatcher("**/*.q") },
   };
 
   let started: unknown;

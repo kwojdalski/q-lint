@@ -710,3 +710,80 @@ fn a_config_the_server_cannot_read_does_not_stop_it() {
     assert_eq!(server.diagnostics_for("file:///tmp/still.q").len(), 1);
     assert_eq!(server.shutdown_and_exit(), 0);
 }
+
+/// Initialize with a workspace folder, as an editor that opened `dir` does.
+fn start_with_workspace(dir: &std::path::Path) -> Server {
+    let mut server = Server::start();
+    let uri = format!("file://{}", dir.display());
+    server.send(json!({"jsonrpc":"2.0","id":1,"method":"initialize",
+        "params":{"capabilities":{},"workspaceFolders":[{"uri":uri,"name":"ws"}]}}));
+    server.receive();
+    server.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+    server
+}
+
+fn codes_of(diagnostics: &[Value]) -> Vec<String> {
+    diagnostics
+        .iter()
+        .map(|d| d["code"].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[test]
+fn a_name_another_workspace_file_defines_is_not_undefined() {
+    // lib.q is on disk and never opened; the server reads it at startup.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("lib.q"), "cfg:5\nhelper:{x+1}\n").unwrap();
+    let mut server = start_with_workspace(dir.path());
+    let app = format!("file://{}/app.q", dir.path().display());
+    server.open(&app, "n:cfg\nr:helper[2]\n");
+    let found = codes_of(&server.diagnostics_for(&app));
+    assert!(!found.contains(&"QF018".to_string()), "{found:?}");
+    // And the other file's function is coloured as one at its call site.
+    server.send(
+        json!({"jsonrpc":"2.0","id":40,"method":"textDocument/semanticTokens/full",
+        "params":{"textDocument":{"uri":app}}}),
+    );
+    let reply = server.receive();
+    // `helper` on line 1 at column 2, length 6, type 0 (function).
+    assert_eq!(reply["result"]["data"], json!([1, 2, 6, 0, 0]));
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn editing_one_files_definitions_relints_the_others() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = start_with_workspace(dir.path());
+    let lib = format!("file://{}/lib.q", dir.path().display());
+    let app = format!("file://{}/app.q", dir.path().display());
+    server.open(&lib, "cfg:5\n");
+    server.diagnostics_for(&lib);
+    server.open(&app, "n:cfg\n");
+    assert!(!codes_of(&server.diagnostics_for(&app)).contains(&"QF018".to_string()));
+    // Rename the definition in the open lib.q buffer: app.q's read of cfg is
+    // now undefined, and the server says so without app.q being touched.
+    server.send(json!({"jsonrpc":"2.0","method":"textDocument/didChange",
+        "params":{"textDocument":{"uri":lib,"version":2},"contentChanges":[{"text":"config:5\n"}]}}));
+    server.diagnostics_for(&lib);
+    assert!(codes_of(&server.diagnostics_for(&app)).contains(&"QF018".to_string()));
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn a_file_changed_outside_the_editor_is_read_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let lib_path = dir.path().join("lib.q");
+    std::fs::write(&lib_path, "other:1\n").unwrap();
+    let mut server = start_with_workspace(dir.path());
+    let app = format!("file://{}/app.q", dir.path().display());
+    server.open(&app, "n:cfg\n");
+    assert!(codes_of(&server.diagnostics_for(&app)).contains(&"QF018".to_string()));
+    // A pull brings cfg in; the editor's watcher reports the change.
+    std::fs::write(&lib_path, "cfg:5\n").unwrap();
+    server.send(
+        json!({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles",
+        "params":{"changes":[{"uri":format!("file://{}", lib_path.display()),"type":2}]}}),
+    );
+    assert!(!codes_of(&server.diagnostics_for(&app)).contains(&"QF018".to_string()));
+    assert_eq!(server.shutdown_and_exit(), 0);
+}

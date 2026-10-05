@@ -40,8 +40,10 @@ and everything after a closing `\`, and `p)` lines as Python.
 On top of that the server sends semantic tokens, the layer Pylance adds for
 Python: a function this file defines is coloured as one wherever it is
 called, not only where it is assigned, and a parameter keeps its colour where
-the body reads it. A function defined in another file is not known here.
-Unused parameters and locals are faded.
+the body reads it. The server reads every `.q` file in the workspace - reads,
+never runs - so a function another file defines is coloured too, and a name
+another file defines is not reported as undefined. Unused parameters and
+locals are faded.
 
 The grammar is generated, builtins and all, from the name list the rules use:
 

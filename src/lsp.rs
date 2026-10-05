@@ -26,8 +26,14 @@
 //! initialize/initialized, didOpen/didChange/didSave/didClose, shutdown/exit,
 //! diagnostics pushed with textDocument/publishDiagnostics, quick fixes
 //! requested with textDocument/codeAction, and semantic tokens - the colour
-//! of a function this file defines at the places it is called, and of a
-//! parameter where its body reads it - with textDocument/semanticTokens/full.
+//! of a function at the places it is called, and of a parameter where its
+//! body reads it - with textDocument/semanticTokens/full.
+//!
+//! A workspace index: every `.q` file under the workspace folders is read at
+//! startup - never run - for the global names it defines, and kept current
+//! from open buffers, closes, and workspace/didChangeWatchedFiles. A name
+//! another file defines is not undefined here, a name two files assign is not
+//! tracked by value, and another file's function is coloured as one.
 //!
 //! Not here: completion, hover, go-to-definition, formatting. Those need a
 //! resolver and a symbol table this crate does not have - it reads source text
@@ -36,7 +42,9 @@
 //! than not claiming them: an editor that is told a server provides completion
 //! stops offering its own word-based fallback.
 use crate::jsonrpc::{receive, send};
-use q_lint_rs::{Finding, Profile, TokenKind, fix_for, lint, semantic_tokens};
+use q_lint_rs::{
+    FileIndex, Finding, Profile, TokenKind, Workspace, fix_for, index, lint_in, semantic_tokens_in,
+};
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
@@ -56,6 +64,114 @@ const INVALID_REQUEST: i64 = -32600;
 /// didOpen until didClose, so nothing here reads from disk.
 type Documents = HashMap<String, String>;
 
+/// What every `.q` file in the workspace defines, so a name another file
+/// defines is not undefined in this one and another file's function is
+/// coloured as one. Files are read, never run - the property this server
+/// exists to keep.
+///
+/// The editor's buffer wins over the disk for an open file; a closed one is
+/// read back from disk, and a file changed outside the editor arrives as a
+/// `workspace/didChangeWatchedFiles` notification.
+#[derive(Default)]
+struct Index {
+    files: HashMap<String, FileIndex>,
+    ws: Workspace,
+}
+
+/// Directories a workspace scan does not enter: version control, build
+/// output and dependency trees hold no q the user is writing.
+const SKIPPED: [&str; 5] = ["node_modules", "target", "__pycache__", "venv", "dist"];
+/// A bound on the scan, so a workspace opened at `/` cannot stall the server.
+const MAX_FILES: usize = 20_000;
+const MAX_BYTES: u64 = 4 << 20;
+
+impl Index {
+    /// Record what `path` defines. Whether it changed is what tells the
+    /// caller other open files need linting again.
+    fn set(&mut self, path: &str, file: FileIndex) -> bool {
+        if self.files.get(path) == Some(&file) {
+            return false;
+        }
+        if let Some(old) = self.files.remove(path) {
+            self.ws.remove(&old);
+        }
+        self.ws.add(&file);
+        self.files.insert(path.to_string(), file);
+        true
+    }
+
+    fn remove(&mut self, path: &str) -> bool {
+        match self.files.remove(path) {
+            Some(old) => {
+                self.ws.remove(&old);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Read `path` from disk, or forget it when it is gone or unreadable.
+    fn reload(&mut self, path: &str) -> bool {
+        match std::fs::read(path) {
+            Ok(bytes) if is_q_path(path) => self.set(path, index(&String::from_utf8_lossy(&bytes))),
+            _ => self.remove(path),
+        }
+    }
+
+    /// Every `.q` file under the workspace folders.
+    fn scan(&mut self, roots: &[String]) {
+        let mut stack: Vec<std::path::PathBuf> = roots.iter().map(Into::into).collect();
+        let mut seen = 0;
+        while let Some(dir) = stack.pop() {
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let Ok(kind) = entry.file_type() else {
+                    continue;
+                };
+                if kind.is_dir() {
+                    if !name.starts_with('.') && !SKIPPED.contains(&name.as_str()) {
+                        stack.push(path);
+                    }
+                } else if kind.is_file()
+                    && is_q_path(&name)
+                    && entry.metadata().is_ok_and(|m| m.len() <= MAX_BYTES)
+                {
+                    self.reload(&path.to_string_lossy());
+                    seen += 1;
+                    if seen >= MAX_FILES {
+                        return;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The folders an `initialize` request names, as filesystem paths: its
+/// `workspaceFolders`, or the older single `rootUri`.
+fn workspace_roots(params: &Value) -> Vec<String> {
+    let mut roots: Vec<String> = params["workspaceFolders"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|f| f["uri"].as_str())
+        .filter(|u| u.starts_with("file://"))
+        .map(path_of)
+        .collect();
+    if roots.is_empty()
+        && let Some(root) = params["rootUri"]
+            .as_str()
+            .filter(|u| u.starts_with("file://"))
+    {
+        roots.push(path_of(root));
+    }
+    roots
+}
+
 pub fn serve(
     reader: &mut impl BufRead,
     writer: &mut impl Write,
@@ -63,6 +179,8 @@ pub fn serve(
     ignore: &[String],
 ) -> Result<u8, String> {
     let mut docs: Documents = HashMap::new();
+    let mut idx = Index::default();
+    let mut roots: Vec<String> = vec![];
     let mut shutdown_requested = false;
     loop {
         let Some(message) = receive(reader)? else {
@@ -76,7 +194,18 @@ pub fn serve(
         let params = message.get("params").cloned().unwrap_or(Value::Null);
 
         match (method.as_str(), id) {
-            ("initialize", Some(id)) => send(writer, json!({"id": id, "result": capabilities()}))?,
+            ("initialize", Some(id)) => {
+                roots = workspace_roots(&params);
+                send(writer, json!({"id": id, "result": capabilities()}))?;
+            }
+            // Indexed once the client is ready rather than inside initialize,
+            // so a large workspace does not hold up the handshake.
+            ("initialized", None) => {
+                idx.scan(&roots);
+                for (uri, text) in &docs {
+                    idx.set(&path_of(uri), index(text));
+                }
+            }
             ("shutdown", Some(id)) => {
                 shutdown_requested = true;
                 docs.clear();
@@ -95,7 +224,15 @@ pub fn serve(
             ("textDocument/didOpen", None) => {
                 let uri = uri_of(&params["textDocument"]);
                 let text = params["textDocument"]["text"].as_str().unwrap_or("");
-                publish(writer, &mut docs, uri, text.to_string(), profile, ignore)?;
+                publish(
+                    writer,
+                    &mut docs,
+                    &mut idx,
+                    uri,
+                    text.to_string(),
+                    profile,
+                    ignore,
+                )?;
             }
             ("textDocument/didChange", None) => {
                 let uri = uri_of(&params["textDocument"]);
@@ -107,7 +244,15 @@ pub fn serve(
                     .and_then(|c| c.last())
                     .and_then(|c| c["text"].as_str())
                 {
-                    publish(writer, &mut docs, uri, text.to_string(), profile, ignore)?;
+                    publish(
+                        writer,
+                        &mut docs,
+                        &mut idx,
+                        uri,
+                        text.to_string(),
+                        profile,
+                        ignore,
+                    )?;
                 }
             }
             ("textDocument/didSave", None) => {
@@ -120,12 +265,17 @@ pub fn serve(
                     .map(str::to_string)
                     .or_else(|| docs.get(&uri).cloned());
                 if let Some(text) = text {
-                    publish(writer, &mut docs, uri, text, profile, ignore)?;
+                    publish(writer, &mut docs, &mut idx, uri, text, profile, ignore)?;
                 }
             }
             ("textDocument/didClose", None) => {
                 let uri = uri_of(&params["textDocument"]);
                 docs.remove(&uri);
+                // The buffer is gone, so the disk is the authority again - and
+                // unsaved definitions it held no longer define anything.
+                if idx.reload(&path_of(&uri)) {
+                    relint(writer, &docs, &idx, None, profile, ignore)?;
+                }
                 // An empty list, not silence: diagnostics are owned by the
                 // server until it says otherwise, so a closed file would keep
                 // its squiggles in the problems panel forever.
@@ -140,14 +290,34 @@ pub fn serve(
                 let data = docs
                     .get(&uri)
                     .filter(|_| is_q_path(&path_of(&uri)))
-                    .map_or_else(Vec::new, |text| encode_tokens(text));
+                    .map_or_else(Vec::new, |text| encode_tokens(text, &idx.ws));
                 send(writer, json!({"id": id, "result": {"data": data}}))?;
             }
             ("textDocument/codeAction", Some(id)) => {
-                let actions = code_actions(&params, &docs, profile, ignore);
+                let actions = code_actions(&params, &docs, &idx.ws, profile, ignore);
                 send(writer, json!({"id": id, "result": actions}))?;
             }
 
+            // A `.q` file created, changed or deleted outside the editor - a
+            // pull, a checkout, another tool. An open file's buffer still wins.
+            ("workspace/didChangeWatchedFiles", None) => {
+                let mut changed = false;
+                for change in params["changes"].as_array().into_iter().flatten() {
+                    let uri = uri_of(change);
+                    if docs.contains_key(&uri) {
+                        continue;
+                    }
+                    let path = path_of(&uri);
+                    changed |= if change["type"].as_i64() == Some(3) {
+                        idx.remove(&path)
+                    } else {
+                        idx.reload(&path)
+                    };
+                }
+                if changed {
+                    relint(writer, &docs, &idx, None, profile, ignore)?;
+                }
+            }
             // Every other REQUEST gets an error, because a client waiting on a
             // reply that never arrives looks like a hung server.
             (_, Some(id)) => send(
@@ -181,10 +351,10 @@ const TOKEN_TYPES: [&str; 2] = ["function", "parameter"];
 /// Semantic tokens in the protocol's packed form: five integers per token -
 /// line delta, start delta (from the previous token when on the same line),
 /// length, type and modifiers - with positions in UTF-16 code units.
-fn encode_tokens(source: &str) -> Vec<u32> {
+fn encode_tokens(source: &str, ws: &Workspace) -> Vec<u32> {
     let mut data = vec![];
     let (mut prev_line, mut prev_start) = (0usize, 0usize);
-    for (at, len, kind) in semantic_tokens(source) {
+    for (at, len, kind) in semantic_tokens_in(source, ws) {
         let line = source[..at].matches('\n').count();
         let line_start = source[..at].rfind('\n').map_or(0, |p| p + 1);
         let start = utf16_len(&source[line_start..at]);
@@ -225,6 +395,7 @@ fn uri_of(text_document: &Value) -> String {
 fn code_actions(
     params: &Value,
     docs: &Documents,
+    ws: &Workspace,
     profile: Profile,
     ignore: &[String],
 ) -> Vec<Value> {
@@ -251,7 +422,7 @@ fn code_actions(
         return vec![];
     };
     let mut actions = vec![];
-    for finding in lint(source, &path, profile)
+    for finding in lint_in(source, &path, profile, ws)
         .into_iter()
         .filter(|f| matches!(f.code.as_str(), "QE004" | "QE005" | "QP006"))
         .filter(|f| !ignore.contains(&f.code))
@@ -290,40 +461,74 @@ fn code_actions(
     actions
 }
 
-/// Lint one document and push its diagnostics.
+/// Take a document's new text: index it, lint it, push its diagnostics - and
+/// when what it defines changed, lint the other open documents again, since a
+/// name it now defines (or no longer does) can change their findings.
 fn publish(
     writer: &mut impl Write,
     docs: &mut Documents,
+    idx: &mut Index,
     uri: String,
     text: String,
     profile: Profile,
     ignore: &[String],
 ) -> Result<(), String> {
     let path = path_of(&uri);
+    let changed = is_q_path(&path) && idx.set(&path, index(&text));
+    docs.insert(uri.clone(), text);
+    diagnose(writer, &uri, &docs[&uri], &idx.ws, profile, ignore)?;
+    if changed {
+        relint(writer, docs, idx, Some(&uri), profile, ignore)?;
+    }
+    Ok(())
+}
+
+/// Lint every open document but `except` again.
+fn relint(
+    writer: &mut impl Write,
+    docs: &Documents,
+    idx: &Index,
+    except: Option<&str>,
+    profile: Profile,
+    ignore: &[String],
+) -> Result<(), String> {
+    for (uri, text) in docs {
+        if Some(uri.as_str()) != except {
+            diagnose(writer, uri, text, &idx.ws, profile, ignore)?;
+        }
+    }
+    Ok(())
+}
+
+/// Lint one document and push its diagnostics.
+fn diagnose(
+    writer: &mut impl Write,
+    uri: &str,
+    text: &str,
+    ws: &Workspace,
+    profile: Profile,
+    ignore: &[String],
+) -> Result<(), String> {
+    let path = path_of(uri);
     // Only q source. A client may open anything - a `.k` file, a console
     // buffer, an untitled scratch, a `.txt` - and hand it to whichever server
     // claims the language. The rules here describe q and say nothing true
     // about k or about a REPL transcript, so a document that is not a `.q`
     // file gets an empty diagnostic list: that clears anything stale without
     // asserting something about a file this linter cannot read.
-    let is_q = std::path::Path::new(&path)
-        .extension()
-        .is_some_and(|e| e.eq_ignore_ascii_case("q"));
-    let findings = if is_q {
-        let mut found = lint(&text, &path, profile);
+    let findings = if is_q_path(&path) {
+        let mut found = lint_in(text, &path, profile, ws);
         found.retain(|f| !ignore.contains(&f.code));
         found
     } else {
         vec![]
     };
-    let diagnostics: Vec<Value> = findings.iter().map(|f| diagnostic(f, &text)).collect();
+    let diagnostics: Vec<Value> = findings.iter().map(|f| diagnostic(f, text)).collect();
     send(
         writer,
         json!({"method": "textDocument/publishDiagnostics",
-               "params": {"uri": uri.clone(), "diagnostics": diagnostics}}),
-    )?;
-    docs.insert(uri, text);
-    Ok(())
+               "params": {"uri": uri, "diagnostics": diagnostics}}),
+    )
 }
 
 /// One finding as an LSP diagnostic.
@@ -460,7 +665,7 @@ mod tests {
     #[test]
     fn unused_names_are_tagged_unnecessary_over_exactly_the_name() {
         let source = "f:{[a;b] r:1; a}\n";
-        let found = lint(source, "x.q", Profile::Style);
+        let found = lint_in(source, "x.q", Profile::Style, &Workspace::default());
         let tagged: Vec<Value> = found
             .iter()
             .map(|f| diagnostic(f, source))
@@ -488,7 +693,7 @@ mod tests {
         // inside a lambda whose own parameter is also named f, so that read
         // is the parameter, not the function.
         let source = "f:{[a] a+1}\nr:f[1]\ng:{[f;b] f+b}\n";
-        let data = encode_tokens(source);
+        let data = encode_tokens(source, &Workspace::default());
         let tokens: Vec<&[u32]> = data.chunks(5).collect();
         assert_eq!(
             tokens,
