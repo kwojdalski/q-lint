@@ -451,6 +451,46 @@ fn global_writes(
         .1
         .as_str()
     };
+    // Column names are written the way assignments are, and assign nothing:
+    // `([k:()] handle:())` and `select a:x from t` define no global `handle`
+    // or `a`. TorQ has a table column named handle in two files, and read as
+    // globals those hid a real undefined-name finding in a third. So table
+    // and dictionary literals, and qSQL phrases to the end of their
+    // statement, are blanked before the search; offsets stay where they were.
+    let mut view = code.as_bytes().to_vec();
+    for (open, _) in code.match_indices('(') {
+        if code[open + 1..].trim_start().starts_with('[')
+            && let Some(close) = matching(code, open, b'(', b')')
+        {
+            blank(&mut view[open + 1..close - 1]);
+        }
+    }
+    for m in re!(r"\b(?:select|exec|update|delete)\b").find_iter(code) {
+        // The keyword, not the end of a dotted name: `clust.kmeans.update:{...}`
+        // defines a function KX ml calls, and `\b` alone would blank it.
+        if !boundary(code, m.start()) {
+            continue;
+        }
+        let (mut at, mut depth) = (m.start(), 0i32);
+        let bytes = code.as_bytes();
+        while at < bytes.len() {
+            match bytes[at] {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => {
+                    if depth == 0 {
+                        break;
+                    }
+                    depth -= 1;
+                }
+                b';' if depth == 0 => break,
+                b'\n' if depth == 0 && !code[at + 1..].starts_with([' ', '\t']) => break,
+                _ => {}
+            }
+            at += 1;
+        }
+        blank(&mut view[m.start()..at]);
+    }
+    let code = std::str::from_utf8(&view).unwrap_or(code);
     let mut globals: HashMap<String, Vec<usize>> = HashMap::new();
     for a in assignment.captures_iter(code) {
         let m = a.get(0).unwrap();
@@ -949,10 +989,13 @@ pub fn check(
             {
                 continue;
             }
+            // This file's globals only, not the workspace's: the name is one
+            // the lambda's own signature or an enclosing lambda gives, so the
+            // author meant that - and a global of the same name in another
+            // file makes the read silently wrong, not right. In a monorepo it
+            // is often an unrelated program's.
             if globals.contains_key(&qualify(name, &scope.namespace))
                 || globals.contains_key(&format!(".{name}"))
-                || elsewhere(&qualify(name, &scope.namespace))
-                || elsewhere(&format!(".{name}"))
             {
                 continue;
             }
@@ -994,10 +1037,13 @@ pub fn check(
             {
                 continue;
             }
+            // This file's globals only, not the workspace's: the name is one
+            // the lambda's own signature or an enclosing lambda gives, so the
+            // author meant that - and a global of the same name in another
+            // file makes the read silently wrong, not right. In a monorepo it
+            // is often an unrelated program's.
             if globals.contains_key(&qualify(name, &scope.namespace))
                 || globals.contains_key(&format!(".{name}"))
-                || elsewhere(&qualify(name, &scope.namespace))
-                || elsewhere(&format!(".{name}"))
             {
                 continue;
             }

@@ -27,14 +27,26 @@ import os
 import subprocess
 import sys
 
-BATCH = 200
+def project(path):
+    """The repository a file belongs to: its nearest ancestor holding `.git`.
+    The files one qlinter run is given are each other's workspace, so a run
+    has to be one project - a corpus of many, linted in one go, would let one
+    project's globals define another's names."""
+    d = os.path.dirname(os.path.abspath(path))
+    while d != os.path.dirname(d):
+        if os.path.exists(os.path.join(d, ".git")):
+            return d
+        d = os.path.dirname(d)
+    return os.path.dirname(os.path.abspath(path))
 
 
 def findings(binary, files, profile):
-    """Every finding `binary` reports, batched so argv stays a sane length."""
+    """Every finding `binary` reports, one run per project."""
     out = []
-    for i in range(0, len(files), BATCH):
-        batch = files[i : i + BATCH]
+    groups = collections.defaultdict(list)
+    for f in files:
+        groups[project(f)].append(f)
+    for batch in groups.values():
         result = subprocess.run(
             [binary, "--profile", profile, "--format", "json", *batch],
             capture_output=True,

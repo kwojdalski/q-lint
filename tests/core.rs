@@ -247,3 +247,54 @@ fn semantic_tokens_survive_a_half_typed_file() {
         let _ = q_lint_rs::semantic_tokens(text);
     }
 }
+
+fn codes(findings: &[q_lint_rs::Finding]) -> Vec<&str> {
+    findings.iter().map(|f| f.code.as_str()).collect()
+}
+
+#[test]
+fn a_workspace_defines_names_for_the_files_around_it() {
+    use q_lint_rs::{Workspace, index, lint, lint_in};
+    let app = "n:cfg\n";
+    assert!(codes(&lint(app, "app.q", Profile::Style)).contains(&"QF018"));
+    let mut ws = Workspace::default();
+    ws.add(&index("cfg:5\n"));
+    ws.add(&index(app));
+    assert!(!codes(&lint_in(app, "app.q", Profile::Style, &ws)).contains(&"QF018"));
+}
+
+#[test]
+fn a_name_another_file_also_assigns_is_not_tracked() {
+    use q_lint_rs::{Workspace, index, lint, lint_in};
+    // Alone, a is the atom 1 and indexing it is 'type. With another file
+    // assigning a too, which value a read meets depends on load order.
+    let source = "a:1\nr:a[0]\n";
+    assert!(codes(&lint(source, "a.q", Profile::General)).contains(&"QT022"));
+    let mut ws = Workspace::default();
+    ws.add(&index(source));
+    ws.add(&index("a:1 2 3\n"));
+    assert!(!codes(&lint_in(source, "a.q", Profile::General, &ws)).contains(&"QT022"));
+}
+
+#[test]
+fn an_enclosing_local_is_not_excused_by_another_files_global() {
+    use q_lint_rs::{Workspace, index, lint_in};
+    // The inner lambda reads its enclosing lambda's parameter, which q does
+    // not let it see. A global `tab` in some other program in the same
+    // repository would make the read silently wrong, not right.
+    let source = "f:{[tab] {count tab} 1}\n";
+    let mut ws = Workspace::default();
+    ws.add(&index(source));
+    ws.add(&index("tab:([]a:1 2)\n"));
+    assert!(codes(&lint_in(source, "f.q", Profile::General, &ws)).contains(&"QF005"));
+}
+
+#[test]
+fn table_columns_and_qsql_assignments_define_no_global() {
+    let index =
+        q_lint_rs::index("t:([k:`a`b]handle:1 2)\nu:update c:1 from t\nclust.kmeans.update:{x}\n");
+    assert!(index.defined.contains(".t") && index.defined.contains(".u"));
+    assert!(!index.defined.contains(".handle") && !index.defined.contains(".c"));
+    // A name that ends in a qSQL keyword is still a name.
+    assert!(index.lambdas.contains(".clust.kmeans.update"));
+}

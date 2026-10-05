@@ -2,7 +2,7 @@ mod jsonrpc;
 mod lsp;
 mod qls;
 use clap::Parser;
-use q_lint_rs::{Profile, RULES, fix_for, lint};
+use q_lint_rs::{Profile, RULES, Workspace, fix_for, index, lint_in};
 use std::{
     collections::BTreeSet,
     fs,
@@ -401,11 +401,17 @@ fn run(args: Args) -> Result<u8, String> {
             }
         }
     }
+    // The files linted together are each other's workspace: a name one
+    // defines is not undefined in another. Indexing reads them; nothing runs.
+    let mut workspace = Workspace::default();
+    for (_, source) in &sources {
+        workspace.add(&index(source));
+    }
     if args.fix || args.diff {
         let mut fixed = 0;
         let mut changed_files = 0;
         for (path, source) in &mut sources {
-            let mut edits: Vec<_> = lint(source, path, profile(&args.profile))
+            let mut edits: Vec<_> = lint_in(source, path, profile(&args.profile), &workspace)
                 .iter()
                 .filter(|finding| !ignore.contains(&finding.code))
                 .filter_map(|finding| fix_for(finding, source))
@@ -446,7 +452,7 @@ fn run(args: Args) -> Result<u8, String> {
     let mut findings = vec![];
     if args.backend != "qls" {
         for (path, source) in &sources {
-            findings.extend(lint(source, path, profile(&args.profile)));
+            findings.extend(lint_in(source, path, profile(&args.profile), &workspace));
         }
     }
     if args.backend != "builtin" {
