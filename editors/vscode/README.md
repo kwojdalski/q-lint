@@ -16,8 +16,10 @@ and why there is no completion, hover or go-to-definition.
 
 - **Diagnostics** for what q would refuse, plus likely mistakes and style
   conventions, depending on the profile.
-- **Quick Fixes** for `==`, `!=`, `+=`-style assignments, `&&`/`||` and a
-  leading BOM; under the `uqf` profile, brackets for a call written `f x`.
+- **Quick Fixes** for `==`, `!=`, `+=`-style assignments, `&&`/`||`, a
+  leading BOM, a symbol as a `like` or `ss` pattern, `reverse asc`,
+  `{x} each`, a lambda's trailing `;`, `a -1` and redundant parentheses;
+  under the `uqf` profile, brackets for a call written `f x`.
 - **Syntax colouring** from a TextMate grammar, plus semantic tokens: a
   function is coloured wherever it is called, even when another `.q` file in
   the workspace defines it, and a parameter wherever its body reads it.

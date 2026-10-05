@@ -219,53 +219,213 @@ pub fn fix_for(finding: &Finding, source: &str) -> Option<Fix> {
     }
     let byte = byte.or_else(|| (units == column).then_some(text.len()))?;
     let start = line_start + byte;
-    let (old, replacement, title, batch_safe): (&str, Cow<str>, Cow<str>, bool) =
-        match finding.code.as_str() {
-            "QE004" => match source.get(start..start + 2)? {
-                "==" => ("==", "=".into(), "Replace `==` with `=`".into(), true),
-                "!=" => ("!=", "<>".into(), "Replace `!=` with `<>`".into(), true),
-                "+=" => ("+=", "+:".into(), "Replace `+=` with `+:`".into(), true),
-                "-=" => ("-=", "-:".into(), "Replace `-=` with `-:`".into(), true),
-                "*=" => ("*=", "*:".into(), "Replace `*=` with `*:`".into(), true),
-                "&&" => ("&&", "&".into(), "Replace `&&` with `&`".into(), false),
-                "||" => ("||", "|".into(), "Replace `||` with `|`".into(), false),
-                _ => return None,
-            },
-            "QE005" if start == 0 && source.starts_with('\u{feff}') => {
-                ("\u{feff}", "".into(), "Remove byte-order mark".into(), true)
-            }
-            // `f x` becomes `f[x]`. The name is what the finding points at;
-            // the argument is everything the application swallows, which the
-            // masked code is the only honest place to measure - a `;` inside
-            // a string or a trailing comment must not end it.
-            "QP006" => {
-                let v = views(source);
-                // A qSQL phrase ends an expression at `from`, `by` or
-                // `where`, and those are words this scan does not read:
-                // `update t:d 0 from rows` would become `d[0 from rows]`.
-                // The finding stands; the rewrite is left to a person.
-                let line_end = source[start..]
-                    .find('\n')
-                    .map_or(source.len(), |at| start + at);
-                if re!(r"\b(?:select|exec|update|delete)\b")
-                    .is_match(&v.code[line_start.min(start)..line_end])
-                {
-                    return None;
-                }
-                let name = re!(r"^\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*")
-                    .find(v.code.get(start..)?)?
-                    .as_str();
-                let argument = argument_start(source, &v.comments, start + name.len())?;
-                let end = argument_end(&v.code, &v.comments, source, argument)?;
-                (
-                    source.get(start..end)?,
-                    format!("{name}[{}]", &source[argument..end]).into(),
-                    format!("Call `{name}` with brackets").into(),
-                    true,
-                )
-            }
+    let (old, replacement, title, batch_safe): (&str, Cow<str>, Cow<str>, bool) = match finding
+        .code
+        .as_str()
+    {
+        "QE004" => match source.get(start..start + 2)? {
+            "==" => ("==", "=".into(), "Replace `==` with `=`".into(), true),
+            "!=" => ("!=", "<>".into(), "Replace `!=` with `<>`".into(), true),
+            "+=" => ("+=", "+:".into(), "Replace `+=` with `+:`".into(), true),
+            "-=" => ("-=", "-:".into(), "Replace `-=` with `-:`".into(), true),
+            "*=" => ("*=", "*:".into(), "Replace `*=` with `*:`".into(), true),
+            "&&" => ("&&", "&".into(), "Replace `&&` with `&`".into(), false),
+            "||" => ("||", "|".into(), "Replace `||` with `|`".into(), false),
             _ => return None,
-        };
+        },
+        // like's pattern is a string: `` `a* `` becomes `"a*"`. The old
+        // spelling is 'type or a projection, never a boolean, so no
+        // working program changes.
+        "QB007" => {
+            let lead = re!(r"^like\s*`").find(source.get(start..)?)?;
+            let pattern = start + lead.end();
+            let mut depth = 0;
+            let len = source[pattern..]
+                .char_indices()
+                .find(|&(_, c)| match c {
+                    '[' => {
+                        depth += 1;
+                        false
+                    }
+                    ']' if depth > 0 => {
+                        depth -= 1;
+                        false
+                    }
+                    c => !(c.is_ascii_alphanumeric() || "_.:*?^-".contains(c)),
+                })
+                .map_or(source.len() - pattern, |(at, _)| at);
+            let text = &source[pattern..pattern + len];
+            if text.is_empty() || depth != 0 || source[pattern + len..].starts_with('`') {
+                return None;
+            }
+            (
+                &source[start..pattern + len],
+                format!("{}\"{text}\"", &lead.as_str()[..lead.len() - 1]).into(),
+                format!("Write the pattern as the string \"{text}\"").into(),
+                true,
+            )
+        }
+        // `ss`/`ssr` given one symbol atom: spell it as the string. Only
+        // in the editor - the call now returns a string, and whether the
+        // caller wanted `` `$ `` back on the result is theirs to say.
+        "QT007" => {
+            let v = views(source);
+            let call = re!(
+                    r"^(?:ssr?\s*\[\s*(?:`[A-Za-z0-9_.]*)+\s*[;\]]|ssr?\s*\[[^;\]]*;\s*(?:`[A-Za-z0-9_.]*)+\s*[;\]]|(?:`[A-Za-z0-9_.]*)+\s+ssr?\b)"
+                )
+                .find(v.code.get(start..)?)?;
+            let old = source.get(start..start + call.end())?;
+            let symbols: Vec<_> = re!(r"(?:`[A-Za-z0-9_.]*)+").find_iter(old).collect();
+            let [symbol] = symbols[..] else {
+                return None;
+            };
+            let name = &symbol.as_str()[1..];
+            if name.contains('`') {
+                return None;
+            }
+            (
+                old,
+                format!(
+                    "{}\"{name}\"{}",
+                    &old[..symbol.start()],
+                    &old[symbol.end()..]
+                )
+                .into(),
+                format!("Pass the string \"{name}\"").into(),
+                false,
+            )
+        }
+        // Dropping the `;` returns the value instead of null - a change in
+        // behaviour, so only on request.
+        "QB012" if source.get(start..)?.starts_with(';') => {
+            (";", "".into(), "Return the last expression".into(), false)
+        }
+        // `a -1` read as subtraction. Which was meant is a guess, so only
+        // in the editor.
+        "QB010" => {
+            let m = re!(r"^[A-Za-z][A-Za-z0-9_]*[ \t]+-").find(source.get(start..)?)?;
+            let name = m.as_str()[..m.len() - 1].trim_end();
+            (
+                m.as_str(),
+                format!("{name} - ").into(),
+                format!("Subtract: `{name} - ...`").into(),
+                false,
+            )
+        }
+        // `reverse asc x` is `desc x` for a list or table, but not for a
+        // dictionary with tied values - q 5 orders the tied keys
+        // differently - so only in the editor.
+        "QR001" => {
+            let m = re!(r"^reverse\s+(asc|desc)\b").captures(source.get(start..)?)?;
+            let other = if &m[1] == "asc" { "desc" } else { "asc" };
+            (
+                m.get(0)?.as_str(),
+                other.into(),
+                format!("Replace `reverse {}` with `{other}`", &m[1]).into(),
+                false,
+            )
+        }
+        // `{x} each y` is `y`: q 5 gives the same on a list, a string, a
+        // dictionary and a table. Only where it has an argument -
+        // `g:{x} each` is a function, which dropping the words would end.
+        "QR002" => {
+            let m = re!(r"^\{\s*x\s*\}[ \t]*(?:each\b|')[ \t]*").find(source.get(start..)?)?;
+            let v = views(source);
+            let before = v.code[..start].trim_end();
+            let heads = before.is_empty()
+                || before.ends_with(|c: char| ":;([{,+-*%&|<>=~!^#$?@".contains(c));
+            let rest = v.code[start + m.end()..].trim_start_matches([' ', '\t']);
+            // `count {x} each b` is `count[{x} each b]`, but `count {x}' b`
+            // makes `{x}'` infix with `count` on its left - parse trees
+            // from q 5 - so only `each` may follow a value.
+            if !(heads || m.as_str().contains("each"))
+                || rest.is_empty()
+                || rest.starts_with([';', ')', ']', '}', '[', '\n', '\r', '\'', '/', '\\'])
+            {
+                return None;
+            }
+            (
+                &source[start..start + m.end()],
+                "".into(),
+                "Remove the identity `{x} each`".into(),
+                true,
+            )
+        }
+        // Sorting adds no duplicates, and q 5 agrees on the value and the
+        // sorted attribute both.
+        "QR003" => {
+            let m = re!(r"^distinct\s+asc\s+distinct\b").find(source.get(start..)?)?;
+            (
+                m.as_str(),
+                "asc distinct".into(),
+                "Replace with `asc distinct`".into(),
+                true,
+            )
+        }
+        // `(a)` becomes `a`, where nothing around it reads differently
+        // once the parentheses are gone: `2 (3)` would become the vector
+        // `2 3`, `f -(1)` the application `f -1`, and `(2)3` the number 23.
+        "QS004" => {
+            let m = re!(r"^\(\s*(\.?[A-Za-z][A-Za-z0-9_.]*|-?\d[A-Za-z0-9.]*)\s*\)")
+                .captures(source.get(start..)?)?;
+            let (whole, token) = (m.get(0)?, &m[1]);
+            let numeric = token.starts_with(|c: char| c == '-' || c.is_ascii_digit());
+            let before = &source[..start];
+            let prev = before.trim_end().chars().next_back();
+            let next = source[start + whole.end()..].trim_start_matches([' ', '\t']);
+            let adjacent = source[start + whole.end()..].chars().next();
+            if before.ends_with('-')
+                || (token.starts_with('-') && !prev.is_none_or(|c| "([{;:".contains(c)))
+                || (numeric
+                    && (prev.is_some_and(|c| c.is_ascii_digit())
+                        || next.starts_with(|c: char| c.is_ascii_digit() || c == '-' || c == '.')))
+                || next.starts_with(':')
+            {
+                return None;
+            }
+            let space = adjacent.is_some_and(|c| c.is_ascii_alphanumeric() || "._`\"".contains(c));
+            (
+                whole.as_str(),
+                format!("{token}{}", if space { " " } else { "" }).into(),
+                format!("Remove the parentheses around `{token}`").into(),
+                true,
+            )
+        }
+        "QE005" if start == 0 && source.starts_with('\u{feff}') => {
+            ("\u{feff}", "".into(), "Remove byte-order mark".into(), true)
+        }
+        // `f x` becomes `f[x]`. The name is what the finding points at;
+        // the argument is everything the application swallows, which the
+        // masked code is the only honest place to measure - a `;` inside
+        // a string or a trailing comment must not end it.
+        "QP006" => {
+            let v = views(source);
+            // A qSQL phrase ends an expression at `from`, `by` or
+            // `where`, and those are words this scan does not read:
+            // `update t:d 0 from rows` would become `d[0 from rows]`.
+            // The finding stands; the rewrite is left to a person.
+            let line_end = source[start..]
+                .find('\n')
+                .map_or(source.len(), |at| start + at);
+            if re!(r"\b(?:select|exec|update|delete)\b")
+                .is_match(&v.code[line_start.min(start)..line_end])
+            {
+                return None;
+            }
+            let name = re!(r"^\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*")
+                .find(v.code.get(start..)?)?
+                .as_str();
+            let argument = argument_start(source, &v.comments, start + name.len())?;
+            let end = argument_end(&v.code, &v.comments, source, argument)?;
+            (
+                source.get(start..end)?,
+                format!("{name}[{}]", &source[argument..end]).into(),
+                format!("Call `{name}` with brackets").into(),
+                true,
+            )
+        }
+        _ => return None,
+    };
     Some(Fix {
         start,
         end: start + old.len(),

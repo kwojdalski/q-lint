@@ -166,3 +166,78 @@ fn a_file_that_is_not_utf8_is_linted_but_never_rewritten() {
     assert!(String::from_utf8_lossy(&fix.stderr).contains("not valid UTF-8, skipped"));
     assert_eq!(fs::read(&path).unwrap(), original);
 }
+
+/// Each rewrite, and whether `--fix` may apply it unattended. The batch-safe
+/// ones were checked in q 5 to leave the program's value alone, or to replace
+/// code that could only fail; the others change behaviour or guess at
+/// intent, so the editor offers them and a person accepts or not.
+#[test]
+fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
+    use q_lint_rs::{Profile, fix_for, lint};
+    let cases = [
+        (
+            "QB007",
+            "r:select from t where s like `a*",
+            "r:select from t where s like \"a*\"",
+            true,
+        ),
+        (
+            "QB007",
+            "r:\"abc\" like `abc",
+            "r:\"abc\" like \"abc\"",
+            true,
+        ),
+        ("QT007", "r:ss[`abc;\"b\"]", "r:ss[\"abc\";\"b\"]", false),
+        ("QB012", "f:{[x] x+1;}", "f:{[x] x+1}", false),
+        ("QB010", "a:1;b:a -1", "a:1;b:a - 1", false),
+        ("QR001", "r:reverse asc 3 1 2", "r:desc 3 1 2", false),
+        ("QR002", "r:{x} each 1 2 3", "r:1 2 3", true),
+        ("QR002", "r:count {x} each y", "r:count y", true),
+        ("QR002", "r:{x}' y", "r:y", true),
+        (
+            "QR003",
+            "r:distinct asc distinct 3 1 1",
+            "r:asc distinct 3 1 1",
+            true,
+        ),
+        ("QS004", "a:1;r:(a)+1", "a:1;r:a+1", true),
+        ("QS004", "a:1;r:(a)b", "a:1;r:a b", true),
+    ];
+    for (code, source, expected, safe) in cases {
+        let finding = lint(source, "probe.q", Profile::Uqf)
+            .into_iter()
+            .find(|f| f.code == code)
+            .unwrap_or_else(|| panic!("{code} not reported on {source}"));
+        let fix = fix_for(&finding, source).unwrap_or_else(|| panic!("no fix for {source}"));
+        let fixed = format!(
+            "{}{}{}",
+            &source[..fix.start],
+            fix.replacement,
+            &source[fix.end..]
+        );
+        assert_eq!(fixed, expected, "{code}");
+        assert_eq!(fix.batch_safe, safe, "{code}: {source}");
+    }
+}
+
+/// Where taking the parentheses or the words away would read differently,
+/// there is no fix - the finding stands for a person to look at.
+#[test]
+fn no_fix_where_the_rewrite_would_change_the_program() {
+    use q_lint_rs::{Profile, fix_for, lint};
+    for (code, source) in [
+        ("QS004", "r:2 (3)"),          // would become the vector 2 3
+        ("QS004", "r:(2)3"),           // would become the number 23
+        ("QS004", "a:1;r:a -(1)"),     // would become a applied to -1
+        ("QR002", "g:{x} each"),       // a function, with nothing to return
+        ("QR002", "r:count {x}' b"),   // `{x}'` infix, `count` its left argument
+        ("QT007", "r:ss[`a`b;\"b\"]"), // a symbol vector is not one string
+    ] {
+        for finding in lint(source, "probe.q", Profile::Uqf)
+            .iter()
+            .filter(|f| f.code == code)
+        {
+            assert!(fix_for(finding, source).is_none(), "{code} fixed {source}");
+        }
+    }
+}

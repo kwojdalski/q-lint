@@ -81,10 +81,18 @@ The qls server may itself require Python; the Rust builtin backend does not.
 To preview mechanical edits, run `qlinter --diff path/to/file.q`; to write
 them, run `qlinter --fix path/to/file.q`. `--fix` re-lints the changed files and
 reports any remaining findings. Batch fixing handles `==`, `!=`, `+=`, `-=`,
-`*=`, a leading UTF-8 BOM, and - under `--profile uqf` - the brackets QP006
-asks for, rewriting `f x` as `f[x]` with whatever the application swallowed.
-The `&&` and `||` replacements remain editor Quick Fixes that you choose
-individually. Both CLI options use the builtin backend (or `--backend all`);
+`*=`, a leading UTF-8 BOM, a symbol used as a `like` pattern (`` `a* `` →
+`"a*"`), `{x} each y` → `y`, `distinct asc distinct` → `asc distinct`,
+redundant parentheses around one token (styleq), and - under `--profile uqf` -
+the brackets QP006 asks for, rewriting `f x` as `f[x]` with whatever the
+application swallowed. Each was checked in q 5 to leave the program alone, or
+to replace code that could only fail.
+
+Some rewrites change behaviour or guess at intent, so they remain editor Quick
+Fixes that you choose individually: `&&` → `&`, `||` → `|`, `reverse asc` →
+`desc` (they differ on a dictionary's tied keys), a symbol given to
+`ss`/`ssr` → a string, dropping a lambda's trailing `;` so it returns its last
+value, and `a -1` → `a - 1`. Both CLI options use the builtin backend (or `--backend all`);
 `--fix` requires file paths rather than stdin.
 
 One pass leaves whatever it could not delimit. A call inside a qSQL phrase is
@@ -136,7 +144,8 @@ It also offers Quick Fixes through `textDocument/codeAction` for `==` → `=`,
 `!=` → `<>`, `+=`/`-=`/`*=` → `+:`/`-:`/`*:`, and a leading UTF-8 BOM.
 It also fixes `&&` → `&` and `||` → `|` when selected in the editor, and
 `f x` → `f[x]` for QP006 under the uqf profile - where the edit covers the
-whole application, not just the underlined name.
+whole application, not just the underlined name - along with every other
+fix `--fix` and the editor-only list above describe.
 Other findings remain diagnostic-only.
 
 **The reason it is a server rather than an editor plugin shelling out to the
