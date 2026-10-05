@@ -18,8 +18,9 @@ and why there is no completion, hover or go-to-definition.
   conventions, depending on the profile.
 - **Quick Fixes** for `==`, `!=`, `+=`-style assignments, `&&`/`||` and a
   leading BOM; under the `uqf` profile, brackets for a call written `f x`.
-- **Syntax colouring** from a TextMate grammar, plus semantic tokens that
-  colour functions and parameters across every `.q` file in the workspace.
+- **Syntax colouring** from a TextMate grammar, plus semantic tokens: a
+  function is coloured wherever it is called, even when another `.q` file in
+  the workspace defines it, and a parameter wherever its body reads it.
   Unused parameters and locals are faded.
 
 ## Requirements
@@ -34,7 +35,7 @@ matching `qlinter` binary is bundled. Elsewhere, take one from
 | setting | default | |
 |---|---|---|
 | `q-lint.profile` | `style` | `general`: only what q refuses. `style`: also likely mistakes. `styleq`: also published style guides. `uqf`: also one repository's conventions. |
-| `q-lint.serverPath` | `qlinter` | Your own binary; always overrides the bundled one. |
+| `q-lint.serverPath` | empty | Your own binary. Empty uses the bundled one, then `qlinter` on `PATH`; set, it always wins. |
 | `q-lint.trace.server` | `off` | Log client-server traffic. |
 
 ## Troubleshooting
