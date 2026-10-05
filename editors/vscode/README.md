@@ -5,6 +5,10 @@ Linting, Quick Fixes and syntax colouring for q/kdb+, as you type, from the
 
 ![the q-lint icon](icon.png)
 
+**Why another linter?** I wasn't satisfied with the solutions available for
+q, so I decided to build my own, inspired by the best practices of linters
+for other languages, such as [Ruff](https://docs.astral.sh/ruff/) for Python.
+
 **Early version.** Open source, built to be good enough for agentic
 development, and already catching the most common problems. A finding that
 looks wrong is worth an [issue](https://github.com/kwojdalski/q-lint/issues).
