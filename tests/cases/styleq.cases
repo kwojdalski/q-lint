@@ -161,3 +161,22 @@ get_trades:1
 
 === clean profile: styleq | a string between the parentheses is not a single token
 r:(system "cd")
+
+=== clean profile: styleq | a keyword in parentheses is a value: (mod) . args needs them
+z:(mod) . 7 3
+
+=== clean profile: styleq | two doc blocks back to back document two functions
+/ @param tape an event tape
+/ @eg ratio[tape]
+/ Private: a zero denominator becomes a null.
+/ @param n a count
+/ @return n, or 0n
+undefinedifzero:{[n] ?[0=n;0n;n]}
+ratio:{[tape] tape}
+
+=== QS007 profile: styleq | but a run of params that matches no lambda is stale
+/ @param rangefrom start of the range
+/ @return gaps
+/ @param fromts start of the range
+/ @return gaps
+gaps:{[fromts] fromts}

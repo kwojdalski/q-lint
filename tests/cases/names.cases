@@ -517,3 +517,11 @@ t:([]a:1 2;b:3 4)
 update c:1 from `t
 r:select c from t
 
+=== clean profile: general | from and by are the two reserved names a namespace accepts
+\d .email
+from:`$"torq@localhost"
+by:1
+
+=== QF004 profile: general | the other 179 it refuses
+\d .ns
+count:5

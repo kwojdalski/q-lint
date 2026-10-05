@@ -1093,10 +1093,24 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
         }
         let n = parts.len();
         if n == 2 {
+            // Two slots is the cast, and both slots are evaluated before it:
+            // when the second is a signal it fires whatever the first holds.
+            // Verified: `{[b] $[b;'`boom]}` raises 'boom for 1b and for 0b,
+            // so TorQ's `$[b;'err...]; :0b` never reaches its `:0b`.
+            let second_start = dollar + 2 + parts[0].len() + 1;
+            let signal = v.comments[second_start..second_start + parts[1].len()]
+                .trim_start()
+                .starts_with('\'');
             add(
                 dollar,
                 "QA006",
-                "Two-slot $[ ... ] is no conditional q defines; it errors 'type at runtime".into(),
+                if signal {
+                    "Two-slot $[ ... ] is no conditional: both slots always run, so this \
+                     signal fires whether or not the test holds"
+                } else {
+                    "Two-slot $[ ... ] is no conditional q defines; it errors 'type at runtime"
+                }
+                .into(),
             );
         } else if n >= 4 && n.is_multiple_of(2) {
             // `$[c1;a;c2;b]` pairs every slot off as test-and-result and has
@@ -1875,6 +1889,51 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
         lines.next(); // the rest of the `@param` line itself
         let mut rest_of_block = lines.collect::<Vec<_>>();
         rest_of_block.pop(); // the line the brace is on, carrying the name
+        // The run of `@param` lines this one belongs to. When it names
+        // exactly the parameters of another lambda in the file, it documents
+        // that lambda: two doc blocks written back to back, the first for a
+        // function defined further down (uqf's microstructure.q documents
+        // cancel_to_trade_ratio_by, then undefined_if_zero, then defines
+        // them in the other order). A run that matches no lambda is stale
+        // documentation, which is what this rule is for.
+        let line_start = source[..m.get(0).unwrap().start()]
+            .rfind('\n')
+            .map_or(0, |p| p + 1);
+        let run: std::collections::BTreeSet<&str> = source[..line_start]
+            .lines()
+            .rev()
+            .take_while(|l| re!(r"^\s*/+\s*@param\b").is_match(l))
+            .chain(
+                source[line_start..]
+                    .lines()
+                    .take_while(|l| re!(r"^\s*/+\s*@param\b").is_match(l)),
+            )
+            .filter_map(|l| {
+                re!(r"@param\s+([A-Za-z][A-Za-z0-9_]*)")
+                    .captures(l)
+                    .map(|c| c.get(1).unwrap().as_str())
+            })
+            .collect();
+        // And only a lambda with no `@param` block of its own above it: one
+        // whose documentation is elsewhere - here. Lambdas sharing a
+        // parameter list are common (KX ml's many `[config]` functions), and
+        // each documented in place is not what a stray run describes.
+        let documents_another = code.match_indices('{').any(|(b, _)| {
+            let other = signature(code, source, b);
+            let at = source[..b].rfind('\n').map_or(0, |p| p + 1);
+            let documented = source[..at]
+                .lines()
+                .rev()
+                .take_while(|l| l.trim_start().starts_with('/'))
+                .any(|l| re!(r"@param\b").is_match(l));
+            other.named
+                && !documented
+                && other.slots.len() == run.len()
+                && other.slots.iter().all(|p| run.contains(p))
+        });
+        if documents_another {
+            continue;
+        }
         if rest_of_block
             .iter()
             .any(|l| !l.trim_start().starts_with('/'))
@@ -2086,6 +2145,12 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
             if literals[whole.range()] != *whole.as_str() {
                 continue;
             }
+            // A keyword in parentheses is a value, not a decorated token:
+            // `(mod) . 7 3` is 1, and `mod . 7 3` does not parse. The
+            // parentheses there are the point.
+            if RESERVED.iter().any(|n| n == m[1].trim()) {
+                continue;
+            }
             if m[1].contains('_') {
                 continue;
             }
@@ -2139,9 +2204,13 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
                 );
             }
         }
+        // Of the 181 reserved names q refuses to assign inside a namespace
+        // all but two: `from` and `by` are accepted there and read back fine,
+        // checked one by one. TorQ's email settings define `.email.from`.
         if namespace
             && let Some(m) = re!(r"^([a-z][a-zA-Z0-9_]*)\s*:").captures(line)
             && RESERVED.iter().any(|n| n == &m[1])
+            && !matches!(&m[1], "from" | "by")
         {
             add(offset, "QF004", format!("Namespace-level `{}`", &m[1]));
         }
@@ -2348,9 +2417,16 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
                 // logical's right operand and nothing is left to consume.
                 // Parenthesising either side is the fix, and the blanking
                 // in `flat_filter` is what recognises it.
-                if let Some(logic) = re!(r"\b(?:and|or)\b").find(&phrase)
-                    && re!(r"[<>=]").is_match(&phrase[..logic.start()])
-                {
+                // Clause by clause: in a where phrase `,` starts a new
+                // condition, so a comparison in one clause and an `or` in the
+                // next are not the trap - TorQ's torq.q pairs them that way.
+                // Parenthesised groups are blank in `phrase`, so a comma
+                // left in it is a top-level one.
+                if phrase.split(',').any(|clause| {
+                    re!(r"\b(?:and|or)\b")
+                        .find(clause)
+                        .is_some_and(|logic| re!(r"[<>=]").is_match(&clause[..logic.start()]))
+                }) {
                     add(
                         offset + w.start(),
                         "QB006",
@@ -2435,6 +2511,12 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
         for m in
             re!(r#"\s*"[^"]*"\s+sv\s+string\s+[A-Za-z_][A-Za-z0-9_.]*\s*,"#).find_iter(literals)
         {
+            // `string procs,()` and `procs,:()` are how a list is made of
+            // what may be an atom: the join is meant to sit inside `string`.
+            let joined = literals[m.end()..].trim_start();
+            if joined.starts_with("()") || joined.starts_with(":()") {
+                continue;
+            }
             if !literals[..m.start()].ends_with('(') || m.as_str().starts_with(char::is_whitespace)
             {
                 add(offset, "QB003", m.as_str().trim().into());

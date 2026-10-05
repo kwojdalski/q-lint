@@ -174,3 +174,5 @@ r:{$[x;`a;`b; / the else
 r1:{$[;y] x}
 r2:$[`long;]
 
+=== QA006 | a signal in a two-slot $ fires whatever the test holds
+f:{[b] $[b;'`boom]}

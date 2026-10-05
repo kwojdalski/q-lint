@@ -297,3 +297,9 @@ f1:{if[x;:1];2}
 f2:{$[x;:1;2]}
 f3:{x+1;:2}
 
+=== clean | string x,() is how a list is made of what may be an atom
+f:{.lg.o[`c;"types "," " sv string procs,()]}
+g:{.lg.o[`c;"types "," " sv string procs,:()]}
+
+=== clean | a comparison and an or in different comma-separated clauses
+r:select from t where abs[port]=1,(lower[h]=x) or h=`a
