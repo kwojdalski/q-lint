@@ -10,7 +10,7 @@ select from t where sym like "a*b"
 === clean | a trailing wildcard is supported
 select from t where sym like "ab*"
 
-=== clean | QB003 withdrawn: string of two joined symbols is two strings, which sv joins
+=== clean | two joined symbols are two strings, which sv joins as a path: "dir/name"
 p:"/" sv string a,b
 
 === clean | sv over a list built elsewhere
@@ -213,7 +213,7 @@ f:{[x] .lg.o "done";}
 === clean | the where phrase belongs to the inner select
 r:delete ok from select from t where not ok
 
-=== clean | QB003 withdrawn: the continued form is the same path join
+=== clean | the continued form is the same path join
 p:"/" sv string
   dir,name
 
@@ -306,3 +306,18 @@ f:{[t] select from t where a in `x, b like "="}
 
 === QB015 | and a real one after such a string is still found
 f:{[t] select from t where b like "=", c<>"ab"}
+
+=== QB003 | a string joined inside sv string is split into characters
+m:"claimed by ",", " sv string clash," - two workers share it"
+
+=== QB003 | after another joined name too
+p:"/" sv string a,b,"xy"
+
+=== clean | parenthesised, the string joins the result of sv
+m:"claimed by ",(", " sv string clash)," - two workers share it"
+
+=== clean | a one-character literal is one item: "dir/x"
+p:"/" sv string a,"x"
+
+=== clean | an empty literal adds nothing
+p:"/" sv string a,""

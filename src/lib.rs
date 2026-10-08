@@ -3539,6 +3539,56 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
                 add(offset, "QB002", format!("like {pat:?}"));
             }
         }
+        // QB003: `", " sv string clash," - two workers share it"`. `,` binds
+        // the literal onto the list before `string` and `sv` run, so each of
+        // its characters becomes an item and sv interleaves them - "w1, w2,
+        // , -,  , t, w, o, ...". Verified in q 5. Only a literal of two or more
+        // characters: one character is a single item (`"/" sv string a,"x"`
+        // is "dir/x", as meant), an empty one adds nothing, and two symbols
+        // joined - `"/" sv string a,b` - is the path join it looks like, which
+        // is why this rule was once withdrawn whole.
+        for m in re!(r"\bsv\s+string\s+").find_iter(line) {
+            if !boundary(line, m.start()) {
+                continue;
+            }
+            let (mut depth, mut at) = (0i32, m.end());
+            let bytes = line.as_bytes();
+            let mut joined = None;
+            while at < bytes.len() {
+                match bytes[at] {
+                    b'(' | b'[' | b'{' => depth += 1,
+                    b')' | b']' | b'}' if depth == 0 => break,
+                    b')' | b']' | b'}' => depth -= 1,
+                    b';' if depth == 0 => break,
+                    b',' if depth == 0 => {
+                        let rest = &literals[at + 1..];
+                        let quote = at + 1 + (rest.len() - rest.trim_start().len());
+                        if literals.as_bytes().get(quote) == Some(&b'"')
+                            && line.as_bytes().get(quote) != Some(&b'"')
+                            && let Some(lit) =
+                                re!(r#"^"((?:[^"\\]|\\.)*)""#).captures(&literals[quote..])
+                            && re!(r"\\.|[^\\]").find_iter(&lit[1]).count() > 1
+                        {
+                            joined = Some(lit.get(0).unwrap().as_str().to_string());
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                at += 1;
+            }
+            if let Some(text) = joined {
+                add(
+                    offset + m.start(),
+                    "QB003",
+                    format!(
+                        "`,{text}` is joined onto the list before `string` and `sv` run, so its \
+                         characters become separate items; parenthesise the sv: \
+                         `(... sv string x),{text}`"
+                    ),
+                );
+            }
+        }
         offset += line.len();
     }
     // String escapes, over the whole file at once. A backslash is in a string

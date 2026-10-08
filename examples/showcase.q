@@ -593,6 +593,11 @@ early2:{[p] if[p<0;:0]; p*2}
 / expect-next: QB002
 hits:select from trades where sym like "a*b"
 
+/ QB003: `,` joins the string onto the list before sv runs, so its
+/ characters become items: "w1, w2,  , -,  , t, w, o, ..."
+/ expect-next: QB003
+msg:"claimed by ",", " sv string clash," - two workers share it"
+
 / QB004: a thrown message over 200 literal chars risks truncation.
 / expect-next: QB004
 overlong:'"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"

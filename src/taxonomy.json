@@ -308,6 +308,13 @@
     "scope": "builtin"
   },
   {
+    "code": "QB003",
+    "name": "unparenthesised-sv",
+    "category": "correctness",
+    "summary": "A string joined after sv string is split into characters before sv runs",
+    "scope": "style"
+  },
+  {
     "code": "QB004",
     "name": "overlong-throw",
     "category": "correctness",
