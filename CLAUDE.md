@@ -65,6 +65,21 @@ checked against before it is written.
 leans on - the language's semantics, the framework's namespaces, and the
 process conventions real q is written against.
 
+## Releasing and installing locally
+
+`scripts/dist.py` is the one place for this, and `dist/vX.Y.Z/` the one
+place artifacts live - nothing goes to `builds/`, a scratch directory or
+`~/Downloads`:
+
+```sh
+python3 scripts/dist.py bump X.Y.Z      # versions + Cargo.lock + the extension's server
+git commit -am "Release X.Y.Z: ..." && git tag vX.Y.Z && git push origin master vX.Y.Z
+python3 scripts/dist.py install         # this machine: ~/.local/bin and VS Code
+```
+
+The tag triggers the release workflow, which builds every platform; watch it
+with `gh run list` and confirm the nine files with `gh release view vX.Y.Z`.
+
 ## Where things are
 
 | | |

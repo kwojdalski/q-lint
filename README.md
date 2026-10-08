@@ -266,29 +266,34 @@ interesting, and honouring an exclude list there would show a file with no
 findings and no explanation for their absence. Exclusions remain a
 batch-linting concern, where the question is which files to visit.
 
-## Shipping prebuilt binaries
+## Builds, downloads and installing
 
-Build a wheel, standalone executable, archive and SHA-256 checksums for the
-current platform:
+Every artifact - built here or downloaded from a release - goes to `dist/`
+(ignored by Git), one folder per version, named as the GitHub release names
+them:
 
 ```sh
-uv run python scripts/build_release.py
+python3 scripts/dist.py build              # this checkout -> dist/vX.Y.Z/ (or vX.Y.Z-dev/)
+python3 scripts/dist.py build --wheel      # ...plus the Python wheel (needs uv)
+python3 scripts/dist.py download 0.14.9    # a release, this machine's files -> dist/v0.14.9/
+python3 scripts/dist.py download 0.14.9 --all-platforms
+python3 scripts/dist.py install            # build, then install the CLI and VS Code extension
+python3 scripts/dist.py install 0.14.9     # install a release, downloading it if needed
 ```
 
-Artifacts go to `dist/` (ignored by Git). The wheel contains the compiled
-executable; the standalone archive contains that same executable. Neither needs
-Rust/Cargo to run. Installing the wheel needs a Python package installer;
-running the standalone binary needs neither Python nor an installer. Optional
-`--backend qls` still requires a separately installed qls server.
+`build` makes the command-line archive and the VS Code extension for the
+machine it runs on - it does not cross-compile; the release workflow builds
+every platform. A build of anything but a clean checkout of the tag `vX.Y.Z`
+lands in `dist/vX.Y.Z-dev/`, so it is never mistaken for the release. Each
+folder carries a `SHA256SUMS`. `install` puts `qlinter` in `~/.local/bin`
+(`--bin-dir` to change it) and the extension into VS Code; reload the window
+afterwards. Neither the archive nor the wheel needs Rust or Python to run, and
+`--backend qls` still needs a separately installed qls.
 
-For example, install a wheel with `uv tool install /path/to/q_lint_rs-....whl`
-or `uv pip install /path/to/q_lint_rs-....whl`, then run `qlinter src/`.
-Alternatively, unpack the standalone archive and run `./qlinter src/`.
-
-The verified artifacts in this checkout target **macOS 11+ on Apple Silicon**.
-Build on each target OS/architecture to distribute its matching binary; this
-command does not cross-compile. It builds artifacts locally and does not publish
-them to PyPI or a release service.
+A release is a tag: `python3 scripts/dist.py bump X.Y.Z` sets the version in
+`Cargo.toml`, `Cargo.lock`, `pyproject.toml` and the extension, and refreshes
+its bundled server; commit, tag `vX.Y.Z` and push, and the release workflow
+builds and publishes every platform.
 
 ## Validation and profiling
 
