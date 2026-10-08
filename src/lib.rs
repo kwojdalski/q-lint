@@ -219,6 +219,18 @@ pub fn fix_for(finding: &Finding, source: &str) -> Option<Fix> {
     }
     let byte = byte.or_else(|| (units == column).then_some(text.len()))?;
     let start = line_start + byte;
+    // A fix edits code. A finding that points into a string or a comment is a
+    // rule that matched text it should not have, and editing there would make
+    // one wrong finding corrupt the file too: QB015 once read the `=` of the
+    // string `"="` as an operator, and its fix rewrote the string as
+    // `" like "`. Only three rules are about those bytes - an escape inside a
+    // string, a definition kept in a comment, and the byte-order mark.
+    if !matches!(finding.code.as_str(), "QE002" | "QL002" | "QE005") {
+        let v = views(source);
+        if v.code.as_bytes().get(start) != source.as_bytes().get(start) {
+            return None;
+        }
+    }
     // Where the edit begins: the finding's own position, unless an arm says
     // otherwise - removing dead code takes the `;` before it too.
     let mut begin = start;
@@ -3313,19 +3325,35 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
         // when the lengths happen to agree it compares row-wise and returns
         // garbage. A one-char string is a char atom and compares fine
         // against a char column, so only longer literals are the trap.
-        if let Some(w) = re!(r"\bwhere\b").find(literals)
-            && let Some(m) = re!(r#"(?:=|<>)\s*"((?:[^"\\]|\\.)*)""#).captures(&literals[w.end()..])
-        {
-            let chars = re!(r"\\.|[^\\]").find_iter(&m[1]).count();
-            if chars != 1 {
-                add(
-                    offset + w.end() + m.get(0).unwrap().start(),
-                    "QB015",
-                    "Equality against a string in a filter is 'type on a symbol column and \
-                     'length on a string column; `like`, `~` or `in` is the comparison meant"
-                        .into(),
-                );
+        // Both `where` and the operator have to be code. `literals` keeps
+        // strings, so an `=` inside `"="` once matched here, its closing quote
+        // read as the opening one of the compared string - and the fix turned
+        // `"="` into `" like "`. An operator that is code can only be followed
+        // by a string's opening quote, so checking it is enough.
+        let in_code = |at: usize| line.as_bytes().get(at) == literals.as_bytes().get(at);
+        // Searched one start at a time, not match after match: a rejected
+        // match runs on to the next quote and would swallow a real one.
+        let comparison = |from: usize| {
+            let mut at = from;
+            while let Some(m) = re!(r#"(?:=|<>)\s*"((?:[^"\\]|\\.)*)""#).captures_at(literals, at) {
+                let op = m.get(0).unwrap().start();
+                if in_code(op) && re!(r"\\.|[^\\]").find_iter(&m[1]).count() != 1 {
+                    return Some(op);
+                }
+                at = op + 1;
             }
+            None
+        };
+        if let Some(w) = re!(r"\bwhere\b").find(line)
+            && let Some(op) = comparison(w.end())
+        {
+            add(
+                offset + op,
+                "QB015",
+                "Equality against a string in a filter is 'type on a symbol column and \
+                 'length on a string column; `like`, `~` or `in` is the comparison meant"
+                    .into(),
+            );
         }
         if re!(r"\b(?:where|select|exec|update|delete)\b").is_match(line) {
             let mut search = 0;

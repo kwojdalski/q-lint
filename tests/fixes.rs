@@ -412,3 +412,27 @@ fn unsafe_fixes_and_a_diff_that_survives_a_removed_line() {
         "a:1\nb:a=1\nr:desc 3 1 2"
     );
 }
+
+/// A fix edits code. Where a finding points into a string or a comment, a
+/// rule matched text it should not have; the fix must not compound it. The
+/// reported case: QB015 read the `=` of the string `"="` as an operator, and
+/// its fix rewrote the string as `" like "`.
+#[test]
+fn no_fix_edits_inside_a_string() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("strings.q");
+    let source = "f:{[t] select from t where a in `x, b like \"=\" , c<>\"ab\"}\n\
+                  g:{[s] ssr[s;\"=\";\" \"]}\n";
+    fs::write(&path, source).unwrap();
+    for flags in [&["--fix"][..], &["--fix", "--unsafe-fixes"][..]] {
+        Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .args(["--profile", "uqf"])
+            .args(flags)
+            .arg(&path)
+            .output()
+            .unwrap();
+        let after = fs::read_to_string(&path).unwrap();
+        assert!(after.contains("like \"=\""), "{after}");
+        assert!(after.contains("ssr[s;\"=\";\" \"]"), "{after}");
+    }
+}

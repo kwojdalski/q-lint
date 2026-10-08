@@ -300,3 +300,9 @@ g:{.lg.o[`c;"types "," " sv string procs,:()]}
 
 === clean | a comparison and an or in different comma-separated clauses
 r:select from t where abs[port]=1,(lower[h]=x) or h=`a
+
+=== clean | QB015: an `=` inside a string is not a comparison
+f:{[t] select from t where a in `x, b like "="}
+
+=== QB015 | and a real one after such a string is still found
+f:{[t] select from t where b like "=", c<>"ab"}
