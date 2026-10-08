@@ -24,10 +24,18 @@ impl Server {
     /// The server started in `dir`, where it looks for `[tool.q-lint]`, with
     /// extra arguments after the usual ones.
     fn start_in(dir: &std::path::Path, extra: &[&str]) -> Self {
+        let mut args = vec!["--lsp", "--profile", "uqf"];
+        args.extend(extra);
+        Self::spawn(dir, &args)
+    }
+
+    /// The server started in `dir` with exactly `args`, and no user-level
+    /// configuration from the machine running the tests.
+    fn spawn(dir: &std::path::Path, args: &[&str]) -> Self {
         let mut child = Command::new(env!("CARGO_BIN_EXE_qlinter"))
             .current_dir(dir)
-            .args(["--lsp", "--profile", "uqf"])
-            .args(extra)
+            .env("XDG_CONFIG_HOME", dir.join("no-such-config-home"))
+            .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -679,8 +687,11 @@ fn the_server_reads_the_projects_ignore() {
     .unwrap();
     let mut server = Server::start_in(dir.path(), &[]);
     server.initialize();
-    server.open("file:///tmp/ignored.q", "my_var:1;f:{[desc] desc}");
-    let diagnostics = server.diagnostics_for("file:///tmp/ignored.q");
+    // The configuration governs the files beneath it, as Ruff's does, so the
+    // document lives in the project.
+    let uri = file_uri(&dir.path().join("ignored.q"));
+    server.open(&uri, "my_var:1;f:{[desc] desc}");
+    let diagnostics = server.diagnostics_for(&uri);
     let codes: Vec<_> = diagnostics.iter().map(|d| d["code"].clone()).collect();
     assert_eq!(codes, ["QF001"], "{diagnostics:?}");
     assert_eq!(server.shutdown_and_exit(), 0);
@@ -796,5 +807,88 @@ fn a_file_changed_outside_the_editor_is_read_again() {
         "params":{"changes":[{"uri":file_uri(&lib_path),"type":2}]}}),
     );
     assert!(!codes_of(&server.diagnostics_for(&app)).contains(&"QF018".to_string()));
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn a_document_takes_the_profile_of_the_qlinter_toml_above_it() {
+    // An editor starts the server with no --profile when the user has not set
+    // one, so the repository's configuration decides; and the server finds
+    // it from the document, not from the directory it was started in.
+    let repo = tempfile::tempdir().unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    std::fs::write(repo.path().join("qlinter.toml"), "profile = \"styleq\"\n").unwrap();
+    std::fs::create_dir_all(repo.path().join("src")).unwrap();
+    let uri = file_uri(&repo.path().join("src/a.q"));
+    let mut server = Server::spawn(elsewhere.path(), &["--lsp"]);
+    server.initialize();
+    server.open(&uri, "my_var:1;f:{[desc] desc}");
+    assert_eq!(codes_of(&server.diagnostics_for(&uri)), ["QF001", "QS001"]);
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn without_a_configuration_or_a_flag_the_server_uses_style() {
+    let dir = tempfile::tempdir().unwrap();
+    let uri = file_uri(&dir.path().join("a.q"));
+    let mut server = Server::spawn(dir.path(), &["--lsp"]);
+    server.initialize();
+    server.open(&uri, "my_var:1;f:{[desc] desc}");
+    assert_eq!(codes_of(&server.diagnostics_for(&uri)), ["QF001"]);
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn editing_the_configuration_relints_the_open_documents() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("qlinter.toml");
+    std::fs::write(&config, "profile = \"style\"\n").unwrap();
+    let uri = file_uri(&dir.path().join("a.q"));
+    let mut server = Server::spawn(dir.path(), &["--lsp"]);
+    server.initialize();
+    server.open(&uri, "my_var:1;f:{[desc] desc}");
+    assert_eq!(codes_of(&server.diagnostics_for(&uri)), ["QF001"]);
+    std::fs::write(&config, "profile = \"style\"\n[lint]\nignore = [\"QF\"]\n").unwrap();
+    server.send(
+        json!({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles",
+        "params":{"changes":[{"uri":file_uri(&config),"type":2}]}}),
+    );
+    assert_eq!(
+        codes_of(&server.diagnostics_for(&uri)),
+        Vec::<String>::new()
+    );
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn every_rule_with_a_fix_offers_it_in_the_editor() {
+    // Not only the three the server first knew: a fix `--fix` applies, and
+    // one only a person should accept, are both offered here.
+    let mut server = Server::start();
+    server.initialize();
+    let uri = "file:///tmp/more-fixes.q";
+    server.open(
+        uri,
+        "r:select from t where s like `a*\nr2:reverse asc 3 1 2\n",
+    );
+    let diagnostics = server.diagnostics_for(uri);
+    let mut titles = vec![];
+    for d in diagnostics
+        .iter()
+        .filter(|d| d["code"] == "QB007" || d["code"] == "QR001")
+    {
+        for action in server.code_actions(uri, std::slice::from_ref(d)) {
+            titles.push(action["title"].as_str().unwrap().to_string());
+        }
+    }
+    titles.sort();
+    assert_eq!(
+        titles,
+        [
+            "Replace `reverse asc` with `desc`",
+            "Write the pattern as the string \"a*\""
+        ],
+        "{diagnostics:?}"
+    );
     assert_eq!(server.shutdown_and_exit(), 0);
 }

@@ -76,8 +76,8 @@ fn an_unknown_code_is_refused_rather_than_ignoring_nothing() {
 }
 
 #[test]
-fn an_unknown_key_names_the_two_that_exist() {
-    let dir = project("[tool.q-lint]\nselect = [\"QS001\"]\n");
+fn an_unknown_key_names_the_keys_that_exist() {
+    let dir = project("[tool.q-lint]\nline-length = 88\n");
     let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
         .current_dir(dir.path())
         .arg("a.q")
@@ -87,7 +87,7 @@ fn an_unknown_key_names_the_two_that_exist() {
     assert!(
         String::from_utf8(out.stderr)
             .unwrap()
-            .contains("supports only exclude and ignore")
+            .contains("unknown key `line-length`; qlinter reads profile, select")
     );
 }
 

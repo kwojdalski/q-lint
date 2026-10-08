@@ -58,7 +58,7 @@
             "uqf"
           ],
           "default": "style",
-          "markdownDescription": "Which rules to run. The default, `style`, reports what q refuses and what q runs but is almost certainly a mistake. `general` keeps only what q itself rejects; `styleq` adds the conventions of published q style guides; `uqf` adds one repository's house conventions on top of those."
+          "markdownDescription": "Which rules to run. Set here, it overrides `profile` in a repository's `qlinter.toml`; left unset, the repository's configuration decides, and `style` applies where there is none. `style` reports what q refuses and what q runs but is almost certainly a mistake. `general` keeps only what q itself rejects; `styleq` adds the conventions of published q style guides; `uqf` adds one repository's house conventions on top of those."
         },
         "q-lint.trace.server": {
           "type": "string",

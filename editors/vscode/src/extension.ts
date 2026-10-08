@@ -47,7 +47,14 @@ function bundledServer(context: ExtensionContext): string | undefined {
 export async function activate(context: ExtensionContext): Promise<void> {
   const settings = workspace.getConfiguration("q-lint");
   const configured = settings.get<string>("serverPath", "").trim();
-  const profile = settings.get<string>("profile", "style");
+  // Only a profile the user actually set is passed on. A flag wins over a
+  // repository's `qlinter.toml`, so passing the default every time would
+  // silently override the project's own `profile`. Left unset, the server
+  // reads the repository's configuration, and uses `style` where there is
+  // none - the same default this setting declares.
+  const inspected = settings.inspect<string>("profile");
+  const profile =
+    inspected?.workspaceFolderValue ?? inspected?.workspaceValue ?? inspected?.globalValue;
 
   // In order of preference, and the fallback matters: packaging the extension
   // from a clone on Linux picks up the darwin-arm64 binary checked in for
@@ -58,7 +65,7 @@ export async function activate(context: ExtensionContext): Promise<void> {
     ? [configured]
     : [bundledServer(context), "qlinter"].filter((c): c is string => !!c);
 
-  const args = ["--lsp", "--profile", profile];
+  const args = profile ? ["--lsp", "--profile", profile] : ["--lsp"];
   const options: LanguageClientOptions = {
     // A saved `.q` file, and nothing else. `language: "q"` alone would also
     // match a console buffer or an untitled scratch that some other q
@@ -73,7 +80,14 @@ export async function activate(context: ExtensionContext): Promise<void> {
     // defines is not undefined in another. It hears about the files the
     // editor has open; this tells it about the rest changing on disk - a
     // pull, a checkout, another tool writing.
-    synchronize: { fileEvents: workspace.createFileSystemWatcher("**/*.q") },
+    // A configuration file changing is the other thing it has to hear about:
+    // the rules a file reports come from the nearest `qlinter.toml`.
+    synchronize: {
+      fileEvents: [
+        workspace.createFileSystemWatcher("**/*.q"),
+        workspace.createFileSystemWatcher("**/{qlinter.toml,.qlinter.toml,pyproject.toml}"),
+      ],
+    },
   };
 
   let started: unknown;

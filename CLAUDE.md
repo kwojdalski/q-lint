@@ -72,6 +72,7 @@ process conventions real q is written against.
 | `src/lib.rs` | the rule engine; `lint(source, path, uqf)` is the entry point |
 | `src/semantics.rs` | the checks that need more than a regex |
 | `src/taxonomy.json`, `src/reserved.json` | rule catalogue and q builtin names, embedded at build time |
+| `src/config.rs` | finding `qlinter.toml` / `[tool.qlinter]` per file, Ruff-style, and rule selection |
 | `src/lsp.rs` | the language server (`qlinter --lsp`) |
 | `src/jsonrpc.rs` | LSP wire framing, shared by the server and the qls client |
 | `src/qls.rs` | client for KX's qls, an optional second backend |

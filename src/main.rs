@@ -1,8 +1,10 @@
+mod config;
 mod jsonrpc;
 mod lsp;
 mod qls;
 use clap::Parser;
-use q_lint_rs::{Profile, RULES, Workspace, fix_for, index, lint_in};
+use config::{Layer, Overrides, Policy};
+use q_lint_rs::{RULES, Workspace, fix_for, index};
 use std::{
     collections::BTreeSet,
     fs,
@@ -26,17 +28,36 @@ struct Args {
     paths: Vec<String>,
     #[arg(long,default_value="text",value_parser=["text","json"])]
     format: String,
-    #[arg(long,default_value="uqf",value_parser=["general","style","styleq","uqf"])]
-    profile: String,
+    /// The rule set: `general` (what q refuses), `style`, `styleq` or `uqf`.
+    /// Wins over `profile` in a configuration file. Without either, `uqf` -
+    /// and `style` for `--lsp`.
+    #[arg(long, value_parser=["general","style","styleq","uqf"])]
+    profile: Option<String>,
     #[arg(long, default_value = "<stdin>")]
     stdin_filename: String,
-    #[arg(long)]
+    /// Use this configuration for every file, instead of the nearest
+    /// `.qlinter.toml`, `qlinter.toml` or `pyproject.toml` `[tool.qlinter]`.
+    #[arg(long, conflicts_with = "isolated")]
     config: Option<PathBuf>,
+    /// Ignore every configuration file; use the defaults and the flags.
+    #[arg(long)]
+    isolated: bool,
+    /// Print which configuration governs each path and the rules it turns
+    /// on, then exit.
+    #[arg(long)]
+    show_settings: bool,
+    /// Only these rules: codes or prefixes, comma-separated or repeated.
+    /// Replaces the profile's set and the configuration's `select`.
+    #[arg(long, value_delimiter = ',')]
+    select: Option<Vec<String>>,
+    /// Rules added to whatever is selected: codes or prefixes.
+    #[arg(long, value_delimiter = ',')]
+    extend_select: Vec<String>,
     #[arg(long)]
     exclude: Vec<String>,
-    /// Drop findings with this diagnostic code, e.g. `--ignore QS001`.
-    /// Repeatable, and added to `ignore` in `[tool.q-lint]`.
-    #[arg(long)]
+    /// Drop findings with this code or prefix, e.g. `--ignore QS001`.
+    /// Repeatable or comma-separated, and applied after the configuration.
+    #[arg(long, value_delimiter = ',')]
     ignore: Vec<String>,
     #[arg(long)]
     rules: bool,
@@ -60,7 +81,7 @@ struct Args {
     #[arg(long, default_value = "30")]
     qls_timeout: f64,
     /// Run as a language server on stdin/stdout instead of linting paths.
-    #[arg(long, conflicts_with_all = ["paths", "rules", "explain", "fix", "diff"])]
+    #[arg(long, conflicts_with_all = ["paths", "rules", "explain", "fix", "diff", "show_settings"])]
     lsp: bool,
     /// Colour the text output: `auto` (a terminal, and NO_COLOR unset),
     /// `always`, or `never`.
@@ -74,107 +95,34 @@ struct Args {
     #[arg(long, hide = true)]
     stdio: bool,
 }
-/// What `[tool.q-lint]` says: the directory it was found in, the paths it
-/// excludes, and the diagnostic codes it ignores.
-struct Settings {
-    root: PathBuf,
-    exclude: Vec<glob::Pattern>,
-    ignore: Vec<String>,
-}
-
-/// Refuse a code no rule has. An ignore list is read once and then trusted,
-/// so a typo in it would silently ignore nothing - the one way this setting
-/// could fail without anyone noticing.
-fn known_code(code: &str) -> Result<String, String> {
-    if RULES.iter().any(|r| r.code == code) {
-        Ok(code.to_string())
-    } else {
-        Err(format!(
-            "ignore: {code} is not a diagnostic code - `qlinter --rules` lists them"
-        ))
-    }
-}
-
-fn config(explicit: Option<&Path>) -> Result<Settings, String> {
-    let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
-    let paths: Vec<_> = match explicit {
-        Some(p) => vec![p.to_path_buf()],
-        None => cwd.ancestors().map(|p| p.join("pyproject.toml")).collect(),
+/// The command line's share of the settings, which wins over any file.
+fn overrides(args: &Args) -> Result<Overrides, String> {
+    let selectors = |key: &str, list: &[String]| -> Result<Vec<String>, String> {
+        list.iter().map(|s| config::selector(key, s)).collect()
     };
-    for path in paths {
-        if explicit.is_none() && !path.is_file() {
-            continue;
-        }
-        let text = fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-        let data: toml::Value =
-            toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
-        if data.get("tool").is_some_and(|t| !t.is_table()) {
-            return Err("tool must be a table".into());
-        }
-        if let Some(settings) = data.get("tool").and_then(|t| t.get("q-lint")) {
-            let table = settings.as_table().ok_or("[tool.q-lint] must be a table")?;
-            if table.keys().any(|k| k != "exclude" && k != "ignore") {
-                return Err("[tool.q-lint] supports only exclude and ignore".into());
-            }
-            let empty = vec![];
-            let patterns = match table.get("exclude") {
-                None => &empty,
-                Some(v) => v.as_array().ok_or("exclude must be an array")?,
-            };
-            let patterns = patterns
-                .iter()
-                .map(|v| {
-                    let s = v
-                        .as_str()
-                        .filter(|s| !s.trim().is_empty())
-                        .ok_or("exclude must contain nonempty strings")?;
-                    glob::Pattern::new(s.trim_end_matches('/')).map_err(|e| e.to_string())
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            let ignore = match table.get("ignore") {
-                None => vec![],
-                Some(v) => v
-                    .as_array()
-                    .ok_or("ignore must be an array")?
-                    .iter()
-                    .map(|v| {
-                        v.as_str()
-                            .map(str::trim)
-                            .filter(|s| !s.is_empty())
-                            .ok_or_else(|| "ignore must contain nonempty strings".to_string())
-                            .and_then(known_code)
-                    })
-                    .collect::<Result<Vec<_>, _>>()?,
-            };
-            return Ok(Settings {
-                root: fs::canonicalize(path)
-                    .map_err(|e| e.to_string())?
-                    .parent()
-                    .unwrap()
-                    .to_path_buf(),
-                exclude: patterns,
-                ignore,
-            });
-        }
-        if explicit.is_some() {
-            return Err("missing [tool.q-lint]".into());
-        }
-    }
-    Ok(Settings {
-        root: cwd,
-        exclude: vec![],
-        ignore: vec![],
+    let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
+    Ok(Overrides {
+        profile: args.profile.clone(),
+        default_profile: if args.lsp { "style" } else { "uqf" },
+        layer: Layer {
+            select: args
+                .select
+                .as_deref()
+                .map(|s| selectors("--select", s))
+                .transpose()?,
+            extend_select: selectors("--extend-select", &args.extend_select)?,
+            ignore: selectors("--ignore", &args.ignore)?,
+        },
+        exclude: args
+            .exclude
+            .iter()
+            .map(|p| config::pattern(p).map(|p| (config::absolute(&cwd), p)))
+            .collect::<Result<_, _>>()?,
+        config: args.config.clone(),
+        isolated: args.isolated,
     })
 }
 
-/// The codes to drop: the configuration's and the command line's together.
-fn ignored(settings_ignore: &[String], flags: &[String]) -> Result<Vec<String>, String> {
-    let mut codes = settings_ignore.to_vec();
-    for code in flags {
-        codes.push(known_code(code.trim())?);
-    }
-    Ok(codes)
-}
 /// Whether a path names q source.
 ///
 /// The extension, and nothing else: this runs before the file is opened, and
@@ -186,37 +134,6 @@ fn is_q_source(path: &Path) -> bool {
         .is_some_and(|e| e.eq_ignore_ascii_case("q"))
 }
 
-fn absolute(path: &Path) -> PathBuf {
-    if let Ok(p) = fs::canonicalize(path) {
-        return p;
-    }
-    let mut result = PathBuf::new();
-    let p = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir().unwrap().join(path)
-    };
-    for c in p.components() {
-        match c {
-            std::path::Component::ParentDir => {
-                result.pop();
-            }
-            std::path::Component::CurDir => {}
-            _ => result.push(c),
-        }
-    }
-    result
-}
-fn excluded(path: &Path, root: &Path, patterns: &[glob::Pattern]) -> bool {
-    let full = absolute(path);
-    let Ok(relative) = full.strip_prefix(root) else {
-        return false;
-    };
-    relative
-        .ancestors()
-        .filter(|p| !p.as_os_str().is_empty())
-        .any(|p| patterns.iter().any(|g| g.matches(&p.to_string_lossy())))
-}
 fn run(args: Args) -> Result<u8, String> {
     if args.lsp {
         // Locked once for the life of the process: the server owns both
@@ -225,22 +142,10 @@ fn run(args: Args) -> Result<u8, String> {
         // editor shows what `qlinter` prints. A configuration it cannot read
         // is reported and passed over rather than fatal: a server that exits
         // gives an editor no diagnostics and no reason why.
-        let from_config = match config(args.config.as_deref()) {
-            Ok(settings) => settings.ignore,
-            Err(e) => {
-                eprintln!("qlinter: {e}; serving without [tool.q-lint] ignore");
-                vec![]
-            }
-        };
-        let ignore = ignored(&from_config, &args.ignore)?;
+        let policy = Policy::new(overrides(&args)?, true);
         let stdin = io::stdin();
         let stdout = io::stdout();
-        return lsp::serve(
-            &mut stdin.lock(),
-            &mut stdout.lock(),
-            profile(&args.profile),
-            &ignore,
-        );
+        return lsp::serve(&mut stdin.lock(), &mut stdout.lock(), &policy);
     }
     if args.rules || args.explain.is_some() {
         if args.fix || args.diff {
@@ -277,11 +182,25 @@ fn run(args: Args) -> Result<u8, String> {
     if args.diff && args.format == "json" {
         return Err("--diff cannot be combined with --format json".into());
     }
-    let settings = config(args.config.as_deref())?;
-    let ignore = ignored(&settings.ignore, &args.ignore)?;
-    let (root, mut patterns) = (settings.root, settings.exclude);
-    for p in &args.exclude {
-        patterns.push(glob::Pattern::new(p.trim_end_matches('/')).map_err(|e| e.to_string())?);
+    let policy = Policy::new(overrides(&args)?, false);
+    if args.show_settings {
+        let paths = if args.paths.is_empty() {
+            vec![".".to_string()]
+        } else {
+            args.paths.clone()
+        };
+        for name in paths {
+            // A directory is described as a file inside it would be, so its
+            // own configuration counts.
+            let path = Path::new(&name);
+            let probe = if path.is_dir() {
+                path.join("*.q")
+            } else {
+                path.to_path_buf()
+            };
+            println!("{}\n", policy.describe(&probe)?);
+        }
+        return Ok(0);
     }
     let paths = if args.paths.is_empty() {
         vec![".".into()]
@@ -296,9 +215,7 @@ fn run(args: Args) -> Result<u8, String> {
         if paths.len() != 1 {
             return Err("Stdin (-) must be the only input".into());
         }
-        if args.stdin_filename == "<stdin>"
-            || !excluded(Path::new(&args.stdin_filename), &root, &patterns)
-        {
+        if args.stdin_filename == "<stdin>" || !policy.excluded(Path::new(&args.stdin_filename))? {
             let mut source = String::new();
             io::stdin()
                 .read_to_string(&mut source)
@@ -314,7 +231,7 @@ fn run(args: Args) -> Result<u8, String> {
             if !path.exists() {
                 return Err(format!("Path does not exist: {name}"));
             }
-            if excluded(path, &root, &patterns) {
+            if policy.excluded(path)? {
                 skipped = true;
                 continue;
             }
@@ -326,7 +243,7 @@ fn run(args: Args) -> Result<u8, String> {
                 // it is to be q. The rules here describe q and say nothing
                 // true about any of those.
                 if is_q_source(path) {
-                    files.insert(absolute(path));
+                    files.insert(config::absolute(path));
                 } else {
                     skipped_not_q = true;
                 }
@@ -339,7 +256,7 @@ fn run(args: Args) -> Result<u8, String> {
             while let Some(entry) = walk.next() {
                 let entry = entry.map_err(|e| e.to_string())?;
                 let p = entry.path();
-                if excluded(p, &root, &patterns) {
+                if policy.excluded(p)? {
                     skipped = true;
                     if entry.file_type().is_dir() {
                         walk.skip_current_dir();
@@ -364,7 +281,7 @@ fn run(args: Args) -> Result<u8, String> {
                     continue;
                 }
                 if p.is_file() && is_q_source(p) {
-                    files.insert(absolute(p));
+                    files.insert(config::absolute(p));
                 }
             }
         }
@@ -416,9 +333,9 @@ fn run(args: Args) -> Result<u8, String> {
         let mut fixed = 0;
         let mut changed_files = 0;
         for (path, source) in &mut sources {
-            let mut edits: Vec<_> = lint_in(source, path, profile(&args.profile), &workspace)
+            let mut edits: Vec<_> = policy
+                .lint(source, path, &workspace)?
                 .iter()
-                .filter(|finding| !ignore.contains(&finding.code))
                 .filter_map(|finding| fix_for(finding, source))
                 .filter(|fix| fix.batch_safe || args.unsafe_fixes)
                 .collect();
@@ -457,7 +374,7 @@ fn run(args: Args) -> Result<u8, String> {
     let mut findings = vec![];
     if args.backend != "qls" {
         for (path, source) in &sources {
-            findings.extend(lint_in(source, path, profile(&args.profile), &workspace));
+            findings.extend(policy.lint(source, path, &workspace)?);
         }
     }
     if args.backend != "builtin" {
@@ -467,7 +384,14 @@ fn run(args: Args) -> Result<u8, String> {
             args.qls_timeout,
         )?);
     }
-    findings.retain(|f| !ignore.contains(&f.code));
+    // qls reports on its own; the configuration still decides what is shown.
+    let mut kept = vec![];
+    for f in findings {
+        if policy.enabled(&f.code, Path::new(&f.path))? {
+            kept.push(f);
+        }
+    }
+    let mut findings = kept;
     findings.sort_by(|a, b| {
         (&a.path, a.line, a.column, &a.source, &a.rule)
             .cmp(&(&b.path, b.line, b.column, &b.source, &b.rule))
@@ -594,22 +518,6 @@ fn print_diff(path: &str, before: &str, edits: &[q_lint_rs::Fix]) {
         shift += new_n as isize - old_n as isize;
     }
 }
-/// The `--profile` flag, as the rule set it selects. clap has already refused
-/// anything not in the list, so the fallback is unreachable rather than a
-/// silent default.
-///
-/// The default is the broadest profile. This binary's job is to report
-/// everything it can see; a consumer that wants fewer findings narrows in its
-/// own configuration, where the choice is theirs and stays with their code.
-fn profile(name: &str) -> Profile {
-    match name {
-        "general" => Profile::General,
-        "style" => Profile::Style,
-        "styleq" => Profile::StyleQ,
-        _ => Profile::Uqf,
-    }
-}
-
 fn main() -> ExitCode {
     match run(Args::parse()) {
         Ok(code) => ExitCode::from(code),

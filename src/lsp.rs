@@ -41,10 +41,9 @@
 //! every keystroke. Claiming those capabilities and answering emptily is worse
 //! than not claiming them: an editor that is told a server provides completion
 //! stops offering its own word-based fallback.
+use crate::config::Policy;
 use crate::jsonrpc::{receive, send};
-use q_lint_rs::{
-    FileIndex, Finding, Profile, TokenKind, Workspace, fix_for, index, lint_in, semantic_tokens_in,
-};
+use q_lint_rs::{FileIndex, Finding, TokenKind, Workspace, fix_for, index, semantic_tokens_in};
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
@@ -176,8 +175,7 @@ fn workspace_roots(params: &Value) -> Vec<String> {
 pub fn serve(
     reader: &mut impl BufRead,
     writer: &mut impl Write,
-    profile: Profile,
-    ignore: &[String],
+    policy: &Policy,
 ) -> Result<u8, String> {
     let mut docs: Documents = HashMap::new();
     let mut idx = Index::default();
@@ -225,15 +223,7 @@ pub fn serve(
             ("textDocument/didOpen", None) => {
                 let uri = uri_of(&params["textDocument"]);
                 let text = params["textDocument"]["text"].as_str().unwrap_or("");
-                publish(
-                    writer,
-                    &mut docs,
-                    &mut idx,
-                    uri,
-                    text.to_string(),
-                    profile,
-                    ignore,
-                )?;
+                publish(writer, &mut docs, &mut idx, uri, text.to_string(), policy)?;
             }
             ("textDocument/didChange", None) => {
                 let uri = uri_of(&params["textDocument"]);
@@ -245,15 +235,7 @@ pub fn serve(
                     .and_then(|c| c.last())
                     .and_then(|c| c["text"].as_str())
                 {
-                    publish(
-                        writer,
-                        &mut docs,
-                        &mut idx,
-                        uri,
-                        text.to_string(),
-                        profile,
-                        ignore,
-                    )?;
+                    publish(writer, &mut docs, &mut idx, uri, text.to_string(), policy)?;
                 }
             }
             ("textDocument/didSave", None) => {
@@ -266,7 +248,7 @@ pub fn serve(
                     .map(str::to_string)
                     .or_else(|| docs.get(&uri).cloned());
                 if let Some(text) = text {
-                    publish(writer, &mut docs, &mut idx, uri, text, profile, ignore)?;
+                    publish(writer, &mut docs, &mut idx, uri, text, policy)?;
                 }
             }
             ("textDocument/didClose", None) => {
@@ -275,7 +257,7 @@ pub fn serve(
                 // The buffer is gone, so the disk is the authority again - and
                 // unsaved definitions it held no longer define anything.
                 if idx.reload(&path_of(&uri)) {
-                    relint(writer, &docs, &idx, None, profile, ignore)?;
+                    relint(writer, &docs, &idx, None, policy)?;
                 }
                 // An empty list, not silence: diagnostics are owned by the
                 // server until it says otherwise, so a closed file would keep
@@ -295,7 +277,7 @@ pub fn serve(
                 send(writer, json!({"id": id, "result": {"data": data}}))?;
             }
             ("textDocument/codeAction", Some(id)) => {
-                let actions = code_actions(&params, &docs, &idx.ws, profile, ignore);
+                let actions = code_actions(&params, &docs, &idx.ws, policy);
                 send(writer, json!({"id": id, "result": actions}))?;
             }
 
@@ -305,6 +287,13 @@ pub fn serve(
                 let mut changed = false;
                 for change in params["changes"].as_array().into_iter().flatten() {
                     let uri = uri_of(change);
+                    // A configuration file changed: every file it governs may
+                    // now report differently, so forget them all and relint.
+                    if is_config_path(&path_of(&uri)) {
+                        policy.reset();
+                        changed = true;
+                        continue;
+                    }
                     if docs.contains_key(&uri) {
                         continue;
                     }
@@ -316,7 +305,7 @@ pub fn serve(
                     };
                 }
                 if changed {
-                    relint(writer, &docs, &idx, None, profile, ignore)?;
+                    relint(writer, &docs, &idx, None, policy)?;
                 }
             }
             // Every other REQUEST gets an error, because a client waiting on a
@@ -393,13 +382,14 @@ fn uri_of(text_document: &Value) -> String {
 /// Offer only replacements whose meaning is unambiguous, and verify each
 /// client-supplied diagnostic against the current unsaved buffer. A pending
 /// code-action request can otherwise apply an old fix after another edit.
-fn code_actions(
-    params: &Value,
-    docs: &Documents,
-    ws: &Workspace,
-    profile: Profile,
-    ignore: &[String],
-) -> Vec<Value> {
+/// A file whose change can change what any document reports.
+fn is_config_path(path: &str) -> bool {
+    std::path::Path::new(path).file_name().is_some_and(|n| {
+        ["qlinter.toml", ".qlinter.toml", "pyproject.toml"].contains(&&*n.to_string_lossy())
+    })
+}
+
+fn code_actions(params: &Value, docs: &Documents, ws: &Workspace, policy: &Policy) -> Vec<Value> {
     if let Some(only) = params["context"]["only"].as_array()
         && !only.iter().any(|kind| {
             kind.as_str()
@@ -423,11 +413,9 @@ fn code_actions(
         return vec![];
     };
     let mut actions = vec![];
-    for finding in lint_in(source, &path, profile, ws)
-        .into_iter()
-        .filter(|f| matches!(f.code.as_str(), "QE004" | "QE005" | "QP006"))
-        .filter(|f| !ignore.contains(&f.code))
-    {
+    // Every finding that has a fix, the editor-only ones included: here a
+    // person sees each edit and accepts it or not.
+    for finding in policy.lint(source, &path, ws).unwrap_or_default() {
         let current = diagnostic(&finding, source);
         let Some(client_diagnostic) = context.iter().find(|d| {
             d["code"] == current["code"]
@@ -471,15 +459,14 @@ fn publish(
     idx: &mut Index,
     uri: String,
     text: String,
-    profile: Profile,
-    ignore: &[String],
+    policy: &Policy,
 ) -> Result<(), String> {
     let path = path_of(&uri);
     let changed = is_q_path(&path) && idx.set(&path, index(&text));
     docs.insert(uri.clone(), text);
-    diagnose(writer, &uri, &docs[&uri], &idx.ws, profile, ignore)?;
+    diagnose(writer, &uri, &docs[&uri], &idx.ws, policy)?;
     if changed {
-        relint(writer, docs, idx, Some(&uri), profile, ignore)?;
+        relint(writer, docs, idx, Some(&uri), policy)?;
     }
     Ok(())
 }
@@ -490,12 +477,11 @@ fn relint(
     docs: &Documents,
     idx: &Index,
     except: Option<&str>,
-    profile: Profile,
-    ignore: &[String],
+    policy: &Policy,
 ) -> Result<(), String> {
     for (uri, text) in docs {
         if Some(uri.as_str()) != except {
-            diagnose(writer, uri, text, &idx.ws, profile, ignore)?;
+            diagnose(writer, uri, text, &idx.ws, policy)?;
         }
     }
     Ok(())
@@ -507,8 +493,7 @@ fn diagnose(
     uri: &str,
     text: &str,
     ws: &Workspace,
-    profile: Profile,
-    ignore: &[String],
+    policy: &Policy,
 ) -> Result<(), String> {
     let path = path_of(uri);
     // Only q source. A client may open anything - a `.k` file, a console
@@ -518,9 +503,9 @@ fn diagnose(
     // file gets an empty diagnostic list: that clears anything stale without
     // asserting something about a file this linter cannot read.
     let findings = if is_q_path(&path) {
-        let mut found = lint_in(text, &path, profile, ws);
-        found.retain(|f| !ignore.contains(&f.code));
-        found
+        // Lenient, so this cannot fail: a configuration it cannot read is
+        // reported once on stderr and the defaults govern its files.
+        policy.lint(text, &path, ws).unwrap_or_default()
     } else {
         vec![]
     };
@@ -712,7 +697,12 @@ mod tests {
     #[test]
     fn unused_names_are_tagged_unnecessary_over_exactly_the_name() {
         let source = "f:{[a;b] r:1; a}\n";
-        let found = lint_in(source, "x.q", Profile::Style, &Workspace::default());
+        let found = q_lint_rs::lint_in(
+            source,
+            "x.q",
+            q_lint_rs::Profile::Style,
+            &Workspace::default(),
+        );
         let tagged: Vec<Value> = found
             .iter()
             .map(|f| diagnostic(f, source))

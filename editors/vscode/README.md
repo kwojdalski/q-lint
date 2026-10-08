@@ -43,9 +43,17 @@ matching `qlinter` binary is bundled. Elsewhere, take one from
 
 | setting | default | |
 |---|---|---|
-| `q-lint.profile` | `style` | `general`: only what q refuses. `style`: also likely mistakes. `styleq`: also published style guides. `uqf`: also one repository's conventions. |
+| `q-lint.profile` | unset | `general`: only what q refuses. `style`: also likely mistakes. `styleq`: also published style guides. `uqf`: also one repository's conventions. Unset, a repository's `qlinter.toml` decides, and `style` applies without one. |
 | `q-lint.serverPath` | empty | Your own binary. Empty uses the bundled one, then `qlinter` on `PATH`; set, it always wins. |
 | `q-lint.trace.server` | `off` | Log client-server traffic. |
+
+## Repository settings
+
+A `qlinter.toml` at the repository root (or `[tool.qlinter]` in
+`pyproject.toml`) sets the profile, the rules and the exclusions for every
+file beneath it, the way Ruff's configuration does; editing it re-lints the
+open files. See the [configuration
+docs](https://github.com/kwojdalski/q-lint#configuration).
 
 ## Troubleshooting
 

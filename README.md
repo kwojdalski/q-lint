@@ -118,21 +118,47 @@ and this tool does not parse; and where one juxtaposed call is the argument of
 another, the outer one is bracketed and the inner waits for the next pass.
 Both keep their finding, so nothing is silently dropped.
 
-The same `[tool.q-lint]` configuration in `pyproject.toml` applies:
+### Configuration
+
+Settings are found the way Ruff finds its own. For each file, qlinter walks up
+from the file's directory and uses the first of `.qlinter.toml`,
+`qlinter.toml`, or a `pyproject.toml` with a `[tool.qlinter]` table (the older
+`[tool.q-lint]` still works). A `pyproject.toml` without the table is passed
+over, so a Python package's own one does not hide the repository's. Put one
+file at the repository root and it governs everything beneath it, wherever
+qlinter is run from; a sub-project can carry its own, and the nearest wins.
+Where no directory has one, `~/.config/qlinter/qlinter.toml` (or
+`$XDG_CONFIG_HOME/qlinter/`) applies.
 
 ```toml
-[tool.q-lint]
-exclude = ["torq/*", "generated/"]
-ignore = ["QS001"]
+# qlinter.toml at the repository root
+profile = "style"                    # general | style | styleq | uqf
+exclude = ["lib/torq/", "generated"] # relative to this file; a bare name matches anywhere
+
+[lint]
+select = ["QE", "QF", "QT"]          # codes or prefixes; replaces the profile's set
+extend-select = ["QS001"]            # added to whatever is selected
+ignore = ["QF016"]
+per-file-ignores = { "tests/*" = ["QS"] }
 ```
 
-Exclusions apply before a file is read or sent to qls. `ignore` drops findings
-with those diagnostic codes - from the report, from `--fix` and `--diff`, and
-from the language server, which reads the same file from the directory it is
-started in. It is for a rule a project has decided against, such as QS001 in a
-codebase whose names are snake_case. `--ignore CODE` (repeatable) adds to it
-for one run. A code no rule has is refused, so a typo cannot quietly ignore
-nothing. Diagnostics carry a
+In `pyproject.toml` the same keys go under `[tool.qlinter]`, and
+`[tool.qlinter.lint]`. Also: `extend-exclude`, and `extend = "../qlinter.toml"`
+to inherit another file and override it. As in Ruff, the most specific
+selector wins - `ignore = ["QS"]` with `extend-select = ["QS001"]` keeps QS001
+alone - and a selector that names no rule is refused, so a typo cannot quietly
+select or ignore nothing.
+
+The command line wins over the file: `--profile`, then `--select`,
+`--extend-select` and `--ignore` (comma-separated or repeated) applied after
+it, and `--exclude` added to it. `--config FILE` uses one file for everything,
+`--isolated` ignores them all, and `--show-settings PATH` prints which file
+governs a path and the rules it turns on. Exclusions apply before a file is
+read or sent to qls; the rest decide which findings are reported, fixed by
+`--fix` and `--diff`, and shown by the language server, which finds each open
+document's settings the same way and re-reads them when one changes.
+
+Diagnostics carry a
 code and a category; `qlinter --rules` lists them all and `qlinter --explain
 QF005` describes one. Exit codes are 0 (no error or warning), 1 (findings) and
 2 (input or server failure).
@@ -197,8 +223,11 @@ code --install-extension q-lint-0.2.0.vsix
 
 Two settings: `q-lint.serverPath` (default `qlinter`, looked up on `PATH` —
 point it at `target/release/qlinter` if you have not installed it) and
-`q-lint.profile` (`general`, `style`, `styleq` or `uqf`); the default is `style`:
-what q refuses, and what q runs that is almost certainly a mistake.
+`q-lint.profile` (`general`, `style`, `styleq` or `uqf`). Set, it overrides the
+repository's `profile`; unset, the repository's configuration decides, and
+`style` - what q refuses, and what q runs that is almost certainly a mistake -
+applies where there is none. `qlinter --lsp` without `--profile` defaults to
+`style` too.
 
 ### Other editors
 
@@ -210,7 +239,7 @@ require("lspconfig.configs").qlint = {
   default_config = {
     cmd = { "qlinter", "--lsp", "--profile", "uqf" },
     filetypes = { "q" },
-    root_dir = require("lspconfig.util").root_pattern("pyproject.toml", ".git"),
+    root_dir = require("lspconfig.util").root_pattern("qlinter.toml", ".qlinter.toml", "pyproject.toml", ".git"),
   },
 }
 require("lspconfig").qlint.setup({})
