@@ -1203,10 +1203,26 @@ fn line_at(s: &str, at: usize) -> usize {
     s.as_bytes()[..at].iter().filter(|&&b| b == b'\n').count() + 1
 }
 fn boundary(s: &str, at: usize) -> bool {
-    s[..at]
+    let before = &s[..at];
+    match before.chars().next_back() {
+        None => true,
+        // `_` joins a name only after that name's own letters: `x_ns` is one
+        // name, but `3_ns` is `3 _ ns` - drop, reading `ns` - and so is
+        // `(x)_ns`. Verified with parse in q 5: "3_ns" is (_;3;`ns), and so
+        // are "1.5_ns", "0x01_ns" and "3j_ns", while "x_ns" is `x_ns.
+        Some('_') => !ends_in_name(&before[..before.len() - 1]),
+        Some(c) => !c.is_alphanumeric() && !".`".contains(c),
+    }
+}
+/// Whether `s` ends with a name - letters, digits and `_` that began with a
+/// letter - rather than a number, a bracket or an operator.
+fn ends_in_name(s: &str) -> bool {
+    let token: Vec<char> = s
         .chars()
-        .next_back()
-        .is_none_or(|c| !c.is_alphanumeric() && !"_.`".contains(c))
+        .rev()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect();
+    token.last().is_some_and(|c| c.is_alphabetic())
 }
 /// Whether the expression an operand belongs to ends at `at`.
 ///

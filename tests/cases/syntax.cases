@@ -79,3 +79,8 @@ f:{s:"abc
 t)"Hello"~r
 t)abs[x]<tol
 
+=== clean | after a number `_` is drop, so `3_ns` reads `ns`
+f:{[x] ns:x+1; 3_ns}
+
+=== QF017 | after a letter `_` joins the name: `ns_3` is another name
+f:{[x] ns:x+1; ns_3:2; ns_3}
