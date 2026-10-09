@@ -1867,6 +1867,43 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
                     );
                 }
             }
+            // No parameter list: the rank is the highest of x, y and z its own
+            // body reads - nested lambdas have their own - and at least 1.
+            // Verified in q 5: `{x+y}[1;2;3]` and `{x}[1;2]` are both 'rank.
+            if let Some(end) = matching(code, at, b'{', b'}') {
+                let rest = code[end..].trim_start();
+                let open = code.len() - rest.len();
+                if rest.starts_with('[')
+                    && !re!(r"\n\S").is_match(&code[end..open + 1])
+                    && let Some(close) = matching(code, open, b'[', b']')
+                {
+                    let body = top_level(&code[at + 1..end - 1]);
+                    let reads = |name: &str| {
+                        re!(r"[A-Za-z_][A-Za-z0-9_]*")
+                            .find_iter(&body)
+                            .any(|w| w.as_str() == name && boundary(&body, w.start()))
+                    };
+                    let rank = if reads("z") {
+                        3
+                    } else if reads("y") {
+                        2
+                    } else {
+                        1
+                    };
+                    let count = slots(&code[open + 1..close - 1]).len();
+                    if count > rank {
+                        add(
+                            open,
+                            "QA002",
+                            format!(
+                                "{count} argument slots applied to a literal lambda that takes \
+                                 {rank}: without a parameter list it takes x, y and z up to the \
+                                 highest its body reads, and at least x"
+                            ),
+                        );
+                    }
+                }
+            }
             continue;
         }
         // From qbists/style, on default arguments:
@@ -2436,6 +2473,9 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
         if !boundary(code, whole.start())
             || RESERVED.iter().any(|n| n == name)
             || ranks.contains_key(name)
+            // A lambda another file of the workspace defines is a call too.
+            || ws.is_lambda(name)
+            || ws.is_lambda(&format!(".{name}"))
             || (name.contains('.') && !Z_VALUES.contains(&name))
         {
             continue;
@@ -2795,6 +2835,24 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
                     "`{}` with an empty pattern is a 'length error",
                     code[m.start()..m.end() - 1].trim()
                 ),
+            );
+        }
+    }
+    // The same written infix: `"abc" ss ""` is 'length too (q 5). The empty
+    // string is blank here, so the source is read at the same offset.
+    // `\bss\b` alone: the masked view turns the string's quotes into spaces
+    // too, so the whitespace after `ss` is skipped in the source instead.
+    for m in re!(r"\bss\b").find_iter(code) {
+        if !boundary(code, m.start()) {
+            continue;
+        }
+        let pattern = source[m.end()..].trim_start_matches([' ', '\t']);
+        let spaced = pattern.len() < source.len() - m.end();
+        if spaced && pattern.starts_with("\"\"") && !pattern[2..].starts_with('"') {
+            add(
+                m.start(),
+                "QT021",
+                "`ss` with an empty pattern is a 'length error".into(),
             );
         }
     }

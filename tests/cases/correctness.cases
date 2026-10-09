@@ -343,3 +343,38 @@ p:"/" sv string a,"x"
 
 === clean | an empty literal adds nothing
 p:"/" sv string a,""
+
+=== clean | QT022: an integer atom applied is a file handle - 1 is stdout - not an atom indexed
+out:1
+out["hello"]
+
+=== QT022 | a float atom indexed by juxtaposition, as with brackets
+f:2.5
+r:f 0
+
+=== clean | QT022: an infix builtin after an atom is not indexing it
+w:3.5
+r:w msum 1 2 3
+
+=== QA002 | a lambda without a parameter list takes x and y here, so three arguments are too many
+r:{x+y}[1;2;3]
+
+=== QA002 | and with no x, y or z read it still takes one
+r:{1}[1;2]
+
+=== clean | QA002: y read means two arguments
+r:{y}[1;2]
+
+=== clean | QA002: a nested lambda's arguments are its own
+r:{x+{y}[1;2]}[1]
+
+=== QT021 | an empty pattern written infix
+r:"abc" ss ""
+
+=== clean | QT021: a non-empty pattern infix
+r:"abc" ss "b"
+
+=== clean | QT022: a null integer is a handle not yet opened, written to by juxtaposition
+log_handle:0N
+f:{[msg] log_handle enlist msg}
+

@@ -60,6 +60,18 @@ fn convention(name: &str) -> Option<Convention> {
         _ => None,
     }
 }
+// Builtins q accepts infix. `f in x` and `f mod 2` put `f` on the left
+// of an operator rather than calling it, and `f each x` applies the
+// adverb to `f` instead of applying `f`. Brackets around what follows
+// would change the line, not respell it.
+const INFIX: &[&str] = &[
+    "aj", "aj0", "and", "asof", "bin", "binr", "cor", "cov", "cross", "cut", "div", "each",
+    "except", "ej", "find", "ij", "in", "insert", "inter", "like", "lj", "lsq", "mmu", "mod", "or",
+    "over", "peach", "pj", "prior", "rotate", "scan", "set", "ss", "sublist", "sv", "uj", "union",
+    "upsert", "vs", "wavg", "within", "wsum", "xasc", "xbar", "xcol", "xcols", "xdesc", "xexp",
+    "xgroup", "xkey", "xlog", "xprev", "xrank", "ema", "fby", "mavg", "mcount", "mdev", "mmax",
+    "mmin", "msum", "scov",
+];
 fn qualify(name: &str, ns: &str) -> String {
     if name.starts_with('.') {
         name.into()
@@ -1338,17 +1350,6 @@ pub fn check(
     // indexing, where brackets would be saying something different about the
     // code.
     if !dynamic {
-        // Builtins q accepts infix. `f in x` and `f mod 2` put `f` on the left
-        // of an operator rather than calling it, and `f each x` applies the
-        // adverb to `f` instead of applying `f`. Brackets around what follows
-        // would change the line, not respell it.
-        const INFIX: &[&str] = &[
-            "aj", "aj0", "and", "asof", "bin", "binr", "cor", "cov", "cross", "cut", "div", "each",
-            "except", "ej", "find", "ij", "in", "insert", "inter", "like", "lj", "lsq", "mmu",
-            "mod", "or", "over", "peach", "pj", "prior", "rotate", "scan", "set", "ss", "sublist",
-            "sv", "uj", "union", "upsert", "vs", "wavg", "within", "wsum", "xasc", "xbar", "xcol",
-            "xcols", "xdesc", "xexp", "xgroup", "xkey", "xlog", "xprev", "xrank",
-        ];
         // Whether `name` holds a lambda where it is used at `at`. A name can be
         // assigned more than once - qbists's aoc 02.q makes `d2` a function
         // and later a dictionary, and `d2 inp` after that is indexing - so it
@@ -1612,6 +1613,9 @@ fn named_values(
     }
     let mut known: HashMap<&str, (usize, Held)> = HashMap::new();
     let mut kinds: HashMap<&str, Arithmetic> = HashMap::new();
+    // Names bound to an integer atom, which q applies as a file handle rather
+    // than indexing: see QT022 below.
+    let mut handles: HashSet<&str> = HashSet::new();
     // A file that evaluates strings can define anything, so nothing is known
     // by name there; the literal-only checks below still hold.
     // Nor in a workspace where another file assigns the name too: which of
@@ -1649,6 +1653,11 @@ fn named_values(
             end += 1;
         }
         if let Some(value) = held(&code[start..end], &raw[start..end]) {
+            // `0N` and `0W` are integers too: uqf's tick.q starts a log
+            // handle as `0N` and sets it with hopen later.
+            if re!(r"^\s*-?(?:\d+|0[NW])[hij]?\s*$").is_match(&raw[start..end]) {
+                handles.insert(name);
+            }
             known.insert(name, (end, value));
             if let Some(kind) = arithmetic_kind(&raw[start..end]) {
                 kinds.insert(name, kind);
@@ -1667,21 +1676,59 @@ fn named_values(
     };
     // Indexing an atom. Verified: 1, 1b, 1.5, "x" and 2020.01.01 bound to a
     // name and then indexed - `a[0]`, `a[]`, `a[0]:5` - are all 'type.
-    for m in re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\[").captures_iter(code) {
+    // Bracketed, `f[0]`, or juxtaposed, `f 0`: the same indexing. Juxtaposed
+    // only before something that is an argument - a literal, a bracket, a
+    // name that is not an infix builtin (`f mod 2` is not indexing `f`) -
+    // and not before a negative literal, which is QB010's.
+    let indexed = re!(
+        r#"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)(?:\[|[ \t]+([0-9"`(]|\.?[A-Za-z][A-Za-z0-9_]*))"#
+    );
+    for m in indexed.captures_iter(code) {
         let name = m.get(1).unwrap();
-        if boundary(code, name.start()) && visible(name.as_str(), name.start()) == Some(&Held::Atom)
-        {
-            out.push(Finding::at(
-                path,
-                raw,
-                name.start(),
-                "QT022",
-                format!(
-                    "`{}` is an atom here, and an atom has no items to index: 'type",
-                    name.as_str()
-                ),
-            ));
+        if m.get(2).is_some_and(|next| INFIX.contains(&next.as_str())) {
+            continue;
         }
+        if !boundary(code, name.start())
+            || visible(name.as_str(), name.start()) != Some(&Held::Atom)
+        {
+            continue;
+        }
+        // An integer is applied as a file handle. Given a string it may well
+        // write - `out:1; out["hi\n"]` prints - but given a number or nothing
+        // it cannot: 'type on an open handle, 'domain on one that is not.
+        // Verified in q 5. A name or anything else might be a string.
+        if handles.contains(name.as_str()) {
+            let after = &raw[name.end()..];
+            let argument = match after.strip_prefix('[') {
+                Some(inside) => inside.trim_start_matches([' ', '\t']),
+                None => after.trim_start_matches([' ', '\t']),
+            };
+            let numeric = re!(r"^(?:-?\d|\])").is_match(argument);
+            if numeric {
+                out.push(Finding::at(
+                    path,
+                    raw,
+                    name.start(),
+                    "QT022",
+                    format!(
+                        "`{}` holds an integer, which q applies as a file handle; a handle \
+                         takes a string, so this is 'type - or 'domain if the handle is not open",
+                        name.as_str()
+                    ),
+                ));
+            }
+            continue;
+        }
+        out.push(Finding::at(
+            path,
+            raw,
+            name.start(),
+            "QT022",
+            format!(
+                "`{}` is an atom here, and an atom has no items to index: 'type",
+                name.as_str()
+            ),
+        ));
     }
     // Two vectors of known, different lengths under an operator that pairs
     // items - QT006 for a name rather than a literal. `,` and `~` take any

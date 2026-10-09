@@ -291,3 +291,23 @@ fn a_user_level_configuration_applies_where_no_project_has_one() {
         .unwrap();
     assert_eq!(String::from_utf8(out.stdout).unwrap().trim(), "[]");
 }
+
+#[test]
+fn a_lambda_another_file_defines_is_called_not_applied_to_a_literal() {
+    // QB010: `shift -1` is a call when shift is a lambda - in this file or,
+    // as here, in another file linted with it.
+    let repo = Repo::new();
+    repo.write("lib.q", "shift:{x+1}\n")
+        .write("app.q", "r:shift -1\n");
+    assert_eq!(
+        repo.codes(
+            ".",
+            &["--isolated", "--profile", "general", "lib.q", "app.q"]
+        ),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        repo.codes(".", &["--isolated", "--profile", "general", "app.q"]),
+        ["QB010"]
+    );
+}
