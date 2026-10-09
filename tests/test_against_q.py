@@ -138,3 +138,41 @@ def test_reserved_names_are_the_ones_q_reserves(tmp_path):
     ours = set(json.loads((ROOT / "src/reserved.json").read_text()))
     assert not reserved - ours, f"q reserves these and the linter does not know: {sorted(reserved - ours)}"
     assert not ours - reserved, f"the linter treats these as reserved and q does not: {sorted(ours - reserved)}"
+
+
+
+# Name, space, negative temporal literal (QB010). q parses each one: when the
+# head of the parse is the name, the minus went to the literal and the name is
+# APPLIED - what QB010 reports. When it is `-`, it is subtraction - clean.
+APPLIED = [".z.p -0D00:01", "window_to -0D00:01", "t -00:00:01"]
+SUBTRACTED = [".z.p - 0D00:01", ".z.p-0D00:01", "window_to - 0D00:01"]
+
+
+def q_heads(sources, tmp_path):
+    """What q's parse puts at the head of each expression, as -3! shows it."""
+    script = tmp_path / "heads.q"
+    calls = "\n".join('-1 "RESULT\\t",(-3!first parse "%s");' % s for s in sources)
+    script.write_text(calls + "\nexit 0;\n")
+    out = subprocess.run([Q, str(script), "-q"], capture_output=True, text=True, timeout=60)
+    return [line.split("\t", 1)[1] for line in out.stdout.splitlines() if line.startswith("RESULT\t")]
+
+
+def qb010(expression, tmp_path):
+    target = tmp_path / "qb010.q"
+    target.write_text("r:" + expression + "\n")
+    out = subprocess.run(
+        [str(BINARY), "--format", "json", str(target)], capture_output=True, text=True
+    )
+    return [f for f in json.loads(out.stdout or "[]") if f["code"] == "QB010"]
+
+
+def test_qb010_reports_exactly_the_temporal_literals_q_applies(tmp_path):
+    heads = q_heads(APPLIED + SUBTRACTED, tmp_path)
+    assert len(heads) == len(APPLIED + SUBTRACTED), "the q oracle produced nothing"
+    for expression, head in zip(APPLIED + SUBTRACTED, heads):
+        applied = head != "-"
+        assert applied == (expression in APPLIED), (expression, head)
+        assert bool(qb010(expression, tmp_path)) == applied, expression
+    # and the report sits on the name, where the trap starts
+    (finding,) = qb010("0D00:01 xbar .z.p -0D00:01", tmp_path)
+    assert finding["column"] == len("r:0D00:01 xbar ") + 1

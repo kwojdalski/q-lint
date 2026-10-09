@@ -88,6 +88,28 @@ r:a -1
 === QB010 | in a condition too
 if[n -1;2]
 
+=== QB010 | a temporal literal is the same trap
+window_to:.z.p;r:window_to -0D00:01
+
+=== QB010 | .z.p is a value, so applying it is never meant
+r:0D00:01 xbar .z.p -0D00:01
+
+=== QB010 | inside a conditional
+r:$[null c; window_to -0D00:01; c]
+
+=== QB010 | a time literal
+r:t -00:00:01
+
+=== clean | subtraction of a timespan, any spacing
+r:.z.p - 0D00:01;r:.z.p-0D00:01;r:window_to - 0D00:01
+
+=== clean | a namespaced name may be a function from elsewhere
+r:.util.shift -1;r:.util.back -0D00:01
+
+=== clean | in a comment or a string
+/ r:.z.p -0D00:01
+s:"window_to -0D00:01"
+
 === clean | subtraction, any spacing
 r:a-1;r:a - 1;r:a- 1
 
