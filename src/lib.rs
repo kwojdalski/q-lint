@@ -318,7 +318,7 @@ pub fn fix_for(finding: &Finding, source: &str) -> Option<Fix> {
         // `a -1` read as subtraction. Which was meant is a guess, so only
         // in the editor.
         "QB010" => {
-            let m = re!(r"^[A-Za-z][A-Za-z0-9_]*[ \t]+-").find(source.get(start..)?)?;
+            let m = re!(r"^\.?[A-Za-z][A-Za-z0-9_.]*[ \t]+-").find(source.get(start..)?)?;
             let name = m.as_str()[..m.len() - 1].trim_end();
             (
                 m.as_str(),
@@ -1202,6 +1202,14 @@ impl Finding {
 fn line_at(s: &str, at: usize) -> usize {
     s.as_bytes()[..at].iter().filter(|&&b| b == b'\n').count() + 1
 }
+/// q's `.z` names that hold a value rather than a function or a callback:
+/// applying one to a negative literal is never meant. `.z.p -0D00:01` is the
+/// shape QB010 exists for.
+const Z_VALUES: &[&str] = &[
+    ".z.a", ".z.d", ".z.D", ".z.f", ".z.h", ".z.i", ".z.K", ".z.k", ".z.n", ".z.N", ".z.o", ".z.p",
+    ".z.P", ".z.t", ".z.T", ".z.u", ".z.x", ".z.X", ".z.z", ".z.Z",
+];
+
 fn boundary(s: &str, at: usize) -> bool {
     let before = &s[..at];
     match before.chars().next_back() {
@@ -2406,20 +2414,29 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
     // matches. Nor does `sizes -1+n`: a literal that continues into an
     // expression is `sizes[n-1]`, indexing said on purpose - only a literal
     // that ends the statement or bracket is the trap.
+    //
+    // The literal may be temporal: `window_to -0D00:01` and `.z.p -0D00:01`
+    // are the same trap with a timespan, and a production timer threw 'type
+    // on both. Verified on q 4.0: parse ".z.p -0D00:01" is
+    // (`.z.p;-0D00:01:00.000000000). A dotted name is reported only when it is
+    // one of q's own `.z` VALUES (Z_VALUES) - a namespaced name could be a
+    // function from anywhere (`.util.shift -1`), and this file cannot know.
     for m in
         // `\r` belongs in the trailing class: with `$` in multiline mode the
         // anchor sits before the `\n`, so on a CRLF checkout the carriage
         // return is left between the literal and the anchor and the match is
         // silently lost. Every file git checks out on Windows is CRLF.
         // No `_` in the literal: no q number has one, and `-1_x` is drop.
-        re!(r"(?m)([A-Za-z][A-Za-z0-9_]*)[ \t]+-\d[A-Za-z0-9.]*[ \t\r]*(?:[;\])]|$)")
-            .captures_iter(code)
+        // `:` in the literal for a temporal one: `-0D00:01`, `-00:00:01`.
+        re!(r"(?m)(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]+(-\d[A-Za-z0-9.:]*)[ \t\r]*(?:[;\])]|$)")
+                .captures_iter(code)
     {
         let whole = m.get(0).unwrap();
-        let name = &m[1];
+        let (name, literal) = (&m[1], &m[2]);
         if !boundary(code, whole.start())
             || RESERVED.iter().any(|n| n == name)
             || ranks.contains_key(name)
+            || (name.contains('.') && !Z_VALUES.contains(&name))
         {
             continue;
         }
@@ -2427,8 +2444,11 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
             whole.start(),
             "QB010",
             format!(
-                "`{name} -N` applies `{name}` to a negative literal; `{name}-N` or `{name} - N` \
-                 is subtraction"
+                "`{name} {literal}` applies `{name}` to the negative literal `{literal}`: with a \
+                 space before `-` and none after, the `-` belongs to the literal. `{name} - {}` \
+                 or `{name}-{}` is subtraction",
+                &literal[1..],
+                &literal[1..]
             ),
         );
     }
