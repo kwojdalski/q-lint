@@ -1,6 +1,6 @@
 [project]
 name = "q-lint-rs"
-version = "0.14.9"
+version = "0.14.10"
 description = "Native standalone q linter"
 readme = "README.md"
 requires-python = ">=3.11"
