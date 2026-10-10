@@ -296,6 +296,60 @@ fn duplicate_columns(path: &str, source: &str, code: &str, out: &mut Vec<Finding
             seen.push(name);
         }
     }
+    // The same in a select or update list, where q 5 renames as well:
+    // `select a,a from t` has columns a and a1. An item is named by its
+    // `name:`, or is a bare column naming itself; other expressions are
+    // named by q's own rules and left out.
+    for q in re!(r"\b(?:select|update)\b").find_iter(code) {
+        if !crate::boundary(code, q.start()) {
+            continue;
+        }
+        let rest = &code[q.end()..];
+        let Some(stop) = re!(r"\b(?:by|from)\b").find(rest) else {
+            continue;
+        };
+        let list = &rest[..stop.start()];
+        if list.contains(['\n', ';', '[', '{']) {
+            continue;
+        }
+        let mut seen: Vec<&str> = vec![];
+        // Items at depth zero: `select f[a,b],c` has two.
+        let mut items = vec![];
+        let (mut depth, mut start) = (0i32, 0);
+        for (i, b) in list.bytes().enumerate() {
+            match b {
+                b'(' => depth += 1,
+                b')' => depth -= 1,
+                b',' if depth == 0 => {
+                    items.push(&list[start..i]);
+                    start = i + 1;
+                }
+                _ => {}
+            }
+        }
+        items.push(&list[start..]);
+        for item in items {
+            let item = item.trim();
+            let name = match item.split_once(':') {
+                Some((name, _)) => name.trim(),
+                None => item,
+            };
+            if !re!(r"^[A-Za-z][A-Za-z0-9_]*$").is_match(name) {
+                continue;
+            }
+            if seen.contains(&name) {
+                out.push(Finding::at(
+                    path,
+                    source,
+                    q.start(),
+                    "QB019",
+                    format!("Column `{name}` is named twice: q keeps both and renames the second, so `{name}` reads the first"),
+                ));
+                break;
+            }
+            seen.push(name);
+        }
+    }
 }
 
 /// QB020. A statement after a return or a signal at a lambda's top level can

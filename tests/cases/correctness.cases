@@ -472,3 +472,17 @@ r:![t;enlist(=;`b;3);0b;enlist`a]
 t:([]a:1 2;b:3 4)
 r:![t;();0b;enlist`a]
 s:![t;enlist(=;`b;3);0b;`symbol$()]
+
+=== QB019 | a column named twice in a select (q 5: select a,a from t has a and a1)
+t:([]a:1 2;b:3 4)
+r:select a,a from t
+s:select a:a,b:a,a:a from t
+
+=== QB019 | and in an update (q 5: update a:1,a:2 from t adds a1)
+t:([]a:1 2;b:3 4)
+r:update a:1,a:2 from t
+
+=== clean | distinct names
+t:([]a:1 2;b:3 4)
+r:select a,b from t
+s:select a:sum b,b from t
