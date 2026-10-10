@@ -1541,9 +1541,10 @@ fn views(source: &str) -> Views {
                 block = false;
                 open_block = None;
             }
-        } else if string.is_none() && matches!(stripped, "/" | "\\") {
+        } else if string.is_none() && matches!(stripped, "/" | "\\" | "\\\\") {
+            // `\\` exits q, so a script ends there as it does at a lone `\`.
             block = stripped == "/";
-            ended = stripped == "\\";
+            ended = stripped != "/";
             if block {
                 open_block = Some(offset);
             }

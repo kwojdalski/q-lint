@@ -86,3 +86,15 @@ c:2
 / comment
 
   b:1+`a
+
+=== clean | \\ exits, so nothing after it is read (q 5 stops there)
+a:1
+\\
+(((
+b:1+`a
+
+=== QE001 | an indented \\ is not the exit line
+a:1
+f:{
+  \\
+(((
