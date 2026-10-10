@@ -433,3 +433,15 @@ a 0
 === clean | a name defined only by set in brackets is defined
 set[`b;1 2]
 b 0
+
+=== QT006 | a vector on the line above is not part of the operand (q 5: 'length)
+a:1
+1 2 3=1 2
+
+=== QT006 | nor across a blank line or an unindented one
+1 2 3
+4 5 6+1 2 3 4
+
+=== clean | an indented line continues the vector (q 5: 1 2 3=1 2 + "  3" is 111b)
+b:1 2 3=1 2
+  3
