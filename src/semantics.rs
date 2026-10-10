@@ -578,7 +578,7 @@ pub fn check(
     // numeric or byte vector, or a parenthesised list. Not a numeric atom:
     // `1!t` keys a table and `0!t` unkeys one, which is not a dictionary.
     for m in re!(
-        r"((?:`[A-Za-z][A-Za-z0-9_.]*)+|-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*;[^()]*\))\s*!"
+        r"((?:`[A-Za-z][A-Za-z0-9_.]*)+|-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*;[^()]*\)|\(\s*(?:`[A-Za-z][A-Za-z0-9_.]*){2,}\s*\))\s*!"
     )
     .captures_iter(code)
     {

@@ -456,3 +456,10 @@ d:1 2 3 mod 1 2
 a:`none^`a`b
 c:1 2 mod 3
 d:1 2 3 mod 4 5 6
+
+=== QT001 | keys in parentheses are measured too (q 5: (`a`b)!(1;2;3) is 'length)
+a:(`a`b)!(1;2;3)
+b:(`a`b)!1 2 3
+
+=== clean | and match
+a:(`a`b)!1 2
