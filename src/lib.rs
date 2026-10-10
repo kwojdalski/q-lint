@@ -3281,6 +3281,19 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
             if m[1].contains('_') {
                 continue;
             }
+            // Next to another literal the parentheses are what keep two
+            // tokens apart: `1 2 (3)` indexes `1 2` at 3 (q 5: 0N), and
+            // `3 (-1)` applies 3, where `1 2 3` and `3 -1` are vectors.
+            let numeric = m[1].trim().starts_with(|c: char| c == '-' || c.is_ascii_digit());
+            if numeric
+                && (re!(r"(?:^|[^A-Za-z0-9_.])-?\d[A-Za-z0-9.:]*$")
+                    .is_match(line[..whole.start()].trim_end())
+                    || line[whole.end()..]
+                        .trim_start_matches([' ', '\t'])
+                        .starts_with(|c: char| c.is_ascii_digit() || c == '-' || c == '.'))
+            {
+                continue;
+            }
             add(
                 offset + whole.start(),
                 "QS004",

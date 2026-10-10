@@ -30,6 +30,18 @@ r:(1)+2
 === QS004 profile: styleq | a name likewise
 r:(t)
 
+=== clean profile: styleq | after a literal they keep two tokens apart (q 5: 1 2 (3) is 0N)
+a:1 2 (3)
+b:3 (-1)
+d:0x01 (0x02)
+e:10b (1)
+
+=== clean profile: styleq | and before one ((1) 2 is 1 applied to 2, 1 2 a vector)
+c:(1) 2
+
+=== QS004 profile: styleq | after a name nothing changes without them
+r:a (3)
+
 === clean profile: styleq | parentheses that group more than one token
 r:(a+b)*c
 
