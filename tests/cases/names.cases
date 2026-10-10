@@ -589,3 +589,10 @@ g:{n:n,1;n}
 === clean profile: general | after a first assignment, or in another branch
 f:{a:1;a:a+1}
 g:{$[x;a:1;a:2];a}
+
+=== QF003 | a query keyword as a local is refused when the lambda is defined (q 5: {select:1;0} is 'from)
+a:{select:1;0}
+b:{delete:1;0}
+
+=== clean | from and by are taken as locals (q 5: {from:1;from+1}[] is 2)
+a:{from:1;from+1}

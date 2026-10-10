@@ -3244,11 +3244,25 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
         if let Some(end) = matching(code, at, b'{', b'}') {
             let mut offset = at;
             for line in code[at..end].split_inclusive('\n') {
+                // A query keyword assigned is refused when the lambda is
+                // defined: q 5 `{select:1;0}` is 'from, `{delete:1;0}` 'type.
+                for a in re!(r"\b(select|exec|update|delete)\s*:").captures_iter(line) {
+                    let m = a.get(0).unwrap();
+                    if boundary(line, m.start()) && !line[m.end()..].starts_with(':') {
+                        add(
+                            offset + m.start(),
+                            "QF003",
+                            format!("Local assignment to `{}`", &a[1]),
+                        );
+                    }
+                }
                 if !re!(r"\b(?:select|exec|update|delete|by)\b").is_match(line) {
                     for a in re!(r"([a-z][a-z0-9_]*)\s*:").captures_iter(line) {
                         let m = a.get(0).unwrap();
+                        // q 5 takes from and by as locals: {from:1;from+1}[] is 2.
                         if boundary(line, m.start())
                             && !line[m.end()..].starts_with(':')
+                            && !matches!(&a[1], "from" | "by")
                             && RESERVED.iter().any(|n| n == &a[1])
                         {
                             add(
