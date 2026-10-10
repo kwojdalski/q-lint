@@ -581,3 +581,11 @@ n:{.z.p}
 
 === clean profile: general | a query, where sym.name can be a foreign key's column
 p:{[t] select sym.name from t}
+
+=== QF014 profile: general | a read in the value assigned to the same name (q 5: {a:a+1}[] is 'a)
+f:{a:a+1}
+g:{n:n,1;n}
+
+=== clean profile: general | after a first assignment, or in another branch
+f:{a:1;a:a+1}
+g:{$[x;a:1;a:2];a}

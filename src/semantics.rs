@@ -791,12 +791,50 @@ pub fn check(
             let Some(&assigned) = first.get(name) else {
                 continue;
             };
-            if m.start() >= assigned
+            // A read to the right of the assignment, in the expression it
+            // assigns, runs first too: q 5 `{a:a+1}[]` is 'a. The walk stops
+            // at a `;` or at a bracket that closes around the assignment.
+            let in_value = m.start() > assigned
+                && direct[assigned..].starts_with(name)
+                && {
+                    let mut depth = 0i32;
+                    direct[assigned..m.start()].bytes().all(|b| {
+                        match b {
+                            b'(' | b'[' | b'{' => depth += 1,
+                            b')' | b']' | b'}' => depth -= 1,
+                            _ => {}
+                        }
+                        depth >= 0 && !(b == b';' && depth == 0) && b != b'\n'
+                    })
+                }
+                && {
+                    // Unless the statement assigns the name again, which may
+                    // run first: `a:a*a:sin x`, `k:2_@[k;..;k:...]` and
+                    // `c:f$[0<count c:g x;c;0]` are fine.
+                    let rest = &direct[assigned..];
+                    let mut depth = 0i32;
+                    let end = rest
+                        .bytes()
+                        .position(|b| {
+                            match b {
+                                b'(' | b'[' | b'{' => depth += 1,
+                                b')' | b']' | b'}' => depth -= 1,
+                                _ => {}
+                            }
+                            depth < 0 || (b == b';' && depth == 0) || b == b'\n'
+                        })
+                        .unwrap_or(rest.len());
+                    !assignment.captures_iter(&rest[..end]).any(|a| {
+                        let at = a.get(0).unwrap().start();
+                        at > 0 && &a[1] == name && a.get(2).is_none() && boundary(rest, at)
+                    })
+                };
+            if (m.start() >= assigned && !in_value)
                 || scope.params.contains(name)
                 || !boundary(&direct, m.start())
                 || after.starts_with(':')
                 || after.starts_with('.')
-                || !runs_before(&direct, m.start(), assigned)
+                || (!in_value && !runs_before(&direct, m.start(), assigned))
                 || !seen.insert(name)
             {
                 continue;
@@ -806,10 +844,18 @@ pub fn check(
                 raw,
                 scope.body + m.start(),
                 "QF014",
-                format!(
-                    "`{name}` is read here but assigned in a later statement, which makes it \
-                     local throughout: this read finds an unset local and throws '{name}"
-                ),
+                if in_value {
+                    format!(
+                        "`{name}` is read in the value being assigned to it, which makes it \
+                         local, and the value runs first: this read finds an unset local and \
+                         throws '{name}"
+                    )
+                } else {
+                    format!(
+                        "`{name}` is read here but assigned in a later statement, which makes \
+                         it local throughout: this read finds an unset local and throws '{name}"
+                    )
+                },
             ));
         }
     }
