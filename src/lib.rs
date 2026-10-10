@@ -3543,6 +3543,32 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
             ),
         );
     }
+    // QB016 in functional form: `![t;c;0b;cols]` with both a where list
+    // and columns is 'nyi (q 5), as the delete phrase is.
+    for (bang, _) in code.match_indices("![") {
+        let Some(close) = matching(code, bang + 1, b'[', b']') else {
+            continue;
+        };
+        let parts = slots(&code[bang + 2..close - 1]);
+        if parts.len() != 4 || parts[2].trim() != "0b" {
+            continue;
+        }
+        let filter = parts[1].trim();
+        let columns = parts[3].trim();
+        if !filter.is_empty()
+            && filter != "()"
+            && re!(r"^(?:enlist\s*`[A-Za-z_][\w.]*|,`[A-Za-z_][\w.]*|(?:`[A-Za-z_][\w.]*){2,})$")
+                .is_match(columns)
+        {
+            add(
+                bang,
+                "QB016",
+                "`![t;c;0b;cols]` cannot name columns and filter rows at once; that is 'nyi at \
+                 runtime"
+                    .into(),
+            );
+        }
+    }
     // `if`, `while` and `do` are statements: each returns `::`, so
     // assigning one assigns null. `$[...]` is the expression form.
     for m in re!(r"[A-Za-z0-9_\])]\s*:\s*(if|while|do)\s*\[").captures_iter(code) {

@@ -463,3 +463,12 @@ f:{x:x}
 
 === clean | a different name on the right
 f:{x:y}
+
+=== QB016 | the functional form with a where list and columns (q 5: 'nyi)
+t:([]a:1 2;b:3 4)
+r:![t;enlist(=;`b;3);0b;enlist`a]
+
+=== clean | columns alone, or a where list alone
+t:([]a:1 2;b:3 4)
+r:![t;();0b;enlist`a]
+s:![t;enlist(=;`b;3);0b;`symbol$()]
