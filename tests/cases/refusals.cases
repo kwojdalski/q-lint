@@ -111,3 +111,41 @@ r:string[1;2]
 === clean | deltas and prev take a second argument
 r:deltas[1;1 2 3]
 
+
+=== QE008 profile: general | monadic minus on a name (q 5: parse "-x" is '-)
+f:{-x}
+
+=== QE008 profile: general | after an assignment or another glyph
+a:-x
+b:1*-x
+
+=== QE008 profile: general | enlist, count and not are keywords in q 5 (',x is ',)
+e:,x
+g:#x
+h:{[y] ~y}
+
+=== clean profile: general | a negative literal, a glyph in parentheses, an amend
+a:-1
+b:-.5
+c:(#)x
+d:x-:1
+
+=== clean profile: general | after an operand the glyph is dyadic, even spaced as if it were not
+b:x -x
+r:x,-1
+m:"j"$x
+p:`$"a"
+
+=== clean profile: general | an indented line continues the one above
+t:a
+  ,b
+
+=== clean profile: general | functional forms and iterators
+g:@[f;x;0]
+h:$[1b;2;3]
+e:,/[x]
+
+=== clean profile: general | the sort in select[>a] is qSQL (q 5: select[>a] from ([]a:1 2) sorts)
+r:select[>a] from t
+s:select[2;<a] from t
+u:75_select[>a] from t

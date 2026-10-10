@@ -1118,6 +1118,7 @@ impl Finding {
                 code,
                 "QE001"
                     | "QE003"
+                    | "QE008"
                     | "QA001"
                     | "QA002"
                     | "QA005"

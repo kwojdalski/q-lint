@@ -589,6 +589,10 @@ once:([]px:1 2;qty:3 4)
 early:{[p] :p; p*2}
 early2:{[p] if[p<0;:0]; p*2}
 
+/ QE008: q 5 has no monadic -, so -x does not parse; neg x does.
+/ expect-next: QE008
+negated:{-x}
+
 / QB002: q 5's like takes one `*`, or a leading and trailing pair;
 / "a*b*" is 'nyi.
 / expect-next: QB002

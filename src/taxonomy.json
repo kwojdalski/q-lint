@@ -49,6 +49,13 @@
     "scope": "builtin"
   },
   {
+    "code": "QE008",
+    "name": "monadic-glyph",
+    "category": "syntax",
+    "summary": "A glyph applied to one argument; q 5 refuses -x, ,x, #x and the rest - the keyword is neg, enlist, count, not...",
+    "scope": "builtin"
+  },
+  {
     "code": "QF001",
     "name": "reserved-parameter",
     "category": "names",

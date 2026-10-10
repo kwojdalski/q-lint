@@ -17,6 +17,7 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
     where_assignment(path, source, code, &mut out);
     hopen_literal(path, source, code, &mut out);
     cast_character(path, source, code, comments, &mut out);
+    monadic_glyph(path, source, code, comments, &mut out);
     out
 }
 
@@ -342,5 +343,77 @@ fn cast_character(path: &str, source: &str, code: &str, comments: &str, out: &mu
                 format!("`\"{c}\"$` casts to a type q does not have: 'type"),
             ));
         }
+    }
+}
+
+/// QE008. A glyph applied to one argument by juxtaposition. q 5 has no
+/// monadic form for any of them: `-x`, `,x`, `#x`, `~x`, `a:-x` and `1*-x`
+/// are each refused by `parse` with the glyph as the error, and a lambda
+/// holding one is refused when the script defines it. `-1` is a literal,
+/// `(#)x` and `-:` are fine, and after an operand the glyph is dyadic.
+fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<Finding>) {
+    const GLYPHS: &[u8] = b"+-*%!#$&|^=<>~,@?";
+    // Pairs QE004 already reports, or that are one operator.
+    const PAIRS: &[&str] = &[
+        "<>", "<=", ">=", "==", "!=", "&&", "||", "+=", "-=", "*=", "->", "=>",
+    ];
+    let b = comments.as_bytes();
+    let mut line_start = 0;
+    for (i, &g) in b.iter().enumerate() {
+        if i > 0 && b[i - 1] == b'\n' {
+            line_start = i;
+        }
+        // Not in a string or a comment, nor on a system command or `#!` line.
+        if !GLYPHS.contains(&g)
+            || code.as_bytes()[i] != g
+            || b[line_start] == b'\\'
+            || comments[line_start..].starts_with("#!")
+        {
+            continue;
+        }
+        // What follows has to be an operand: not `:` (`-:`, `,:`), an
+        // iterator, a bracket (`@[f;x;g]`, `$[c;a;b]`) or a negative literal.
+        let rest = &comments[i + 1..];
+        let next = rest.trim_start_matches([' ', '\t']);
+        let spaced = next.len() < rest.len();
+        let operand = next.starts_with(|c: char| c.is_ascii_alphabetic() || "`(\"".contains(c))
+            || (next.starts_with(|c: char| c.is_ascii_digit() || c == '.')
+                && (g != b'-' || spaced));
+        if !operand {
+            continue;
+        }
+        // What precedes has to start an expression, or be another glyph.
+        let before = comments[..i].trim_end_matches([' ', '\t', '\r', '\n']);
+        let adjacent = before.len() == i;
+        let opens = i == line_start
+            || before.is_empty()
+            || before.ends_with([':', '(', '[', '{', ';'])
+            || re!(r"\{\s*\[[A-Za-z0-9_; \t]*\]$").is_match(before);
+        let after_glyph = before
+            .bytes()
+            .next_back()
+            .is_some_and(|p| GLYPHS.contains(&p))
+            && !(adjacent && PAIRS.contains(&&comments[i - 1..=i]));
+        if !opens && !after_glyph {
+            continue;
+        }
+        // The sort in `select[>a]` and `select[2;<a]` is q's own syntax.
+        if matches!(g, b'<' | b'>')
+            && re!(r"(?:^|[^A-Za-z0-9.])select\s*\[(?:[^\[\];]*;)?$").is_match(before)
+        {
+            continue;
+        }
+        let mut finding = Finding::at(
+            path,
+            source,
+            i,
+            "QE008",
+            format!(
+                "`{}` has no monadic form in q 5: q refuses this line with '{}",
+                g as char, g as char
+            ),
+        );
+        finding.end_column = finding.column.map(|c| c + 1);
+        out.push(finding);
     }
 }
