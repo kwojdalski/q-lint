@@ -3746,7 +3746,8 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
                 i += 1;
                 continue;
             }
-            if b.get(i + 1).is_some_and(|c| b"\\\"nrt".contains(c)) {
+            // q 5 also takes `\/` as a slash: "a\/b" is "a/b".
+            if b.get(i + 1).is_some_and(|c| b"\\\"nrt/".contains(c)) {
                 i += 2;
                 continue;
             }

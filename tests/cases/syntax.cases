@@ -19,6 +19,9 @@ f:{[a] $[a>0;(1;2);()]}
 === QE002 | an escape q does not define
 s:"a\qb"
 
+=== clean | q 5 takes \/ as a slash ("a\/b" is "a/b")
+s:"a\/b"
+
 === clean | the escapes q does define
 s:"a\tb\nc\\d\"e"
 
