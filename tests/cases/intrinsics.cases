@@ -473,3 +473,18 @@ r5:1 rotate 1 2,3
 === clean | an infix right operand that runs on is not the literal
 r:x within 1 2 3,4
 
+
+=== clean | an int vector counts (q 5: where 1 2i is 0 1 1)
+r:where 1 2i
+
+=== QT009 | a short one does not (q 5: where 1 2h is 'type)
+r:where 1 2h
+
+=== QT009 | nor does an atom (q 5: where 2 is 'type)
+r:where 2
+
+=== QT009 | a boolean atom either (q 5: where 1b is 'type)
+r:where 1b
+
+=== clean | an enlisted atom is a list (q 5: where enlist 2 is 0 0)
+r:where enlist 2

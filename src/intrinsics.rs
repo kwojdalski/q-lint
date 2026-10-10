@@ -89,7 +89,7 @@ fn literal(s: &str) -> Option<Literal> {
             vector: numbers.len() > 1,
             len: numbers.len(),
             negative: numbers.iter().any(|&v| v < 0),
-            short_integer: s.ends_with(['h', 'i']),
+            short_integer: s.ends_with('h'),
         });
     }
     let float = re!(
@@ -366,12 +366,15 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
                 Some(("QD001", "til cannot generate a negative number of indices"))
             }
             // `where ""` is the one string q accepts: there is nothing in it.
+            // q 5 wants a list: `where 2` and `where 1b` are 'type, and so is
+            // a short vector, while an int one counts (`where 1 2i` is 0 1 1).
             "where"
                 if matches!(value.kind, Kind::Float | Kind::Symbol | Kind::Byte)
                     || (value.kind == Kind::Char && value.len > 0)
+                    || (matches!(value.kind, Kind::Integer | Kind::Bool) && !value.vector)
                     || value.short_integer =>
             {
-                Some(("QT009", "where requires boolean or long counts"))
+                Some(("QT009", "where requires a boolean, int or long vector"))
             }
             "where" if value.negative => Some((
                 "QD002",
