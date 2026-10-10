@@ -392,6 +392,17 @@ deltas[1;2]
 === clean | ratios accepts two arguments
 ratios[1;2]
 
+=== clean | maxs, mins and fills take a seed (q 5: maxs[10;3 1 5] is 10 10 10)
+maxs[10;3 1 5]
+mins[0;3 1 5]
+fills[0;0N 1 0N]
+
+=== QA010 | but not two (q 5: maxs[10;3 1 5;4] is 'rank)
+maxs[10;3 1 5;4]
+
+=== QA010 | avgs takes no seed (q 5: avgs[1;2 3] is 'rank)
+avgs[1;2 3]
+
 === clean | enlist accepts two arguments
 enlist[1;2]
 

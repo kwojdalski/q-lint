@@ -292,7 +292,7 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
         };
         let max_arity = match name {
             "enlist" => usize::MAX,
-            "sums" | "prds" | "deltas" | "ratios" => 2,
+            "sums" | "prds" | "deltas" | "ratios" | "maxs" | "mins" | "fills" => 2,
             _ => arity,
         };
         if args.len() > max_arity {
