@@ -414,3 +414,13 @@ r:a+b,0
 pkg:([arch:"expat"; ubuntu:"libexpat1"; centos:""])
 env:([a:1;b:2 3])
 
+
+=== clean | a boolean vector is a digit per item (q 5: `a`b!10b is a dictionary)
+`a`b!10b
+
+=== QT001 | and still counted against the keys (q 5: `a`b`c!10b is 'length)
+`a`b`c!10b
+
+=== clean | one symbol on the left is an enumeration (q 5: `sym!0 1 2 is type 20h)
+sym:`a`b`c
+x:`sym!0 1 2

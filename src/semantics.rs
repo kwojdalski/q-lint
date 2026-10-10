@@ -255,6 +255,10 @@ fn shape(s: &str) -> Option<usize> {
     {
         return Some(hex.len() / 2);
     }
+    // A boolean vector is one token, a digit per item: `10b` is two.
+    if re!(r"^[01]+b$").is_match(s) {
+        return Some(s.len() - 1);
+    }
     if re!(r"^(?:`[A-Za-z][A-Za-z0-9_.]*)+$").is_match(s) {
         return Some(s.bytes().filter(|&b| b == b'`').count());
     }
@@ -577,6 +581,11 @@ pub fn check(
     {
         let start = m.get(0).unwrap();
         if !boundary(code, start.start()) {
+            continue;
+        }
+        // One symbol on the left is an enumeration, not a dictionary:
+        // `` `sym!0 1 2 `` indexes the list named sym.
+        if m[1].starts_with('`') && m[1].matches('`').count() == 1 {
             continue;
         }
         let mut end = start.end();
