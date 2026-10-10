@@ -154,7 +154,10 @@ The command line wins over the file: `--profile`, then `--select`,
 it, and `--exclude` added to it. `--config FILE` uses one file for everything,
 `--isolated` ignores them all, and `--show-settings PATH` prints which file
 governs a path and the rules it turns on. Exclusions apply before a file is
-read or sent to qls; the rest decide which findings are reported, fixed by
+read or sent to qls, to the files a directory walk finds: a file named on the
+command line is linted whatever `exclude` says, as in Ruff, unless
+`--force-exclude` is given - which pre-commit hooks and scripts that pass every
+changed file want; the rest decide which findings are reported, fixed by
 `--fix` and `--diff`, and shown by the language server, which finds each open
 document's settings the same way and re-reads them when one changes.
 

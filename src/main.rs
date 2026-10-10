@@ -55,6 +55,11 @@ struct Args {
     extend_select: Vec<String>,
     #[arg(long)]
     exclude: Vec<String>,
+    /// Apply `exclude` to paths named on the command line too, and to
+    /// `--stdin-filename`. Without it an excluded file named explicitly is
+    /// still linted, as in Ruff; editors and pre-commit hooks pass it.
+    #[arg(long)]
+    force_exclude: bool,
     /// Drop findings with this code or prefix, e.g. `--ignore QS001`.
     /// Repeatable or comma-separated, and applied after the configuration.
     #[arg(long, value_delimiter = ',')]
@@ -215,7 +220,10 @@ fn run(args: Args) -> Result<u8, String> {
         if paths.len() != 1 {
             return Err("Stdin (-) must be the only input".into());
         }
-        if args.stdin_filename == "<stdin>" || !policy.excluded(Path::new(&args.stdin_filename))? {
+        if args.stdin_filename == "<stdin>"
+            || !args.force_exclude
+            || !policy.excluded(Path::new(&args.stdin_filename))?
+        {
             let mut source = String::new();
             io::stdin()
                 .read_to_string(&mut source)
@@ -231,7 +239,9 @@ fn run(args: Args) -> Result<u8, String> {
             if !path.exists() {
                 return Err(format!("Path does not exist: {name}"));
             }
-            if policy.excluded(path)? {
+            // A path named here is linted whatever `exclude` says, unless
+            // --force-exclude: exclusion is for what a walk discovers.
+            if args.force_exclude && policy.excluded(path)? {
                 skipped = true;
                 continue;
             }
@@ -256,7 +266,7 @@ fn run(args: Args) -> Result<u8, String> {
             while let Some(entry) = walk.next() {
                 let entry = entry.map_err(|e| e.to_string())?;
                 let p = entry.path();
-                if policy.excluded(p)? {
+                if entry.depth() > 0 && policy.excluded(p)? {
                     skipped = true;
                     if entry.file_type().is_dir() {
                         walk.skip_current_dir();

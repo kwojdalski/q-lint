@@ -311,3 +311,17 @@ fn a_lambda_another_file_defines_is_called_not_applied_to_a_literal() {
         ["QB010"]
     );
 }
+
+#[test]
+fn an_excluded_file_named_explicitly_is_linted_unless_force_exclude() {
+    let repo = Repo::new();
+    repo.write("qlinter.toml", "profile = \"style\"\nexclude = [\"sub\"]\n")
+        .write("sub/x.q", SOURCE);
+    // As in Ruff: exclusion is for what a walk discovers.
+    assert_eq!(repo.codes(".", &["sub/x.q"]), ["QF016"]);
+    assert_eq!(repo.codes(".", &["."]), Vec::<String>::new());
+    assert_eq!(
+        repo.codes(".", &["--force-exclude", "sub/x.q"]),
+        Vec::<String>::new()
+    );
+}
