@@ -1982,8 +1982,22 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
             .iter()
             .filter(|p| RESERVED.iter().any(|n| n == **p))
             .collect();
+        // q 5 defines such a lambda but refuses every call to it: 'match for
+        // a `.q` name such as count, 'nyi for a k primitive such as til.
+        // Only the keywords by, do, from, if and while still run.
         if !bad.is_empty() {
-            add(at, "QF001", format!("Builtin parameter name(s): {bad:?}"));
+            let detail = if bad
+                .iter()
+                .all(|p| matches!(**p, "by" | "do" | "from" | "if" | "while"))
+            {
+                format!("Builtin parameter name(s): {bad:?}")
+            } else {
+                format!(
+                    "Builtin parameter name(s): {bad:?}; q refuses every call to this lambda \
+                     ('match or 'nyi)"
+                )
+            };
+            add(at, "QF001", detail);
         }
         let mut seen = std::collections::HashSet::new();
         let repeated: Vec<&&str> = params
@@ -2944,34 +2958,45 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
             );
         }
     }
-    // A table literal's column named for a builtin: `([] first:1 2)` parses,
-    // but in a where phrase q resolves the bare name as the function, so
-    // `where first>1` is a 'type error and `select first from t` returns
-    // something that is not the column. The definition is the only place
-    // to say so.
-    for (at, _) in code.match_indices("([]") {
+    // A table literal's column named for a builtin: q 5 refuses to build
+    // `([]sum:1 2)` or `([sum:1 2]a:3 4)` with 'assign. Only by and from
+    // build a table, and a query reads even those as the keyword: q 5
+    // `select from t where from>3` is ",".
+    for (at, _) in code.match_indices("([") {
         let Some(close) = matching(code, at, b'(', b')') else {
             continue;
         };
-        let inner = &code[at + 3..close.saturating_sub(1)];
-        let mut pos = at + 3;
-        for part in inner.split(';') {
-            let trimmed = part.trim_start();
-            let lead = part.len() - trimmed.len();
-            if let Some(m) = re!(r"^([A-Za-z][A-Za-z0-9_]*)\s*:").captures(trimmed)
-                && RESERVED.iter().any(|n| n == &m[1])
-            {
-                add(
-                    pos + lead,
-                    "QF013",
-                    format!(
-                        "Column `{}` is a builtin name: in a filter q resolves the bare name \
-                         as the function, and the column is unreachable",
-                        &m[1]
-                    ),
-                );
+        let Some(keys) = matching(code, at + 1, b'[', b']') else {
+            continue;
+        };
+        // The key columns, then the value columns after the bracket.
+        for (start, end) in [(at + 2, keys - 1), (keys, close.saturating_sub(1))] {
+            if start >= end {
+                continue;
             }
-            pos += part.len() + 1;
+            let mut pos = start;
+            for part in code[start..end].split(';') {
+                let trimmed = part.trim_start();
+                let lead = part.len() - trimmed.len();
+                if let Some(m) = re!(r"^([A-Za-z][A-Za-z0-9_]*)\s*:").captures(trimmed)
+                    && RESERVED.iter().any(|n| n == &m[1])
+                {
+                    let detail = if matches!(&m[1], "by" | "from") {
+                        format!(
+                            "Column `{}` is a query keyword: a query reads the bare name as \
+                             the keyword, not the column",
+                            &m[1]
+                        )
+                    } else {
+                        format!(
+                            "Column `{}` is a builtin name: q refuses the literal",
+                            &m[1]
+                        )
+                    };
+                    add(pos + lead, "QF013", detail);
+                }
+                pos += part.len() + 1;
+            }
         }
     }
     // Match the Python rule's outer-body traversal, including nested assignments.

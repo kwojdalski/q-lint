@@ -146,6 +146,12 @@ t:([] first:1 2 3)
 === QF013 | the second column is checked too
 t:([] px:1 2; last:3 4)
 
+=== QF013 | a key column too (q 5: ([sum:1 2]a:3 4) is 'assign)
+k:([sum:1 2]a:3 4)
+
+=== QF013 | by builds a table, but no query can name the column
+t:([]a:1 2;by:3 4)
+
 === clean | ordinary column names
 t:([] px:1 2; qty:3 4)
 
