@@ -1,6 +1,6 @@
 # Rules
 
-All 113 rules, generated from `src/taxonomy.json` - the same data
+All 114 rules, generated from `src/taxonomy.json` - the same data
 `qlinter --rules` and `qlinter --explain <CODE>` print from. Regenerate with
 `python3 scripts/rules_doc.py > docs/rules.md`; a test fails when this is stale.
 
@@ -74,6 +74,7 @@ that wants fewer findings narrows in its own configuration.
 | `QF018` | possibly-undefined-name | Bare value read has no local or global definition in this file | `style` and above |
 | `QF019` | read-only-system-name | Assignment to a single-letter .z name, which q refuses with 'domain | every profile |
 | `QF020` | unknown-column | A column a table literal does not have, in select, exec, update, a where phrase or xkey, and nothing defines it | every profile |
+| `QF021` | dotted-local | name.member on a parameter or local reads a global, never the local | every profile |
 
 ## Application - how many arguments a thing takes and how it is called
 

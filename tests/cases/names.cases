@@ -551,3 +551,27 @@ f7:{p:1;{[p] p+1} each 1 2}
 
 === clean | except .z.m, which q 5 lets a script assign (.z.m:{x} succeeds)
 .z.m:{x}
+
+=== QF021 profile: general | dot notation on a parameter is a global name (q 5: {[t] t.c}[([]c:1 2)] is 't.c)
+f:{[t] t.c}
+
+=== QF021 profile: general | on a local too (q 5: 'd.x)
+g:{d:`x`y!1 2; d x; d.x}
+
+=== QF021 profile: general | and on an implicit argument
+h:{x.y}
+
+=== clean profile: general | at the top level it is the dictionary's member (q 5: t:([]c:1 2);t.c is 1 2)
+t:([]c:1 2)
+t.c
+
+=== clean profile: general | in a lambda, on a global (q 5: {t.c}[] is 1 2)
+t:([]c:1 2)
+k:{t.c}
+
+=== clean profile: general | indexing with a symbol, and q's own namespaces
+m:{[t] t`c}
+n:{.z.p}
+
+=== clean profile: general | a query, where sym.name can be a foreign key's column
+p:{[t] select sym.name from t}

@@ -90,6 +90,11 @@ three:{[a;b;] a+b}
 / expect-next: QF013
 ledger:([] first:1 2 3; qty:4 5 6)
 
+/ QF021: inside a lambda, t.c is the global named t.c, not column c of the
+/ parameter t, and q raises 't.c when it is called.
+/ expect-next: QF021
+dotted:{[t] t.c}
+
 / QF014: an assignment anywhere in a body makes the name local throughout,
 / so the read of `cfg` on the left finds an unset local, not the global,
 / and throws 'cfg. Within one statement q runs right to left and this does

@@ -189,6 +189,13 @@
     "scope": "builtin"
   },
   {
+    "code": "QF021",
+    "name": "dotted-local",
+    "category": "names",
+    "summary": "name.member on a parameter or local reads a global, never the local",
+    "scope": "builtin"
+  },
+  {
     "code": "QA001",
     "name": "parameter-limit",
     "category": "application",

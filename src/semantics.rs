@@ -813,6 +813,44 @@ pub fn check(
             ));
         }
     }
+    // `t.c` inside a lambda is the global named `t.c`, never column c of a
+    // parameter or local `t`: q 5 `{[t] t.c}[([]c:1 2)]` is 't.c, while at
+    // the top level `t.c` works. A query is left alone, where `sym.name`
+    // can be a foreign key's column.
+    for scope in &scopes {
+        if re!(r"\b(?:select|exec|update|delete)\b").is_match(&scope.direct) {
+            continue;
+        }
+        let direct = re!(r"`[A-Za-z0-9_./:]*")
+            .replace_all(&scope.direct, |m: &regex::Captures| " ".repeat(m[0].len()));
+        for m in re!(r"([A-Za-z][A-Za-z0-9_]*)\.[A-Za-z][A-Za-z0-9_.]*").find_iter(&direct) {
+            let whole = m.as_str();
+            let name = &whole[..whole.find('.').unwrap()];
+            if !boundary(&direct, m.start())
+                || !(scope.params.contains(name) || scope.locals.contains(name))
+                || re!(r"(?:^|[^A-Za-z0-9_.`])([A-Za-z][A-Za-z0-9_.]*)\s*::?")
+                    .captures_iter(code)
+                    .any(|a| &a[1] == whole)
+            {
+                continue;
+            }
+            out.push(Finding::at(
+                path,
+                raw,
+                scope.body + m.start(),
+                "QF021",
+                format!(
+                    "`{whole}` in a lambda is the global of that name, not `{name}` here: \
+                     q raises '{whole} (index with `{name}[{}]` instead)",
+                    whole[name.len() + 1..]
+                        .split('.')
+                        .map(|k| format!("`{k}"))
+                        .collect::<Vec<_>>()
+                        .join(";")
+                ),
+            ));
+        }
+    }
     // A parameter the body never mentions. The caller is still required to
     // pass it, so this is usually a call site that changed and a signature
     // that did not.
