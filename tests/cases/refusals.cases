@@ -185,3 +185,14 @@ f:{[x]
 === clean | a continued line after an operand makes it each
 h:{a
   '1}
+
+=== QE007 profile: general | delete needs a from too (q 5: parse "delete a" is 'from)
+r:{delete a}
+
+=== QE007 profile: general | and something after it (q 5: parse "select a from" is 'from)
+r:{select a from}
+s:{delete from}
+
+=== clean profile: general | delete from a named table, and delete columns
+delete from t
+r:delete a from t

@@ -45,7 +45,7 @@
     "code": "QE007",
     "name": "qsql-missing-from",
     "category": "syntax",
-    "summary": "select, exec or update with no from before the statement ends",
+    "summary": "select, exec, update or delete with no from before the statement ends, or nothing after it",
     "scope": "builtin"
   },
   {

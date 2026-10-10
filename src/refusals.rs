@@ -134,11 +134,11 @@ fn temporals(path: &str, source: &str, unsym: &str, out: &mut Vec<Finding>) {
     }
 }
 
-/// QE007. A select, exec or update with no `from` before its statement ends:
-/// `select a by b t` and `{select x}` are 'from. (`delete` without one is a
-/// different error, 'type, and is left out.)
+/// QE007. A select, exec, update or delete with no `from` before its
+/// statement ends, or nothing after it: `select a by b t`, `{select x}`,
+/// `delete a` and `select a from` are each 'from at parse time (q 5).
 fn missing_from(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Finding>) {
-    for m in re!(r"\b(select|exec|update)\b").find_iter(unsym) {
+    for m in re!(r"\b(select|exec|update|delete)\b").find_iter(unsym) {
         if !boundary(code, m.start()) {
             continue;
         }
@@ -169,18 +169,23 @@ fn missing_from(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec
             }
             at += 1;
         }
-        if !re!(r"\bfrom\b").is_match(&unsym[m.end()..at]) {
-            out.push(Finding::at(
-                path,
-                source,
-                m.start(),
-                "QE007",
-                format!(
-                    "`{}` has no `from` before its statement ends: q raises 'from",
-                    m.as_str()
-                ),
-            ));
-        }
+        let statement = &unsym[m.end()..at];
+        let from = re!(r"\bfrom\b").find_iter(statement).last();
+        let detail = match from {
+            None => "has no `from` before its statement ends",
+            // Read from `code`, where `` from `t `` still has its table.
+            Some(f) if code[m.end() + f.end()..at].trim().is_empty() => {
+                "has nothing after its `from`"
+            }
+            Some(_) => continue,
+        };
+        out.push(Finding::at(
+            path,
+            source,
+            m.start(),
+            "QE007",
+            format!("`{}` {detail}: q raises 'from", m.as_str()),
+        ));
     }
 }
 
