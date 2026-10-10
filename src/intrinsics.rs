@@ -280,6 +280,38 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
 
 pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Finding> {
     let mut out = vec![];
+    // QA010 for the keywords that are not in BUILTINS: arity from calling
+    // each with one more argument than it takes, which q 5 refuses with
+    // 'rank - `xasc[`a;t;1]`, `ssr[a;b;c;d]`, `wj[a;b;c;d;e]`.
+    for m in re!(r"\b(xasc|xdesc|bin|binr|except|ss|vs|sv|upsert|xbar|cross|cut|inter|union|in|like|xkey|xcols|xexp|xlog|xgroup|mod|div|insert|lj|uj|set|dsave|fby|md5|ssr|aj|aj0|ajf|ajf0|ej|wj|wj1)\s*\[")
+        .captures_iter(code)
+    {
+        let whole = m.get(0).unwrap();
+        if !boundary(code, whole.start()) {
+            continue;
+        }
+        let name = &m[1];
+        let arity = match name {
+            "md5" => 1,
+            "ssr" | "aj" | "aj0" | "ajf" | "ajf0" | "ej" => 3,
+            "wj" | "wj1" => 4,
+            _ => 2,
+        };
+        let open = whole.end() - 1;
+        let Some(close) = matching(code, open, b'[', b']') else {
+            continue;
+        };
+        let given = slots(&code[open + 1..close - 1]).len();
+        if given > arity {
+            out.push(Finding::at(
+                path,
+                source,
+                whole.start(),
+                "QA010",
+                format!("{name} accepts at most {arity} argument(s), but this call supplies {given}"),
+            ));
+        }
+    }
     for Call { at, name, args } in calls(code, comments, source) {
         let args = &args;
         let arity = match name {

@@ -498,3 +498,17 @@ c:til 0W
 
 === QT013 | flip of a symbol, even one naming a table (q 5: flip `t is 'rank)
 d:flip `a
+
+=== QA010 | the dyadic keywords refuse a third argument (q 5: xasc[`a;t;1] and bin[1 2 3;2;1] are 'rank)
+a:xasc[`a;t;1]
+b:bin[1 2 3;2;1]
+
+=== QA010 | ssr takes three, wj four, md5 one (q 5: 'rank past each)
+c:ssr["a";"b";"c";1]
+d:wj[a;b;c;d;e]
+e:md5["a";"b"]
+
+=== clean | the arity each takes
+a:xasc[`a;t]
+b:ssr["a";"b";"c"]
+c:wj[a;b;c;d]
