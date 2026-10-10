@@ -87,3 +87,21 @@ f:{[x] ns:x+1; 3_ns}
 
 === QF017 | after a letter `_` joins the name: `ns_3` is another name
 f:{[x] ns:x+1; ns_3:2; ns_3}
+
+=== QE004 profile: general | the longer spellings from other languages (q 5 parse refuses each)
+a:x**2
+b:x=>y
+c:x=<y
+d:x<<2
+e:x|>f
+f:x->y
+x:=1
+g:x%%y
+h:x<=>y
+k:x+++y
+
+=== clean profile: general | what parses: a trailing ++ or ** is a projection, and x>>2 runs
+a:a++
+b:a**
+c:x>>2
+d:x<-1

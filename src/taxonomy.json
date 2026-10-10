@@ -24,7 +24,7 @@
     "code": "QE004",
     "name": "foreign-operator",
     "category": "syntax",
-    "summary": "Operator from another language; q has no ==, !=, && or ||",
+    "summary": "Operator from another language; q has no ==, !=, &&, ||, **, =>, -> or :=",
     "scope": "builtin"
   },
   {

@@ -45,7 +45,7 @@ that wants fewer findings narrows in its own configuration.
 | `QE001` | syntax-delimiter | Unbalanced delimiter or unterminated string | every profile |
 | `QE002` | invalid-string-escape | Invalid q string escape | every profile |
 | `QE003` | unterminated-block-comment | Block comment opened but never closed | `style` and above |
-| `QE004` | foreign-operator | Operator from another language; q has no ==, !=, && or \|\| | every profile |
+| `QE004` | foreign-operator | Operator from another language; q has no ==, !=, &&, \|\|, **, =>, -> or := | every profile |
 | `QE005` | byte-order-mark | File starts with a BOM, which q refuses to load | every profile |
 | `QE006` | impossible-temporal | A date or month that does not exist, which q refuses to parse | every profile |
 | `QE007` | qsql-missing-from | select, exec, update or delete with no from before the statement ends, or nothing after it | every profile |

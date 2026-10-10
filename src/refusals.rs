@@ -427,10 +427,14 @@ const GLYPHS: &[u8] = b"+-*%!#$&|^=<>~,@?";
 fn opens_expression(comments: &str, i: usize, line_start: usize) -> bool {
     // Pairs QE004 already reports, or that are one operator.
     const PAIRS: &[&str] = &[
-        "<>", "<=", ">=", "==", "!=", "&&", "||", "+=", "-=", "*=", "->", "=>",
+        "<>", "<=", ">=", "==", "!=", "&&", "||", "+=", "-=", "*=", "->", "=>", "**", "=<", "<<",
+        "|>", ":=", "%%", "++", ">>",
     ];
     let before = comments[..i].trim_end_matches([' ', '\t', '\r', '\n']);
     let adjacent = before.len() == i;
+    if adjacent && i > 0 && PAIRS.contains(&&comments[i - 1..=i]) {
+        return false;
+    }
     i == line_start
         || before.is_empty()
         || before.ends_with([':', '(', '[', '{', ';'])

@@ -1869,7 +1869,12 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
         // Every QE004 spelling is two ASCII characters. Keep its diagnostic
         // on the operator so an editor requests the fix for the right one.
         if id == "QE004" {
-            finding.end_column = finding.column.map(|column| column + 2);
+            let len = if source[at..].starts_with("<=>") {
+                3
+            } else {
+                2
+            };
+            finding.end_column = finding.column.map(|column| column + len);
         }
         out.push(finding);
     };
@@ -2641,12 +2646,36 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
     // Operators borrowed from other languages. None of these parse: q's
     // equality is `=`, inequality `<>`, and `&&`/`||` are `and`/`or` (or
     // `&`/`|`). `+=` and friends are `+:`.
-    for m in re!(r"==|!=|&&|\|\||[+\-*]=").find_iter(code) {
+    //
+    // The longer spellings q 5 also refuses, each verified with parse:
+    // `x**2`, `x=>y`, `x=<y`, `x<<2`, `x|>f`, `x->y`, `x:=1`, `x%%y`,
+    // `x<=>y`, `x+++y`. Only before an operand - `a++` and `a**` with nothing
+    // after them parse, as projections, and `x>>2` parses too.
+    for m in re!(r"<=>|\*\*|=>|=<|<<|\|>|->|:=|%%|\+\+|==|!=|&&|\|\||[+\-*]=").find_iter(code) {
+        let long = !matches!(m.as_str(), "==" | "!=" | "&&" | "||" | "+=" | "-=" | "*=");
+        if long
+            && code[m.end()..]
+                .trim_start_matches([' ', '\t'])
+                .starts_with(|c: char| ";)]}\r\n".contains(c))
+            || long && code[m.end()..].trim().is_empty()
+        {
+            continue;
+        }
         let (op, meant) = match m.as_str() {
             "==" => ("==", "`=`"),
             "!=" => ("!=", "`<>`"),
             "&&" => ("&&", "`and` (or `&`)"),
             "||" => ("||", "`or` (or `|`)"),
+            "**" => ("**", "`xexp`"),
+            "=>" => ("=>", "`>=`"),
+            "=<" => ("=<", "`<=`"),
+            "<<" => ("<<", "`<` (q has no shift operator)"),
+            "|>" => ("|>", "plain application, `f x`"),
+            "->" => ("->", "a dictionary's `!`, or a lambda"),
+            ":=" => (":=", "`:`"),
+            "%%" => ("%%", "`mod` (`%` is division)"),
+            "<=>" => ("<=>", "`signum x-y`"),
+            "++" => ("++", "`+:` or `x+1`"),
             other => (other, "`+:`-style amend"),
         };
         add(
