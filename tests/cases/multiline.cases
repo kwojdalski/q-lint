@@ -68,3 +68,21 @@ f:{[a;b]a+b}
 [1;2;3]
 til
 [1.5]
+
+=== clean | an indented line under a comment at the head of a file is comment (q 5: b stays undefined)
+/ comment
+  b:1+`a
+c:2
+
+=== clean | so are several, after a system command and more comment
+\d .
+/ one
+/ two
+  b:1+`a
+  d:1+`a
+c:2
+
+=== QT003 | a blank line ends the comment (q 5: 'type)
+/ comment
+
+  b:1+`a

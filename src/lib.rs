@@ -1492,9 +1492,23 @@ fn views(source: &str) -> Views {
     let mut foreign_offsets = Vec::new();
     let mut open_block = None;
     let mut string_starts = Vec::new();
+    // Before the first statement, an indented line under a column-0 comment
+    // is more of that comment: q 5 loads `/ c` + `  b:1` and leaves b
+    // undefined. System commands do not count as statements here.
+    let (mut statement, mut heading) = (false, false);
     for line in source.split_inclusive('\n') {
         let end = offset + line.len();
         let stripped = line.trim_end_matches(['\r', '\n', ' ', '\t']);
+        if !ended && !block && string.is_none() && !statement {
+            if heading && line.starts_with([' ', '\t']) && !stripped.trim().is_empty() {
+                blank(&mut comments[offset..end]);
+                blank(&mut code[offset..end]);
+                offset = end;
+                continue;
+            }
+            heading = line.starts_with('/') && stripped != "/";
+            statement = !heading && !stripped.is_empty() && !line.starts_with(['\\', ' ', '\t']);
+        }
         if foreign && !(line.starts_with([' ', '\t']) || stripped.is_empty()) {
             foreign = false;
         }
