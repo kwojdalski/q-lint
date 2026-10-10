@@ -2636,10 +2636,14 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
     // subject or the pattern slot. `trim`, `lower` and `like` accept symbols
     // and are deliberately not here.
     for m in re!(
-        r"\bssr?\s*\[\s*(?:`[A-Za-z0-9_.]*)+\s*[;\]]|\bssr?\s*\[[^;\]]*;\s*(?:`[A-Za-z0-9_.]*)+\s*[;\]]|(?:`[A-Za-z0-9_.]*)+\s+ssr?\b"
+        r"\bssr?\s*\[\s*(?:`[A-Za-z0-9_.]*)+\s*[;\]]|\bssr?\s*\[[^;\]]*;\s*(?:`[A-Za-z0-9_.]*)+\s*[;\]]|(?:`[A-Za-z0-9_.]*)+\s+ssr?\b|\bss[ \t]+`[A-Za-z0-9_.]*"
     )
     .find_iter(code)
     {
+        // `"abc" ss `a` puts the symbol in the pattern slot (q 5: 'type).
+        if m.as_str().starts_with('s') && !boundary(code, m.start()) {
+            continue;
+        }
         add(
             m.start(),
             "QT007",

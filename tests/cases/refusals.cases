@@ -245,3 +245,24 @@ a:25:00
 b:0D25:00:00
 c:12:59:59.999
 d:2023.01m
+
+=== QT024 profile: general | an attribute on a string is checked char by char (q 5: `s#"cba" is 's-fail)
+a:`s#"cba"
+b:`u#"aa"
+
+=== clean profile: general | a sorted string, distinct chars
+a:`s#"abc"
+b:`u#"ab"
+
+=== QT029 profile: general | hopen of a real, the empty symbol or the empty string (q 5: 'type)
+a:hopen 1.5e
+b:hopen `
+c:hopen ""
+
+=== QT025 profile: general | a list cannot be signalled (q 5: '(1;2), '() and '`a`b are 'stype)
+a:{'(1;2)}
+b:{'()}
+c:{'`a`b}
+
+=== clean profile: general | a symbol or a string in parentheses can
+a:{'(`a)}

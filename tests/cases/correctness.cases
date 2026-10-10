@@ -447,3 +447,6 @@ c:"a"=97
 a:x="b"
 c:"a"=x
 f:"a"="b",x
+
+=== QT007 profile: general | a symbol pattern in infix ss (q 5: "abc" ss `a is 'type)
+a:"abc" ss `a

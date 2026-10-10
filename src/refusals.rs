@@ -10,12 +10,12 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
     let unsym = re!(r"`[A-Za-z0-9_.:/]*")
         .replace_all(code, |m: &regex::Captures| " ".repeat(m[0].len()))
         .into_owned();
-    attributes(path, source, code, &mut out);
+    attributes(path, source, code, comments, &mut out);
     temporals(path, source, &unsym, &mut out);
     missing_from(path, source, code, &unsym, &mut out);
     signals(path, source, code, comments, &mut out);
     where_assignment(path, source, code, &mut out);
-    hopen_literal(path, source, code, &mut out);
+    hopen_literal(path, source, code, comments, &mut out);
     cast_character(path, source, code, comments, &mut out);
     monadic_glyph(path, source, code, comments, &mut out);
     juxtaposed_derived(path, source, code, comments, &mut out);
@@ -27,20 +27,34 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
 /// `` `s#3 1 2 `` is 's-fail, `` `u#1 1 2 `` 'u-fail, `` `p#1 2 1 `` 'u-fail;
 /// `` `s#1 1 2 `` (ties) and `` `s#0N 1 2 `` (a null first) are sorted, and
 /// symbols sort by byte, `` `B `` before `` `a ``. `` `g# `` never fails.
-fn attributes(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
+/// A string is a list of chars and is checked the same way: q 5 `s#"cba"` is
+/// 's-fail and `u#"aa"` 'u-fail. It is read from `comments`, where the
+/// string is still text.
+fn attributes(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<Finding>) {
     for m in re!(
-        r"`([spu])#[ \t]*((?:`[A-Za-z0-9_.]*){2,}|-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+)"
+        r#"`([spu])#[ \t]*((?:`[A-Za-z0-9_.]*){2,}|-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+|"[^"\\]{2,}")"#
     )
-    .captures_iter(code)
+    .captures_iter(comments)
     {
         let whole = m.get(0).unwrap();
-        if !boundary(code, whole.start()) || !operand_ends(code, whole.end()) {
+        if code.as_bytes()[whole.start()] != b'`'
+            || !boundary(code, whole.start())
+            || !operand_ends(code, whole.end())
+        {
             continue;
         }
         let items = m.get(2).unwrap().as_str();
         // Symbols compare as bytes. Numbers compare as numbers, with q's
         // nulls first; anything that will not parse leaves the rule silent.
-        let keys: Option<Vec<Key>> = if items.starts_with('`') {
+        let keys: Option<Vec<Key>> = if let Some(chars) = items.strip_prefix('"') {
+            Some(
+                chars
+                    .trim_end_matches('"')
+                    .chars()
+                    .map(|c| Key::Text(c.to_string()))
+                    .collect(),
+            )
+        } else if items.starts_with('`') {
             Some(
                 items
                     .split('`')
@@ -240,7 +254,9 @@ fn signals(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<F
     // and `{:'5}` does not parse; neither is a signal (q 5).
     // At any line's start too, or after a newline that only continues the
     // bracket before it: `{[x]` + `  '1}` is a signal (q 5: 'stype).
-    for m in re!(r#"(')(-?\d[A-Za-z0-9.]*|"(?:[^"\\]|\\.)")"#).captures_iter(comments) {
+    // A list cannot be signalled either: q 5 `'(1;2)`, `'()`, `'(1)` and
+    // `` '`a`b `` are each 'stype.
+    for m in re!(r#"(')(-?\d[A-Za-z0-9.]*|"(?:[^"\\]|\\.)"|\(\s*\)|\(\s*-?\d[A-Za-z0-9.]*\s*\)|\([^()"]*;[^()]*\)|(?:`[A-Za-z0-9_.]*){2,})"#).captures_iter(comments) {
         let quote = m.get(1).unwrap();
         let value = m.get(2).unwrap();
         if code.as_bytes()[quote.start()] != b'\'' {
@@ -266,6 +282,8 @@ fn signals(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<F
         }
         let what = if value.as_str().starts_with('"') {
             "a one-character string, which is a char atom"
+        } else if value.as_str().starts_with('`') || value.as_str().contains(';') || value.as_str().trim_matches(['(', ')', ' ']).is_empty() {
+            "a list"
         } else {
             "a number"
         };
@@ -346,25 +364,31 @@ fn where_assignment(path: &str, source: &str, code: &str, out: &mut Vec<Finding>
 /// negative number, or a symbol without the `:` every handle starts with.
 /// `hopen 1.5` and `` hopen `abc `` are 'type and `hopen -1` 'domain;
 /// anything else can only fail at run time, if nothing is listening.
-fn hopen_literal(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
+fn hopen_literal(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<Finding>) {
     for m in
         // A symbol may hold `:` after its first character - `` `localhost:5000 ``
         // is one symbol - so the colon a handle needs is only the leading one.
-        re!(r"\bhopen\s*(?:\[\s*)?(-\d+|\d*\.\d+|\d+\.\d*|`[A-Za-z0-9_.][A-Za-z0-9_.:]*)")
-            .captures_iter(code)
+        // A real (`1.5e`, `2e`), the empty symbol and the empty string are
+        // 'type too (q 5); the string is read from `comments`.
+        re!(r#"\bhopen\s*(?:\[\s*)?(-\d+|\d*\.\d+e?|\d+\.\d*e?|\d+e|`(?:[A-Za-z0-9_.][A-Za-z0-9_.:]*)?|"")"#)
+            .captures_iter(comments)
     {
         let whole = m.get(0).unwrap();
         let value = m.get(1).unwrap();
-        if !boundary(code, whole.start()) {
+        if !boundary(code, whole.start()) || !code[whole.start()..].starts_with("hopen") {
             continue;
         }
         let rest = code[value.end()..].trim_start_matches([' ', '\t']);
         if !(rest.is_empty() || rest.starts_with([';', ')', ']', '}', '\n', '\r'])) {
             continue;
         }
-        let (what, error) = if value.as_str().starts_with('`') {
+        let (what, error) = if value.as_str() == "`" {
+            ("the empty symbol", "'type")
+        } else if value.as_str() == "\"\"" {
+            ("the empty string", "'type")
+        } else if value.as_str().starts_with('`') {
             ("a symbol without the leading `:` a handle needs", "'type")
-        } else if value.as_str().contains('.') {
+        } else if value.as_str().contains(['.', 'e']) {
             ("a float", "'type")
         } else {
             ("a negative number", "'domain")
