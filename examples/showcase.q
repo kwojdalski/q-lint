@@ -33,7 +33,8 @@ from:1
 
 / ------------------------------------------------------------------- names
 
-/ QF001: `count` is a q builtin, and a parameter of that name shadows it.
+/ QF001: `count` is a q builtin; q 5 defines this lambda but refuses every
+/ call to it with 'match.
 / expect-next: QF001
 rows:{[count] count+1}
 
@@ -84,9 +85,8 @@ twice:{[a;a] a}
 / expect-next: QF009
 three:{[a;b;] a+b}
 
-/ QF013: a table literal whose column is a builtin name. It parses, but in
-/ a where phrase q resolves the bare `first` as the function, so the
-/ column can be defined and never filtered on.
+/ QF013: a table literal whose column is a builtin name. q 5 refuses to
+/ build it with 'assign.
 / expect-next: QF013
 ledger:([] first:1 2 3; qty:4 5 6)
 

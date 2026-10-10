@@ -74,7 +74,7 @@
     "name": "reserved-parameter",
     "category": "names",
     "summary": "Builtin name used as a parameter",
-    "scope": "style"
+    "scope": "builtin"
   },
   {
     "code": "QF002",
@@ -151,7 +151,7 @@
     "name": "reserved-table-column",
     "category": "names",
     "summary": "Builtin name as a table-literal column",
-    "scope": "style"
+    "scope": "builtin"
   },
   {
     "code": "QF014",

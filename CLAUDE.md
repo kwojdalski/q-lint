@@ -110,6 +110,6 @@ with `gh run list` and confirm the nine files with `gh release view vX.Y.Z`.
   the rule says so. Char arithmetic is the known case: this repository once
   recorded `"a"*3` as 291, on a version nobody wrote down, and q 5 raises
   'type. Record the version whenever an answer could depend on it. For
-  example: `{[count] count+1}` runs perfectly well and is
-  `style`, while `{[a] x+1}` throws 'x the moment it is called and is
-  `general`.
+  example: `{[a] x+1}` throws 'x the moment it is called and is `general`,
+  and so is `{[count] count+1}` - it once ran, but q 5 raises 'match on
+  every call. `{[from] from+1}` still runs on q 5 and is not reported there.

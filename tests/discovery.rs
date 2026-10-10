@@ -9,8 +9,8 @@ use std::{
     process::Command,
 };
 
-/// Two findings: QS001 (styleq) on `my_var`, QF001 (style) on `desc`.
-const SOURCE: &str = "my_var:1;f:{[desc] desc}\n";
+/// Two findings: QS001 (styleq) on `my_var`, QF016 (style) on the unused `b`.
+const SOURCE: &str = "my_var:1;f:{[a;b] a}\n";
 
 struct Repo(tempfile::TempDir);
 
@@ -66,8 +66,8 @@ fn the_repository_root_configuration_governs_a_file_deep_below_it() {
         .write("src/lib/a.q", SOURCE);
     // From the root, from the file's own directory, and from outside the
     // repository altogether: the file's position decides, not the cwd.
-    assert_eq!(repo.codes(".", &["src/lib/a.q"]), ["QF001"]);
-    assert_eq!(repo.codes("src/lib", &["a.q"]), ["QF001"]);
+    assert_eq!(repo.codes(".", &["src/lib/a.q"]), ["QF016"]);
+    assert_eq!(repo.codes("src/lib", &["a.q"]), ["QF016"]);
     let outside = tempfile::tempdir().unwrap();
     let file = repo.path("src/lib/a.q");
     let out = run(outside.path(), &[file.to_str().unwrap()]);
@@ -83,7 +83,7 @@ fn the_nearest_configuration_wins_over_one_further_up() {
         .write("a.q", SOURCE)
         .write("pkg/b.q", SOURCE);
     assert_eq!(repo.codes(".", &["a.q"]), Vec::<String>::new());
-    assert_eq!(repo.codes(".", &["pkg/b.q"]), ["QF001", "QS001"]);
+    assert_eq!(repo.codes(".", &["pkg/b.q"]), ["QF016", "QS001"]);
 }
 
 #[test]
@@ -91,9 +91,9 @@ fn in_one_directory_dot_qlinter_then_qlinter_then_pyproject() {
     let repo = Repo::new();
     repo.write("a.q", SOURCE)
         .write("pyproject.toml", "[tool.qlinter]\nprofile = \"styleq\"\n");
-    assert_eq!(repo.codes(".", &["a.q"]), ["QF001", "QS001"]);
+    assert_eq!(repo.codes(".", &["a.q"]), ["QF016", "QS001"]);
     repo.write("qlinter.toml", "profile = \"style\"\n");
-    assert_eq!(repo.codes(".", &["a.q"]), ["QF001"]);
+    assert_eq!(repo.codes(".", &["a.q"]), ["QF016"]);
     repo.write(".qlinter.toml", "profile = \"general\"\n");
     assert_eq!(repo.codes(".", &["a.q"]), Vec::<String>::new());
 }
@@ -106,7 +106,7 @@ fn a_pyproject_without_the_table_is_passed_over() {
     repo.write("qlinter.toml", "profile = \"style\"\n")
         .write("py/pyproject.toml", "[project]\nname = \"x\"\n")
         .write("py/a.q", SOURCE);
-    assert_eq!(repo.codes(".", &["py/a.q"]), ["QF001"]);
+    assert_eq!(repo.codes(".", &["py/a.q"]), ["QF016"]);
 }
 
 #[test]
@@ -114,10 +114,10 @@ fn the_old_tool_q_lint_table_is_still_read_but_not_beside_the_new_one() {
     let repo = Repo::new();
     repo.write("pyproject.toml", "[tool.q-lint]\nignore = [\"QS001\"]\n")
         .write("a.q", SOURCE);
-    assert_eq!(repo.codes(".", &["a.q"]), ["QF001"]);
+    assert_eq!(repo.codes(".", &["a.q"]), ["QF016"]);
     repo.write(
         "pyproject.toml",
-        "[tool.q-lint]\nignore = [\"QS001\"]\n[tool.qlinter]\nignore = [\"QF001\"]\n",
+        "[tool.q-lint]\nignore = [\"QS001\"]\n[tool.qlinter]\nignore = [\"QF016\"]\n",
     );
     let out = run(&repo.path("."), &["a.q"]);
     assert_eq!(out.status.code(), Some(2));
@@ -133,13 +133,13 @@ fn select_and_ignore_resolve_by_specificity_as_in_ruff() {
         "qlinter.toml",
         "[lint]\nselect = [\"QF\", \"QS\"]\nignore = [\"QS001\"]\n",
     );
-    assert_eq!(repo.codes(".", &["a.q"]), ["QF001"]);
+    assert_eq!(repo.codes(".", &["a.q"]), ["QF016"]);
     // A family ignored, one of it put back: the code is more specific.
     repo.write(
         "qlinter.toml",
         "profile = \"styleq\"\n[lint]\nignore = [\"QS\"]\nextend-select = [\"QS001\"]\n",
     );
-    assert_eq!(repo.codes(".", &["a.q"]), ["QF001", "QS001"]);
+    assert_eq!(repo.codes(".", &["a.q"]), ["QF016", "QS001"]);
     // extend-select reaches past the profile.
     repo.write(
         "qlinter.toml",
@@ -153,7 +153,7 @@ fn a_key_both_at_the_top_and_under_lint_is_refused() {
     let repo = Repo::new();
     repo.write("a.q", SOURCE).write(
         "qlinter.toml",
-        "ignore = [\"QS001\"]\n[lint]\nignore = [\"QF001\"]\n",
+        "ignore = [\"QS001\"]\n[lint]\nignore = [\"QF016\"]\n",
     );
     let out = run(&repo.path("."), &["a.q"]);
     assert_eq!(out.status.code(), Some(2));
@@ -169,8 +169,8 @@ fn per_file_ignores_apply_to_the_paths_they_name() {
     )
     .write("tests/t.q", SOURCE)
     .write("src/s.q", SOURCE);
-    assert_eq!(repo.codes(".", &["tests/t.q"]), ["QF001"]);
-    assert_eq!(repo.codes(".", &["src/s.q"]), ["QF001", "QS001"]);
+    assert_eq!(repo.codes(".", &["tests/t.q"]), ["QF016"]);
+    assert_eq!(repo.codes(".", &["src/s.q"]), ["QF016", "QS001"]);
 }
 
 #[test]
@@ -201,16 +201,16 @@ fn extend_inherits_and_the_extending_file_wins() {
     let repo = Repo::new();
     repo.write(
         "base.toml",
-        "profile = \"styleq\"\n[lint]\nignore = [\"QF001\"]\n",
+        "profile = \"styleq\"\n[lint]\nignore = [\"QF016\"]\n",
     )
     .write("pkg/qlinter.toml", "extend = \"../base.toml\"\n")
     .write("pkg/a.q", SOURCE);
     assert_eq!(repo.codes(".", &["pkg/a.q"]), ["QS001"]);
     repo.write(
         "pkg/qlinter.toml",
-        "extend = \"../base.toml\"\nprofile = \"general\"\nextend-select = [\"QF001\"]\n",
+        "extend = \"../base.toml\"\nprofile = \"general\"\nextend-select = [\"QF016\"]\n",
     );
-    assert_eq!(repo.codes(".", &["pkg/a.q"]), ["QF001"]);
+    assert_eq!(repo.codes(".", &["pkg/a.q"]), ["QF016"]);
 }
 
 #[test]
@@ -221,7 +221,7 @@ fn the_command_line_wins_over_the_file() {
     assert_eq!(repo.codes(".", &["a.q"]), Vec::<String>::new());
     assert_eq!(
         repo.codes(".", &["--profile", "styleq", "a.q"]),
-        ["QF001", "QS001"]
+        ["QF016", "QS001"]
     );
     assert_eq!(
         repo.codes(".", &["--extend-select", "QS001", "a.q"]),
@@ -229,7 +229,7 @@ fn the_command_line_wins_over_the_file() {
     );
     assert_eq!(
         repo.codes(".", &["--select", "QF,QS", "--ignore", "QS", "a.q"]),
-        ["QF001"]
+        ["QF016"]
     );
 }
 
@@ -240,10 +240,10 @@ fn isolated_and_config_replace_the_search() {
         .write("other.toml", "profile = \"style\"\n")
         .write("a.q", SOURCE);
     // --isolated: the defaults, which for the command line is uqf.
-    assert_eq!(repo.codes(".", &["--isolated", "a.q"]), ["QF001", "QS001"]);
+    assert_eq!(repo.codes(".", &["--isolated", "a.q"]), ["QF016", "QS001"]);
     assert_eq!(
         repo.codes(".", &["--config", "other.toml", "a.q"]),
-        ["QF001"]
+        ["QF016"]
     );
 }
 
@@ -274,7 +274,7 @@ fn show_settings_names_the_file_in_force() {
     let text = String::from_utf8(out.stdout).unwrap();
     assert!(text.contains("qlinter.toml"), "{text}");
     assert!(text.contains("profile: style"), "{text}");
-    assert!(!text.contains("QF001"), "{text}");
+    assert!(!text.contains("QF016"), "{text}");
     assert!(text.contains("QE004"), "{text}");
 }
 

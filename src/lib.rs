@@ -1987,20 +1987,20 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
             .collect();
         // q 5 defines such a lambda but refuses every call to it: 'match for
         // a `.q` name such as count, 'nyi for a k primitive such as til.
-        // Only the keywords by, do, from, if and while still run.
+        // The keywords by, do, from, if and while still run, and are left out.
+        let bad: Vec<_> = bad
+            .into_iter()
+            .filter(|p| !matches!(**p, "by" | "do" | "from" | "if" | "while"))
+            .collect();
         if !bad.is_empty() {
-            let detail = if bad
-                .iter()
-                .all(|p| matches!(**p, "by" | "do" | "from" | "if" | "while"))
-            {
-                format!("Builtin parameter name(s): {bad:?}")
-            } else {
+            add(
+                at,
+                "QF001",
                 format!(
                     "Builtin parameter name(s): {bad:?}; q refuses every call to this lambda \
                      ('match or 'nyi)"
-                )
-            };
-            add(at, "QF001", detail);
+                ),
+            );
         }
         let mut seen = std::collections::HashSet::new();
         let repeated: Vec<&&str> = params
@@ -2963,8 +2963,7 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
     }
     // A table literal's column named for a builtin: q 5 refuses to build
     // `([]sum:1 2)` or `([sum:1 2]a:3 4)` with 'assign. Only by and from
-    // build a table, and a query reads even those as the keyword: q 5
-    // `select from t where from>3` is ",".
+    // build a table.
     for (at, _) in code.match_indices("([") {
         let Some(close) = matching(code, at, b'(', b')') else {
             continue;
@@ -2984,18 +2983,15 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
                 if let Some(m) = re!(r"^([A-Za-z][A-Za-z0-9_]*)\s*:").captures(trimmed)
                     && RESERVED.iter().any(|n| n == &m[1])
                 {
-                    let detail = if matches!(&m[1], "by" | "from") {
-                        format!(
-                            "Column `{}` is a query keyword: a query reads the bare name as \
-                             the keyword, not the column",
-                            &m[1]
-                        )
-                    } else {
-                        format!(
-                            "Column `{}` is a builtin name: q refuses the literal",
-                            &m[1]
-                        )
-                    };
+                    // by and from build a table (q 5), and are left out.
+                    if matches!(&m[1], "by" | "from") {
+                        pos += part.len() + 1;
+                        continue;
+                    }
+                    let detail = format!(
+                        "Column `{}` is a builtin name: q refuses the literal",
+                        &m[1]
+                    );
                     add(pos + lead, "QF013", detail);
                 }
                 pos += part.len() + 1;

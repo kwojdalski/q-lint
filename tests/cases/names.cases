@@ -4,7 +4,7 @@ f:{[count] count+1}
 === QF001 | a q keyword from .Q.res, not just the .q namespace
 f:{[sin] sin*2}
 
-=== QF001 | qSQL keywords are reserved too
+=== clean profile: general | from as a parameter still runs in q 5 ({[from] from}[1] is 1)
 f:{[from] from}
 
 === clean | a name that merely resembles a builtin is fine
@@ -120,7 +120,7 @@ f:{[t] select x from t}
 === QF001 | a join keyword is reserved even though it reads like a name
 f:{[aj] aj}
 
-=== QF001 | control words are reserved
+=== clean profile: general | and so do the control words ({[while] 1}[1] is 1)
 f:{[while] while}
 
 === QF001 | several at once
@@ -149,8 +149,14 @@ t:([] px:1 2; last:3 4)
 === QF013 | a key column too (q 5: ([sum:1 2]a:3 4) is 'assign)
 k:([sum:1 2]a:3 4)
 
-=== QF013 | by builds a table, but no query can name the column
+=== clean profile: general | by and from build a table (q 5: ([]a:1 2;by:3 4) is a table)
 t:([]a:1 2;by:3 4)
+
+=== QF001 profile: general | q 5 refuses the call, so the default reports it ('match)
+f:{[count] count+1}
+
+=== QF013 profile: general | and the literal ('assign)
+t:([]sum:1 2)
 
 === clean | ordinary column names
 t:([] px:1 2; qty:3 4)

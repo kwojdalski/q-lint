@@ -57,7 +57,7 @@ that wants fewer findings narrows in its own configuration.
 
 | code | name | summary | on in |
 |---|---|---|---|
-| `QF001` | reserved-parameter | Builtin name used as a parameter | `style` and above |
+| `QF001` | reserved-parameter | Builtin name used as a parameter | every profile |
 | `QF002` | underscore-parameter | `_` is the drop operator, not a parameter name | `style` and above |
 | `QF003` | reserved-local | Assignment to a builtin in a lambda | every profile |
 | `QF004` | reserved-definition | Namespace definition shadows a builtin | every profile |
@@ -68,7 +68,7 @@ that wants fewer findings narrows in its own configuration.
 | `QF009` | empty-parameter-slot | Empty slot in a parameter list is still a parameter | `style` and above |
 | `QF010` | implicit-argument-with-signature | x, y or z used where parameters are declared | every profile |
 | `QF012` | reserved-root-assignment | Root-level assignment to a reserved name | `style` and above |
-| `QF013` | reserved-table-column | Builtin name as a table-literal column | `style` and above |
+| `QF013` | reserved-table-column | Builtin name as a table-literal column | every profile |
 | `QF014` | local-read-before-assign | Name read before the assignment that makes it local | every profile |
 | `QF015` | foreign-keyword | Keyword from another language resolves as an undefined global | every profile |
 | `QF016` | unused-parameter | Declared parameter the body never reads | `style` and above |
