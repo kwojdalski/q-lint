@@ -3395,11 +3395,17 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
             add(
                 offset,
                 "QF012",
-                format!(
-                    "Root-level assignment to `{}`: q refuses some reserved names outright and \
-                     silently accepts the rest",
-                    &m[1]
-                ),
+                // Checked one by one on q 5: every reserved name but these
+                // two is refused at the root.
+                if matches!(&m[1], "from" | "by") {
+                    format!(
+                        "Root-level assignment to `{}`: q accepts it, but the name is a query \
+                         keyword everywhere else",
+                        &m[1]
+                    )
+                } else {
+                    format!("Root-level assignment to `{}`: q refuses it", &m[1])
+                },
             );
         }
         // The parentheses have to be empty in the source - a string between
