@@ -3569,6 +3569,35 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
             );
         }
     }
+    // QB006 in a condition: the same right-to-left reading applies outside
+    // a where phrase. q 5: `x:0;y:1;if[x=0 and y=0;...]` runs the branch,
+    // since it reads `x=(0 and y=0)`.
+    for m in re!(r"(?:\b(?:if|while)|\$)\[").find_iter(code) {
+        if m.as_str() != "$[" && !boundary(code, m.start()) {
+            continue;
+        }
+        let open = m.end() - 1;
+        let Some(close) = matching(code, open, b'[', b']') else {
+            continue;
+        };
+        let parts = slots(&code[open + 1..close - 1]);
+        if parts.len() < 2 || (m.as_str() == "$[" && parts.len() < 3) {
+            continue;
+        }
+        let condition = flat_filter(parts[0]);
+        if re!(r"\b(?:and|or)\b")
+            .find(&condition)
+            .is_some_and(|logic| re!(r"[<>=]").is_match(&condition[..logic.start()]))
+        {
+            add(
+                m.start(),
+                "QB006",
+                "Comparison left of and/or without parentheses: q evaluates right to left, so \
+                 it reads `a=1 and b=0` as `a=(1 and b=0)`, not `(a=1) and b=0`"
+                    .into(),
+            );
+        }
+    }
     // `if`, `while` and `do` are statements: each returns `::`, so
     // assigning one assigns null. `$[...]` is the expression form.
     for m in re!(r"[A-Za-z0-9_\])]\s*:\s*(if|while|do)\s*\[").captures_iter(code) {
