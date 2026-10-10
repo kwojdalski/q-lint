@@ -1640,6 +1640,40 @@ pub(crate) struct Signature<'a> {
     /// Where the body starts: after `]` for a signature, after `{` otherwise.
     pub body: usize,
 }
+/// Whether `name`, read at `at`, is a parameter or local of a lambda around
+/// it - and so not the global a rule may know the rank of. q 5:
+/// `f:{x}; g:{[f] f[1;2]}; g[{x+y}]` is 3. A dotted name is always global.
+pub(crate) fn shadowed(code: &str, raw: &str, at: usize, name: &str) -> bool {
+    if name.contains('.') {
+        return false;
+    }
+    for (brace, _) in code[..at].match_indices('{') {
+        if !matching(code, brace, b'{', b'}').is_some_and(|end| end > at) {
+            continue;
+        }
+        let sig = signature(code, raw, brace);
+        if if sig.named {
+            sig.slots.contains(&name)
+        } else {
+            matches!(name, "x" | "y" | "z")
+        } {
+            return true;
+        }
+        let body = &code[sig.body..];
+        for (i, _) in body.match_indices(name) {
+            let after = body[i + name.len()..].trim_start_matches([' ', '\t']);
+            if boundary(body, i)
+                && !body[i + name.len()..]
+                    .starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_')
+                && after.starts_with(':')
+                && !after.starts_with("::")
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
 /// `code` is the masked view and `raw` the source it was masked from, at the
 /// same offsets. Both are needed: a string literal is blank in `code`, and
 /// `{["s"] 1}` would otherwise read as the empty parameter list it is not.
@@ -2395,6 +2429,9 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
         let Some(&rank) = ranks.get(name) else {
             continue;
         };
+        if shadowed(code, source, whole.start(), name) {
+            continue;
+        }
         let open = whole.end() - 1;
         let Some(close) = matching(code, open, b'[', b']') else {
             continue;
@@ -2426,6 +2463,7 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
         if !boundary(code, whole.start())
             || redefined.contains(name)
             || ranks.get(name).is_none_or(|&r| r < 2)
+            || shadowed(code, source, whole.start(), name)
         {
             continue;
         }

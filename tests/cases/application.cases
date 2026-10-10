@@ -176,3 +176,22 @@ r2:$[`long;]
 
 === QA006 | a signal in a two-slot $ fires whatever the test holds
 f:{[b] $[b;'`boom]}
+
+=== clean | a parameter shadows a global lambda of that name (q 5: g[{x+y}] is 3)
+f:{x}
+g:{[f] f[1;2]}
+h:{[f;a] f[a;2]}
+
+=== clean | so does a local (q 5: h[] is 3)
+f:{x+y}
+g:{[f] f(1;2)}
+h:{f:sum; f(1;2)}
+
+=== QA012 | a global assignment inside the lambda does not
+f:{x}
+g:{f::{x}; f[1;2]}
+
+=== QA012 | nor does a parameter of a different lambda
+f:{x}
+g:{[f] f}
+h:{f[1;2]}
