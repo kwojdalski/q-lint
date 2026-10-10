@@ -195,3 +195,20 @@ g:{f::{x}; f[1;2]}
 f:{x}
 g:{[f] f}
 h:{f[1;2]}
+
+=== QA012 | a lambda defined under \d is called by its full name (q 5: .foo.f[1;2] is 'rank)
+\d .foo
+f:{x}
+\d .
+.foo.f[1;2]
+
+=== QA012 | or by its short name inside the namespace
+\d .foo
+f:{x}
+g:{f[1;2]}
+
+=== clean | and is not the root name of the same spelling (q 5: f[1;2] is 'f)
+\d .foo
+f:{x}
+\d .
+r:{f[1;2]}

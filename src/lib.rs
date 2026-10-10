@@ -2371,7 +2371,23 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
     // The rank of every lambda this file names, for the two call-shape rules
     // below. An implicit signature's rank is the highest of x, y, z its own
     // body mentions, with nested lambdas blanked so theirs do not count.
-    let mut ranks: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    // Names are keyed as q resolves them, under the `\d` in force: after
+    // `\d .foo`, `f:{x}` defines `.foo.f`, and a root `f[1;2]` is 'f, not
+    // 'rank (q 5).
+    let mut spaces: Vec<(usize, String)> = vec![(0, String::new())];
+    for m in re!(r"(?m)^\\d[ \t]+(\.[\w.]*)[ \t\r]*$").captures_iter(source) {
+        let ns = m[1].trim_end_matches('.');
+        spaces.push((m.get(0).unwrap().start(), ns.to_string()));
+    }
+    let qualified = |at: usize, name: &str| -> String {
+        let ns = &spaces.iter().rev().find(|(o, _)| *o <= at).unwrap().1;
+        if name.starts_with('.') || ns.is_empty() {
+            name.to_string()
+        } else {
+            format!("{ns}.{name}")
+        }
+    };
+    let mut ranks: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     for m in re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)\s*:\s*\{").captures_iter(code) {
         let brace = m.get(0).unwrap().end() - 1;
         let Some(end) = matching(code, brace, b'{', b'}') else {
@@ -2418,7 +2434,7 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
         {
             continue;
         }
-        ranks.insert(m.get(1).unwrap().as_str(), rank);
+        ranks.insert(qualified(m.get(0).unwrap().start(), &m[1]), rank);
     }
     // The same arity check as QA002, for a lambda reached by name. `ranks`
     // already knows what each `name:{...}` takes, so a call with more slots
@@ -2430,22 +2446,23 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
     // 'rank, which q confirms. `f[]` supplies none and is a projection at any
     // rank. Names defined more than once are dropped rather than guessed at,
     // since the rank at the call site is whichever definition ran last.
-    let mut redefined: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let mut redefined: std::collections::HashSet<String> = std::collections::HashSet::new();
     {
-        let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
         for m in re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)\s*:\s*\{").captures_iter(code) {
-            let name = m.get(1).unwrap().as_str();
-            if !seen.insert(name) {
+            let name = qualified(m.get(0).unwrap().start(), &m[1]);
+            if !seen.insert(name.clone()) {
                 redefined.insert(name);
             }
         }
     }
     for m in re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)\s*\[").captures_iter(code) {
         let (whole, name) = (m.get(0).unwrap(), m.get(1).unwrap().as_str());
-        if !boundary(code, whole.start()) || redefined.contains(name) {
+        let key = qualified(whole.start(), name);
+        if !boundary(code, whole.start()) || redefined.contains(&key) {
             continue;
         }
-        let Some(&rank) = ranks.get(name) else {
+        let Some(&rank) = ranks.get(&key) else {
             continue;
         };
         if shadowed(code, source, whole.start(), name) {
@@ -2480,8 +2497,10 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
         let name = m.get(1).unwrap().as_str();
         // A name defined twice has whichever rank ran last, as QA012 knows.
         if !boundary(code, whole.start())
-            || redefined.contains(name)
-            || ranks.get(name).is_none_or(|&r| r < 2)
+            || redefined.contains(&qualified(whole.start(), name))
+            || ranks
+                .get(&qualified(whole.start(), name))
+                .is_none_or(|&r| r < 2)
             || shadowed(code, source, whole.start(), name)
         {
             continue;
@@ -2496,7 +2515,7 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
                 format!(
                     "`{name}(...)` passes one list argument to a rank-{} lambda, so this is a \
                      projection, not a call; square brackets separate arguments",
-                    ranks[name]
+                    ranks[&qualified(whole.start(), name)]
                 ),
             );
         }
@@ -2530,7 +2549,7 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
         let (name, literal) = (&m[1], &m[2]);
         if !boundary(code, whole.start())
             || RESERVED.iter().any(|n| n == name)
-            || ranks.contains_key(name)
+            || ranks.contains_key(&qualified(whole.start(), name))
             // A lambda another file of the workspace defines is a call too.
             || ws.is_lambda(name)
             || ws.is_lambda(&format!(".{name}"))
