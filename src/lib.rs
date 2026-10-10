@@ -3405,8 +3405,11 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
         }
         out
     };
-    for m in re!(r"(?m)(\.?[A-Za-z][A-Za-z0-9_.]*)\s*:\s*(\.?[A-Za-z][A-Za-z0-9_.]*)\s*(?:;|$)")
-        .captures_iter(code)
+    // `::` too, and a last statement that ends at the brace: q 5 `x::x`,
+    // `{b:1;b::b}` and `{x:x}` each assign the name to itself.
+    for m in
+        re!(r"(?m)(\.?[A-Za-z][A-Za-z0-9_.]*)\s*::?\s*(\.?[A-Za-z][A-Za-z0-9_.]*)\s*(?:;|\}|$)")
+            .captures_iter(code)
     {
         let whole = m.get(0).unwrap();
         if depth.get(whole.start()) == Some(&true) && boundary(code, whole.start()) && m[1] == m[2]

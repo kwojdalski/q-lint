@@ -454,3 +454,12 @@ a:"abc" ss `a
 === QB013 | type of a literal in parentheses (q 5: (type 1)=`long is 'type)
 a:(type 1)=`long
 b:(type "a")<>`char
+
+=== QB017 | a global self-assignment with :: (q 5: x::x assigns x to itself)
+x:1;x::x
+
+=== QB017 | and a last statement that ends at the brace
+f:{x:x}
+
+=== clean | a different name on the right
+f:{x:y}
