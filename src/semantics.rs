@@ -939,9 +939,35 @@ pub fn check(
     // `direct` is the body with nested lambdas blanked, which is what these
     // want: a name assigned in this lambda and read only by an inner one is
     // not read at all, because q will not let the inner one see it.
-    for scope in &scopes {
+    for (si, scope) in scopes.iter().enumerate() {
         let direct = re!(r"`[A-Za-z0-9_./:]*")
             .replace_all(&scope.direct, |m: &regex::Captures| " ".repeat(m[0].len()));
+        // A name an inner lambda reads is QF005's finding, and its fix passes
+        // the local in - so it is not unused, and removing it would leave
+        // that fix reading nothing.
+        let nested: HashSet<&str> = scopes
+            .iter()
+            .filter(|s| {
+                let mut p = s.parent;
+                while let Some(i) = p {
+                    if i == si {
+                        return true;
+                    }
+                    p = scopes[i].parent;
+                }
+                false
+            })
+            .flat_map(|s| {
+                re!(r"[A-Za-z][A-Za-z0-9_]*")
+                    .find_iter(&s.direct)
+                    .filter(|m| {
+                        boundary(&s.direct, m.start())
+                            && !s.locals.contains(m.as_str())
+                            && !s.params.contains(m.as_str())
+                    })
+                    .map(|m| m.as_str())
+            })
+            .collect();
         // Two views, because the two halves of this rule want different ones.
         // Assignments are looked for with bracketed groups blanked, since
         // `([sym:`symbol$()] qty:...)` names table columns with the syntax an
@@ -983,7 +1009,10 @@ pub fn check(
             if scope.params.contains(*name) {
                 continue;
             }
-            if !read.contains(*name) && !re!(r"(?i)^(?:unused|ignored?|dummy)").is_match(name) {
+            if !read.contains(*name)
+                && !nested.contains(*name)
+                && !re!(r"(?i)^(?:unused|ignored?|dummy)").is_match(name)
+            {
                 let mut finding = Finding::at(
                     path,
                     raw,

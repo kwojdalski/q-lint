@@ -536,3 +536,9 @@ by:1
 === QF004 profile: general | the other 179 it refuses
 \d .ns
 count:5
+
+=== QF005 | a local an inner lambda reads is QF005's, not unused (its fix passes it in)
+f6:{p:1;{p+x} each 1 2}
+
+=== QF017 | an inner lambda's own parameter of that name is not a read
+f7:{p:1;{[p] p+1} each 1 2}
