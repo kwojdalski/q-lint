@@ -51,7 +51,12 @@ def test_exclusions_config_discovery_and_deduplication(tmp_path):
     result = run("..", good, "--format", "json", cwd=nested)
     assert len(json.loads(result.stdout)) == 1
     assert run("..", "--exclude", "src/", cwd=nested).returncode == 0
-    assert run("-", "--stdin-filename", bad, cwd=nested, source="f:{]").returncode == 0
+    # As in Ruff: an excluded --stdin-filename is linted unless --force-exclude.
+    assert run("-", "--stdin-filename", bad, cwd=nested, source="f:{]").returncode == 1
+    assert (
+        run("-", "--stdin-filename", bad, "--force-exclude", cwd=nested, source="f:{]").returncode
+        == 0
+    )
 
 
 def test_errors_are_not_partial_json(tmp_path):
