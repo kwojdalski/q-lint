@@ -477,3 +477,27 @@ a:2.5
 b:a+0
 c:`a`b!1 2
 d:c@`a
+
+=== QT027 | the bracket form, upsert on the table, and a vector row (q 5: 'length)
+t:([]a:1 2;b:3 4)
+r1:insert[`t;(1;2;3)]
+r2:t upsert (1;2;3)
+r3:`t insert 1 2 3
+
+=== clean | one value per column
+t:([]a:1 2;b:3 4)
+r1:insert[`t;(1;2)]
+r2:t upsert (1;2)
+r3:`t insert 1 2
+
+=== QT026 | ljf, and the bracket form, with an unkeyed right table (q 5: 'type)
+t:([]a:1 2)
+s:([]a:1 2;b:3 4)
+r1:t ljf s
+r2:lj[t;s]
+r3:ij[t;s]
+
+=== clean | a keyed right table
+t:([]a:1 2)
+s:([]a:1 2;b:3 4)
+r:lj[t;`a xkey s]

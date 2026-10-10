@@ -2091,7 +2091,8 @@ fn named_values(
     }
     // QT026. lj, ij and pj join on the right table's key, so an unkeyed right
     // table is 'type - checked for all three; uj takes any and is not here.
-    for m in re!(r"\b(lj|ij|pj)\s+(\(\s*\[|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)")
+    // ljf and ijf too, and the bracket form `lj[t;s]` (q 5: 'type).
+    for m in re!(r"\b(ljf|ijf|lj|ij|pj)(?:\s+|\s*\[[^;\[\]]*;\s*)(\(\s*\[|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)")
         .captures_iter(code)
     {
         let right = m.get(2).unwrap();
@@ -2121,33 +2122,60 @@ fn named_values(
         }
     }
     // QT027. insert and upsert take one value per column, keys included:
-    // `` `t insert (5;6;7) `` into a two-column table is 'length.
-    for m in re!(r"`(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s+(insert|upsert)\s*\(")
-        .captures_iter(code)
-    {
-        let table = m.get(1).unwrap();
-        let open = m.get(0).unwrap().end() - 1;
-        let Some(close) = matching(code, open, b'(', b')') else {
-            continue;
+    // `` `t insert (5;6;7) `` into a two-column table is 'length. q 5 says
+    // the same of the bracket form, `insert[`t;(1;2;3)]`, of upsert on the
+    // table itself, `t upsert (1;2;3)`, and of a simple vector row,
+    // `` `t insert 1 2 3 ``, whose items are the values.
+    let name = r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*";
+    let row = r"\(|-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+";
+    let forms = regex::Regex::new(&format!(
+        r"`(?P<a>{name})\s+(?P<op1>insert|upsert)\s*(?P<r1>{row})|(?:^|[^A-Za-z0-9_.`])(?P<b>{name})\s+(?P<op2>upsert)\s*(?P<r2>{row})|\b(?P<op3>insert|upsert)\s*\[\s*`(?P<c>{name})\s*;\s*(?P<r3>{row})"
+    ))
+    .unwrap();
+    for m in forms.captures_iter(code) {
+        let table = m.name("a").or(m.name("b")).or(m.name("c")).unwrap();
+        let op = m
+            .name("op1")
+            .or(m.name("op2"))
+            .or(m.name("op3"))
+            .unwrap()
+            .as_str();
+        let r = m.name("r1").or(m.name("r2")).or(m.name("r3")).unwrap();
+        let (values, end) = if r.as_str() == "(" {
+            let Some(close) = matching(code, r.start(), b'(', b')') else {
+                continue;
+            };
+            (crate::slots(&code[r.start() + 1..close - 1]).len(), close)
+        } else {
+            (r.as_str().split_whitespace().count(), r.end())
         };
-        if !operand_ends(code, close) {
+        // The row ends the call: a bracket form closes after it.
+        let ends = if m.name("op3").is_some() {
+            code[end..].trim_start().starts_with(']')
+        } else {
+            operand_ends(code, end)
+        };
+        if !ends {
             continue;
         }
         let Some(Held::Table(columns, _)) = visible(table.as_str(), table.start()) else {
             continue;
         };
-        let values = crate::slots(&code[open + 1..close - 1]).len();
         if values > 1 && values != columns.len() {
             out.push(Finding::at(
                 path,
                 raw,
-                m.get(0).unwrap().start(),
+                // The backtick, the table, or the bracket form's keyword.
+                match (m.name("a"), m.name("op3")) {
+                    (Some(t), _) => t.start() - 1,
+                    (_, Some(o)) => o.start(),
+                    _ => table.start(),
+                },
                 "QT027",
                 format!(
-                    "{values} values for the {} columns of `{}`: '{}' raises 'length",
+                    "{values} values for the {} columns of `{}`: '{op}' raises 'length",
                     columns.len(),
                     table.as_str(),
-                    &m[2]
                 ),
             ));
         }
