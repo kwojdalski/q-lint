@@ -187,8 +187,10 @@ fn missing_from(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec
 /// one-character string is a char atom, not a string.
 fn signals(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<Finding>) {
     // A signal opens an expression; after an operand the quote is each.
-    for m in re!(r#"(?:^|[\[(;{:])[ \t]*(')(-?\d[A-Za-z0-9.]*|"(?:[^"\\]|\\.)")"#)
-        .captures_iter(comments)
+    // Not after `:` - `r:'5` is ((';:);`r;5), each applied to assignment,
+    // and `{:'5}` does not parse; neither is a signal (q 5).
+    for m in
+        re!(r#"(?:^|[\[(;{])[ \t]*(')(-?\d[A-Za-z0-9.]*|"(?:[^"\\]|\\.)")"#).captures_iter(comments)
     {
         let quote = m.get(1).unwrap();
         let value = m.get(2).unwrap();
@@ -287,7 +289,10 @@ fn where_assignment(path: &str, source: &str, code: &str, out: &mut Vec<Finding>
 /// anything else can only fail at run time, if nothing is listening.
 fn hopen_literal(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
     for m in
-        re!(r"\bhopen\s*(?:\[\s*)?(-\d+|\d*\.\d+|\d+\.\d*|`[A-Za-z0-9_.]+)").captures_iter(code)
+        // A symbol may hold `:` after its first character - `` `localhost:5000 ``
+        // is one symbol - so the colon a handle needs is only the leading one.
+        re!(r"\bhopen\s*(?:\[\s*)?(-\d+|\d*\.\d+|\d+\.\d*|`[A-Za-z0-9_.][A-Za-z0-9_.:]*)")
+            .captures_iter(code)
     {
         let whole = m.get(0).unwrap();
         let value = m.get(1).unwrap();

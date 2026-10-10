@@ -197,6 +197,21 @@ pub(crate) fn argument_end(code: &str, comments: &str, raw: &str, from: usize) -
 /// The single source of replacements for the CLI and LSP. Findings have UTF-16
 /// positions for editors, while edits use byte offsets to change Rust strings.
 pub fn fix_for(finding: &Finding, source: &str) -> Option<Fix> {
+    fix_with(finding, source, &views(source))
+}
+
+/// The fixes for many findings in one source, masking it once. `fix_for` per
+/// finding re-masks the whole file each time, which grows with findings times
+/// file size - 1.7 s for 3000 findings in 6000 lines, against 0.13 s to lint.
+pub fn fixes_for<'a>(findings: impl IntoIterator<Item = &'a Finding>, source: &str) -> Vec<Fix> {
+    let v = views(source);
+    findings
+        .into_iter()
+        .filter_map(|finding| fix_with(finding, source, &v))
+        .collect()
+}
+
+fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
     let line = finding.line.checked_sub(1)?;
     let column = finding.column?.checked_sub(1)?;
     let line_start = if line == 0 {
@@ -225,11 +240,10 @@ pub fn fix_for(finding: &Finding, source: &str) -> Option<Fix> {
     // string `"="` as an operator, and its fix rewrote the string as
     // `" like "`. Only three rules are about those bytes - an escape inside a
     // string, a definition kept in a comment, and the byte-order mark.
-    if !matches!(finding.code.as_str(), "QE002" | "QL002" | "QE005") {
-        let v = views(source);
-        if v.code.as_bytes().get(start) != source.as_bytes().get(start) {
-            return None;
-        }
+    if !matches!(finding.code.as_str(), "QE002" | "QL002" | "QE005")
+        && v.code.as_bytes().get(start) != source.as_bytes().get(start)
+    {
+        return None;
     }
     // Where the edit begins: the finding's own position, unless an arm says
     // otherwise - removing dead code takes the `;` before it too.
@@ -284,7 +298,6 @@ pub fn fix_for(finding: &Finding, source: &str) -> Option<Fix> {
         // in the editor - the call now returns a string, and whether the
         // caller wanted `` `$ `` back on the result is theirs to say.
         "QT007" => {
-            let v = views(source);
             let call = re!(
                     r"^(?:ssr?\s*\[\s*(?:`[A-Za-z0-9_.]*)+\s*[;\]]|ssr?\s*\[[^;\]]*;\s*(?:`[A-Za-z0-9_.]*)+\s*[;\]]|(?:`[A-Za-z0-9_.]*)+\s+ssr?\b)"
                 )
@@ -345,7 +358,6 @@ pub fn fix_for(finding: &Finding, source: &str) -> Option<Fix> {
         // `g:{x} each` is a function, which dropping the words would end.
         "QR002" => {
             let m = re!(r"^\{\s*x\s*\}[ \t]*(?:each\b|')[ \t]*").find(source.get(start..)?)?;
-            let v = views(source);
             let before = v.code[..start].trim_end();
             let heads = before.is_empty()
                 || before.ends_with(|c: char| ":;([{,+-*%&|<>=~!^#$?@".contains(c));
@@ -423,7 +435,6 @@ pub fn fix_for(finding: &Finding, source: &str) -> Option<Fix> {
                 "None" => ("None", "(::)"),
                 // `return x` is `:x`, where `return` opens the statement.
                 "return" => {
-                    let v = views(source);
                     let before = v.code[..start].trim_end();
                     let opens = before.is_empty()
                         || before.ends_with([';', '[', '{'])
@@ -449,7 +460,6 @@ pub fn fix_for(finding: &Finding, source: &str) -> Option<Fix> {
         }
         // A table of scalars is 'rank; enlisting each makes the one row.
         "QT005" => {
-            let v = views(source);
             if !v.code.get(start..)?.starts_with("([]") {
                 return None;
             }
@@ -495,7 +505,6 @@ pub fn fix_for(finding: &Finding, source: &str) -> Option<Fix> {
         // the operator just before the first change of family. The parse
         // tree is the same - `2*3+4` and `2*(3+4)` are one program.
         "QP005" => {
-            let v = views(source);
             let (_, line_end) = statement_groups(&v.code, source)
                 .into_iter()
                 .find(|&(from, _)| from == start)?;
@@ -543,7 +552,6 @@ pub fn fix_for(finding: &Finding, source: &str) -> Option<Fix> {
         // `f(a;b)` passes one list; brackets pass two arguments. The old
         // form returns a projection rather than failing, so on request.
         "QA008" => {
-            let v = views(source);
             let name = re!(r"^\.?[A-Za-z][A-Za-z0-9_.]*").find(v.code.get(start..)?)?;
             let open = start + name.end();
             if !v.code[open..].starts_with('(') {
@@ -590,7 +598,6 @@ pub fn fix_for(finding: &Finding, source: &str) -> Option<Fix> {
         // A statement after a top-level return never runs: remove it and
         // what follows it up to the closing brace, on one line.
         "QB020" => {
-            let v = views(source);
             let semi = v.code[..start].trim_end();
             if !semi.ends_with(';') {
                 return None;
@@ -644,7 +651,6 @@ pub fn fix_for(finding: &Finding, source: &str) -> Option<Fix> {
         // The UTC clock the convention asks for. A different value, so
         // only on request.
         "QP003" => {
-            let v = views(source);
             let line_end = v.code[start..]
                 .find('\n')
                 .map_or(v.code.len(), |at| start + at);
@@ -660,7 +666,6 @@ pub fn fix_for(finding: &Finding, source: &str) -> Option<Fix> {
         // `a=1 and b=0` grouped the way it was meant: `(a=1) and b=0`. The
         // rows returned change, so only on request.
         "QB006" => {
-            let v = views(source);
             let m = re!(r"^where\b").find(v.code.get(start..)?)?;
             let phrase = start + m.end();
             // The phrase ends where its statement does: a `;` or a bracket
@@ -708,7 +713,6 @@ pub fn fix_for(finding: &Finding, source: &str) -> Option<Fix> {
                 r"^\{\s*(?:x\s*([-+*%])\s*(-?\d[A-Za-z0-9.]*)|(-?\d[A-Za-z0-9.]*)\s*([-+*%])\s*x)\s*\}[ \t]*(?:each\b|')[ \t]*"
             )
             .captures(source.get(start..)?)?;
-            let v = views(source);
             let tick = !m.get(0)?.as_str().contains("each");
             let before = v.code[..start].trim_end();
             let heads = before.is_empty()
@@ -771,7 +775,6 @@ pub fn fix_for(finding: &Finding, source: &str) -> Option<Fix> {
         // `x` read in a lambda that declares one parameter: read that
         // parameter, which is almost always what was meant.
         "QF010" if source.get(start..)?.starts_with('x') => {
-            let v = views(source);
             let brace = v.code[..start].rfind("{[")?;
             let sig = signature(&v.code, source, brace);
             let [param] = sig.slots[..] else {
@@ -790,7 +793,6 @@ pub fn fix_for(finding: &Finding, source: &str) -> Option<Fix> {
         }
         // `f . ()` is 'type; a niladic call is `f[]`.
         "QA004" => {
-            let v = views(source);
             let line_end = v.code[start..]
                 .find('\n')
                 .map_or(v.code.len(), |at| start + at);
@@ -836,7 +838,6 @@ pub fn fix_for(finding: &Finding, source: &str) -> Option<Fix> {
         // it, and the new one reads the local.
         "QF005" => {
             let name = re!(r"'([A-Za-z][A-Za-z0-9_]*)'").captures(&finding.detail)?[1].to_string();
-            let v = views(source);
             let brace = enclosing_brace(&v.code, start)?;
             let close = matching(&v.code, brace, b'{', b'}')?;
             let sig = signature(&v.code, source, brace);
@@ -875,7 +876,6 @@ pub fn fix_for(finding: &Finding, source: &str) -> Option<Fix> {
         // `$[c;a;b;]`: the trailing `;` makes `b` a test. Dropping it gives
         // the if-else the layout says.
         "QA007" => {
-            let v = views(source);
             if !v.code.get(start..)?.starts_with("$[") {
                 return None;
             }
@@ -962,7 +962,6 @@ pub fn fix_for(finding: &Finding, source: &str) -> Option<Fix> {
         // The timestamp the convention asks for in place of datetime. A
         // different type, so only on request.
         "QP002" => {
-            let v = views(source);
             let line_end = v.code[start..]
                 .find('\n')
                 .map_or(v.code.len(), |at| start + at);
@@ -992,7 +991,6 @@ pub fn fix_for(finding: &Finding, source: &str) -> Option<Fix> {
         // lambda's own body - a nested lambda cannot see it, so its uses of
         // the name are the builtin's and stay.
         "QF001" => {
-            let v = views(source);
             if !v.code.get(start..)?.starts_with("{[") {
                 return None;
             }
@@ -1069,7 +1067,6 @@ pub fn fix_for(finding: &Finding, source: &str) -> Option<Fix> {
         // masked code is the only honest place to measure - a `;` inside
         // a string or a trailing comment must not end it.
         "QP006" => {
-            let v = views(source);
             // A qSQL phrase ends an expression at `from`, `by` or
             // `where`, and those are words this scan does not read:
             // `update t:d 0 from rows` would become `d[0 from rows]`.
@@ -2111,7 +2108,11 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
             && (re!(r"^`[A-Za-z][A-Za-z0-9_.]*$").is_match(cond)
                 || re!(r#"^"[^"]*"$"#).is_match(cond)
                 || re!(r"^[01]{2,}b$").is_match(cond)
-                || re!(r"^-?\d[A-Za-z0-9.]*(?:\s+-?\d[A-Za-z0-9.]*)+$").is_match(cond)
+                || (re!(r"^-?\d[A-Za-z0-9.]*(?:\s+-?\d[A-Za-z0-9.]*)+$").is_match(cond)
+                    // Spaced, a `b` suffix is not a boolean vector: `1 0b` is
+                    // `(1;0b)`, the long 1 - stdout's handle - applied to 0b,
+                    // which writes it and returns 1. q 5: `$[1 0b;a;b]` is a.
+                    && !cond.ends_with('b'))
                 || vector_comparison(cond))
         {
             add(
@@ -3070,7 +3071,9 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
     }
     // Two literals compared. The answer is fixed before the program runs, so
     // either the comparison is dead or one side was meant to be a name.
-    for m in re!(r"(-?\d[A-Za-z0-9.]*|`[A-Za-z][A-Za-z0-9_.]*)\s*(=|<>|<=|>=|<|>)\s*(-?\d[A-Za-z0-9.]*|`[A-Za-z][A-Za-z0-9_.]*)")
+    // A side may be a vector - `1 2 3>2` compares the whole of `1 2 3`, so
+    // the operand quoted back is all of it, not its last item.
+    for m in re!(r"(-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)*|(?:`[A-Za-z][A-Za-z0-9_.]*)+)\s*(=|<>|<=|>=|<|>)\s*(-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)*|(?:`[A-Za-z][A-Za-z0-9_.]*)+)")
         .captures_iter(code)
     {
         let whole = m.get(0).unwrap();
@@ -3080,6 +3083,16 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
         // and `0<1_x` drops before it, and both look like `0<0` and `0<1` to a
         // pattern. So: the comparison ends here, or it was never one.
         if !boundary(code, whole.start()) || !operand_ends(code, whole.end()) {
+            continue;
+        }
+        // Two vectors are QT006's: of different lengths they are an error,
+        // not a constant. One side has to be an atom.
+        let vector = |side: &str| side.trim().contains([' ', '\t']) || side.matches('`').count() > 1;
+        // With a vector on one side, a symbol against a number is QT015's
+        // 'type alone; two atoms keep both findings, as they always have.
+        let symbol = |side: &str| side.trim_start().starts_with('`');
+        let either = vector(&m[1]) || vector(&m[3]);
+        if (vector(&m[1]) && vector(&m[3])) || (either && symbol(&m[1]) != symbol(&m[3])) {
             continue;
         }
         add(

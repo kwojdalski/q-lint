@@ -378,3 +378,31 @@ r:"abc" ss "b"
 log_handle:0N
 f:{[msg] log_handle enlist msg}
 
+=== clean | QA011: a spaced literal ending in b is an application, not a boolean vector
+r:$[1 0b;`t;`f]
+
+=== QA011 | the unspaced boolean vector is the one $ refuses
+r:$[10b;`t;`f]
+
+=== QT029 | a host:port symbol without the leading colon
+h:hopen `localhost:5000
+
+=== clean | QT029: with the leading colon it is a handle
+h:hopen `:localhost:5000
+
+=== QT010 | max of a symbol vector
+r:max `a`b
+
+=== clean | QT010: max of a symbol atom, or of a string, is fine
+r:max `a
+r2:max "ab"
+
+=== clean | QT025: after `:` the quote is each on assignment, not a signal
+r:'5
+
+=== QT025 | a number signalled where a statement opens
+f:{x;'5}
+
+=== QB018 | a vector against an atom, quoted whole
+r:1 2 3>2
+

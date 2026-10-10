@@ -4,7 +4,7 @@ mod lsp;
 mod qls;
 use clap::Parser;
 use config::{Layer, Overrides, Policy};
-use q_lint_rs::{RULES, Workspace, fix_for, index};
+use q_lint_rs::{RULES, Workspace, fixes_for, index};
 use std::{
     collections::BTreeSet,
     fs,
@@ -333,10 +333,8 @@ fn run(args: Args) -> Result<u8, String> {
         let mut fixed = 0;
         let mut changed_files = 0;
         for (path, source) in &mut sources {
-            let mut edits: Vec<_> = policy
-                .lint(source, path, &workspace)?
-                .iter()
-                .filter_map(|finding| fix_for(finding, source))
+            let mut edits: Vec<_> = fixes_for(&policy.lint(source, path, &workspace)?, source)
+                .into_iter()
                 .filter(|fix| fix.batch_safe || args.unsafe_fixes)
                 .collect();
             edits.sort_by_key(|fix| (fix.start, fix.end));

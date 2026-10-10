@@ -116,7 +116,7 @@ struct Call<'a> {
     args: Vec<&'a str>,
 }
 
-const BUILTINS: &str = r"til|where|sum|prd|avg|med|dev|var|sums|prds|deltas|ratios|asc|desc|iasc|idesc|distinct|flip|rotate|count|first|last|enlist|reverse|abs|neg|sqrt|log|exp|sin|cos|tan|acos|asin|atan|reciprocal|mavg|msum|mcount|mdev|mmin|mmax|cor|cov|wavg|wsum|within|string|key|value|type|not|null|min|max|floor|ceiling|signum|group|cols|keys|meta|fills|next|upper|lower|trim|ltrim|rtrim|show|hcount|hclose|hopen|get|inv|attr|parse|eval|system|any|all|sdev|svar|avgs";
+const BUILTINS: &str = r"til|where|sum|prd|avg|med|dev|var|sums|prds|deltas|ratios|asc|desc|iasc|idesc|distinct|flip|rotate|count|first|last|enlist|reverse|abs|neg|sqrt|log|exp|sin|cos|tan|acos|asin|atan|reciprocal|mavg|msum|mcount|mdev|mmin|mmax|cor|cov|wavg|wsum|within|string|key|value|type|not|null|min|max|floor|ceiling|signum|group|cols|keys|meta|fills|next|upper|lower|trim|ltrim|rtrim|show|hcount|hclose|hopen|get|inv|attr|parse|eval|system|any|all|sdev|svar|avgs|maxs|mins";
 
 /// Every complete call to a checked builtin, in either spelling.
 ///
@@ -191,6 +191,37 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
             name: call.get(1).unwrap().as_str(),
             args: vec![&comments[arg.start()..arg.end()]],
         });
+    }
+    // Applied with `@`: `til@2.5` and `@[til;2.5]` are the call `til 2.5`,
+    // and 'type alike (q 5). Two slots only - `@[til;2.5;{x}]` is a protected
+    // call whose handler catches the error. A dyadic builtin under `@` is a
+    // projection, which the argument count in `check` already passes over.
+    const LITERAL: &str = r#"(?:-?\d[A-Za-z0-9.:]*(?:[ \t]+-?\d[A-Za-z0-9.:]*)*)|(?:`[A-Za-z0-9_.]*)+|"(?:\\.|[^"\\])*""#;
+    for (pattern, name_group, arg_group) in [
+        (format!(r"\b({BUILTINS})[ \t]*@[ \t]*({LITERAL})"), 1, 2),
+        (
+            format!(r"@\[[ \t]*({BUILTINS})[ \t]*;[ \t]*({LITERAL})[ \t]*\]"),
+            1,
+            2,
+        ),
+    ] {
+        for call in regex::Regex::new(&pattern).unwrap().captures_iter(comments) {
+            let whole = call.get(0).unwrap();
+            let name = call.get(name_group).unwrap();
+            if !boundary(code, whole.start()) || code.get(name.range()) != Some(name.as_str()) {
+                continue;
+            }
+            let rest = code[whole.end()..].trim_start_matches([' ', '\t']);
+            if !(rest.is_empty() || rest.starts_with([';', ')', ']', '}', '\n', '\r'])) {
+                continue;
+            }
+            let arg = call.get(arg_group).unwrap();
+            out.push(Call {
+                at: whole.start(),
+                name: name.as_str(),
+                args: vec![&comments[arg.start()..arg.end()]],
+            });
+        }
     }
     // Infix form: `left name right`, the way the dyadic builtins are almost
     // always written - `2 mavg x`, `x within 1 2`. The left operand is the
@@ -346,6 +377,14 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
                 "QD002",
                 "where cannot repeat an index a negative number of times",
             )),
+            // These four take a symbol atom - `max `a` is `a - and any
+            // string, but not a symbol vector: `max `a`b` is 'type (q 5).
+            "max" | "min" | "maxs" | "mins" if value.kind == Kind::Symbol && value.vector => {
+                Some((
+                    "QT010",
+                    "This numeric aggregate or scan rejects this literal",
+                ))
+            }
             "sum" | "prd" | "avg" | "med" | "dev" | "var" | "sums" | "prds" | "deltas"
             | "ratios"
                 if (value.kind == Kind::Symbol
