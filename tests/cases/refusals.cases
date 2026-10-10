@@ -196,3 +196,38 @@ s:{delete from}
 === clean profile: general | delete from a named table, and delete columns
 delete from t
 r:delete a from t
+
+=== QE010 profile: general | an integer type with a fraction (q 5: parse "1.5j" is '1.5)
+a:1.5j
+
+=== QE010 profile: general | a suffix on an item that is not the last (q 5: '3i)
+c:3i 4j
+
+=== QE010 profile: general | a fraction in a vector the suffix makes integer (q 5: parse "1.5 2j" is '1.5)
+n:1.5 2j
+
+=== QE010 profile: general | a boolean digit other than 0 or 1 (q 5: '2b)
+b:2b
+
+=== QE010 profile: general | a letter that is no type (q 5: '1y)
+m:1y
+
+=== QE010 profile: general | dots that make no date (q 5: '2023.1.1 and '1.2.3)
+g:2023.1.1
+
+=== QE010 profile: general | a long that overflows (q 5: parse "9223372036854775808" is refused)
+h:9223372036854775808
+
+=== clean profile: general | the shapes q accepts
+a:3 4i
+b:10b
+c:1b 0b
+d:0N 1
+e:1e5
+f:2023.01.01
+g:2023.01.01D12:00
+h:9223372036854775807
+m:0x0102
+n:12:30:00.000
+t:2023.01m
+w:0w 0W 0n 0Nj

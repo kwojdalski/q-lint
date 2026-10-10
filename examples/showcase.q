@@ -603,6 +603,10 @@ negated:{-x}
 / expect-next: QE009
 summed:{+/x}
 
+/ QE010: an integer type takes no fraction, so q 5 cannot parse 1.5j.
+/ expect-next: QE010
+half:1.5j
+
 / QB002: q 5's like takes one `*`, or a leading and trailing pair;
 / "a*b*" is 'nyi.
 / expect-next: QB002

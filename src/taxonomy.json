@@ -63,6 +63,13 @@
     "scope": "builtin"
   },
   {
+    "code": "QE010",
+    "name": "malformed-number",
+    "category": "syntax",
+    "summary": "A number q 5 cannot parse: 1.5j, 2b, 3i 4j, 1y, 1.2.3, or a long that overflows",
+    "scope": "builtin"
+  },
+  {
     "code": "QF001",
     "name": "reserved-parameter",
     "category": "names",

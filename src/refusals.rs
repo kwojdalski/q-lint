@@ -19,6 +19,7 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
     cast_character(path, source, code, comments, &mut out);
     monadic_glyph(path, source, code, comments, &mut out);
     juxtaposed_derived(path, source, code, comments, &mut out);
+    numbers(path, source, code, &unsym, &mut out);
     out
 }
 
@@ -516,5 +517,95 @@ fn juxtaposed_derived(
         );
         finding.end_column = finding.column.map(|col| col + iter.len());
         out.push(finding);
+    }
+}
+
+/// QE010. A number q 5 will not parse. Each shape was refused by `parse`,
+/// which names the token: an integer type with a fraction (`1.5j`, and
+/// `1.5 2j`, where the suffix types every item), a suffix on any item but
+/// the last (`3i 4j`, `1e 2`), a boolean digit that is not 0 or 1 (`2b`), a
+/// letter that is no type (`1y`, `1d`, `1m`), dots that make no date
+/// (`1.2.3`, `2023.1.1`), and a long past 9223372036854775807. A boolean
+/// vector of atoms is not a vector at all - `1b 0b` parses, as two atoms -
+/// and `0N 1`, `3 4i`, `1e5` and `2023.01.01` are fine.
+fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Finding>) {
+    let tokens: Vec<regex::Match> = re!(r"\d[0-9A-Za-z.:]*")
+        .find_iter(unsym)
+        .filter(|m| boundary(code, m.start()))
+        // q's nulls and infinities: 0n, 0w, 0N, 0Wj and the rest.
+        .filter(|m| !re!(r"^0[nNwW]").is_match(m.as_str()))
+        .filter(|m| {
+            let line = unsym[..m.start()].rfind('\n').map_or(0, |p| p + 1);
+            !unsym[line..].starts_with('\\')
+        })
+        .collect();
+    let mut report = |at: usize, detail: String| {
+        out.push(Finding::at(path, source, at, "QE010", detail));
+    };
+    let mut i = 0;
+    while i < tokens.len() {
+        // A run of items separated by spaces only is one vector literal.
+        let mut j = i;
+        while j + 1 < tokens.len()
+            && unsym[tokens[j].end()..tokens[j + 1].start()]
+                .bytes()
+                .all(|b| b == b' ' || b == b'\t')
+            && tokens[j].end() < tokens[j + 1].start()
+        {
+            j += 1;
+        }
+        let run = &tokens[i..=j];
+        let last = run[run.len() - 1].as_str();
+        let mut reported = false;
+        for (k, t) in run.iter().enumerate() {
+            let text = t.as_str();
+            let detail = if re!(r"^\d+\.\d*[hij]$").is_match(text) {
+                Some(format!(
+                    "`{text}`: an integer type takes no fractional part"
+                ))
+            } else if re!(r"^\d*[2-9]\d*b$").is_match(text) {
+                Some(format!("`{text}`: a boolean is written with 0 and 1 only"))
+            } else if re!(r"^\d+[adgklmoqrwyz]$").is_match(text)
+                || (re!(r"^\d+x$").is_match(text) && text != "0x")
+            {
+                Some(format!(
+                    "`{text}`: `{}` is not a type suffix",
+                    &text[text.len() - 1..]
+                ))
+            } else if re!(r"^\d+(?:\.\d+){2,}$").is_match(text)
+                && !re!(r"^\d{4}\.\d{2}\.\d{2}$").is_match(text)
+            {
+                Some(format!("`{text}` is not a number or a date (yyyy.mm.dd)"))
+            } else if re!(r"^\d{19,}j?$").is_match(text)
+                && text
+                    .trim_end_matches('j')
+                    .parse::<u128>()
+                    .is_ok_and(|v| v > i64::MAX as u128)
+            {
+                Some(format!("`{text}` does not fit in a long"))
+            } else if k + 1 < run.len() && re!(r"^\d+(?:\.\d*)?[hijef]$").is_match(text) {
+                Some(format!(
+                    "`{text}`: a vector literal takes one type suffix, after its last item"
+                ))
+            } else if k + 1 < run.len()
+                && text.contains('.')
+                && !text.contains(':')
+                && re!(r"^\d+[hij]$").is_match(last)
+            {
+                Some(format!(
+                    "`{text}`: the vector's `{}` suffix makes every item an integer",
+                    &last[last.len() - 1..]
+                ))
+            } else {
+                None
+            };
+            if let Some(detail) = detail
+                && !reported
+            {
+                report(t.start(), format!("{detail}; q refuses to parse it"));
+                reported = true;
+            }
+        }
+        i = j + 1;
     }
 }

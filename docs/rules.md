@@ -1,6 +1,6 @@
 # Rules
 
-All 115 rules, generated from `src/taxonomy.json` - the same data
+All 116 rules, generated from `src/taxonomy.json` - the same data
 `qlinter --rules` and `qlinter --explain <CODE>` print from. Regenerate with
 `python3 scripts/rules_doc.py > docs/rules.md`; a test fails when this is stale.
 
@@ -51,6 +51,7 @@ that wants fewer findings narrows in its own configuration.
 | `QE007` | qsql-missing-from | select, exec, update or delete with no from before the statement ends, or nothing after it | every profile |
 | `QE008` | monadic-glyph | A glyph applied to one argument; q 5 refuses -x, ,x, #x and the rest - the keyword is neg, enlist, count, not... | every profile |
 | `QE009` | juxtaposed-derived-function | A derived function applied by juxtaposition: q 5 refuses +/x, count'x and x/y; write (+/)x, +/[x] or sum x | every profile |
+| `QE010` | malformed-number | A number q 5 cannot parse: 1.5j, 2b, 3i 4j, 1y, 1.2.3, or a long that overflows | every profile |
 
 ## Names - parameters, locals, globals and what they shadow
 
