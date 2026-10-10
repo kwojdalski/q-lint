@@ -2976,13 +2976,14 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
     // of `=` is a 'type error every time. A bare `type=` is a column named
     // type, which is QF013's business, not this rule's.
     for m in re!(
-        r"\btype\s*(?:\[[^\]]*\]|\(?[A-Za-z_][A-Za-z0-9_.]*\)?)\s*(?:=|<>)\s*`[a-z][A-Za-z0-9_.]*(?:`[A-Za-z0-9_.]*)*|`[a-z]+\s*(?:=|<>)\s*type\b"
+        r"\btype\s*(?:\[[^\]]*\]|\(?[A-Za-z_][A-Za-z0-9_.]*\)?)\s*(?:=|<>)\s*`[a-z][A-Za-z0-9_.]*(?:`[A-Za-z0-9_.]*)*|\(\s*type\b[^()]*\)\s*(?:=|<>)\s*`[a-z][A-Za-z0-9_.]*(?:`[A-Za-z0-9_.]*)*|`[a-z]+\s*(?:=|<>)\s*type\b"
     )
     .find_iter(code)
     {
         // The symbol on the right has to be the whole operand:
         // `` type[1]=`a`b?`a `` compares a short with a long.
-        if m.as_str().starts_with("type") && !operand_ends(code, m.end()) {
+        // So does a parenthesised one: q 5 `(type 1)=`long` is 'type.
+        if !m.as_str().starts_with('`') && !operand_ends(code, m.end()) {
             continue;
         }
         add(

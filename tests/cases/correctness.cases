@@ -450,3 +450,7 @@ f:"a"="b",x
 
 === QT007 profile: general | a symbol pattern in infix ss (q 5: "abc" ss `a is 'type)
 a:"abc" ss `a
+
+=== QB013 | type of a literal in parentheses (q 5: (type 1)=`long is 'type)
+a:(type 1)=`long
+b:(type "a")<>`char
