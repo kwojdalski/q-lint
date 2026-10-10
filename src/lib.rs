@@ -3836,11 +3836,14 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
                 }
                 j += 1;
             }
-            if length > 200 {
+            // q 5 keeps the first 254 characters of a signalled string.
+            if length > 254 {
                 add(
                     chars[i].0,
                     "QB004",
-                    format!("Thrown message with {length} chars of literal text"),
+                    format!(
+                        "Thrown message with {length} chars of literal text; q keeps only the first 254"
+                    ),
                 );
             }
         }
