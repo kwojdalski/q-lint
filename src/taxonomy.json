@@ -56,6 +56,13 @@
     "scope": "builtin"
   },
   {
+    "code": "QE009",
+    "name": "juxtaposed-derived-function",
+    "category": "syntax",
+    "summary": "A derived function applied by juxtaposition: q 5 refuses +/x, count'x and x/y; write (+/)x, +/[x] or sum x",
+    "scope": "builtin"
+  },
+  {
     "code": "QF001",
     "name": "reserved-parameter",
     "category": "names",

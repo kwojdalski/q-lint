@@ -18,6 +18,7 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
     hopen_literal(path, source, code, &mut out);
     cast_character(path, source, code, comments, &mut out);
     monadic_glyph(path, source, code, comments, &mut out);
+    juxtaposed_derived(path, source, code, comments, &mut out);
     out
 }
 
@@ -352,11 +353,6 @@ fn cast_character(path: &str, source: &str, code: &str, comments: &str, out: &mu
 /// holding one is refused when the script defines it. `-1` is a literal,
 /// `(#)x` and `-:` are fine, and after an operand the glyph is dyadic.
 fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<Finding>) {
-    const GLYPHS: &[u8] = b"+-*%!#$&|^=<>~,@?";
-    // Pairs QE004 already reports, or that are one operator.
-    const PAIRS: &[&str] = &[
-        "<>", "<=", ">=", "==", "!=", "&&", "||", "+=", "-=", "*=", "->", "=>",
-    ];
     let b = comments.as_bytes();
     let mut line_start = 0;
     for (i, &g) in b.iter().enumerate() {
@@ -382,19 +378,8 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
         if !operand {
             continue;
         }
-        // What precedes has to start an expression, or be another glyph.
         let before = comments[..i].trim_end_matches([' ', '\t', '\r', '\n']);
-        let adjacent = before.len() == i;
-        let opens = i == line_start
-            || before.is_empty()
-            || before.ends_with([':', '(', '[', '{', ';'])
-            || re!(r"\{\s*\[[A-Za-z0-9_; \t]*\]$").is_match(before);
-        let after_glyph = before
-            .bytes()
-            .next_back()
-            .is_some_and(|p| GLYPHS.contains(&p))
-            && !(adjacent && PAIRS.contains(&&comments[i - 1..=i]));
-        if !opens && !after_glyph {
+        if !opens_expression(comments, i, line_start) {
             continue;
         }
         // The sort in `select[>a]` and `select[2;<a]` is q's own syntax.
@@ -414,6 +399,107 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
             ),
         );
         finding.end_column = finding.column.map(|c| c + 1);
+        out.push(finding);
+    }
+}
+
+const GLYPHS: &[u8] = b"+-*%!#$&|^=<>~,@?";
+
+/// Whether the token at `i` starts an expression, so that whatever it applies
+/// to is applied by juxtaposition: the start of a line or statement, after
+/// `:`, an opening bracket or a signature, or after another glyph.
+fn opens_expression(comments: &str, i: usize, line_start: usize) -> bool {
+    // Pairs QE004 already reports, or that are one operator.
+    const PAIRS: &[&str] = &[
+        "<>", "<=", ">=", "==", "!=", "&&", "||", "+=", "-=", "*=", "->", "=>",
+    ];
+    let before = comments[..i].trim_end_matches([' ', '\t', '\r', '\n']);
+    let adjacent = before.len() == i;
+    i == line_start
+        || before.is_empty()
+        || before.ends_with([':', '(', '[', '{', ';'])
+        || re!(r"\{\s*\[[A-Za-z0-9_; \t]*\]$").is_match(before)
+        || (before
+            .bytes()
+            .next_back()
+            .is_some_and(|p| GLYPHS.contains(&p))
+            && !(adjacent && PAIRS.contains(&&comments[i - 1..=i])))
+}
+
+/// QE009. A derived function applied by juxtaposition at the start of an
+/// expression. q 5 refuses it at parse time - `{+/x}`, `{,/x}`, `{x/y}`,
+/// `{count'x}`, `{{x+y}/x}` and `{sum/:x}` are each an error naming the
+/// iterator - and a script stops at the lambda holding one. Applied infix
+/// (`0+/x`, `x,/:y`), in parentheses (`(,/)x`) or in brackets (`,/[x]`) it is
+/// fine, and so is the keyword (`sum x`, `raze x`, `count each x`).
+fn juxtaposed_derived(
+    path: &str,
+    source: &str,
+    code: &str,
+    comments: &str,
+    out: &mut Vec<Finding>,
+) {
+    // Symbols filled with digits: a path such as `:hdb/2024 is not a name
+    // and an iterator, and `` ` sv'x `` still has an operand on the left.
+    let view = re!(r"`[A-Za-z0-9_.:/]*")
+        .replace_all(comments, |m: &regex::Captures| "0".repeat(m[0].len()));
+    let b = view.as_bytes();
+    let c = code.as_bytes();
+    let mut opens: Vec<usize> = vec![];
+    let mut lambda = std::collections::HashMap::new();
+    for (i, &ch) in c.iter().enumerate() {
+        if ch == b'{' {
+            opens.push(i);
+        } else if ch == b'}'
+            && let Some(o) = opens.pop()
+        {
+            lambda.insert(i, o);
+        }
+    }
+    for m in re!(r"(?:[-+*%!#$&|^=<>~,@?]|\.?[A-Za-z][A-Za-z0-9_.]*|\})(?:/:|\\:|':|/|\\|')")
+        .find_iter(&view)
+    {
+        let token = m.start();
+        let iterator = token + m.as_str().find(['/', '\\', '\'']).unwrap();
+        // Both the token and the iterator are code, not string or comment.
+        if c[iterator] != b[iterator] || (c[token] != b[token] && b[token] != b'0') {
+            continue;
+        }
+        let start = match b[token] {
+            b'}' => match lambda.get(&token) {
+                Some(&o) => o,
+                None => continue,
+            },
+            ch if (ch.is_ascii_alphabetic() || ch == b'.') && !boundary(&view, token) => continue,
+            _ => token,
+        };
+        let line_start = view[..start].rfind('\n').map_or(0, |p| p + 1);
+        if b[line_start] == b'\\' {
+            continue;
+        }
+        // Applied to an operand right after the iterator: a name, a symbol,
+        // a bracketed or quoted value, or a number.
+        let next = view[m.end()..].trim_start_matches([' ', '\t']);
+        let operand = next
+            .starts_with(|ch: char| ch.is_ascii_alphanumeric() || "`(\"".contains(ch))
+            || ((next.starts_with('-') || next.starts_with('.'))
+                && next[1..].starts_with(|ch: char| ch.is_ascii_digit()));
+        if !operand || !opens_expression(&view, start, line_start) {
+            continue;
+        }
+        let iter = &view[iterator..m.end()];
+        let mut finding = Finding::at(
+            path,
+            source,
+            iterator,
+            "QE009",
+            format!(
+                "q 5 refuses a derived function applied by juxtaposition ('{}): write it in \
+                 parentheses, with brackets, or as the keyword",
+                &iter[..1]
+            ),
+        );
+        finding.end_column = finding.column.map(|col| col + iter.len());
         out.push(finding);
     }
 }

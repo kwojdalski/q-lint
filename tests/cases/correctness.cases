@@ -205,8 +205,11 @@ r:(2*)/1
 === clean | percent divides
 r:10%2
 
-=== clean | over on a function
+=== QE009 | over applied by juxtaposition (q 5: parse "r:+/1 2 3" is '/)
 r:+/1 2 3
+
+=== clean | over on a function, in brackets
+r:+/[1 2 3]
 
 === QB015 | a string literal in a filter
 select from t where sym="EUR"

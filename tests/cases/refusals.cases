@@ -51,9 +51,11 @@ f:{'1}
 === QT025 | a one-character string is a char atom, not a string
 f:{'"x"}
 
-=== clean | a string, a symbol, and the each adverb
+=== clean | a string and a symbol
 f1:{'"xy"}
 f2:{'`a}
+
+=== QE009 | while x'1 is each applied by juxtaposition (q 5: parse "{x'1}" is ')
 f3:{x'1}
 
 === QT026 | lj with an unkeyed table on the right
@@ -149,3 +151,25 @@ e:,/[x]
 r:select[>a] from t
 s:select[2;<a] from t
 u:75_select[>a] from t
+
+=== QE009 profile: general | a derived function applied by juxtaposition (q 5: {+/x} is '/)
+f:{+/x}
+g:{,/x}
+
+=== QE009 profile: general | a name, a lambda or a noun before the iterator too (q 5: '/ and ')
+h:{x/y}
+k:{a:count'x}
+m:{{x+y}/x}
+n:{sum/:x}
+
+=== clean profile: general | in parentheses, with brackets, or infix (q 5 accepts each)
+f:{(,/)x}
+g:{,/[x]}
+h:{x,/:y}
+n:{0+/x}
+p:{x+/y}
+u:{x ~/: y}
+
+=== clean profile: general | a symbol on the left is an operand, and a path is a symbol
+y:{` sv'x,'k}
+s:{hsym `:hdb/2024}

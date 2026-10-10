@@ -598,6 +598,11 @@ early2:{[p] if[p<0;:0]; p*2}
 / expect-next: QE008
 negated:{-x}
 
+/ QE009: q 5 refuses a derived function applied by juxtaposition, so
+/ +/x does not parse; sum x, (+/)x and +/[x] do.
+/ expect-next: QE009
+summed:{+/x}
+
 / QB002: q 5's like takes one `*`, or a leading and trailing pair;
 / "a*b*" is 'nyi.
 / expect-next: QB002
