@@ -45,8 +45,36 @@ fn argument(code: &str, comments: &str, source: &str, after: usize) -> Option<(u
 /// string literal. `value "select from t"` is a constant, and `value x` says
 /// nothing about where `x` came from.
 fn query_injection(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<Finding>) {
-    for m in re!(r"\b(?:value|eval)\b").find_iter(code) {
-        if !boundary(code, m.start()) {
+    // `get` of a string evaluates it as `value` does (q 5), and a string sent
+    // over a handle - `h "select ...",x` - is evaluated by the remote
+    // process's `.z.pg`, which is `value` by default. A name applied to a
+    // query string is taken for a handle unless it is one of q's own.
+    let handles: Vec<usize> =
+        re!(r#"\b([A-Za-z][A-Za-z0-9_.]*)[ \t]+"(?:select|exec|update|delete)\b"#)
+            .captures_iter(comments)
+            .filter(|c| {
+                let name = c.get(1).unwrap();
+                code[name.start()..].starts_with(name.as_str())
+                    && !crate::RESERVED.iter().any(|n| n == name.as_str())
+            })
+            .map(|c| c.get(1).unwrap().start())
+            .collect();
+    let calls = re!(r"\b(?:value|eval|get)\b")
+        .find_iter(code)
+        .map(|m| (m.start(), m.end()))
+        .chain(handles.iter().map(|&at| {
+            let end = at + code[at..].find([' ', '\t']).unwrap();
+            (at, end)
+        }));
+    for (m_start, m_end) in calls {
+        let m = Span {
+            start: m_start,
+            end: m_end,
+        };
+        // A system command line keeps its strings in every view, so its
+        // commas would read as joins: `\t do[10;db "select a,b from t"]`.
+        let line = code[..m.start()].rfind('\n').map_or(0, |p| p + 1);
+        if !boundary(code, m.start()) || code[line..].starts_with('\\') {
             continue;
         }
         let Some((start, end)) = argument(code, comments, source, m.end()) else {
@@ -91,10 +119,15 @@ fn query_injection(path: &str, source: &str, code: &str, comments: &str, out: &m
                 source,
                 m.start(),
                 "QX001",
-                "This query is built by joining strings and run by `value`, so a value \
-                 spliced into it can rewrite it; a functional select (`?[t;c;b;a]`) takes \
-                 the value as data"
-                    .into(),
+                format!(
+                    "This query is built by joining strings and run by `{}`, so a value \
+                     spliced into it can rewrite it; a functional select (`?[t;c;b;a]`) takes \
+                     the value as data",
+                    match &code[m.start()..m.end()] {
+                        f @ ("value" | "eval" | "get") => f.to_string(),
+                        h => format!("{h}` over a handle and evaluated by the remote `.z.pg"),
+                    }
+                ),
             ));
         }
     }
@@ -396,5 +429,20 @@ fn unreachable(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
                     "This statement follows a return or signal at the lambda's top level, so it never runs".into(),
                 ));
         }
+    }
+}
+
+/// A start and end, standing in for a regex match where a rule gathers
+/// positions from more than one pattern.
+struct Span {
+    start: usize,
+    end: usize,
+}
+impl Span {
+    fn start(&self) -> usize {
+        self.start
+    }
+    fn end(&self) -> usize {
+        self.end
     }
 }

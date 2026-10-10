@@ -30,3 +30,13 @@ password:getenv`PASS
 
 === clean | an empty string holds nothing
 token:""
+
+=== QX001 | get evaluates a string as value does (q 5)
+f:{get "select from t where a=",x}
+
+=== QX001 | and a handle hands it to the remote .z.pg
+g:{[h;x] h "select from t where a=",x}
+
+=== clean | a constant query over a handle, and a joined string only shown
+g:{[h] h "select from t"}
+k:{show "select from t where a=",x}
