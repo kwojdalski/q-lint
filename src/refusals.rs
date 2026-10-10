@@ -191,12 +191,22 @@ fn signals(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<F
     // A signal opens an expression; after an operand the quote is each.
     // Not after `:` - `r:'5` is ((';:);`r;5), each applied to assignment,
     // and `{:'5}` does not parse; neither is a signal (q 5).
-    for m in
-        re!(r#"(?:^|[\[(;{])[ \t]*(')(-?\d[A-Za-z0-9.]*|"(?:[^"\\]|\\.)")"#).captures_iter(comments)
-    {
+    // At any line's start too, or after a newline that only continues the
+    // bracket before it: `{[x]` + `  '1}` is a signal (q 5: 'stype).
+    for m in re!(r#"(')(-?\d[A-Za-z0-9.]*|"(?:[^"\\]|\\.)")"#).captures_iter(comments) {
         let quote = m.get(1).unwrap();
         let value = m.get(2).unwrap();
         if code.as_bytes()[quote.start()] != b'\'' {
+            continue;
+        }
+        let at = quote.start();
+        let line_start = comments[..at].rfind('\n').map_or(0, |p| p + 1);
+        let before = comments[..at].trim_end_matches([' ', '\t', '\r', '\n']);
+        if !(at == line_start
+            || before.is_empty()
+            || before.ends_with(['[', '(', ';', '{'])
+            || re!(r"\{\s*\[[A-Za-z0-9_; \t]*\]$").is_match(before))
+        {
             continue;
         }
         let rest = &code[value.end()..];

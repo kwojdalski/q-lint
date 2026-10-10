@@ -173,3 +173,15 @@ u:{x ~/: y}
 === clean profile: general | a symbol on the left is an operand, and a path is a symbol
 y:{` sv'x,'k}
 s:{hsym `:hdb/2024}
+
+=== QT025 | a signal at the start of any line, not only the first (q 5: 'stype)
+a:1
+'1
+
+=== QT025 | or on a lambda's continued line, after its signature
+f:{[x]
+  '1}
+
+=== clean | a continued line after an operand makes it each
+h:{a
+  '1}
