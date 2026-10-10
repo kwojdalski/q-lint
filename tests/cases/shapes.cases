@@ -424,3 +424,12 @@ env:([a:1;b:2 3])
 === clean | one symbol on the left is an enumeration (q 5: `sym!0 1 2 is type 20h)
 sym:`a`b`c
 x:`sym!0 1 2
+
+=== clean | set in brackets rebinds the name too (q 5: a:1;set[`a;2 3];a 0 is 2)
+a:1
+set[`a;2 3]
+a 0
+
+=== clean | a name defined only by set in brackets is defined
+set[`b;1 2]
+b 0

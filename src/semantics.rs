@@ -527,10 +527,13 @@ fn global_writes(
                 .push(m.end());
         }
     }
-    for m in re!(r"`(\.?[A-Za-z][A-Za-z0-9_.]*)\s+set\b").captures_iter(code) {
+    for m in re!(r"`(\.?[A-Za-z][A-Za-z0-9_.]*)\s+set\b|\bset\s*\[\s*`(\.?[A-Za-z][A-Za-z0-9_.]*)")
+        .captures_iter(code)
+    {
         let whole = m.get(0).unwrap();
+        let name = m.get(1).or(m.get(2)).unwrap().as_str();
         globals
-            .entry(qualify(&m[1], ns_at(whole.start())))
+            .entry(qualify(name, ns_at(whole.start())))
             .or_default()
             .push(whole.end());
     }
@@ -1603,9 +1606,12 @@ fn named_values(
         }
         writes.entry(m.get(1).unwrap().as_str()).or_default().push(whole.start());
     }
-    for m in re!(r"`(\.?[A-Za-z][A-Za-z0-9_.]*)\s+set\b").captures_iter(code) {
+    for m in re!(r"`(\.?[A-Za-z][A-Za-z0-9_.]*)\s+set\b|\bset\s*\[\s*`(\.?[A-Za-z][A-Za-z0-9_.]*)")
+        .captures_iter(code)
+    {
+        // Infix and bracket form alike: q 5 `a:1;set[`a;2 3];a 0` is 2.
         writes
-            .entry(m.get(1).unwrap().as_str())
+            .entry(m.get(1).or(m.get(2)).unwrap().as_str())
             .or_default()
             .extend([0, 0]);
     }
