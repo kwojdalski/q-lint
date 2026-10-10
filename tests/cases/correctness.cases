@@ -436,3 +436,14 @@ e:`a or `b
 
 === clean profile: general | a symbol fills a symbol list (q 5: `none^``a is `none`a)
 a:`none^s
+
+=== QB018 | two char literals compared (q 5: "a"="b" is 0b, every run)
+a:"a"="b"
+
+=== QB018 | a char and a number (q 5: "a"=97 is 1b)
+c:"a"=97
+
+=== clean | a char against a name, or continued past the literal
+a:x="b"
+c:"a"=x
+f:"a"="b",x

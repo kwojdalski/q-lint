@@ -3244,6 +3244,38 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
             format!("`{}` compares two literals; the answer is the same every run", whole.as_str().trim()),
         );
     }
+    // The same with a char atom on a side, which `code` blanks: q 5
+    // `"a"="b"` is 0b and `"a"=97` is 1b, every run. Read from `comments`,
+    // where the string is still text; only a one-character string is an atom.
+    let char_atom = r#""(?:[^"\\]|\\.)""#;
+    let number = r"-?\d[A-Za-z0-9.]*";
+    let pair = regex::Regex::new(&format!(
+        r"({char_atom}|{number})[ \t]*(=|<>|<=|>=|<|>)[ \t]*({char_atom}|{number})"
+    ))
+    .unwrap();
+    for m in pair.captures_iter(&v.comments) {
+        let whole = m.get(0).unwrap();
+        // Each quote has to open a string, not close one.
+        let opens = |g: regex::Match| {
+            !g.as_str().starts_with('"') || v.string_starts.binary_search(&g.start()).is_ok()
+        };
+        if !(m[1].starts_with('"') || m[3].starts_with('"'))
+            || !opens(m.get(1).unwrap())
+            || !opens(m.get(3).unwrap())
+            || !boundary(&v.comments, whole.start())
+            || !operand_ends(&v.comments, whole.end())
+        {
+            continue;
+        }
+        add(
+            whole.start(),
+            "QB018",
+            format!(
+                "`{}` compares two literals; the answer is the same every run",
+                whole.as_str()
+            ),
+        );
+    }
     // `if`, `while` and `do` are statements: each returns `::`, so
     // assigning one assigns null. `$[...]` is the expression form.
     for m in re!(r"[A-Za-z0-9_\])]\s*:\s*(if|while|do)\s*\[").captures_iter(code) {

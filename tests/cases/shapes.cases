@@ -200,7 +200,7 @@ r:`x<1
 === QB018 | symbol against symbol is not a type error, but it is still two literals
 r:`a=`b
 
-=== clean | a char compares by its code, which q allows
+=== QB018 | a char compares by its code, which q allows - though two literals are still constant
 r:1="a"
 
 === clean | match never raises, whatever the types
