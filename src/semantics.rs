@@ -1801,12 +1801,13 @@ fn named_values(
     };
     // Indexing an atom. Verified: 1, 1b, 1.5, "x" and 2020.01.01 bound to a
     // name and then indexed - `a[0]`, `a[]`, `a[0]:5` - are all 'type.
-    // Bracketed, `f[0]`, or juxtaposed, `f 0`: the same indexing. Juxtaposed
+    // Bracketed, `f[0]`, with `@` or `.`, or juxtaposed, `f 0`: the same
+    // indexing (q 5: `a:2.5;a@0` is 'type). Juxtaposed
     // only before something that is an argument - a literal, a bracket, a
     // name that is not an infix builtin (`f mod 2` is not indexing `f`) -
     // and not before a negative literal, which is QB010's.
     let indexed = re!(
-        r#"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)(?:\[|[ \t]+([0-9"`(]|\.?[A-Za-z][A-Za-z0-9_]*))"#
+        r#"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)(?:\[|[ \t]*@[ \t]*[0-9"`(A-Za-z]|[ \t]+\.[ \t]+[0-9"`(A-Za-z]|[ \t]+([0-9"`(]|\.?[A-Za-z][A-Za-z0-9_]*))"#
     );
     for m in indexed.captures_iter(code) {
         let name = m.get(1).unwrap();
@@ -1823,10 +1824,14 @@ fn named_values(
         // it cannot: 'type on an open handle, 'domain on one that is not.
         // Verified in q 5. A name or anything else might be a string.
         if handles.contains(name.as_str()) {
-            let after = &raw[name.end()..];
+            // `a@0` and `a . enlist 0` apply it the same way (q 5).
+            let after = raw[name.end()..].trim_start_matches([' ', '\t']);
+            let after = after
+                .strip_prefix(['@', '.'])
+                .map_or(after, |a| a.trim_start_matches([' ', '\t']));
             let argument = match after.strip_prefix('[') {
                 Some(inside) => inside.trim_start_matches([' ', '\t']),
-                None => after.trim_start_matches([' ', '\t']),
+                None => after,
             };
             let numeric = re!(r"^(?:-?\d|\])").is_match(argument);
             if numeric {

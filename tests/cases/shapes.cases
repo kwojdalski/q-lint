@@ -463,3 +463,17 @@ b:(`a`b)!1 2 3
 
 === clean | and match
 a:(`a`b)!1 2
+
+=== QT022 | an atom indexed with @ (q 5: a:2.5;a@0 is 'type)
+a:2.5
+b:a@0
+
+=== QT022 | or with dot apply (q 5: a:2.5;a . enlist 0 is 'type)
+a:2.5
+e:a . enlist 0
+
+=== clean | arithmetic on it, and a dictionary indexed with @
+a:2.5
+b:a+0
+c:`a`b!1 2
+d:c@`a
