@@ -212,3 +212,27 @@ g:{f[1;2]}
 f:{x}
 \d .
 r:{f[1;2]}
+
+=== QA005 | a lambda with no parameter list has the rank of the x, y, z it reads (q 5: {x+y}'[1 2])
+a:{x+y} each 1 2
+
+=== clean | rank one under each, or a y read only by an inner lambda
+a:{x,1} each 1 2
+b:{x,{y}1} each 1 2
+
+=== QA003 | protected apply of an implicit-rank lambda (q 5: @[{x+y};1;{x}] is {x+y}[1])
+c:@[{x+y};1;{x}]
+
+=== QA003 | of a lambda named in this file
+f:{[a;b]a+b}
+d:@[f;1;{x}]
+
+=== QA003 | and under dot, against the items of the list (q 5: .[{[a;b;c]a};1 2;{x}] is a projection)
+e:.[{[a;b;c]a+b+c};1 2;{x}]
+
+=== clean | enough arguments, an amend, or a parameter of that name
+f:{[a;b]a+b}
+c:.[f;(1;2);{x}]
+d:@[{x};1;{x}]
+e:@[t;`a;:;1]
+h:{[f] @[f;1;{x}]}

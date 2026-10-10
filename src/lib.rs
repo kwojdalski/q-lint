@@ -1659,6 +1659,40 @@ pub(crate) struct Signature<'a> {
     /// Where the body starts: after `]` for a signature, after `{` otherwise.
     pub body: usize,
 }
+/// How many arguments the lambda at `brace` (closing before `end`) takes: its
+/// parameter count, 0 for `{[]...}`, or for an implicit signature the
+/// highest of x, y and z its own body reads - nested lambdas blanked, so
+/// theirs do not count.
+pub(crate) fn lambda_rank(code: &str, raw: &str, brace: usize, end: usize) -> usize {
+    let sig = signature(code, raw, brace);
+    if sig.named {
+        return if sig.slots.iter().all(|p| p.is_empty()) {
+            0
+        } else {
+            sig.slots.len()
+        };
+    }
+    let mut body = code.as_bytes()[sig.body..end].to_vec();
+    let mut depth = 0i32;
+    for c in &mut body {
+        match *c {
+            b'{' => depth += 1,
+            b'}' => depth -= 1,
+            _ if depth > 0 => *c = b' ',
+            _ => {}
+        }
+    }
+    let body = String::from_utf8(body).unwrap();
+    // Not as part of a dotted name: `.z.s` is the lambda itself, and
+    // reading it says nothing about a third argument.
+    if re!(r"(?:^|[^A-Za-z0-9_.])z(?:[^A-Za-z0-9_.]|$)").is_match(&body) {
+        3
+    } else if re!(r"(?:^|[^A-Za-z0-9_.])y(?:[^A-Za-z0-9_.]|$)").is_match(&body) {
+        2
+    } else {
+        1
+    }
+}
 /// Whether `name`, read at `at`, is a parameter or local of a lambda around
 /// it - and so not the global a rule may know the rank of. q 5:
 /// `f:{x}; g:{[f] f[1;2]}; g[{x+y}]` is 3. A dotted name is always global.
@@ -2419,35 +2453,7 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
         let Some(end) = matching(code, brace, b'{', b'}') else {
             continue;
         };
-        let sig = signature(code, source, brace);
-        let rank = if sig.named {
-            if sig.slots.iter().all(|p| p.is_empty()) {
-                0
-            } else {
-                sig.slots.len()
-            }
-        } else {
-            let mut body = code.as_bytes()[sig.body..end].to_vec();
-            let mut depth = 0i32;
-            for c in &mut body {
-                match *c {
-                    b'{' => depth += 1,
-                    b'}' => depth -= 1,
-                    _ if depth > 0 => *c = b' ',
-                    _ => {}
-                }
-            }
-            let body = String::from_utf8(body).unwrap();
-            // Not as part of a dotted name: `.z.s` is the lambda itself, and
-            // reading it says nothing about a third argument.
-            if re!(r"(?:^|[^A-Za-z0-9_.])z(?:[^A-Za-z0-9_.]|$)").is_match(&body) {
-                3
-            } else if re!(r"(?:^|[^A-Za-z0-9_.])y(?:[^A-Za-z0-9_.]|$)").is_match(&body) {
-                2
-            } else {
-                1
-            }
-        };
+        let rank = lambda_rank(code, source, brace, end);
         // Only when the name is the lambda, not the result of applying it.
         // `files:{...} each x` and `bids:{...}'[til n]` both assign a list,
         // and treating either as a function of the rank its braces declare
@@ -2542,6 +2548,93 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
                     "`{name}(...)` passes one list argument to a rank-{} lambda, so this is a \
                      projection, not a call; square brackets separate arguments",
                     ranks[&qualified(whole.start(), name)]
+                ),
+            );
+        }
+    }
+    // QA005 and QA003 for a lambda with no parameter list, whose rank is the
+    // x, y and z it reads, and QA003 for a lambda named in this file. q 5:
+    // `{x+y} each 1 2` is `{x+y}'[1 2]`, and `@[{x+y};1;{x}]`,
+    // `f:{[a;b]a};@[f;1;{x}]` and `.[{[a;b;c]a};1 2;{x}]` each return a
+    // projection, so the handler never runs.
+    for (brace, _) in code.match_indices('{') {
+        if signature(code, source, brace).named {
+            continue;
+        }
+        let Some(end) = matching(code, brace, b'{', b'}') else {
+            continue;
+        };
+        let rank = lambda_rank(code, source, brace, end);
+        if rank >= 2 && re!(r"\Aeach\b").is_match(code[end..].trim_start()) {
+            add(
+                end,
+                "QA005",
+                format!(
+                    "`each` supplies one argument to a lambda of rank {rank} (it reads {}), so \
+                     the results are projections, not values",
+                    if rank == 3 { "x, y and z" } else { "x and y" }
+                ),
+            );
+        }
+    }
+    for m in re!(r"([@.])\[").find_iter(code) {
+        let open = m.end() - 1;
+        if !boundary(code, m.start())
+            && !code[..m.start()].ends_with([' ', '\t', '(', '[', ';', ':', '{'])
+        {
+            continue;
+        }
+        let Some(close) = matching(code, open, b'[', b']') else {
+            continue;
+        };
+        let parts = slots(&code[open + 1..close - 1]);
+        if parts.len() != 3 {
+            continue;
+        }
+        let f = parts[0].trim();
+        let f_at = open + 1 + (parts[0].len() - parts[0].trim_start().len());
+        let rank = if f.starts_with('{') {
+            // A named signature under `@` is the older QA003 loop's.
+            if m.as_str() == "@[" && signature(code, source, f_at).named {
+                continue;
+            }
+            match matching(code, f_at, b'{', b'}') {
+                Some(end) if end == f_at + f.len() => lambda_rank(code, source, f_at, end),
+                _ => continue,
+            }
+        } else if re!(r"^\.?[A-Za-z][A-Za-z0-9_.]*$").is_match(f) {
+            let key = qualified(f_at, f);
+            if redefined.contains(&key) || shadowed(code, source, f_at, f) {
+                continue;
+            }
+            match ranks.get(&key) {
+                Some(&r) => r,
+                None => continue,
+            }
+        } else {
+            continue;
+        };
+        // `@` supplies one argument; `.` as many as its literal list holds.
+        let supplied = if m.as_str() == "@[" {
+            1
+        } else {
+            let arg = parts[1].trim();
+            if arg.starts_with('(') && matching(arg, 0, b'(', b')') == Some(arg.len()) {
+                slots(&arg[1..arg.len() - 1]).len()
+            } else if re!(r"^-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)*$").is_match(arg) {
+                arg.split_whitespace().count()
+            } else {
+                continue;
+            }
+        };
+        if rank > supplied && rank >= 2 {
+            add(
+                m.start(),
+                "QA003",
+                format!(
+                    "`{}` gives this rank-{rank} function {supplied} argument(s), so the result is \
+                     a projection rather than a value, and the error handler never runs",
+                    &m.as_str()[..1]
                 ),
             );
         }

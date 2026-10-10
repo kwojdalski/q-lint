@@ -27,7 +27,6 @@ r:{[p] {2*x} each p}
 
 === clean | a lambda that is not one atomic operation needs its each
 r1:{[p] {x,1} each p}
-r2:{[p] {x+y} each p}
 r3:{[p] {sum x} each p}
 
 === clean | sum is not +/: it skips nulls
