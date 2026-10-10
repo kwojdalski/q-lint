@@ -2245,7 +2245,10 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
     // ending one line and a `-1"..."` print opening the next are two
     // statements, not a subtraction - the commonest shape in public q.
     for m in
-        re!(r"(?:`[A-Za-z][A-Za-z0-9_.]*)+[ \t]*[+\-*%]|[+\-*%][ \t]*(?:`[A-Za-z][A-Za-z0-9_.]*)+")
+        // `&` and `|` are min and max, and 'type on a symbol too, as are the
+        // word operators (q 5: `a&`b, `a mod 2, 2 xexp `a). Not `^`: a
+        // symbol fills a symbol list (`none^s).
+        re!(r"(?:`[A-Za-z][A-Za-z0-9_.]*)+(?:[ \t]*[+\-*%&|]|[ \t]+(?:mod|div|xexp|xlog|and|or)[ \t])|(?:[+\-*%&|]|[ \t](?:mod|div|xexp|xlog|and|or)[ \t]+)[ \t]*(?:`[A-Za-z][A-Za-z0-9_.]*)+")
             .find_iter(code)
     {
         let at = m.start();

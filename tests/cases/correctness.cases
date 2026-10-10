@@ -424,3 +424,15 @@ f:{x;'5}
 === QB018 | a vector against an atom, quoted whole
 r:1 2 3>2
 
+
+=== QT003 profile: general | min and max on a symbol are 'type too (q 5: `a|1 and `a&`b)
+a:`a|1
+b:`a&`b
+
+=== QT003 profile: general | and the word operators (q 5: `a mod 2, 2 xexp `a, `a or `b)
+c:`a mod 2
+d:2 xexp `a
+e:`a or `b
+
+=== clean profile: general | a symbol fills a symbol list (q 5: `none^``a is `none`a)
+a:`none^s
