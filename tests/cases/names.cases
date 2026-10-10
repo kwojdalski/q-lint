@@ -596,3 +596,12 @@ b:{delete:1;0}
 
 === clean | from and by are taken as locals (q 5: {from:1;from+1}[] is 2)
 a:{from:1;from+1}
+
+=== QF013 profile: general | a builtin as a column in a query (q 5: select sum:a from t is 'assign)
+a:select sum:a from t
+b:update count:a from t
+c:select by max:a from t
+
+=== clean profile: general | ordinary names, and a builtin used as a function
+a:select s:sum a by c:count a from t
+d:update a:sum b from t

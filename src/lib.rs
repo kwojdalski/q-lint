@@ -3236,6 +3236,50 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
             }
         }
     }
+    // The same in a query's column or by list: q 5 `select sum:a from t`,
+    // `update count:a from t` and `select by max:a from t` are 'assign when
+    // parsed. by and from are not reserved there either, but q reads them
+    // as the keywords, so they never reach this pattern as names.
+    for q in re!(r"\b(?:select|exec|update)\b").find_iter(code) {
+        if !boundary(code, q.start()) {
+            continue;
+        }
+        let rest = &code[q.end()..];
+        let Some(from) = re!(r"\bfrom\b").find(rest) else {
+            continue;
+        };
+        let list = &rest[..from.start()];
+        if list.contains(['\n', ';']) && re!(r"\n\S").is_match(list) {
+            continue;
+        }
+        let mut depth = 0i32;
+        let mut opens = vec![true; list.len()];
+        for (i, b) in list.bytes().enumerate() {
+            match b {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => depth -= 1,
+                _ => {}
+            }
+            opens[i] = depth == 0;
+        }
+        for a in re!(r"(?:^|[,\s])([a-z][A-Za-z0-9_]*)\s*:").captures_iter(list) {
+            let name = a.get(1).unwrap();
+            if opens[name.start()]
+                && !list[a.get(0).unwrap().end()..].starts_with(':')
+                && !matches!(name.as_str(), "by" | "from")
+                && RESERVED.iter().any(|n| n == name.as_str())
+            {
+                add(
+                    q.end() + name.start(),
+                    "QF013",
+                    format!(
+                        "Column `{}` is a builtin name: q refuses the query ('assign)",
+                        name.as_str()
+                    ),
+                );
+            }
+        }
+    }
     // Match the Python rule's outer-body traversal, including nested assignments.
     for (at, _) in code.match_indices('{') {
         if code[..at].rfind('}') < code[..at].rfind('{') {
