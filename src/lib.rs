@@ -2573,13 +2573,24 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
     for m in re!(r"([A-Za-z][A-Za-z0-9_]*)\s*:").captures_iter(code) {
         declared.insert(m.get(1).unwrap().as_str());
     }
+    // A column: named as a symbol somewhere (`` `sym`return!... ``), or read
+    // inside a query, where a bare name is the column before any global.
+    for m in re!(r"`([A-Za-z][A-Za-z0-9_]*)").captures_iter(code) {
+        declared.insert(m.get(1).unwrap().as_str());
+    }
     for m in
         re!(r"\b(return|else|elif|elseif|true|false|None|break|continue)\b").captures_iter(code)
     {
         let whole = m.get(0).unwrap();
         let name = &m[1];
         let after = code[whole.end()..].trim_start();
-        if !boundary(code, whole.start()) || after.starts_with('.') || declared.contains(name) {
+        let line = &code[code[..whole.start()].rfind('\n').map_or(0, |i| i + 1)..whole.start()];
+        let in_query = re!(r"\b(?:select|exec|update|delete)\b").is_match(line);
+        if !boundary(code, whole.start())
+            || after.starts_with('.')
+            || declared.contains(name)
+            || in_query
+        {
             continue;
         }
         add(

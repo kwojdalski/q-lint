@@ -190,6 +190,17 @@ f:{[x] $[x;true;false]}
 === clean | null is a q function
 f:{[x] null x}
 
+=== clean | a column named return, read in a query (q 5: the query runs)
+t:flip `sym`return!(`a`b;0.1 0.2)
+select avg return by sym from t
+
+=== clean | or in a where phrase, of a table from elsewhere
+f:{[t] select from t where return>0.15}
+
+=== QF015 | a query on another line does not cover this one
+r:select from t
+f:{[x] return x}
+
 === clean | a file that defines the name has made it one
 return:{[x] x}
 f:{[x] return x}
