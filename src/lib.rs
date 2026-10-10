@@ -2210,9 +2210,22 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
         // form that does. A symbol or a string is 'type for the same reason.
         // Verified: `$[101b;1;2]`, `$[1 2 3;1;2]`, `$[`a;1;2]` and `$["";1;2]`
         // all raise, while `$[1b;1;2]` and `$[1;1;2]` return 1.
+        // The condition is read from `comments` as well, where a string is
+        // still text. q 5 also refuses a string of other than one character,
+        // a symbol or byte vector, and a float, real or guid atom: `$["ab";..]`,
+        // `$[`a`b;..]`, `$[0x0102;..]`, `$[1.5;..]`, `$[0n;..]`, `$[1e;..]`.
+        let cond_raw = v.comments[dollar + 2..dollar + 2 + parts[0].len()].trim();
+        let refused_raw = re!(r#"^"((?:[^"\\]|\\.)*)"$"#)
+            .captures(cond_raw)
+            .is_some_and(|c| re!(r"\\[0-7]{3}|\\.|[^\\]").find_iter(&c[1]).count() != 1)
+            || re!(r"^(?:`[A-Za-z0-9_.]*){2,}$").is_match(cond_raw)
+            || re!(r"^0x(?:[0-9a-fA-F]{2}){2,}$").is_match(cond_raw)
+            || re!(r"^-?(?:\d+\.\d*|\.\d+|\d+(?:\.\d*)?[eE][+-]?\d+)[ef]?$|^-?\d+[ef]$|^-?0[nwNW][ef]?$|^0Ng$")
+                .is_match(cond_raw)
+                && !re!(r"^-?0[NW]$").is_match(cond_raw);
         if let Some(cond) = parts.first().map(|c| c.trim())
-            && (re!(r"^`[A-Za-z][A-Za-z0-9_.]*$").is_match(cond)
-                || re!(r#"^"[^"]*"$"#).is_match(cond)
+            && (refused_raw
+                || re!(r"^`[A-Za-z][A-Za-z0-9_.]*$").is_match(cond)
                 || re!(r"^[01]{2,}b$").is_match(cond)
                 || (re!(r"^-?\d[A-Za-z0-9.]*(?:\s+-?\d[A-Za-z0-9.]*)+$").is_match(cond)
                     // Spaced, a `b` suffix is not a boolean vector: `1 0b` is
@@ -2225,7 +2238,7 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
                 dollar,
                 "QA011",
                 format!(
-                    "`$[{cond};...]` is 'type: the condition must be an atom, and `?[...]` is the vector conditional"
+                    "`$[{cond_raw};...]` is 'type: the condition must be a boolean, integer, char or temporal atom, and `?[...]` is the vector conditional"
                 ),
             );
         }
