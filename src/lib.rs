@@ -3745,13 +3745,15 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
                     re!(r"\b15h\s*\$"),
                     re!(r"(?:^|[^\w.])-?0[NW]z\b"),
                     re!(r"\b\d{4}\.\d{2}\.\d{2}T\d"),
+                    // `.z.z` and `.z.Z` are the clock as a datetime (-15h).
+                    re!(r"\.z\.[zZ]\b"),
                 ]
                 .iter()
                 .any(|regex| regex.find_iter(literals).any(in_code))
             {
                 add(offset, "QP002", "Legacy datetime value or cast".into());
             }
-            if let Some(m) = re!(r"\.z\.[PTN]\b")
+            if let Some(m) = re!(r"\.z\.[PTNZD]\b")
                 .find_iter(literals)
                 .find(|m| line[m.range()] == *m.as_str())
             {
@@ -3759,7 +3761,7 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
                     .as_str()
                     .chars()
                     .map(|c| match c {
-                        'P' | 'T' | 'N' => c.to_ascii_lowercase(),
+                        'P' | 'T' | 'N' | 'Z' | 'D' => c.to_ascii_lowercase(),
                         _ => c,
                     })
                     .collect();

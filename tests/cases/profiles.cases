@@ -176,3 +176,16 @@ gini:{1f-enorm2 x}
 
 === clean profile: uqf | the sign of a float's exponent is part of the number
 gap:1e-9*gaps
+
+=== QP002 QP003 profile: uqf | .z.Z is the local clock as a datetime (q 5: type .z.Z is -15h)
+a:.z.Z
+
+=== QP003 profile: uqf | .z.D is the local date; the UTC one is .z.d
+b:.z.D
+
+=== QP002 profile: uqf | .z.z is UTC, but still a datetime
+c:.z.z
+
+=== clean profile: uqf | .z.d and .z.p are UTC and not datetimes
+d:.z.d
+e:.z.p
