@@ -3672,10 +3672,13 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
             }
         }
         for m in re!(r#"\blike\s*"([^"]*)""#).captures_iter(literals) {
+            // q 5 takes one `*` anywhere, or a leading and a trailing pair:
+            // "abc" like "a*c" and "*b*" are 1b, "a*b*" and "**" are 'nyi.
+            // A `*` inside `[...]` is a literal star.
             let pat = &m[1];
-            let core = pat.strip_prefix('*').unwrap_or(pat);
-            let core = core.strip_suffix('*').unwrap_or(core);
-            if core.contains('*') {
+            let stars = re!(r"\[[^\]]*\]").replace_all(pat, "").matches('*').count();
+            let ends = pat.len() > 2 && pat.starts_with('*') && pat.ends_with('*');
+            if stars > 2 || (stars == 2 && !ends) {
                 add(offset, "QB002", format!("like {pat:?}"));
             }
         }

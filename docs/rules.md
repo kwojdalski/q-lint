@@ -131,7 +131,7 @@ that wants fewer findings narrows in its own configuration.
 | code | name | summary | on in |
 |---|---|---|---|
 | `QB001` | self-comparison | qSQL filter compares a name to itself | `style` and above |
-| `QB002` | interior-like-wildcard | Unsupported interior wildcard in like | every profile |
+| `QB002` | interior-like-wildcard | More than one * in a like pattern, other than a leading and trailing pair: 'nyi in q 5 | every profile |
 | `QB003` | unparenthesised-sv | A string joined after sv string is split into characters before sv runs | `style` and above |
 | `QB004` | overlong-throw | Thrown message risks truncation | `style` and above |
 | `QB005` | match-in-where | Match in a qSQL filter compares whole vectors, not rows | `style` and above |

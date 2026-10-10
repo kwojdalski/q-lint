@@ -589,9 +589,10 @@ once:([]px:1 2;qty:3 4)
 early:{[p] :p; p*2}
 early2:{[p] if[p<0;:0]; p*2}
 
-/ QB002: q's like does not support an interior wildcard.
+/ QB002: q 5's like takes one `*`, or a leading and trailing pair;
+/ "a*b*" is 'nyi.
 / expect-next: QB002
-hits:select from trades where sym like "a*b"
+hits:select from trades where sym like "a*b*"
 
 / QB003: `,` joins the string onto the list before sv runs, so its
 / characters become items: "w1, w2,  , -,  , t, w, o, ..."
@@ -811,6 +812,7 @@ literal:{[a;b]a+b}[1;2]
 elided:{[a;b]a+b}[1;]
 column:{[t] select x from t}
 tail:select from trades where sym like "ab*"
+inner:select from trades where sym like "a*b"
 
 / One near-miss per rule, roughly: the shape the rule reports, with the one
 / thing that makes it fine. Each was checked to be silent before it went in.

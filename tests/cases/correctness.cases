@@ -4,8 +4,20 @@ select from t where a=a
 === clean | comparing two different columns
 select from t where a=b
 
-=== QB002 | an interior wildcard, which q's like does not support
+=== QB002 | two wildcards, not a leading and trailing pair (q 5: "abc" like "a*b*" is 'nyi)
+select from t where sym like "a*b*"
+
+=== QB002 | or two together (q 5: 'nyi)
+select from t where sym like "a**"
+
+=== clean | one interior wildcard is supported in q 5 ("abc" like "a*c" is 1b)
 select from t where sym like "a*b"
+
+=== clean | as is a leading and trailing pair ("abc" like "*b*" is 1b)
+select from t where sym like "*b*"
+
+=== clean | a star in brackets is a literal ("a*c" like "*[*]*" is 1b)
+select from t where sym like "*[*]*"
 
 === clean | a trailing wildcard is supported
 select from t where sym like "ab*"
