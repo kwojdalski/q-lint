@@ -100,6 +100,47 @@ fn number(token: &str) -> Option<Key> {
 /// `2024.02.30` is '2024.02.30 and `2024.13m` is '2024.13; leap years are
 /// Gregorian, so 2000.02.29 parses and 1900.02.29 does not.
 fn temporals(path: &str, source: &str, unsym: &str, out: &mut Vec<Finding>) {
+    // Minutes and seconds stop at 59 wherever they appear - a minute, second,
+    // time, timespan or timestamp - while hours run on: q 5 refuses `12:60`,
+    // `12:00:60` and `0D00:00:60`, and takes `25:00` and `0D25:00:00`.
+    for m in re!(r"(\d{2,}):(\d{2})(?::(\d{2}))?").captures_iter(unsym) {
+        let whole = m.get(0).unwrap();
+        if unsym[..whole.start()].ends_with(|c: char| c.is_ascii_digit() || c == '.') {
+            continue;
+        }
+        let field = |i| {
+            m.get(i)
+                .map_or(0, |f: regex::Match| f.as_str().parse::<u32>().unwrap())
+        };
+        if field(2) > 59 || field(3) > 59 {
+            out.push(Finding::at(
+                path,
+                source,
+                whole.start(),
+                "QE006",
+                format!(
+                    "`{}` is no time: minutes and seconds stop at 59, and q refuses the literal",
+                    whole.as_str()
+                ),
+            ));
+        }
+    }
+    // A month has two digits: q 5 refuses `2023.1m`.
+    for m in re!(r"\b\d{4}\.\dm\b").find_iter(unsym) {
+        if unsym[..m.start()].ends_with(|c: char| c.is_ascii_alphanumeric() || c == '.') {
+            continue;
+        }
+        out.push(Finding::at(
+            path,
+            source,
+            m.start(),
+            "QE006",
+            format!(
+                "`{}` is no month: it takes two digits, and q refuses the literal",
+                m.as_str()
+            ),
+        ));
+    }
     for m in re!(r"\b(\d{4})\.(\d{2})(?:\.(\d{2})|m\b)").captures_iter(unsym) {
         let whole = m.get(0).unwrap();
         // The year has to start the token: `1.2024.02.30` is not a date.

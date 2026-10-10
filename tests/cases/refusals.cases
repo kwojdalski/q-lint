@@ -231,3 +231,17 @@ m:0x0102
 n:12:30:00.000
 t:2023.01m
 w:0w 0W 0n 0Nj
+
+=== QE006 profile: general | minutes and seconds stop at 59 (q 5: parse "12:60" and "12:00:60" are refused)
+a:12:60
+b:12:00:60
+c:2023.01.01D12:60:00
+
+=== QE006 profile: general | a month takes two digits (q 5: '2023.1)
+d:2023.1m
+
+=== clean profile: general | hours run on (q 5: 25:00 and 0D25:00:00 are fine)
+a:25:00
+b:0D25:00:00
+c:12:59:59.999
+d:2023.01m
