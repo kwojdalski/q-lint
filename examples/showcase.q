@@ -607,6 +607,10 @@ summed:{+/x}
 / expect-next: QE010
 half:1.5j
 
+/ QT031: an uppercase cast parses text; "J"$1 is 'type, "j"$1 casts.
+/ expect-next: QT031
+parsed:"J"$1
+
 / QB002: q 5's like takes one `*`, or a leading and trailing pair;
 / "a*b*" is 'nyi.
 / expect-next: QB002

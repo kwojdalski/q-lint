@@ -416,6 +416,30 @@ fn cast_character(path: &str, source: &str, code: &str, comments: &str, out: &mu
             continue;
         }
         let c = &m[1];
+        // QT031. An uppercase cast parses text, so it takes a string: q 5
+        // `"J"$1`, `"J"$1 2`, `"D"$20230101` and `"S"$`a` are each 'type.
+        let operand = &comments[whole.end()..];
+        let operand = operand.trim_start_matches([' ', '\t']);
+        let start = whole.end() + comments[whole.end()..].len() - operand.len();
+        if c.chars().all(|c| c.is_ascii_uppercase())
+            && !"AKLOQRWY".contains(c)
+            && let Some(lit) =
+                re!(r"^(?:-?\d[A-Za-z0-9.:]*(?:[ \t]+-?\d[A-Za-z0-9.:]*)*|(?:`[A-Za-z0-9_.:]*)+)")
+                    .find(operand)
+            && crate::operand_ends(code, start + lit.end())
+        {
+            out.push(Finding::at(
+                path,
+                source,
+                whole.start(),
+                "QT031",
+                format!(
+                    "`\"{c}\"$` parses a string, and `{}` is not one: 'type (the lowercase \"{}\"$ casts)",
+                    lit.as_str(),
+                    c.to_ascii_lowercase()
+                ),
+            ));
+        }
         if "akloqrwyAKLOQRWY".contains(c) {
             out.push(Finding::at(
                 path,

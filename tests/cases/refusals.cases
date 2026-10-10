@@ -266,3 +266,14 @@ c:{'`a`b}
 
 === clean profile: general | a symbol or a string in parentheses can
 a:{'(`a)}
+
+=== QT031 profile: general | an uppercase cast parses a string (q 5: "J"$1 and "S"$`a are 'type)
+a:"J"$1
+c:"S"$`a
+d:"D"$20230101
+
+=== clean profile: general | a string, a lowercase cast, or a name
+a:"J"$"12"
+b:"j"$1
+c:"J"$x
+d:"J"$1+x
