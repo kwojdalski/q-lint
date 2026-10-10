@@ -488,3 +488,13 @@ r:where 1b
 
 === clean | an enlisted atom is a list (q 5: where enlist 2 is 0 0)
 r:where enlist 2
+
+=== QD001 | til of a null or negative infinity (q 5: til 0N and til -0W are 'domain)
+a:til 0N
+b:til -0W
+
+=== QD001 | and of infinity (q 5: til 0W is 'limit)
+c:til 0W
+
+=== QT013 | flip of a symbol, even one naming a table (q 5: flip `t is 'rank)
+d:flip `a

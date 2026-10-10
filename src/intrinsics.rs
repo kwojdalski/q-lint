@@ -339,6 +339,22 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
             }
             continue;
         }
+        // Nulls and infinities are no counts: q 5 `til 0N` and `til -0W` are
+        // 'domain, `til 0W` is 'limit.
+        if name == "til" {
+            let arg = args[0].trim();
+            let detail = if re!(r"^(?:0N|-0W)[hij]?$").is_match(arg) {
+                Some("til: til of a null or negative infinity is 'domain")
+            } else if re!(r"^0W[hij]?$").is_match(arg) {
+                Some("til: til of infinity is 'limit")
+            } else {
+                None
+            };
+            if let Some(detail) = detail {
+                report(&mut out, "QD001", detail.into());
+                continue;
+            }
+        }
         let Some(value) = literal(args[0]) else {
             continue;
         };
@@ -411,9 +427,8 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
                 "QT012",
                 "distinct requires a list rather than a literal atom",
             )),
-            "flip" if value.kind != Kind::Symbol => {
-                Some(("QT013", "flip cannot transpose an atom or a flat vector"))
-            }
+            // A symbol too, though it may name a table: q 5 `flip `t` is 'rank.
+            "flip" => Some(("QT013", "flip cannot transpose an atom or a flat vector")),
             "rotate"
                 if value.vector
                     || matches!(value.kind, Kind::Float | Kind::Symbol | Kind::Char) =>
