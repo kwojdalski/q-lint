@@ -312,18 +312,28 @@ fn where_assignment(path: &str, source: &str, code: &str, out: &mut Vec<Finding>
             continue;
         }
         let bytes = code.as_bytes();
-        let (mut at, mut depth) = (w.end(), 0i32);
+        // `depth` counts every bracket, `nested` only those that are not
+        // parentheses: an assignment in `(a:1)` is still the phrase's own
+        // (q 5: 'type), one in a lambda or a bracket is not.
+        let (mut at, mut depth, mut nested) = (w.end(), 0i32, 0i32);
         while at < bytes.len() {
             match bytes[at] {
-                b'(' | b'[' | b'{' => depth += 1,
+                b'(' => depth += 1,
+                b'[' | b'{' => {
+                    depth += 1;
+                    nested += 1;
+                }
                 b')' | b']' | b'}' => {
                     if depth == 0 {
                         break;
                     }
                     depth -= 1;
+                    if bytes[at] != b')' {
+                        nested -= 1;
+                    }
                 }
                 b';' | b'\n' if depth == 0 => break,
-                b':' if depth == 0
+                b':' if nested == 0
                     && code[..at]
                         .trim_end()
                         .ends_with(|c: char| c.is_alphanumeric() || c == '_')

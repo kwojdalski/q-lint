@@ -277,3 +277,10 @@ a:"J"$"12"
 b:"j"$1
 c:"J"$x
 d:"J"$1+x
+
+=== QT028 profile: general | an assignment in parentheses in a where phrase (q 5: 'type)
+r:select from t where (a:1)
+s:select from t where a in (b:1 2)
+
+=== clean profile: general | an assignment inside a lambda in the phrase
+r:select from t where {b:x;b>0} a
