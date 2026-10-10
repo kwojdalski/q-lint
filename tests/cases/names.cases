@@ -542,3 +542,6 @@ f6:{p:1;{p+x} each 1 2}
 
 === QF017 | an inner lambda's own parameter of that name is not a read
 f7:{p:1;{[p] p+1} each 1 2}
+
+=== clean | except .z.m, which q 5 lets a script assign (.z.m:{x} succeeds)
+.z.m:{x}

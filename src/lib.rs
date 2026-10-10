@@ -2316,7 +2316,8 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
     // The single-letter `.z` names are the system's own values - `.z.p` the
     // time, `.z.i` the pid, `.z.x` the command line - and q refuses every
     // assignment to one with 'domain, however it is written: `:`, `::`, an
-    // amend, an indexed assignment or `set`. Verified for all 52 letters.
+    // amend, an indexed assignment or `set`. Verified for all 52 letters on
+    // q 5, where `.z.m` alone takes an assignment: `.z.m:{x}` succeeds.
     // The longer names are the callbacks (`.z.pg`, `.z.ts`, `.z.exit`), and
     // assigning those is how a process installs a handler.
     for m in re!(
@@ -2328,7 +2329,10 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
         // `.z.p:` must be followed by the value, not be `::`'s first half
         // read as an iterator such as `/:`.
         let after = &code[m.get(0).unwrap().end()..];
-        if after.starts_with(['/', '\\', '\'']) || code[name.end()..].starts_with(|c: char| c.is_alphanumeric()) {
+        if after.starts_with(['/', '\\', '\''])
+            || code[name.end()..].starts_with(|c: char| c.is_alphanumeric())
+            || name.as_str() == ".z.m"
+        {
             continue;
         }
         add(
