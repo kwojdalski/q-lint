@@ -236,3 +236,20 @@ c:.[f;(1;2);{x}]
 d:@[{x};1;{x}]
 e:@[t;`a;:;1]
 h:{[f] @[f;1;{x}]}
+
+=== QA009 | infix dot apply of a scalar (q 5: f . 1 is 'type)
+f:{x+1}
+a:f . 1
+
+=== QA012 | too many arguments through dot apply, to a named lambda (q 5: 'rank)
+g:{x}
+c:g . (1;2)
+
+=== QA002 | and to a literal one, infix or bracketed (q 5: 'rank)
+e:{[a;b]a+b} . 1 2 3
+h:.[{[a]a};(1;2)]
+
+=== clean | the right count, or an enlisted atom
+f:{x+y}
+a:f . 1 2
+b:f . enlist 1

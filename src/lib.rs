@@ -2639,6 +2639,100 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
             );
         }
     }
+    // Dot apply of a lambda to a literal: an atom is not an argument list
+    // (QA009), and a list longer than the rank is 'rank (QA002 for a lambda
+    // written out, QA012 for one named here). q 5: `f . 1` is 'type, and
+    // `{x} . (1;2)`, `{[a;b]a} . 1 2 3` and `.[{[a]a};(1;2)]` are 'rank.
+    let lambda_ending = |end: usize| -> Option<usize> {
+        code[..end]
+            .match_indices('{')
+            .map(|(o, _)| o)
+            .find(|&o| matching(code, o, b'{', b'}') == Some(end))
+    };
+    let applied = |at: usize, f: &str, f_end: usize| -> Option<(usize, &'static str)> {
+        if f.ends_with('}') {
+            let open = lambda_ending(f_end)?;
+            Some((lambda_rank(code, source, open, f_end), "QA002"))
+        } else {
+            let name = re!(r"\.?[A-Za-z][A-Za-z0-9_.]*$").find(f)?.as_str();
+            let start = f_end - name.len();
+            let key = qualified(at, name);
+            if !boundary(code, start)
+                || redefined.contains(&key)
+                || shadowed(code, source, at, name)
+            {
+                return None;
+            }
+            ranks.get(&key).map(|&r| (r, "QA012"))
+        }
+    };
+    let items = |arg: &str| -> Option<usize> {
+        let arg = arg.trim();
+        if arg.starts_with('(') && matching(arg, 0, b'(', b')') == Some(arg.len()) {
+            let n = slots(&arg[1..arg.len() - 1]).len();
+            (n > 1).then_some(n)
+        } else if re!(r"^-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+$").is_match(arg) {
+            Some(arg.split_whitespace().count())
+        } else {
+            None
+        }
+    };
+    let too_many = |rank: usize, n: usize| {
+        (rank > 0 && n > rank).then(|| {
+            format!(
+                "{n} arguments applied through `.` to a function of rank {rank}: 'rank at runtime"
+            )
+        })
+    };
+    for m in re!(r"[ \t]\.[ \t]+").find_iter(code) {
+        let left = code[..m.start()].trim_end_matches([' ', '\t']);
+        let Some((rank, id)) = applied(m.start(), left, left.len()) else {
+            continue;
+        };
+        let rest = &code[m.end()..];
+        let end = if rest.starts_with('(') {
+            match matching(rest, 0, b'(', b')') {
+                Some(e) => e,
+                None => continue,
+            }
+        } else {
+            rest.find(|c: char| ";)]}\r\n".contains(c))
+                .unwrap_or(rest.len())
+        };
+        let arg = &rest[..end];
+        if !operand_ends(code, m.end() + end) {
+            continue;
+        }
+        if re!(r"^(?:-?\d[A-Za-z0-9.]*|`[A-Za-z0-9_.]*)[ \t]*$").is_match(arg) {
+            add(
+                m.start() + 1,
+                "QA009",
+                "Dot apply takes a list of arguments; a scalar here is a 'type error at runtime \
+                 (`enlist` it, or use `@`)"
+                    .into(),
+            );
+        } else if let Some(detail) = items(arg).and_then(|n| too_many(rank, n)) {
+            add(m.start() + 1, id, detail);
+        }
+    }
+    for (at, _) in code.match_indices(".[") {
+        if code[..at].ends_with(|c: char| c.is_alphanumeric() || "_.".contains(c)) {
+            continue;
+        }
+        let Some(close) = matching(code, at + 1, b'[', b']') else {
+            continue;
+        };
+        let parts = slots(&code[at + 2..close - 1]);
+        if parts.len() != 2 {
+            continue;
+        }
+        let f_end = at + 2 + parts[0].trim_end().len();
+        if let Some((rank, id)) = applied(at, parts[0].trim_end(), f_end)
+            && let Some(detail) = items(parts[1]).and_then(|n| too_many(rank, n))
+        {
+            add(at, id, detail);
+        }
+    }
     // `a -1` is `a` applied to `-1`, not `a` minus one: with whitespace before
     // it and none after, the `-` belongs to the literal. Verified: `a:3; a -1`
     // tries to write to file handle 3. A builtin or a lambda this file defines
