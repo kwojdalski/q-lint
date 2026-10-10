@@ -436,3 +436,33 @@ fn no_fix_edits_inside_a_string() {
         assert!(after.contains("ssr[s;\"=\";\" \"]"), "{after}");
     }
 }
+
+/// `--fix` repeats until nothing applies, as Ruff does. QF005's fix passes
+/// one enclosing local in per pass, so a lambda reading two needed a second
+/// run - and after the first, q 5 still threw 'q. `--diff` shows the result
+/// of the whole run.
+#[test]
+fn fixes_repeat_until_nothing_applies() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("two.q");
+    fs::write(&path, "f10:{p:1;q:2;{p+q+x}[3]}\n").unwrap();
+    let run = |flags: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .args(["--profile", "style", "--unsafe-fixes", "--ignore", "QF017"])
+            .args(flags)
+            .arg(&path)
+            .output()
+            .unwrap();
+        String::from_utf8(output.stdout).unwrap()
+    };
+    let diff = run(&["--diff"]);
+    assert!(
+        diff.contains("+f10:{p:1;q:2;{[q;p;x] p+q+x}[q][p][3]}"),
+        "{diff}"
+    );
+    run(&["--fix"]);
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "f10:{p:1;q:2;{[q;p;x] p+q+x}[q][p][3]}\n"
+    );
+}
