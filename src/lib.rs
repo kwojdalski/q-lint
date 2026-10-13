@@ -1849,6 +1849,42 @@ impl Profile {
     }
 }
 
+/// Drops each finding whose line ends in a `/ noqa: CODE[, CODE...]` comment
+/// naming its code. Only a trailing comment counts - a `/` the views pass
+/// blanked as one, so a `noqa` inside a string literal is text, not a
+/// directive - and only the codes it names: a bare `/ noqa` suppresses
+/// nothing. Anything after the codes is a free-text reason.
+fn suppress(out: &mut Vec<Finding>, source: &str, comments: &str) {
+    let (raw, blanked) = (source.as_bytes(), comments.as_bytes());
+    let mut noqa: std::collections::HashMap<usize, Vec<&str>> = Default::default();
+    let mut offset = 0;
+    for (n, line) in source.split_inclusive('\n').enumerate() {
+        let end = offset + line.len();
+        let start = (offset..end).find(|&i| {
+            raw[i] == b'/'
+                && blanked[i] == b' '
+                && (i == offset || raw[i - 1].is_ascii_whitespace())
+        });
+        if let Some(caps) = start.and_then(|i| {
+            re!(r"(?:^|\s)/\s*(?i:noqa)\s*:\s*([A-Z]+[0-9]+\b(?:\s*,\s*[A-Z]+[0-9]+\b|\s+[A-Z]+[0-9]+\b)*)")
+                .captures(&source[i..end])
+        }) {
+            let codes = caps.get(1).unwrap().as_str();
+            noqa.entry(n + 1)
+                .or_default()
+                .extend(codes.split([',', ' ', '\t']).filter(|c| !c.is_empty()));
+        }
+        offset = end;
+    }
+    if !noqa.is_empty() {
+        out.retain(|f| {
+            !noqa
+                .get(&f.line)
+                .is_some_and(|codes| codes.contains(&f.code.as_str()))
+        });
+    }
+}
+
 pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
     lint_in(source, path, profile, &Workspace::default())
 }
@@ -1860,7 +1896,9 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
     let uqf = profile == Profile::Uqf;
     let v = views(source);
     if let Some(f) = structure(path, source, &v) {
-        return vec![f];
+        let mut out = vec![f];
+        suppress(&mut out, source, &v.comments);
+        return out;
     }
     let code = &v.code;
     // A UTF-8 BOM is not something q tolerates: it reports 'char on the first
@@ -4295,6 +4333,7 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
             .find(|r| r.code == f.code)
             .is_none_or(|r| profile.allows(&r.scope))
     });
+    suppress(&mut out, source, &v.comments);
     out.sort_by(|a, b| {
         (&a.path, a.line, &a.rule, &a.detail).cmp(&(&b.path, b.line, &b.rule, &b.detail))
     });
