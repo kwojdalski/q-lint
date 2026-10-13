@@ -317,6 +317,19 @@ fn opening_a_document_publishes_its_findings() {
 }
 
 #[test]
+fn a_noqa_comment_suppresses_the_diagnostic() {
+    let mut server = Server::start();
+    server.initialize();
+    let uri = "file:///tmp/noqa.q";
+    server.open(uri, "f:{[desc] 1+1} / noqa: QF001\ng:{[desc] 1+1}\n");
+    let diagnostics = server.diagnostics_for(uri);
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0]["code"], "QF001");
+    assert_eq!(diagnostics[0]["range"]["start"]["line"], 1);
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
 fn a_change_lints_the_buffer_rather_than_the_file_on_disk() {
     // THE REASON THIS IS A SERVER. The URI names a file that does not exist;
     // the text only ever lived in the editor. A CLI over paths cannot do this.

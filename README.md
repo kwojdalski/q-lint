@@ -161,6 +161,13 @@ changed file want; the rest decide which findings are reported, fixed by
 `--fix` and `--diff`, and shown by the language server, which finds each open
 document's settings the same way and re-reads them when one changes.
 
+One finding on one line is accepted with a trailing comment naming its code:
+`endofday:{[dt;data] dt} / noqa: QF016 TorQ's fixed signature`. Several codes
+are separated by commas or spaces, and text after them is a reason. It drops
+only findings reported on that line, from the output, `--fix` and the
+language server alike; a bare `/ noqa` names nothing and suppresses nothing.
+The built-in rules honour it; findings from qls do not.
+
 Diagnostics carry a
 code and a category; `qlinter --rules` lists them all and `qlinter --explain
 QF005` describes one. Exit codes are 0 (no error or warning), 1 (findings) and
