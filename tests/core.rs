@@ -209,10 +209,17 @@ fn scope_analysis_does_not_scale_quadratically() {
             .map(|i| format!("f{i}:{{[a;b] a+b}}\n"))
             .collect::<String>()
     };
+    // The best of five runs: a single run on a shared CI runner is tens of
+    // milliseconds, where one preemption is enough to push the ratio past the
+    // threshold (6.5x and 8.2x on the v0.14.12 release run, 3x locally).
     let time = |source: &str| {
-        let start = std::time::Instant::now();
-        std::hint::black_box(lint(source, "t.q", Profile::Uqf));
-        start.elapsed().as_secs_f64()
+        (0..5)
+            .map(|_| {
+                let start = std::time::Instant::now();
+                std::hint::black_box(lint(source, "t.q", Profile::Uqf));
+                start.elapsed().as_secs_f64()
+            })
+            .fold(f64::INFINITY, f64::min)
     };
     // Four times the input. Measured on the scan-per-scope version this was
     // 10.5x, and on the indexed one 2.7x, so the threshold sits between with
