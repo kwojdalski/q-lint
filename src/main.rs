@@ -20,11 +20,20 @@ use std::{
     version,
     // clap's default short form is `-V`. Most people reach for `-v` first and
     // nothing here means verbose, so both answer.
-    disable_version_flag = true
+    disable_version_flag = true,
+    // `qlinter analyze graph src/` is a subcommand, recognised only as the
+    // first argument; `qlinter src/` and every flag below still lint, and a
+    // directory named `analyze` is linted as `./analyze`. A lint flag after
+    // the subcommand is refused rather than silently ignored.
+    args_conflicts_with_subcommands = true,
+    // `help` stays a path, as it always was: `--help` is the flag.
+    disable_help_subcommand = true
 )]
 struct Args {
     #[arg(short = 'v', short_alias = 'V', long, action = clap::ArgAction::Version)]
     version: (),
+    #[command(subcommand)]
+    command: Option<Command>,
     paths: Vec<String>,
     #[arg(long,default_value="text",value_parser=["text","json"])]
     format: String,
@@ -100,6 +109,45 @@ struct Args {
     #[arg(long, hide = true)]
     stdio: bool,
 }
+#[derive(clap::Subcommand)]
+enum Command {
+    /// Read a q tree as a whole, without running it.
+    Analyze {
+        #[command(subcommand)]
+        what: Analyze,
+    },
+}
+
+#[derive(clap::Subcommand)]
+enum Analyze {
+    /// Print the file-to-file dependency graph as JSON: each file and the
+    /// files it depends on, by the global names it reads and the scripts it
+    /// loads. Paths are relative to the current directory.
+    Graph(GraphArgs),
+}
+
+#[derive(clap::Args)]
+struct GraphArgs {
+    paths: Vec<String>,
+    /// `dependencies`: each file and the files it depends on. `dependents`:
+    /// each file and the files that depend on it.
+    #[arg(long, default_value = "dependencies", value_parser = ["dependencies", "dependents"])]
+    direction: String,
+    /// Also count a qualified symbol literal, `` `.ns.f ``, as a read of the
+    /// name it spells - the way a callback is registered.
+    #[arg(long)]
+    symbols: bool,
+    /// Print `{file: {<direction>, ambiguous, dynamic}}` instead of
+    /// `{file: [files]}`: the names more than one file defines, and the
+    /// places a name is reached by a value computed at run time.
+    #[arg(long)]
+    detail: bool,
+    /// Leave out paths matching this glob, as `exclude` in a configuration
+    /// file does, which is honoured too.
+    #[arg(long)]
+    exclude: Vec<String>,
+}
+
 /// The command line's share of the settings, which wins over any file.
 fn overrides(args: &Args) -> Result<Overrides, String> {
     let selectors = |key: &str, list: &[String]| -> Result<Vec<String>, String> {
@@ -139,7 +187,96 @@ fn is_q_source(path: &Path) -> bool {
         .is_some_and(|e| e.eq_ignore_ascii_case("q"))
 }
 
+/// The q files under `paths`, absolute and in order: a directory is walked,
+/// skipping what `exclude` names and the usual build and tool directories; a
+/// file named outright is taken if it is q, excluded only with
+/// `force_exclude`.
+fn discover(
+    paths: Vec<String>,
+    policy: &Policy,
+    force_exclude: bool,
+) -> Result<BTreeSet<PathBuf>, String> {
+    let mut files = BTreeSet::new();
+    let mut skipped = false;
+    let mut skipped_not_q = false;
+    for name in paths {
+        let path = Path::new(&name);
+        if !path.exists() {
+            return Err(format!("Path does not exist: {name}"));
+        }
+        // A path named here is linted whatever `exclude` says, unless
+        // --force-exclude: exclusion is for what a walk discovers.
+        if force_exclude && policy.excluded(path)? {
+            skipped = true;
+            continue;
+        }
+        if path.is_file() {
+            // Only q source, however the path arrived. `qlinter *` makes
+            // every entry in a directory an explicit argument - the shell
+            // expanded it, not the user - and one of them is as likely to
+            // be a README, a Python script or the q interpreter itself as
+            // it is to be q. The rules here describe q and say nothing
+            // true about any of those.
+            if is_q_source(path) {
+                files.insert(config::absolute(path));
+            } else {
+                skipped_not_q = true;
+            }
+            continue;
+        }
+        if !path.is_dir() {
+            return Err(format!("Not a file/directory: {name}"));
+        }
+        let mut walk = walkdir::WalkDir::new(path).into_iter();
+        while let Some(entry) = walk.next() {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let p = entry.path();
+            if entry.depth() > 0 && policy.excluded(p)? {
+                skipped = true;
+                if entry.file_type().is_dir() {
+                    walk.skip_current_dir();
+                }
+                continue;
+            }
+            if entry.depth() > 0
+                && entry.file_type().is_dir()
+                && [
+                    ".git",
+                    ".venv",
+                    "node_modules",
+                    "__pycache__",
+                    "build",
+                    "dist",
+                    "target",
+                ]
+                .iter()
+                .any(|n| entry.file_name() == *n)
+            {
+                walk.skip_current_dir();
+                continue;
+            }
+            if p.is_file() && is_q_source(p) {
+                files.insert(config::absolute(p));
+            }
+        }
+    }
+    if files.is_empty() && !skipped {
+        return Err(if skipped_not_q {
+            "No .q files among the paths given".into()
+        } else {
+            "No .q files found".to_string()
+        });
+    }
+    Ok(files)
+}
+
 fn run(args: Args) -> Result<u8, String> {
+    if let Some(Command::Analyze {
+        what: Analyze::Graph(graph),
+    }) = args.command
+    {
+        return analyze_graph(graph);
+    }
     if args.lsp {
         // Locked once for the life of the process: the server owns both
         // streams, and re-locking per message would be pure overhead.
@@ -231,77 +368,7 @@ fn run(args: Args) -> Result<u8, String> {
             sources.push((args.stdin_filename, source));
         }
     } else {
-        let mut files = BTreeSet::new();
-        let mut skipped = false;
-        let mut skipped_not_q = false;
-        for name in paths {
-            let path = Path::new(&name);
-            if !path.exists() {
-                return Err(format!("Path does not exist: {name}"));
-            }
-            // A path named here is linted whatever `exclude` says, unless
-            // --force-exclude: exclusion is for what a walk discovers.
-            if args.force_exclude && policy.excluded(path)? {
-                skipped = true;
-                continue;
-            }
-            if path.is_file() {
-                // Only q source, however the path arrived. `qlinter *` makes
-                // every entry in a directory an explicit argument - the shell
-                // expanded it, not the user - and one of them is as likely to
-                // be a README, a Python script or the q interpreter itself as
-                // it is to be q. The rules here describe q and say nothing
-                // true about any of those.
-                if is_q_source(path) {
-                    files.insert(config::absolute(path));
-                } else {
-                    skipped_not_q = true;
-                }
-                continue;
-            }
-            if !path.is_dir() {
-                return Err(format!("Not a file/directory: {name}"));
-            }
-            let mut walk = walkdir::WalkDir::new(path).into_iter();
-            while let Some(entry) = walk.next() {
-                let entry = entry.map_err(|e| e.to_string())?;
-                let p = entry.path();
-                if entry.depth() > 0 && policy.excluded(p)? {
-                    skipped = true;
-                    if entry.file_type().is_dir() {
-                        walk.skip_current_dir();
-                    }
-                    continue;
-                }
-                if entry.depth() > 0
-                    && entry.file_type().is_dir()
-                    && [
-                        ".git",
-                        ".venv",
-                        "node_modules",
-                        "__pycache__",
-                        "build",
-                        "dist",
-                        "target",
-                    ]
-                    .iter()
-                    .any(|n| entry.file_name() == *n)
-                {
-                    walk.skip_current_dir();
-                    continue;
-                }
-                if p.is_file() && is_q_source(p) {
-                    files.insert(config::absolute(p));
-                }
-            }
-        }
-        if files.is_empty() && !skipped {
-            return Err(if skipped_not_q {
-                "No .q files among the paths given".into()
-            } else {
-                "No .q files found".to_string()
-            });
-        }
+        let files = discover(paths, &policy, args.force_exclude)?;
         for path in files {
             // A file that cannot be read as text is reported and passed over.
             // Aborting here would mean one unreadable file hides every finding
@@ -505,6 +572,94 @@ fn run(args: Args) -> Result<u8, String> {
     Ok(u8::from(findings.iter().any(|f| {
         matches!(f.severity.as_str(), "error" | "warning")
     })))
+}
+
+/// `qlinter analyze graph`: the dependency graph of the q files under the
+/// paths given, as JSON with sorted keys, so two runs over one tree print the
+/// same bytes. Reads every file and runs none.
+fn analyze_graph(args: GraphArgs) -> Result<u8, String> {
+    let cwd = config::absolute(&std::env::current_dir().map_err(|e| e.to_string())?);
+    let overrides = Overrides {
+        profile: None,
+        default_profile: "uqf",
+        layer: Layer::default(),
+        exclude: args
+            .exclude
+            .iter()
+            .map(|p| config::pattern(p).map(|p| (cwd.clone(), p)))
+            .collect::<Result<_, _>>()?,
+        config: None,
+        isolated: false,
+    };
+    let policy = Policy::new(overrides, false);
+    let paths = if args.paths.is_empty() {
+        vec![".".into()]
+    } else {
+        args.paths
+    };
+    let mut sources = vec![];
+    for path in discover(paths, &policy, false)? {
+        // As when linting: a file that is not UTF-8 is still q, and is read
+        // with each invalid byte as one replacement character.
+        match fs::read(&path) {
+            Ok(bytes) => {
+                let source = String::from_utf8_lossy(&bytes).into_owned();
+                sources.push((path, source));
+            }
+            Err(e) => eprintln!("qlinter: {}: {e}, skipped", path.display()),
+        }
+    }
+    let graph = q_lint_rs::graph::build(&sources, args.symbols, &cwd);
+    let show = |p: &Path| relative(p, &cwd);
+    let mut edges: std::collections::BTreeMap<String, BTreeSet<String>> =
+        graph.keys().map(|p| (show(p), BTreeSet::new())).collect();
+    for (file, node) in &graph {
+        for dep in &node.dependencies {
+            if args.direction == "dependents" {
+                edges.entry(show(dep)).or_default().insert(show(file));
+            } else {
+                edges.entry(show(file)).or_default().insert(show(dep));
+            }
+        }
+    }
+    let out = if args.detail {
+        let mut detail = serde_json::Map::new();
+        for (file, node) in &graph {
+            let key = show(file);
+            let ambiguous: std::collections::BTreeMap<_, Vec<_>> = node
+                .ambiguous
+                .iter()
+                .map(|(name, defs)| (name.clone(), defs.iter().map(|d| show(d)).collect()))
+                .collect();
+            let mut entry = serde_json::Map::new();
+            entry.insert(args.direction.clone(), serde_json::json!(edges[&key]));
+            entry.insert("ambiguous".into(), serde_json::json!(ambiguous));
+            entry.insert("dynamic".into(), serde_json::json!(node.dynamic));
+            detail.insert(key, serde_json::Value::Object(entry));
+        }
+        serde_json::to_string_pretty(&detail)
+    } else {
+        serde_json::to_string_pretty(&edges)
+    };
+    println!("{}", out.map_err(|e| e.to_string())?);
+    Ok(0)
+}
+
+/// `path` relative to `base`, through `..` where it lies outside it.
+fn relative(path: &Path, base: &Path) -> String {
+    let common = path
+        .components()
+        .zip(base.components())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let mut out = PathBuf::new();
+    for _ in base.components().skip(common) {
+        out.push("..");
+    }
+    for c in path.components().skip(common) {
+        out.push(c);
+    }
+    out.to_string_lossy().into_owned()
 }
 
 /// Zero-context unified diff, built from the edits rather than by pairing

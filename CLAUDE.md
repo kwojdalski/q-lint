@@ -86,6 +86,7 @@ with `gh run list` and confirm the nine files with `gh release view vX.Y.Z`.
 |---|---|
 | `src/lib.rs` | the rule engine; `lint(source, path, uqf)` is the entry point |
 | `src/semantics.rs` | the checks that need more than a regex |
+| `src/graph.rs` | `qlinter analyze graph`: file-to-file edges from what each file defines and reads |
 | `src/taxonomy.json`, `src/reserved.json` | rule catalogue and q builtin names, embedded at build time |
 | `src/config.rs` | finding `qlinter.toml` / `[tool.qlinter]` per file, Ruff-style, and rule selection |
 | `src/lsp.rs` | the language server (`qlinter --lsp`) |
