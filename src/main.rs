@@ -645,21 +645,21 @@ fn analyze_graph(args: GraphArgs) -> Result<u8, String> {
     Ok(0)
 }
 
-/// `path` relative to `base`, through `..` where it lies outside it.
+/// `path` relative to `base`, through `..` where it lies outside it, joined
+/// with `/` on every platform: the graph is data another tool reads, and a
+/// key that changes with the OS that printed it is a different key.
 fn relative(path: &Path, base: &Path) -> String {
     let common = path
         .components()
         .zip(base.components())
         .take_while(|(a, b)| a == b)
         .count();
-    let mut out = PathBuf::new();
-    for _ in base.components().skip(common) {
-        out.push("..");
-    }
-    for c in path.components().skip(common) {
-        out.push(c);
-    }
-    out.to_string_lossy().into_owned()
+    let up = base.components().skip(common).map(|_| "..".to_string());
+    let down = path
+        .components()
+        .skip(common)
+        .map(|c| c.as_os_str().to_string_lossy().into_owned());
+    up.chain(down).collect::<Vec<_>>().join("/")
 }
 
 /// Zero-context unified diff, built from the edits rather than by pairing
