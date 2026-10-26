@@ -566,6 +566,186 @@ pub fn index(code: &str, raw: &str) -> crate::FileIndex {
     }
 }
 
+/// The global names a file reads, the scripts it loads by a literal path, and
+/// the places reading it cannot see through. The other half of `index`, for
+/// the dependency graph: read, never run, with the same scopes and the same
+/// `\d` contexts the checks use, stopped before any rule.
+///
+/// A name read is kept as the names it could be, in the order they are
+/// tried: `f` inside `\d .a` is `.a.f`, failing that `.f`; a qualified name
+/// is only itself. Which of them some file defines is the graph's question,
+/// since the answer is in other files.
+pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
+    let (scopes, namespaces) = scopes(code, raw);
+    let ns_at = |at: usize| {
+        namespaces[namespaces
+            .partition_point(|(p, _)| *p <= at)
+            .saturating_sub(1)]
+        .1
+        .as_str()
+    };
+    // System commands (`\d .a`, `\l x.q`) are not expressions: `.a` there is a
+    // context being opened, not a read. Offsets stay where they were.
+    let mut view = code.as_bytes().to_vec();
+    let mut offset = 0;
+    for line in code.split_inclusive('\n') {
+        if line.starts_with('\\') {
+            blank(&mut view[offset..offset + line.len()]);
+        }
+        offset += line.len();
+    }
+    let view = String::from_utf8(view).unwrap_or_default();
+    let candidates = |name: &str, ns: &str| -> Vec<String> {
+        if name.starts_with('.') || ns.is_empty() {
+            vec![qualify(name, ns)]
+        } else {
+            vec![qualify(name, ns), qualify(name, "")]
+        }
+    };
+    let mut names: HashSet<Vec<String>> = HashSet::new();
+    let name = re!(r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*");
+    for m in name.find_iter(&view) {
+        if !boundary(&view, m.start()) {
+            continue;
+        }
+        // An assignment, `f:` or `f::`, is the definition `index` reads.
+        if view[m.end()..]
+            .trim_start_matches([' ', '\t'])
+            .starts_with(':')
+        {
+            continue;
+        }
+        if !m.as_str().contains('.')
+            && scope_at(&scopes, m.start()).is_some_and(|s| scopes[s].locals.contains(m.as_str()))
+        {
+            continue;
+        }
+        names.insert(candidates(m.as_str(), ns_at(m.start())));
+    }
+    // A symbol handed straight to `get` or `value` names the global it reads
+    // as plainly as writing the name would.
+    for m in re!(r"\b(?:get|value)\s*`(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)")
+        .captures_iter(&view)
+    {
+        let whole = m.get(0).unwrap();
+        if boundary(&view, whole.start()) {
+            names.insert(candidates(&m[1], ns_at(whole.start())));
+        }
+    }
+    // `--symbols`: a symbol literal naming a qualified global, `` `.ns.f ``,
+    // the way a callback is registered. An unqualified symbol is far more
+    // often a column than a function, and is left alone.
+    if symbols {
+        for m in re!(r"`(\.[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)").captures_iter(&view)
+        {
+            names.insert(vec![m[1].to_string()]);
+        }
+    }
+    let mut names: Vec<_> = names.into_iter().collect();
+    names.sort();
+    crate::References {
+        names,
+        loads: loads(code, raw, &view),
+        dynamic: dynamic(raw, &view),
+    }
+}
+
+/// Scripts loaded by a literal path: `\l x.q` and `system "l x.q"`. Where
+/// the path leads is the graph's question: q resolves it against the
+/// process's directory, which the source does not name.
+fn loads(code: &str, raw: &str, view: &str) -> Vec<String> {
+    let mut loads = vec![];
+    for line in code.lines() {
+        if let Some(m) = re!(r"^\\l\s+(\S+)").captures(line) {
+            loads.push(m[1].to_string());
+        }
+    }
+    for m in re!(r#"\bsystem\s*"l\s+([^"\s]+)\s*""#).captures_iter(raw) {
+        if view[m.get(0).unwrap().start()..].starts_with("system") {
+            loads.push(m[1].to_string());
+        }
+    }
+    loads.sort();
+    loads.dedup();
+    loads
+}
+
+/// The places a name is reached by a value computed at run time, which no
+/// amount of reading resolves: `value "..."`, `get` of anything but a
+/// literal, a name built with `` ` sv ``, `set` into a computed name, and a
+/// load whose path is concatenated. `view` is the code view with system
+/// commands blanked; `raw` says whether a blank was a string.
+fn dynamic(raw: &str, view: &str) -> Vec<crate::Dynamic> {
+    let mut found = vec![];
+    let mut push = |at: usize, kind: &'static str| {
+        let line = raw.as_bytes()[..at].iter().filter(|&&b| b == b'\n').count() + 1;
+        found.push(crate::Dynamic { line, kind });
+    };
+    let next = |at: usize| view[at..].trim_start_matches([' ', '\t']);
+    for m in re!(r"\bvalue\b").find_iter(view) {
+        if boundary(view, m.start())
+            && raw[m.end()..]
+                .trim_start_matches([' ', '\t'])
+                .starts_with('"')
+        {
+            push(m.start(), "value");
+        }
+    }
+    // A symbol literal after `get` is a read the names already hold, and
+    // `` `:path `` or `hsym` reads a file, not a global.
+    for m in re!(r"\bget\b").find_iter(view) {
+        let after = next(m.end());
+        if boundary(view, m.start())
+            && !after.starts_with(['`', ':'])
+            && !re!(r"^hsym\b").is_match(after)
+        {
+            push(m.start(), "get");
+        }
+    }
+    // `` ` sv `` joins parts into a name - or, before `` `: ``, into a path.
+    for m in re!(r"`[ \t]+sv\b").find_iter(view) {
+        if !next(m.end()).starts_with("`:") {
+            push(m.start(), "sv");
+        }
+    }
+    // A literal target is a definition `index` already holds, and `hsym`
+    // or `` `: `` a file; anything else is a name computed at run time.
+    for m in re!(r"\bset\b").find_iter(view) {
+        if !boundary(view, m.start()) || next(m.end()).starts_with(':') {
+            continue;
+        }
+        let target = if let Some(args) = next(m.end()).strip_prefix('[') {
+            args.split([';', ']']).next().unwrap_or("").trim()
+        } else {
+            let before = view[..m.start()].trim_end_matches([' ', '\t']);
+            if before.ends_with(')') {
+                let close = before.len();
+                (0..close)
+                    .rev()
+                    .filter(|&i| before.as_bytes()[i] == b'(')
+                    .find(|&o| matching(before, o, b'(', b')') == Some(close))
+                    .map_or("", |o| &before[o..close])
+            } else {
+                re!(r"[`A-Za-z0-9_.:/]*$")
+                    .find(before)
+                    .map_or("", |t| t.as_str())
+            }
+        };
+        let literal = re!(r"^\(?\s*`[A-Za-z0-9_.:/]*\s*\)?$").is_match(target);
+        if !literal && !target.contains("hsym") && !target.contains("`:") {
+            push(m.start(), "set");
+        }
+    }
+    for m in re!(r#"\bsystem\s*"l\s[^"]*"\s*,"#).find_iter(raw) {
+        if view[m.start()..].starts_with("system") {
+            push(m.start(), "load");
+        }
+    }
+    found.sort_by_key(|d| (d.line, d.kind));
+    found.dedup();
+    found
+}
+
 pub fn check(
     path: &str,
     code: &str,

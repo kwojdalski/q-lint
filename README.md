@@ -118,6 +118,58 @@ and this tool does not parse; and where one juxtaposed call is the argument of
 another, the outer one is bracketed and the inner waits for the next pass.
 Both keep their finding, so nothing is silently dropped.
 
+### The dependency graph: `qlinter analyze graph`
+
+```sh
+qlinter analyze graph src/                          # {file: [files it depends on]}
+qlinter analyze graph --direction dependents src/   # {file: [files that depend on it]}
+qlinter analyze graph --detail src/                 # {file: {dependencies, ambiguous, dynamic}}
+```
+
+Prints the file-to-file dependency graph of the q files under the paths, as
+JSON in the shape `ruff analyze graph` prints: every file is a key, even one
+with no edges, keys and lists are sorted so two runs print the same bytes,
+and paths are relative to the current directory. It is built for test-impact
+analysis - from the files that changed, which tests are worth running - and,
+like the rest of qlinter, it reads the files and runs none of them.
+
+A file depends on another when:
+
+- it reads a global name the other defines. A bare name is qualified by the
+  `\d` context in force, and tried at the root when that context has none:
+  `f` inside `\d .a` is `.a.f`, failing that `.f`. A local or parameter of the
+  same name is not a read, and neither is a name in a string or comment. A
+  name no file defines is tried without its last segment, so
+  `.cfg.opts.port` reaches the file defining `.cfg.opts`. A symbol handed
+  straight to `get` or `value`, `` get`.ns.x ``, is a read too;
+- it loads the other by a literal path, `\l path` or `system "l path"`. q
+  resolves that path against the process's directory, which the source does
+  not name, so it is tried against the loading file's directory, each
+  directory above it, then the current one.
+
+A name several files define gives an edge to each of them - which one wins is
+load order, and load order is not in the source. With `--detail` each file's
+entry is `{"dependencies" (or "dependents"): [...], "ambiguous": {name:
+[every file defining it]}, "dynamic": [{"line", "kind"}]}`. `dynamic` lists
+each line where a name is reached by a value computed at run time, which no
+amount of reading resolves: `value` of a string, `get` of anything but a
+literal, a name built with `` ` sv ``, `set` into a computed name, and a
+concatenated `system "l ",path`. The graph does not guess at those; a caller
+that wants to be safe can treat such a file as depending on everything.
+
+`--symbols` also counts a qualified symbol literal, `` `.ns.f ``, as a read
+of that name, the way a callback is registered; it is off by default because
+a symbol is often only data. `exclude` from a configuration file applies, and
+`--exclude` adds to it. The subcommand is recognised only as the first
+argument: `qlinter path.q`, `--explain` and `--lsp` are unchanged, and a
+directory named `analyze` is linted as `./analyze`.
+
+What it cannot see: a name reached through a variable holding a symbol
+(`@[nm;k;:;v]` amends whatever `nm` names, and is not listed), a qSQL column
+read as a global when some file happens to define a global of that name, and
+a `\l` whose path only exists relative to a directory q was started in
+elsewhere.
+
 ### Configuration
 
 Settings are found the way Ruff finds its own. For each file, qlinter walks up

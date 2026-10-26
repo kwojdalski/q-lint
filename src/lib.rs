@@ -85,6 +85,38 @@ pub fn index(source: &str) -> FileIndex {
     semantics::index(&v.code, source)
 }
 
+/// What one file reads from the files around it, for the dependency graph -
+/// the counterpart of `FileIndex`, kept apart from it so the language server,
+/// which indexes on every keystroke, does not pay for a graph it never draws.
+#[derive(Default, Clone, PartialEq, Eq, Debug)]
+pub struct References {
+    /// Each global read, as the qualified names it could be, in the order
+    /// they are tried: the file's own `\d` context first, then the root.
+    pub names: Vec<Vec<String>>,
+    /// The paths of `\l path` and `system "l path"`, as written.
+    pub loads: Vec<String>,
+    /// Where a name is reached by a value computed at run time.
+    pub dynamic: Vec<Dynamic>,
+}
+
+/// A place reading cannot see through: `kind` is `value` (of a string),
+/// `get` (of anything but a literal), `sv` (a name built from parts), `set`
+/// (into a computed name) or `load` (a concatenated `system "l ..."`).
+#[derive(Clone, PartialEq, Eq, Debug, Serialize)]
+pub struct Dynamic {
+    pub line: usize,
+    pub kind: &'static str,
+}
+
+/// What `source` reads, loads and reaches dynamically. `symbols` also counts
+/// a qualified symbol literal, `` `.ns.f ``, as a read of that name.
+pub fn references(source: &str, symbols: bool) -> References {
+    let v = views(source);
+    semantics::references(&v.code, source, symbols)
+}
+
+pub mod graph;
+
 /// The names in `source` an editor can colour by what they refer to, as byte
 /// offset, byte length and kind - in order, and never inside a string or a
 /// comment, since those are blank in the view this reads.

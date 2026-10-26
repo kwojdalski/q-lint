@@ -124,5 +124,13 @@ lambda to tell whether a call passes too many arguments, or the length of a
 named vector. That is a symbol table, not a full tree, and it can be built the
 way `semantics` builds scopes - narrowly, for the rules that ask.
 
+`qlinter analyze graph` is the first thing built that way across files.
+`semantics::index` says what each file defines and `semantics::references`
+what it reads - the same scopes and `\d` contexts the checks use - and
+`src/graph.rs` joins them into file-to-file edges. It is per-file sets of
+names, not a resolver: a name defined in two files is an edge to both, and a
+name computed at run time (`value "..."`, `` ` sv ``, a `set` into a computed
+target) is listed as `dynamic` rather than guessed at.
+
 The line to hold is the one in `CLAUDE.md`: anything requiring the source to
 be evaluated is a change to the premise, not a feature.
