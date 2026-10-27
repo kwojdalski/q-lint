@@ -659,9 +659,12 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
     }
 }
 
-/// Scripts loaded by a literal path: `\l x.q` and `system "l x.q"`. Where
-/// the path leads is the graph's question: q resolves it against the
-/// process's directory, which the source does not name.
+/// Scripts loaded by a literal path: `\l x.q`, `system "l x.q"`, and a file
+/// symbol naming a script, `` `:lib/x.q ``, whatever it is handed to - a
+/// project's own loader, `` loadfile`:code/x.q ``, is as plain a load as
+/// `\l` and no reading can know its name. Where the path leads is the
+/// graph's question: q resolves it against the process's directory, which
+/// the source does not name.
 fn loads(code: &str, raw: &str, view: &str) -> Vec<String> {
     let mut loads = vec![];
     for line in code.lines() {
@@ -673,6 +676,11 @@ fn loads(code: &str, raw: &str, view: &str) -> Vec<String> {
         if view[m.get(0).unwrap().start()..].starts_with("system") {
             loads.push(m[1].to_string());
         }
+    }
+    // The symbol runs on over `:` and `/`, so `.q` must end it: `` `:x.qd ``
+    // and `` `:x.q/y `` name something else.
+    for m in re!(r"`:([A-Za-z0-9_./]*\.q)(?:[^A-Za-z0-9_.:/]|$)").captures_iter(view) {
+        loads.push(m[1].to_string());
     }
     loads.sort();
     loads.dedup();
