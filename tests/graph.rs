@@ -253,6 +253,25 @@ fn a_literal_load_is_an_edge() {
     assert!(deps(&g, "src/none.q").is_empty());
 }
 
+#[test]
+fn a_file_symbol_naming_a_script_is_a_load_whatever_takes_it() {
+    let g = graph(
+        &[
+            ("src/util.q", "k:1\n"),
+            // A project's own loader, the way automl writes it.
+            ("src/deep/app.q", "loadfile`:src/util.q\n"),
+            // Not a script, in a string, in a comment, or not ending at `.q`.
+            (
+                "src/other.q",
+                "r:`:src/util.qd\ns:\"`:src/util.q\"\nt:1 / `:src/util.q\nu:`:src/util.q/x\n",
+            ),
+        ],
+        false,
+    );
+    assert_eq!(deps(&g, "src/deep/app.q"), ["util.q"]);
+    assert!(deps(&g, "src/other.q").is_empty());
+}
+
 // The command line.
 
 fn qlinter(cwd: &Path, args: &[&str]) -> std::process::Output {

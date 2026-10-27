@@ -93,7 +93,8 @@ pub struct References {
     /// Each global read, as the qualified names it could be, in the order
     /// they are tried: the file's own `\d` context first, then the root.
     pub names: Vec<Vec<String>>,
-    /// The paths of `\l path` and `system "l path"`, as written.
+    /// The paths of `\l path`, `system "l path"` and `` `:path.q ``, as
+    /// written.
     pub loads: Vec<String>,
     /// Where a name is reached by a value computed at run time.
     pub dynamic: Vec<Dynamic>,
