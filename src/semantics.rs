@@ -602,10 +602,19 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
             vec![qualify(name, ns), qualify(name, "")]
         }
     };
+    // A symbol literal names nothing it reads, and runs on past where a name
+    // would stop: over `:` anywhere, and over `/` after `` `: ``. Verified
+    // with parse in q 5: "`a:b" and "`:hdb/sym" are each one symbol. Left in,
+    // `` `:hdb/sym `` would read `hdb` and `sym`.
+    let mut unsymbolled = view.as_bytes().to_vec();
+    for m in re!(r"`(?::[A-Za-z0-9_.:/]*|[A-Za-z0-9_.:]*)").find_iter(&view) {
+        blank(&mut unsymbolled[m.range()]);
+    }
+    let unsymbolled = String::from_utf8(unsymbolled).unwrap_or_default();
     let mut names: HashSet<Vec<String>> = HashSet::new();
     let name = re!(r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*");
-    for m in name.find_iter(&view) {
-        if !boundary(&view, m.start()) {
+    for m in name.find_iter(&unsymbolled) {
+        if !boundary(&unsymbolled, m.start()) {
             continue;
         }
         // An assignment, `f:` or `f::`, is the definition `index` reads.
