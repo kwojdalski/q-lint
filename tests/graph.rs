@@ -99,6 +99,25 @@ fn a_locals_name_is_not_a_read_of_the_global() {
 }
 
 #[test]
+fn a_file_path_or_symbol_reads_none_of_the_names_inside_it() {
+    // q 5 reads each as one symbol: `:` runs on anywhere, `/` after `` `: ``.
+    let g = graph(
+        &[
+            ("lib.q", "trade:1\nsym:`a\nhdb:2\nb:3\n"),
+            (
+                "app.q",
+                "r:`:trade.csv\ns:get `:hdb/sym\nhdel `:hdb/2024.01.01/trade/\nt:`a:b\n",
+            ),
+            // A symbol handed to `get` still names the global it reads.
+            ("get.q", "r:get `trade\n"),
+        ],
+        false,
+    );
+    assert!(deps(&g, "app.q").is_empty());
+    assert_eq!(deps(&g, "get.q"), ["lib.q"]);
+}
+
+#[test]
 fn a_key_of_a_defined_dictionary_reaches_its_definer() {
     let g = graph(
         &[
