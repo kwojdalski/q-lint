@@ -314,6 +314,11 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ("QB014", "r:10/2", "r:10%2", false),
         ("QB017", "a:1\na:a\nb:2", "a:1\nb:2", false),
         ("QB017", "a:1;a:a;b:2", "a:1;b:2", false),
+        // An operand, not a statement: only the assignment goes, and the
+        // value it held stays where it was read (q 5: both give 3).
+        ("QB017", "f:{[x;b] r:x+b:b;r}", "f:{[x;b] r:x+b;r}", false),
+        ("QB017", "b:1;c:b:b;c", "b:1;c:b;c", false),
+        ("QB017", "f:{[b] b:b; b}", "f:{[b] b}", false),
         ("QP002", "r:`datetime$x", "r:`timestamp$x", false),
         ("QP002", "r:2026.01.01T12:00", "r:2026.01.01D12:00", false),
         (
