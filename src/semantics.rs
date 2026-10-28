@@ -545,13 +545,27 @@ pub fn tokens(code: &str, raw: &str, ws: &crate::Workspace) -> Vec<(usize, usize
     out
 }
 
+/// Whether the symbol `name`, handed to `get`, `value` or `set` at `at`, is
+/// resolved in a namespace the source does not say. A name in a lambda's
+/// text is fixed when the lambda is defined, but a symbol is looked up when
+/// it runs, in the `\d` current at the call: after `\d .a`, `p:{get `k}`,
+/// `\d .`, q 5's `.a.p[]` reads the root `k`, not `.a.k`. A lambda written
+/// at the root is taken to be called there too.
+fn call_time(scopes: &[Scope], at: usize, name: &str) -> bool {
+    !name.starts_with('.') && scope_at(scopes, at).is_some_and(|s| !scopes[s].namespace.is_empty())
+}
+
 /// Every name this file assigns at global scope, qualified by the namespace
-/// in force, with where each assignment's value starts.
+/// in force, with where each assignment's value starts. `call_time_sets`
+/// credits a `` `n set `` inside a `\d` lambda to the namespace it is written
+/// in - generous, and right for the checks, which only ask whether a name
+/// has a definition; the graph says it cannot know instead.
 fn global_writes(
     code: &str,
     scopes: &[Scope],
     namespaces: &[(usize, String)],
     qualify: fn(&str, &str) -> String,
+    call_time_sets: bool,
 ) -> HashMap<String, Vec<usize>> {
     let assignment = re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*:(:)?");
     let ns_at = |at: usize| {
@@ -640,6 +654,9 @@ fn global_writes(
     {
         let whole = m.get(0).unwrap();
         let name = m.get(1).or(m.get(2)).unwrap().as_str();
+        if !call_time_sets && call_time(scopes, whole.start(), name) {
+            continue;
+        }
         globals
             .entry(qualify(name, ns_at(whole.start())))
             .or_default()
@@ -662,7 +679,7 @@ fn global_writes(
 /// checks use, stopped before any rule.
 pub fn index(code: &str, raw: &str) -> crate::FileIndex {
     let (scopes, namespaces) = scopes(code, raw);
-    let globals = global_writes(code, &scopes, &namespaces, qualify);
+    let globals = global_writes(code, &scopes, &namespaces, qualify, true);
     let lambdas = globals
         .iter()
         .filter(|(_, at)| at.iter().any(|&a| assigns_lambda(code, a)))
@@ -734,13 +751,39 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
         names.insert(resolved(m.as_str(), ns_at(m.start())));
     }
     // A symbol handed straight to `get` or `value` names the global it reads
-    // as plainly as writing the name would.
-    for m in re!(r"\b(?:get|value)\s*`(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)")
+    // as plainly as writing the name would - unless it is resolved at call
+    // time, in a `\d` the source does not say; then, and for a `set` into
+    // one, the place is listed as dynamic.
+    let mut call_time_access = vec![];
+    for m in re!(r"\b(get|value)\s*`(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)")
         .captures_iter(&view)
     {
         let whole = m.get(0).unwrap();
-        if boundary(&view, whole.start()) {
-            names.insert(resolved(&m[1], ns_at(whole.start())));
+        if !boundary(&view, whole.start()) {
+            continue;
+        }
+        // `value `c _ x` is value of what the drop returns, not of `c`.
+        let rest = view[whole.end()..].trim_start_matches([' ', '\t']);
+        if !(rest.is_empty() || rest.starts_with([';', ']', ')', '}', '\n', '\r'])) {
+            continue;
+        }
+        if call_time(&scopes, whole.start(), &m[2]) {
+            let kind = if &m[1] == "get" { "get" } else { "value" };
+            call_time_access.push((whole.start(), kind));
+        } else {
+            names.insert(resolved(&m[2], ns_at(whole.start())));
+        }
+    }
+    for m in re!(r"`(\.?[A-Za-z][A-Za-z0-9_.]*)\s+set\b|\bset\s*\[\s*`(\.?[A-Za-z][A-Za-z0-9_.]*)")
+        .captures_iter(&view)
+    {
+        let whole = m.get(0).unwrap();
+        if call_time(
+            &scopes,
+            whole.start(),
+            m.get(1).or(m.get(2)).unwrap().as_str(),
+        ) {
+            call_time_access.push((whole.start(), "set"));
         }
     }
     // `--symbols`: a symbol literal naming a qualified global, `` `.ns.f ``,
@@ -754,7 +797,7 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
     }
     let mut names: Vec<_> = names.into_iter().collect();
     names.sort();
-    let mut defines: Vec<_> = global_writes(code, &scopes, &namespaces, resolved)
+    let mut defines: Vec<_> = global_writes(code, &scopes, &namespaces, resolved, false)
         .into_keys()
         .collect();
     defines.sort();
@@ -762,7 +805,7 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
         names,
         defines,
         loads: loads(code, raw, &view),
-        dynamic: dynamic(raw, &view),
+        dynamic: dynamic(raw, &view, &call_time_access),
     }
 }
 
@@ -798,13 +841,18 @@ fn loads(code: &str, raw: &str, view: &str) -> Vec<String> {
 /// amount of reading resolves: `value "..."`, `get` of anything but a
 /// literal, a name built with `` ` sv ``, `set` into a computed name, and a
 /// load whose path is concatenated. `view` is the code view with system
-/// commands blanked; `raw` says whether a blank was a string.
-fn dynamic(raw: &str, view: &str) -> Vec<crate::Dynamic> {
+/// commands blanked; `raw` says whether a blank was a string. `call_time`
+/// holds the literal symbols `call_time` says are resolved where the lambda
+/// is called, found by the caller.
+fn dynamic(raw: &str, view: &str, call_time: &[(usize, &'static str)]) -> Vec<crate::Dynamic> {
     let mut found = vec![];
     let mut push = |at: usize, kind: &'static str| {
         let line = raw.as_bytes()[..at].iter().filter(|&&b| b == b'\n').count() + 1;
         found.push(crate::Dynamic { line, kind });
     };
+    for &(at, kind) in call_time {
+        push(at, kind);
+    }
     let next = |at: usize| view[at..].trim_start_matches([' ', '\t']);
     for m in re!(r"\bvalue\b").find_iter(view) {
         if boundary(view, m.start())
@@ -1023,12 +1071,12 @@ pub fn check(
         .1
         .as_str()
     };
-    let globals = global_writes(code, &scopes, &namespaces, qualify);
+    let globals = global_writes(code, &scopes, &namespaces, qualify, true);
     // The same writes keyed as q resolves them, root `x` apart from `.x`:
     // a name read in a `\d .ns` lambda is `.ns.x` and nothing else - q 5
     // has no root fallback. After `x:1`, `\d .ns`, `f:{[a] a+x}`, calling
     // `.ns.f 1` is 'x.
-    let exact = global_writes(code, &scopes, &namespaces, resolved);
+    let exact = global_writes(code, &scopes, &namespaces, resolved, true);
     // What this file defines itself; the workspace answers for the rest.
     let own: HashSet<String> = globals.keys().cloned().collect();
     let elsewhere = |name: &str| ws.defined_elsewhere(name, &own);

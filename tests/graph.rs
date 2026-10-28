@@ -245,6 +245,56 @@ u:{value \"1\"}
 }
 
 #[test]
+fn a_symbol_resolved_when_a_context_lambda_runs_is_dynamic() {
+    // q 5: after `\d .a`, `p:{get `k}`, `\d .`, with a root `k:5` and
+    // `.a.k:6`, `.a.p[]` is 5 - the symbol is looked up in the `\d` current
+    // at the call, not where the lambda is written - and `.a.m[]` for
+    // `m:{`n set 3}` sets the root `n` and leaves `.a.n` undefined.
+    let g = graph(
+        &[
+            ("get.q", "\\d .a\np:{get `k}\nq:{value `k}\n\\d .\n"),
+            ("set.q", "\\d .a\nm:{`n set 3}\ns:{set[`o;4]}\n\\d .\n"),
+            ("root.q", "k:5\n"),
+            ("dotted.q", ".a.k:6\n"),
+            ("reads_n.q", "r:{.a.n+.a.o}\n"),
+            // `value` of what the drop returns, a dictionary, reaches no name.
+            ("drop.q", "\\d .a\nf:{value `c _ x}\n\\d .\n"),
+            ("c.q", ".a.c:1\n"),
+        ],
+        false,
+    );
+    assert!(kinds(&g, "drop.q").is_empty());
+    assert!(deps(&g, "drop.q").is_empty());
+    assert!(deps(&g, "get.q").is_empty());
+    assert_eq!(kinds(&g, "get.q"), [(2, "get"), (3, "value")]);
+    assert_eq!(kinds(&g, "set.q"), [(2, "set"), (3, "set")]);
+    assert!(deps(&g, "reads_n.q").is_empty());
+}
+
+#[test]
+fn a_symbol_outside_a_context_lambda_resolves_where_it_is_written() {
+    // q 5: `\d .a`, `` `k set 2 `` at the top level makes `.a.k`; a
+    // qualified symbol names one global whatever the `\d`; and a lambda at
+    // the root is taken to be called at the root.
+    let g = graph(
+        &[
+            ("top.q", "\\d .a\n`k set 2\n\\d .\n"),
+            ("read_top.q", "r:.a.k\n"),
+            ("qualified.q", "\\d .a\np:{get `.b.k}\n\\d .\n"),
+            ("b.q", ".b.k:1\n"),
+            ("rootfn.q", "p:{get `j}\n"),
+            ("j.q", "j:1\n"),
+        ],
+        false,
+    );
+    assert_eq!(deps(&g, "read_top.q"), ["top.q"]);
+    assert_eq!(deps(&g, "qualified.q"), ["b.q"]);
+    assert!(kinds(&g, "qualified.q").is_empty());
+    assert_eq!(deps(&g, "rootfn.q"), ["j.q"]);
+    assert!(kinds(&g, "rootfn.q").is_empty());
+}
+
+#[test]
 fn a_symbol_handed_to_get_is_a_read() {
     let g = graph(
         &[("lib.q", ".lib.x:1\n"), ("app.q", "f:{get `.lib.x}\n")],
