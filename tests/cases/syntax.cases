@@ -7,6 +7,20 @@ f:{[a] a[}
 === QE001 | an unterminated string
 s:"abc
 
+=== QE001 profile: general | a line at column 0 ends a string, though a quote closes it there (q 5: '")
+s:"abc
+def"
+t:1
+
+=== QE001 profile: general | in a lambda too (q 5: '{)
+f:{s:"abc
+def";s}
+
+=== clean profile: general | an indented or blank line continues a string (q 5: "abc\n\n def")
+s:"abc
+
+ def"
+
 === clean | a brace inside a string is not a delimiter
 s:"{[desc]}"
 

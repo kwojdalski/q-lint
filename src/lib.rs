@@ -1529,6 +1529,7 @@ fn views(source: &str) -> Views {
     let mut foreign_offsets = Vec::new();
     let mut open_block = None;
     let mut string_starts = Vec::new();
+    let mut unterminated = None;
     // Before the first statement, an indented line continues nothing, and q
     // drops it: q 5 loads `/ c` + `  b:1`, `/ c` + blank + `  b:1`,
     // `\d .foo` + `  b:1` and a file starting `  b:1` all leaving b
@@ -1538,6 +1539,13 @@ fn views(source: &str) -> Views {
     for line in source.split_inclusive('\n') {
         let end = offset + line.len();
         let stripped = line.trim_end_matches(['\r', '\n', ' ', '\t']);
+        // A string runs on over indented and blank lines only. A line at
+        // column 0 starts a statement, so q 5 refuses `s:"abc` + `def"` with
+        // '" - and the lambda around such a string with '{ - and reads that
+        // line as code.
+        if string.is_some() && !stripped.is_empty() && !line.starts_with([' ', '\t']) {
+            unterminated = unterminated.or(string.take());
+        }
         if !ended && block == 0 && string.is_none() && !statement {
             if line.starts_with([' ', '\t']) && !stripped.trim().is_empty() {
                 blank(&mut comments[offset..end]);
@@ -1634,7 +1642,7 @@ fn views(source: &str) -> Views {
     Views {
         comments: String::from_utf8(comments).unwrap(),
         code: String::from_utf8(code).unwrap(),
-        unterminated: string,
+        unterminated: unterminated.or(string),
         foreign_offsets,
         open_block,
         string_starts,
