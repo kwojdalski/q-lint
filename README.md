@@ -156,8 +156,8 @@ load order, and load order is not in the source. With `--detail` each file's
 entry is `{"dependencies" (or "dependents"): [...], "ambiguous": {name:
 [every file defining it]}, "dynamic": [{"line", "kind"}]}`. `dynamic` lists
 each line where a name is reached by a value computed at run time, which no
-amount of reading resolves: `value` of a string, `get` or `value` of
-anything but a literal, a name built with `` ` sv ``, `set` into a computed name, and a
+amount of reading resolves: `value` of a string, `get` of anything but a
+literal, a name built with `` ` sv ``, `set` into a computed name, and a
 concatenated `system "l ",path`. The graph does not guess at those; a caller
 that wants to be safe can treat such a file as depending on everything.
 

@@ -105,10 +105,9 @@ pub struct References {
     pub dynamic: Vec<Dynamic>,
 }
 
-/// A place reading cannot see through: `kind` is `value` (of a string, or
-/// of anything but a literal), `get` (of anything but a literal), `sv` (a
-/// name built from parts), `set` (into a computed name) or `load` (a
-/// concatenated `system "l ..."`).
+/// A place reading cannot see through: `kind` is `value` (of a string),
+/// `get` (of anything but a literal), `sv` (a name built from parts), `set`
+/// (into a computed name) or `load` (a concatenated `system "l ..."`).
 #[derive(Clone, PartialEq, Eq, Debug, Serialize)]
 pub struct Dynamic {
     pub line: usize,
