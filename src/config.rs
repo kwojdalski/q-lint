@@ -310,19 +310,8 @@ fn matches(full: &Path, glob: &Glob) -> bool {
     {
         return true;
     }
-    // A walked path can also differ from the resolved root in spelling
-    // alone - a Windows temporary directory under an 8.3 name, `RUNNER~1` for
-    // `runneradmin` - so it is resolved the same way before giving up.
-    let resolved;
-    let relative = match full.strip_prefix(root) {
-        Ok(relative) => relative,
-        Err(_) => {
-            resolved = plain(&absolute(full));
-            match resolved.strip_prefix(root) {
-                Ok(relative) => relative,
-                Err(_) => return false,
-            }
-        }
+    let Ok(relative) = full.strip_prefix(root) else {
+        return false;
     };
     // An absolute pattern with no glob in it names its root itself.
     if pattern.as_str().is_empty() {
