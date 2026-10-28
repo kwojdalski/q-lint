@@ -3580,6 +3580,37 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
         let line = code[..end + next].rfind('\n').map_or(0, |i| i + 1);
         !source[line..].starts_with([' ', '\t'])
     };
+    // Inside a lambda the name has to be the lambda's own already - a
+    // parameter, or assigned earlier in its body. Otherwise the `a:` makes
+    // `a` a local that the right side reads before it has a value, and q 5
+    // refuses the lambda: `{b:1; a:a; a}` is 'a even with a global `a`.
+    // That is QF014's finding. `::` and a dotted name are the global, and
+    // `{b:1; a::a}` loads.
+    let own = |name: &str, at: usize, op: &str| {
+        let Some(brace) = enclosing_brace(code, at) else {
+            return true;
+        };
+        if name.contains('.') || op.trim_start().starts_with("::") {
+            return true;
+        }
+        let sig = signature(code, source, brace);
+        if sig.named {
+            if sig.slots.contains(&name) {
+                return true;
+            }
+        } else if matches!(name, "x" | "y" | "z") {
+            return true;
+        }
+        let body = top_level(&code[sig.body..at]);
+        body.match_indices(name).any(|(i, _)| {
+            let after = &body[i + name.len()..];
+            let op = after.trim_start_matches([' ', '\t']);
+            boundary(&body, i)
+                && !after.starts_with(|c: char| c.is_ascii_alphanumeric() || "_.".contains(c))
+                && op.starts_with(':')
+                && !op.starts_with("::")
+        })
+    };
     for m in re!(
         r"(?m)(\.?[A-Za-z][A-Za-z0-9_.]*)\s*::?\s*(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t\r]*(?:;|\}|$)"
     )
@@ -3590,6 +3621,7 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
             && boundary(code, whole.start())
             && m[1] == m[2]
             && ends(m.get(2).unwrap().end(), whole.end())
+            && own(&m[1], whole.start(), &whole.as_str()[m[1].len()..])
         {
             add(
                 whole.start(),

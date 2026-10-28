@@ -485,6 +485,20 @@ y:x
 f:{[a] a:a
   }
 
+=== QF014 | in a lambda with no earlier local, a:a is 'a (q 5), not a self-assignment
+a:5
+f:{b:1; a:a; a+b}
+
+=== QF014 | and a lambda inside one does not see the outer local
+f:{a:1; a+{a:a}[]}
+
+=== QB017 | an earlier assignment in a branch makes it local (q 5 loads this)
+f:{[b] if[b;a:2]; a:a; a}
+
+=== QB017 | and with :: it is the global, assigned to itself (q 5 loads this)
+a:5
+f:{b:1; a::a; a+b}
+
 === QB016 | the functional form with a where list and columns (q 5: 'nyi)
 t:([]a:1 2;b:3 4)
 r:![t;enlist(=;`b;3);0b;enlist`a]
