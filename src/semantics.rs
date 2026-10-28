@@ -614,6 +614,27 @@ fn global_writes(
                 .push(m.end());
         }
     }
+    // An operator assignment, `a,:1` or `a+:1`, writes the name too. Inside a
+    // lambda it does not make the name local: q 5 gives 5 for
+    // `a:5; {r:a; a+:1; r}[]`, and `{c,:1; c}` writes the global `c` - so
+    // only a name the lambda has no plain `name:` local of is a global write.
+    // `/:` and `\:` are adverbs, `_` and `.` continue a name, and `::` is a
+    // view or a global assignment, which the pass above holds.
+    for a in re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*[-+*%&|^=<>,#~!?@$]:")
+        .captures_iter(code)
+    {
+        let m = a.get(0).unwrap();
+        if !boundary(code, m.start()) || code[m.end()..].starts_with(':') {
+            continue;
+        }
+        let local = scope_at(scopes, m.start()).is_some_and(|s| scopes[s].locals.contains(&a[1]));
+        if !local {
+            globals
+                .entry(qualify(&a[1], ns_at(m.start())))
+                .or_default()
+                .push(m.end());
+        }
+    }
     for m in re!(r"`(\.?[A-Za-z][A-Za-z0-9_.]*)\s+set\b|\bset\s*\[\s*`(\.?[A-Za-z][A-Za-z0-9_.]*)")
         .captures_iter(code)
     {

@@ -339,6 +339,25 @@ f:{[] aa:bb; aa}
 `bb set 1
 f:{[] aa:bb; aa}
 
+=== clean | a compound assignment at the root defines the name (q 5: a,:1; b:a is ,1)
+bb,:1
+f:{[] aa:bb; aa}
+
+=== clean | and so does one inside a lambda (q 5: f:{c,:1; c} writes the global c)
+f:{[] bb+:1; bb}
+
+=== clean | with a space before the operator (q 5: parse "a ,:1" is (,:;`a;1))
+bb ,:1
+f:{[] aa:bb; aa}
+
+=== QF018 | a compound write to a local defines no global (q 5: {bb:1#1; bb,:2} leaves bb unset)
+f:{[] bb:1#1; bb,:2; bb}
+g:{[] aa:bb; aa}
+
+=== QF018 | each-right is not an assignment (q 5: bb,/:1 2 is 'bb with no bb)
+bb,/:1 2
+f:{[] aa:bb; aa}
+
 === clean | a global multiple assignment defines both names
 (bb;cc):1 2
 f:{[] aa:bb; aa}
