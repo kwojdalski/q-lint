@@ -99,8 +99,9 @@ pub struct References {
     /// to q they are two names.
     pub defines: Vec<String>,
     /// The paths of `\l path`, `system "l path"` and `` `:path.q ``, as
-    /// written.
-    pub loads: Vec<String>,
+    /// written, each with the `\d` in force where it is loaded - `""` at the
+    /// root - since the loaded script runs in it.
+    pub loads: Vec<(String, String)>,
     /// Where a name is reached by a value computed at run time.
     pub dynamic: Vec<Dynamic>,
 }

@@ -149,7 +149,9 @@ A file depends on another when:
   handed to - a project's own loader is invisible to reading otherwise. q
   resolves that path against the process's directory, which the source does
   not name, so it is tried against the loading file's directory, each
-  directory above it, then the current one.
+  directory above it, then the current one. A script loaded under `\d .a`
+  runs in `.a`, so what it defines at its root is `.a.name` as well as
+  `name`, and so is what the scripts it loads at its root define.
 
 A name several files define gives an edge to each of them - which one wins is
 load order, and load order is not in the source. With `--detail` each file's

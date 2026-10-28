@@ -344,6 +344,53 @@ fn a_literal_load_is_an_edge() {
 }
 
 #[test]
+fn a_script_loaded_under_a_context_defines_in_it() {
+    // q 5: after `\d .a`, `\l b.q`, `\d .` with b.q's `ff:{1}`, `.a.ff[]`
+    // is 1 and `ff` is 'ff. b.q's own `\d .b` does not leak back out: a.q's
+    // `xx:1` after the load is `.a.xx`. And c.q, loaded at b.q's root, runs
+    // in `.a` too.
+    let g = graph(
+        &[
+            ("a.q", "\\d .a\n\\l b.q\nxx:1\n\\d .\n"),
+            ("b.q", "ff:{1}\n.q2.w:2\n\\l c.q\n\\d .b\nyy:1\n"),
+            ("c.q", "gg:{2}\n"),
+            ("reads_ff.q", "r:.a.ff[]\n"),
+            ("reads_gg.q", "r:.a.gg[]\n"),
+            ("reads_xx.q", "r:.a.xx\n"),
+            ("reads_bxx.q", "r:.b.xx\n"),
+            // A qualified write and one under the script's own `\d` are
+            // where they say, whatever the context it is loaded in.
+            ("reads_aw.q", "r:.a.q2.w\n"),
+            ("reads_ayy.q", "r:.a.b.yy\n"),
+        ],
+        false,
+    );
+    assert_eq!(deps(&g, "reads_ff.q"), ["b.q"]);
+    assert_eq!(deps(&g, "reads_gg.q"), ["c.q"]);
+    assert_eq!(deps(&g, "reads_xx.q"), ["a.q"]);
+    assert!(deps(&g, "reads_bxx.q").is_empty());
+    assert!(deps(&g, "reads_aw.q").is_empty());
+    assert!(deps(&g, "reads_ayy.q").is_empty());
+}
+
+#[test]
+fn a_script_loaded_from_several_contexts_defines_in_each() {
+    let g = graph(
+        &[
+            ("a.q", "\\d .a\n\\l lib.q\n\\d .\n"),
+            ("b.q", "\\d .b\nsystem \"l lib.q\"\n\\d .\n"),
+            ("lib.q", "ff:{1}\n"),
+            ("reads.q", "r:.a.ff[]+.b.ff[]+ff[]\n"),
+            ("reads_c.q", "r:.c.ff[]\n"),
+        ],
+        false,
+    );
+    assert_eq!(deps(&g, "reads.q"), ["lib.q"]);
+    assert!(g["reads.q"].ambiguous.is_empty());
+    assert!(deps(&g, "reads_c.q").is_empty());
+}
+
+#[test]
 fn a_file_symbol_naming_a_script_is_a_load_whatever_takes_it() {
     let g = graph(
         &[

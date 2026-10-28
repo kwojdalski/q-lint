@@ -804,7 +804,13 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
     crate::References {
         names,
         defines,
-        loads: loads(code, raw, &view),
+        loads: loads(code, raw, &view, |at| {
+            if scope_at(&scopes, at).is_some() {
+                String::new()
+            } else {
+                ns_at(at).to_string()
+            }
+        }),
         dynamic: dynamic(raw, &view, &call_time_access),
     }
 }
@@ -815,22 +821,35 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
 /// `\l` and no reading can know its name. Where the path leads is the
 /// graph's question: q resolves it against the process's directory, which
 /// the source does not name.
-fn loads(code: &str, raw: &str, view: &str) -> Vec<String> {
+///
+/// Each comes with the `\d` in force where it is loaded, since the script
+/// runs there: after `\d .a`, `\l b.q` with b.q's `ff:{1}`, q 5 has `.a.ff`
+/// and no `ff`. Inside a lambda the load runs wherever the lambda is called,
+/// taken to be the root.
+fn loads(
+    code: &str,
+    raw: &str,
+    view: &str,
+    namespace_at: impl Fn(usize) -> String,
+) -> Vec<(String, String)> {
     let mut loads = vec![];
-    for line in code.lines() {
+    let mut offset = 0;
+    for line in code.split_inclusive('\n') {
         if let Some(m) = re!(r"^\\l\s+(\S+)").captures(line) {
-            loads.push(m[1].to_string());
+            loads.push((m[1].to_string(), namespace_at(offset)));
         }
+        offset += line.len();
     }
     for m in re!(r#"\bsystem\s*"l\s+([^"\s]+)\s*""#).captures_iter(raw) {
-        if view[m.get(0).unwrap().start()..].starts_with("system") {
-            loads.push(m[1].to_string());
+        let at = m.get(0).unwrap().start();
+        if view[at..].starts_with("system") {
+            loads.push((m[1].to_string(), namespace_at(at)));
         }
     }
     // The symbol runs on over `:` and `/`, so `.q` must end it: `` `:x.qd ``
     // and `` `:x.q/y `` name something else.
     for m in re!(r"`:([A-Za-z0-9_./]*\.q)(?:[^A-Za-z0-9_.:/]|$)").captures_iter(view) {
-        loads.push(m[1].to_string());
+        loads.push((m[1].to_string(), namespace_at(m.get(0).unwrap().start())));
     }
     loads.sort();
     loads.dedup();
