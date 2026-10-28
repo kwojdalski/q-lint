@@ -38,6 +38,26 @@ anything after is comment
 inside
 \
 
+=== QT003 profile: general | block comments nest, so the inner backslash leaves f commented (q 5 loads g alone)
+/
+/
+\
+f:1+`a
+\
+g:1+`a
+
+=== QE003 | a nested block left open swallows the file
+/
+/
+\
+f:1+`a
+
+=== QT003 profile: general | a slash with text after it is a comment line and nests nothing
+/
+/ x
+\
+g:1+`a
+
 === QE003 | the closer has to be a bare backslash, not a directive
 /
 text

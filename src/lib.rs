@@ -1524,7 +1524,7 @@ fn views(source: &str) -> Views {
     let bytes = source.as_bytes();
     let mut comments = bytes.to_vec();
     let mut code = bytes.to_vec();
-    let (mut string, mut block, mut ended, mut offset) = (None, false, false, 0);
+    let (mut string, mut block, mut ended, mut offset) = (None, 0usize, false, 0);
     let mut foreign = false;
     let mut foreign_offsets = Vec::new();
     let mut open_block = None;
@@ -1536,7 +1536,7 @@ fn views(source: &str) -> Views {
     for line in source.split_inclusive('\n') {
         let end = offset + line.len();
         let stripped = line.trim_end_matches(['\r', '\n', ' ', '\t']);
-        if !ended && !block && string.is_none() && !statement {
+        if !ended && block == 0 && string.is_none() && !statement {
             if heading && line.starts_with([' ', '\t']) && !stripped.trim().is_empty() {
                 blank(&mut comments[offset..end]);
                 blank(&mut code[offset..end]);
@@ -1549,7 +1549,7 @@ fn views(source: &str) -> Views {
         if foreign && !(line.starts_with([' ', '\t']) || stripped.is_empty()) {
             foreign = false;
         }
-        if !ended && !block && string.is_none() {
+        if !ended && block == 0 && string.is_none() {
             // Any `x)` line is another language: q hands it to `.x.e`, which
             // is how `p)` reaches embedPy and `k)` reaches k, and a test
             // harness may define `.t.e` for `t)`. `q)` is q itself, and its
@@ -1571,18 +1571,25 @@ fn views(source: &str) -> Views {
         } else {
             0
         };
-        if ended || block {
+        if ended || block > 0 {
             blank(&mut comments[offset..end]);
             blank(&mut code[offset..end]);
-            if block && stripped == "\\" {
-                block = false;
-                open_block = None;
+            // Block comments nest: inside one, a bare `/` opens another and
+            // a bare `\` closes the innermost. q 5 loads `/`,`/`,`\`,`f:..`,
+            // `\`,`g:..` as g alone. `/ x` is a comment line and nests nothing.
+            if block > 0 && stripped == "/" {
+                block += 1;
+            } else if block > 0 && stripped == "\\" {
+                block -= 1;
+                if block == 0 {
+                    open_block = None;
+                }
             }
         } else if string.is_none() && matches!(stripped, "/" | "\\" | "\\\\") {
             // `\\` exits q, so a script ends there as it does at a lone `\`.
-            block = stripped == "/";
+            block = usize::from(stripped == "/");
             ended = stripped != "/";
-            if block {
+            if block > 0 {
                 open_block = Some(offset);
             }
             blank(&mut comments[offset..end]);
