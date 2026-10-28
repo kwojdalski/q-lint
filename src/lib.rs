@@ -404,9 +404,15 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             {
                 return None;
             }
+            // `a{x} each b` is `a b`, not `ab`.
+            let gap = if ends_in_token(&source[..start]) {
+                " "
+            } else {
+                ""
+            };
             (
                 &source[start..start + m.end()],
-                "".into(),
+                gap.into(),
                 "Remove the identity `{x} each`".into(),
                 true,
             )
@@ -778,9 +784,14 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 // x on the right takes everything to its right anyway.
                 _ => format!("{}{}{argument}", &m[3], &m[4]),
             };
+            let gap = if ends_in_token(&source[..start]) {
+                " "
+            } else {
+                ""
+            };
             (
                 &source[start..end],
-                new.into(),
+                format!("{gap}{new}").into(),
                 "Apply the arithmetic to the whole list".into(),
                 false,
             )
@@ -1406,6 +1417,11 @@ pub(crate) fn flat_filter(phrase: &str) -> String {
         i += 1;
     }
     String::from_utf8(flat).unwrap()
+}
+/// Whether `before` ends in a character that would fuse with a token
+/// written straight after it: `a` and `b` are `ab`, `1` and `b` are `1b`.
+fn ends_in_token(before: &str) -> bool {
+    before.ends_with(|c: char| c.is_ascii_alphanumeric() || "_.`\")]}".contains(c))
 }
 /// Where the where phrase that starts at `from` in masked `code` ends: at a
 /// `;` outside brackets, or the bracket that closes around it.

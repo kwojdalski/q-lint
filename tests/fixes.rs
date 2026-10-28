@@ -194,6 +194,8 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ("QR002", "r:{x} each 1 2 3", "r:1 2 3", true),
         ("QR002", "r:count {x} each y", "r:count y", true),
         ("QR002", "r:{x}' y", "r:y", true),
+        ("QR002", "a:1 2 3;r:a{x} each 0 2", "a:1 2 3;r:a 0 2", true),
+        ("QR002", "b:0 2;r:0 1 2{x} each b", "b:0 2;r:0 1 2 b", true),
         (
             "QR003",
             "r:distinct asc distinct 3 1 1",
@@ -260,6 +262,7 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ("QR004", "r:{2-x} each a,b", "r:2-a,b", false),
         ("QR004", "r:{x%2} each a,b", "r:(a,b)%2", false),
         ("QR004", "r:count {x*2} each b", "r:count b*2", false),
+        ("QR004", "f:{a{x+1} each b}", "f:{a b+1}", false),
         ("QL002", "a:1\n/ old:{x+1}\nb:2", "a:1\nb:2", false),
         (
             "QB005",
