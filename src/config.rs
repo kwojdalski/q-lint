@@ -568,7 +568,10 @@ pub fn rooted(root: &Path, text: &str) -> Result<Glob, String> {
         // so `/var/...` still names the `/private/var/...` a walk finds.
         let literal: PathBuf = written
             .components()
-            .take_while(|c| !c.as_os_str().to_string_lossy().contains(['*', '?', '[']))
+            // Only a name can hold a glob: Windows' `\\?\C:` prefix has a `?`.
+            .take_while(|c| {
+                !matches!(c, std::path::Component::Normal(n) if n.to_string_lossy().contains(['*', '?', '[']))
+            })
             .collect();
         let tail = written.strip_prefix(&literal).unwrap_or(Path::new(""));
         return Ok(Glob {
