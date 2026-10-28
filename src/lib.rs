@@ -3555,12 +3555,41 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
     };
     // `::` too, and a last statement that ends at the brace: q 5 `x::x`,
     // `{b:1;b::b}` and `{x:x}` each assign the name to itself.
-    for m in
-        re!(r"(?m)(\.?[A-Za-z][A-Za-z0-9_.]*)\s*::?\s*(\.?[A-Za-z][A-Za-z0-9_.]*)\s*(?:;|\}|$)")
-            .captures_iter(code)
+    //
+    // The name has to end the value. A string is blank in `code`, so
+    // `a:a"x"` - an index - is checked against the view that keeps it. And a
+    // line end ends a statement only where q says it does: at the top level
+    // an indented next line continues it (q 5: `x:x` over `  where x>3` is a
+    // filter), and inside a lambda a newline is a blank (`{a:1;a:a` over
+    // `  +1}` returns 2).
+    let ends = |name_end: usize, end: usize| {
+        let term = code[name_end..end].trim_end_matches([';', '}']).len() + name_end;
+        if !v.comments[name_end..term].trim().is_empty() {
+            return false;
+        }
+        if code[name_end..end].ends_with([';', '}']) {
+            return true;
+        }
+        let rest = &code[end..];
+        let Some(next) = rest.find(|c: char| !c.is_whitespace()) else {
+            return true;
+        };
+        if enclosing_brace(code, name_end).is_some() {
+            return rest[next..].starts_with([';', '}']);
+        }
+        let line = code[..end + next].rfind('\n').map_or(0, |i| i + 1);
+        !source[line..].starts_with([' ', '\t'])
+    };
+    for m in re!(
+        r"(?m)(\.?[A-Za-z][A-Za-z0-9_.]*)\s*::?\s*(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t\r]*(?:;|\}|$)"
+    )
+    .captures_iter(code)
     {
         let whole = m.get(0).unwrap();
-        if depth.get(whole.start()) == Some(&true) && boundary(code, whole.start()) && m[1] == m[2]
+        if depth.get(whole.start()) == Some(&true)
+            && boundary(code, whole.start())
+            && m[1] == m[2]
+            && ends(m.get(2).unwrap().end(), whole.end())
         {
             add(
                 whole.start(),

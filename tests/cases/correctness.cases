@@ -464,6 +464,27 @@ f:{x:x}
 === clean | a different name on the right
 f:{x:y}
 
+=== clean | a value continued on an indented line (q 5: x is 4 5 6 7 8)
+x:til 9
+x:x
+  where x>3
+
+=== clean | a name indexed by a string is not the name alone
+f:{a:1;a:a"x";a}
+
+=== clean | inside a lambda a newline is a blank, so this is a:a+1 (q 5: 2)
+g:{a:1;a:a
+  +1}
+
+=== QB017 | a self-assignment on a line of its own, with a comment after it
+x:1
+x:x / again
+y:x
+
+=== QB017 | and one that ends where the lambda's next line closes it
+f:{[a] a:a
+  }
+
 === QB016 | the functional form with a where list and columns (q 5: 'nyi)
 t:([]a:1 2;b:3 4)
 r:![t;enlist(=;`b;3);0b;enlist`a]
