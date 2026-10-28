@@ -67,8 +67,8 @@ pub struct Settings {
     pub file: Option<PathBuf>,
     profile: Option<String>,
     layers: Vec<Layer>,
-    exclude: Vec<(PathBuf, glob::Pattern)>,
-    per_file_ignores: Vec<(PathBuf, glob::Pattern, Vec<String>)>,
+    exclude: Vec<Glob>,
+    per_file_ignores: Vec<(Glob, Vec<String>)>,
 }
 
 /// What the command line says, which wins over any file.
@@ -79,7 +79,7 @@ pub struct Overrides {
     pub default_profile: &'static str,
     pub layer: Layer,
     /// `--exclude`, relative to the directory qlinter runs in.
-    pub exclude: Vec<(PathBuf, glob::Pattern)>,
+    pub exclude: Vec<Glob>,
     pub config: Option<PathBuf>,
     pub isolated: bool,
 }
@@ -184,7 +184,7 @@ impl Policy {
             .exclude
             .iter()
             .chain(&self.overrides.exclude)
-            .any(|(root, pattern)| matches(&full, root, pattern)))
+            .any(|glob| matches(&full, glob)))
     }
 
     /// Whether the rule `code` reports on `path`.
@@ -276,9 +276,7 @@ fn per_file_ignored(settings: &Settings, code: &str, path: &Path) -> bool {
     settings
         .per_file_ignores
         .iter()
-        .any(|(root, pattern, codes)| {
-            codes.iter().any(|s| names(s, code)) && matches(&full, root, pattern)
-        })
+        .any(|(glob, codes)| codes.iter().any(|s| names(s, code)) && matches(&full, glob))
 }
 
 /// Ruff's matching: a pattern is tried against the path relative to the
@@ -286,8 +284,13 @@ fn per_file_ignored(settings: &Settings, code: &str, path: &Path) -> bool {
 /// root, so `vendor/*` and `vendor` both cover everything under `vendor/`. A
 /// pattern with no `/` names a file or directory anywhere below the root, so
 /// `generated` excludes every directory of that name.
-fn matches(full: &Path, root: &Path, pattern: &glob::Pattern) -> bool {
-    let anywhere = !pattern.as_str().contains('/');
+fn matches(full: &Path, glob: &Glob) -> bool {
+    let Glob {
+        root,
+        pattern,
+        anywhere,
+    } = glob;
+    let anywhere = *anywhere;
     // The walk asks about every directory before entering it, so a name
     // pattern is checked against the path's own name too - wherever the walk
     // started, which may be above or beside the root.
@@ -301,6 +304,10 @@ fn matches(full: &Path, root: &Path, pattern: &glob::Pattern) -> bool {
     let Ok(relative) = full.strip_prefix(root) else {
         return false;
     };
+    // An absolute pattern with no glob in it names its root itself.
+    if pattern.as_str().is_empty() {
+        return true;
+    }
     relative
         .ancestors()
         .filter(|p| !p.as_os_str().is_empty())
@@ -468,7 +475,7 @@ fn load(path: &Path, depth: usize) -> Result<Option<Settings>, String> {
                     .as_str()
                     .filter(|s| !s.trim().is_empty())
                     .ok_or_else(|| format!("{shown}: {key} must contain nonempty strings"))?;
-                settings.exclude.push((root.clone(), pattern(p)?));
+                settings.exclude.push(rooted(&root, p)?);
             }
         }
     }
@@ -489,7 +496,7 @@ fn load(path: &Path, depth: usize) -> Result<Option<Settings>, String> {
                 .collect::<Result<Vec<_>, _>>()?;
             settings
                 .per_file_ignores
-                .push((root.clone(), pattern(glob)?, codes));
+                .push((rooted(&root, glob)?, codes));
         }
     }
     Ok(Some(settings))
@@ -497,6 +504,49 @@ fn load(path: &Path, depth: usize) -> Result<Option<Settings>, String> {
 
 pub fn pattern(text: &str) -> Result<glob::Pattern, String> {
     glob::Pattern::new(text.trim().trim_end_matches('/')).map_err(|e| format!("{text}: {e}"))
+}
+
+/// An `exclude` or `per-file-ignores` pattern, with the directory it is
+/// relative to: a configuration's own, or the current one for `--exclude`.
+#[derive(Clone, Debug)]
+pub struct Glob {
+    root: PathBuf,
+    pattern: glob::Pattern,
+    /// A bare name, `generated`, which matches a file or directory of that
+    /// name anywhere below the root, not only at it.
+    anywhere: bool,
+}
+
+/// `text` as a pattern rooted at `root`. Ruff joins every pattern to its
+/// root before matching, so `./gen` and an absolute `/abs/root/gen` name the
+/// directory `gen/` does - anchored at the root - and only a bare `gen`,
+/// with no `/` in it at all, also matches the name anywhere below it.
+pub fn rooted(root: &Path, text: &str) -> Result<Glob, String> {
+    let trimmed = text.trim();
+    let written = Path::new(trimmed);
+    if written.is_absolute() {
+        // The literal part of the path is resolved the way the files are,
+        // so `/var/...` still names the `/private/var/...` a walk finds.
+        let literal: PathBuf = written
+            .components()
+            .take_while(|c| !c.as_os_str().to_string_lossy().contains(['*', '?', '[']))
+            .collect();
+        let tail = written.strip_prefix(&literal).unwrap_or(Path::new(""));
+        return Ok(Glob {
+            root: absolute(&literal),
+            pattern: pattern(&tail.to_string_lossy().replace('\\', "/"))?,
+            anywhere: false,
+        });
+    }
+    let mut rest = trimmed;
+    while let Some(r) = rest.strip_prefix("./") {
+        rest = r.trim_start_matches('/');
+    }
+    Ok(Glob {
+        root: root.to_path_buf(),
+        pattern: pattern(rest)?,
+        anywhere: rest == trimmed && !rest.trim_end_matches('/').contains('/'),
+    })
 }
 
 /// A code or a prefix of codes, refused when it names no rule: a typo in a

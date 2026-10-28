@@ -196,6 +196,64 @@ fn exclude_patterns_are_relative_to_the_configuration_and_a_bare_name_matches_an
     assert!(paths[0].ends_with("lib/l.q"), "{paths:?}");
 }
 
+/// The files a run from the repository root reports on, relative to it.
+fn linted(repo: &Repo, args: &[&str]) -> Vec<String> {
+    let out = run(&repo.path("."), args);
+    let found: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let root = repo.path(".").canonicalize().unwrap();
+    let mut paths: Vec<String> = found
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| {
+            let path = Path::new(f["path"].as_str().unwrap());
+            let path = path.strip_prefix(&root).unwrap_or(path);
+            path.display().to_string().replace('\\', "/")
+        })
+        .collect();
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+#[test]
+fn a_dot_slash_or_absolute_exclude_is_anchored_at_its_root() {
+    // Ruff joins each pattern to its root: `./gen` and `/abs/root/gen` both
+    // name the root's `gen`, and neither reaches `lib/gen` the way a bare
+    // `gen` does.
+    let repo = Repo::new();
+    repo.write("gen/g.q", SOURCE)
+        .write("lib/gen/l.q", SOURCE)
+        .write("m.q", SOURCE);
+    let root = repo.path(".").canonicalize().unwrap();
+    let absolute = root.join("gen").display().to_string();
+    let glob = root.join("g*").display().to_string();
+    // Not resolved through symlinks: on macOS a temporary directory is under
+    // /var, which is a link to /private/var.
+    let unresolved = repo.path("gen").display().to_string();
+    for pattern in ["./gen", "./gen/", &absolute, &glob, &unresolved] {
+        assert_eq!(
+            linted(&repo, &["--isolated", "--exclude", pattern, "."]),
+            ["lib/gen/l.q", "m.q"],
+            "--exclude {pattern}"
+        );
+        repo.write(
+            "qlinter.toml",
+            &format!("exclude = [{}]\n", toml::Value::from(pattern)),
+        );
+        assert_eq!(
+            linted(&repo, &["."]),
+            ["lib/gen/l.q", "m.q"],
+            "exclude = [{pattern:?}]"
+        );
+        fs::remove_file(repo.path("qlinter.toml")).unwrap();
+    }
+    assert_eq!(
+        linted(&repo, &["--isolated", "--exclude", "gen", "."]),
+        ["m.q"]
+    );
+}
+
 #[test]
 fn extend_inherits_and_the_extending_file_wins() {
     let repo = Repo::new();
