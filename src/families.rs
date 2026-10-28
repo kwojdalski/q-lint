@@ -410,10 +410,14 @@ fn unreachable(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
             }
         }
         statements.push((start, body.len()));
+        // `'[f;g]` - or `' [f;g]` - is a composition, not a signal: q 5
+        // `{'[neg;abs]; 2}[]` is 2.
         let exits = |text: &str| {
             let t = text.trim_start();
             (t.starts_with(':') && !t.starts_with("::"))
-                || (t.starts_with('\'') && !t.starts_with("':"))
+                || (t.starts_with('\'')
+                    && !t.starts_with("':")
+                    && !t[1..].trim_start().starts_with('['))
         };
         if let Some(i) = statements.iter().position(|&(a, b)| exits(&body[a..b]))
             && let Some(&(a, _)) = statements[i + 1..]

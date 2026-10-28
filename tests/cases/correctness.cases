@@ -329,6 +329,14 @@ f:{:1;2}
 === QB020 | nor after a signal
 f:{'`e;x}
 
+=== clean | '[f;g] is a composition, not a signal (q 5: f[] is 2)
+f:{'[neg;abs]; 2}
+g:{' [neg;abs] 3; 2}
+
+=== QB020 | a signal of a bracketed name is still one (q 5: 'e)
+e:`e
+f:{'(e); 2}
+
 === clean | a return inside a branch leaves the rest reachable
 f1:{if[x;:1];2}
 f2:{$[x;:1;2]}
