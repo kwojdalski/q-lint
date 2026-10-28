@@ -597,6 +597,36 @@ n:{.z.p}
 === clean profile: general | a query, where sym.name can be a foreign key's column
 p:{[t] select sym.name from t}
 
+=== QF021 profile: general | but only the query is left alone (q 5: f 1 is 'd.a)
+f:{[d] t:select from ([]a:1 2);d.a}
+
+=== clean profile: general | a namespace read before a local of its name is set (q 5, .ml.clust.i.f defined elsewhere: fit 1 runs)
+\d .ml
+fit:{[d] d:clust.i.f d; clust:-1^exec a from t; (d;clust)}
+\d .
+
+=== QF014 profile: general | a symbol spelling a query keyword is not a query (q 5: defining f is 'b)
+f:{r:b; b:2; k:`delete; r}
+
+=== QF014 profile: general | a query elsewhere in the lambda does not hide the read (q 5: defining f is 'a)
+f:{b:a;a:1;select from ([]c:1 2)}
+
+=== QF010 profile: general | nor does a dotted name ending in a keyword (q 5: f 1 is 'x)
+f:{[a] .ns.update a; x}
+
+=== QF010 profile: general | nor a query in another statement (q 5: f 1 is 'x)
+f:{[a] r:select from t; x}
+
+=== clean profile: general | x inside the query itself may be a column
+f:{[a] select from t where a>x}
+g:{[a] h[select from t where x>1; a]}
+
+=== QF005 profile: general | a nested lambda's read outside its query is still checked
+f:{c:1; {r:select from t; c}[]}
+
+=== clean profile: general | and inside its query it may be a column
+f:{c:1; {select c from t}[]}
+
 === QF014 profile: general | a read in the value assigned to the same name (q 5: {a:a+1}[] is 'a)
 f:{a:a+1}
 g:{n:n,1;n}

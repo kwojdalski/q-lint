@@ -1091,22 +1091,11 @@ pub fn check(
     // business: within one statement q evaluates right to left, so
     // `x#a where (a:...)` assigns first and is fine. A column in a table
     // literal is not an assignment, and column names inside a query resolve
-    // to the table first, so both are out of scope here.
+    // to the table first, so both are blanked here - the query only over its
+    // own extent, since the rest of the lambda is ordinary q: q 5 refuses
+    // `{b:a;a:1;select from ([]c:1)}` with 'a.
     for scope in &scopes {
-        if re!(r"\b(?:select|exec|update|delete)\b").is_match(&scope.direct) {
-            continue;
-        }
-        let direct = re!(r"`[A-Za-z0-9_./:]*")
-            .replace_all(&scope.direct, |m: &regex::Captures| " ".repeat(m[0].len()))
-            .into_owned();
-        let mut direct = direct.into_bytes();
-        let text = String::from_utf8(direct.clone()).unwrap();
-        for (at, _) in text.match_indices("([") {
-            if let Some(close) = matching(&text, at, b'(', b')') {
-                direct[at..close].fill(b' ');
-            }
-        }
-        let direct = String::from_utf8(direct).unwrap();
+        let direct = local_view(&scope.direct, true);
         let mut first: HashMap<&str, usize> = HashMap::new();
         for a in assignment.captures_iter(&direct) {
             let m = a.get(0).unwrap();
@@ -1197,18 +1186,31 @@ pub fn check(
     // `t.c` inside a lambda is the global named `t.c`, never column c of a
     // parameter or local `t`: q 5 `{[t] t.c}[([]c:1 2)]` is 't.c, while at
     // the top level `t.c` works. A query is left alone, where `sym.name`
-    // can be a foreign key's column.
+    // can be a foreign key's column - but only the query: q 5 refuses
+    // `{[d] t:select from ([]a:1 2);d.a}[1]` with 'd.a.
+    //
+    // A local counts only once it has been assigned: before that the author
+    // cannot have meant it, and the dotted name is a namespace's. KX's
+    // ml/clust/dbscan.q reads `clust.i.df` in a lambda that sets a local
+    // `clust` further down, and q 5 runs it, finding `.ml.clust.i.df`.
     for scope in &scopes {
-        if re!(r"\b(?:select|exec|update|delete)\b").is_match(&scope.direct) {
-            continue;
-        }
-        let direct = re!(r"`[A-Za-z0-9_./:]*")
-            .replace_all(&scope.direct, |m: &regex::Captures| " ".repeat(m[0].len()));
+        let direct = local_view(&scope.direct, false);
+        let tables = local_view(&scope.direct, true);
+        let set_before = |name: &str, at: usize| {
+            assignment.captures_iter(&tables).any(|a| {
+                let m = a.get(0).unwrap();
+                m.start() < at
+                    && &a[1] == name
+                    && a.get(2).is_none()
+                    && boundary(&tables, m.start())
+            }) || multi_assignments(&tables).any(|(p, n)| p < at && n == name)
+        };
         for m in re!(r"([A-Za-z][A-Za-z0-9_]*)\.[A-Za-z][A-Za-z0-9_.]*").find_iter(&direct) {
             let whole = m.as_str();
             let name = &whole[..whole.find('.').unwrap()];
             if !boundary(&direct, m.start())
-                || !(scope.params.contains(name) || scope.locals.contains(name))
+                || !(scope.params.contains(name)
+                    || (scope.locals.contains(name) && set_before(name, m.start())))
                 || re!(r"(?:^|[^A-Za-z0-9_.`])([A-Za-z][A-Za-z0-9_.]*)\s*::?")
                     .captures_iter(code)
                     .any(|a| &a[1] == whole)
@@ -1445,15 +1447,13 @@ pub fn check(
     // `{[a] x+1}` is not an argument, it is a global, and q throws 'x when
     // there is none. Only a name this file never assigns globally is reported,
     // since the global may legitimately live in another file.
+    // A query's own extent is left out, where `x` may be a column; the rest
+    // of the lambda is not: q 5 `{[a] r:select from t; x}[1]` is 'x.
     for scope in &scopes {
-        if dynamic
-            || !scope.named
-            || re!(r"\b(?:select|exec|update|delete)\b").is_match(&scope.direct)
-        {
+        if dynamic || !scope.named {
             continue;
         }
-        let direct = re!(r"`[A-Za-z0-9_./:]*")
-            .replace_all(&scope.direct, |m: &regex::Captures| " ".repeat(m[0].len()));
+        let direct = local_view(&scope.direct, false);
         let mut seen = HashSet::new();
         for m in re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(&direct) {
             let name = m.as_str();
@@ -1493,10 +1493,7 @@ pub fn check(
         }
     }
     for scope in &scopes {
-        if dynamic
-            || scope.parent.is_none()
-            || re!(r"\b(?:select|exec|update|delete)\b").is_match(&scope.direct)
-        {
+        if dynamic || scope.parent.is_none() {
             continue;
         }
         let mut outer = HashSet::new();
@@ -1505,8 +1502,7 @@ pub fn check(
             outer.extend(scopes[p].locals.iter().cloned());
             parent = scopes[p].parent;
         }
-        let direct = re!(r"`[A-Za-z0-9_./:]*")
-            .replace_all(&scope.direct, |m: &regex::Captures| " ".repeat(m[0].len()));
+        let direct = local_view(&scope.direct, false);
         let mut seen = HashSet::new();
         for m in re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(&direct) {
             let name = m.as_str();
