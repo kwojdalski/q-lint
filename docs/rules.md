@@ -88,7 +88,7 @@ that wants fewer findings narrows in its own configuration.
 | `QA004` | dot-empty-list | Empty-list application to a niladic function | every profile |
 | `QA005` | each-on-binary | each supplies one argument to a binary function | `style` and above |
 | `QA006` | cond-two-slots | Two-slot conditional has no else branch and errors at runtime | every profile |
-| `QA007` | cond-even-slots | Even-slot $[ ... ] has no else branch and returns null | `style` and above |
+| `QA007` | cond-even-slots | Even-slot $[ ... ] has no else branch and returns null - or 'type, when the last test is a symbol or string | `style` and above |
 | `QA008` | parenthesised-call | f(a;b) passes one list to a lambda of rank 2 or more | `style` and above |
 | `QA009` | dot-apply-scalar | Dot apply given a scalar where an argument list is required | every profile |
 | `QA010` | builtin-excess-arguments | Excess arguments in a complete builtin call | every profile |

@@ -255,7 +255,7 @@
     "code": "QA007",
     "name": "cond-even-slots",
     "category": "application",
-    "summary": "Even-slot $[ ... ] has no else branch and returns null",
+    "summary": "Even-slot $[ ... ] has no else branch and returns null - or 'type, when the last test is a symbol or string",
     "scope": "style"
   },
   {

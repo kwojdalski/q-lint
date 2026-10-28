@@ -311,3 +311,24 @@ fn table_columns_and_qsql_assignments_define_no_global() {
     // A name that ends in a qSQL keyword is still a name.
     assert!(index.lambdas.contains(".clust.kmeans.update"));
 }
+
+/// QA007 names what q 5 does when the slot it runs as the last test is a
+/// literal no test may be: `$[0b;`a;`b;]` is 'type, `$[0b;1;2;]` is null.
+#[test]
+fn even_slot_conditional_says_type_or_null() {
+    for (source, claim) in [
+        ("r:{$[x;`a;`b;]}", "'type"),
+        ("r:{$[x;1;\"ab\";]}", "'type"),
+        ("r:{$[x;1;`a;2]}", "'type"),
+        ("r:{$[x;1;2;]}", "null"),
+        ("r:{$[x;1;y;2]}", "null"),
+    ] {
+        let found = lint(source, "t.q", Profile::Style);
+        assert!(
+            found
+                .iter()
+                .any(|f| f.code == "QA007" && f.detail.contains(claim)),
+            "{source:?}: QA007 should say {claim}: {found:?}"
+        );
+    }
+}

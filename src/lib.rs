@@ -2393,10 +2393,25 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
             // A trailing `;` is the common way in: `$[c;a;b;]` reads as an
             // if-else, but b is the second test and the empty slot its result.
             // Verified: `$[0b;1;2;]` is `::`, and `$[0b;`a;`b;]` is 'type.
+            // When that last test is a literal no test may be - a symbol, a
+            // string - reaching it is 'type rather than null.
+            let last: usize = parts[..n - 2].iter().map(|p| p.len() + 1).sum();
+            let last = dollar + 2 + last;
+            let test = v.comments[last..last + parts[n - 2].len()].trim();
+            let outcome = if refused_atom_condition(test) {
+                format!("and q 5 refuses `{test}` as a test with 'type")
+            } else {
+                "and the result is null".into()
+            };
             let detail = if empty.last() == Some(&true) {
                 format!(
                     "The trailing `;` makes this a {n}-slot conditional, not an if-else: the \
-                     slot before it is run as another test, and the result is null"
+                     slot before it is run as another test, {outcome}"
+                )
+            } else if refused_atom_condition(test) {
+                format!(
+                    "{n}-slot $[ ... ] has no else branch: when no other condition holds it \
+                     runs `{test}` as a test, which q 5 refuses with 'type"
                 )
             } else {
                 format!(
