@@ -261,6 +261,26 @@ c:2023.01.01D12:60:00
 === QE006 profile: general | a month takes two digits (q 5: '2023.1)
 d:2023.1m
 
+=== QE006 profile: general | a minute or second takes two digits (q 5: '12:5 and '12:00:5)
+a:12:5
+b:12:00:5
+
+=== QE006 profile: general | so does an hour after D or T (q 5: '0D1:30 and '2023.01.01D1:30)
+a:0D1:30
+b:2023.01.01D1:30
+
+=== QE006 profile: general | a one-digit hour with nothing on its left (q 5: parse "t:1:30" is '1:)
+t:1:30
+
+=== clean profile: general | the dyadic 1: writes a file, and longer fields are fine (q 5: 01:30, 123:45, 12:345)
+h 1:30
+`:f 1:30
+a:01:30
+b:123:45
+c:12:345
+d:12:30:05.5
+e:0D1
+
 === clean profile: general | hours run on (q 5: 25:00 and 0D25:00:00 are fine)
 a:25:00
 b:0D25:00:00

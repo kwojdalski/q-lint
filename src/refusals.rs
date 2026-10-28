@@ -11,7 +11,7 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
         .replace_all(code, |m: &regex::Captures| " ".repeat(m[0].len()))
         .into_owned();
     attributes(path, source, code, comments, &mut out);
-    temporals(path, source, &unsym, &mut out);
+    temporals(path, source, comments, &unsym, &mut out);
     missing_from(path, source, code, &unsym, &mut out);
     signals(path, source, code, comments, &mut out);
     where_assignment(path, source, code, &mut out);
@@ -110,10 +110,10 @@ fn number(token: &str) -> Option<Key> {
         .map(Key::Number)
 }
 
-/// QE006. A date or month that does not exist. q refuses the literal at parse:
+/// QE006. A date, month or time q refuses at parse. A date or month that does not exist:
 /// `2024.02.30` is '2024.02.30 and `2024.13m` is '2024.13; leap years are
 /// Gregorian, so 2000.02.29 parses and 1900.02.29 does not.
-fn temporals(path: &str, source: &str, unsym: &str, out: &mut Vec<Finding>) {
+fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Vec<Finding>) {
     // Minutes and seconds stop at 59 wherever they appear - a minute, second,
     // time, timespan or timestamp - while hours run on: q 5 refuses `12:60`,
     // `12:00:60` and `0D00:00:60`, and takes `25:00` and `0D25:00:00`.
@@ -137,6 +137,79 @@ fn temporals(path: &str, source: &str, unsym: &str, out: &mut Vec<Finding>) {
                     whole.as_str()
                 ),
             ));
+        }
+    }
+    // Minutes and seconds take two digits, and so does an hour: q 5 refuses
+    // `12:5`, `12:00:5`, `0D1:30` and `2023.01.01D1:30`, and takes `01:30`,
+    // `123:45` and `12:345` (as 12:34). A one-digit hour with nothing on its
+    // left is no literal at all - `1:30`, `x:1:30` and `(1:30)` are '1: at
+    // parse - while `h 1:30` is the dyadic `1:`, a file write, and is fine.
+    let mut refuse = |at: usize, text: &str, why: &str| {
+        out.push(Finding::at(
+            path,
+            source,
+            at,
+            "QE006",
+            format!("`{text}` is no time: {why}"),
+        ));
+    };
+    for m in re!(r"(\d+)[DT](\d):\d|(\d+):(\d+)(?::(\d+))?").captures_iter(unsym) {
+        let whole = m.get(0).unwrap();
+        let before = &unsym[..whole.start()];
+        let line = before.rfind('\n').map_or(0, |p| p + 1);
+        if unsym[line..].starts_with('\\') {
+            continue;
+        }
+        let rest = &unsym[whole.end()..];
+        let tail = rest.len()
+            - rest
+                .trim_start_matches(|c: char| c.is_ascii_digit() || c == ':')
+                .len();
+        if m.get(1).is_some() {
+            // `2023.01.01D1:30` matches from the date's last field.
+            let start = before
+                .trim_end_matches(|c: char| c.is_ascii_digit() || c == '.')
+                .len();
+            if boundary(unsym, start) {
+                refuse(
+                    start,
+                    &unsym[start..whole.end() + tail],
+                    "the hour takes two digits, and q refuses the literal",
+                );
+            }
+            continue;
+        }
+        // The hour starts the token, or follows the `D` of a timespan or the
+        // `D` or `T` of a timestamp or datetime.
+        let stamp = before.ends_with(['D', 'T'])
+            && before[..before.len() - 1].ends_with(|c: char| c.is_ascii_digit());
+        if !stamp && !boundary(unsym, whole.start()) {
+            continue;
+        }
+        let text = &unsym[whole.start()..whole.end() + tail];
+        if m[3].len() >= 2 {
+            if m[4].len() == 1 || m.get(5).is_some_and(|s| s.as_str().len() == 1) {
+                refuse(
+                    whole.start(),
+                    text,
+                    "minutes and seconds take two digits, and q refuses the literal",
+                );
+            }
+        } else if !stamp {
+            // Read in `comments`, which keeps symbols and strings: the left
+            // operand of `h 1:30` may be either.
+            let left = comments[..whole.start()].trim_end();
+            if whole.start() == line
+                || left.is_empty()
+                || left.ends_with(|c: char| ":([;{,+*%&|=<>~#$^!?@".contains(c))
+            {
+                refuse(
+                    whole.start(),
+                    text,
+                    "the hour takes two digits, and with nothing on its left q refuses \
+                     the `:` at parse",
+                );
+            }
         }
     }
     // A month has two digits: q 5 refuses `2023.1m`.

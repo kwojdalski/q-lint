@@ -38,7 +38,7 @@
     "code": "QE006",
     "name": "impossible-temporal",
     "category": "syntax",
-    "summary": "A date or month that does not exist, which q refuses to parse",
+    "summary": "A date, month or time q refuses to parse: a day that does not exist, a minute past 59, a one-digit field",
     "scope": "builtin"
   },
   {
