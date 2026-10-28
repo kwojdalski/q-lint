@@ -4046,8 +4046,8 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
         // A cast named by symbol converts a string char by char - `long$"123"`
         // is `49 50 51`, and `date$"2024.01.01"` is ten dates - with no error
         // to say so. The uppercase-char cast `"J"$` parses text. `char` and
-        // `byte` are legitimate on a string, and `symbol` is a 'type error
-        // rather than junk, but is still not the `$"..."` that was meant.
+        // `byte` are legitimate on a string, and `symbol` and `guid` are 'type
+        // errors rather than junk, but are still not the cast that was meant.
         if let Some(m) = re!(
             r#"`(long|int|short|float|real|boolean|date|time|timestamp|timespan|month|minute|second|datetime|symbol|guid)\s*\$\s*""#
         )
@@ -4060,10 +4060,13 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
                 "timespan" => "N", "month" => "M", "minute" => "U", "second" => "V",
                 "datetime" => "Z", "guid" => "G", _ => "",
             };
-            // `symbol` is the exception: q refuses it with 'type rather than
-            // converting codes, so the message has to say something else.
+            // `symbol` and `guid` are the exceptions: q 5 refuses them with
+            // 'type rather than converting codes, so the message has to say
+            // something else.
             let detail = if name == "symbol" {
                 "`symbol$ on a string is 'type; the cast to symbol is `$\"...\"".to_string()
+            } else if name == "guid" {
+                "`guid$ on a string is 'type; parsing text is \"G\"$\"...\"".to_string()
             } else {
                 format!(
                     "`{name}$ on a string casts each character's code, not the text; parsing \
