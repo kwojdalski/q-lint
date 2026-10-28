@@ -312,6 +312,32 @@ fn table_columns_and_qsql_assignments_define_no_global() {
     assert!(index.lambdas.contains(".clust.kmeans.update"));
 }
 
+#[test]
+fn system_d_and_a_commented_backslash_d_switch_the_namespace() {
+    // q 5: each `f[1;2]` below is 'f - the definition went into the context
+    // opened above it - not 'rank. `key `.b` after `system "d .b"` and
+    // `k:{1}` is ``k, and `\d .c  / note` opens `.c` as `\d .c` does.
+    for open in ["system \"d .foo\"", "system\"d .foo\";", "\\d .foo  / note"] {
+        let source = format!("{open}\nf:{{[a] a}}\n\\d .\nf[1;2]\n");
+        let found = lint(&source, "t.q", Profile::General);
+        assert!(!codes(&found).contains(&"QA012"), "{open}: {found:?}");
+    }
+    // Inside the context the call is the same function, and the same 'rank;
+    // and a `system` string that is not `d`, a computed one, or one in a
+    // comment opens none.
+    for source in [
+        "system \"d .foo\"\nf:{[a] a}\nf[1;2]\n",
+        "system \"l x.q\"\nf:{[a] a}\nf[1;2]\n",
+        "system \"d \",ns\nf:{[a] a}\nf[1;2]\n",
+        "/ system \"d .foo\"\nf:{[a] a}\nf[1;2]\n",
+    ] {
+        assert!(
+            codes(&lint(source, "t.q", Profile::General)).contains(&"QA012"),
+            "{source}"
+        );
+    }
+}
+
 /// q 5 refuses `` `guid$ `` and `` `symbol$ `` on a string with 'type, where the
 /// other named casts convert char codes, so QT004 cannot say codes for them.
 #[test]

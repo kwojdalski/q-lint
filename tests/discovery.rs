@@ -196,6 +196,64 @@ fn exclude_patterns_are_relative_to_the_configuration_and_a_bare_name_matches_an
     assert!(paths[0].ends_with("lib/l.q"), "{paths:?}");
 }
 
+/// The files a run from the repository root reports on, relative to it.
+fn linted(repo: &Repo, args: &[&str]) -> Vec<String> {
+    let out = run(&repo.path("."), args);
+    let found: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let root = repo.path(".").canonicalize().unwrap();
+    let mut paths: Vec<String> = found
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| {
+            let path = Path::new(f["path"].as_str().unwrap());
+            let path = path.strip_prefix(&root).unwrap_or(path);
+            path.display().to_string().replace('\\', "/")
+        })
+        .collect();
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+#[test]
+fn a_dot_slash_or_absolute_exclude_is_anchored_at_its_root() {
+    // Ruff joins each pattern to its root: `./gen` and `/abs/root/gen` both
+    // name the root's `gen`, and neither reaches `lib/gen` the way a bare
+    // `gen` does.
+    let repo = Repo::new();
+    repo.write("gen/g.q", SOURCE)
+        .write("lib/gen/l.q", SOURCE)
+        .write("m.q", SOURCE);
+    let root = repo.path(".").canonicalize().unwrap();
+    let absolute = root.join("gen").display().to_string();
+    let glob = root.join("g*").display().to_string();
+    // Not resolved through symlinks: on macOS a temporary directory is under
+    // /var, which is a link to /private/var.
+    let unresolved = repo.path("gen").display().to_string();
+    for pattern in ["./gen", "./gen/", &absolute, &glob, &unresolved] {
+        assert_eq!(
+            linted(&repo, &["--isolated", "--exclude", pattern, "."]),
+            ["lib/gen/l.q", "m.q"],
+            "--exclude {pattern}"
+        );
+        repo.write(
+            "qlinter.toml",
+            &format!("exclude = [{}]\n", toml::Value::from(pattern)),
+        );
+        assert_eq!(
+            linted(&repo, &["."]),
+            ["lib/gen/l.q", "m.q"],
+            "exclude = [{pattern:?}]"
+        );
+        fs::remove_file(repo.path("qlinter.toml")).unwrap();
+    }
+    assert_eq!(
+        linted(&repo, &["--isolated", "--exclude", "gen", "."]),
+        ["m.q"]
+    );
+}
+
 #[test]
 fn extend_inherits_and_the_extending_file_wins() {
     let repo = Repo::new();
@@ -211,6 +269,38 @@ fn extend_inherits_and_the_extending_file_wins() {
         "extend = \"../base.toml\"\nprofile = \"general\"\nextend-select = [\"QF016\"]\n",
     );
     assert_eq!(repo.codes(".", &["pkg/a.q"]), ["QF016"]);
+}
+
+#[test]
+fn an_extending_files_exclude_and_per_file_ignores_replace_the_bases() {
+    // Ruff, the same layout: the child's `exclude` replaces the base's, so
+    // gen/ is linted again; `extend-exclude` adds to it; and the child's
+    // per-file-ignores replace the base's too.
+    let repo = Repo::new();
+    repo.write(
+        "base.toml",
+        "profile = \"styleq\"\nexclude = [\"gen\"]\nextend-exclude = [\"old\"]\n\
+         per-file-ignores = { \"m.q\" = [\"QS001\"] }\n",
+    )
+    .write(
+        "proj/qlinter.toml",
+        "extend = \"../base.toml\"\nexclude = [\"other\"]\nextend-exclude = [\"tmp\"]\n\
+         per-file-ignores = { \"m.q\" = [\"QF016\"] }\n",
+    )
+    .write("proj/gen/x.q", SOURCE)
+    .write("proj/other/x.q", SOURCE)
+    .write("proj/old/x.q", SOURCE)
+    .write("proj/tmp/x.q", SOURCE)
+    .write("proj/m.q", SOURCE);
+    assert_eq!(linted(&repo, &["proj"]), ["proj/gen/x.q", "proj/m.q"]);
+    assert_eq!(repo.codes(".", &["proj/m.q"]), ["QS001"]);
+    // A child that sets neither inherits both.
+    repo.write("proj/qlinter.toml", "extend = \"../base.toml\"\n");
+    assert_eq!(
+        linted(&repo, &["proj"]),
+        ["proj/m.q", "proj/other/x.q", "proj/tmp/x.q"]
+    );
+    assert_eq!(repo.codes(".", &["proj/m.q"]), ["QF016"]);
 }
 
 #[test]
@@ -290,6 +380,109 @@ fn a_user_level_configuration_applies_where_no_project_has_one() {
         .output()
         .unwrap();
     assert_eq!(String::from_utf8(out.stdout).unwrap().trim(), "[]");
+}
+
+#[test]
+fn a_user_level_configurations_patterns_are_rooted_at_the_current_directory() {
+    // Ruff resolves a user configuration's paths against the directory it
+    // runs in, not against ~/.config/ruff, where no project lives.
+    let repo = Repo::new();
+    repo.write(
+        "xdg/qlinter/qlinter.toml",
+        "profile = \"style\"\nextend-exclude = [\"tests/skip.q\"]\n\
+         per-file-ignores = { \"tests/quiet.q\" = [\"QF016\"] }\n",
+    )
+    .write("uc/tests/skip.q", SOURCE)
+    .write("uc/tests/quiet.q", SOURCE)
+    .write("uc/tests/kept.q", SOURCE);
+    let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .current_dir(repo.path("uc"))
+        .env("XDG_CONFIG_HOME", repo.path("xdg"))
+        .args(["--format", "json", "."])
+        .output()
+        .unwrap();
+    let found: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let paths: Vec<_> = found
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["path"].as_str().unwrap().replace('\\', "/"))
+        .collect();
+    assert_eq!(paths.len(), 1, "{paths:?}");
+    assert!(paths[0].ends_with("tests/kept.q"), "{paths:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn an_unreadable_file_is_an_input_failure_and_the_rest_are_still_linted() {
+    use std::os::unix::fs::PermissionsExt;
+    let repo = Repo::new();
+    repo.write("unr/x.q", "a:1\n").write("unr/y.q", SOURCE);
+    // Readable, the run is an ordinary one: findings, exit 1.
+    let out = run(&repo.path("."), &["--isolated", "unr"]);
+    assert_eq!(out.status.code(), Some(1));
+    fs::set_permissions(repo.path("unr/x.q"), fs::Permissions::from_mode(0o000)).unwrap();
+    if fs::read(repo.path("unr/x.q")).is_ok() {
+        return; // root reads it anyway; there is nothing to test
+    }
+    // Without the `--format json` `run` adds, which neither takes.
+    let plain = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .current_dir(repo.path("."))
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    for (args, out) in [
+        ("lint", run(&repo.path("."), &["--isolated", "unr"])),
+        ("diff", plain(&["--isolated", "--diff", "unr"])),
+        ("graph", plain(&["analyze", "graph", "unr"])),
+    ] {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(2), "{args}: {stderr}");
+        assert!(
+            stderr.contains("x.q") && stderr.contains("skipped"),
+            "{stderr}"
+        );
+    }
+    let out = run(&repo.path("."), &["--isolated", "unr"]);
+    let found: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(!found.as_array().unwrap().is_empty(), "y.q is still linted");
+}
+
+#[test]
+fn a_closed_pipe_ends_the_run_quietly() {
+    // `qlinter src | head -1`: the reader goes away, and the next write is
+    // EPIPE. Ruff, following ripgrep, exits 0 there; `println!` panicked.
+    // Far more output than a pipe buffers, so some write must fail.
+    let repo = Repo::new();
+    repo.write("a.q", &SOURCE.repeat(500));
+    for args in [
+        &["--isolated", "a.q"][..],
+        &["--rules"],
+        &["analyze", "graph", "."],
+    ] {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .current_dir(repo.path("."))
+            .args(args)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        drop(child.stdout.take());
+        let out = child.wait_with_output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!stderr.contains("panicked"), "{args:?}: {stderr}");
+        assert_eq!(out.status.code(), Some(0), "{args:?}: {stderr}");
+    }
+    // Read to the end, the same run is an ordinary one.
+    let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .current_dir(repo.path("."))
+        .args(["--isolated", "a.q"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("1000 finding(s)"));
 }
 
 #[test]

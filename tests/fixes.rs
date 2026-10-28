@@ -414,15 +414,19 @@ fn unsafe_fixes_and_a_diff_that_survives_a_removed_line() {
         String::from_utf8(output.stdout).unwrap()
     };
     let safe = run(&["--diff"]);
-    assert!(safe.contains("@@ -3,1 +3,1 @@\n-b:a==1\n+b:a=1"), "{safe}");
-    assert!(!safe.contains("old:"), "{safe}");
+    assert!(
+        safe.ends_with(
+            "@@ -1,4 +1,4 @@\n a:1\n / old:{x+1}\n-b:a==1\n+b:a=1\n r:reverse asc 3 1 2\n\
+             \\ No newline at end of file\n"
+        ),
+        "{safe}"
+    );
 
     let all = run(&["--diff", "--unsafe-fixes"]);
-    assert!(all.contains("@@ -2,1 +1,0 @@\n-/ old:{x+1}\n"), "{all}");
-    assert!(all.contains("@@ -3,1 +2,1 @@\n-b:a==1\n+b:a=1"), "{all}");
     assert!(
-        all.contains(
-            "@@ -4,1 +3,1 @@\n-r:reverse asc 3 1 2\n\\ No newline at end of file\n+r:desc 3 1 2\n\\ No newline at end of file"
+        all.ends_with(
+            "@@ -1,4 +1,3 @@\n a:1\n-/ old:{x+1}\n-b:a==1\n+b:a=1\n-r:reverse asc 3 1 2\n\
+             \\ No newline at end of file\n+r:desc 3 1 2\n\\ No newline at end of file\n"
         ),
         "{all}"
     );
@@ -432,6 +436,93 @@ fn unsafe_fixes_and_a_diff_that_survives_a_removed_line() {
         fs::read_to_string(&path).unwrap(),
         "a:1\nb:a=1\nr:desc 3 1 2"
     );
+}
+
+/// `--diff` names each file relative to the current directory, as Ruff does,
+/// so the patch it prints applies with `patch -p1` and `git apply` - and
+/// applied, it gives what `--fix` writes. An absolute path behind `a/` was
+/// `a//abs/path`, which patch asked about and git refused.
+#[test]
+fn a_diff_names_files_relative_to_the_current_directory_and_applies() {
+    let directory = tempfile::tempdir().unwrap();
+    // Two fixes far enough apart for two hunks, each with its context, and
+    // the second not at the end of the file - the case `git apply` refuses
+    // without context.
+    let source = "f:{[x] $[x;true;false]}\nb:2\nc:3\nd:4\ne:5\ng:6\nh:7\ni:8\na:1==1\nj:9\n";
+    let run = |flags: &[&str], file: &std::path::Path| {
+        Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .current_dir(directory.path())
+            .arg("--isolated")
+            .args(flags)
+            .arg(file)
+            .output()
+            .unwrap()
+    };
+    fs::create_dir_all(directory.path().join("sub")).unwrap();
+    let path = directory.path().join("sub/fx.q");
+    fs::write(&path, source).unwrap();
+    // Named relatively or absolutely, the header is the same.
+    let diff = String::from_utf8(run(&["--diff"], &path).stdout).unwrap();
+    let relative = run(&["--diff"], std::path::Path::new("sub/fx.q")).stdout;
+    assert_eq!(diff, String::from_utf8(relative).unwrap());
+    assert!(diff.contains("@@ -1,4 +1,4 @@\n"), "{diff}");
+    assert!(
+        diff.contains("@@ -6,5 +6,5 @@\n g:6\n h:7\n i:8\n"),
+        "{diff}"
+    );
+    assert!(
+        diff.starts_with("--- a/sub/fx.q\n+++ b/sub/fx.q\n"),
+        "{diff}"
+    );
+    run(&["--fix"], &path);
+    let fixed = fs::read_to_string(&path).unwrap();
+    assert_ne!(fixed, source);
+    fs::write(directory.path().join("fx.diff"), &diff).unwrap();
+    for tool in [
+        &["patch", "-p1", "-i", "fx.diff"][..],
+        &["git", "apply", "fx.diff"],
+    ] {
+        // windows-latest's patch is Strawberry Perl's 2.5.9, which fails its
+        // own assertion in patch.c on any input; git apply still runs there.
+        if cfg!(windows) && tool[0] == "patch" {
+            continue;
+        }
+        fs::write(&path, source).unwrap();
+        let Ok(out) = Command::new(tool[0])
+            .current_dir(directory.path())
+            .args(&tool[1..])
+            .output()
+        else {
+            continue; // not installed here
+        };
+        assert!(
+            out.status.success(),
+            "{tool:?}: {}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        // git on windows-latest writes with core.autocrlf, so the applied
+        // file has CRLF where --fix kept the source's LF.
+        let applied = fs::read_to_string(&path).unwrap().replace("\r\n", "\n");
+        assert_eq!(applied, fixed, "{tool:?}");
+    }
+    // A name given for stdin is printed as given.
+    let mut child = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .current_dir(directory.path())
+        .args(["--isolated", "--diff", "--stdin-filename", "sub/in.q", "-"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    use std::io::Write;
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(source.as_bytes())
+        .unwrap();
+    let out = String::from_utf8(child.wait_with_output().unwrap().stdout).unwrap();
+    assert!(out.starts_with("--- a/sub/in.q\n+++ b/sub/in.q\n"), "{out}");
 }
 
 /// A fix edits code. Where a finding points into a string or a comment, a

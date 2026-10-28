@@ -78,9 +78,10 @@ The CLI supports `--profile general|style|styleq|uqf`, `--format text|json`,
 `--qls-timeout` bounds a batch, plus at most one second for cleanup.
 The qls server may itself require Python; the Rust builtin backend does not.
 
-To preview mechanical edits, run `qlinter --diff path/to/file.q`; to write
-them, run `qlinter --fix path/to/file.q`. `--fix` re-lints the changed files and
-reports any remaining findings. Batch fixing handles `==`, `!=`, `+=`, `-=`,
+To preview mechanical edits, run `qlinter --diff path/to/file.q` - a unified
+diff with paths relative to the current directory, which `patch -p1` and
+`git apply` take as it is; to write them, run `qlinter --fix path/to/file.q`.
+`--fix` re-lints the changed files and reports any remaining findings. Batch fixing handles `==`, `!=`, `+=`, `-=`,
 `*=`, a leading UTF-8 BOM, an invalid string escape (`"C:\data"` →
 `"C:\\data"`), `true`/`false`/`None`/`return x` → `1b`/`0b`/`(::)`/`:x`,
 a table literal of scalars (each column enlisted), a symbol used as a `like`
@@ -136,12 +137,13 @@ like the rest of qlinter, it reads the files and runs none of them.
 A file depends on another when:
 
 - it reads a global name the other defines. A bare name is qualified by the
-  `\d` context in force, and tried at the root when that context has none:
-  `f` inside `\d .a` is `.a.f`, failing that `.f`. A local or parameter of the
-  same name is not a read, and neither is a name in a string or comment. A
-  name no file defines is tried without its last segment, so
-  `.cfg.opts.port` reaches the file defining `.cfg.opts`. A symbol handed
-  straight to `get` or `value`, `` get`.ns.x ``, is a read too;
+  `\d` context in force and by nothing else, as q resolves it: `f` inside
+  `\d .a` is `.a.f`, never the root's `f`, and a root `g` is not `.g`. A
+  local or parameter of the same name is not a read, and neither is a name
+  in a string or comment. A name no file defines is tried without its last
+  segment, so `.cfg.opts.port` reaches the file defining `.cfg.opts`. A
+  symbol handed straight to `get` or `value`, `` get`.ns.x ``, is a read
+  too;
 - it loads the other by a literal path, `\l path` or `system "l path"`, or
   names it as a file symbol ending in `.q`, `` `:lib/x.q ``, whatever that is
   handed to - a project's own loader is invisible to reading otherwise. q
@@ -182,7 +184,8 @@ over, so a Python package's own one does not hide the repository's. Put one
 file at the repository root and it governs everything beneath it, wherever
 qlinter is run from; a sub-project can carry its own, and the nearest wins.
 Where no directory has one, `~/.config/qlinter/qlinter.toml` (or
-`$XDG_CONFIG_HOME/qlinter/`) applies.
+`$XDG_CONFIG_HOME/qlinter/`) applies, with its patterns relative to the
+directory qlinter runs in, as in Ruff.
 
 ```toml
 # qlinter.toml at the repository root
@@ -198,7 +201,9 @@ per-file-ignores = { "tests/*" = ["QS"] }
 
 In `pyproject.toml` the same keys go under `[tool.qlinter]`, and
 `[tool.qlinter.lint]`. Also: `extend-exclude`, and `extend = "../qlinter.toml"`
-to inherit another file and override it. As in Ruff, the most specific
+to inherit another file and override it - a key the extending file sets
+replaces the base's, `exclude` and `per-file-ignores` included, and only
+`extend-exclude` adds to it. As in Ruff, the most specific
 selector wins - `ignore = ["QS"]` with `extend-select = ["QS001"]` keeps QS001
 alone - and a selector that names no rule is refused, so a typo cannot quietly
 select or ignore nothing.
@@ -225,7 +230,8 @@ The built-in rules honour it; findings from qls do not.
 Diagnostics carry a
 code and a category; `qlinter --rules` lists them all and `qlinter --explain
 QF005` describes one. Exit codes are 0 (no error or warning), 1 (findings) and
-2 (input or server failure).
+2 (input or server failure - a file that cannot be read is reported, the rest
+are still linted, and the run ends in 2).
 
 These are heuristics over source text, not a proof: a clean lint means no rule
 matched, which is weaker than "this code is correct".
