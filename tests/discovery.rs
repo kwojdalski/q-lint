@@ -383,6 +383,36 @@ fn a_user_level_configuration_applies_where_no_project_has_one() {
 }
 
 #[test]
+fn a_user_level_configurations_patterns_are_rooted_at_the_current_directory() {
+    // Ruff resolves a user configuration's paths against the directory it
+    // runs in, not against ~/.config/ruff, where no project lives.
+    let repo = Repo::new();
+    repo.write(
+        "xdg/qlinter/qlinter.toml",
+        "profile = \"style\"\nextend-exclude = [\"tests/skip.q\"]\n\
+         per-file-ignores = { \"tests/quiet.q\" = [\"QF016\"] }\n",
+    )
+    .write("uc/tests/skip.q", SOURCE)
+    .write("uc/tests/quiet.q", SOURCE)
+    .write("uc/tests/kept.q", SOURCE);
+    let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .current_dir(repo.path("uc"))
+        .env("XDG_CONFIG_HOME", repo.path("xdg"))
+        .args(["--format", "json", "."])
+        .output()
+        .unwrap();
+    let found: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let paths: Vec<_> = found
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["path"].as_str().unwrap().replace('\\', "/"))
+        .collect();
+    assert_eq!(paths.len(), 1, "{paths:?}");
+    assert!(paths[0].ends_with("tests/kept.q"), "{paths:?}");
+}
+
+#[test]
 fn a_lambda_another_file_defines_is_called_not_applied_to_a_literal() {
     // QB010: `shift -1` is a call when shift is a lambda - in this file or,
     // as here, in another file linted with it.

@@ -183,7 +183,8 @@ over, so a Python package's own one does not hide the repository's. Put one
 file at the repository root and it governs everything beneath it, wherever
 qlinter is run from; a sub-project can carry its own, and the nearest wins.
 Where no directory has one, `~/.config/qlinter/qlinter.toml` (or
-`$XDG_CONFIG_HOME/qlinter/`) applies.
+`$XDG_CONFIG_HOME/qlinter/`) applies, with its patterns relative to the
+directory qlinter runs in, as in Ruff.
 
 ```toml
 # qlinter.toml at the repository root

@@ -142,7 +142,7 @@ impl Policy {
                 return Ok(found.clone());
             }
             let settings = Rc::new(
-                load(&key, 0)?
+                load(&key, 0, None)?
                     .ok_or_else(|| format!("{}: no [tool.qlinter] table", explicit.display()))?,
             );
             self.cache.borrow_mut().insert(key, settings.clone());
@@ -330,7 +330,7 @@ fn in_directory(dir: &Path) -> Result<Option<Settings>, String> {
     for name in FILES {
         let path = dir.join(name);
         if path.is_file()
-            && let Some(settings) = load(&path, 0)?
+            && let Some(settings) = load(&path, 0, None)?
         {
             return Ok(Some(settings));
         }
@@ -338,20 +338,30 @@ fn in_directory(dir: &Path) -> Result<Option<Settings>, String> {
     Ok(None)
 }
 
+/// The user-level configuration. Its patterns are rooted at the current
+/// directory, not at the configuration's own: a file under
+/// `~/.config/qlinter/` governs projects elsewhere, and Ruff resolves a user
+/// configuration's `exclude` and per-file-ignores against the directory it
+/// runs in.
 fn user_config() -> Result<Option<Settings>, String> {
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .filter(|v| !v.is_empty())
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")));
     match base.map(|b| b.join("qlinter").join("qlinter.toml")) {
-        Some(path) if path.is_file() => load(&path, 0),
+        Some(path) if path.is_file() => {
+            let cwd = absolute(&std::env::current_dir().map_err(|e| e.to_string())?);
+            load(&path, 0, Some(&cwd))
+        }
         _ => Ok(None),
     }
 }
 
 /// Read one configuration file, and what it extends. `None` for a
 /// `pyproject.toml` that has no qlinter table, which is not a configuration.
-fn load(path: &Path, depth: usize) -> Result<Option<Settings>, String> {
+/// Its patterns are rooted at its own directory unless `patterns` says
+/// otherwise.
+fn load(path: &Path, depth: usize, patterns: Option<&Path>) -> Result<Option<Settings>, String> {
     if depth > 16 {
         return Err(format!(
             "{}: `extend` goes more than 16 files deep",
@@ -437,7 +447,7 @@ fn load(path: &Path, depth: usize) -> Result<Option<Settings>, String> {
                 .as_str()
                 .ok_or_else(|| format!("{shown}: extend must be a path"))?;
             let base = root.join(base);
-            load(&base, depth + 1)?
+            load(&base, depth + 1, patterns)?
                 .ok_or_else(|| format!("{}: no [tool.qlinter] table to extend", base.display()))?
         }
     };
@@ -485,7 +495,7 @@ fn load(path: &Path, depth: usize) -> Result<Option<Settings>, String> {
                     .as_str()
                     .filter(|s| !s.trim().is_empty())
                     .ok_or_else(|| format!("{shown}: {key} must contain nonempty strings"))?;
-                globs.push(rooted(&root, p)?);
+                globs.push(rooted(patterns.unwrap_or(&root), p)?);
             }
             if key == "exclude" {
                 settings.exclude = globs;
@@ -512,7 +522,7 @@ fn load(path: &Path, depth: usize) -> Result<Option<Settings>, String> {
                 .collect::<Result<Vec<_>, _>>()?;
             settings
                 .per_file_ignores
-                .push((rooted(&root, glob)?, codes));
+                .push((rooted(patterns.unwrap_or(&root), glob)?, codes));
         }
     }
     Ok(Some(settings))
