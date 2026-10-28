@@ -131,6 +131,30 @@ fn runs_before(text: &str, read: usize, assign: usize) -> bool {
     }
     false
 }
+/// Whether a read written after an assignment in the same statement still
+/// runs first, because it is not in the value the assignment computes. Where
+/// the two part ways, a read in a later slot of a call or a list runs first
+/// (`g[a:1;a]`, `(a:1;a)`), and so does a read to the right of the bracket
+/// holding the assignment (`(a:1)+a`, `f[a:1] a`); a control bracket runs its
+/// slots left to right (`$[a:1;a;0]`). A read at the assignment's own level,
+/// to its right, is in its value, which is `in_value`'s case. Verified in
+/// q 5: the first four are refused at definition with 'a, `$[a:1;a;0]` is not.
+fn runs_first_after(text: &str, read: usize, assign: usize) -> bool {
+    let (read_seq, read_path) = eval_path(text, read);
+    let (assign_seq, assign_path) = eval_path(text, assign);
+    if read <= assign || read_seq != assign_seq {
+        return false;
+    }
+    for (r, a) in read_path.iter().zip(&assign_path) {
+        if r.0 != a.0 {
+            return true;
+        }
+        if r.1 != a.1 {
+            return !r.2;
+        }
+    }
+    assign_path.len() > read_path.len()
+}
 /// Where `pos` sits in the order a lambda body runs in: the statement it is
 /// in, and each bracket open around it, as the bracket's offset, the slot
 /// within it, and whether it is a control bracket.
@@ -139,8 +163,14 @@ fn eval_path(text: &str, pos: usize) -> (usize, Vec<(usize, usize, bool)>) {
     for (i, &c) in text.as_bytes()[..pos].iter().enumerate() {
         match c {
             b'[' | b'(' | b'{' => {
+                // A bracket that follows nothing it could index is a block,
+                // which runs left to right like a control bracket. Verified
+                // in q 5: `{$[1b;[a:1;a];0]}[]` and `{(a:1;[a:2;a])}` run,
+                // while `{g [a:1;a]}` and `{x:[a:1;a]}` are 'a.
                 let control = c == b'['
-                    && re!(r"(?:^|[^A-Za-z0-9_.])(?:if|while|do)\s*$|\$\s*$").is_match(&text[..i]);
+                    && (re!(r"(?:^|[^A-Za-z0-9_.])(?:if|while|do)\s*$|\$\s*$")
+                        .is_match(&text[..i])
+                        || text[..i].trim_end().ends_with([';', '[', '(']));
                 stack.push((i, 0, control));
             }
             b']' | b')' | b'}' => {
@@ -1085,28 +1115,37 @@ pub fn check(
     }
     // An assignment anywhere in a lambda body makes the name local for the
     // whole body, including the statements above it - so a read that q runs
-    // before the first assignment finds an unset local, never the global,
-    // and throws the name. Verified: `{r:cfg; cfg:1; r}[]` is 'cfg,
-    // `{if[a;a:1]}[]` is 'a. What "before" means is `runs_before`'s
-    // business: within one statement q evaluates right to left, so
-    // `x#a where (a:...)` assigns first and is fine. A column in a table
+    // before the first assignment is of an unset local, never the global,
+    // and q refuses the lambda at definition. Verified: `{r:cfg; cfg:1; r}`
+    // and `{if[a;a:1]}` are 'cfg and 'a before they are called. What "before"
+    // means is `runs_before`'s and `runs_first_after`'s business: within one
+    // statement q evaluates right to left, so `x#a where (a:...)` assigns
+    // first and is fine, and `(a:1)+a` reads first and is not. A column in a table
     // literal is not an assignment, and column names inside a query resolve
     // to the table first, so both are blanked here - the query only over its
     // own extent, since the rest of the lambda is ordinary q: q 5 refuses
     // `{b:a;a:1;select from ([]c:1)}` with 'a.
     for scope in &scopes {
+        // A bracket that opens the body and is not a parameter list, as in
+        // `{[a:1] a}`, is a malformed signature, which is QF007's to report.
+        if !scope.named && scope.direct.trim_start().starts_with('[') {
+            continue;
+        }
         let direct = local_view(&scope.direct, true);
         let mut first: HashMap<&str, usize> = HashMap::new();
+        let mut every: HashMap<&str, Vec<usize>> = HashMap::new();
         for a in assignment.captures_iter(&direct) {
             let m = a.get(0).unwrap();
             if boundary(&direct, m.start()) && a.get(2).is_none() && !a[1].contains('.') {
                 let name = a.get(1).unwrap().as_str();
                 first.entry(name).or_insert(m.start());
+                every.entry(name).or_default().push(m.start());
             }
         }
         for (at, name) in multi_assignments(&direct) {
             let entry = first.entry(name).or_insert(at);
             *entry = (*entry).min(at);
+            every.entry(name).or_default().push(at);
         }
         let mut seen = HashSet::new();
         for m in re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(&direct) {
@@ -1153,33 +1192,49 @@ pub fn check(
                         at > 0 && &a[1] == name && a.get(2).is_none() && boundary(rest, at)
                     })
                 };
-            if (m.start() >= assigned && !in_value)
+            // Written after the assignment, outside its value, and still run
+            // first: q 5 refuses `{(a:1)+a}` and `{g[a:1;a]}` with 'a. Only
+            // when it runs before every assignment of the name: in KX's
+            // taq/daily.q, `(t;..t:max b..;t;..t:min a..)` reads the third
+            // slot after the fourth has set `t`.
+            let later = m.start() >= assigned
+                && !in_value
+                && every[name].iter().all(|&p| {
+                    if p < m.start() {
+                        runs_first_after(&direct, m.start(), p)
+                    } else {
+                        runs_before(&direct, m.start(), p)
+                    }
+                });
+            if (m.start() >= assigned && !in_value && !later)
                 || scope.params.contains(name)
                 || !boundary(&direct, m.start())
                 || after.starts_with(':')
                 || after.starts_with('.')
-                || (!in_value && !runs_before(&direct, m.start(), assigned))
+                || (!in_value && !later && !runs_before(&direct, m.start(), assigned))
                 || !seen.insert(name)
             {
                 continue;
             }
+            // q settles which names are local when it reads the lambda, so it
+            // refuses the definition, not the call: as a script line, q 5
+            // stops at `f:{r:b; b:2; r}` with 'b.
+            let why = if in_value {
+                "is read in the value being assigned to it, which makes it local, and the \
+                 value runs first"
+            } else if later {
+                "is read to the right of where it is assigned, outside the value, and q runs \
+                 the right first, so it is an unset local here"
+            } else {
+                "is read here but assigned in a later statement, which makes it local \
+                 throughout"
+            };
             out.push(Finding::at(
                 path,
                 raw,
                 scope.body + m.start(),
                 "QF014",
-                if in_value {
-                    format!(
-                        "`{name}` is read in the value being assigned to it, which makes it \
-                         local, and the value runs first: this read finds an unset local and \
-                         throws '{name}"
-                    )
-                } else {
-                    format!(
-                        "`{name}` is read here but assigned in a later statement, which makes \
-                         it local throughout: this read finds an unset local and throws '{name}"
-                    )
-                },
+                format!("`{name}` {why}: q refuses the lambda where it is defined, with '{name}"),
             ));
         }
     }

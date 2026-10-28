@@ -97,9 +97,9 @@ ledger:([] first:1 2 3; qty:4 5 6)
 dotted:{[t] t.c}
 
 / QF014: an assignment anywhere in a body makes the name local throughout,
-/ so the read of `cfg` on the left finds an unset local, not the global,
-/ and throws 'cfg. Within one statement q runs right to left and this does
-/ not apply; across statements it does.
+/ so the read of `cfg` on the left is of an unset local, not the global,
+/ and q refuses the lambda where it is defined, with 'cfg. Within one
+/ statement q runs right to left, so what counts as first is what runs first.
 / expect-next: QF014
 early:{[x] r:cfg; cfg:1; r}
 

@@ -635,6 +635,39 @@ g:{n:n,1;n}
 f:{a:1;a:a+1}
 g:{$[x;a:1;a:2];a}
 
+=== QF014 profile: general | a read right of the bracket holding the assignment runs first (q 5: each is 'n or 'a or 'b at definition)
+f:{[t] (n:count t)#n}
+g:{(a:1)+a}
+h:{r:(b:1),b; r}
+k:{f[a:1] a}
+
+=== QF014 profile: general | a later slot of a call or list runs first (q 5: each is 'a at definition)
+f:{g[a:1;a]}
+h:{(a:1;a)}
+
+=== clean profile: general | the earlier slot reads, the later assigns, and runs first (q 5: {(a;a:1)}[] is 1 1)
+f:{g[a;a:1]}
+h:{(a;a:1)}
+k:{a+(a:1)}
+
+=== clean profile: general | a control bracket runs its slots left to right (q 5: $[a:1;a;0] and if[(a:1);a] run)
+f:{$[a:1;a;0]}
+g:{if[(a:1);a]}
+h:{a:1;(a:2)+a}
+
+=== clean profile: general | and so does a block (q 5: {$[1b;[a:1;a];0]}[] and {(a:1;[a:2;a])} run)
+f:{$[x;[a:1;b:a];0]}
+g:{(a:1;[a:2;a])}
+
+=== QF014 profile: general | a block's slots in order, so the read comes first (q 5: 'a at definition)
+f:{$[x;[r:a;a:1];0]}
+
+=== QF014 profile: general | but brackets after a name are a call, with a space or without (q 5: {g [a:1;a]} is 'a)
+f:{g [a:1;a]}
+
+=== clean profile: general | a slot that runs earlier still may have assigned it again (KX taq/daily.q runs)
+f:{(t;b=t:max b:x;t;a=t:min a:y)}
+
 === QF003 | a query keyword as a local is refused when the lambda is defined (q 5: {select:1;0} is 'from)
 a:{select:1;0}
 b:{delete:1;0}
