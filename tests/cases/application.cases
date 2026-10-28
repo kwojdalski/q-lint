@@ -47,6 +47,14 @@ r:$[7h;2.5]
 === clean | and as a char, which parses text
 r:$["J";"12"]
 
+=== clean profile: general | a type named by an expression is still the cast (q 5: each is 2)
+f:{$[`$"long";x]}
+g:{$[(`long);x]}
+h:{$[(7h);x]}
+
+=== QA006 profile: general | but a name in parentheses is a condition
+f:{[c;x] $[(c);x]}
+
 === clean | three slots is the conditional
 $[1b;2;3]
 

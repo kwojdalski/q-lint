@@ -2298,10 +2298,18 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
         // conditional at all but dyadic `$` in bracket form: `$[`long;1.5]`
         // is 2, `$[7h;2.5]` is 3 and `$["J";"12"]` is 12. A string is blank
         // in `code`, so its slot is read from the source.
-        let first_raw = source[dollar + 2..dollar + 2 + parts[0].len()].trim();
+        // Parentheses and `` `$"..." `` name a type too: q 5 gives 2 for
+        // `$[(`long);1.5]` and for `$[`$"long";1.5]`.
+        fn bare(mut s: &str) -> &str {
+            while s.starts_with('(') && matching(s, 0, b'(', b')') == Some(s.len()) {
+                s = s[1..s.len() - 1].trim();
+            }
+            s
+        }
+        let first_raw = bare(source[dollar + 2..dollar + 2 + parts[0].len()].trim());
         let cast = parts.len() == 2
-            && (re!(r"^`[A-Za-z]*$|^\d+h$").is_match(parts[0].trim())
-                || re!(r#"^"[^"]*"$"#).is_match(first_raw));
+            && (re!(r"^`[A-Za-z]*$|^\d+h$").is_match(bare(parts[0].trim()))
+                || re!(r#"^(?:`\$\s*)?"[^"]*"$"#).is_match(first_raw));
         if cast {
             continue;
         }
