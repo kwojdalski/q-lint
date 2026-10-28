@@ -192,7 +192,8 @@ fn temporals(path: &str, source: &str, unsym: &str, out: &mut Vec<Finding>) {
 
 /// QE007. A select, exec, update or delete with no `from` before its
 /// statement ends, or nothing after it: `select a by b t`, `{select x}`,
-/// `delete a` and `select a from` are each 'from at parse time (q 5).
+/// `delete a` and `select a from` are each 'from at parse time (q 5), and
+/// `select from t where` - a where phrase with nothing in it - is ',.
 fn missing_from(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Finding>) {
     for m in re!(r"\b(select|exec|update|delete)\b").find_iter(unsym) {
         if !boundary(code, m.start()) {
@@ -228,10 +229,23 @@ fn missing_from(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec
         let statement = &unsym[m.end()..at];
         let from = re!(r"\bfrom\b").find_iter(statement).last();
         let detail = match from {
-            None => "has no `from` before its statement ends",
+            None => "has no `from` before its statement ends: q raises 'from",
             // Read from `code`, where `` from `t `` still has its table.
             Some(f) if code[m.end() + f.end()..at].trim().is_empty() => {
-                "has nothing after its `from`"
+                "has nothing after its `from`: q raises 'from"
+            }
+            // A where phrase with nothing in it: q 5 `parse "exec a from t
+            // where"` and `parse "select from t where"` are ',.
+            Some(f)
+                if re!(r"\bwhere\b")
+                    .find_iter(&statement[f.end()..])
+                    .last()
+                    .is_some_and(|w| {
+                        code[m.end() + f.end() + w.end()..at].trim().is_empty()
+                            && boundary(code, m.end() + f.end() + w.start())
+                    }) =>
+            {
+                "has nothing after its `where`: q raises ',"
             }
             Some(_) => continue,
         };
@@ -240,7 +254,7 @@ fn missing_from(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec
             source,
             m.start(),
             "QE007",
-            format!("`{}` {detail}: q raises 'from", m.as_str()),
+            format!("`{}` {detail}", m.as_str()),
         ));
     }
 }

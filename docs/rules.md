@@ -48,7 +48,7 @@ that wants fewer findings narrows in its own configuration.
 | `QE004` | foreign-operator | Operator from another language; q has no ==, !=, &&, \|\|, **, =>, -> or := | every profile |
 | `QE005` | byte-order-mark | File starts with a BOM, which q refuses to load | every profile |
 | `QE006` | impossible-temporal | A date or month that does not exist, which q refuses to parse | every profile |
-| `QE007` | qsql-missing-from | select, exec, update or delete with no from before the statement ends, or nothing after it | every profile |
+| `QE007` | qsql-missing-from | select, exec, update or delete with no from before the statement ends, or nothing after its from or its where | every profile |
 | `QE008` | monadic-glyph | A glyph applied to one argument; q 5 refuses -x, ,x, #x and the rest - the keyword is neg, enlist, count, not... | every profile |
 | `QE009` | juxtaposed-derived-function | A derived function applied by juxtaposition: q 5 refuses +/x, count'x and x/y; write (+/)x, +/[x] or sum x | every profile |
 | `QE010` | malformed-number | A number q 5 cannot parse: 1.5j, 2b, 3i 4j, 1y, 1.2.3, or a long that overflows | every profile |

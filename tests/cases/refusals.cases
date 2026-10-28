@@ -214,6 +214,18 @@ s:{delete from}
 delete from t
 r:delete a from t
 
+=== QE007 profile: general | a where phrase with nothing in it (q 5: parse "exec a from t where" is ',)
+r:exec a from t where
+f:{[t] select from t where}
+g:{update a:1 from t where;1}
+
+=== clean profile: general | a where phrase with a condition, and where as a column or a call
+r:exec a from t where a>1
+s:select where from t
+u:select from t where a in (exec b from v where c)
+w:select from t where
+  a>1
+
 === QE010 profile: general | an integer type with a fraction (q 5: parse "1.5j" is '1.5)
 a:1.5j
 
