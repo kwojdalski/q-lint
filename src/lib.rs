@@ -519,7 +519,9 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         }
         // `col="ab"` is 'type or 'length on every column; `like` is the
         // comparison that works on a symbol column. A pattern character
-        // in the string would change what it matches, so not then.
+        // in the string would change what it matches, so not then. Only in
+        // the editor: on a char column as long as the string, `=` is valid
+        // q and compares char by char.
         "QB015" => {
             let m = re!(r#"^=\s*("[^"\\*?\[\]^]*")"#).captures(source.get(start..)?)?;
             let pad = if source[..start].ends_with([' ', '\t']) {
@@ -531,7 +533,7 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 m.get(0)?.as_str(),
                 format!("{pad}like {}", &m[1]).into(),
                 format!("Compare with `like {}`", &m[1]).into(),
-                true,
+                false,
             )
         }
         // Parentheses where q already groups: around the right operand of
@@ -1404,6 +1406,21 @@ pub(crate) fn flat_filter(phrase: &str) -> String {
         i += 1;
     }
     String::from_utf8(flat).unwrap()
+}
+/// Where the where phrase that starts at `from` in masked `code` ends: at a
+/// `;` outside brackets, or the bracket that closes around it.
+fn phrase_end(code: &str, from: usize) -> usize {
+    let mut depth = 0i32;
+    for (i, b) in code.bytes().enumerate().skip(from) {
+        match b {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' if depth == 0 => return i,
+            b')' | b']' | b'}' => depth -= 1,
+            b';' if depth == 0 => return i,
+            _ => {}
+        }
+    }
+    code.len()
 }
 /// Whether a top-level statement mixes `*`/`%` with a binary `+`/`-` - the
 /// pair whose right-to-left order readers most often get wrong. A `-` is
@@ -4040,8 +4057,16 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
             }
             None
         };
-        if let Some(w) = re!(r"\bwhere\b").find(line)
+        // A where phrase: a qSQL keyword earlier in the statement, and the
+        // `=` before the phrase ends. `r:where s="ab"` is the where
+        // function on a comparison, and `a:where b; c:x="ab"` two statements.
+        let filter = re!(r"\bwhere\b").find_iter(line).find(|w| {
+            let head = &line[line[..w.start()].rfind(';').map_or(0, |p| p + 1)..w.start()];
+            re!(r"\b(?:select|exec|update|delete)\b").is_match(head)
+        });
+        if let Some(w) = filter
             && let Some(op) = comparison(w.end())
+            && op < phrase_end(line, w.end())
         {
             add(
                 offset + op,

@@ -223,7 +223,7 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
             "QB015",
             "t:([]s:`ab`cd);r:select from t where s=\"ab\"",
             "t:([]s:`ab`cd);r:select from t where s like \"ab\"",
-            true,
+            false,
         ),
         ("QP005", "r:2*3+4", "r:2*(3+4)", true),
         ("QP005", "a:1;r:a*a*a+1", "a:1;r:a*a*(a+1)", true),

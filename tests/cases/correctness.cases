@@ -347,6 +347,14 @@ f:{[t] select from t where a in `x, b like "="}
 === QB015 | and a real one after such a string is still found
 f:{[t] select from t where b like "=", c<>"ab"}
 
+=== clean | QB015: the where function on a comparison is not a filter (q 5: where s="ab" is 0 1)
+s:"ab"
+r:where s="ab"
+f:{where x="ab"}
+b:01b
+a:where b; c:s="ab"
+g:{[t] (select from t where b; s="ab")}
+
 === QB003 | a string joined inside sv string is split into characters
 m:"claimed by ",", " sv string clash," - two workers share it"
 
