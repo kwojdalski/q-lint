@@ -277,16 +277,24 @@ fn a_workspace_defines_names_for_the_files_around_it() {
 }
 
 #[test]
-fn a_name_another_file_also_assigns_is_not_tracked() {
+fn a_name_another_file_also_assigns_is_not_tracked_in_a_lambda() {
     use q_lint_rs::{Workspace, index, lint, lint_in};
     // Alone, a is the atom 1 and indexing it is 'type. With another file
-    // assigning a too, which value a read meets depends on load order.
-    let source = "a:1\nr:a[0]\n";
-    assert!(codes(&lint(source, "a.q", Profile::General)).contains(&"QT022"));
+    // assigning a too, which value a lambda's read meets depends on load
+    // order; a top-level read after this file's own assignment meets that
+    // one whatever was loaded first (q 5: 'type either way).
+    let lambda = "a:1\nf:{a[0]}\n";
+    assert!(codes(&lint(lambda, "a.q", Profile::General)).contains(&"QT022"));
     let mut ws = Workspace::default();
-    ws.add(&index(source));
+    ws.add(&index(lambda));
     ws.add(&index("a:1 2 3\n"));
-    assert!(!codes(&lint_in(source, "a.q", Profile::General, &ws)).contains(&"QT022"));
+    assert!(!codes(&lint_in(lambda, "a.q", Profile::General, &ws)).contains(&"QT022"));
+
+    let top = "a:1\nr:a[0]\n";
+    let mut ws = Workspace::default();
+    ws.add(&index(top));
+    ws.add(&index("a:1 2 3\n"));
+    assert!(codes(&lint_in(top, "a.q", Profile::General, &ws)).contains(&"QT022"));
 }
 
 #[test]

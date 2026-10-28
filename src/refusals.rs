@@ -11,7 +11,7 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
         .replace_all(code, |m: &regex::Captures| " ".repeat(m[0].len()))
         .into_owned();
     attributes(path, source, code, comments, &mut out);
-    temporals(path, source, &unsym, &mut out);
+    temporals(path, source, comments, &unsym, &mut out);
     missing_from(path, source, code, &unsym, &mut out);
     signals(path, source, code, comments, &mut out);
     where_assignment(path, source, code, &mut out);
@@ -110,10 +110,10 @@ fn number(token: &str) -> Option<Key> {
         .map(Key::Number)
 }
 
-/// QE006. A date or month that does not exist. q refuses the literal at parse:
+/// QE006. A date, month or time q refuses at parse. A date or month that does not exist:
 /// `2024.02.30` is '2024.02.30 and `2024.13m` is '2024.13; leap years are
 /// Gregorian, so 2000.02.29 parses and 1900.02.29 does not.
-fn temporals(path: &str, source: &str, unsym: &str, out: &mut Vec<Finding>) {
+fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Vec<Finding>) {
     // Minutes and seconds stop at 59 wherever they appear - a minute, second,
     // time, timespan or timestamp - while hours run on: q 5 refuses `12:60`,
     // `12:00:60` and `0D00:00:60`, and takes `25:00` and `0D25:00:00`.
@@ -137,6 +137,79 @@ fn temporals(path: &str, source: &str, unsym: &str, out: &mut Vec<Finding>) {
                     whole.as_str()
                 ),
             ));
+        }
+    }
+    // Minutes and seconds take two digits, and so does an hour: q 5 refuses
+    // `12:5`, `12:00:5`, `0D1:30` and `2023.01.01D1:30`, and takes `01:30`,
+    // `123:45` and `12:345` (as 12:34). A one-digit hour with nothing on its
+    // left is no literal at all - `1:30`, `x:1:30` and `(1:30)` are '1: at
+    // parse - while `h 1:30` is the dyadic `1:`, a file write, and is fine.
+    let mut refuse = |at: usize, text: &str, why: &str| {
+        out.push(Finding::at(
+            path,
+            source,
+            at,
+            "QE006",
+            format!("`{text}` is no time: {why}"),
+        ));
+    };
+    for m in re!(r"(\d+)[DT](\d):\d|(\d+):(\d+)(?::(\d+))?").captures_iter(unsym) {
+        let whole = m.get(0).unwrap();
+        let before = &unsym[..whole.start()];
+        let line = before.rfind('\n').map_or(0, |p| p + 1);
+        if unsym[line..].starts_with('\\') {
+            continue;
+        }
+        let rest = &unsym[whole.end()..];
+        let tail = rest.len()
+            - rest
+                .trim_start_matches(|c: char| c.is_ascii_digit() || c == ':')
+                .len();
+        if m.get(1).is_some() {
+            // `2023.01.01D1:30` matches from the date's last field.
+            let start = before
+                .trim_end_matches(|c: char| c.is_ascii_digit() || c == '.')
+                .len();
+            if boundary(unsym, start) {
+                refuse(
+                    start,
+                    &unsym[start..whole.end() + tail],
+                    "the hour takes two digits, and q refuses the literal",
+                );
+            }
+            continue;
+        }
+        // The hour starts the token, or follows the `D` of a timespan or the
+        // `D` or `T` of a timestamp or datetime.
+        let stamp = before.ends_with(['D', 'T'])
+            && before[..before.len() - 1].ends_with(|c: char| c.is_ascii_digit());
+        if !stamp && !boundary(unsym, whole.start()) {
+            continue;
+        }
+        let text = &unsym[whole.start()..whole.end() + tail];
+        if m[3].len() >= 2 {
+            if m[4].len() == 1 || m.get(5).is_some_and(|s| s.as_str().len() == 1) {
+                refuse(
+                    whole.start(),
+                    text,
+                    "minutes and seconds take two digits, and q refuses the literal",
+                );
+            }
+        } else if !stamp {
+            // Read in `comments`, which keeps symbols and strings: the left
+            // operand of `h 1:30` may be either.
+            let left = comments[..whole.start()].trim_end();
+            if whole.start() == line
+                || left.is_empty()
+                || left.ends_with(|c: char| ":([;{,+*%&|=<>~#$^!?@".contains(c))
+            {
+                refuse(
+                    whole.start(),
+                    text,
+                    "the hour takes two digits, and with nothing on its left q refuses \
+                     the `:` at parse",
+                );
+            }
         }
     }
     // A month has two digits: q 5 refuses `2023.1m`.
@@ -693,12 +766,32 @@ fn juxtaposed_derived(
     }
 }
 
+/// The narrow integer type a vector item is parsed as, and the largest
+/// magnitude it holds: its own `i` or `h` suffix, or the one after the last
+/// item of its vector. q 5 refuses `2147483648i`, `-2147483648i` (that is
+/// 0Ni's bit pattern, not a number) and `32768h`, and takes `2147483647i`.
+fn narrow(text: &str, last: &str) -> Option<(&'static str, u128)> {
+    let suffix = if re!(r"^\d+[hi]$").is_match(text) {
+        text
+    } else if re!(r"^\d+$").is_match(text) && re!(r"^\d+[hi]$").is_match(last) {
+        last
+    } else {
+        return None;
+    };
+    Some(if suffix.ends_with('i') {
+        ("an int", i32::MAX as u128)
+    } else {
+        ("a short", i16::MAX as u128)
+    })
+}
+
 /// QE010. A number q 5 will not parse. Each shape was refused by `parse`,
 /// which names the token: an integer type with a fraction (`1.5j`, and
 /// `1.5 2j`, where the suffix types every item), a suffix on any item but
 /// the last (`3i 4j`, `1e 2`), a boolean digit that is not 0 or 1 (`2b`), a
 /// letter that is no type (`1y`, `1d`, `1m`), dots that make no date
-/// (`1.2.3`, `2023.1.1`), and a long past 9223372036854775807. A boolean
+/// (`1.2.3`, `2023.1.1`), a long past 9223372036854775807, and an int or
+/// short past its own range (`2147483648i`, `32768h`). A boolean
 /// vector of atoms is not a vector at all - `1b 0b` parses, as two atoms -
 /// and `0N 1`, `3 4i`, `1e5` and `2023.01.01` are fine.
 fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Finding>) {
@@ -756,6 +849,15 @@ fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Find
                     .is_ok_and(|v| v > i64::MAX as u128)
             {
                 Some(format!("`{text}` does not fit in a long"))
+            } else if let Some((kind, max)) = narrow(text, last)
+                && text
+                    .trim_end_matches(['h', 'i'])
+                    .parse::<u128>()
+                    .is_ok_and(|v| v > max)
+            {
+                // The suffix types every item, so `1 2 2147483648i` overflows
+                // at its last item but one: q 5 refuses each with the number.
+                Some(format!("`{text}` does not fit in {kind}"))
             } else if k + 1 < run.len() && re!(r"^\d+(?:\.\d*)?[hijef]$").is_match(text) {
                 Some(format!(
                     "`{text}`: a vector literal takes one type suffix, after its last item"

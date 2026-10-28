@@ -502,6 +502,41 @@ t:([]a:1 2)
 s:([]a:1 2;b:3 4)
 r:lj[t;`a xkey s]
 
+=== QT022 profile: general | a trailing comment does not hide what a name holds (q 5: 'type)
+a:"x" / note
+r:a[0]
+
+=== clean profile: general | nor make a handle an ordinary atom: \t:n times a[20;5] n times
+a:{x+y}
+n:10 / note
+\t:n a[20;5]
+
+=== QT003 profile: general | a glyph applied with brackets is the infix (q 5: +[1;`a] is 'type)
+r:+[1;`a]
+
+=== QT015 profile: general | a comparison applied with brackets (q 5: <=[1;`a] is 'type)
+s:<=[1;`a]
+
+=== QT006 profile: general | so is a pairing glyph on two vectors (q 5: +[1 2 3;4 5] is 'length)
+t:+[1 2 3;4 5]
+
+=== QT001 profile: general | and ! on keys and values (q 5: ![`a`b;1 2 3] is 'length)
+d:![`a`b;1 2 3]
+
+=== QT006 profile: general | each-both pairs items too (q 5: 1 2 3,'4 5 is 'length)
+u:1 2 3,'4 5
+
+=== clean profile: general | brackets that fit, a projection, and an atom each-both (q 5: 3, 4 6, 0b, +[;`a], (1 3;2 3))
+a:+[1;2]
+b:+[1 2;3 4]
+c:(=[`a;`b])
+d:~[1;`a]
+e:,[1;`a]
+f:+[;`a]
+g:1 2,'3
+h:![`a`b;1 2]
+k:`a`b,'`c`d
+
 === QT003 QT006 QT008 profile: general | a qSQL phrase ends an operand at from, by, where and a column's comma (q 5: each is 'type or 'length)
 r1:select b:1+`x from t
 r2:select b:til 1.5 from t

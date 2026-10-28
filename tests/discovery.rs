@@ -487,23 +487,23 @@ fn a_closed_pipe_ends_the_run_quietly() {
 
 #[test]
 fn a_lambda_another_file_defines_is_called_not_applied_to_a_literal() {
-    // QB010: `shift -1` applies an atom when this file binds shift to one,
-    // but is a call when another file linted with it defines shift as a
-    // lambda: which one a read meets depends on load order.
+    // QB010: inside a lambda, `shift -1` meets whatever shift holds when it
+    // is called, and another file linted with this one defines it as a
+    // lambda, so it may be a call. At the top level the read follows this
+    // file's own `shift:3` whatever was loaded first: q 5 loading lib.q then
+    // app.q raises 'domain there (#148).
     let repo = Repo::new();
     repo.write("lib.q", "shift:{x+1}\n")
-        .write("app.q", "shift:3\nr:shift -1\n");
-    assert_eq!(
-        repo.codes(
-            ".",
-            &["--isolated", "--profile", "general", "lib.q", "app.q"]
-        ),
-        Vec::<String>::new()
-    );
-    assert_eq!(
-        repo.codes(".", &["--isolated", "--profile", "general", "app.q"]),
-        ["QB010"]
-    );
+        .write("app.q", "shift:3\nr:shift -1\n")
+        .write("late.q", "shift:3\ng:{shift -1}\n");
+    let general = |files: &[&str]| {
+        let mut args = vec!["--isolated", "--profile", "general"];
+        args.extend(files);
+        repo.codes(".", &args)
+    };
+    assert_eq!(general(&["lib.q", "app.q"]), ["QB010"]);
+    assert_eq!(general(&["app.q"]), ["QB010"]);
+    assert_eq!(general(&["lib.q", "late.q"]), Vec::<String>::new());
 }
 
 #[test]

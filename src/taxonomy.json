@@ -38,7 +38,7 @@
     "code": "QE006",
     "name": "impossible-temporal",
     "category": "syntax",
-    "summary": "A date or month that does not exist, which q refuses to parse",
+    "summary": "A date, month or time q refuses to parse: a day that does not exist, a minute past 59, a one-digit field",
     "scope": "builtin"
   },
   {
@@ -66,7 +66,7 @@
     "code": "QE010",
     "name": "malformed-number",
     "category": "syntax",
-    "summary": "A number q 5 cannot parse: 1.5j, 2b, 3i 4j, 1y, 1.2.3, or a long that overflows",
+    "summary": "A number q 5 cannot parse: 1.5j, 2b, 3i 4j, 1y, 1.2.3, or an integer that overflows its type (2147483648i, 32768h)",
     "scope": "builtin"
   },
   {

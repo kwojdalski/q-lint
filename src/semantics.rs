@@ -238,6 +238,58 @@ fn top_level_statements<'a>(code: &'a str, raw: &str) -> Vec<(usize, &'a str)> {
     statements
 }
 
+/// A glyph applied with brackets to two whole slots, `+[l;r]`, is the infix
+/// `l+r`, and fails the same way: q 5 `+[1;`a]` and `=[1;`a]` are 'type,
+/// `+[1 2 3;4 5]` and `![`a`b;1 2 3]` 'length. Only literal slots are read,
+/// so this is QT003, QT015, QT006 and QT001 for the bracket spelling - the
+/// length first, since q 5 checks it first (`+[`a`b;1 2 3]` is 'length).
+fn glyph_brackets(path: &str, raw: &str, code: &str, out: &mut Vec<Finding>) {
+    let symbol = |s: &str| re!(r"^(?:`[A-Za-z][A-Za-z0-9_.]*)+$").is_match(s);
+    let number = |s: &str| re!(r"^-?\d[A-Za-z0-9.:]*(?:[ \t]+-?\d[A-Za-z0-9.:]*)*$").is_match(s);
+    for m in re!(r"(<=|>=|<>|[+\-*%&|=<>^!])\[").captures_iter(code) {
+        let glyph = m.get(1).unwrap();
+        let open = m.get(0).unwrap().end() - 1;
+        let Some(close) = matching(code, open, b'[', b']') else {
+            continue;
+        };
+        let [l, r] = crate::slots(&code[open + 1..close - 1])[..] else {
+            continue;
+        };
+        let (l, r) = (l.trim(), r.trim());
+        if l.is_empty() || r.is_empty() || re!(r"\n\S").is_match(&code[open..close]) {
+            continue;
+        }
+        let g = glyph.as_str();
+        let text = &raw[glyph.start()..close];
+        let (code, detail) = match (shape(l), shape(r)) {
+            (Some(k), Some(v)) if g == "!" && k >= 2 && k != v => (
+                "QT001",
+                format!("Literal dictionary has {k} keys and {v} values"),
+            ),
+            (Some(a), Some(b)) if g != "!" && a >= 2 && b >= 2 && a != b => (
+                "QT006",
+                format!("`{g}` pairs a {a}-vector with a {b}-vector; that is a 'length error"),
+            ),
+            _ if "+-*%&|".contains(g) && (symbol(l) || symbol(r)) => (
+                "QT003",
+                "Arithmetic on a symbol literal is a 'type error at runtime".into(),
+            ),
+            _ if ["=", "<", ">", "<=", ">=", "<>"].contains(&g)
+                && ((symbol(l) && number(r)) || (number(l) && symbol(r))) =>
+            {
+                (
+                    "QT015",
+                    format!(
+                        "`{text}` is 'type: a symbol compares with a symbol, not with a number or a string"
+                    ),
+                )
+            }
+            _ => continue,
+        };
+        out.push(Finding::at(path, raw, glyph.start(), code, detail));
+    }
+}
+
 fn shape(s: &str) -> Option<usize> {
     let s = s.trim();
     if re!(r"\n\S").is_match(s) {
@@ -856,14 +908,15 @@ pub fn check(
     }
     // Two literal vectors either side of an infix that pairs elements must
     // agree in length, or the line is a 'length error - `1 2 3+4 5` and
-    // `` `a`b=`a`b`c `` alike. `,` joins anything and is not in the set. A
-    // `-` with space before and none after is a negative literal rather than
+    // `` `a`b=`a`b`c `` alike. `,` joins anything and is not in the set, but
+    // each-both pairs items whatever it derives from: q 5 `1 2 3,'4 5` and
+    // `1 2 3+'4 5` are 'length. A `-` with space before and none after is a negative literal rather than
     // the operator (`1 2 3 -1 2` is one five-vector), and is skipped.
     // An operand is a symbol vector, a numeric vector, a byte vector with at
     // least two items, or a parenthesised list. `shape` decides the length of
     // each; this pattern only has to find them.
     for m in re!(
-        r"(?P<l>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*;[^()]*\))\s*(?P<op><>|<=|>=|[+*%&|=<>^-]|\b(?:and|or|mod|div|xexp|xlog)\b)\s*(?P<r>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*;[^()]*\))"
+        r"(?P<l>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*;[^()]*\))\s*(?P<op>(?:<>|<=|>=|[+*%&|=<>^-]|\b(?:and|or|mod|div|xexp|xlog)\b)'?|,')\s*(?P<r>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*;[^()]*\))"
     )
     .captures_iter(code)
     {
@@ -903,6 +956,7 @@ pub fn check(
             ));
         }
     }
+    glyph_brackets(path, raw, code, &mut out);
     // Dynamic evaluation is where the global-name checks stop being
     // reliable: `\l`, `eval`, `system "l ..."` and `value` on a string can
     // all define globals this file never spells out, and QF005, QF010 and
@@ -2033,13 +2087,8 @@ fn named_values(
     let mut handles: HashSet<&str> = HashSet::new();
     // A file that evaluates strings can define anything, so nothing is known
     // by name there; the literal-only checks below still hold.
-    // Nor in a workspace where another file assigns the name too: which of
-    // the two a read meets depends on load order, which the text cannot say.
     for (name, at) in writes.iter().filter(|_| !dynamic) {
         let [at] = at[..] else { continue };
-        if elsewhere(name) {
-            continue;
-        }
         if scope_at(scopes, at).is_some() || !boundary(code, at) {
             continue;
         }
@@ -2067,24 +2116,30 @@ fn named_values(
             }
             end += 1;
         }
-        if let Some(value) = held(&code[start..end], &raw[start..end]) {
+        if let Some(value) = held(&code[start..end], &comments[start..end]) {
             // `0N` and `0W` are integers too: uqf's tick.q starts a log
             // handle as `0N` and sets it with hopen later.
-            if re!(r"^\s*-?(?:\d+|0[NW])[hij]?\s*$").is_match(&raw[start..end]) {
+            if re!(r"^\s*-?(?:\d+|0[NW])[hij]?\s*$").is_match(&comments[start..end]) {
                 handles.insert(name);
             }
             known.insert(name, (end, value));
-            if let Some(kind) = arithmetic_kind(&raw[start..end]) {
+            if let Some(kind) = arithmetic_kind(&comments[start..end]) {
                 kinds.insert(name, kind);
             }
         }
     }
     // A read sees the global only after it is assigned, at the top level, and
-    // only where no local of the same name hides it.
+    // only where no local of the same name hides it. Where another file of
+    // the workspace assigns the name too, a lambda body may run after either
+    // assignment, which load order decides and the text cannot say; but a
+    // top-level read after this file's own assignment meets that one,
+    // whatever was loaded before (q 5: `g:{x}` loaded, then `g:2.5` + `g 0`,
+    // is 'type).
     let visible = |name: &str, at: usize| -> Option<&Held> {
         let (assigned, value) = known.get(name)?;
         match scope_at(scopes, at) {
             Some(s) if scopes[s].locals.contains(name) => None,
+            Some(_) if elsewhere(name) => None,
             None if at < *assigned => None,
             _ => Some(value),
         }

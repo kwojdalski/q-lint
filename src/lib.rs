@@ -1691,33 +1691,42 @@ fn views(source: &str) -> Views {
     let bytes = source.as_bytes();
     let mut comments = bytes.to_vec();
     let mut code = bytes.to_vec();
-    let (mut string, mut block, mut ended, mut offset) = (None, false, false, 0);
+    let (mut string, mut block, mut ended, mut offset) = (None, 0usize, false, 0);
     let mut foreign = false;
     let mut foreign_offsets = Vec::new();
     let mut open_block = None;
     let mut script_end = None;
     let mut string_starts = Vec::new();
-    // Before the first statement, an indented line under a column-0 comment
-    // is more of that comment: q 5 loads `/ c` + `  b:1` and leaves b
-    // undefined. System commands do not count as statements here.
-    let (mut statement, mut heading) = (false, false);
+    let mut unterminated = None;
+    // Before the first statement, an indented line continues nothing, and q
+    // drops it: q 5 loads `/ c` + `  b:1`, `/ c` + blank + `  b:1`,
+    // `\d .foo` + `  b:1` and a file starting `  b:1` all leaving b
+    // undefined. Comments, blank lines and system commands are not
+    // statements, so none of them ends that stretch.
+    let mut statement = false;
     for line in source.split_inclusive('\n') {
         let end = offset + line.len();
         let stripped = line.trim_end_matches(['\r', '\n', ' ', '\t']);
-        if !ended && !block && string.is_none() && !statement {
-            if heading && line.starts_with([' ', '\t']) && !stripped.trim().is_empty() {
+        // A string runs on over indented and blank lines only. A line at
+        // column 0 starts a statement, so q 5 refuses `s:"abc` + `def"` with
+        // '" - and the lambda around such a string with '{ - and reads that
+        // line as code.
+        if string.is_some() && !stripped.is_empty() && !line.starts_with([' ', '\t']) {
+            unterminated = unterminated.or(string.take());
+        }
+        if !ended && block == 0 && string.is_none() && !statement {
+            if line.starts_with([' ', '\t']) && !stripped.trim().is_empty() {
                 blank(&mut comments[offset..end]);
                 blank(&mut code[offset..end]);
                 offset = end;
                 continue;
             }
-            heading = line.starts_with('/') && stripped != "/";
-            statement = !heading && !stripped.is_empty() && !line.starts_with(['\\', ' ', '\t']);
+            statement = !stripped.is_empty() && !line.starts_with(['\\', '/', ' ', '\t']);
         }
         if foreign && !(line.starts_with([' ', '\t']) || stripped.is_empty()) {
             foreign = false;
         }
-        if !ended && !block && string.is_none() {
+        if !ended && block == 0 && string.is_none() {
             // Any `x)` line is another language: q hands it to `.x.e`, which
             // is how `p)` reaches embedPy and `k)` reaches k, and a test
             // harness may define `.t.e` for `t)`. `q)` is q itself, and its
@@ -1739,21 +1748,28 @@ fn views(source: &str) -> Views {
         } else {
             0
         };
-        if ended || block {
+        if ended || block > 0 {
             blank(&mut comments[offset..end]);
             blank(&mut code[offset..end]);
-            if block && stripped == "\\" {
-                block = false;
-                open_block = None;
+            // Block comments nest: inside one, a bare `/` opens another and
+            // a bare `\` closes the innermost. q 5 loads `/`,`/`,`\`,`f:..`,
+            // `\`,`g:..` as g alone. `/ x` is a comment line and nests nothing.
+            if block > 0 && stripped == "/" {
+                block += 1;
+            } else if block > 0 && stripped == "\\" {
+                block -= 1;
+                if block == 0 {
+                    open_block = None;
+                }
             }
         } else if string.is_none() && matches!(stripped, "/" | "\\" | "\\\\") {
             // `\\` exits q, so a script ends there as it does at a lone `\`.
-            block = stripped == "/";
+            block = usize::from(stripped == "/");
             ended = stripped != "/";
             if ended {
                 script_end = Some(offset);
             }
-            if block {
+            if block > 0 {
                 open_block = Some(offset);
             }
             blank(&mut comments[offset..end]);
@@ -1797,7 +1813,7 @@ fn views(source: &str) -> Views {
     Views {
         comments: String::from_utf8(comments).unwrap(),
         code: String::from_utf8(code).unwrap(),
-        unterminated: string,
+        unterminated: unterminated.or(string),
         foreign_offsets,
         open_block,
         string_starts,
@@ -2630,7 +2646,7 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
         // `&` and `|` are min and max, and 'type on a symbol too, as are the
         // word operators (q 5: `a&`b, `a mod 2, 2 xexp `a). Not `^`: a
         // symbol fills a symbol list (`none^s).
-        re!(r"(?:`[A-Za-z][A-Za-z0-9_.]*)+(?:[ \t]*[+\-*%&|]|[ \t]+(?:mod|div|xexp|xlog|and|or)[ \t])|(?:[+\-*%&|]|[ \t](?:mod|div|xexp|xlog|and|or)[ \t]+)[ \t]*(?:`[A-Za-z][A-Za-z0-9_.]*)+")
+        re!(r"(?:`[A-Za-z][A-Za-z0-9_.]*)+(?:[ \t]*[+\-*%&|]|[ \t]+(?:mod|div|xexp|xlog|and|or)[ \t])|(?:[+\-*%&|](?:[ \t]*\r?\n[ \t]+|[ \t]*)|[ \t](?:mod|div|xexp|xlog|and|or)(?:[ \t]*\r?\n[ \t]+|[ \t]+))(?:`[A-Za-z][A-Za-z0-9_.]*)+")
             .find_iter(code)
     {
         let at = m.start();
@@ -2813,6 +2829,19 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
             .trim_start_matches([' ', '\t'])
             .starts_with([';', '\n', '\r'])
             && !code[end..].trim_start_matches([' ', '\t']).is_empty()
+        {
+            continue;
+        }
+        // A newline ends it only when the next line is not indented: q 5
+        // reads `f:{[a] a}` + `  f[1;2]` as one expression, and refuses it
+        // with 'f, since the right is evaluated before f is assigned. Blank
+        // and comment lines between do not end it either.
+        let next = code[end..].trim_start();
+        let at = code.len() - next.len();
+        let line = source[..at].rfind('\n').map_or(0, |p| p + 1);
+        if !next.is_empty()
+            && !next.starts_with([';', ')', ']', '}'])
+            && source[line..].starts_with([' ', '\t'])
         {
             continue;
         }
