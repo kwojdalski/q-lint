@@ -700,7 +700,7 @@ fn loads(code: &str, raw: &str, view: &str) -> Vec<String> {
 }
 
 /// The places a name is reached by a value computed at run time, which no
-/// amount of reading resolves: `value "..."`, `get` of anything but a
+/// amount of reading resolves: `value "..."`, `get` or `value` of anything but a
 /// literal, a name built with `` ` sv ``, `set` into a computed name, and a
 /// load whose path is concatenated. `view` is the code view with system
 /// commands blanked; `raw` says whether a blank was a string.
@@ -721,14 +721,20 @@ fn dynamic(raw: &str, view: &str) -> Vec<crate::Dynamic> {
         }
     }
     // A symbol literal after `get` is a read the names already hold, and
-    // `` `:path `` or `hsym` reads a file, not a global.
-    for m in re!(r"\bget\b").find_iter(view) {
+    // `` `:path `` or `hsym` reads a file, not a global. `value` is the
+    // same function - q 5: `get~value` is 1b - so `value nm` reaches a
+    // name as unseen as `get nm` does; a string after it is reported above.
+    for m in re!(r"\b(?:get|value)\b").find_iter(view) {
         let after = next(m.end());
+        let string = raw[m.end()..]
+            .trim_start_matches([' ', '\t'])
+            .starts_with('"');
         if boundary(view, m.start())
+            && !(string && m.as_str() == "value")
             && !after.starts_with(['`', ':'])
             && !re!(r"^hsym\b").is_match(after)
         {
-            push(m.start(), "get");
+            push(m.start(), if m.as_str() == "get" { "get" } else { "value" });
         }
     }
     // `` ` sv `` joins parts into a name - or, before `` `: ``, into a path.

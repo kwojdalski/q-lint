@@ -218,12 +218,20 @@ x:get `:data/t
 y:get hsym `t
 z:get `.a.b
 w:` sv `:dir`file
-v:value d
+v:value `.a.b
+s:value hsym `t
 u:{value \"1\"}
 ";
     let g = graph(&[("static.q", source)], false);
     // Only the string handed to `value` is out of reach.
-    assert_eq!(kinds(&g, "static.q"), [(10, "value")]);
+    assert_eq!(kinds(&g, "static.q"), [(11, "value")]);
+}
+
+#[test]
+fn value_of_a_name_is_as_dynamic_as_get_of_one() {
+    // q 5: `get~value` is 1b - the same function, so the same blind spot.
+    let g = graph(&[("dyn.q", "nm:`x\nr:get nm\ns:value nm\n")], false);
+    assert_eq!(kinds(&g, "dyn.q"), [(2, "get"), (3, "value")]);
 }
 
 #[test]
