@@ -363,6 +363,19 @@ fn a_config_flags_patterns_are_rooted_at_the_current_directory() {
 }
 
 #[test]
+fn a_per_file_ignore_starting_with_a_bang_applies_to_every_other_file() {
+    let repo = Repo::new();
+    repo.write(
+        "qlinter.toml",
+        "profile = \"style\"\n[lint.per-file-ignores]\n\"!tests/*\" = [\"QF016\"]\n",
+    )
+    .write("tests/t.q", SOURCE)
+    .write("src/s.q", SOURCE);
+    assert_eq!(repo.codes(".", &["tests/t.q"]), ["QF016"]);
+    assert!(repo.codes(".", &["src/s.q"]).is_empty());
+}
+
+#[test]
 fn a_selector_that_names_no_rule_is_refused() {
     let repo = Repo::new();
     repo.write("a.q", SOURCE)

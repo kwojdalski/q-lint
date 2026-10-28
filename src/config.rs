@@ -283,10 +283,9 @@ fn names(selector: &str, code: &str) -> bool {
 
 fn per_file_ignored(settings: &Settings, code: &str, path: &Path) -> bool {
     let full = absolute(path);
-    settings
-        .per_file_ignores
-        .iter()
-        .any(|(glob, codes)| codes.iter().any(|s| names(s, code)) && matches(&full, glob))
+    settings.per_file_ignores.iter().any(|(glob, codes)| {
+        codes.iter().any(|s| names(s, code)) && matches(&full, glob) != glob.negated
+    })
 }
 
 /// Ruff's matching: a pattern is tried against the path relative to the
@@ -299,6 +298,7 @@ fn matches(full: &Path, glob: &Glob) -> bool {
         root,
         pattern,
         anywhere,
+        ..
     } = glob;
     let anywhere = *anywhere;
     // On Windows a canonicalized pattern root is `\\?\C:\...` while the walk
@@ -527,9 +527,15 @@ fn load(path: &Path, depth: usize, patterns: Option<&Path>) -> Result<Option<Set
                         .and_then(|s| selector("per-file-ignores", s))
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            settings
-                .per_file_ignores
-                .push((rooted(patterns.unwrap_or(&root), glob)?, codes));
+            // An initial `!` negates the pattern, in per-file-ignores only:
+            // Ruff's `exclude` has no negation.
+            let (text, negated) = match glob.trim().strip_prefix('!') {
+                Some(rest) => (rest, true),
+                None => (glob.as_str(), false),
+            };
+            let mut rooted = rooted(patterns.unwrap_or(&root), text)?;
+            rooted.negated = negated;
+            settings.per_file_ignores.push((rooted, codes));
         }
     }
     Ok(Some(settings))
@@ -558,6 +564,9 @@ pub struct Glob {
     /// A bare name, `generated`, which matches a file or directory of that
     /// name anywhere below the root, not only at it.
     anywhere: bool,
+    /// A per-file-ignores pattern written `!tests/*`, which applies to every
+    /// file the rest of it does not match, as Ruff's does.
+    negated: bool,
 }
 
 /// `text` as a pattern rooted at `root`. Ruff joins every pattern to its
@@ -582,6 +591,7 @@ pub fn rooted(root: &Path, text: &str) -> Result<Glob, String> {
             root: absolute(&literal),
             pattern: pattern(&tail.to_string_lossy().replace('\\', "/"))?,
             anywhere: false,
+            negated: false,
         });
     }
     let mut rest = trimmed;
@@ -592,6 +602,7 @@ pub fn rooted(root: &Path, text: &str) -> Result<Glob, String> {
         root: root.to_path_buf(),
         pattern: pattern(rest)?,
         anywhere: rest == trimmed && !rest.trim_end_matches('/').contains('/'),
+        negated: false,
     })
 }
 
