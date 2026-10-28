@@ -2508,11 +2508,45 @@ fn named_values(
             .unwrap()
             .as_str();
         let r = m.name("r1").or(m.name("r2")).or(m.name("r3")).unwrap();
+        let mut rows = vec![];
         let (values, end) = if r.as_str() == "(" {
             let Some(close) = matching(code, r.start(), b'(', b')') else {
                 continue;
             };
-            (crate::slots(&code[r.start() + 1..close - 1]).len(), close)
+            let slots = crate::slots(&code[r.start() + 1..close - 1]);
+            // upsert also takes a list of rows: q 5 runs
+            // `t upsert ((1;`a);(3;`b);(5;`c))` on a two-column t, and
+            // `s upsert (1 2;3 4;5 6)`, where insert raises 'length. Read
+            // that only when every slot is a row - a list in parentheses or a
+            // vector literal - since a mix such as `(1 2;3;4)` runs with the
+            // atoms extended; a row whose count is not the columns' is still
+            // 'length.
+            if op == "upsert" {
+                let row = |slot: &str| -> Option<usize> {
+                    let slot = slot.trim();
+                    if slot.starts_with('(') && matching(slot, 0, b'(', b')') == Some(slot.len()) {
+                        let n = crate::slots(&slot[1..slot.len() - 1]).len();
+                        return (n > 1).then_some(n);
+                    }
+                    re!(r"^(?:-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+|(?:`[A-Za-z0-9_.]*){2,})$")
+                        .is_match(slot)
+                        .then(|| {
+                            if slot.starts_with('`') {
+                                slot.matches('`').count()
+                            } else {
+                                slot.split_whitespace().count()
+                            }
+                        })
+                };
+                let read: Vec<_> = slots.iter().map(|s| row(s)).collect();
+                if read.iter().any(Option::is_some) {
+                    if read.iter().any(Option::is_none) {
+                        continue;
+                    }
+                    rows = read.into_iter().flatten().collect();
+                }
+            }
+            (slots.len(), close)
         } else {
             (r.as_str().split_whitespace().count(), r.end())
         };
@@ -2528,7 +2562,14 @@ fn named_values(
         let Some(Held::Table(columns, _)) = visible(table.as_str(), table.start()) else {
             continue;
         };
-        if values > 1 && values != columns.len() {
+        let message = if rows.is_empty() {
+            (values > 1 && values != columns.len()).then(|| format!("{values} values"))
+        } else {
+            rows.iter()
+                .find(|&&n| n != columns.len())
+                .map(|n| format!("A row of {n} values"))
+        };
+        if let Some(message) = message {
             out.push(Finding::at(
                 path,
                 raw,
@@ -2540,7 +2581,7 @@ fn named_values(
                 },
                 "QT027",
                 format!(
-                    "{values} values for the {} columns of `{}`: '{op}' raises 'length",
+                    "{message} for the {} columns of `{}`: '{op}' raises 'length",
                     columns.len(),
                     table.as_str(),
                 ),

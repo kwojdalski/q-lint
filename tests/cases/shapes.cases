@@ -490,6 +490,24 @@ r1:insert[`t;(1;2)]
 r2:t upsert (1;2)
 r3:`t insert 1 2
 
+=== QT027 | insert of a list of rows, or upsert of a row of the wrong count (q 5: 'length)
+t:([]a:1 2;b:`x`y)
+k:([]a:1 2;b:3 4;c:5 6)
+s:([]a:1 2;b:3 4)
+r1:`t insert ((1;`a);(3;`b);(5;`c))
+r2:k upsert (1 2;3 4)
+r3:t upsert ((1;`a);(3;`b;`c))
+r4:upsert[`s;(1 2 3;4 5 6)]
+
+=== clean | upsert takes a list of rows, or a mix it extends (q 5: each runs)
+t:([]a:1 2;b:`x`y)
+s:([]a:1 2;b:3 4)
+r1:t upsert ((1;`a);(3;`b);(5;`c))
+r2:s upsert (1 2;3 4;5 6)
+r3:`s upsert (1 2;3 4;5 6)
+r4:upsert[`s;(1 2;3 4;5 6)]
+r5:s upsert (1 2;3;4)
+
 === QT026 | ljf, and the bracket form, with an unkeyed right table (q 5: 'type)
 t:([]a:1 2)
 s:([]a:1 2;b:3 4)
