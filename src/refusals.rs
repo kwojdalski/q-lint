@@ -479,7 +479,7 @@ fn atom_literal(lit: &str) -> bool {
 }
 
 /// QE008. A glyph applied to one argument by juxtaposition. q 5 has no
-/// monadic form for any of them: `-x`, `,x`, `#x`, `~x`, `a:-x` and `1*-x`
+/// monadic form for any of them: `-x`, `,x`, `#x`, `~x`, `_x`, `a:-x` and `1*-x`
 /// are each refused by `parse` with the glyph as the error, and a lambda
 /// holding one is refused when the script defines it. `-1` is a literal,
 /// `(#)x` and `-:` are fine, and after an operand the glyph is dyadic.
@@ -491,7 +491,9 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
             line_start = i;
         }
         // Not in a string or a comment, nor on a system command or `#!` line.
-        if !GLYPHS.contains(&g)
+        // `_` too: `_x`, `_1.5` and `1+_x` are '_ in q 5, while `x _1`,
+        // `1 _x` and the `_` inside `x_y` follow an operand.
+        if !(GLYPHS.contains(&g) || g == b'_')
             || code.as_bytes()[i] != g
             || b[line_start] == b'\\'
             || comments[line_start..].starts_with("#!")

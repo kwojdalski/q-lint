@@ -126,6 +126,23 @@ e:,x
 g:#x
 h:{[y] ~y}
 
+=== QE008 profile: general | drop has no monadic form either (q 5: _x, _1.5, (_x) and 1+_x are '_)
+r:_x
+s:_1.5
+t:(_x)
+u:1+_x
+v:{_x}
+
+=== clean profile: general | drop after an operand, and _ inside a name
+a:x _1
+b:1 _x
+c:x_y
+d:.a._b
+e:0N_x
+f:3_ns
+g:a_ -x
+h:(_)x
+
 === clean profile: general | a negative literal, a glyph in parentheses, an amend
 a:-1
 b:-.5
