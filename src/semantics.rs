@@ -326,7 +326,13 @@ fn shape(s: &str) -> Option<usize> {
     if re!(r"^(?:`[A-Za-z][A-Za-z0-9_.]*)+$").is_match(s) {
         return Some(s.bytes().filter(|&b| b == b'`').count());
     }
-    if re!(r"^-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?[bhijef]?(?:\s+-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?[bhijef]?)*$").is_match(s) {return Some(s.split_whitespace().count());}
+    // Numbers, a null or an infinity among them: `0N 0N` is two items and
+    // `0W 1` two, as q 5's 'length on `` `a`b`c!0N 0N `` and `0W 1+1 2 3` shows.
+    if re!(r"^(?:-?(?:(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?[bhijef]?|0[nNwW][a-z]?)(?:\s+|$))+$")
+        .is_match(s)
+    {
+        return Some(s.split_whitespace().count());
+    }
     None
 }
 /// The context a top-level line switches to, if it switches: `""` for the

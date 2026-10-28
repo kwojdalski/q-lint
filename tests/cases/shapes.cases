@@ -323,6 +323,25 @@ r:(1;2;3)+4 5
 === clean | the same shapes at matching lengths
 r:1 2+0x0102
 
+=== QT001 | a null or an infinity is an item like any other (q 5: `a`b`c!0N 0N is 'length)
+d:`a`b`c!0N 0N
+e:`a`b!0N 0N 0N
+
+=== QT006 | under an operator too (q 5: 1 2=0n 1 2 and 0W 1+1 2 3 are 'length)
+r:1 2=0n 1 2
+s:0W 1+1 2 3
+t:1 2 3*-0w 1
+
+=== QT001 QT006 | applied with brackets (q 5: +[0N 1;1 2 3] and ![`a`b;0N 1 2] are 'length)
+r:+[0N 1;1 2 3]
+d:![`a`b;0N 1 2]
+
+=== clean | nulls and infinities at matching lengths (q 5: each runs)
+d:`a`b!0N 0N
+r:1 2 3=0n 1 2
+s:0W 1+1 2
+t:0N+1 2 3
+
 === QT001 | the keys need not be symbols: a parenthesised list
 d:(1;2;3)!1 2
 
