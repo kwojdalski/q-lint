@@ -87,6 +87,22 @@ c:2
 
   b:1+`a
 
+=== QT003 profile: general | an operand continued onto an indented line (q 5: a:1+ then   `a is 'type)
+a:1+
+  `a
+b:3 mod
+  `a
+
+=== QT008 profile: general | so is a builtin's argument (q 5: r:til then   1.5 is 'type)
+r:til
+  1.5
+
+=== clean profile: general | at column 0 the next line is a statement of its own (q 5: +[1] and 1.5)
+a:1+
+`a
+r:til
+1.5
+
 === clean | \\ exits, so nothing after it is read (q 5 stops there)
 a:1
 \\
