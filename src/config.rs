@@ -297,6 +297,9 @@ fn matches(full: &Path, glob: &Glob) -> bool {
         anywhere,
     } = glob;
     let anywhere = *anywhere;
+    // On Windows a canonicalized pattern root is `\\?\C:\...` while the walk
+    // yields `C:\...`, and the two never share a prefix.
+    let (full, root) = (&plain(full), &plain(root));
     // The walk asks about every directory before entering it, so a name
     // pattern is checked against the path's own name too - wherever the walk
     // started, which may be above or beside the root.
@@ -526,6 +529,16 @@ fn load(path: &Path, depth: usize, patterns: Option<&Path>) -> Result<Option<Set
         }
     }
     Ok(Some(settings))
+}
+
+/// `path` without Windows' verbatim prefix: `\\?\C:\x` is `C:\x`. Any
+/// other path, and every path elsewhere, is returned as it is.
+fn plain(path: &Path) -> PathBuf {
+    let text = path.to_string_lossy();
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => PathBuf::from(rest),
+        _ => path.to_path_buf(),
+    }
 }
 
 pub fn pattern(text: &str) -> Result<glob::Pattern, String> {
