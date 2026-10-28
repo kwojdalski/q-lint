@@ -481,6 +481,44 @@ fn semantic_tokens_colour_calls_and_parameters_at_utf16_positions() {
 }
 
 #[test]
+fn a_lone_carriage_return_is_a_line_break_to_the_client() {
+    // LSP ends a line at `\n`, `\r\n` and a lone `\r`; q only at `\n`. The
+    // `\r` inside the comment puts every position after it one client line
+    // lower than q's count - diagnostics, code actions and tokens alike -
+    // while `\r\n` stays one break.
+    for (text, line) in [
+        ("a:1 / note\rmore\nc:1==1\nf:{[a] a+1}\n", 2),
+        ("a:1 / note\r\nc:1==1\r\nf:{[a] a+1}\r\n", 1),
+    ] {
+        // A server each: a second open document would be republished too.
+        let mut server = Server::start();
+        server.initialize();
+        let uri = format!("file:///tmp/cr{line}.q");
+        server.open(&uri, text);
+        let diagnostics = server.diagnostics_for(&uri);
+        let equality: Vec<Value> = diagnostics
+            .iter()
+            .filter(|d| d["code"] == "QE004")
+            .cloned()
+            .collect();
+        let range = json!({"start":{"line":line,"character":3},"end":{"line":line,"character":5}});
+        assert_eq!(equality.len(), 1, "{diagnostics:?}");
+        assert_eq!(equality[0]["range"], range, "{text:?}");
+        let actions = server.code_actions(&uri, &equality);
+        assert_eq!(actions.len(), 1, "{actions:?}");
+        assert_eq!(actions[0]["edit"]["changes"][&uri][0]["range"], range);
+        server.send(
+            json!({"jsonrpc":"2.0","id":31,"method":"textDocument/semanticTokens/full",
+            "params":{"textDocument":{"uri":uri}}}),
+        );
+        let reply = server.receive();
+        // `a` read at col 7 of the lambda's line.
+        assert_eq!(reply["result"]["data"], json!([line + 1, 7, 1, 1, 0]));
+        assert_eq!(server.shutdown_and_exit(), 0);
+    }
+}
+
+#[test]
 fn semantic_tokens_on_a_half_typed_lambda_keep_the_server_alive() {
     // Two unclosed lambdas once panicked in the scope pass and killed the
     // server; an editor reaches that state just by typing `f:{g:{`.
