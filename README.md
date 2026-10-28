@@ -229,7 +229,8 @@ The built-in rules honour it; findings from qls do not.
 Diagnostics carry a
 code and a category; `qlinter --rules` lists them all and `qlinter --explain
 QF005` describes one. Exit codes are 0 (no error or warning), 1 (findings) and
-2 (input or server failure).
+2 (input or server failure - a file that cannot be read is reported, the rest
+are still linted, and the run ends in 2).
 
 These are heuristics over source text, not a proof: a clean lint means no rule
 matched, which is weaker than "this code is correct".

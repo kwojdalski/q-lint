@@ -412,6 +412,44 @@ fn a_user_level_configurations_patterns_are_rooted_at_the_current_directory() {
     assert!(paths[0].ends_with("tests/kept.q"), "{paths:?}");
 }
 
+#[cfg(unix)]
+#[test]
+fn an_unreadable_file_is_an_input_failure_and_the_rest_are_still_linted() {
+    use std::os::unix::fs::PermissionsExt;
+    let repo = Repo::new();
+    repo.write("unr/x.q", "a:1\n").write("unr/y.q", SOURCE);
+    // Readable, the run is an ordinary one: findings, exit 1.
+    let out = run(&repo.path("."), &["--isolated", "unr"]);
+    assert_eq!(out.status.code(), Some(1));
+    fs::set_permissions(repo.path("unr/x.q"), fs::Permissions::from_mode(0o000)).unwrap();
+    if fs::read(repo.path("unr/x.q")).is_ok() {
+        return; // root reads it anyway; there is nothing to test
+    }
+    // Without the `--format json` `run` adds, which neither takes.
+    let plain = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .current_dir(repo.path("."))
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    for (args, out) in [
+        ("lint", run(&repo.path("."), &["--isolated", "unr"])),
+        ("diff", plain(&["--isolated", "--diff", "unr"])),
+        ("graph", plain(&["analyze", "graph", "unr"])),
+    ] {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(2), "{args}: {stderr}");
+        assert!(
+            stderr.contains("x.q") && stderr.contains("skipped"),
+            "{stderr}"
+        );
+    }
+    let out = run(&repo.path("."), &["--isolated", "unr"]);
+    let found: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(!found.as_array().unwrap().is_empty(), "y.q is still linted");
+}
+
 #[test]
 fn a_lambda_another_file_defines_is_called_not_applied_to_a_literal() {
     // QB010: `shift -1` is a call when shift is a lambda - in this file or,

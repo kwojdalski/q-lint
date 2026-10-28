@@ -350,6 +350,7 @@ fn run(args: Args) -> Result<u8, String> {
         args.paths
     };
     let mut sources = vec![];
+    let mut unreadable = false;
     if paths.iter().any(|p| p == "-") {
         if args.fix {
             return Err("--fix needs file paths; use --diff to preview stdin".into());
@@ -370,9 +371,12 @@ fn run(args: Args) -> Result<u8, String> {
     } else {
         let files = discover(paths, &policy, args.force_exclude)?;
         for path in files {
-            // A file that cannot be read as text is reported and passed over.
+            // A file that cannot be read is reported and passed over, and the
+            // run ends in exit 2, an input failure, whatever the others find.
             // Aborting here would mean one unreadable file hides every finding
-            // in every other file, which is the opposite of useful.
+            // in every other file, which is the opposite of useful; exiting 0
+            // would tell CI a file nobody linted is clean. Ruff, likewise,
+            // reports E902 and goes on, and its exit code is not 0.
             //
             // A file that is not UTF-8 is still q - q reads bytes, and KX's
             // own e/c.q carries Latin-1 after its closing backslash - so it
@@ -396,7 +400,10 @@ fn run(args: Args) -> Result<u8, String> {
                         sources.push((path.to_string_lossy().into_owned(), source));
                     }
                 },
-                Err(e) => eprintln!("qlinter: {}: {e}, skipped", path.display()),
+                Err(e) => {
+                    eprintln!("qlinter: {}: {e}, skipped", path.display());
+                    unreadable = true;
+                }
             }
         }
     }
@@ -494,7 +501,7 @@ fn run(args: Args) -> Result<u8, String> {
         }
         if args.diff {
             eprintln!("qlinter: {fixed} fix(es) available in {changed_files} file(s)");
-            return Ok(u8::from(fixed > 0));
+            return Ok(if unreadable { 2 } else { u8::from(fixed > 0) });
         }
         eprintln!("qlinter: fixed {fixed} finding(s) in {changed_files} file(s)");
     }
@@ -569,6 +576,9 @@ fn run(args: Args) -> Result<u8, String> {
             findings.len()
         );
     }
+    if unreadable {
+        return Ok(2);
+    }
     Ok(u8::from(findings.iter().any(|f| {
         matches!(f.severity.as_str(), "error" | "warning")
     })))
@@ -598,6 +608,7 @@ fn analyze_graph(args: GraphArgs) -> Result<u8, String> {
         args.paths
     };
     let mut sources = vec![];
+    let mut unreadable = false;
     for path in discover(paths, &policy, false)? {
         // As when linting: a file that is not UTF-8 is still q, and is read
         // with each invalid byte as one replacement character.
@@ -606,7 +617,12 @@ fn analyze_graph(args: GraphArgs) -> Result<u8, String> {
                 let source = String::from_utf8_lossy(&bytes).into_owned();
                 sources.push((path, source));
             }
-            Err(e) => eprintln!("qlinter: {}: {e}, skipped", path.display()),
+            // A file left out is an edge the graph cannot show, so the run
+            // still prints what it read and ends in exit 2.
+            Err(e) => {
+                eprintln!("qlinter: {}: {e}, skipped", path.display());
+                unreadable = true;
+            }
         }
     }
     let graph = q_lint_rs::graph::build(&sources, args.symbols, &cwd);
@@ -642,7 +658,7 @@ fn analyze_graph(args: GraphArgs) -> Result<u8, String> {
         serde_json::to_string_pretty(&edges)
     };
     println!("{}", out.map_err(|e| e.to_string())?);
-    Ok(0)
+    Ok(if unreadable { 2 } else { 0 })
 }
 
 /// `path` relative to `base`, through `..` where it lies outside it, joined
