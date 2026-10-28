@@ -278,6 +278,56 @@ t:2147483648 1i
 === QE010 profile: general | 0Ni's bit pattern is no int (q 5: parse "-2147483648i" is refused)
 u:-2147483648i
 
+=== QE010 profile: general | a typed null takes its suffix after the last item too (q 5: '0Ni, '1i, '0nf)
+a:0Ni 1
+b:1i 0N
+c:0nf 1
+d:0Nh 0Nh
+
+=== QE010 profile: general | a type q has no null for (q 5: '0Nb, '0Nx, '0Nk, '0Nq, '0Ny)
+a:0Nb
+b:0Nx
+c:0Nk
+d:0Nq
+e:0Ny
+f:{0Nx}
+
+=== QE010 profile: general | nor an infinity for (q 5: '0Wb, '0Wx, '0Wg)
+a:0Wb
+b:0Wx
+c:0Wg
+
+=== QE010 profile: general | a null symbol is a lone backtick (q 5: 0Ns and 0Ws are the names 0N and 0W, '0N and '0W)
+a:0Ns
+b:0Ws
+
+=== QE010 profile: general | a null has no negative (q 5: -0Nh, a:-0N and x -0N are '-0N)
+a:-0Nh
+b:-0N
+c:x -0N
+
+=== QE010 profile: general | a fraction in a vector a typed null makes integer (q 5: '1.5)
+a:1.5 0Ni
+
+=== clean profile: general | the nulls and infinities q has, a typed one last, and minus between operands (q 5: each parses)
+a:0Nh
+b:0Nc
+c:0Wc
+d:0Ng
+e:0Wt
+f:0Wv
+g:0N 1
+h:1 0Ni
+i:0N 0Nh
+j:x-0N
+k:-0W
+l:-0n
+m:0N 0Nd
+n:0n 0w 1e
+o:-0Wh
+p:0Np
+q:0Wz
+
 === clean profile: general | the largest int and short, and a long past them (q 5: 0Wi, 0Wh, 2147483648)
 a:2147483647i
 b:-2147483647i

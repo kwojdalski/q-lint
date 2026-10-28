@@ -800,6 +800,42 @@ fn narrow(text: &str, last: &str) -> Option<(&'static str, u128)> {
     })
 }
 
+/// What q 5 refuses in a null or infinity token: a type letter it has no
+/// null or infinity for, a suffix on an item but the last, and a negative
+/// null. Measured with `parse` over every letter: `0N` takes
+/// `c d e f g h i j m n p t u v z` and refuses the rest (`'0Nb`, `'0Nx`);
+/// `0W` takes the same but `g` (`'0Wg`, and no guid infinity). `0n` and `0w`
+/// read as `0N` and `0W`. `0Ni 1` is '0Ni and `0Nh 0Nh` '0Nh, while `1 0Ni`
+/// and `0N 0Nh` parse. `-0N`, of any type but char, is '-0N; `-0W` and `-0n`
+/// parse.
+fn null_literal(text: &str, not_last: bool, negative: bool) -> Option<String> {
+    let caps = re!(r"^0([nNwW])([A-Za-z])?$").captures(text)?;
+    let null = caps[1].eq_ignore_ascii_case("n");
+    let letter = caps.get(2).map(|l| l.as_str());
+    let takes = if null {
+        "cdefghijmnptuvz"
+    } else {
+        "cdefhijmnptuvz"
+    };
+    if let Some(l) = letter
+        && !takes.contains(l)
+    {
+        return Some(format!(
+            "`{text}`: q has no {} of type `{l}`",
+            if null { "null" } else { "infinity" }
+        ));
+    }
+    if letter.is_some() && not_last {
+        return Some(format!(
+            "`{text}`: a vector literal takes one type suffix, after its last item"
+        ));
+    }
+    if negative && &caps[1] == "N" && letter != Some("c") {
+        return Some(format!("`-{text}`: a null has no negative"));
+    }
+    None
+}
+
 /// QE010. A number q 5 will not parse. Each shape was refused by `parse`,
 /// which names the token: an integer type with a fraction (`1.5j`, and
 /// `1.5 2j`, where the suffix types every item), a suffix on any item but
@@ -813,8 +849,6 @@ fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Find
     let tokens: Vec<regex::Match> = re!(r"\d[0-9A-Za-z.:]*")
         .find_iter(unsym)
         .filter(|m| boundary(code, m.start()))
-        // q's nulls and infinities: 0n, 0w, 0N, 0Wj and the rest.
-        .filter(|m| !re!(r"^0[nNwW]").is_match(m.as_str()))
         .filter(|m| {
             let line = unsym[..m.start()].rfind('\n').map_or(0, |p| p + 1);
             !unsym[line..].starts_with('\\')
@@ -840,7 +874,31 @@ fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Find
         let mut reported = false;
         for (k, t) in run.iter().enumerate() {
             let text = t.as_str();
-            let detail = if re!(r"^\d+\.\d*[hij]$").is_match(text) {
+            // `0Ns` and `0Ws` are names to q, not literals: it parses them
+            // as `0N` and `0W` and signals '0N or '0W when they are read.
+            if !reported && re!(r"^0[nNwW]s$").is_match(text) {
+                report(
+                    t.start(),
+                    format!(
+                        "`{text}` is no symbol: q 5 reads it as the name `{}`, which is \
+                         never defined, and signals '{} - the null symbol is a lone backtick",
+                        &text[..2],
+                        &text[..2]
+                    ),
+                );
+                reported = true;
+                continue;
+            }
+            // A minus that starts a literal, not one between operands:
+            // `x-0N` subtracts, while `-0N`, `a:-0N` and `x -0N` are refused.
+            let negative = unsym[..t.start()].ends_with('-')
+                && !code[..t.start() - 1]
+                    .ends_with(|c: char| c.is_ascii_alphanumeric() || "_.)]}\"`".contains(c));
+            // A null or infinity is judged on its own terms: the `w` of `0w`
+            // is no type suffix, but the token is no number either.
+            let detail = if re!(r"^0[nNwW][A-Za-z]?$").is_match(text) {
+                null_literal(text, k + 1 < run.len(), negative)
+            } else if re!(r"^\d+\.\d*[hij]$").is_match(text) {
                 Some(format!(
                     "`{text}`: an integer type takes no fractional part"
                 ))
@@ -880,7 +938,7 @@ fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Find
             } else if k + 1 < run.len()
                 && text.contains('.')
                 && !text.contains(':')
-                && re!(r"^\d+[hij]$").is_match(last)
+                && re!(r"^(?:\d+|0[nNwW])[hij]$").is_match(last)
             {
                 Some(format!(
                     "`{text}`: the vector's `{}` suffix makes every item an integer",
