@@ -1372,6 +1372,23 @@ fn refused_atom_condition(raw: &str) -> bool {
             && !re!(r"^-?0[NW]$").is_match(raw)
 }
 
+/// Whether a `$[...]` test is a literal q 5 refuses with 'type: an atom
+/// `refused_atom_condition` names, `()`, a boolean vector, a spaced numeric
+/// vector, or a comparison of vectors. `raw` is the test with strings still
+/// in it, `cond` the same text from the masked view.
+fn refused_test(raw: &str, cond: &str) -> bool {
+    refused_atom_condition(raw)
+        || re!(r"^\(\s*\)$").is_match(cond)
+        || re!(r"^`[A-Za-z][A-Za-z0-9_.]*$").is_match(cond)
+        || re!(r"^[01]{2,}b$").is_match(cond)
+        || (re!(r"^-?\d[A-Za-z0-9.]*(?:\s+-?\d[A-Za-z0-9.]*)+$").is_match(cond)
+            // Spaced, a `b` suffix is not a boolean vector: `1 0b` is
+            // `(1;0b)`, the long 1 - stdout's handle - applied to 0b,
+            // which writes it and returns 1. q 5: `$[1 0b;a;b]` is a.
+            && !cond.ends_with('b'))
+        || vector_comparison(cond)
+}
+
 fn vector_comparison(cond: &str) -> bool {
     const VECTOR: &str = r"(?:-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+|\(\s*-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+\s*\)|(?:`[A-Za-z0-9_.]*){2,}|[01]{2,}b)";
     const OPERAND: &str = r"(?:-?\d[A-Za-z0-9.]*|`[A-Za-z0-9_.]*|\.?[A-Za-z][A-Za-z0-9_.]*)";
@@ -2510,17 +2527,8 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
         // a symbol or byte vector, and a float, real or guid atom: `$["ab";..]`,
         // `$[`a`b;..]`, `$[0x0102;..]`, `$[1.5;..]`, `$[0n;..]`, `$[1e;..]`.
         let cond_raw = v.comments[dollar + 2..dollar + 2 + parts[0].len()].trim();
-        let refused_raw = refused_atom_condition(cond_raw);
         if let Some(cond) = parts.first().map(|c| c.trim())
-            && (refused_raw
-                || re!(r"^`[A-Za-z][A-Za-z0-9_.]*$").is_match(cond)
-                || re!(r"^[01]{2,}b$").is_match(cond)
-                || (re!(r"^-?\d[A-Za-z0-9.]*(?:\s+-?\d[A-Za-z0-9.]*)+$").is_match(cond)
-                    // Spaced, a `b` suffix is not a boolean vector: `1 0b` is
-                    // `(1;0b)`, the long 1 - stdout's handle - applied to 0b,
-                    // which writes it and returns 1. q 5: `$[1 0b;a;b]` is a.
-                    && !cond.ends_with('b'))
-                || vector_comparison(cond))
+            && refused_test(cond_raw, cond)
         {
             add(
                 dollar,
@@ -2533,13 +2541,15 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
         let n = parts.len();
         // Every later test is refused the same way once it is reached - a
         // symbol, a string of other than one char, a symbol or byte vector,
-        // a float: q 5 `$[0b;1;`a;2;3]` and `$[0b;1;"ab";2;3]` are 'type.
-        // A vector is not: `$[0b;1;1 0 1b;2;3]` is 3, so only these are.
+        // a float, a vector or `()`: q 5 `$[0b;1;`a;2;3]`, `$[0b;1;"ab";2;3]`,
+        // `$[0b;1;101b;2;3]`, `$[0b;1;1 2 3;2;3]` and `$[0b;1;();2;3]` are
+        // each 'type. (`$[0b;1;1 0 1b;2;3]` is 3, but `1 0 1b` is no vector:
+        // it is 1 applied to 0 1b, the long atom 0.)
         let mut from = dollar + 2 + parts[0].len() + 1;
         for (k, part) in parts.iter().enumerate().skip(1) {
             let raw = v.comments[from..from + part.len()].trim();
             from += part.len() + 1;
-            if k % 2 == 0 && k + 1 < n && refused_atom_condition(raw) {
+            if k % 2 == 0 && k + 1 < n && refused_test(raw, part.trim()) {
                 add(
                     dollar,
                     "QA011",
@@ -2582,7 +2592,7 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
             let last: usize = parts[..n - 2].iter().map(|p| p.len() + 1).sum();
             let last = dollar + 2 + last;
             let test = v.comments[last..last + parts[n - 2].len()].trim();
-            let outcome = if refused_atom_condition(test) {
+            let outcome = if refused_test(test, parts[n - 2].trim()) {
                 format!("and q 5 refuses `{test}` as a test with 'type")
             } else {
                 "and the result is null".into()
@@ -2592,7 +2602,7 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
                     "The trailing `;` makes this a {n}-slot conditional, not an if-else: the \
                      slot before it is run as another test, {outcome}"
                 )
-            } else if refused_atom_condition(test) {
+            } else if refused_test(test, parts[n - 2].trim()) {
                 format!(
                     "{n}-slot $[ ... ] has no else branch: when no other condition holds it \
                      runs `{test}` as a test, which q 5 refuses with 'type"
@@ -2626,6 +2636,7 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
         }
         let raw = v.comments[open + 1..open + 1 + parts[0].len()].trim();
         if refused_atom_condition(raw)
+            || re!(r"^\(\s*\)$").is_match(raw)
             || re!(r"^[01]{2,}b$").is_match(raw)
             || (re!(r"^-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+$").is_match(raw)
                 && !raw.ends_with('b'))
