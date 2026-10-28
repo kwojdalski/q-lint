@@ -1994,13 +1994,8 @@ fn named_values(
     let mut handles: HashSet<&str> = HashSet::new();
     // A file that evaluates strings can define anything, so nothing is known
     // by name there; the literal-only checks below still hold.
-    // Nor in a workspace where another file assigns the name too: which of
-    // the two a read meets depends on load order, which the text cannot say.
     for (name, at) in writes.iter().filter(|_| !dynamic) {
         let [at] = at[..] else { continue };
-        if elsewhere(name) {
-            continue;
-        }
         if scope_at(scopes, at).is_some() || !boundary(code, at) {
             continue;
         }
@@ -2041,11 +2036,17 @@ fn named_values(
         }
     }
     // A read sees the global only after it is assigned, at the top level, and
-    // only where no local of the same name hides it.
+    // only where no local of the same name hides it. Where another file of
+    // the workspace assigns the name too, a lambda body may run after either
+    // assignment, which load order decides and the text cannot say; but a
+    // top-level read after this file's own assignment meets that one,
+    // whatever was loaded before (q 5: `g:{x}` loaded, then `g:2.5` + `g 0`,
+    // is 'type).
     let visible = |name: &str, at: usize| -> Option<&Held> {
         let (assigned, value) = known.get(name)?;
         match scope_at(scopes, at) {
             Some(s) if scopes[s].locals.contains(name) => None,
+            Some(_) if elsewhere(name) => None,
             None if at < *assigned => None,
             _ => Some(value),
         }
