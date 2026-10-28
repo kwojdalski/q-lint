@@ -136,12 +136,13 @@ like the rest of qlinter, it reads the files and runs none of them.
 A file depends on another when:
 
 - it reads a global name the other defines. A bare name is qualified by the
-  `\d` context in force, and tried at the root when that context has none:
-  `f` inside `\d .a` is `.a.f`, failing that `.f`. A local or parameter of the
-  same name is not a read, and neither is a name in a string or comment. A
-  name no file defines is tried without its last segment, so
-  `.cfg.opts.port` reaches the file defining `.cfg.opts`. A symbol handed
-  straight to `get` or `value`, `` get`.ns.x ``, is a read too;
+  `\d` context in force and by nothing else, as q resolves it: `f` inside
+  `\d .a` is `.a.f`, never the root's `f`, and a root `g` is not `.g`. A
+  local or parameter of the same name is not a read, and neither is a name
+  in a string or comment. A name no file defines is tried without its last
+  segment, so `.cfg.opts.port` reaches the file defining `.cfg.opts`. A
+  symbol handed straight to `get` or `value`, `` get`.ns.x ``, is a read
+  too;
 - it loads the other by a literal path, `\l path` or `system "l path"`, or
   names it as a file symbol ending in `.q`, `` `:lib/x.q ``, whatever that is
   handed to - a project's own loader is invisible to reading otherwise. q

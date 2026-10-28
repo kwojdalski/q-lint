@@ -90,9 +90,14 @@ pub fn index(source: &str) -> FileIndex {
 /// which indexes on every keystroke, does not pay for a graph it never draws.
 #[derive(Default, Clone, PartialEq, Eq, Debug)]
 pub struct References {
-    /// Each global read, as the qualified names it could be, in the order
-    /// they are tried: the file's own `\d` context first, then the root.
-    pub names: Vec<Vec<String>>,
+    /// Each global read, as the one name q resolves it to under the `\d`
+    /// context in force: `.a.f` inside `\d .a`, and `f` - not `.f` - at the
+    /// root.
+    pub names: Vec<String>,
+    /// Each global this file assigns, named the same way. `FileIndex` keys a
+    /// root `g` as `.g`, which the checks rely on; the graph cannot, since
+    /// to q they are two names.
+    pub defines: Vec<String>,
     /// The paths of `\l path`, `system "l path"` and `` `:path.q ``, as
     /// written.
     pub loads: Vec<String>,

@@ -51,7 +51,7 @@ fn a_bare_name_inside_a_context_is_qualified_by_it() {
         &[
             ("lib.q", "\\d .lib\nf:{x+1}\n"),
             ("app.q", "\\d .lib\ng:{f x}\n"),
-            // The same bare name at the root means `.f`, which nobody defines.
+            // The same bare name at the root means `f`, which nobody defines.
             ("root.q", "h:{f x}\n"),
         ],
         false,
@@ -61,15 +61,37 @@ fn a_bare_name_inside_a_context_is_qualified_by_it() {
 }
 
 #[test]
-fn a_bare_name_falls_back_to_the_root_when_its_context_has_none() {
+fn a_bare_name_inside_a_context_does_not_fall_back_to_the_root() {
+    // q 5: after `f:{42}`, `\d .a`, `g:{f[]}`, calling `.a.g[]` is 'f.
     let g = graph(
         &[
             ("util.q", "helper:{x}\n"),
             ("app.q", "\\d .app\ng:{helper x}\n"),
+            // At the root the same read is the root's own name.
+            ("root.q", "g:{helper x}\n"),
         ],
         false,
     );
-    assert_eq!(deps(&g, "app.q"), ["util.q"]);
+    assert!(deps(&g, "app.q").is_empty());
+    assert_eq!(deps(&g, "root.q"), ["util.q"]);
+}
+
+#[test]
+fn a_root_name_is_not_the_dotted_name_of_the_same_spelling() {
+    // q 5: after `.h2:7`, `value "h2"` is 'h2; after `h3:5`, `value ".h3"`
+    // is '.h3. Each read reaches only the file defining its own spelling.
+    let g = graph(
+        &[
+            ("dot.q", ".g:7\n"),
+            ("bare.q", "g:1\n"),
+            ("bare_read.q", "r:g+1\n"),
+            ("dot_read.q", "r:.g+1\n"),
+        ],
+        false,
+    );
+    assert_eq!(deps(&g, "bare_read.q"), ["bare.q"]);
+    assert!(g["bare_read.q"].ambiguous.is_empty());
+    assert_eq!(deps(&g, "dot_read.q"), ["dot.q"]);
 }
 
 #[test]
@@ -140,7 +162,7 @@ fn a_name_several_files_define_is_an_edge_to_each_and_listed() {
         false,
     );
     assert_eq!(deps(&g, "app.q"), ["one.q", "two.q"]);
-    let definers: Vec<_> = g["app.q"].ambiguous[".init"]
+    let definers: Vec<_> = g["app.q"].ambiguous["init"]
         .iter()
         .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
         .collect();
@@ -159,7 +181,7 @@ fn a_file_that_defines_a_name_itself_still_depends_on_another_definer() {
         false,
     );
     assert_eq!(deps(&g, "one.q"), ["two.q"]);
-    assert_eq!(g["one.q"].ambiguous[".init"].len(), 2);
+    assert_eq!(g["one.q"].ambiguous["init"].len(), 2);
 }
 
 #[test]
@@ -351,7 +373,7 @@ fn the_graph_prints_dependents_with_detail() {
     ));
     let found: serde_json::Value = serde_json::from_str(&out).unwrap();
     let expected = serde_json::json!({
-        "src/app.q": {"dependents": [], "ambiguous": {".init": ["src/lib/a.q", "src/lib/b.q"]},
+        "src/app.q": {"dependents": [], "ambiguous": {"init": ["src/lib/a.q", "src/lib/b.q"]},
                       "dynamic": [{"line": 6, "kind": "get"}]},
         // A file that defines `init` but never reads it has no doubt to list.
         "src/lib/a.q": {"dependents": ["src/app.q", "src/lib/b.q"], "ambiguous": {}, "dynamic": []},
