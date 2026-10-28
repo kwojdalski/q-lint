@@ -25,6 +25,13 @@ r:{[p] {x+1} each p}
 === QR004 | the number on the left
 r:{[p] {2*x} each p}
 
+=== QR004 | a subtraction, spaced or not (q 5: {x-1} each (1 2;3 4) and {x - 1} each are both (0 1;2 3))
+r1:{[p] {x-1} each p}
+r2:{[p] {x - 1} each p}
+
+=== clean | x indexed at a negative literal is not arithmetic (q 5: {x -1} each (1 2;3 4) is 0N 0N)
+r:{[p] {x -1} each p}
+
 === clean | a lambda that is not one atomic operation needs its each
 r1:{[p] {x,1} each p}
 r3:{[p] {sum x} each p}

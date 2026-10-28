@@ -222,12 +222,17 @@ fn simplifications(path: &str, source: &str, code: &str, out: &mut Vec<Finding>)
     // QR004: arithmetic is atomic, so a lambda that does one operation with a
     // number needs no each - `{x+1} each x` is `1+x`, run on the whole list
     // at once. Only the visibly atomic shape: one of + - * % between x and a
-    // numeric literal.
+    // numeric literal. `{x -1}` is not one: a `-` after a space and before a
+    // digit is a negative literal, so that is x indexed at -1, and q 5 gives
+    // `0N 0N` for `{x -1} each (1 2;3 4)` where `(1 2;3 4)-1` is `(0 1;2 3)`.
     for m in re!(
         r"\{\s*(?:x\s*[-+*%]\s*-?\d[A-Za-z0-9.]*|-?\d[A-Za-z0-9.]*\s*[-+*%]\s*x)\s*\}\s*(?:each\b|'(?:[^:]|$))"
     )
     .find_iter(code)
     {
+        if re!(r"^\{\s*x\s+-\d").is_match(m.as_str()) {
+            continue;
+        }
         add(
             m.start(),
             "QR004",

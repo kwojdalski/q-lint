@@ -265,6 +265,7 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ("QR004", "r:{x%2} each a,b", "r:(a,b)%2", false),
         ("QR004", "r:count {x*2} each b", "r:count b*2", false),
         ("QR004", "f:{a{x+1} each b}", "f:{a b+1}", false),
+        ("QR004", "r:{x - 1} each b", "r:b-1", false),
         ("QL002", "a:1\n/ old:{x+1}\nb:2", "a:1\nb:2", false),
         (
             "QB005",

@@ -763,6 +763,10 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 r"^\{\s*(?:x\s*([-+*%])\s*(-?\d[A-Za-z0-9.]*)|(-?\d[A-Za-z0-9.]*)\s*([-+*%])\s*x)\s*\}[ \t]*(?:each\b|')[ \t]*"
             )
             .captures(source.get(start..)?)?;
+            // `{x -1}` indexes x at -1: there is no arithmetic to lift.
+            if re!(r"^\{\s*x\s+-\d").is_match(m.get(0)?.as_str()) {
+                return None;
+            }
             let tick = !m.get(0)?.as_str().contains("each");
             let before = v.code[..start].trim_end();
             let heads = before.is_empty()
