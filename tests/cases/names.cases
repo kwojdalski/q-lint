@@ -247,6 +247,21 @@ f:{[x;y] (tx;ty):type each (x;y); if[tx=11h; tx:0h]; tx+ty}
 === QF005 | the names a multiple assignment binds are locals, which a nested lambda cannot see
 f:{[x] (a;b):x; g:{[v] v+a}; g 1}
 
+=== clean profile: general | a column an update sets is not a local (q 5, c:10: f ([]a:1 2) is 11, the global)
+f:{[t] t:update c:1 from t; {c+1}[]}
+
+=== clean profile: general | nor is a table literal's column (q 5, c:10: g[] is 11)
+g:{t:([]c:1 2); {c+1}[]}
+
+=== clean profile: general | a column in an inner table literal is not a read of the outer local
+f:{c:1; {([]c:2 3)}[]}
+
+=== QF010 profile: general | a table literal's column does not bind x (q 5: f 1 is 'x)
+f:{[a] t:([]x:1 2); x}
+
+=== clean profile: general | a column named x is set, not read
+f:{[a] ([]x:a)}
+
 === QF016 | a parameter the body never reads
 f:{[used;stale] used+1}
 

@@ -116,34 +116,8 @@ fn multi_assignments(text: &str) -> impl Iterator<Item = (usize, &str)> {
 /// itself. `f[c-1; c:count x]` and `g[c] h[c:1]` both assign before they
 /// read; `if[c; c:1]` and `r:c; c:1` do not.
 fn runs_before(text: &str, read: usize, assign: usize) -> bool {
-    let path = |pos: usize| {
-        let (mut seq, mut stack): (usize, Vec<(usize, usize, bool)>) = (0, vec![]);
-        for (i, &c) in text.as_bytes()[..pos].iter().enumerate() {
-            match c {
-                b'[' | b'(' | b'{' => {
-                    let control = c == b'['
-                        && re!(r"(?:^|[^A-Za-z0-9_.])(?:if|while|do)\s*$|\$\s*$")
-                            .is_match(&text[..i]);
-                    stack.push((i, 0, control));
-                }
-                b']' | b')' | b'}' => {
-                    stack.pop();
-                }
-                b';' => match stack.last_mut() {
-                    Some(top) => top.1 += 1,
-                    None => seq += 1,
-                },
-                // No newline arm: inside a lambda an indented line continues
-                // the expression above it, so only `;` ends a statement.
-                // Verified: `{r:a\n  +a:5; r}[]` is 10, and `{r:3\n  r}[]`
-                // is 'r - `3 r`, one expression.
-                _ => {}
-            }
-        }
-        (seq, stack)
-    };
-    let (read_seq, read_path) = path(read);
-    let (assign_seq, assign_path) = path(assign);
+    let (read_seq, read_path) = eval_path(text, read);
+    let (assign_seq, assign_path) = eval_path(text, assign);
     if read_seq != assign_seq {
         return read_seq < assign_seq;
     }
@@ -156,6 +130,78 @@ fn runs_before(text: &str, read: usize, assign: usize) -> bool {
         }
     }
     false
+}
+/// Where `pos` sits in the order a lambda body runs in: the statement it is
+/// in, and each bracket open around it, as the bracket's offset, the slot
+/// within it, and whether it is a control bracket.
+fn eval_path(text: &str, pos: usize) -> (usize, Vec<(usize, usize, bool)>) {
+    let (mut seq, mut stack): (usize, Vec<(usize, usize, bool)>) = (0, vec![]);
+    for (i, &c) in text.as_bytes()[..pos].iter().enumerate() {
+        match c {
+            b'[' | b'(' | b'{' => {
+                let control = c == b'['
+                    && re!(r"(?:^|[^A-Za-z0-9_.])(?:if|while|do)\s*$|\$\s*$").is_match(&text[..i]);
+                stack.push((i, 0, control));
+            }
+            b']' | b')' | b'}' => {
+                stack.pop();
+            }
+            b';' => match stack.last_mut() {
+                Some(top) => top.1 += 1,
+                None => seq += 1,
+            },
+            // No newline arm: inside a lambda an indented line continues
+            // the expression above it, so only `;` ends a statement.
+            // Verified: `{r:a\n  +a:5; r}[]` is 10, and `{r:3\n  r}[]`
+            // is 'r - `3 r`, one expression.
+            _ => {}
+        }
+    }
+    (seq, stack)
+}
+/// A lambda body as the local-scope checks read it: symbols blanked, and each
+/// qSQL query blanked over its own extent, from the keyword to the `;` or
+/// bracket that ends its statement. Inside a query a name may be a column,
+/// and `update c:1 from t` names one with an assignment's syntax, so neither
+/// is a local or a read of one. Only a keyword at a word boundary starts a
+/// query: `` `delete`` is a symbol and `.ns.update` a name. With `tables`, a
+/// table literal `([...]...)` goes too, whose columns are written the same way.
+fn local_view(direct: &str, tables: bool) -> String {
+    let symbols = re!(r"`[A-Za-z0-9_./:]*")
+        .replace_all(direct, |m: &regex::Captures| " ".repeat(m[0].len()))
+        .into_owned();
+    let mut out = symbols.clone().into_bytes();
+    for m in re!(r"\b(?:select|exec|update|delete)\b").find_iter(&symbols) {
+        if !boundary(&symbols, m.start()) || out[m.start()] == b' ' {
+            continue;
+        }
+        let mut depth = 0i32;
+        let end = symbols.as_bytes()[m.end()..]
+            .iter()
+            .position(|&b| {
+                match b {
+                    b'(' | b'[' | b'{' => depth += 1,
+                    b')' | b']' | b'}' => depth -= 1,
+                    _ => {}
+                }
+                depth < 0 || (b == b';' && depth == 0)
+            })
+            .map_or(out.len(), |p| m.end() + p);
+        for b in &mut out[m.start()..end] {
+            if !matches!(*b, b'\n' | b'\r') {
+                *b = b' ';
+            }
+        }
+    }
+    if tables {
+        let text = String::from_utf8(out.clone()).unwrap_or_default();
+        for (at, _) in text.match_indices("([") {
+            if let Some(close) = matching(&text, at, b'(', b')') {
+                out[at..close].fill(b' ');
+            }
+        }
+    }
+    String::from_utf8(out).unwrap_or_default()
 }
 /// The innermost scope containing `at`.
 ///
@@ -431,16 +477,20 @@ fn scopes(code: &str, raw: &str) -> (Vec<Scope>, Vec<(usize, String)>) {
             direct[child.start - scope.body..end - scope.body].fill(b' ');
         }
         let direct = String::from_utf8(direct).unwrap();
+        // A column is not a local: after `t:([]c:1 2)` or `update c:1 from t`,
+        // `c` is still the global. Verified in q 5, with `c:10`:
+        // `{t:([]c:1 2); {c+1}[]}[]` is 11, and `{[a] t:([]x:1 2); x}[1]` is 'x.
+        let view = local_view(&direct, true);
         let mut locals = scope.params.clone();
-        for a in assignment.captures_iter(&direct) {
-            if boundary(&direct, a.get(0).unwrap().start())
+        for a in assignment.captures_iter(&view) {
+            if boundary(&view, a.get(0).unwrap().start())
                 && a.get(2).is_none()
                 && !a[1].contains('.')
             {
                 locals.insert(a[1].into());
             }
         }
-        locals.extend(multi_assignments(&direct).map(|(_, n)| n.to_string()));
+        locals.extend(multi_assignments(&view).map(|(_, n)| n.to_string()));
         scopes[i].direct = direct;
         scopes[i].locals = locals;
     }
@@ -1407,9 +1457,14 @@ pub fn check(
         let mut seen = HashSet::new();
         for m in re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(&direct) {
             let name = m.as_str();
+            // A name written before `:` is being set, not read: the column
+            // `x` in `([]x:a)` included, which the locals leave out.
             if !matches!(name, "x" | "y" | "z")
                 || !boundary(&direct, m.start())
                 || direct[m.end()..].starts_with('.')
+                || direct[m.end()..]
+                    .trim_start_matches([' ', '\t'])
+                    .starts_with(':')
                 || scope.locals.contains(name)
                 || !seen.insert(name)
             {
@@ -1457,6 +1512,9 @@ pub fn check(
             let name = m.as_str();
             if !boundary(&direct, m.start())
                 || direct[m.end()..].starts_with('.')
+                || direct[m.end()..]
+                    .trim_start_matches([' ', '\t'])
+                    .starts_with(':')
                 || !outer.contains(name)
                 || scope.locals.contains(name)
                 || !seen.insert(name)
