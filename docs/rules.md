@@ -1,6 +1,6 @@
 # Rules
 
-All 118 rules, generated from `src/taxonomy.json` - the same data
+All 119 rules, generated from `src/taxonomy.json` - the same data
 `qlinter --rules` and `qlinter --explain <CODE>` print from. Regenerate with
 `python3 scripts/rules_doc.py > docs/rules.md`; a test fails when this is stale.
 
@@ -58,7 +58,7 @@ that wants fewer findings narrows in its own configuration.
 | code | name | summary | on in |
 |---|---|---|---|
 | `QF001` | reserved-parameter | Builtin name used as a parameter | every profile |
-| `QF002` | underscore-parameter | `_` is the drop operator, not a parameter name | `style` and above |
+| `QF002` | underscore-parameter | `_` is the drop operator, not a parameter name: q 5 refuses every call with 'match | every profile |
 | `QF003` | reserved-local | Assignment to a builtin in a lambda | every profile |
 | `QF004` | reserved-definition | Namespace definition shadows a builtin | every profile |
 | `QF005` | nested-local-reference | Nested lambda expects an outer local | every profile |
@@ -130,6 +130,7 @@ that wants fewer findings narrows in its own configuration.
 | `QT029` | hopen-literal | hopen given a float, a negative number, or a symbol without its leading colon | every profile |
 | `QT030` | cast-unknown-type | A cast to a type character q does not have | every profile |
 | `QT031` | uppercase-cast-literal | An uppercase cast parses a string; given a number or a symbol it is 'type, and "C"$ refuses only a vector | every profile |
+| `QT032` | cast-by-name-refused-on-string | `symbol$ or `guid$ on a string, which q 5 refuses with 'type | every profile |
 
 ## Correctness - q that runs and does the wrong thing
 
@@ -160,7 +161,7 @@ that wants fewer findings narrows in its own configuration.
 
 | code | name | summary | on in |
 |---|---|---|---|
-| `QD001` | negative-til | til called with a negative literal count | every profile |
+| `QD001` | negative-til | til called with a negative, null or long-infinite literal count | every profile |
 | `QD002` | negative-where | where called with negative literal repetition counts | every profile |
 
 ## Security - q that lets its input decide what it runs, or carries secrets

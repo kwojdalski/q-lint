@@ -80,8 +80,8 @@
     "code": "QF002",
     "name": "underscore-parameter",
     "category": "names",
-    "summary": "`_` is the drop operator, not a parameter name",
-    "scope": "style"
+    "summary": "`_` is the drop operator, not a parameter name: q 5 refuses every call with 'match",
+    "scope": "builtin"
   },
   {
     "code": "QF003",
@@ -556,7 +556,7 @@
     "code": "QD001",
     "name": "negative-til",
     "category": "domain",
-    "summary": "til called with a negative literal count",
+    "summary": "til called with a negative, null or long-infinite literal count",
     "scope": "builtin"
   },
   {
@@ -760,6 +760,13 @@
     "name": "uppercase-cast-literal",
     "category": "types-and-shapes",
     "summary": "An uppercase cast parses a string; given a number or a symbol it is 'type, and \"C\"$ refuses only a vector",
+    "scope": "builtin"
+  },
+  {
+    "code": "QT032",
+    "name": "cast-by-name-refused-on-string",
+    "category": "types-and-shapes",
+    "summary": "`symbol$ or `guid$ on a string, which q 5 refuses with 'type",
     "scope": "builtin"
   },
   {

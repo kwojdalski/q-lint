@@ -621,9 +621,12 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         }
         // `` `int$"12" `` casts character codes; `"I"$` parses the text.
         // Both run, so which was meant is the author's to confirm.
-        "QT004" => {
+        // `` `symbol$"ab" `` and `` `guid$".." `` are 'type; what was meant is
+        // `` `$ `` and `"G"$`.
+        "QT004" | "QT032" => {
             let m = re!(r"^`([a-z]+)\s*\$").captures(source.get(start..)?)?;
             let letter = match &m[1] {
+                "symbol" => "",
                 "boolean" => "B",
                 "guid" => "G",
                 "byte" => "X",
@@ -642,12 +645,21 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 "time" => "T",
                 _ => return None,
             };
-            (
-                m.get(0)?.as_str(),
-                format!("\"{letter}\"$").into(),
-                format!("Parse the text with `\"{letter}\"$`").into(),
-                false,
-            )
+            if letter.is_empty() {
+                (
+                    m.get(0)?.as_str(),
+                    "`$".into(),
+                    "Make a symbol with `` `$ ``".into(),
+                    false,
+                )
+            } else {
+                (
+                    m.get(0)?.as_str(),
+                    format!("\"{letter}\"$").into(),
+                    format!("Parse the text with `\"{letter}\"$`").into(),
+                    false,
+                )
+            }
         }
         // A statement after a top-level return never runs: remove it and
         // what follows it up to the closing brace, on one line.
@@ -1264,6 +1276,7 @@ impl Finding {
                     | "QT028"
                     | "QT029"
                     | "QT030"
+                    | "QT032"
                     | "QE006"
                     | "QE007"
             ) {
@@ -1378,6 +1391,23 @@ fn refused_atom_condition(raw: &str) -> bool {
         || re!(r"^-?(?:\d+\.\d*|\.\d+|\d+(?:\.\d*)?[eE][+-]?\d+)[ef]?$|^-?\d+[ef]$|^-?0[nwNW][ef]?$|^0Ng$")
             .is_match(raw)
             && !re!(r"^-?0[NW]$").is_match(raw)
+}
+
+/// Whether a `$[...]` test is a literal q 5 refuses with 'type: an atom
+/// `refused_atom_condition` names, `()`, a boolean vector, a spaced numeric
+/// vector, or a comparison of vectors. `raw` is the test with strings still
+/// in it, `cond` the same text from the masked view.
+fn refused_test(raw: &str, cond: &str) -> bool {
+    refused_atom_condition(raw)
+        || re!(r"^\(\s*\)$").is_match(cond)
+        || re!(r"^`[A-Za-z][A-Za-z0-9_.]*$").is_match(cond)
+        || re!(r"^[01]{2,}b$").is_match(cond)
+        || (re!(r"^-?\d[A-Za-z0-9.]*(?:\s+-?\d[A-Za-z0-9.]*)+$").is_match(cond)
+            // Spaced, a `b` suffix is not a boolean vector: `1 0b` is
+            // `(1;0b)`, the long 1 - stdout's handle - applied to 0b,
+            // which writes it and returns 1. q 5: `$[1 0b;a;b]` is a.
+            && !cond.ends_with('b'))
+        || vector_comparison(cond)
 }
 
 fn vector_comparison(cond: &str) -> bool {
@@ -2211,10 +2241,16 @@ pub fn lint_selecting(
                     .filter(|s| !s.is_empty() && !is_param_name(s))
                     .collect();
                 // `_` has its own code because it has its own cause: it reads
-                // as a name but is the drop operator, so q takes the brackets
-                // for body text exactly as it does for any other expression.
+                // as a name but is the drop operator. q 5 defines the lambda
+                // and keeps no usable name for the slot - `{[_] 1}[]`,
+                // `{[_] 1}[1]` and `{[a;_] a}[1;2]` are each 'match - so it
+                // fails on every call.
                 if offenders.contains(&"_") {
-                    add(at, "QF002", "`_` as a lambda parameter".into());
+                    add(
+                        at,
+                        "QF002",
+                        "`_` as a lambda parameter: q 5 refuses every call with 'match".into(),
+                    );
                 }
 
                 let underscore = offenders.contains(&"_");
@@ -2529,17 +2565,8 @@ pub fn lint_selecting(
         // a symbol or byte vector, and a float, real or guid atom: `$["ab";..]`,
         // `$[`a`b;..]`, `$[0x0102;..]`, `$[1.5;..]`, `$[0n;..]`, `$[1e;..]`.
         let cond_raw = v.comments[dollar + 2..dollar + 2 + parts[0].len()].trim();
-        let refused_raw = refused_atom_condition(cond_raw);
         if let Some(cond) = parts.first().map(|c| c.trim())
-            && (refused_raw
-                || re!(r"^`[A-Za-z][A-Za-z0-9_.]*$").is_match(cond)
-                || re!(r"^[01]{2,}b$").is_match(cond)
-                || (re!(r"^-?\d[A-Za-z0-9.]*(?:\s+-?\d[A-Za-z0-9.]*)+$").is_match(cond)
-                    // Spaced, a `b` suffix is not a boolean vector: `1 0b` is
-                    // `(1;0b)`, the long 1 - stdout's handle - applied to 0b,
-                    // which writes it and returns 1. q 5: `$[1 0b;a;b]` is a.
-                    && !cond.ends_with('b'))
-                || vector_comparison(cond))
+            && refused_test(cond_raw, cond)
         {
             add(
                 dollar,
@@ -2552,13 +2579,15 @@ pub fn lint_selecting(
         let n = parts.len();
         // Every later test is refused the same way once it is reached - a
         // symbol, a string of other than one char, a symbol or byte vector,
-        // a float: q 5 `$[0b;1;`a;2;3]` and `$[0b;1;"ab";2;3]` are 'type.
-        // A vector is not: `$[0b;1;1 0 1b;2;3]` is 3, so only these are.
+        // a float, a vector or `()`: q 5 `$[0b;1;`a;2;3]`, `$[0b;1;"ab";2;3]`,
+        // `$[0b;1;101b;2;3]`, `$[0b;1;1 2 3;2;3]` and `$[0b;1;();2;3]` are
+        // each 'type. (`$[0b;1;1 0 1b;2;3]` is 3, but `1 0 1b` is no vector:
+        // it is 1 applied to 0 1b, the long atom 0.)
         let mut from = dollar + 2 + parts[0].len() + 1;
         for (k, part) in parts.iter().enumerate().skip(1) {
             let raw = v.comments[from..from + part.len()].trim();
             from += part.len() + 1;
-            if k % 2 == 0 && k + 1 < n && refused_atom_condition(raw) {
+            if k % 2 == 0 && k + 1 < n && refused_test(raw, part.trim()) {
                 add(
                     dollar,
                     "QA011",
@@ -2601,7 +2630,7 @@ pub fn lint_selecting(
             let last: usize = parts[..n - 2].iter().map(|p| p.len() + 1).sum();
             let last = dollar + 2 + last;
             let test = v.comments[last..last + parts[n - 2].len()].trim();
-            let outcome = if refused_atom_condition(test) {
+            let outcome = if refused_test(test, parts[n - 2].trim()) {
                 format!("and q 5 refuses `{test}` as a test with 'type")
             } else {
                 "and the result is null".into()
@@ -2611,7 +2640,7 @@ pub fn lint_selecting(
                     "The trailing `;` makes this a {n}-slot conditional, not an if-else: the \
                      slot before it is run as another test, {outcome}"
                 )
-            } else if refused_atom_condition(test) {
+            } else if refused_test(test, parts[n - 2].trim()) {
                 format!(
                     "{n}-slot $[ ... ] has no else branch: when no other condition holds it \
                      runs `{test}` as a test, which q 5 refuses with 'type"
@@ -2645,6 +2674,7 @@ pub fn lint_selecting(
         }
         let raw = v.comments[open + 1..open + 1 + parts[0].len()].trim();
         if refused_atom_condition(raw)
+            || re!(r"^\(\s*\)$").is_match(raw)
             || re!(r"^[01]{2,}b$").is_match(raw)
             || (re!(r"^-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+$").is_match(raw)
                 && !raw.ends_with('b'))
@@ -4369,8 +4399,8 @@ pub fn lint_selecting(
         // A cast named by symbol converts a string char by char - `long$"123"`
         // is `49 50 51`, and `date$"2024.01.01"` is ten dates - with no error
         // to say so. The uppercase-char cast `"J"$` parses text. `char` and
-        // `byte` are legitimate on a string, and `symbol` and `guid` are 'type
-        // errors rather than junk, but are still not the cast that was meant.
+        // `byte` are legitimate on a string. `symbol` and `guid` convert
+        // nothing: q 5 refuses them with 'type, which is QT032's, in general.
         if let Some(m) = re!(
             r#"`(long|int|short|float|real|boolean|date|time|timestamp|timespan|month|minute|second|datetime|symbol|guid)\s*\$\s*""#
         )
@@ -4384,8 +4414,13 @@ pub fn lint_selecting(
                 "datetime" => "Z", "guid" => "G", _ => "",
             };
             // `symbol` and `guid` are the exceptions: q 5 refuses them with
-            // 'type rather than converting codes, so the message has to say
-            // something else.
+            // 'type rather than converting codes, so they are another rule
+            // with another message.
+            let code = if matches!(name, "symbol" | "guid") {
+                "QT032"
+            } else {
+                "QT004"
+            };
             let detail = if name == "symbol" {
                 "`symbol$ on a string is 'type; the cast to symbol is `$\"...\"".to_string()
             } else if name == "guid" {
@@ -4396,7 +4431,7 @@ pub fn lint_selecting(
                      text is \"{ch}\"$\"...\""
                 )
             };
-            add(offset + m.get(0).unwrap().start(), "QT004", detail);
+            add(offset + m.get(0).unwrap().start(), code, detail);
         }
         // Equality against a string literal in a filter pairs each row with
         // one character. q 5: 'length whenever the row count differs from

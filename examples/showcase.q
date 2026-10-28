@@ -43,7 +43,7 @@ rows:{[count] count+1}
 / expect-next: QF001
 wave:{[sin] sin*2}
 
-/ QF002: `_` is the drop operator; q will not take it as a parameter name.
+/ QF002: `_` is the drop operator, not a name; q 5 refuses every call with 'match.
 / expect-next: QF002
 drop:{[_] x+1}
 
@@ -620,6 +620,11 @@ half:1.5j
 / QT031: an uppercase cast parses text; "J"$1 is 'type, "j"$1 casts.
 / expect-next: QT031
 parsed:"J"$1
+
+/ QT032: a cast to symbol by name converts nothing - q 5 refuses a string
+/ with 'type. `$"abc" is the cast that makes a symbol.
+/ expect-next: QT032
+named:`symbol$"abc"
 
 / QB002: q 5's like takes one `*`, or a leading and trailing pair;
 / "a*b*" is 'nyi.

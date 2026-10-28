@@ -22,6 +22,13 @@ f:{[counted] counted+1}
 === QF002 | the drop operator cannot be a parameter
 f:{[_] x+1}
 
+=== QF002 profile: general | every call is refused, so the default reports it (q 5: {[_] 1}[] and {[a;_] a}[1;2] are 'match)
+f:{[_] 1}
+g:{[a;_] a}
+
+=== clean profile: general | a name with an underscore in it is a parameter (q 5: {[a_] a_}[1] is 1)
+f:{[a_] a_}
+
 === QF004 | a definition inside a namespace that shadows a builtin
 \d .util
 count:{[t] 42}

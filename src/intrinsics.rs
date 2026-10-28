@@ -371,13 +371,16 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
             continue;
         }
         // Nulls and infinities are no counts: q 5 `til 0N` and `til -0W` are
-        // 'domain, `til 0W` is 'limit.
+        // 'domain, of any width, and `til 0W` and `til 0Wj` are 'limit. A
+        // narrower infinity is only a large count: `til 0Wh` is 32767 items,
+        // and `til 0Wi` asks for 2147483647 longs, which fails or not with
+        // the memory at hand ('stop on the machine that measured it).
         if name == "til" {
             let arg = args[0].trim();
             let detail = if re!(r"^(?:0N|-0W)[hij]?$").is_match(arg) {
                 Some("til: til of a null or negative infinity is 'domain")
-            } else if re!(r"^0W[hij]?$").is_match(arg) {
-                Some("til: til of infinity is 'limit")
+            } else if re!(r"^0Wj?$").is_match(arg) {
+                Some("til: til of a long infinity is 'limit")
             } else {
                 None
             };
@@ -412,12 +415,14 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
             "til" if value.kind == Kind::Integer && value.negative => {
                 Some(("QD001", "til cannot generate a negative number of indices"))
             }
-            // `where ""` is the one string q accepts: there is nothing in it.
+            // `where ""` and `where 0x` are the string and byte vector q
+            // accepts: there is nothing in them (q 5 gives `long$() for each,
+            // and `where 0x01` is 'type).
             // q 5 wants a list: `where 2` and `where 1b` are 'type, and so is
             // a short vector, while an int one counts (`where 1 2i` is 0 1 1).
             "where"
-                if matches!(value.kind, Kind::Float | Kind::Symbol | Kind::Byte)
-                    || (value.kind == Kind::Char && value.len > 0)
+                if matches!(value.kind, Kind::Float | Kind::Symbol)
+                    || (matches!(value.kind, Kind::Char | Kind::Byte) && value.len > 0)
                     || (matches!(value.kind, Kind::Integer | Kind::Bool) && !value.vector)
                     || value.short_integer =>
             {

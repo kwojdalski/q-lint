@@ -288,7 +288,16 @@ b:$[0b;1;"ab";2;3]
 c:$[0b;1;0b;2;`a;4;5]
 d:$[0b;1;1.5;2;3]
 
-=== clean profile: general | a vector, a char or a name as a later test, and a symbol as a result (q 5: $[0b;1;1 0 1b;2;3] is 3)
+=== QA011 profile: general | a vector or () as a later test, and () as any test (q 5: $[0b;1;101b;2;3], $[0b;1;1 2 3;2;3], $[();1;2], if[();1] and do[();1] are 'type)
+a:$[0b;1;101b;2;3]
+b:$[0b;1;1 2 3;2;3]
+c:$[0b;1;();2;3]
+d:$[();1;2]
+if[();1]
+do[();1]
+while[();1]
+
+=== clean profile: general | 1 0 1b is no vector but 1 applied to 0 1b, a char or a name as a later test, and a symbol as a result (q 5: $[0b;1;1 0 1b;2;3] is 3)
 a:$[0b;1;1 0 1b;2;3]
 b:$[0b;1;"a";2;3]
 c:$[0b;1;x;2;3]
