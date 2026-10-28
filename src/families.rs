@@ -154,10 +154,15 @@ fn credentials(path: &str, source: &str, code: &str, comments: &str, out: &mut V
             continue;
         }
         let quote = m.get(0).unwrap().end() - 1;
-        let value = re!(r#"^"((?:\\.|[^"\\])*)""#)
-            .captures(&comments[quote..])
-            .map(|c| c.get(1).unwrap().as_str());
-        if value.is_some_and(|v| !v.trim().is_empty()) {
+        let value = re!(r#"^"((?:\\.|[^"\\])*)""#).captures(&comments[quote..]);
+        // The literal has to be the whole value: in `token:"," vs x` and
+        // `token:"Bearer ",x` it is a delimiter and a prefix, and the token
+        // is computed.
+        let whole = value
+            .as_ref()
+            .is_some_and(|c| crate::operand_ends(comments, quote + c.get(0).unwrap().end()));
+        let value = value.map(|c| c.get(1).unwrap().as_str());
+        if whole && value.is_some_and(|v| !v.trim().is_empty()) {
             out.push(Finding::at(
                 path,
                 source,
@@ -410,10 +415,14 @@ fn unreachable(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
             }
         }
         statements.push((start, body.len()));
+        // `'[f;g]` - or `' [f;g]` - is a composition, not a signal: q 5
+        // `{'[neg;abs]; 2}[]` is 2.
         let exits = |text: &str| {
             let t = text.trim_start();
             (t.starts_with(':') && !t.starts_with("::"))
-                || (t.starts_with('\'') && !t.starts_with("':"))
+                || (t.starts_with('\'')
+                    && !t.starts_with("':")
+                    && !t[1..].trim_start().starts_with('['))
         };
         if let Some(i) = statements.iter().position(|&(a, b)| exits(&body[a..b]))
             && let Some(&(a, _)) = statements[i + 1..]

@@ -962,19 +962,38 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             ("/", "%".into(), "Divide with `%`".into(), false)
         }
         // `a:a` does nothing at best. Remove the statement and its `;`, or
-        // the line when it is alone on one.
+        // the line when it is alone on one - or, inside an expression, just
+        // the assignment.
         "QB017" => {
             let m =
-                re!(r"^(\.?[A-Za-z][A-Za-z0-9_.]*)\s*::?\s*(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]*;?")
+                re!(r"^(\.?[A-Za-z][A-Za-z0-9_.]*)\s*::?\s*(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]*(?:;[ \t]*)?")
                     .captures(source.get(start..)?)?;
             if m[1] != m[2] {
                 return None;
             }
             let whole = m.get(0)?;
             let line_start = source[..start].rfind('\n').map_or(0, |i| i + 1);
+            // Only a whole statement can go. `r:x+b:b` reads the value it
+            // assigns, so there only the `b:` is removed: q 5 gives 3 for
+            // `{[x;b] r:x+b:b;r}[1;2]` and for `{[x;b] r:x+b;r}[1;2]`.
+            let before = v.code[..start].trim_end();
+            let statement = before.is_empty()
+                || before.ends_with([';', '{'])
+                || (start == line_start && enclosing_brace(&v.code, start).is_none())
+                || enclosing_brace(&v.code, start).is_some_and(|brace| {
+                    let sig = signature(&v.code, source, brace);
+                    sig.named && v.code[sig.body..start].trim().is_empty()
+                });
             let rest = &source[start + whole.end()..];
             let line_rest = rest.split('\n').next().unwrap_or("");
-            if source[line_start..start].trim().is_empty() && line_rest.trim().is_empty() {
+            if !statement {
+                (
+                    &source[start..start + m.get(2)?.start()],
+                    "".into(),
+                    "Remove the self-assignment".into(),
+                    false,
+                )
+            } else if source[line_start..start].trim().is_empty() && line_rest.trim().is_empty() {
                 let end = start + whole.end() + line_rest.len();
                 let end = (end + 1).min(source.len());
                 begin = line_start;
@@ -1611,6 +1630,9 @@ struct Views {
     /// part of a comment - and only `views` has followed the text closely
     /// enough to say which.
     string_starts: Vec<usize>,
+    /// Where the line that ends the script - a lone `\` outside a block
+    /// comment, or `\\` - begins. q reads nothing after it.
+    script_end: Option<usize>,
 }
 fn views(source: &str) -> Views {
     let bytes = source.as_bytes();
@@ -1620,6 +1642,7 @@ fn views(source: &str) -> Views {
     let mut foreign = false;
     let mut foreign_offsets = Vec::new();
     let mut open_block = None;
+    let mut script_end = None;
     let mut string_starts = Vec::new();
     // Before the first statement, an indented line under a column-0 comment
     // is more of that comment: q 5 loads `/ c` + `  b:1` and leaves b
@@ -1674,6 +1697,9 @@ fn views(source: &str) -> Views {
             // `\\` exits q, so a script ends there as it does at a lone `\`.
             block = stripped == "/";
             ended = stripped != "/";
+            if ended {
+                script_end = Some(offset);
+            }
             if block {
                 open_block = Some(offset);
             }
@@ -1722,6 +1748,7 @@ fn views(source: &str) -> Views {
         foreign_offsets,
         open_block,
         string_starts,
+        script_end,
     }
 }
 fn matching(s: &str, start: usize, open: u8, close: u8) -> Option<usize> {
@@ -3694,12 +3721,73 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
     };
     // `::` too, and a last statement that ends at the brace: q 5 `x::x`,
     // `{b:1;b::b}` and `{x:x}` each assign the name to itself.
-    for m in
-        re!(r"(?m)(\.?[A-Za-z][A-Za-z0-9_.]*)\s*::?\s*(\.?[A-Za-z][A-Za-z0-9_.]*)\s*(?:;|\}|$)")
-            .captures_iter(code)
+    //
+    // The name has to end the value. A string is blank in `code`, so
+    // `a:a"x"` - an index - is checked against the view that keeps it. And a
+    // line end ends a statement only where q says it does: at the top level
+    // an indented next line continues it (q 5: `x:x` over `  where x>3` is a
+    // filter), and inside a lambda a newline is a blank (`{a:1;a:a` over
+    // `  +1}` returns 2).
+    let ends = |name_end: usize, end: usize| {
+        let term = code[name_end..end].trim_end_matches([';', '}']).len() + name_end;
+        if !v.comments[name_end..term].trim().is_empty() {
+            return false;
+        }
+        if code[name_end..end].ends_with([';', '}']) {
+            return true;
+        }
+        let rest = &code[end..];
+        let Some(next) = rest.find(|c: char| !c.is_whitespace()) else {
+            return true;
+        };
+        if enclosing_brace(code, name_end).is_some() {
+            return rest[next..].starts_with([';', '}']);
+        }
+        let line = code[..end + next].rfind('\n').map_or(0, |i| i + 1);
+        !source[line..].starts_with([' ', '\t'])
+    };
+    // Inside a lambda the name has to be the lambda's own already - a
+    // parameter, or assigned earlier in its body. Otherwise the `a:` makes
+    // `a` a local that the right side reads before it has a value, and q 5
+    // refuses the lambda: `{b:1; a:a; a}` is 'a even with a global `a`.
+    // That is QF014's finding. `::` and a dotted name are the global, and
+    // `{b:1; a::a}` loads.
+    let own = |name: &str, at: usize, op: &str| {
+        let Some(brace) = enclosing_brace(code, at) else {
+            return true;
+        };
+        if name.contains('.') || op.trim_start().starts_with("::") {
+            return true;
+        }
+        let sig = signature(code, source, brace);
+        if sig.named {
+            if sig.slots.contains(&name) {
+                return true;
+            }
+        } else if matches!(name, "x" | "y" | "z") {
+            return true;
+        }
+        let body = top_level(&code[sig.body..at]);
+        body.match_indices(name).any(|(i, _)| {
+            let after = &body[i + name.len()..];
+            let op = after.trim_start_matches([' ', '\t']);
+            boundary(&body, i)
+                && !after.starts_with(|c: char| c.is_ascii_alphanumeric() || "_.".contains(c))
+                && op.starts_with(':')
+                && !op.starts_with("::")
+        })
+    };
+    for m in re!(
+        r"(?m)(\.?[A-Za-z][A-Za-z0-9_.]*)\s*::?\s*(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t\r]*(?:;|\}|$)"
+    )
+    .captures_iter(code)
     {
         let whole = m.get(0).unwrap();
-        if depth.get(whole.start()) == Some(&true) && boundary(code, whole.start()) && m[1] == m[2]
+        if depth.get(whole.start()) == Some(&true)
+            && boundary(code, whole.start())
+            && m[1] == m[2]
+            && ends(m.get(2).unwrap().end(), whole.end())
+            && own(&m[1], whole.start(), &whole.as_str()[m[1].len()..])
         {
             add(
                 whole.start(),
@@ -3907,7 +3995,12 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
                 depth -= 1;
             }
         }
-        if uqf && first_raw.trim() == "/" && !v.foreign_offsets.contains(&offset) {
+        // Not after the end of the script: q 5 reads nothing past a lone `\`.
+        if uqf
+            && first_raw.trim() == "/"
+            && !v.foreign_offsets.contains(&offset)
+            && v.script_end.is_none_or(|end| offset < end)
+        {
             add(offset, "QP001", "Bare slash opens a block comment".into());
         }
         if first.trim().starts_with("\\d ") {
