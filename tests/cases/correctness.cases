@@ -19,6 +19,30 @@ c6:update a by a from t
 c7:select by a from t
 c8:select a from t;d:select b by c from u
 
+=== QB021 | a comparison, xbar, a list or a call is named by q 5's own rule (q 5: each raises 'dup names for cols/groups a)
+f:{x}
+r1:select b>a by a from t
+r2:select b xbar a by a from t
+r3:select (b;a) by a from t
+r4:select f a by a from t
+r5:select f[a] by a from t
+r6:select {x} a by a from t
+
+=== clean | named after the right operand, or x after a literal (q 5: each runs, with column x or b)
+r1:select 100*a by a from t
+r2:select a mod 2 by a from t
+r3:select a<2 by a from t
+r4:select 2+a by a from t
+r5:select a=1 by a from t
+r6:select a in 1 2 by a from t
+r7:select a<b by a from t
+r8:select a#b by a from t
+r9:select a^b by a from t
+r10:select a cross b by a from t
+r11:select a wavg b by a from t
+r12:select a by 2*a from t
+r13:select a by a in 1 from t
+
 === QB001 | a qSQL filter comparing a column to itself
 select from t where a=a
 
