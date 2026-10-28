@@ -613,8 +613,11 @@ fn atom_literal(lit: &str) -> bool {
 /// QE008. A glyph applied to one argument by juxtaposition. q 5 has no
 /// monadic form for any of them: `-x`, `,x`, `#x`, `~x`, `_x`, `a:-x` and `1*-x`
 /// are each refused by `parse` with the glyph as the error, and a lambda
-/// holding one is refused when the script defines it. `-1` is a literal,
-/// `(#)x` and `-:` are fine, and after an operand the glyph is dyadic.
+/// holding one is refused when the script defines it. The k-style monadic
+/// form fares no better: `#:a`, `-:a`, `b:,:a` and `1+#:a` are each refused
+/// with the glyph and its colon (`'#:`). `-1` is a literal, `(#)x`, `(#:)a`,
+/// `#:[a]` and `f:#:` are fine, and after an operand the glyph is dyadic
+/// (`a,:1` and `a-:1` amend in place).
 fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<Finding>) {
     let b = comments.as_bytes();
     let mut line_start = 0;
@@ -635,9 +638,15 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
         // What follows has to be an operand: not `:` (`-:`, `,:`), an
         // iterator, a bracket (`@[f;x;g]`, `$[c;a;b]`) or a negative literal.
         let rest = &comments[i + 1..];
+        // `#:a`: the k form, a glyph and a colon, applied to an operand
+        // written straight after it.
+        let colon = rest.starts_with(':')
+            && rest[1..].starts_with(|c: char| c.is_ascii_alphanumeric() || "`(\".".contains(c))
+            || rest.starts_with(":-") && rest[2..].starts_with(|c: char| c.is_ascii_digit());
         let next = rest.trim_start_matches([' ', '\t']);
         let spaced = next.len() < rest.len();
-        let operand = next.starts_with(|c: char| c.is_ascii_alphabetic() || "`(\"".contains(c))
+        let operand = colon
+            || next.starts_with(|c: char| c.is_ascii_alphabetic() || "`(\"".contains(c))
             || (next.starts_with(|c: char| c.is_ascii_digit() || c == '.')
                 && (g != b'-' || spaced));
         if !operand {
@@ -653,17 +662,15 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
         {
             continue;
         }
-        let mut finding = Finding::at(
-            path,
-            source,
-            i,
-            "QE008",
-            format!(
-                "`{}` has no monadic form in q 5: q refuses this line with '{}",
-                g as char, g as char
-            ),
-        );
-        finding.end_column = finding.column.map(|c| c + 1);
+        let mut finding = Finding::at(path, source, i, "QE008", {
+            let glyph = if colon {
+                format!("{}:", g as char)
+            } else {
+                (g as char).to_string()
+            };
+            format!("`{glyph}` has no monadic form in q 5: q refuses this line with '{glyph}")
+        });
+        finding.end_column = finding.column.map(|c| c + if colon { 2 } else { 1 });
         out.push(finding);
     }
 }

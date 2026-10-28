@@ -133,6 +133,25 @@ t:(_x)
 u:1+_x
 v:{_x}
 
+=== QE008 profile: general | the k form, a glyph and a colon, has no monadic use either (q 5: b:#:a is '#:, -:a is '-:)
+b:#:a
+c:-:a
+d:,:a
+e:*:a
+f:{#:x}
+g:1+#:a
+h:~:a
+i:_:a
+j:-:-1
+
+=== clean profile: general | the k form in parentheses, with brackets, alone or amending in place (q 5: all parse)
+r:(#:)a
+s:#:[a]
+f:#:
+a,:1
+a-:1
+0N!:a
+
 === clean profile: general | drop after an operand, and _ inside a name
 a:x _1
 b:1 _x
