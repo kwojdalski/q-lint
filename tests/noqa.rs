@@ -33,6 +33,17 @@ fn a_multi_line_lambda_is_suppressed_where_the_finding_is_reported() {
 }
 
 #[test]
+fn a_suppressed_structure_finding_leaves_the_other_rules_running() {
+    // q 5: `b:(1` fails to parse with '(; `a:1==2` with '=. Accepting the
+    // first must not accept the whole file.
+    let unbalanced = "a:1==2\nb:(1\n";
+    assert_eq!(codes(unbalanced), [(2, "QE001".to_string())]);
+    let accepted = "a:1==2\nb:(1 / noqa: QE001\n";
+    assert!(has(accepted, 1, "QE004"));
+    assert!(!codes(accepted).iter().any(|(_, code)| code == "QE001"));
+}
+
+#[test]
 fn other_codes_on_the_same_line_are_still_reported() {
     let source = "f:{[dt;data] s:1; dt} / noqa: QF016\n";
     assert!(!has(source, 1, "QF016"));

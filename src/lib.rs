@@ -2114,12 +2114,29 @@ pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
 /// file defines is not undefined here, and a name another file assigns is not
 /// one whose value this file can know.
 pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Vec<Finding> {
+    lint_selecting(source, path, profile, ws, true)
+}
+
+/// `lint_in`, told whether the configuration reports QE001 here. A file
+/// whose brackets do not balance is reported for that alone, since every
+/// other rule reads its structure; but when that finding is suppressed - by
+/// a `noqa` on its line or by deselecting QE001 - the other rules still run,
+/// rather than the suppression silencing the whole file.
+pub fn lint_selecting(
+    source: &str,
+    path: &str,
+    profile: Profile,
+    ws: &Workspace,
+    structure_selected: bool,
+) -> Vec<Finding> {
     let uqf = profile == Profile::Uqf;
     let v = views(source);
-    if let Some(f) = structure(path, source, &v) {
+    if structure_selected && let Some(f) = structure(path, source, &v) {
         let mut out = vec![f];
         suppress(&mut out, source, &v.comments);
-        return out;
+        if !out.is_empty() {
+            return out;
+        }
     }
     let code = &v.code;
     // A UTF-8 BOM is not something q tolerates: it reports 'char on the first

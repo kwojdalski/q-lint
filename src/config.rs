@@ -39,7 +39,7 @@
 //!
 //! Nothing here reads q source; a configuration is TOML and is only parsed.
 
-use q_lint_rs::{Finding, Profile, RULES, Workspace, lint_in};
+use q_lint_rs::{Finding, Profile, RULES, Workspace, lint_selecting};
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
@@ -222,7 +222,9 @@ impl Policy {
     pub fn lint(&self, source: &str, path: &str, ws: &Workspace) -> Result<Vec<Finding>, String> {
         let file = Path::new(path);
         let settings = self.settings(file)?;
-        let mut found = lint_in(source, path, Profile::Uqf, ws);
+        let structure =
+            self.selected(&settings, "QE001") && !per_file_ignored(&settings, "QE001", file);
+        let mut found = lint_selecting(source, path, Profile::Uqf, ws, structure);
         found.retain(|f| {
             self.selected(&settings, &f.code) && !per_file_ignored(&settings, &f.code, file)
         });

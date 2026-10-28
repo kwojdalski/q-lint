@@ -376,6 +376,24 @@ fn a_per_file_ignore_starting_with_a_bang_applies_to_every_other_file() {
 }
 
 #[test]
+fn deselecting_qe001_leaves_the_other_rules_running() {
+    // q 5: `b:(1` fails to parse with '( and `a:1==2` with '=. Ignoring the
+    // first must not hide the second.
+    let repo = Repo::new();
+    repo.write("a.q", "a:1==2\nb:(1\n");
+    assert_eq!(repo.codes(".", &["--isolated", "a.q"]), ["QE001"]);
+    assert_eq!(
+        repo.codes(".", &["--isolated", "--ignore", "QE001", "a.q"]),
+        ["QE004"]
+    );
+    repo.write(
+        "qlinter.toml",
+        "profile = \"general\"\nper-file-ignores = { \"a.q\" = [\"QE001\"] }\n",
+    );
+    assert_eq!(repo.codes(".", &["a.q"]), ["QE004"]);
+}
+
+#[test]
 fn a_selector_that_names_no_rule_is_refused() {
     let repo = Repo::new();
     repo.write("a.q", SOURCE)
