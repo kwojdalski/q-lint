@@ -336,57 +336,45 @@ fn duplicate_columns(path: &str, source: &str, code: &str, out: &mut Vec<Finding
         }
     }
     // The same in a select or update list, where q 5 renames as well:
-    // `select a,a from t` has columns a and a1. An item is named by its
-    // `name:`, or is a bare column naming itself; other expressions are
-    // named by q's own rules and left out.
+    // `select a,a from t` has columns a and a1, and so do `select max a,min a`
+    // and `select a,max a`, each item named as `column_name` says. A select's
+    // by list is renamed the same way - `select a by b,b` groups by b and b1 -
+    // where update's by names no column and is left alone.
     for q in re!(r"\b(?:select|update)\b").find_iter(code) {
-        if !crate::boundary(code, q.start()) {
+        if !crate::boundary(code, q.start()) || in_string(code, q.start()) {
             continue;
         }
         let rest = &code[q.end()..];
         let Some(stop) = re!(r"\b(?:by|from)\b").find(rest) else {
             continue;
         };
-        let list = &rest[..stop.start()];
-        if list.contains(['\n', ';', '[', '{']) {
-            continue;
+        let mut lists = vec![&rest[..stop.start()]];
+        if stop.as_str() == "by"
+            && q.as_str() == "select"
+            && let Some(from) = re!(r"\bfrom\b").find(&rest[stop.end()..])
+        {
+            lists.push(&rest[stop.end()..stop.end() + from.start()]);
         }
-        let mut seen: Vec<&str> = vec![];
-        // Items at depth zero: `select f[a,b],c` has two.
-        let mut items = vec![];
-        let (mut depth, mut start) = (0i32, 0);
-        for (i, b) in list.bytes().enumerate() {
-            match b {
-                b'(' => depth += 1,
-                b')' => depth -= 1,
-                b',' if depth == 0 => {
-                    items.push(&list[start..i]);
-                    start = i + 1;
-                }
-                _ => {}
-            }
-        }
-        items.push(&list[start..]);
-        for item in items {
-            let item = item.trim();
-            let name = match item.split_once(':') {
-                Some((name, _)) => name.trim(),
-                None => item,
-            };
-            if !re!(r"^[A-Za-z][A-Za-z0-9_]*$").is_match(name) {
+        for list in lists {
+            // A newline, a `;` outside brackets or the end of a lambda ends
+            // the statement before the list does.
+            if list.contains('\n') || !braces_close(list) || items_at_depth_zero(list, b';') {
                 continue;
             }
-            if seen.contains(&name) {
-                out.push(Finding::at(
-                    path,
-                    source,
-                    q.start(),
-                    "QB019",
-                    format!("Column `{name}` is named twice: q keeps both and renames the second, so `{name}` reads the first"),
-                ));
-                break;
+            let mut seen: Vec<&str> = vec![];
+            for name in items(list).into_iter().filter_map(column_name) {
+                if seen.contains(&name) {
+                    out.push(Finding::at(
+                        path,
+                        source,
+                        q.start(),
+                        "QB019",
+                        format!("Column `{name}` is named twice: q keeps both and renames the second, so `{name}` reads the first"),
+                    ));
+                    break;
+                }
+                seen.push(name);
             }
-            seen.push(name);
         }
     }
 }
@@ -409,6 +397,25 @@ fn items(list: &str) -> Vec<&str> {
     }
     items.push(&list[start..]);
     items
+}
+
+/// Whether `at` sits inside a string on its line. The masked view blanks
+/// most strings, but not on a `\t` line, where `\t f "select min(p) ..."`
+/// carries SQL that is not q.
+fn in_string(code: &str, at: usize) -> bool {
+    let line = code[..at].rfind('\n').map_or(0, |n| n + 1);
+    let mut inside = false;
+    let b = code.as_bytes();
+    let mut i = line;
+    while i < at {
+        match b[i] {
+            b'\\' if inside => i += 1,
+            b'"' => inside = !inside,
+            _ => {}
+        }
+        i += 1;
+    }
+    inside
 }
 
 /// Whether every `{` in `text` closes inside it, and no `}` closes one
@@ -652,7 +659,7 @@ fn last_slot_name(inner: &str) -> Option<&str> {
 /// run, so only select is read.
 fn select_by_duplicate(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
     for q in re!(r"\bselect\b").find_iter(code) {
-        if !crate::boundary(code, q.start()) {
+        if !crate::boundary(code, q.start()) || in_string(code, q.start()) {
             continue;
         }
         let rest = &code[q.end()..];

@@ -592,6 +592,22 @@ t:([]a:1 2;b:3 4)
 r:select a,a from t
 s:select a:a,b:a,a:a from t
 
+=== QB019 | an aggregate is named after its column (q 5: select max a,min a from t and select a,max a from t have a and a1)
+t:([]a:1 2;b:3 4)
+r:select max a,min a from t
+s:select a,max a from t
+
+=== QB019 | and a select's by list is renamed too (q 5: select a by b,b from t groups by b and b1)
+t:([]a:1 2;b:3 4)
+r:select a by b,b from t
+
+=== clean | aggregates of different columns, an update's by, or SQL in a string (q 5: no column renamed)
+t:([]a:1 2;b:3 4)
+r:select max a,min b from t
+s:select a by b,a<2 from t
+u:update a by b,b from t
+\t do[1;f "select min(a),max(a) from t"]
+
 === QB019 | and in an update (q 5: update a:1,a:2 from t adds a1)
 t:([]a:1 2;b:3 4)
 r:update a:1,a:2 from t
