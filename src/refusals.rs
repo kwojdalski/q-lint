@@ -402,8 +402,7 @@ fn hopen_literal(path: &str, source: &str, code: &str, comments: &str, out: &mut
         if !boundary(code, whole.start()) || !code[whole.start()..].starts_with("hopen") {
             continue;
         }
-        let rest = code[value.end()..].trim_start_matches([' ', '\t']);
-        if !(rest.is_empty() || rest.starts_with([';', ')', ']', '}', '\n', '\r'])) {
+        if !crate::operand_ends(code, value.end()) {
             continue;
         }
         let (what, error) = if value.as_str() == "`" {

@@ -1332,9 +1332,61 @@ fn vector_comparison(cond: &str) -> bool {
     });
     RE.is_match(cond)
 }
+/// Whether the expression an operand belongs to ends at `at`: at a `;`, a
+/// closing bracket or the end of the line - or, inside a qSQL phrase, at the
+/// `from`, `by` or `where` that ends the phrase and the `,` that separates
+/// its columns. q 5: `select b:1+`x from t`, `select b:1+`x,c:a from t`,
+/// `select by b:1+`x from t` and `select from t where a=1+`x, a>1` are
+/// each 'type, as the same expression on a line of its own is.
 pub(crate) fn operand_ends(code: &str, at: usize) -> bool {
     let rest = code[at..].trim_start_matches([' ', '\t']);
-    rest.is_empty() || rest.starts_with([';', ')', ']', '}', '\n', '\r'])
+    rest.is_empty()
+        || rest.starts_with([';', ')', ']', '}', '\n', '\r'])
+        || ((rest.starts_with(',')
+            || re!(r"^(?:from|by|where)(?:[^A-Za-z0-9_.]|$)").is_match(rest))
+            && in_qsql_phrase(code, at))
+}
+
+/// Whether `at` sits at the top level of a select, exec, update or delete
+/// phrase: walking back through its statement - to a `;`, an opening
+/// bracket or an unindented line - meets the keyword at the same depth.
+fn in_qsql_phrase(code: &str, at: usize) -> bool {
+    let b = code.as_bytes();
+    let mut depth = 0i32;
+    let mut seen_where = false;
+    let mut i = at;
+    while i > 0 {
+        i -= 1;
+        match b[i] {
+            b')' | b']' | b'}' => depth += 1,
+            b'(' | b'[' | b'{' => {
+                if depth == 0 {
+                    return false;
+                }
+                depth -= 1;
+            }
+            b';' if depth == 0 => return false,
+            b'\n' if depth == 0 && !code[i + 1..].starts_with([' ', '\t']) => return false,
+            _ => {}
+        }
+        if depth != 0 || !b[i].is_ascii_lowercase() || !boundary(code, i) {
+            continue;
+        }
+        let word = |w: &str| {
+            code[i..].starts_with(w)
+                && !code[i + w.len()..].starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_')
+        };
+        // In the where phrase a `,` separates conditions; in the from
+        // phrase it joins - `select from t,u` - so that phrase is not one.
+        if word("where") {
+            seen_where = true;
+        } else if word("from") && !seen_where {
+            return false;
+        } else if ["select", "exec", "update", "delete"].into_iter().any(word) {
+            return true;
+        }
+    }
+    false
 }
 fn blank(b: &mut [u8]) {
     for c in b {
