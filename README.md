@@ -330,7 +330,13 @@ language-servers = ["qlint"]
 
 ### What the server does not read
 
-`--config` and `--exclude` are not consulted in server mode. An editor asking
+`--exclude`, and the `exclude` and `extend-exclude` of any configuration, are
+not consulted in server mode. Everything else a configuration says is: the
+server finds `qlinter.toml` or `pyproject.toml` above each document as the
+command line does, and `--config FILE` replaces that search with the one file,
+whose per-file-ignores are then read relative to the directory the server was
+started in. `--isolated`, `--profile`, `--select`, `--extend-select` and
+`--ignore` apply as they do on the command line. An editor asking
 for diagnostics on a file it has open has already decided the file is
 interesting, and honouring an exclude list there would show a file with no
 findings and no explanation for their absence. Exclusions remain a

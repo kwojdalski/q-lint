@@ -338,6 +338,62 @@ fn isolated_and_config_replace_the_search() {
 }
 
 #[test]
+fn a_config_flags_patterns_are_rooted_at_the_current_directory() {
+    // Ruff: a file passed with --config has its relative paths resolved
+    // against the current directory, not the file's own.
+    let repo = Repo::new();
+    repo.write(
+        "cfg/shared.toml",
+        "profile = \"style\"\nexclude = [\"./src\"]\n\
+         [lint]\nper-file-ignores = { \"tests/*\" = [\"QF016\"] }\n",
+    )
+    .write("proj/src/s.q", SOURCE)
+    .write("proj/tests/t.q", SOURCE)
+    .write("proj/lib/l.q", SOURCE);
+    let out = run(&repo.path("proj"), &["--config", "../cfg/shared.toml", "."]);
+    let found: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let paths: Vec<_> = found
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["path"].as_str().unwrap().replace('\\', "/"))
+        .collect();
+    assert_eq!(paths.len(), 1, "{paths:?}");
+    assert!(paths[0].ends_with("lib/l.q"), "{paths:?}");
+}
+
+#[test]
+fn a_per_file_ignore_starting_with_a_bang_applies_to_every_other_file() {
+    let repo = Repo::new();
+    repo.write(
+        "qlinter.toml",
+        "profile = \"style\"\n[lint.per-file-ignores]\n\"!tests/*\" = [\"QF016\"]\n",
+    )
+    .write("tests/t.q", SOURCE)
+    .write("src/s.q", SOURCE);
+    assert_eq!(repo.codes(".", &["tests/t.q"]), ["QF016"]);
+    assert!(repo.codes(".", &["src/s.q"]).is_empty());
+}
+
+#[test]
+fn deselecting_qe001_leaves_the_other_rules_running() {
+    // q 5: `b:(1` fails to parse with '( and `a:1==2` with '=. Ignoring the
+    // first must not hide the second.
+    let repo = Repo::new();
+    repo.write("a.q", "a:1==2\nb:(1\n");
+    assert_eq!(repo.codes(".", &["--isolated", "a.q"]), ["QE001"]);
+    assert_eq!(
+        repo.codes(".", &["--isolated", "--ignore", "QE001", "a.q"]),
+        ["QE004"]
+    );
+    repo.write(
+        "qlinter.toml",
+        "profile = \"general\"\nper-file-ignores = { \"a.q\" = [\"QE001\"] }\n",
+    );
+    assert_eq!(repo.codes(".", &["a.q"]), ["QE004"]);
+}
+
+#[test]
 fn a_selector_that_names_no_rule_is_refused() {
     let repo = Repo::new();
     repo.write("a.q", SOURCE)

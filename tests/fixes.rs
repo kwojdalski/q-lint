@@ -158,12 +158,33 @@ fn a_file_that_is_not_utf8_is_linted_but_never_rewritten() {
         (Some(2), Some(6))
     );
 
+    // Under --fix and --diff the file is still linted and its findings
+    // still decide the exit code; only the rewrite is withheld.
     let fix = Command::new(env!("CARGO_BIN_EXE_qlinter"))
-        .arg("--fix")
+        .args(["--fix", "--format", "json"])
         .arg(&path)
         .output()
         .unwrap();
-    assert!(String::from_utf8_lossy(&fix.stderr).contains("not valid UTF-8, skipped"));
+    assert!(String::from_utf8_lossy(&fix.stderr).contains("not fixed"));
+    assert_eq!(fix.status.code(), Some(1), "{fix:?}");
+    let after: serde_json::Value = serde_json::from_slice(&fix.stdout).unwrap();
+    assert!(
+        after
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|finding| finding["code"] == "QE004"),
+        "{after}"
+    );
+    assert_eq!(fs::read(&path).unwrap(), original);
+
+    let diff = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .arg("--diff")
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert_eq!(diff.status.code(), Some(1), "{diff:?}");
+    assert!(String::from_utf8_lossy(&diff.stderr).contains("not shown"));
     assert_eq!(fs::read(&path).unwrap(), original);
 }
 

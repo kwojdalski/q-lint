@@ -387,6 +387,8 @@ fn run(args: Args) -> Result<u8, String> {
     };
     let mut sources = vec![];
     let mut unreadable = false;
+    // Files read lossily, which are linted and reported but never fixed.
+    let mut lossy = std::collections::HashSet::new();
     if paths.iter().any(|p| p == "-") {
         if args.fix {
             return Err("--fix needs file paths; use --diff to preview stdin".into());
@@ -418,22 +420,28 @@ fn run(args: Args) -> Result<u8, String> {
             // own e/c.q carries Latin-1 after its closing backslash - so it
             // is linted with each invalid byte read as one replacement
             // character, which keeps every line and column where it was.
-            // Never under --fix or --diff: writing the decoded text back
-            // would change the bytes this linter could not read.
+            // Under --fix or --diff it is still linted and reported, but never
+            // fixed: writing the decoded text back would change the bytes
+            // this linter could not read.
             match fs::read(&path) {
                 Ok(bytes) => match String::from_utf8(bytes) {
                     Ok(source) => sources.push((path.to_string_lossy().into_owned(), source)),
-                    Err(_) if args.fix || args.diff => eprintln!(
-                        "qlinter: {}: not valid UTF-8, skipped: a fix would rewrite bytes it cannot read",
-                        path.display()
-                    ),
                     Err(e) => {
-                        eprintln!(
-                            "qlinter: {}: not valid UTF-8; each invalid byte is read as one character",
-                            path.display()
-                        );
+                        if args.fix || args.diff {
+                            eprintln!(
+                                "qlinter: {}: not valid UTF-8; linted with each invalid byte read as one character, and not fixed: a fix would rewrite bytes it cannot read",
+                                path.display()
+                            );
+                        } else {
+                            eprintln!(
+                                "qlinter: {}: not valid UTF-8; each invalid byte is read as one character",
+                                path.display()
+                            );
+                        }
                         let source = String::from_utf8_lossy(e.as_bytes()).into_owned();
-                        sources.push((path.to_string_lossy().into_owned(), source));
+                        let name = path.to_string_lossy().into_owned();
+                        lossy.insert(name.clone());
+                        sources.push((name, source));
                     }
                 },
                 Err(e) => {
@@ -452,7 +460,17 @@ fn run(args: Args) -> Result<u8, String> {
     if args.fix || args.diff {
         let mut fixed = 0;
         let mut changed_files = 0;
+        // Fixes a lossily read file wants but cannot be given: under --diff
+        // they still mean the run is not clean.
+        let mut withheld = 0;
         for (path, source) in &mut sources {
+            if lossy.contains(path.as_str()) {
+                withheld += fixes_for(&policy.lint(source, path, &workspace)?, source)
+                    .into_iter()
+                    .filter(|fix| fix.batch_safe || args.unsafe_fixes)
+                    .count();
+                continue;
+            }
             // Repeat until nothing applies, as Ruff does: one fix can leave
             // another to make - QF005's fix passes one local in, and the
             // next pass finds the second. Overlapping fixes wait a pass.
@@ -537,7 +555,16 @@ fn run(args: Args) -> Result<u8, String> {
         }
         if args.diff {
             eprintln!("qlinter: {fixed} fix(es) available in {changed_files} file(s)");
-            return Ok(if unreadable { 2 } else { u8::from(fixed > 0) });
+            if withheld > 0 {
+                eprintln!(
+                    "qlinter: {withheld} more fix(es) not shown, in files that are not valid UTF-8"
+                );
+            }
+            return Ok(if unreadable {
+                2
+            } else {
+                u8::from(fixed + withheld > 0)
+            });
         }
         eprintln!("qlinter: fixed {fixed} finding(s) in {changed_files} file(s)");
     }
