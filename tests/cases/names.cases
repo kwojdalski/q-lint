@@ -111,6 +111,40 @@ f:{[a] z*2}
 === clean | a global x that does exist is a legitimate reference
 x:1;f:{[a] x+1}
 
+=== QF010 profile: general | a root x is not visible from a \d .ns lambda (q 5: .ns.f 1 is 'x)
+x:1
+\d .ns
+f:{[a] a+x}
+\d .
+
+=== clean profile: general | the namespace's own x is (q 5: .ns.f 1 is 2)
+\d .ns
+x:1
+f:{[a] a+x}
+\d .
+
+=== clean profile: general | and so is one written qualified from the root (q 5: .ns.f 1 is 2)
+.ns.x:1
+\d .ns
+f:{[a] a+x}
+\d .
+
+=== QF010 profile: general | a root .x is not the root x (q 5: f 1 is 'x)
+.x:1
+f:{[a] a+x}
+
+=== QF005 profile: general | a root a does not answer a \d .ns nested read (q 5: .ns.f[] is 'a)
+a:1
+\d .ns
+f:{a:2; {a}[]}
+\d .
+
+=== clean profile: general | the namespace's own a does (q 5: .ns.f[] is 1)
+\d .ns
+a:1
+f:{a:2; {a}[]}
+\d .
+
 === clean | x declared as the parameter is the argument
 f:{[x] x+1}
 
@@ -337,6 +371,25 @@ f:{[] aa:bb; aa}
 
 === clean | literal set defines the global
 `bb set 1
+f:{[] aa:bb; aa}
+
+=== clean | a compound assignment at the root defines the name (q 5: a,:1; b:a is ,1)
+bb,:1
+f:{[] aa:bb; aa}
+
+=== clean | and so does one inside a lambda (q 5: f:{c,:1; c} writes the global c)
+f:{[] bb+:1; bb}
+
+=== clean | with a space before the operator (q 5: parse "a ,:1" is (,:;`a;1))
+bb ,:1
+f:{[] aa:bb; aa}
+
+=== QF018 | a compound write to a local defines no global (q 5: {bb:1#1; bb,:2} leaves bb unset)
+f:{[] bb:1#1; bb,:2; bb}
+g:{[] aa:bb; aa}
+
+=== QF018 | each-right is not an assignment (q 5: bb,/:1 2 is 'bb with no bb)
+bb,/:1 2
 f:{[] aa:bb; aa}
 
 === clean | a global multiple assignment defines both names

@@ -149,7 +149,9 @@ A file depends on another when:
   handed to - a project's own loader is invisible to reading otherwise. q
   resolves that path against the process's directory, which the source does
   not name, so it is tried against the loading file's directory, each
-  directory above it, then the current one.
+  directory above it, then the current one. A script loaded under `\d .a`
+  runs in `.a`, so what it defines at its root is `.a.name` as well as
+  `name`, and so is what the scripts it loads at its root define.
 
 A name several files define gives an edge to each of them - which one wins is
 load order, and load order is not in the source. With `--detail` each file's
@@ -158,7 +160,10 @@ entry is `{"dependencies" (or "dependents"): [...], "ambiguous": {name:
 each line where a name is reached by a value computed at run time, which no
 amount of reading resolves: `value` of a string, `get` of anything but a
 literal, a name built with `` ` sv ``, `set` into a computed name, and a
-concatenated `system "l ",path`. The graph does not guess at those; a caller
+concatenated `system "l ",path`. So is `get`, `value` or `set` of an
+unqualified symbol in a lambda written under `\d`: q looks the symbol up in
+the `\d` current when the lambda is called, not where it is written. The
+graph does not guess at those; a caller
 that wants to be safe can treat such a file as depending on everything.
 
 `--symbols` also counts a qualified symbol literal, `` `.ns.f ``, as a read

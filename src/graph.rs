@@ -46,6 +46,48 @@ pub fn build(files: &[(PathBuf, String)], symbols: bool, cwd: &Path) -> BTreeMap
         .enumerate()
         .map(|(i, (p, _))| (p.as_path(), i))
         .collect();
+    let target = |i: usize, load: &str| {
+        load_targets(&files[i].0, load, cwd)
+            .iter()
+            .find_map(|p| position.get(p.as_path()).copied())
+    };
+    // A script loaded under `\d .a` runs in `.a`, so what it writes at its
+    // root is `.a.name` too: q 5, after `\d .a` and `\l b.q` with b.q's
+    // `ff:{1}`, has `.a.ff` and no `ff`. Its own `\d` does not leak back
+    // out. The root names are kept, since the same script may be loaded or
+    // run at the root elsewhere, and one loaded from several contexts
+    // defines in each. A load at a loaded script's root runs in the context
+    // that script runs in: `\l c.q` at b.q's root, with b.q loaded under
+    // `\d .a`, puts c.q's `gg` at `.a.gg` (q 5).
+    let mut contexts: Vec<BTreeSet<&str>> = vec![BTreeSet::new(); files.len()];
+    let mut pending: Vec<(usize, &str)> = vec![];
+    for (i, read) in reads.iter().enumerate() {
+        for (load, namespace) in &read.loads {
+            if let Some(d) = target(i, load)
+                && !namespace.is_empty()
+            {
+                pending.push((d, namespace));
+            }
+        }
+    }
+    while let Some((d, namespace)) = pending.pop() {
+        if !contexts[d].insert(namespace) {
+            continue;
+        }
+        for name in reads[d].defines.iter().filter(|n| !n.starts_with('.')) {
+            let defs = definers.entry(format!("{namespace}.{name}")).or_default();
+            if !defs.contains(&d) {
+                defs.push(d);
+            }
+        }
+        for (load, inner) in &reads[d].loads {
+            if inner.is_empty()
+                && let Some(next) = target(d, load)
+            {
+                pending.push((next, namespace));
+            }
+        }
+    }
     let mut graph = BTreeMap::new();
     for (i, (path, _)) in files.iter().enumerate() {
         let mut node = Node {
@@ -70,10 +112,8 @@ pub fn build(files: &[(PathBuf, String)], symbols: bool, cwd: &Path) -> BTreeMap
                 );
             }
         }
-        for load in &reads[i].loads {
-            if let Some(&d) = load_targets(path, load, cwd)
-                .iter()
-                .find_map(|p| position.get(p.as_path()))
+        for (load, _) in &reads[i].loads {
+            if let Some(d) = target(i, load)
                 && d != i
             {
                 node.dependencies.insert(files[d].0.clone());

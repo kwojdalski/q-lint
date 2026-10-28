@@ -99,15 +99,19 @@ pub struct References {
     /// to q they are two names.
     pub defines: Vec<String>,
     /// The paths of `\l path`, `system "l path"` and `` `:path.q ``, as
-    /// written.
-    pub loads: Vec<String>,
+    /// written, each with the `\d` in force where it is loaded - `""` at the
+    /// root - since the loaded script runs in it.
+    pub loads: Vec<(String, String)>,
     /// Where a name is reached by a value computed at run time.
     pub dynamic: Vec<Dynamic>,
 }
 
 /// A place reading cannot see through: `kind` is `value` (of a string),
 /// `get` (of anything but a literal), `sv` (a name built from parts), `set`
-/// (into a computed name) or `load` (a concatenated `system "l ..."`).
+/// (into a computed name) or `load` (a concatenated `system "l ..."`). A
+/// `get`, `value` or `set` of an unqualified symbol inside a lambda written
+/// under `\d` is one too: q looks the symbol up in the `\d` current when the
+/// lambda is called, which the source does not say.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize)]
 pub struct Dynamic {
     pub line: usize,
