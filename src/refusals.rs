@@ -623,12 +623,32 @@ fn juxtaposed_derived(
     }
 }
 
+/// The narrow integer type a vector item is parsed as, and the largest
+/// magnitude it holds: its own `i` or `h` suffix, or the one after the last
+/// item of its vector. q 5 refuses `2147483648i`, `-2147483648i` (that is
+/// 0Ni's bit pattern, not a number) and `32768h`, and takes `2147483647i`.
+fn narrow(text: &str, last: &str) -> Option<(&'static str, u128)> {
+    let suffix = if re!(r"^\d+[hi]$").is_match(text) {
+        text
+    } else if re!(r"^\d+$").is_match(text) && re!(r"^\d+[hi]$").is_match(last) {
+        last
+    } else {
+        return None;
+    };
+    Some(if suffix.ends_with('i') {
+        ("an int", i32::MAX as u128)
+    } else {
+        ("a short", i16::MAX as u128)
+    })
+}
+
 /// QE010. A number q 5 will not parse. Each shape was refused by `parse`,
 /// which names the token: an integer type with a fraction (`1.5j`, and
 /// `1.5 2j`, where the suffix types every item), a suffix on any item but
 /// the last (`3i 4j`, `1e 2`), a boolean digit that is not 0 or 1 (`2b`), a
 /// letter that is no type (`1y`, `1d`, `1m`), dots that make no date
-/// (`1.2.3`, `2023.1.1`), and a long past 9223372036854775807. A boolean
+/// (`1.2.3`, `2023.1.1`), a long past 9223372036854775807, and an int or
+/// short past its own range (`2147483648i`, `32768h`). A boolean
 /// vector of atoms is not a vector at all - `1b 0b` parses, as two atoms -
 /// and `0N 1`, `3 4i`, `1e5` and `2023.01.01` are fine.
 fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Finding>) {
@@ -686,6 +706,15 @@ fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Find
                     .is_ok_and(|v| v > i64::MAX as u128)
             {
                 Some(format!("`{text}` does not fit in a long"))
+            } else if let Some((kind, max)) = narrow(text, last)
+                && text
+                    .trim_end_matches(['h', 'i'])
+                    .parse::<u128>()
+                    .is_ok_and(|v| v > max)
+            {
+                // The suffix types every item, so `1 2 2147483648i` overflows
+                // at its last item but one: q 5 refuses each with the number.
+                Some(format!("`{text}` does not fit in {kind}"))
             } else if k + 1 < run.len() && re!(r"^\d+(?:\.\d*)?[hijef]$").is_match(text) {
                 Some(format!(
                     "`{text}`: a vector literal takes one type suffix, after its last item"

@@ -218,6 +218,27 @@ g:2023.1.1
 === QE010 profile: general | a long that overflows (q 5: parse "9223372036854775808" is refused)
 h:9223372036854775808
 
+=== QE010 profile: general | an int that overflows (q 5: parse "2147483648i" is '2147483648)
+r:2147483648i
+
+=== QE010 profile: general | a short that overflows (q 5: '32768)
+s:32768h
+
+=== QE010 profile: general | the suffix types every item, so an earlier one overflows (q 5: '2147483648)
+t:2147483648 1i
+
+=== QE010 profile: general | 0Ni's bit pattern is no int (q 5: parse "-2147483648i" is refused)
+u:-2147483648i
+
+=== clean profile: general | the largest int and short, and a long past them (q 5: 0Wi, 0Wh, 2147483648)
+a:2147483647i
+b:-2147483647i
+c:32767h
+d:-32767h
+e:2147483648
+f:1 2 2147483647i
+g:2147483648 1
+
 === clean profile: general | the shapes q accepts
 a:3 4i
 b:10b
