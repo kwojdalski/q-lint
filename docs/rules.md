@@ -1,6 +1,6 @@
 # Rules
 
-All 117 rules, generated from `src/taxonomy.json` - the same data
+All 118 rules, generated from `src/taxonomy.json` - the same data
 `qlinter --rules` and `qlinter --explain <CODE>` print from. Regenerate with
 `python3 scripts/rules_doc.py > docs/rules.md`; a test fails when this is stale.
 
@@ -154,6 +154,7 @@ that wants fewer findings narrows in its own configuration.
 | `QB018` | constant-comparison | Two literals compared, so the answer never varies | `style` and above |
 | `QB019` | duplicate-column | A table literal names a column twice; q renames the second instead of refusing | `style` and above |
 | `QB020` | unreachable-statement | A statement after a top-level return or signal in a lambda never runs | `style` and above |
+| `QB021` | select-by-duplicate-name | A select names a result column the same as a by group, which q refuses with 'dup names for cols/groups | every profile |
 
 ## Domain - literal arguments outside what a builtin accepts
 

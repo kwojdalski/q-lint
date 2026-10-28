@@ -455,6 +455,13 @@
     "scope": "style"
   },
   {
+    "code": "QB021",
+    "name": "select-by-duplicate-name",
+    "category": "correctness",
+    "summary": "A select names a result column the same as a by group, which q refuses with 'dup names for cols/groups",
+    "scope": "builtin"
+  },
+  {
     "code": "QP001",
     "name": "bare-slash-block",
     "category": "policy",

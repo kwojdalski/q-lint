@@ -593,6 +593,12 @@ parsed2:"J"$"1"
 twice:([]px:1 2;px:3 4)
 once:([]px:1 2;qty:3 4)
 
+/ QB021: a result column named like its by group is refused, 'dup names
+/ for cols/groups; named apart, the line after runs.
+/ expect-next: QB021
+bysame:select max px by px from trades
+byapart:select top:max px by px from trades
+
 / QB020: the return ends the lambda, so the line after it never runs.
 / expect-next: QB020
 early:{[p] :p; p*2}
