@@ -92,6 +92,16 @@ a+=1
 === clean | the q spellings
 if[a=1;2];if[a<>1;2];r:a and b;a+:1;if[a>=1;2]
 
+=== clean | an = applied with brackets is its own token (q 5: c:=[`a;`b] is 0b, x+=[1;1] and x==[1;1] parse)
+c:=[`a;`b]
+d:= [1;1]
+e:x+=[1;1]
+f:x==[1;1]
+
+=== QE004 | without the brackets the pair is refused (q 5: x:=1 and x:=(1;1) are '=)
+a:=1
+b:=(1;1)
+
 === clean | operators inside a string are text
 s:"a==b"
 

@@ -3209,6 +3209,16 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
     // `x<=>y`, `x+++y`. Only before an operand - `a++` and `a**` with nothing
     // after them parse, as projections, and `x>>2` parses too.
     for m in re!(r"<=>|\*\*|=>|=<|<<|\|>|->|:=|%%|\+\+|==|!=|&&|\|\||[+\-*]=").find_iter(code) {
+        // An `=` applied with brackets is its own token: `c:=[`a;`b]` assigns
+        // an equality, and q 5 parses `x+=[1;1]`, `x==[1;1]` and `x:= [1;1]`
+        // too - only without the brackets is the pair refused.
+        if m.as_str().ends_with('=')
+            && code[m.end()..]
+                .trim_start_matches([' ', '\t'])
+                .starts_with('[')
+        {
+            continue;
+        }
         let long = !matches!(m.as_str(), "==" | "!=" | "&&" | "||" | "+=" | "-=" | "*=");
         if long
             && code[m.end()..]
