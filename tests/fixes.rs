@@ -317,6 +317,13 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ("QP002", "r:`datetime$x", "r:`timestamp$x", false),
         ("QP002", "r:2026.01.01T12:00", "r:2026.01.01D12:00", false),
         (
+            "QP002",
+            "s:\"15h$\";y:`datetime$z",
+            "s:\"15h$\";y:`timestamp$z",
+            false,
+        ),
+        ("QP002", "r:\"z\"$x", "r:\"p\"$x", false),
+        (
             "QF001",
             "f:{[count] count+{count x}[count]}",
             "f:{[countArg] countArg+{count x}[countArg]}",
@@ -369,6 +376,8 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
         ("QT008", "r:til 2.5"),              // no long it spells
         ("QF020", "t:([]ab:1 2;ac:3 4);r:select a from t"), // two equally close
         ("QA007", "f:{[c] $[c;1;2;3]}"),     // no empty slot
+        ("QP002", "t:.z.z / old: 15h$x"),    // the cast is in a comment
+        ("QP002", "t:.z.Z;s:\"0Nz\""),       // and the null in a string
     ] {
         for finding in lint(source, "probe.q", Profile::Uqf)
             .iter()

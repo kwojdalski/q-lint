@@ -1014,7 +1014,19 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             let line_end = v.code[start..]
                 .find('\n')
                 .map_or(v.code.len(), |at| start + at);
-            let line = &source[start..line_end];
+            // Matched as the detector matches: on the view without comments,
+            // and in code - a string spelling `"0Nz"` or `"15h$"` is data.
+            // The `"z"` cast is the one string that is the point, so only
+            // its `$` has to be code.
+            let line = &v.comments[start..line_end];
+            let code = &v.code[start..line_end];
+            let in_code = |m: &regex::Match| {
+                if m.as_str().starts_with('"') {
+                    code.as_bytes()[m.end() - 1] == b'$'
+                } else {
+                    code[m.range()] == *m.as_str()
+                }
+            };
             let swaps: [(&regex::Regex, &str); 5] = [
                 (re!(r"`datetime(\s*\$)"), "`timestamp$1"),
                 (re!(r#""z"(\s*\$)"#), "\"p\"$1"),
@@ -1022,15 +1034,13 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 (re!(r"(^|[^\w.])(-?0[NW])z\b"), "$1${2}p"),
                 (re!(r"\b(\d{4}\.\d{2}\.\d{2})T(\d)"), "${1}D$2"),
             ];
-            let (regex, to) = swaps
+            let (m, regex, to) = swaps
                 .iter()
-                .filter_map(|(r, to)| r.find(line).map(|m| (m.start(), *r, *to)))
-                .min_by_key(|s| s.0)
-                .map(|(_, r, to)| (r, to))?;
-            let m = regex.find(line)?;
+                .filter_map(|(r, to)| r.find_iter(line).find(&in_code).map(|m| (m, *r, *to)))
+                .min_by_key(|s| s.0.start())?;
             begin = start + m.start();
             (
-                m.as_str(),
+                &source[begin..start + m.end()],
                 regex.replace(m.as_str(), to).into_owned().into(),
                 "Use timestamp, not datetime".into(),
                 false,
