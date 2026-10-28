@@ -78,9 +78,10 @@ The CLI supports `--profile general|style|styleq|uqf`, `--format text|json`,
 `--qls-timeout` bounds a batch, plus at most one second for cleanup.
 The qls server may itself require Python; the Rust builtin backend does not.
 
-To preview mechanical edits, run `qlinter --diff path/to/file.q`; to write
-them, run `qlinter --fix path/to/file.q`. `--fix` re-lints the changed files and
-reports any remaining findings. Batch fixing handles `==`, `!=`, `+=`, `-=`,
+To preview mechanical edits, run `qlinter --diff path/to/file.q` - a unified
+diff with paths relative to the current directory, which `patch -p1` and
+`git apply` take as it is; to write them, run `qlinter --fix path/to/file.q`.
+`--fix` re-lints the changed files and reports any remaining findings. Batch fixing handles `==`, `!=`, `+=`, `-=`,
 `*=`, a leading UTF-8 BOM, an invalid string escape (`"C:\data"` →
 `"C:\\data"`), `true`/`false`/`None`/`return x` → `1b`/`0b`/`(::)`/`:x`,
 a table literal of scalars (each column enlisted), a symbol used as a `like`

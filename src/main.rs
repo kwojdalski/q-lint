@@ -460,7 +460,7 @@ fn run(args: Args) -> Result<u8, String> {
                 continue;
             }
             if args.diff && passes == 1 {
-                print_diff(path, source, &first);
+                print_diff(&diff_path(path), source, &first);
             } else if args.diff {
                 // The whole run as one edit: the span between what the two
                 // texts share at either end.
@@ -491,7 +491,7 @@ fn run(args: Args) -> Result<u8, String> {
                     title: "".into(),
                     batch_safe: true,
                 };
-                print_diff(path, source, &[whole]);
+                print_diff(&diff_path(path), source, &[whole]);
             } else {
                 fs::write(path.as_str(), &updated).map_err(|e| format!("{path}: {e}"))?;
                 *source = updated;
@@ -678,12 +678,28 @@ fn relative(path: &Path, base: &Path) -> String {
     up.chain(down).collect::<Vec<_>>().join("/")
 }
 
-/// Zero-context unified diff, built from the edits rather than by pairing
-/// lines: a fix may remove a line (a commented-out definition) or join two,
-/// and pairing old and new lines by position would misalign every hunk after
-/// it. Each hunk is the whole lines an edit touches, with edits that share a
-/// line merged into one.
+/// The path a `--diff` header names: relative to the current directory, as
+/// Ruff prints it, so `patch -p1` and `git apply` find the file. An absolute
+/// path behind `a/` is `a//abs/path`, which patch asks about and git refuses.
+/// A relative path - a `--stdin-filename` - is already what was meant.
+fn diff_path(path: &str) -> String {
+    let path = Path::new(path);
+    match std::env::current_dir() {
+        Ok(cwd) if path.is_absolute() => relative(path, &config::absolute(&cwd)),
+        _ => path.display().to_string(),
+    }
+}
+
+/// A unified diff with three lines of context, built from the edits rather
+/// than by pairing lines: a fix may remove a line (a commented-out
+/// definition) or join two, and pairing old and new lines by position would
+/// misalign every hunk after it. Each change is the whole lines an edit
+/// touches, with edits that share a line merged into one, and changes whose
+/// context meets share a hunk. The context is what `git apply` checks a
+/// patch against; without it, it refuses any hunk not at the start or end of
+/// the file unless told `--unidiff-zero`.
 fn print_diff(path: &str, before: &str, edits: &[q_lint_rs::Fix]) {
+    const CONTEXT: usize = 3;
     println!("--- a/{path}\n+++ b/{path}");
     // On bytes: `end - 1` can sit inside a multi-byte character - a BOM is
     // three - and a newline is one byte wherever it is.
@@ -700,7 +716,9 @@ fn print_diff(path: &str, before: &str, edits: &[q_lint_rs::Fix]) {
             .position(|&b| b == b'\n')
             .map_or(before.len(), |i| at + i + 1)
     };
-    let mut hunks: Vec<(usize, usize, Vec<&q_lint_rs::Fix>)> = vec![];
+    // The byte range of whole lines a change replaces, and its edits.
+    type Change<'a> = (usize, usize, Vec<&'a q_lint_rs::Fix>);
+    let mut changes: Vec<Change> = vec![];
     for edit in edits {
         let from = line_start(edit.start);
         let to = line_end(if edit.end > edit.start {
@@ -708,44 +726,82 @@ fn print_diff(path: &str, before: &str, edits: &[q_lint_rs::Fix]) {
         } else {
             edit.start
         });
-        match hunks.last_mut() {
+        match changes.last_mut() {
             Some(last) if from < last.1 => {
                 last.1 = last.1.max(to);
                 last.2.push(edit);
             }
-            _ => hunks.push((from, to, vec![edit])),
+            _ => changes.push((from, to, vec![edit])),
+        }
+    }
+    // Both ends of a change are line starts, or the end of the text.
+    let back = |mut at: usize| {
+        for _ in 0..CONTEXT {
+            if at > 0 {
+                at = line_start(at - 1);
+            }
+        }
+        at
+    };
+    let forward = |mut at: usize| {
+        for _ in 0..CONTEXT {
+            if at < before.len() {
+                at = line_end(at);
+            }
+        }
+        at
+    };
+    let mut hunks: Vec<(usize, usize, Vec<Change>)> = vec![];
+    for change in changes {
+        let (from, to) = (back(change.0), forward(change.1));
+        match hunks.last_mut() {
+            Some(last) if from <= last.1 => {
+                last.1 = to;
+                last.2.push(change);
+            }
+            _ => hunks.push((from, to, vec![change])),
         }
     }
     let lines = |text: &str| text.split_inclusive('\n').count();
+    // The file's last line may have no newline, which `patch` needs told.
+    let show = |body: &mut String, sign: char, text: &str| {
+        for line in text.split_inclusive('\n') {
+            body.push(sign);
+            body.push_str(line.trim_end_matches('\n'));
+            body.push('\n');
+            if !line.ends_with('\n') {
+                body.push_str("\\ No newline at end of file\n");
+            }
+        }
+    };
     let mut shift = 0isize;
     for (from, to, group) in hunks {
-        let old = &before[from..to];
-        let mut new = String::new();
-        let mut at = from;
-        for edit in group {
-            new.push_str(&before[at..edit.start]);
-            new.push_str(&edit.replacement);
-            at = edit.end;
+        let mut body = String::new();
+        let (mut at, mut new_n) = (from, 0);
+        for (start, end, fixes) in group {
+            let mut new = String::new();
+            let mut cursor = start;
+            for edit in fixes {
+                new.push_str(&before[cursor..edit.start]);
+                new.push_str(&edit.replacement);
+                cursor = edit.end;
+            }
+            new.push_str(&before[cursor..end]);
+            show(&mut body, ' ', &before[at..start]);
+            show(&mut body, '-', &before[start..end]);
+            show(&mut body, '+', &new);
+            new_n += lines(&before[at..start]) + lines(&new);
+            at = end;
         }
-        new.push_str(&before[at..to]);
+        show(&mut body, ' ', &before[at..to]);
+        new_n += lines(&before[at..to]);
+        let old_n = lines(&before[from..to]);
         let first = before[..from].matches('\n').count() + 1;
-        let (old_n, new_n) = (lines(old), lines(&new));
         // A side with no lines names the line before it, as diff does.
         let old_at = if old_n == 0 { first - 1 } else { first };
         let new_first = (first as isize + shift) as usize;
         let new_at = if new_n == 0 { new_first - 1 } else { new_first };
-        println!("@@ -{old_at},{old_n} +{new_at},{new_n} @@");
-        // The file's last line may have no newline, which `patch` needs told.
-        let show = |sign: char, text: &str| {
-            for line in text.split_inclusive('\n') {
-                println!("{sign}{}", line.trim_end_matches('\n'));
-                if !line.ends_with('\n') {
-                    println!("\\ No newline at end of file");
-                }
-            }
-        };
-        show('-', old);
-        show('+', &new);
+        print!("@@ -{old_at},{old_n} +{new_at},{new_n} @@\n{body}");
         shift += new_n as isize - old_n as isize;
     }
 }
