@@ -281,6 +281,21 @@ f:{[x;y] (tx;ty):type each (x;y); if[tx=11h; tx:0h]; tx+ty}
 === QF005 | the names a multiple assignment binds are locals, which a nested lambda cannot see
 f:{[x] (a;b):x; g:{[v] v+a}; g 1}
 
+=== clean profile: general | a column an update sets is not a local (q 5, c:10: f ([]a:1 2) is 11, the global)
+f:{[t] t:update c:1 from t; {c+1}[]}
+
+=== clean profile: general | nor is a table literal's column (q 5, c:10: g[] is 11)
+g:{t:([]c:1 2); {c+1}[]}
+
+=== clean profile: general | a column in an inner table literal is not a read of the outer local
+f:{c:1; {([]c:2 3)}[]}
+
+=== QF010 profile: general | a table literal's column does not bind x (q 5: f 1 is 'x)
+f:{[a] t:([]x:1 2); x}
+
+=== clean profile: general | a column named x is set, not read
+f:{[a] ([]x:a)}
+
 === QF016 | a parameter the body never reads
 f:{[used;stale] used+1}
 
@@ -635,6 +650,36 @@ n:{.z.p}
 === clean profile: general | a query, where sym.name can be a foreign key's column
 p:{[t] select sym.name from t}
 
+=== QF021 profile: general | but only the query is left alone (q 5: f 1 is 'd.a)
+f:{[d] t:select from ([]a:1 2);d.a}
+
+=== clean profile: general | a namespace read before a local of its name is set (q 5, .ml.clust.i.f defined elsewhere: fit 1 runs)
+\d .ml
+fit:{[d] d:clust.i.f d; clust:-1^exec a from t; (d;clust)}
+\d .
+
+=== QF014 profile: general | a symbol spelling a query keyword is not a query (q 5: defining f is 'b)
+f:{r:b; b:2; k:`delete; r}
+
+=== QF014 profile: general | a query elsewhere in the lambda does not hide the read (q 5: defining f is 'a)
+f:{b:a;a:1;select from ([]c:1 2)}
+
+=== QF010 profile: general | nor does a dotted name ending in a keyword (q 5: f 1 is 'x)
+f:{[a] .ns.update a; x}
+
+=== QF010 profile: general | nor a query in another statement (q 5: f 1 is 'x)
+f:{[a] r:select from t; x}
+
+=== clean profile: general | x inside the query itself may be a column
+f:{[a] select from t where a>x}
+g:{[a] h[select from t where x>1; a]}
+
+=== QF005 profile: general | a nested lambda's read outside its query is still checked
+f:{c:1; {r:select from t; c}[]}
+
+=== clean profile: general | and inside its query it may be a column
+f:{c:1; {select c from t}[]}
+
 === QF014 profile: general | a read in the value assigned to the same name (q 5: {a:a+1}[] is 'a)
 f:{a:a+1}
 g:{n:n,1;n}
@@ -642,6 +687,39 @@ g:{n:n,1;n}
 === clean profile: general | after a first assignment, or in another branch
 f:{a:1;a:a+1}
 g:{$[x;a:1;a:2];a}
+
+=== QF014 profile: general | a read right of the bracket holding the assignment runs first (q 5: each is 'n or 'a or 'b at definition)
+f:{[t] (n:count t)#n}
+g:{(a:1)+a}
+h:{r:(b:1),b; r}
+k:{f[a:1] a}
+
+=== QF014 profile: general | a later slot of a call or list runs first (q 5: each is 'a at definition)
+f:{g[a:1;a]}
+h:{(a:1;a)}
+
+=== clean profile: general | the earlier slot reads, the later assigns, and runs first (q 5: {(a;a:1)}[] is 1 1)
+f:{g[a;a:1]}
+h:{(a;a:1)}
+k:{a+(a:1)}
+
+=== clean profile: general | a control bracket runs its slots left to right (q 5: $[a:1;a;0] and if[(a:1);a] run)
+f:{$[a:1;a;0]}
+g:{if[(a:1);a]}
+h:{a:1;(a:2)+a}
+
+=== clean profile: general | and so does a block (q 5: {$[1b;[a:1;a];0]}[] and {(a:1;[a:2;a])} run)
+f:{$[x;[a:1;b:a];0]}
+g:{(a:1;[a:2;a])}
+
+=== QF014 profile: general | a block's slots in order, so the read comes first (q 5: 'a at definition)
+f:{$[x;[r:a;a:1];0]}
+
+=== QF014 profile: general | but brackets after a name are a call, with a space or without (q 5: {g [a:1;a]} is 'a)
+f:{g [a:1;a]}
+
+=== clean profile: general | a slot that runs earlier still may have assigned it again (KX taq/daily.q runs)
+f:{(t;b=t:max b:x;t;a=t:min a:y)}
 
 === QF003 | a query keyword as a local is refused when the lambda is defined (q 5: {select:1;0} is 'from)
 a:{select:1;0}
