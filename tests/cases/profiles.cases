@@ -188,6 +188,28 @@ enorm2:{x wsum x}
 enorm:sqrt enorm2::
 gini:{1f-enorm2 x}
 
+=== clean profile: uqf | a root function is not visible from a \d namespace (q 5: .a.h[] is 'f)
+f:{x+1}
+\d .a
+h:{f 1}
+\d .
+
+=== QP006 profile: uqf | while the namespace's own function is
+\d .a
+f:{x+1}
+h:{f 1}
+\d .
+
+=== clean profile: uqf | in a query a column of the table comes first (q 5: f 0 indexes the column)
+f:{x+1}
+t:([]f:1 2)
+u:update g:f 0 from t
+
+=== QP006 profile: uqf | but a table without that column leaves the function
+f:{x+1}
+t:([]a:1 2)
+u:update g:f a from t
+
 === clean profile: uqf | the sign of a float's exponent is part of the number
 gap:1e-9*gaps
 

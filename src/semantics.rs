@@ -1712,6 +1712,49 @@ pub fn check(
         let named = re!(
             "(\\.?[A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z][A-Za-z0-9_]*)*)[ \\t]+([`\"(A-Za-z0-9]|\\.[A-Za-z])"
         );
+        // Each query's phrases, from the keyword to `from` and through a
+        // `where`, with the table it reads.
+        let queries: Vec<(usize, usize, &str)> = re!(
+            r"\b(?:select|exec|update|delete)\b[^\n;]*?\bfrom\s+(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\b(?:\s+where\b[^\n;]*)?"
+        )
+        .captures_iter(code)
+        .map(|m| {
+            let whole = m.get(0).unwrap();
+            (whole.start(), whole.end(), m.get(1).unwrap().as_str())
+        })
+        .collect();
+        // The columns of the table literal `table` holds where it is read at
+        // `at`, by the same assignment-in-force rule as `holds_lambda`.
+        let columns_of = |table: &str, at: usize, in_lambda: bool| -> Option<Vec<String>> {
+            let mut root: Vec<usize> = globals
+                .get(table)?
+                .iter()
+                .copied()
+                .filter(|&a| scope_at(&scopes, a).is_none())
+                .collect();
+            root.sort_unstable();
+            let &start = if in_lambda {
+                root.last()
+            } else {
+                root.iter().rev().find(|&&a| a < at)
+            }?;
+            let (mut end, mut depth, bytes) = (start, 0i32, code.as_bytes());
+            while end < bytes.len() {
+                match bytes[end] {
+                    b'(' | b'[' | b'{' => depth += 1,
+                    b')' | b']' | b'}' if depth == 0 => break,
+                    b')' | b']' | b'}' => depth -= 1,
+                    b';' if depth == 0 => break,
+                    b'\n' if depth == 0 && !code[end + 1..].starts_with([' ', '\t']) => break,
+                    _ => {}
+                }
+                end += 1;
+            }
+            match held(&code[start..end], &raw[start..end]) {
+                Some(Held::Table(columns, _)) => Some(columns),
+                _ => None,
+            }
+        };
         let mut candidates: Vec<(usize, &str)> = named
             .captures_iter(code)
             .map(|m| {
@@ -1796,10 +1839,20 @@ pub fn check(
             {
                 continue;
             }
+            // The name in the namespace it is read in, and nowhere else: q 5
+            // has no root fallback, so after `f:{x+1}`, `\d .a`, `h:{f 1}`,
+            // `.a.h[]` is 'f.
             let namespace = scope.map_or_else(|| ns_at(at), |i| scopes[i].namespace.as_str());
-            if !holds_lambda(&qualify(bare, namespace), at, scope.is_some())
-                && !holds_lambda(&format!(".{bare}"), at, scope.is_some())
-            {
+            if !holds_lambda(&qualify(bare, namespace), at, scope.is_some()) {
+                continue;
+            }
+            // In a query the table's columns come first: with a column `f`,
+            // `update g:f 0 from t` indexes the column (q 5).
+            if queries.iter().any(|&(lo, hi, table)| {
+                (lo..hi).contains(&at)
+                    && columns_of(&qualify(table, namespace), at, scope.is_some())
+                        .is_some_and(|columns| columns.iter().any(|c| c == bare))
+            }) {
                 continue;
             }
             let mut finding = Finding::at(
