@@ -2422,6 +2422,41 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
             add(dollar, "QA007", detail);
         }
     }
+    // The test of `if` and `while` and the count of `do` are refused for
+    // the same literals as the first test of `$[...]`: q 5 `if[`a;1]`,
+    // `while["ab";1]`, `if[101b;1]`, `if[1 2;1]`, `do[1.5;1]`, `do[`a;1]`
+    // and `do[1 2;1]` are each 'type, while `if[0N;1]`, `do["a";1]`,
+    // `do[1b;1]`, `do[2h;1]` and `do[2024.01.01;1]` run.
+    for m in re!(r"\b(if|while|do)\[").captures_iter(code) {
+        let at = m.get(0).unwrap().start();
+        let open = m.get(0).unwrap().end() - 1;
+        if !boundary(code, at) {
+            continue;
+        }
+        let Some(close) = matching(code, open, b'[', b']') else {
+            continue;
+        };
+        let parts = slots(&code[open + 1..close - 1]);
+        if parts.len() < 2 {
+            continue;
+        }
+        let raw = v.comments[open + 1..open + 1 + parts[0].len()].trim();
+        if refused_atom_condition(raw)
+            || re!(r"^[01]{2,}b$").is_match(raw)
+            || (re!(r"^-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+$").is_match(raw)
+                && !raw.ends_with('b'))
+        {
+            let what = if &m[1] == "do" { "count" } else { "test" };
+            add(
+                at,
+                "QA011",
+                format!(
+                    "`{}[{raw};...]` is 'type: the {what} must be a boolean, integer, char or temporal atom",
+                    &m[1]
+                ),
+            );
+        }
+    }
     // Symbols take no arithmetic: `2+`a`, `` `a*2 `` and `2%`b` are all
     // 'type errors. Chars are another matter, version by version - see
     // QT023 - so this rule is a symbol literal next to an infix + - * % and

@@ -563,7 +563,7 @@
     "code": "QA011",
     "name": "cond-non-atom-condition",
     "category": "application",
-    "summary": "$[ ... ] condition must be an atom; a vector or symbol first test is a type error, and so is a symbol, string or float in a later one",
+    "summary": "$[ ... ], if and while tests and the do count must be atoms; a vector or symbol is a type error, and in a later $[ ... ] test a symbol, string or float is",
     "scope": "builtin"
   },
   {
