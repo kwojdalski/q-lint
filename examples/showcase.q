@@ -61,13 +61,14 @@ count:{[t] 42}
 / expect-next: QF005
 apply:{[scale] f:{[v] v*scale}; f each 1 2 3}
 
-/ QF007: not a parameter list. `tables[]` is a call, so q reads the
-/ brackets as the start of the body - and refuses this one outright.
+/ QF007: not a parameter list. `tables[]` applies a builtin, which q 5
+/ refuses where the lambda is defined: 'nyi.
 / expect-next: QF007
 broken:{[tables[]] x+1}
 
-/ QF007: accepted by q, and worse for it: the brackets are body text, so
-/ this takes the implicit x rather than the `n` it appears to declare.
+/ QF007: accepted where it is defined, and worse for it: the brackets are
+/ body text, not the `n` it appears to declare, and q 5 refuses every call
+/ with 'type.
 / expect-next: QF007
 scaled:{[n:1] n*2}
 
@@ -425,15 +426,17 @@ sub2: `abc ss "a"
 
 / --------------------------------------------------------------- correctness
 
-/ QB010: `n -1` is `n` applied to `-1`, not `n` minus one: with a space
-/ before the minus and none after, it belongs to the literal. Verified:
-/ with n:3 this tries to write to file handle 3.
+/ QB010: `fh -1` is `fh` applied to `-1`, not `fh` minus one: with a space
+/ before the minus and none after, it belongs to the literal. `fh` is an
+/ atom, so q refuses it: as a handle, 3 is 'domain in q 5. Had `fh` held a
+/ list, `fh -1` would index it, which is why only an atom is reported.
+fh:3
 / expect-next: QB010
-off: n -1
+off: fh -1
 
-/ QB010: the same inside a condition - `n -1` is `n[-1]` wherever it is.
+/ QB010: the same inside a condition - `fh -1` is `fh[-1]` wherever it is.
 / expect-next: QB010
-if[n -1; 1]
+if[fh -1; 1]
 
 / QB011: `if` is a statement that returns `::`, so `flag` is null however
 / the condition goes. `$[...]` is the conditional with a value.
@@ -472,8 +475,9 @@ half: 10/2
 / expect-next: QB014
 half2: (a+b)/2
 
-/ QB015: equality against a string in a filter: 'type on a symbol column,
-/ 'length on a string column, and row-wise garbage if the lengths agree.
+/ QB015: equality against a string in a filter pairs each row with one
+/ character: 'length unless the table has exactly three rows, and 'type on
+/ a symbol column even then.
 / expect-next: QB015
 eur:select from trades where sym="EUR"
 

@@ -487,11 +487,12 @@ fn a_closed_pipe_ends_the_run_quietly() {
 
 #[test]
 fn a_lambda_another_file_defines_is_called_not_applied_to_a_literal() {
-    // QB010: `shift -1` is a call when shift is a lambda - in this file or,
-    // as here, in another file linted with it.
+    // QB010: `shift -1` applies an atom when this file binds shift to one,
+    // but is a call when another file linted with it defines shift as a
+    // lambda: which one a read meets depends on load order.
     let repo = Repo::new();
     repo.write("lib.q", "shift:{x+1}\n")
-        .write("app.q", "r:shift -1\n");
+        .write("app.q", "shift:3\nr:shift -1\n");
     assert_eq!(
         repo.codes(
             ".",

@@ -126,6 +126,23 @@ e:,x
 g:#x
 h:{[y] ~y}
 
+=== QE008 profile: general | drop has no monadic form either (q 5: _x, _1.5, (_x) and 1+_x are '_)
+r:_x
+s:_1.5
+t:(_x)
+u:1+_x
+v:{_x}
+
+=== clean profile: general | drop after an operand, and _ inside a name
+a:x _1
+b:1 _x
+c:x_y
+d:.a._b
+e:0N_x
+f:3_ns
+g:a_ -x
+h:(_)x
+
 === clean profile: general | a negative literal, a glyph in parentheses, an amend
 a:-1
 b:-.5
@@ -196,6 +213,18 @@ s:{delete from}
 === clean profile: general | delete from a named table, and delete columns
 delete from t
 r:delete a from t
+
+=== QE007 profile: general | a where phrase with nothing in it (q 5: parse "exec a from t where" is ',)
+r:exec a from t where
+f:{[t] select from t where}
+g:{update a:1 from t where;1}
+
+=== clean profile: general | a where phrase with a condition, and where as a column or a call
+r:exec a from t where a>1
+s:select where from t
+u:select from t where a in (exec b from v where c)
+w:select from t where
+  a>1
 
 === QE010 profile: general | an integer type with a fraction (q 5: parse "1.5j" is '1.5)
 a:1.5j
@@ -278,9 +307,32 @@ b:"j"$1
 c:"J"$x
 d:"J"$1+x
 
+=== QT031 profile: general | "C"$ of a vector (q 5: "C"$1 2, "C"$`a`b, "C"$10b and "C"$0x0102 are 'type)
+a:"C"$1 2
+b:"C"$`a`b
+c:"C"$10b
+d:"C"$0x0102
+
+=== clean profile: general | "C"$ of an atom hands it back (q 5: "C"$1 is 1, "C"$`a is `a)
+a:"C"$1
+b:"C"$`a
+c:"C"$1.5
+d:"C"$0x01
+e:"C"$2024.01.01
+
 === QT028 profile: general | an assignment in parentheses in a where phrase (q 5: 'type)
 r:select from t where (a:1)
+
+=== QT028 profile: general | an assignment heading a later sub-phrase (q 5: 'type)
+r:select from t where a=1,b:2
+
+=== clean profile: general | an assignment that is an operand runs (q 5: one row each)
+r:select from t where a in b:1 2
 s:select from t where a in (b:1 2)
+u:select from t where (b:1)>0
+
+=== clean profile: general | a where before from is the function, in a column
+r:exec where m:a>0 from t
 
 === clean profile: general | an assignment inside a lambda in the phrase
 r:select from t where {b:x;b>0} a

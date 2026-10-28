@@ -194,6 +194,8 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ("QR002", "r:{x} each 1 2 3", "r:1 2 3", true),
         ("QR002", "r:count {x} each y", "r:count y", true),
         ("QR002", "r:{x}' y", "r:y", true),
+        ("QR002", "a:1 2 3;r:a{x} each 0 2", "a:1 2 3;r:a 0 2", true),
+        ("QR002", "b:0 2;r:0 1 2{x} each b", "b:0 2;r:0 1 2 b", true),
         (
             "QR003",
             "r:distinct asc distinct 3 1 1",
@@ -202,6 +204,8 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ),
         ("QS004", "a:1;r:(a)+1", "a:1;r:a+1", true),
         ("QS004", "a:1;r:(a)b", "a:1;r:a b", true),
+        ("QS004", "a:1;r:a (b)", "a:1;r:a b", true),
+        ("QS004", "a:1;r:\"ab\"(1)", "a:1;r:\"ab\" 1", true),
         ("QE002", "p:\"C:\\data\"", "p:\"C:\\\\data\"", true),
         (
             "QF015",
@@ -223,7 +227,7 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
             "QB015",
             "t:([]s:`ab`cd);r:select from t where s=\"ab\"",
             "t:([]s:`ab`cd);r:select from t where s like \"ab\"",
-            true,
+            false,
         ),
         ("QP005", "r:2*3+4", "r:2*(3+4)", true),
         ("QP005", "a:1;r:a*a*a+1", "a:1;r:a*a*(a+1)", true),
@@ -260,6 +264,7 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ("QR004", "r:{2-x} each a,b", "r:2-a,b", false),
         ("QR004", "r:{x%2} each a,b", "r:(a,b)%2", false),
         ("QR004", "r:count {x*2} each b", "r:count b*2", false),
+        ("QR004", "f:{a{x+1} each b}", "f:{a b+1}", false),
         ("QL002", "a:1\n/ old:{x+1}\nb:2", "a:1\nb:2", false),
         (
             "QB005",
@@ -309,8 +314,20 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ("QB014", "r:10/2", "r:10%2", false),
         ("QB017", "a:1\na:a\nb:2", "a:1\nb:2", false),
         ("QB017", "a:1;a:a;b:2", "a:1;b:2", false),
+        // An operand, not a statement: only the assignment goes, and the
+        // value it held stays where it was read (q 5: both give 3).
+        ("QB017", "f:{[x;b] r:x+b:b;r}", "f:{[x;b] r:x+b;r}", false),
+        ("QB017", "b:1;c:b:b;c", "b:1;c:b;c", false),
+        ("QB017", "f:{[b] b:b; b}", "f:{[b] b}", false),
         ("QP002", "r:`datetime$x", "r:`timestamp$x", false),
         ("QP002", "r:2026.01.01T12:00", "r:2026.01.01D12:00", false),
+        (
+            "QP002",
+            "s:\"15h$\";y:`datetime$z",
+            "s:\"15h$\";y:`timestamp$z",
+            false,
+        ),
+        ("QP002", "r:\"z\"$x", "r:\"p\"$x", false),
         (
             "QF001",
             "f:{[count] count+{count x}[count]}",
@@ -360,10 +377,14 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
         ("QP005", "r:select mid:0.5*bid+ask from q"), // qSQL columns
         ("QP005", "tanh:1f-2f%1f+exp 2f*"),  // a composition
         ("QR004", "r:count {x+1}' b"),       // `{x+1}'` infix
+        ("QA006", "r:`int$[a;b]"),           // `if` would fuse onto `int
+        ("QA006", "r:x$[a;b]"),              // and onto a name
         ("QF010", "f:{[a;b] x+a}"),          // which parameter?
         ("QT008", "r:til 2.5"),              // no long it spells
         ("QF020", "t:([]ab:1 2;ac:3 4);r:select a from t"), // two equally close
         ("QA007", "f:{[c] $[c;1;2;3]}"),     // no empty slot
+        ("QP002", "t:.z.z / old: 15h$x"),    // the cast is in a comment
+        ("QP002", "t:.z.Z;s:\"0Nz\""),       // and the null in a string
     ] {
         for finding in lint(source, "probe.q", Profile::Uqf)
             .iter()
@@ -547,5 +568,24 @@ fn fixes_repeat_until_nothing_applies() {
     assert_eq!(
         fs::read_to_string(&path).unwrap(),
         "f10:{p:1;q:2;{[q;p;x] p+q+x}[q][p][3]}\n"
+    );
+}
+
+/// Two fixes that touch are applied in one pass, each against the source
+/// as it was. QS004 unwrapped both of `(x)(y)` and left the name `xy`, which
+/// q 5 throws as undefined where the original indexes `x` by `y`.
+#[test]
+fn touching_fixes_keep_their_tokens_apart() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("adjacent.q");
+    fs::write(&path, "x:10 20 30;y:2\nr:(x)(y)\nf:{(-1)(x)}\n").unwrap();
+    Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .args(["--profile", "styleq", "--fix"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "x:10 20 30;y:2\nr:x y\nf:{-1 x}\n"
     );
 }

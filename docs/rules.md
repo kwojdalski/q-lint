@@ -48,7 +48,7 @@ that wants fewer findings narrows in its own configuration.
 | `QE004` | foreign-operator | Operator from another language; q has no ==, !=, &&, \|\|, **, =>, -> or := | every profile |
 | `QE005` | byte-order-mark | File starts with a BOM, which q refuses to load | every profile |
 | `QE006` | impossible-temporal | A date or month that does not exist, which q refuses to parse | every profile |
-| `QE007` | qsql-missing-from | select, exec, update or delete with no from before the statement ends, or nothing after it | every profile |
+| `QE007` | qsql-missing-from | select, exec, update or delete with no from before the statement ends, or nothing after its from or its where | every profile |
 | `QE008` | monadic-glyph | A glyph applied to one argument; q 5 refuses -x, ,x, #x and the rest - the keyword is neg, enlist, count, not... | every profile |
 | `QE009` | juxtaposed-derived-function | A derived function applied by juxtaposition: q 5 refuses +/x, count'x and x/y; write (+/)x, +/[x] or sum x | every profile |
 | `QE010` | malformed-number | A number q 5 cannot parse: 1.5j, 2b, 3i 4j, 1y, 1.2.3, or a long that overflows | every profile |
@@ -63,7 +63,7 @@ that wants fewer findings narrows in its own configuration.
 | `QF004` | reserved-definition | Namespace definition shadows a builtin | every profile |
 | `QF005` | nested-local-reference | Nested lambda expects an outer local | every profile |
 | `QF006` | reserved-name-in-embedded-q | Builtin column name in embedded q | a Python hook |
-| `QF007` | not-a-parameter-list | Brackets after { are body text, not parameters | every profile |
+| `QF007` | not-a-parameter-list | Brackets after { that are not a parameter list: refused where defined, refused on every call, or run as body text | every profile |
 | `QF008` | duplicate-parameter | Parameter declared more than once | `style` and above |
 | `QF009` | empty-parameter-slot | Empty slot in a parameter list is still a parameter | `style` and above |
 | `QF010` | implicit-argument-with-signature | x, y or z used where parameters are declared | every profile |
@@ -88,11 +88,11 @@ that wants fewer findings narrows in its own configuration.
 | `QA004` | dot-empty-list | Empty-list application to a niladic function | every profile |
 | `QA005` | each-on-binary | each supplies one argument to a binary function | `style` and above |
 | `QA006` | cond-two-slots | Two-slot conditional has no else branch and errors at runtime | every profile |
-| `QA007` | cond-even-slots | Even-slot $[ ... ] has no else branch and returns null | `style` and above |
+| `QA007` | cond-even-slots | Even-slot $[ ... ] has no else branch and returns null - or 'type, when the last test is a symbol or string | `style` and above |
 | `QA008` | parenthesised-call | f(a;b) passes one list to a lambda of rank 2 or more | `style` and above |
 | `QA009` | dot-apply-scalar | Dot apply given a scalar where an argument list is required | every profile |
 | `QA010` | builtin-excess-arguments | Excess arguments in a complete builtin call | every profile |
-| `QA011` | cond-non-atom-condition | $[ ... ] condition must be an atom; a vector or symbol is a type error | every profile |
+| `QA011` | cond-non-atom-condition | $[ ... ], if and while tests and the do count must be atoms; a vector or symbol is a type error, and in a later $[ ... ] test a symbol, string or float is | every profile |
 | `QA012` | named-lambda-rank | More arguments than the named lambda takes | every profile |
 
 ## Types and shapes - literals that cannot be what the operator needs
@@ -129,7 +129,7 @@ that wants fewer findings narrows in its own configuration.
 | `QT028` | where-assignment | An assignment in a where phrase, where a comparison was meant; q raises 'type | every profile |
 | `QT029` | hopen-literal | hopen given a float, a negative number, or a symbol without its leading colon | every profile |
 | `QT030` | cast-unknown-type | A cast to a type character q does not have | every profile |
-| `QT031` | uppercase-cast-literal | An uppercase cast parses a string; given a number or a symbol it is 'type | every profile |
+| `QT031` | uppercase-cast-literal | An uppercase cast parses a string; given a number or a symbol it is 'type, and "C"$ refuses only a vector | every profile |
 
 ## Correctness - q that runs and does the wrong thing
 
@@ -143,12 +143,12 @@ that wants fewer findings narrows in its own configuration.
 | `QB006` | comparison-with-logic | Unparenthesised comparison mixed with and/or reads right-to-left | `style` and above |
 | `QB007` | like-symbol-pattern | like with a symbol pattern is a type error or, with a glob, a projection instead of a boolean | every profile |
 | `QB008` | vector-equality-filter | Column equality against a vector literal in a filter | `style` and above |
-| `QB010` | apply-not-subtract | Name, space, negative literal applies the name rather than subtracting | every profile |
+| `QB010` | apply-not-subtract | An atom, a space and a negative literal applies the atom rather than subtracting, which q refuses | every profile |
 | `QB011` | control-as-value | if, while or do assigned as a value is always null | `style` and above |
 | `QB012` | trailing-semicolon-body | Lambda ends in ; so its last expression is discarded | `style` and above |
 | `QB013` | type-compared-to-symbol | type returns a short; comparing it to a symbol is a type error | every profile |
 | `QB014` | slash-division | / after a value is the over adverb, not division | `style` and above |
-| `QB015` | string-equality-filter | Equality against a string literal in a filter errors at runtime | every profile |
+| `QB015` | string-equality-filter | Equality against a string literal in a filter is 'length unless the table has as many rows as the string has characters, and 'type on a symbol or string column even then | every profile |
 | `QB016` | delete-columns-and-rows | delete cannot take both columns and a where phrase | every profile |
 | `QB017` | self-assignment | A name assigned to itself | `style` and above |
 | `QB018` | constant-comparison | Two literals compared, so the answer never varies | `style` and above |

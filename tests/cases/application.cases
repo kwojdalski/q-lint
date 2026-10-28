@@ -47,6 +47,14 @@ r:$[7h;2.5]
 === clean | and as a char, which parses text
 r:$["J";"12"]
 
+=== clean profile: general | a type named by an expression is still the cast (q 5: each is 2)
+f:{$[`$"long";x]}
+g:{$[(`long);x]}
+h:{$[(7h);x]}
+
+=== QA006 profile: general | but a name in parentheses is a condition
+f:{[c;x] $[(c);x]}
+
 === clean | three slots is the conditional
 $[1b;2;3]
 
@@ -163,10 +171,10 @@ f:{x+y+z}
 r:f(1;2)
 f:{x}
 
-=== QA007 | a trailing semicolon makes the else a second test, not an else
+=== QA007 QA011 | a trailing semicolon makes the else a second test, not an else - here a symbol, which q 5 refuses
 r:{$[x;`a;`b;]}
 
-=== QA007 | and a comment in the empty slot does not fill it
+=== QA007 QA011 | and a comment in the empty slot does not fill it
 r:{$[x;`a;`b; / the else
   ]}
 
@@ -264,6 +272,32 @@ d:$[0x0102;1;2]
 e:$[1.5;1;2]
 f:$[0n;1;2]
 g:$[1e;1;2]
+
+=== QA011 profile: general | a later test is refused the same way once reached (q 5: $[0b;1;`a;2;3] and $[0b;1;"ab";2;3] are 'type)
+a:$[0b;1;`a;2;3]
+b:$[0b;1;"ab";2;3]
+c:$[0b;1;0b;2;`a;4;5]
+d:$[0b;1;1.5;2;3]
+
+=== clean profile: general | a vector, a char or a name as a later test, and a symbol as a result (q 5: $[0b;1;1 0 1b;2;3] is 3)
+a:$[0b;1;1 0 1b;2;3]
+b:$[0b;1;"a";2;3]
+c:$[0b;1;x;2;3]
+d:$[0b;`a;1b;`b;`c]
+
+=== QA011 profile: general | the test of if and while, the count of do (q 5: if[`a;1], while["ab";1] and do[1.5;1] are 'type)
+if[`a;1]
+while["ab";1]
+do[1.5;1]
+f:{if[101b;:1]; do[1 2;x+:1]; x}
+
+=== clean profile: general | a name, a null long, a char, a boolean, a short or a date (q 5: each runs)
+if[x;1]
+if[0N;1]
+do["a";1]
+do[1b;1]
+do[2h;1]
+do[2024.01.01;1]
 
 === clean profile: general | a char, byte, int, temporal or null-long atom (q 5: each is 1)
 a:$["a";1;2]
