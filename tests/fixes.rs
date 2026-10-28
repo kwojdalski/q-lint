@@ -482,6 +482,11 @@ fn a_diff_names_files_relative_to_the_current_directory_and_applies() {
         &["patch", "-p1", "-i", "fx.diff"][..],
         &["git", "apply", "fx.diff"],
     ] {
+        // windows-latest's patch is Strawberry Perl's 2.5.9, which fails its
+        // own assertion in patch.c on any input; git apply still runs there.
+        if cfg!(windows) && tool[0] == "patch" {
+            continue;
+        }
         fs::write(&path, source).unwrap();
         let Ok(out) = Command::new(tool[0])
             .current_dir(directory.path())
