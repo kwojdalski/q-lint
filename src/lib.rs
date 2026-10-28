@@ -1538,6 +1538,9 @@ struct Views {
     /// part of a comment - and only `views` has followed the text closely
     /// enough to say which.
     string_starts: Vec<usize>,
+    /// Where the line that ends the script - a lone `\` outside a block
+    /// comment, or `\\` - begins. q reads nothing after it.
+    script_end: Option<usize>,
 }
 fn views(source: &str) -> Views {
     let bytes = source.as_bytes();
@@ -1547,6 +1550,7 @@ fn views(source: &str) -> Views {
     let mut foreign = false;
     let mut foreign_offsets = Vec::new();
     let mut open_block = None;
+    let mut script_end = None;
     let mut string_starts = Vec::new();
     // Before the first statement, an indented line under a column-0 comment
     // is more of that comment: q 5 loads `/ c` + `  b:1` and leaves b
@@ -1601,6 +1605,9 @@ fn views(source: &str) -> Views {
             // `\\` exits q, so a script ends there as it does at a lone `\`.
             block = stripped == "/";
             ended = stripped != "/";
+            if ended {
+                script_end = Some(offset);
+            }
             if block {
                 open_block = Some(offset);
             }
@@ -1649,6 +1656,7 @@ fn views(source: &str) -> Views {
         foreign_offsets,
         open_block,
         string_starts,
+        script_end,
     }
 }
 fn matching(s: &str, start: usize, open: u8, close: u8) -> Option<usize> {
@@ -3829,7 +3837,12 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
                 depth -= 1;
             }
         }
-        if uqf && first_raw.trim() == "/" && !v.foreign_offsets.contains(&offset) {
+        // Not after the end of the script: q 5 reads nothing past a lone `\`.
+        if uqf
+            && first_raw.trim() == "/"
+            && !v.foreign_offsets.contains(&offset)
+            && v.script_end.is_none_or(|end| offset < end)
+        {
             add(offset, "QP001", "Bare slash opens a block comment".into());
         }
         if first.trim().starts_with("\\d ") {

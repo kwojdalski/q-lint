@@ -74,6 +74,20 @@ f:{[a] a+x}
 a:1
 /
 
+=== clean profile: uqf | nothing after a lone backslash is read, a bare slash included (q 5: b is 'b)
+a:1
+\
+/
+b:2
+
+=== QP001 profile: uqf | while a backslash that closes a block comment does not end the script
+/
+text
+\
+/
+more
+\
+
 === clean profile: uqf | an indented slash does not: q keeps reading code after it
 a:1
   /
