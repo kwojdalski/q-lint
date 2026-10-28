@@ -100,6 +100,15 @@ r:.[{x};enlist 1]
 f:{[a] a+1}
 r:f[1;2]
 
+=== QA012 profile: general | a comment line between does not join the call to the definition (q 5: 'rank)
+f:{[a] a+1}
+  / note
+f[1;2]
+
+=== clean profile: general | an indented call continues the definition, and q refuses that with 'f, not 'rank
+f:{[a] a+1}
+  f[1;2]
+
 === QA012 | an elided slot still counts against the rank
 f:{[a] a+1}
 r:f[1;]

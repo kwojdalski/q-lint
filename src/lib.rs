@@ -2566,6 +2566,19 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
         {
             continue;
         }
+        // A newline ends it only when the next line is not indented: q 5
+        // reads `f:{[a] a}` + `  f[1;2]` as one expression, and refuses it
+        // with 'f, since the right is evaluated before f is assigned. Blank
+        // and comment lines between do not end it either.
+        let next = code[end..].trim_start();
+        let at = code.len() - next.len();
+        let line = source[..at].rfind('\n').map_or(0, |p| p + 1);
+        if !next.is_empty()
+            && !next.starts_with([';', ')', ']', '}'])
+            && source[line..].starts_with([' ', '\t'])
+        {
+            continue;
+        }
         ranks.insert(qualified(m.get(0).unwrap().start(), &m[1]), rank);
     }
     // The same arity check as QA002, for a lambda reached by name. `ranks`
