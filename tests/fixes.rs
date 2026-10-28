@@ -204,6 +204,8 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ),
         ("QS004", "a:1;r:(a)+1", "a:1;r:a+1", true),
         ("QS004", "a:1;r:(a)b", "a:1;r:a b", true),
+        ("QS004", "a:1;r:a (b)", "a:1;r:a b", true),
+        ("QS004", "a:1;r:\"ab\"(1)", "a:1;r:\"ab\" 1", true),
         ("QE002", "p:\"C:\\data\"", "p:\"C:\\\\data\"", true),
         (
             "QF015",
@@ -467,5 +469,24 @@ fn fixes_repeat_until_nothing_applies() {
     assert_eq!(
         fs::read_to_string(&path).unwrap(),
         "f10:{p:1;q:2;{[q;p;x] p+q+x}[q][p][3]}\n"
+    );
+}
+
+/// Two fixes that touch are applied in one pass, each against the source
+/// as it was. QS004 unwrapped both of `(x)(y)` and left the name `xy`, which
+/// q 5 throws as undefined where the original indexes `x` by `y`.
+#[test]
+fn touching_fixes_keep_their_tokens_apart() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("adjacent.q");
+    fs::write(&path, "x:10 20 30;y:2\nr:(x)(y)\nf:{(-1)(x)}\n").unwrap();
+    Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .args(["--profile", "styleq", "--fix"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "x:10 20 30;y:2\nr:x y\nf:{-1 x}\n"
     );
 }

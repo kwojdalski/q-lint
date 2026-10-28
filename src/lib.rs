@@ -450,9 +450,12 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 return None;
             }
             let space = adjacent.is_some_and(|c| c.is_ascii_alphanumeric() || "._`\"".contains(c));
+            // Likewise before: `(x)(y)` loses both pairs in one pass, and
+            // `x` then `y` would be the name `xy`.
+            let lead = if ends_in_token(before) { " " } else { "" };
             (
                 whole.as_str(),
-                format!("{token}{}", if space { " " } else { "" }).into(),
+                format!("{lead}{token}{}", if space { " " } else { "" }).into(),
                 format!("Remove the parentheses around `{token}`").into(),
                 true,
             )
