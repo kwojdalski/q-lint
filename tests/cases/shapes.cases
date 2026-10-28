@@ -502,6 +502,15 @@ t:([]a:1 2)
 s:([]a:1 2;b:3 4)
 r:lj[t;`a xkey s]
 
+=== QT022 profile: general | a trailing comment does not hide what a name holds (q 5: 'type)
+a:"x" / note
+r:a[0]
+
+=== clean profile: general | nor make a handle an ordinary atom: \t:n times a[20;5] n times
+a:{x+y}
+n:10 / note
+\t:n a[20;5]
+
 === QT003 profile: general | a glyph applied with brackets is the infix (q 5: +[1;`a] is 'type)
 r:+[1;`a]
 

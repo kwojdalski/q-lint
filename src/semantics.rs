@@ -2023,14 +2023,14 @@ fn named_values(
             }
             end += 1;
         }
-        if let Some(value) = held(&code[start..end], &raw[start..end]) {
+        if let Some(value) = held(&code[start..end], &comments[start..end]) {
             // `0N` and `0W` are integers too: uqf's tick.q starts a log
             // handle as `0N` and sets it with hopen later.
-            if re!(r"^\s*-?(?:\d+|0[NW])[hij]?\s*$").is_match(&raw[start..end]) {
+            if re!(r"^\s*-?(?:\d+|0[NW])[hij]?\s*$").is_match(&comments[start..end]) {
                 handles.insert(name);
             }
             known.insert(name, (end, value));
-            if let Some(kind) = arithmetic_kind(&raw[start..end]) {
+            if let Some(kind) = arithmetic_kind(&comments[start..end]) {
                 kinds.insert(name, kind);
             }
         }
