@@ -119,7 +119,14 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
     // `12:00:60` and `0D00:00:60`, and takes `25:00` and `0D25:00:00`.
     for m in re!(r"(\d{2,}):(\d{2})(?::(\d{2}))?").captures_iter(unsym) {
         let whole = m.get(0).unwrap();
-        if unsym[..whole.start()].ends_with(|c: char| c.is_ascii_digit() || c == '.') {
+        // Part of a longer token: a date's or number's digits, or a name
+        // such as `p60` in `p60:60`, which assigns 60 rather than writing a
+        // time. The `D` of `0D00:00:60` and the `T` of a datetime start no name.
+        let head = &unsym[..whole.start()];
+        let word = head.trim_end_matches(|c: char| c.is_ascii_alphanumeric() || "._".contains(c));
+        if head.ends_with(|c: char| c.is_ascii_digit() || c == '.')
+            || head[word.len()..].starts_with(|c: char| c.is_ascii_alphabetic() || "._".contains(c))
+        {
             continue;
         }
         let field = |i| {

@@ -286,6 +286,13 @@ w:0w 0W 0n 0Nj
 a:12:60
 b:12:00:60
 c:2023.01.01D12:60:00
+d:0D00:00:60
+
+=== clean profile: general | a name ending in digits assigned a number is no time (q 5: p60:60 and {v60:60; v60}[] run)
+p60:60
+f:{v60:60; v60}[]
+a_60:60
+.ns.p60:60
 
 === QE006 profile: general | a month takes two digits (q 5: '2023.1)
 d:2023.1m
