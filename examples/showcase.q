@@ -43,7 +43,7 @@ rows:{[count] count+1}
 / expect-next: QF001
 wave:{[sin] sin*2}
 
-/ QF002: `_` is the drop operator; q will not take it as a parameter name.
+/ QF002: `_` is the drop operator, not a name; q 5 refuses every call with 'match.
 / expect-next: QF002
 drop:{[_] x+1}
 

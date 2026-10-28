@@ -2186,10 +2186,16 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
                     .filter(|s| !s.is_empty() && !is_param_name(s))
                     .collect();
                 // `_` has its own code because it has its own cause: it reads
-                // as a name but is the drop operator, so q takes the brackets
-                // for body text exactly as it does for any other expression.
+                // as a name but is the drop operator. q 5 defines the lambda
+                // and keeps no usable name for the slot - `{[_] 1}[]`,
+                // `{[_] 1}[1]` and `{[a;_] a}[1;2]` are each 'match - so it
+                // fails on every call.
                 if offenders.contains(&"_") {
-                    add(at, "QF002", "`_` as a lambda parameter".into());
+                    add(
+                        at,
+                        "QF002",
+                        "`_` as a lambda parameter: q 5 refuses every call with 'match".into(),
+                    );
                 }
 
                 let underscore = offenders.contains(&"_");

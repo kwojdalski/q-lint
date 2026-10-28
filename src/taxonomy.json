@@ -80,8 +80,8 @@
     "code": "QF002",
     "name": "underscore-parameter",
     "category": "names",
-    "summary": "`_` is the drop operator, not a parameter name",
-    "scope": "style"
+    "summary": "`_` is the drop operator, not a parameter name: q 5 refuses every call with 'match",
+    "scope": "builtin"
   },
   {
     "code": "QF003",
