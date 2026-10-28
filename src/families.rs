@@ -154,10 +154,15 @@ fn credentials(path: &str, source: &str, code: &str, comments: &str, out: &mut V
             continue;
         }
         let quote = m.get(0).unwrap().end() - 1;
-        let value = re!(r#"^"((?:\\.|[^"\\])*)""#)
-            .captures(&comments[quote..])
-            .map(|c| c.get(1).unwrap().as_str());
-        if value.is_some_and(|v| !v.trim().is_empty()) {
+        let value = re!(r#"^"((?:\\.|[^"\\])*)""#).captures(&comments[quote..]);
+        // The literal has to be the whole value: in `token:"," vs x` and
+        // `token:"Bearer ",x` it is a delimiter and a prefix, and the token
+        // is computed.
+        let whole = value
+            .as_ref()
+            .is_some_and(|c| crate::operand_ends(comments, quote + c.get(0).unwrap().end()));
+        let value = value.map(|c| c.get(1).unwrap().as_str());
+        if whole && value.is_some_and(|v| !v.trim().is_empty()) {
             out.push(Finding::at(
                 path,
                 source,
