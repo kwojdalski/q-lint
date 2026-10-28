@@ -4213,8 +4213,14 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
                 // A column equals one value; against a vector literal the
                 // phrase is a length error at runtime, and `in` is the
                 // operator that was meant.
-                if re!(r"(?:=|<>)\s*(?:-?\d[A-Za-z0-9.]*\s+-?\d|`[A-Za-z][A-Za-z0-9_.]*`)")
-                    .is_match(&phrase)
+                // The literal has to be the whole right operand: `a=1 2 3?b`
+                // and `a=0 1 2 b` index it first, and q 5 runs both.
+                if re!(r"(?:=|<>)\s*(?:-?\d[A-Za-z0-9.]*(?:\s+-?\d[A-Za-z0-9.]*)+|`[A-Za-z][A-Za-z0-9_.]*(?:`[A-Za-z0-9_.]*)+)")
+                    .find_iter(&phrase)
+                    .any(|m| {
+                        let rest = phrase[m.end()..].trim_start();
+                        rest.is_empty() || rest.starts_with([',', ';'])
+                    })
                 {
                     add(
                         offset + w.start(),

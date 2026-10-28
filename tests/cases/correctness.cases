@@ -67,6 +67,14 @@ select from t where px=1 2
 === QB008 | a symbol vector likewise
 select from t where sym=`a`b
 
+=== QB008 | and one ending a clause before the next
+r:select from t where a=1 2, b>0
+
+=== clean | a vector literal indexed or searched is not the operand (q 5: each runs)
+r:select from t where a=1 2 3?b
+s:select from t where a=0 1 2 b
+u:select from t where a=`x`y`z?s
+
 === clean | in is the membership operator
 select from t where px in 1 2
 
