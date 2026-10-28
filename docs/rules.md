@@ -92,7 +92,7 @@ that wants fewer findings narrows in its own configuration.
 | `QA008` | parenthesised-call | f(a;b) passes one list to a lambda of rank 2 or more | `style` and above |
 | `QA009` | dot-apply-scalar | Dot apply given a scalar where an argument list is required | every profile |
 | `QA010` | builtin-excess-arguments | Excess arguments in a complete builtin call | every profile |
-| `QA011` | cond-non-atom-condition | $[ ... ] condition must be an atom; a vector or symbol is a type error | every profile |
+| `QA011` | cond-non-atom-condition | $[ ... ] condition must be an atom; a vector or symbol first test is a type error, and so is a symbol, string or float in a later one | every profile |
 | `QA012` | named-lambda-rank | More arguments than the named lambda takes | every profile |
 
 ## Types and shapes - literals that cannot be what the operator needs

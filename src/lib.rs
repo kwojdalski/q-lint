@@ -1280,6 +1280,24 @@ fn ends_in_name(s: &str) -> bool {
 /// `` `a`b=`a `` are all 'type there. Only the whole condition, so
 /// `any x>1 2 3` - an atom - is not this; and only the operators that pair
 /// items, so `~` and `in`, which return one boolean, are not either.
+/// Whether a literal, as written in the view that keeps strings, is one q 5
+/// refuses as a test wherever it sits - any test of `$[...]`, the test of
+/// `if` or `while`, the count of `do`: a symbol (`` `a ``, `` ` ``), a
+/// string of other than one char, a symbol or byte vector, or a float, real
+/// or guid atom. `$["ab";..]`, `$[`a`b;..]`, `$[0x0102;..]`, `$[1.5;..]`,
+/// `$[0n;..]`, `$[1e;..]`, `if[`a;..]` and `do[1.5;..]` are each 'type;
+/// `0N` and `0W` are longs and are not.
+fn refused_atom_condition(raw: &str) -> bool {
+    re!(r#"^"((?:[^"\\]|\\.)*)"$"#)
+        .captures(raw)
+        .is_some_and(|c| re!(r"\\[0-7]{3}|\\.|[^\\]").find_iter(&c[1]).count() != 1)
+        || re!(r"^(?:`[A-Za-z0-9_.:]*)+$").is_match(raw)
+        || re!(r"^0x(?:[0-9a-fA-F]{2}){2,}$").is_match(raw)
+        || re!(r"^-?(?:\d+\.\d*|\.\d+|\d+(?:\.\d*)?[eE][+-]?\d+)[ef]?$|^-?\d+[ef]$|^-?0[nwNW][ef]?$|^0Ng$")
+            .is_match(raw)
+            && !re!(r"^-?0[NW]$").is_match(raw)
+}
+
 fn vector_comparison(cond: &str) -> bool {
     const VECTOR: &str = r"(?:-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+|\(\s*-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+\s*\)|(?:`[A-Za-z0-9_.]*){2,}|[01]{2,}b)";
     const OPERAND: &str = r"(?:-?\d[A-Za-z0-9.]*|`[A-Za-z0-9_.]*|\.?[A-Za-z][A-Za-z0-9_.]*)";
@@ -2308,14 +2326,7 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
         // a symbol or byte vector, and a float, real or guid atom: `$["ab";..]`,
         // `$[`a`b;..]`, `$[0x0102;..]`, `$[1.5;..]`, `$[0n;..]`, `$[1e;..]`.
         let cond_raw = v.comments[dollar + 2..dollar + 2 + parts[0].len()].trim();
-        let refused_raw = re!(r#"^"((?:[^"\\]|\\.)*)"$"#)
-            .captures(cond_raw)
-            .is_some_and(|c| re!(r"\\[0-7]{3}|\\.|[^\\]").find_iter(&c[1]).count() != 1)
-            || re!(r"^(?:`[A-Za-z0-9_.]*){2,}$").is_match(cond_raw)
-            || re!(r"^0x(?:[0-9a-fA-F]{2}){2,}$").is_match(cond_raw)
-            || re!(r"^-?(?:\d+\.\d*|\.\d+|\d+(?:\.\d*)?[eE][+-]?\d+)[ef]?$|^-?\d+[ef]$|^-?0[nwNW][ef]?$|^0Ng$")
-                .is_match(cond_raw)
-                && !re!(r"^-?0[NW]$").is_match(cond_raw);
+        let refused_raw = refused_atom_condition(cond_raw);
         if let Some(cond) = parts.first().map(|c| c.trim())
             && (refused_raw
                 || re!(r"^`[A-Za-z][A-Za-z0-9_.]*$").is_match(cond)
@@ -2336,6 +2347,24 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
             );
         }
         let n = parts.len();
+        // Every later test is refused the same way once it is reached - a
+        // symbol, a string of other than one char, a symbol or byte vector,
+        // a float: q 5 `$[0b;1;`a;2;3]` and `$[0b;1;"ab";2;3]` are 'type.
+        // A vector is not: `$[0b;1;1 0 1b;2;3]` is 3, so only these are.
+        let mut from = dollar + 2 + parts[0].len() + 1;
+        for (k, part) in parts.iter().enumerate().skip(1) {
+            let raw = v.comments[from..from + part.len()].trim();
+            from += part.len() + 1;
+            if k % 2 == 0 && k + 1 < n && refused_atom_condition(raw) {
+                add(
+                    dollar,
+                    "QA011",
+                    format!(
+                        "`{raw}` as a later test of `$[...]` is 'type once it is reached: a test must be a boolean, integer, char or temporal atom"
+                    ),
+                );
+            }
+        }
         if n == 2 {
             // Two slots is the cast, and both slots are evaluated before it:
             // when the second is a signal it fires whatever the first holds.
