@@ -517,7 +517,8 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 true,
             )
         }
-        // `col="ab"` is 'type or 'length on every column; `like` is the
+        // `col="ab"` is 'length or 'type on all but a char column of as many
+        // rows as the string has chars; `like` is the
         // comparison that works on a symbol column. A pattern character
         // in the string would change what it matches, so not then.
         "QB015" => {
@@ -4121,11 +4122,13 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
             };
             add(offset + m.get(0).unwrap().start(), "QT004", detail);
         }
-        // Equality against a string literal in a filter: on a symbol column
-        // it is 'type, on a string column 'length (rows against chars), and
-        // when the lengths happen to agree it compares row-wise and returns
-        // garbage. A one-char string is a char atom and compares fine
-        // against a char column, so only longer literals are the trap.
+        // Equality against a string literal in a filter pairs each row with
+        // one character. q 5: 'length whenever the row count differs from
+        // the string's length, on any column; when they agree, 'type on a
+        // symbol or string column (`([]s:`a`b`c)` and `([]s:("ab";"cd"))`),
+        // and a row-by-row comparison of chars on a char column -
+        // `([]c:"ab")` where c="ab" returns both rows. A one-char string is a
+        // char atom and compares fine, so only other lengths are the trap.
         // Both `where` and the operator have to be code. `literals` keeps
         // strings, so an `=` inside `"="` once matched here, its closing quote
         // read as the opening one of the compared string - and the fix turned
@@ -4138,22 +4141,29 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
             let mut at = from;
             while let Some(m) = re!(r#"(?:=|<>)\s*"((?:[^"\\]|\\.)*)""#).captures_at(literals, at) {
                 let op = m.get(0).unwrap().start();
-                if in_code(op) && re!(r"\\.|[^\\]").find_iter(&m[1]).count() != 1 {
-                    return Some(op);
+                let n = re!(r"\\[0-7]{3}|\\.|[^\\]").find_iter(&m[1]).count();
+                if in_code(op) && n != 1 {
+                    return Some((op, n));
                 }
                 at = op + 1;
             }
             None
         };
         if let Some(w) = re!(r"\bwhere\b").find(line)
-            && let Some(op) = comparison(w.end())
+            && let Some((op, n)) = comparison(w.end())
         {
+            let rows = match n {
+                0 => "the table is empty".to_string(),
+                n => format!("the table has exactly {n} rows"),
+            };
             add(
                 offset + op,
                 "QB015",
-                "Equality against a string in a filter is 'type on a symbol column and \
-                 'length on a string column; `like`, `~` or `in` is the comparison meant"
-                    .into(),
+                format!(
+                    "Equality against a string in a filter pairs each row with one character: \
+                     q raises 'length unless {rows}, and 'type even then on a symbol or string \
+                     column; `like`, `~` or `in` is the comparison meant"
+                ),
             );
         }
         if re!(r"\b(?:where|select|exec|update|delete)\b").is_match(line) {

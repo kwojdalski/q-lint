@@ -148,7 +148,7 @@ that wants fewer findings narrows in its own configuration.
 | `QB012` | trailing-semicolon-body | Lambda ends in ; so its last expression is discarded | `style` and above |
 | `QB013` | type-compared-to-symbol | type returns a short; comparing it to a symbol is a type error | every profile |
 | `QB014` | slash-division | / after a value is the over adverb, not division | `style` and above |
-| `QB015` | string-equality-filter | Equality against a string literal in a filter errors at runtime | every profile |
+| `QB015` | string-equality-filter | Equality against a string literal in a filter is 'length unless the table has as many rows as the string has characters, and 'type on a symbol or string column even then | every profile |
 | `QB016` | delete-columns-and-rows | delete cannot take both columns and a where phrase | every profile |
 | `QB017` | self-assignment | A name assigned to itself | `style` and above |
 | `QB018` | constant-comparison | Two literals compared, so the answer never varies | `style` and above |

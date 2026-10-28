@@ -475,8 +475,9 @@ half: 10/2
 / expect-next: QB014
 half2: (a+b)/2
 
-/ QB015: equality against a string in a filter: 'type on a symbol column,
-/ 'length on a string column, and row-wise garbage if the lengths agree.
+/ QB015: equality against a string in a filter pairs each row with one
+/ character: 'length unless the table has exactly three rows, and 'type on
+/ a symbol column even then.
 / expect-next: QB015
 eur:select from trades where sym="EUR"
 

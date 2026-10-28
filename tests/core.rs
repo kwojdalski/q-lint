@@ -332,3 +332,32 @@ fn even_slot_conditional_says_type_or_null() {
         );
     }
 }
+
+/// QB015 says what q 5 does: `([]c:"ab")` where c="ab" returns its rows, a
+/// count that differs from the string's length is 'length, and a symbol or
+/// string column is 'type even when the counts agree.
+#[test]
+fn string_equality_in_a_filter_names_the_row_count() {
+    for (source, claim) in [
+        (
+            "r:select from t where sym=\"EUR\"",
+            "'length unless the table has exactly 3 rows",
+        ),
+        (
+            "r:select from t where sym=\"\"",
+            "'length unless the table is empty",
+        ),
+        (
+            "r:select from t where s<>\"ab\"",
+            "'type even then on a symbol or string column",
+        ),
+    ] {
+        let found = lint(source, "t.q", Profile::General);
+        assert!(
+            found
+                .iter()
+                .any(|f| f.code == "QB015" && f.detail.contains(claim)),
+            "{source:?}: QB015 should say {claim}: {found:?}"
+        );
+    }
+}

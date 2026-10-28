@@ -416,7 +416,7 @@
     "code": "QB015",
     "name": "string-equality-filter",
     "category": "correctness",
-    "summary": "Equality against a string literal in a filter errors at runtime",
+    "summary": "Equality against a string literal in a filter is 'length unless the table has as many rows as the string has characters, and 'type on a symbol or string column even then",
     "scope": "builtin"
   },
   {
