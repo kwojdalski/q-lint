@@ -2525,9 +2525,12 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
     // `\d .foo`, `f:{x}` defines `.foo.f`, and a root `f[1;2]` is 'f, not
     // 'rank (q 5).
     let mut spaces: Vec<(usize, String)> = vec![(0, String::new())];
-    for m in re!(r"(?m)^\\d[ \t]+(\.[\w.]*)[ \t\r]*$").captures_iter(source) {
-        let ns = m[1].trim_end_matches('.');
-        spaces.push((m.get(0).unwrap().start(), ns.to_string()));
+    let mut offset = 0;
+    for line in code.split_inclusive('\n') {
+        if let Some(ns) = semantics::opens(line, &source[offset..offset + line.len()]) {
+            spaces.push((offset, ns));
+        }
+        offset += line.len();
     }
     let qualified = |at: usize, name: &str| -> String {
         let ns = &spaces.iter().rev().find(|(o, _)| *o <= at).unwrap().1;

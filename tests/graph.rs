@@ -95,6 +95,24 @@ fn a_root_name_is_not_the_dotted_name_of_the_same_spelling() {
 }
 
 #[test]
+fn system_d_and_a_commented_backslash_d_open_a_context() {
+    // q 5: after `system "d .b"` and `k:{1}`, `key `.b` is ``k; after
+    // `\d .c  / note` and `m:1`, `key `.c` is ``m.
+    let g = graph(
+        &[
+            ("sys.q", "system \"d .b\"\nk:{1}\nsystem \"d .\"\n"),
+            ("note.q", "\\d .c  / note\nm:1\n\\d .\n"),
+            ("root.q", "k:{2}\nm:2\n"),
+            ("app.q", "r:{.b.k[] + .c.m}\n"),
+            ("bare.q", "r:{k[] + m}\n"),
+        ],
+        false,
+    );
+    assert_eq!(deps(&g, "app.q"), ["note.q", "sys.q"]);
+    assert_eq!(deps(&g, "bare.q"), ["root.q"]);
+}
+
+#[test]
 fn a_nested_context_qualifies_with_its_whole_path() {
     let g = graph(
         &[

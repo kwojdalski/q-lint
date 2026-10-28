@@ -277,6 +277,28 @@ fn shape(s: &str) -> Option<usize> {
     if re!(r"^-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?[bhijef]?(?:\s+-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?[bhijef]?)*$").is_match(s) {return Some(s.split_whitespace().count());}
     None
 }
+/// The context a top-level line switches to, if it switches: `""` for the
+/// root. `code_line` and `raw_line` are the same line in the two views.
+///
+/// Either spelling switches, and q 5 agrees on both: after `system "d .b"`
+/// and `k:{1}`, `key `.b` is ``k, and `\d .c  / note` opens `.c` as `\d .c`
+/// does. The `system` form is read only with a literal argument - a computed
+/// one, `system "d ",x`, names a context no reading can know, and the
+/// context in force is left as it was rather than guessed.
+pub(crate) fn opens(code_line: &str, raw_line: &str) -> Option<String> {
+    let ns = if let Some(m) =
+        re!(r"^\\d[ \t]+(\.[\w.]*)(?:[ \t]+/.*)?[ \t\r]*\n?$").captures(code_line)
+    {
+        m.get(1)
+    } else if re!(r"^system\b").is_match(code_line) {
+        re!(r#"^system[ \t]*"d[ \t]+(\.[\w.]*)[ \t]*""#)
+            .captures(raw_line)?
+            .get(1)
+    } else {
+        None
+    };
+    Some(ns?.as_str().trim_end_matches('.').into())
+}
 /// Every lambda in the file, with what it binds, and the namespace in force
 /// at each line. Shared by the checks and by the editor's semantic tokens,
 /// which have to agree about what a name in a body refers to.
@@ -289,9 +311,9 @@ fn scopes(code: &str, raw: &str) -> (Vec<Scope>, Vec<(usize, String)>) {
     let mut offset = 0;
     for line in code.split_inclusive('\n') {
         if stack.is_empty()
-            && let Some(m) = re!(r"^\\d\s+(\.[\w.]*)\s*$").captures(line)
+            && let Some(ns) = opens(line, &raw[offset..offset + line.len()])
         {
-            namespace = m[1].trim_end_matches('.').into();
+            namespace = ns;
         }
         namespaces.push((offset, namespace.clone()));
         if line.starts_with('\\') {
