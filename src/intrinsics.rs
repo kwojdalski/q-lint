@@ -182,7 +182,7 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
         // call on 1.5 - q reads right to left - and `sum 1 2 3,x` is a call
         // on a join. Anything that continues the expression disqualifies it.
         let rest = code[whole.end()..].trim_start_matches([' ', '\t']);
-        if !(rest.is_empty() || rest.starts_with([';', ')', ']', '}', '\n', '\r', '/'])) {
+        if !(crate::operand_ends(code, whole.end()) || rest.starts_with('/')) {
             continue;
         }
         let arg = call.get(2).unwrap();
@@ -211,8 +211,7 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
             if !boundary(code, whole.start()) || code.get(name.range()) != Some(name.as_str()) {
                 continue;
             }
-            let rest = code[whole.end()..].trim_start_matches([' ', '\t']);
-            if !(rest.is_empty() || rest.starts_with([';', ')', ']', '}', '\n', '\r'])) {
+            if !crate::operand_ends(code, whole.end()) {
                 continue;
             }
             let arg = call.get(arg_group).unwrap();

@@ -13,6 +13,38 @@ use std::{
     process::ExitCode,
 };
 
+/// `println!`, except that a closed pipe ends the run quietly. `qlinter src |
+/// head -1` closes stdout after one line, and `println!` panics on the next
+/// write - exit 101 and a backtrace hint for a reader who asked for less.
+/// Ruff, following ripgrep, exits 0 on a broken pipe, and so does this.
+macro_rules! out {
+    ($($arg:tt)*) => {
+        emit(format_args!($($arg)*), true)
+    };
+}
+
+/// Write to stdout, ending the line when `newline`; see `out!`. Any other
+/// write error is reported and exits 2, as an output failure.
+fn emit(text: std::fmt::Arguments, newline: bool) {
+    use std::io::Write;
+    let mut stdout = io::stdout().lock();
+    let written = stdout.write_fmt(text).and_then(|()| {
+        if newline {
+            stdout.write_all(b"\n")
+        } else {
+            Ok(())
+        }
+    });
+    match written {
+        Ok(()) => {}
+        Err(e) if e.kind() == io::ErrorKind::BrokenPipe => std::process::exit(0),
+        Err(e) => {
+            eprintln!("qlinter: writing output: {e}");
+            std::process::exit(2);
+        }
+    }
+}
+
 #[derive(Parser)]
 #[command(
     name = "qlinter",
@@ -169,7 +201,7 @@ fn overrides(args: &Args) -> Result<Overrides, String> {
         exclude: args
             .exclude
             .iter()
-            .map(|p| config::pattern(p).map(|p| (config::absolute(&cwd), p)))
+            .map(|p| config::rooted(&config::absolute(&cwd), p))
             .collect::<Result<_, _>>()?,
         config: args.config.clone(),
         isolated: args.isolated,
@@ -304,12 +336,16 @@ fn run(args: Args) -> Result<u8, String> {
             ));
         }
         if args.format == "json" {
-            println!("{}", serde_json::to_string(&entries).unwrap());
+            out!("{}", serde_json::to_string(&entries).unwrap());
         } else {
             for r in entries {
-                println!(
+                out!(
                     "{} [{}] {}: {} ({})",
-                    r.code, r.category, r.name, r.summary, r.scope
+                    r.code,
+                    r.category,
+                    r.name,
+                    r.summary,
+                    r.scope
                 );
             }
         }
@@ -340,7 +376,7 @@ fn run(args: Args) -> Result<u8, String> {
             } else {
                 path.to_path_buf()
             };
-            println!("{}\n", policy.describe(&probe)?);
+            out!("{}\n", policy.describe(&probe)?);
         }
         return Ok(0);
     }
@@ -350,6 +386,7 @@ fn run(args: Args) -> Result<u8, String> {
         args.paths
     };
     let mut sources = vec![];
+    let mut unreadable = false;
     if paths.iter().any(|p| p == "-") {
         if args.fix {
             return Err("--fix needs file paths; use --diff to preview stdin".into());
@@ -370,9 +407,12 @@ fn run(args: Args) -> Result<u8, String> {
     } else {
         let files = discover(paths, &policy, args.force_exclude)?;
         for path in files {
-            // A file that cannot be read as text is reported and passed over.
+            // A file that cannot be read is reported and passed over, and the
+            // run ends in exit 2, an input failure, whatever the others find.
             // Aborting here would mean one unreadable file hides every finding
-            // in every other file, which is the opposite of useful.
+            // in every other file, which is the opposite of useful; exiting 0
+            // would tell CI a file nobody linted is clean. Ruff, likewise,
+            // reports E902 and goes on, and its exit code is not 0.
             //
             // A file that is not UTF-8 is still q - q reads bytes, and KX's
             // own e/c.q carries Latin-1 after its closing backslash - so it
@@ -396,7 +436,10 @@ fn run(args: Args) -> Result<u8, String> {
                         sources.push((path.to_string_lossy().into_owned(), source));
                     }
                 },
-                Err(e) => eprintln!("qlinter: {}: {e}, skipped", path.display()),
+                Err(e) => {
+                    eprintln!("qlinter: {}: {e}, skipped", path.display());
+                    unreadable = true;
+                }
             }
         }
     }
@@ -453,7 +496,7 @@ fn run(args: Args) -> Result<u8, String> {
                 continue;
             }
             if args.diff && passes == 1 {
-                print_diff(path, source, &first);
+                print_diff(&diff_path(path), source, &first);
             } else if args.diff {
                 // The whole run as one edit: the span between what the two
                 // texts share at either end.
@@ -484,7 +527,7 @@ fn run(args: Args) -> Result<u8, String> {
                     title: "".into(),
                     batch_safe: true,
                 };
-                print_diff(path, source, &[whole]);
+                print_diff(&diff_path(path), source, &[whole]);
             } else {
                 fs::write(path.as_str(), &updated).map_err(|e| format!("{path}: {e}"))?;
                 *source = updated;
@@ -494,7 +537,7 @@ fn run(args: Args) -> Result<u8, String> {
         }
         if args.diff {
             eprintln!("qlinter: {fixed} fix(es) available in {changed_files} file(s)");
-            return Ok(u8::from(fixed > 0));
+            return Ok(if unreadable { 2 } else { u8::from(fixed > 0) });
         }
         eprintln!("qlinter: fixed {fixed} finding(s) in {changed_files} file(s)");
     }
@@ -524,7 +567,7 @@ fn run(args: Args) -> Result<u8, String> {
             .cmp(&(&b.path, b.line, b.column, &b.source, &b.rule))
     });
     if args.format == "json" {
-        println!("{}", serde_json::to_string(&findings).unwrap());
+        out!("{}", serde_json::to_string(&findings).unwrap());
     } else {
         let paint = Paint::for_stdout(&args.color);
         for f in &findings {
@@ -534,7 +577,7 @@ fn run(args: Args) -> Result<u8, String> {
                 "warning" => paint.yellow_bold(&f.severity),
                 other => other.to_string(),
             };
-            println!(
+            out!(
                 "{}:{}{}: {}: {} [{}/{}] {}\n    {}",
                 paint.bold(&f.path),
                 f.line,
@@ -563,11 +606,14 @@ fn run(args: Args) -> Result<u8, String> {
                 )),
             ),
         };
-        println!(
+        out!(
             "qlinter: {} file(s), {} finding(s){tally}",
             sources.len(),
             findings.len()
         );
+    }
+    if unreadable {
+        return Ok(2);
     }
     Ok(u8::from(findings.iter().any(|f| {
         matches!(f.severity.as_str(), "error" | "warning")
@@ -586,7 +632,7 @@ fn analyze_graph(args: GraphArgs) -> Result<u8, String> {
         exclude: args
             .exclude
             .iter()
-            .map(|p| config::pattern(p).map(|p| (cwd.clone(), p)))
+            .map(|p| config::rooted(&cwd, p))
             .collect::<Result<_, _>>()?,
         config: None,
         isolated: false,
@@ -598,6 +644,7 @@ fn analyze_graph(args: GraphArgs) -> Result<u8, String> {
         args.paths
     };
     let mut sources = vec![];
+    let mut unreadable = false;
     for path in discover(paths, &policy, false)? {
         // As when linting: a file that is not UTF-8 is still q, and is read
         // with each invalid byte as one replacement character.
@@ -606,7 +653,12 @@ fn analyze_graph(args: GraphArgs) -> Result<u8, String> {
                 let source = String::from_utf8_lossy(&bytes).into_owned();
                 sources.push((path, source));
             }
-            Err(e) => eprintln!("qlinter: {}: {e}, skipped", path.display()),
+            // A file left out is an edge the graph cannot show, so the run
+            // still prints what it read and ends in exit 2.
+            Err(e) => {
+                eprintln!("qlinter: {}: {e}, skipped", path.display());
+                unreadable = true;
+            }
         }
     }
     let graph = q_lint_rs::graph::build(&sources, args.symbols, &cwd);
@@ -641,8 +693,8 @@ fn analyze_graph(args: GraphArgs) -> Result<u8, String> {
     } else {
         serde_json::to_string_pretty(&edges)
     };
-    println!("{}", out.map_err(|e| e.to_string())?);
-    Ok(0)
+    out!("{}", out.map_err(|e| e.to_string())?);
+    Ok(if unreadable { 2 } else { 0 })
 }
 
 /// `path` relative to `base`, through `..` where it lies outside it, joined
@@ -662,13 +714,29 @@ fn relative(path: &Path, base: &Path) -> String {
     up.chain(down).collect::<Vec<_>>().join("/")
 }
 
-/// Zero-context unified diff, built from the edits rather than by pairing
-/// lines: a fix may remove a line (a commented-out definition) or join two,
-/// and pairing old and new lines by position would misalign every hunk after
-/// it. Each hunk is the whole lines an edit touches, with edits that share a
-/// line merged into one.
+/// The path a `--diff` header names: relative to the current directory, as
+/// Ruff prints it, so `patch -p1` and `git apply` find the file. An absolute
+/// path behind `a/` is `a//abs/path`, which patch asks about and git refuses.
+/// A relative path - a `--stdin-filename` - is already what was meant.
+fn diff_path(path: &str) -> String {
+    let path = Path::new(path);
+    match std::env::current_dir() {
+        Ok(cwd) if path.is_absolute() => relative(path, &config::absolute(&cwd)),
+        _ => path.display().to_string(),
+    }
+}
+
+/// A unified diff with three lines of context, built from the edits rather
+/// than by pairing lines: a fix may remove a line (a commented-out
+/// definition) or join two, and pairing old and new lines by position would
+/// misalign every hunk after it. Each change is the whole lines an edit
+/// touches, with edits that share a line merged into one, and changes whose
+/// context meets share a hunk. The context is what `git apply` checks a
+/// patch against; without it, it refuses any hunk not at the start or end of
+/// the file unless told `--unidiff-zero`.
 fn print_diff(path: &str, before: &str, edits: &[q_lint_rs::Fix]) {
-    println!("--- a/{path}\n+++ b/{path}");
+    const CONTEXT: usize = 3;
+    out!("--- a/{path}\n+++ b/{path}");
     // On bytes: `end - 1` can sit inside a multi-byte character - a BOM is
     // three - and a newline is one byte wherever it is.
     let bytes = before.as_bytes();
@@ -684,7 +752,9 @@ fn print_diff(path: &str, before: &str, edits: &[q_lint_rs::Fix]) {
             .position(|&b| b == b'\n')
             .map_or(before.len(), |i| at + i + 1)
     };
-    let mut hunks: Vec<(usize, usize, Vec<&q_lint_rs::Fix>)> = vec![];
+    // The byte range of whole lines a change replaces, and its edits.
+    type Change<'a> = (usize, usize, Vec<&'a q_lint_rs::Fix>);
+    let mut changes: Vec<Change> = vec![];
     for edit in edits {
         let from = line_start(edit.start);
         let to = line_end(if edit.end > edit.start {
@@ -692,44 +762,85 @@ fn print_diff(path: &str, before: &str, edits: &[q_lint_rs::Fix]) {
         } else {
             edit.start
         });
-        match hunks.last_mut() {
+        match changes.last_mut() {
             Some(last) if from < last.1 => {
                 last.1 = last.1.max(to);
                 last.2.push(edit);
             }
-            _ => hunks.push((from, to, vec![edit])),
+            _ => changes.push((from, to, vec![edit])),
+        }
+    }
+    // Both ends of a change are line starts, or the end of the text.
+    let back = |mut at: usize| {
+        for _ in 0..CONTEXT {
+            if at > 0 {
+                at = line_start(at - 1);
+            }
+        }
+        at
+    };
+    let forward = |mut at: usize| {
+        for _ in 0..CONTEXT {
+            if at < before.len() {
+                at = line_end(at);
+            }
+        }
+        at
+    };
+    let mut hunks: Vec<(usize, usize, Vec<Change>)> = vec![];
+    for change in changes {
+        let (from, to) = (back(change.0), forward(change.1));
+        match hunks.last_mut() {
+            Some(last) if from <= last.1 => {
+                last.1 = to;
+                last.2.push(change);
+            }
+            _ => hunks.push((from, to, vec![change])),
         }
     }
     let lines = |text: &str| text.split_inclusive('\n').count();
+    // The file's last line may have no newline, which `patch` needs told.
+    let show = |body: &mut String, sign: char, text: &str| {
+        for line in text.split_inclusive('\n') {
+            body.push(sign);
+            body.push_str(line.trim_end_matches('\n'));
+            body.push('\n');
+            if !line.ends_with('\n') {
+                body.push_str("\\ No newline at end of file\n");
+            }
+        }
+    };
     let mut shift = 0isize;
     for (from, to, group) in hunks {
-        let old = &before[from..to];
-        let mut new = String::new();
-        let mut at = from;
-        for edit in group {
-            new.push_str(&before[at..edit.start]);
-            new.push_str(&edit.replacement);
-            at = edit.end;
+        let mut body = String::new();
+        let (mut at, mut new_n) = (from, 0);
+        for (start, end, fixes) in group {
+            let mut new = String::new();
+            let mut cursor = start;
+            for edit in fixes {
+                new.push_str(&before[cursor..edit.start]);
+                new.push_str(&edit.replacement);
+                cursor = edit.end;
+            }
+            new.push_str(&before[cursor..end]);
+            show(&mut body, ' ', &before[at..start]);
+            show(&mut body, '-', &before[start..end]);
+            show(&mut body, '+', &new);
+            new_n += lines(&before[at..start]) + lines(&new);
+            at = end;
         }
-        new.push_str(&before[at..to]);
+        show(&mut body, ' ', &before[at..to]);
+        new_n += lines(&before[at..to]);
+        let old_n = lines(&before[from..to]);
         let first = before[..from].matches('\n').count() + 1;
-        let (old_n, new_n) = (lines(old), lines(&new));
         // A side with no lines names the line before it, as diff does.
         let old_at = if old_n == 0 { first - 1 } else { first };
         let new_first = (first as isize + shift) as usize;
         let new_at = if new_n == 0 { new_first - 1 } else { new_first };
-        println!("@@ -{old_at},{old_n} +{new_at},{new_n} @@");
-        // The file's last line may have no newline, which `patch` needs told.
-        let show = |sign: char, text: &str| {
-            for line in text.split_inclusive('\n') {
-                println!("{sign}{}", line.trim_end_matches('\n'));
-                if !line.ends_with('\n') {
-                    println!("\\ No newline at end of file");
-                }
-            }
-        };
-        show('-', old);
-        show('+', &new);
+        emit(
+            format_args!("@@ -{old_at},{old_n} +{new_at},{new_n} @@\n{body}"),
+            false,
+        );
         shift += new_n as isize - old_n as isize;
     }
 }

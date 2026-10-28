@@ -344,10 +344,9 @@ const TOKEN_TYPES: [&str; 2] = ["function", "parameter"];
 fn encode_tokens(source: &str, ws: &Workspace) -> Vec<u32> {
     let mut data = vec![];
     let (mut prev_line, mut prev_start) = (0usize, 0usize);
+    let lines = Lines::new(source);
     for (at, len, kind) in semantic_tokens_in(source, ws) {
-        let line = source[..at].matches('\n').count();
-        let line_start = source[..at].rfind('\n').map_or(0, |p| p + 1);
-        let start = utf16_len(&source[line_start..at]);
+        let (line, start) = lines.position(at);
         let delta_start = if line == prev_line {
             start - prev_start
         } else {
@@ -431,9 +430,10 @@ fn code_actions(params: &Value, docs: &Documents, ws: &Workspace, policy: &Polic
         // two coincide for an operator swapped in place, but `f x` becomes
         // `f[x]` by replacing the whole application while the diagnostic
         // underlines only the name.
+        let lines = Lines::new(source);
         let range = json!({
-            "start": position_at(source, fix.start),
-            "end": position_at(source, fix.end),
+            "start": lines.json(fix.start),
+            "end": lines.json(fix.end),
         });
         let mut changes = serde_json::Map::new();
         changes.insert(
@@ -524,27 +524,34 @@ fn diagnose(
 /// characters or bytes. Getting the second wrong is invisible in ASCII source
 /// and misplaces every marker after the first non-ASCII character in a
 /// comment, which is exactly the kind of bug that ships.
+///
+/// And they count lines differently. A finding's line is q's, which ends a
+/// line only at `\n`; an LSP client also ends one at a lone `\r`. So a
+/// finding is turned back into the byte offset it names, and that offset
+/// into the client's line and character.
 fn diagnostic(f: &Finding, source: &str) -> Value {
     let line = f.line.saturating_sub(1);
     let end_line = f.end_line.map_or(line, |l| l.saturating_sub(1));
-    let start_char = f.column.map_or(0, |c| c.saturating_sub(1));
     // No column means the rule found a line, not a span. Underlining from the
     // first non-blank character to the end of the line is what a reader means
     // by "this line": starting at 0 would decorate the indentation, and an
     // empty range would show nothing at all in some clients.
-    let end_char = match f.end_column {
-        Some(c) => c.saturating_sub(1),
-        None => utf16_len(line_text(source, end_line)),
+    let start = match f.column {
+        Some(c) => q_offset(source, line, c.saturating_sub(1)),
+        None => {
+            let text = q_line(source, line);
+            q_offset(source, line, 0) + text.len() - text.trim_start().len()
+        }
     };
-    let start_char = if f.column.is_none() {
-        indent_utf16(line_text(source, line))
-    } else {
-        start_char
+    let end = match f.end_column {
+        Some(c) => q_offset(source, end_line, c.saturating_sub(1)),
+        None => q_offset(source, end_line, 0) + q_line(source, end_line).len(),
     };
+    let lines = Lines::new(source);
     let mut d = json!({
         "range": {
-            "start": {"line": line, "character": start_char},
-            "end": {"line": end_line, "character": end_char.max(start_char)},
+            "start": lines.json(start),
+            "end": lines.json(end.max(start)),
         },
         "severity": severity(&f.severity),
         "code": f.code,
@@ -571,24 +578,75 @@ fn severity(name: &str) -> i64 {
     }
 }
 
-/// A byte offset as the line and UTF-16 character an editor addresses it by.
-fn position_at(source: &str, byte: usize) -> Value {
-    let before = &source[..byte.min(source.len())];
-    let line = before.matches('\n').count();
-    let start = before.rfind('\n').map_or(0, |at| at + 1);
-    json!({"line": line, "character": utf16_len(&before[start..])})
+/// Where each line starts, as an LSP client counts lines: the protocol ends
+/// one at `\n`, at `\r\n`, and at a lone `\r`. Every position this server
+/// sends - diagnostics, code actions, semantic tokens - goes through it, so
+/// none of them is a line high after a stray carriage return. Nothing comes
+/// the other way: documents are synced whole, and a code action's
+/// diagnostics are matched against ranges made here.
+struct Lines<'a> {
+    source: &'a str,
+    starts: Vec<usize>,
 }
 
-fn line_text(source: &str, line: usize) -> &str {
-    source.lines().nth(line).unwrap_or("")
+impl<'a> Lines<'a> {
+    fn new(source: &'a str) -> Self {
+        let bytes = source.as_bytes();
+        let mut starts = vec![0];
+        for (i, &b) in bytes.iter().enumerate() {
+            if b == b'\n' || b == b'\r' && bytes.get(i + 1) != Some(&b'\n') {
+                starts.push(i + 1);
+            }
+        }
+        Lines { source, starts }
+    }
+
+    /// A byte offset as the line and UTF-16 character a client addresses it
+    /// by.
+    fn position(&self, byte: usize) -> (usize, usize) {
+        let byte = byte.min(self.source.len());
+        let line = self.starts.partition_point(|&s| s <= byte) - 1;
+        (line, utf16_len(&self.source[self.starts[line]..byte]))
+    }
+
+    fn json(&self, byte: usize) -> Value {
+        let (line, character) = self.position(byte);
+        json!({"line": line, "character": character})
+    }
+}
+
+/// The text of a 0-based line as q counts lines - ended by `\n` alone - less
+/// its line ending.
+fn q_line(source: &str, line: usize) -> &str {
+    let text = source.split('\n').nth(line).unwrap_or("");
+    text.strip_suffix('\r').unwrap_or(text)
+}
+
+/// The byte offset of a finding's position: the 0-based `line` as q counts
+/// lines, and `column` UTF-16 code units into it, which is how a finding
+/// measures one. A column past the line's end is its end.
+fn q_offset(source: &str, line: usize, column: usize) -> usize {
+    let start = if line == 0 {
+        0
+    } else {
+        match source.match_indices('\n').nth(line - 1) {
+            Some((at, _)) => at + 1,
+            None => return source.len(),
+        }
+    };
+    let text = q_line(source, line);
+    let mut units = 0;
+    for (i, c) in text.char_indices() {
+        if units >= column {
+            return start + i;
+        }
+        units += c.len_utf16();
+    }
+    start + text.len()
 }
 
 fn utf16_len(text: &str) -> usize {
     text.chars().map(char::len_utf16).sum()
-}
-
-fn indent_utf16(text: &str) -> usize {
-    utf16_len(&text[..text.len() - text.trim_start().len()])
 }
 
 /// A `file:` URI as a filesystem path.

@@ -45,7 +45,7 @@
     "code": "QE007",
     "name": "qsql-missing-from",
     "category": "syntax",
-    "summary": "select, exec, update or delete with no from before the statement ends, or nothing after it",
+    "summary": "select, exec, update or delete with no from before the statement ends, or nothing after its from or its where",
     "scope": "builtin"
   },
   {
@@ -115,7 +115,7 @@
     "code": "QF007",
     "name": "not-a-parameter-list",
     "category": "names",
-    "summary": "Brackets after { are body text, not parameters",
+    "summary": "Brackets after { that are not a parameter list: refused where defined, refused on every call, or run as body text",
     "scope": "builtin"
   },
   {
@@ -255,7 +255,7 @@
     "code": "QA007",
     "name": "cond-even-slots",
     "category": "application",
-    "summary": "Even-slot $[ ... ] has no else branch and returns null",
+    "summary": "Even-slot $[ ... ] has no else branch and returns null - or 'type, when the last test is a symbol or string",
     "scope": "style"
   },
   {
@@ -381,7 +381,7 @@
     "code": "QB010",
     "name": "apply-not-subtract",
     "category": "correctness",
-    "summary": "Name, space, negative literal applies the name rather than subtracting",
+    "summary": "An atom, a space and a negative literal applies the atom rather than subtracting, which q refuses",
     "scope": "builtin"
   },
   {
@@ -416,7 +416,7 @@
     "code": "QB015",
     "name": "string-equality-filter",
     "category": "correctness",
-    "summary": "Equality against a string literal in a filter errors at runtime",
+    "summary": "Equality against a string literal in a filter is 'length unless the table has as many rows as the string has characters, and 'type on a symbol or string column even then",
     "scope": "builtin"
   },
   {
@@ -563,7 +563,7 @@
     "code": "QA011",
     "name": "cond-non-atom-condition",
     "category": "application",
-    "summary": "$[ ... ] condition must be an atom; a vector or symbol is a type error",
+    "summary": "$[ ... ], if and while tests and the do count must be atoms; a vector or symbol is a type error, and in a later $[ ... ] test a symbol, string or float is",
     "scope": "builtin"
   },
   {
@@ -752,7 +752,7 @@
     "code": "QT031",
     "name": "uppercase-cast-literal",
     "category": "types-and-shapes",
-    "summary": "An uppercase cast parses a string; given a number or a symbol it is 'type",
+    "summary": "An uppercase cast parses a string; given a number or a symbol it is 'type, and \"C\"$ refuses only a vector",
     "scope": "builtin"
   },
   {

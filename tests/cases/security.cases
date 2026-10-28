@@ -31,6 +31,14 @@ password:getenv`PASS
 === clean | an empty string holds nothing
 token:""
 
+=== clean | a literal that is only part of the value: a delimiter, a prefix
+f:{[x] token:"," vs x; token}
+g:{[x] token:"Bearer ",x; token}
+
+=== QX002 | the whole value, before a comment or inside a lambda
+apiKey:"abc123" / rotate yearly
+f:{secret:"s3cr3t"; secret}
+
 === QX001 | get evaluates a string as value does (q 5)
 f:{get "select from t where a=",x}
 

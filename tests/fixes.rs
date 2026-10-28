@@ -194,6 +194,8 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ("QR002", "r:{x} each 1 2 3", "r:1 2 3", true),
         ("QR002", "r:count {x} each y", "r:count y", true),
         ("QR002", "r:{x}' y", "r:y", true),
+        ("QR002", "a:1 2 3;r:a{x} each 0 2", "a:1 2 3;r:a 0 2", true),
+        ("QR002", "b:0 2;r:0 1 2{x} each b", "b:0 2;r:0 1 2 b", true),
         (
             "QR003",
             "r:distinct asc distinct 3 1 1",
@@ -202,6 +204,8 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ),
         ("QS004", "a:1;r:(a)+1", "a:1;r:a+1", true),
         ("QS004", "a:1;r:(a)b", "a:1;r:a b", true),
+        ("QS004", "a:1;r:a (b)", "a:1;r:a b", true),
+        ("QS004", "a:1;r:\"ab\"(1)", "a:1;r:\"ab\" 1", true),
         ("QE002", "p:\"C:\\data\"", "p:\"C:\\\\data\"", true),
         (
             "QF015",
@@ -223,7 +227,7 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
             "QB015",
             "t:([]s:`ab`cd);r:select from t where s=\"ab\"",
             "t:([]s:`ab`cd);r:select from t where s like \"ab\"",
-            true,
+            false,
         ),
         ("QP005", "r:2*3+4", "r:2*(3+4)", true),
         ("QP005", "a:1;r:a*a*a+1", "a:1;r:a*a*(a+1)", true),
@@ -260,6 +264,7 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ("QR004", "r:{2-x} each a,b", "r:2-a,b", false),
         ("QR004", "r:{x%2} each a,b", "r:(a,b)%2", false),
         ("QR004", "r:count {x*2} each b", "r:count b*2", false),
+        ("QR004", "f:{a{x+1} each b}", "f:{a b+1}", false),
         ("QL002", "a:1\n/ old:{x+1}\nb:2", "a:1\nb:2", false),
         (
             "QB005",
@@ -309,8 +314,20 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ("QB014", "r:10/2", "r:10%2", false),
         ("QB017", "a:1\na:a\nb:2", "a:1\nb:2", false),
         ("QB017", "a:1;a:a;b:2", "a:1;b:2", false),
+        // An operand, not a statement: only the assignment goes, and the
+        // value it held stays where it was read (q 5: both give 3).
+        ("QB017", "f:{[x;b] r:x+b:b;r}", "f:{[x;b] r:x+b;r}", false),
+        ("QB017", "b:1;c:b:b;c", "b:1;c:b;c", false),
+        ("QB017", "f:{[b] b:b; b}", "f:{[b] b}", false),
         ("QP002", "r:`datetime$x", "r:`timestamp$x", false),
         ("QP002", "r:2026.01.01T12:00", "r:2026.01.01D12:00", false),
+        (
+            "QP002",
+            "s:\"15h$\";y:`datetime$z",
+            "s:\"15h$\";y:`timestamp$z",
+            false,
+        ),
+        ("QP002", "r:\"z\"$x", "r:\"p\"$x", false),
         (
             "QF001",
             "f:{[count] count+{count x}[count]}",
@@ -360,10 +377,14 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
         ("QP005", "r:select mid:0.5*bid+ask from q"), // qSQL columns
         ("QP005", "tanh:1f-2f%1f+exp 2f*"),  // a composition
         ("QR004", "r:count {x+1}' b"),       // `{x+1}'` infix
+        ("QA006", "r:`int$[a;b]"),           // `if` would fuse onto `int
+        ("QA006", "r:x$[a;b]"),              // and onto a name
         ("QF010", "f:{[a;b] x+a}"),          // which parameter?
         ("QT008", "r:til 2.5"),              // no long it spells
         ("QF020", "t:([]ab:1 2;ac:3 4);r:select a from t"), // two equally close
         ("QA007", "f:{[c] $[c;1;2;3]}"),     // no empty slot
+        ("QP002", "t:.z.z / old: 15h$x"),    // the cast is in a comment
+        ("QP002", "t:.z.Z;s:\"0Nz\""),       // and the null in a string
     ] {
         for finding in lint(source, "probe.q", Profile::Uqf)
             .iter()
@@ -393,15 +414,19 @@ fn unsafe_fixes_and_a_diff_that_survives_a_removed_line() {
         String::from_utf8(output.stdout).unwrap()
     };
     let safe = run(&["--diff"]);
-    assert!(safe.contains("@@ -3,1 +3,1 @@\n-b:a==1\n+b:a=1"), "{safe}");
-    assert!(!safe.contains("old:"), "{safe}");
+    assert!(
+        safe.ends_with(
+            "@@ -1,4 +1,4 @@\n a:1\n / old:{x+1}\n-b:a==1\n+b:a=1\n r:reverse asc 3 1 2\n\
+             \\ No newline at end of file\n"
+        ),
+        "{safe}"
+    );
 
     let all = run(&["--diff", "--unsafe-fixes"]);
-    assert!(all.contains("@@ -2,1 +1,0 @@\n-/ old:{x+1}\n"), "{all}");
-    assert!(all.contains("@@ -3,1 +2,1 @@\n-b:a==1\n+b:a=1"), "{all}");
     assert!(
-        all.contains(
-            "@@ -4,1 +3,1 @@\n-r:reverse asc 3 1 2\n\\ No newline at end of file\n+r:desc 3 1 2\n\\ No newline at end of file"
+        all.ends_with(
+            "@@ -1,4 +1,3 @@\n a:1\n-/ old:{x+1}\n-b:a==1\n+b:a=1\n-r:reverse asc 3 1 2\n\
+             \\ No newline at end of file\n+r:desc 3 1 2\n\\ No newline at end of file\n"
         ),
         "{all}"
     );
@@ -411,6 +436,93 @@ fn unsafe_fixes_and_a_diff_that_survives_a_removed_line() {
         fs::read_to_string(&path).unwrap(),
         "a:1\nb:a=1\nr:desc 3 1 2"
     );
+}
+
+/// `--diff` names each file relative to the current directory, as Ruff does,
+/// so the patch it prints applies with `patch -p1` and `git apply` - and
+/// applied, it gives what `--fix` writes. An absolute path behind `a/` was
+/// `a//abs/path`, which patch asked about and git refused.
+#[test]
+fn a_diff_names_files_relative_to_the_current_directory_and_applies() {
+    let directory = tempfile::tempdir().unwrap();
+    // Two fixes far enough apart for two hunks, each with its context, and
+    // the second not at the end of the file - the case `git apply` refuses
+    // without context.
+    let source = "f:{[x] $[x;true;false]}\nb:2\nc:3\nd:4\ne:5\ng:6\nh:7\ni:8\na:1==1\nj:9\n";
+    let run = |flags: &[&str], file: &std::path::Path| {
+        Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .current_dir(directory.path())
+            .arg("--isolated")
+            .args(flags)
+            .arg(file)
+            .output()
+            .unwrap()
+    };
+    fs::create_dir_all(directory.path().join("sub")).unwrap();
+    let path = directory.path().join("sub/fx.q");
+    fs::write(&path, source).unwrap();
+    // Named relatively or absolutely, the header is the same.
+    let diff = String::from_utf8(run(&["--diff"], &path).stdout).unwrap();
+    let relative = run(&["--diff"], std::path::Path::new("sub/fx.q")).stdout;
+    assert_eq!(diff, String::from_utf8(relative).unwrap());
+    assert!(diff.contains("@@ -1,4 +1,4 @@\n"), "{diff}");
+    assert!(
+        diff.contains("@@ -6,5 +6,5 @@\n g:6\n h:7\n i:8\n"),
+        "{diff}"
+    );
+    assert!(
+        diff.starts_with("--- a/sub/fx.q\n+++ b/sub/fx.q\n"),
+        "{diff}"
+    );
+    run(&["--fix"], &path);
+    let fixed = fs::read_to_string(&path).unwrap();
+    assert_ne!(fixed, source);
+    fs::write(directory.path().join("fx.diff"), &diff).unwrap();
+    for tool in [
+        &["patch", "-p1", "-i", "fx.diff"][..],
+        &["git", "apply", "fx.diff"],
+    ] {
+        // windows-latest's patch is Strawberry Perl's 2.5.9, which fails its
+        // own assertion in patch.c on any input; git apply still runs there.
+        if cfg!(windows) && tool[0] == "patch" {
+            continue;
+        }
+        fs::write(&path, source).unwrap();
+        let Ok(out) = Command::new(tool[0])
+            .current_dir(directory.path())
+            .args(&tool[1..])
+            .output()
+        else {
+            continue; // not installed here
+        };
+        assert!(
+            out.status.success(),
+            "{tool:?}: {}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        // git on windows-latest writes with core.autocrlf, so the applied
+        // file has CRLF where --fix kept the source's LF.
+        let applied = fs::read_to_string(&path).unwrap().replace("\r\n", "\n");
+        assert_eq!(applied, fixed, "{tool:?}");
+    }
+    // A name given for stdin is printed as given.
+    let mut child = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .current_dir(directory.path())
+        .args(["--isolated", "--diff", "--stdin-filename", "sub/in.q", "-"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    use std::io::Write;
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(source.as_bytes())
+        .unwrap();
+    let out = String::from_utf8(child.wait_with_output().unwrap().stdout).unwrap();
+    assert!(out.starts_with("--- a/sub/in.q\n+++ b/sub/in.q\n"), "{out}");
 }
 
 /// A fix edits code. Where a finding points into a string or a comment, a
@@ -464,5 +576,24 @@ fn fixes_repeat_until_nothing_applies() {
     assert_eq!(
         fs::read_to_string(&path).unwrap(),
         "f10:{p:1;q:2;{[q;p;x] p+q+x}[q][p][3]}\n"
+    );
+}
+
+/// Two fixes that touch are applied in one pass, each against the source
+/// as it was. QS004 unwrapped both of `(x)(y)` and left the name `xy`, which
+/// q 5 throws as undefined where the original indexes `x` by `y`.
+#[test]
+fn touching_fixes_keep_their_tokens_apart() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("adjacent.q");
+    fs::write(&path, "x:10 20 30;y:2\nr:(x)(y)\nf:{(-1)(x)}\n").unwrap();
+    Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .args(["--profile", "styleq", "--fix"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "x:10 20 30;y:2\nr:x y\nf:{-1 x}\n"
     );
 }

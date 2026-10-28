@@ -67,8 +67,13 @@ pub struct Settings {
     pub file: Option<PathBuf>,
     profile: Option<String>,
     layers: Vec<Layer>,
-    exclude: Vec<(PathBuf, glob::Pattern)>,
-    per_file_ignores: Vec<(PathBuf, glob::Pattern, Vec<String>)>,
+    /// `exclude` and `extend-exclude`, kept apart because they inherit
+    /// differently: as in Ruff, a file that `extend`s another replaces its
+    /// `exclude` and adds to its `extend-exclude`.
+    exclude: Vec<Glob>,
+    extend_exclude: Vec<Glob>,
+    /// Replaced, not added to, by a file that sets its own, as in Ruff.
+    per_file_ignores: Vec<(Glob, Vec<String>)>,
 }
 
 /// What the command line says, which wins over any file.
@@ -79,7 +84,7 @@ pub struct Overrides {
     pub default_profile: &'static str,
     pub layer: Layer,
     /// `--exclude`, relative to the directory qlinter runs in.
-    pub exclude: Vec<(PathBuf, glob::Pattern)>,
+    pub exclude: Vec<Glob>,
     pub config: Option<PathBuf>,
     pub isolated: bool,
 }
@@ -137,7 +142,7 @@ impl Policy {
                 return Ok(found.clone());
             }
             let settings = Rc::new(
-                load(&key, 0)?
+                load(&key, 0, None)?
                     .ok_or_else(|| format!("{}: no [tool.qlinter] table", explicit.display()))?,
             );
             self.cache.borrow_mut().insert(key, settings.clone());
@@ -183,8 +188,9 @@ impl Policy {
         Ok(settings
             .exclude
             .iter()
+            .chain(&settings.extend_exclude)
             .chain(&self.overrides.exclude)
-            .any(|(root, pattern)| matches(&full, root, pattern)))
+            .any(|glob| matches(&full, glob)))
     }
 
     /// Whether the rule `code` reports on `path`.
@@ -276,9 +282,7 @@ fn per_file_ignored(settings: &Settings, code: &str, path: &Path) -> bool {
     settings
         .per_file_ignores
         .iter()
-        .any(|(root, pattern, codes)| {
-            codes.iter().any(|s| names(s, code)) && matches(&full, root, pattern)
-        })
+        .any(|(glob, codes)| codes.iter().any(|s| names(s, code)) && matches(&full, glob))
 }
 
 /// Ruff's matching: a pattern is tried against the path relative to the
@@ -286,8 +290,16 @@ fn per_file_ignored(settings: &Settings, code: &str, path: &Path) -> bool {
 /// root, so `vendor/*` and `vendor` both cover everything under `vendor/`. A
 /// pattern with no `/` names a file or directory anywhere below the root, so
 /// `generated` excludes every directory of that name.
-fn matches(full: &Path, root: &Path, pattern: &glob::Pattern) -> bool {
-    let anywhere = !pattern.as_str().contains('/');
+fn matches(full: &Path, glob: &Glob) -> bool {
+    let Glob {
+        root,
+        pattern,
+        anywhere,
+    } = glob;
+    let anywhere = *anywhere;
+    // On Windows a canonicalized pattern root is `\\?\C:\...` while the walk
+    // yields `C:\...`, and the two never share a prefix.
+    let (full, root) = (&plain(full), &plain(root));
     // The walk asks about every directory before entering it, so a name
     // pattern is checked against the path's own name too - wherever the walk
     // started, which may be above or beside the root.
@@ -301,6 +313,10 @@ fn matches(full: &Path, root: &Path, pattern: &glob::Pattern) -> bool {
     let Ok(relative) = full.strip_prefix(root) else {
         return false;
     };
+    // An absolute pattern with no glob in it names its root itself.
+    if pattern.as_str().is_empty() {
+        return true;
+    }
     relative
         .ancestors()
         .filter(|p| !p.as_os_str().is_empty())
@@ -317,7 +333,7 @@ fn in_directory(dir: &Path) -> Result<Option<Settings>, String> {
     for name in FILES {
         let path = dir.join(name);
         if path.is_file()
-            && let Some(settings) = load(&path, 0)?
+            && let Some(settings) = load(&path, 0, None)?
         {
             return Ok(Some(settings));
         }
@@ -325,20 +341,30 @@ fn in_directory(dir: &Path) -> Result<Option<Settings>, String> {
     Ok(None)
 }
 
+/// The user-level configuration. Its patterns are rooted at the current
+/// directory, not at the configuration's own: a file under
+/// `~/.config/qlinter/` governs projects elsewhere, and Ruff resolves a user
+/// configuration's `exclude` and per-file-ignores against the directory it
+/// runs in.
 fn user_config() -> Result<Option<Settings>, String> {
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .filter(|v| !v.is_empty())
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")));
     match base.map(|b| b.join("qlinter").join("qlinter.toml")) {
-        Some(path) if path.is_file() => load(&path, 0),
+        Some(path) if path.is_file() => {
+            let cwd = absolute(&std::env::current_dir().map_err(|e| e.to_string())?);
+            load(&path, 0, Some(&cwd))
+        }
         _ => Ok(None),
     }
 }
 
 /// Read one configuration file, and what it extends. `None` for a
 /// `pyproject.toml` that has no qlinter table, which is not a configuration.
-fn load(path: &Path, depth: usize) -> Result<Option<Settings>, String> {
+/// Its patterns are rooted at its own directory unless `patterns` says
+/// otherwise.
+fn load(path: &Path, depth: usize, patterns: Option<&Path>) -> Result<Option<Settings>, String> {
     if depth > 16 {
         return Err(format!(
             "{}: `extend` goes more than 16 files deep",
@@ -424,7 +450,7 @@ fn load(path: &Path, depth: usize) -> Result<Option<Settings>, String> {
                 .as_str()
                 .ok_or_else(|| format!("{shown}: extend must be a path"))?;
             let base = root.join(base);
-            load(&base, depth + 1)?
+            load(&base, depth + 1, patterns)?
                 .ok_or_else(|| format!("{}: no [tool.qlinter] table to extend", base.display()))?
         }
     };
@@ -458,8 +484,12 @@ fn load(path: &Path, depth: usize) -> Result<Option<Settings>, String> {
         extend_select: selectors("extend-select")?.unwrap_or_default(),
         ignore: selectors("ignore")?.unwrap_or_default(),
     });
+    // What a file sets replaces what it extends - Ruff lints `gen/` when the
+    // base excludes it and the extending file excludes something else - and
+    // only `extend-exclude` adds to the base's.
     for key in ["exclude", "extend-exclude"] {
         if let Some(v) = table.get(key) {
+            let mut globs = vec![];
             for p in v
                 .as_array()
                 .ok_or_else(|| format!("{shown}: {key} must be an array"))?
@@ -468,11 +498,17 @@ fn load(path: &Path, depth: usize) -> Result<Option<Settings>, String> {
                     .as_str()
                     .filter(|s| !s.trim().is_empty())
                     .ok_or_else(|| format!("{shown}: {key} must contain nonempty strings"))?;
-                settings.exclude.push((root.clone(), pattern(p)?));
+                globs.push(rooted(patterns.unwrap_or(&root), p)?);
+            }
+            if key == "exclude" {
+                settings.exclude = globs;
+            } else {
+                settings.extend_exclude.extend(globs);
             }
         }
     }
     if let Some(v) = get("per-file-ignores") {
+        settings.per_file_ignores.clear();
         let map = v.as_table().ok_or_else(|| {
             format!("{shown}: per-file-ignores must be a table of glob = [codes]")
         })?;
@@ -489,14 +525,70 @@ fn load(path: &Path, depth: usize) -> Result<Option<Settings>, String> {
                 .collect::<Result<Vec<_>, _>>()?;
             settings
                 .per_file_ignores
-                .push((root.clone(), pattern(glob)?, codes));
+                .push((rooted(patterns.unwrap_or(&root), glob)?, codes));
         }
     }
     Ok(Some(settings))
 }
 
+/// `path` without Windows' verbatim prefix: `\\?\C:\x` is `C:\x`. Any
+/// other path, and every path elsewhere, is returned as it is.
+fn plain(path: &Path) -> PathBuf {
+    let text = path.to_string_lossy();
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => PathBuf::from(rest),
+        _ => path.to_path_buf(),
+    }
+}
+
 pub fn pattern(text: &str) -> Result<glob::Pattern, String> {
     glob::Pattern::new(text.trim().trim_end_matches('/')).map_err(|e| format!("{text}: {e}"))
+}
+
+/// An `exclude` or `per-file-ignores` pattern, with the directory it is
+/// relative to: a configuration's own, or the current one for `--exclude`.
+#[derive(Clone, Debug)]
+pub struct Glob {
+    root: PathBuf,
+    pattern: glob::Pattern,
+    /// A bare name, `generated`, which matches a file or directory of that
+    /// name anywhere below the root, not only at it.
+    anywhere: bool,
+}
+
+/// `text` as a pattern rooted at `root`. Ruff joins every pattern to its
+/// root before matching, so `./gen` and an absolute `/abs/root/gen` name the
+/// directory `gen/` does - anchored at the root - and only a bare `gen`,
+/// with no `/` in it at all, also matches the name anywhere below it.
+pub fn rooted(root: &Path, text: &str) -> Result<Glob, String> {
+    let trimmed = text.trim();
+    let written = Path::new(trimmed);
+    if written.is_absolute() {
+        // The literal part of the path is resolved the way the files are,
+        // so `/var/...` still names the `/private/var/...` a walk finds.
+        let literal: PathBuf = written
+            .components()
+            // Only a name can hold a glob: Windows' `\\?\C:` prefix has a `?`.
+            .take_while(|c| {
+                !matches!(c, std::path::Component::Normal(n) if n.to_string_lossy().contains(['*', '?', '[']))
+            })
+            .collect();
+        let tail = written.strip_prefix(&literal).unwrap_or(Path::new(""));
+        return Ok(Glob {
+            root: absolute(&literal),
+            pattern: pattern(&tail.to_string_lossy().replace('\\', "/"))?,
+            anywhere: false,
+        });
+    }
+    let mut rest = trimmed;
+    while let Some(r) = rest.strip_prefix("./") {
+        rest = r.trim_start_matches('/');
+    }
+    Ok(Glob {
+        root: root.to_path_buf(),
+        pattern: pattern(rest)?,
+        anywhere: rest == trimmed && !rest.trim_end_matches('/').contains('/'),
+    })
 }
 
 /// A code or a prefix of codes, refused when it names no rule: a typo in a

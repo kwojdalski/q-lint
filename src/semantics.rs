@@ -79,6 +79,18 @@ fn qualify(name: &str, ns: &str) -> String {
         format!("{ns}.{name}")
     }
 }
+/// The name q resolves `name` to under `ns`, exactly: `.ns.name` inside a
+/// context, and the name itself at the root. `qualify` keys a root `g` as
+/// `.g`, and the checks lean on that; this keeps the two apart, as q 5
+/// does: after `.h2:7`, `value "h2"` is 'h2, and after `h3:5`,
+/// `value ".h3"` is '.h3.
+fn resolved(name: &str, ns: &str) -> String {
+    if ns.is_empty() {
+        name.into()
+    } else {
+        qualify(name, ns)
+    }
+}
 /// The names a multiple assignment `(a;b):...` binds, with where it starts.
 fn multi_assignments(text: &str) -> impl Iterator<Item = (usize, &str)> {
     re!(r"\(([A-Za-z0-9_;\s]+)\)\s*:[^:]")
@@ -317,6 +329,28 @@ fn shape(s: &str) -> Option<usize> {
     if re!(r"^-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?[bhijef]?(?:\s+-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?[bhijef]?)*$").is_match(s) {return Some(s.split_whitespace().count());}
     None
 }
+/// The context a top-level line switches to, if it switches: `""` for the
+/// root. `code_line` and `raw_line` are the same line in the two views.
+///
+/// Either spelling switches, and q 5 agrees on both: after `system "d .b"`
+/// and `k:{1}`, `key `.b` is ``k, and `\d .c  / note` opens `.c` as `\d .c`
+/// does. The `system` form is read only with a literal argument - a computed
+/// one, `system "d ",x`, names a context no reading can know, and the
+/// context in force is left as it was rather than guessed.
+pub(crate) fn opens(code_line: &str, raw_line: &str) -> Option<String> {
+    let ns = if let Some(m) =
+        re!(r"^\\d[ \t]+(\.[\w.]*)(?:[ \t]+/.*)?[ \t\r]*\n?$").captures(code_line)
+    {
+        m.get(1)
+    } else if re!(r"^system\b").is_match(code_line) {
+        re!(r#"^system[ \t]*"d[ \t]+(\.[\w.]*)[ \t]*""#)
+            .captures(raw_line)?
+            .get(1)
+    } else {
+        None
+    };
+    Some(ns?.as_str().trim_end_matches('.').into())
+}
 /// Every lambda in the file, with what it binds, and the namespace in force
 /// at each line. Shared by the checks and by the editor's semantic tokens,
 /// which have to agree about what a name in a body refers to.
@@ -329,9 +363,9 @@ fn scopes(code: &str, raw: &str) -> (Vec<Scope>, Vec<(usize, String)>) {
     let mut offset = 0;
     for line in code.split_inclusive('\n') {
         if stack.is_empty()
-            && let Some(m) = re!(r"^\\d\s+(\.[\w.]*)\s*$").captures(line)
+            && let Some(ns) = opens(line, &raw[offset..offset + line.len()])
         {
-            namespace = m[1].trim_end_matches('.').into();
+            namespace = ns;
         }
         namespaces.push((offset, namespace.clone()));
         if line.starts_with('\\') {
@@ -517,6 +551,7 @@ fn global_writes(
     code: &str,
     scopes: &[Scope],
     namespaces: &[(usize, String)],
+    qualify: fn(&str, &str) -> String,
 ) -> HashMap<String, Vec<usize>> {
     let assignment = re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*:(:)?");
     let ns_at = |at: usize| {
@@ -606,7 +641,7 @@ fn global_writes(
 /// checks use, stopped before any rule.
 pub fn index(code: &str, raw: &str) -> crate::FileIndex {
     let (scopes, namespaces) = scopes(code, raw);
-    let globals = global_writes(code, &scopes, &namespaces);
+    let globals = global_writes(code, &scopes, &namespaces, qualify);
     let lambdas = globals
         .iter()
         .filter(|(_, at)| at.iter().any(|&a| assigns_lambda(code, a)))
@@ -623,10 +658,11 @@ pub fn index(code: &str, raw: &str) -> crate::FileIndex {
 /// the dependency graph: read, never run, with the same scopes and the same
 /// `\d` contexts the checks use, stopped before any rule.
 ///
-/// A name read is kept as the names it could be, in the order they are
-/// tried: `f` inside `\d .a` is `.a.f`, failing that `.f`; a qualified name
-/// is only itself. Which of them some file defines is the graph's question,
-/// since the answer is in other files.
+/// A name, read or defined, is kept as the one name q resolves it to: `f`
+/// inside `\d .a` is `.a.f` and nothing else. q 5 does not fall back to the
+/// root: after `f:{42}`, `\d .a`, `g:{f[]}`, calling `.a.g[]` is 'f. Which
+/// file defines it is the graph's question, since the answer is in other
+/// files.
 pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
     let (scopes, namespaces) = scopes(code, raw);
     let ns_at = |at: usize| {
@@ -647,13 +683,6 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
         offset += line.len();
     }
     let view = String::from_utf8(view).unwrap_or_default();
-    let candidates = |name: &str, ns: &str| -> Vec<String> {
-        if name.starts_with('.') || ns.is_empty() {
-            vec![qualify(name, ns)]
-        } else {
-            vec![qualify(name, ns), qualify(name, "")]
-        }
-    };
     // A symbol literal names nothing it reads, and runs on past where a name
     // would stop: over `:` anywhere, and over `/` after `` `: ``. Verified
     // with parse in q 5: "`a:b" and "`:hdb/sym" are each one symbol. Left in,
@@ -663,7 +692,7 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
         blank(&mut unsymbolled[m.range()]);
     }
     let unsymbolled = String::from_utf8(unsymbolled).unwrap_or_default();
-    let mut names: HashSet<Vec<String>> = HashSet::new();
+    let mut names: HashSet<String> = HashSet::new();
     let name = re!(r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*");
     for m in name.find_iter(&unsymbolled) {
         if !boundary(&unsymbolled, m.start()) {
@@ -681,7 +710,7 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
         {
             continue;
         }
-        names.insert(candidates(m.as_str(), ns_at(m.start())));
+        names.insert(resolved(m.as_str(), ns_at(m.start())));
     }
     // A symbol handed straight to `get` or `value` names the global it reads
     // as plainly as writing the name would.
@@ -690,7 +719,7 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
     {
         let whole = m.get(0).unwrap();
         if boundary(&view, whole.start()) {
-            names.insert(candidates(&m[1], ns_at(whole.start())));
+            names.insert(resolved(&m[1], ns_at(whole.start())));
         }
     }
     // `--symbols`: a symbol literal naming a qualified global, `` `.ns.f ``,
@@ -699,13 +728,18 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
     if symbols {
         for m in re!(r"`(\.[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)").captures_iter(&view)
         {
-            names.insert(vec![m[1].to_string()]);
+            names.insert(m[1].to_string());
         }
     }
     let mut names: Vec<_> = names.into_iter().collect();
     names.sort();
+    let mut defines: Vec<_> = global_writes(code, &scopes, &namespaces, resolved)
+        .into_keys()
+        .collect();
+    defines.sort();
     crate::References {
         names,
+        defines,
         loads: loads(code, raw, &view),
         dynamic: dynamic(raw, &view),
     }
@@ -968,7 +1002,7 @@ pub fn check(
         .1
         .as_str()
     };
-    let globals = global_writes(code, &scopes, &namespaces);
+    let globals = global_writes(code, &scopes, &namespaces, qualify);
     // What this file defines itself; the workspace answers for the rest.
     let own: HashSet<String> = globals.keys().cloned().collect();
     let elsewhere = |name: &str| ws.defined_elsewhere(name, &own);
@@ -1766,6 +1800,49 @@ pub fn check(
         let named = re!(
             "(\\.?[A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z][A-Za-z0-9_]*)*)[ \\t]+([`\"(A-Za-z0-9]|\\.[A-Za-z])"
         );
+        // Each query's phrases, from the keyword to `from` and through a
+        // `where`, with the table it reads.
+        let queries: Vec<(usize, usize, &str)> = re!(
+            r"\b(?:select|exec|update|delete)\b[^\n;]*?\bfrom\s+(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\b(?:\s+where\b[^\n;]*)?"
+        )
+        .captures_iter(code)
+        .map(|m| {
+            let whole = m.get(0).unwrap();
+            (whole.start(), whole.end(), m.get(1).unwrap().as_str())
+        })
+        .collect();
+        // The columns of the table literal `table` holds where it is read at
+        // `at`, by the same assignment-in-force rule as `holds_lambda`.
+        let columns_of = |table: &str, at: usize, in_lambda: bool| -> Option<Vec<String>> {
+            let mut root: Vec<usize> = globals
+                .get(table)?
+                .iter()
+                .copied()
+                .filter(|&a| scope_at(&scopes, a).is_none())
+                .collect();
+            root.sort_unstable();
+            let &start = if in_lambda {
+                root.last()
+            } else {
+                root.iter().rev().find(|&&a| a < at)
+            }?;
+            let (mut end, mut depth, bytes) = (start, 0i32, code.as_bytes());
+            while end < bytes.len() {
+                match bytes[end] {
+                    b'(' | b'[' | b'{' => depth += 1,
+                    b')' | b']' | b'}' if depth == 0 => break,
+                    b')' | b']' | b'}' => depth -= 1,
+                    b';' if depth == 0 => break,
+                    b'\n' if depth == 0 && !code[end + 1..].starts_with([' ', '\t']) => break,
+                    _ => {}
+                }
+                end += 1;
+            }
+            match held(&code[start..end], &raw[start..end]) {
+                Some(Held::Table(columns, _)) => Some(columns),
+                _ => None,
+            }
+        };
         let mut candidates: Vec<(usize, &str)> = named
             .captures_iter(code)
             .map(|m| {
@@ -1850,10 +1927,20 @@ pub fn check(
             {
                 continue;
             }
+            // The name in the namespace it is read in, and nowhere else: q 5
+            // has no root fallback, so after `f:{x+1}`, `\d .a`, `h:{f 1}`,
+            // `.a.h[]` is 'f.
             let namespace = scope.map_or_else(|| ns_at(at), |i| scopes[i].namespace.as_str());
-            if !holds_lambda(&qualify(bare, namespace), at, scope.is_some())
-                && !holds_lambda(&format!(".{bare}"), at, scope.is_some())
-            {
+            if !holds_lambda(&qualify(bare, namespace), at, scope.is_some()) {
+                continue;
+            }
+            // In a query the table's columns come first: with a column `f`,
+            // `update g:f 0 from t` indexes the column (q 5).
+            if queries.iter().any(|&(lo, hi, table)| {
+                (lo..hi).contains(&at)
+                    && columns_of(&qualify(table, namespace), at, scope.is_some())
+                        .is_some_and(|columns| columns.iter().any(|c| c == bare))
+            }) {
                 continue;
             }
             let mut finding = Finding::at(
@@ -1928,6 +2015,12 @@ fn held(code: &str, raw: &str) -> Option<Held> {
     if let Some(body) = re!(r#"^"((?:\\[0-7]{3}|\\.|[^"\\])*)"$"#).captures(raw) {
         let n = re!(r"\\[0-7]{3}|\\.|[^\\]").find_iter(&body[1]).count();
         return Some(if n == 1 { Held::Atom } else { Held::Vector(n) });
+    }
+    // q's own temporal and float atoms: `.z.p`, `.z.d`, `.z.K` and the rest
+    // are 'type indexed or applied (q 5). Not `.z.a` and `.z.i`, integers q
+    // takes as handles, nor the symbols `.z.f`, `.z.h`, `.z.o` and `.z.u`.
+    if crate::Z_ATOMS.contains(&code) {
+        return Some(Held::Atom);
     }
     if re!(r"^(?:-?\d[A-Za-z0-9.:]*|0x[0-9a-fA-F]{2})$").is_match(code)
         && !re!(r"^[01]{2,}b$|^0x(?:[0-9a-fA-F]{2}){2,}$").is_match(code)
@@ -2110,6 +2203,28 @@ fn named_values(
                 "`{}` is an atom here, and an atom has no items to index: 'type",
                 name.as_str()
             ),
+        ));
+    }
+    // QB010 for a name bound to an atom: `a -1` applies it to `-1` rather
+    // than subtracting, and an atom cannot be applied - q 5 `a:3; a -1` is
+    // 'domain, `a:1.5; a -1` and `w:.z.p; w -0D00:01` are 'type. A name that
+    // may hold a list is left alone: `a:1 2 3; a -1` indexes, and is 0N.
+    // The literal has to end the statement or bracket, as in `lib.rs`.
+    for m in re!(r"(?m)(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)[ \t]+(-\d[A-Za-z0-9.:]*)[ \t\r]*(?:[;\])]|$)")
+        .captures_iter(code)
+    {
+        let name = m.get(1).unwrap();
+        if !boundary(code, name.start())
+            || visible(name.as_str(), name.start()) != Some(&Held::Atom)
+        {
+            continue;
+        }
+        out.push(Finding::at(
+            path,
+            raw,
+            name.start(),
+            "QB010",
+            crate::apply_not_subtract(name.as_str(), &m[2]),
         ));
     }
     // Two vectors of known, different lengths under an operator that pairs

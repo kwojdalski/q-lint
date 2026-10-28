@@ -7,7 +7,7 @@
 //! the same approximation the workspace already makes for colouring, and
 //! where reading cannot know what a name is, the file says so in `dynamic`
 //! rather than the graph guessing.
-use crate::{Dynamic, index, references};
+use crate::{Dynamic, references};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Component, Path, PathBuf};
 
@@ -35,10 +35,11 @@ pub fn build(files: &[(PathBuf, String)], symbols: bool, cwd: &Path) -> BTreeMap
     let mut definers: HashMap<String, Vec<usize>> = HashMap::new();
     let mut reads = Vec::with_capacity(files.len());
     for (i, (_, source)) in files.iter().enumerate() {
-        for name in index(source).defined {
-            definers.entry(name).or_default().push(i);
+        let read = references(source, symbols);
+        for name in &read.defines {
+            definers.entry(name.clone()).or_default().push(i);
         }
-        reads.push(references(source, symbols));
+        reads.push(read);
     }
     let position: HashMap<&Path, usize> = files
         .iter()
@@ -51,8 +52,8 @@ pub fn build(files: &[(PathBuf, String)], symbols: bool, cwd: &Path) -> BTreeMap
             dynamic: reads[i].dynamic.clone(),
             ..Node::default()
         };
-        for candidates in &reads[i].names {
-            let Some((name, defs)) = resolve(candidates, &definers) else {
+        for name in &reads[i].names {
+            let Some((name, defs)) = resolve(name, &definers) else {
                 continue;
             };
             let others: Vec<_> = defs.iter().filter(|&&d| d != i).collect();
@@ -83,26 +84,22 @@ pub fn build(files: &[(PathBuf, String)], symbols: bool, cwd: &Path) -> BTreeMap
     graph
 }
 
-/// The first of `candidates` some file defines, with its definers. A name no
-/// file defines is tried without its last segment, so `.ns.cfg.port` reaches
-/// the file defining the dictionary `.ns.cfg`.
+/// The definers of `name`. A name no file defines is tried without its last
+/// segment, so `.ns.cfg.port` reaches the file defining the dictionary
+/// `.ns.cfg`.
 fn resolve<'a>(
-    candidates: &'a [String],
+    mut name: &'a str,
     definers: &'a HashMap<String, Vec<usize>>,
 ) -> Option<(&'a str, &'a [usize])> {
-    for candidate in candidates {
-        let mut name = candidate.as_str();
-        loop {
-            if let Some(defs) = definers.get(name) {
-                return Some((name, defs));
-            }
-            match name.rfind('.') {
-                Some(at) if at > 0 => name = &name[..at],
-                _ => break,
-            }
+    loop {
+        if let Some(defs) = definers.get(name) {
+            return Some((name, defs));
+        }
+        match name.rfind('.') {
+            Some(at) if at > 0 => name = &name[..at],
+            _ => return None,
         }
     }
-    None
 }
 
 /// Where `\l load` in the file at `from` might lead, in the order tried: the
