@@ -371,13 +371,16 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
             continue;
         }
         // Nulls and infinities are no counts: q 5 `til 0N` and `til -0W` are
-        // 'domain, `til 0W` is 'limit.
+        // 'domain, of any width, and `til 0W` and `til 0Wj` are 'limit. A
+        // narrower infinity is only a large count: `til 0Wh` is 32767 items,
+        // and `til 0Wi` asks for 2147483647 longs, which fails or not with
+        // the memory at hand ('stop on the machine that measured it).
         if name == "til" {
             let arg = args[0].trim();
             let detail = if re!(r"^(?:0N|-0W)[hij]?$").is_match(arg) {
                 Some("til: til of a null or negative infinity is 'domain")
-            } else if re!(r"^0W[hij]?$").is_match(arg) {
-                Some("til: til of infinity is 'limit")
+            } else if re!(r"^0Wj?$").is_match(arg) {
+                Some("til: til of a long infinity is 'limit")
             } else {
                 None
             };

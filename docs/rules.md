@@ -160,7 +160,7 @@ that wants fewer findings narrows in its own configuration.
 
 | code | name | summary | on in |
 |---|---|---|---|
-| `QD001` | negative-til | til called with a negative literal count | every profile |
+| `QD001` | negative-til | til called with a negative, null or long-infinite literal count | every profile |
 | `QD002` | negative-where | where called with negative literal repetition counts | every profile |
 
 ## Security - q that lets its input decide what it runs, or carries secrets

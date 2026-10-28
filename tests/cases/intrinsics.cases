@@ -493,8 +493,12 @@ r:where enlist 2
 a:til 0N
 b:til -0W
 
-=== QD001 | and of infinity (q 5: til 0W is 'limit)
+=== QD001 | and of infinity (q 5: til 0W and til 0Wj are 'limit)
 c:til 0W
+d:til 0Wj
+
+=== clean | a short infinity is only a count (q 5: count til 0Wh is 32767)
+e:til 0Wh
 
 === QT013 | flip of a symbol, even one naming a table (q 5: flip `t is 'rank)
 d:flip `a

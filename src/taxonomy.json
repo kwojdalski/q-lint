@@ -556,7 +556,7 @@
     "code": "QD001",
     "name": "negative-til",
     "category": "domain",
-    "summary": "til called with a negative literal count",
+    "summary": "til called with a negative, null or long-infinite literal count",
     "scope": "builtin"
   },
   {
