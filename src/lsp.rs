@@ -670,12 +670,18 @@ fn path_of(uri: &str) -> String {
     let mut bytes = Vec::with_capacity(rest.len());
     let raw = rest.as_bytes();
     let mut i = 0;
+    // An escape is `%` and two hex digits, read as bytes: slicing the str
+    // there panicked when a multi-byte character followed the `%`, and a
+    // `%` that starts no escape is kept as it is.
+    let hex = |b: u8| (b as char).to_digit(16);
     while i < raw.len() {
         if raw[i] == b'%'
-            && i + 2 < raw.len()
-            && let Ok(byte) = u8::from_str_radix(&rest[i + 1..i + 3], 16)
+            && let (Some(hi), Some(lo)) = (
+                raw.get(i + 1).copied().and_then(hex),
+                raw.get(i + 2).copied().and_then(hex),
+            )
         {
-            bytes.push(byte);
+            bytes.push((hi * 16 + lo) as u8);
             i += 3;
             continue;
         }
@@ -731,6 +737,15 @@ mod tests {
         // A Windows drive is not under a root.
         assert_eq!(path_of("file:///c%3A/Users/a.q"), "c:/Users/a.q");
         assert_eq!(path_of("file:///C:/Users/a.q"), "C:/Users/a.q");
+        // A `%` that starts no escape is kept, even before a multi-byte
+        // character, a sign, or the end of the URI.
+        assert_eq!(
+            path_of("file:///tmp/50%\u{20ac}off.q"),
+            "/tmp/50%\u{20ac}off.q"
+        );
+        assert_eq!(path_of("file:///tmp/x%+1.q"), "/tmp/x%+1.q");
+        assert_eq!(path_of("file:///tmp/a%4"), "/tmp/a%4");
+        assert_eq!(path_of("file:///tmp/a%41"), "/tmp/aA");
         // And on Windows the scan's spelling of the same file is the same key.
         if cfg!(windows) {
             assert_eq!(

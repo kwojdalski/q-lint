@@ -431,6 +431,24 @@ fn a_percent_encoded_uri_reaches_the_rules_as_a_real_path() {
 }
 
 #[test]
+fn a_percent_before_a_multibyte_character_does_not_stop_the_server() {
+    // `%€` starts no escape. Reading the two characters after the `%` as a
+    // str slice split the `€` and the server panicked with exit 101.
+    for uri in [
+        "file:///tmp/50%\u{20ac}off.q",
+        "file:///tmp/x%+1.q",
+        "file:///tmp/end%4.q",
+    ] {
+        let mut server = Server::start();
+        server.initialize();
+        server.open(uri, RESERVED_PARAM);
+        let diagnostics = server.diagnostics_for(uri);
+        assert_eq!(diagnostics.len(), 1, "{uri} is still linted");
+        assert_eq!(server.shutdown_and_exit(), 0, "{uri}");
+    }
+}
+
+#[test]
 fn a_namespace_definition_does_not_hide_an_undefined_root_read() {
     let mut server = Server::start();
     server.initialize();
