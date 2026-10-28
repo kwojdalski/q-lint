@@ -501,7 +501,10 @@ fn a_diff_names_files_relative_to_the_current_directory_and_applies() {
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
-        assert_eq!(fs::read_to_string(&path).unwrap(), fixed, "{tool:?}");
+        // git on windows-latest writes with core.autocrlf, so the applied
+        // file has CRLF where --fix kept the source's LF.
+        let applied = fs::read_to_string(&path).unwrap().replace("\r\n", "\n");
+        assert_eq!(applied, fixed, "{tool:?}");
     }
     // A name given for stdin is printed as given.
     let mut child = Command::new(env!("CARGO_BIN_EXE_qlinter"))
