@@ -961,19 +961,38 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             ("/", "%".into(), "Divide with `%`".into(), false)
         }
         // `a:a` does nothing at best. Remove the statement and its `;`, or
-        // the line when it is alone on one.
+        // the line when it is alone on one - or, inside an expression, just
+        // the assignment.
         "QB017" => {
             let m =
-                re!(r"^(\.?[A-Za-z][A-Za-z0-9_.]*)\s*::?\s*(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]*;?")
+                re!(r"^(\.?[A-Za-z][A-Za-z0-9_.]*)\s*::?\s*(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]*(?:;[ \t]*)?")
                     .captures(source.get(start..)?)?;
             if m[1] != m[2] {
                 return None;
             }
             let whole = m.get(0)?;
             let line_start = source[..start].rfind('\n').map_or(0, |i| i + 1);
+            // Only a whole statement can go. `r:x+b:b` reads the value it
+            // assigns, so there only the `b:` is removed: q 5 gives 3 for
+            // `{[x;b] r:x+b:b;r}[1;2]` and for `{[x;b] r:x+b;r}[1;2]`.
+            let before = v.code[..start].trim_end();
+            let statement = before.is_empty()
+                || before.ends_with([';', '{'])
+                || (start == line_start && enclosing_brace(&v.code, start).is_none())
+                || enclosing_brace(&v.code, start).is_some_and(|brace| {
+                    let sig = signature(&v.code, source, brace);
+                    sig.named && v.code[sig.body..start].trim().is_empty()
+                });
             let rest = &source[start + whole.end()..];
             let line_rest = rest.split('\n').next().unwrap_or("");
-            if source[line_start..start].trim().is_empty() && line_rest.trim().is_empty() {
+            if !statement {
+                (
+                    &source[start..start + m.get(2)?.start()],
+                    "".into(),
+                    "Remove the self-assignment".into(),
+                    false,
+                )
+            } else if source[line_start..start].trim().is_empty() && line_rest.trim().is_empty() {
                 let end = start + whole.end() + line_rest.len();
                 let end = (end + 1).min(source.len());
                 begin = line_start;
