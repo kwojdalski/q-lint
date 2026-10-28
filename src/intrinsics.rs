@@ -415,12 +415,14 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
             "til" if value.kind == Kind::Integer && value.negative => {
                 Some(("QD001", "til cannot generate a negative number of indices"))
             }
-            // `where ""` is the one string q accepts: there is nothing in it.
+            // `where ""` and `where 0x` are the string and byte vector q
+            // accepts: there is nothing in them (q 5 gives `long$() for each,
+            // and `where 0x01` is 'type).
             // q 5 wants a list: `where 2` and `where 1b` are 'type, and so is
             // a short vector, while an int one counts (`where 1 2i` is 0 1 1).
             "where"
-                if matches!(value.kind, Kind::Float | Kind::Symbol | Kind::Byte)
-                    || (value.kind == Kind::Char && value.len > 0)
+                if matches!(value.kind, Kind::Float | Kind::Symbol)
+                    || (matches!(value.kind, Kind::Char | Kind::Byte) && value.len > 0)
                     || (matches!(value.kind, Kind::Integer | Kind::Bool) && !value.vector)
                     || value.short_integer =>
             {
