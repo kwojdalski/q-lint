@@ -306,9 +306,10 @@ fn where_assignment(path: &str, source: &str, code: &str, out: &mut Vec<Finding>
         if !boundary(code, w.start()) {
             continue;
         }
-        if !re!(r"\b(?:select|exec|update|delete)\b")
-            .is_match(&code[code[..w.start()].rfind(['\n', ';']).map_or(0, |p| p + 1)..w.start()])
-        {
+        // The qSQL keyword, and its `from` before this `where`: in
+        // `exec where m:a>0 from t` the `where` is the function, in a column.
+        let head = &code[code[..w.start()].rfind(['\n', ';']).map_or(0, |p| p + 1)..w.start()];
+        if !re!(r"\b(?:select|exec|update|delete)\b[\s\S]*\bfrom\b").is_match(head) {
             continue;
         }
         let bytes = code.as_bytes();
@@ -316,8 +317,17 @@ fn where_assignment(path: &str, source: &str, code: &str, out: &mut Vec<Finding>
         // parentheses: an assignment in `(a:1)` is still the phrase's own
         // (q 5: 'type), one in a lambda or a bracket is not.
         let (mut at, mut depth, mut nested) = (w.end(), 0i32, 0i32);
+        // Where the current sub-phrase starts. q 5 refuses an assignment
+        // only when it is the whole sub-phrase - `where a:1`, `where
+        // a=1,b:2`, `where (a:1)` - and runs `where a in b:1 2` and
+        // `where (b:1)>0`, where the assignment is an operand.
+        let mut sub = w.end();
         while at < bytes.len() {
+            if depth == 0 && boundary(code, at) && re!(r"^(?:from|by)\b").is_match(&code[at..]) {
+                break;
+            }
             match bytes[at] {
+                b',' if depth == 0 => sub = at + 1,
                 b'(' => depth += 1,
                 b'[' | b'{' => {
                     depth += 1;
@@ -349,6 +359,7 @@ fn where_assignment(path: &str, source: &str, code: &str, out: &mut Vec<Finding>
                     // their colons are part of them.
                     if !code[name_start..].starts_with(|c: char| c.is_ascii_alphabetic())
                         || code[..name_start].ends_with(['.', '`'])
+                        || !whole_sub_phrase(code, sub, name_start, at)
                     {
                         at += 1;
                         continue;
@@ -368,6 +379,34 @@ fn where_assignment(path: &str, source: &str, code: &str, out: &mut Vec<Finding>
             at += 1;
         }
     }
+}
+
+/// Whether the assignment to the name at `name`, its `:` at `colon`, is the
+/// whole sub-phrase opened at `sub`: only parentheses before it, and once
+/// the parenthesis it sits in closes, only closing ones up to the phrase's
+/// next `,` or its end.
+fn whole_sub_phrase(code: &str, sub: usize, name: usize, colon: usize) -> bool {
+    let lead = &code[sub..name];
+    if !lead.trim().chars().all(|c| c == '(') {
+        return false;
+    }
+    let opens = lead.matches('(').count() as i32;
+    let mut depth = opens;
+    for c in code[colon..].chars() {
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                depth -= 1;
+                if depth < 0 {
+                    return true;
+                }
+            }
+            ',' | ';' | '\n' if depth <= 0 => return true,
+            c if depth < opens && !c.is_whitespace() => return false,
+            _ => {}
+        }
+    }
+    true
 }
 
 /// QT029. hopen given a literal that can never be a handle: a float, a
