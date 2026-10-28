@@ -82,10 +82,24 @@ c:2
   d:1+`a
 c:2
 
-=== QT003 | a blank line ends the comment (q 5: 'type)
+=== clean | a blank line does not end that stretch (q 5 loads the file and b stays undefined)
 / comment
 
   b:1+`a
+
+=== clean | nor does a system command, a whitespace-only line, or the start of the file (q 5: b undefined)
+  a:1+`a
+/ c
+
+\d .foo
+  b:1+`a
+c:2
+
+=== QT003 | after the first statement an indented line continues it again (q 5: 'type)
+/ comment
+
+c:2
+  +`a
 
 === QT003 profile: general | an operand continued onto an indented line (q 5: a:1+ then   `a is 'type)
 a:1+
