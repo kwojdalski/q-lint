@@ -1024,6 +1024,11 @@ pub fn check(
         .as_str()
     };
     let globals = global_writes(code, &scopes, &namespaces, qualify);
+    // The same writes keyed as q resolves them, root `x` apart from `.x`:
+    // a name read in a `\d .ns` lambda is `.ns.x` and nothing else - q 5
+    // has no root fallback. After `x:1`, `\d .ns`, `f:{[a] a+x}`, calling
+    // `.ns.f 1` is 'x.
+    let exact = global_writes(code, &scopes, &namespaces, resolved);
     // What this file defines itself; the workspace answers for the rest.
     let own: HashSet<String> = globals.keys().cloned().collect();
     let elsewhere = |name: &str| ws.defined_elsewhere(name, &own);
@@ -1441,9 +1446,7 @@ pub fn check(
             // author meant that - and a global of the same name in another
             // file makes the read silently wrong, not right. In a monorepo it
             // is often an unrelated program's.
-            if globals.contains_key(&qualify(name, &scope.namespace))
-                || globals.contains_key(&format!(".{name}"))
-            {
+            if exact.contains_key(&resolved(name, &scope.namespace)) {
                 continue;
             }
             out.push(Finding::at(
@@ -1489,9 +1492,7 @@ pub fn check(
             // author meant that - and a global of the same name in another
             // file makes the read silently wrong, not right. In a monorepo it
             // is often an unrelated program's.
-            if globals.contains_key(&qualify(name, &scope.namespace))
-                || globals.contains_key(&format!(".{name}"))
-            {
+            if exact.contains_key(&resolved(name, &scope.namespace)) {
                 continue;
             }
             out.push(Finding::at(
