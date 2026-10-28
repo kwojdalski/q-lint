@@ -17,6 +17,7 @@ pub fn check(
     simplifications(path, source, code, &mut out);
     leftovers(path, source, comments, foreign, &mut out);
     duplicate_columns(path, source, code, &mut out);
+    select_by_duplicate(path, source, code, &mut out);
     unreachable(path, source, code, &mut out);
     out
 }
@@ -386,6 +387,110 @@ fn duplicate_columns(path: &str, source: &str, code: &str, out: &mut Vec<Finding
                 break;
             }
             seen.push(name);
+        }
+    }
+}
+
+/// The items of a select or by list: split at commas outside brackets, so
+/// `select f[a,b],c` and `by xbar[2;a]` keep theirs whole.
+fn items(list: &str) -> Vec<&str> {
+    let mut items = vec![];
+    let (mut depth, mut start) = (0i32, 0);
+    for (i, b) in list.bytes().enumerate() {
+        match b {
+            b'(' | b'[' => depth += 1,
+            b')' | b']' => depth -= 1,
+            b',' if depth == 0 => {
+                items.push(&list[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    items.push(&list[start..]);
+    items
+}
+
+/// Whether `byte` occurs in `text` outside every bracket.
+fn items_at_depth_zero(text: &str, byte: u8) -> bool {
+    let mut depth = 0i32;
+    text.bytes().any(|b| {
+        match b {
+            b'(' | b'[' => depth += 1,
+            b')' | b']' => depth -= 1,
+            _ => {}
+        }
+        b == byte && depth == 0
+    })
+}
+
+/// The column name q 5 gives a select or by item: its `name:`, or else the
+/// first name in it that is not a builtin - `max a`, `a+1`, `2 xbar a` and
+/// `xbar[2;a]` are each `a`, `b*a` is `b` - with the virtual `i` named `x`.
+/// None where reading cannot say: a qualified name, or no name at all.
+fn column_name(item: &str) -> Option<&str> {
+    let item = item.trim();
+    if let Some(m) = re!(r"^([A-Za-z][A-Za-z0-9_]*)\s*:[^:]").captures(item) {
+        return Some(m.get(1).unwrap().as_str());
+    }
+    let name = re!(r"`?\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*")
+        .find_iter(item)
+        .filter(|m| crate::boundary(item, m.start()))
+        .map(|m| m.as_str())
+        .find(|n| !n.starts_with('`') && !crate::RESERVED.iter().any(|r| r == n))?;
+    match name {
+        _ if name.contains('.') => None,
+        "i" => Some("x"),
+        _ => Some(name),
+    }
+}
+
+/// QB021. A select naming a result column the same as one of its by groups.
+/// q 5 refuses it with 'dup names for cols/groups: `select a by a from t`,
+/// `select max a by a from t` and `select a:b by a from t` all fail, where
+/// `select m:max a by a from t` runs. exec and update with the same lists
+/// run, so only select is read.
+fn select_by_duplicate(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
+    for q in re!(r"\bselect\b").find_iter(code) {
+        if !crate::boundary(code, q.start()) {
+            continue;
+        }
+        let rest = &code[q.end()..];
+        let Some(by) = re!(r"\b(?:by|from)\b").find(rest) else {
+            continue;
+        };
+        let Some(from) = re!(r"\bfrom\b").find(&rest[by.end()..]) else {
+            continue;
+        };
+        if by.as_str() != "by" {
+            continue;
+        }
+        let (list, groups) = (
+            &rest[..by.start()],
+            &rest[by.end()..by.end() + from.start()],
+        );
+        // A `;` outside brackets, or a newline or lambda, ends the statement
+        // before these lists do; `xbar[2;a]` keeps its own.
+        let both = format!("{list}{groups}");
+        if both.contains(['\n', '{']) || items_at_depth_zero(&both, b';') {
+            continue;
+        }
+        let groups: Vec<_> = items(groups).into_iter().filter_map(column_name).collect();
+        if let Some(name) = items(list)
+            .into_iter()
+            .filter_map(column_name)
+            .find(|n| groups.contains(n))
+        {
+            out.push(Finding::at(
+                path,
+                source,
+                q.start(),
+                "QB021",
+                format!(
+                    "`{name}` names both a result column and a by group: q 5 refuses the select \
+                     with 'dup names for cols/groups {name}; name the column, `m:max {name}`"
+                ),
+            ));
         }
     }
 }

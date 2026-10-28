@@ -1,3 +1,24 @@
+=== QB021 | a result column named like a by group (q 5: 'dup names for cols/groups a)
+r:select a by a from t
+
+=== QB021 | an aggregate or expression takes the name of its first column (q 5: max a, a+1, a:b and 2 xbar a each clash)
+r1:select max a by a from t
+r2:select a+1 by a from t
+r3:select a:b by a from t
+r4:select a by 2 xbar a from t
+r5:select a by xbar[2;a] from t
+r6:f:{select b,a by a from x where b>3}
+
+=== clean | a renamed column, another first name, or exec and update (q 5: each runs)
+c1:select m:max a by a from t
+c2:select b*a by a from t
+c3:select a by b:a from t
+c4:select count i by a from t
+c5:exec a by a from t
+c6:update a by a from t
+c7:select by a from t
+c8:select a from t;d:select b by c from u
+
 === QB001 | a qSQL filter comparing a column to itself
 select from t where a=a
 
