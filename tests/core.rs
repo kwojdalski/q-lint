@@ -312,6 +312,27 @@ fn table_columns_and_qsql_assignments_define_no_global() {
     assert!(index.lambdas.contains(".clust.kmeans.update"));
 }
 
+/// q 5 refuses `` `guid$ `` and `` `symbol$ `` on a string with 'type, where the
+/// other named casts convert char codes, so QT004 cannot say codes for them.
+#[test]
+fn a_cast_q_refuses_on_a_string_is_not_said_to_convert_codes() {
+    let detail = |source: &str| {
+        lint(source, "t.q", Profile::Style)
+            .into_iter()
+            .find(|f| f.code == "QT004")
+            .map(|f| f.detail)
+            .unwrap()
+    };
+    for source in [
+        "g:`guid$\"0a369037-75d3-b24d-6721-5a1d44d4bed5\"",
+        "s:`symbol$\"ab\"",
+    ] {
+        assert!(detail(source).contains("'type"), "{source}");
+        assert!(!detail(source).contains("code"), "{source}");
+    }
+    assert!(detail("n:`long$\"12\"").contains("code"));
+}
+
 /// QA007 names what q 5 does when the slot it runs as the last test is a
 /// literal no test may be: `$[0b;`a;`b;]` is 'type, `$[0b;1;2;]` is null.
 #[test]

@@ -322,7 +322,17 @@ e:"C"$2024.01.01
 
 === QT028 profile: general | an assignment in parentheses in a where phrase (q 5: 'type)
 r:select from t where (a:1)
+
+=== QT028 profile: general | an assignment heading a later sub-phrase (q 5: 'type)
+r:select from t where a=1,b:2
+
+=== clean profile: general | an assignment that is an operand runs (q 5: one row each)
+r:select from t where a in b:1 2
 s:select from t where a in (b:1 2)
+u:select from t where (b:1)>0
+
+=== clean profile: general | a where before from is the function, in a column
+r:exec where m:a>0 from t
 
 === clean profile: general | an assignment inside a lambda in the phrase
 r:select from t where {b:x;b>0} a

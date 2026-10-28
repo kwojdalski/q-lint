@@ -67,6 +67,14 @@ select from t where px=1 2
 === QB008 | a symbol vector likewise
 select from t where sym=`a`b
 
+=== QB008 | and one ending a clause before the next
+r:select from t where a=1 2, b>0
+
+=== clean | a vector literal indexed or searched is not the operand (q 5: each runs)
+r:select from t where a=1 2 3?b
+s:select from t where a=0 1 2 b
+u:select from t where a=`x`y`z?s
+
 === clean | in is the membership operator
 select from t where px in 1 2
 
@@ -364,6 +372,14 @@ f:{[t] select from t where a in `x, b like "="}
 
 === QB015 | and a real one after such a string is still found
 f:{[t] select from t where b like "=", c<>"ab"}
+
+=== clean | QB015: the where function on a comparison is not a filter (q 5: where s="ab" is 0 1)
+s:"ab"
+r:where s="ab"
+f:{where x="ab"}
+b:01b
+a:where b; c:s="ab"
+g:{[t] (select from t where b; s="ab")}
 
 === QB003 | a string joined inside sv string is split into characters
 m:"claimed by ",", " sv string clash," - two workers share it"

@@ -404,9 +404,15 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             {
                 return None;
             }
+            // `a{x} each b` is `a b`, not `ab`.
+            let gap = if ends_in_token(&source[..start]) {
+                " "
+            } else {
+                ""
+            };
             (
                 &source[start..start + m.end()],
-                "".into(),
+                gap.into(),
                 "Remove the identity `{x} each`".into(),
                 true,
             )
@@ -444,9 +450,12 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 return None;
             }
             let space = adjacent.is_some_and(|c| c.is_ascii_alphanumeric() || "._`\"".contains(c));
+            // Likewise before: `(x)(y)` loses both pairs in one pass, and
+            // `x` then `y` would be the name `xy`.
+            let lead = if ends_in_token(before) { " " } else { "" };
             (
                 whole.as_str(),
-                format!("{token}{}", if space { " " } else { "" }).into(),
+                format!("{lead}{token}{}", if space { " " } else { "" }).into(),
                 format!("Remove the parentheses around `{token}`").into(),
                 true,
             )
@@ -520,7 +529,9 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         // `col="ab"` is 'length or 'type on all but a char column of as many
         // rows as the string has chars; `like` is the
         // comparison that works on a symbol column. A pattern character
-        // in the string would change what it matches, so not then.
+        // in the string would change what it matches, so not then. Only in
+        // the editor: on a char column as long as the string, `=` is valid
+        // q and compares char by char.
         "QB015" => {
             let m = re!(r#"^=\s*("[^"\\*?\[\]^]*")"#).captures(source.get(start..)?)?;
             let pad = if source[..start].ends_with([' ', '\t']) {
@@ -532,7 +543,7 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 m.get(0)?.as_str(),
                 format!("{pad}like {}", &m[1]).into(),
                 format!("Compare with `like {}`", &m[1]).into(),
-                true,
+                false,
             )
         }
         // Parentheses where q already groups: around the right operand of
@@ -777,9 +788,14 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 // x on the right takes everything to its right anyway.
                 _ => format!("{}{}{argument}", &m[3], &m[4]),
             };
+            let gap = if ends_in_token(&source[..start]) {
+                " "
+            } else {
+                ""
+            };
             (
                 &source[start..end],
-                new.into(),
+                format!("{gap}{new}").into(),
                 "Apply the arithmetic to the whole list".into(),
                 false,
             )
@@ -924,7 +940,9 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             (";", "".into(), "Remove the trailing `;`".into(), false)
         }
         // `$[c;a]` is 'type; `if[c;a]` runs `a` when `c` holds.
-        "QA006" if source.get(start..)?.starts_with("$[") => {
+        // Not straight after a value: `` `int$[a;b] `` would become
+        // `` `intif[a;b] ``.
+        "QA006" if source.get(start..)?.starts_with("$[") && !ends_in_token(&source[..start]) => {
             ("$[", "if[".into(), "Use `if[...]`".into(), false)
         }
         // `where a:1` is 'type; the comparison is `=`.
@@ -1018,7 +1036,19 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             let line_end = v.code[start..]
                 .find('\n')
                 .map_or(v.code.len(), |at| start + at);
-            let line = &source[start..line_end];
+            // Matched as the detector matches: on the view without comments,
+            // and in code - a string spelling `"0Nz"` or `"15h$"` is data.
+            // The `"z"` cast is the one string that is the point, so only
+            // its `$` has to be code.
+            let line = &v.comments[start..line_end];
+            let code = &v.code[start..line_end];
+            let in_code = |m: &regex::Match| {
+                if m.as_str().starts_with('"') {
+                    code.as_bytes()[m.end() - 1] == b'$'
+                } else {
+                    code[m.range()] == *m.as_str()
+                }
+            };
             let swaps: [(&regex::Regex, &str); 5] = [
                 (re!(r"`datetime(\s*\$)"), "`timestamp$1"),
                 (re!(r#""z"(\s*\$)"#), "\"p\"$1"),
@@ -1026,15 +1056,13 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 (re!(r"(^|[^\w.])(-?0[NW])z\b"), "$1${2}p"),
                 (re!(r"\b(\d{4}\.\d{2}\.\d{2})T(\d)"), "${1}D$2"),
             ];
-            let (regex, to) = swaps
+            let (m, regex, to) = swaps
                 .iter()
-                .filter_map(|(r, to)| r.find(line).map(|m| (m.start(), *r, *to)))
-                .min_by_key(|s| s.0)
-                .map(|(_, r, to)| (r, to))?;
-            let m = regex.find(line)?;
+                .filter_map(|(r, to)| r.find_iter(line).find(&in_code).map(|m| (m, *r, *to)))
+                .min_by_key(|s| s.0.start())?;
             begin = start + m.start();
             (
-                m.as_str(),
+                &source[begin..start + m.end()],
                 regex.replace(m.as_str(), to).into_owned().into(),
                 "Use timestamp, not datetime".into(),
                 false,
@@ -1515,6 +1543,26 @@ pub(crate) fn flat_filter(phrase: &str) -> String {
         i += 1;
     }
     String::from_utf8(flat).unwrap()
+}
+/// Whether `before` ends in a character that would fuse with a token
+/// written straight after it: `a` and `b` are `ab`, `1` and `b` are `1b`.
+fn ends_in_token(before: &str) -> bool {
+    before.ends_with(|c: char| c.is_ascii_alphanumeric() || "_.`\")]}".contains(c))
+}
+/// Where the where phrase that starts at `from` in masked `code` ends: at a
+/// `;` outside brackets, or the bracket that closes around it.
+fn phrase_end(code: &str, from: usize) -> usize {
+    let mut depth = 0i32;
+    for (i, b) in code.bytes().enumerate().skip(from) {
+        match b {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' if depth == 0 => return i,
+            b')' | b']' | b'}' => depth -= 1,
+            b';' if depth == 0 => return i,
+            _ => {}
+        }
+    }
+    code.len()
 }
 /// Whether a top-level statement mixes `*`/`%` with a binary `+`/`-` - the
 /// pair whose right-to-left order readers most often get wrong. A `-` is
@@ -2391,10 +2439,18 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
         // conditional at all but dyadic `$` in bracket form: `$[`long;1.5]`
         // is 2, `$[7h;2.5]` is 3 and `$["J";"12"]` is 12. A string is blank
         // in `code`, so its slot is read from the source.
-        let first_raw = source[dollar + 2..dollar + 2 + parts[0].len()].trim();
+        // Parentheses and `` `$"..." `` name a type too: q 5 gives 2 for
+        // `$[(`long);1.5]` and for `$[`$"long";1.5]`.
+        fn bare(mut s: &str) -> &str {
+            while s.starts_with('(') && matching(s, 0, b'(', b')') == Some(s.len()) {
+                s = s[1..s.len() - 1].trim();
+            }
+            s
+        }
+        let first_raw = bare(source[dollar + 2..dollar + 2 + parts[0].len()].trim());
         let cast = parts.len() == 2
-            && (re!(r"^`[A-Za-z]*$|^\d+h$").is_match(parts[0].trim())
-                || re!(r#"^"[^"]*"$"#).is_match(first_raw));
+            && (re!(r"^`[A-Za-z]*$|^\d+h$").is_match(bare(parts[0].trim()))
+                || re!(r#"^(?:`\$\s*)?"[^"]*"$"#).is_match(first_raw));
         if cast {
             continue;
         }
@@ -4241,8 +4297,8 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
         // A cast named by symbol converts a string char by char - `long$"123"`
         // is `49 50 51`, and `date$"2024.01.01"` is ten dates - with no error
         // to say so. The uppercase-char cast `"J"$` parses text. `char` and
-        // `byte` are legitimate on a string, and `symbol` is a 'type error
-        // rather than junk, but is still not the `$"..."` that was meant.
+        // `byte` are legitimate on a string, and `symbol` and `guid` are 'type
+        // errors rather than junk, but are still not the cast that was meant.
         if let Some(m) = re!(
             r#"`(long|int|short|float|real|boolean|date|time|timestamp|timespan|month|minute|second|datetime|symbol|guid)\s*\$\s*""#
         )
@@ -4255,10 +4311,13 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
                 "timespan" => "N", "month" => "M", "minute" => "U", "second" => "V",
                 "datetime" => "Z", "guid" => "G", _ => "",
             };
-            // `symbol` is the exception: q refuses it with 'type rather than
-            // converting codes, so the message has to say something else.
+            // `symbol` and `guid` are the exceptions: q 5 refuses them with
+            // 'type rather than converting codes, so the message has to say
+            // something else.
             let detail = if name == "symbol" {
                 "`symbol$ on a string is 'type; the cast to symbol is `$\"...\"".to_string()
+            } else if name == "guid" {
+                "`guid$ on a string is 'type; parsing text is \"G\"$\"...\"".to_string()
             } else {
                 format!(
                     "`{name}$ on a string casts each character's code, not the text; parsing \
@@ -4294,8 +4353,16 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
             }
             None
         };
-        if let Some(w) = re!(r"\bwhere\b").find(line)
+        // A where phrase: a qSQL keyword earlier in the statement, and the
+        // `=` before the phrase ends. `r:where s="ab"` is the where
+        // function on a comparison, and `a:where b; c:x="ab"` two statements.
+        let filter = re!(r"\bwhere\b").find_iter(line).find(|w| {
+            let head = &line[line[..w.start()].rfind(';').map_or(0, |p| p + 1)..w.start()];
+            re!(r"\b(?:select|exec|update|delete)\b").is_match(head)
+        });
+        if let Some(w) = filter
             && let Some((op, n)) = comparison(w.end())
+            && op < phrase_end(line, w.end())
         {
             let rows = match n {
                 0 => "the table is empty".to_string(),
@@ -4409,8 +4476,14 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
                 // A column equals one value; against a vector literal the
                 // phrase is a length error at runtime, and `in` is the
                 // operator that was meant.
-                if re!(r"(?:=|<>)\s*(?:-?\d[A-Za-z0-9.]*\s+-?\d|`[A-Za-z][A-Za-z0-9_.]*`)")
-                    .is_match(&phrase)
+                // The literal has to be the whole right operand: `a=1 2 3?b`
+                // and `a=0 1 2 b` index it first, and q 5 runs both.
+                if re!(r"(?:=|<>)\s*(?:-?\d[A-Za-z0-9.]*(?:\s+-?\d[A-Za-z0-9.]*)+|`[A-Za-z][A-Za-z0-9_.]*(?:`[A-Za-z0-9_.]*)+)")
+                    .find_iter(&phrase)
+                    .any(|m| {
+                        let rest = phrase[m.end()..].trim_start();
+                        rest.is_empty() || rest.starts_with([',', ';'])
+                    })
                 {
                     add(
                         offset + w.start(),
