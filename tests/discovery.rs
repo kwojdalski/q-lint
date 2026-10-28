@@ -451,6 +451,41 @@ fn an_unreadable_file_is_an_input_failure_and_the_rest_are_still_linted() {
 }
 
 #[test]
+fn a_closed_pipe_ends_the_run_quietly() {
+    // `qlinter src | head -1`: the reader goes away, and the next write is
+    // EPIPE. Ruff, following ripgrep, exits 0 there; `println!` panicked.
+    // Far more output than a pipe buffers, so some write must fail.
+    let repo = Repo::new();
+    repo.write("a.q", &SOURCE.repeat(500));
+    for args in [
+        &["--isolated", "a.q"][..],
+        &["--rules"],
+        &["analyze", "graph", "."],
+    ] {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .current_dir(repo.path("."))
+            .args(args)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        drop(child.stdout.take());
+        let out = child.wait_with_output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!stderr.contains("panicked"), "{args:?}: {stderr}");
+        assert_eq!(out.status.code(), Some(0), "{args:?}: {stderr}");
+    }
+    // Read to the end, the same run is an ordinary one.
+    let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .current_dir(repo.path("."))
+        .args(["--isolated", "a.q"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("1000 finding(s)"));
+}
+
+#[test]
 fn a_lambda_another_file_defines_is_called_not_applied_to_a_literal() {
     // QB010: `shift -1` is a call when shift is a lambda - in this file or,
     // as here, in another file linted with it.

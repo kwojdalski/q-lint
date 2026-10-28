@@ -13,6 +13,38 @@ use std::{
     process::ExitCode,
 };
 
+/// `println!`, except that a closed pipe ends the run quietly. `qlinter src |
+/// head -1` closes stdout after one line, and `println!` panics on the next
+/// write - exit 101 and a backtrace hint for a reader who asked for less.
+/// Ruff, following ripgrep, exits 0 on a broken pipe, and so does this.
+macro_rules! out {
+    ($($arg:tt)*) => {
+        emit(format_args!($($arg)*), true)
+    };
+}
+
+/// Write to stdout, ending the line when `newline`; see `out!`. Any other
+/// write error is reported and exits 2, as an output failure.
+fn emit(text: std::fmt::Arguments, newline: bool) {
+    use std::io::Write;
+    let mut stdout = io::stdout().lock();
+    let written = stdout.write_fmt(text).and_then(|()| {
+        if newline {
+            stdout.write_all(b"\n")
+        } else {
+            Ok(())
+        }
+    });
+    match written {
+        Ok(()) => {}
+        Err(e) if e.kind() == io::ErrorKind::BrokenPipe => std::process::exit(0),
+        Err(e) => {
+            eprintln!("qlinter: writing output: {e}");
+            std::process::exit(2);
+        }
+    }
+}
+
 #[derive(Parser)]
 #[command(
     name = "qlinter",
@@ -304,12 +336,16 @@ fn run(args: Args) -> Result<u8, String> {
             ));
         }
         if args.format == "json" {
-            println!("{}", serde_json::to_string(&entries).unwrap());
+            out!("{}", serde_json::to_string(&entries).unwrap());
         } else {
             for r in entries {
-                println!(
+                out!(
                     "{} [{}] {}: {} ({})",
-                    r.code, r.category, r.name, r.summary, r.scope
+                    r.code,
+                    r.category,
+                    r.name,
+                    r.summary,
+                    r.scope
                 );
             }
         }
@@ -340,7 +376,7 @@ fn run(args: Args) -> Result<u8, String> {
             } else {
                 path.to_path_buf()
             };
-            println!("{}\n", policy.describe(&probe)?);
+            out!("{}\n", policy.describe(&probe)?);
         }
         return Ok(0);
     }
@@ -531,7 +567,7 @@ fn run(args: Args) -> Result<u8, String> {
             .cmp(&(&b.path, b.line, b.column, &b.source, &b.rule))
     });
     if args.format == "json" {
-        println!("{}", serde_json::to_string(&findings).unwrap());
+        out!("{}", serde_json::to_string(&findings).unwrap());
     } else {
         let paint = Paint::for_stdout(&args.color);
         for f in &findings {
@@ -541,7 +577,7 @@ fn run(args: Args) -> Result<u8, String> {
                 "warning" => paint.yellow_bold(&f.severity),
                 other => other.to_string(),
             };
-            println!(
+            out!(
                 "{}:{}{}: {}: {} [{}/{}] {}\n    {}",
                 paint.bold(&f.path),
                 f.line,
@@ -570,7 +606,7 @@ fn run(args: Args) -> Result<u8, String> {
                 )),
             ),
         };
-        println!(
+        out!(
             "qlinter: {} file(s), {} finding(s){tally}",
             sources.len(),
             findings.len()
@@ -657,7 +693,7 @@ fn analyze_graph(args: GraphArgs) -> Result<u8, String> {
     } else {
         serde_json::to_string_pretty(&edges)
     };
-    println!("{}", out.map_err(|e| e.to_string())?);
+    out!("{}", out.map_err(|e| e.to_string())?);
     Ok(if unreadable { 2 } else { 0 })
 }
 
@@ -700,7 +736,7 @@ fn diff_path(path: &str) -> String {
 /// the file unless told `--unidiff-zero`.
 fn print_diff(path: &str, before: &str, edits: &[q_lint_rs::Fix]) {
     const CONTEXT: usize = 3;
-    println!("--- a/{path}\n+++ b/{path}");
+    out!("--- a/{path}\n+++ b/{path}");
     // On bytes: `end - 1` can sit inside a multi-byte character - a BOM is
     // three - and a newline is one byte wherever it is.
     let bytes = before.as_bytes();
@@ -801,7 +837,10 @@ fn print_diff(path: &str, before: &str, edits: &[q_lint_rs::Fix]) {
         let old_at = if old_n == 0 { first - 1 } else { first };
         let new_first = (first as isize + shift) as usize;
         let new_at = if new_n == 0 { new_first - 1 } else { new_first };
-        print!("@@ -{old_at},{old_n} +{new_at},{new_n} @@\n{body}");
+        emit(
+            format_args!("@@ -{old_at},{old_n} +{new_at},{new_n} @@\n{body}"),
+            false,
+        );
         shift += new_n as isize - old_n as isize;
     }
 }
