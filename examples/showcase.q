@@ -61,13 +61,14 @@ count:{[t] 42}
 / expect-next: QF005
 apply:{[scale] f:{[v] v*scale}; f each 1 2 3}
 
-/ QF007: not a parameter list. `tables[]` is a call, so q reads the
-/ brackets as the start of the body - and refuses this one outright.
+/ QF007: not a parameter list. `tables[]` applies a builtin, which q 5
+/ refuses where the lambda is defined: 'nyi.
 / expect-next: QF007
 broken:{[tables[]] x+1}
 
-/ QF007: accepted by q, and worse for it: the brackets are body text, so
-/ this takes the implicit x rather than the `n` it appears to declare.
+/ QF007: accepted where it is defined, and worse for it: the brackets are
+/ body text, not the `n` it appears to declare, and q 5 refuses every call
+/ with 'type.
 / expect-next: QF007
 scaled:{[n:1] n*2}
 

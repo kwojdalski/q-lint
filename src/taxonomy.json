@@ -115,7 +115,7 @@
     "code": "QF007",
     "name": "not-a-parameter-list",
     "category": "names",
-    "summary": "Brackets after { are body text, not parameters",
+    "summary": "Brackets after { that are not a parameter list: refused where defined, refused on every call, or run as body text",
     "scope": "builtin"
   },
   {

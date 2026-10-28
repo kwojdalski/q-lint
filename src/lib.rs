@@ -2016,15 +2016,37 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
                 } else {
                     "A literal is not a parameter name".into()
                 };
+                // What q 5 does with it depends on what the slots hold. An
+                // operator in one, or a builtin applied - `{[a+b] x}`,
+                // `{[count x] 1}`, `{[tables[]] 1}` - is 'nyi where the
+                // lambda is defined. Literals alone - `{[1] x}`, `{[`s] x}`,
+                // `{[a;1] x}`, a string - give it the parameter list ,`0,
+                // and every call is 'match. Anything else - `{[a b] a}`,
+                // `{[a:1] a}` - runs the brackets as the start of the body.
+                let literal = |s: &str| {
+                    re!(r"^(?:-?[0-9.][A-Za-z0-9.:]*(?:\s+-?[0-9.][A-Za-z0-9.:]*)*|(?:`[A-Za-z0-9_.:]*)+)$")
+                        .is_match(s)
+                };
+                let applies_builtin = |s: &str| {
+                    re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(s).any(|w| {
+                        RESERVED.iter().any(|n| n == w.as_str())
+                            && boundary(s, w.start())
+                            && !s[w.end()..].trim().is_empty()
+                    })
+                };
+                let consequence = if rest
+                    .iter()
+                    .any(|s| re!(r"[-+*%,#$@&|^=<>~!?]").is_match(s) || applies_builtin(s))
+                {
+                    "q 5 refuses the lambda where it is defined: 'nyi"
+                } else if rest.iter().all(|s| literal(s)) {
+                    "q 5 gives the lambda no parameters it can bind, and every call is 'match"
+                } else {
+                    "q reads these brackets as the start of the body and the lambda takes \
+                     x, y and z instead"
+                };
                 if !subject.is_empty() {
-                    add(
-                        at,
-                        "QF007",
-                        format!(
-                            "{subject}, so q reads these brackets as the start of the body and \
-                             the lambda takes x, y and z instead"
-                        ),
-                    );
+                    add(at, "QF007", format!("{subject}, so {consequence}"));
                 }
             }
             // No parameter list: the rank is the highest of x, y and z its own

@@ -100,22 +100,28 @@ fn parameter_lists_agree_with_q() {
             "{source:?} is a parameter list to q: {found:?}"
         );
     }
-    // q falls back to implicit arguments, or refuses the source outright.
-    for source in [
-        "f:{[tables[]] x+1}", // 'nyi
-        "f:{[a+b] 1}",        // 'nyi
-        "f:{[1] x+1}",
-        "f:{[`s] x+1}",
-        "f:{[a b] a}",
-        "f:{[a[0]] a}",
-        "f:{[a:1] a}",
-        "f:{[\"s\"] 1}", // blank once literals are masked; still not a name
+    // q refuses the source, refuses every call, or runs the brackets as
+    // body text - and the message says which, as q 5 does.
+    for (source, claim) in [
+        ("f:{[tables[]] x+1}", "'nyi"),
+        ("f:{[a+b] 1}", "'nyi"),
+        ("f:{[a-b] x}", "'nyi"),
+        ("f:{[count x] 1}", "'nyi"),
+        ("f:{[1] x+1}", "'match"),
+        ("f:{[`s] x+1}", "'match"),
+        ("f:{[1;2] x}", "'match"),
+        ("f:{[a;1] x}", "'match"),
+        ("f:{[a b] a}", "start of the body"),
+        ("f:{[a[0]] a}", "start of the body"),
+        ("f:{[a:1] a}", "start of the body"),
+        ("f:{[\"s\"] 1}", "'match"), // blank once literals are masked; still not a name
     ] {
+        let found = lint(source, "t.q", Profile::Style);
         assert!(
-            lint(source, "t.q", Profile::Style)
+            found
                 .iter()
-                .any(|f| f.code == "QF007"),
-            "{source:?} is not a parameter list to q"
+                .any(|f| f.code == "QF007" && f.detail.contains(claim)),
+            "{source:?} is not a parameter list to q, and q says {claim}: {found:?}"
         );
     }
 }
