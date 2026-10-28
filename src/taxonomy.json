@@ -381,7 +381,7 @@
     "code": "QB010",
     "name": "apply-not-subtract",
     "category": "correctness",
-    "summary": "Name, space, negative literal applies the name rather than subtracting",
+    "summary": "An atom, a space and a negative literal applies the atom rather than subtracting, which q refuses",
     "scope": "builtin"
   },
   {

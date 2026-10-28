@@ -1875,6 +1875,12 @@ fn held(code: &str, raw: &str) -> Option<Held> {
         let n = re!(r"\\[0-7]{3}|\\.|[^\\]").find_iter(&body[1]).count();
         return Some(if n == 1 { Held::Atom } else { Held::Vector(n) });
     }
+    // q's own temporal and float atoms: `.z.p`, `.z.d`, `.z.K` and the rest
+    // are 'type indexed or applied (q 5). Not `.z.a` and `.z.i`, integers q
+    // takes as handles, nor the symbols `.z.f`, `.z.h`, `.z.o` and `.z.u`.
+    if crate::Z_ATOMS.contains(&code) {
+        return Some(Held::Atom);
+    }
     if re!(r"^(?:-?\d[A-Za-z0-9.:]*|0x[0-9a-fA-F]{2})$").is_match(code)
         && !re!(r"^[01]{2,}b$|^0x(?:[0-9a-fA-F]{2}){2,}$").is_match(code)
     {
@@ -2055,6 +2061,28 @@ fn named_values(
                 "`{}` is an atom here, and an atom has no items to index: 'type",
                 name.as_str()
             ),
+        ));
+    }
+    // QB010 for a name bound to an atom: `a -1` applies it to `-1` rather
+    // than subtracting, and an atom cannot be applied - q 5 `a:3; a -1` is
+    // 'domain, `a:1.5; a -1` and `w:.z.p; w -0D00:01` are 'type. A name that
+    // may hold a list is left alone: `a:1 2 3; a -1` indexes, and is 0N.
+    // The literal has to end the statement or bracket, as in `lib.rs`.
+    for m in re!(r"(?m)(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)[ \t]+(-\d[A-Za-z0-9.:]*)[ \t\r]*(?:[;\])]|$)")
+        .captures_iter(code)
+    {
+        let name = m.get(1).unwrap();
+        if !boundary(code, name.start())
+            || visible(name.as_str(), name.start()) != Some(&Held::Atom)
+        {
+            continue;
+        }
+        out.push(Finding::at(
+            path,
+            raw,
+            name.start(),
+            "QB010",
+            crate::apply_not_subtract(name.as_str(), &m[2]),
         ));
     }
     // Two vectors of known, different lengths under an operator that pairs

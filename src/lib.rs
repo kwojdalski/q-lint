@@ -1239,10 +1239,31 @@ fn line_at(s: &str, at: usize) -> usize {
 /// q's `.z` names that hold a value rather than a function or a callback:
 /// applying one to a negative literal is never meant. `.z.p -0D00:01` is the
 /// shape QB010 exists for.
+/// q's own `.z` values that are atoms, and so refuse to be applied: each of
+/// these given `-1` is an error in q 5. Not `.z.x` and `.z.X`, which are
+/// lists - `.z.x -1` is `()`.
 const Z_VALUES: &[&str] = &[
     ".z.a", ".z.d", ".z.D", ".z.f", ".z.h", ".z.i", ".z.K", ".z.k", ".z.n", ".z.N", ".z.o", ".z.p",
-    ".z.P", ".z.t", ".z.T", ".z.u", ".z.x", ".z.X", ".z.z", ".z.Z",
+    ".z.P", ".z.t", ".z.T", ".z.u", ".z.z", ".z.Z",
 ];
+
+/// The temporal and float ones among them, which `semantics` knows a name
+/// bound to holds an atom: 'type indexed or applied (q 5).
+pub(crate) const Z_ATOMS: &[&str] = &[
+    ".z.d", ".z.D", ".z.K", ".z.k", ".z.n", ".z.N", ".z.p", ".z.P", ".z.t", ".z.T", ".z.z", ".z.Z",
+];
+
+/// QB010's message, shared by the `.z` case here and the bound-name case in
+/// `semantics`.
+pub(crate) fn apply_not_subtract(name: &str, literal: &str) -> String {
+    format!(
+        "`{name} {literal}` applies the atom `{name}` to the negative literal `{literal}`, which \
+         q refuses: with a space before `-` and none after, the `-` belongs to the literal. \
+         `{name} - {}` or `{name}-{}` is subtraction",
+        &literal[1..],
+        &literal[1..]
+    )
+}
 
 fn boundary(s: &str, at: usize) -> bool {
     let before = &s[..at];
@@ -2919,20 +2940,17 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
         }
     }
     // `a -1` is `a` applied to `-1`, not `a` minus one: with whitespace before
-    // it and none after, the `-` belongs to the literal. Verified: `a:3; a -1`
-    // tries to write to file handle 3. A builtin or a lambda this file defines
-    // on the left is an intended application (`neg -1`, `f -1`) and is left
-    // alone; a numeric literal on the left is a vector (`1 2 -3`) and never
-    // matches. Nor does `sizes -1+n`: a literal that continues into an
-    // expression is `sizes[n-1]`, indexing said on purpose - only a literal
-    // that ends the statement or bracket is the trap.
+    // it and none after, the `-` belongs to the literal. q refuses it only
+    // when `a` is an atom - q 5 `a:3; a -1` is 'domain, `a:1.5; a -1` 'type,
+    // while `a:1 2 3; a -1` indexes and is 0N - so this reports q's own `.z`
+    // atoms, and `semantics` a name it sees bound to an atom. Nor does
+    // `sizes -1+n`: a literal that continues into an expression is
+    // `sizes[n-1]` - only a literal that ends the statement or bracket.
     //
     // The literal may be temporal: `window_to -0D00:01` and `.z.p -0D00:01`
     // are the same trap with a timespan, and a production timer threw 'type
     // on both. Verified on q 4.0: parse ".z.p -0D00:01" is
-    // (`.z.p;-0D00:01:00.000000000). A dotted name is reported only when it is
-    // one of q's own `.z` VALUES (Z_VALUES) - a namespaced name could be a
-    // function from anywhere (`.util.shift -1`), and this file cannot know.
+    // (`.z.p;-0D00:01:00.000000000).
     for m in
         // `\r` belongs in the trailing class: with `$` in multiline mode the
         // anchor sits before the `\n`, so on a CRLF checkout the carriage
@@ -2945,27 +2963,13 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
     {
         let whole = m.get(0).unwrap();
         let (name, literal) = (&m[1], &m[2]);
-        if !boundary(code, whole.start())
-            || RESERVED.iter().any(|n| n == name)
-            || ranks.contains_key(&qualified(whole.start(), name))
-            // A lambda another file of the workspace defines is a call too.
-            || ws.is_lambda(name)
-            || ws.is_lambda(&format!(".{name}"))
-            || (name.contains('.') && !Z_VALUES.contains(&name))
-        {
+        // Only q's own atoms here: any other name may hold a list, which
+        // `a -1` indexes - q 5 `a:1 2 3; a -1` is 0N - so a name is only
+        // reported where `semantics` sees it bound to an atom.
+        if !boundary(code, whole.start()) || !Z_VALUES.contains(&name) {
             continue;
         }
-        add(
-            whole.start(),
-            "QB010",
-            format!(
-                "`{name} {literal}` applies `{name}` to the negative literal `{literal}`: with a \
-                 space before `-` and none after, the `-` belongs to the literal. `{name} - {}` \
-                 or `{name}-{}` is subtraction",
-                &literal[1..],
-                &literal[1..]
-            ),
-        );
+        add(whole.start(), "QB010", apply_not_subtract(name, literal));
     }
     // Dot apply wants a list of arguments, and a scalar in that slot is a
     // 'type error - even when the left side is itself a list to index.

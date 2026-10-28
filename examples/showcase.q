@@ -426,15 +426,17 @@ sub2: `abc ss "a"
 
 / --------------------------------------------------------------- correctness
 
-/ QB010: `n -1` is `n` applied to `-1`, not `n` minus one: with a space
-/ before the minus and none after, it belongs to the literal. Verified:
-/ with n:3 this tries to write to file handle 3.
+/ QB010: `fh -1` is `fh` applied to `-1`, not `fh` minus one: with a space
+/ before the minus and none after, it belongs to the literal. `fh` is an
+/ atom, so q refuses it: as a handle, 3 is 'domain in q 5. Had `fh` held a
+/ list, `fh -1` would index it, which is why only an atom is reported.
+fh:3
 / expect-next: QB010
-off: n -1
+off: fh -1
 
-/ QB010: the same inside a condition - `n -1` is `n[-1]` wherever it is.
+/ QB010: the same inside a condition - `fh -1` is `fh[-1]` wherever it is.
 / expect-next: QB010
-if[n -1; 1]
+if[fh -1; 1]
 
 / QB011: `if` is a statement that returns `::`, so `flag` is null however
 / the condition goes. `$[...]` is the conditional with a value.

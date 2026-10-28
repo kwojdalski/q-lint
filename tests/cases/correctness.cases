@@ -94,10 +94,12 @@ select avg[px] by sym from t
 === clean | a user-defined aggregation
 select .my.agg px by sym from t
 
-=== QB010 | name, space, negative literal is application
+=== QB010 profile: general | name, space, negative literal applies an atom (q 5: a:3;a -1 is 'domain)
+a:3
 r:a -1
 
 === QB010 | in a condition too
+n:1.5
 if[n -1;2]
 
 === QB010 | a temporal literal is the same trap
@@ -107,10 +109,18 @@ window_to:.z.p;r:window_to -0D00:01
 r:0D00:01 xbar .z.p -0D00:01
 
 === QB010 | inside a conditional
+window_to:.z.p
 r:$[null c; window_to -0D00:01; c]
 
 === QB010 | a time literal
+t:12:00:00
 r:t -00:00:01
+
+=== clean profile: general | a name that may hold a list indexes it (q 5: a:1 2 3;a -1 is 0N)
+a:1 2 3
+r:a -1
+s:b -1
+u:.z.x -1
 
 === clean | subtraction of a timespan, any spacing
 r:.z.p - 0D00:01;r:.z.p-0D00:01;r:window_to - 0D00:01

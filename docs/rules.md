@@ -143,7 +143,7 @@ that wants fewer findings narrows in its own configuration.
 | `QB006` | comparison-with-logic | Unparenthesised comparison mixed with and/or reads right-to-left | `style` and above |
 | `QB007` | like-symbol-pattern | like with a symbol pattern is a type error or, with a glob, a projection instead of a boolean | every profile |
 | `QB008` | vector-equality-filter | Column equality against a vector literal in a filter | `style` and above |
-| `QB010` | apply-not-subtract | Name, space, negative literal applies the name rather than subtracting | every profile |
+| `QB010` | apply-not-subtract | An atom, a space and a negative literal applies the atom rather than subtracting, which q refuses | every profile |
 | `QB011` | control-as-value | if, while or do assigned as a value is always null | `style` and above |
 | `QB012` | trailing-semicolon-body | Lambda ends in ; so its last expression is discarded | `style` and above |
 | `QB013` | type-compared-to-symbol | type returns a short; comparing it to a symbol is a type error | every profile |
