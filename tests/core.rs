@@ -416,3 +416,24 @@ fn string_equality_in_a_filter_names_the_row_count() {
         );
     }
 }
+
+/// QE009 names the iterator the way q 5's error does, whole: `b:,/:a` is
+/// '/:, `-':a` is ':, `f\:a` is '\:, and `{+/x}` is '/.
+#[test]
+fn juxtaposed_derived_names_the_whole_iterator() {
+    for (source, claim) in [
+        ("b:,/:a", "('/:)"),
+        ("c:-':a", "('':)"),
+        ("d:f\\:a", "('\\:)"),
+        ("e:{+/x}", "('/)"),
+        ("g:{count'x}", "('')"),
+    ] {
+        let found = lint(source, "t.q", Profile::General);
+        assert!(
+            found
+                .iter()
+                .any(|f| f.code == "QE009" && f.detail.contains(claim)),
+            "{source:?}: QE009 should say {claim}: {found:?}"
+        );
+    }
+}

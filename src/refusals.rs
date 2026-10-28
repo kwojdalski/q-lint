@@ -772,7 +772,8 @@ fn juxtaposed_derived(
             format!(
                 "q 5 refuses a derived function applied by juxtaposition ('{}): write it in \
                  parentheses, with brackets, or as the keyword",
-                &iter[..1]
+                // q names the whole iterator: `,/:a` is '/:, `-':a` is ':.
+                iter
             ),
         );
         finding.end_column = finding.column.map(|col| col + iter.len());
