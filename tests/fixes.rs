@@ -372,6 +372,8 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
         ("QP005", "r:select mid:0.5*bid+ask from q"), // qSQL columns
         ("QP005", "tanh:1f-2f%1f+exp 2f*"),  // a composition
         ("QR004", "r:count {x+1}' b"),       // `{x+1}'` infix
+        ("QA006", "r:`int$[a;b]"),           // `if` would fuse onto `int
+        ("QA006", "r:x$[a;b]"),              // and onto a name
         ("QF010", "f:{[a;b] x+a}"),          // which parameter?
         ("QT008", "r:til 2.5"),              // no long it spells
         ("QF020", "t:([]ab:1 2;ac:3 4);r:select a from t"), // two equally close

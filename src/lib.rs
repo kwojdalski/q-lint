@@ -939,7 +939,9 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             (";", "".into(), "Remove the trailing `;`".into(), false)
         }
         // `$[c;a]` is 'type; `if[c;a]` runs `a` when `c` holds.
-        "QA006" if source.get(start..)?.starts_with("$[") => {
+        // Not straight after a value: `` `int$[a;b] `` would become
+        // `` `intif[a;b] ``.
+        "QA006" if source.get(start..)?.starts_with("$[") && !ends_in_token(&source[..start]) => {
             ("$[", "if[".into(), "Use `if[...]`".into(), false)
         }
         // `where a:1` is 'type; the comparison is `=`.
