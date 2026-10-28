@@ -272,6 +272,38 @@ fn extend_inherits_and_the_extending_file_wins() {
 }
 
 #[test]
+fn an_extending_files_exclude_and_per_file_ignores_replace_the_bases() {
+    // Ruff, the same layout: the child's `exclude` replaces the base's, so
+    // gen/ is linted again; `extend-exclude` adds to it; and the child's
+    // per-file-ignores replace the base's too.
+    let repo = Repo::new();
+    repo.write(
+        "base.toml",
+        "profile = \"styleq\"\nexclude = [\"gen\"]\nextend-exclude = [\"old\"]\n\
+         per-file-ignores = { \"m.q\" = [\"QS001\"] }\n",
+    )
+    .write(
+        "proj/qlinter.toml",
+        "extend = \"../base.toml\"\nexclude = [\"other\"]\nextend-exclude = [\"tmp\"]\n\
+         per-file-ignores = { \"m.q\" = [\"QF016\"] }\n",
+    )
+    .write("proj/gen/x.q", SOURCE)
+    .write("proj/other/x.q", SOURCE)
+    .write("proj/old/x.q", SOURCE)
+    .write("proj/tmp/x.q", SOURCE)
+    .write("proj/m.q", SOURCE);
+    assert_eq!(linted(&repo, &["proj"]), ["proj/gen/x.q", "proj/m.q"]);
+    assert_eq!(repo.codes(".", &["proj/m.q"]), ["QS001"]);
+    // A child that sets neither inherits both.
+    repo.write("proj/qlinter.toml", "extend = \"../base.toml\"\n");
+    assert_eq!(
+        linted(&repo, &["proj"]),
+        ["proj/m.q", "proj/other/x.q", "proj/tmp/x.q"]
+    );
+    assert_eq!(repo.codes(".", &["proj/m.q"]), ["QF016"]);
+}
+
+#[test]
 fn the_command_line_wins_over_the_file() {
     let repo = Repo::new();
     repo.write("qlinter.toml", "profile = \"general\"\n")

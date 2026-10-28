@@ -199,7 +199,9 @@ per-file-ignores = { "tests/*" = ["QS"] }
 
 In `pyproject.toml` the same keys go under `[tool.qlinter]`, and
 `[tool.qlinter.lint]`. Also: `extend-exclude`, and `extend = "../qlinter.toml"`
-to inherit another file and override it. As in Ruff, the most specific
+to inherit another file and override it - a key the extending file sets
+replaces the base's, `exclude` and `per-file-ignores` included, and only
+`extend-exclude` adds to it. As in Ruff, the most specific
 selector wins - `ignore = ["QS"]` with `extend-select = ["QS001"]` keeps QS001
 alone - and a selector that names no rule is refused, so a typo cannot quietly
 select or ignore nothing.

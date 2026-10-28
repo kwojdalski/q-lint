@@ -67,7 +67,12 @@ pub struct Settings {
     pub file: Option<PathBuf>,
     profile: Option<String>,
     layers: Vec<Layer>,
+    /// `exclude` and `extend-exclude`, kept apart because they inherit
+    /// differently: as in Ruff, a file that `extend`s another replaces its
+    /// `exclude` and adds to its `extend-exclude`.
     exclude: Vec<Glob>,
+    extend_exclude: Vec<Glob>,
+    /// Replaced, not added to, by a file that sets its own, as in Ruff.
     per_file_ignores: Vec<(Glob, Vec<String>)>,
 }
 
@@ -183,6 +188,7 @@ impl Policy {
         Ok(settings
             .exclude
             .iter()
+            .chain(&settings.extend_exclude)
             .chain(&self.overrides.exclude)
             .any(|glob| matches(&full, glob)))
     }
@@ -465,8 +471,12 @@ fn load(path: &Path, depth: usize) -> Result<Option<Settings>, String> {
         extend_select: selectors("extend-select")?.unwrap_or_default(),
         ignore: selectors("ignore")?.unwrap_or_default(),
     });
+    // What a file sets replaces what it extends - Ruff lints `gen/` when the
+    // base excludes it and the extending file excludes something else - and
+    // only `extend-exclude` adds to the base's.
     for key in ["exclude", "extend-exclude"] {
         if let Some(v) = table.get(key) {
+            let mut globs = vec![];
             for p in v
                 .as_array()
                 .ok_or_else(|| format!("{shown}: {key} must be an array"))?
@@ -475,11 +485,17 @@ fn load(path: &Path, depth: usize) -> Result<Option<Settings>, String> {
                     .as_str()
                     .filter(|s| !s.trim().is_empty())
                     .ok_or_else(|| format!("{shown}: {key} must contain nonempty strings"))?;
-                settings.exclude.push(rooted(&root, p)?);
+                globs.push(rooted(&root, p)?);
+            }
+            if key == "exclude" {
+                settings.exclude = globs;
+            } else {
+                settings.extend_exclude.extend(globs);
             }
         }
     }
     if let Some(v) = get("per-file-ignores") {
+        settings.per_file_ignores.clear();
         let map = v.as_table().ok_or_else(|| {
             format!("{shown}: per-file-ignores must be a table of glob = [codes]")
         })?;
