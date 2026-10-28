@@ -245,6 +245,13 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
             false,
         ),
         ("QT004", "r:`int$\"12\"", "r:\"I\"$\"12\"", false),
+        ("QT032", "r:`symbol$\"ab\"", "r:`$\"ab\"", false),
+        (
+            "QT032",
+            "r:`guid$\"0a369037-75d3-b24d-6721-5a1d44d4bed5\"",
+            "r:\"G\"$\"0a369037-75d3-b24d-6721-5a1d44d4bed5\"",
+            false,
+        ),
         ("QB020", "f:{[x] :x; x+1}", "f:{[x] :x}", false),
         ("QF017", "f:{[x] a:x+1; x}", "f:{[x] x+1; x}", false),
         ("QP003", "r:.z.P", "r:.z.p", false),

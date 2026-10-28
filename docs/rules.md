@@ -1,6 +1,6 @@
 # Rules
 
-All 118 rules, generated from `src/taxonomy.json` - the same data
+All 119 rules, generated from `src/taxonomy.json` - the same data
 `qlinter --rules` and `qlinter --explain <CODE>` print from. Regenerate with
 `python3 scripts/rules_doc.py > docs/rules.md`; a test fails when this is stale.
 
@@ -130,6 +130,7 @@ that wants fewer findings narrows in its own configuration.
 | `QT029` | hopen-literal | hopen given a float, a negative number, or a symbol without its leading colon | every profile |
 | `QT030` | cast-unknown-type | A cast to a type character q does not have | every profile |
 | `QT031` | uppercase-cast-literal | An uppercase cast parses a string; given a number or a symbol it is 'type, and "C"$ refuses only a vector | every profile |
+| `QT032` | cast-by-name-refused-on-string | `symbol$ or `guid$ on a string, which q 5 refuses with 'type | every profile |
 
 ## Correctness - q that runs and does the wrong thing
 

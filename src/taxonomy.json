@@ -763,6 +763,13 @@
     "scope": "builtin"
   },
   {
+    "code": "QT032",
+    "name": "cast-by-name-refused-on-string",
+    "category": "types-and-shapes",
+    "summary": "`symbol$ or `guid$ on a string, which q 5 refuses with 'type",
+    "scope": "builtin"
+  },
+  {
     "code": "QP006",
     "name": "juxtaposed-application",
     "category": "policy",

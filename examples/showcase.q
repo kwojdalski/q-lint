@@ -621,6 +621,11 @@ half:1.5j
 / expect-next: QT031
 parsed:"J"$1
 
+/ QT032: a cast to symbol by name converts nothing - q 5 refuses a string
+/ with 'type. `$"abc" is the cast that makes a symbol.
+/ expect-next: QT032
+named:`symbol$"abc"
+
 / QB002: q 5's like takes one `*`, or a leading and trailing pair;
 / "a*b*" is 'nyi.
 / expect-next: QB002

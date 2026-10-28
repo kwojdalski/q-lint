@@ -617,9 +617,12 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         }
         // `` `int$"12" `` casts character codes; `"I"$` parses the text.
         // Both run, so which was meant is the author's to confirm.
-        "QT004" => {
+        // `` `symbol$"ab" `` and `` `guid$".." `` are 'type; what was meant is
+        // `` `$ `` and `"G"$`.
+        "QT004" | "QT032" => {
             let m = re!(r"^`([a-z]+)\s*\$").captures(source.get(start..)?)?;
             let letter = match &m[1] {
+                "symbol" => "",
                 "boolean" => "B",
                 "guid" => "G",
                 "byte" => "X",
@@ -638,12 +641,21 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 "time" => "T",
                 _ => return None,
             };
-            (
-                m.get(0)?.as_str(),
-                format!("\"{letter}\"$").into(),
-                format!("Parse the text with `\"{letter}\"$`").into(),
-                false,
-            )
+            if letter.is_empty() {
+                (
+                    m.get(0)?.as_str(),
+                    "`$".into(),
+                    "Make a symbol with `` `$ ``".into(),
+                    false,
+                )
+            } else {
+                (
+                    m.get(0)?.as_str(),
+                    format!("\"{letter}\"$").into(),
+                    format!("Parse the text with `\"{letter}\"$`").into(),
+                    false,
+                )
+            }
         }
         // A statement after a top-level return never runs: remove it and
         // what follows it up to the closing brace, on one line.
@@ -1256,6 +1268,7 @@ impl Finding {
                     | "QT028"
                     | "QT029"
                     | "QT030"
+                    | "QT032"
                     | "QE006"
                     | "QE007"
             ) {
@@ -4361,8 +4374,8 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
         // A cast named by symbol converts a string char by char - `long$"123"`
         // is `49 50 51`, and `date$"2024.01.01"` is ten dates - with no error
         // to say so. The uppercase-char cast `"J"$` parses text. `char` and
-        // `byte` are legitimate on a string, and `symbol` and `guid` are 'type
-        // errors rather than junk, but are still not the cast that was meant.
+        // `byte` are legitimate on a string. `symbol` and `guid` convert
+        // nothing: q 5 refuses them with 'type, which is QT032's, in general.
         if let Some(m) = re!(
             r#"`(long|int|short|float|real|boolean|date|time|timestamp|timespan|month|minute|second|datetime|symbol|guid)\s*\$\s*""#
         )
@@ -4376,8 +4389,13 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
                 "datetime" => "Z", "guid" => "G", _ => "",
             };
             // `symbol` and `guid` are the exceptions: q 5 refuses them with
-            // 'type rather than converting codes, so the message has to say
-            // something else.
+            // 'type rather than converting codes, so they are another rule
+            // with another message.
+            let code = if matches!(name, "symbol" | "guid") {
+                "QT032"
+            } else {
+                "QT004"
+            };
             let detail = if name == "symbol" {
                 "`symbol$ on a string is 'type; the cast to symbol is `$\"...\"".to_string()
             } else if name == "guid" {
@@ -4388,7 +4406,7 @@ pub fn lint_in(source: &str, path: &str, profile: Profile, ws: &Workspace) -> Ve
                      text is \"{ch}\"$\"...\""
                 )
             };
-            add(offset + m.get(0).unwrap().start(), "QT004", detail);
+            add(offset + m.get(0).unwrap().start(), code, detail);
         }
         // Equality against a string literal in a filter pairs each row with
         // one character. q 5: 'length whenever the row count differs from

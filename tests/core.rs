@@ -353,7 +353,7 @@ fn a_cast_q_refuses_on_a_string_is_not_said_to_convert_codes() {
     let detail = |source: &str| {
         lint(source, "t.q", Profile::Style)
             .into_iter()
-            .find(|f| f.code == "QT004")
+            .find(|f| matches!(f.code.as_str(), "QT004" | "QT032"))
             .map(|f| f.detail)
             .unwrap()
     };
