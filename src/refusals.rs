@@ -428,6 +428,9 @@ fn cast_character(path: &str, source: &str, code: &str, comments: &str, out: &mu
         let c = &m[1];
         // QT031. An uppercase cast parses text, so it takes a string: q 5
         // `"J"$1`, `"J"$1 2`, `"D"$20230101` and `"S"$`a` are each 'type.
+        // `"C"$` is the exception for an atom: q 5 hands `1`, `` `a ``,
+        // `1.5`, `0x01` and `2024.01.01` back unchanged, and only a vector
+        // (`1 2`, `` `a`b ``, `10b`, `0x0102`) is 'type.
         let operand = &comments[whole.end()..];
         let operand = operand.trim_start_matches([' ', '\t']);
         let start = whole.end() + comments[whole.end()..].len() - operand.len();
@@ -437,6 +440,7 @@ fn cast_character(path: &str, source: &str, code: &str, comments: &str, out: &mu
                 re!(r"^(?:-?\d[A-Za-z0-9.:]*(?:[ \t]+-?\d[A-Za-z0-9.:]*)*|(?:`[A-Za-z0-9_.:]*)+)")
                     .find(operand)
             && crate::operand_ends(code, start + lit.end())
+            && (c != "C" || !atom_literal(lit.as_str()))
         {
             out.push(Finding::at(
                 path,
@@ -460,6 +464,18 @@ fn cast_character(path: &str, source: &str, code: &str, comments: &str, out: &mu
             ));
         }
     }
+}
+
+/// Whether a literal QT031 matched is one atom: no space, at most one
+/// symbol, and not a boolean or byte vector written as one token.
+fn atom_literal(lit: &str) -> bool {
+    if lit.contains([' ', '\t']) || lit.matches('`').count() > 1 {
+        return false;
+    }
+    if let Some(hex) = lit.strip_prefix("0x") {
+        return hex.len() == 2;
+    }
+    !re!(r"^[01]{2,}b$").is_match(lit)
 }
 
 /// QE008. A glyph applied to one argument by juxtaposition. q 5 has no

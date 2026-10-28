@@ -752,7 +752,7 @@
     "code": "QT031",
     "name": "uppercase-cast-literal",
     "category": "types-and-shapes",
-    "summary": "An uppercase cast parses a string; given a number or a symbol it is 'type",
+    "summary": "An uppercase cast parses a string; given a number or a symbol it is 'type, and \"C\"$ refuses only a vector",
     "scope": "builtin"
   },
   {
