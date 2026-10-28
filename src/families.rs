@@ -222,12 +222,17 @@ fn simplifications(path: &str, source: &str, code: &str, out: &mut Vec<Finding>)
     // QR004: arithmetic is atomic, so a lambda that does one operation with a
     // number needs no each - `{x+1} each x` is `1+x`, run on the whole list
     // at once. Only the visibly atomic shape: one of + - * % between x and a
-    // numeric literal.
+    // numeric literal. `{x -1}` is not one: a `-` after a space and before a
+    // digit is a negative literal, so that is x indexed at -1, and q 5 gives
+    // `0N 0N` for `{x -1} each (1 2;3 4)` where `(1 2;3 4)-1` is `(0 1;2 3)`.
     for m in re!(
         r"\{\s*(?:x\s*[-+*%]\s*-?\d[A-Za-z0-9.]*|-?\d[A-Za-z0-9.]*\s*[-+*%]\s*x)\s*\}\s*(?:each\b|'(?:[^:]|$))"
     )
     .find_iter(code)
     {
+        if re!(r"^\{\s*x\s+-\d").is_match(m.as_str()) {
+            continue;
+        }
         add(
             m.start(),
             "QR004",
@@ -336,57 +341,45 @@ fn duplicate_columns(path: &str, source: &str, code: &str, out: &mut Vec<Finding
         }
     }
     // The same in a select or update list, where q 5 renames as well:
-    // `select a,a from t` has columns a and a1. An item is named by its
-    // `name:`, or is a bare column naming itself; other expressions are
-    // named by q's own rules and left out.
+    // `select a,a from t` has columns a and a1, and so do `select max a,min a`
+    // and `select a,max a`, each item named as `column_name` says. A select's
+    // by list is renamed the same way - `select a by b,b` groups by b and b1 -
+    // where update's by names no column and is left alone.
     for q in re!(r"\b(?:select|update)\b").find_iter(code) {
-        if !crate::boundary(code, q.start()) {
+        if !crate::boundary(code, q.start()) || in_string(code, q.start()) {
             continue;
         }
         let rest = &code[q.end()..];
         let Some(stop) = re!(r"\b(?:by|from)\b").find(rest) else {
             continue;
         };
-        let list = &rest[..stop.start()];
-        if list.contains(['\n', ';', '[', '{']) {
-            continue;
+        let mut lists = vec![&rest[..stop.start()]];
+        if stop.as_str() == "by"
+            && q.as_str() == "select"
+            && let Some(from) = re!(r"\bfrom\b").find(&rest[stop.end()..])
+        {
+            lists.push(&rest[stop.end()..stop.end() + from.start()]);
         }
-        let mut seen: Vec<&str> = vec![];
-        // Items at depth zero: `select f[a,b],c` has two.
-        let mut items = vec![];
-        let (mut depth, mut start) = (0i32, 0);
-        for (i, b) in list.bytes().enumerate() {
-            match b {
-                b'(' => depth += 1,
-                b')' => depth -= 1,
-                b',' if depth == 0 => {
-                    items.push(&list[start..i]);
-                    start = i + 1;
-                }
-                _ => {}
-            }
-        }
-        items.push(&list[start..]);
-        for item in items {
-            let item = item.trim();
-            let name = match item.split_once(':') {
-                Some((name, _)) => name.trim(),
-                None => item,
-            };
-            if !re!(r"^[A-Za-z][A-Za-z0-9_]*$").is_match(name) {
+        for list in lists {
+            // A newline, a `;` outside brackets or the end of a lambda ends
+            // the statement before the list does.
+            if list.contains('\n') || !braces_close(list) || items_at_depth_zero(list, b';') {
                 continue;
             }
-            if seen.contains(&name) {
-                out.push(Finding::at(
-                    path,
-                    source,
-                    q.start(),
-                    "QB019",
-                    format!("Column `{name}` is named twice: q keeps both and renames the second, so `{name}` reads the first"),
-                ));
-                break;
+            let mut seen: Vec<&str> = vec![];
+            for name in items(list).into_iter().filter_map(column_name) {
+                if seen.contains(&name) {
+                    out.push(Finding::at(
+                        path,
+                        source,
+                        q.start(),
+                        "QB019",
+                        format!("Column `{name}` is named twice: q keeps both and renames the second, so `{name}` reads the first"),
+                    ));
+                    break;
+                }
+                seen.push(name);
             }
-            seen.push(name);
         }
     }
 }
@@ -411,6 +404,42 @@ fn items(list: &str) -> Vec<&str> {
     items
 }
 
+/// Whether `at` sits inside a string on its line. The masked view blanks
+/// most strings, but not on a `\t` line, where `\t f "select min(p) ..."`
+/// carries SQL that is not q.
+fn in_string(code: &str, at: usize) -> bool {
+    let line = code[..at].rfind('\n').map_or(0, |n| n + 1);
+    let mut inside = false;
+    let b = code.as_bytes();
+    let mut i = line;
+    while i < at {
+        match b[i] {
+            b'\\' if inside => i += 1,
+            b'"' => inside = !inside,
+            _ => {}
+        }
+        i += 1;
+    }
+    inside
+}
+
+/// Whether every `{` in `text` closes inside it, and no `}` closes one
+/// opened before it: `{x} a` does, `a}` and `{a` do not.
+fn braces_close(text: &str) -> bool {
+    let mut depth = 0i32;
+    for b in text.bytes() {
+        match b {
+            b'{' => depth += 1,
+            b'}' => depth -= 1,
+            _ => {}
+        }
+        if depth < 0 {
+            return false;
+        }
+    }
+    depth == 0
+}
+
 /// Whether `byte` occurs in `text` outside every bracket.
 fn items_at_depth_zero(text: &str, byte: u8) -> bool {
     let mut depth = 0i32;
@@ -425,24 +454,207 @@ fn items_at_depth_zero(text: &str, byte: u8) -> bool {
 }
 
 /// The column name q 5 gives a select or by item: its `name:`, or else the
-/// first name in it that is not a builtin - `max a`, `a+1`, `2 xbar a` and
-/// `xbar[2;a]` are each `a`, `b*a` is `b` - with the virtual `i` named `x`.
-/// None where reading cannot say: a qualified name, or no name at all.
+/// name q derives from the expression, or None where that is not known.
+///
+/// Measured in q 5 with `cols select E from t`, and followed only that far:
+/// - a column names itself, and the virtual `i` and any literal are `x`;
+/// - `l+r`, `l-r`, `l*r`, `l%r`, `l&r`, `l|r`, `and`, `or` take the name of
+///   their left operand, so `a+b` is `a` and `2+a` is `x`;
+/// - `= < > <> <= >= ^ # @ ?` and `mod xbar div cross except wavg within in
+///   xexp xlog` take the right one: `a=b` is `b`, `a mod 2` is `x`;
+/// - a function applied, `max a`, `f a`, `{x} a`, takes its argument's;
+/// - `f[a;b]` and `(a;b)` take their last item's: `g[1;a]` is `a`.
+///
+/// Anything else - an adverb, an unmeasured operator, a qualified name -
+/// is None, and the rules reading this stay silent rather than guess.
 fn column_name(item: &str) -> Option<&str> {
     let item = item.trim();
     if let Some(m) = re!(r"^([A-Za-z][A-Za-z0-9_]*)\s*:[^:]").captures(item) {
         return Some(m.get(1).unwrap().as_str());
     }
-    let name = re!(r"`?\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*")
-        .find_iter(item)
-        .filter(|m| crate::boundary(item, m.start()))
-        .map(|m| m.as_str())
-        .find(|n| !n.starts_with('`') && !crate::RESERVED.iter().any(|r| r == n))?;
-    match name {
-        _ if name.contains('.') => None,
-        "i" => Some("x"),
-        _ => Some(name),
+    expression_name(&tokens(item)?)
+}
+
+/// One token of a select item, for `column_name`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Tok<'a> {
+    Name(&'a str),
+    Lit,
+    Op(&'a str),
+    /// The inside of `(...)`.
+    Group(&'a str),
+    /// The inside of `[...]`.
+    Args(&'a str),
+    Lambda,
+}
+
+/// Operators that name their result after the left operand, and those that
+/// name it after the right: both lists are q 5's, measured, and nothing
+/// outside them is named.
+const LEFT_NAMED: &[&str] = &["+", "-", "*", "%", "&", "|", "and", "or"];
+const RIGHT_NAMED: &[&str] = &[
+    "=", "<", ">", "<>", "<=", ">=", "^", "#", "@", "?", "mod", "xbar", "div", "cross", "except",
+    "wavg", "within", "in", "xexp", "xlog",
+];
+
+fn tokens(s: &str) -> Option<Vec<Tok<'_>>> {
+    let b = s.as_bytes();
+    let mut out = vec![];
+    let mut i = 0;
+    let mut number_end = None;
+    let digit = |at: usize| at < b.len() && b[at].is_ascii_digit();
+    while i < b.len() {
+        let c = b[i];
+        let prev = s[..i].chars().next_back();
+        let noun_before = prev.is_some_and(|p| p.is_alphanumeric() || ")]}\"_.`".contains(p));
+        if c.is_ascii_whitespace() {
+            i += 1;
+        } else if c == b'"' {
+            i += 1;
+            while i < b.len() && b[i] != b'"' {
+                i += if b[i] == b'\\' { 2 } else { 1 };
+            }
+            i = (i + 1).min(b.len());
+            out.push(Tok::Lit);
+        } else if c == b'`' {
+            while i < b.len() && b[i] == b'`' {
+                i += 1;
+                while i < b.len() && (b[i].is_ascii_alphanumeric() || b"_.:/".contains(&b[i])) {
+                    i += 1;
+                }
+            }
+            out.push(Tok::Lit);
+        } else if digit(i)
+            || (c == b'.' && digit(i + 1))
+            || (c == b'-'
+                && !noun_before
+                && (digit(i + 1) || (b.get(i + 1) == Some(&b'.') && digit(i + 2))))
+        {
+            let start = i;
+            i += 1;
+            while i < b.len() && (b[i].is_ascii_alphanumeric() || b"._:".contains(&b[i])) {
+                i += 1;
+            }
+            // `1 2` is one vector literal, not one number applied to another.
+            if number_end != Some(s[..start].trim_end().len()) {
+                out.push(Tok::Lit);
+            }
+            number_end = Some(i);
+        } else if c.is_ascii_alphabetic()
+            || (c == b'.' && b.get(i + 1).is_some_and(u8::is_ascii_alphabetic))
+        {
+            let start = i;
+            i += 1;
+            while i < b.len() && (b[i].is_ascii_alphanumeric() || b"_.".contains(&b[i])) {
+                i += 1;
+            }
+            out.push(Tok::Name(&s[start..i]));
+        } else if let Some((open, close)) = match c {
+            b'(' => Some((b'(', b')')),
+            b'[' => Some((b'[', b']')),
+            b'{' => Some((b'{', b'}')),
+            _ => None,
+        } {
+            let end = matching(s, i, open, close)?;
+            let inner = &s[i + 1..end - 1];
+            out.push(match c {
+                b'(' => Tok::Group(inner),
+                b'[' => Tok::Args(inner),
+                _ => Tok::Lambda,
+            });
+            i = end;
+        } else if b")]}".contains(&c) {
+            return None;
+        } else {
+            let two = s.get(i..i + 2);
+            let len = if matches!(two, Some("<>" | "<=" | ">=")) {
+                2
+            } else {
+                1
+            };
+            out.push(Tok::Op(&s[i..i + len]));
+            i += len;
+        }
     }
+    Some(out)
+}
+
+fn reserved(name: &str) -> bool {
+    crate::RESERVED.iter().any(|r| r == name)
+}
+
+/// The name of an expression read right to left, as `column_name` explains.
+fn expression_name<'a>(toks: &[Tok<'a>]) -> Option<&'a str> {
+    // A term: something followed by at most one bracket list.
+    let (&first, rest) = toks.split_first()?;
+    let (args, rest) = match rest.split_first() {
+        Some((&Tok::Args(a), rest)) => (Some(a), rest),
+        _ => (None, rest),
+    };
+    if matches!(rest.first(), Some(Tok::Args(_))) {
+        return None;
+    }
+    let term = || -> Option<&'a str> {
+        match (first, args) {
+            (Tok::Lambda, Some(a)) => last_slot_name(a),
+            (Tok::Name(n), Some(a)) if !n.contains('.') => last_slot_name(a),
+            (_, Some(_)) => None,
+            (Tok::Name(n), None) => match n {
+                _ if n.contains('.') || reserved(n) => None,
+                "i" => Some("x"),
+                _ => Some(n),
+            },
+            (Tok::Lit, None) => Some("x"),
+            (Tok::Group(g), None) => last_slot_name(g),
+            _ => None,
+        }
+    };
+    let Some(&next) = rest.first() else {
+        return term();
+    };
+    let op = match next {
+        Tok::Op(o) => Some(o),
+        Tok::Name(n) if LEFT_NAMED.contains(&n) || RIGHT_NAMED.contains(&n) => Some(n),
+        _ => None,
+    };
+    if let Some(op) = op {
+        let right = &rest[1..];
+        if right.is_empty() {
+            return None;
+        }
+        // The right side must read too, or the left may not be an operand.
+        let named = expression_name(right);
+        return if LEFT_NAMED.contains(&op) {
+            named.and(term())
+        } else if RIGHT_NAMED.contains(&op) {
+            named
+        } else {
+            None
+        };
+    }
+    // Application: a function, builtin or not, or a lambda, given what
+    // follows it. A literal or a bracketed call applied to more is not read,
+    // nor a column before an unmeasured builtin, `a bin b`.
+    match (first, args) {
+        (Tok::Name(n), None) if !n.contains('.') => {
+            if !reserved(n) && matches!(next, Tok::Name(m) if reserved(m)) {
+                return None;
+            }
+            expression_name(rest)
+        }
+        (Tok::Lambda, None) => expression_name(rest),
+        _ => None,
+    }
+}
+
+/// The name of the last `;`-slot of a bracket or parenthesis: `g[1;a]` and
+/// `(1;a)` are both `a`.
+fn last_slot_name(inner: &str) -> Option<&str> {
+    let last = slots(inner).pop()?;
+    if last.trim().is_empty() {
+        return None;
+    }
+    expression_name(&tokens(last)?)
 }
 
 /// QB021. A select naming a result column the same as one of its by groups.
@@ -452,7 +664,7 @@ fn column_name(item: &str) -> Option<&str> {
 /// run, so only select is read.
 fn select_by_duplicate(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
     for q in re!(r"\bselect\b").find_iter(code) {
-        if !crate::boundary(code, q.start()) {
+        if !crate::boundary(code, q.start()) || in_string(code, q.start()) {
             continue;
         }
         let rest = &code[q.end()..];
@@ -469,10 +681,11 @@ fn select_by_duplicate(path: &str, source: &str, code: &str, out: &mut Vec<Findi
             &rest[..by.start()],
             &rest[by.end()..by.end() + from.start()],
         );
-        // A `;` outside brackets, or a newline or lambda, ends the statement
-        // before these lists do; `xbar[2;a]` keeps its own.
+        // A `;` outside brackets, a newline, or the end of a lambda ends the
+        // statement before these lists do; `xbar[2;a]` and `{x} a` keep
+        // their own.
         let both = format!("{list}{groups}");
-        if both.contains(['\n', '{']) || items_at_depth_zero(&both, b';') {
+        if both.contains('\n') || !braces_close(&both) || items_at_depth_zero(&both, b';') {
             continue;
         }
         let groups: Vec<_> = items(groups).into_iter().filter_map(column_name).collect();
@@ -558,5 +771,99 @@ impl Span {
     }
     fn end(&self) -> usize {
         self.end
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::column_name;
+
+    /// Each pair measured in q 5 with `cols select E from t`, t:([]a:1 2;b:3 4)
+    /// and f:{x}, g:{x+y}.
+    #[test]
+    fn column_names_follow_q5() {
+        let measured = [
+            ("a+b", "a"),
+            ("a-b", "a"),
+            ("a*b", "a"),
+            ("a%b", "a"),
+            ("a&b", "a"),
+            ("a|b", "a"),
+            ("a and b", "a"),
+            ("a or b", "a"),
+            ("2+a", "x"),
+            ("1+a", "x"),
+            ("a=b", "b"),
+            ("a<b", "b"),
+            ("a>b", "b"),
+            ("a<>b", "b"),
+            ("a^b", "b"),
+            ("a#b", "b"),
+            ("a@b", "b"),
+            ("a?b", "b"),
+            ("a<=b", "b"),
+            ("a>=b", "b"),
+            ("a mod b", "b"),
+            ("a xbar b", "b"),
+            ("a div b", "b"),
+            ("a cross b", "b"),
+            ("a except b", "b"),
+            ("a wavg b", "b"),
+            ("a xlog b", "b"),
+            ("a mod 2", "x"),
+            ("a<2", "x"),
+            ("a=2", "x"),
+            ("a within 1 2", "x"),
+            ("a in 1 2", "x"),
+            ("a xexp 2", "x"),
+            ("max a", "a"),
+            ("f a", "a"),
+            ("f[a]", "a"),
+            ("{x} a", "a"),
+            ("g[a;1]", "x"),
+            ("sum 1+a", "x"),
+            ("g[1;a]", "a"),
+            ("(a;b)", "b"),
+            ("(a)", "a"),
+            ("max a+b", "a"),
+            ("b+max a", "b"),
+            ("f[a]+b", "a"),
+            ("(a+b)*2", "a"),
+            ("a+b*2", "a"),
+            ("2*a+b", "x"),
+            ("a b", "b"),
+            ("a - 1", "a"),
+            ("a-1", "a"),
+            ("b xbar a", "a"),
+            ("b>a", "a"),
+            ("i", "x"),
+            ("a+1 2", "a"),
+            ("a+(b)", "a"),
+            ("neg a", "a"),
+            ("1 2", "x"),
+            ("f[a]+f[b]", "a"),
+            ("g[b;a]", "a"),
+            ("{x+y}[a;b]", "b"),
+            ("(a;1)", "x"),
+            ("(1;a)", "a"),
+            ("a=b+1", "b"),
+            ("a+b=1", "a"),
+            ("max[a]", "a"),
+            ("f[a]=b", "b"),
+            ("a+f b", "a"),
+            ("max a mod b", "b"),
+            ("a mod max b", "b"),
+            ("count i", "x"),
+            ("m:max a", "m"),
+        ];
+        for (expr, name) in measured {
+            assert_eq!(column_name(expr), Some(name), "{expr}");
+        }
+        // Unmeasured, or adverbs: no name rather than a guess.
+        for expr in [
+            "f each a", "a+/b", "a$b", "a!b", "a like b", ".z.p", "a bin b", "-a",
+        ] {
+            assert_eq!(column_name(expr), None, "{expr}");
+        }
     }
 }
