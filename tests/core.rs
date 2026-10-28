@@ -100,22 +100,28 @@ fn parameter_lists_agree_with_q() {
             "{source:?} is a parameter list to q: {found:?}"
         );
     }
-    // q falls back to implicit arguments, or refuses the source outright.
-    for source in [
-        "f:{[tables[]] x+1}", // 'nyi
-        "f:{[a+b] 1}",        // 'nyi
-        "f:{[1] x+1}",
-        "f:{[`s] x+1}",
-        "f:{[a b] a}",
-        "f:{[a[0]] a}",
-        "f:{[a:1] a}",
-        "f:{[\"s\"] 1}", // blank once literals are masked; still not a name
+    // q refuses the source, refuses every call, or runs the brackets as
+    // body text - and the message says which, as q 5 does.
+    for (source, claim) in [
+        ("f:{[tables[]] x+1}", "'nyi"),
+        ("f:{[a+b] 1}", "'nyi"),
+        ("f:{[a-b] x}", "'nyi"),
+        ("f:{[count x] 1}", "'nyi"),
+        ("f:{[1] x+1}", "'match"),
+        ("f:{[`s] x+1}", "'match"),
+        ("f:{[1;2] x}", "'match"),
+        ("f:{[a;1] x}", "'match"),
+        ("f:{[a b] a}", "start of the body"),
+        ("f:{[a[0]] a}", "start of the body"),
+        ("f:{[a:1] a}", "start of the body"),
+        ("f:{[\"s\"] 1}", "'match"), // blank once literals are masked; still not a name
     ] {
+        let found = lint(source, "t.q", Profile::Style);
         assert!(
-            lint(source, "t.q", Profile::Style)
+            found
                 .iter()
-                .any(|f| f.code == "QF007"),
-            "{source:?} is not a parameter list to q"
+                .any(|f| f.code == "QF007" && f.detail.contains(claim)),
+            "{source:?} is not a parameter list to q, and q says {claim}: {found:?}"
         );
     }
 }
@@ -304,4 +310,54 @@ fn table_columns_and_qsql_assignments_define_no_global() {
     assert!(!index.defined.contains(".handle") && !index.defined.contains(".c"));
     // A name that ends in a qSQL keyword is still a name.
     assert!(index.lambdas.contains(".clust.kmeans.update"));
+}
+
+/// QA007 names what q 5 does when the slot it runs as the last test is a
+/// literal no test may be: `$[0b;`a;`b;]` is 'type, `$[0b;1;2;]` is null.
+#[test]
+fn even_slot_conditional_says_type_or_null() {
+    for (source, claim) in [
+        ("r:{$[x;`a;`b;]}", "'type"),
+        ("r:{$[x;1;\"ab\";]}", "'type"),
+        ("r:{$[x;1;`a;2]}", "'type"),
+        ("r:{$[x;1;2;]}", "null"),
+        ("r:{$[x;1;y;2]}", "null"),
+    ] {
+        let found = lint(source, "t.q", Profile::Style);
+        assert!(
+            found
+                .iter()
+                .any(|f| f.code == "QA007" && f.detail.contains(claim)),
+            "{source:?}: QA007 should say {claim}: {found:?}"
+        );
+    }
+}
+
+/// QB015 says what q 5 does: `([]c:"ab")` where c="ab" returns its rows, a
+/// count that differs from the string's length is 'length, and a symbol or
+/// string column is 'type even when the counts agree.
+#[test]
+fn string_equality_in_a_filter_names_the_row_count() {
+    for (source, claim) in [
+        (
+            "r:select from t where sym=\"EUR\"",
+            "'length unless the table has exactly 3 rows",
+        ),
+        (
+            "r:select from t where sym=\"\"",
+            "'length unless the table is empty",
+        ),
+        (
+            "r:select from t where s<>\"ab\"",
+            "'type even then on a symbol or string column",
+        ),
+    ] {
+        let found = lint(source, "t.q", Profile::General);
+        assert!(
+            found
+                .iter()
+                .any(|f| f.code == "QB015" && f.detail.contains(claim)),
+            "{source:?}: QB015 should say {claim}: {found:?}"
+        );
+    }
 }

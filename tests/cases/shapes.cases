@@ -501,3 +501,19 @@ r3:ij[t;s]
 t:([]a:1 2)
 s:([]a:1 2;b:3 4)
 r:lj[t;`a xkey s]
+
+=== QT003 QT006 QT008 profile: general | a qSQL phrase ends an operand at from, by, where and a column's comma (q 5: each is 'type or 'length)
+r1:select b:1+`x from t
+r2:select b:til 1.5 from t
+r3:exec 1 2 3+4 5 from t
+r4:select b:1+`x,c:a from t
+r5:select by b:1+`x from t
+r6:select from t where a=1+`x, a>1
+
+=== clean profile: general | outside a phrase, and in the from phrase, a comma joins; a lookup continues the operand
+c1:select from t,u where a>1
+c2:f[1+`x,y]
+c3:1+`x,y
+c4:til 1.5,x
+c5:select b:1+`x`y?`y from t
+c6:select from t where a in til 3, b>1

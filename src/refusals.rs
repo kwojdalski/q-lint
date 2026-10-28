@@ -192,7 +192,8 @@ fn temporals(path: &str, source: &str, unsym: &str, out: &mut Vec<Finding>) {
 
 /// QE007. A select, exec, update or delete with no `from` before its
 /// statement ends, or nothing after it: `select a by b t`, `{select x}`,
-/// `delete a` and `select a from` are each 'from at parse time (q 5).
+/// `delete a` and `select a from` are each 'from at parse time (q 5), and
+/// `select from t where` - a where phrase with nothing in it - is ',.
 fn missing_from(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Finding>) {
     for m in re!(r"\b(select|exec|update|delete)\b").find_iter(unsym) {
         if !boundary(code, m.start()) {
@@ -228,10 +229,23 @@ fn missing_from(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec
         let statement = &unsym[m.end()..at];
         let from = re!(r"\bfrom\b").find_iter(statement).last();
         let detail = match from {
-            None => "has no `from` before its statement ends",
+            None => "has no `from` before its statement ends: q raises 'from",
             // Read from `code`, where `` from `t `` still has its table.
             Some(f) if code[m.end() + f.end()..at].trim().is_empty() => {
-                "has nothing after its `from`"
+                "has nothing after its `from`: q raises 'from"
+            }
+            // A where phrase with nothing in it: q 5 `parse "exec a from t
+            // where"` and `parse "select from t where"` are ',.
+            Some(f)
+                if re!(r"\bwhere\b")
+                    .find_iter(&statement[f.end()..])
+                    .last()
+                    .is_some_and(|w| {
+                        code[m.end() + f.end() + w.end()..at].trim().is_empty()
+                            && boundary(code, m.end() + f.end() + w.start())
+                    }) =>
+            {
+                "has nothing after its `where`: q raises ',"
             }
             Some(_) => continue,
         };
@@ -240,7 +254,7 @@ fn missing_from(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec
             source,
             m.start(),
             "QE007",
-            format!("`{}` {detail}: q raises 'from", m.as_str()),
+            format!("`{}` {detail}", m.as_str()),
         ));
     }
 }
@@ -388,8 +402,7 @@ fn hopen_literal(path: &str, source: &str, code: &str, comments: &str, out: &mut
         if !boundary(code, whole.start()) || !code[whole.start()..].starts_with("hopen") {
             continue;
         }
-        let rest = code[value.end()..].trim_start_matches([' ', '\t']);
-        if !(rest.is_empty() || rest.starts_with([';', ')', ']', '}', '\n', '\r'])) {
+        if !crate::operand_ends(code, value.end()) {
             continue;
         }
         let (what, error) = if value.as_str() == "`" {
@@ -428,6 +441,9 @@ fn cast_character(path: &str, source: &str, code: &str, comments: &str, out: &mu
         let c = &m[1];
         // QT031. An uppercase cast parses text, so it takes a string: q 5
         // `"J"$1`, `"J"$1 2`, `"D"$20230101` and `"S"$`a` are each 'type.
+        // `"C"$` is the exception for an atom: q 5 hands `1`, `` `a ``,
+        // `1.5`, `0x01` and `2024.01.01` back unchanged, and only a vector
+        // (`1 2`, `` `a`b ``, `10b`, `0x0102`) is 'type.
         let operand = &comments[whole.end()..];
         let operand = operand.trim_start_matches([' ', '\t']);
         let start = whole.end() + comments[whole.end()..].len() - operand.len();
@@ -437,6 +453,7 @@ fn cast_character(path: &str, source: &str, code: &str, comments: &str, out: &mu
                 re!(r"^(?:-?\d[A-Za-z0-9.:]*(?:[ \t]+-?\d[A-Za-z0-9.:]*)*|(?:`[A-Za-z0-9_.:]*)+)")
                     .find(operand)
             && crate::operand_ends(code, start + lit.end())
+            && (c != "C" || !atom_literal(lit.as_str()))
         {
             out.push(Finding::at(
                 path,
@@ -462,8 +479,20 @@ fn cast_character(path: &str, source: &str, code: &str, comments: &str, out: &mu
     }
 }
 
+/// Whether a literal QT031 matched is one atom: no space, at most one
+/// symbol, and not a boolean or byte vector written as one token.
+fn atom_literal(lit: &str) -> bool {
+    if lit.contains([' ', '\t']) || lit.matches('`').count() > 1 {
+        return false;
+    }
+    if let Some(hex) = lit.strip_prefix("0x") {
+        return hex.len() == 2;
+    }
+    !re!(r"^[01]{2,}b$").is_match(lit)
+}
+
 /// QE008. A glyph applied to one argument by juxtaposition. q 5 has no
-/// monadic form for any of them: `-x`, `,x`, `#x`, `~x`, `a:-x` and `1*-x`
+/// monadic form for any of them: `-x`, `,x`, `#x`, `~x`, `_x`, `a:-x` and `1*-x`
 /// are each refused by `parse` with the glyph as the error, and a lambda
 /// holding one is refused when the script defines it. `-1` is a literal,
 /// `(#)x` and `-:` are fine, and after an operand the glyph is dyadic.
@@ -475,7 +504,9 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
             line_start = i;
         }
         // Not in a string or a comment, nor on a system command or `#!` line.
-        if !GLYPHS.contains(&g)
+        // `_` too: `_x`, `_1.5` and `1+_x` are '_ in q 5, while `x _1`,
+        // `1 _x` and the `_` inside `x_y` follow an operand.
+        if !(GLYPHS.contains(&g) || g == b'_')
             || code.as_bytes()[i] != g
             || b[line_start] == b'\\'
             || comments[line_start..].starts_with("#!")
