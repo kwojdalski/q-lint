@@ -338,6 +338,31 @@ fn isolated_and_config_replace_the_search() {
 }
 
 #[test]
+fn a_config_flags_patterns_are_rooted_at_the_current_directory() {
+    // Ruff: a file passed with --config has its relative paths resolved
+    // against the current directory, not the file's own.
+    let repo = Repo::new();
+    repo.write(
+        "cfg/shared.toml",
+        "profile = \"style\"\nexclude = [\"./src\"]\n\
+         [lint]\nper-file-ignores = { \"tests/*\" = [\"QF016\"] }\n",
+    )
+    .write("proj/src/s.q", SOURCE)
+    .write("proj/tests/t.q", SOURCE)
+    .write("proj/lib/l.q", SOURCE);
+    let out = run(&repo.path("proj"), &["--config", "../cfg/shared.toml", "."]);
+    let found: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let paths: Vec<_> = found
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["path"].as_str().unwrap().replace('\\', "/"))
+        .collect();
+    assert_eq!(paths.len(), 1, "{paths:?}");
+    assert!(paths[0].ends_with("lib/l.q"), "{paths:?}");
+}
+
+#[test]
 fn a_selector_that_names_no_rule_is_refused() {
     let repo = Repo::new();
     repo.write("a.q", SOURCE)

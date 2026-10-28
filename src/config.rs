@@ -141,8 +141,12 @@ impl Policy {
             if let Some(found) = self.cache.borrow().get(&key) {
                 return Ok(found.clone());
             }
+            // Ruff resolves the patterns of a file named by `--config`
+            // against the current directory, as it does a user-level one:
+            // the file is chosen for this run, not found beside the source.
+            let cwd = absolute(&std::env::current_dir().map_err(|e| e.to_string())?);
             let settings = Rc::new(
-                load(&key, 0, None)?
+                load(&key, 0, Some(&cwd))?
                     .ok_or_else(|| format!("{}: no [tool.qlinter] table", explicit.display()))?,
             );
             self.cache.borrow_mut().insert(key, settings.clone());
