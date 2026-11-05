@@ -245,6 +245,51 @@ u:{value \"1\"}
 }
 
 #[test]
+fn value_of_a_name_holding_a_symbol_is_dynamic_like_get() {
+    // #142. q 5 (KDB-X, .z.K 5, .z.k 2026.07.23): `get~value` is 1b - both
+    // are `.:` - and after `x:42; nm:`x`, `value nm` and `get nm` are both
+    // 42. But `value d` of a dictionary is its values, and reading cannot
+    // tell the two apart from `value` alone (#170 tried, and marked 387
+    // places over the corpus). So `value` is listed only where the source
+    // shows its argument is a symbol: a name the scope assigns nothing but a
+    // symbol atom, or a symbol built on the spot with `` `$ `` or `.Q.dd`.
+    let source = "\
+a:{nm:`x; value nm}
+nm:`x
+b:value nm
+c:{value `$x}
+d:{value `$\"f\",x}
+e:{value .Q.dd[`a;x]}
+f:{value nm}
+g:{[nm] value nm}
+h:{value x}
+dd:`a`b!1 2
+i:value dd
+syms:`a`b
+j:value syms
+k:{s:`x; s:s,`y; value s}
+l:{t:`x; value t,1}
+m:{value[nm]}
+n:{p:`$x; value p}
+o:{q:`:file; value q}
+";
+    let g = graph(&[("val.q", source)], false);
+    assert_eq!(
+        kinds(&g, "val.q"),
+        [
+            (1, "value"),
+            (3, "value"),
+            (4, "value"),
+            (5, "value"),
+            (6, "value"),
+            (7, "value"),
+            (16, "value"),
+            (17, "value")
+        ]
+    );
+}
+
+#[test]
 fn a_symbol_resolved_when_a_context_lambda_runs_is_dynamic() {
     // q 5: after `\d .a`, `p:{get `k}`, `\d .`, with a root `k:5` and
     // `.a.k:6`, `.a.p[]` is 5 - the symbol is looked up in the `\d` current

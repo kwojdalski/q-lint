@@ -160,7 +160,12 @@ entry is `{"dependencies" (or "dependents"): [...], "ambiguous": {name:
 each line where a name is reached by a value computed at run time, which no
 amount of reading resolves: `value` of a string, `get` of anything but a
 literal, a name built with `` ` sv ``, `set` into a computed name, and a
-concatenated `system "l ",path`. So is `get`, `value` or `set` of an
+concatenated `system "l ",path`. `value` is the same function as `get` (q 5:
+`get~value` is 1b), but it is listed only where the source shows its argument
+is a symbol - `` value `$x ``, `value .Q.dd[...]`, or `value nm` where the
+scope assigns `nm` nothing but a symbol atom - because `value` of a
+dictionary, `value d`, reaches no name and reading alone cannot tell the two
+apart. A parameter handed to `value` is not listed. So is `get`, `value` or `set` of an
 unqualified symbol in a lambda written under `\d`: q looks the symbol up in
 the `\d` current when the lambda is called, not where it is written. The
 graph does not guess at those; a caller
@@ -195,7 +200,7 @@ directory qlinter runs in, as in Ruff.
 ```toml
 # qlinter.toml at the repository root
 profile = "style"                    # general | style | styleq | uqf
-exclude = ["lib/torq/", "generated"] # relative to this file; a bare name matches anywhere
+exclude = ["lib/torq/", "generated"] # relative to this file; a bare name matches at any depth
 
 [lint]
 select = ["QE", "QF", "QT"]          # codes or prefixes; replaces the profile's set
@@ -203,6 +208,24 @@ extend-select = ["QS001"]            # added to whatever is selected
 ignore = ["QF016"]
 per-file-ignores = { "tests/*" = ["QS"] }
 ```
+
+`exclude`, `extend-exclude`, `--exclude` and the keys of `per-file-ignores`
+are globs read the way Ruff reads them. A pattern with a `/` anywhere in it -
+`lib/`, `./lib`, `src/gen/*.q`, a trailing slash included - is anchored at the
+configuration's directory (the current directory for `--exclude` and the
+user-level file), so `lib/` excludes the root's `lib` and not `tests/lib`. A
+pattern with no `/` at all - `lib`, `*_gen.q` - matches a file or directory of
+that name at any depth. A pattern that names a directory covers everything
+under it. This is gitignore's anchoring rule except for the trailing slash,
+which gitignore alone treats as "directories only" rather than as an anchor;
+write `**/lib` for a `lib` at any depth.
+
+The root is the directory the pattern is written relative to, never the path
+being linted: a configuration file's own directory for its patterns, and the
+directory qlinter runs in for `--exclude` (and for a `--config FILE` or the
+user-level file). So `qlinter .. --exclude src/`, run from `proj/tests`,
+names `proj/tests/src`; a leading `../` climbs from the root, as Ruff resolves
+it, and `qlinter .. --exclude ../src` is the one that names `proj/src`.
 
 In `pyproject.toml` the same keys go under `[tool.qlinter]`, and
 `[tool.qlinter.lint]`. Also: `extend-exclude`, and `extend = "../qlinter.toml"`

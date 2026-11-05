@@ -860,6 +860,7 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
             names.insert(resolved(&m[2], ns_at(whole.start())));
         }
     }
+    call_time_access.extend(value_of_symbols(&view, &scopes, &ns_at));
     for m in re!(r"`(\.?[A-Za-z][A-Za-z0-9_.]*)\s+set\b|\bset\s*\[\s*`(\.?[A-Za-z][A-Za-z0-9_.]*)")
         .captures_iter(&view)
     {
@@ -899,6 +900,106 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
         }),
         dynamic: dynamic(raw, &view, &call_time_access),
     }
+}
+
+/// `value` of a symbol the source does not spell out: `value nm` reads the
+/// global `nm` names, as `get nm` does - q 5 (KDB-X, `.z.K` 5,
+/// `.z.k` 2026.07.23) has `get~value` 1b, both `.:` (#142). But `value` of a
+/// dictionary is its values, `value flip t` its columns, `value group x` its
+/// indices, and reading cannot tell them apart by `value` alone: listing
+/// every `value nm`, as `get nm` is, marked 387 places over the corpus,
+/// nearly all dictionaries (#170). So a place is listed only where the
+/// source shows the argument is a symbol atom:
+///
+/// - one built on the spot, `` value `$x `` or `value .Q.dd[...]`;
+/// - a name, alone as the argument, that its scope assigns and assigns
+///   nothing but a symbol atom, `` `x ``, `` `$... `` or `.Q.dd`. A local is
+///   read in its own lambda; a name a lambda does not bind is a global, read
+///   from the assignments at the top level of the same `\d`. A parameter
+///   could hold anything, and is passed over; so is a name assigned a list,
+///   `` `a`b ``, a dictionary, `` `a`b!1 2 ``, or a file, `` `:f ``, anywhere
+///   in its scope.
+///
+/// `` value ` sv ... `` is already listed as `sv`.
+fn value_of_symbols<'n>(
+    view: &str,
+    scopes: &[Scope],
+    ns_at: &dyn Fn(usize) -> &'n str,
+) -> Vec<(usize, &'static str)> {
+    // A symbol atom: `` `$ ``, `.Q.dd`, or `` `name `` ending the expression.
+    let symbol = |text: &str| {
+        let text = text.trim_start_matches([' ', '\t']);
+        text.starts_with("`$")
+            || re!(r"^\.Q\.dd\b").is_match(text)
+            || re!(r"^`[A-Za-z.][A-Za-z0-9_.]*[ \t]*(?:$|[;\])}\r\n])").is_match(text)
+    };
+    let assignment = re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*:(:)?");
+    // Every assignment's name, with its scope, its namespace and whether it
+    // assigns a symbol.
+    type Write<'n> = (Option<usize>, &'n str, bool);
+    let mut assigned: HashMap<&str, Vec<Write<'n>>> = HashMap::new();
+    for a in assignment.captures_iter(view) {
+        let whole = a.get(0).unwrap();
+        if !boundary(view, whole.start()) {
+            continue;
+        }
+        let after = &view[whole.end()..];
+        // `nm::x` inside a lambda assigns the global.
+        let scope = if a.get(2).is_some() {
+            None
+        } else {
+            scope_at(scopes, whole.start())
+        };
+        assigned
+            .entry(a.get(1).unwrap().as_str())
+            .or_default()
+            .push((scope, ns_at(whole.start()), symbol(after)));
+    }
+    let mut found = vec![];
+    for m in re!(r"\bvalue\b").find_iter(view) {
+        if !boundary(view, m.start()) {
+            continue;
+        }
+        let after = view[m.end()..].trim_start_matches([' ', '\t']);
+        if after.starts_with("`$") || re!(r"^\.Q\.dd\b").is_match(after) {
+            found.push((m.start(), "value"));
+            continue;
+        }
+        let (bracket, after) = match after.strip_prefix('[') {
+            Some(inner) => (true, inner.trim_start_matches([' ', '\t'])),
+            None => (false, after),
+        };
+        let Some(arg) = re!(r"^[A-Za-z][A-Za-z0-9_]*").find(after) else {
+            continue;
+        };
+        let rest = after[arg.end()..].trim_start_matches([' ', '\t']);
+        let ends = if bracket {
+            rest.starts_with(']')
+        } else {
+            rest.is_empty() || rest.starts_with([';', ']', ')', '}', '\r', '\n'])
+        };
+        if !ends {
+            continue;
+        }
+        let name = arg.as_str();
+        let scope = scope_at(scopes, m.start());
+        let local = scope.filter(|&s| scopes[s].locals.contains(name));
+        if local.is_some_and(|s| scopes[s].params.contains(name)) {
+            continue;
+        }
+        let namespace = ns_at(m.start());
+        let writes: Vec<bool> = assigned
+            .get(name)
+            .into_iter()
+            .flatten()
+            .filter(|(s, ns, _)| *s == local && (local.is_some() || *ns == namespace))
+            .map(|&(_, _, sym)| sym)
+            .collect();
+        if !writes.is_empty() && writes.iter().all(|&sym| sym) {
+            found.push((m.start(), "value"));
+        }
+    }
+    found
 }
 
 /// Scripts loaded by a literal path: `\l x.q`, `system "l x.q"`, and a file
@@ -948,7 +1049,8 @@ fn loads(
 /// load whose path is concatenated. `view` is the code view with system
 /// commands blanked; `raw` says whether a blank was a string. `call_time`
 /// holds the literal symbols `call_time` says are resolved where the lambda
-/// is called, found by the caller.
+/// is called, and the `value`s of a symbol `value_of_symbols` finds, both
+/// found by the caller.
 fn dynamic(raw: &str, view: &str, call_time: &[(usize, &'static str)]) -> Vec<crate::Dynamic> {
     let mut found = vec![];
     let mut push = |at: usize, kind: &'static str| {

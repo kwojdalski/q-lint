@@ -50,7 +50,11 @@ def test_exclusions_config_discovery_and_deduplication(tmp_path):
     good.write_text("f:{[desc] desc}")
     result = run("..", good, "--format", "json", cwd=nested)
     assert len(json.loads(result.stdout)) == 1
-    assert run("..", "--exclude", "src/", cwd=nested).returncode == 0
+    # --exclude is rooted at the directory qlinter runs in, not at the path
+    # given (#117): from src/, `src/` names src/src, so good.q is still
+    # linted, and the root-relative `../src` is what names src/ itself.
+    assert run("..", "--exclude", "src/", cwd=nested).returncode == 1
+    assert run("..", "--exclude", "../src", cwd=nested).returncode == 0
     # As in Ruff: an excluded --stdin-filename is linted unless --force-exclude.
     assert run("-", "--stdin-filename", bad, cwd=nested, source="f:{]").returncode == 1
     assert (
