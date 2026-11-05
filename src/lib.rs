@@ -236,6 +236,93 @@ pub(crate) fn argument_end(code: &str, comments: &str, raw: &str, from: usize) -
     (end > from).then_some(end)
 }
 
+/// The qSQL words, in the order a phrase writes them.
+const QUERY_WORDS: [&str; 7] = ["select", "exec", "update", "delete", "by", "from", "where"];
+
+/// The qSQL word at `at` in the masked code, if one starts there.
+fn query_word(code: &str, at: usize) -> Option<&'static str> {
+    // Part of a longer name - `.req.delete`, `clust.dbscan.update` - or a
+    // symbol, `` `update ``, is not the keyword.
+    let word = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'.';
+    if at > 0 && (word(code.as_bytes()[at - 1]) || code.as_bytes()[at - 1] == b'`') {
+        return None;
+    }
+    QUERY_WORDS.into_iter().find(|w| {
+        code[at..].starts_with(w) && !code.as_bytes().get(at + w.len()).is_some_and(|&b| word(b))
+    })
+}
+
+/// The qSQL clause the expression at `at` is written in: the last qSQL word
+/// at its own bracket depth earlier in its statement, or `None` outside a
+/// query. The statement starts after the bracket that opens around `at`, a
+/// `;` at its depth, or a newline the line after does not continue - the
+/// same boundaries `argument_end` stops at, read backwards. A query may
+/// span lines, so the line `at` is on does not settle this (#111).
+fn query_clause(code: &str, at: usize) -> Option<&'static str> {
+    let bytes = code.as_bytes();
+    let mut depth = 0usize;
+    let mut start = at;
+    while start > 0 {
+        match bytes[start - 1] {
+            b')' | b']' | b'}' => depth += 1,
+            b'(' | b'[' | b'{' if depth == 0 => break,
+            b'(' | b'[' | b'{' => depth -= 1,
+            b';' if depth == 0 => break,
+            b'\n' if depth == 0 && !code[start..].starts_with([' ', '\t']) => break,
+            _ => {}
+        }
+        start -= 1;
+    }
+    let (mut depth, mut clause) = (0usize, None);
+    for (i, &b) in bytes.iter().enumerate().take(at).skip(start) {
+        match b {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            _ if depth == 0 => clause = query_word(code, i).or(clause),
+            _ => {}
+        }
+    }
+    clause
+}
+
+/// Where a prefix argument inside a qSQL phrase ends: `argument_end`'s
+/// answer, cut at the first comma at its depth - which separates columns,
+/// or `where` constraints - or at `by`, `from` or `where`, which close the
+/// list. Parse trees checked in q 5: `select s:g v,m:avg v by k from t` is
+/// `select s:g[v],m:avg v by k from t`. `None` where the argument holds a
+/// query of its own, which this scan does not delimit.
+fn query_argument_end(
+    code: &str,
+    comments: &str,
+    raw: &str,
+    from: usize,
+    end: usize,
+) -> Option<usize> {
+    let bytes = code.as_bytes();
+    let mut depth = 0usize;
+    let mut at = from;
+    while at < end {
+        match bytes[at] {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            b',' if depth == 0 => break,
+            _ if depth == 0 => match query_word(code, at) {
+                Some("by" | "from" | "where") => break,
+                Some(_) => return None,
+                None => {}
+            },
+            _ => {}
+        }
+        at += 1;
+    }
+    let (raw, comments) = (raw.as_bytes(), comments.as_bytes());
+    let mut cut = at;
+    while cut > from && (raw[cut - 1].is_ascii_whitespace() || comments[cut - 1] == b' ') {
+        cut -= 1;
+    }
+    (cut > from).then_some(cut)
+}
+
 /// The single source of replacements for the CLI and LSP. Findings have UTF-16
 /// positions for editors, while edits use byte offsets to change Rust strings.
 pub fn fix_for(finding: &Finding, source: &str) -> Option<Fix> {
@@ -1274,23 +1361,20 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         // masked code is the only honest place to measure - a `;` inside
         // a string or a trailing comment must not end it.
         "QP006" => {
-            // A qSQL phrase ends an expression at `from`, `by` or
-            // `where`, and those are words this scan does not read:
-            // `update t:d 0 from rows` would become `d[0 from rows]`.
-            // The finding stands; the rewrite is left to a person.
-            let line_end = source[start..]
-                .find('\n')
-                .map_or(source.len(), |at| start + at);
-            if re!(r"\b(?:select|exec|update|delete)\b")
-                .is_match(&v.code[line_start.min(start)..line_end])
-            {
-                return None;
-            }
             let name = re!(r"^\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*")
                 .find(v.code.get(start..)?)?
                 .as_str();
             let argument = argument_start(source, &v.comments, start + name.len())?;
-            let end = argument_end(&v.code, &v.comments, source, argument)?;
+            let mut end = argument_end(&v.code, &v.comments, source, argument)?;
+            // A qSQL phrase ends an expression early: `update t:d 0 from
+            // rows` is `d[0] from rows`, not `d[0 from rows]`. After `from`
+            // the table is one whole expression up to `where` - q 5 reads
+            // `select from g v,w` as `g[v,w]` - and that is left to a person.
+            match query_clause(&v.code, start) {
+                None => {}
+                Some("from") => return None,
+                Some(_) => end = query_argument_end(&v.code, &v.comments, source, argument, end)?,
+            }
             (
                 source.get(start..end)?,
                 format!("{name}[{}]", &source[argument..end]).into(),

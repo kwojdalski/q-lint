@@ -27,6 +27,8 @@ not:
 | `` `abs`cor`like`mins `` | the word `like` preceded by a backtick, so an element of a list rather than the operator |
 | `` $[0i=`int$period;...] `` | a number, `=`, and a symbol, where the symbol is again a cast |
 | `` `time in 0!select ... `` | a symbol, `in`, and a number, where the number unkeys a table |
+| `select n:count i,` then `s:scale v,m:avg v` and `by k from t` on indented lines | a call whose argument looks like it runs to the end of the statement, when the column comma and `by` end it first |
+| `update time:stamp from t` with `stamp` an atom | an atom followed by a word, which reads as indexing it |
 | a usage string spanning indented lines | q continues a line when the next is indented, so a string may be long and full of things that read as code |
 
 Adding to this file is the cheapest thing to do when a false positive is

@@ -62,7 +62,7 @@ fn fix_exits_cleanly_when_every_finding_was_fixed() {
 /// q evaluates right to left, so everything to the right of the name is it.
 /// The shapes that end an expression early are the point of the fixtures:
 /// a `;` in a string is not one, a trailing comment is not part of the
-/// argument, and a qSQL phrase is not rewritten at all.
+/// argument, and in a qSQL phrase `from` is.
 #[test]
 fn brackets_replace_a_juxtaposed_call_and_nothing_around_it() {
     let directory = tempfile::tempdir().unwrap();
@@ -96,11 +96,73 @@ fn brackets_replace_a_juxtaposed_call_and_nothing_around_it() {
             "r4:f[\"a;b\"]\n",
             "lg[\"hello\"];\n",
             "t:([] v:1 2)\n",
-            "r5:update w:f 1 from t\n",
+            "r5:update w:f[1] from t\n",
         )
     );
-    // The qSQL line keeps its finding rather than being rewritten wrongly:
-    // `from` ends the expression there, and this tool does not parse.
+    // `from` ends the expression in the qSQL line, so the bracket closes
+    // before it (q 5: the two parse alike).
+    let findings: serde_json::Value = serde_json::from_slice(&applied.stdout).unwrap();
+    assert!(
+        findings
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|f| f["code"] != "QP006"),
+        "{findings}"
+    );
+}
+
+/// Inside a qSQL phrase the argument ends where the phrase's own grammar
+/// ends it: a top-level comma separates columns (or `where` constraints),
+/// and `by`, `from` and `where` close the list. Parse trees checked in q 5:
+/// `select s:g v,m:avg v by k from t` is `select s:g[v],m:avg v by k from t`.
+/// Before #111 the multi-line form became `.ns.f[v,m:avg v\n by k from t]`,
+/// which does not load. After `from` the table is one whole expression -
+/// `select from g v,w` reads `g[v,w]` - so a call there is left alone.
+#[test]
+fn a_call_in_a_query_is_bracketed_up_to_the_column_it_belongs_to() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("query.q");
+    let original = concat!(
+        "\\d .ns\n",
+        "f:{[x] sum x}\n",
+        "g:{[t]\n",
+        "    a:select n:count i,\n",
+        "        s:.ns.f v,m:avg v\n",
+        "        by k from t;\n",
+        "    a}\n",
+        "h:{[t] select from t where 0<.ns.f v,w>0}\n",
+        "j:{[t] select from 0#.ns.f t,t}\n",
+        "\\d .\n",
+    );
+    fs::write(&path, original).unwrap();
+    let applied = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .args([
+            "--fix",
+            "--isolated",
+            "--profile",
+            "uqf",
+            "--format",
+            "json",
+        ])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        concat!(
+            "\\d .ns\n",
+            "f:{[x] sum x}\n",
+            "g:{[t]\n",
+            "    a:select n:count i,\n",
+            "        s:.ns.f[v],m:avg v\n",
+            "        by k from t;\n",
+            "    a}\n",
+            "h:{[t] select from t where 0<.ns.f[v],w>0}\n",
+            "j:{[t] select from 0#.ns.f t,t}\n",
+            "\\d .\n",
+        )
+    );
     let findings: serde_json::Value = serde_json::from_slice(&applied.stdout).unwrap();
     let remaining: Vec<_> = findings
         .as_array()
