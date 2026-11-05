@@ -253,6 +253,107 @@ pub fn fixes_for<'a>(findings: impl IntoIterator<Item = &'a Finding>, source: &s
         .collect()
 }
 
+/// What `fix_all` leaves: the fixed text, how many fixes made it and over
+/// how many passes, and the first pass's edits into the original source.
+pub struct Fixed {
+    pub text: String,
+    pub count: usize,
+    pub passes: usize,
+    pub first: Vec<Fix>,
+}
+
+/// Apply fixes to `source` until none applies: what `--fix` writes, `--diff`
+/// shows and the language server's formatting returns, from one loop so the
+/// three cannot disagree. Only the batch-safe fixes, unless `unsafe_fixes`.
+/// `lint` is the caller's policy - its profile, selection and ignores.
+///
+/// Repeat until nothing applies, as Ruff does: one fix can leave another to
+/// make - QF005's fix passes one local in, and the next pass finds the
+/// second. Overlapping fixes wait a pass. Capped, so a pair of fixes that
+/// undo each other cannot spin.
+pub fn fix_all<E>(
+    source: &str,
+    unsafe_fixes: bool,
+    mut lint: impl FnMut(&str) -> Result<Vec<Finding>, E>,
+) -> Result<Fixed, E> {
+    let mut updated = source.to_string();
+    let mut count = 0;
+    let (mut passes, mut first) = (0, vec![]);
+    for _ in 0..100 {
+        let mut edits: Vec<_> = fixes_for(&lint(&updated)?, &updated)
+            .into_iter()
+            .filter(|fix| fix.batch_safe || unsafe_fixes)
+            .collect();
+        edits.sort_by_key(|fix| (fix.start, fix.end));
+        let mut selected = vec![];
+        let mut end = 0;
+        for edit in edits {
+            if edit.start < end || edit.end > updated.len() {
+                continue;
+            }
+            end = edit.end;
+            selected.push(edit);
+        }
+        if selected.is_empty() {
+            break;
+        }
+        let before = updated.clone();
+        for edit in selected.iter().rev() {
+            updated.replace_range(edit.start..edit.end, &edit.replacement);
+        }
+        if updated == before {
+            break;
+        }
+        count += selected.len();
+        passes += 1;
+        if passes == 1 {
+            first = selected;
+        }
+    }
+    Ok(Fixed {
+        text: updated,
+        count,
+        passes,
+        first,
+    })
+}
+
+/// `before` turned into `after` as one edit: the span between what the two
+/// texts share at either end, widened to character boundaries. `None` when
+/// they are the same text.
+pub fn whole_edit(before: &str, after: &str) -> Option<Fix> {
+    if before == after {
+        return None;
+    }
+    let prefix = before
+        .bytes()
+        .zip(after.bytes())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let suffix = before.as_bytes()[prefix..]
+        .iter()
+        .rev()
+        .zip(after.as_bytes()[prefix..].iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let (mut start, mut old_end, mut new_end) =
+        (prefix, before.len() - suffix, after.len() - suffix);
+    while !before.is_char_boundary(start) || !after.is_char_boundary(start) {
+        start -= 1;
+    }
+    while !before.is_char_boundary(old_end) || !after.is_char_boundary(new_end) {
+        old_end += 1;
+        new_end += 1;
+    }
+    Some(Fix {
+        start,
+        end: old_end,
+        replacement: after[start..new_end].to_string().into(),
+        title: "".into(),
+        batch_safe: true,
+    })
+}
+
 fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
     let line = finding.line.checked_sub(1)?;
     let column = finding.column?.checked_sub(1)?;

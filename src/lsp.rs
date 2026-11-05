@@ -25,9 +25,10 @@
 //!
 //! initialize/initialized, didOpen/didChange/didSave/didClose, shutdown/exit,
 //! diagnostics pushed with textDocument/publishDiagnostics, quick fixes
-//! requested with textDocument/codeAction, and semantic tokens - the colour
-//! of a function at the places it is called, and of a parameter where its
-//! body reads it - with textDocument/semanticTokens/full.
+//! requested with textDocument/codeAction, document formatting with
+//! textDocument/formatting, and semantic tokens - the colour of a function at
+//! the places it is called, and of a parameter where its body reads it - with
+//! textDocument/semanticTokens/full.
 //!
 //! A workspace index: every `.q` file under the workspace folders is read at
 //! startup - never run - for the global names it defines, and kept current
@@ -35,15 +36,37 @@
 //! another file defines is not undefined here, a name two files assign is not
 //! tracked by value, and another file's function is coloured as one.
 //!
-//! Not here: completion, hover, go-to-definition, formatting. Those need a
-//! resolver and a symbol table this crate does not have - it reads source text
-//! without executing it, which is the property that makes it safe to run on
-//! every keystroke. Claiming those capabilities and answering emptily is worse
-//! than not claiming them: an editor that is told a server provides completion
-//! stops offering its own word-based fallback.
+//! FORMATTING IS THE SAFE AUTOFIXES, NOT A LAYOUT ENGINE
+//!
+//! "Format document" applies exactly what `qlinter --fix` applies by default:
+//! the batch-safe fixes, through the same loop (`fix_all`) and the same
+//! policy as the diagnostics, until none applies. Never the editor-only ones
+//! `--unsafe-fixes` adds - those a person accepts one at a time as Quick
+//! Fixes. There is no whitespace or layout formatter here, and none is
+//! implied: q's layout carries meaning (an unindented line ends a statement,
+//! a `/` alone opens a comment block), and re-laying it out would need the
+//! parser this crate does not have. A buffer with nothing to fix, or one
+//! whose structure is broken - an unclosed bracket or string reports only
+//! that, so no other fix is offered - gets no edits, not an error. The reply
+//! is one edit spanning what changed, so formatting twice changes nothing
+//! the second time. Range formatting is not offered: one fix can leave
+//! another to make outside the range, and a selection's half of a pass is
+//! not something `--fix` ever produces.
+//!
+//! Not here: completion, hover, go-to-definition. Those need a resolver and a
+//! symbol table this crate does not have - it reads source text without
+//! executing it, which is the property that makes it safe to run on every
+//! keystroke. Claiming those capabilities and answering emptily is worse than
+//! not claiming them: an editor that is told a server provides completion
+//! stops offering its own word-based fallback. Formatting does not share the
+//! problem: its answer comes from rules that read text, and when there is
+//! nothing to fix, an empty answer is the true one.
 use crate::config::Policy;
 use crate::jsonrpc::{receive, send};
-use q_lint_rs::{FileIndex, Finding, TokenKind, Workspace, fix_for, index, semantic_tokens_in};
+use q_lint_rs::{
+    FileIndex, Finding, TokenKind, Workspace, fix_all, fix_for, index, semantic_tokens_in,
+    whole_edit,
+};
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
@@ -280,6 +303,10 @@ pub fn serve(
                 let actions = code_actions(&params, &docs, &idx.ws, policy);
                 send(writer, json!({"id": id, "result": actions}))?;
             }
+            ("textDocument/formatting", Some(id)) => {
+                let edits = format(&params, &docs, &idx.ws, policy);
+                send(writer, json!({"id": id, "result": edits}))?;
+            }
 
             // A `.q` file created, changed or deleted outside the editor - a
             // pull, a checkout, another tool. An open file's buffer still wins.
@@ -325,6 +352,7 @@ fn capabilities() -> Value {
         "capabilities": {
             "textDocumentSync": SYNC_FULL,
             "codeActionProvider": true,
+            "documentFormattingProvider": true,
             "semanticTokensProvider": {
                 "legend": {"tokenTypes": TOKEN_TYPES, "tokenModifiers": []},
                 "full": true,
@@ -448,6 +476,32 @@ fn code_actions(params: &Value, docs: &Documents, ws: &Workspace, policy: &Polic
         }));
     }
     actions
+}
+
+/// The edits "Format document" makes: the safe fixes `--fix` applies, to the
+/// open buffer, under the same policy as its diagnostics. At most one edit,
+/// from the first byte that changed to the last, and none at all when nothing
+/// would - a document that is not open or not q, a broken structure, a
+/// configuration that cannot be read, or nothing to fix.
+fn format(params: &Value, docs: &Documents, ws: &Workspace, policy: &Policy) -> Vec<Value> {
+    let uri = uri_of(&params["textDocument"]);
+    let path = path_of(&uri);
+    let Some(source) = docs.get(&uri).filter(|_| is_q_path(&path)) else {
+        return vec![];
+    };
+    // `false`: formatting never applies an editor-only fix, whatever flags
+    // the server was started with.
+    let Ok(fixed) = fix_all(source, false, |text| policy.lint(text, &path, ws)) else {
+        return vec![];
+    };
+    let Some(edit) = whole_edit(source, &fixed.text) else {
+        return vec![];
+    };
+    let lines = Lines::new(source);
+    vec![json!({
+        "range": {"start": lines.json(edit.start), "end": lines.json(edit.end)},
+        "newText": edit.replacement,
+    })]
 }
 
 /// Take a document's new text: index it, lint it, push its diagnostics - and

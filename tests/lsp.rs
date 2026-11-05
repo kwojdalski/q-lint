@@ -961,3 +961,139 @@ fn every_rule_with_a_fix_offers_it_in_the_editor() {
     );
     assert_eq!(server.shutdown_and_exit(), 0);
 }
+
+impl Server {
+    fn format(&mut self, uri: &str) -> Value {
+        self.send(
+            json!({"jsonrpc":"2.0","id":30,"method":"textDocument/formatting",
+            "params":{"textDocument":{"uri":uri},
+                      "options":{"tabSize":4,"insertSpaces":true}}}),
+        );
+        // Opening a document that defines names relints the others, so their
+        // diagnostics can still be on the wire ahead of the reply.
+        let mut reply = self.receive();
+        while reply["method"] == "textDocument/publishDiagnostics" {
+            reply = self.receive();
+        }
+        assert_eq!(reply["id"], 30);
+        assert!(reply.get("error").is_none(), "{reply}");
+        reply
+    }
+
+    fn change(&mut self, uri: &str, version: i64, text: &str) {
+        self.send(json!({"jsonrpc":"2.0","method":"textDocument/didChange",
+            "params":{"textDocument":{"uri":uri,"version":version},
+                      "contentChanges":[{"text":text}]}}));
+    }
+}
+
+/// `text` with LSP `edits` applied: positions are lines split at `\n` and
+/// characters counted in UTF-16 code units, as the protocol counts them.
+fn apply_edits(text: &str, edits: &[Value]) -> String {
+    let offset = |position: &Value| {
+        let line = position["line"].as_u64().unwrap() as usize;
+        let character = position["character"].as_u64().unwrap() as usize;
+        let start: usize = text.split_inclusive('\n').take(line).map(str::len).sum();
+        let mut units = 0;
+        for (i, c) in text[start..].char_indices() {
+            if units == character {
+                return start + i;
+            }
+            units += c.len_utf16();
+        }
+        text.len()
+    };
+    let mut spans: Vec<(usize, usize, &str)> = edits
+        .iter()
+        .map(|e| {
+            (
+                offset(&e["range"]["start"]),
+                offset(&e["range"]["end"]),
+                e["newText"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    spans.sort();
+    let mut out = text.to_string();
+    for (start, end, new) in spans.into_iter().rev() {
+        out.replace_range(start..end, new);
+    }
+    out
+}
+
+/// "Format document" applies what `qlinter --fix` would: here `==` and `!=`,
+/// on a line whose emoji is two UTF-16 code units, so a range counted in
+/// bytes or characters would land on the wrong text. Formatting the result
+/// again finds nothing more to do.
+#[test]
+fn formatting_applies_the_safe_fixes_and_is_idempotent() {
+    let mut server = Server::start();
+    let reply = server.initialize();
+    assert_eq!(
+        reply["result"]["capabilities"]["documentFormattingProvider"],
+        true
+    );
+    let uri = "file:///tmp/format.q";
+    let before = "/ \u{1F600}\na:1==1; b:1!=2\nc:3\n";
+    server.open(uri, before);
+    server.diagnostics_for(uri);
+    let edits = server.format(uri)["result"].as_array().cloned().unwrap();
+    assert_eq!(edits.len(), 1, "{edits:?}");
+    // One edit, from the first byte that changed to the last.
+    assert_eq!(
+        edits[0]["range"],
+        json!({"start":{"line":1,"character":4},"end":{"line":1,"character":13}})
+    );
+    let after = apply_edits(before, &edits);
+    assert_eq!(after, "/ \u{1F600}\na:1=1; b:1<>2\nc:3\n");
+
+    server.change(uri, 2, &after);
+    server.diagnostics_for(uri);
+    assert_eq!(server.format(uri)["result"], json!([]));
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+/// `&&` has a fix, but one only a person should accept: formatting leaves it,
+/// even from a server started with `--unsafe-fixes`.
+#[test]
+fn formatting_never_applies_an_unsafe_fix() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start_in(dir.path(), &["--unsafe-fixes"]);
+    server.initialize();
+    let uri = "file:///tmp/unsafe-format.q";
+    server.open(uri, "a:1b; b:0b; r:a&&b; s:a||b\n");
+    let diagnostics = server.diagnostics_for(uri);
+    assert_eq!(
+        codes_of(&diagnostics),
+        ["QE004", "QE004"],
+        "{diagnostics:?}"
+    );
+    // The fixes exist - they are offered as Quick Fixes - but not here.
+    assert_eq!(server.code_actions(uri, &diagnostics).len(), 2);
+    assert_eq!(server.format(uri)["result"], json!([]));
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+/// A buffer whose structure is broken reports only that, so there is nothing
+/// to format: the answer is an empty list, not an error. The same for a
+/// document the server was never given, and one that is not q.
+#[test]
+fn formatting_a_broken_or_unknown_buffer_returns_no_edits() {
+    let mut server = Server::start();
+    server.initialize();
+    for (uri, text) in [
+        ("file:///tmp/unclosed.q", "f:{[x] x==1\n"),
+        ("file:///tmp/string.q", "a:1==1; s:\"abc\n"),
+        ("file:///tmp/stray.q", "a:1==1]\n"),
+        ("file:///tmp/not-q.k", "a:1==1\n"),
+    ] {
+        server.open(uri, text);
+        server.diagnostics_for(uri);
+        assert_eq!(server.format(uri)["result"], json!([]), "{uri}");
+    }
+    assert_eq!(
+        server.format("file:///tmp/never-opened.q")["result"],
+        json!([])
+    );
+    assert_eq!(server.shutdown_and_exit(), 0);
+}

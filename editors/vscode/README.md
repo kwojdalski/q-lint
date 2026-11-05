@@ -27,6 +27,9 @@ and why there is no completion, hover or go-to-definition.
   a nested lambda reading its parent's local.
   Those that cannot change a working program also run in bulk with
   `qlinter --fix`; `--unsafe-fixes` adds the rest.
+- **Format Document** applies the fixes `qlinter --fix` makes - those that
+  cannot change a working program - and nothing else: it is not a
+  whitespace or layout formatter, and it never applies an editor-only fix.
 - **Syntax colouring** from a TextMate grammar, plus semantic tokens: a
   function is coloured wherever it is called, even when another `.q` file in
   the workspace defines it, and a parameter wherever its body reads it.
@@ -46,6 +49,19 @@ matching `qlinter` binary is bundled. Elsewhere, take one from
 | `q-lint.profile` | unset | `general`: only what q refuses. `style`: also likely mistakes. `styleq`: also published style guides. `uqf`: also one repository's conventions. Unset, a repository's `qlinter.toml` decides, and `style` applies without one. |
 | `q-lint.serverPath` | empty | Your own binary. Empty uses the bundled one, then `qlinter` on `PATH`; set, it always wins. |
 | `q-lint.trace.server` | `off` | Log client-server traffic. |
+
+## Formatting
+
+q-lint does not make itself the default formatter. To use it for q files, and
+to apply its safe fixes on every save, add this to your `settings.json`:
+
+```json
+"[q]": {"editor.defaultFormatter": "wojdalski.q-lint", "editor.formatOnSave": true}
+```
+
+Leave out `editor.formatOnSave` to format only when you ask (**Format
+Document**). A file with nothing to fix, or whose brackets or strings do not
+close, is left as it is.
 
 ## Repository settings
 

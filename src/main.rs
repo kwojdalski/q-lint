@@ -4,7 +4,7 @@ mod lsp;
 mod qls;
 use clap::Parser;
 use config::{Layer, Overrides, Policy};
-use q_lint_rs::{RULES, Workspace, fixes_for, index};
+use q_lint_rs::{RULES, Workspace, fix_all, fixes_for, index, whole_edit};
 use std::{
     collections::BTreeSet,
     fs,
@@ -471,81 +471,25 @@ fn run(args: Args) -> Result<u8, String> {
                     .count();
                 continue;
             }
-            // Repeat until nothing applies, as Ruff does: one fix can leave
-            // another to make - QF005's fix passes one local in, and the
-            // next pass finds the second. Overlapping fixes wait a pass.
-            // Capped, so a pair of fixes that undo each other cannot spin.
-            let mut updated = source.clone();
-            let mut count = 0;
-            let (mut passes, mut first) = (0, vec![]);
-            for _ in 0..100 {
-                let mut edits: Vec<_> =
-                    fixes_for(&policy.lint(&updated, path, &workspace)?, &updated)
-                        .into_iter()
-                        .filter(|fix| fix.batch_safe || args.unsafe_fixes)
-                        .collect();
-                edits.sort_by_key(|fix| (fix.start, fix.end));
-                let mut selected = vec![];
-                let mut end = 0;
-                for edit in edits {
-                    if edit.start < end || edit.end > updated.len() {
-                        continue;
-                    }
-                    end = edit.end;
-                    selected.push(edit);
-                }
-                if selected.is_empty() {
-                    break;
-                }
-                let before = updated.clone();
-                for edit in selected.iter().rev() {
-                    updated.replace_range(edit.start..edit.end, &edit.replacement);
-                }
-                if updated == before {
-                    break;
-                }
-                count += selected.len();
-                passes += 1;
-                if passes == 1 {
-                    first = selected;
-                }
-            }
+            let q_lint_rs::Fixed {
+                text: updated,
+                count,
+                passes,
+                first,
+            } = fix_all(source, args.unsafe_fixes, |text| {
+                policy.lint(text, path, &workspace)
+            })?;
             if count == 0 {
                 continue;
             }
             if args.diff && passes == 1 {
                 print_diff(&diff_path(path), source, &first);
             } else if args.diff {
-                // The whole run as one edit: the span between what the two
-                // texts share at either end.
-                let prefix = source
-                    .bytes()
-                    .zip(updated.bytes())
-                    .take_while(|(a, b)| a == b)
-                    .count();
-                let suffix = source.as_bytes()[prefix..]
-                    .iter()
-                    .rev()
-                    .zip(updated.as_bytes()[prefix..].iter().rev())
-                    .take_while(|(a, b)| a == b)
-                    .count();
-                let (mut start, mut old_end, mut new_end) =
-                    (prefix, source.len() - suffix, updated.len() - suffix);
-                while !source.is_char_boundary(start) || !updated.is_char_boundary(start) {
-                    start -= 1;
+                // The whole run as one edit, since later passes edit text
+                // the first pass wrote rather than the file.
+                if let Some(whole) = whole_edit(source, &updated) {
+                    print_diff(&diff_path(path), source, &[whole]);
                 }
-                while !source.is_char_boundary(old_end) || !updated.is_char_boundary(new_end) {
-                    old_end += 1;
-                    new_end += 1;
-                }
-                let whole = q_lint_rs::Fix {
-                    start,
-                    end: old_end,
-                    replacement: updated[start..new_end].to_string().into(),
-                    title: "".into(),
-                    batch_safe: true,
-                };
-                print_diff(&diff_path(path), source, &[whole]);
             } else {
                 fs::write(path.as_str(), &updated).map_err(|e| format!("{path}: {e}"))?;
                 *source = updated;
