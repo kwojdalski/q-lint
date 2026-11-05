@@ -266,12 +266,20 @@ whole application, not just the underlined name - along with every other
 fix `--fix` and the editor-only list above describe.
 Other findings remain diagnostic-only.
 
+`textDocument/formatting` - "Format Document" - applies exactly the fixes
+`qlinter --fix` applies by default, through the same loop and the same
+configuration as the diagnostics: never an editor-only fix, whatever flags the
+server was started with. It is not a whitespace or layout formatter, and there
+is none. A document with nothing to fix, or whose brackets or strings do not
+close, gets no edits; formatting twice changes nothing the second time. Range
+formatting is not offered.
+
 **The reason it is a server rather than an editor plugin shelling out to the
 CLI**: `didChange` carries the buffer, so what gets linted is what is on
 screen, including a file that has never been saved. A CLI over paths cannot do
 that, and `--stdin-filename` only gets you there one editor at a time.
 
-Deliberately not implemented: completion, hover, go-to-definition, formatting.
+Deliberately not implemented: completion, hover, go-to-definition.
 Those need a resolver and a symbol table this crate does not have — it reads
 source without executing it, which is what makes it safe to run on every
 keystroke. Announcing a capability and answering emptily is worse than not
