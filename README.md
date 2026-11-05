@@ -288,7 +288,7 @@ offering its own word-based fallback.
 
 ### VS Code
 
-The extension in `editors/vscode` is about thirty lines: it launches the
+The extension in `editors/vscode` is small: it launches the
 server and lets the protocol do the rest.
 
 ```sh
@@ -304,13 +304,12 @@ npx vsce package                           # produces q-lint-0.2.0.vsix
 code --install-extension q-lint-0.2.0.vsix
 ```
 
-Two settings: `q-lint.serverPath` (default `qlinter`, looked up on `PATH` —
-point it at `target/release/qlinter` if you have not installed it) and
-`q-lint.profile` (`general`, `style`, `styleq` or `uqf`). Set, it overrides the
-repository's `profile`; unset, the repository's configuration decides, and
-`style` - what q refuses, and what q runs that is almost certainly a mistake -
-applies where there is none. `qlinter --lsp` without `--profile` defaults to
-`style` too.
+Its settings - the server binary and arguments, the profile, a configuration
+file, rule selection that can only narrow the repository's, when to lint,
+severities, Quick Fixes, formatting, semantic colouring and the workspace
+index - are listed, with which wins over which, in the [extension's
+README](editors/vscode/README.md#settings). `qlinter --lsp` without
+`--profile` defaults to `style`.
 
 ### Other editors
 
@@ -340,6 +339,30 @@ name = "q"
 file-types = ["q"]
 language-servers = ["qlint"]
 ```
+
+### Editor options: `initializationOptions`
+
+What only an editor has a use for is read from the `initialize` request's
+`initializationOptions`, once; a client restarts the server to change it.
+Every key is optional, and these are the defaults:
+
+```json
+{"lint": {"select": [], "ignore": [], "run": "onType", "severity": {}},
+ "fixes": {"unsafe": true}, "format": {"enable": true},
+ "semanticTokens": {"enable": true},
+ "workspaceIndex": {"enable": true, "exclude": []}}
+```
+
+`lint.select` and `lint.ignore` are rule codes or prefixes applied after the
+configuration and the command line, and only turn rules off: a rule reports
+when the configuration selects it and they do too. `lint.run` is `onType` or
+`onSave`. `lint.severity` maps a code or prefix to `error`, `warning`,
+`information` or `hint`, the longest winning. `fixes.unsafe: false` offers
+only the fixes `--fix` applies; `format.enable` and `semanticTokens.enable`
+set to `false` leave the capability unannounced. `workspaceIndex.exclude`
+holds globs relative to each workspace folder that the index does not read.
+A value the server cannot read is reported with `window/showMessage` and its
+default used.
 
 ### What the server does not read
 
