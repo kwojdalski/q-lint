@@ -20,4 +20,17 @@ matched:{[t;s] select from t where sym like s}
 
 names:asc `abs`cor`ej`gtime`like`mins`prev`scov`system`wavg
 
+/ A column list spanning lines: the comma after `scale v` separates columns
+/ and `by` ends the list, so the call's argument is `v` alone - bracketing
+/ the rest of the statement does not load (#111).
+scale:{[x] sum x}
+stats:{[t]
+  select n:count i,
+    s:scale v,m:avg v
+    by k from t}
+
+/ An atom assigned to a column, which `from` ends: not the atom indexed (#114).
+stamp:2026.09.19D12:00:00.000000000
+stamped:{[t] update time:stamp from t}
+
 \d .

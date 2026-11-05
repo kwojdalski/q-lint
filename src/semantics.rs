@@ -1966,8 +1966,10 @@ pub fn check(
         // and later a dictionary, and `d2 inp` after that is indexing - so it
         // is the assignment in force that decides: at root the last one
         // above the use, and inside a lambda, which runs once the file has
-        // loaded, the file's last. Only root assignments count for that: one
-        // inside a lambda happens if and when the lambda runs.
+        // loaded, the file's last. Only root assignments count, for that and
+        // for whether the file defines the name at all: one inside a lambda
+        // happens if and when the lambda runs, and is usually a test stub
+        // standing in for a function another file defines (#110).
         let holds_lambda = |name: &str, at: usize, in_lambda: bool| {
             let Some(assignments) = globals.get(name) else {
                 return false;
@@ -1991,7 +1993,7 @@ pub fn check(
             };
             match live {
                 Some(&a) => assigns_lambda(code, a),
-                None => assignments.iter().any(|&a| assigns_lambda(code, a)),
+                None => root.iter().any(|&a| assigns_lambda(code, a)),
             }
         };
         // Two passes, because the two views disagree about what an argument
@@ -2360,7 +2362,11 @@ fn named_values(
     );
     for m in indexed.captures_iter(code) {
         let name = m.get(1).unwrap();
-        if m.get(2).is_some_and(|next| INFIX.contains(&next.as_str())) {
+        // Nor before a qSQL word, which ends the column list or the clause:
+        // `update time:t0 from t` fills the column from the atom (q 5, #114).
+        if m.get(2).is_some_and(|next| {
+            INFIX.contains(&next.as_str()) || matches!(next.as_str(), "by" | "from" | "where")
+        }) {
             continue;
         }
         if !boundary(code, name.start())

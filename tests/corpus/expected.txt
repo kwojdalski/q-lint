@@ -1,7 +1,7 @@
 queries.q general: clean
 queries.q style: clean
 queries.q styleq: clean
-queries.q uqf: clean
+queries.q uqf: 29:QP006 `scale` is a function defined in this file, applied without brackets; the convention here is `scale[...]`
 tickerplant.q general: clean
 tickerplant.q style: clean
 tickerplant.q styleq: 12:QS008 `x` is parameter 2 here; q gives that name to argument 1

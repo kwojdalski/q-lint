@@ -487,6 +487,20 @@ b:(`a`b)!1 2 3
 === clean | and match
 a:(`a`b)!1 2
 
+=== clean | an atom assigned to a column: from ends the column list (q 5: update time:t0 from ([]x:1 2) fills the column) (#114)
+.a.t0:2026.09.19D12:00:00.000000000
+f:{[t] s:update time:.a.t0 from ([]x:1 2); s}
+
+=== clean | and by and where end a phrase the same way
+a:2.5
+r:select s:a by k from t
+w:select from t where x>a
+u:exec a from t
+
+=== QT022 | an atom juxtaposed with a name that is not a qSQL word is still indexed
+a:2.5
+r:select s:a v from t
+
 === QT022 | an atom indexed with @ (q 5: a:2.5;a@0 is 'type)
 a:2.5
 b:a@0

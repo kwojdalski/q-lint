@@ -183,6 +183,29 @@ d2:`a`b!1 2
 .app.lg:{[x] -1 x}
 f:{[x] n:x; .app.lg "start"; if[n; .app.lg:"oops"]}
 
+=== clean profile: uqf | a stub a lambda installs is not a definition: the function lives in another file (#110)
+stub:{[t] .ns.f:{[job] '"stub"}}
+run:{[t] r:.ns.f `z; r}
+
+=== QP006 profile: uqf | while a root definition beside the stub still is
+.ns.f:{[job] job}
+stub:{[t] .ns.f:{[job] '"stub"}}
+run:{[t] r:.ns.f `z; r}
+
+=== clean profile: uqf | nor is a function only an init lambda would assign
+init:{[] .ns.g:{[x] x+1}}
+r:.ns.g 2
+
+=== QP006 profile: uqf | in a multi-line select the call is still reported
+\d .ns
+f:{[x] sum x}
+g:{[t]
+    a:select n:count i,
+        s:.ns.f v,m:avg v
+        by k from t;
+    a}
+\d .
+
 === QP006 profile: uqf | a composition naming the function is not an assignment to it
 enorm2:{x wsum x}
 enorm:sqrt enorm2::
