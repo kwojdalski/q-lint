@@ -255,6 +255,36 @@ fn a_dot_slash_or_absolute_exclude_is_anchored_at_its_root() {
 }
 
 #[test]
+fn a_pattern_with_a_trailing_slash_is_anchored_at_its_root() {
+    // #117. As in Ruff, any `/` in a pattern - a trailing one included -
+    // anchors it at the configuration's directory: `lib/` names the root's
+    // `lib` and not `tests/lib`. Only a name with no `/` matches at any depth.
+    let repo = Repo::new();
+    repo.write(
+        "qlinter.toml",
+        "profile = \"style\"\nexclude = [\"lib/\"]\n",
+    )
+    .write("lib/a.q", SOURCE)
+    .write("tests/lib/b.q", SOURCE);
+    assert_eq!(linted(&repo, &["."]), ["tests/lib/b.q"]);
+    assert_eq!(linted(&repo, &["tests/"]), ["tests/lib/b.q"]);
+    assert_eq!(
+        linted(&repo, &["--isolated", "--exclude", "lib/", "."]),
+        ["tests/lib/b.q"]
+    );
+    // A bare name, or `**/` written out, still matches at any depth.
+    assert!(linted(&repo, &["--isolated", "--exclude", "lib", "."]).is_empty());
+    assert!(linted(&repo, &["--isolated", "--exclude", "**/lib", "."]).is_empty());
+    // per-file-ignores keys are read by the same rule.
+    repo.write(
+        "qlinter.toml",
+        "profile = \"style\"\n[lint]\nper-file-ignores = { \"lib/\" = [\"QF016\"] }\n",
+    );
+    assert!(repo.codes(".", &["lib/a.q"]).is_empty());
+    assert_eq!(repo.codes(".", &["tests/lib/b.q"]), ["QF016"]);
+}
+
+#[test]
 fn extend_inherits_and_the_extending_file_wins() {
     let repo = Repo::new();
     repo.write(

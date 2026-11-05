@@ -195,7 +195,7 @@ directory qlinter runs in, as in Ruff.
 ```toml
 # qlinter.toml at the repository root
 profile = "style"                    # general | style | styleq | uqf
-exclude = ["lib/torq/", "generated"] # relative to this file; a bare name matches anywhere
+exclude = ["lib/torq/", "generated"] # relative to this file; a bare name matches at any depth
 
 [lint]
 select = ["QE", "QF", "QT"]          # codes or prefixes; replaces the profile's set
@@ -203,6 +203,17 @@ extend-select = ["QS001"]            # added to whatever is selected
 ignore = ["QF016"]
 per-file-ignores = { "tests/*" = ["QS"] }
 ```
+
+`exclude`, `extend-exclude`, `--exclude` and the keys of `per-file-ignores`
+are globs read the way Ruff reads them. A pattern with a `/` anywhere in it -
+`lib/`, `./lib`, `src/gen/*.q`, a trailing slash included - is anchored at the
+configuration's directory (the current directory for `--exclude` and the
+user-level file), so `lib/` excludes the root's `lib` and not `tests/lib`. A
+pattern with no `/` at all - `lib`, `*_gen.q` - matches a file or directory of
+that name at any depth. A pattern that names a directory covers everything
+under it. This is gitignore's anchoring rule except for the trailing slash,
+which gitignore alone treats as "directories only" rather than as an anchor;
+write `**/lib` for a `lib` at any depth.
 
 In `pyproject.toml` the same keys go under `[tool.qlinter]`, and
 `[tool.qlinter.lint]`. Also: `extend-exclude`, and `extend = "../qlinter.toml"`

@@ -21,8 +21,8 @@
 //! ```toml
 //! profile = "style"                 # general | style | styleq | uqf
 //! extend = "../qlinter.toml"        # inherit, then override
-//! exclude = ["generated/", "vendor/*"]
-//! extend-exclude = ["scratch"]
+//! exclude = ["generated/", "vendor/*"]   # a `/` anchors at this file's directory
+//! extend-exclude = ["scratch"]          # no `/`: a name at any depth
 //!
 //! [lint]
 //! select = ["QE", "QF"]             # codes or prefixes; replaces the profile's set
@@ -294,7 +294,9 @@ fn per_file_ignored(settings: &Settings, code: &str, path: &Path) -> bool {
 /// configuration's directory and against each directory above it within that
 /// root, so `vendor/*` and `vendor` both cover everything under `vendor/`. A
 /// pattern with no `/` names a file or directory anywhere below the root, so
-/// `generated` excludes every directory of that name.
+/// `generated` excludes every directory of that name; one with a `/`
+/// anywhere in it, a trailing one included, is anchored at the root, so
+/// `lib/` excludes the root's `lib` and not `tests/lib`.
 fn matches(full: &Path, glob: &Glob) -> bool {
     let Glob {
         root,
@@ -572,9 +574,9 @@ pub struct Glob {
 }
 
 /// `text` as a pattern rooted at `root`. Ruff joins every pattern to its
-/// root before matching, so `./gen` and an absolute `/abs/root/gen` name the
-/// directory `gen/` does - anchored at the root - and only a bare `gen`,
-/// with no `/` in it at all, also matches the name anywhere below it.
+/// root before matching, so `gen/`, `./gen` and an absolute `/abs/root/gen`
+/// all name the root's `gen` - anchored there - and only a bare `gen`, with
+/// no `/` in it at all, also matches the name anywhere below it.
 pub fn rooted(root: &Path, text: &str) -> Result<Glob, String> {
     let trimmed = text.trim();
     let written = Path::new(trimmed);
@@ -603,7 +605,10 @@ pub fn rooted(root: &Path, text: &str) -> Result<Glob, String> {
     Ok(Glob {
         root: root.to_path_buf(),
         pattern: pattern(rest)?,
-        anywhere: rest == trimmed && !rest.trim_end_matches('/').contains('/'),
+        // Any `/` anchors, a trailing one included (#117): `lib/` is the
+        // root's `lib`, not `tests/lib` - Ruff adds the basename match only
+        // for a pattern with no separator in it at all.
+        anywhere: rest == trimmed && !rest.contains('/'),
         negated: false,
     })
 }
