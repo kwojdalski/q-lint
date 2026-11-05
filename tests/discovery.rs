@@ -198,7 +198,12 @@ fn exclude_patterns_are_relative_to_the_configuration_and_a_bare_name_matches_an
 
 /// The files a run from the repository root reports on, relative to it.
 fn linted(repo: &Repo, args: &[&str]) -> Vec<String> {
-    let out = run(&repo.path("."), args);
+    linted_from(repo, ".", args)
+}
+
+/// The files a run from `cwd` reports on, relative to the repository root.
+fn linted_from(repo: &Repo, cwd: &str, args: &[&str]) -> Vec<String> {
+    let out = run(&repo.path(cwd), args);
     let found: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     let root = repo.path(".").canonicalize().unwrap();
     let mut paths: Vec<String> = found
@@ -275,6 +280,12 @@ fn a_pattern_with_a_trailing_slash_is_anchored_at_its_root() {
     // A bare name, or `**/` written out, still matches at any depth.
     assert!(linted(&repo, &["--isolated", "--exclude", "lib", "."]).is_empty());
     assert!(linted(&repo, &["--isolated", "--exclude", "**/lib", "."]).is_empty());
+    // --exclude is rooted at the directory qlinter runs in, whatever path is
+    // linted: from tests/, `lib/` names tests/lib and `../lib` the root's.
+    let from_tests =
+        |pattern: &str| linted_from(&repo, "tests", &["--isolated", "--exclude", pattern, ".."]);
+    assert_eq!(from_tests("lib/"), ["lib/a.q"]);
+    assert_eq!(from_tests("../lib"), ["tests/lib/b.q"]);
     // per-file-ignores keys are read by the same rule.
     repo.write(
         "qlinter.toml",

@@ -220,6 +220,13 @@ under it. This is gitignore's anchoring rule except for the trailing slash,
 which gitignore alone treats as "directories only" rather than as an anchor;
 write `**/lib` for a `lib` at any depth.
 
+The root is the directory the pattern is written relative to, never the path
+being linted: a configuration file's own directory for its patterns, and the
+directory qlinter runs in for `--exclude` (and for a `--config FILE` or the
+user-level file). So `qlinter .. --exclude src/`, run from `proj/tests`,
+names `proj/tests/src`; a leading `../` climbs from the root, as Ruff resolves
+it, and `qlinter .. --exclude ../src` is the one that names `proj/src`.
+
 In `pyproject.toml` the same keys go under `[tool.qlinter]`, and
 `[tool.qlinter.lint]`. Also: `extend-exclude`, and `extend = "../qlinter.toml"`
 to inherit another file and override it - a key the extending file sets

@@ -598,12 +598,26 @@ pub fn rooted(root: &Path, text: &str) -> Result<Glob, String> {
             negated: false,
         });
     }
+    // Leading `./` and `../` are resolved against the root, as Ruff
+    // normalises the joined path: from `proj/tests`, `--exclude ../src`
+    // names `proj/src`, which a pattern rooted below it could never reach.
     let mut rest = trimmed;
-    while let Some(r) = rest.strip_prefix("./") {
-        rest = r.trim_start_matches('/');
+    let mut root = root.to_path_buf();
+    loop {
+        if let Some(r) = rest.strip_prefix("./") {
+            rest = r.trim_start_matches('/');
+        } else if let Some(r) = rest.strip_prefix("../") {
+            rest = r.trim_start_matches('/');
+            root.pop();
+        } else if rest == ".." {
+            rest = "";
+            root.pop();
+        } else {
+            break;
+        }
     }
     Ok(Glob {
-        root: root.to_path_buf(),
+        root,
         pattern: pattern(rest)?,
         // Any `/` anchors, a trailing one included (#117): `lib/` is the
         // root's `lib`, not `tests/lib` - Ruff adds the basename match only
