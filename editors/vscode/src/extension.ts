@@ -3,10 +3,12 @@
 //
 // Everything a reader might expect here - reading files, parsing output,
 // building diagnostics, deciding when to re-lint - lives in the server, which
-// is why this stays about thirty lines. The same server serves Neovim, Helix
+// is why this stays short. The settings are mapped to the server's command
+// line and options in `settings.ts`. The same server serves Neovim, Helix
 // and Zed with a comparable amount of their own configuration; nothing in this
 // file is knowledge those editors would have to reimplement.
-import { commands, workspace, window, type ExtensionContext } from "vscode";
+import { commands, workspace, window, type ExtensionContext, type OutputChannel } from "vscode";
+import { launch, needsRestart } from "./settings";
 import { chmodSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -16,6 +18,10 @@ import {
 } from "vscode-languageclient/node";
 
 let client: LanguageClient | undefined;
+/// One channel for the life of the extension. Each client would otherwise
+/// make its own, and every restart would leave another "q-lint" in the
+/// Output panel's list.
+let channel: OutputChannel | undefined;
 
 /// The server this extension was packaged with, if it was packaged with one.
 ///
@@ -45,16 +51,41 @@ function bundledServer(context: ExtensionContext): string | undefined {
 }
 
 export async function activate(context: ExtensionContext): Promise<void> {
-  const settings = workspace.getConfiguration("q-lint");
-  const configured = settings.get<string>("serverPath", "").trim();
-  // Only a profile the user actually set is passed on. A flag wins over a
-  // repository's `qlinter.toml`, so passing the default every time would
-  // silently override the project's own `profile`. Left unset, the server
-  // reads the repository's configuration, and uses `style` where there is
-  // none - the same default this setting declares.
-  const inspected = settings.inspect<string>("profile");
-  const profile =
-    inspected?.workspaceFolderValue ?? inspected?.workspaceValue ?? inspected?.globalValue;
+  // Replacing the binary does not restart the server, and a window reload is
+  // a blunt way to pick up a new one. This is the small way.
+  context.subscriptions.push(commands.registerCommand("q-lint.restartServer", () => restart(context)));
+  // The server reads its settings once, at startup, so a change starts a new
+  // one - except the trace level, which the client applies as it runs.
+  context.subscriptions.push(
+    workspace.onDidChangeConfiguration((event) => {
+      if (needsRestart((section) => event.affectsConfiguration(section))) {
+        void restart(context);
+      }
+    }),
+  );
+  context.subscriptions.push({ dispose: () => void client?.stop() });
+  await start(context);
+}
+
+async function restart(context: ExtensionContext): Promise<void> {
+  await client?.stop().catch(() => {});
+  client = undefined;
+  await start(context);
+}
+
+async function start(context: ExtensionContext): Promise<void> {
+  const settings = launch(
+    workspace.getConfiguration("q-lint"),
+    workspace.workspaceFolders?.[0]?.uri.fsPath,
+  );
+  if (!settings.enabled) {
+    return;
+  }
+  const configured = settings.serverPath;
+  if (channel === undefined) {
+    channel = window.createOutputChannel("q-lint");
+    context.subscriptions.push(channel);
+  }
 
   // In order of preference, and the fallback matters: packaging the extension
   // from a clone on Linux picks up the darwin-arm64 binary checked in for
@@ -65,8 +96,9 @@ export async function activate(context: ExtensionContext): Promise<void> {
     ? [configured]
     : [bundledServer(context), "qlinter"].filter((c): c is string => !!c);
 
-  const args = profile ? ["--lsp", "--profile", profile] : ["--lsp"];
+  const args = settings.args;
   const options: LanguageClientOptions = {
+    initializationOptions: settings.initializationOptions,
     // A saved `.q` file, and nothing else. `language: "q"` alone would also
     // match a console buffer or an untitled scratch that some other q
     // extension has labelled `q`, and this linter has nothing true to say
@@ -75,7 +107,7 @@ export async function activate(context: ExtensionContext): Promise<void> {
     documentSelector: [{ scheme: "file", language: "q", pattern: "**/*.q" }],
     // The output channel the server's own trace goes to, so a user debugging
     // the integration has one place to look.
-    outputChannelName: "q-lint",
+    outputChannel: channel,
     // The server indexes every `.q` file in the workspace, so a name one file
     // defines is not undefined in another. It hears about the files the
     // editor has open; this tells it about the rest changing on disk - a
@@ -135,16 +167,6 @@ export async function activate(context: ExtensionContext): Promise<void> {
       );
     }
   }
-  // Replacing the binary does not restart the server, and a window reload is
-  // a blunt way to pick up a new one. This is the small way.
-  context.subscriptions.push(
-    commands.registerCommand("q-lint.restartServer", async () => {
-      await client?.stop().catch(() => {});
-      client = undefined;
-      await activate(context);
-    }),
-  );
-  context.subscriptions.push({ dispose: () => void client?.stop() });
 }
 
 export function deactivate(): Thenable<void> | undefined {

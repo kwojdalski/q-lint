@@ -1097,3 +1097,242 @@ fn formatting_a_broken_or_unknown_buffer_returns_no_edits() {
     );
     assert_eq!(server.shutdown_and_exit(), 0);
 }
+
+/// The server started in `dir` with `args`, initialized with `options` as a
+/// client's `initializationOptions` and, when given, one workspace folder.
+/// The initialize reply comes back with it.
+fn start_with_options(
+    dir: &std::path::Path,
+    args: &[&str],
+    options: Value,
+    workspace: Option<&std::path::Path>,
+) -> (Server, Value) {
+    let mut server = Server::spawn(dir, args);
+    let mut params = json!({"capabilities":{}, "initializationOptions": options});
+    if let Some(ws) = workspace {
+        params["workspaceFolders"] = json!([{"uri": file_uri(ws), "name": "ws"}]);
+    }
+    server.send(json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":params}));
+    let reply = server.receive();
+    server.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+    (server, reply)
+}
+
+/// A source with a style finding (QF001, `desc` as a parameter) and one only
+/// `styleq` and `uqf` report (QS001, an underscore in a name).
+const TWO_FAMILIES: &str = "my_var:1;f:{[desc] desc}";
+
+#[test]
+fn an_editor_select_narrows_what_the_configuration_reports() {
+    let dir = tempfile::tempdir().unwrap();
+    let uri = file_uri(&dir.path().join("a.q"));
+    let (mut server, _) = start_with_options(
+        dir.path(),
+        &["--lsp", "--profile", "uqf"],
+        json!({"lint": {"select": ["QF"]}}),
+        None,
+    );
+    server.open(&uri, TWO_FAMILIES);
+    assert_eq!(codes_of(&server.diagnostics_for(&uri)), ["QF001"]);
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn an_editor_select_cannot_widen_the_configuration() {
+    // `style` does not report QS001, and selecting it in the editor does not
+    // turn it on: the repository's configuration is the ceiling.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("qlinter.toml"), "profile = \"style\"\n").unwrap();
+    let uri = file_uri(&dir.path().join("a.q"));
+    let (mut server, _) = start_with_options(
+        dir.path(),
+        &["--lsp"],
+        json!({"lint": {"select": ["QS001", "QF001"]}}),
+        None,
+    );
+    server.open(&uri, TWO_FAMILIES);
+    assert_eq!(codes_of(&server.diagnostics_for(&uri)), ["QF001"]);
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn an_editor_ignore_drops_a_rule_the_configuration_selects() {
+    let dir = tempfile::tempdir().unwrap();
+    let uri = file_uri(&dir.path().join("a.q"));
+    let (mut server, _) = start_with_options(
+        dir.path(),
+        &["--lsp", "--profile", "uqf"],
+        json!({"lint": {"ignore": ["QF001"]}}),
+        None,
+    );
+    server.open(&uri, TWO_FAMILIES);
+    let found = codes_of(&server.diagnostics_for(&uri));
+    assert!(!found.contains(&"QF001".to_string()), "{found:?}");
+    assert!(found.contains(&"QS001".to_string()), "{found:?}");
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn an_unreadable_setting_is_reported_and_the_rest_still_apply() {
+    let dir = tempfile::tempdir().unwrap();
+    let uri = file_uri(&dir.path().join("a.q"));
+    let (mut server, _) = start_with_options(
+        dir.path(),
+        &["--lsp", "--profile", "uqf"],
+        json!({"lint": {"ignore": ["QZ999", "QS"]}, "format": {"enable": "no"}}),
+        None,
+    );
+    let mut warnings = vec![];
+    for _ in 0..2 {
+        let message = server.receive();
+        assert_eq!(message["method"], "window/showMessage", "{message}");
+        assert_eq!(message["params"]["type"], 2);
+        warnings.push(message["params"]["message"].as_str().unwrap().to_string());
+    }
+    assert!(warnings.iter().any(|w| w.contains("QZ999")), "{warnings:?}");
+    assert!(
+        warnings.iter().any(|w| w.contains("/format/enable")),
+        "{warnings:?}"
+    );
+    server.open(&uri, TWO_FAMILIES);
+    assert_eq!(codes_of(&server.diagnostics_for(&uri)), ["QF001"]);
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn unsafe_quick_fixes_are_offered_only_while_enabled() {
+    // `&&` has an editor-only fix, `==` a batch-safe one.
+    let text = "a:1b; b:0b; r:a&&b; c:1==1\n";
+    let dir = tempfile::tempdir().unwrap();
+    for (enabled, expected) in [
+        (None, vec!["QE004", "QE004"]),
+        (Some(true), vec!["QE004", "QE004"]),
+        (Some(false), vec!["QE004"]),
+    ] {
+        let options = enabled.map_or(json!(null), |e| json!({"fixes": {"unsafe": e}}));
+        let (mut server, _) =
+            start_with_options(dir.path(), &["--lsp", "--profile", "uqf"], options, None);
+        let uri = "file:///tmp/unsafe-setting.q";
+        server.open(uri, text);
+        let diagnostics = server.diagnostics_for(uri);
+        let mut fixed = vec![];
+        for d in &diagnostics {
+            if !server.code_actions(uri, std::slice::from_ref(d)).is_empty() {
+                fixed.push(d["code"].as_str().unwrap().to_string());
+            }
+        }
+        // Two QE004 findings, `&&` and `==`; with unsafe fixes off only `==`
+        // keeps its fix.
+        assert_eq!(fixed, expected, "unsafe = {enabled:?}: {diagnostics:?}");
+        assert_eq!(server.shutdown_and_exit(), 0);
+    }
+}
+
+#[test]
+fn formatting_and_semantic_tokens_can_be_turned_off() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut server, reply) = start_with_options(
+        dir.path(),
+        &["--lsp"],
+        json!({"format": {"enable": false}, "semanticTokens": {"enable": false}}),
+        None,
+    );
+    let capabilities = &reply["result"]["capabilities"];
+    assert!(
+        capabilities.get("documentFormattingProvider").is_none(),
+        "{capabilities}"
+    );
+    assert!(
+        capabilities.get("semanticTokensProvider").is_none(),
+        "{capabilities}"
+    );
+    assert_eq!(capabilities["codeActionProvider"], true);
+    // A client that asks anyway gets nothing to apply.
+    let uri = "file:///tmp/no-format.q";
+    server.open(uri, "a:1==1\n");
+    server.diagnostics_for(uri);
+    assert_eq!(server.format(uri)["result"], json!([]));
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn with_run_on_save_a_change_is_linted_only_when_saved() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut server, _) = start_with_options(
+        dir.path(),
+        &["--lsp"],
+        json!({"lint": {"run": "onSave"}}),
+        None,
+    );
+    let uri = "file:///tmp/on-save.q";
+    server.open(uri, "a:1\n");
+    assert!(server.diagnostics_for(uri).is_empty());
+    server.change(uri, 2, RESERVED_PARAM);
+    // Nothing is published for the change: the next message is the reply to
+    // this request.
+    server.send(
+        json!({"jsonrpc":"2.0","id":41,"method":"textDocument/semanticTokens/full",
+        "params":{"textDocument":{"uri":uri}}}),
+    );
+    assert_eq!(server.receive()["id"], 41);
+    server.send(json!({"jsonrpc":"2.0","method":"textDocument/didSave",
+        "params":{"textDocument":{"uri":uri}}}));
+    assert_eq!(codes_of(&server.diagnostics_for(uri)), ["QF001"]);
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn a_severity_setting_overrides_by_the_longest_prefix() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut server, _) = start_with_options(
+        dir.path(),
+        &["--lsp", "--profile", "uqf"],
+        json!({"lint": {"severity": {"QF": "hint", "QS001": "error"}}}),
+        None,
+    );
+    let uri = "file:///tmp/severity.q";
+    server.open(uri, TWO_FAMILIES);
+    let diagnostics = server.diagnostics_for(uri);
+    let by_code = |code: &str| {
+        diagnostics
+            .iter()
+            .find(|d| d["code"] == code)
+            .unwrap_or_else(|| panic!("{code} in {diagnostics:?}"))["severity"]
+            .clone()
+    };
+    assert_eq!(by_code("QF001"), 4);
+    assert_eq!(by_code("QS001"), 1);
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn the_workspace_index_can_be_turned_off_or_narrowed() {
+    // vendor/lib.q defines cfg. Indexed, app.q's read of it is defined; with
+    // the index off, or vendor/ excluded from it, it is not.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("vendor")).unwrap();
+    std::fs::write(dir.path().join("vendor/lib.q"), "cfg:5\n").unwrap();
+    let app = file_uri(&dir.path().join("app.q"));
+    for (options, undefined) in [
+        (json!({}), false),
+        (json!({"workspaceIndex": {"exclude": ["other/**"]}}), false),
+        (json!({"workspaceIndex": {"enable": false}}), true),
+        (json!({"workspaceIndex": {"exclude": ["vendor/**"]}}), true),
+        (json!({"workspaceIndex": {"exclude": ["vendor"]}}), true),
+    ] {
+        let (mut server, _) = start_with_options(
+            dir.path(),
+            &["--lsp", "--profile", "uqf"],
+            options.clone(),
+            Some(dir.path()),
+        );
+        server.open(&app, "n:cfg\n");
+        let found = codes_of(&server.diagnostics_for(&app));
+        assert_eq!(
+            found.contains(&"QF018".to_string()),
+            undefined,
+            "{options}: {found:?}"
+        );
+        assert_eq!(server.shutdown_and_exit(), 0);
+    }
+}

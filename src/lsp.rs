@@ -53,6 +53,16 @@
 //! another to make outside the range, and a selection's half of a pass is
 //! not something `--fix` ever produces.
 //!
+//! EDITOR SETTINGS ARRIVE AS initializationOptions, AND ONLY NARROW
+//!
+//! An editor's settings reach the server once, in `initialize` (see
+//! `Options`); a client that wants new ones restarts the server, which is
+//! what the VS Code extension does. Rule selection there can only turn rules
+//! off: the repository's configuration is what CI reads, and an editor that
+//! could widen it would show findings nobody else sees. The flags the server
+//! was started with - `--profile`, `--select` and the rest - are the
+//! command line's, and keep their meaning.
+//!
 //! Not here: completion, hover, go-to-definition. Those need a resolver and a
 //! symbol table this crate does not have - it reads source text without
 //! executing it, which is the property that makes it safe to run on every
@@ -61,7 +71,7 @@
 //! stops offering its own word-based fallback. Formatting does not share the
 //! problem: its answer comes from rules that read text, and when there is
 //! nothing to fix, an empty answer is the true one.
-use crate::config::Policy;
+use crate::config::{Layer, Policy, selector};
 use crate::jsonrpc::{receive, send};
 use q_lint_rs::{
     FileIndex, Finding, TokenKind, Workspace, fix_all, fix_for, index, semantic_tokens_in,
@@ -141,11 +151,26 @@ impl Index {
         }
     }
 
-    /// Every `.q` file under the workspace folders.
-    fn scan(&mut self, roots: &[String]) {
-        let mut stack: Vec<std::path::PathBuf> = roots.iter().map(Into::into).collect();
+    /// Every `.q` file under the workspace folders, less those `exclude`
+    /// names. A pattern is matched against the path relative to the folder it
+    /// is under, with `/` between components, as VS Code's globs are; a
+    /// directory it names is not entered at all.
+    fn scan(&mut self, roots: &[String], exclude: &[glob::Pattern]) {
+        let mut stack: Vec<(std::path::PathBuf, std::path::PathBuf)> =
+            roots.iter().map(|r| (r.into(), r.into())).collect();
+        let excluded = |root: &std::path::Path, path: &std::path::Path| {
+            let Ok(relative) = path.strip_prefix(root) else {
+                return false;
+            };
+            let relative = relative.to_string_lossy().replace('\\', "/");
+            let options = glob::MatchOptions {
+                require_literal_separator: true,
+                ..Default::default()
+            };
+            exclude.iter().any(|p| p.matches_with(&relative, options))
+        };
         let mut seen = 0;
-        while let Some(dir) = stack.pop() {
+        while let Some((root, dir)) = stack.pop() {
             let Ok(entries) = std::fs::read_dir(&dir) else {
                 continue;
             };
@@ -155,9 +180,12 @@ impl Index {
                 let Ok(kind) = entry.file_type() else {
                     continue;
                 };
+                if excluded(&root, &path) {
+                    continue;
+                }
                 if kind.is_dir() {
                     if !name.starts_with('.') && !SKIPPED.contains(&name.as_str()) {
-                        stack.push(path);
+                        stack.push((root.clone(), path));
                     }
                 } else if kind.is_file()
                     && is_q_path(&name)
@@ -195,6 +223,165 @@ fn workspace_roots(params: &Value) -> Vec<String> {
     roots
 }
 
+/// What a client asked for in `initializationOptions`. Every field defaults
+/// to what the server did before there were any, so a client that sends
+/// nothing - every editor but VS Code, unless configured - sees no change:
+///
+/// ```json
+/// {"lint": {"select": [], "ignore": [], "run": "onType", "severity": {}},
+///  "fixes": {"unsafe": true}, "format": {"enable": true},
+///  "semanticTokens": {"enable": true},
+///  "workspaceIndex": {"enable": true, "exclude": []}}
+/// ```
+///
+/// `lint.select` and `lint.ignore` narrow the selection (see
+/// `Policy::narrow`); everything else here is the server's own behaviour,
+/// which no configuration file describes.
+struct Options {
+    /// Lint on save rather than on every change. An open buffer's text is
+    /// still kept current, for code actions and formatting.
+    on_save: bool,
+    /// Offer the editor-only fixes as Quick Fixes, not just the batch-safe
+    /// ones `--fix` applies.
+    unsafe_fixes: bool,
+    format: bool,
+    semantic_tokens: bool,
+    /// Read the workspace's `.q` files at startup. Off, only open documents
+    /// are indexed.
+    index: bool,
+    index_exclude: Vec<glob::Pattern>,
+    /// A diagnostic severity by code or prefix; the longest that names a
+    /// code decides.
+    severity: Vec<(String, i64)>,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Options {
+            on_save: false,
+            unsafe_fixes: true,
+            format: true,
+            semantic_tokens: true,
+            index: true,
+            index_exclude: vec![],
+            severity: vec![],
+        }
+    }
+}
+
+impl Options {
+    /// The options in `initialize`'s params, and a line for each one that
+    /// could not be read. A bad value is reported and its default used: a
+    /// server that refused to start over a typo in a setting would give an
+    /// editor no diagnostics at all.
+    fn read(params: &Value) -> (Self, Layer, Vec<String>) {
+        let init = &params["initializationOptions"];
+        let mut options = Options::default();
+        let mut problems = vec![];
+        let mut flag = |pointer: &str, default: bool| match init.pointer(pointer) {
+            None | Some(Value::Null) => default,
+            Some(Value::Bool(b)) => *b,
+            Some(other) => {
+                problems.push(format!("{pointer} must be true or false, not {other}"));
+                default
+            }
+        };
+        options.unsafe_fixes = flag("/fixes/unsafe", true);
+        options.format = flag("/format/enable", true);
+        options.semantic_tokens = flag("/semanticTokens/enable", true);
+        options.index = flag("/workspaceIndex/enable", true);
+        match init.pointer("/lint/run") {
+            None | Some(Value::Null) => {}
+            Some(v) if v == "onType" => {}
+            Some(v) if v == "onSave" => options.on_save = true,
+            Some(other) => problems.push(format!(
+                "/lint/run must be \"onType\" or \"onSave\", not {other}"
+            )),
+        }
+        let mut strings = |pointer: &str| -> Vec<String> {
+            match init.pointer(pointer) {
+                None | Some(Value::Null) => vec![],
+                Some(Value::Array(items)) => items
+                    .iter()
+                    .filter_map(|item| match item.as_str() {
+                        Some(s) => Some(s.to_string()),
+                        None => {
+                            problems.push(format!("{pointer} must list strings, not {item}"));
+                            None
+                        }
+                    })
+                    .collect(),
+                Some(other) => {
+                    problems.push(format!("{pointer} must be a list, not {other}"));
+                    vec![]
+                }
+            }
+        };
+        let select = strings("/lint/select");
+        let ignore = strings("/lint/ignore");
+        let exclude = strings("/workspaceIndex/exclude");
+        // A code that names no rule is reported and dropped: kept, a typo in
+        // `select` would silently select nothing.
+        let mut codes = |key: &str, list: Vec<String>| -> Vec<String> {
+            list.iter()
+                .filter_map(|s| selector(key, s).map_err(|e| problems.push(e)).ok())
+                .collect()
+        };
+        let select = codes("/lint/select", select);
+        let ignore = codes("/lint/ignore", ignore);
+        for text in exclude {
+            match crate::config::pattern(&text) {
+                Ok(p) => options.index_exclude.push(p),
+                Err(e) => problems.push(format!("/workspaceIndex/exclude: {e}")),
+            }
+        }
+        match init.pointer("/lint/severity") {
+            None | Some(Value::Null) => {}
+            Some(Value::Object(map)) => {
+                for (code, level) in map {
+                    let level = match level.as_str() {
+                        Some("error") => 1,
+                        Some("warning") => 2,
+                        Some("information") => 3,
+                        Some("hint") => 4,
+                        _ => {
+                            problems.push(format!(
+                                "/lint/severity/{code} must be error, warning, information \
+                                 or hint, not {level}"
+                            ));
+                            continue;
+                        }
+                    };
+                    match selector("/lint/severity", code) {
+                        Ok(code) => options.severity.push((code, level)),
+                        Err(e) => problems.push(e),
+                    }
+                }
+            }
+            Some(other) => problems.push(format!(
+                "/lint/severity must map codes to severities, not {other}"
+            )),
+        }
+        let layer = Layer {
+            // An empty list is no selection at all, not a selection of
+            // nothing: it is what an editor sends for a setting left alone.
+            select: (!select.is_empty()).then_some(select),
+            extend_select: vec![],
+            ignore,
+        };
+        (options, layer, problems)
+    }
+
+    /// The severity a client asked for `code`, if it asked for one.
+    fn severity_of(&self, code: &str) -> Option<i64> {
+        self.severity
+            .iter()
+            .filter(|(s, _)| s == "ALL" || code.starts_with(s.as_str()))
+            .max_by_key(|(s, _)| if s == "ALL" { 0 } else { s.len() })
+            .map(|&(_, level)| level)
+    }
+}
+
 pub fn serve(
     reader: &mut impl BufRead,
     writer: &mut impl Write,
@@ -203,6 +390,8 @@ pub fn serve(
     let mut docs: Documents = HashMap::new();
     let mut idx = Index::default();
     let mut roots: Vec<String> = vec![];
+    let mut opts = Options::default();
+    let mut problems: Vec<String> = vec![];
     let mut shutdown_requested = false;
     loop {
         let Some(message) = receive(reader)? else {
@@ -218,12 +407,29 @@ pub fn serve(
         match (method.as_str(), id) {
             ("initialize", Some(id)) => {
                 roots = workspace_roots(&params);
-                send(writer, json!({"id": id, "result": capabilities()}))?;
+                let layer;
+                (opts, layer, problems) = Options::read(&params);
+                if layer.select.is_some() || !layer.ignore.is_empty() {
+                    policy.narrow(layer);
+                }
+                send(writer, json!({"id": id, "result": capabilities(&opts)}))?;
             }
             // Indexed once the client is ready rather than inside initialize,
             // so a large workspace does not hold up the handshake.
             ("initialized", None) => {
-                idx.scan(&roots);
+                // Told once the client is listening: a setting that could not
+                // be read is otherwise a default nobody knows is in force.
+                for problem in problems.drain(..) {
+                    eprintln!("qlinter: initializationOptions: {problem}");
+                    send(
+                        writer,
+                        json!({"method": "window/showMessage", "params": {"type": 2,
+                               "message": format!("q-lint: ignoring a setting: {problem}")}}),
+                    )?;
+                }
+                if opts.index {
+                    idx.scan(&roots, &opts.index_exclude);
+                }
                 for (uri, text) in &docs {
                     idx.set(&path_of(uri), index(text));
                 }
@@ -246,7 +452,15 @@ pub fn serve(
             ("textDocument/didOpen", None) => {
                 let uri = uri_of(&params["textDocument"]);
                 let text = params["textDocument"]["text"].as_str().unwrap_or("");
-                publish(writer, &mut docs, &mut idx, uri, text.to_string(), policy)?;
+                publish(
+                    writer,
+                    &mut docs,
+                    &mut idx,
+                    uri,
+                    text.to_string(),
+                    policy,
+                    &opts,
+                )?;
             }
             ("textDocument/didChange", None) => {
                 let uri = uri_of(&params["textDocument"]);
@@ -258,7 +472,21 @@ pub fn serve(
                     .and_then(|c| c.last())
                     .and_then(|c| c["text"].as_str())
                 {
-                    publish(writer, &mut docs, &mut idx, uri, text.to_string(), policy)?;
+                    if opts.on_save {
+                        // Kept, so a Quick Fix or a format reads what is on
+                        // screen; linted, and indexed, when it is saved.
+                        docs.insert(uri, text.to_string());
+                    } else {
+                        publish(
+                            writer,
+                            &mut docs,
+                            &mut idx,
+                            uri,
+                            text.to_string(),
+                            policy,
+                            &opts,
+                        )?;
+                    }
                 }
             }
             ("textDocument/didSave", None) => {
@@ -271,7 +499,7 @@ pub fn serve(
                     .map(str::to_string)
                     .or_else(|| docs.get(&uri).cloned());
                 if let Some(text) = text {
-                    publish(writer, &mut docs, &mut idx, uri, text, policy)?;
+                    publish(writer, &mut docs, &mut idx, uri, text, policy, &opts)?;
                 }
             }
             ("textDocument/didClose", None) => {
@@ -280,7 +508,7 @@ pub fn serve(
                 // The buffer is gone, so the disk is the authority again - and
                 // unsaved definitions it held no longer define anything.
                 if idx.reload(&path_of(&uri)) {
-                    relint(writer, &docs, &idx, None, policy)?;
+                    relint(writer, &docs, &idx, None, policy, &opts)?;
                 }
                 // An empty list, not silence: diagnostics are owned by the
                 // server until it says otherwise, so a closed file would keep
@@ -295,16 +523,20 @@ pub fn serve(
                 let uri = uri_of(&params["textDocument"]);
                 let data = docs
                     .get(&uri)
-                    .filter(|_| is_q_path(&path_of(&uri)))
+                    .filter(|_| opts.semantic_tokens && is_q_path(&path_of(&uri)))
                     .map_or_else(Vec::new, |text| encode_tokens(text, &idx.ws));
                 send(writer, json!({"id": id, "result": {"data": data}}))?;
             }
             ("textDocument/codeAction", Some(id)) => {
-                let actions = code_actions(&params, &docs, &idx.ws, policy);
+                let actions = code_actions(&params, &docs, &idx.ws, policy, opts.unsafe_fixes);
                 send(writer, json!({"id": id, "result": actions}))?;
             }
             ("textDocument/formatting", Some(id)) => {
-                let edits = format(&params, &docs, &idx.ws, policy);
+                let edits = if opts.format {
+                    format(&params, &docs, &idx.ws, policy)
+                } else {
+                    vec![]
+                };
                 send(writer, json!({"id": id, "result": edits}))?;
             }
 
@@ -332,7 +564,7 @@ pub fn serve(
                     };
                 }
                 if changed {
-                    relint(writer, &docs, &idx, None, policy)?;
+                    relint(writer, &docs, &idx, None, policy, &opts)?;
                 }
             }
             // Every other REQUEST gets an error, because a client waiting on a
@@ -347,17 +579,25 @@ pub fn serve(
     }
 }
 
-fn capabilities() -> Value {
+/// What the server offers. Formatting and semantic tokens a client turned
+/// off are not announced at all, so the editor uses another provider - its
+/// own grammar's colours, another formatter - rather than an empty answer.
+fn capabilities(opts: &Options) -> Value {
+    let mut capabilities = json!({
+        "textDocumentSync": SYNC_FULL,
+        "codeActionProvider": true,
+    });
+    if opts.format {
+        capabilities["documentFormattingProvider"] = json!(true);
+    }
+    if opts.semantic_tokens {
+        capabilities["semanticTokensProvider"] = json!({
+            "legend": {"tokenTypes": TOKEN_TYPES, "tokenModifiers": []},
+            "full": true,
+        });
+    }
     json!({
-        "capabilities": {
-            "textDocumentSync": SYNC_FULL,
-            "codeActionProvider": true,
-            "documentFormattingProvider": true,
-            "semanticTokensProvider": {
-                "legend": {"tokenTypes": TOKEN_TYPES, "tokenModifiers": []},
-                "full": true,
-            },
-        },
+        "capabilities": capabilities,
         "serverInfo": {"name": "q-lint", "version": env!("CARGO_PKG_VERSION")},
     })
 }
@@ -416,7 +656,13 @@ fn is_config_path(path: &str) -> bool {
     })
 }
 
-fn code_actions(params: &Value, docs: &Documents, ws: &Workspace, policy: &Policy) -> Vec<Value> {
+fn code_actions(
+    params: &Value,
+    docs: &Documents,
+    ws: &Workspace,
+    policy: &Policy,
+    unsafe_fixes: bool,
+) -> Vec<Value> {
     if let Some(only) = params["context"]["only"].as_array()
         && !only.iter().any(|kind| {
             kind.as_str()
@@ -440,8 +686,9 @@ fn code_actions(params: &Value, docs: &Documents, ws: &Workspace, policy: &Polic
         return vec![];
     };
     let mut actions = vec![];
-    // Every finding that has a fix, the editor-only ones included: here a
-    // person sees each edit and accepts it or not.
+    // Every finding that has a fix, the editor-only ones included unless the
+    // client turned them off: here a person sees each edit and accepts it or
+    // not.
     for finding in policy.lint(source, &path, ws).unwrap_or_default() {
         let current = diagnostic(&finding, source);
         let Some(client_diagnostic) = context.iter().find(|d| {
@@ -451,7 +698,7 @@ fn code_actions(params: &Value, docs: &Documents, ws: &Workspace, policy: &Polic
         }) else {
             continue;
         };
-        let Some(fix) = fix_for(&finding, source) else {
+        let Some(fix) = fix_for(&finding, source).filter(|f| f.batch_safe || unsafe_fixes) else {
             continue;
         };
         // The edit's range comes from the fix, not from the diagnostic. The
@@ -514,13 +761,14 @@ fn publish(
     uri: String,
     text: String,
     policy: &Policy,
+    opts: &Options,
 ) -> Result<(), String> {
     let path = path_of(&uri);
     let changed = is_q_path(&path) && idx.set(&path, index(&text));
     docs.insert(uri.clone(), text);
-    diagnose(writer, &uri, &docs[&uri], &idx.ws, policy)?;
+    diagnose(writer, &uri, &docs[&uri], &idx.ws, policy, opts)?;
     if changed {
-        relint(writer, docs, idx, Some(&uri), policy)?;
+        relint(writer, docs, idx, Some(&uri), policy, opts)?;
     }
     Ok(())
 }
@@ -532,10 +780,11 @@ fn relint(
     idx: &Index,
     except: Option<&str>,
     policy: &Policy,
+    opts: &Options,
 ) -> Result<(), String> {
     for (uri, text) in docs {
         if Some(uri.as_str()) != except {
-            diagnose(writer, uri, text, &idx.ws, policy)?;
+            diagnose(writer, uri, text, &idx.ws, policy, opts)?;
         }
     }
     Ok(())
@@ -548,6 +797,7 @@ fn diagnose(
     text: &str,
     ws: &Workspace,
     policy: &Policy,
+    opts: &Options,
 ) -> Result<(), String> {
     let path = path_of(uri);
     // Only q source. A client may open anything - a `.k` file, a console
@@ -563,7 +813,16 @@ fn diagnose(
     } else {
         vec![]
     };
-    let diagnostics: Vec<Value> = findings.iter().map(|f| diagnostic(f, text)).collect();
+    let diagnostics: Vec<Value> = findings
+        .iter()
+        .map(|f| {
+            let mut d = diagnostic(f, text);
+            if let Some(level) = opts.severity_of(&f.code) {
+                d["severity"] = json!(level);
+            }
+            d
+        })
+        .collect();
     send(
         writer,
         json!({"method": "textDocument/publishDiagnostics",

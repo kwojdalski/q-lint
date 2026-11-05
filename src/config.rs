@@ -98,6 +98,12 @@ pub struct Policy {
     /// problem once and uses the defaults for the files it governs.
     lenient: bool,
     warned: RefCell<HashSet<String>>,
+    /// An editor's own selection, applied after everything else and only
+    /// ever to turn rules off: a rule reports when the configuration and the
+    /// command line select it AND this layer does. It is how a language
+    /// client's settings narrow what a repository's configuration - the one
+    /// CI reads - turns on, without being able to widen it.
+    narrowing: RefCell<Option<Layer>>,
 }
 
 impl Policy {
@@ -107,7 +113,15 @@ impl Policy {
             cache: RefCell::default(),
             lenient,
             warned: RefCell::default(),
+            narrowing: RefCell::default(),
         }
+    }
+
+    /// Narrow every file's selection by `layer`, resolved the way a
+    /// configuration's own layer is - the longest selector that names a code
+    /// decides - and then intersected with what is already selected.
+    pub fn narrow(&self, layer: Layer) {
+        *self.narrowing.borrow_mut() = Some(layer);
     }
 
     /// Forget every file read, after one of them changed on disk.
@@ -212,7 +226,11 @@ impl Policy {
         for layer in settings.layers.iter().chain([&self.overrides.layer]) {
             on = apply(layer, code, on);
         }
-        on
+        on && self
+            .narrowing
+            .borrow()
+            .as_ref()
+            .is_none_or(|layer| apply(layer, code, true))
     }
 
     /// The findings for one file: every rule run, then only those the

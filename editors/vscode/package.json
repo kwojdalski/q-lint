@@ -44,10 +44,26 @@
     "configuration": {
       "title": "q-lint",
       "properties": {
+        "q-lint.enable": {
+          "type": "boolean",
+          "default": true,
+          "order": 0,
+          "markdownDescription": "Run the q-lint language server. Off, the extension keeps the syntax colouring and starts no server: no diagnostics, Quick Fixes, formatting or semantic colouring."
+        },
         "q-lint.serverPath": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Path to the `qlinter` binary. Left empty, the extension uses the server it was packaged with, and falls back to looking up `qlinter` on `PATH` when it was packaged without one."
+          "markdownDescription": "Path to the `qlinter` binary. Left empty, the extension uses the server it was packaged with, and falls back to looking up `qlinter` on `PATH` when it was packaged without one.",
+          "order": 1
+        },
+        "q-lint.serverArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "order": 2,
+          "markdownDescription": "Extra command-line arguments for `qlinter --lsp`, after the ones the other settings produce - for example `[\"--isolated\"]` or `[\"--extend-select\", \"QS001\"]`. Flags given here keep their command-line meaning, so unlike `#q-lint.lint.select#` they can widen what the repository's configuration selects."
         },
         "q-lint.profile": {
           "type": "string",
@@ -58,7 +74,94 @@
             "uqf"
           ],
           "default": "style",
-          "markdownDescription": "Which rules to run. Set here, it overrides `profile` in a repository's `qlinter.toml`; left unset, the repository's configuration decides, and `style` applies where there is none. `style` reports what q refuses and what q runs but is almost certainly a mistake. `general` keeps only what q itself rejects; `styleq` adds the conventions of published q style guides; `uqf` adds one repository's house conventions on top of those."
+          "markdownDescription": "Which rules to run. Set here, it overrides `profile` in a repository's `qlinter.toml`; left unset, the repository's configuration decides, and `style` applies where there is none. `style` reports what q refuses and what q runs but is almost certainly a mistake. `general` keeps only what q itself rejects; `styleq` adds the conventions of published q style guides; `uqf` adds one repository's house conventions on top of those.",
+          "order": 3
+        },
+        "q-lint.configFile": {
+          "type": "string",
+          "default": "",
+          "order": 4,
+          "markdownDescription": "A configuration file to use for every document instead of the nearest `.qlinter.toml`, `qlinter.toml` or `pyproject.toml` `[tool.qlinter]` (the server's `--config`). Relative to the first workspace folder. Empty: the nearest one governs each file, as on the command line and in CI."
+        },
+        "q-lint.lint.select": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "order": 10,
+          "markdownDescription": "Show only these rules, among those the configuration already turns on. Rule codes or prefixes, as `qlinter --rules` lists them. It narrows and never widens: a rule the repository's configuration leaves off stays off. Empty: no narrowing."
+        },
+        "q-lint.lint.ignore": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "order": 11,
+          "markdownDescription": "Hide these rules in the editor. Rule codes or prefixes, as `qlinter --rules` lists them. Applied after the configuration, so it can only hide; the repository's configuration, which CI reads, is unchanged."
+        },
+        "q-lint.lint.run": {
+          "type": "string",
+          "enum": [
+            "onType",
+            "onSave"
+          ],
+          "default": "onType",
+          "order": 12,
+          "enumDescriptions": [
+            "Lint the buffer on every change.",
+            "Lint when the file is opened and saved. Quick Fixes match the last saved lint, so they appear again after a save."
+          ],
+          "markdownDescription": "When to lint."
+        },
+        "q-lint.lint.severity": {
+          "type": "object",
+          "default": {},
+          "order": 13,
+          "additionalProperties": {
+            "type": "string",
+            "enum": [
+              "error",
+              "warning",
+              "information",
+              "hint"
+            ]
+          },
+          "markdownDescription": "The severity the editor shows, by rule code or prefix; the longest that names a rule decides. For example `{\"QS\": \"hint\", \"QE\": \"error\"}`. Display only: what is reported does not change."
+        },
+        "q-lint.fixes.unsafe": {
+          "type": "boolean",
+          "default": true,
+          "order": 20,
+          "markdownDescription": "Offer the editor-only Quick Fixes too: those `qlinter --fix` applies only with `--unsafe-fixes`, because they can change what a working program does or guess at what was meant. Off, only the fixes `qlinter --fix` applies are offered."
+        },
+        "q-lint.format.enable": {
+          "type": "boolean",
+          "default": true,
+          "order": 21,
+          "markdownDescription": "Offer **Format Document**, which applies the fixes `qlinter --fix` applies and nothing else. Off, q-lint does not register as a formatter."
+        },
+        "q-lint.semanticTokens.enable": {
+          "type": "boolean",
+          "default": true,
+          "order": 22,
+          "markdownDescription": "Colour functions where they are called and parameters where they are read, on top of the grammar's colouring. Off, only the grammar colours."
+        },
+        "q-lint.workspaceIndex.enable": {
+          "type": "boolean",
+          "default": true,
+          "order": 30,
+          "markdownDescription": "Read every `.q` file in the workspace at startup, never running it, so a name another file defines is not reported as undefined and is coloured as a function. Off, only open files are indexed."
+        },
+        "q-lint.workspaceIndex.exclude": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "order": 31,
+          "markdownDescription": "Globs, relative to the workspace folder, of files and directories the workspace index does not read - for example `[\"vendor/**\", \"**/generated/**\"]`. An open file is still linted and indexed. Version-control, `node_modules`, `target`, `dist`, `venv` and `__pycache__` directories are always skipped."
         },
         "q-lint.trace.server": {
           "type": "string",
@@ -68,7 +171,8 @@
             "verbose"
           ],
           "default": "off",
-          "description": "Log the traffic between VS Code and the server, for debugging the integration itself."
+          "description": "Log the traffic between VS Code and the server, for debugging the integration itself.",
+          "order": 40
         }
       }
     },
@@ -85,7 +189,7 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "package": "vsce package",
-    "test": "node --test test/grammar.test.js"
+    "test": "tsc -p ./ && node --test test/*.test.js"
   },
   "dependencies": {
     "vscode-languageclient": "^9.0.1"
