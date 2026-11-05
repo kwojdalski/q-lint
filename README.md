@@ -160,7 +160,12 @@ entry is `{"dependencies" (or "dependents"): [...], "ambiguous": {name:
 each line where a name is reached by a value computed at run time, which no
 amount of reading resolves: `value` of a string, `get` of anything but a
 literal, a name built with `` ` sv ``, `set` into a computed name, and a
-concatenated `system "l ",path`. So is `get`, `value` or `set` of an
+concatenated `system "l ",path`. `value` is the same function as `get` (q 5:
+`get~value` is 1b), but it is listed only where the source shows its argument
+is a symbol - `` value `$x ``, `value .Q.dd[...]`, or `value nm` where the
+scope assigns `nm` nothing but a symbol atom - because `value` of a
+dictionary, `value d`, reaches no name and reading alone cannot tell the two
+apart. A parameter handed to `value` is not listed. So is `get`, `value` or `set` of an
 unqualified symbol in a lambda written under `\d`: q looks the symbol up in
 the `\d` current when the lambda is called, not where it is written. The
 graph does not guess at those; a caller
