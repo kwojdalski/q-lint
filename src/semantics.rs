@@ -2341,6 +2341,93 @@ fn held(code: &str, raw: &str) -> Option<Held> {
     }
 }
 
+/// Whether `name`, read at `at`, is a local of the lambda around it that
+/// certainly holds an atom there: every write to it in that body is a plain
+/// `name:` of an atom literal, and one of them sits outside every bracket
+/// and ends before `at`, so it has run by the time the read does.
+///
+/// A parameter is never known, whatever it is rebound to: `{[t] t -1}` may
+/// be given a list or a function. Nor is a local written only under a
+/// condition - q 5 `{[c] if[c; m:5]; m -1}[0b]` reads the unset local as
+/// `()`, and indexing that is `()`, no error. Nor is a read in a qSQL
+/// statement, where a column of the same name wins: q 5
+/// `{t:([]m:1 2 3); m:5; select from t where m=m -1}[]` runs.
+fn local_atom(scopes: &[Scope], code: &str, comments: &str, name: &str, at: usize) -> bool {
+    let Some(s) = scope_at(scopes, at) else {
+        return false;
+    };
+    let scope = &scopes[s];
+    if at < scope.body || scope.params.contains(name) || !scope.locals.contains(name) {
+        return false;
+    }
+    let rel = at - scope.body;
+    let direct = scope.direct.as_bytes();
+    // Depth-zero statement starts, so the read's own statement is known.
+    let mut depth = 0i32;
+    let mut statement = 0;
+    for (i, &b) in direct[..rel].iter().enumerate() {
+        match b {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            b';' if depth == 0 => statement = i + 1,
+            _ => {}
+        }
+    }
+    if re!(r"\b(?:select|exec|update|delete)\b").is_match(&scope.direct[statement..rel]) {
+        return false;
+    }
+    let view = local_view(&scope.direct, true);
+    if multi_assignments(&view).any(|(_, n)| n == name) {
+        return false;
+    }
+    let mut dominated = false;
+    for w in re!(r"([A-Za-z][A-Za-z0-9_]*)\s*(?:\[[^\]]*\])?\s*[-+*%,&|^#_!~=<>$?@.]?::?")
+        .captures_iter(&view)
+    {
+        let whole = w.get(0).unwrap();
+        if &w[1] != name || !boundary(&view, whole.start()) {
+            continue;
+        }
+        // `name:` and nothing else: not `name::`, `name+:` or `name[i]:`.
+        let Some(plain) =
+            re!(r"^[A-Za-z][A-Za-z0-9_]*\s*:([^:]|$)").captures(&view[whole.start()..])
+        else {
+            return false;
+        };
+        let start = whole.start() + plain.get(1).unwrap().start();
+        let bytes = view.as_bytes();
+        let (mut end, mut depth) = (start, 0i32);
+        while end < bytes.len() {
+            match bytes[end] {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => {
+                    if depth == 0 {
+                        break;
+                    }
+                    depth -= 1
+                }
+                b';' if depth == 0 => break,
+                _ => {}
+            }
+            end += 1;
+        }
+        let (a, b) = (scope.body + start, scope.body + end);
+        if held(&code[a..b], &comments[a..b]) != Some(Held::Atom) {
+            return false;
+        }
+        let outside = view.as_bytes()[..whole.start()]
+            .iter()
+            .fold(0i32, |d, &c| match c {
+                b'(' | b'[' | b'{' => d + 1,
+                b')' | b']' | b'}' => d - 1,
+                _ => d,
+            })
+            == 0;
+        dominated |= outside && end <= rel;
+    }
+    dominated
+}
+
 /// The rules that need to know what a name holds: indexing an atom, two
 /// vectors of different lengths paired by an operator, and a select of a
 /// column the table does not have. Each one only for a name `held` knows.
@@ -2528,6 +2615,27 @@ fn named_values(
         let name = m.get(1).unwrap();
         if !boundary(code, name.start())
             || visible(name.as_str(), name.start()) != Some(&Held::Atom)
+        {
+            continue;
+        }
+        out.push(Finding::at(
+            path,
+            raw,
+            name.start(),
+            "QB010",
+            crate::apply_not_subtract(name.as_str(), &m[2]),
+        ));
+    }
+    // And for a local bound to an atom earlier in the same lambda body: q 5
+    // `{[] m:1.5; m -1}[]` and `{[] s:.z.p; s -0D00:00:01}[]` are 'type
+    // like their top-level forms. A lambda's closing brace ends the literal too.
+    // `local_atom` says when the text is sure.
+    for m in re!(r"(?m)(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)[ \t]+(-\d[A-Za-z0-9.:]*)[ \t\r]*(?:[;\])}]|$)")
+        .captures_iter(code)
+    {
+        let name = m.get(1).unwrap();
+        if !boundary(code, name.start())
+            || !local_atom(scopes, code, comments, name.as_str(), name.start())
         {
             continue;
         }

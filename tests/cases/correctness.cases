@@ -169,6 +169,41 @@ r:$[null c; window_to -0D00:01; c]
 t:12:00:00
 r:t -00:00:01
 
+=== QB010 profile: general | a local bound to an atom in the same lambda (q 5: {[] m:5; m -1}[] throws)
+f:{[] m:5; m -1}
+
+=== QB010 profile: general | a local bound to a timestamp, the uqf test shape (q 5: 'type)
+g:{[] s:2026.09.17D10:00:00; s -0D00:00:01}
+
+=== QB010 profile: general | a local read inside a bracket, after its binding (q 5: {[] m:1.5; r:{x}[m -1]; r}[] is 'type)
+h:{[] m:1.5; r:{x}[m -1]; r}
+
+=== clean profile: general | a parameter may hold a list or a function (q 5: {[t] t -1}[1 2 3] and {x -1}[1 2 3] are 0N)
+f:{[t] t -1}
+g:{x -1}
+
+=== clean profile: general | a parameter rebound is still left alone: the text is not sure which binding a read meets
+h:{[t] t:5; t -1}
+
+=== clean profile: general | a local rebound to a list or an expression before the read (q 5: {[] m:5; m:1 2 3; m -1}[] is 0N)
+f:{[] m:5; m:1 2 3; m -1}
+g:{[] m:1.5; m:m,2.5; m -1}
+
+=== clean profile: general | a list literal, enlist, and a lambda applied to a negative literal (q 5: each runs)
+f:{[] m:2 -1; m}
+g:{[] m:enlist -1; m}
+h:{[] k:{x+1}; k -1}
+
+=== clean profile: general | a local bound only under a condition reads as () when unset (q 5: {[c] if[c; m:5]; m -1}[0b] is ())
+f:{[c] if[c; m:5]; m -1}
+g:{[c] $[c; m:5; 0]; m -1}
+
+=== clean profile: general | in qSQL a column of the same name wins (q 5: runs)
+f:{[] t:([]m:1 2 3); m:5; select from t where m=m -1}
+
+=== QF005 profile: general | a nested lambda reads the global, not the outer local, so no QB010 (q 5: with global m:1 2 3, {[] m:5; {m -1}[]}[] is 0N)
+f:{[] m:5; {m -1}[]}
+
 === clean profile: general | a name that may hold a list indexes it (q 5: a:1 2 3;a -1 is 0N)
 a:1 2 3
 r:a -1
