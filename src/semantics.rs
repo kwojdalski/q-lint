@@ -823,7 +823,12 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
     let mut offset = 0;
     for line in code.split_inclusive('\n') {
         if line.starts_with('\\') {
-            blank(&mut view[offset..offset + line.len()]);
+            // `\t f[]` and `\ts:10 f[]` run their expression: only the
+            // command is blanked, and what it times is read like any line.
+            let keep = re!(r"^\\ts?(?::\d+)?[ \t]")
+                .find(line)
+                .map_or(line.len(), |m| m.end());
+            blank(&mut view[offset..offset + keep]);
         }
         offset += line.len();
     }

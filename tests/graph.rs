@@ -658,3 +658,20 @@ fn a_double_colon_with_nothing_after_it_defines_nothing() {
     assert!(deps(&g, "b.q").is_empty());
     assert_eq!(deps(&g, "d.q"), ["c.q"]);
 }
+
+#[test]
+fn the_expression_a_timing_command_runs_is_read() {
+    // `\t f[]` runs `f[]`, and q 5 `\ts:10 f[]` likewise; the command itself
+    // is not a name.
+    let g = graph(
+        &[
+            ("a.q", "f:{til 10}\ng:{til 5}\n"),
+            ("b.q", "\\t f[]\n"),
+            ("c.q", "\\ts:10 g[]\n"),
+            ("d.q", "\\l a.q\n"),
+        ],
+        false,
+    );
+    assert_eq!(deps(&g, "b.q"), ["a.q"]);
+    assert_eq!(deps(&g, "c.q"), ["a.q"]);
+}
