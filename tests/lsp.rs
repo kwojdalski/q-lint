@@ -57,6 +57,13 @@ impl Server {
         self.stdin.flush().unwrap();
     }
 
+    /// A frame holding `body` as it is, JSON or not.
+    fn send_raw(&mut self, body: &[u8]) {
+        write!(self.stdin, "Content-Length: {}\r\n\r\n", body.len()).unwrap();
+        self.stdin.write_all(body).unwrap();
+        self.stdin.flush().unwrap();
+    }
+
     fn receive(&mut self) -> Value {
         let mut length = 0;
         loop {
@@ -718,6 +725,7 @@ fn only_q_files_are_linted() {
 #[test]
 fn the_bracket_quick_fix_covers_the_whole_application() {
     let mut server = Server::start();
+    server.initialize();
     let uri = "file:///tmp/calls.q";
     server.open(uri, "f:{x+1}\nr:f 3+4\n");
     let diagnostics = server.diagnostics_for(uri);
@@ -1335,4 +1343,55 @@ fn the_workspace_index_can_be_turned_off_or_narrowed() {
         );
         assert_eq!(server.shutdown_and_exit(), 0);
     }
+}
+
+#[test]
+fn a_message_that_is_not_json_is_answered_and_the_server_carries_on() {
+    // JSON-RPC 2.0: a body that does not parse is a Parse error, one that is
+    // not a request object an Invalid Request, each with a null id. The
+    // frame was intact, so nothing stops the server reading the next one.
+    let mut server = Server::start();
+    server.initialize();
+    server.send_raw(b"{bad}");
+    let reply = server.receive();
+    assert_eq!(reply["error"]["code"], -32700, "{reply}");
+    assert_eq!(reply["id"], Value::Null);
+    server.send_raw(b"[]");
+    assert_eq!(server.receive()["error"]["code"], -32600);
+    // A header line the protocol does not define is passed over.
+    write!(server.stdin, "X-Foo bar\r\n").unwrap();
+    server.send(json!({"jsonrpc":"2.0","id":7,"method":"no/such"}));
+    assert_eq!(server.receive()["id"], 7);
+    let uri = "file:///tmp/after-bad.q";
+    server.open(uri, "f:{[count] count+1}\n");
+    assert!(!server.diagnostics_for(uri).is_empty());
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn before_initialize_a_request_is_refused_and_a_notification_dropped() {
+    // LSP 3.17: until initialize, a request gets ServerNotInitialized and a
+    // notification other than exit is dropped.
+    let mut server = Server::start();
+    server.open("file:///tmp/early.q", "f:{[count] count+1}\n");
+    server.send(json!({"jsonrpc":"2.0","id":5,"method":"textDocument/codeAction","params":{}}));
+    let reply = server.receive();
+    assert_eq!(reply["id"], 5);
+    assert_eq!(reply["error"]["code"], -32002, "{reply}");
+    // The dropped didOpen published nothing: the next message is the reply
+    // to initialize.
+    let reply = server.initialize();
+    assert_eq!(reply["id"], 1, "{reply}");
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn a_response_from_the_client_is_not_answered() {
+    let mut server = Server::start();
+    server.initialize();
+    server.send(json!({"jsonrpc":"2.0","id":9,"result":null}));
+    server.send(json!({"jsonrpc":"2.0","id":10,"method":"no/such"}));
+    // The first thing back answers 10; nothing answered 9.
+    assert_eq!(server.receive()["id"], 10);
+    assert_eq!(server.shutdown_and_exit(), 0);
 }

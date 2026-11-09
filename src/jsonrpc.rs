@@ -38,6 +38,29 @@ pub fn send(writer: &mut impl Write, mut value: Value) -> Result<(), String> {
 /// which is how a server learns its editor has gone away. That is distinct
 /// from a stream that ends mid-message, which is an error.
 pub fn receive(reader: &mut impl BufRead) -> Result<Option<Value>, String> {
+    match receive_message(reader)? {
+        None => Ok(None),
+        Some(Ok(value)) => Ok(Some(value)),
+        Some(Err((_, message))) => Err(message),
+    }
+}
+
+/// JSON-RPC's code for a body that is not JSON.
+pub const PARSE_ERROR: i64 = -32700;
+/// JSON-RPC's code for JSON that is not a request object.
+pub const INVALID_MESSAGE: i64 = -32600;
+
+/// A message that arrived whole but is not one: its JSON-RPC error code and
+/// what was wrong.
+pub type BadMessage = (i64, String);
+
+/// `receive`, telling a broken stream (the outer `Err`, after which nothing
+/// more can be read) from a broken message in an intact frame (the inner
+/// `Err`, with its JSON-RPC error code), which a server answers and reads
+/// past rather than dying on.
+pub fn receive_message(
+    reader: &mut impl BufRead,
+) -> Result<Option<Result<Value, BadMessage>>, String> {
     let mut length = None;
     let mut size = 0;
     loop {
@@ -56,7 +79,11 @@ pub fn receive(reader: &mut impl BufRead) -> Result<Option<Value>, String> {
         if line == "\r\n" || line == "\n" {
             break;
         }
-        let (k, v) = line.split_once(':').ok_or("Invalid LSP header")?;
+        // A header line the protocol does not define is passed over, a
+        // malformed one included: only Content-Length frames the body.
+        let Some((k, v)) = line.split_once(':') else {
+            continue;
+        };
         if k.eq_ignore_ascii_case("content-length") {
             length = Some(
                 v.trim()
@@ -70,10 +97,20 @@ pub fn receive(reader: &mut impl BufRead) -> Result<Option<Value>, String> {
         .ok_or("Invalid LSP message size")?;
     let mut body = vec![0; length];
     std::io::Read::read_exact(reader, &mut body).map_err(|e| e.to_string())?;
-    let value: Value =
-        serde_json::from_slice(&body).map_err(|e| format!("Invalid LSP response: {e}"))?;
+    let value: Value = match serde_json::from_slice(&body) {
+        Ok(value) => value,
+        Err(e) => {
+            return Ok(Some(Err((
+                PARSE_ERROR,
+                format!("Invalid LSP message: {e}"),
+            ))));
+        }
+    };
     if !value.is_object() {
-        return Err("Invalid LSP response: expected object".into());
+        return Ok(Some(Err((
+            INVALID_MESSAGE,
+            "Invalid LSP message: expected an object".into(),
+        ))));
     }
-    Ok(Some(value))
+    Ok(Some(Ok(value)))
 }

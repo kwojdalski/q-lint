@@ -72,7 +72,7 @@
 //! problem: its answer comes from rules that read text, and when there is
 //! nothing to fix, an empty answer is the true one.
 use crate::config::{Layer, Policy, selector};
-use crate::jsonrpc::{receive, send};
+use crate::jsonrpc::{receive_message, send};
 use q_lint_rs::{
     FileIndex, Finding, TokenKind, Workspace, fix_all, fix_for, index, semantic_tokens_in,
     whole_edit,
@@ -91,6 +91,7 @@ const SYNC_FULL: i64 = 1;
 
 const METHOD_NOT_FOUND: i64 = -32601;
 const INVALID_REQUEST: i64 = -32600;
+const SERVER_NOT_INITIALIZED: i64 = -32002;
 
 /// Open documents, by URI. The editor is the authority on their contents from
 /// didOpen until didClose, so nothing here reads from disk.
@@ -393,19 +394,50 @@ pub fn serve(
     let mut opts = Options::default();
     let mut problems: Vec<String> = vec![];
     let mut shutdown_requested = false;
+    let mut initialized = false;
     loop {
-        let Some(message) = receive(reader)? else {
+        let Some(message) = receive_message(reader)? else {
             // The stream closed without `exit`. Editors are supposed to send
             // it; when one dies instead, leaving cleanly is the friendlier
             // behaviour and matches what rust-analyzer does.
             return Ok(if shutdown_requested { 0 } else { 1 });
         };
-        let method = message["method"].as_str().unwrap_or("").to_string();
+        // A body that is not a JSON object, in a frame that is intact, is
+        // answered with JSON-RPC's error and read past: one bad message
+        // should not take the editor's diagnostics down with it.
+        let message = match message {
+            Ok(message) => message,
+            Err((code, text)) => {
+                send(
+                    writer,
+                    json!({"id": null, "error": {"code": code, "message": text}}),
+                )?;
+                continue;
+            }
+        };
+        // A response - `result` or `error`, no `method` - is never answered.
+        // This server sends no requests, so there is nothing to match it to.
+        let Some(method) = message["method"].as_str().map(str::to_string) else {
+            continue;
+        };
         let id = message.get("id").cloned();
         let params = message.get("params").cloned().unwrap_or(Value::Null);
 
+        // Before `initialize`, LSP 3.17 has a request answered with
+        // ServerNotInitialized and a notification dropped - `exit` aside.
+        if !initialized && method != "initialize" && method != "exit" {
+            if let Some(id) = id {
+                send(
+                    writer,
+                    json!({"id": id, "error": {"code": SERVER_NOT_INITIALIZED, "message": "the server is not initialized"}}),
+                )?;
+            }
+            continue;
+        }
+
         match (method.as_str(), id) {
             ("initialize", Some(id)) => {
+                initialized = true;
                 roots = workspace_roots(&params);
                 let layer;
                 (opts, layer, problems) = Options::read(&params);
