@@ -400,10 +400,27 @@ fn run(args: Args) -> Result<u8, String> {
             || !args.force_exclude
             || !policy.excluded(Path::new(&args.stdin_filename))?
         {
-            let mut source = String::new();
+            // Read as a file is: bytes that are not UTF-8 are still q.
+            let mut bytes = vec![];
             io::stdin()
-                .read_to_string(&mut source)
+                .read_to_end(&mut bytes)
                 .map_err(|e| e.to_string())?;
+            let source = match String::from_utf8(bytes) {
+                Ok(source) => source,
+                Err(e) => {
+                    eprintln!(
+                        "qlinter: {}: not valid UTF-8; each invalid byte is read as one character{}",
+                        args.stdin_filename,
+                        if args.fix || args.diff {
+                            ", and not fixed: a fix would rewrite bytes it cannot read"
+                        } else {
+                            ""
+                        }
+                    );
+                    lossy.insert(args.stdin_filename.clone());
+                    String::from_utf8_lossy(e.as_bytes()).into_owned()
+                }
+            };
             sources.push((args.stdin_filename, source));
         }
     } else {

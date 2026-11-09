@@ -702,3 +702,34 @@ fn extend_expands_a_leading_tilde_to_the_home_directory() {
         .collect();
     assert_eq!(codes, ["QF001"]);
 }
+
+#[test]
+fn stdin_that_is_not_utf8_is_linted_as_a_file_would_be() {
+    use std::io::Write;
+    let dir = tempfile::tempdir().unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .current_dir(dir.path())
+        .env("XDG_CONFIG_HOME", dir.path().join("no-such-config-home"))
+        .args(["--isolated", "--format", "json", "-"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"a:1\xff\nf:{[x] x==1}\n")
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(String::from_utf8_lossy(&out.stderr).contains("not valid UTF-8"));
+    let found: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(found[0]["code"], "QE004");
+}
