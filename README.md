@@ -245,8 +245,11 @@ governs a path and the rules it turns on. Exclusions apply before a file is
 read or sent to qls, to the files a directory walk finds: a file named on the
 command line is linted whatever `exclude` says, as in Ruff, and so is a
 directory named there - `qlinter gen/sub` walks it with `gen` excluded - unless
-`--force-exclude` is given - which pre-commit hooks and scripts that pass every
-changed file want; the rest decide which findings are reported, fixed by
+`--force-exclude` is given, which pre-commit hooks and scripts that pass every
+changed file want. A walk also passes over `.git`, `.venv`, `node_modules`,
+`__pycache__`, `build`, `dist` and `target` unless a configuration sets
+`exclude`, which replaces that list as Ruff's does; `extend-exclude` keeps it.
+The rest of the settings decide which findings are reported, fixed by
 `--fix` and `--diff`, and shown by the language server, which finds each open
 document's settings the same way and re-reads them when one changes.
 

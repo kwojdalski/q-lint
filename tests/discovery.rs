@@ -750,3 +750,17 @@ fn a_symlinked_file_is_governed_from_where_it_is_linked() {
     // configuration is linted under it rather than under the target's.
     assert_eq!(repo.codes(".", &["sl"]), ["QF016", "QS001"]);
 }
+
+#[test]
+fn setting_exclude_replaces_the_default_skips_and_extend_exclude_keeps_them() {
+    let repo = Repo::new();
+    repo.write("build/b.q", SOURCE).write("src/a.q", SOURCE);
+    // No configuration: build/ is passed over.
+    assert_eq!(linted(&repo, &["."]), ["src/a.q"]);
+    // extend-exclude adds to the defaults.
+    repo.write("qlinter.toml", "extend-exclude = [\"other\"]\n");
+    assert_eq!(linted(&repo, &["."]), ["src/a.q"]);
+    // exclude replaces them, as Ruff's does.
+    repo.write("qlinter.toml", "exclude = []\n");
+    assert_eq!(linted(&repo, &["."]), ["build/b.q", "src/a.q"]);
+}

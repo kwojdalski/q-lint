@@ -270,20 +270,7 @@ fn discover(
                 }
                 continue;
             }
-            if entry.depth() > 0
-                && entry.file_type().is_dir()
-                && [
-                    ".git",
-                    ".venv",
-                    "node_modules",
-                    "__pycache__",
-                    "build",
-                    "dist",
-                    "target",
-                ]
-                .iter()
-                .any(|n| entry.file_name() == *n)
-            {
+            if entry.depth() > 0 && entry.file_type().is_dir() && policy.default_excluded(p)? {
                 walk.skip_current_dir();
                 continue;
             }

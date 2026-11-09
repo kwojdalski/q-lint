@@ -71,10 +71,26 @@ pub struct Settings {
     /// differently: as in Ruff, a file that `extend`s another replaces its
     /// `exclude` and adds to its `extend-exclude`.
     exclude: Vec<Glob>,
+    /// Whether a file in the chain set `exclude`, which replaces
+    /// `DEFAULT_EXCLUDE` as Ruff's `exclude` replaces its defaults.
+    exclude_set: bool,
     extend_exclude: Vec<Glob>,
     /// Replaced, not added to, by a file that sets its own, as in Ruff.
     per_file_ignores: Vec<(Glob, Vec<String>)>,
 }
+
+/// Directories a walk passes over unless a configuration sets `exclude`:
+/// version control, environments and build output, which hold no q worth
+/// reporting on, or a copy of it.
+pub const DEFAULT_EXCLUDE: &[&str] = &[
+    ".git",
+    ".venv",
+    "node_modules",
+    "__pycache__",
+    "build",
+    "dist",
+    "target",
+];
 
 /// What the command line says, which wins over any file.
 #[derive(Clone, Debug)]
@@ -202,6 +218,19 @@ impl Policy {
     /// Whether `path` is excluded, by its configuration or by `--exclude`.
     pub fn excluded(&self, path: &Path) -> Result<bool, String> {
         self.excluded_below(path, None)
+    }
+
+    /// Whether a walk skips the directory `path` by `DEFAULT_EXCLUDE`: by
+    /// name, unless the configuration governing it sets `exclude`, which
+    /// replaces the defaults (`extend-exclude` keeps them), as in Ruff.
+    pub fn default_excluded(&self, path: &Path) -> Result<bool, String> {
+        let Some(name) = path.file_name() else {
+            return Ok(false);
+        };
+        if !DEFAULT_EXCLUDE.iter().any(|n| name == *n) {
+            return Ok(false);
+        }
+        Ok(!self.settings(path)?.exclude_set)
     }
 
     /// `excluded`, for an entry a walk from `walk` found. Only the entry and
@@ -570,6 +599,7 @@ fn load(path: &Path, depth: usize, patterns: Option<&Path>) -> Result<Option<Set
             }
             if key == "exclude" {
                 settings.exclude = globs;
+                settings.exclude_set = true;
             } else {
                 settings.extend_exclude.extend(globs);
             }
