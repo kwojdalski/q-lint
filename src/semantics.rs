@@ -1188,11 +1188,13 @@ pub fn check(
     // each-both pairs items whatever it derives from: q 5 `1 2 3,'4 5` and
     // `1 2 3+'4 5` are 'length. A `-` with space before and none after is a negative literal rather than
     // the operator (`1 2 3 -1 2` is one five-vector), and is skipped.
-    // An operand is a symbol vector, a numeric vector, a byte vector with at
-    // least two items, or a parenthesised list. `shape` decides the length of
-    // each; this pattern only has to find them.
+    // An operand is a symbol vector, a numeric vector, a byte or boolean
+    // vector with at least two items (`10b` is one token and two items), or
+    // anything parenthesised - `(1 2 3)` is the vector unwrapped. `shape`
+    // decides the length of each; this pattern only has to find them. Both
+    // sides need two items: an atom extends, and `shape` counts `(1)` as one.
     for m in re!(
-        r"(?P<l>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*;[^()]*\))\s*(?P<op>(?:<>|<=|>=|[+*%&|=<>^-]|\b(?:and|or|mod|div|xexp|xlog)\b)'?|,')\s*(?P<r>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*;[^()]*\))"
+        r"(?P<l>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|[01]{2,}b|\([^()]*\))\s*(?P<op>(?:<>|<=|>=|[+*%&|=<>^-]|\b(?:and|or|mod|div|xexp|xlog)\b)'?|,')\s*(?P<r>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|[01]{2,}b|\([^()]*\))"
     )
     .captures_iter(code)
     {
@@ -1219,6 +1221,8 @@ pub fn check(
         }
         if let (Some(l), Some(r)) = (shape(&m["l"]), shape(&m["r"]))
             && l != r
+            && l >= 2
+            && r >= 2
         {
             out.push(Finding::at(
                 path,

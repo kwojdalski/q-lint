@@ -327,6 +327,22 @@ r:(1;2;3)+4 5
 === clean | the same shapes at matching lengths
 r:1 2+0x0102
 
+=== QT006 | a boolean vector is one token with an item per digit (10b+1 2 3 is 'length)
+r:10b+1 2 3
+s:1 2 3 and 10b
+
+=== QT006 | a parenthesised vector is the vector unwrapped ((1 2 3)+4 5 is 'length)
+r:(1 2 3)+4 5
+s:1 2 3+(4 5)
+
+=== clean | an atom or a one-item list in parentheses, or a name, is not a length to compare
+r:(1)+1 2
+s:(x)+1 2
+t:10b+01b
+u:(1 2 3)+4 5 6
+v:10b,1 2 3
+
+
 === QT001 | a null or an infinity is an item like any other (q 5: `a`b`c!0N 0N is 'length)
 d:`a`b`c!0N 0N
 e:`a`b!0N 0N 0N
