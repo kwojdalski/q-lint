@@ -263,7 +263,7 @@ fn discover(
         while let Some(entry) = walk.next() {
             let entry = entry.map_err(|e| e.to_string())?;
             let p = entry.path();
-            if entry.depth() > 0 && policy.excluded(p)? {
+            if entry.depth() > 0 && policy.excluded_in_walk(p, path)? {
                 skipped = true;
                 if entry.file_type().is_dir() {
                     walk.skip_current_dir();

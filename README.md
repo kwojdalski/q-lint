@@ -229,7 +229,8 @@ it, and `qlinter .. --exclude ../src` is the one that names `proj/src`.
 
 In `pyproject.toml` the same keys go under `[tool.qlinter]`, and
 `[tool.qlinter.lint]`. Also: `extend-exclude`, and `extend = "../qlinter.toml"`
-to inherit another file and override it - a key the extending file sets
+(or `"~/base.toml"`, from the home directory) to inherit another file and
+override it - a key the extending file sets
 replaces the base's, `exclude` and `per-file-ignores` included, and only
 `extend-exclude` adds to it. As in Ruff, the most specific
 selector wins - `ignore = ["QS"]` with `extend-select = ["QS001"]` keeps QS001
@@ -242,7 +243,8 @@ it, and `--exclude` added to it. `--config FILE` uses one file for everything,
 `--isolated` ignores them all, and `--show-settings PATH` prints which file
 governs a path and the rules it turns on. Exclusions apply before a file is
 read or sent to qls, to the files a directory walk finds: a file named on the
-command line is linted whatever `exclude` says, as in Ruff, unless
+command line is linted whatever `exclude` says, as in Ruff, and so is a
+directory named there - `qlinter gen/sub` walks it with `gen` excluded - unless
 `--force-exclude` is given - which pre-commit hooks and scripts that pass every
 changed file want; the rest decide which findings are reported, fixed by
 `--fix` and `--diff`, and shown by the language server, which finds each open

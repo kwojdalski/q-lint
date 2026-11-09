@@ -201,6 +201,18 @@ impl Policy {
 
     /// Whether `path` is excluded, by its configuration or by `--exclude`.
     pub fn excluded(&self, path: &Path) -> Result<bool, String> {
+        self.excluded_below(path, None)
+    }
+
+    /// `excluded`, for an entry a walk from `walk` found. Only the entry and
+    /// the directories between it and `walk` are tried: a directory above
+    /// where the walk started was named by the user, and as in Ruff, naming
+    /// `gen/sub` lints it even when `gen` is excluded.
+    pub fn excluded_in_walk(&self, path: &Path, walk: &Path) -> Result<bool, String> {
+        self.excluded_below(path, Some(&absolute(walk)))
+    }
+
+    fn excluded_below(&self, path: &Path, floor: Option<&Path>) -> Result<bool, String> {
         let settings = self.settings(path)?;
         let full = absolute(path);
         Ok(settings
@@ -208,7 +220,7 @@ impl Policy {
             .iter()
             .chain(&settings.extend_exclude)
             .chain(&self.overrides.exclude)
-            .any(|glob| matches(&full, glob)))
+            .any(|glob| matches_below(&full, glob, floor)))
     }
 
     /// Whether the rule `code` reports on `path`.
@@ -316,6 +328,12 @@ fn per_file_ignored(settings: &Settings, code: &str, path: &Path) -> bool {
 /// anywhere in it, a trailing one included, is anchored at the root, so
 /// `lib/` excludes the root's `lib` and not `tests/lib`.
 fn matches(full: &Path, glob: &Glob) -> bool {
+    matches_below(full, glob, None)
+}
+
+/// `matches`, trying only the ancestors strictly below `floor` when given.
+fn matches_below(full: &Path, glob: &Glob, floor: Option<&Path>) -> bool {
+    let floor = floor.map(plain);
     let Glob {
         root,
         pattern,
@@ -341,11 +359,19 @@ fn matches(full: &Path, glob: &Glob) -> bool {
     };
     // An absolute pattern with no glob in it names its root itself.
     if pattern.as_str().is_empty() {
-        return true;
+        return floor
+            .as_ref()
+            .is_none_or(|floor| root.starts_with(floor) && root != floor);
     }
     relative
         .ancestors()
         .filter(|p| !p.as_os_str().is_empty())
+        .filter(|p| {
+            floor.as_ref().is_none_or(|floor| {
+                let at = root.join(p);
+                at.starts_with(floor) && at != *floor
+            })
+        })
         .any(|p| {
             pattern.matches(&p.to_string_lossy().replace('\\', "/"))
                 || anywhere
@@ -475,7 +501,15 @@ fn load(path: &Path, depth: usize, patterns: Option<&Path>) -> Result<Option<Set
             let base = v
                 .as_str()
                 .ok_or_else(|| format!("{shown}: extend must be a path"))?;
-            let base = root.join(base);
+            // Ruff expands `~` in `extend`, so a shared base can live in the
+            // home directory: `extend = "~/qlinter-base.toml"`.
+            let base = match base.strip_prefix("~/") {
+                Some(rest) => match std::env::var_os("HOME") {
+                    Some(home) => Path::new(&home).join(rest),
+                    None => root.join(base),
+                },
+                None => root.join(base),
+            };
             load(&base, depth + 1, patterns)?
                 .ok_or_else(|| format!("{}: no [tool.qlinter] table to extend", base.display()))?
         }
@@ -499,7 +533,7 @@ fn load(path: &Path, depth: usize, patterns: Option<&Path>) -> Result<Option<Set
                     .map(|s| {
                         s.as_str()
                             .ok_or_else(|| format!("{shown}: {key} must contain strings"))
-                            .and_then(|s| selector(key, s))
+                            .and_then(|s| selector(key, s).map_err(|e| format!("{shown}: {e}")))
                     })
                     .collect()
             })
@@ -524,7 +558,9 @@ fn load(path: &Path, depth: usize, patterns: Option<&Path>) -> Result<Option<Set
                     .as_str()
                     .filter(|s| !s.trim().is_empty())
                     .ok_or_else(|| format!("{shown}: {key} must contain nonempty strings"))?;
-                globs.push(rooted(patterns.unwrap_or(&root), p)?);
+                globs.push(
+                    rooted(patterns.unwrap_or(&root), p).map_err(|e| format!("{shown}: {e}"))?,
+                );
             }
             if key == "exclude" {
                 settings.exclude = globs;
@@ -546,7 +582,9 @@ fn load(path: &Path, depth: usize, patterns: Option<&Path>) -> Result<Option<Set
                 .map(|s| {
                     s.as_str()
                         .ok_or_else(|| format!("{shown}: per-file-ignores must list strings"))
-                        .and_then(|s| selector("per-file-ignores", s))
+                        .and_then(|s| {
+                            selector("per-file-ignores", s).map_err(|e| format!("{shown}: {e}"))
+                        })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             // An initial `!` negates the pattern, in per-file-ignores only:
@@ -555,7 +593,8 @@ fn load(path: &Path, depth: usize, patterns: Option<&Path>) -> Result<Option<Set
                 Some(rest) => (rest, true),
                 None => (glob.as_str(), false),
             };
-            let mut rooted = rooted(patterns.unwrap_or(&root), text)?;
+            let mut rooted =
+                rooted(patterns.unwrap_or(&root), text).map_err(|e| format!("{shown}: {e}"))?;
             rooted.negated = negated;
             settings.per_file_ignores.push((rooted, codes));
         }
@@ -630,6 +669,9 @@ pub fn rooted(root: &Path, text: &str) -> Result<Glob, String> {
         } else if rest == ".." {
             rest = "";
             root.pop();
+        } else if rest == "." {
+            // `.` is the root itself, as `./` is.
+            rest = "";
         } else {
             break;
         }

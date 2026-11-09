@@ -616,3 +616,89 @@ fn an_excluded_file_named_explicitly_is_linted_unless_force_exclude() {
         Vec::<String>::new()
     );
 }
+
+#[test]
+fn a_directory_named_inside_an_excluded_one_is_walked_unless_force_exclude() {
+    let repo = Repo::new();
+    repo.write("qlinter.toml", "profile = \"style\"\nexclude = [\"gen\"]\n")
+        .write("gen/sub/x.q", SOURCE)
+        .write("gen/sub/deeper/gen/y.q", SOURCE);
+    // As in Ruff: the walk tries what it finds, not the directories above
+    // where it started - but a `gen` found below is still excluded.
+    assert_eq!(linted(&repo, &["gen/sub"]), ["gen/sub/x.q"]);
+    assert_eq!(linted(&repo, &["gen"]), ["gen/sub/x.q"]);
+    assert_eq!(linted(&repo, &["."]), Vec::<String>::new());
+    assert_eq!(
+        linted(&repo, &["--force-exclude", "gen/sub"]),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
+fn a_bare_dot_exclude_is_the_root_as_dot_slash_is() {
+    for pattern in [".", "./"] {
+        let repo = Repo::new();
+        repo.write(
+            "qlinter.toml",
+            &format!("profile = \"style\"\nexclude = [\"{pattern}\"]\n"),
+        )
+        .write("a.q", SOURCE);
+        // The root is where the walk starts, so it is linted; with
+        // --force-exclude a file under it is not.
+        assert_eq!(linted(&repo, &["."]), ["a.q"], "{pattern}");
+        assert_eq!(
+            linted(&repo, &["--force-exclude", "a.q"]),
+            Vec::<String>::new(),
+            "{pattern}"
+        );
+    }
+}
+
+#[test]
+fn a_bad_code_or_glob_names_the_configuration_it_is_in() {
+    for toml in [
+        "per-file-ignores = {\"x\" = [\"QZ\"]}\n",
+        "exclude = [\"[ab\"]\n",
+        "ignore = [\"QZ\"]\n",
+    ] {
+        let repo = Repo::new();
+        repo.write("sub/a.q", SOURCE)
+            .write("sub/qlinter.toml", toml);
+        let out = run(&repo.path("."), &["sub"]);
+        assert_eq!(out.status.code(), Some(2), "{toml}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains("qlinter.toml:"), "{toml}: {err}");
+    }
+}
+
+#[test]
+fn extend_expands_a_leading_tilde_to_the_home_directory() {
+    let repo = Repo::new();
+    repo.write(
+        "home/base.toml",
+        "profile = \"style\"\nignore = [\"QF016\"]\n",
+    )
+    .write("proj/qlinter.toml", "extend = \"~/base.toml\"\n")
+    .write("proj/a.q", "f:{[count] count+1}\n");
+    let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .current_dir(repo.path("proj"))
+        .env("XDG_CONFIG_HOME", repo.path("no-such-config-home"))
+        .env("HOME", repo.path("home"))
+        .args(["--format", "json", "a.q"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let found: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let codes: Vec<&str> = found
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["code"].as_str().unwrap())
+        .collect();
+    assert_eq!(codes, ["QF001"]);
+}
