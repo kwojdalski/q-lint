@@ -347,6 +347,9 @@ pub struct Fixed {
     pub count: usize,
     pub passes: usize,
     pub first: Vec<Fix>,
+    /// Whether the loop ended because nothing more applied, rather than at
+    /// its cap - when it did not, a second `--fix` would change more.
+    pub converged: bool,
 }
 
 /// Apply fixes to `source` until none applies: what `--fix` writes, `--diff`
@@ -358,6 +361,9 @@ pub struct Fixed {
 /// make - QF005's fix passes one local in, and the next pass finds the
 /// second. Overlapping fixes wait a pass. Capped, so a pair of fixes that
 /// undo each other cannot spin.
+/// How many passes `fix_all` makes before giving up, as Ruff's 100.
+pub const FIX_PASSES: usize = 100;
+
 pub fn fix_all<E>(
     source: &str,
     unsafe_fixes: bool,
@@ -366,7 +372,8 @@ pub fn fix_all<E>(
     let mut updated = source.to_string();
     let mut count = 0;
     let (mut passes, mut first) = (0, vec![]);
-    for _ in 0..100 {
+    let mut converged = false;
+    for _ in 0..FIX_PASSES {
         let mut edits: Vec<_> = fixes_for(&lint(&updated)?, &updated)
             .into_iter()
             .filter(|fix| fix.batch_safe || unsafe_fixes)
@@ -382,6 +389,7 @@ pub fn fix_all<E>(
             selected.push(edit);
         }
         if selected.is_empty() {
+            converged = true;
             break;
         }
         let before = updated.clone();
@@ -389,6 +397,7 @@ pub fn fix_all<E>(
             updated.replace_range(edit.start..edit.end, &edit.replacement);
         }
         if updated == before {
+            converged = true;
             break;
         }
         count += selected.len();
@@ -397,11 +406,18 @@ pub fn fix_all<E>(
             first = selected;
         }
     }
+    // The cap reached on the pass that left nothing more to do is still
+    // convergence.
+    converged = converged
+        || fixes_for(&lint(&updated)?, &updated)
+            .iter()
+            .all(|fix| !(fix.batch_safe || unsafe_fixes));
     Ok(Fixed {
         text: updated,
         count,
         passes,
         first,
+        converged,
     })
 }
 

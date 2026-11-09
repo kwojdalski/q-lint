@@ -493,9 +493,17 @@ fn run(args: Args) -> Result<u8, String> {
                 count,
                 passes,
                 first,
+                converged,
             } = fix_all(source, args.unsafe_fixes, |text| {
                 policy.lint(text, path, &workspace)
             })?;
+            // As Ruff warns: what was written is not the end of it.
+            if !converged {
+                eprintln!(
+                    "qlinter: {path}: fixes did not converge after {} passes; running again would change more",
+                    q_lint_rs::FIX_PASSES
+                );
+            }
             if count == 0 {
                 continue;
             }

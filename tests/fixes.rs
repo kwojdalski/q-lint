@@ -688,3 +688,33 @@ fn touching_fixes_keep_their_tokens_apart() {
         "x:10 20 30;y:2\nr:x y\nf:{-1 x}\n"
     );
 }
+
+#[test]
+fn a_fix_run_that_hits_the_pass_cap_says_so() {
+    // QS004 unwraps one level of parentheses a pass: 120 levels outlast the
+    // 100 passes, and --fix has to say the file is not finished.
+    let directory = tempfile::tempdir().unwrap();
+    let deep = directory.path().join("deep.q");
+    let shallow = directory.path().join("shallow.q");
+    fs::write(
+        &deep,
+        format!("a:{}x{}\n", "(".repeat(120), ")".repeat(120)),
+    )
+    .unwrap();
+    fs::write(
+        &shallow,
+        format!("a:{}x{}\n", "(".repeat(50), ")".repeat(50)),
+    )
+    .unwrap();
+    let run = |path: &std::path::Path| {
+        let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .args(["--isolated", "--profile", "styleq", "--fix"])
+            .arg(path)
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stderr).into_owned()
+    };
+    assert!(run(&deep).contains("did not converge after 100 passes"));
+    assert!(!run(&shallow).contains("did not converge"));
+    assert_eq!(fs::read_to_string(&shallow).unwrap(), "a:x\n");
+}
