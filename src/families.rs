@@ -570,7 +570,8 @@ fn tokens(s: &str) -> Option<Vec<Tok<'_>>> {
             let len = if matches!(two, Some("<>" | "<=" | ">=")) {
                 2
             } else {
-                1
+                // One character, which outside ASCII is more than one byte.
+                s[i..].chars().next().map_or(1, char::len_utf8)
             };
             out.push(Tok::Op(&s[i..i + len]));
             i += len;

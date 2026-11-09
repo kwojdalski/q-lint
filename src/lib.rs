@@ -1525,7 +1525,11 @@ pub(crate) fn apply_not_subtract(name: &str, literal: &str) -> String {
 }
 
 fn boundary(s: &str, at: usize) -> bool {
-    let before = &s[..at];
+    // A byte inside a multi-byte character starts no token. Callers that walk
+    // bytes (`{é}`, `` `日本 ``) reach these, and slicing there would panic.
+    let Some(before) = s.get(..at) else {
+        return false;
+    };
     match before.chars().next_back() {
         None => true,
         // `_` joins a name only after that name's own letters: `x_ns` is one

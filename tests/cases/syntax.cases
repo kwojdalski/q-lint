@@ -149,3 +149,9 @@ a:a++
 b:a**
 c:x>>2
 d:x<-1
+
+=== clean | a character outside ASCII in code is read, not a crash (it once panicked slicing inside one)
+a:`é-x
+r:select é from t
+r:select a+é by a from t
+f:{日本+1}

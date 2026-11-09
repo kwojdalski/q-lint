@@ -688,7 +688,10 @@ fn opens_expression(comments: &str, i: usize, line_start: usize) -> bool {
     ];
     let before = comments[..i].trim_end_matches([' ', '\t', '\r', '\n']);
     let adjacent = before.len() == i;
-    if adjacent && i > 0 && PAIRS.contains(&&comments[i - 1..=i]) {
+    // `get`, not indexing: the byte before a glyph can end a multi-byte
+    // character, as in `` `é-x ``.
+    let pair = || i > 0 && comments.get(i - 1..=i).is_some_and(|p| PAIRS.contains(&p));
+    if adjacent && pair() {
         return false;
     }
     i == line_start
@@ -699,7 +702,7 @@ fn opens_expression(comments: &str, i: usize, line_start: usize) -> bool {
             .bytes()
             .next_back()
             .is_some_and(|p| GLYPHS.contains(&p))
-            && !(adjacent && PAIRS.contains(&&comments[i - 1..=i])))
+            && !(adjacent && pair()))
 }
 
 /// QE009. A derived function applied by juxtaposition at the start of an
