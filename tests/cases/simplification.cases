@@ -38,3 +38,11 @@ r3:{[p] {sum x} each p}
 
 === clean | sum is not +/: it skips nulls
 r:{[p] {x+y}/[p]}
+
+=== clean | a literal that is a vector on its own is not lifted: {x+10b} each a adds both items to each of a, a+10b pairs them
+r:{x+10b} each a
+s:{0x0102*x} each a
+
+=== QR004 | a boolean or byte atom is an atom like any number
+r:{x+1b} each a
+s:{x*0x01} each a

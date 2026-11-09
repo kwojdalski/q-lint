@@ -225,12 +225,14 @@ fn simplifications(path: &str, source: &str, code: &str, out: &mut Vec<Finding>)
     // numeric literal. `{x -1}` is not one: a `-` after a space and before a
     // digit is a negative literal, so that is x indexed at -1, and q 5 gives
     // `0N 0N` for `{x -1} each (1 2;3 4)` where `(1 2;3 4)-1` is `(0 1;2 3)`.
+    // Nor is a literal that is one token and a vector, `10b` or `0x0102`:
+    // `{x+10b} each a` adds both items to each of a, where `a+10b` pairs them.
     for m in re!(
         r"\{\s*(?:x\s*[-+*%]\s*-?\d[A-Za-z0-9.]*|-?\d[A-Za-z0-9.]*\s*[-+*%]\s*x)\s*\}\s*(?:each\b|'(?:[^:]|$))"
     )
     .find_iter(code)
     {
-        if re!(r"^\{\s*x\s+-\d").is_match(m.as_str()) {
+        if re!(r"^\{\s*x\s+-\d").is_match(m.as_str()) || crate::vector_token(m.as_str()) {
             continue;
         }
         add(

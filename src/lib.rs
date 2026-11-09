@@ -967,8 +967,11 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 r"^\{\s*(?:x\s*([-+*%])\s*(-?\d[A-Za-z0-9.]*)|(-?\d[A-Za-z0-9.]*)\s*([-+*%])\s*x)\s*\}[ \t]*(?:each\b|')[ \t]*"
             )
             .captures(source.get(start..)?)?;
-            // `{x -1}` indexes x at -1: there is no arithmetic to lift.
-            if re!(r"^\{\s*x\s+-\d").is_match(m.get(0)?.as_str()) {
+            // `{x -1}` indexes x at -1: there is no arithmetic to lift. And
+            // `{x+10b}` adds a vector to each item, which `a+10b` does not.
+            if re!(r"^\{\s*x\s+-\d").is_match(m.get(0)?.as_str())
+                || vector_token(m.get(0)?.as_str())
+            {
                 return None;
             }
             let tick = !m.get(0)?.as_str().contains("each");
@@ -1522,6 +1525,12 @@ pub(crate) fn apply_not_subtract(name: &str, literal: &str) -> String {
         &literal[1..],
         &literal[1..]
     )
+}
+
+/// Whether `{...}` text holds a number token that is a vector on its own: a
+/// boolean vector, `10b`, or a byte vector of more than one byte, `0x0102`.
+pub(crate) fn vector_token(text: &str) -> bool {
+    re!(r"(?:^|[^A-Za-z0-9_.])(?:[01]{2,}b|0x[0-9a-fA-F]{3,})(?:[^A-Za-z0-9_.]|$)").is_match(text)
 }
 
 fn boundary(s: &str, at: usize) -> bool {
