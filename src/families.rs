@@ -715,17 +715,34 @@ fn select_by_duplicate(path: &str, source: &str, code: &str, out: &mut Vec<Findi
 /// never run: `{:1;2}` returns 1 and the 2 is dead. Only the top level - a
 /// `:x` inside `if[...]` or `$[...]` is a branch, and what follows it runs.
 fn unreachable(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
+    // Every brace's match in one pass, the way `matching` finds one: asking
+    // `matching` per brace, and scanning each body through its nested
+    // lambdas, made nesting cost the square of its depth.
+    let ends = brace_ends(code);
     for (brace, _) in code.match_indices('{') {
-        let Some(end) = matching(code, brace, b'{', b'}') else {
+        let Some(&end) = ends.get(&brace) else {
             continue;
         };
         let sig = crate::signature(code, source, brace);
         let body_start = sig.body;
+        if body_start > end - 1 {
+            continue;
+        }
         let body = &code[body_start..end - 1];
         let (mut depth, mut start) = (0i32, 0usize);
         let mut statements = vec![];
-        for (i, b) in body.bytes().enumerate() {
-            match b {
+        let bytes = body.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            match bytes[i] {
+                // A nested lambda holds no statement of this one: past it.
+                b'{' if ends
+                    .get(&(body_start + i))
+                    .is_some_and(|&e| e - body_start <= bytes.len()) =>
+                {
+                    i = ends[&(body_start + i)] - body_start;
+                    continue;
+                }
                 b'(' | b'[' | b'{' => depth += 1,
                 b')' | b']' | b'}' => depth -= 1,
                 b';' if depth == 0 => {
@@ -734,6 +751,7 @@ fn unreachable(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
                 }
                 _ => {}
             }
+            i += 1;
         }
         statements.push((start, body.len()));
         // `'[f;g]` - or `' [f;g]` - is a composition, not a signal: q 5
@@ -760,6 +778,34 @@ fn unreachable(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
                 ));
         }
     }
+}
+
+/// Each `{` in `code` with the offset just past its `}`, as `matching` gives
+/// it: braces alone are counted, and a string is passed over whole.
+fn brace_ends(code: &str) -> std::collections::HashMap<usize, usize> {
+    let b = code.as_bytes();
+    let mut ends = std::collections::HashMap::new();
+    let mut open = vec![];
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'"' => {
+                i += 1;
+                while i < b.len() && b[i] != b'"' {
+                    i += if b[i] == b'\\' { 2 } else { 1 };
+                }
+            }
+            b'{' => open.push(i),
+            b'}' => {
+                if let Some(at) = open.pop() {
+                    ends.insert(at, i + 1);
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    ends
 }
 
 /// A start and end, standing in for a regex match where a rule gathers

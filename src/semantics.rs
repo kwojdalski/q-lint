@@ -1739,6 +1739,11 @@ pub fn check(
             })
             .map(|m| m.as_str())
             .collect();
+        // Nothing to hand up: no walk, or nested empty lambdas cost the
+        // square of their depth.
+        if free.is_empty() {
+            continue;
+        }
         let mut p = s.parent;
         while let Some(i) = p {
             inner_reads[i].extend(free.iter().copied());
@@ -1860,12 +1865,19 @@ pub fn check(
         if dynamic || scope.parent.is_none() {
             continue;
         }
-        let mut outer = HashSet::new();
-        let mut parent = scope.parent;
-        while let Some(p) = parent {
-            outer.extend(scopes[p].locals.iter().cloned());
-            parent = scopes[p].parent;
-        }
+        // Asked per name read rather than gathered per scope: gathering
+        // cloned every ancestor's locals into every scope, which nested
+        // lambdas made the square of their depth.
+        let outer = |name: &str| {
+            let mut parent = scope.parent;
+            while let Some(p) = parent {
+                if scopes[p].locals.contains(name) {
+                    return true;
+                }
+                parent = scopes[p].parent;
+            }
+            false
+        };
         let direct = local_view(&scope.direct, false);
         let mut seen = HashSet::new();
         for m in re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(&direct) {
@@ -1875,8 +1887,8 @@ pub fn check(
                 || direct[m.end()..]
                     .trim_start_matches([' ', '\t'])
                     .starts_with(':')
-                || !outer.contains(name)
                 || scope.locals.contains(name)
+                || !outer(name)
                 || !seen.insert(name)
             {
                 continue;

@@ -449,5 +449,9 @@ fn deeply_nested_lambdas_cost_their_length_not_its_square() {
     let found = lint(&source, "t.q", Profile::Style);
     assert!(found.iter().any(|f| f.code == "QE001"));
     q_lint_rs::semantic_tokens(&source);
+    // Closed, the same depth once took seconds a lint: every scope gathered
+    // its ancestors' locals, and QB020 scanned each body through its children.
+    let closed = format!("f:{}{}", "{".repeat(8_000), "}".repeat(8_000));
+    lint(&closed, "t.q", Profile::Style);
     assert!(start.elapsed() < std::time::Duration::from_secs(20));
 }
