@@ -733,3 +733,20 @@ fn stdin_that_is_not_utf8_is_linted_as_a_file_would_be() {
     let found: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(found[0]["code"], "QE004");
 }
+
+#[cfg(unix)]
+#[test]
+fn a_symlinked_file_is_governed_from_where_it_is_linked() {
+    let repo = Repo::new();
+    repo.write("other/real.q", SOURCE)
+        .write(
+            "sl/qlinter.toml",
+            "profile = \"style\"\nexclude = [\"link.q\"]\n",
+        )
+        .write("sl/kept/qlinter.toml", "profile = \"styleq\"\n");
+    std::os::unix::fs::symlink(repo.path("other/real.q"), repo.path("sl/link.q")).unwrap();
+    std::os::unix::fs::symlink(repo.path("other/real.q"), repo.path("sl/kept/l.q")).unwrap();
+    // The link's own name is excluded, and the one beside a styleq
+    // configuration is linted under it rather than under the target's.
+    assert_eq!(repo.codes(".", &["sl"]), ["QF016", "QS001"]);
+}

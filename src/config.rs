@@ -720,6 +720,19 @@ pub fn parse_profile(name: &str) -> Profile {
 /// existing ancestor, so `/var/...` on macOS still matches patterns rooted at
 /// the `/private/var/...` a configuration file canonicalizes to.
 pub fn absolute(path: &Path) -> PathBuf {
+    // A symlinked file is where it is linked, not where it points: its own
+    // directory's configuration governs it and its own path is matched, as
+    // in Ruff. The directories above it are still resolved.
+    if fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink())
+        && let (Some(parent), Some(name)) = (path.parent(), path.file_name())
+    {
+        let parent = if parent.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            parent
+        };
+        return absolute(parent).join(name);
+    }
     if let Ok(p) = fs::canonicalize(path) {
         return p;
     }
