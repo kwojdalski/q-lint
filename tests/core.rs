@@ -437,3 +437,17 @@ fn juxtaposed_derived_names_the_whole_iterator() {
         );
     }
 }
+
+#[test]
+fn deeply_nested_lambdas_cost_their_length_not_its_square() {
+    // Each scope once kept its own copy of everything to the end of the
+    // file, so 60,000 unclosed braces - an editor's buffer mid-keystroke, or
+    // a hostile file - took 1.8 GB. Now a few tens of MB and well under a
+    // second; the time bound is loose so a slow machine still passes.
+    let source = "{".repeat(60_000);
+    let start = std::time::Instant::now();
+    let found = lint(&source, "t.q", Profile::Style);
+    assert!(found.iter().any(|f| f.code == "QE001"));
+    q_lint_rs::semantic_tokens(&source);
+    assert!(start.elapsed() < std::time::Duration::from_secs(20));
+}

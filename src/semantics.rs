@@ -501,15 +501,45 @@ fn scopes(code: &str, raw: &str) -> (Vec<Scope>, Vec<(usize, String)>) {
     }
     for i in 0..scopes.len() {
         let scope = &scopes[i];
-        let mut direct = code.as_bytes()[scope.body..scope.end].to_vec();
+        // Where the scope's own text ends: past it there is only whitespace
+        // and blanked children. Copying that tail made nested lambdas cost
+        // the square of their depth - a file of 60,000 unclosed braces took
+        // 1.8 GB - and no check reads it. Each scope's own bytes are walked
+        // once, so finding the end is linear over the file.
+        let own_end = {
+            let mut seg_end = scope.end;
+            let mut found = None;
+            for &c in children[i].iter().rev() {
+                let child_end = (scopes[c].end + 1).min(scope.end);
+                if let Some(p) = code.as_bytes()[child_end..seg_end]
+                    .iter()
+                    .rposition(|b| !b.is_ascii_whitespace())
+                {
+                    found = Some(child_end + p + 1);
+                    break;
+                }
+                seg_end = scopes[c].start;
+            }
+            found.unwrap_or_else(|| {
+                scope.body
+                    + code.as_bytes()[scope.body..seg_end]
+                        .iter()
+                        .rposition(|b| !b.is_ascii_whitespace())
+                        .map_or(0, |p| p + 1)
+            })
+        };
+        let mut direct = code.as_bytes()[scope.body..own_end].to_vec();
         for &c in &children[i] {
             let child = &scopes[c];
+            if child.start >= own_end {
+                break;
+            }
             // An unclosed lambda runs to the end of the file, and so does an
             // unclosed one around it: `f:{g:{` is two scopes ending at the
             // same byte, and the child's closing brace is not there to blank.
             // The checks never see such a file - QE001 stops them - but the
             // editor's semantic tokens are asked for mid-keystroke.
-            let end = (child.end + 1).min(scope.end);
+            let end = (child.end + 1).min(own_end);
             direct[child.start - scope.body..end - scope.body].fill(b' ');
         }
         let direct = String::from_utf8(direct).unwrap();
