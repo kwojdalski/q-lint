@@ -102,6 +102,14 @@ pub struct References {
     /// written, each with the `\d` in force where it is loaded - `""` at the
     /// root - since the loaded script runs in it.
     pub loads: Vec<(String, String)>,
+    /// What lies before the file's first `\d`, which runs in whatever
+    /// context the file is loaded under: the unqualified names read there,
+    /// those assigned there, and the scripts loaded there. After a `\d .`
+    /// the root is the root; before any `\d` it is the loader's context, and
+    /// `names`, `defines` and `loads` alone cannot tell the two apart.
+    pub inherited_names: Vec<String>,
+    pub inherited_defines: Vec<String>,
+    pub inherited_loads: Vec<String>,
     /// Where a name is reached by a value computed at run time.
     pub dynamic: Vec<Dynamic>,
 }

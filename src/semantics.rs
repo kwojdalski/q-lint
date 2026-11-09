@@ -863,6 +863,28 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
         offset += line.len();
     }
     let view = String::from_utf8(view).unwrap_or_default();
+    // Where the file first switches context at the top level. Before it, the
+    // file runs in the context it is loaded under, which the graph supplies.
+    let first_switch = {
+        let mut offset = 0;
+        let mut found = code.len() + 1;
+        for line in code.split_inclusive('\n') {
+            if scope_at(&scopes, offset).is_none()
+                && opens(line, &raw[offset..offset + line.len()]).is_some()
+            {
+                found = offset;
+                break;
+            }
+            offset += line.len();
+        }
+        found
+    };
+    let mut inherited_names: HashSet<String> = HashSet::new();
+    let mut inherit = |name: &str, at: usize| {
+        if at < first_switch && !name.starts_with('.') {
+            inherited_names.insert(name.to_string());
+        }
+    };
     // A symbol literal names nothing it reads, and runs on past where a name
     // would stop: over `:` anywhere, and over `/` after `` `: ``. Verified
     // with parse in q 5: "`a:b" and "`:hdb/sym" are each one symbol. Left in,
@@ -891,6 +913,7 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
             continue;
         }
         names.insert(resolved(m.as_str(), ns_at(m.start())));
+        inherit(m.as_str(), m.start());
     }
     // A symbol handed straight to `get` or `value` names the global it reads
     // as plainly as writing the name would - unless it is resolved at call
@@ -914,6 +937,7 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
             call_time_access.push((whole.start(), kind));
         } else {
             names.insert(resolved(&m[2], ns_at(whole.start())));
+            inherit(&m[2], whole.start());
         }
     }
     call_time_access.extend(value_of_symbols(&view, &scopes, &ns_at));
@@ -940,20 +964,46 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
     }
     let mut names: Vec<_> = names.into_iter().collect();
     names.sort();
-    let mut defines: Vec<_> = global_writes(code, &scopes, &namespaces, resolved, false)
-        .into_keys()
+    let writes = global_writes(code, &scopes, &namespaces, resolved, false);
+    let mut inherited_defines: Vec<_> = writes
+        .iter()
+        .filter(|(name, at)| !name.starts_with('.') && at.iter().any(|&a| a < first_switch))
+        .map(|(name, _)| name.clone())
         .collect();
+    inherited_defines.sort();
+    let mut defines: Vec<_> = writes.into_keys().collect();
     defines.sort();
-    crate::References {
-        names,
-        defines,
-        loads: loads(code, raw, &view, |at| {
-            if scope_at(&scopes, at).is_some() {
+    let mut inherited_names: Vec<_> = inherited_names.into_iter().collect();
+    inherited_names.sort();
+    // Each load with where it is, so the ones before the first `\d` are known.
+    let placed = loads(code, raw, &view, |at| at);
+    let mut inherited_loads: Vec<String> = placed
+        .iter()
+        .filter(|(_, at)| *at < first_switch)
+        .map(|(path, _)| path.clone())
+        .collect();
+    inherited_loads.sort();
+    inherited_loads.dedup();
+    let mut loads: Vec<(String, String)> = placed
+        .into_iter()
+        .map(|(path, at)| {
+            let namespace = if scope_at(&scopes, at).is_some() {
                 String::new()
             } else {
                 ns_at(at).to_string()
-            }
-        }),
+            };
+            (path, namespace)
+        })
+        .collect();
+    loads.sort();
+    loads.dedup();
+    crate::References {
+        names,
+        defines,
+        loads,
+        inherited_names,
+        inherited_defines,
+        inherited_loads,
         dynamic: dynamic(raw, &view, &call_time_access),
     }
 }
@@ -1069,12 +1119,12 @@ fn value_of_symbols<'n>(
 /// runs there: after `\d .a`, `\l b.q` with b.q's `ff:{1}`, q 5 has `.a.ff`
 /// and no `ff`. Inside a lambda the load runs wherever the lambda is called,
 /// taken to be the root.
-fn loads(
+fn loads<T: Ord>(
     code: &str,
     raw: &str,
     view: &str,
-    namespace_at: impl Fn(usize) -> String,
-) -> Vec<(String, String)> {
+    namespace_at: impl Fn(usize) -> T,
+) -> Vec<(String, T)> {
     let mut loads = vec![];
     let mut offset = 0;
     for line in code.split_inclusive('\n') {

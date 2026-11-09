@@ -58,7 +58,10 @@ pub fn build(files: &[(PathBuf, String)], symbols: bool, cwd: &Path) -> BTreeMap
     // run at the root elsewhere, and one loaded from several contexts
     // defines in each. A load at a loaded script's root runs in the context
     // that script runs in: `\l c.q` at b.q's root, with b.q loaded under
-    // `\d .a`, puts c.q's `gg` at `.a.gg` (q 5).
+    // `\d .a`, puts c.q's `gg` at `.a.gg` (q 5). So does a bare name it
+    // reads: `h` there is `.a.h`. Only what comes before the script's own
+    // first `\d` is in the loader's context - after a `\d .` in it, the
+    // root is the root.
     let mut contexts: Vec<BTreeSet<&str>> = vec![BTreeSet::new(); files.len()];
     let mut pending: Vec<(usize, &str)> = vec![];
     for (i, read) in reads.iter().enumerate() {
@@ -74,16 +77,14 @@ pub fn build(files: &[(PathBuf, String)], symbols: bool, cwd: &Path) -> BTreeMap
         if !contexts[d].insert(namespace) {
             continue;
         }
-        for name in reads[d].defines.iter().filter(|n| !n.starts_with('.')) {
+        for name in &reads[d].inherited_defines {
             let defs = definers.entry(format!("{namespace}.{name}")).or_default();
             if !defs.contains(&d) {
                 defs.push(d);
             }
         }
-        for (load, inner) in &reads[d].loads {
-            if inner.is_empty()
-                && let Some(next) = target(d, load)
-            {
+        for load in &reads[d].inherited_loads {
+            if let Some(next) = target(d, load) {
                 pending.push((next, namespace));
             }
         }
@@ -94,7 +95,16 @@ pub fn build(files: &[(PathBuf, String)], symbols: bool, cwd: &Path) -> BTreeMap
             dynamic: reads[i].dynamic.clone(),
             ..Node::default()
         };
-        for name in &reads[i].names {
+        let qualified: Vec<String> = contexts[i]
+            .iter()
+            .flat_map(|ns| {
+                reads[i]
+                    .inherited_names
+                    .iter()
+                    .map(move |n| format!("{ns}.{n}"))
+            })
+            .collect();
+        for name in reads[i].names.iter().chain(&qualified) {
             let Some((name, defs)) = resolve(name, &definers) else {
                 continue;
             };

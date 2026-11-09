@@ -675,3 +675,36 @@ fn the_expression_a_timing_command_runs_is_read() {
     assert_eq!(deps(&g, "b.q"), ["a.q"]);
     assert_eq!(deps(&g, "c.q"), ["a.q"]);
 }
+
+#[test]
+fn a_bare_name_a_loaded_script_reads_is_read_in_the_loaders_context() {
+    // q 5: after `\d .a` and `\l b.q`, b.q's `g:{h[]}` calls `.a.h`.
+    let g = graph(
+        &[
+            ("a.q", "\\d .a\n\\l b.q\n"),
+            ("b.q", "g:{h[]}\n"),
+            ("c.q", "\\d .a\nh:{1}\n\\d .\n"),
+        ],
+        false,
+    );
+    assert_eq!(deps(&g, "b.q"), ["c.q"]);
+}
+
+#[test]
+fn after_its_own_backslash_d_dot_a_loaded_script_is_at_the_root() {
+    // b.q's `\d .` returns to the root whatever context loaded it, so its
+    // `zz` is the root's and its `\l c.q` runs c.q at the root: q 5 has no
+    // `.a.zz` from b.q and no `.a.gg` from c.q.
+    let g = graph(
+        &[
+            ("a.q", "\\d .a\n\\l b.q\n\\l d.q\n\\d .\n"),
+            ("b.q", "\\d .b\nyy:1\n\\d .\nzz:1\n"),
+            ("c.q", "\\d .a\nzz:2\n\\d .\n"),
+            ("d.q", "\\d .b\n\\d .\n\\l e.q\n"),
+            ("e.q", "gg:1\n"),
+            ("r.q", "s:.a.zz\nt:.a.gg\n"),
+        ],
+        false,
+    );
+    assert_eq!(deps(&g, "r.q"), ["c.q"]);
+}
