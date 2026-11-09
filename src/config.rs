@@ -254,7 +254,13 @@ impl Policy {
         let settings = self.settings(file)?;
         let structure =
             self.selected(&settings, "QE001") && !per_file_ignored(&settings, "QE001", file);
-        let mut found = lint_selecting(source, path, Profile::Uqf, ws, structure);
+        // A panic in a rule is a bug, but one file's bug should not end the
+        // run - or the language server, which lints on every keystroke and
+        // would otherwise die with every edit to that file.
+        let mut found = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            lint_selecting(source, path, Profile::Uqf, ws, structure)
+        }))
+        .map_err(|_| format!("{path}: internal error while linting; please report it"))?;
         found.retain(|f| {
             self.selected(&settings, &f.code) && !per_file_ignored(&settings, &f.code, file)
         });
