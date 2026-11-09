@@ -700,11 +700,32 @@ fn global_writes(
         }
         blank(&mut view[m.start()..at]);
     }
+    // A symbol assigns nothing, and runs on over `:` and, after `` `: ``,
+    // over `/` - the same reading `references` makes. Left in, the host in
+    // `` hopen `:localhost:5010 `` is an assignment to `localhost`, and the
+    // table in `` `:db/trade:1 `` one to `trade`.
+    // Only for this search: `` `k set 2 `` below needs its symbol.
     let code = std::str::from_utf8(&view).unwrap_or(code);
+    let mut unsymbolled = view.clone();
+    for m in re!(r"`(?::[A-Za-z0-9_.:/]*|[A-Za-z0-9_.:]*)").find_iter(code) {
+        blank(&mut unsymbolled[m.range()]);
+    }
+    let unsymbolled = std::str::from_utf8(&unsymbolled).unwrap_or(code);
     let mut globals: HashMap<String, Vec<usize>> = HashMap::new();
-    for a in assignment.captures_iter(code) {
+    for a in assignment.captures_iter(unsymbolled) {
         let m = a.get(0).unwrap();
         if !boundary(code, m.start()) {
+            continue;
+        }
+        // `name::` with nothing after it assigns no value: `(1,count::;2)`
+        // is not a definition of `count`, which q would refuse anyway.
+        if a.get(2).is_some()
+            && code[m.end()..]
+                .trim_start_matches([' ', '\t'])
+                .chars()
+                .next()
+                .is_none_or(|c| ";)]}\r\n".contains(c))
+        {
             continue;
         }
         if scope_at(scopes, m.start()).is_none() || a.get(2).is_some() || a[1].contains('.') {

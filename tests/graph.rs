@@ -629,3 +629,32 @@ fn the_language_server_still_starts_and_exits() {
     assert_eq!(out.status.code(), Some(0));
     assert!(String::from_utf8_lossy(&out.stdout).contains("capabilities"));
 }
+
+#[test]
+fn a_symbol_is_not_an_assignment_to_the_names_inside_it() {
+    // `` `:localhost:5010 `` and `` `:db/trade:1 `` are each one symbol: they
+    // define no `localhost` or `trade`.
+    let g = graph(
+        &[
+            ("a.q", "h:hopen `:localhost:5010\nq:`:db/trade:1\n"),
+            ("b.q", "g:{localhost}\nk:{trade}\n"),
+        ],
+        false,
+    );
+    assert!(deps(&g, "b.q").is_empty());
+}
+
+#[test]
+fn a_double_colon_with_nothing_after_it_defines_nothing() {
+    let g = graph(
+        &[
+            ("a.q", "rot:reverse flip::\ns:(1,count::;2)\n"),
+            ("b.q", "g:flip x\nh:count x\n"),
+            ("c.q", "v::1\n"),
+            ("d.q", "w:{v}\n"),
+        ],
+        false,
+    );
+    assert!(deps(&g, "b.q").is_empty());
+    assert_eq!(deps(&g, "d.q"), ["c.q"]);
+}
