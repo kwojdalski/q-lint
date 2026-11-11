@@ -48,3 +48,16 @@ g:{[h;x] h "select from t where a=",x}
 === clean | a constant query over a handle, and a joined string only shown
 g:{[h] h "select from t"}
 k:{show "select from t where a=",x}
+
+=== clean | QX002: a column in an update or select phrase is not a variable - this one redacts it (#204)
+r:update password:"***" from users
+s:select user,password:"***" from users
+f:{update token:"" from x}
+
+=== clean | QX002: nor is a table-literal column, keyed or not (#204)
+t:([]token:"ab")
+u:([token:enlist "k"] a:enlist 1)
+
+=== clean | QX002: an indented next line continues the value, which is then computed (#204)
+password:"abc"
+  ,x

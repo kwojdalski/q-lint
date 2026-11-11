@@ -1667,6 +1667,16 @@ fn vector_comparison(cond: &str) -> bool {
 /// each 'type, as the same expression on a line of its own is.
 pub(crate) fn operand_ends(code: &str, at: usize) -> bool {
     let rest = code[at..].trim_start_matches([' ', '\t']);
+    // A line break ends the operand unless the next line is indented and not
+    // blank, which continues the statement: `where 2` + `  #1b` is
+    // `where 2#1b` (#193).
+    if let Some(next) = rest
+        .strip_prefix("\r\n")
+        .or_else(|| rest.strip_prefix('\n'))
+    {
+        let line = next.split('\n').next().unwrap_or("");
+        return !(next.starts_with([' ', '\t']) && !line.trim().is_empty());
+    }
     rest.is_empty()
         || rest.starts_with([';', ')', ']', '}', '\n', '\r'])
         || ((rest.starts_with(',')
@@ -1677,7 +1687,7 @@ pub(crate) fn operand_ends(code: &str, at: usize) -> bool {
 /// Whether `at` sits at the top level of a select, exec, update or delete
 /// phrase: walking back through its statement - to a `;`, an opening
 /// bracket or an unindented line - meets the keyword at the same depth.
-fn in_qsql_phrase(code: &str, at: usize) -> bool {
+pub(crate) fn in_qsql_phrase(code: &str, at: usize) -> bool {
     let b = code.as_bytes();
     let mut depth = 0i32;
     let mut seen_where = false;
@@ -2095,7 +2105,123 @@ fn views(source: &str) -> Views {
         script_end,
     }
 }
+/// Every bracket's match in one text, computed once in a single stack pass.
+///
+/// Rules call `matching` from every `{`, `[` and `(` they look at, and many
+/// of them from every one in the file; done by scanning, that is time
+/// quadratic in nesting depth. `lint` installs one of these for `code` for
+/// the length of the lint, and `matching` answers from it for that text and
+/// any slice of it, falling back to the scan for any other text (#185).
+struct MatchTable {
+    start: usize,
+    len: usize,
+    /// For each position: where the group opened there ends, `NO_MATCH` if
+    /// it never closes, or `NOT_OPEN` if the position opens no group as
+    /// `matching` would read it from there.
+    ends: Vec<u32>,
+}
+
+const NO_MATCH: u32 = u32::MAX;
+const NOT_OPEN: u32 = u32::MAX - 1;
+
+thread_local! {
+    static MATCHES: std::cell::RefCell<Option<std::rc::Rc<MatchTable>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Keeps a `MatchTable` installed for as long as it lives, restoring
+/// whatever was installed before when it drops.
+pub(crate) struct MatchScope(Option<std::rc::Rc<MatchTable>>);
+
+impl MatchScope {
+    /// Installs the table for `text`. The caller keeps `text` alive and
+    /// unchanged while the scope lives - `matching` recognises the text by
+    /// its address.
+    pub(crate) fn install(text: &str) -> MatchScope {
+        let b = text.as_bytes();
+        let mut ends = vec![NOT_OPEN; b.len()];
+        // Applicable only below u32 offsets; a larger text keeps scanning.
+        if b.len() < NOT_OPEN as usize {
+            let mut stacks: [Vec<usize>; 3] = [vec![], vec![], vec![]];
+            let mut i = 0;
+            // The same walk `matching` makes, so a position it reads as
+            // outside a string is one this reads as outside a string too: from
+            // there on the two walks are in the same state and agree.
+            while i < b.len() {
+                match b[i] {
+                    b'"' => {
+                        i += 1;
+                        while i < b.len() && b[i] != b'"' {
+                            i += if b[i] == b'\\' { 2 } else { 1 };
+                        }
+                    }
+                    c @ (b'{' | b'[' | b'(') => {
+                        ends[i] = NO_MATCH;
+                        stacks[bracket_kind(c)].push(i);
+                    }
+                    c @ (b'}' | b']' | b')') => {
+                        if let Some(o) = stacks[bracket_kind(c)].pop() {
+                            ends[o] = (i + 1) as u32;
+                        }
+                    }
+                    _ => {}
+                }
+                i += 1;
+            }
+        }
+        let table = std::rc::Rc::new(MatchTable {
+            start: text.as_ptr() as usize,
+            len: text.len(),
+            ends,
+        });
+        MatchScope(MATCHES.with(|m| m.replace(Some(table))))
+    }
+}
+
+impl Drop for MatchScope {
+    fn drop(&mut self) {
+        let previous = self.0.take();
+        MATCHES.with(|m| *m.borrow_mut() = previous);
+    }
+}
+
+fn bracket_kind(c: u8) -> usize {
+    match c {
+        b'{' | b'}' => 0,
+        b'[' | b']' => 1,
+        _ => 2,
+    }
+}
+
+/// `matching` from the installed table, when `s` is a slice of its text and
+/// `start` opens a group of `open` there. `None` means "not answerable here".
+fn matching_from_table(s: &str, start: usize, open: u8) -> Option<Option<usize>> {
+    if s.is_empty() || start >= s.len() || s.as_bytes()[start] != open {
+        return None;
+    }
+    MATCHES.with(|m| {
+        let m = m.borrow();
+        let t = m.as_ref()?;
+        let at = s.as_ptr() as usize;
+        if at < t.start || at + s.len() > t.start + t.len {
+            return None;
+        }
+        let offset = at - t.start;
+        match t.ends[offset + start] {
+            NOT_OPEN => None,
+            NO_MATCH => Some(None),
+            end => {
+                let end = end as usize - offset;
+                Some((end <= s.len()).then_some(end))
+            }
+        }
+    })
+}
+
 fn matching(s: &str, start: usize, open: u8, close: u8) -> Option<usize> {
+    if let Some(answer) = matching_from_table(s, start, open) {
+        return answer;
+    }
     let b = s.as_bytes();
     let (mut i, mut depth) = (start, 0usize);
     while i < b.len() {
@@ -2178,7 +2304,12 @@ pub(crate) fn lambda_rank(code: &str, raw: &str, brace: usize, end: usize) -> us
             _ => {}
         }
     }
-    let body = String::from_utf8(body).unwrap();
+    // A symbol is not a read: `{x,`y}` takes one argument (#189).
+    let body = re!(r"`[A-Za-z0-9_./:]*")
+        .replace_all(&String::from_utf8(body).unwrap(), |m: &regex::Captures| {
+            " ".repeat(m[0].len())
+        })
+        .into_owned();
     // Not as part of a dotted name: `.z.s` is the lambda itself, and
     // reading it says nothing about a third argument.
     if re!(r"(?:^|[^A-Za-z0-9_.])z(?:[^A-Za-z0-9_.]|$)").is_match(&body) {
@@ -2197,9 +2328,9 @@ pub(crate) fn shadowed(code: &str, raw: &str, at: usize, name: &str) -> bool {
         return false;
     }
     for (brace, _) in code[..at].match_indices('{') {
-        if !matching(code, brace, b'{', b'}').is_some_and(|end| end > at) {
+        let Some(end) = matching(code, brace, b'{', b'}').filter(|&end| end > at) else {
             continue;
-        }
+        };
         let sig = signature(code, raw, brace);
         if if sig.named {
             sig.slots.contains(&name)
@@ -2208,7 +2339,20 @@ pub(crate) fn shadowed(code: &str, raw: &str, at: usize, name: &str) -> bool {
         } {
             return true;
         }
-        let body = &code[sig.body..];
+        // This lambda's own body only: an assignment after its closing brace
+        // is another lambda's local, or a global, and one inside a nested
+        // lambda is that lambda's local (#187). q has no closures.
+        let mut own = code.as_bytes()[sig.body.min(end - 1)..end - 1].to_vec();
+        let mut depth = 0i32;
+        for c in &mut own {
+            match *c {
+                b'{' => depth += 1,
+                b'}' => depth -= 1,
+                _ if depth > 0 => *c = b' ',
+                _ => {}
+            }
+        }
+        let body = &String::from_utf8(own).unwrap();
         for (i, _) in body.match_indices(name) {
             let after = body[i + name.len()..].trim_start_matches([' ', '\t']);
             if boundary(body, i)
@@ -2414,6 +2558,7 @@ pub fn lint_selecting(
         }
     }
     let code = &v.code;
+    let _matches = MatchScope::install(code);
     // A UTF-8 BOM is not something q tolerates: it reports 'char on the first
     // line and loads nothing. Reported and then carried on past, because the
     // author still wants to know what else is wrong with a file they are
@@ -3105,8 +3250,30 @@ pub fn lint_selecting(
             format!("{ns}.{name}")
         }
     };
+    // How deep in lambdas each byte sits. A plain `g:{...}` inside a lambda
+    // assigns a local of that lambda, not the global `g` (#188); a dotted
+    // name is global wherever it is assigned.
+    let mut lambda_depth = vec![0u32; code.len() + 1];
+    {
+        let mut depth = 0u32;
+        for (i, b) in code.bytes().enumerate() {
+            lambda_depth[i] = depth;
+            match b {
+                b'{' => depth += 1,
+                b'}' => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+        }
+        lambda_depth[code.len()] = depth;
+    }
+    let global_definition = |m: &regex::Captures| -> bool {
+        m[1].contains('.') || lambda_depth[m.get(0).unwrap().start()] == 0
+    };
     let mut ranks: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     for m in re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)\s*:\s*\{").captures_iter(code) {
+        if !global_definition(&m) {
+            continue;
+        }
         let brace = m.get(0).unwrap().end() - 1;
         let Some(end) = matching(code, brace, b'{', b'}') else {
             continue;
@@ -3153,6 +3320,9 @@ pub fn lint_selecting(
     {
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
         for m in re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)\s*:\s*\{").captures_iter(code) {
+            if !global_definition(&m) {
+                continue;
+            }
             let name = qualified(m.get(0).unwrap().start(), &m[1]);
             if !seen.insert(name.clone()) {
                 redefined.insert(name);
@@ -3951,24 +4121,27 @@ pub fn lint_selecting(
                         );
                     }
                 }
-                if !re!(r"\b(?:select|exec|update|delete|by)\b").is_match(line) {
-                    for a in re!(r"([a-z][a-z0-9_]*)\s*:").captures_iter(line) {
-                        let m = a.get(0).unwrap();
-                        // q 5 takes from and by as locals: {from:1;from+1}[] is 2.
-                        if boundary(line, m.start())
-                            && !line[m.end()..].starts_with(':')
-                            && !matches!(&a[1], "from" | "by")
-                            && RESERVED.iter().any(|n| n == &a[1])
-                        {
-                            add(
-                                offset + m.start(),
-                                "QF003",
-                                format!("Local assignment to `{}`", &a[1]),
-                            );
-                        }
-                    }
-                }
                 offset += line.len();
+            }
+            // A column is not a local: in a query phrase or a table literal,
+            // `count:1` names one, which is QF013's to report (#192). The
+            // view blanks both over their own extent, whatever lines they
+            // span.
+            let view = semantics::local_view(&code[at..end], true);
+            for a in re!(r"([a-z][a-z0-9_]*)\s*:").captures_iter(&view) {
+                let m = a.get(0).unwrap();
+                // q 5 takes from and by as locals: {from:1;from+1}[] is 2.
+                if boundary(&view, m.start())
+                    && !view[m.end()..].starts_with(':')
+                    && !matches!(&a[1], "from" | "by")
+                    && RESERVED.iter().any(|n| n == &a[1])
+                {
+                    add(
+                        at + m.start(),
+                        "QF003",
+                        format!("Local assignment to `{}`", &a[1]),
+                    );
+                }
             }
         }
     }
@@ -4482,10 +4655,14 @@ pub fn lint_selecting(
         //   "`l` never use letter `l`, looks like number `1` in some fonts"
         //
         // Assignment targets only: a name being read might be someone else's,
-        // and there is nothing for the reader of this file to act on.
-        if let Some(m) = re!(r"^\s*(\.?[A-Za-z][A-Za-z0-9_.]*)\s*::?(?:[^:=]|$)").captures(line)
-            && !in_parens[offset + m.get(1).unwrap().start()]
+        // and there is nothing for the reader of this file to act on. At the
+        // start of each line of the statement: an indented line continues
+        // it, and `f:{x}` + `  l:1` still assigns `l` (#214).
+        for m in re!(r"(?m)^[ \t]*(\.?[A-Za-z][A-Za-z0-9_.]*)\s*::?(?:[^:=]|$)").captures_iter(line)
         {
+            if in_parens[offset + m.get(1).unwrap().start()] {
+                continue;
+            }
             let target = m.get(1).unwrap();
             let text = target.as_str();
             if text.contains('_') {
@@ -4828,15 +5005,30 @@ pub fn lint_selecting(
                 // operator that was meant.
                 // The literal has to be the whole right operand: `a=1 2 3?b`
                 // and `a=0 1 2 b` index it first, and q 5 runs both.
-                if re!(r"(?:=|<>)\s*(?:-?\d[A-Za-z0-9.]*(?:\s+-?\d[A-Za-z0-9.]*)+|`[A-Za-z][A-Za-z0-9_.]*(?:`[A-Za-z0-9_.]*)+)")
+                // Each offending constraint at its own start, where the fix
+                // is anchored: the first at `where`, a later one after its
+                // comma (#215).
+                let mut reported = vec![];
+                for m in re!(r"(?:=|<>)\s*(?:-?\d[A-Za-z0-9.]*(?:\s+-?\d[A-Za-z0-9.]*)+|`[A-Za-z][A-Za-z0-9_.]*(?:`[A-Za-z0-9_.]*)+)")
                     .find_iter(&phrase)
-                    .any(|m| {
-                        let rest = phrase[m.end()..].trim_start();
-                        rest.is_empty() || rest.starts_with([',', ';'])
-                    })
                 {
+                    let rest = phrase[m.end()..].trim_start();
+                    if !(rest.is_empty() || rest.starts_with([',', ';'])) {
+                        continue;
+                    }
+                    let at = match phrase[..m.start()].rfind(',') {
+                        None => offset + w.start(),
+                        Some(c) => {
+                            let clause = &phrase[c + 1..];
+                            offset + w.end() + c + 1 + (clause.len() - clause.trim_start().len())
+                        }
+                    };
+                    if reported.contains(&at) {
+                        continue;
+                    }
+                    reported.push(at);
                     add(
-                        offset + w.start(),
+                        at,
                         "QB008",
                         "Equality against a vector literal in a filter is a 'length error at \
                          runtime; `in` is the operator for membership"

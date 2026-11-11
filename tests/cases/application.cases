@@ -213,6 +213,42 @@ f:{x}
 g:{[f] f}
 h:{f[1;2]}
 
+=== QA012 | defined below the call, the rank is still known (#187)
+g:{f[1;2]}
+f:{x}
+
+=== QA012 | a local of another lambda further down does not shadow (#187)
+f:{x}
+g:{f[1;2]}
+h:{f:3; f}
+
+=== QA012 | nor does a local of a lambda nested inside the caller (#187)
+f:{x}
+g:{[a] f[1;2]; {f:1; f}[]}
+
+=== clean | a lambda assigned to a local is not the global of that name (#188)
+h:{g:{x}; g 1}
+g:{x+y}
+r:g[1;2]
+
+=== QA012 | so the global's rank still counts after one (#188)
+h:{g:{x+y}; g[1;2]}
+g:{x}
+r:g[1;2]
+
+=== clean | a local lambda's rank does not make a later root call a projection (#188)
+h:{[a] g:{[p;q] p+q}; g[a;1]}
+r:g(1;2)
+
+=== clean | a symbol is not a read of y: the lambda takes one argument (#189)
+r:{x,`y} each 1 2
+f:{x,`y}
+s:f(1;2)
+
+=== QA012 | so two arguments are one too many (#189)
+f:{x,`y}
+f[1;2]
+
 === QA012 | a lambda defined under \d is called by its full name (q 5: .foo.f[1;2] is 'rank)
 \d .foo
 f:{x}

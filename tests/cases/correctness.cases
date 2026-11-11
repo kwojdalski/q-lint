@@ -1,3 +1,11 @@
+=== clean profile: general | QB021: a by inside a parenthesised subquery is the subquery's, not the outer select's (#203)
+r:select sym,lastPx:(exec last price by sym from q) sym from t
+s:select a,(exec b by a from u) from t
+
+=== clean | QB019: nor does a subquery's by or from end the outer select list (#203)
+s:select a,(exec b by a from u) from t
+v:select a,(select a by c from u) from t
+
 === QB021 | a result column named like a by group (q 5: 'dup names for cols/groups a)
 r:select a by a from t
 
@@ -424,6 +432,9 @@ d:([a:1;a:2])
 === QB020 | a statement after a top-level return never runs
 f:{:1;2}
 
+=== QB020 | a string is a statement too, and never runs after the return (#216)
+f:{[a] :a; "x"}
+
 === QB020 | nor after a signal
 f:{'`e;x}
 
@@ -483,6 +494,21 @@ out["hello"]
 === QT022 | a float atom indexed by juxtaposition, as with brackets
 f:2.5
 r:f 0
+
+=== clean | QT022 and QB010: a value assigned under \d is the namespace's, not the root name read after \d . (#190)
+\d .ns
+a:1
+\d .
+r:a 0
+s:a -1
+
+=== QT022 QB010 | but read inside the namespace, or by its full name, it is that atom (#190)
+\d .ns
+a:1.5
+r:a 0
+s:a -1
+\d .
+t:.ns.a 0
 
 === clean | QT022: an infix builtin after an atom is not indexing it
 w:3.5
@@ -602,6 +628,14 @@ f:{[a] a:a
 === QF014 | in a lambda with no earlier local, a:a is 'a (q 5), not a self-assignment
 a:5
 f:{b:1; a:a; a+b}
+
+=== QF014 | a read in the value on the next line of the lambda is still in the value (#191)
+g:{b:1+
+  b; b}
+
+=== QF014 | nor does the line break have to come before the read (#191)
+h:{c:1
+  +c; c}
 
 === QF014 | and a lambda inside one does not see the outer local
 f:{a:1; a+{a:a}[]}

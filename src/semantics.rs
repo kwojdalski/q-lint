@@ -196,7 +196,7 @@ fn eval_path(text: &str, pos: usize) -> (usize, Vec<(usize, usize, bool)>) {
 /// is a local or a read of one. Only a keyword at a word boundary starts a
 /// query: `` `delete`` is a symbol and `.ns.update` a name. With `tables`, a
 /// table literal `([...]...)` goes too, whose columns are written the same way.
-fn local_view(direct: &str, tables: bool) -> String {
+pub(crate) fn local_view(direct: &str, tables: bool) -> String {
     let symbols = re!(r"`[A-Za-z0-9_./:]*")
         .replace_all(direct, |m: &regex::Captures| " ".repeat(m[0].len()))
         .into_owned();
@@ -1357,7 +1357,8 @@ pub fn check(
             };
             // A read to the right of the assignment, in the expression it
             // assigns, runs first too: q 5 `{a:a+1}[]` is 'a. The walk stops
-            // at a `;` or at a bracket that closes around the assignment.
+            // at a `;` or at a bracket that closes around the assignment -
+            // not at a line break, which inside a lambda is whitespace (#191).
             let in_value = m.start() > assigned
                 && direct[assigned..].starts_with(name)
                 && {
@@ -1368,7 +1369,7 @@ pub fn check(
                             b')' | b']' | b'}' => depth -= 1,
                             _ => {}
                         }
-                        depth >= 0 && !(b == b';' && depth == 0) && b != b'\n'
+                        depth >= 0 && !(b == b';' && depth == 0)
                     })
                 }
                 && {
@@ -1385,7 +1386,7 @@ pub fn check(
                                 b')' | b']' | b'}' => depth -= 1,
                                 _ => {}
                             }
-                            depth < 0 || (b == b';' && depth == 0) || b == b'\n'
+                            depth < 0 || (b == b';' && depth == 0)
                         })
                         .unwrap_or(rest.len());
                     !assignment.captures_iter(&rest[..end]).any(|a| {
@@ -1750,12 +1751,19 @@ pub fn check(
         if dynamic || scope.parent.is_none() {
             continue;
         }
-        let mut outer = HashSet::new();
-        let mut parent = scope.parent;
-        while let Some(p) = parent {
-            outer.extend(scopes[p].locals.iter().cloned());
-            parent = scopes[p].parent;
-        }
+        // Walked per name rather than collected per scope: collecting copies
+        // every enclosing lambda's locals into every nested one, which is
+        // quadratic in nesting depth (#185).
+        let outer = |name: &str| {
+            let mut parent = scope.parent;
+            while let Some(p) = parent {
+                if scopes[p].locals.contains(name) {
+                    return true;
+                }
+                parent = scopes[p].parent;
+            }
+            false
+        };
         let direct = local_view(&scope.direct, false);
         let mut seen = HashSet::new();
         for m in re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(&direct) {
@@ -1765,8 +1773,8 @@ pub fn check(
                 || direct[m.end()..]
                     .trim_start_matches([' ', '\t'])
                     .starts_with(':')
-                || !outer.contains(name)
                 || scope.locals.contains(name)
+                || !outer(name)
                 || !seen.insert(name)
             {
                 continue;
@@ -2270,7 +2278,7 @@ pub fn check(
         code,
         raw,
         comments,
-        &scopes,
+        (&scopes, &namespaces),
         dynamic,
         &|name: &str| elsewhere(&qualify(name, "")),
     ));
@@ -2436,16 +2444,29 @@ fn named_values(
     code: &str,
     raw: &str,
     comments: &str,
-    scopes: &[Scope],
+    // The scopes, and the `\d` namespace in force from each offset on.
+    (scopes, namespaces): (&[Scope], &[(usize, String)]),
     dynamic: bool,
     elsewhere: &dyn Fn(&str) -> bool,
 ) -> Vec<Finding> {
     let mut out = vec![];
+    // A name as q resolves it at `at`, under the `\d` in force there: after
+    // `\d .ns`, `a:1` defines `.ns.a`, and a root `a` read after `\d .` is
+    // another variable (#190).
+    let key = |name: &str, at: usize| -> String {
+        let ns = &namespaces[namespaces
+            .partition_point(|(p, _)| *p <= at)
+            .saturating_sub(1)]
+        .1;
+        resolved(name, ns)
+    };
     let name_re = r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*";
     // Every place a name is written: `a:`, `a::`, `a+:`, `a[i]:`, `a set`,
     // and `(a;b):`. A name written anywhere but its one plain top-level
     // assignment is not known.
     let mut writes: HashMap<&str, Vec<usize>> = HashMap::new();
+    // The same, keyed as q resolves each name where it is written.
+    let mut exact: HashMap<String, Vec<usize>> = HashMap::new();
     for m in re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*(?:\[[^\]]*\])?\s*[-+*%,&|^#_!~=<>$?@.]?::?")
         .captures_iter(code)
     {
@@ -2454,24 +2475,33 @@ fn named_values(
             continue;
         }
         writes.entry(m.get(1).unwrap().as_str()).or_default().push(whole.start());
+        exact
+            .entry(key(m.get(1).unwrap().as_str(), whole.start()))
+            .or_default()
+            .push(whole.start());
     }
     for m in re!(r"`(\.?[A-Za-z][A-Za-z0-9_.]*)\s+set\b|\bset\s*\[\s*`(\.?[A-Za-z][A-Za-z0-9_.]*)")
         .captures_iter(code)
     {
         // Infix and bracket form alike: q 5 `a:1;set[`a;2 3];a 0` is 2.
-        writes
-            .entry(m.get(1).or(m.get(2)).unwrap().as_str())
+        let name = m.get(1).or(m.get(2)).unwrap().as_str();
+        writes.entry(name).or_default().extend([0, 0]);
+        exact
+            .entry(key(name, m.get(0).unwrap().start()))
             .or_default()
             .extend([0, 0]);
     }
-    for (_, name) in multi_assignments(code) {
+    for (at, name) in multi_assignments(code) {
         writes.entry(name).or_default().extend([0, 0]);
+        exact.entry(key(name, at)).or_default().extend([0, 0]);
     }
     // A table changed in place by name: `update c:1 from `t` adds a column,
     // as do `![`t;...]` and `.[`t;...]`, without an assignment to say so.
     for m in re!(r"(?:\bfrom\s*|[!.]\s*\[\s*)`(\.?[A-Za-z][A-Za-z0-9_.]*)").captures_iter(code) {
-        writes
-            .entry(m.get(1).unwrap().as_str())
+        let name = m.get(1).unwrap().as_str();
+        writes.entry(name).or_default().extend([0, 0]);
+        exact
+            .entry(key(name, m.get(0).unwrap().start()))
             .or_default()
             .extend([0, 0]);
     }
@@ -2482,7 +2512,8 @@ fn named_values(
     let mut handles: HashSet<&str> = HashSet::new();
     // A file that evaluates strings can define anything, so nothing is known
     // by name there; the literal-only checks below still hold.
-    for (name, at) in writes.iter().filter(|_| !dynamic) {
+    for (name, at) in exact.iter().filter(|_| !dynamic) {
+        let name = name.as_str();
         let [at] = at[..] else { continue };
         if scope_at(scopes, at).is_some() || !boundary(code, at) {
             continue;
@@ -2531,10 +2562,10 @@ fn named_values(
     // whatever was loaded before (q 5: `g:{x}` loaded, then `g:2.5` + `g 0`,
     // is 'type).
     let visible = |name: &str, at: usize| -> Option<&Held> {
-        let (assigned, value) = known.get(name)?;
+        let (assigned, value) = known.get(key(name, at).as_str())?;
         match scope_at(scopes, at) {
             Some(s) if scopes[s].locals.contains(name) => None,
-            Some(_) if elsewhere(name) => None,
+            Some(_) if elsewhere(&key(name, at)) => None,
             None if at < *assigned => None,
             _ => Some(value),
         }
@@ -2567,7 +2598,7 @@ fn named_values(
         // write - `out:1; out["hi\n"]` prints - but given a number or nothing
         // it cannot: 'type on an open handle, 'domain on one that is not.
         // Verified in q 5. A name or anything else might be a string.
-        if handles.contains(name.as_str()) {
+        if handles.contains(key(name.as_str(), name.start()).as_str()) {
             // `a@0` and `a . enlist 0` apply it the same way (q 5).
             let after = raw[name.end()..].trim_start_matches([' ', '\t']);
             let after = after
@@ -2716,7 +2747,7 @@ fn named_values(
     let kind_of = |text: &str, at: usize| -> Option<Arithmetic> {
         if text.starts_with(|c: char| c.is_alphabetic() || c == '.') {
             visible(text, at)?;
-            kinds.get(text).copied()
+            kinds.get(key(text, at).as_str()).copied()
         } else {
             arithmetic_kind(text)
         }

@@ -238,3 +238,11 @@ tearDown_release:{x}
 beforeNamespace_isolate:{x}
 fooBar:{x}
 bazQux:{x}
+
+=== QS003 profile: styleq | an assignment on an indented continuation line still names l (#214)
+f:{x}
+  l:1
+
+=== QS001 profile: styleq | and still names a_b (#214)
+f:{x}
+  a_b:1

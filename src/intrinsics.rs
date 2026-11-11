@@ -181,8 +181,9 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
         // The literal has to be the whole argument. `til 1.5 * x` is not a
         // call on 1.5 - q reads right to left - and `sum 1 2 3,x` is a call
         // on a join. Anything that continues the expression disqualifies it.
-        let rest = code[whole.end()..].trim_start_matches([' ', '\t']);
-        if !(crate::operand_ends(code, whole.end()) || rest.starts_with('/')) {
+        // A `/` straight after it is not a comment - those are blank in
+        // `code` - but an iterator: `asc 3/x` sorts `3/x` (#194).
+        if !crate::operand_ends(code, whole.end()) {
             continue;
         }
         let arg = call.get(2).unwrap();

@@ -12,7 +12,7 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
         .into_owned();
     attributes(path, source, code, comments, &mut out);
     temporals(path, source, comments, &unsym, &mut out);
-    missing_from(path, source, code, &unsym, &mut out);
+    missing_from(path, source, code, comments, &unsym, &mut out);
     signals(path, source, code, comments, &mut out);
     where_assignment(path, source, code, &mut out);
     hopen_literal(path, source, code, comments, &mut out);
@@ -110,6 +110,14 @@ fn number(token: &str) -> Option<Key> {
         .map(Key::Number)
 }
 
+/// Whether `at` is in the argument of a system command, which q never parses
+/// as q: `\l /data/2024.02.30/t` names a path (#198). Not `\t` or `\ts`,
+/// whose argument is an expression q runs.
+fn command_argument(unsym: &str, at: usize) -> bool {
+    let line = unsym[..at].rfind('\n').map_or(0, |p| p + 1);
+    unsym[line..].starts_with('\\') && !re!(r"^\\ts?(?::\d+)?[ \t]").is_match(&unsym[line..])
+}
+
 /// QE006. A date, month or time q refuses at parse. A date or month that does not exist:
 /// `2024.02.30` is '2024.02.30 and `2024.13m` is '2024.13; leap years are
 /// Gregorian, so 2000.02.29 parses and 1900.02.29 does not.
@@ -119,6 +127,9 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
     // `12:00:60` and `0D00:00:60`, and takes `25:00` and `0D25:00:00`.
     for m in re!(r"(\d{2,}):(\d{2})(?::(\d{2}))?").captures_iter(unsym) {
         let whole = m.get(0).unwrap();
+        if command_argument(unsym, whole.start()) {
+            continue;
+        }
         // Part of a longer token: a date's or number's digits, or a name
         // such as `p60` in `p60:60`, which assigns 60 rather than writing a
         // time. The `D` of `0D00:00:60` and the `T` of a datetime start no name.
@@ -221,7 +232,9 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
     }
     // A month has two digits: q 5 refuses `2023.1m`.
     for m in re!(r"\b\d{4}\.\dm\b").find_iter(unsym) {
-        if unsym[..m.start()].ends_with(|c: char| c.is_ascii_alphanumeric() || c == '.') {
+        if unsym[..m.start()].ends_with(|c: char| c.is_ascii_alphanumeric() || c == '.')
+            || command_argument(unsym, m.start())
+        {
             continue;
         }
         out.push(Finding::at(
@@ -237,6 +250,9 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
     }
     for m in re!(r"\b(\d{4})\.(\d{2})(?:\.(\d{2})|m\b)").captures_iter(unsym) {
         let whole = m.get(0).unwrap();
+        if command_argument(unsym, whole.start()) {
+            continue;
+        }
         // The year has to start the token: `1.2024.02.30` is not a date.
         if !unsym[..whole.start()].ends_with(|c: char| !c.is_ascii_alphanumeric() && c != '.')
             && whole.start() != 0
@@ -274,7 +290,14 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
 /// statement ends, or nothing after it: `select a by b t`, `{select x}`,
 /// `delete a` and `select a from` are each 'from at parse time (q 5), and
 /// `select from t where` - a where phrase with nothing in it - is ',.
-fn missing_from(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Finding>) {
+fn missing_from(
+    path: &str,
+    source: &str,
+    code: &str,
+    comments: &str,
+    unsym: &str,
+    out: &mut Vec<Finding>,
+) {
     for m in re!(r"\b(select|exec|update|delete)\b").find_iter(unsym) {
         if !boundary(code, m.start()) {
             continue;
@@ -306,12 +329,38 @@ fn missing_from(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec
             }
             at += 1;
         }
-        let statement = &unsym[m.end()..at];
+        // This phrase's own `from` and `where` only: not one inside a
+        // bracket, nor one that belongs to a query nested after this one's
+        // `from` - `... where b in exec c from u where` leaves the outer
+        // where its operand (#200).
+        let mut flat = unsym.as_bytes()[m.end()..at].to_vec();
+        let mut depth = 0i32;
+        for b in &mut flat {
+            let c = *b;
+            if c == b')' || c == b']' || c == b'}' {
+                depth -= 1;
+            }
+            if depth > 0 {
+                *b = b' ';
+            }
+            if c == b'(' || c == b'[' || c == b'{' {
+                depth += 1;
+            }
+        }
+        let flat = String::from_utf8(flat).unwrap_or_default();
+        let own = re!(r"\bfrom\b").find(&flat).map_or(flat.len(), |first| {
+            re!(r"\b(?:select|exec|update|delete)\b")
+                .find_iter(&flat[first.end()..])
+                .find(|n| boundary(code, m.end() + first.end() + n.start()))
+                .map_or(flat.len(), |n| first.end() + n.start())
+        });
+        let statement = &flat[..own];
         let from = re!(r"\bfrom\b").find_iter(statement).last();
         let detail = match from {
             None => "has no `from` before its statement ends: q raises 'from",
-            // Read from `code`, where `` from `t `` still has its table.
-            Some(f) if code[m.end() + f.end()..at].trim().is_empty() => {
+            // Read from `comments`, where `` from `t `` still has its table
+            // and `from "t"` its string (#199).
+            Some(f) if comments[m.end() + f.end()..at].trim().is_empty() => {
                 "has nothing after its `from`: q raises 'from"
             }
             // A where phrase with nothing in it: q 5 `parse "exec a from t
@@ -321,7 +370,7 @@ fn missing_from(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec
                     .find_iter(&statement[f.end()..])
                     .last()
                     .is_some_and(|w| {
-                        code[m.end() + f.end() + w.end()..at].trim().is_empty()
+                        comments[m.end() + f.end() + w.end()..at].trim().is_empty()
                             && boundary(code, m.end() + f.end() + w.start())
                     }) =>
             {

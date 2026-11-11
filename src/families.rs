@@ -18,7 +18,7 @@ pub fn check(
     leftovers(path, source, comments, foreign, &mut out);
     duplicate_columns(path, source, code, &mut out);
     select_by_duplicate(path, source, code, &mut out);
-    unreachable(path, source, code, &mut out);
+    unreachable(path, source, code, comments, &mut out);
     out
 }
 
@@ -154,6 +154,11 @@ fn credentials(path: &str, source: &str, code: &str, comments: &str, out: &mut V
         if !secret.is_match(last) || message.is_match(last) {
             continue;
         }
+        // A column, not a variable: `update password:"***" from users`
+        // redacts one, and `([]token:"ab")` names one (#204).
+        if crate::in_qsql_phrase(code, name.start()) || in_table_literal(code, name.start()) {
+            continue;
+        }
         let quote = m.get(0).unwrap().end() - 1;
         let value = re!(r#"^"((?:\\.|[^"\\])*)""#).captures(&comments[quote..]);
         // The literal has to be the whole value: in `token:"," vs x` and
@@ -187,6 +192,27 @@ fn credentials(path: &str, source: &str, code: &str, comments: &str, out: &mut V
 fn iterated(code: &str, at: usize) -> bool {
     let rest = &code[at..];
     rest.starts_with(['\'', '/', '\\']) || re!(r"^[ \t]*(?:each|peach)\b").is_match(rest)
+}
+
+/// Whether `at` names a column of a table literal: the bracket around it,
+/// past any `;` between columns, is the `(` of `([...] ...)` or the `[` of
+/// its key columns.
+fn in_table_literal(code: &str, at: usize) -> bool {
+    let b = code.as_bytes();
+    let mut depth = 0i32;
+    let mut i = at;
+    while i > 0 {
+        i -= 1;
+        match b[i] {
+            b')' | b']' | b'}' => depth += 1,
+            b'(' | b'[' | b'{' if depth > 0 => depth -= 1,
+            b'(' => return code[i + 1..].trim_start().starts_with('['),
+            b'[' => return code[..i].trim_end().ends_with('('),
+            b'{' => return false,
+            _ => {}
+        }
+    }
+    false
 }
 
 /// #10: doing by hand what a q primitive does. Only rewrites q confirmed give
@@ -360,13 +386,13 @@ fn duplicate_columns(path: &str, source: &str, code: &str, out: &mut Vec<Finding
             continue;
         }
         let rest = &code[q.end()..];
-        let Some(stop) = re!(r"\b(?:by|from)\b").find(rest) else {
+        let Some(stop) = top_level_word(rest, re!(r"\b(?:by|from)\b")) else {
             continue;
         };
         let mut lists = vec![&rest[..stop.start()]];
         if stop.as_str() == "by"
             && q.as_str() == "select"
-            && let Some(from) = re!(r"\bfrom\b").find(&rest[stop.end()..])
+            && let Some(from) = top_level_word(&rest[stop.end()..], re!(r"\bfrom\b"))
         {
             lists.push(&rest[stop.end()..stop.end() + from.start()]);
         }
@@ -392,6 +418,32 @@ fn duplicate_columns(path: &str, source: &str, code: &str, out: &mut Vec<Finding
             }
         }
     }
+}
+
+/// The first match of `word` in `text` at its own bracket depth - not one
+/// inside a parenthesised subquery, `(exec b by a from u)`, whose by and
+/// from are that query's (#203) - and before any bracket closes around
+/// `text`'s start, which ends the phrase.
+fn top_level_word<'t>(text: &'t str, word: &regex::Regex) -> Option<regex::Match<'t>> {
+    let b = text.as_bytes();
+    let (mut depth, mut i) = (0i32, 0);
+    for m in word.find_iter(text) {
+        while i < m.start() {
+            match b[i] {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => depth -= 1,
+                _ => {}
+            }
+            if depth < 0 {
+                return None;
+            }
+            i += 1;
+        }
+        if depth == 0 {
+            return Some(m);
+        }
+    }
+    None
 }
 
 /// The items of a select or by list: split at commas outside brackets, so
@@ -678,10 +730,10 @@ fn select_by_duplicate(path: &str, source: &str, code: &str, out: &mut Vec<Findi
             continue;
         }
         let rest = &code[q.end()..];
-        let Some(by) = re!(r"\b(?:by|from)\b").find(rest) else {
+        let Some(by) = top_level_word(rest, re!(r"\b(?:by|from)\b")) else {
             continue;
         };
-        let Some(from) = re!(r"\bfrom\b").find(&rest[by.end()..]) else {
+        let Some(from) = top_level_word(&rest[by.end()..], re!(r"\bfrom\b")) else {
             continue;
         };
         if by.as_str() != "by" {
@@ -721,7 +773,7 @@ fn select_by_duplicate(path: &str, source: &str, code: &str, out: &mut Vec<Findi
 /// QB020. A statement after a return or a signal at a lambda's top level can
 /// never run: `{:1;2}` returns 1 and the 2 is dead. Only the top level - a
 /// `:x` inside `if[...]` or `$[...]` is a branch, and what follows it runs.
-fn unreachable(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
+fn unreachable(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<Finding>) {
     for (brace, _) in code.match_indices('{') {
         let Some(end) = matching(code, brace, b'{', b'}') else {
             continue;
@@ -752,12 +804,15 @@ fn unreachable(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
                     && !t.starts_with("':")
                     && !t[1..].trim_start().starts_with('['))
         };
+        // Emptiness read from `comments`, where a string is still there:
+        // `{[a] :a; "x"}` has a statement after the return (#216).
+        let kept = &comments[body_start..end - 1];
         if let Some(i) = statements.iter().position(|&(a, b)| exits(&body[a..b]))
             && let Some(&(a, _)) = statements[i + 1..]
                 .iter()
-                .find(|&&(a, b)| !body[a..b].trim().is_empty())
+                .find(|&&(a, b)| !kept[a..b].trim().is_empty())
         {
-            let at = body_start + a + (body[a..].len() - body[a..].trim_start().len());
+            let at = body_start + a + (kept[a..].len() - kept[a..].trim_start().len());
             out.push(Finding::at(
                     path,
                     source,
