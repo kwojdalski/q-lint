@@ -360,13 +360,13 @@ fn duplicate_columns(path: &str, source: &str, code: &str, out: &mut Vec<Finding
             continue;
         }
         let rest = &code[q.end()..];
-        let Some(stop) = re!(r"\b(?:by|from)\b").find(rest) else {
+        let Some(stop) = top_level_word(rest, re!(r"\b(?:by|from)\b")) else {
             continue;
         };
         let mut lists = vec![&rest[..stop.start()]];
         if stop.as_str() == "by"
             && q.as_str() == "select"
-            && let Some(from) = re!(r"\bfrom\b").find(&rest[stop.end()..])
+            && let Some(from) = top_level_word(&rest[stop.end()..], re!(r"\bfrom\b"))
         {
             lists.push(&rest[stop.end()..stop.end() + from.start()]);
         }
@@ -392,6 +392,32 @@ fn duplicate_columns(path: &str, source: &str, code: &str, out: &mut Vec<Finding
             }
         }
     }
+}
+
+/// The first match of `word` in `text` at its own bracket depth - not one
+/// inside a parenthesised subquery, `(exec b by a from u)`, whose by and
+/// from are that query's (#203) - and before any bracket closes around
+/// `text`'s start, which ends the phrase.
+fn top_level_word<'t>(text: &'t str, word: &regex::Regex) -> Option<regex::Match<'t>> {
+    let b = text.as_bytes();
+    let (mut depth, mut i) = (0i32, 0);
+    for m in word.find_iter(text) {
+        while i < m.start() {
+            match b[i] {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => depth -= 1,
+                _ => {}
+            }
+            if depth < 0 {
+                return None;
+            }
+            i += 1;
+        }
+        if depth == 0 {
+            return Some(m);
+        }
+    }
+    None
 }
 
 /// The items of a select or by list: split at commas outside brackets, so
@@ -678,10 +704,10 @@ fn select_by_duplicate(path: &str, source: &str, code: &str, out: &mut Vec<Findi
             continue;
         }
         let rest = &code[q.end()..];
-        let Some(by) = re!(r"\b(?:by|from)\b").find(rest) else {
+        let Some(by) = top_level_word(rest, re!(r"\b(?:by|from)\b")) else {
             continue;
         };
-        let Some(from) = re!(r"\bfrom\b").find(&rest[by.end()..]) else {
+        let Some(from) = top_level_word(&rest[by.end()..], re!(r"\bfrom\b")) else {
             continue;
         };
         if by.as_str() != "by" {

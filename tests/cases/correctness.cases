@@ -1,3 +1,11 @@
+=== clean profile: general | QB021: a by inside a parenthesised subquery is the subquery's, not the outer select's (#203)
+r:select sym,lastPx:(exec last price by sym from q) sym from t
+s:select a,(exec b by a from u) from t
+
+=== clean | QB019: nor does a subquery's by or from end the outer select list (#203)
+s:select a,(exec b by a from u) from t
+v:select a,(select a by c from u) from t
+
 === QB021 | a result column named like a by group (q 5: 'dup names for cols/groups a)
 r:select a by a from t
 
