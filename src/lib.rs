@@ -938,7 +938,21 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 }
                 end += 1;
             }
-            let groups = swallowed_comparisons(&flat_filter(&v.code[phrase..end]));
+            // A string is blank in the code view, and a blank reads as the
+            // space between operands: `a=f "x" and b=0` would group as
+            // `(a=f) "x"`. Fill it, so the string stays part of its operand.
+            let filled: String = v.code[phrase..end]
+                .bytes()
+                .zip(v.comments[phrase..end].bytes())
+                .map(|(c, s)| {
+                    if c != s || !c.is_ascii() {
+                        '_'
+                    } else {
+                        c as char
+                    }
+                })
+                .collect();
+            let groups = swallowed_comparisons(&flat_filter(&filled));
             if groups.is_empty() {
                 return None;
             }

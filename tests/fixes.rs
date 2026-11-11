@@ -355,6 +355,19 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
             "t:([]a:1 2;b:3 4);r:select from t where (a>1) or b<=4, a<3;",
             false,
         ),
+        // A string ends no operand: it is not the gap a blank would be (#210).
+        (
+            "QB006",
+            "r:select from t where a=f \"x\" and b=0",
+            "r:select from t where (a=f \"x\") and b=0",
+            false,
+        ),
+        (
+            "QB006",
+            "s:select from t where a=\"x\" and b=0",
+            "s:select from t where (a=\"x\") and b=0",
+            false,
+        ),
         ("QR004", "r:{x+1} each 1 2 3", "r:1 2 3+1", false),
         ("QR004", "r:{2-x} each a,b", "r:2-a,b", false),
         ("QR004", "r:{x%2} each a,b", "r:(a,b)%2", false),
