@@ -364,6 +364,8 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ("QR004", "s:a -{1+x} each 2 3", "s:a - 1+2 3", false),
         ("QR004", "t:a -{x*2} each 3 4", "t:a - 3 4*2", false),
         ("QL002", "a:1\n/ old:{x+1}\nb:2", "a:1\nb:2", false),
+        // The indentation goes with it, or `b:2` would continue `a:1` (#205).
+        ("QL002", "a:1\n  / f:{x}\nb:2", "a:1\nb:2", false),
         (
             "QB005",
             "t:([]a:1 2);r:select from t where a~1",

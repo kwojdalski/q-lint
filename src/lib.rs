@@ -1024,8 +1024,15 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             if matching(text, open, b'{', b'}') != Some(close + 1) {
                 return None;
             }
+            // The whole line, its indentation too: left behind, the
+            // indentation would make the next line continue the one above.
+            let line_start = source[..start].rfind('\n').map_or(0, |at| at + 1);
+            if !source[line_start..start].trim().is_empty() {
+                return None;
+            }
+            begin = line_start;
             (
-                text,
+                &source[line_start..line_end],
                 "".into(),
                 "Delete the commented-out definition".into(),
                 false,
