@@ -2095,7 +2095,123 @@ fn views(source: &str) -> Views {
         script_end,
     }
 }
+/// Every bracket's match in one text, computed once in a single stack pass.
+///
+/// Rules call `matching` from every `{`, `[` and `(` they look at, and many
+/// of them from every one in the file; done by scanning, that is time
+/// quadratic in nesting depth. `lint` installs one of these for `code` for
+/// the length of the lint, and `matching` answers from it for that text and
+/// any slice of it, falling back to the scan for any other text (#185).
+struct MatchTable {
+    start: usize,
+    len: usize,
+    /// For each position: where the group opened there ends, `NO_MATCH` if
+    /// it never closes, or `NOT_OPEN` if the position opens no group as
+    /// `matching` would read it from there.
+    ends: Vec<u32>,
+}
+
+const NO_MATCH: u32 = u32::MAX;
+const NOT_OPEN: u32 = u32::MAX - 1;
+
+thread_local! {
+    static MATCHES: std::cell::RefCell<Option<std::rc::Rc<MatchTable>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Keeps a `MatchTable` installed for as long as it lives, restoring
+/// whatever was installed before when it drops.
+pub(crate) struct MatchScope(Option<std::rc::Rc<MatchTable>>);
+
+impl MatchScope {
+    /// Installs the table for `text`. The caller keeps `text` alive and
+    /// unchanged while the scope lives - `matching` recognises the text by
+    /// its address.
+    pub(crate) fn install(text: &str) -> MatchScope {
+        let b = text.as_bytes();
+        let mut ends = vec![NOT_OPEN; b.len()];
+        // Applicable only below u32 offsets; a larger text keeps scanning.
+        if b.len() < NOT_OPEN as usize {
+            let mut stacks: [Vec<usize>; 3] = [vec![], vec![], vec![]];
+            let mut i = 0;
+            // The same walk `matching` makes, so a position it reads as
+            // outside a string is one this reads as outside a string too: from
+            // there on the two walks are in the same state and agree.
+            while i < b.len() {
+                match b[i] {
+                    b'"' => {
+                        i += 1;
+                        while i < b.len() && b[i] != b'"' {
+                            i += if b[i] == b'\\' { 2 } else { 1 };
+                        }
+                    }
+                    c @ (b'{' | b'[' | b'(') => {
+                        ends[i] = NO_MATCH;
+                        stacks[bracket_kind(c)].push(i);
+                    }
+                    c @ (b'}' | b']' | b')') => {
+                        if let Some(o) = stacks[bracket_kind(c)].pop() {
+                            ends[o] = (i + 1) as u32;
+                        }
+                    }
+                    _ => {}
+                }
+                i += 1;
+            }
+        }
+        let table = std::rc::Rc::new(MatchTable {
+            start: text.as_ptr() as usize,
+            len: text.len(),
+            ends,
+        });
+        MatchScope(MATCHES.with(|m| m.replace(Some(table))))
+    }
+}
+
+impl Drop for MatchScope {
+    fn drop(&mut self) {
+        let previous = self.0.take();
+        MATCHES.with(|m| *m.borrow_mut() = previous);
+    }
+}
+
+fn bracket_kind(c: u8) -> usize {
+    match c {
+        b'{' | b'}' => 0,
+        b'[' | b']' => 1,
+        _ => 2,
+    }
+}
+
+/// `matching` from the installed table, when `s` is a slice of its text and
+/// `start` opens a group of `open` there. `None` means "not answerable here".
+fn matching_from_table(s: &str, start: usize, open: u8) -> Option<Option<usize>> {
+    if s.is_empty() || start >= s.len() || s.as_bytes()[start] != open {
+        return None;
+    }
+    MATCHES.with(|m| {
+        let m = m.borrow();
+        let t = m.as_ref()?;
+        let at = s.as_ptr() as usize;
+        if at < t.start || at + s.len() > t.start + t.len {
+            return None;
+        }
+        let offset = at - t.start;
+        match t.ends[offset + start] {
+            NOT_OPEN => None,
+            NO_MATCH => Some(None),
+            end => {
+                let end = end as usize - offset;
+                Some((end <= s.len()).then_some(end))
+            }
+        }
+    })
+}
+
 fn matching(s: &str, start: usize, open: u8, close: u8) -> Option<usize> {
+    if let Some(answer) = matching_from_table(s, start, open) {
+        return answer;
+    }
     let b = s.as_bytes();
     let (mut i, mut depth) = (start, 0usize);
     while i < b.len() {
@@ -2414,6 +2530,7 @@ pub fn lint_selecting(
         }
     }
     let code = &v.code;
+    let _matches = MatchScope::install(code);
     // A UTF-8 BOM is not something q tolerates: it reports 'char on the first
     // line and loads nothing. Reported and then carried on past, because the
     // author still wants to know what else is wrong with a file they are

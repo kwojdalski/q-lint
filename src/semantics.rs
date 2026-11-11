@@ -1750,12 +1750,19 @@ pub fn check(
         if dynamic || scope.parent.is_none() {
             continue;
         }
-        let mut outer = HashSet::new();
-        let mut parent = scope.parent;
-        while let Some(p) = parent {
-            outer.extend(scopes[p].locals.iter().cloned());
-            parent = scopes[p].parent;
-        }
+        // Walked per name rather than collected per scope: collecting copies
+        // every enclosing lambda's locals into every nested one, which is
+        // quadratic in nesting depth (#185).
+        let outer = |name: &str| {
+            let mut parent = scope.parent;
+            while let Some(p) = parent {
+                if scopes[p].locals.contains(name) {
+                    return true;
+                }
+                parent = scopes[p].parent;
+            }
+            false
+        };
         let direct = local_view(&scope.direct, false);
         let mut seen = HashSet::new();
         for m in re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(&direct) {
@@ -1765,8 +1772,8 @@ pub fn check(
                 || direct[m.end()..]
                     .trim_start_matches([' ', '\t'])
                     .starts_with(':')
-                || !outer.contains(name)
                 || scope.locals.contains(name)
+                || !outer(name)
                 || !seen.insert(name)
             {
                 continue;
