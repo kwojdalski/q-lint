@@ -279,6 +279,10 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ("QR002", "r:{x}' y", "r:y", true),
         ("QR002", "a:1 2 3;r:a{x} each 0 2", "a:1 2 3;r:a 0 2", true),
         ("QR002", "b:0 2;r:0 1 2{x} each b", "b:0 2;r:0 1 2 b", true),
+        // A `-` left against the number would make it a negative literal
+        // and the subtraction an application (#207).
+        ("QR002", "r:a -{x} each 1 2", "r:a - 1 2", true),
+        ("QR002", "r:a -{x} each .5", "r:a - .5", true),
         (
             "QR003",
             "r:distinct asc distinct 3 1 1",
@@ -337,6 +341,7 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ),
         ("QB020", "f:{[x] :x; x+1}", "f:{[x] :x}", false),
         ("QF017", "f:{[x] a:x+1; x}", "f:{[x] x+1; x}", false),
+        ("QF017", "f:{[a] r:a -m:1; r}", "f:{[a] r:a - 1; r}", false),
         ("QP003", "r:.z.P", "r:.z.p", false),
         (
             "QB006",
@@ -356,6 +361,8 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ("QR004", "r:count {x*2} each b", "r:count b*2", false),
         ("QR004", "f:{a{x+1} each b}", "f:{a b+1}", false),
         ("QR004", "r:{x - 1} each b", "r:b-1", false),
+        ("QR004", "s:a -{1+x} each 2 3", "s:a - 1+2 3", false),
+        ("QR004", "t:a -{x*2} each 3 4", "t:a - 3 4*2", false),
         ("QL002", "a:1\n/ old:{x+1}\nb:2", "a:1\nb:2", false),
         (
             "QB005",

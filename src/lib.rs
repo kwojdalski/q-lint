@@ -1384,6 +1384,29 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         }
         _ => return None,
     };
+    // An edit that leaves a `-` against a number makes it a negative
+    // literal: `a -{x} each 1 2` would become `a -1 2`, `a` applied to
+    // `-1 2` where it was subtraction. Keep the two apart with a space,
+    // unless the number was already there - then the `-` was its sign.
+    let numeric = |s: &str| {
+        let mut c = s.chars();
+        match c.next() {
+            Some(d) if d.is_ascii_digit() => true,
+            Some('.') => c.next().is_some_and(|d| d.is_ascii_digit()),
+            _ => false,
+        }
+    };
+    let next: String = replacement
+        .chars()
+        .chain(source[begin + old.len()..].chars())
+        .take(2)
+        .collect();
+    let replacement = if source[..begin].ends_with('-') && !numeric(&source[begin..]) && numeric(&next)
+    {
+        format!(" {replacement}").into()
+    } else {
+        replacement
+    };
     Some(Fix {
         start: begin,
         end: begin + old.len(),
