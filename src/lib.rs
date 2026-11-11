@@ -2294,7 +2294,12 @@ pub(crate) fn lambda_rank(code: &str, raw: &str, brace: usize, end: usize) -> us
             _ => {}
         }
     }
-    let body = String::from_utf8(body).unwrap();
+    // A symbol is not a read: `{x,`y}` takes one argument (#189).
+    let body = re!(r"`[A-Za-z0-9_./:]*")
+        .replace_all(&String::from_utf8(body).unwrap(), |m: &regex::Captures| {
+            " ".repeat(m[0].len())
+        })
+        .into_owned();
     // Not as part of a dotted name: `.z.s` is the lambda itself, and
     // reading it says nothing about a third argument.
     if re!(r"(?:^|[^A-Za-z0-9_.])z(?:[^A-Za-z0-9_.]|$)").is_match(&body) {
@@ -2313,9 +2318,9 @@ pub(crate) fn shadowed(code: &str, raw: &str, at: usize, name: &str) -> bool {
         return false;
     }
     for (brace, _) in code[..at].match_indices('{') {
-        if !matching(code, brace, b'{', b'}').is_some_and(|end| end > at) {
+        let Some(end) = matching(code, brace, b'{', b'}').filter(|&end| end > at) else {
             continue;
-        }
+        };
         let sig = signature(code, raw, brace);
         if if sig.named {
             sig.slots.contains(&name)
@@ -2324,7 +2329,20 @@ pub(crate) fn shadowed(code: &str, raw: &str, at: usize, name: &str) -> bool {
         } {
             return true;
         }
-        let body = &code[sig.body..];
+        // This lambda's own body only: an assignment after its closing brace
+        // is another lambda's local, or a global, and one inside a nested
+        // lambda is that lambda's local (#187). q has no closures.
+        let mut own = code.as_bytes()[sig.body.min(end - 1)..end - 1].to_vec();
+        let mut depth = 0i32;
+        for c in &mut own {
+            match *c {
+                b'{' => depth += 1,
+                b'}' => depth -= 1,
+                _ if depth > 0 => *c = b' ',
+                _ => {}
+            }
+        }
+        let body = &String::from_utf8(own).unwrap();
         for (i, _) in body.match_indices(name) {
             let after = body[i + name.len()..].trim_start_matches([' ', '\t']);
             if boundary(body, i)
@@ -3222,8 +3240,30 @@ pub fn lint_selecting(
             format!("{ns}.{name}")
         }
     };
+    // How deep in lambdas each byte sits. A plain `g:{...}` inside a lambda
+    // assigns a local of that lambda, not the global `g` (#188); a dotted
+    // name is global wherever it is assigned.
+    let mut lambda_depth = vec![0u32; code.len() + 1];
+    {
+        let mut depth = 0u32;
+        for (i, b) in code.bytes().enumerate() {
+            lambda_depth[i] = depth;
+            match b {
+                b'{' => depth += 1,
+                b'}' => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+        }
+        lambda_depth[code.len()] = depth;
+    }
+    let global_definition = |m: &regex::Captures| -> bool {
+        m[1].contains('.') || lambda_depth[m.get(0).unwrap().start()] == 0
+    };
     let mut ranks: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     for m in re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)\s*:\s*\{").captures_iter(code) {
+        if !global_definition(&m) {
+            continue;
+        }
         let brace = m.get(0).unwrap().end() - 1;
         let Some(end) = matching(code, brace, b'{', b'}') else {
             continue;
@@ -3270,6 +3310,9 @@ pub fn lint_selecting(
     {
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
         for m in re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)\s*:\s*\{").captures_iter(code) {
+            if !global_definition(&m) {
+                continue;
+            }
             let name = qualified(m.get(0).unwrap().start(), &m[1]);
             if !seen.insert(name.clone()) {
                 redefined.insert(name);
