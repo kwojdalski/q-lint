@@ -1684,7 +1684,7 @@ pub(crate) fn operand_ends(code: &str, at: usize) -> bool {
 /// Whether `at` sits at the top level of a select, exec, update or delete
 /// phrase: walking back through its statement - to a `;`, an opening
 /// bracket or an unindented line - meets the keyword at the same depth.
-fn in_qsql_phrase(code: &str, at: usize) -> bool {
+pub(crate) fn in_qsql_phrase(code: &str, at: usize) -> bool {
     let b = code.as_bytes();
     let mut depth = 0i32;
     let mut seen_where = false;

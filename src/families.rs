@@ -154,6 +154,11 @@ fn credentials(path: &str, source: &str, code: &str, comments: &str, out: &mut V
         if !secret.is_match(last) || message.is_match(last) {
             continue;
         }
+        // A column, not a variable: `update password:"***" from users`
+        // redacts one, and `([]token:"ab")` names one (#204).
+        if crate::in_qsql_phrase(code, name.start()) || in_table_literal(code, name.start()) {
+            continue;
+        }
         let quote = m.get(0).unwrap().end() - 1;
         let value = re!(r#"^"((?:\\.|[^"\\])*)""#).captures(&comments[quote..]);
         // The literal has to be the whole value: in `token:"," vs x` and
@@ -187,6 +192,27 @@ fn credentials(path: &str, source: &str, code: &str, comments: &str, out: &mut V
 fn iterated(code: &str, at: usize) -> bool {
     let rest = &code[at..];
     rest.starts_with(['\'', '/', '\\']) || re!(r"^[ \t]*(?:each|peach)\b").is_match(rest)
+}
+
+/// Whether `at` names a column of a table literal: the bracket around it,
+/// past any `;` between columns, is the `(` of `([...] ...)` or the `[` of
+/// its key columns.
+fn in_table_literal(code: &str, at: usize) -> bool {
+    let b = code.as_bytes();
+    let mut depth = 0i32;
+    let mut i = at;
+    while i > 0 {
+        i -= 1;
+        match b[i] {
+            b')' | b']' | b'}' => depth += 1,
+            b'(' | b'[' | b'{' if depth > 0 => depth -= 1,
+            b'(' => return code[i + 1..].trim_start().starts_with('['),
+            b'[' => return code[..i].trim_end().ends_with('('),
+            b'{' => return false,
+            _ => {}
+        }
+    }
+    false
 }
 
 /// #10: doing by hand what a q primitive does. Only rewrites q confirmed give
