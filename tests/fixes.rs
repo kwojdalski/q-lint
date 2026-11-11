@@ -372,6 +372,14 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ),
         ("QF010", "f:{[a] x+1}", "f:{[a] a+1}", false),
         ("QA004", "f:{1};r:f . ()", "f:{1};r:f[]", true),
+        // Only the `. ()` reported changes - not the string argument before
+        // it, nor the `. (),1` that applies to a list (#208).
+        (
+            "QA004",
+            "f:{1}\nr:(!).(\"S=;\"); s:f . ()\nt:g . (),1; u:f . ()",
+            "f:{1}\nr:(!).(\"S=;\"); s:f[]\nt:g . (),1; u:f . ()",
+            true,
+        ),
         ("QT008", "r:til 5.0", "r:til 5", true),
         ("QT008", "r:til 3f", "r:til 3", true),
         ("QT025", "f:{'5}", "f:{'\"5\"}", true),

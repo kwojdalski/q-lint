@@ -1055,17 +1055,18 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             )
         }
         // `f . ()` is 'type; a niladic call is `f[]`.
+        // The finding sits on the `.` it names, and detection has already
+        // checked that the parentheses are empty and end the operand.
         "QA004" => {
-            let line_end = v.code[start..]
-                .find('\n')
-                .map_or(v.code.len(), |at| start + at);
-            let m = re!(r"\s*\.\s*\(\s*\)").find(&v.code[start..line_end])?;
-            if m.start() == 0 {
+            let m = re!(r"^\.\s*\(\s*\)").find(source.get(start..)?)?;
+            let function = source[..start].trim_end_matches([' ', '\t']);
+            if !ends_in_token(function) {
                 return None;
             }
+            begin = function.len();
             (
-                &source[start..start + m.end()],
-                format!("{}[]", &source[start..start + m.start()]).into(),
+                &source[begin..start + m.end()],
+                "[]".into(),
                 "Call with `[]`".into(),
                 true,
             )
@@ -1401,12 +1402,12 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         .chain(source[begin + old.len()..].chars())
         .take(2)
         .collect();
-    let replacement = if source[..begin].ends_with('-') && !numeric(&source[begin..]) && numeric(&next)
-    {
-        format!(" {replacement}").into()
-    } else {
-        replacement
-    };
+    let replacement =
+        if source[..begin].ends_with('-') && !numeric(&source[begin..]) && numeric(&next) {
+            format!(" {replacement}").into()
+        } else {
+            replacement
+        };
     Some(Fix {
         start: begin,
         end: begin + old.len(),
@@ -4528,10 +4529,13 @@ pub fn lint_selecting(
         // The parentheses have to be empty in the source - a string between
         // them is blank in `line`, so `(!).("S=;")` would pass for `. ()` -
         // and the whole of the right operand: `. (),y` applies to a list.
-        if re!(r"\.\s*\(\s*\)").find_iter(line).any(|m| {
-            re!(r"\(\s*\)$").is_match(&literals[m.range()]) && operand_ends(code, offset + m.end())
-        }) {
-            add(offset, "QA004", "`. ()`".into());
+        // Reported at the `.` itself, which is where the fix edits.
+        for m in re!(r"\.\s*\(\s*\)").find_iter(line) {
+            if re!(r"\(\s*\)$").is_match(&literals[m.range()])
+                && operand_ends(code, offset + m.end())
+            {
+                add(offset + m.start(), "QA004", "`. ()`".into());
+            }
         }
         // `/` after a value is the over adverb. `10/2` and `(a+b)/2` are '/
         // parse errors (with a space before it, `/` opens a comment and the
