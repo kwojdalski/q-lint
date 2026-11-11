@@ -2362,7 +2362,7 @@ fn suppress(out: &mut Vec<Finding>, source: &str, comments: &str) {
                 && (i == offset || raw[i - 1].is_ascii_whitespace())
         });
         if let Some(caps) = start.and_then(|i| {
-            re!(r"(?:^|\s)/\s*(?i:noqa)\s*:\s*([A-Z]+[0-9]+\b(?:\s*,\s*[A-Z]+[0-9]+\b|\s+[A-Z]+[0-9]+\b)*)")
+            re!(r"(?:^|\s)/+\s*(?i:noqa)\s*:\s*([A-Z]+[0-9]+\b(?:\s*,\s*[A-Z]+[0-9]+\b|\s+[A-Z]+[0-9]+\b)*)")
                 .captures(&source[i..end])
         }) {
             let codes = caps.get(1).unwrap().as_str();

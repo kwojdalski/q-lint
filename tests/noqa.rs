@@ -111,3 +111,13 @@ fn cli_exit_code_follows_suppression() {
     fs::write(&path, "f:{[dt;data] dt} / noqa\n").unwrap();
     assert_eq!(run().status.code(), Some(1));
 }
+
+/// `//` and `///` comments are comments too - 414 of the corpus's 707 files
+/// write them - so a suppression in that style works the same (#186).
+#[test]
+fn a_noqa_written_with_several_slashes_suppresses_too() {
+    for comment in ["//", "///"] {
+        let source = format!("f:{{[dt;data] dt}} {comment} noqa: QF016\n");
+        assert!(!has(&source, 1, "QF016"), "{source}");
+    }
+}
