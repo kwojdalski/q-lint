@@ -1239,7 +1239,12 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 });
             let rest = &source[start + whole.end()..];
             let line_rest = rest.split('\n').next().unwrap_or("");
-            if !statement {
+            // A lambda's last statement is its value: `{[a] a:a}` returns
+            // `a`, and `{[a] }` would return null. Keep the name there.
+            let last = !whole.as_str().contains(';')
+                && v.code[start + whole.end()..].trim_start().starts_with('}')
+                && enclosing_brace(&v.code, start).is_some();
+            if !statement || last {
                 (
                     &source[start..start + m.get(2)?.start()],
                     "".into(),

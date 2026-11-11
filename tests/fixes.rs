@@ -440,6 +440,9 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ("QB017", "f:{[x;b] r:x+b:b;r}", "f:{[x;b] r:x+b;r}", false),
         ("QB017", "b:1;c:b:b;c", "b:1;c:b;c", false),
         ("QB017", "f:{[b] b:b; b}", "f:{[b] b}", false),
+        // The last statement is the lambda's value, so the name stays (#213).
+        ("QB017", "f:{[a] a:a}", "f:{[a] a}", false),
+        ("QB017", "f:{[a]\n  a:a\n  }", "f:{[a]\n  a\n  }", false),
         ("QP002", "r:`datetime$x", "r:`timestamp$x", false),
         ("QP002", "r:2026.01.01T12:00", "r:2026.01.01D12:00", false),
         (
