@@ -728,11 +728,19 @@ fn print_diff(path: &str, before: &str, edits: &[q_lint_rs::Fix]) {
     let mut changes: Vec<Change> = vec![];
     for edit in edits {
         let from = line_start(edit.start);
-        let to = line_end(if edit.end > edit.start {
+        let mut to = line_end(if edit.end > edit.start {
             edit.end - 1
         } else {
             edit.start
         });
+        // An edit that removes a newline but leaves text before it on the
+        // line joins that text to the next line, which the change must then
+        // take in - or the new side ends mid-line, as if at end of file.
+        let kept = (edit.start > from || !edit.replacement.is_empty())
+            && !edit.replacement.ends_with('\n');
+        if kept && edit.end > edit.start && bytes[edit.end - 1] == b'\n' && to < before.len() {
+            to = line_end(to);
+        }
         match changes.last_mut() {
             Some(last) if from < last.1 => {
                 last.1 = last.1.max(to);

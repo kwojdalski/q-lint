@@ -179,6 +179,16 @@ fn credentials(path: &str, source: &str, code: &str, comments: &str, out: &mut V
     }
 }
 
+/// Whether the keyword that ends at `at` is the operand of an iterator -
+/// `asc each x`, `asc'[x]`, `distinct peach x` - and so applied item by item
+/// rather than to the list: `reverse asc each x` reverses the items, and
+/// `distinct each x` can make two items equal that the outer `distinct`
+/// then removes.
+fn iterated(code: &str, at: usize) -> bool {
+    let rest = &code[at..];
+    rest.starts_with(['\'', '/', '\\']) || re!(r"^[ \t]*(?:each|peach)\b").is_match(rest)
+}
+
 /// #10: doing by hand what a q primitive does. Only rewrites q confirmed give
 /// the same result on every input tried - nulls, symbols, strings, a
 /// dictionary, a table, an atom, the empty list. Others the survey proposed
@@ -192,7 +202,7 @@ fn simplifications(path: &str, source: &str, code: &str, out: &mut Vec<Finding>)
     // QR001: `reverse asc x` is `desc x`, and `reverse desc x` is `asc x`.
     for m in re!(r"\breverse\s+(asc|desc)\b").captures_iter(code) {
         let whole = m.get(0).unwrap();
-        if boundary(code, whole.start()) {
+        if boundary(code, whole.start()) && !iterated(code, whole.end()) {
             let other = if &m[1] == "asc" { "desc" } else { "asc" };
             add(
                 whole.start(),
@@ -211,7 +221,7 @@ fn simplifications(path: &str, source: &str, code: &str, out: &mut Vec<Finding>)
     }
     // QR003: sorting the distinct items keeps them distinct.
     for m in re!(r"\bdistinct\s+asc\s+distinct\b").find_iter(code) {
-        if boundary(code, m.start()) {
+        if boundary(code, m.start()) && !iterated(code, m.end()) {
             add(
                 m.start(),
                 "QR003",

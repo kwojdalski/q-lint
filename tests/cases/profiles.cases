@@ -8,6 +8,13 @@ t:2024.01.01T00:00:00.000
 === clean profile: uqf | a timestamp has the precision uqf wants
 t:2024.01.01D00:00:00.000000000
 
+=== clean profile: uqf | an indented slash is a line comment, not a block comment
+  /
+a:1
+f:{x+
+ /
+ 1}
+
 === QP001 profile: uqf | a terminated block comment is still policy, not syntax
 /
 text
@@ -241,6 +248,9 @@ a:.z.Z
 
 === QP003 profile: uqf | .z.D is the local date; the UTC one is .z.d
 b:.z.D
+
+=== clean profile: uqf | a dotted name that ends in .z.P is a variable, not the clock
+r:x.z.P
 
 === QP002 profile: uqf | .z.z is UTC, but still a datetime
 c:.z.z

@@ -279,6 +279,10 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ("QR002", "r:{x}' y", "r:y", true),
         ("QR002", "a:1 2 3;r:a{x} each 0 2", "a:1 2 3;r:a 0 2", true),
         ("QR002", "b:0 2;r:0 1 2{x} each b", "b:0 2;r:0 1 2 b", true),
+        // A `-` left against the number would make it a negative literal
+        // and the subtraction an application (#207).
+        ("QR002", "r:a -{x} each 1 2", "r:a - 1 2", true),
+        ("QR002", "r:a -{x} each .5", "r:a - .5", true),
         (
             "QR003",
             "r:distinct asc distinct 3 1 1",
@@ -337,7 +341,11 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ),
         ("QB020", "f:{[x] :x; x+1}", "f:{[x] :x}", false),
         ("QF017", "f:{[x] a:x+1; x}", "f:{[x] x+1; x}", false),
+        ("QF017", "f:{[a] r:a -m:1; r}", "f:{[a] r:a - 1; r}", false),
         ("QP003", "r:.z.P", "r:.z.p", false),
+        // The clock named is the clock fixed, on the line it is on (#206).
+        ("QP003", "a:(.z.D;.z.P)", "a:(.z.d;.z.P)", false),
+        ("QP003", "f:{x}\n  .z.P", "f:{x}\n  .z.p", false),
         (
             "QB006",
             "t:([]a:1 2;b:3 4);r:select from t where a=1 and b=3",
@@ -350,13 +358,30 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
             "t:([]a:1 2;b:3 4);r:select from t where (a>1) or b<=4, a<3;",
             false,
         ),
+        // A string ends no operand: it is not the gap a blank would be (#210).
+        (
+            "QB006",
+            "r:select from t where a=f \"x\" and b=0",
+            "r:select from t where (a=f \"x\") and b=0",
+            false,
+        ),
+        (
+            "QB006",
+            "s:select from t where a=\"x\" and b=0",
+            "s:select from t where (a=\"x\") and b=0",
+            false,
+        ),
         ("QR004", "r:{x+1} each 1 2 3", "r:1 2 3+1", false),
         ("QR004", "r:{2-x} each a,b", "r:2-a,b", false),
         ("QR004", "r:{x%2} each a,b", "r:(a,b)%2", false),
         ("QR004", "r:count {x*2} each b", "r:count b*2", false),
         ("QR004", "f:{a{x+1} each b}", "f:{a b+1}", false),
         ("QR004", "r:{x - 1} each b", "r:b-1", false),
+        ("QR004", "s:a -{1+x} each 2 3", "s:a - 1+2 3", false),
+        ("QR004", "t:a -{x*2} each 3 4", "t:a - 3 4*2", false),
         ("QL002", "a:1\n/ old:{x+1}\nb:2", "a:1\nb:2", false),
+        // The indentation goes with it, or `b:2` would continue `a:1` (#205).
+        ("QL002", "a:1\n  / f:{x}\nb:2", "a:1\nb:2", false),
         (
             "QB005",
             "t:([]a:1 2);r:select from t where a~1",
@@ -365,6 +390,14 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ),
         ("QF010", "f:{[a] x+1}", "f:{[a] a+1}", false),
         ("QA004", "f:{1};r:f . ()", "f:{1};r:f[]", true),
+        // Only the `. ()` reported changes - not the string argument before
+        // it, nor the `. (),1` that applies to a list (#208).
+        (
+            "QA004",
+            "f:{1}\nr:(!).(\"S=;\"); s:f . ()\nt:g . (),1; u:f . ()",
+            "f:{1}\nr:(!).(\"S=;\"); s:f[]\nt:g . (),1; u:f . ()",
+            true,
+        ),
         ("QT008", "r:til 5.0", "r:til 5", true),
         ("QT008", "r:til 3f", "r:til 3", true),
         ("QT025", "f:{'5}", "f:{'\"5\"}", true),
@@ -410,6 +443,9 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ("QB017", "f:{[x;b] r:x+b:b;r}", "f:{[x;b] r:x+b;r}", false),
         ("QB017", "b:1;c:b:b;c", "b:1;c:b;c", false),
         ("QB017", "f:{[b] b:b; b}", "f:{[b] b}", false),
+        // The last statement is the lambda's value, so the name stays (#213).
+        ("QB017", "f:{[a] a:a}", "f:{[a] a}", false),
+        ("QB017", "f:{[a]\n  a:a\n  }", "f:{[a]\n  a\n  }", false),
         ("QP002", "r:`datetime$x", "r:`timestamp$x", false),
         ("QP002", "r:2026.01.01T12:00", "r:2026.01.01D12:00", false),
         (
@@ -687,4 +723,27 @@ fn touching_fixes_keep_their_tokens_apart() {
         fs::read_to_string(&path).unwrap(),
         "x:10 20 30;y:2\nr:x y\nf:{-1 x}\n"
     );
+}
+
+/// QP002 and QP003 point at the value they name, not at the statement it
+/// sits in - where an editor underlines and where the fix edits (#206).
+#[test]
+fn policy_findings_sit_on_the_token_they_name() {
+    use q_lint_rs::{Profile, lint};
+    let source = "a:(.z.D;.z.P)\nf:{x}\n  .z.P\ntotalTime:.z.T\nb:1;c:-0Nz\n";
+    let at: Vec<_> = lint(source, "probe.q", Profile::Uqf)
+        .into_iter()
+        .filter(|f| f.code.starts_with("QP00"))
+        .map(|f| (f.code, f.line, f.column.unwrap()))
+        .collect();
+    let want: Vec<(String, usize, usize)> = vec![
+        ("QP003".into(), 1, 4),
+        ("QP003".into(), 1, 9),
+        ("QP003".into(), 3, 3),
+        ("QP003".into(), 4, 11),
+        ("QP002".into(), 5, 7),
+    ];
+    for w in &want {
+        assert!(at.contains(w), "{w:?} not in {at:?}");
+    }
 }

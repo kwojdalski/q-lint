@@ -904,15 +904,13 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         }
         // The UTC clock the convention asks for. A different value, so
         // only on request.
+        // The finding sits on the clock it names.
         "QP003" => {
-            let line_end = v.code[start..]
-                .find('\n')
-                .map_or(v.code.len(), |at| start + at);
-            let m = re!(r"\.z\.[PTN]\b").find(&v.code[start..line_end])?;
-            let clock = format!(".z.{}", m.as_str()[3..].to_ascii_lowercase());
+            let m = re!(r"^\.z\.[PTNZD]\b").find(v.code.get(start..)?)?;
+            let clock = m.as_str().to_ascii_lowercase();
             (
                 &source[start..start + m.end()],
-                format!("{}{clock}", &source[start..start + m.start()]).into(),
+                clock.clone().into(),
                 format!("Use the UTC `{clock}`").into(),
                 false,
             )
@@ -938,7 +936,21 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 }
                 end += 1;
             }
-            let groups = swallowed_comparisons(&flat_filter(&v.code[phrase..end]));
+            // A string is blank in the code view, and a blank reads as the
+            // space between operands: `a=f "x" and b=0` would group as
+            // `(a=f) "x"`. Fill it, so the string stays part of its operand.
+            let filled: String = v.code[phrase..end]
+                .bytes()
+                .zip(v.comments[phrase..end].bytes())
+                .map(|(c, s)| {
+                    if c != s || !c.is_ascii() {
+                        '_'
+                    } else {
+                        c as char
+                    }
+                })
+                .collect();
+            let groups = swallowed_comparisons(&flat_filter(&filled));
             if groups.is_empty() {
                 return None;
             }
@@ -1024,8 +1036,15 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             if matching(text, open, b'{', b'}') != Some(close + 1) {
                 return None;
             }
+            // The whole line, its indentation too: left behind, the
+            // indentation would make the next line continue the one above.
+            let line_start = source[..start].rfind('\n').map_or(0, |at| at + 1);
+            if !source[line_start..start].trim().is_empty() {
+                return None;
+            }
+            begin = line_start;
             (
-                text,
+                &source[line_start..line_end],
                 "".into(),
                 "Delete the commented-out definition".into(),
                 false,
@@ -1055,17 +1074,18 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             )
         }
         // `f . ()` is 'type; a niladic call is `f[]`.
+        // The finding sits on the `.` it names, and detection has already
+        // checked that the parentheses are empty and end the operand.
         "QA004" => {
-            let line_end = v.code[start..]
-                .find('\n')
-                .map_or(v.code.len(), |at| start + at);
-            let m = re!(r"\s*\.\s*\(\s*\)").find(&v.code[start..line_end])?;
-            if m.start() == 0 {
+            let m = re!(r"^\.\s*\(\s*\)").find(source.get(start..)?)?;
+            let function = source[..start].trim_end_matches([' ', '\t']);
+            if !ends_in_token(function) {
                 return None;
             }
+            begin = function.len();
             (
-                &source[start..start + m.end()],
-                format!("{}[]", &source[start..start + m.start()]).into(),
+                &source[begin..start + m.end()],
+                "[]".into(),
                 "Call with `[]`".into(),
                 true,
             )
@@ -1217,7 +1237,12 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 });
             let rest = &source[start + whole.end()..];
             let line_rest = rest.split('\n').next().unwrap_or("");
-            if !statement {
+            // A lambda's last statement is its value: `{[a] a:a}` returns
+            // `a`, and `{[a] }` would return null. Keep the name there.
+            let last = !whole.as_str().contains(';')
+                && v.code[start + whole.end()..].trim_start().starts_with('}')
+                && enclosing_brace(&v.code, start).is_some();
+            if !statement || last {
                 (
                     &source[start..start + m.get(2)?.start()],
                     "".into(),
@@ -1249,6 +1274,10 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             let line_end = v.code[start..]
                 .find('\n')
                 .map_or(v.code.len(), |at| start + at);
+            // The `"z"` cast is reported on its `$`; its string comes first.
+            let start = re!(r#""z"\s*$"#)
+                .find(&source[..start])
+                .map_or(start, |m| m.start());
             // Matched as the detector matches: on the view without comments,
             // and in code - a string spelling `"0Nz"` or `"15h$"` is data.
             // The `"z"` cast is the one string that is the point, so only
@@ -1384,6 +1413,29 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         }
         _ => return None,
     };
+    // An edit that leaves a `-` against a number makes it a negative
+    // literal: `a -{x} each 1 2` would become `a -1 2`, `a` applied to
+    // `-1 2` where it was subtraction. Keep the two apart with a space,
+    // unless the number was already there - then the `-` was its sign.
+    let numeric = |s: &str| {
+        let mut c = s.chars();
+        match c.next() {
+            Some(d) if d.is_ascii_digit() => true,
+            Some('.') => c.next().is_some_and(|d| d.is_ascii_digit()),
+            _ => false,
+        }
+    };
+    let next: String = replacement
+        .chars()
+        .chain(source[begin + old.len()..].chars())
+        .take(2)
+        .collect();
+    let replacement =
+        if source[..begin].ends_with('-') && !numeric(&source[begin..]) && numeric(&next) {
+            format!(" {replacement}").into()
+        } else {
+            replacement
+        };
     Some(Fix {
         start: begin,
         end: begin + old.len(),
@@ -2310,7 +2362,7 @@ fn suppress(out: &mut Vec<Finding>, source: &str, comments: &str) {
                 && (i == offset || raw[i - 1].is_ascii_whitespace())
         });
         if let Some(caps) = start.and_then(|i| {
-            re!(r"(?:^|\s)/\s*(?i:noqa)\s*:\s*([A-Z]+[0-9]+\b(?:\s*,\s*[A-Z]+[0-9]+\b|\s+[A-Z]+[0-9]+\b)*)")
+            re!(r"(?:^|\s)/+\s*(?i:noqa)\s*:\s*([A-Z]+[0-9]+\b(?:\s*,\s*[A-Z]+[0-9]+\b|\s+[A-Z]+[0-9]+\b)*)")
                 .captures(&source[i..end])
         }) {
             let codes = caps.get(1).unwrap().as_str();
@@ -4339,8 +4391,11 @@ pub fn lint_selecting(
             }
         }
         // Not after the end of the script: q 5 reads nothing past a lone `\`.
+        // Only a `/` alone in column 0 opens one, as the masker reads it: an
+        // indented `/` line is not a block comment.
         if uqf
-            && first_raw.trim() == "/"
+            && source[..start].rfind('\n').map_or(0, |at| at + 1) == start
+            && first_raw.trim_end_matches([' ', '\t', '\r', '\n']) == "/"
             && !v.foreign_offsets.contains(&offset)
             && v.script_end.is_none_or(|end| offset < end)
         {
@@ -4505,10 +4560,13 @@ pub fn lint_selecting(
         // The parentheses have to be empty in the source - a string between
         // them is blank in `line`, so `(!).("S=;")` would pass for `. ()` -
         // and the whole of the right operand: `. (),y` applies to a list.
-        if re!(r"\.\s*\(\s*\)").find_iter(line).any(|m| {
-            re!(r"\(\s*\)$").is_match(&literals[m.range()]) && operand_ends(code, offset + m.end())
-        }) {
-            add(offset, "QA004", "`. ()`".into());
+        // Reported at the `.` itself, which is where the fix edits.
+        for m in re!(r"\.\s*\(\s*\)").find_iter(line) {
+            if re!(r"\(\s*\)$").is_match(&literals[m.range()])
+                && operand_ends(code, offset + m.end())
+            {
+                add(offset + m.start(), "QA004", "`. ()`".into());
+            }
         }
         // `/` after a value is the over adverb. `10/2` and `(a+b)/2` are '/
         // parse errors (with a space before it, `/` opens a comment and the
@@ -4791,24 +4849,45 @@ pub fn lint_selecting(
             // Every pattern but the first has to match code: a help table
             // that spells `".z.Z"` or `"0Nz"` in a string uses neither. The
             // first is the one pattern whose string is the point - `"z"$`.
-            let in_code = |m: regex::Match| line[m.range()] == *m.as_str();
-            if re!(r#""z"\s*\$"#).is_match(literals)
-                || [
-                    re!(r"`datetime\s*\$"),
-                    re!(r"\b15h\s*\$"),
-                    re!(r"(?:^|[^\w.])-?0[NW]z\b"),
-                    re!(r"\b\d{4}\.\d{2}\.\d{2}T\d"),
-                    // `.z.z` and `.z.Z` are the clock as a datetime (-15h).
-                    re!(r"\.z\.[zZ]\b"),
-                ]
-                .iter()
-                .any(|regex| regex.find_iter(literals).any(in_code))
+            let in_code = |m: &regex::Match| line[m.range()] == *m.as_str();
+            // Reported at the first of them, which is where the fix starts.
+            if let Some(at) = re!(r#""z"\s*\$"#)
+                .find(literals)
+                .into_iter()
+                .chain(
+                    [
+                        re!(r"`datetime\s*\$"),
+                        re!(r"\b15h\s*\$"),
+                        re!(r"(?:^|[^\w.])-?0[NW]z\b"),
+                        re!(r"\b\d{4}\.\d{2}\.\d{2}T\d"),
+                        // `.z.z` and `.z.Z` are the clock as a datetime (-15h).
+                        re!(r"\.z\.[zZ]\b"),
+                    ]
+                    .iter()
+                    .filter_map(|regex| regex.find_iter(literals).find(in_code)),
+                )
+                // The null's pattern takes in the byte before it.
+                .map(|m| match m.as_str().find("0N").or(m.as_str().find("0W")) {
+                    Some(at) if m.as_str().ends_with('z') => {
+                        m.start() + at - usize::from(m.as_str()[..at].ends_with('-'))
+                    }
+                    // The `"z"` cast on its `$`: the string is not code, and
+                    // a fix only starts in code.
+                    _ if m.as_str().starts_with('"') => m.end() - 1,
+                    _ => m.start(),
+                })
+                .min()
             {
-                add(offset, "QP002", "Legacy datetime value or cast".into());
+                add(offset + at, "QP002", "Legacy datetime value or cast".into());
             }
-            if let Some(m) = re!(r"\.z\.[PTNZD]\b")
+            // The clock's own name: `x.z.P` is one dotted name, not `.z.P`.
+            for m in re!(r"\.z\.[PTNZD]\b")
                 .find_iter(literals)
-                .find(|m| line[m.range()] == *m.as_str())
+                .filter(|m| {
+                    !line[..m.start()]
+                        .ends_with(|c: char| c.is_ascii_alphanumeric() || "_.".contains(c))
+                })
+                .filter(|m| line[m.range()] == *m.as_str())
             {
                 let utc: String = m
                     .as_str()
@@ -4819,7 +4898,7 @@ pub fn lint_selecting(
                     })
                     .collect();
                 add(
-                    offset,
+                    offset + m.start(),
                     "QP003",
                     format!(
                         "`{}` is the local wall clock; the convention is UTC `{}`",

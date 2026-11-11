@@ -157,9 +157,16 @@ def q_heads(sources, tmp_path):
     return [line.split("\t", 1)[1] for line in out.stdout.splitlines() if line.startswith("RESULT\t")]
 
 
-def qb010(expression, tmp_path):
+# QB010 is in `general`, so it reports only what q refuses: a name applied to
+# the literal is refused when it holds an atom (#125), and runs when it holds
+# a function or a list - `window_to:{x}; window_to -0D00:01` is -0D00:01, and
+# a list indexed by the timespan is 0N. So each name is bound to an atom first.
+ATOMS = "window_to:.z.p\nt:00:00:05\n"
+
+
+def qb010(expression, tmp_path, prelude=ATOMS):
     target = tmp_path / "qb010.q"
-    target.write_text("r:" + expression + "\n")
+    target.write_text(prelude + "r:" + expression + "\n")
     out = subprocess.run(
         [str(BINARY), "--format", "json", str(target)], capture_output=True, text=True
     )
@@ -176,3 +183,23 @@ def test_qb010_reports_exactly_the_temporal_literals_q_applies(tmp_path):
     # and the report sits on the name, where the trap starts
     (finding,) = qb010("0D00:01 xbar .z.p -0D00:01", tmp_path)
     assert finding["column"] == len("r:0D00:01 xbar ") + 1
+
+
+def test_qb010_leaves_a_name_q_runs_alone(tmp_path):
+    """Applied to the literal, a function or a list is not refused - q runs it."""
+    script = tmp_path / "runs.q"
+    script.write_text(
+        'f:{x}; l:1 2 3;\n'
+        '-1 "RESULT\\t",.Q.s1 @[value;"f -0D00:01";{"ERR"}];\n'
+        '-1 "RESULT\\t",.Q.s1 @[value;"l -0D00:01";{"ERR"}];\n'
+        "exit 0;\n"
+    )
+    out = subprocess.run([Q, str(script), "-q"], capture_output=True, text=True, timeout=60)
+    results = [line for line in out.stdout.splitlines() if line.startswith("RESULT\t")]
+    assert len(results) == 2 and not any('"ERR"' in r for r in results), out.stdout
+    for prelude, expression in [
+        ("f:{x}\n", "f -0D00:01"),
+        ("l:1 2 3\n", "l -0D00:01"),
+        ("", "window_to -0D00:01"),
+    ]:
+        assert not qb010(expression, tmp_path, prelude), expression

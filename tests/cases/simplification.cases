@@ -4,6 +4,11 @@ r:{[p] reverse asc p}
 === QR001 | and reverse desc is asc
 r:{[p] reverse desc p}
 
+=== clean | under an iterator the sort is per item, and reverse reorders the items (q 5: reverse asc each (2 1;4 3) is (3 4;1 2), desc each is (2 1;4 3))
+r1:{[p] reverse asc each p}
+r2:{[p] reverse asc'[p]}
+r3:{[p] reverse desc peach p}
+
 === clean | first asc is not min: asc puts a null first and min skips it
 r:{[p] first asc p}
 
@@ -18,6 +23,11 @@ r:{[p] {x}':[p]}
 
 === QR003 | distinct after sorting distinct items
 r:{[p] distinct asc distinct p}
+
+=== clean | distinct each can make two items equal, which the outer distinct removes (q 5: (1 1 2;1 2) gives enlist 1 2, not two items)
+r1:{[p] distinct asc distinct each p}
+r2:{[p] distinct asc distinct'[p]}
+r3:{[p] distinct asc distinct peach p}
 
 === QR004 | one arithmetic operation with a number, which is atomic
 r:{[p] {x+1} each p}
