@@ -115,8 +115,7 @@ fn number(token: &str) -> Option<Key> {
 /// whose argument is an expression q runs.
 fn command_argument(unsym: &str, at: usize) -> bool {
     let line = unsym[..at].rfind('\n').map_or(0, |p| p + 1);
-    unsym[line..].starts_with('\\')
-        && !re!(r"^\\ts?(?::\d+)?[ \t]").is_match(&unsym[line..])
+    unsym[line..].starts_with('\\') && !re!(r"^\\ts?(?::\d+)?[ \t]").is_match(&unsym[line..])
 }
 
 /// QE006. A date, month or time q refuses at parse. A date or month that does not exist:

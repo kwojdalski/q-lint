@@ -1670,7 +1670,10 @@ pub(crate) fn operand_ends(code: &str, at: usize) -> bool {
     // A line break ends the operand unless the next line is indented and not
     // blank, which continues the statement: `where 2` + `  #1b` is
     // `where 2#1b` (#193).
-    if let Some(next) = rest.strip_prefix("\r\n").or_else(|| rest.strip_prefix('\n')) {
+    if let Some(next) = rest
+        .strip_prefix("\r\n")
+        .or_else(|| rest.strip_prefix('\n'))
+    {
         let line = next.split('\n').next().unwrap_or("");
         return !(next.starts_with([' ', '\t']) && !line.trim().is_empty());
     }
@@ -4652,10 +4655,14 @@ pub fn lint_selecting(
         //   "`l` never use letter `l`, looks like number `1` in some fonts"
         //
         // Assignment targets only: a name being read might be someone else's,
-        // and there is nothing for the reader of this file to act on.
-        if let Some(m) = re!(r"^\s*(\.?[A-Za-z][A-Za-z0-9_.]*)\s*::?(?:[^:=]|$)").captures(line)
-            && !in_parens[offset + m.get(1).unwrap().start()]
+        // and there is nothing for the reader of this file to act on. At the
+        // start of each line of the statement: an indented line continues
+        // it, and `f:{x}` + `  l:1` still assigns `l` (#214).
+        for m in re!(r"(?m)^[ \t]*(\.?[A-Za-z][A-Za-z0-9_.]*)\s*::?(?:[^:=]|$)").captures_iter(line)
         {
+            if in_parens[offset + m.get(1).unwrap().start()] {
+                continue;
+            }
             let target = m.get(1).unwrap();
             let text = target.as_str();
             if text.contains('_') {
