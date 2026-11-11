@@ -242,6 +242,9 @@ a:.z.Z
 === QP003 profile: uqf | .z.D is the local date; the UTC one is .z.d
 b:.z.D
 
+=== clean profile: uqf | a dotted name that ends in .z.P is a variable, not the clock
+r:x.z.P
+
 === QP002 profile: uqf | .z.z is UTC, but still a datetime
 c:.z.z
 

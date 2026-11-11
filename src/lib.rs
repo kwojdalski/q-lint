@@ -904,15 +904,13 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         }
         // The UTC clock the convention asks for. A different value, so
         // only on request.
+        // The finding sits on the clock it names.
         "QP003" => {
-            let line_end = v.code[start..]
-                .find('\n')
-                .map_or(v.code.len(), |at| start + at);
-            let m = re!(r"\.z\.[PTN]\b").find(&v.code[start..line_end])?;
-            let clock = format!(".z.{}", m.as_str()[3..].to_ascii_lowercase());
+            let m = re!(r"^\.z\.[PTNZD]\b").find(v.code.get(start..)?)?;
+            let clock = m.as_str().to_ascii_lowercase();
             (
                 &source[start..start + m.end()],
-                format!("{}{clock}", &source[start..start + m.start()]).into(),
+                clock.clone().into(),
                 format!("Use the UTC `{clock}`").into(),
                 false,
             )
@@ -1276,6 +1274,10 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             let line_end = v.code[start..]
                 .find('\n')
                 .map_or(v.code.len(), |at| start + at);
+            // The `"z"` cast is reported on its `$`; its string comes first.
+            let start = re!(r#""z"\s*$"#)
+                .find(&source[..start])
+                .map_or(start, |m| m.start());
             // Matched as the detector matches: on the view without comments,
             // and in code - a string spelling `"0Nz"` or `"15h$"` is data.
             // The `"z"` cast is the one string that is the point, so only
@@ -4844,24 +4846,45 @@ pub fn lint_selecting(
             // Every pattern but the first has to match code: a help table
             // that spells `".z.Z"` or `"0Nz"` in a string uses neither. The
             // first is the one pattern whose string is the point - `"z"$`.
-            let in_code = |m: regex::Match| line[m.range()] == *m.as_str();
-            if re!(r#""z"\s*\$"#).is_match(literals)
-                || [
-                    re!(r"`datetime\s*\$"),
-                    re!(r"\b15h\s*\$"),
-                    re!(r"(?:^|[^\w.])-?0[NW]z\b"),
-                    re!(r"\b\d{4}\.\d{2}\.\d{2}T\d"),
-                    // `.z.z` and `.z.Z` are the clock as a datetime (-15h).
-                    re!(r"\.z\.[zZ]\b"),
-                ]
-                .iter()
-                .any(|regex| regex.find_iter(literals).any(in_code))
+            let in_code = |m: &regex::Match| line[m.range()] == *m.as_str();
+            // Reported at the first of them, which is where the fix starts.
+            if let Some(at) = re!(r#""z"\s*\$"#)
+                .find(literals)
+                .into_iter()
+                .chain(
+                    [
+                        re!(r"`datetime\s*\$"),
+                        re!(r"\b15h\s*\$"),
+                        re!(r"(?:^|[^\w.])-?0[NW]z\b"),
+                        re!(r"\b\d{4}\.\d{2}\.\d{2}T\d"),
+                        // `.z.z` and `.z.Z` are the clock as a datetime (-15h).
+                        re!(r"\.z\.[zZ]\b"),
+                    ]
+                    .iter()
+                    .filter_map(|regex| regex.find_iter(literals).find(in_code)),
+                )
+                // The null's pattern takes in the byte before it.
+                .map(|m| match m.as_str().find("0N").or(m.as_str().find("0W")) {
+                    Some(at) if m.as_str().ends_with('z') => {
+                        m.start() + at - usize::from(m.as_str()[..at].ends_with('-'))
+                    }
+                    // The `"z"` cast on its `$`: the string is not code, and
+                    // a fix only starts in code.
+                    _ if m.as_str().starts_with('"') => m.end() - 1,
+                    _ => m.start(),
+                })
+                .min()
             {
-                add(offset, "QP002", "Legacy datetime value or cast".into());
+                add(offset + at, "QP002", "Legacy datetime value or cast".into());
             }
-            if let Some(m) = re!(r"\.z\.[PTNZD]\b")
+            // The clock's own name: `x.z.P` is one dotted name, not `.z.P`.
+            for m in re!(r"\.z\.[PTNZD]\b")
                 .find_iter(literals)
-                .find(|m| line[m.range()] == *m.as_str())
+                .filter(|m| {
+                    !line[..m.start()]
+                        .ends_with(|c: char| c.is_ascii_alphanumeric() || "_.".contains(c))
+                })
+                .filter(|m| line[m.range()] == *m.as_str())
             {
                 let utc: String = m
                     .as_str()
@@ -4872,7 +4895,7 @@ pub fn lint_selecting(
                     })
                     .collect();
                 add(
-                    offset,
+                    offset + m.start(),
                     "QP003",
                     format!(
                         "`{}` is the local wall clock; the convention is UTC `{}`",

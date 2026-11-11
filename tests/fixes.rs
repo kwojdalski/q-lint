@@ -343,6 +343,9 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ("QF017", "f:{[x] a:x+1; x}", "f:{[x] x+1; x}", false),
         ("QF017", "f:{[a] r:a -m:1; r}", "f:{[a] r:a - 1; r}", false),
         ("QP003", "r:.z.P", "r:.z.p", false),
+        // The clock named is the clock fixed, on the line it is on (#206).
+        ("QP003", "a:(.z.D;.z.P)", "a:(.z.d;.z.P)", false),
+        ("QP003", "f:{x}\n  .z.P", "f:{x}\n  .z.p", false),
         (
             "QB006",
             "t:([]a:1 2;b:3 4);r:select from t where a=1 and b=3",
@@ -720,4 +723,27 @@ fn touching_fixes_keep_their_tokens_apart() {
         fs::read_to_string(&path).unwrap(),
         "x:10 20 30;y:2\nr:x y\nf:{-1 x}\n"
     );
+}
+
+/// QP002 and QP003 point at the value they name, not at the statement it
+/// sits in - where an editor underlines and where the fix edits (#206).
+#[test]
+fn policy_findings_sit_on_the_token_they_name() {
+    use q_lint_rs::{Profile, lint};
+    let source = "a:(.z.D;.z.P)\nf:{x}\n  .z.P\ntotalTime:.z.T\nb:1;c:-0Nz\n";
+    let at: Vec<_> = lint(source, "probe.q", Profile::Uqf)
+        .into_iter()
+        .filter(|f| f.code.starts_with("QP00"))
+        .map(|f| (f.code, f.line, f.column.unwrap()))
+        .collect();
+    let want: Vec<(String, usize, usize)> = vec![
+        ("QP003".into(), 1, 4),
+        ("QP003".into(), 1, 9),
+        ("QP003".into(), 3, 3),
+        ("QP003".into(), 4, 11),
+        ("QP002".into(), 5, 7),
+    ];
+    for w in &want {
+        assert!(at.contains(w), "{w:?} not in {at:?}");
+    }
 }
