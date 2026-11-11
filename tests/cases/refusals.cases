@@ -480,3 +480,23 @@ r:exec where m:a>0 from t
 
 === clean profile: general | an assignment inside a lambda in the phrase
 r:select from t where {b:x;b>0} a
+
+=== clean profile: general | QE006: a system command's argument is a path, not a q literal (#198)
+\l /data/2024.02.30/t
+\cd /x/12:60
+\l /h/2023.1m
+
+=== QE006 profile: general | but the expression after \t is q (#198)
+\t 2024.02.30
+
+=== QE006 profile: general | and so is the one after \ts:n (#198)
+\ts:10 12:60
+
+=== clean profile: general | QE007: a string after from is something after from (#199)
+a:select from "t"
+
+=== QE007 profile: general | an empty where in a nested query is reported once, on the nested query (#200)
+a:select a from t where b in exec c from u where
+
+=== QE007 profile: general | and once when the nested query is in brackets (#200)
+c:select from t where a in (exec b from u where)

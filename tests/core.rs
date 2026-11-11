@@ -437,3 +437,17 @@ fn juxtaposed_derived_names_the_whole_iterator() {
         );
     }
 }
+#[test]
+fn an_empty_nested_where_is_reported_on_the_nested_query_alone() {
+    // #200: the outer select's where has `b in exec ...` in it.
+    let columns: Vec<_> = lint(
+        "a:select a from t where b in exec c from u where\n",
+        "t.q",
+        Profile::General,
+    )
+    .into_iter()
+    .filter(|f| f.code == "QE007")
+    .map(|f| f.column)
+    .collect();
+    assert_eq!(columns, vec![Some(30)]);
+}
