@@ -523,3 +523,28 @@ e:md5["a";"b"]
 a:xasc[`a;t]
 b:ssr["a";"b";"c"]
 c:wj[a;b;c;d]
+
+=== clean | an indented next line continues the argument: where 2#1b, asc 3#x, til@2.5+x (#193)
+a:where 2
+  #1b
+b:asc 3
+  #x
+c:til@2.5
+  +x
+
+=== clean | so does one after a trailing comment (#193)
+a:where 2 / c
+  #1b
+
+=== QT008 | but a blank line between ends the statement (#193)
+d:til 2.5
+
+  +x
+
+=== clean | a slash straight after the literal is an iterator, so the literal is not the argument (#194)
+a:asc 3/x
+b:til 1.5/x
+c:asc 3\x
+
+=== QT008 | a comment after the literal leaves it the whole argument (#194)
+d:til 1.5 / c

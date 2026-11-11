@@ -1667,6 +1667,13 @@ fn vector_comparison(cond: &str) -> bool {
 /// each 'type, as the same expression on a line of its own is.
 pub(crate) fn operand_ends(code: &str, at: usize) -> bool {
     let rest = code[at..].trim_start_matches([' ', '\t']);
+    // A line break ends the operand unless the next line is indented and not
+    // blank, which continues the statement: `where 2` + `  #1b` is
+    // `where 2#1b` (#193).
+    if let Some(next) = rest.strip_prefix("\r\n").or_else(|| rest.strip_prefix('\n')) {
+        let line = next.split('\n').next().unwrap_or("");
+        return !(next.starts_with([' ', '\t']) && !line.trim().is_empty());
+    }
     rest.is_empty()
         || rest.starts_with([';', ')', ']', '}', '\n', '\r'])
         || ((rest.starts_with(',')
