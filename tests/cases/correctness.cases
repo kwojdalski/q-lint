@@ -618,6 +618,14 @@ f:{[a] a:a
 a:5
 f:{b:1; a:a; a+b}
 
+=== QF014 | a read in the value on the next line of the lambda is still in the value (#191)
+g:{b:1+
+  b; b}
+
+=== QF014 | nor does the line break have to come before the read (#191)
+h:{c:1
+  +c; c}
+
 === QF014 | and a lambda inside one does not see the outer local
 f:{a:1; a+{a:a}[]}
 

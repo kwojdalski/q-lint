@@ -1357,7 +1357,8 @@ pub fn check(
             };
             // A read to the right of the assignment, in the expression it
             // assigns, runs first too: q 5 `{a:a+1}[]` is 'a. The walk stops
-            // at a `;` or at a bracket that closes around the assignment.
+            // at a `;` or at a bracket that closes around the assignment -
+            // not at a line break, which inside a lambda is whitespace (#191).
             let in_value = m.start() > assigned
                 && direct[assigned..].starts_with(name)
                 && {
@@ -1368,7 +1369,7 @@ pub fn check(
                             b')' | b']' | b'}' => depth -= 1,
                             _ => {}
                         }
-                        depth >= 0 && !(b == b';' && depth == 0) && b != b'\n'
+                        depth >= 0 && !(b == b';' && depth == 0)
                     })
                 }
                 && {
@@ -1385,7 +1386,7 @@ pub fn check(
                                 b')' | b']' | b'}' => depth -= 1,
                                 _ => {}
                             }
-                            depth < 0 || (b == b';' && depth == 0) || b == b'\n'
+                            depth < 0 || (b == b';' && depth == 0)
                         })
                         .unwrap_or(rest.len());
                     !assignment.captures_iter(&rest[..end]).any(|a| {
