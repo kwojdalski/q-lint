@@ -196,7 +196,7 @@ fn eval_path(text: &str, pos: usize) -> (usize, Vec<(usize, usize, bool)>) {
 /// is a local or a read of one. Only a keyword at a word boundary starts a
 /// query: `` `delete`` is a symbol and `.ns.update` a name. With `tables`, a
 /// table literal `([...]...)` goes too, whose columns are written the same way.
-fn local_view(direct: &str, tables: bool) -> String {
+pub(crate) fn local_view(direct: &str, tables: bool) -> String {
     let symbols = re!(r"`[A-Za-z0-9_./:]*")
         .replace_all(direct, |m: &regex::Captures| " ".repeat(m[0].len()))
         .into_owned();

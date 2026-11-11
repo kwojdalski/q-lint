@@ -4111,24 +4111,27 @@ pub fn lint_selecting(
                         );
                     }
                 }
-                if !re!(r"\b(?:select|exec|update|delete|by)\b").is_match(line) {
-                    for a in re!(r"([a-z][a-z0-9_]*)\s*:").captures_iter(line) {
-                        let m = a.get(0).unwrap();
-                        // q 5 takes from and by as locals: {from:1;from+1}[] is 2.
-                        if boundary(line, m.start())
-                            && !line[m.end()..].starts_with(':')
-                            && !matches!(&a[1], "from" | "by")
-                            && RESERVED.iter().any(|n| n == &a[1])
-                        {
-                            add(
-                                offset + m.start(),
-                                "QF003",
-                                format!("Local assignment to `{}`", &a[1]),
-                            );
-                        }
-                    }
-                }
                 offset += line.len();
+            }
+            // A column is not a local: in a query phrase or a table literal,
+            // `count:1` names one, which is QF013's to report (#192). The
+            // view blanks both over their own extent, whatever lines they
+            // span.
+            let view = semantics::local_view(&code[at..end], true);
+            for a in re!(r"([a-z][a-z0-9_]*)\s*:").captures_iter(&view) {
+                let m = a.get(0).unwrap();
+                // q 5 takes from and by as locals: {from:1;from+1}[] is 2.
+                if boundary(&view, m.start())
+                    && !view[m.end()..].starts_with(':')
+                    && !matches!(&a[1], "from" | "by")
+                    && RESERVED.iter().any(|n| n == &a[1])
+                {
+                    add(
+                        at + m.start(),
+                        "QF003",
+                        format!("Local assignment to `{}`", &a[1]),
+                    );
+                }
             }
         }
     }

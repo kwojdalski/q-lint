@@ -176,6 +176,13 @@ count:42
 === QF012 | one q silently accepts, and the linter still flags
 from:1
 
+=== QF013 QT005 | a table-literal column is not a local assignment, so QF013 alone reports it (#192)
+m:{([] count:1)}
+
+=== QF013 | nor is a column whose select keyword is on an earlier line (#192)
+n:{select
+  count:1 from t}
+
 === QF003 QF017 | a local shadow at column zero is not root scope, and nothing reads it
 f:{[x]
 count:1
