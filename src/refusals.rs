@@ -643,7 +643,7 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
         let colon = rest.starts_with(':')
             && rest[1..].starts_with(|c: char| c.is_ascii_alphanumeric() || "`(\".".contains(c))
             || rest.starts_with(":-") && rest[2..].starts_with(|c: char| c.is_ascii_digit());
-        let next = rest.trim_start_matches([' ', '\t']);
+        let next = continued(rest);
         let spaced = next.len() < rest.len();
         let operand = colon
             || next.starts_with(|c: char| c.is_ascii_alphabetic() || "`(\"".contains(c))
@@ -677,6 +677,16 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
 
 const GLYPHS: &[u8] = b"+-*%!#$&|^=<>~,@?";
 
+/// What follows a glyph, past the blanks before it - and past a line break
+/// into an indented line, which q reads as the same statement: `a:-` with
+/// `  x` below it is `a:- x`.
+fn continued(rest: &str) -> &str {
+    let m = re!(r"^[ \t]*(?:\r?\n[ \t]+)*")
+        .find(rest)
+        .map_or(0, |m| m.end());
+    &rest[m..]
+}
+
 /// Whether the token at `i` starts an expression, so that whatever it applies
 /// to is applied by juxtaposition: the start of a line or statement, after
 /// `:`, an opening bracket or a signature, or after another glyph.
@@ -691,8 +701,18 @@ fn opens_expression(comments: &str, i: usize, line_start: usize) -> bool {
     if adjacent && i > 0 && PAIRS.contains(&&comments[i - 1..=i]) {
         return false;
     }
+    // After an iterator the next glyph can only be applied monadically:
+    // q 5 refuses `x,\-y`, `x,'-y` and `count'-x` with '-, as it does
+    // `x,\:-y`, whose iterator ends in the `:` above. Only an iterator written
+    // straight after its operand - a `/` after a space opens a comment.
+    let iterator = before.ends_with(['/', '\\', '\''])
+        && before[..before.len() - 1]
+            .bytes()
+            .next_back()
+            .is_some_and(|p| !p.is_ascii_whitespace());
     i == line_start
         || before.is_empty()
+        || iterator
         || before.ends_with([':', '(', '[', '{', ';'])
         || re!(r"\{\s*\[[A-Za-z0-9_; \t]*\]$").is_match(before)
         || (before
@@ -755,11 +775,16 @@ fn juxtaposed_derived(
         }
         // Applied to an operand right after the iterator: a name, a symbol,
         // a bracketed or quoted value, or a number.
-        let next = view[m.end()..].trim_start_matches([' ', '\t']);
+        // A `-` before an operand is one too: `+/-x` holds the same derived
+        // function as `+/-1`, and q 5 refuses both with '/.
+        let next = continued(&view[m.end()..]);
         let operand = next
             .starts_with(|ch: char| ch.is_ascii_alphanumeric() || "`(\"".contains(ch))
             || ((next.starts_with('-') || next.starts_with('.'))
-                && next[1..].starts_with(|ch: char| ch.is_ascii_digit()));
+                && next[1..].starts_with(|ch: char| ch.is_ascii_digit()))
+            || (next.starts_with('-')
+                && next[1..]
+                    .starts_with(|ch: char| ch.is_ascii_alphabetic() || "`(\"".contains(ch)));
         if !operand || !opens_expression(&view, start, line_start) {
             continue;
         }
@@ -846,7 +871,8 @@ fn null_literal(text: &str, not_last: bool, negative: bool) -> Option<String> {
 /// vector of atoms is not a vector at all - `1b 0b` parses, as two atoms -
 /// and `0N 1`, `3 4i`, `1e5` and `2023.01.01` are fine.
 fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Finding>) {
-    let tokens: Vec<regex::Match> = re!(r"\d[0-9A-Za-z.:]*")
+    // An exponent's sign is part of its number: `1.5e-3` is one float.
+    let tokens: Vec<regex::Match> = re!(r"\d(?:[eE][+-]\d|[0-9A-Za-z.:])*")
         .find_iter(unsym)
         .filter(|m| boundary(code, m.start()))
         .filter(|m| {
@@ -936,7 +962,7 @@ fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Find
                     "`{text}`: a vector literal takes one type suffix, after its last item"
                 ))
             } else if k + 1 < run.len()
-                && text.contains('.')
+                && (text.contains('.') || re!(r"^\d+[eE][+-]?\d+$").is_match(text))
                 && !text.contains(':')
                 && re!(r"^(?:\d+|0[nNwW])[hij]$").is_match(last)
             {

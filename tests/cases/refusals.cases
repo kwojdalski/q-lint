@@ -188,6 +188,23 @@ r:select[>a] from t
 s:select[2;<a] from t
 u:75_select[>a] from t
 
+=== QE008 profile: general | after an iterator the next glyph is monadic (q 5: x,\-y, x,'-y, x,/-y and x' -y are '-)
+b:x,\-y
+c:x,'-y
+d:x,/-y
+
+=== QE008 QE009 profile: general | and a derived function before it is juxtaposed too (q 5: +/-x is '/, count'-x is ')
+e:+/-x
+f:count'-x
+
+=== QE008 profile: general | the operand on an indented next line continues the statement (q 5: a:- then   x is refused)
+b:-
+  x
+
+=== QE009 profile: general | as it does after a derived function (q 5: d:+/ then   x is refused)
+d:+/
+  x
+
 === QE009 profile: general | a derived function applied by juxtaposition (q 5: {+/x} is '/)
 f:{+/x}
 g:{,/x}
@@ -253,6 +270,16 @@ c:3i 4j
 
 === QE010 profile: general | a fraction in a vector the suffix makes integer (q 5: parse "1.5 2j" is '1.5)
 n:1.5 2j
+
+=== QE010 profile: general | an exponent's sign is part of the float (q 5: '1.5e-3, '2.5e-3, '2e-3, '2e3)
+b:1.5e-3 2j
+c:1 2.5e-3 4j
+d:2e-3 4i
+e:2e3 4j
+
+=== clean profile: general | floats with signed exponents in a float vector
+f:1e-3 2e-3
+g:1.5e-3*x
 
 === QE010 profile: general | a boolean digit other than 0 or 1 (q 5: '2b)
 b:2b
