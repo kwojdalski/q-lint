@@ -451,3 +451,13 @@ fn an_empty_nested_where_is_reported_on_the_nested_query_alone() {
     .collect();
     assert_eq!(columns, vec![Some(30)]);
 }
+#[test]
+fn a_later_vector_equality_is_reported_at_its_own_constraint() {
+    // #215: `s=`a`b` is the second constraint, at column 27.
+    let columns: Vec<_> = lint("q:select from t where a>1,s=`a`b\n", "t.q", Profile::Style)
+        .into_iter()
+        .filter(|f| f.code == "QB008")
+        .map(|f| f.column)
+        .collect();
+    assert_eq!(columns, vec![Some(27)]);
+}

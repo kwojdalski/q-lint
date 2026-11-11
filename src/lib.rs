@@ -5005,15 +5005,30 @@ pub fn lint_selecting(
                 // operator that was meant.
                 // The literal has to be the whole right operand: `a=1 2 3?b`
                 // and `a=0 1 2 b` index it first, and q 5 runs both.
-                if re!(r"(?:=|<>)\s*(?:-?\d[A-Za-z0-9.]*(?:\s+-?\d[A-Za-z0-9.]*)+|`[A-Za-z][A-Za-z0-9_.]*(?:`[A-Za-z0-9_.]*)+)")
+                // Each offending constraint at its own start, where the fix
+                // is anchored: the first at `where`, a later one after its
+                // comma (#215).
+                let mut reported = vec![];
+                for m in re!(r"(?:=|<>)\s*(?:-?\d[A-Za-z0-9.]*(?:\s+-?\d[A-Za-z0-9.]*)+|`[A-Za-z][A-Za-z0-9_.]*(?:`[A-Za-z0-9_.]*)+)")
                     .find_iter(&phrase)
-                    .any(|m| {
-                        let rest = phrase[m.end()..].trim_start();
-                        rest.is_empty() || rest.starts_with([',', ';'])
-                    })
                 {
+                    let rest = phrase[m.end()..].trim_start();
+                    if !(rest.is_empty() || rest.starts_with([',', ';'])) {
+                        continue;
+                    }
+                    let at = match phrase[..m.start()].rfind(',') {
+                        None => offset + w.start(),
+                        Some(c) => {
+                            let clause = &phrase[c + 1..];
+                            offset + w.end() + c + 1 + (clause.len() - clause.trim_start().len())
+                        }
+                    };
+                    if reported.contains(&at) {
+                        continue;
+                    }
+                    reported.push(at);
                     add(
-                        offset + w.start(),
+                        at,
                         "QB008",
                         "Equality against a vector literal in a filter is a 'length error at \
                          runtime; `in` is the operator for membership"

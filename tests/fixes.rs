@@ -326,6 +326,12 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
             false,
         ),
         (
+            "QB008",
+            "t:([]a:1 2 3;s:`a`b`c);r:select from t where a>1,s=`a`b",
+            "t:([]a:1 2 3;s:`a`b`c);r:select from t where a>1,s in `a`b",
+            false,
+        ),
+        (
             "QA008",
             "f:{[a;b] a+b};r:f(1;2)",
             "f:{[a;b] a+b};r:f[1;2]",
