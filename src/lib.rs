@@ -4391,8 +4391,11 @@ pub fn lint_selecting(
             }
         }
         // Not after the end of the script: q 5 reads nothing past a lone `\`.
+        // Only a `/` alone in column 0 opens one, as the masker reads it: an
+        // indented `/` line is not a block comment.
         if uqf
-            && first_raw.trim() == "/"
+            && source[..start].rfind('\n').map_or(0, |at| at + 1) == start
+            && first_raw.trim_end_matches([' ', '\t', '\r', '\n']) == "/"
             && !v.foreign_offsets.contains(&offset)
             && v.script_end.is_none_or(|end| offset < end)
         {
