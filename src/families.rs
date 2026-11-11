@@ -18,7 +18,7 @@ pub fn check(
     leftovers(path, source, comments, foreign, &mut out);
     duplicate_columns(path, source, code, &mut out);
     select_by_duplicate(path, source, code, &mut out);
-    unreachable(path, source, code, &mut out);
+    unreachable(path, source, code, comments, &mut out);
     out
 }
 
@@ -773,7 +773,7 @@ fn select_by_duplicate(path: &str, source: &str, code: &str, out: &mut Vec<Findi
 /// QB020. A statement after a return or a signal at a lambda's top level can
 /// never run: `{:1;2}` returns 1 and the 2 is dead. Only the top level - a
 /// `:x` inside `if[...]` or `$[...]` is a branch, and what follows it runs.
-fn unreachable(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
+fn unreachable(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<Finding>) {
     for (brace, _) in code.match_indices('{') {
         let Some(end) = matching(code, brace, b'{', b'}') else {
             continue;
@@ -804,12 +804,15 @@ fn unreachable(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
                     && !t.starts_with("':")
                     && !t[1..].trim_start().starts_with('['))
         };
+        // Emptiness read from `comments`, where a string is still there:
+        // `{[a] :a; "x"}` has a statement after the return (#216).
+        let kept = &comments[body_start..end - 1];
         if let Some(i) = statements.iter().position(|&(a, b)| exits(&body[a..b]))
             && let Some(&(a, _)) = statements[i + 1..]
                 .iter()
-                .find(|&&(a, b)| !body[a..b].trim().is_empty())
+                .find(|&&(a, b)| !kept[a..b].trim().is_empty())
         {
-            let at = body_start + a + (body[a..].len() - body[a..].trim_start().len());
+            let at = body_start + a + (kept[a..].len() - kept[a..].trim_start().len());
             out.push(Finding::at(
                     path,
                     source,

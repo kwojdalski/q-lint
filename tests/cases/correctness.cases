@@ -432,6 +432,9 @@ d:([a:1;a:2])
 === QB020 | a statement after a top-level return never runs
 f:{:1;2}
 
+=== QB020 | a string is a statement too, and never runs after the return (#216)
+f:{[a] :a; "x"}
+
 === QB020 | nor after a signal
 f:{'`e;x}
 
