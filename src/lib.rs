@@ -4727,42 +4727,57 @@ pub fn lint_selecting(
                 );
             }
         }
-        // Of the 181 reserved names q refuses to assign inside a namespace
-        // all but two: `from` and `by` are accepted there and read back fine,
-        // checked one by one. TorQ's email settings define `.email.from`.
-        if namespace
-            && let Some(m) = re!(r"^([a-z][a-zA-Z0-9_]*)\s*:").captures(line)
-            && RESERVED.iter().any(|n| n == &m[1])
-            && !matches!(&m[1], "from" | "by")
-        {
-            add(offset, "QF004", format!("Namespace-level `{}`", &m[1]));
+        // Each statement on the line, not only the first, when the line opens
+        // at the root: `y:1;sum:2` is 'assign as `sum:2` is (#244).
+        let mut heads = vec![(0, line)];
+        if line_depth == 0 {
+            let mut from = 0;
+            for part in slots(line) {
+                let lead = part.len() - part.trim_start().len();
+                if from > 0 {
+                    heads.push((from + lead, &part[lead..]));
+                }
+                from += part.len() + 1;
+            }
         }
-        // The root is where q is inconsistent about reserved names:
-        // `count:1` and `where:1` it refuses ('assign), `select:1` it
-        // cannot parse, but `from:1` and `by:1` it silently accepts. A
-        // lambda body at column 0 must not be mistaken for root scope,
-        // hence the brace depth.
-        if !namespace
-            && line_depth == 0
-            && let Some(m) = re!(r"^([a-z][a-zA-Z0-9_]*)\s*:").captures(line)
-            && !line[m.get(0).unwrap().end()..].starts_with(':')
-            && RESERVED.iter().any(|n| n == &m[1])
-        {
-            add(
-                offset,
-                "QF012",
-                // Checked one by one on q 5: every reserved name but these
-                // two is refused at the root.
-                if matches!(&m[1], "from" | "by") {
-                    format!(
-                        "Root-level assignment to `{}`: q accepts it, but the name is a query \
-                         keyword everywhere else",
-                        &m[1]
-                    )
-                } else {
-                    format!("Root-level assignment to `{}`: q refuses it", &m[1])
-                },
-            );
+        for (at, head) in heads {
+            // Of the 181 reserved names q refuses to assign inside a namespace
+            // all but two: `from` and `by` are accepted there and read back fine,
+            // checked one by one. TorQ's email settings define `.email.from`.
+            if namespace
+                && let Some(m) = re!(r"^([a-z][a-zA-Z0-9_]*)\s*:").captures(head)
+                && RESERVED.iter().any(|n| n == &m[1])
+                && !matches!(&m[1], "from" | "by")
+            {
+                add(offset + at, "QF004", format!("Namespace-level `{}`", &m[1]));
+            }
+            // The root is where q is inconsistent about reserved names:
+            // `count:1` and `where:1` it refuses ('assign), `select:1` it
+            // cannot parse, but `from:1` and `by:1` it silently accepts. A
+            // lambda body at column 0 must not be mistaken for root scope,
+            // hence the brace depth.
+            if !namespace
+                && line_depth == 0
+                && let Some(m) = re!(r"^([a-z][a-zA-Z0-9_]*)\s*:").captures(head)
+                && !head[m.get(0).unwrap().end()..].starts_with(':')
+                && RESERVED.iter().any(|n| n == &m[1])
+            {
+                add(
+                    offset + at,
+                    "QF012",
+                    // Checked one by one on q 5: every reserved name but these
+                    // two is refused at the root.
+                    if matches!(&m[1], "from" | "by") {
+                        format!(
+                            "Root-level assignment to `{}`: q accepts it, but the name is a query \
+                             keyword everywhere else",
+                            &m[1]
+                        )
+                    } else {
+                        format!("Root-level assignment to `{}`: q refuses it", &m[1])
+                    },
+                );
+            }
         }
         // The parentheses have to be empty in the source - a string between
         // them is blank in `line`, so `(!).("S=;")` would pass for `. ()` -
