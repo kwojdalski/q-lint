@@ -244,6 +244,16 @@ d:x,/-y
 e:+/-x
 f:count'-x
 
+=== clean profile: general | a file handle ending in : or / is the left operand (q 5: `:,`s1.err`s1.std is `:`s1.err`s1.std)
+srvr:`s1.err`s1.std
+x:`:,srvr
+y:`:dir/,`f
+z:`a:,`b
+
+=== QE008 profile: general | a plain symbol before an iterator does not make the glyph dyadic (q 5: `a/,-1 is '/)
+x:,srvr
+y:`a/,x
+
 === QE008 profile: general | the operand on an indented next line continues the statement (q 5: a:- then   x is refused)
 b:-
   x

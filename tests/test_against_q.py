@@ -45,15 +45,23 @@ SIGNATURES = [
 NOT_SIGNATURES = [
     "{[tables[]] x+1}",
     "{[a+b] 1}",
-    "{[1] x+1}",
-    "{[`s] x+1}",
     "{[_] x+1}",
     "{[a b] a}",
     "{[a[0]] a}",
     "{[a:1] a}",
-    "{[-1] 1}",
-    '{["s"] 1}',
 ]
+# q 5 parameter patterns: q binds one positional parameter per slot (`0, `1,
+# ...) and destructures the argument into the names inside, so the lambda has
+# the rank its slots show and QF007 must stay quiet (#298).
+PATTERNS = {
+    "{[1] x+1}": 1,
+    "{[`s] x+1}": 1,
+    "{[-1] 1}": 1,
+    '{["s"] 1}': 1,
+    "{[(a;b);c] a+b+c}": 2,
+    "{[([k;v])] k+v}": 1,
+    "{[1;b] b}": 2,
+}
 
 
 def q_parameters(sources, tmp_path):
@@ -104,6 +112,15 @@ def test_qf007_fires_exactly_when_q_does_not_see_a_parameter_list(tmp_path):
         # `_` gets QF002, which says the same thing about the same brackets
         # with a more specific cause; either code is the linter agreeing.
         assert findings(source, tmp_path) & {"QF007", "QF002"}, source
+
+
+def test_q5_parameter_patterns_are_parameter_lists(tmp_path):
+    answers = q_parameters(list(PATTERNS), tmp_path)
+    for source, rank in PATTERNS.items():
+        names = answers[source]
+        assert names is not None, f"q unexpectedly refused {source!r}"
+        assert len(names) == rank, (source, names)
+        assert "QF007" not in findings(source, tmp_path), source
 
 
 def test_an_empty_slot_is_a_parameter(tmp_path):

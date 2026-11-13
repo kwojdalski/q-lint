@@ -63,8 +63,18 @@ f:{$[`$"long";x]}
 g:{$[(`long);x]}
 h:{$[(7h);x]}
 
-=== QA006 profile: general | but a name in parentheses is a condition
+=== clean profile: general | two slots with a name or a matrix on the left are dyadic $, which q 5 defines (mmu: $[a;flip a] is (5 11f;11 25f); $[5;"abc"] pads)
+a:(1 2f;3 4f)
+r:$[a;flip a]
 f:{[c;x] $[(c);x]}
+g:{[c] $[c;1]}
+
+=== QA006 profile: general | but a boolean test on the left is 'type (q 5: $[1=1;2], $[not 0b;2], $[x in y;2])
+f:{[c;x] $[(c=1);x]}
+g:{[x;y] $[not x;y]}
+h:{[x;y] $[x in y;2]}
+i:{[x] $[count[x]>0;x]}
+j:{[s] $[s like "a*";1]}
 
 === clean | three slots is the conditional
 $[1b;2;3]

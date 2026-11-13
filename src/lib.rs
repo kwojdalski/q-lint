@@ -2341,6 +2341,19 @@ fn matching(s: &str, start: usize, open: u8, close: u8) -> Option<usize> {
     }
     None
 }
+/// Whether an expression is a boolean on its face: a boolean literal, a
+/// `not`/`null`/`all`/`any` application, or one operand compared with what
+/// follows it - q evaluates right to left, so the leftmost operator gives the
+/// result its type. Anything else, a bare name included, may be any type.
+fn boolean_test(s: &str) -> bool {
+    re!(r"^[01]+b$").is_match(s)
+        || re!(r"^(?:not|null|all|any)\b").is_match(s)
+        || re!(
+            r#"^(?:-?\d[\w.:]*|`[\w.:]*|\.?[A-Za-z][\w.]*(?:\[[^\[\]]*\])?|\([^()]*\)|"[^"]*")(?:\s*(?:<>|<=|>=|=|<|>|~)|\s+(?:in|like|within)\b)"#
+        )
+        .is_match(s)
+}
+
 pub(crate) fn slots(s: &str) -> Vec<&str> {
     let (mut start, mut depth) = (0, 0i32);
     let mut out = vec![];
@@ -2363,12 +2376,70 @@ fn is_param_name(s: &str) -> bool {
     re!(r"^\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*$").is_match(s)
 }
 
+/// A q 5 parameter pattern, as written in code with strings blanked: a name,
+/// a literal (a string is blank here, so an empty item inside a pattern
+/// passes), a list of patterns `(a;b)`, a dictionary `([k;v:p])` or a table
+/// `([]a;b:c)`. q 5 binds each and fails a call only where the argument does
+/// not match: `{[(a;b);c] a+b+c}[(1;2);3]` is 6, `{[([k;v])] k+v}[`k`v!1 2]`
+/// is 3, `{[1;b] b}[1;2]` is 2 and `{[1] 5} 2` is 'match (#298). `_` is
+/// none: `{[(a;_)] a}[(1;2)]` is 'match, as `{[_] 1}[1]` is.
+fn is_pattern(s: &str, nested: bool) -> bool {
+    let s = s.trim();
+    let items = |inner: &str, item: &dyn Fn(&str) -> bool| {
+        inner.trim().is_empty() || slots(inner).into_iter().all(item)
+    };
+    let whole = |s: &str| matching(s, 0, b'(', b')') == Some(s.len());
+    if s.is_empty() {
+        nested
+    } else if is_param_name(s)
+        || re!(r"^(?:-?[0-9.][A-Za-z0-9.:]*(?:\s+-?[0-9.][A-Za-z0-9.:]*)*|(?:`[A-Za-z0-9_.:]*)+)$")
+            .is_match(s)
+    {
+        true
+    } else if let Some(inner) = s.strip_prefix("([]").filter(|_| whole(s)) {
+        items(&inner[..inner.len() - 1], &|c| field(c))
+    } else if let Some(inner) = s
+        .strip_prefix("([")
+        .filter(|_| s.ends_with("])") && whole(s))
+    {
+        matching(s, 1, b'[', b']') == Some(s.len() - 1)
+            && items(&inner[..inner.len() - 2], &|c| field(c))
+    } else if whole(s) {
+        items(&s[1..s.len() - 1], &|c| is_pattern(c, true))
+    } else {
+        false
+    }
+}
+/// The names a parameter slot binds: the slot itself when it is a name, and
+/// for a pattern every name in it but the keys and columns it matches on -
+/// `(a;b)` binds a and b, `([k:p])` binds p, and `1` binds nothing.
+pub(crate) fn pattern_names(slot: &str) -> Vec<&str> {
+    re!(r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*")
+        .find_iter(slot)
+        .filter(|m| {
+            boundary(slot, m.start())
+                && !slot[..m.start()].ends_with(['`', '.'])
+                && !slot[..m.start()].ends_with(|c: char| c.is_ascii_digit())
+                && !slot[m.end()..].trim_start().starts_with(':')
+        })
+        .map(|m| m.as_str())
+        .collect()
+}
+/// A key or column of a dictionary or table pattern: `k`, or `k:p`.
+fn field(s: &str) -> bool {
+    match s.split_once(':') {
+        Some((name, p)) => is_param_name(name.trim()) && is_pattern(p, true),
+        None => is_param_name(s.trim()),
+    }
+}
+
 /// What q makes of the `[...]` following a `{`.
 ///
-/// q reads those brackets as a parameter list only when every slot is a name.
-/// `{[a+b] ...}`, `{[1] ...}` and `{[_] ...}` are lambdas whose *body* opens
-/// with a bracket expression instead, and they take the implicit x, y and z -
-/// a different rank, from source that looks like a signature. The rules here
+/// q reads those brackets as a parameter list only when every slot is a name
+/// or, in q 5, a pattern (see `is_pattern`). `{[a+b] ...}`, `{[a b] ...}` and
+/// `{[_] ...}` are lambdas whose *body* opens with a bracket expression
+/// instead, and they take the implicit x, y and z - a different rank, from
+/// source that looks like a signature. The rules here
 /// and the scope tracking in `semantics` both have to agree with q about
 /// which of the two a given `{` is, so they share this.
 pub(crate) struct Signature<'a> {
@@ -2501,7 +2572,9 @@ pub(crate) fn signature<'a>(code: &'a str, raw: &str, brace: usize) -> Signature
     // trailing `;` in `{[a;b;] ...}` is a third argument rather than nothing.
     // "Empty" has to be judged on `raw`, or a masked literal passes for one.
     let names_only = ranges.iter().zip(&slots).all(|(&(a, b), slot)| {
-        (slot.is_empty() && raw[a..b].trim().is_empty()) || is_param_name(slot)
+        (slot.is_empty() && raw[a..b].trim().is_empty())
+            || is_param_name(slot)
+            || is_pattern(slot, !slot.is_empty() || !raw[a..b].trim().is_empty())
     });
     if !names_only {
         return implicit(slots);
@@ -2765,14 +2838,9 @@ pub fn lint_selecting(
                 // What q 5 does with it depends on what the slots hold. An
                 // operator in one, or a builtin applied - `{[a+b] x}`,
                 // `{[count x] 1}`, `{[tables[]] 1}` - is 'nyi where the
-                // lambda is defined. Literals alone - `{[1] x}`, `{[`s] x}`,
-                // `{[a;1] x}`, a string - give it the parameter list ,`0,
-                // and every call is 'match. Anything else - `{[a b] a}`,
+                // lambda is defined. A literal is a pattern and never gets
+                // here (`is_pattern`). Anything else - `{[a b] a}`,
                 // `{[a:1] a}` - runs the brackets as the start of the body.
-                let literal = |s: &str| {
-                    re!(r"^(?:-?[0-9.][A-Za-z0-9.:]*(?:\s+-?[0-9.][A-Za-z0-9.:]*)*|(?:`[A-Za-z0-9_.:]*)+)$")
-                        .is_match(s)
-                };
                 let applies_builtin = |s: &str| {
                     re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(s).any(|w| {
                         RESERVED.iter().any(|n| n == w.as_str())
@@ -2785,8 +2853,6 @@ pub fn lint_selecting(
                     .any(|s| re!(r"[-+*%,#$@&|^=<>~!?]").is_match(s) || applies_builtin(s))
                 {
                     "q 5 refuses the lambda where it is defined: 'nyi"
-                } else if rest.iter().all(|s| literal(s)) {
-                    "q 5 gives the lambda no parameters it can bind, and every call is 'match"
                 } else {
                     "q reads these brackets as the start of the body and the lambda takes \
                      x, y and z instead"
@@ -3121,6 +3187,15 @@ pub fn lint_selecting(
             let signal = v.comments[second_start..second_start + parts[1].len()]
                 .trim_start()
                 .starts_with('\'');
+            // Otherwise two slots are dyadic `$`, and q 5 defines it for more
+            // than a type on the left: `$[m;flip m]` multiplies two float
+            // matrices and `$[5;"abc"]` pads (#295). What it refuses with
+            // 'type is a boolean there - `$[1b;2]`, `$[1=1;2]`, `$[not 0b;2]`.
+            // Only a test the text shows to be boolean is reported: a name
+            // (`$[c;x]`) could hold a matrix, a count or a type, so it is not.
+            if !signal && !boolean_test(bare(parts[0].trim())) {
+                continue;
+            }
             add(
                 dollar,
                 "QA006",
@@ -3230,6 +3305,16 @@ pub fn lint_selecting(
         // being an operand: `` `long$x-`long$y `` is subtraction of two longs,
         // which q is perfectly happy to evaluate.
         if code[m.end()..].starts_with('$') {
+            continue;
+        }
+        // `` `a -1 ``: a space before the minus and a digit straight after it
+        // make a negative literal, and the symbol is applied to it - q 5
+        // `parse "`a -1"` is `(,`a;-1)` (#293). `` `a-1 `` and `` `a - 1 ``
+        // subtract, and are 'type.
+        if m.as_str().starts_with('`')
+            && re!(r"[ \t]-$").is_match(m.as_str())
+            && re!(r"^\.?\d").is_match(&code[m.end()..])
+        {
             continue;
         }
         // A symbol on the right is only the operand when the expression ends
@@ -3790,11 +3875,27 @@ pub fn lint_selecting(
     // `ss` and `ssr` are string functions and refuse a symbol in either the
     // subject or the pattern slot. `trim`, `lower` and `like` accept symbols
     // and are deliberately not here.
-    for m in re!(
-        r"\bssr?\s*\[\s*(?:`[A-Za-z0-9_.]*)+\s*[;\]]|\bssr?\s*\[[^;\]]*;\s*(?:`[A-Za-z0-9_.]*)+\s*[;\]]|(?:`[A-Za-z0-9_.]*)+\s+ssr?\b|\bss[ \t]+`[A-Za-z0-9_.]*"
-    )
-    .find_iter(code)
-    {
+    // The bracket form is split into its slots, so the `;` of a call nested
+    // in the subject does not start the pattern: `ssr[f[0;`a;s];"b";"c"]`
+    // passes a string (#294).
+    for m in re!(r"\bssr?\s*\[").find_iter(code) {
+        let open = m.end() - 1;
+        if !boundary(code, m.start()) {
+            continue;
+        }
+        let Some(close) = matching(code, open, b'[', b']') else {
+            continue;
+        };
+        let symbol = |s: &&str| re!(r"^\s*(?:`[A-Za-z0-9_.]*)+\s*$").is_match(s);
+        if slots(&code[open + 1..close - 1]).iter().take(2).any(symbol) {
+            add(
+                m.start(),
+                "QT007",
+                "ss/ssr work on strings; a symbol literal is a 'type error at runtime".into(),
+            );
+        }
+    }
+    for m in re!(r"(?:`[A-Za-z0-9_.]*)+\s+ssr?\b|\bss[ \t]+`[A-Za-z0-9_.]*").find_iter(code) {
         // `"abc" ss `a` puts the symbol in the pattern slot (q 5: 'type).
         if m.as_str().starts_with('s') && !boundary(code, m.start()) {
             continue;
@@ -3944,9 +4045,10 @@ pub fn lint_selecting(
     }
     // `type` returns a short - 7h, not `long - so a symbol on the other side
     // of `=` is a 'type error every time. A bare `type=` is a column named
-    // type, which is QF013's business, not this rule's.
+    // type, which is QF013's business, not this rule's. `type` has to be the
+    // whole word: `typeTerminal=`count` is a name (#296).
     for m in re!(
-        r"\btype\s*(?:\[[^\]]*\]|\(?[A-Za-z_][A-Za-z0-9_.]*\)?)\s*(?:=|<>)\s*`[a-z][A-Za-z0-9_.]*(?:`[A-Za-z0-9_.]*)*|\(\s*type\b[^()]*\)\s*(?:=|<>)\s*`[a-z][A-Za-z0-9_.]*(?:`[A-Za-z0-9_.]*)*|`[a-z]+\s*(?:=|<>)\s*type\b"
+        r"\btype(?:\s*\[[^\]]*\]|\s*\([A-Za-z_][A-Za-z0-9_.]*\)|\s+\(?[A-Za-z_][A-Za-z0-9_.]*\)?)\s*(?:=|<>)\s*`[a-z][A-Za-z0-9_.]*(?:`[A-Za-z0-9_.]*)*|\(\s*type\b[^()]*\)\s*(?:=|<>)\s*`[a-z][A-Za-z0-9_.]*(?:`[A-Za-z0-9_.]*)*|`[a-z]+\s*(?:=|<>)\s*type\b"
     )
     .find_iter(code)
     {

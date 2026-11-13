@@ -79,7 +79,8 @@ fn language_prefixes_preserve_following_q_diagnostics() {
 /// reading the reference manual. q accepts more in a parameter list than one
 /// would guess - `.q.z` is a legal parameter name, `{[a;b;] ...}` takes three
 /// arguments - and reads the brackets as body text rather than a signature
-/// whenever a slot is not a name, which is the trap QF007 exists for.
+/// whenever a slot is neither a name nor, in q 5, a pattern, which is the
+/// trap QF007 exists for.
 #[test]
 fn parameter_lists_agree_with_q() {
     // q reports the declared names: these are signatures.
@@ -93,6 +94,16 @@ fn parameter_lists_agree_with_q() {
         "f:{[.q.z] 1}",
         "f:{[a;b;c;d;e;f;g;h] a}",
         "f:{x+1}",
+        // q 5 patterns bind as parameters, and a literal fails only a call
+        // that does not match it (#298): `{[1] 5} 1` is 5.
+        "f:{[1] x+1}",
+        "f:{[`s] x+1}",
+        "f:{[1;2] x}",
+        "f:{[a;1] x}",
+        "f:{[\"s\"] 1}",
+        "f:{[(a;b);c] a+b+c}",
+        "f:{[([k;v])] k+v}",
+        "f:{[([]a;b:c)] a}",
     ] {
         let found = lint(source, "t.q", Profile::Style);
         assert!(
@@ -107,14 +118,10 @@ fn parameter_lists_agree_with_q() {
         ("f:{[a+b] 1}", "'nyi"),
         ("f:{[a-b] x}", "'nyi"),
         ("f:{[count x] 1}", "'nyi"),
-        ("f:{[1] x+1}", "'match"),
-        ("f:{[`s] x+1}", "'match"),
-        ("f:{[1;2] x}", "'match"),
-        ("f:{[a;1] x}", "'match"),
         ("f:{[a b] a}", "start of the body"),
         ("f:{[a[0]] a}", "start of the body"),
         ("f:{[a:1] a}", "start of the body"),
-        ("f:{[\"s\"] 1}", "'match"), // blank once literals are masked; still not a name
+        ("f:{[(a b)] 1}", "start of the body"),
     ] {
         let found = lint(source, "t.q", Profile::Style);
         assert!(
