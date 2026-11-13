@@ -619,6 +619,22 @@ fn before_initialize_requests_are_refused_and_notifications_dropped() {
 }
 
 #[test]
+fn a_second_shutdown_is_an_invalid_request() {
+    // LSP 3.17, Shutdown Request: requests after it error with
+    // InvalidRequest, and `shutdown` is a request like any other.
+    let mut server = Server::start();
+    server.initialize();
+    server.send(json!({"jsonrpc":"2.0","id":2,"method":"shutdown"}));
+    assert_eq!(server.receive()["result"], Value::Null);
+    server.send(json!({"jsonrpc":"2.0","id":3,"method":"shutdown"}));
+    let reply = server.receive();
+    assert_eq!(reply["id"], 3);
+    assert_eq!(reply["error"]["code"], -32600, "{reply}");
+    server.send(json!({"jsonrpc":"2.0","method":"exit"}));
+    assert_eq!(server.child.wait().unwrap().code(), Some(0));
+}
+
+#[test]
 fn exit_without_shutdown_reports_a_nonzero_code() {
     // The protocol's own rule, and the only way a supervisor can tell a
     // clean stop from an editor that died.

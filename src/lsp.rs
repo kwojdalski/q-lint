@@ -458,19 +458,19 @@ pub fn serve(
                     idx.set(&path_of(uri), index(text));
                 }
             }
+            // A request after shutdown is the one protocol error worth
+            // answering rather than ignoring: the client is confused and
+            // should be told, not left waiting for a reply that never comes.
+            // A second `shutdown` included (LSP 3.17, Shutdown Request).
+            (_, Some(id)) if shutdown_requested => send(
+                writer,
+                json!({"id": id, "error": {"code": INVALID_REQUEST, "message": "server is shut down"}}),
+            )?,
             ("shutdown", Some(id)) => {
                 shutdown_requested = true;
                 docs.clear();
                 send(writer, json!({"id": id, "result": Value::Null}))?;
             }
-
-            // A request after shutdown is the one protocol error worth
-            // answering rather than ignoring: the client is confused and
-            // should be told, not left waiting for a reply that never comes.
-            (_, Some(id)) if shutdown_requested => send(
-                writer,
-                json!({"id": id, "error": {"code": INVALID_REQUEST, "message": "server is shut down"}}),
-            )?,
 
             ("textDocument/didOpen", None) => {
                 let uri = uri_of(&params["textDocument"]);
