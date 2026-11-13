@@ -326,6 +326,9 @@ select from t where sym=""
 === clean | a one-char string is a char atom
 select from t where c="a"
 
+=== QB015 | a non-ASCII char is two bytes, so no char atom (q 5: s="é" on 3 rows is 'length)
+select from t where s="é"
+
 === clean | like, match and in are the string comparisons
 select from t where sym like "EUR", s~\:"ab", c in "abc"
 

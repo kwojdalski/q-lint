@@ -492,3 +492,12 @@ fn deeply_nested_lambdas_lint_in_bounded_time() {
         "{depth} nested lambdas took {elapsed:?}"
     );
 }
+
+/// QB015 names the row count q needs, which is the string's length in bytes:
+/// `"éa"` is three, not two (#227).
+#[test]
+fn a_filter_string_is_counted_in_bytes() {
+    let found = lint("r:select from t where s=\"éa\"\n", "t.q", Profile::Style);
+    let qb015 = found.iter().find(|f| f.code == "QB015").expect("QB015");
+    assert!(qb015.detail.contains("exactly 3 rows"), "{}", qb015.detail);
+}

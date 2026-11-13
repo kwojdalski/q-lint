@@ -4966,7 +4966,7 @@ pub fn lint_selecting(
             let mut at = from;
             while let Some(m) = re!(r#"(?:=|<>)\s*"((?:[^"\\]|\\.)*)""#).captures_at(literals, at) {
                 let op = m.get(0).unwrap().start();
-                let n = re!(r"\\[0-7]{3}|\\.|[^\\]").find_iter(&m[1]).count();
+                let n = q_bytes(&m[1]).len();
                 if in_code(op) && n != 1 {
                     return Some((op, n));
                 }
