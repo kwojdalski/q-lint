@@ -16,6 +16,17 @@ f:{[a;b;c;d;e;f;g;h] a+b+c+d+e+f+g+h}
 === QA004 | applying a niladic function to the empty list
 f:{[] 1};f . ()
 
+=== QA004 | and in brackets, where the trap's handler swallows the 'type (q 5: .[g;()] is 'type, .[g;();{x}] calls the handler)
+f:{[] 1}
+b:.[f;()]
+c:.[f;();{x}]
+d:.[{[] 1};( );{x}]
+
+=== clean | three arguments with data on the left are an amend of the whole (q 5: .[d;();{x}] is d)
+d:`a`b!1 2
+r:.[d;();{x}]
+s:.[d;();:;3]
+
 === clean | the same shape where the function takes an argument
 f:{[a] 1};f . enlist 1
 

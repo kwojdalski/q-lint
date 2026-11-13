@@ -3591,10 +3591,21 @@ pub fn lint_selecting(
             continue;
         };
         let parts = slots(&code[at + 2..close - 1]);
+        let f_end = at + 2 + parts[0].trim_end().len();
+        // QA004 in brackets: `.[f;()]` is 'type as `f . ()` is, and so is the
+        // trap `.[f;();h]`, whose handler swallows it (q 5). With data on
+        // the left three arguments are an amend - `.[d;();f]` applies f to
+        // d - so the trap only for a lambda written out or named here.
+        let second = at + 2 + parts[0].len() + 1;
+        if (parts.len() == 2
+            || parts.len() == 3 && applied(at, parts[0].trim_end(), f_end).is_some())
+            && re!(r"^\s*\(\s*\)\s*$").is_match(&v.comments[second..second + parts[1].len()])
+        {
+            add(at, "QA004", "`.[f;()]`".into());
+        }
         if parts.len() != 2 {
             continue;
         }
-        let f_end = at + 2 + parts[0].trim_end().len();
         if let Some((rank, id)) = applied(at, parts[0].trim_end(), f_end)
             && let Some(detail) = items(parts[1]).and_then(|n| too_many(rank, n))
         {
