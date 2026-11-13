@@ -842,6 +842,14 @@ h:{[x] r:1+contracts; .registry.__contracts:x; r}
 .h._ranks:{2*x}
 f:{[x] a:.h._ranks a+1}
 
+=== clean profile: general | an assignment in a query's from-clause sets a local the next statement reads (q 5: f[([] b:3 1 2);enlist`b] sorts by b) (#300)
+f:{[p;c1] k:exec c from meta data4:p; data4:(c1 inter k) xasc data4; data4}
+g:{[p] r:select from d:p where a>1; d}
+
+=== QF014 profile: general | and a from-clause is a read like any other q (q 5: defining f is 't) (#300)
+t:([]a:1 2)
+f:{r:select from t; t:([]a:1 2); r}
+
 === QF003 | a query keyword as a local is refused when the lambda is defined (q 5: {select:1;0} is 'from)
 a:{select:1;0}
 b:{delete:1;0}

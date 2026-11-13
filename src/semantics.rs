@@ -236,6 +236,60 @@ pub(crate) fn local_view(direct: &str, tables: bool) -> String {
     }
     String::from_utf8(out).unwrap_or_default()
 }
+/// `local_view(direct, true)` with each query's from-clause put back. The
+/// table a query reads is ordinary q, run in the lambda's scope before the
+/// query, so an assignment there sets a local: q 5 runs
+/// `{[p;c] k:exec c from meta d:p; d:(c inter k) xasc d}`, where the second
+/// statement reads the `d` the first one set. Only an outermost query's
+/// clause, and only one holding no query of its own, whose names could be
+/// columns again; table literals in it stay blank.
+fn with_from_clauses(direct: &str) -> String {
+    let keyword = re!(r"(?:select|exec|update|delete)\b");
+    let mut out = local_view(direct, true).into_bytes();
+    // The same text with no query blanked, to copy a clause back from.
+    let unblanked = keyword.replace_all(direct, |m: &regex::Captures| " ".repeat(m[0].len()));
+    let plain = local_view(&unblanked, true);
+    let symbols = re!(r"`[A-Za-z0-9_./:]*")
+        .replace_all(direct, |m: &regex::Captures| " ".repeat(m[0].len()))
+        .into_owned();
+    let mut covered = 0;
+    for m in keyword.find_iter(&symbols) {
+        if m.start() < covered || !boundary(&symbols, m.start()) {
+            continue;
+        }
+        let (mut depth, mut from, mut clause_end) = (0i32, None, None);
+        let mut end = symbols.len();
+        for (i, b) in symbols.bytes().enumerate().skip(m.end()) {
+            match b {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => depth -= 1,
+                _ => {}
+            }
+            if depth < 0 || (b == b';' && depth == 0) {
+                end = i;
+                break;
+            }
+            if depth == 0 && boundary(&symbols, i) {
+                if from.is_none() && re!(r"^from\b").is_match(&symbols[i..]) {
+                    from = Some(i + 4);
+                } else if from.is_some()
+                    && clause_end.is_none()
+                    && re!(r"^where\b").is_match(&symbols[i..])
+                {
+                    clause_end = Some(i);
+                }
+            }
+        }
+        covered = end;
+        if let Some(from) = from {
+            let to = clause_end.unwrap_or(end);
+            if !keyword.is_match(&symbols[from..to]) {
+                out[from..to].copy_from_slice(&plain.as_bytes()[from..to]);
+            }
+        }
+    }
+    String::from_utf8(out).unwrap_or_default()
+}
 /// The innermost scope containing `at`.
 ///
 /// Scopes are pushed as their `{` is met, so they are ordered by `start` and
@@ -1428,7 +1482,7 @@ pub fn check(
         if !scope.named && scope.direct.trim_start().starts_with('[') {
             continue;
         }
-        let direct = local_view(&scope.direct, true);
+        let direct = with_from_clauses(&scope.direct);
         let mut first: HashMap<&str, usize> = HashMap::new();
         let mut every: HashMap<&str, Vec<usize>> = HashMap::new();
         for a in assignment.captures_iter(&direct) {
