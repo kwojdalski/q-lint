@@ -1533,9 +1533,13 @@ pub fn check(
                 && {
                     // Unless the statement assigns the name again, which may
                     // run first: `a:a*a:sin x`, `k:2_@[k;..;k:...]` and
-                    // `c:f$[0<count c:g x;c;0]` are fine.
+                    // `c:f$[0<count c:g x;c;0]` are fine. So is one right of
+                    // the bracket that closes around the first: `(b:b&x)|b:x>0`
+                    // runs `b:x>0` first (#302). The walk ends at a `;` of the
+                    // outermost level it has reached, since a later slot of a
+                    // control bracket, `$[c;(a:a+1);a:2]`, runs after.
                     let rest = &direct[assigned..];
-                    let mut depth = 0i32;
+                    let (mut depth, mut floor) = (0i32, 0i32);
                     let end = rest
                         .bytes()
                         .position(|b| {
@@ -1544,7 +1548,8 @@ pub fn check(
                                 b')' | b']' | b'}' => depth -= 1,
                                 _ => {}
                             }
-                            depth < 0 || (b == b';' && depth == 0)
+                            floor = floor.min(depth);
+                            b == b';' && depth <= floor
                         })
                         .unwrap_or(rest.len());
                     !assignment.captures_iter(&rest[..end]).any(|a| {

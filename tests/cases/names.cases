@@ -857,6 +857,16 @@ f:{[data] tmp:([] e:`a`b); 1_update e:data e from tmp}
 f:{r:a_update; a_update:1; r}
 g:{[d] t:([]e:1 2); r:1_update e:d from t; a:a+1}
 
+=== clean profile: general | an assignment right of the bracket holding the first runs before it (q 5: f 1 0 -1 is 1 0 0b, and g, k are defined) (#302)
+f:{[x] (b:b&x)|b:x>0}
+g:{(`$q:(),/:q)!til count q:-1_.Q.t}
+h:{x+y}
+k:{[x] (b:b&x)|h[1;b:x]}
+
+=== QF014 profile: general | but not with no such assignment, nor in a later slot of a control bracket (q 5: defining each is 'b or 'a) (#302)
+f:{[x] (b:b&x)|1}
+g:{[x] $[x;(a:a+1);a:2]}
+
 === QF003 | a query keyword as a local is refused when the lambda is defined (q 5: {select:1;0} is 'from)
 a:{select:1;0}
 b:{delete:1;0}
