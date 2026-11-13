@@ -386,7 +386,7 @@ fn run(args: Args) -> Result<u8, String> {
         args.paths
     };
     let mut sources = vec![];
-    let mut unreadable = false;
+    let mut failed = false;
     // Files read lossily, which are linted and reported but never fixed.
     let mut lossy = std::collections::HashSet::new();
     if paths.iter().any(|p| p == "-") {
@@ -446,7 +446,7 @@ fn run(args: Args) -> Result<u8, String> {
                 },
                 Err(e) => {
                     eprintln!("qlinter: {}: {e}, skipped", path.display());
-                    unreadable = true;
+                    failed = true;
                 }
             }
         }
@@ -490,8 +490,14 @@ fn run(args: Args) -> Result<u8, String> {
                 if let Some(whole) = whole_edit(source, &updated) {
                     print_diff(&diff_path(path), source, &[whole]);
                 }
+            } else if let Err(e) = fs::write(path.as_str(), &updated) {
+                // As for a file that cannot be read: reported, the rest still
+                // fixed and linted - this one as it stands on disk - and the
+                // run ends in 2.
+                eprintln!("qlinter: {path}: {e}, not fixed");
+                failed = true;
+                continue;
             } else {
-                fs::write(path.as_str(), &updated).map_err(|e| format!("{path}: {e}"))?;
                 *source = updated;
             }
             fixed += count;
@@ -504,7 +510,7 @@ fn run(args: Args) -> Result<u8, String> {
                     "qlinter: {withheld} more fix(es) not shown, in files that are not valid UTF-8"
                 );
             }
-            return Ok(if unreadable {
+            return Ok(if failed {
                 2
             } else {
                 u8::from(fixed + withheld > 0)
@@ -583,7 +589,7 @@ fn run(args: Args) -> Result<u8, String> {
             findings.len()
         );
     }
-    if unreadable {
+    if failed {
         return Ok(2);
     }
     Ok(u8::from(findings.iter().any(|f| {
@@ -615,7 +621,7 @@ fn analyze_graph(args: GraphArgs) -> Result<u8, String> {
         args.paths
     };
     let mut sources = vec![];
-    let mut unreadable = false;
+    let mut failed = false;
     for path in discover(paths, &policy, false)? {
         // As when linting: a file that is not UTF-8 is still q, and is read
         // with each invalid byte as one replacement character.
@@ -628,7 +634,7 @@ fn analyze_graph(args: GraphArgs) -> Result<u8, String> {
             // still prints what it read and ends in exit 2.
             Err(e) => {
                 eprintln!("qlinter: {}: {e}, skipped", path.display());
-                unreadable = true;
+                failed = true;
             }
         }
     }
@@ -665,7 +671,7 @@ fn analyze_graph(args: GraphArgs) -> Result<u8, String> {
         serde_json::to_string_pretty(&edges)
     };
     out!("{}", out.map_err(|e| e.to_string())?);
-    Ok(if unreadable { 2 } else { 0 })
+    Ok(if failed { 2 } else { 0 })
 }
 
 /// `path` relative to `base`, through `..` where it lies outside it, joined

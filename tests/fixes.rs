@@ -753,3 +753,57 @@ fn policy_findings_sit_on_the_token_they_name() {
         assert!(at.contains(w), "{w:?} not in {at:?}");
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn a_file_that_cannot_be_written_is_reported_and_the_rest_are_still_fixed() {
+    // One read-only file used to end the run on the spot: the files after it
+    // were neither fixed nor linted, and nothing was reported (#264).
+    use std::os::unix::fs::PermissionsExt;
+    let directory = tempfile::tempdir().unwrap();
+    let path = |name: &str| directory.path().join(name);
+    fs::write(path("a.q"), "f:{[x] x==1}\n").unwrap();
+    fs::write(path("b.q"), "f:{[x] x==1}\n").unwrap();
+    fs::write(path("c.q"), "g:{[x;y] x}\n").unwrap();
+    fs::set_permissions(path("a.q"), fs::Permissions::from_mode(0o444)).unwrap();
+    if fs::OpenOptions::new().write(true).open(path("a.q")).is_ok() {
+        return; // root writes it anyway; there is nothing to test
+    }
+    let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .current_dir(directory.path())
+        .args([
+            "--isolated",
+            "--profile",
+            "style",
+            "--fix",
+            "--format",
+            "json",
+        ])
+        .args(["a.q", "b.q", "c.q"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    assert!(
+        stderr.contains("a.q") && stderr.contains("not fixed"),
+        "{stderr}"
+    );
+    assert_eq!(fs::read_to_string(path("a.q")).unwrap(), "f:{[x] x==1}\n");
+    assert_eq!(fs::read_to_string(path("b.q")).unwrap(), "f:{[x] x=1}\n");
+    let findings: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let mut reported: Vec<_> = findings
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| {
+            let file = std::path::Path::new(f["path"].as_str().unwrap());
+            format!(
+                "{} {}",
+                file.file_name().unwrap().to_string_lossy(),
+                f["code"].as_str().unwrap()
+            )
+        })
+        .collect();
+    reported.sort();
+    assert_eq!(reported, ["a.q QE004", "c.q QF016"], "{findings}");
+}
