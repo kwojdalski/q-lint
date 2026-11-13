@@ -183,10 +183,10 @@ m:{([] count:1)}
 n:{select
   count:1 from t}
 
-=== QF003 QF017 | a local shadow at column zero is not root scope, and nothing reads it
+=== QE001 profile: general | a line at column zero inside a lambda ends it, so it is no local (q 5: '{)
 f:{[x]
 count:1
-}
+ }
 
 === QF013 | a builtin column name in a table literal
 t:([] first:1 2 3)
@@ -525,8 +525,8 @@ show
 
 === clean | a multiline bracketed expression is not a bare name read
 r:(
-bb;
-cc)
+ bb;
+ cc)
 
 === clean | a multiline lambda is checked once in its own scope
 f:{[bb]

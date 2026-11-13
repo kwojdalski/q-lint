@@ -124,7 +124,7 @@ outer:{[x]
     ]
   };
   inner[x]
-}
+ }
 
 === clean | nested multiline good
 outer:{[x]
@@ -135,7 +135,7 @@ outer:{[x]
     ]
   };
   inner[x]
-}
+ }
 
 === QT008 | nested multiline bad
 outer:{[x]
@@ -146,7 +146,7 @@ outer:{[x]
     ]
   };
   inner[x]
-}
+ }
 
 === clean | nested multiline good
 outer:{[x]
@@ -157,7 +157,7 @@ outer:{[x]
     ]
   };
   inner[x]
-}
+ }
 
 === QT009 | nested multiline bad
 outer:{[x]
@@ -168,7 +168,7 @@ outer:{[x]
     ]
   };
   inner[x]
-}
+ }
 
 === clean | nested multiline good
 outer:{[x]
@@ -179,7 +179,7 @@ outer:{[x]
     ]
   };
   inner[x]
-}
+ }
 
 === QT010 | nested multiline bad
 outer:{[x]
@@ -190,7 +190,7 @@ outer:{[x]
     ]
   };
   inner[x]
-}
+ }
 
 === clean | nested multiline good
 outer:{[x]
@@ -201,7 +201,7 @@ outer:{[x]
     ]
   };
   inner[x]
-}
+ }
 
 === QT011 | nested multiline bad
 outer:{[x]
@@ -212,7 +212,7 @@ outer:{[x]
     ]
   };
   inner[x]
-}
+ }
 
 === clean | nested multiline good
 outer:{[x]
@@ -223,7 +223,7 @@ outer:{[x]
     ]
   };
   inner[x]
-}
+ }
 
 === QT012 | nested multiline bad
 outer:{[x]
@@ -234,7 +234,7 @@ outer:{[x]
     ]
   };
   inner[x]
-}
+ }
 
 === clean | nested multiline good
 outer:{[x]
@@ -245,7 +245,7 @@ outer:{[x]
     ]
   };
   inner[x]
-}
+ }
 
 === QT013 | nested multiline bad
 outer:{[x]
@@ -256,7 +256,7 @@ outer:{[x]
     ]
   };
   inner[x]
-}
+ }
 
 === clean | nested multiline good
 outer:{[x]
@@ -269,7 +269,7 @@ outer:{[x]
     ]
   };
   inner[x]
-}
+ }
 
 === QT014 | nested multiline bad
 outer:{[x]
@@ -282,7 +282,7 @@ outer:{[x]
     ]
   };
   inner[x]
-}
+ }
 
 === clean | nested multiline good
 outer:{[x]
@@ -295,7 +295,7 @@ outer:{[x]
     ]
   };
   inner[x]
-}
+ }
 
 === QD001 | nested multiline bad
 outer:{[x]
@@ -306,7 +306,7 @@ outer:{[x]
     ]
   };
   inner[x]
-}
+ }
 
 === clean | nested multiline good
 outer:{[x]
@@ -317,7 +317,7 @@ outer:{[x]
     ]
   };
   inner[x]
-}
+ }
 
 === QD002 | nested multiline bad
 outer:{[x]
@@ -328,7 +328,7 @@ outer:{[x]
     ]
   };
   inner[x]
-}
+ }
 
 === clean | nested multiline good
 outer:{[x]
@@ -339,7 +339,7 @@ outer:{[x]
     ]
   };
   inner[x]
-}
+ }
 
 === clean | nested enlist is a matrix
 flip[enlist enlist 1]

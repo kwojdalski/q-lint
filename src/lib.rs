@@ -2475,6 +2475,22 @@ fn structure(path: &str, source: &str, v: &Views) -> Option<Finding> {
     let mut offset = 0;
     let make = |at, detail| Finding::at(path, source, at, "QE001", detail);
     for line in v.code.split_inclusive('\n') {
+        // A line at column 0 starts a statement, so a bracket still open
+        // there never closes: q 5 refuses `f:{[y]` + `  y+1` + `}` with '{
+        // (#225). A comment line is blank here and does not count.
+        if let Some(&(c, at)) = stack.last()
+            && line.starts_with(|ch: char| !ch.is_ascii_whitespace())
+        {
+            let row = source[..offset].matches('\n').count() + 1;
+            return Some(make(
+                at,
+                format!(
+                    "Unclosed delimiter; expected '{}' before line {row}, which starts at \
+                     column 0 and so begins a new statement",
+                    c as char
+                ),
+            ));
+        }
         if !line.starts_with('\\') {
             for (i, c) in line.bytes().enumerate() {
                 if let Some(p) = b"([{ ".iter().position(|&a| a == c).filter(|&p| p < 3) {

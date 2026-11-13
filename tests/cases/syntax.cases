@@ -30,6 +30,23 @@ x:1 / (]
 === clean | balanced nesting
 f:{[a] $[a>0;(1;2);()]}
 
+=== QE001 profile: general | a closing brace at column 0 starts a new statement (q 5: '{)
+f:{[y]
+  y+1
+}
+
+=== QE001 profile: general | so does any line at column 0 inside a bracket (q 5: '()
+a:(1;
+2)
+
+=== clean profile: general | indented closers, and a column-0 comment inside a lambda (q 5: f 1 is 2)
+f:{[y]
+/ a note
+  y+1
+ }
+a:(1;
+ 2)
+
 === QE002 | an escape q does not define
 s:"a\qb"
 
