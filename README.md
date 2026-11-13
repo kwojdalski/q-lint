@@ -114,11 +114,14 @@ that shadows a builtin, a column one typo from the table's, and (uqf)
 include them. Both CLI options use the builtin backend (or `--backend all`);
 `--fix` requires file paths rather than stdin.
 
-One pass leaves whatever it could not delimit. A call inside a qSQL phrase is
-not rewritten at all, because `from`, `by` and `where` end an expression there
-and this tool does not parse; and where one juxtaposed call is the argument of
-another, the outer one is bracketed and the inner waits for the next pass.
-Both keep their finding, so nothing is silently dropped.
+`--fix` and `--diff` repeat until nothing more applies, so where one
+juxtaposed call is the argument of another, both are bracketed in one run.
+Inside a qSQL phrase a call is bracketed up to the comma, `by`, `from` or
+`where` that ends its column or constraint - q 5 reads `select v:g s by k from
+t` as `g[s]`. A call in the table expression after `from` is left alone, as is
+one whose argument holds a query of its own: after `from`, q reads up to
+`where` as one expression (`select from g v,w` is `g[v,w]`), and this tool
+does not parse. Each keeps its finding, so nothing is silently dropped.
 
 ### The dependency graph: `qlinter analyze graph`
 
