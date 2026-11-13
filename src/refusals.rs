@@ -752,6 +752,14 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
         if !opens_expression(comments, i, line_start) {
             continue;
         }
+        // A symbol ending in `:` or `/` is still an operand: `` `:,srvr ``
+        // and `` `:dir/,`f `` join to a file handle (#292). Only a handle
+        // holds a `/`; `` `a/ `` is a symbol and an iterator.
+        if re!(r"`(?::[A-Za-z0-9_.:/]*|[A-Za-z0-9_.][A-Za-z0-9_.:]*)$")
+            .is_match(code[..i].trim_end_matches([' ', '\t']))
+        {
+            continue;
+        }
         // The sort in `select[>a]` and `select[2;<a]` is q's own syntax.
         if matches!(g, b'<' | b'>')
             && re!(r"(?:^|[^A-Za-z0-9.])select\s*\[(?:[^\[\];]*;)?$").is_match(before)
