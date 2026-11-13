@@ -291,6 +291,14 @@ t:([]a:"a";b:1)
 === clean | a two-char string is a two-row column
 t:([]a:"ab";b:1)
 
+=== clean | an escape is one char (q 5 builds both: "\n\t" is two rows, "\n" an atom)
+a:([]a:1 2;b:"\n\t")
+b:([]a:1 2 3;b:"\n")
+c:([]a:1 2;b:"\012\t")
+
+=== QT020 | a non-ASCII char is two bytes, so two rows
+t:([]a:1 2 3;b:"é")
+
 === QT021 | ss with an empty pattern
 r:ss["abc";""]
 

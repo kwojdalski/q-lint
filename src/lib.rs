@@ -3985,8 +3985,9 @@ pub fn lint_selecting(
         // A string column is blank in this view. Its length is in the source.
         let string_len = |v: &str, offset: usize| -> Option<Shape> {
             let raw = source[at + 1 + offset..at + 1 + offset + v.len()].trim();
-            if raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2 {
-                let n = raw.len() - 2;
+            // Counted as q holds it: `"\n\t"` is two chars, not four (#231).
+            if let Some(body) = re!(r#"^"((?:\\[0-7]{3}|\\.|[^"\\])*)"$"#).captures(raw) {
+                let n = q_bytes(&body[1]).len();
                 return Some(if n == 1 {
                     Shape::Atom
                 } else {
