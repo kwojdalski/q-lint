@@ -284,6 +284,29 @@ g:1.5e-3*x
 === QE010 profile: general | a boolean digit other than 0 or 1 (q 5: '2b)
 b:2b
 
+=== QE010 profile: general | an exponent makes an integer-suffixed atom a float (q 5: '1e5)
+a:1e5j
+
+=== QE010 profile: general | an exponent with an int suffix (q 5: '1e3)
+b:1e3i
+
+=== QE010 profile: general | an exponent with a short suffix and a fraction (q 5: '1.5e-3)
+c:1.5e-3h
+
+=== QE010 profile: general | a boolean with a fraction (q 5: '1.5b)
+d:1.5b
+
+=== QE010 profile: general | a byte literal with a letter that is no hex digit (q 5: '0x0g)
+e:0x0g
+
+=== clean profile: general | integer-suffixed atoms, booleans and bytes q accepts
+a:15j
+b:10b
+c:0x0f
+d:0xAB
+e:0x
+f:1e3e
+
 === QE010 profile: general | a letter that is no type (q 5: '1y)
 m:1y
 

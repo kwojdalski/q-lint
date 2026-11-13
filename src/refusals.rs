@@ -973,12 +973,22 @@ fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Find
             // is no type suffix, but the token is no number either.
             let detail = if re!(r"^0[nNwW][A-Za-z]?$").is_match(text) {
                 null_literal(text, k + 1 < run.len(), negative)
-            } else if re!(r"^\d+\.\d*[hij]$").is_match(text) {
+            } else if re!(r"^\d+(?:\.\d*)?(?:[eE][+-]?\d+)?[hij]$").is_match(text)
+                && !re!(r"^\d+[hij]$").is_match(text)
+            {
+                // `1e3j` too: an exponent makes a float, whatever it equals.
                 Some(format!(
-                    "`{text}`: an integer type takes no fractional part"
+                    "`{text}`: an integer type takes no fractional part or exponent"
                 ))
-            } else if re!(r"^\d*[2-9]\d*b$").is_match(text) {
+            } else if re!(r"^\d*[2-9]\d*b$").is_match(text)
+                || (re!(r"^\d+(?:\.\d*)?(?:[eE][+-]?\d+)?b$").is_match(text)
+                    && !re!(r"^\d+b$").is_match(text))
+            {
                 Some(format!("`{text}`: a boolean is written with 0 and 1 only"))
+            } else if re!(r"^0x[0-9a-fA-F]*[g-zG-Z][0-9A-Za-z]*$").is_match(text) {
+                Some(format!(
+                    "`{text}`: a byte literal is written with hex digits only"
+                ))
             } else if re!(r"^\d+[adgklmoqrwyz]$").is_match(text)
                 || (re!(r"^\d+x$").is_match(text) && text != "0x")
             {
