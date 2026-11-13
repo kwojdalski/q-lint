@@ -25,7 +25,7 @@ rules actually go wrong. Build the binary before and after, and diff them over
 a body of q nobody here wrote:
 
 ```sh
-python3 scripts/fetch_corpus.py ~/q-corpus      # once: 707 files of public q, pinned
+python3 scripts/fetch_corpus.py ~/q-corpus      # once: 3,664 files of public q, pinned
 python3 scripts/corpus_diff.py /tmp/qlinter-before target/release/qlinter ~/q-corpus
 ```
 

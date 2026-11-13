@@ -12,6 +12,14 @@ written to different habits. Run against them, the default profile reported
 55 findings, of which 44 were wrong; the seven causes are fixed and the 10
 that are real defects in that code are its authors' to fix.
 
+The second set, from 2026-11-13, adds the open-source projects on peachq.org's
+compatibility page that the first set did not already have. These are working
+applications and libraries, each tested on PeachQ with its own suite, so they
+hold what people actually write. Under the default profile they reported 190
+findings. 57 were wrong, from eleven causes (#292-#302). The other 131 are
+real errors in the code or fixtures broken on purpose, and two are code from
+before a check q has since added.
+
 The code is third-party and is never committed here. Each repository is
 pinned to the commit it was triaged at, so a diff over it moves only when the
 linter does.
@@ -46,6 +54,33 @@ REPOS = [
     ("qbists/studyq", "efe1da1a9c31044580c573f59e9f669d5a646e67"),
     ("simongarland/tick", "d5fdc3d3112ecdf547c42f4a6f2f917cb3bffa50"),
     ("timeseries/kdb", "18822dd8d932d429b8ebacbbde2e3624440d5777"),
+    # The projects on peachq.org's compatibility page (2026-11-13), at the
+    # commit each was triaged at. Those already above are not repeated.
+    ("aa1024/strQ", "7fa050ffaf385477bc16e946c6ec8ca7955833d7"),
+    ("angusmit/qPricer", "9b418d62c9a1843c175a24fc3e0610d8a57ffc61"),
+    ("asatirahul/cryptoq", "ffc72c1cdc487595df82de5a7969100bf0c4ade7"),
+    ("BuaBook/kdb-common", "d836de1eac943aa1fbc8b4c6237ed49e91333206"),
+    ("caolanraff/q-sino", "d7e1ee7b733d72c97ca3322d10588b1b09b77a52"),
+    ("dalaing/qcheck", "2c80face5167a6edfa0ae884dc43130b1a28d5c2"),
+    ("DataIntellectTech/TorQ", "4be4fc3457bf1a838e976ff2e9892b2babe8c1c3"),
+    ("dflynch/kdb-q-ext-vscode", "f363a8913bfc0d4bd7c2becbf5acff6c65a58c0a"),
+    ("drewsteele/qYaml", "d62cc5b41d235b10a49b9c572e52c530917a4f05"),
+    ("exxeleron/enterprise-components", "c1cc3bbf783bfc395d99fdb44b2754e3cc742f85"),
+    ("hanssmail/quantQ", "7a50cc9d3067ce365307b9cb211bd34561db2722"),
+    ("jkane17/qtools", "3df046566569913335fc0d1be6b73485082bab5a"),
+    ("jlas/ml.q", "bb0c8ca39717023de951351127342ad96dbb0f26"),
+    ("jsogarro/qstats", "d2f24f10735288b30fe1d712e8f9079e09efe428"),
+    ("kimtang/btick2", "d9055fe20a1c0628b9967a6840bf8f4dbe1aa7fc"),
+    ("kwojdalski/uqf", "428405789b2272efec40ce6c4e4900f54d80e2c2"),
+    ("nugend/qspec", "9b846b68a8d808e472ba504d18c325b14b468087"),
+    ("nugend/qutil", "2bce9deb5585f7166052bfb81012b8d897fedeeb"),
+    ("Oiubrab/qSolve", "bf4c3a8d93fb0b055cfe6b69b55dc36c88f083c9"),
+    ("patmok/unparse", "079b8a2ad1a18770677bd68ef31b5fa1d38c3864"),
+    ("Piohrun/resq", "1a5c4486ce821e3cb6c4f9e79ea04695d6ee98cc"),
+    ("quintanar401/qchk", "083306eae29a7e39e5577779ff89c9ce21e8ef2d"),
+    ("quintanar401/Qute", "7fd3140489a02d1b7eaa75cf532f78378d663f18"),
+    ("SpencerFX/q-desc", "99e7d0a700cbe6b39680ce46aa43d78f43b8c3cb"),
+    ("timestored/kdb", "0da819cd1eaaf7f0a7b7e5b509f9acc052770564"),
 ]
 
 
