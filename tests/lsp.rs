@@ -650,6 +650,23 @@ fn a_response_is_not_answered_and_a_bad_method_is_an_invalid_request() {
 }
 
 #[test]
+fn a_document_over_the_size_limit_is_skipped_and_the_server_carries_on() {
+    // The cap stops an unbounded allocation; Content-Length still says where
+    // the next message starts, so nothing else need be lost.
+    let mut server = Server::start();
+    server.initialize();
+    let big = "a:1\n".repeat(17 << 18);
+    server.open("file:///tmp/big.q", &big);
+    let reply = server.receive();
+    assert_eq!(reply["id"], Value::Null, "{reply}");
+    assert_eq!(reply["error"]["code"], -32600, "{reply}");
+    let uri = "file:///tmp/after_big.q";
+    server.open(uri, RESERVED_PARAM);
+    assert!(!server.diagnostics_for(uri).is_empty());
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
 fn exit_without_shutdown_reports_a_nonzero_code() {
     // The protocol's own rule, and the only way a supervisor can tell a
     // clean stop from an editor that died.

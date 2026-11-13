@@ -88,9 +88,25 @@ pub fn receive(reader: &mut impl BufRead) -> Result<Option<Result<Value, Malform
             );
         }
     }
-    let length = length
-        .filter(|&n| n <= MAX_BODY_BYTES)
-        .ok_or("Invalid LSP message size")?;
+    let length = length.ok_or("Invalid LSP message size")?;
+    // Too big to hold, but counted: skipping it keeps the stream in step, so
+    // one huge document costs that document rather than the whole session.
+    if length > MAX_BODY_BYTES {
+        let skipped = std::io::copy(
+            &mut std::io::Read::take(&mut *reader, length as u64),
+            &mut std::io::sink(),
+        )
+        .map_err(|e| e.to_string())?;
+        if skipped < length as u64 {
+            return Err("stream closed part-way through an LSP message".into());
+        }
+        return Ok(Some(Err(Malformed {
+            code: INVALID_REQUEST,
+            message: format!(
+                "a message of {length} bytes is over the limit of {MAX_BODY_BYTES}; skipped"
+            ),
+        })));
+    }
     let mut body = vec![0; length];
     std::io::Read::read_exact(reader, &mut body).map_err(|e| e.to_string())?;
     if let Some(line) = bad_header {
