@@ -610,6 +610,21 @@ r:update c:a by d from t
 t:([]a:1 2;b:3 4)
 r:`c xdesc t
 
+=== QF020 | a column alias elsewhere defines no global
+k:([]a:1 2)
+r:select from k where b>0
+q:select b:a from k
+
+=== QF020 | nor does another table's column
+k:([]a:1 2)
+u:([]b:3 4)
+r:select b from k
+
+=== QF020 | nor another lambda's local
+k:([]a:1 2)
+f:{b:1; b}
+r:select b from k
+
 === clean | a column added in place by name with @ is the table's now
 t:([]a:1 2)
 @[`t;`b;:;3 4]

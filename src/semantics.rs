@@ -641,6 +641,8 @@ fn call_time(scopes: &[Scope], at: usize, name: &str) -> bool {
     !name.starts_with('.') && scope_at(scopes, at).is_some_and(|s| !scopes[s].namespace.is_empty())
 }
 
+/// Global names, each with where its assignments' values start.
+type Writes = HashMap<String, Vec<usize>>;
 /// Every name this file assigns at global scope, qualified by the namespace
 /// in force, with where each assignment's value starts. `call_time_sets`
 /// credits a `` `n set `` inside a `\d` lambda to the namespace it is written
@@ -2278,7 +2280,7 @@ pub fn check(
         code,
         raw,
         comments,
-        (&scopes, &namespaces),
+        (&scopes, &namespaces, &exact),
         dynamic,
         &|name: &str| elsewhere(&qualify(name, "")),
     ));
@@ -2444,8 +2446,9 @@ fn named_values(
     code: &str,
     raw: &str,
     comments: &str,
-    // The scopes, and the `\d` namespace in force from each offset on.
-    (scopes, namespaces): (&[Scope], &[(usize, String)]),
+    // The scopes, the `\d` namespace in force from each offset on, and the
+    // file's global definitions keyed as q resolves them.
+    (scopes, namespaces, globals): (&[Scope], &[(usize, String)], &Writes),
     dynamic: bool,
     elsewhere: &dyn Fn(&str) -> bool,
 ) -> Vec<Finding> {
@@ -2802,13 +2805,14 @@ fn named_values(
     // looks for a column, then a variable, and raises the name when neither
     // exists - `select b from ([]a:1 2)` is 'b. So only a name nothing in
     // this file defines: a global or local of that name changes the error
-    // or removes it. `i` is the virtual row index.
-    let defined: HashSet<&str> = writes.keys().copied().collect();
+    // or removes it. `i` is the virtual row index. A global, that is: a
+    // column alias, another table's column or another lambda's local defines
+    // nothing here - q 5 `k:([]a:1 2); f:{b:1; b}; select b from k` is 'b.
     let is_free = |name: &str, at: usize, columns: &[String]| {
         re!(r"^[A-Za-z][A-Za-z0-9_]*$").is_match(name)
             && name != "i"
             && !columns.iter().any(|c| c == name)
-            && !defined.contains(name)
+            && !globals.contains_key(&key(name, at))
             && !elsewhere(name)
             && !crate::RESERVED.iter().any(|n| n == name)
             && !scope_at(scopes, at).is_some_and(|s| scopes[s].locals.contains(name))
