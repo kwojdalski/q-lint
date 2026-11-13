@@ -602,6 +602,23 @@ fn a_malformed_message_is_answered_and_the_server_carries_on() {
 }
 
 #[test]
+fn before_initialize_requests_are_refused_and_notifications_dropped() {
+    // LSP 3.17, Initialize Request: -32002 for a request, nothing for a
+    // notification. The didOpen must not be linted, so the first message
+    // back after initialize is initialize's own reply.
+    let mut server = Server::start();
+    server.send(json!({"jsonrpc":"2.0","id":3,"method":"textDocument/formatting",
+        "params":{"textDocument":{"uri":"file:///tmp/a.q"},"options":{"tabSize":2,"insertSpaces":true}}}));
+    let reply = server.receive();
+    assert_eq!(reply["id"], 3);
+    assert_eq!(reply["error"]["code"], -32002);
+    server.open("file:///tmp/early.q", RESERVED_PARAM);
+    let reply = server.initialize();
+    assert_eq!(reply["id"], 1, "{reply}");
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
 fn exit_without_shutdown_reports_a_nonzero_code() {
     // The protocol's own rule, and the only way a supervisor can tell a
     // clean stop from an editor that died.
@@ -752,6 +769,7 @@ fn only_q_files_are_linted() {
 #[test]
 fn the_bracket_quick_fix_covers_the_whole_application() {
     let mut server = Server::start();
+    server.initialize();
     let uri = "file:///tmp/calls.q";
     server.open(uri, "f:{x+1}\nr:f 3+4\n");
     let diagnostics = server.diagnostics_for(uri);

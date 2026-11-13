@@ -90,6 +90,7 @@ use std::{
 const SYNC_FULL: i64 = 1;
 
 const METHOD_NOT_FOUND: i64 = -32601;
+const SERVER_NOT_INITIALIZED: i64 = -32002;
 
 /// Open documents, by URI. The editor is the authority on their contents from
 /// didOpen until didClose, so nothing here reads from disk.
@@ -391,6 +392,7 @@ pub fn serve(
     let mut roots: Vec<String> = vec![];
     let mut opts = Options::default();
     let mut problems: Vec<String> = vec![];
+    let mut initialized = false;
     let mut shutdown_requested = false;
     loop {
         let message = match receive(reader)? {
@@ -425,7 +427,17 @@ pub fn serve(
                     policy.narrow(layer);
                 }
                 send(writer, json!({"id": id, "result": capabilities(&opts)}))?;
+                initialized = true;
             }
+            ("exit", _) => return Ok(if shutdown_requested { 0 } else { 1 }),
+            // LSP 3.17, Initialize Request: before `initialize`, a request is
+            // answered with ServerNotInitialized and a notification dropped,
+            // `exit` excepted.
+            (_, Some(id)) if !initialized => send(
+                writer,
+                json!({"id": id, "error": {"code": SERVER_NOT_INITIALIZED, "message": "server is not initialized"}}),
+            )?,
+            (_, None) if !initialized => {}
             // Indexed once the client is ready rather than inside initialize,
             // so a large workspace does not hold up the handshake.
             ("initialized", None) => {
@@ -451,7 +463,6 @@ pub fn serve(
                 docs.clear();
                 send(writer, json!({"id": id, "result": Value::Null}))?;
             }
-            ("exit", _) => return Ok(if shutdown_requested { 0 } else { 1 }),
 
             // A request after shutdown is the one protocol error worth
             // answering rather than ignoring: the client is confused and
