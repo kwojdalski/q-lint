@@ -520,6 +520,9 @@ r:{x+y}[1;2;3]
 === QA002 | and with no x, y or z read it still takes one
 r:{1}[1;2]
 
+=== QA002 QF021 profile: general | y.z is a global, not a read of y (q 5: {x+y.z}[1;2] is 'rank)
+r:{x+y.z}[1;2]
+
 === clean | QA002: y read means two arguments
 r:{y}[1;2]
 

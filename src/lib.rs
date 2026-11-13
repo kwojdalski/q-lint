@@ -2691,10 +2691,14 @@ pub fn lint_selecting(
                     && let Some(close) = matching(code, open, b'[', b']')
                 {
                     let body = top_level(&code[at + 1..end - 1]);
+                    // Not as the head of a dotted name: `y.z` is a global,
+                    // and q 5 `{x+y.z}[1;2]` is 'rank.
                     let reads = |name: &str| {
-                        re!(r"[A-Za-z_][A-Za-z0-9_]*")
-                            .find_iter(&body)
-                            .any(|w| w.as_str() == name && boundary(&body, w.start()))
+                        re!(r"[A-Za-z_][A-Za-z0-9_]*").find_iter(&body).any(|w| {
+                            w.as_str() == name
+                                && boundary(&body, w.start())
+                                && !body[w.end()..].starts_with('.')
+                        })
                     };
                     let rank = if reads("z") {
                         3
