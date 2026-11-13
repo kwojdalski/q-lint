@@ -59,6 +59,19 @@ fn non_ascii_before_a_glyph_does_not_panic() {
     }
 }
 
+/// A non-ASCII character in a select list: the qSQL tokenizer once took it
+/// as a one-byte operator and sliced through the `€` (#235).
+#[test]
+fn non_ascii_in_a_select_list_does_not_panic() {
+    for source in [
+        "r:select a€ from t\n",
+        "r:select €,b from t\n",
+        "r:exec a+€ by b from t\n",
+    ] {
+        lint(source, "t.q", Profile::Uqf);
+    }
+}
+
 #[test]
 fn language_prefixes_preserve_following_q_diagnostics() {
     for prefix in ["p)", "k)"] {
