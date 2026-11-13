@@ -1,0 +1,921 @@
+{
+ "general": {
+  "BuaBook/kdb-common": [],
+  "DataIntellectTech/TorQ": [
+   {
+    "code": "QF005",
+    "detail": "Nested lambda references enclosing local 'handle' without a parameter",
+    "path": "code/common/subscribercutoff.q",
+    "text": "@[hclose;handle;{.lg.e[`subscribercutoff;\"Failed to close handle \",string handle]}]; .z.pc handle} each where .subcut.state >= breachlimit;"
+   },
+   {
+    "code": "QF005",
+    "detail": "Nested lambda references enclosing local 'tab' without a parameter",
+    "path": "code/dqc/daytoday.q",
+    "text": "listt:{?[tab;((=;cola;enlist vara);(=;colb;enlist varb);(=;.Q.pf;x));1b;()]}each -2#.Q.PV;"
+   },
+   {
+    "code": "QF005",
+    "detail": "Nested lambda references enclosing local 'cola' without a parameter",
+    "path": "code/dqc/daytoday.q",
+    "text": "listt:{?[tab;((=;cola;enlist vara);(=;colb;enlist varb);(=;.Q.pf;x));1b;()]}each -2#.Q.PV;"
+   },
+   {
+    "code": "QF005",
+    "detail": "Nested lambda references enclosing local 'vara' without a parameter",
+    "path": "code/dqc/daytoday.q",
+    "text": "listt:{?[tab;((=;cola;enlist vara);(=;colb;enlist varb);(=;.Q.pf;x));1b;()]}each -2#.Q.PV;"
+   },
+   {
+    "code": "QF005",
+    "detail": "Nested lambda references enclosing local 'colb' without a parameter",
+    "path": "code/dqc/daytoday.q",
+    "text": "listt:{?[tab;((=;cola;enlist vara);(=;colb;enlist varb);(=;.Q.pf;x));1b;()]}each -2#.Q.PV;"
+   },
+   {
+    "code": "QF005",
+    "detail": "Nested lambda references enclosing local 'varb' without a parameter",
+    "path": "code/dqc/daytoday.q",
+    "text": "listt:{?[tab;((=;cola;enlist vara);(=;colb;enlist varb);(=;.Q.pf;x));1b;()]}each -2#.Q.PV;"
+   },
+   {
+    "code": "QA006",
+    "detail": "Two-slot $[ ... ] is no conditional: both slots always run, so this signal fires whether or not the test holds",
+    "path": "code/handlers/permissions.q",
+    "text": "dotqd:enlist[`]!enlist{[u;e;b;pr]if[not (fchk[u;ALL;()] or fchk[u;`$string(first e);()]);$[b;'err[`expr][]];:0b];$[b;qexe e;1b]};"
+   }
+  ],
+  "KxSystems/arrowkdb": [],
+  "KxSystems/automl": [],
+  "KxSystems/cookbook": [
+   {
+    "code": "QF003",
+    "detail": "Local assignment to `use`",
+    "path": "tutorial/smartmeterfunctions.q",
+    "text": "if[0<count grps; use:`long$eval(?;use;();byclause;aggs)];"
+   },
+   {
+    "code": "QF003",
+    "detail": "Local assignment to `use`",
+    "path": "tutorial/smartmeterfunctions.q",
+    "text": "if[any`custtype`region in grps; use:use lj static];"
+   },
+   {
+    "code": "QF003",
+    "detail": "Local assignment to `use`",
+    "path": "tutorial/smartmeterfunctions.q",
+    "text": "if[pivot~`date; use:update date:`$string date from use];"
+   },
+   {
+    "code": "QF003",
+    "detail": "Local assignment to `use`",
+    "path": "tutorial/smartmeterfunctions.q",
+    "text": "if[pivot~`hour; use:update hour:`$string hour from use];"
+   },
+   {
+    "code": "QF003",
+    "detail": "Local assignment to `use`",
+    "path": "tutorial/smartmeterfunctions.q",
+    "text": "use:0^eval(?;use;();pivot _ grps!grps;enlist(#;enlist P;(!;pivot;`totalusage)))];"
+   },
+   {
+    "code": "QF003",
+    "detail": "Local assignment to `use`",
+    "path": "tutorial/smartmeterfunctions.q",
+    "text": "use:eval(?;`meter;enlist meterwc;bygrp;(enlist `usage)!enlist(.q.first;`usage));"
+   },
+   {
+    "code": "QF003",
+    "detail": "Local assignment to `use`",
+    "path": "tutorial/smartmeterfunctions.q",
+    "text": "use:select from use where date<enddate+1;"
+   },
+   {
+    "code": "QF003",
+    "detail": "Local assignment to `use`",
+    "path": "tutorial/smartmeterfunctions.q",
+    "text": "use:update usage:next deltas[first usage;usage] by meterid from use;"
+   }
+  ],
+  "KxSystems/embedPy": [],
+  "KxSystems/fusionx": [],
+  "KxSystems/jupyterq": [],
+  "KxSystems/kafka": [],
+  "KxSystems/kdb": [
+   {
+    "code": "QB007",
+    "detail": "like needs a string pattern; a symbol literal is a 'type error at runtime",
+    "path": "e/tpcd.q",
+    "text": "select rev wavg s.n=`BRAZIL by o.d.year from l where o.c.n.r=`AMERICA,o.d.year in 1995 1996,p.t like`$\"ECONOMY ANODIZED STEEL\""
+   }
+  ],
+  "KxSystems/kdb-taq": [],
+  "KxSystems/kdb-tick": [],
+  "KxSystems/ml": [],
+  "KxSystems/mqtt": [],
+  "KxSystems/nlp": [],
+  "KxSystems/protobufkdb": [],
+  "KxSystems/pykx": [
+   {
+    "code": "QT003",
+    "detail": "Arithmetic on a symbol literal is a 'type error at runtime",
+    "path": "tests/qscripts/sync_file_fail.q",
+    "text": "`e+1"
+   }
+  ],
+  "Oiubrab/qSolve": [],
+  "Piohrun/resq": [
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 55, which starts at column 0 and so begins a new statement",
+    "path": "examples/quickstart/test/analytics/test_moving_avg.q",
+    "text": ".tst.desc[\"Moving Average Analytics\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 31, which starts at column 0 and so begins a new statement",
+    "path": "examples/quickstart/test/gateway/test_auth.q",
+    "text": ".tst.desc[\"Auth Gateway\"; {"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 116, which starts at column 0 and so begins a new statement",
+    "path": "examples/quickstart/test/order/test_service.q",
+    "text": ".tst.desc[\"Order Processing Service\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 70, which starts at column 0 and so begins a new statement",
+    "path": "examples/quickstart/test/perf/test_benchmark.q",
+    "text": ".tst.desc[\"Performance Benchmarking\"; {"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 29, which starts at column 0 and so begins a new statement",
+    "path": "examples/quickstart/test/tick/test_feed.q",
+    "text": ".tst.desc[\"Ticker Feed\"; {"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 89, which starts at column 0 and so begins a new statement",
+    "path": "examples/quickstart/test/user/test_service.q",
+    "text": ".tst.desc[\"User Management Service\"]{"
+   },
+   {
+    "code": "QF005",
+    "detail": "Nested lambda references enclosing local 'fallback' without a parameter",
+    "path": "lib/quarantine.q",
+    "text": "configured:.tst.toString @[get;` sv (`.tst.app;setting);{fallback}];"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 31, which starts at column 0 and so begins a new statement",
+    "path": "pilots/vendor/strq/tests/test_strq.q",
+    "text": ".tst.desc[\"strQ external adoption\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 23, which starts at column 0 and so begins a new statement",
+    "path": "tests/compat/application/application_suite.q",
+    "text": "describe[\"production application compatibility\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 55, which starts at column 0 and so begins a new statement",
+    "path": "tests/fixture_tests/test_directory_fixture.q",
+    "text": ".tst.desc[\"Loading Directory Fixtures\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 10, which starts at column 0 and so begins a new statement",
+    "path": "tests/fixtures/distributed/coverage_suite.q",
+    "text": ".tst.desc[\"Distributed coverage contract\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 38, which starts at column 0 and so begins a new statement",
+    "path": "tests/fixtures/distributed/distributed_suite.q",
+    "text": ".tst.desc[\"Distributed execution contract\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 4, which starts at column 0 and so begins a new statement",
+    "path": "tests/fixtures/distributed/fail_fast_suite.q",
+    "text": ".tst.desc[\"Distributed fail-fast contract\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 7, which starts at column 0 and so begins a new statement",
+    "path": "tests/fixtures/property_protocol.q",
+    "text": ".tst.desc[\"property protocol fixture\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 18, which starts at column 0 and so begins a new statement",
+    "path": "tests/fixtures/review/loader_constructor_literals.q",
+    "text": ".tst.desc[\"constructor literals should stay data\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 6, which starts at column 0 and so begins a new statement",
+    "path": "tests/fixtures/review/qspec_test_assertions.q",
+    "text": ".tst.desc[\"qspec discovery review fixture\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected ']' before line 2, which starts at column 0 and so begins a new statement",
+    "path": "tests/hardening/manual_deep_diff.q",
+    "text": "if[not `FILELOADING in key `.utl;"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected ']' before line 2, which starts at column 0 and so begins a new statement",
+    "path": "tests/hardening/manual_discovery.q",
+    "text": "if[not `FILELOADING in key `.utl;"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected ']' before line 2, which starts at column 0 and so begins a new statement",
+    "path": "tests/hardening/manual_large_table_diff.q",
+    "text": "if[not `FILELOADING in key `.utl;"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected ']' before line 2, which starts at column 0 and so begins a new statement",
+    "path": "tests/hardening/manual_stack_final.q",
+    "text": "if[not `FILELOADING in key `.utl;"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected ']' before line 2, which starts at column 0 and so begins a new statement",
+    "path": "tests/hardening/manual_stack_manual.q",
+    "text": "if[not `FILELOADING in key `.utl;"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected ']' before line 2, which starts at column 0 and so begins a new statement",
+    "path": "tests/hardening/manual_stack_simple.q",
+    "text": "if[not `FILELOADING in key `.utl;"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected ']' before line 2, which starts at column 0 and so begins a new statement",
+    "path": "tests/hardening/repro_stack.q",
+    "text": "if[not `FILELOADING in key `.utl;"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 18, which starts at column 0 and so begins a new statement",
+    "path": "tests/hardening/test_cleanup_isolation.q",
+    "text": ".tst.desc[\"Exit Code Constants\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 33, which starts at column 0 and so begins a new statement",
+    "path": "tests/hardening/test_dev_experience.q",
+    "text": ".tst.desc[\"Developer Experience Features\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 48, which starts at column 0 and so begins a new statement",
+    "path": "tests/hardening/test_dirty_types.q",
+    "text": ".tst.desc[\"Phase 2 Hardening: Dirty Types Reporting\"; {"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 36, which starts at column 0 and so begins a new statement",
+    "path": "tests/hardening/test_enhanced_context.q",
+    "text": ".tst.desc[\"Enhanced Error Context\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 31, which starts at column 0 and so begins a new statement",
+    "path": "tests/hardening/test_exit_codes.q",
+    "text": ".tst.desc[\"Exit Code Logic\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 21, which starts at column 0 and so begins a new statement",
+    "path": "tests/hardening/test_handles_timers.q",
+    "text": ".tst.desc[\"Phase 1 Hardening: Handles and Timers\"; {"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 11, which starts at column 0 and so begins a new statement",
+    "path": "tests/hardening/test_isolation.q",
+    "text": ".tst.desc[\"Isolation Testing 1\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 135, which starts at column 0 and so begins a new statement",
+    "path": "tests/hardening/test_large_output.q",
+    "text": ".tst.desc[\"Large Output Safety\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 42, which starts at column 0 and so begins a new statement",
+    "path": "tests/hardening/test_mock_warnings.q",
+    "text": ".tst.desc[\"Mock Restoration Warnings\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 12, which starts at column 0 and so begins a new statement",
+    "path": "tests/hardening/test_resource_cleanup.q",
+    "text": ".tst.desc[\"Phase 1 Hardening: Resource Management\"; {"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 21, which starts at column 0 and so begins a new statement",
+    "path": "tests/hardening/test_skip_pending.q",
+    "text": ".tst.desc[\"Skip and Pending DSL\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 127, which starts at column 0 and so begins a new statement",
+    "path": "tests/hardening/test_stack_trace_phase2.q",
+    "text": ".tst.desc[\"Stack Trace Support\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 29, which starts at column 0 and so begins a new statement",
+    "path": "tests/hardening/test_testing_patterns.q",
+    "text": ".tst.desc[\"Testing Pattern Features\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 52, which starts at column 0 and so begins a new statement",
+    "path": "tests/hardening/test_timeout_safety.q",
+    "text": ".tst.desc[\"Timeout Safety #slow\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 7, which starts at column 0 and so begins a new statement",
+    "path": "tests/isolation/test_a.q",
+    "text": ".tst.desc[\"Isolation Source\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 7, which starts at column 0 and so begins a new statement",
+    "path": "tests/isolation/test_b.q",
+    "text": ".tst.desc[\"Isolation Target\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 15, which starts at column 0 and so begins a new statement",
+    "path": "tests/pollution/polluter.q",
+    "text": ".tst.desc[\"Pollution Source\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 127, which starts at column 0 and so begins a new statement",
+    "path": "tests/test_assertions.q",
+    "text": ".tst.desc[\"mustmatch rich diff\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 45, which starts at column 0 and so begins a new statement",
+    "path": "tests/test_assertions_can_fail.q",
+    "text": ".tst.desc[\"every assertion can fail\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 80, which starts at column 0 and so begins a new statement",
+    "path": "tests/test_async_documented.q",
+    "text": ".tst.desc[\"ASYNC.md examples\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 57, which starts at column 0 and so begins a new statement",
+    "path": "tests/test_cleanup_failures.q",
+    "text": ".tst.desc[\"Cleanup failures fail the run #slow\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 39, which starts at column 0 and so begins a new statement",
+    "path": "tests/test_cli.q",
+    "text": ".tst.desc[\"CLI mode parsing\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 68, which starts at column 0 and so begins a new statement",
+    "path": "tests/test_coverage.q",
+    "text": ".tst.desc[\"Coverage: scalar helpers\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 170, which starts at column 0 and so begins a new statement",
+    "path": "tests/test_coverage_gate.q",
+    "text": ".tst.desc[\"Coverage gate decision\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 39, which starts at column 0 and so begins a new statement",
+    "path": "tests/test_declarative_cases.q",
+    "text": ".tst.desc[\"Declarative parameter cases\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 52, which starts at column 0 and so begins a new statement",
+    "path": "tests/test_deps.q",
+    "text": ".tst.desc[\"Dependency Graph Analysis\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 84, which starts at column 0 and so begins a new statement",
+    "path": "tests/test_diff.q",
+    "text": ".tst.desc[\"Semantic Diff Engine\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 38, which starts at column 0 and so begins a new statement",
+    "path": "tests/test_embedded_run.q",
+    "text": ".tst.desc[\"embedded public run API #slow\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 34, which starts at column 0 and so begins a new statement",
+    "path": "tests/test_framework_integration.q",
+    "text": ".tst.desc[\"Framework Isolation\"; {"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 145, which starts at column 0 and so begins a new statement",
+    "path": "tests/test_generators.q",
+    "text": ".tst.desc[\"Deterministic property generators\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 25, which starts at column 0 and so begins a new statement",
+    "path": "tests/test_injection.q",
+    "text": ".tst.desc[\"Fixture Injection\"; {"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected ']' before line 16, which starts at column 0 and so begins a new statement",
+    "path": "tests/test_isolate.q",
+    "text": ".tst.isotest.qExe: {$["
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 64, which starts at column 0 and so begins a new statement",
+    "path": "tests/test_library_init.q",
+    "text": ".tst.desc[\"library initialization in an existing application #slow\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 27, which starts at column 0 and so begins a new statement",
+    "path": "tests/test_load_error.q",
+    "text": ".tst.desc[\"Load Error Test\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 13, which starts at column 0 and so begins a new statement",
+    "path": "tests/test_mock_arity.q",
+    "text": ".tst.desc[\"Mocking Arity Test\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 207, which starts at column 0 and so begins a new statement",
+    "path": "tests/test_namespace_adoption.q",
+    "text": ".tst.desc[\"reserved namespace adoption contract #slow\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 30, which starts at column 0 and so begins a new statement",
+    "path": "tests/test_new_features.q",
+    "text": ".tst.desc[\"New Features Verification\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 260, which starts at column 0 and so begins a new statement",
+    "path": "tests/test_observability.q",
+    "text": ".tst.desc[\"Observability contract v2\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 91, which starts at column 0 and so begins a new statement",
+    "path": "tests/test_perf.q",
+    "text": ".tst.desc[\"Benchmarking Features\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 12, which starts at column 0 and so begins a new statement",
+    "path": "tests/test_pollution_sandbox.q",
+    "text": ".tst.desc[\"Pollution and Sandbox Test\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 78, which starts at column 0 and so begins a new statement",
+    "path": "tests/test_runner.q",
+    "text": ".tst.desc[\"runAll phase: initRun\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 129, which starts at column 0 and so begins a new statement",
+    "path": "tests/test_runner_finalizer.q",
+    "text": ".tst.desc[\"runSpec always-finalize contract #slow\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 68, which starts at column 0 and so begins a new statement",
+    "path": "tests/test_snapshot.q",
+    "text": ".tst.desc[\"Snapshot Verification\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 32, which starts at column 0 and so begins a new statement",
+    "path": "tests/test_spy.q",
+    "text": ".tst.desc[\"Spy Verification\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 31, which starts at column 0 and so begins a new statement",
+    "path": "tests/test_static_analysis.q",
+    "text": ".tst.desc[\"Static analysis: path helpers\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 6, which starts at column 0 and so begins a new statement",
+    "path": "tests/test_timeout_throw.q",
+    "text": ".tst.desc[\"Timeout Test\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 93, which starts at column 0 and so begins a new statement",
+    "path": "tests/test_ui.q",
+    "text": ".tst.desc[\"alt blocks and hooks declared after them\"]{"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 103, which starts at column 0 and so begins a new statement",
+    "path": "tools/coverage_performance_probe.q",
+    "text": ".tst.desc[\"Coverage performance probe\"]{"
+   }
+  ],
+  "SpencerFX/q-desc": [
+   {
+    "code": "QT003",
+    "detail": "Arithmetic on a symbol literal is a 'type error at runtime",
+    "path": "example/namespaceQ.q",
+    "text": "f:{`hello+x};"
+   }
+  ],
+  "aa1024/strQ": [],
+  "angusmit/qPricer": [
+   {
+    "code": "QF001",
+    "detail": "Builtin parameter name(s): [\"exp\"]; q refuses every call to this lambda ('match or 'nyi)",
+    "path": "apps/examples/build_vol_surface.q",
+    "text": "chainPrices:{[ot;stk;exp;vol] .validation.blackScholesClosedForm[ot;spot;stk;exp;riskFreeRate;dividendYield;vol]}'[optTypes;strikes;expiries;trueVols];"
+   },
+   {
+    "code": "QE010",
+    "detail": "`0Nf`: a vector literal takes one type suffix, after its last item; q refuses to parse it",
+    "path": "apps/examples/price_portfolio.q",
+    "text": "barrierLevel:0Nf 0Nf 0Nf 130f;"
+   },
+   {
+    "code": "QT003",
+    "detail": "Arithmetic on a symbol literal is a 'type error at runtime",
+    "path": "apps/examples/validate_market_data.q",
+    "text": "(row`expDate-valDate)%365f;"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected ']' before line 40, which starts at column 0 and so begins a new statement",
+    "path": "tests/core/test_european_call.q",
+    "text": "$[absError < tolerance;"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected ']' before line 40, which starts at column 0 and so begins a new statement",
+    "path": "tests/core/test_european_put.q",
+    "text": "$[absError < tolerance;"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected ']' before line 48, which starts at column 0 and so begins a new statement",
+    "path": "tests/core/test_grid_convergence.q",
+    "text": "$[fineError < coarseError;"
+   },
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected ']' before line 39, which starts at column 0 and so begins a new statement",
+    "path": "tests/core/test_put_call_parity.q",
+    "text": "$[absError < tolerance;"
+   }
+  ],
+  "asatirahul/cryptoq": [],
+  "caolanraff/q-sino": [
+   {
+    "code": "QF019",
+    "detail": "`.z.x` is read-only: q refuses any assignment to it with 'domain",
+    "path": "test/run.q",
+    "text": "if[count resultFile;.z.x,:enlist \"--noquit\"];"
+   }
+  ],
+  "dalaing/qcheck": [
+   {
+    "code": "QT003",
+    "detail": "Arithmetic on a symbol literal is a 'type error at runtime",
+    "path": "spikes/a4_errors.q",
+    "text": ".h.t[\"signals from inside each are caught\"; \"type\"~@[{{x+`a} each x};1 2;{x}]]"
+   },
+   {
+    "code": "QT003",
+    "detail": "Arithmetic on a symbol literal is a 'type error at runtime",
+    "path": "spikes/a4_errors.q",
+    "text": "r:.Q.trp[{[x] x+`a};1;{[e;bt] (e;.Q.sbt bt)}]"
+   },
+   {
+    "code": "QT003",
+    "detail": "Arithmetic on a symbol literal is a 'type error at runtime",
+    "path": "t/core.q",
+    "text": "r:.qc.chk[q,enlist[`v]!enlist 0;.qc.int 0 9;{[x] y:x+`a; y}]"
+   },
+   {
+    "code": "QT003",
+    "detail": "Arithmetic on a symbol literal is a 'type error at runtime",
+    "path": "t/core.q",
+    "text": "r:.qc.chk[q;.qc.int 0 9;{x+`a}]"
+   },
+   {
+    "code": "QT025",
+    "detail": "Signalling a one-character string, which is a char atom: q signals only a symbol or a string, and raises 'stype",
+    "path": "t/core.q",
+    "text": ".t.t[\"check: :: property means generation must not fail\"; ((.qc.chk[q;.qc.int 0 9;::])`ok) and `error=(.qc.chk[q;{'\"x\"};::])`why]"
+   },
+   {
+    "code": "QT025",
+    "detail": "Signalling a one-character string, which is a char atom: q signals only a symbol or a string, and raises 'stype",
+    "path": "t/outcomes.q",
+    "text": "{.qc.chk[q;.qc.int 0 9;5]}; {.qc.chk[q;.qc.int 5 1;{1b}]}; {.qc.chk[q;.qc.sm[`m0`init!(0;{'\"x\"})] .g.cm;::]};"
+   },
+   {
+    "code": "QT025",
+    "detail": "Signalling a one-character string, which is a char atom: q signals only a symbol or a string, and raises 'stype",
+    "path": "t/outcomes.q",
+    "text": "{.qc.recheck[.qc.int 0 9;5;enlist 1]}; {.qc.minimal {[d] '\"x\"}}; {.qc.replay[1 2] {[d] .qc.draw .qc.int 5 1}}; {.qc.draw .qc.sized 5};"
+   }
+  ],
+  "dflynch/kdb-q-ext-vscode": [
+   {
+    "code": "QE009",
+    "detail": "q 5 refuses a derived function applied by juxtaposition ('':): write it in parentheses, with brackets, or as the keyword",
+    "path": "test/fixtures/lexing.q",
+    "text": "x':y"
+   },
+   {
+    "code": "QE009",
+    "detail": "q 5 refuses a derived function applied by juxtaposition (''): write it in parentheses, with brackets, or as the keyword",
+    "path": "test/fixtures/lexing.q",
+    "text": "x'y"
+   },
+   {
+    "code": "QE009",
+    "detail": "q 5 refuses a derived function applied by juxtaposition ('/:): write it in parentheses, with brackets, or as the keyword",
+    "path": "test/fixtures/lexing.q",
+    "text": "x/:y"
+   },
+   {
+    "code": "QE009",
+    "detail": "q 5 refuses a derived function applied by juxtaposition ('\\:): write it in parentheses, with brackets, or as the keyword",
+    "path": "test/fixtures/lexing.q",
+    "text": "x\\:y"
+   },
+   {
+    "code": "QT003",
+    "detail": "Arithmetic on a symbol literal is a 'type error at runtime",
+    "path": "test/fixtures/lexing.q",
+    "text": "`a-1"
+   },
+   {
+    "code": "QF001",
+    "detail": "Builtin parameter name(s): [\"til\", \"count\"]; q refuses every call to this lambda ('match or 'nyi)",
+    "path": "test/fixtures/scoping.q",
+    "text": "{[til;count] 0}"
+   },
+   {
+    "code": "QF005",
+    "detail": "Nested lambda references enclosing local 'a' without a parameter",
+    "path": "test/fixtures/scoping.q",
+    "text": "{a:1; {a}; a}"
+   },
+   {
+    "code": "QF005",
+    "detail": "Nested lambda references enclosing local 'a' without a parameter",
+    "path": "test/fixtures/scoping.q",
+    "text": "{a:1; {b:2; a+b}}"
+   },
+   {
+    "code": "QF007",
+    "detail": "[\"a b\"] is not a parameter name, so q reads these brackets as the start of the body and the lambda takes x, y and z instead",
+    "path": "test/fixtures/scoping.q",
+    "text": "{[a b] a}"
+   },
+   {
+    "code": "QF021",
+    "detail": "`m.f` in a lambda is the global of that name, not `m` here: q raises 'm.f (index with `m[`f]` instead)",
+    "path": "test/fixtures/scoping.q",
+    "text": "{m:use`foo; m.f 1}"
+   },
+   {
+    "code": "QF021",
+    "detail": "`x.a` in a lambda is the global of that name, not `x` here: q raises 'x.a (index with `x[`a]` instead)",
+    "path": "test/fixtures/scoping.q",
+    "text": "{x.a}"
+   },
+   {
+    "code": "QT005",
+    "detail": "Every column of this table literal is a scalar, which is a 'rank error; a one-row table needs `enlist`",
+    "path": "test/fixtures/scoping.q",
+    "text": "{([] z:1)}"
+   },
+   {
+    "code": "QT005",
+    "detail": "A keyed table literal needs vector columns on both sides of the key; a single row on either side is a 'rank error",
+    "path": "test/fixtures/scoping.q",
+    "text": "{([k:1] v:2)}"
+   }
+  ],
+  "drewsteele/qYaml": [],
+  "exxeleron/enterprise-components": [
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 9, which starts at column 0 and so begins a new statement",
+    "path": "components/stream/test/manual_tests.q",
+    "text": "{[hh;q] .hnd.h[] \"count trade\""
+   },
+   {
+    "code": "QF005",
+    "detail": "Nested lambda references enclosing local 'cb' without a parameter",
+    "path": "libraries/qsl/callback.q",
+    "text": ".pe.at[{[x] .cb.p.back[x]:value x;.log.warn[`cb] \"overwriting existing variable \",(string cb),\" to create a callback collection\"};cb;{[x;y].cb.p.back[x]:{}}[cb]];"
+   },
+   {
+    "code": "QT001",
+    "detail": "Literal dictionary has 5 keys and 4 values",
+    "path": "libraries/qsl/parseq.q",
+    "text": "if[n <= 0;:(`s`cp`errp`errs`ast)!(k;0N;();())];"
+   }
+  ],
+  "finos/kdb": [
+   {
+    "code": "QF010",
+    "detail": "'x' is not an argument here: the lambda declares its parameters, so q resolves 'x' as a global",
+    "path": "q/conn/conn.q",
+    "text": "`.finos.conn.priv.clientList upsert `fd`protocol`user`host`connID!(x;`ws;.z.u;.Q.host[.z.a];.finos.conn.priv.lastClientConnID+:1);"
+   },
+   {
+    "code": "QF005",
+    "detail": "Nested lambda references enclosing local 'newChildPid' without a parameter",
+    "path": "q/qclone/finos_qclone.q",
+    "text": "\" newChildPid=\",string[newChildPid],\", eventType=\",string[eventType],"
+   },
+   {
+    "code": "QF005",
+    "detail": "Nested lambda references enclosing local 'eventType' without a parameter",
+    "path": "q/qclone/finos_qclone.q",
+    "text": "\" newChildPid=\",string[newChildPid],\", eventType=\",string[eventType],"
+   },
+   {
+    "code": "QF015",
+    "detail": "`break` is not a q keyword; it resolves as a global and throws 'break",
+    "path": "q/unzip/unzip.q",
+    "text": "break;"
+   },
+   {
+    "code": "QF010",
+    "detail": "'x' is not an argument here: the lambda declares its parameters, so q resolves 'x' as a global",
+    "path": "qdoc/src/qdoc_example/dba.q",
+    "text": "x;"
+   }
+  ],
+  "hanssmail/quantQ": [],
+  "jkane17/qtools": [],
+  "jlas/ml.q": [
+   {
+    "code": "QB021",
+    "detail": "`v_` names both a result column and a by group: q 5 refuses the select with 'dup names for cols/groups v_; name the column, `m:max v_`",
+    "path": "ml.q",
+    "text": "`e_ xdesc value select first n_, first v_, first e_ by c_, v_ from `e_ xdesc tree_}"
+   }
+  ],
+  "jonathonmcmurray/qwebapi": [],
+  "jonathonmcmurray/reQ": [],
+  "jsogarro/qstats": [],
+  "kimtang/btick2": [
+   {
+    "code": "QT003",
+    "detail": "Arithmetic on a symbol literal is a 'type error at runtime",
+    "path": "qlib/repository/template/lib/test/001.q",
+    "text": ".qtx.testCase[`test.%name%.1;\"test %name%\"]["
+   },
+   {
+    "code": "QT003",
+    "detail": "Arithmetic on a symbol literal is a 'type error at runtime",
+    "path": "qlib/repository/template/lib/test/001.q",
+    "text": ".qtx.testSuite[`test.%repo%.%name%;\"test %name%\"]"
+   },
+   {
+    "code": "QT003",
+    "detail": "Arithmetic on a symbol literal is a 'type error at runtime",
+    "path": "qlib/repository/template/repository/qlib/__name__/test/001.q",
+    "text": ".qtx.testCase[`test.%name%.1;\"test %name%\"]["
+   },
+   {
+    "code": "QT003",
+    "detail": "Arithmetic on a symbol literal is a 'type error at runtime",
+    "path": "qlib/repository/template/repository/qlib/__name__/test/001.q",
+    "text": ".qtx.testSuite[`test.%repo%.%name%;\"test %name%\"]"
+   }
+  ],
+  "kwojdalski/uqf": [
+   {
+    "code": "QE001",
+    "detail": "Unclosed delimiter; expected '}' before line 31, which starts at column 0 and so begins a new statement",
+    "path": "lib/kdb-parquet/Python/converter_new.q",
+    "text": "python2q:{converter:.p.get[`converter;<]"
+   },
+   {
+    "code": "QF005",
+    "detail": "Nested lambda references enclosing local 'handle' without a parameter",
+    "path": "lib/torq/code/common/subscribercutoff.q",
+    "text": "@[hclose;handle;{.lg.e[`subscribercutoff;\"Failed to close handle \",string handle]}]; .z.pc handle} each where .subcut.state >= breachlimit;"
+   },
+   {
+    "code": "QF005",
+    "detail": "Nested lambda references enclosing local 'tab' without a parameter",
+    "path": "lib/torq/code/dqc/daytoday.q",
+    "text": "listt:{?[tab;((=;cola;enlist vara);(=;colb;enlist varb);(=;.Q.pf;x));1b;()]}each -2#.Q.PV;"
+   },
+   {
+    "code": "QF005",
+    "detail": "Nested lambda references enclosing local 'cola' without a parameter",
+    "path": "lib/torq/code/dqc/daytoday.q",
+    "text": "listt:{?[tab;((=;cola;enlist vara);(=;colb;enlist varb);(=;.Q.pf;x));1b;()]}each -2#.Q.PV;"
+   },
+   {
+    "code": "QF005",
+    "detail": "Nested lambda references enclosing local 'vara' without a parameter",
+    "path": "lib/torq/code/dqc/daytoday.q",
+    "text": "listt:{?[tab;((=;cola;enlist vara);(=;colb;enlist varb);(=;.Q.pf;x));1b;()]}each -2#.Q.PV;"
+   },
+   {
+    "code": "QF005",
+    "detail": "Nested lambda references enclosing local 'colb' without a parameter",
+    "path": "lib/torq/code/dqc/daytoday.q",
+    "text": "listt:{?[tab;((=;cola;enlist vara);(=;colb;enlist varb);(=;.Q.pf;x));1b;()]}each -2#.Q.PV;"
+   },
+   {
+    "code": "QF005",
+    "detail": "Nested lambda references enclosing local 'varb' without a parameter",
+    "path": "lib/torq/code/dqc/daytoday.q",
+    "text": "listt:{?[tab;((=;cola;enlist vara);(=;colb;enlist varb);(=;.Q.pf;x));1b;()]}each -2#.Q.PV;"
+   },
+   {
+    "code": "QA006",
+    "detail": "Two-slot $[ ... ] is no conditional: both slots always run, so this signal fires whether or not the test holds",
+    "path": "lib/torq/code/handlers/permissions.q",
+    "text": "dotqd:enlist[`]!enlist{[u;e;b;pr]if[not (fchk[u;ALL;()] or fchk[u;`$string(first e);()]);$[b;'err[`expr][]];:0b];$[b;qexe e;1b]};"
+   }
+  ],
+  "kxcontrib/cburke": [],
+  "nugend/qspec": [],
+  "nugend/qutil": [],
+  "patmok/unparse": [],
+  "psaris/funq": [],
+  "psaris/qtips": [],
+  "qbists/studyq": [],
+  "quintanar401/Qute": [
+   {
+    "code": "QE001",
+    "detail": "Expected ']', got '}'",
+    "path": "modules/gw/gw.q",
+    "text": "};"
+   },
+   {
+    "code": "QE001",
+    "detail": "Expected ']', got '}'",
+    "path": "modules/ipc/ipc.q",
+    "text": ".ipc.getColumn:{[cfg;c] $[`handle in key cfg;.ipc.inbound[cfg`handle]c;.ipc.outbound[cfg`name;c]};"
+   },
+   {
+    "code": "QF010",
+    "detail": "'x' is not an argument here: the lambda declares its parameters, so q resolves 'x' as a global",
+    "path": "modules/mbus/mbus.q",
+    "text": "nm:$[1=c:count nm;(`;`localhost;\"J\"$nm 0);2=c;(`;`$x 0;\"J\"$x 1);3=c;(`$x 0;`localhost^`$x 1;\"J\"$x 2);'\"invalid mbus name\"];"
+   },
+   {
+    "code": "QA012",
+    "detail": "2 argument slots applied to `.timer.execJob`, which takes 1: 'rank at runtime",
+    "path": "modules/timer/timer.q",
+    "text": ".timer.execJob[.timer.getJob cfg`id;.sys.P[]]"
+   }
+  ],
+  "quintanar401/qchk": [],
+  "simongarland/tick": [],
+  "timeseries/kdb": [],
+  "timestored/kdb": []
+ }
+}
