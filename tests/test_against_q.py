@@ -61,6 +61,12 @@ PATTERNS = {
     "{[(a;b);c] a+b+c}": 2,
     "{[([k;v])] k+v}": 1,
     "{[1;b] b}": 2,
+    # Typed slots (#304): the pattern, checked against the type at the call.
+    "{[a:`j] a}": 1,
+    '{[a:"j"] a}': 1,
+    "{[a: `long] a}": 1,
+    "{[a:`j;b] a+b}": 2,
+    "{[(a;b):`j] a+b}": 1,
 }
 
 

@@ -2406,14 +2406,28 @@ fn is_pattern(s: &str, nested: bool) -> bool {
             && items(&inner[..inner.len() - 2], &|c| field(c))
     } else if whole(s) {
         items(&s[1..s.len() - 1], &|c| is_pattern(c, true))
+    } else if let Some(at) = typed_at(s) {
+        is_pattern(&s[..at], nested)
     } else {
         false
     }
+}
+/// Where a typed slot's `:type` starts: `a:`j`, `a:"j"` and `(a;b):`j` are
+/// the pattern on the left, checked against the type on the right when the
+/// lambda is called. q 5 defines the lambda whatever the type names, and
+/// with no type at all (`{[a:] a}`), which is also how a masked `a:"j"`
+/// reads (#304).
+fn typed_at(s: &str) -> Option<usize> {
+    re!(r#":\s*(?:(?:`[A-Za-z0-9_.:]*)+|"(?:[^"\\]|\\.)*")?\s*$"#)
+        .find(s)
+        .map(|m| m.start())
+        .filter(|&at| at > 0)
 }
 /// The names a parameter slot binds: the slot itself when it is a name, and
 /// for a pattern every name in it but the keys and columns it matches on -
 /// `(a;b)` binds a and b, `([k:p])` binds p, and `1` binds nothing.
 pub(crate) fn pattern_names(slot: &str) -> Vec<&str> {
+    let slot = typed_at(slot).map_or(slot, |at| &slot[..at]);
     re!(r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*")
         .find_iter(slot)
         .filter(|m| {

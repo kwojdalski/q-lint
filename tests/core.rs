@@ -597,3 +597,20 @@ fn an_invalid_escape_names_a_non_ascii_char_whole() {
     let qe002 = found.iter().find(|f| f.code == "QE002").expect("QE002");
     assert_eq!(qe002.detail, "Invalid escape \\é");
 }
+
+/// A typed slot binds its pattern's names: q 5 defines `{[a:`j] a}` and checks
+/// the type at the call, so `a` is a parameter, not body text (#304). A slot
+/// that is no pattern at all is still reported.
+#[test]
+fn a_typed_parameter_binds_its_name() {
+    for source in [
+        "f:{[a:`j] a}\n",
+        "f:{[a:\"j\";b] a+b}\n",
+        "f:{[(a;b):`j] a+b}\n",
+    ] {
+        let found = lint(source, "t.q", Profile::General);
+        assert!(found.is_empty(), "{source}: {found:?}");
+    }
+    let found = lint("f:{[a b] a}\n", "t.q", Profile::General);
+    assert!(found.iter().any(|f| f.code == "QF007"), "{found:?}");
+}
