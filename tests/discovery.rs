@@ -616,3 +616,33 @@ fn an_excluded_file_named_explicitly_is_linted_unless_force_exclude() {
         Vec::<String>::new()
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn a_symlink_is_governed_excluded_and_reported_where_it_is() {
+    // The link lives in proj/tests; its target lives outside the project.
+    // Resolving it first lost the link's place and name, so proj's
+    // configuration, its per-file-ignores and every exclude passed it by,
+    // and the finding was reported against the target (#263).
+    let repo = Repo::new();
+    repo.write("elsewhere/x.q", SOURCE)
+        .write(
+            "proj/qlinter.toml",
+            "profile = \"style\"\n[lint.per-file-ignores]\n\"tests/*\" = [\"QF016\"]\n",
+        )
+        .write("proj/ok.q", "h:1\n");
+    fs::create_dir_all(repo.path("proj/tests")).unwrap();
+    std::os::unix::fs::symlink("../../elsewhere/x.q", repo.path("proj/tests/link.q")).unwrap();
+    assert_eq!(repo.codes("proj", &["tests"]), Vec::<String>::new());
+    assert_eq!(
+        linted_from(&repo, "proj", &["--isolated", "."]),
+        ["proj/tests/link.q"]
+    );
+    for exclude in ["link.q", "tests/link.q"] {
+        assert_eq!(
+            linted_from(&repo, "proj", &["--isolated", ".", "--exclude", exclude]),
+            Vec::<String>::new(),
+            "{exclude}"
+        );
+    }
+}

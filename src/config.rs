@@ -671,7 +671,20 @@ pub fn parse_profile(name: &str) -> Profile {
 /// exist - an editor buffer never saved - is resolved through its nearest
 /// existing ancestor, so `/var/...` on macOS still matches patterns rooted at
 /// the `/private/var/...` a configuration file canonicalizes to.
+///
+/// A symlink itself is not resolved, only the directories it sits in: a link
+/// is governed, excluded and reported where it is and by its own name, as
+/// Ruff matches a path as walked, not by wherever its target happens to be.
 pub fn absolute(path: &Path) -> PathBuf {
+    if fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink())
+        && let Some(name) = path.file_name()
+    {
+        let parent = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        return absolute(parent).join(name);
+    }
     if let Ok(p) = fs::canonicalize(path) {
         return p;
     }
