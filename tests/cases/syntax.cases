@@ -103,6 +103,17 @@ a+=1
 \d .
 \echo "a==b"
 
+=== clean | an indented line after a command is the command's argument (q 5 loads this, ctx .foo)
+a:0
+\d .foo
+  x==y
+\d .
+
+=== QE004 | an indented line after \t is part of its expression
+a:0
+\t 1+
+  x==y
+
 === clean | the q spellings
 if[a=1;2];if[a<>1;2];r:a and b;a+:1;if[a>=1;2]
 

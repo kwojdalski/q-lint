@@ -2055,6 +2055,12 @@ fn views(source: &str) -> Views {
             .then(|| re!(r"^\\ts?(?::\d+)?[ \t]").find(line))
             .flatten()
             .map_or(0, |m| m.end());
+        // q appends an indented line to the command before it, so after any
+        // command but `\t` the lines that follow are its argument, not q:
+        // `\d .foo` + `  b:1` defines no `b` anywhere (#223).
+        if !ended && block == 0 && string.is_none() && line.starts_with('\\') {
+            statement = timed > 0;
+        }
         if ended || block > 0 {
             blank(&mut comments[offset..end]);
             blank(&mut code[offset..end]);
