@@ -322,6 +322,14 @@ f:{[a] ([]x:a)}
 === QF016 | a parameter the body never reads
 f:{[used;stale] used+1}
 
+=== QF016 | a parameter only overwritten is never read either
+f:{[a;b] a:0; b}
+
+=== clean | overwritten from its own value, read after, or `f::` with nothing to assign (q 5 parses that as a read), it is read
+f:{[a;b] a:a+1; a+b}
+g:{[a;b] a:0; a+b}
+h:{[f;b] k[b;f::;1]}
+
 === clean | a lambda that reads none of them is conforming to a signature
 f:{[t] 42}
 

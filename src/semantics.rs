@@ -1543,14 +1543,20 @@ pub fn check(
         }
         // Names the body mentions, with symbols blanked first so `` `a `` does
         // not count as a use of `a`, and dotted names left whole so `.ns.a`
-        // does not count as one either.
+        // does not count as one either. Nor does an assignment target:
+        // `{[a;b] a:0; b}` throws the caller's `a` away unread (#262).
         let body = re!(r"`[A-Za-z0-9_./:]*")
             .replace_all(&code[scope.body..scope.end], |m: &regex::Captures| {
                 " ".repeat(m[0].len())
             });
         let mut mentioned: HashSet<&str> = parse_tree_names(&code[scope.body..scope.end]);
         for m in re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(&body) {
-            if boundary(&body, m.start()) && !body[m.end()..].starts_with('.') {
+            if boundary(&body, m.start())
+                && !body[m.end()..].starts_with('.')
+                // `f dtf::` with nothing after reads `dtf` (q 5 parses
+                // `dtf::;` as `(::;`dtf)`), as psaris/funq's ml.q does.
+                && !re!(r"^[ \t]*:(?::[ \t]*[^ \t;\])}\n]|[^:]|$)").is_match(&body[m.end()..])
+            {
                 mentioned.insert(m.as_str());
             }
         }
