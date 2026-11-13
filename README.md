@@ -85,8 +85,7 @@ diff with paths relative to the current directory, which `patch -p1` and
 `*=`, a leading UTF-8 BOM, an invalid string escape (`"C:\data"` →
 `"C:\\data"`), `true`/`false`/`None`/`return x` → `1b`/`0b`/`(::)`/`:x`,
 a table literal of scalars (each column enlisted), a symbol used as a `like`
-pattern (`` `a* `` → `"a*"`), a string compared with `=` in a filter →
-`like`, `f . ()` → `f[]`, `til 5.0` → `til 5` (and `2.0 rotate`, `3.0 mavg`),
+pattern (`` `a* `` → `"a*"`), `f . ()` → `f[]`, `til 5.0` → `til 5` (and `2.0 rotate`, `3.0 mavg`),
 a number signalled → a string, `where a:1` → `where a=1`, `{x} each y` → `y`, `distinct asc distinct` → `asc distinct`,
 redundant parentheses around one token (styleq), and - under `--profile uqf` -
 parentheses showing the order q already evaluates `a*b+c` in, and the
@@ -98,7 +97,9 @@ Some rewrites change behaviour or guess at intent, so they remain editor Quick
 Fixes that you choose individually: `&&` → `&`, `||` → `|`, `reverse asc` →
 `desc` (they differ on a dictionary's tied keys), a symbol given to
 `ss`/`ssr` → a string, dropping a lambda's trailing `;` so it returns its last
-value, `a -1` → `a - 1`, `=` against a vector in a filter → `in`, `f(a;b)` →
+value, `a -1` → `a - 1`, a string compared with `=` in a filter → `like`
+(on a char column as long as the string, `=` is valid q), `=` against a
+vector in a filter → `in`, `f(a;b)` →
 `f[a;b]`, `` `int$"12" `` → `"I"$"12"`, removing a statement that never runs,
 removing an unused local's name while keeping its expression,
 `{x+1} each a` → `a+1` (they differ on an empty typed list), parentheses
