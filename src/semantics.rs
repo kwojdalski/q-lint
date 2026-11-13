@@ -166,11 +166,14 @@ fn eval_path(text: &str, pos: usize) -> (usize, Vec<(usize, usize, bool)>) {
                 // A bracket that follows nothing it could index is a block,
                 // which runs left to right like a control bracket. Verified
                 // in q 5: `{$[1b;[a:1;a];0]}[]` and `{(a:1;[a:2;a])}` run,
-                // while `{g [a:1;a]}` and `{x:[a:1;a]}` are 'a.
+                // while `{g [a:1;a]}` and `{x:[a:1;a]}` are 'a. So does
+                // one that opens the body: `{[p] [a:1;a+p]}[5]` is 6.
+                let before = text[..i].trim_end();
                 let control = c == b'['
                     && (re!(r"(?:^|[^A-Za-z0-9_.])(?:if|while|do)\s*$|\$\s*$")
                         .is_match(&text[..i])
-                        || text[..i].trim_end().ends_with([';', '[', '(']));
+                        || before.is_empty()
+                        || before.ends_with([';', '[', '(']));
                 stack.push((i, 0, control));
             }
             b']' | b')' | b'}' => {
@@ -641,6 +644,8 @@ fn call_time(scopes: &[Scope], at: usize, name: &str) -> bool {
     !name.starts_with('.') && scope_at(scopes, at).is_some_and(|s| !scopes[s].namespace.is_empty())
 }
 
+/// Global names, each with where its assignments' values start.
+type Writes = HashMap<String, Vec<usize>>;
 /// Every name this file assigns at global scope, qualified by the namespace
 /// in force, with where each assignment's value starts. `call_time_sets`
 /// credits a `` `n set `` inside a `\d` lambda to the namespace it is written
@@ -707,7 +712,14 @@ fn global_writes(
         if !boundary(code, m.start()) {
             continue;
         }
-        if scope_at(scopes, m.start()).is_none() || a.get(2).is_some() || a[1].contains('.') {
+        // `::` assigns a parameter or local where the lambda has one: q 5
+        // `g:{[b] b::7; b}; g 1` is 7 and leaves no global `b`.
+        let local =
+            || scope_at(scopes, m.start()).is_some_and(|s| scopes[s].locals.contains(&a[1]));
+        if scope_at(scopes, m.start()).is_none()
+            || (a.get(2).is_some() && !local())
+            || a[1].contains('.')
+        {
             globals
                 .entry(qualify(&a[1], ns_at(m.start())))
                 .or_default()
@@ -735,7 +747,9 @@ fn global_writes(
                 .push(m.end());
         }
     }
-    for m in re!(r"`(\.?[A-Za-z][A-Za-z0-9_.]*)\s+set\b|\bset\s*\[\s*`(\.?[A-Za-z][A-Za-z0-9_.]*)")
+    // `` `n set ``, and `` `t insert `` and `` `t upsert ``, which create the
+    // table when there is none (q 5: `` `t insert ([]a:1 2) `` then `t`).
+    for m in re!(r"`(\.?[A-Za-z][A-Za-z0-9_.]*)\s+(?:set|insert|upsert)\b|\b(?:set|insert|upsert)\s*\[\s*`(\.?[A-Za-z][A-Za-z0-9_.]*)")
         .captures_iter(code)
     {
         let whole = m.get(0).unwrap();
@@ -747,6 +761,20 @@ fn global_writes(
             .entry(qualify(name, ns_at(whole.start())))
             .or_default()
             .push(whole.end());
+    }
+    // Each of a symbol list, `` `p`q set'1 2 `` - only with each: q 5
+    // `` `p`q set 1 2 `` defines neither name.
+    for m in re!(r"((?:`\.?[A-Za-z][A-Za-z0-9_.]*){2,})\s*set'").captures_iter(code) {
+        let whole = m.get(0).unwrap();
+        for name in m[1].split('`').skip(1) {
+            if !call_time_sets && call_time(scopes, whole.start(), name) {
+                continue;
+            }
+            globals
+                .entry(qualify(name, ns_at(whole.start())))
+                .or_default()
+                .push(whole.end());
+        }
     }
     for (at, name) in multi_assignments(code) {
         if scope_at(scopes, at).is_none() {
@@ -1253,7 +1281,9 @@ pub fn check(
             .find_iter(code)
             .filter(|m| boundary(code, m.start()))
             .find(|m| {
-                let rest = &raw[m.end()..];
+                // Strings kept, comments blanked: a quote in a comment after
+                // `value d` is not a string to evaluate (#258).
+                let rest = &comments[m.end()..];
                 let statement = &rest[..rest.find([';', '\n']).unwrap_or(rest.len())];
                 match m.as_str() {
                     "eval" => true,
@@ -1412,7 +1442,8 @@ pub fn check(
                 || scope.params.contains(name)
                 || !boundary(&direct, m.start())
                 || after.starts_with(':')
-                || after.starts_with('.')
+                // A dotted name, not dot-apply: `g . p` reads `g` (#251).
+                || direct[m.end()..].starts_with('.')
                 || (!in_value && !later && !runs_before(&direct, m.start(), assigned))
                 || !seen.insert(name)
             {
@@ -1512,14 +1543,20 @@ pub fn check(
         }
         // Names the body mentions, with symbols blanked first so `` `a `` does
         // not count as a use of `a`, and dotted names left whole so `.ns.a`
-        // does not count as one either.
+        // does not count as one either. Nor does an assignment target:
+        // `{[a;b] a:0; b}` throws the caller's `a` away unread (#262).
         let body = re!(r"`[A-Za-z0-9_./:]*")
             .replace_all(&code[scope.body..scope.end], |m: &regex::Captures| {
                 " ".repeat(m[0].len())
             });
         let mut mentioned: HashSet<&str> = parse_tree_names(&code[scope.body..scope.end]);
         for m in re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(&body) {
-            if boundary(&body, m.start()) && !body[m.end()..].starts_with('.') {
+            if boundary(&body, m.start())
+                && !body[m.end()..].starts_with('.')
+                // `f dtf::` with nothing after reads `dtf` (q 5 parses
+                // `dtf::;` as `(::;`dtf)`), as psaris/funq's ml.q does.
+                && !re!(r"^[ \t]*:(?::[ \t]*[^ \t;\])}\n]|[^:]|$)").is_match(&body[m.end()..])
+            {
                 mentioned.insert(m.as_str());
             }
         }
@@ -2036,7 +2073,8 @@ pub fn check(
             if comments[start..start + statement.len()].contains(['"', '{'])
                     || scope.is_some_and(|s| s.locals.contains(name))
                     || crate::RESERVED.iter().any(|builtin| builtin == name)
-                    || globals.contains_key(&global)
+                    // Keyed exactly: `.cfg:1` defines no root `cfg` (q 5: 'cfg).
+                    || exact.contains_key(&resolved(name, namespace))
                     || elsewhere(&global)
                     || elsewhere(&format!(".{name}"))
                     // QF010 and QF005 already explain these more precisely.
@@ -2278,7 +2316,7 @@ pub fn check(
         code,
         raw,
         comments,
-        (&scopes, &namespaces),
+        (&scopes, &namespaces, &exact),
         dynamic,
         &|name: &str| elsewhere(&qualify(name, "")),
     ));
@@ -2444,8 +2482,9 @@ fn named_values(
     code: &str,
     raw: &str,
     comments: &str,
-    // The scopes, and the `\d` namespace in force from each offset on.
-    (scopes, namespaces): (&[Scope], &[(usize, String)]),
+    // The scopes, the `\d` namespace in force from each offset on, and the
+    // file's global definitions keyed as q resolves them.
+    (scopes, namespaces, globals): (&[Scope], &[(usize, String)], &Writes),
     dynamic: bool,
     elsewhere: &dyn Fn(&str) -> bool,
 ) -> Vec<Finding> {
@@ -2496,8 +2535,9 @@ fn named_values(
         exact.entry(key(name, at)).or_default().extend([0, 0]);
     }
     // A table changed in place by name: `update c:1 from `t` adds a column,
-    // as do `![`t;...]` and `.[`t;...]`, without an assignment to say so.
-    for m in re!(r"(?:\bfrom\s*|[!.]\s*\[\s*)`(\.?[A-Za-z][A-Za-z0-9_.]*)").captures_iter(code) {
+    // as do `![`t;...]`, `.[`t;...]` and `@[`t;...]`, without an assignment
+    // to say so.
+    for m in re!(r"(?:\bfrom\s*|[!.@]\s*\[\s*)`(\.?[A-Za-z][A-Za-z0-9_.]*)").captures_iter(code) {
         let name = m.get(1).unwrap().as_str();
         writes.entry(name).or_default().extend([0, 0]);
         exact
@@ -2801,13 +2841,14 @@ fn named_values(
     // looks for a column, then a variable, and raises the name when neither
     // exists - `select b from ([]a:1 2)` is 'b. So only a name nothing in
     // this file defines: a global or local of that name changes the error
-    // or removes it. `i` is the virtual row index.
-    let defined: HashSet<&str> = writes.keys().copied().collect();
+    // or removes it. `i` is the virtual row index. A global, that is: a
+    // column alias, another table's column or another lambda's local defines
+    // nothing here - q 5 `k:([]a:1 2); f:{b:1; b}; select b from k` is 'b.
     let is_free = |name: &str, at: usize, columns: &[String]| {
         re!(r"^[A-Za-z][A-Za-z0-9_]*$").is_match(name)
             && name != "i"
             && !columns.iter().any(|c| c == name)
-            && !defined.contains(name)
+            && !globals.contains_key(&key(name, at))
             && !elsewhere(name)
             && !crate::RESERVED.iter().any(|n| n == name)
             && !scope_at(scopes, at).is_some_and(|s| scopes[s].locals.contains(name))
@@ -2859,28 +2900,55 @@ fn named_values(
     }
     // The where phrase, in any of the four: `select from t where c>0` is 'c
     // when t has no c and nothing defines one. Names inside a lambda in the
-    // phrase are that lambda's own and are left alone.
-    for m in re!(r"\b(?:select|exec|update|delete)\b[^\n;]*?\bfrom\s+(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s+where\b([^\n;]*)")
-        .captures_iter(code)
+    // phrase are that lambda's own and are left alone, and so are a nested
+    // query's, which are its table's (#259). The phrase ends at a bracket it
+    // did not open: `(select from t where a>1),select ...` (#260).
+    let mut from = 0;
+    while let Some(m) = re!(r"\b(?:select|exec|update|delete)\b[^\n;]*?\bfrom\s+(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s+where\b([^\n;]*)")
+        .captures_at(code, from)
     {
+        let phrase = m.get(2).unwrap();
+        let mut flat = phrase.as_str().as_bytes().to_vec();
+        let (mut depth, mut lambda, mut nested) = (0i32, 0i32, None);
+        let mut end = flat.len();
+        for (i, &c) in phrase.as_str().as_bytes().iter().enumerate() {
+            match c {
+                b'(' | b'[' => depth += 1,
+                b'{' => lambda += 1,
+                b'}' => {
+                    lambda -= 1;
+                    flat[i] = b' ';
+                }
+                b')' | b']' if depth == 0 => {
+                    end = i;
+                    break;
+                }
+                b')' | b']' => depth -= 1,
+                _ => {}
+            }
+            if nested.is_some_and(|d| depth < d) {
+                nested = None;
+            }
+            if nested.is_none()
+                && phrase
+                    .as_str()
+                    .get(i..)
+                    .is_some_and(|rest| re!(r"^(?:select|exec|update|delete)\b").is_match(rest))
+                && boundary(code, phrase.start() + i)
+            {
+                nested = Some(depth);
+            }
+            if lambda > 0 || nested.is_some() {
+                flat[i] = b' ';
+            }
+        }
+        flat.truncate(end);
+        from = phrase.start() + end.max(1);
+        let flat = String::from_utf8_lossy(&flat).into_owned();
         let table = m.get(1).unwrap();
         let Some(Held::Table(columns, _)) = visible(table.as_str(), table.start()) else {
             continue;
         };
-        let phrase = m.get(2).unwrap();
-        let mut depth = 0i32;
-        let flat: String = phrase
-            .as_str()
-            .chars()
-            .map(|c| {
-                match c {
-                    '{' => depth += 1,
-                    '}' => depth -= 1,
-                    _ => {}
-                }
-                if depth > 0 || c == '}' { ' ' } else { c }
-            })
-            .collect();
         for name in re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(&flat) {
             let at = phrase.start() + name.start();
             if boundary(code, at) && !flat[name.end()..].starts_with('.') && is_free(name.as_str(), at, columns) {

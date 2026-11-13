@@ -34,6 +34,15 @@ f:{[a_] a_}
 count:{[t] 42}
 \d .
 
+=== QF004 profile: general | and after system "d .ns", the same switch (q 5: count:1 is 'assign)
+system "d .ns"
+count:1
+
+=== QF012 | and system "d ." returns to the root
+system "d .ns"
+system "d ."
+count:1
+
 === clean | a file may end inside a namespace it opened
 \d .util
 helper:{[x] x}
@@ -313,6 +322,14 @@ f:{[a] ([]x:a)}
 === QF016 | a parameter the body never reads
 f:{[used;stale] used+1}
 
+=== QF016 | a parameter only overwritten is never read either
+f:{[a;b] a:0; b}
+
+=== clean | overwritten from its own value, read after, or `f::` with nothing to assign (q 5 parses that as a read), it is read
+f:{[a;b] a:a+1; a+b}
+g:{[a;b] a:0; a+b}
+h:{[f;b] k[b;f::;1]}
+
 === clean | a lambda that reads none of them is conforming to a signature
 f:{[t] 42}
 
@@ -394,6 +411,17 @@ bb:1
 f:{[] aa:bb; aa}
 \d .
 
+=== QF018 | a dotted root name is not the bare name (q 5: .cfg:1; b:cfg is 'cfg)
+.cfg:1
+b:cfg
+
+=== QF018 | :: on a parameter assigns the parameter, not a global (q 5: g 1 is 7, then b is 'b)
+g:{[b] b::7; b}
+r:b
+
+=== QF005 | nor does :: on a local make it a global for a nested lambda (q 5: h 1 is 'c)
+h:{[a] c:a; c::a+1; {c}[]}
+
 === clean | a global write inside another function supplies the name
 init:{[] bb::1}
 f:{[] aa:bb; aa}
@@ -401,6 +429,16 @@ f:{[] aa:bb; aa}
 === clean | literal set defines the global
 `bb set 1
 f:{[] aa:bb; aa}
+
+=== clean | insert and upsert by name create the table (q 5: `t insert ([]a:1 2) then t runs)
+`t insert ([]a:1 2)
+r:t
+`u upsert ([]a:1 2)
+s:u
+
+=== clean | set each over a symbol list defines every name (q 5: `p`q set'1 2 then p is 1)
+`p`q set'1 2
+r:p
 
 === clean | a compound assignment at the root defines the name (q 5: a,:1; b:a is ,1)
 bb,:1
@@ -610,6 +648,43 @@ r:update c:a by d from t
 t:([]a:1 2;b:3 4)
 r:`c xdesc t
 
+=== QF020 | a column alias elsewhere defines no global
+k:([]a:1 2)
+r:select from k where b>0
+q:select b:a from k
+
+=== QF020 | nor does another table's column
+k:([]a:1 2)
+u:([]b:3 4)
+r:select b from k
+
+=== QF020 | nor another lambda's local
+k:([]a:1 2)
+f:{b:1; b}
+r:select b from k
+
+=== clean | a column added in place by name with @ is the table's now
+t:([]a:1 2)
+@[`t;`b;:;3 4]
+r:select b from t
+
+=== clean | a nested query's columns in a where phrase are its own table's (q 5 runs f)
+t:([]a:1 2 3)
+f:{[u] select from t where a in exec b from u}
+
+=== clean | the where phrase ends at the bracket around its query (q 5 runs the line)
+t:([]a:1 2 3)
+u:flip enlist[`c]!enlist 4 5
+r:(select from t where a>1),select a:c from u where c>4
+
+=== QF020 | but the outer phrase still reads past a nested query in brackets
+t:([]a:1 2 3)
+f:{[u] select from t where a in (exec b from u), d>0}
+
+=== QF020 | and the query after a closed one is checked in its own right
+t:([]a:1 2 3)
+r:(select from t where a>1),select from t where d>0
+
 === clean | columns it has, the virtual index, and a lambda's own names
 t:([]a:1 2;b:3 4)
 r1:select from t where a>0, b<3
@@ -726,6 +801,12 @@ h:{a:1;(a:2)+a}
 f:{$[x;[a:1;b:a];0]}
 g:{(a:1;[a:2;a])}
 
+=== clean profile: general | a block that opens the body runs in order too (q 5: {[p] [a:1; a+p]}[5] is 6)
+f:{[p] [a:1; a+p]}
+
+=== QF014 profile: general | and its reverse reads first (q 5: defining f is 'a)
+f:{[p] [r:a; a:1]; r}
+
 === QF014 profile: general | a block's slots in order, so the read comes first (q 5: 'a at definition)
 f:{$[x;[r:a;a:1];0]}
 
@@ -734,6 +815,9 @@ f:{g [a:1;a]}
 
 === clean profile: general | a slot that runs earlier still may have assigned it again (KX taq/daily.q runs)
 f:{(t;b=t:max b:x;t;a=t:min a:y)}
+
+=== QF014 profile: general | a read before dot-apply is a read, not a dotted name (q 5: defining f is 'g)
+f:{[p] r:g . p; g:{x+y}; r}
 
 === QF003 | a query keyword as a local is refused when the lambda is defined (q 5: {select:1;0} is 'from)
 a:{select:1;0}

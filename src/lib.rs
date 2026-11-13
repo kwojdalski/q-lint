@@ -2691,10 +2691,14 @@ pub fn lint_selecting(
                     && let Some(close) = matching(code, open, b'[', b']')
                 {
                     let body = top_level(&code[at + 1..end - 1]);
+                    // Not as the head of a dotted name: `y.z` is a global,
+                    // and q 5 `{x+y.z}[1;2]` is 'rank.
                     let reads = |name: &str| {
-                        re!(r"[A-Za-z_][A-Za-z0-9_]*")
-                            .find_iter(&body)
-                            .any(|w| w.as_str() == name && boundary(&body, w.start()))
+                        re!(r"[A-Za-z_][A-Za-z0-9_]*").find_iter(&body).any(|w| {
+                            w.as_str() == name
+                                && boundary(&body, w.start())
+                                && !body[w.end()..].starts_with('.')
+                        })
                     };
                     let rank = if reads("z") {
                         3
@@ -4102,11 +4106,15 @@ pub fn lint_selecting(
         }
     }
     // Match the Python rule's outer-body traversal, including nested assignments.
+    // Only a brace outside every lambda already scanned opens an outer body:
+    // `{a:{x}; b:{count:1; x}}` is one body, scanned once (#252).
+    let mut scanned = 0;
     for (at, _) in code.match_indices('{') {
-        if code[..at].rfind('}') < code[..at].rfind('{') {
+        if at < scanned {
             continue;
         }
         if let Some(end) = matching(code, at, b'{', b'}') {
+            scanned = end;
             let mut offset = at;
             for line in code[at..end].split_inclusive('\n') {
                 // A query keyword assigned is refused when the lambda is
@@ -4584,6 +4592,10 @@ pub fn lint_selecting(
         if first.trim_start().starts_with('\\') {
             offset += line.len();
             continue;
+        }
+        // `system "d .ns"` switches as `\d .ns` does (#261).
+        if let Some(ns) = semantics::opens(first, first_raw) {
+            namespace = !ns.is_empty();
         }
         // More from the same guidelines:
         //
