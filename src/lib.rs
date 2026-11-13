@@ -2331,6 +2331,19 @@ fn matching(s: &str, start: usize, open: u8, close: u8) -> Option<usize> {
     }
     None
 }
+/// Whether an expression is a boolean on its face: a boolean literal, a
+/// `not`/`null`/`all`/`any` application, or one operand compared with what
+/// follows it - q evaluates right to left, so the leftmost operator gives the
+/// result its type. Anything else, a bare name included, may be any type.
+fn boolean_test(s: &str) -> bool {
+    re!(r"^[01]+b$").is_match(s)
+        || re!(r"^(?:not|null|all|any)\b").is_match(s)
+        || re!(
+            r#"^(?:-?\d[\w.:]*|`[\w.:]*|\.?[A-Za-z][\w.]*(?:\[[^\[\]]*\])?|\([^()]*\)|"[^"]*")(?:\s*(?:<>|<=|>=|=|<|>|~)|\s+(?:in|like|within)\b)"#
+        )
+        .is_match(s)
+}
+
 pub(crate) fn slots(s: &str) -> Vec<&str> {
     let (mut start, mut depth) = (0, 0i32);
     let mut out = vec![];
@@ -3111,6 +3124,15 @@ pub fn lint_selecting(
             let signal = v.comments[second_start..second_start + parts[1].len()]
                 .trim_start()
                 .starts_with('\'');
+            // Otherwise two slots are dyadic `$`, and q 5 defines it for more
+            // than a type on the left: `$[m;flip m]` multiplies two float
+            // matrices and `$[5;"abc"]` pads (#295). What it refuses with
+            // 'type is a boolean there - `$[1b;2]`, `$[1=1;2]`, `$[not 0b;2]`.
+            // Only a test the text shows to be boolean is reported: a name
+            // (`$[c;x]`) could hold a matrix, a count or a type, so it is not.
+            if !signal && !boolean_test(bare(parts[0].trim())) {
+                continue;
+            }
             add(
                 dollar,
                 "QA006",
