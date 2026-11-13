@@ -807,3 +807,50 @@ fn a_file_that_cannot_be_written_is_reported_and_the_rest_are_still_fixed() {
     reported.sort();
     assert_eq!(reported, ["a.q QE004", "c.q QF016"], "{findings}");
 }
+
+/// A name with a space ends its header in a TAB, as git and diffutils write
+/// it: without one, patch cut `my file.q` at the space and found no file
+/// (#271).
+#[test]
+fn a_diff_of_a_file_whose_name_has_a_space_applies() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("my file.q");
+    let source = "f:{[x] x==1}\n";
+    fs::write(&path, source).unwrap();
+    let diff = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .current_dir(directory.path())
+        .args(["--isolated", "--diff", "my file.q"])
+        .output()
+        .unwrap();
+    let diff = String::from_utf8(diff.stdout).unwrap();
+    assert!(
+        diff.starts_with("--- a/my file.q\t\n+++ b/my file.q\t\n"),
+        "{diff:?}"
+    );
+    fs::write(directory.path().join("fx.diff"), &diff).unwrap();
+    for tool in [
+        &["patch", "-p1", "-i", "fx.diff"][..],
+        &["git", "apply", "fx.diff"],
+    ] {
+        if cfg!(windows) && tool[0] == "patch" {
+            continue; // see a_diff_names_files_relative_to_the_current_directory_and_applies
+        }
+        fs::write(&path, source).unwrap();
+        let Ok(out) = Command::new(tool[0])
+            .current_dir(directory.path())
+            .args(&tool[1..])
+            .stdin(std::process::Stdio::null())
+            .output()
+        else {
+            continue; // not installed here
+        };
+        assert!(
+            out.status.success(),
+            "{tool:?}: {}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let applied = fs::read_to_string(&path).unwrap().replace("\r\n", "\n");
+        assert_eq!(applied, "f:{[x] x=1}\n", "{tool:?}");
+    }
+}

@@ -721,7 +721,10 @@ fn diff_path(path: &str) -> String {
 /// the file unless told `--unidiff-zero`.
 fn print_diff(path: &str, before: &str, edits: &[q_lint_rs::Fix]) {
     const CONTEXT: usize = 3;
-    out!("--- a/{path}\n+++ b/{path}");
+    // A name with a space in it ends in a TAB, as git and diffutils write
+    // it: patch otherwise cuts the name at the space.
+    let tab = if path.contains(' ') { "\t" } else { "" };
+    out!("--- a/{path}{tab}\n+++ b/{path}{tab}");
     // On bytes: `end - 1` can sit inside a multi-byte character - a BOM is
     // three - and a newline is one byte wherever it is.
     let bytes = before.as_bytes();
