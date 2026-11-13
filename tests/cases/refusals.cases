@@ -121,6 +121,16 @@ f:{-x}
 a:-x
 b:1*-x
 
+=== QE008 profile: general | monadic minus on a dotted name, which is not a number (q 5: -.foo.x and -.z.p are '-)
+a:-.foo.x
+b:-.z.p
+c:(-.Q.n)
+
+=== clean profile: general | while subtracting one, or negating a fraction, parses
+a:x-.foo.x
+b:1-.z.p
+c:-.5
+
 === QE008 profile: general | enlist, count and not are keywords in q 5 (',x is ',)
 e:,x
 g:#x

@@ -694,8 +694,11 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
             || rest.starts_with(":-") && rest[2..].starts_with(|c: char| c.is_ascii_digit());
         let next = continued(rest);
         let spaced = next.len() < rest.len();
+        // A `.` before a letter starts a name, not a number: q 5 refuses
+        // `-.foo.x` and `-.z.p` with '-, as it does `#.foo.x` (#241).
         let operand = colon
             || next.starts_with(|c: char| c.is_ascii_alphabetic() || "`(\"".contains(c))
+            || re!(r"^\.[A-Za-z]").is_match(next)
             || (next.starts_with(|c: char| c.is_ascii_digit() || c == '.')
                 && (g != b'-' || spaced));
         if !operand {
