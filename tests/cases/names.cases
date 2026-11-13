@@ -830,6 +830,18 @@ f:{(t;b=t:max b:x;t;a=t:min a:y)}
 === QF014 profile: general | a read before dot-apply is a read, not a dotted name (q 5: defining f is 'g)
 f:{[p] r:g . p; g:{x+y}; r}
 
+=== clean profile: general | a dotted name's segment may begin with `_` and is still one name (q 5: f 10 is 11, g 3 is 6, h 3 is 6) (#299)
+contracts:5
+.a.b.__perf:{x+y}
+.h._ranks:{2*x}
+f:{[x] perf:.a.b.__perf[x;1]; perf}
+g:{[x] ranks:.h._ranks x; ranks}
+h:{[x] r:1+contracts; .registry.__contracts:x; r}
+
+=== QF014 profile: general | but a plain read of the name being assigned still is one (q 5: defining f is 'a) (#299)
+.h._ranks:{2*x}
+f:{[x] a:.h._ranks a+1}
+
 === QF003 | a query keyword as a local is refused when the lambda is defined (q 5: {select:1;0} is 'from)
 a:{select:1;0}
 b:{delete:1;0}
