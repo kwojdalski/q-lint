@@ -700,7 +700,9 @@ fn relative(path: &Path, base: &Path) -> String {
 /// The path a `--diff` header names: relative to the current directory, as
 /// Ruff prints it, so `patch -p1` and `git apply` find the file. An absolute
 /// path behind `a/` is `a//abs/path`, which patch asks about and git refuses.
-/// A relative path - a `--stdin-filename` - is already what was meant.
+/// A relative path - a `--stdin-filename` - is already what was meant. A file
+/// outside the current directory is named through `..`, which patch takes;
+/// git applies nothing outside the directory it runs in, under any name.
 fn diff_path(path: &str) -> String {
     let path = Path::new(path);
     match std::env::current_dir() {
