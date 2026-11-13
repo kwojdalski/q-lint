@@ -10,6 +10,18 @@ r:`u#1 1 2
 === QT024 | parted attribute on a value that comes back
 r:`p#1 2 1
 
+=== QT024 | a string sorts by byte, and é is 0xC3 0xA9 (q 5: `s#"aé" is 's-fail)
+a:`s#"aé"
+
+=== QT024 | two non-ASCII chars can share a byte (q 5: `u#"éè" is 'u-fail)
+b:`u#"éè"
+
+=== QT024 | one non-ASCII char is two bytes, here descending (q 5: `s#"é" is 's-fail)
+a:`s#"é"
+
+=== clean | its two bytes differ, so it is unique (q 5: `u#"é" applies)
+b:`u#"é"
+
 === clean | ties, a null first and contiguous runs are what the attributes allow
 r1:`s#1 1 2
 r2:`s#0N 1 2
@@ -20,6 +32,25 @@ r4:`s#`B`a
 r1:`g#1 2 1
 r2:`s#3 1 2,0
 
+=== QE006 | a minute past 59 in a digit-form minute (q 5: parse "1260u" is '1260)
+a:1260u
+
+=== QE006 | a second past 59 in a digit-form second (q 5: '120060)
+b:120060v
+
+=== QE006 | a minute past 59 in a digit-form time (q 5: '126000)
+c:126000t
+
+=== QE006 | the minutes of a nine-digit time (q 5: '126000123)
+d:126000123t
+
+=== clean | digit forms q reads (q 5: 12:59, 60:00, 01:00, **:45, 12:00:00.123)
+a:1259u
+b:60u
+c:100v
+d:12345u
+e:120000123t
+x1260u:1
 === QE006 | a date that does not exist
 r:2024.02.30
 
@@ -47,6 +78,12 @@ r2:update a:1 from t
 
 === QT025 | signalling a number
 f:{'1}
+
+=== QT025 | an octal escape is one char (q 5: '"\012" is 'stype)
+g:{'"\012"}
+
+=== clean | a non-ASCII char is two bytes, so a string (q 5: '"é" signals "\303\251")
+f:{'"é"}
 
 === QT025 | a one-character string is a char atom, not a string
 f:{'"x"}
@@ -293,6 +330,29 @@ g:1.5e-3*x
 
 === QE010 profile: general | a boolean digit other than 0 or 1 (q 5: '2b)
 b:2b
+
+=== QE010 profile: general | an exponent makes an integer-suffixed atom a float (q 5: '1e5)
+a:1e5j
+
+=== QE010 profile: general | an exponent with an int suffix (q 5: '1e3)
+b:1e3i
+
+=== QE010 profile: general | an exponent with a short suffix and a fraction (q 5: '1.5e-3)
+c:1.5e-3h
+
+=== QE010 profile: general | a boolean with a fraction (q 5: '1.5b)
+d:1.5b
+
+=== QE010 profile: general | a byte literal with a letter that is no hex digit (q 5: '0x0g)
+e:0x0g
+
+=== clean profile: general | integer-suffixed atoms, booleans and bytes q accepts
+a:15j
+b:10b
+c:0x0f
+d:0xAB
+e:0x
+f:1e3e
 
 === QE010 profile: general | a letter that is no type (q 5: '1y)
 m:1y

@@ -43,10 +43,10 @@ fn literal(s: &str) -> Option<Literal> {
             short_integer: false,
         });
     }
-    // Read from `comments`, where a string is still text. Its length counts
-    // an escape as the one character it stands for.
+    // Read from `comments`, where a string is still text. Its length is
+    // q's, in bytes, with an escape the one byte it stands for.
     if let Some(body) = re!(r#"^"((?:\\[0-7]{3}|\\.|[^"\\])*)"$"#).captures(s) {
-        let len = re!(r"\\[0-7]{3}|\\.|[^\\]").find_iter(&body[1]).count();
+        let len = crate::q_bytes(&body[1]).len();
         return Some(Literal {
             kind: Kind::Char,
             vector: len != 1,

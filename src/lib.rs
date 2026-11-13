@@ -1635,7 +1635,7 @@ fn ends_in_name(s: &str) -> bool {
 fn refused_atom_condition(raw: &str) -> bool {
     re!(r#"^"((?:[^"\\]|\\.)*)"$"#)
         .captures(raw)
-        .is_some_and(|c| re!(r"\\[0-7]{3}|\\.|[^\\]").find_iter(&c[1]).count() != 1)
+        .is_some_and(|c| q_bytes(&c[1]).len() != 1)
         || re!(r"^(?:`[A-Za-z0-9_.:]*)+$").is_match(raw)
         || re!(r"^0x(?:[0-9a-fA-F]{2}){2,}$").is_match(raw)
         || re!(r"^-?(?:\d+\.\d*|\.\d+|\d+(?:\.\d*)?[eE][+-]?\d+)[ef]?$|^-?\d+[ef]$|^-?0[nwNW][ef]?$|^0Ng$")
@@ -1937,7 +1937,20 @@ fn mixed_run(line: &str) -> Option<Vec<(usize, bool)>> {
 fn statement_groups(code: &str, source: &str) -> Vec<(usize, usize)> {
     let mut out: Vec<(usize, usize)> = vec![];
     let (mut at, mut open) = (0usize, 0i32);
-    for (l, raw) in code.split_inclusive('\n').zip(source.split_inclusive('\n')) {
+    let lines: Vec<(&str, &str)> = code
+        .split_inclusive('\n')
+        .zip(source.split_inclusive('\n'))
+        .collect();
+    // For each line, whether the next line with code on it is indented.
+    let mut indented_next = vec![false; lines.len()];
+    let mut next = false;
+    for (n, &(l, raw)) in lines.iter().enumerate().rev() {
+        indented_next[n] = next;
+        if !l.trim().is_empty() {
+            next = raw.starts_with([' ', '\t']);
+        }
+    }
+    for (n, &(l, raw)) in lines.iter().enumerate() {
         // Indentation is a fact about the source, not about `code`: a
         // comment is blanked to spaces, so a bare `/` reads as indented
         // there and would fold into the line above it, taking the rule
@@ -1948,7 +1961,14 @@ fn statement_groups(code: &str, source: &str) -> Vec<(usize, usize)> {
         // already insignificant to q, and the rules below have always
         // read those lines one at a time - folding a table literal or a
         // lambda body into one unit loses findings inside it.
-        let continues = open == 0 && raw.starts_with([' ', '\t']);
+        //
+        // A blank or column-0 comment line ends nothing: q 5 reads `a:1+`,
+        // a blank line, `  2` as 3. It folds only when an indented line
+        // follows it, so a statement's group never takes a comment after it.
+        // The next line is the next one with code on it: an indented line
+        // inside a block comment continues nothing.
+        let continues =
+            open == 0 && (raw.starts_with([' ', '\t']) || l.trim().is_empty() && indented_next[n]);
         match out.last_mut() {
             Some(last) if continues => last.1 += l.len(),
             _ => out.push((at, at + l.len())),
@@ -1961,6 +1981,25 @@ fn statement_groups(code: &str, source: &str) -> Vec<(usize, usize)> {
             }
         }
         at += l.len();
+    }
+    out
+}
+/// The bytes q makes of a string literal's body, the text between its
+/// quotes. q strings are bytes, so `"é"` is two items, and an escape is the
+/// one byte it stands for: `\n`, `\"`, `\012` (#226).
+pub(crate) fn q_bytes(body: &str) -> Vec<u8> {
+    let mut out = vec![];
+    for m in re!(r"\\[0-7]{3}|\\.|[^\\]").find_iter(body) {
+        match m.as_str().strip_prefix('\\') {
+            None => out.extend_from_slice(m.as_str().as_bytes()),
+            Some(octal) if octal.len() == 3 && octal.bytes().all(|b| b.is_ascii_digit()) => {
+                out.push(u32::from_str_radix(octal, 8).unwrap_or(0) as u8)
+            }
+            Some("n") => out.push(b'\n'),
+            Some("t") => out.push(b'\t'),
+            Some("r") => out.push(b'\r'),
+            Some(other) => out.push(other.as_bytes()[0]),
+        }
     }
     out
 }
@@ -1986,6 +2025,21 @@ struct Views {
     script_end: Option<usize>,
 }
 fn views(source: &str) -> Views {
+    // A BOM is QE005's to report; the rest of the file is read as q would
+    // read it without one, so `<BOM>/ note` is still a comment line (#221).
+    if let Some(body) = source.strip_prefix('\u{feff}') {
+        let n = source.len() - body.len();
+        let mut v = views(body);
+        v.comments.insert(0, '\u{feff}');
+        v.code.insert(0, '\u{feff}');
+        let shift = |at: &mut usize| *at += n;
+        v.unterminated.iter_mut().for_each(shift);
+        v.foreign_offsets.iter_mut().for_each(shift);
+        v.open_block.iter_mut().for_each(shift);
+        v.string_starts.iter_mut().for_each(shift);
+        v.script_end.iter_mut().for_each(shift);
+        return v;
+    }
     let bytes = source.as_bytes();
     let mut comments = bytes.to_vec();
     let mut code = bytes.to_vec();
@@ -2046,6 +2100,19 @@ fn views(source: &str) -> Views {
         } else {
             0
         };
+        // `\t` and `\ts` run their argument as q, so its strings and its
+        // comment are masked as on any other line (#222); the command itself
+        // stays, for the rules that read system commands.
+        let timed = (string.is_none())
+            .then(|| re!(r"^\\ts?(?::\d+)?[ \t]").find(line))
+            .flatten()
+            .map_or(0, |m| m.end());
+        // q appends an indented line to the command before it, so after any
+        // command but `\t` the lines that follow are its argument, not q:
+        // `\d .foo` + `  b:1` defines no `b` anywhere (#223).
+        if !ended && block == 0 && string.is_none() && line.starts_with('\\') {
+            statement = timed > 0;
+        }
         if ended || block > 0 {
             blank(&mut comments[offset..end]);
             blank(&mut code[offset..end]);
@@ -2072,10 +2139,19 @@ fn views(source: &str) -> Views {
             }
             blank(&mut comments[offset..end]);
             blank(&mut code[offset..end]);
-        } else if !(string.is_none() && line.starts_with('\\')) {
+        } else if timed == 0 && string.is_none() && line.starts_with('\\') {
+            // Any other command's argument is no q: a path, a name, or text
+            // for the shell. Only what the rules read of it is kept - the
+            // command, and the namespace or file of `\d` and `\l`.
+            let kept = re!(r"^\\(?:[dl][ \t]+[^ \t\r\n]*|[^ \t\r\n]*)")
+                .find(line)
+                .map_or(0, |m| m.end());
+            blank(&mut comments[offset + kept..end]);
+            blank(&mut code[offset + kept..end]);
+        } else {
             blank(&mut comments[offset..offset + prefix]);
             blank(&mut code[offset..offset + prefix]);
-            let mut i = offset + prefix;
+            let mut i = offset + prefix + timed;
             while i < end {
                 let c = bytes[i];
                 if string.is_some() {
@@ -2431,6 +2507,22 @@ fn structure(path: &str, source: &str, v: &Views) -> Option<Finding> {
     let mut offset = 0;
     let make = |at, detail| Finding::at(path, source, at, "QE001", detail);
     for line in v.code.split_inclusive('\n') {
+        // A line at column 0 starts a statement, so a bracket still open
+        // there never closes: q 5 refuses `f:{[y]` + `  y+1` + `}` with '{
+        // (#225). A comment line is blank here and does not count.
+        if let Some(&(c, at)) = stack.last()
+            && line.starts_with(|ch: char| !ch.is_ascii_whitespace())
+        {
+            let row = source[..offset].matches('\n').count() + 1;
+            return Some(make(
+                at,
+                format!(
+                    "Unclosed delimiter; expected '{}' before line {row}, which starts at \
+                     column 0 and so begins a new statement",
+                    c as char
+                ),
+            ));
+        }
         if !line.starts_with('\\') {
             for (i, c) in line.bytes().enumerate() {
                 if let Some(p) = b"([{ ".iter().position(|&a| a == c).filter(|&p| p < 3) {
@@ -3109,12 +3201,14 @@ pub fn lint_selecting(
     // nothing more.
     // Spaces and tabs only between the symbol and the operator: a symbol
     // ending one line and a `-1"..."` print opening the next are two
-    // statements, not a subtraction - the commonest shape in public q.
+    // statements, not a subtraction - the commonest shape in public q. After
+    // the operator, an indented line continues it, past blank and comment
+    // lines (#224).
     for m in
         // `&` and `|` are min and max, and 'type on a symbol too, as are the
         // word operators (q 5: `a&`b, `a mod 2, 2 xexp `a). Not `^`: a
         // symbol fills a symbol list (`none^s).
-        re!(r"(?:`[A-Za-z][A-Za-z0-9_.]*)+(?:[ \t]*[+\-*%&|]|[ \t]+(?:mod|div|xexp|xlog|and|or)[ \t])|(?:[+\-*%&|](?:[ \t]*\r?\n[ \t]+|[ \t]*)|[ \t](?:mod|div|xexp|xlog|and|or)(?:[ \t]*\r?\n[ \t]+|[ \t]+))(?:`[A-Za-z][A-Za-z0-9_.]*)+")
+        re!(r"(?:`[A-Za-z][A-Za-z0-9_.]*)+(?:[ \t]*[+\-*%&|]|[ \t]+(?:mod|div|xexp|xlog|and|or)[ \t])|(?:[+\-*%&|][ \t]*(?:(?:\r?\n[ \t]*)*\r?\n[ \t]+)?|[ \t](?:mod|div|xexp|xlog|and|or)(?:[ \t]*(?:\r?\n[ \t]*)*\r?\n[ \t]+|[ \t]+))(?:`[A-Za-z][A-Za-z0-9_.]*)+")
             .find_iter(code)
     {
         let at = m.start();
@@ -3936,8 +4030,9 @@ pub fn lint_selecting(
         // A string column is blank in this view. Its length is in the source.
         let string_len = |v: &str, offset: usize| -> Option<Shape> {
             let raw = source[at + 1 + offset..at + 1 + offset + v.len()].trim();
-            if raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2 {
-                let n = raw.len() - 2;
+            // Counted as q holds it: `"\n\t"` is two chars, not four (#231).
+            if let Some(body) = re!(r#"^"((?:\\[0-7]{3}|\\.|[^"\\])*)"$"#).captures(raw) {
+                let n = q_bytes(&body[1]).len();
                 return Some(if n == 1 {
                     Shape::Atom
                 } else {
@@ -4940,7 +5035,7 @@ pub fn lint_selecting(
             let mut at = from;
             while let Some(m) = re!(r#"(?:=|<>)\s*"((?:[^"\\]|\\.)*)""#).captures_at(literals, at) {
                 let op = m.get(0).unwrap().start();
-                let n = re!(r"\\[0-7]{3}|\\.|[^\\]").find_iter(&m[1]).count();
+                let n = q_bytes(&m[1]).len();
                 if in_code(op) && n != 1 {
                     return Some((op, n));
                 }
@@ -5284,9 +5379,15 @@ pub fn lint_selecting(
             add(
                 i,
                 "QE002",
+                // The whole char after the backslash, which may be more than
+                // one byte: `\é` is named as such, not half of it (#233).
                 format!(
-                    "Invalid escape {}",
-                    String::from_utf8_lossy(&b[i..(i + 2).min(b.len())])
+                    "Invalid escape \\{}",
+                    v.comments[i + 1..]
+                        .chars()
+                        .next()
+                        .map(String::from)
+                        .unwrap_or_default()
                 ),
             );
             i += 2;
@@ -5305,14 +5406,13 @@ pub fn lint_selecting(
             while j < chars.len() {
                 let c = chars[j].1;
                 if c == '"' {
+                    let start = chars[j].0 + 1;
                     j += 1;
                     while j < chars.len() && chars[j].1 != '"' {
-                        if chars[j].1 == '\\' {
-                            j += 1;
-                        }
-                        length += 1;
-                        j += 1;
+                        j += if chars[j].1 == '\\' { 2 } else { 1 };
                     }
+                    let end = chars.get(j).map_or(v.comments.len(), |c| c.0);
+                    length += q_bytes(&v.comments[start..end]).len();
                 } else if "([{ ".contains(c) && c != ' ' {
                     depth += 1;
                 } else if ")]}".contains(c) {
@@ -5325,13 +5425,14 @@ pub fn lint_selecting(
                 }
                 j += 1;
             }
-            // q 5 keeps the first 254 characters of a signalled string.
+            // q 5 keeps the first 254 bytes of a signalled string, cutting a
+            // multi-byte char in half if it must (#230).
             if length > 254 {
                 add(
                     chars[i].0,
                     "QB004",
                     format!(
-                        "Thrown message with {length} chars of literal text; q keeps only the first 254"
+                        "Thrown message with {length} bytes of literal text; q keeps only the first 254"
                     ),
                 );
             }

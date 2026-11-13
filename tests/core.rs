@@ -559,3 +559,34 @@ fn self_comparison_and_like_report_at_the_token() {
     let same = f.iter().find(|f| f.code == "QB001").unwrap();
     assert_eq!((same.line, same.column), (3, Some(23)));
 }
+
+/// The BOM is no part of the first line as the masker reads it: a comment
+/// or block comment that opens there is still one (#221).
+#[test]
+fn a_byte_order_mark_does_not_turn_a_first_line_comment_into_code() {
+    let codes = |s: &str| -> Vec<String> {
+        lint(s, "t.q", Profile::General)
+            .into_iter()
+            .map(|f| f.code)
+            .collect()
+    };
+    assert_eq!(codes("\u{feff}/ uses x==y\na:1\n"), ["QE005"]);
+    assert_eq!(codes("\u{feff}/\nprose x==y\n\\\na:1\n"), ["QE005"]);
+    assert_eq!(codes("\u{feff}a:\"x\"; b:x==y\n"), ["QE005", "QE004"]);
+}
+/// QB015 names the row count q needs, which is the string's length in bytes:
+/// `"éa"` is three, not two (#227).
+#[test]
+fn a_filter_string_is_counted_in_bytes() {
+    let found = lint("r:select from t where s=\"éa\"\n", "t.q", Profile::Style);
+    let qb015 = found.iter().find(|f| f.code == "QB015").expect("QB015");
+    assert!(qb015.detail.contains("exactly 3 rows"), "{}", qb015.detail);
+}
+/// QE002 names the whole char after the backslash, though it is more than
+/// one byte (#233).
+#[test]
+fn an_invalid_escape_names_a_non_ascii_char_whole() {
+    let found = lint("a:\"x\\éy\"\n", "t.q", Profile::General);
+    let qe002 = found.iter().find(|f| f.code == "QE002").expect("QE002");
+    assert_eq!(qe002.detail, "Invalid escape \\é");
+}

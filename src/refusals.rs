@@ -32,7 +32,7 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
 /// string is still text.
 fn attributes(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<Finding>) {
     for m in re!(
-        r#"`([spu])#[ \t]*((?:`[A-Za-z0-9_.]*){2,}|-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+|"[^"\\]{2,}")"#
+        r#"`([spu])#[ \t]*((?:`[A-Za-z0-9_.]*){2,}|-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+|"[^"\\]+")"#
     )
     .captures_iter(comments)
     {
@@ -44,14 +44,15 @@ fn attributes(path: &str, source: &str, code: &str, comments: &str, out: &mut Ve
             continue;
         }
         let items = m.get(2).unwrap().as_str();
-        // Symbols compare as bytes. Numbers compare as numbers, with q's
-        // nulls first; anything that will not parse leaves the rule silent.
+        // Symbols compare as bytes, and so do a string's items, which are
+        // bytes: `"aé"` is 0x61 0xC3 0xA9 (#228). Numbers compare as numbers,
+        // with q's nulls first; anything that will not parse leaves the rule
+        // silent.
         let keys: Option<Vec<Key>> = if let Some(chars) = items.strip_prefix('"') {
             Some(
-                chars
-                    .trim_end_matches('"')
-                    .chars()
-                    .map(|c| Key::Text(c.to_string()))
+                crate::q_bytes(chars.trim_end_matches('"'))
+                    .into_iter()
+                    .map(|b| Key::Number(f64::from(b)))
                     .collect(),
             )
         } else if items.starts_with('`') {
@@ -65,7 +66,9 @@ fn attributes(path: &str, source: &str, code: &str, comments: &str, out: &mut Ve
         } else {
             items.split_whitespace().map(number).collect()
         };
-        let Some(keys) = keys else { continue };
+        let Some(keys) = keys.filter(|k| k.len() > 1) else {
+            continue;
+        };
         let attr = &m[1];
         let fails = match attr {
             "s" => keys.windows(2).any(|w| w[0] > w[1]),
@@ -145,6 +148,40 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
                 .map_or(0, |f: regex::Match| f.as_str().parse::<u32>().unwrap())
         };
         if field(2) > 59 || field(3) > 59 {
+            out.push(Finding::at(
+                path,
+                source,
+                whole.start(),
+                "QE006",
+                format!(
+                    "`{}` is no time: minutes and seconds stop at 59, and q refuses the literal",
+                    whole.as_str()
+                ),
+            ));
+        }
+    }
+    // The digit forms too (#232): q 5 reads `1259u` as 12:59 and refuses
+    // `1260u`, `120060v` and `126000t`. The minutes are a minute's last two
+    // digits, and a second's or time's from three to five digits; from six or
+    // seven they are followed by the seconds, and a time of nine digits ends
+    // in milliseconds. Other lengths q reads in ways not worth modelling.
+    for m in re!(r"\b(\d{3,})([uvt])\b").captures_iter(unsym) {
+        let whole = m.get(0).unwrap();
+        if command_argument(unsym, whole.start())
+            || unsym[..whole.start()].ends_with('.')
+            || unsym[whole.end()..].starts_with('.')
+        {
+            continue;
+        }
+        let d = m[1].as_bytes();
+        let two = |i: usize| u32::from(d[i] - b'0') * 10 + u32::from(d[i + 1] - b'0');
+        let fields = match (&m[2], d.len()) {
+            ("u", n) | ("v" | "t", n @ 3..=5) => vec![two(n - 2)],
+            ("v" | "t", n @ 6..=7) => vec![two(n - 4), two(n - 2)],
+            ("t", 9) => vec![two(2), two(4)],
+            _ => vec![],
+        };
+        if fields.iter().any(|&f| f > 59) {
             out.push(Finding::at(
                 path,
                 source,
@@ -399,7 +436,7 @@ fn signals(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<F
     // bracket before it: `{[x]` + `  '1}` is a signal (q 5: 'stype).
     // A list cannot be signalled either: q 5 `'(1;2)`, `'()`, `'(1)` and
     // `` '`a`b `` are each 'stype.
-    for m in re!(r#"(')(-?\d[A-Za-z0-9.]*|"(?:[^"\\]|\\.)"|\(\s*\)|\(\s*-?\d[A-Za-z0-9.]*\s*\)|\([^()"]*;[^()]*\)|(?:`[A-Za-z0-9_.]*){2,})"#).captures_iter(comments) {
+    for m in re!(r#"(')(-?\d[A-Za-z0-9.]*|"(?:\\[0-7]{3}|\\.|[^"\\])+"|\(\s*\)|\(\s*-?\d[A-Za-z0-9.]*\s*\)|\([^()"]*;[^()]*\)|(?:`[A-Za-z0-9_.]*){2,})"#).captures_iter(comments) {
         let quote = m.get(1).unwrap();
         let value = m.get(2).unwrap();
         if code.as_bytes()[quote.start()] != b'\'' {
@@ -412,6 +449,13 @@ fn signals(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<F
             || before.is_empty()
             || before.ends_with(['[', '(', ';', '{'])
             || re!(r"\{\s*\[[A-Za-z0-9_; \t]*\]$").is_match(before))
+        {
+            continue;
+        }
+        // A one-char string is a char atom, counted as q does, in bytes:
+        // `"é"` is a two-byte string and `"\012"` one char (#229).
+        if value.as_str().starts_with('"')
+            && crate::q_bytes(&value.as_str()[1..value.len() - 1]).len() != 1
         {
             continue;
         }
@@ -731,9 +775,10 @@ const GLYPHS: &[u8] = b"+-*%!#$&|^=<>~,@?";
 
 /// What follows a glyph, past the blanks before it - and past a line break
 /// into an indented line, which q reads as the same statement: `a:-` with
-/// `  x` below it is `a:- x`.
+/// `  x` below it is `a:- x`. Blank and comment lines between them do not
+/// end the statement (#224).
 fn continued(rest: &str) -> &str {
-    let m = re!(r"^[ \t]*(?:\r?\n[ \t]+)*")
+    let m = re!(r"^[ \t]*(?:(?:\r?\n[ \t]*)*\r?\n[ \t]+)?")
         .find(rest)
         .map_or(0, |m| m.end());
     &rest[m..]
@@ -979,12 +1024,22 @@ fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Find
             // is no type suffix, but the token is no number either.
             let detail = if re!(r"^0[nNwW][A-Za-z]?$").is_match(text) {
                 null_literal(text, k + 1 < run.len(), negative)
-            } else if re!(r"^\d+\.\d*[hij]$").is_match(text) {
+            } else if re!(r"^\d+(?:\.\d*)?(?:[eE][+-]?\d+)?[hij]$").is_match(text)
+                && !re!(r"^\d+[hij]$").is_match(text)
+            {
+                // `1e3j` too: an exponent makes a float, whatever it equals.
                 Some(format!(
-                    "`{text}`: an integer type takes no fractional part"
+                    "`{text}`: an integer type takes no fractional part or exponent"
                 ))
-            } else if re!(r"^\d*[2-9]\d*b$").is_match(text) {
+            } else if re!(r"^\d*[2-9]\d*b$").is_match(text)
+                || (re!(r"^\d+(?:\.\d*)?(?:[eE][+-]?\d+)?b$").is_match(text)
+                    && !re!(r"^\d+b$").is_match(text))
+            {
                 Some(format!("`{text}`: a boolean is written with 0 and 1 only"))
+            } else if re!(r"^0x[0-9a-fA-F]*[g-zG-Z][0-9A-Za-z]*$").is_match(text) {
+                Some(format!(
+                    "`{text}`: a byte literal is written with hex digits only"
+                ))
             } else if re!(r"^\d+[adgklmoqrwyz]$").is_match(text)
                 || (re!(r"^\d+x$").is_match(text) && text != "0x")
             {

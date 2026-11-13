@@ -30,6 +30,23 @@ x:1 / (]
 === clean | balanced nesting
 f:{[a] $[a>0;(1;2);()]}
 
+=== QE001 profile: general | a closing brace at column 0 starts a new statement (q 5: '{)
+f:{[y]
+  y+1
+}
+
+=== QE001 profile: general | so does any line at column 0 inside a bracket (q 5: '()
+a:(1;
+2)
+
+=== clean profile: general | indented closers, and a column-0 comment inside a lambda (q 5: f 1 is 2)
+f:{[y]
+/ a note
+  y+1
+ }
+a:(1;
+ 2)
+
 === QE002 | an escape q does not define
 s:"a\qb"
 
@@ -88,6 +105,31 @@ r:a&&b
 
 === QE004 | plus-equals
 a+=1
+
+=== clean | a string and a comment on a \t line are masked (q 5 runs both: 0 and 0)
+\t count "a==b"
+\t 1+1 / x==y
+\ts:2 count "12:60"
+
+=== QE004 | the expression of a \t line is still q
+\t x==y
+
+=== clean | another command's argument is no q (q 5 loads \l inc.q / x==y and \d .foo / a==b)
+\l inc.q / x==y
+\d .foo / a==b
+\d .
+\echo "a==b"
+
+=== clean | an indented line after a command is the command's argument (q 5 loads this, ctx .foo)
+a:0
+\d .foo
+  x==y
+\d .
+
+=== QE004 | an indented line after \t is part of its expression
+a:0
+\t 1+
+  x==y
 
 === clean | the q spellings
 if[a=1;2];if[a<>1;2];r:a and b;a+:1;if[a>=1;2]

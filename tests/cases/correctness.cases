@@ -338,6 +338,9 @@ select from t where sym=""
 === clean | a one-char string is a char atom
 select from t where c="a"
 
+=== QB015 | a non-ASCII char is two bytes, so no char atom (q 5: s="é" on 3 rows is 'length)
+select from t where s="é"
+
 === clean | like, match and in are the string comparisons
 select from t where sym like "EUR", s~\:"ab", c in "abc"
 
@@ -382,6 +385,12 @@ dir:1
 
 === QB004 | a thrown message long enough to be truncated
 f:{'"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+
+=== QB004 | q keeps 254 bytes, and each é is two (q 5: 200 of them, 400 bytes, signal as 254)
+f:{'"éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé"}
+
+=== clean | 127 two-byte chars are 254 bytes, which survive
+f:{'"ééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé"}
 
 === clean | 254 characters survive whole in q 5
 f:{'"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}

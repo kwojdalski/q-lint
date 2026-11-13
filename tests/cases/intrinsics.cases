@@ -28,6 +28,13 @@ asc[1]
 === clean | valid counterpart for QT011
 asc[enlist 1]
 
+=== clean | a non-ASCII char is two bytes, so its string is a list (q 5: asc "é" is `s#"\251\303")
+a:asc "é"
+b:distinct "é"
+
+=== QT011 | an octal escape is one char, so the string is an atom (q 5: asc "\012" is 'rank)
+a:asc "\012"
+
 === QT012 | runtime type
 distinct[1]
 
@@ -124,7 +131,7 @@ outer:{[x]
     ]
   };
   inner[x]
-}
+ }
 
 === clean | nested multiline good
 outer:{[x]
@@ -135,7 +142,7 @@ outer:{[x]
     ]
   };
   inner[x]
-}
+ }
 
 === QT008 | nested multiline bad
 outer:{[x]
@@ -146,7 +153,7 @@ outer:{[x]
     ]
   };
   inner[x]
-}
+ }
 
 === clean | nested multiline good
 outer:{[x]
@@ -157,7 +164,7 @@ outer:{[x]
     ]
   };
   inner[x]
-}
+ }
 
 === QT009 | nested multiline bad
 outer:{[x]
@@ -168,7 +175,7 @@ outer:{[x]
     ]
   };
   inner[x]
-}
+ }
 
 === clean | nested multiline good
 outer:{[x]
@@ -179,7 +186,7 @@ outer:{[x]
     ]
   };
   inner[x]
-}
+ }
 
 === QT010 | nested multiline bad
 outer:{[x]
@@ -190,7 +197,7 @@ outer:{[x]
     ]
   };
   inner[x]
-}
+ }
 
 === clean | nested multiline good
 outer:{[x]
@@ -201,7 +208,7 @@ outer:{[x]
     ]
   };
   inner[x]
-}
+ }
 
 === QT011 | nested multiline bad
 outer:{[x]
@@ -212,7 +219,7 @@ outer:{[x]
     ]
   };
   inner[x]
-}
+ }
 
 === clean | nested multiline good
 outer:{[x]
@@ -223,7 +230,7 @@ outer:{[x]
     ]
   };
   inner[x]
-}
+ }
 
 === QT012 | nested multiline bad
 outer:{[x]
@@ -234,7 +241,7 @@ outer:{[x]
     ]
   };
   inner[x]
-}
+ }
 
 === clean | nested multiline good
 outer:{[x]
@@ -245,7 +252,7 @@ outer:{[x]
     ]
   };
   inner[x]
-}
+ }
 
 === QT013 | nested multiline bad
 outer:{[x]
@@ -256,7 +263,7 @@ outer:{[x]
     ]
   };
   inner[x]
-}
+ }
 
 === clean | nested multiline good
 outer:{[x]
@@ -269,7 +276,7 @@ outer:{[x]
     ]
   };
   inner[x]
-}
+ }
 
 === QT014 | nested multiline bad
 outer:{[x]
@@ -282,7 +289,7 @@ outer:{[x]
     ]
   };
   inner[x]
-}
+ }
 
 === clean | nested multiline good
 outer:{[x]
@@ -295,7 +302,7 @@ outer:{[x]
     ]
   };
   inner[x]
-}
+ }
 
 === QD001 | nested multiline bad
 outer:{[x]
@@ -306,7 +313,7 @@ outer:{[x]
     ]
   };
   inner[x]
-}
+ }
 
 === clean | nested multiline good
 outer:{[x]
@@ -317,7 +324,7 @@ outer:{[x]
     ]
   };
   inner[x]
-}
+ }
 
 === QD002 | nested multiline bad
 outer:{[x]
@@ -328,7 +335,7 @@ outer:{[x]
     ]
   };
   inner[x]
-}
+ }
 
 === clean | nested multiline good
 outer:{[x]
@@ -339,7 +346,7 @@ outer:{[x]
     ]
   };
   inner[x]
-}
+ }
 
 === clean | nested enlist is a matrix
 flip[enlist enlist 1]

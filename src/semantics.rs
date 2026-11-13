@@ -2433,7 +2433,7 @@ fn held(code: &str, raw: &str) -> Option<Held> {
     }
     // A string is blank in `code`; its length is in the source.
     if let Some(body) = re!(r#"^"((?:\\[0-7]{3}|\\.|[^"\\])*)"$"#).captures(raw) {
-        let n = re!(r"\\[0-7]{3}|\\.|[^\\]").find_iter(&body[1]).count();
+        let n = crate::q_bytes(&body[1]).len();
         return Some(if n == 1 { Held::Atom } else { Held::Vector(n) });
     }
     // q's own temporal and float atoms: `.z.p`, `.z.d`, `.z.K` and the rest
