@@ -189,6 +189,14 @@ r:ssr[`abc;"a";"b"]
 === QT007 | a symbol as the pattern
 r:ssr["abc";`a;"b"]
 
+=== clean profile: general | a symbol inside a call nested in the subject is not a slot of ssr (q 5: returns "ab")
+f:{[r;k;d] d}
+r:ssr[f[0;`csv;"a\rb"];"\r";""]
+s:ssr[string f[0;`abc;`abc];"b";"c"]
+
+=== QT007 profile: general | a symbol pattern after a bracketed subject is still one (q 5: 'type)
+r:ssr[s[0];`a;"b"]
+
 === QT007 | infix ss on a symbol
 r:`abc ss "a"
 

@@ -3790,11 +3790,27 @@ pub fn lint_selecting(
     // `ss` and `ssr` are string functions and refuse a symbol in either the
     // subject or the pattern slot. `trim`, `lower` and `like` accept symbols
     // and are deliberately not here.
-    for m in re!(
-        r"\bssr?\s*\[\s*(?:`[A-Za-z0-9_.]*)+\s*[;\]]|\bssr?\s*\[[^;\]]*;\s*(?:`[A-Za-z0-9_.]*)+\s*[;\]]|(?:`[A-Za-z0-9_.]*)+\s+ssr?\b|\bss[ \t]+`[A-Za-z0-9_.]*"
-    )
-    .find_iter(code)
-    {
+    // The bracket form is split into its slots, so the `;` of a call nested
+    // in the subject does not start the pattern: `ssr[f[0;`a;s];"b";"c"]`
+    // passes a string (#294).
+    for m in re!(r"\bssr?\s*\[").find_iter(code) {
+        let open = m.end() - 1;
+        if !boundary(code, m.start()) {
+            continue;
+        }
+        let Some(close) = matching(code, open, b'[', b']') else {
+            continue;
+        };
+        let symbol = |s: &&str| re!(r"^\s*(?:`[A-Za-z0-9_.]*)+\s*$").is_match(s);
+        if slots(&code[open + 1..close - 1]).iter().take(2).any(symbol) {
+            add(
+                m.start(),
+                "QT007",
+                "ss/ssr work on strings; a symbol literal is a 'type error at runtime".into(),
+            );
+        }
+    }
+    for m in re!(r"(?:`[A-Za-z0-9_.]*)+\s+ssr?\b|\bss[ \t]+`[A-Za-z0-9_.]*").find_iter(code) {
         // `"abc" ss `a` puts the symbol in the pattern slot (q 5: 'type).
         if m.as_str().starts_with('s') && !boundary(code, m.start()) {
             continue;
