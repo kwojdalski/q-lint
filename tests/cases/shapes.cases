@@ -28,6 +28,14 @@ f:{[k;v] k!v}
 === QT002 | a symbol passed to a function that is visibly numeric
 f:{[r] r+1};f[`bad]
 
+=== QT002 | and one with an implicit x (q 5: g:{x+1}; g[`a] is 'type)
+g:{x+1}
+s:g[`a]
+
+=== clean | an implicit y makes it rank 2, so one argument projects (q 5: {y+1}[`a] is a projection)
+h:{y+1}
+s:h[`a]
+
 === clean | the same function given a number
 f:{[r] r+1};f[2]
 

@@ -1368,9 +1368,11 @@ pub fn check(
         if let Some(scope) = scope_starting_at
             .get(&start)
             .map(|&i| &scopes[i])
-            .filter(|s| s.params.len() == 1)
+            .filter(|s| s.params.len() == 1 || !s.named)
             && let Some(m)=re!(r"^\s*([A-Za-z][A-Za-z0-9_]*)\s*[+*%\-]\s*-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?[bhijef]?\s*;?\s*$").captures(&scope.direct)
-                && scope.params.contains(&m[1]) {numeric.insert(name.clone());}
+                // An implicit signature is rank 1 only when the body reads
+                // `x` alone: `{x+1}[`a]` is 'type, `{y+1}[`a]` a projection.
+                && if scope.named { scope.params.contains(&m[1]) } else { &m[1] == "x" } {numeric.insert(name.clone());}
     }
     for call in re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*\[\s*`[A-Za-z][A-Za-z0-9_.]*\s*\]").captures_iter(code) {
         if dynamic {break;}
