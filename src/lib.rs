@@ -2366,12 +2366,70 @@ fn is_param_name(s: &str) -> bool {
     re!(r"^\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*$").is_match(s)
 }
 
+/// A q 5 parameter pattern, as written in code with strings blanked: a name,
+/// a literal (a string is blank here, so an empty item inside a pattern
+/// passes), a list of patterns `(a;b)`, a dictionary `([k;v:p])` or a table
+/// `([]a;b:c)`. q 5 binds each and fails a call only where the argument does
+/// not match: `{[(a;b);c] a+b+c}[(1;2);3]` is 6, `{[([k;v])] k+v}[`k`v!1 2]`
+/// is 3, `{[1;b] b}[1;2]` is 2 and `{[1] 5} 2` is 'match (#298). `_` is
+/// none: `{[(a;_)] a}[(1;2)]` is 'match, as `{[_] 1}[1]` is.
+fn is_pattern(s: &str, nested: bool) -> bool {
+    let s = s.trim();
+    let items = |inner: &str, item: &dyn Fn(&str) -> bool| {
+        inner.trim().is_empty() || slots(inner).into_iter().all(item)
+    };
+    let whole = |s: &str| matching(s, 0, b'(', b')') == Some(s.len());
+    if s.is_empty() {
+        nested
+    } else if is_param_name(s)
+        || re!(r"^(?:-?[0-9.][A-Za-z0-9.:]*(?:\s+-?[0-9.][A-Za-z0-9.:]*)*|(?:`[A-Za-z0-9_.:]*)+)$")
+            .is_match(s)
+    {
+        true
+    } else if let Some(inner) = s.strip_prefix("([]").filter(|_| whole(s)) {
+        items(&inner[..inner.len() - 1], &|c| field(c))
+    } else if let Some(inner) = s
+        .strip_prefix("([")
+        .filter(|_| s.ends_with("])") && whole(s))
+    {
+        matching(s, 1, b'[', b']') == Some(s.len() - 1)
+            && items(&inner[..inner.len() - 2], &|c| field(c))
+    } else if whole(s) {
+        items(&s[1..s.len() - 1], &|c| is_pattern(c, true))
+    } else {
+        false
+    }
+}
+/// The names a parameter slot binds: the slot itself when it is a name, and
+/// for a pattern every name in it but the keys and columns it matches on -
+/// `(a;b)` binds a and b, `([k:p])` binds p, and `1` binds nothing.
+pub(crate) fn pattern_names(slot: &str) -> Vec<&str> {
+    re!(r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*")
+        .find_iter(slot)
+        .filter(|m| {
+            boundary(slot, m.start())
+                && !slot[..m.start()].ends_with(['`', '.'])
+                && !slot[..m.start()].ends_with(|c: char| c.is_ascii_digit())
+                && !slot[m.end()..].trim_start().starts_with(':')
+        })
+        .map(|m| m.as_str())
+        .collect()
+}
+/// A key or column of a dictionary or table pattern: `k`, or `k:p`.
+fn field(s: &str) -> bool {
+    match s.split_once(':') {
+        Some((name, p)) => is_param_name(name.trim()) && is_pattern(p, true),
+        None => is_param_name(s.trim()),
+    }
+}
+
 /// What q makes of the `[...]` following a `{`.
 ///
-/// q reads those brackets as a parameter list only when every slot is a name.
-/// `{[a+b] ...}`, `{[1] ...}` and `{[_] ...}` are lambdas whose *body* opens
-/// with a bracket expression instead, and they take the implicit x, y and z -
-/// a different rank, from source that looks like a signature. The rules here
+/// q reads those brackets as a parameter list only when every slot is a name
+/// or, in q 5, a pattern (see `is_pattern`). `{[a+b] ...}`, `{[a b] ...}` and
+/// `{[_] ...}` are lambdas whose *body* opens with a bracket expression
+/// instead, and they take the implicit x, y and z - a different rank, from
+/// source that looks like a signature. The rules here
 /// and the scope tracking in `semantics` both have to agree with q about
 /// which of the two a given `{` is, so they share this.
 pub(crate) struct Signature<'a> {
@@ -2504,7 +2562,9 @@ pub(crate) fn signature<'a>(code: &'a str, raw: &str, brace: usize) -> Signature
     // trailing `;` in `{[a;b;] ...}` is a third argument rather than nothing.
     // "Empty" has to be judged on `raw`, or a masked literal passes for one.
     let names_only = ranges.iter().zip(&slots).all(|(&(a, b), slot)| {
-        (slot.is_empty() && raw[a..b].trim().is_empty()) || is_param_name(slot)
+        (slot.is_empty() && raw[a..b].trim().is_empty())
+            || is_param_name(slot)
+            || is_pattern(slot, !slot.is_empty() || !raw[a..b].trim().is_empty())
     });
     if !names_only {
         return implicit(slots);
@@ -2768,14 +2828,9 @@ pub fn lint_selecting(
                 // What q 5 does with it depends on what the slots hold. An
                 // operator in one, or a builtin applied - `{[a+b] x}`,
                 // `{[count x] 1}`, `{[tables[]] 1}` - is 'nyi where the
-                // lambda is defined. Literals alone - `{[1] x}`, `{[`s] x}`,
-                // `{[a;1] x}`, a string - give it the parameter list ,`0,
-                // and every call is 'match. Anything else - `{[a b] a}`,
+                // lambda is defined. A literal is a pattern and never gets
+                // here (`is_pattern`). Anything else - `{[a b] a}`,
                 // `{[a:1] a}` - runs the brackets as the start of the body.
-                let literal = |s: &str| {
-                    re!(r"^(?:-?[0-9.][A-Za-z0-9.:]*(?:\s+-?[0-9.][A-Za-z0-9.:]*)*|(?:`[A-Za-z0-9_.:]*)+)$")
-                        .is_match(s)
-                };
                 let applies_builtin = |s: &str| {
                     re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(s).any(|w| {
                         RESERVED.iter().any(|n| n == w.as_str())
@@ -2788,8 +2843,6 @@ pub fn lint_selecting(
                     .any(|s| re!(r"[-+*%,#$@&|^=<>~!?]").is_match(s) || applies_builtin(s))
                 {
                     "q 5 refuses the lambda where it is defined: 'nyi"
-                } else if rest.iter().all(|s| literal(s)) {
-                    "q 5 gives the lambda no parameters it can bind, and every call is 'match"
                 } else {
                     "q reads these brackets as the start of the body and the lambda takes \
                      x, y and z instead"

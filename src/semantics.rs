@@ -495,8 +495,8 @@ fn scopes(code: &str, raw: &str) -> (Vec<Scope>, Vec<(usize, String)>) {
                 let params = if sig.named {
                     sig.slots
                         .iter()
-                        .filter(|p| !p.is_empty())
-                        .map(|p| (*p).to_string())
+                        .flat_map(|p| crate::pattern_names(p))
+                        .map(str::to_string)
                         .collect()
                 } else {
                     ["x", "y", "z"].into_iter().map(str::to_string).collect()

@@ -67,10 +67,10 @@ f:{[tables[]] x+1}
 === QF007 | an expression in the parameter slot
 f:{[a+b] 1}
 
-=== QF007 | an integer literal reads as body text, not a parameter
+=== QF010 | a literal is a q 5 parameter pattern, so the lambda takes no implicit x (q 5: {[1] x+1}[1] is 'x)
 f:{[1] x+1}
 
-=== QF007 | a symbol literal likewise
+=== QF010 | a symbol literal likewise
 f:{[`s] x+1}
 
 === QF007 | two names without a separator is one bracket expression
@@ -82,8 +82,24 @@ f:{[a[0]] a}
 === QF007 | an assignment in the parameter slot
 f:{[a:1] a}
 
-=== QF007 | a string literal, which the rules see only as blanks
+=== clean profile: general | a string literal is a pattern too, which the rules see only as blanks (q 5: {["ab"] 5} "ab" is 5)
 f:{["s"] 1}
+
+=== clean profile: general | q 5 parameter patterns bind, and a literal one fails only on a mismatch (q 5: 6, 3, 2)
+f:{[(a;b);c] a+b+c}
+g:{[([k;v])] k+v}
+h:{[1;b] b}
+i:{[a;(b;"x")] a+b}
+j:{[([k:p;v])] p+v}
+k:{[([]a;b:c)] a,c}
+r:(f[(1;2);3]; g[`k`v!1 2]; h[1;2])
+
+=== QA012 profile: general | the rank of a pattern lambda is its slot count (q 5: f[(1;2);3;4] is 'rank)
+f:{[(a;b);c] a+b+c}
+r:f[(1;2);3;4]
+
+=== QF002 profile: general | but _ is no pattern (q 5: {[_] 1}[1] is 'match)
+f:{[_] 1}
 
 === clean | a dotted name is a legal parameter, surprising as that is
 f:{[.q.z] 1}
