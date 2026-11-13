@@ -1436,3 +1436,51 @@ fn the_workspace_index_can_be_turned_off_or_narrowed() {
         assert_eq!(server.shutdown_and_exit(), 0);
     }
 }
+
+#[test]
+fn neither_a_watched_change_nor_a_close_indexes_what_the_settings_leave_out() {
+    // With the index off or vendor/ excluded, a change on disk to vendor/lib.q
+    // must not put its `cfg` in the index, nor may closing a file keep what
+    // it defined: app.q's read of cfg stays undefined either way.
+    let has_qf018 = |server: &mut Server, app: &str| {
+        server.send(json!({"jsonrpc":"2.0","method":"textDocument/didChange",
+            "params":{"textDocument":{"uri":app,"version":2},"contentChanges":[{"text":"n:cfg\n"}]}}));
+        codes_of(&server.diagnostics_for(app)).contains(&"QF018".to_string())
+    };
+    for options in [
+        json!({"workspaceIndex": {"enable": false}}),
+        json!({"workspaceIndex": {"exclude": ["vendor/**"]}}),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("vendor")).unwrap();
+        let lib = dir.path().join("vendor/lib.q");
+        let app = file_uri(&dir.path().join("app.q"));
+        let (mut server, _) = start_with_options(
+            dir.path(),
+            &["--lsp", "--profile", "uqf"],
+            options.clone(),
+            Some(dir.path()),
+        );
+        server.open(&app, "n:cfg\n");
+        assert!(codes_of(&server.diagnostics_for(&app)).contains(&"QF018".to_string()));
+        std::fs::write(&lib, "cfg:5\n").unwrap();
+        server.send(
+            json!({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles",
+            "params":{"changes":[{"uri":file_uri(&lib),"type":1}]}}),
+        );
+        assert!(
+            has_qf018(&mut server, &app),
+            "{options}: after the watched change"
+        );
+        server.open(&file_uri(&lib), "cfg:5\n");
+        server.diagnostics_for(&file_uri(&lib));
+        // Open, lib.q's buffer does define cfg, and app.q is linted again.
+        assert!(!codes_of(&server.diagnostics_for(&app)).contains(&"QF018".to_string()));
+        server.send(json!({"jsonrpc":"2.0","method":"textDocument/didClose",
+            "params":{"textDocument":{"uri":file_uri(&lib)}}}));
+        server.diagnostics_for(&app);
+        server.diagnostics_for(&file_uri(&lib));
+        assert!(has_qf018(&mut server, &app), "{options}: after the close");
+        assert_eq!(server.shutdown_and_exit(), 0);
+    }
+}

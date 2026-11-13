@@ -109,6 +109,12 @@ type Documents = HashMap<String, String>;
 struct Index {
     files: HashMap<String, FileIndex>,
     ws: Workspace,
+    /// What may be read from disk: `.q` files under these folders, less
+    /// those `exclude` names - and nothing at all while `enabled` is off,
+    /// when only open documents are indexed.
+    roots: Vec<String>,
+    exclude: Vec<glob::Pattern>,
+    enabled: bool,
 }
 
 /// Directories a workspace scan does not enter: version control, build
@@ -144,32 +150,65 @@ impl Index {
         }
     }
 
-    /// Read `path` from disk, or forget it when it is gone or unreadable.
+    /// Read `path` from disk when the index covers it, and forget it when it
+    /// does not, is gone, or is unreadable. A closed document and a file
+    /// changed on disk both come here, so neither can put back what the
+    /// settings left out of the scan.
     fn reload(&mut self, path: &str) -> bool {
+        if self.covers(path) {
+            self.read(path)
+        } else {
+            self.remove(path)
+        }
+    }
+
+    fn read(&mut self, path: &str) -> bool {
         match std::fs::read(path) {
             Ok(bytes) if is_q_path(path) => self.set(path, index(&String::from_utf8_lossy(&bytes))),
             _ => self.remove(path),
         }
     }
 
-    /// Every `.q` file under the workspace folders, less those `exclude`
-    /// names. A pattern is matched against the path relative to the folder it
-    /// is under, with `/` between components, as VS Code's globs are; a
-    /// directory it names is not entered at all.
-    fn scan(&mut self, roots: &[String], exclude: &[glob::Pattern]) {
-        let mut stack: Vec<(std::path::PathBuf, std::path::PathBuf)> =
-            roots.iter().map(|r| (r.into(), r.into())).collect();
-        let excluded = |root: &std::path::Path, path: &std::path::Path| {
-            let Ok(relative) = path.strip_prefix(root) else {
-                return false;
-            };
-            let relative = relative.to_string_lossy().replace('\\', "/");
-            let options = glob::MatchOptions {
-                require_literal_separator: true,
-                ..Default::default()
-            };
-            exclude.iter().any(|p| p.matches_with(&relative, options))
+    /// Whether the scan would have read `path`: index on, under a workspace
+    /// folder, in no directory the scan skips, not excluded, and not too big.
+    fn covers(&self, path: &str) -> bool {
+        let path = std::path::Path::new(path);
+        self.enabled
+            && is_q_path(&path.to_string_lossy())
+            && std::fs::metadata(path).is_ok_and(|m| m.len() <= MAX_BYTES)
+            && self.roots.iter().any(|root| {
+                let root = std::path::Path::new(root);
+                path.strip_prefix(root).is_ok_and(|relative| {
+                    let mut dirs = relative.parent().into_iter().flat_map(|p| p.iter());
+                    !dirs.any(|d| {
+                        let d = d.to_string_lossy();
+                        d.starts_with('.') || SKIPPED.contains(&&*d)
+                    }) && !self.excluded(root, path)
+                })
+            })
+    }
+
+    /// A pattern is matched against the path relative to the folder it is
+    /// under, with `/` between components, as VS Code's globs are.
+    fn excluded(&self, root: &std::path::Path, path: &std::path::Path) -> bool {
+        let Ok(relative) = path.strip_prefix(root) else {
+            return false;
         };
+        let relative = relative.to_string_lossy().replace('\\', "/");
+        let options = glob::MatchOptions {
+            require_literal_separator: true,
+            ..Default::default()
+        };
+        self.exclude
+            .iter()
+            .any(|p| p.matches_with(&relative, options))
+    }
+
+    /// Every `.q` file under the workspace folders, less those `exclude`
+    /// names; a directory it names is not entered at all.
+    fn scan(&mut self) {
+        let mut stack: Vec<(std::path::PathBuf, std::path::PathBuf)> =
+            self.roots.iter().map(|r| (r.into(), r.into())).collect();
         let mut seen = 0;
         while let Some((root, dir)) = stack.pop() {
             let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -181,7 +220,7 @@ impl Index {
                 let Ok(kind) = entry.file_type() else {
                     continue;
                 };
-                if excluded(&root, &path) {
+                if self.excluded(&root, &path) {
                     continue;
                 }
                 if kind.is_dir() {
@@ -192,7 +231,7 @@ impl Index {
                     && is_q_path(&name)
                     && entry.metadata().is_ok_and(|m| m.len() <= MAX_BYTES)
                 {
-                    self.reload(&path.to_string_lossy());
+                    self.read(&path.to_string_lossy());
                     seen += 1;
                     if seen >= MAX_FILES {
                         return;
@@ -390,7 +429,6 @@ pub fn serve(
 ) -> Result<u8, String> {
     let mut docs: Documents = HashMap::new();
     let mut idx = Index::default();
-    let mut roots: Vec<String> = vec![];
     let mut opts = Options::default();
     let mut problems: Vec<String> = vec![];
     let mut initialized = false;
@@ -437,7 +475,7 @@ pub fn serve(
 
         match (method.as_str(), id) {
             ("initialize", Some(id)) => {
-                roots = workspace_roots(&params);
+                idx.roots = workspace_roots(&params);
                 let layer;
                 (opts, layer, problems) = Options::read(&params);
                 if layer.select.is_some() || !layer.ignore.is_empty() {
@@ -468,8 +506,10 @@ pub fn serve(
                                "message": format!("q-lint: ignoring a setting: {problem}")}}),
                     )?;
                 }
-                if opts.index {
-                    idx.scan(&roots, &opts.index_exclude);
+                idx.enabled = opts.index;
+                idx.exclude = opts.index_exclude.clone();
+                if idx.enabled {
+                    idx.scan();
                 }
                 for (uri, text) in &docs {
                     idx.set(&path_of(uri), index(text));
