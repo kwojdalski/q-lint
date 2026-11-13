@@ -4593,6 +4593,10 @@ pub fn lint_selecting(
             offset += line.len();
             continue;
         }
+        // `system "d .ns"` switches as `\d .ns` does (#261).
+        if let Some(ns) = semantics::opens(first, first_raw) {
+            namespace = !ns.is_empty();
+        }
         // More from the same guidelines:
         //
         //   "Do not use unnecessary parentheses - the compiler doesn't need

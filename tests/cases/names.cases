@@ -34,6 +34,15 @@ f:{[a_] a_}
 count:{[t] 42}
 \d .
 
+=== QF004 profile: general | and after system "d .ns", the same switch (q 5: count:1 is 'assign)
+system "d .ns"
+count:1
+
+=== QF012 | and system "d ." returns to the root
+system "d .ns"
+system "d ."
+count:1
+
 === clean | a file may end inside a namespace it opened
 \d .util
 helper:{[x] x}
