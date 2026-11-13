@@ -28,6 +28,13 @@ asc[1]
 === clean | valid counterpart for QT011
 asc[enlist 1]
 
+=== clean | a non-ASCII char is two bytes, so its string is a list (q 5: asc "é" is `s#"\251\303")
+a:asc "é"
+b:distinct "é"
+
+=== QT011 | an octal escape is one char, so the string is an atom (q 5: asc "\012" is 'rank)
+a:asc "\012"
+
 === QT012 | runtime type
 distinct[1]
 

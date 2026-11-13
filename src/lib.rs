@@ -1622,7 +1622,7 @@ fn ends_in_name(s: &str) -> bool {
 fn refused_atom_condition(raw: &str) -> bool {
     re!(r#"^"((?:[^"\\]|\\.)*)"$"#)
         .captures(raw)
-        .is_some_and(|c| re!(r"\\[0-7]{3}|\\.|[^\\]").find_iter(&c[1]).count() != 1)
+        .is_some_and(|c| q_bytes(&c[1]).len() != 1)
         || re!(r"^(?:`[A-Za-z0-9_.:]*)+$").is_match(raw)
         || re!(r"^0x(?:[0-9a-fA-F]{2}){2,}$").is_match(raw)
         || re!(r"^-?(?:\d+\.\d*|\.\d+|\d+(?:\.\d*)?[eE][+-]?\d+)[ef]?$|^-?\d+[ef]$|^-?0[nwNW][ef]?$|^0Ng$")
@@ -1968,6 +1968,25 @@ fn statement_groups(code: &str, source: &str) -> Vec<(usize, usize)> {
             }
         }
         at += l.len();
+    }
+    out
+}
+/// The bytes q makes of a string literal's body, the text between its
+/// quotes. q strings are bytes, so `"é"` is two items, and an escape is the
+/// one byte it stands for: `\n`, `\"`, `\012` (#226).
+pub(crate) fn q_bytes(body: &str) -> Vec<u8> {
+    let mut out = vec![];
+    for m in re!(r"\\[0-7]{3}|\\.|[^\\]").find_iter(body) {
+        match m.as_str().strip_prefix('\\') {
+            None => out.extend_from_slice(m.as_str().as_bytes()),
+            Some(octal) if octal.len() == 3 && octal.bytes().all(|b| b.is_ascii_digit()) => {
+                out.push(u32::from_str_radix(octal, 8).unwrap_or(0) as u8)
+            }
+            Some("n") => out.push(b'\n'),
+            Some("t") => out.push(b'\t'),
+            Some("r") => out.push(b'\r'),
+            Some(other) => out.push(other.as_bytes()[0]),
+        }
     }
     out
 }
