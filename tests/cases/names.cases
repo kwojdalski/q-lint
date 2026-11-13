@@ -750,6 +750,12 @@ h:{a:1;(a:2)+a}
 f:{$[x;[a:1;b:a];0]}
 g:{(a:1;[a:2;a])}
 
+=== clean profile: general | a block that opens the body runs in order too (q 5: {[p] [a:1; a+p]}[5] is 6)
+f:{[p] [a:1; a+p]}
+
+=== QF014 profile: general | and its reverse reads first (q 5: defining f is 'a)
+f:{[p] [r:a; a:1]; r}
+
 === QF014 profile: general | a block's slots in order, so the read comes first (q 5: 'a at definition)
 f:{$[x;[r:a;a:1];0]}
 

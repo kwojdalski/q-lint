@@ -166,11 +166,14 @@ fn eval_path(text: &str, pos: usize) -> (usize, Vec<(usize, usize, bool)>) {
                 // A bracket that follows nothing it could index is a block,
                 // which runs left to right like a control bracket. Verified
                 // in q 5: `{$[1b;[a:1;a];0]}[]` and `{(a:1;[a:2;a])}` run,
-                // while `{g [a:1;a]}` and `{x:[a:1;a]}` are 'a.
+                // while `{g [a:1;a]}` and `{x:[a:1;a]}` are 'a. So does
+                // one that opens the body: `{[p] [a:1;a+p]}[5]` is 6.
+                let before = text[..i].trim_end();
                 let control = c == b'['
                     && (re!(r"(?:^|[^A-Za-z0-9_.])(?:if|while|do)\s*$|\$\s*$")
                         .is_match(&text[..i])
-                        || text[..i].trim_end().ends_with([';', '[', '(']));
+                        || before.is_empty()
+                        || before.ends_with([';', '[', '(']));
                 stack.push((i, 0, control));
             }
             b']' | b')' | b'}' => {
