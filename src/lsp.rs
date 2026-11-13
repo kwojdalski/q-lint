@@ -110,6 +110,9 @@ type Documents = HashMap<String, String>;
 struct Index {
     files: HashMap<String, FileIndex>,
     ws: Workspace,
+    /// Bumped whenever what the workspace defines changes, which is what
+    /// makes the open documents' semantic tokens stale.
+    generation: u64,
     /// What may be read from disk: `.q` files under these folders, less
     /// those `exclude` names - and nothing at all while `enabled` is off,
     /// when only open documents are indexed.
@@ -138,6 +141,7 @@ impl Index {
         }
         self.ws.add(&file);
         self.files.insert(path.to_string(), file);
+        self.generation += 1;
         true
     }
 
@@ -145,6 +149,7 @@ impl Index {
         match self.files.remove(&file_key(path)) {
             Some(old) => {
                 self.ws.remove(&old);
+                self.generation += 1;
                 true
             }
             None => false,
@@ -435,6 +440,10 @@ pub fn serve(
     let mut initialized = false;
     // Whether the client can take a `CodeAction` literal; see `capabilities`.
     let mut code_action_literals = false;
+    // Whether the client re-asks for semantic tokens when told to, and the
+    // id of the next request the server sends it.
+    let mut token_refresh = false;
+    let mut next_request: u64 = 0;
     let mut shutdown_requested = false;
     loop {
         let message = match receive(reader)? {
@@ -476,6 +485,7 @@ pub fn serve(
         };
         let params = message.get("params").cloned().unwrap_or(Value::Null);
 
+        let generation = idx.generation;
         match (method.as_str(), id) {
             ("initialize", Some(id)) => {
                 idx.roots = workspace_roots(&params);
@@ -487,6 +497,10 @@ pub fn serve(
                 code_action_literals = params
                     .pointer("/capabilities/textDocument/codeAction/codeActionLiteralSupport")
                     .is_some_and(|v| !v.is_null());
+                token_refresh = params
+                    .pointer("/capabilities/workspace/semanticTokens/refreshSupport")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
                 send(
                     writer,
                     json!({"id": id, "result": capabilities(&opts, code_action_literals)}),
@@ -676,6 +690,22 @@ pub fn serve(
             )?,
             // Every other NOTIFICATION is ignored, which the protocol requires.
             (_, None) => {}
+        }
+        // Another file's definitions changed, so a name in an open document
+        // may now be a function, or no longer one. Its diagnostics were
+        // pushed again; its colours a client fetches only when it changes,
+        // or when asked to (LSP 3.17, workspace/semanticTokens/refresh). The
+        // client's reply is a response, and dropped as one.
+        if idx.generation != generation
+            && token_refresh
+            && opts.semantic_tokens
+            && !shutdown_requested
+        {
+            next_request += 1;
+            send(
+                writer,
+                json!({"id": format!("qlinter-{next_request}"), "method": "workspace/semanticTokens/refresh"}),
+            )?;
         }
     }
 }

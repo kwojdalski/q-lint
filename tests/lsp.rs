@@ -84,6 +84,15 @@ impl Server {
         serde_json::from_slice(&body).unwrap()
     }
 
+    /// Read until a message `wanted` accepts arrives, past whatever the
+    /// server sends first - other documents linted again, say.
+    fn until(&mut self, wanted: impl Fn(&Value) -> bool) -> Value {
+        (0..10)
+            .map(|_| self.receive())
+            .find(|m| wanted(m))
+            .expect("the message arrived")
+    }
+
     /// Read until a publishDiagnostics for this uri arrives.
     fn diagnostics_for(&mut self, uri: &str) -> Vec<Value> {
         for _ in 0..10 {
@@ -1565,10 +1574,7 @@ fn a_rule_that_panics_costs_one_answer_not_the_server() {
         "params":{"textDocument":{"uri":format_panic},"options":{"tabSize":2,"insertSpaces":true}}}));
     // Opening the second file re-lints the first, so its diagnostics may
     // come before the reply.
-    let reply = (0..10)
-        .map(|_| server.receive())
-        .find(|m| m["id"] == 2)
-        .expect("formatting was answered");
+    let reply = server.until(|m| m["id"] == 2);
     assert!(
         reply.get("result").is_some() || reply["error"]["code"] == -32603,
         "{reply}"
@@ -1578,7 +1584,46 @@ fn a_rule_that_panics_costs_one_answer_not_the_server() {
     assert!(!server.diagnostics_for(ok).is_empty());
     // The other documents are linted again after it, in no fixed order.
     server.send(json!({"jsonrpc":"2.0","id":99,"method":"shutdown"}));
-    assert!((0..10).any(|_| server.receive()["id"] == 99));
+    server.until(|m| m["id"] == 99);
+    server.send(json!({"jsonrpc":"2.0","method":"exit"}));
+    assert_eq!(server.child.wait().unwrap().code(), Some(0));
+}
+
+#[test]
+fn another_files_new_function_asks_the_client_to_refresh_its_colours() {
+    // app.q calls helper before any file defines it, so it is not coloured
+    // as a function. lib.q's arrival changes that; the client re-asks for
+    // tokens only when told to, with workspace/semanticTokens/refresh.
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start_in(dir.path(), &[]);
+    let mut capabilities = client_capabilities();
+    capabilities["workspace"] = json!({"semanticTokens": {"refreshSupport": true}});
+    server.send(
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+        "capabilities": capabilities,
+        "workspaceFolders":[{"uri":file_uri(dir.path()),"name":"ws"}]}}),
+    );
+    server.receive();
+    server.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+    let tokens = |server: &mut Server, uri: &str| {
+        server.send(
+            json!({"jsonrpc":"2.0","id":30,"method":"textDocument/semanticTokens/full",
+            "params":{"textDocument":{"uri":uri}}}),
+        );
+        server.until(|m| m["id"] == 30)["result"]["data"].clone()
+    };
+    let app = file_uri(&dir.path().join("app.q"));
+    server.open(&app, "r:helper[2]\n");
+    server.until(|m| m["method"] == "workspace/semanticTokens/refresh");
+    assert_eq!(tokens(&mut server, &app), json!([]));
+    let lib = file_uri(&dir.path().join("lib.q"));
+    server.open(&lib, "helper:{x+1}\n");
+    let refresh = server.until(|m| m["method"] == "workspace/semanticTokens/refresh");
+    // Answered as a client would; the server must not answer the answer.
+    server.send(json!({"jsonrpc":"2.0","id":refresh["id"],"result":null}));
+    assert_eq!(tokens(&mut server, &app), json!([0, 2, 6, 0, 0]));
+    server.send(json!({"jsonrpc":"2.0","id":99,"method":"shutdown"}));
+    server.until(|m| m["id"] == 99);
     server.send(json!({"jsonrpc":"2.0","method":"exit"}));
     assert_eq!(server.child.wait().unwrap().code(), Some(0));
 }
