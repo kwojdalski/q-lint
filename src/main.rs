@@ -74,8 +74,11 @@ struct Args {
     /// and `style` for `--lsp`.
     #[arg(long, value_parser=["general","style","styleq","uqf"])]
     profile: Option<String>,
-    #[arg(long, default_value = "<stdin>")]
-    stdin_filename: String,
+    /// The path standard input is linted as. It means stdin is read, `-` or
+    /// not, as in Ruff: an editor that pipes a buffer with it and no `-`
+    /// wants that buffer linted, not the tree it runs in.
+    #[arg(long)]
+    stdin_filename: Option<String>,
     /// Use this configuration for every file, instead of the nearest
     /// `.qlinter.toml`, `qlinter.toml` or `pyproject.toml` `[tool.qlinter]`.
     #[arg(long, conflicts_with = "isolated")]
@@ -385,6 +388,8 @@ fn run(args: Args) -> Result<u8, String> {
         }
         return Ok(0);
     }
+    let stdin = args.stdin_filename.is_some() || args.paths.iter().any(|p| p == "-");
+    let only_stdin = args.paths.len() <= 1 && args.paths.iter().all(|p| p == "-");
     let paths = if args.paths.is_empty() {
         vec![".".into()]
     } else {
@@ -394,22 +399,22 @@ fn run(args: Args) -> Result<u8, String> {
     let mut failed = false;
     // Files read lossily, which are linted and reported but never fixed.
     let mut lossy = std::collections::HashSet::new();
-    if paths.iter().any(|p| p == "-") {
+    if stdin {
         if args.fix {
             return Err("--fix needs file paths; use --diff to preview stdin".into());
         }
-        if paths.len() != 1 {
-            return Err("Stdin (-) must be the only input".into());
+        // Refused rather than one of them quietly ignored: the paths, or
+        // the buffer the flag names.
+        if !only_stdin {
+            return Err("Stdin (- or --stdin-filename) must be the only input".into());
         }
-        if args.stdin_filename == "<stdin>"
-            || !args.force_exclude
-            || !policy.excluded(Path::new(&args.stdin_filename))?
-        {
+        let name = args.stdin_filename.unwrap_or_else(|| "<stdin>".into());
+        if name == "<stdin>" || !args.force_exclude || !policy.excluded(Path::new(&name))? {
             let mut source = String::new();
             io::stdin()
                 .read_to_string(&mut source)
                 .map_err(|e| e.to_string())?;
-            sources.push((args.stdin_filename, source));
+            sources.push((name, source));
         }
     } else {
         let (files, missing) = discover(paths, &policy, args.force_exclude)?;

@@ -72,7 +72,8 @@ guess in either direction. JSON output never carries colour.
 so a client that appends it gets a server rather than an exit code.
 
 The CLI supports `--profile general|style|styleq|uqf`, `--format text|json`,
-`--exclude`, `--config`, stdin (`-`, `--stdin-filename`) and
+`--exclude`, `--config`, stdin (`-`, `--stdin-filename`; the name alone reads
+stdin too, as in Ruff, and either refuses other paths beside it) and
 `--backend builtin|qls|all` options. The default is builtin.
 `--qls-executable` chooses the separately installed server;
 `--qls-timeout` bounds a batch, plus at most one second for cleanup.
