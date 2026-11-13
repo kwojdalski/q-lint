@@ -587,7 +587,7 @@ fn linting_paths_explain_and_lsp_are_unchanged_by_the_subcommand() {
     // `help` is still a path, not a subcommand.
     let out = qlinter(dir.path(), &["help"]);
     assert!(
-        String::from_utf8_lossy(&out.stderr).contains("Path does not exist: help"),
+        String::from_utf8_lossy(&out.stderr).contains("help: No such file"),
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );

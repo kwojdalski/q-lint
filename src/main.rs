@@ -74,8 +74,11 @@ struct Args {
     /// and `style` for `--lsp`.
     #[arg(long, value_parser=["general","style","styleq","uqf"])]
     profile: Option<String>,
-    #[arg(long, default_value = "<stdin>")]
-    stdin_filename: String,
+    /// The path standard input is linted as. It means stdin is read, `-` or
+    /// not, as in Ruff: an editor that pipes a buffer with it and no `-`
+    /// wants that buffer linted, not the tree it runs in.
+    #[arg(long)]
+    stdin_filename: Option<String>,
     /// Use this configuration for every file, instead of the nearest
     /// `.qlinter.toml`, `qlinter.toml` or `pyproject.toml` `[tool.qlinter]`.
     #[arg(long, conflicts_with = "isolated")]
@@ -220,21 +223,28 @@ fn is_q_source(path: &Path) -> bool {
 }
 
 /// The q files under `paths`, absolute and in order: a directory is walked,
-/// skipping what `exclude` names and the usual build and tool directories; a
+/// skipping what `exclude` names - by default, the usual build and tool
+/// directories; a
 /// file named outright is taken if it is q, excluded only with
-/// `force_exclude`.
+/// `force_exclude`. And whether any path could not be read: like a file that
+/// cannot be, it is reported and passed over, and the rest are still linted -
+/// one stale path in a pre-commit file list must not hide every finding in
+/// every other file - and the caller ends the run in 2.
 fn discover(
     paths: Vec<String>,
     policy: &Policy,
     force_exclude: bool,
-) -> Result<BTreeSet<PathBuf>, String> {
+) -> Result<(BTreeSet<PathBuf>, bool), String> {
     let mut files = BTreeSet::new();
     let mut skipped = false;
     let mut skipped_not_q = false;
+    let mut failed = false;
     for name in paths {
         let path = Path::new(&name);
-        if !path.exists() {
-            return Err(format!("Path does not exist: {name}"));
+        if let Err(e) = fs::metadata(path) {
+            eprintln!("qlinter: {name}: {e}, skipped");
+            failed = true;
+            continue;
         }
         // A path named here is linted whatever `exclude` says, unless
         // --force-exclude: exclusion is for what a walk discovers.
@@ -257,11 +267,26 @@ fn discover(
             continue;
         }
         if !path.is_dir() {
-            return Err(format!("Not a file/directory: {name}"));
+            eprintln!("qlinter: {name}: not a file or directory, skipped");
+            failed = true;
+            continue;
         }
         let mut walk = walkdir::WalkDir::new(path).into_iter();
         while let Some(entry) = walk.next() {
-            let entry = entry.map_err(|e| e.to_string())?;
+            // A directory the walk cannot read - a root-owned cache, a
+            // mount - is reported and passed over like a file that cannot be.
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(e) => {
+                    let at = e.path().unwrap_or(path).display().to_string();
+                    match e.io_error() {
+                        Some(io) => eprintln!("qlinter: {at}: {io}, skipped"),
+                        None => eprintln!("qlinter: {e}, skipped"),
+                    }
+                    failed = true;
+                    continue;
+                }
+            };
             let p = entry.path();
             if entry.depth() > 0 && policy.excluded(p)? {
                 skipped = true;
@@ -270,36 +295,19 @@ fn discover(
                 }
                 continue;
             }
-            if entry.depth() > 0
-                && entry.file_type().is_dir()
-                && [
-                    ".git",
-                    ".venv",
-                    "node_modules",
-                    "__pycache__",
-                    "build",
-                    "dist",
-                    "target",
-                ]
-                .iter()
-                .any(|n| entry.file_name() == *n)
-            {
-                walk.skip_current_dir();
-                continue;
-            }
             if p.is_file() && is_q_source(p) {
                 files.insert(config::absolute(p));
             }
         }
     }
-    if files.is_empty() && !skipped {
+    if files.is_empty() && !skipped && !failed {
         return Err(if skipped_not_q {
             "No .q files among the paths given".into()
         } else {
             "No .q files found".to_string()
         });
     }
-    Ok(files)
+    Ok((files, failed))
 }
 
 fn run(args: Args) -> Result<u8, String> {
@@ -376,38 +384,41 @@ fn run(args: Args) -> Result<u8, String> {
             } else {
                 path.to_path_buf()
             };
-            out!("{}\n", policy.describe(&probe)?);
+            out!("{}\n", policy.describe(&probe, &args.backend)?);
         }
         return Ok(0);
     }
+    let stdin = args.stdin_filename.is_some() || args.paths.iter().any(|p| p == "-");
+    let only_stdin = args.paths.len() <= 1 && args.paths.iter().all(|p| p == "-");
     let paths = if args.paths.is_empty() {
         vec![".".into()]
     } else {
         args.paths
     };
     let mut sources = vec![];
-    let mut unreadable = false;
+    let mut failed = false;
     // Files read lossily, which are linted and reported but never fixed.
     let mut lossy = std::collections::HashSet::new();
-    if paths.iter().any(|p| p == "-") {
+    if stdin {
         if args.fix {
             return Err("--fix needs file paths; use --diff to preview stdin".into());
         }
-        if paths.len() != 1 {
-            return Err("Stdin (-) must be the only input".into());
+        // Refused rather than one of them quietly ignored: the paths, or
+        // the buffer the flag names.
+        if !only_stdin {
+            return Err("Stdin (- or --stdin-filename) must be the only input".into());
         }
-        if args.stdin_filename == "<stdin>"
-            || !args.force_exclude
-            || !policy.excluded(Path::new(&args.stdin_filename))?
-        {
+        let name = args.stdin_filename.unwrap_or_else(|| "<stdin>".into());
+        if name == "<stdin>" || !args.force_exclude || !policy.excluded(Path::new(&name))? {
             let mut source = String::new();
             io::stdin()
                 .read_to_string(&mut source)
                 .map_err(|e| e.to_string())?;
-            sources.push((args.stdin_filename, source));
+            sources.push((name, source));
         }
     } else {
-        let files = discover(paths, &policy, args.force_exclude)?;
+        let (files, missing) = discover(paths, &policy, args.force_exclude)?;
+        failed |= missing;
         for path in files {
             // A file that cannot be read is reported and passed over, and the
             // run ends in exit 2, an input failure, whatever the others find.
@@ -438,7 +449,7 @@ fn run(args: Args) -> Result<u8, String> {
                                 path.display()
                             );
                         }
-                        let source = String::from_utf8_lossy(e.as_bytes()).into_owned();
+                        let source = lossy_text(e.as_bytes());
                         let name = path.to_string_lossy().into_owned();
                         lossy.insert(name.clone());
                         sources.push((name, source));
@@ -446,7 +457,7 @@ fn run(args: Args) -> Result<u8, String> {
                 },
                 Err(e) => {
                     eprintln!("qlinter: {}: {e}, skipped", path.display());
-                    unreadable = true;
+                    failed = true;
                 }
             }
         }
@@ -490,8 +501,14 @@ fn run(args: Args) -> Result<u8, String> {
                 if let Some(whole) = whole_edit(source, &updated) {
                     print_diff(&diff_path(path), source, &[whole]);
                 }
+            } else if let Err(e) = fs::write(path.as_str(), &updated) {
+                // As for a file that cannot be read: reported, the rest still
+                // fixed and linted - this one as it stands on disk - and the
+                // run ends in 2.
+                eprintln!("qlinter: {path}: {e}, not fixed");
+                failed = true;
+                continue;
             } else {
-                fs::write(path.as_str(), &updated).map_err(|e| format!("{path}: {e}"))?;
                 *source = updated;
             }
             fixed += count;
@@ -504,7 +521,7 @@ fn run(args: Args) -> Result<u8, String> {
                     "qlinter: {withheld} more fix(es) not shown, in files that are not valid UTF-8"
                 );
             }
-            return Ok(if unreadable {
+            return Ok(if failed {
                 2
             } else {
                 u8::from(fixed + withheld > 0)
@@ -583,12 +600,25 @@ fn run(args: Args) -> Result<u8, String> {
             findings.len()
         );
     }
-    if unreadable {
+    if failed {
         return Ok(2);
     }
     Ok(u8::from(findings.iter().any(|f| {
         matches!(f.severity.as_str(), "error" | "warning")
     })))
+}
+
+/// `bytes` as text, each byte that is not UTF-8 read as one replacement
+/// character, so every column after it stays where it was.
+/// `String::from_utf8_lossy` replaces a whole truncated sequence - `E2 82` -
+/// with one, which moves the rest of the line one column early.
+fn lossy_text(bytes: &[u8]) -> String {
+    let mut text = String::with_capacity(bytes.len());
+    for chunk in bytes.utf8_chunks() {
+        text.push_str(chunk.valid());
+        text.extend(std::iter::repeat_n('\u{FFFD}', chunk.invalid().len()));
+    }
+    text
 }
 
 /// `qlinter analyze graph`: the dependency graph of the q files under the
@@ -615,20 +645,20 @@ fn analyze_graph(args: GraphArgs) -> Result<u8, String> {
         args.paths
     };
     let mut sources = vec![];
-    let mut unreadable = false;
-    for path in discover(paths, &policy, false)? {
+    let (files, mut failed) = discover(paths, &policy, false)?;
+    for path in files {
         // As when linting: a file that is not UTF-8 is still q, and is read
         // with each invalid byte as one replacement character.
         match fs::read(&path) {
             Ok(bytes) => {
-                let source = String::from_utf8_lossy(&bytes).into_owned();
+                let source = lossy_text(&bytes);
                 sources.push((path, source));
             }
             // A file left out is an edge the graph cannot show, so the run
             // still prints what it read and ends in exit 2.
             Err(e) => {
                 eprintln!("qlinter: {}: {e}, skipped", path.display());
-                unreadable = true;
+                failed = true;
             }
         }
     }
@@ -665,7 +695,7 @@ fn analyze_graph(args: GraphArgs) -> Result<u8, String> {
         serde_json::to_string_pretty(&edges)
     };
     out!("{}", out.map_err(|e| e.to_string())?);
-    Ok(if unreadable { 2 } else { 0 })
+    Ok(if failed { 2 } else { 0 })
 }
 
 /// `path` relative to `base`, through `..` where it lies outside it, joined
@@ -688,7 +718,9 @@ fn relative(path: &Path, base: &Path) -> String {
 /// The path a `--diff` header names: relative to the current directory, as
 /// Ruff prints it, so `patch -p1` and `git apply` find the file. An absolute
 /// path behind `a/` is `a//abs/path`, which patch asks about and git refuses.
-/// A relative path - a `--stdin-filename` - is already what was meant.
+/// A relative path - a `--stdin-filename` - is already what was meant. A file
+/// outside the current directory is named through `..`, which patch takes;
+/// git applies nothing outside the directory it runs in, under any name.
 fn diff_path(path: &str) -> String {
     let path = Path::new(path);
     match std::env::current_dir() {
@@ -707,7 +739,10 @@ fn diff_path(path: &str) -> String {
 /// the file unless told `--unidiff-zero`.
 fn print_diff(path: &str, before: &str, edits: &[q_lint_rs::Fix]) {
     const CONTEXT: usize = 3;
-    out!("--- a/{path}\n+++ b/{path}");
+    // A name with a space in it ends in a TAB, as git and diffutils write
+    // it: patch otherwise cuts the name at the space.
+    let tab = if path.contains(' ') { "\t" } else { "" };
+    out!("--- a/{path}{tab}\n+++ b/{path}{tab}");
     // On bytes: `end - 1` can sit inside a multi-byte character - a BOM is
     // three - and a newline is one byte wherever it is.
     let bytes = before.as_bytes();

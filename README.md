@@ -72,21 +72,24 @@ guess in either direction. JSON output never carries colour.
 so a client that appends it gets a server rather than an exit code.
 
 The CLI supports `--profile general|style|styleq|uqf`, `--format text|json`,
-`--exclude`, `--config`, stdin (`-`, `--stdin-filename`) and
+`--exclude`, `--config`, stdin (`-`, `--stdin-filename`; the name alone reads
+stdin too, as in Ruff, and either refuses other paths beside it) and
 `--backend builtin|qls|all` options. The default is builtin.
 `--qls-executable` chooses the separately installed server;
 `--qls-timeout` bounds a batch, plus at most one second for cleanup.
 The qls server may itself require Python; the Rust builtin backend does not.
 
 To preview mechanical edits, run `qlinter --diff path/to/file.q` - a unified
-diff with paths relative to the current directory, which `patch -p1` and
-`git apply` take as it is; to write them, run `qlinter --fix path/to/file.q`.
+diff with paths relative to the current directory, which `patch -p1` takes as
+it is, and `git apply` too for files under the current directory: a file
+outside it is named through `..`, and git applies no patch to a path outside
+the directory it runs in, so run it from one that holds the files. To write
+the edits, run `qlinter --fix path/to/file.q`.
 `--fix` re-lints the changed files and reports any remaining findings. Batch fixing handles `==`, `!=`, `+=`, `-=`,
 `*=`, a leading UTF-8 BOM, an invalid string escape (`"C:\data"` →
 `"C:\\data"`), `true`/`false`/`None`/`return x` → `1b`/`0b`/`(::)`/`:x`,
 a table literal of scalars (each column enlisted), a symbol used as a `like`
-pattern (`` `a* `` → `"a*"`), a string compared with `=` in a filter →
-`like`, `f . ()` → `f[]`, `til 5.0` → `til 5` (and `2.0 rotate`, `3.0 mavg`),
+pattern (`` `a* `` → `"a*"`), `f . ()` → `f[]`, `til 5.0` → `til 5` (and `2.0 rotate`, `3.0 mavg`),
 a number signalled → a string, `where a:1` → `where a=1`, `{x} each y` → `y`, `distinct asc distinct` → `asc distinct`,
 redundant parentheses around one token (styleq), and - under `--profile uqf` -
 parentheses showing the order q already evaluates `a*b+c` in, and the
@@ -98,7 +101,9 @@ Some rewrites change behaviour or guess at intent, so they remain editor Quick
 Fixes that you choose individually: `&&` → `&`, `||` → `|`, `reverse asc` →
 `desc` (they differ on a dictionary's tied keys), a symbol given to
 `ss`/`ssr` → a string, dropping a lambda's trailing `;` so it returns its last
-value, `a -1` → `a - 1`, `=` against a vector in a filter → `in`, `f(a;b)` →
+value, `a -1` → `a - 1`, a string compared with `=` in a filter → `like`
+(on a char column as long as the string, `=` is valid q), `=` against a
+vector in a filter → `in`, `f(a;b)` →
 `f[a;b]`, `` `int$"12" `` → `"I"$"12"`, removing a statement that never runs,
 removing an unused local's name while keeping its expression,
 `{x+1} each a` → `a+1` (they differ on an empty typed list), parentheses
@@ -113,11 +118,14 @@ that shadows a builtin, a column one typo from the table's, and (uqf)
 include them. Both CLI options use the builtin backend (or `--backend all`);
 `--fix` requires file paths rather than stdin.
 
-One pass leaves whatever it could not delimit. A call inside a qSQL phrase is
-not rewritten at all, because `from`, `by` and `where` end an expression there
-and this tool does not parse; and where one juxtaposed call is the argument of
-another, the outer one is bracketed and the inner waits for the next pass.
-Both keep their finding, so nothing is silently dropped.
+`--fix` and `--diff` repeat until nothing more applies, so where one
+juxtaposed call is the argument of another, both are bracketed in one run.
+Inside a qSQL phrase a call is bracketed up to the comma, `by`, `from` or
+`where` that ends its column or constraint - q 5 reads `select v:g s by k from
+t` as `g[s]`. A call in the table expression after `from` is left alone, as is
+one whose argument holds a query of its own: after `from`, q reads up to
+`where` as one expression (`select from g v,w` is `g[v,w]`), and this tool
+does not parse. Each keeps its finding, so nothing is silently dropped.
 
 ### The dependency graph: `qlinter analyze graph`
 
@@ -219,6 +227,12 @@ that name at any depth. A pattern that names a directory covers everything
 under it. This is gitignore's anchoring rule except for the trailing slash,
 which gitignore alone treats as "directories only" rather than as an anchor;
 write `**/lib` for a `lib` at any depth.
+
+Until a configuration sets `exclude`, a walk skips directories named `.git`,
+`.venv`, `node_modules`, `__pycache__`, `build`, `dist` and `target` at any
+depth. As in Ruff, that list is `exclude`'s default: a configuration's own
+`exclude` replaces it (`exclude = []` walks them all), and `extend-exclude`
+adds to it.
 
 The root is the directory the pattern is written relative to, never the path
 being linted: a configuration file's own directory for its patterns, and the
