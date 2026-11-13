@@ -1924,7 +1924,20 @@ fn mixed_run(line: &str) -> Option<Vec<(usize, bool)>> {
 fn statement_groups(code: &str, source: &str) -> Vec<(usize, usize)> {
     let mut out: Vec<(usize, usize)> = vec![];
     let (mut at, mut open) = (0usize, 0i32);
-    for (l, raw) in code.split_inclusive('\n').zip(source.split_inclusive('\n')) {
+    let lines: Vec<(&str, &str)> = code
+        .split_inclusive('\n')
+        .zip(source.split_inclusive('\n'))
+        .collect();
+    // For each line, whether the next line with code on it is indented.
+    let mut indented_next = vec![false; lines.len()];
+    let mut next = false;
+    for (n, &(l, raw)) in lines.iter().enumerate().rev() {
+        indented_next[n] = next;
+        if !l.trim().is_empty() {
+            next = raw.starts_with([' ', '\t']);
+        }
+    }
+    for (n, &(l, raw)) in lines.iter().enumerate() {
         // Indentation is a fact about the source, not about `code`: a
         // comment is blanked to spaces, so a bare `/` reads as indented
         // there and would fold into the line above it, taking the rule
@@ -1935,7 +1948,14 @@ fn statement_groups(code: &str, source: &str) -> Vec<(usize, usize)> {
         // already insignificant to q, and the rules below have always
         // read those lines one at a time - folding a table literal or a
         // lambda body into one unit loses findings inside it.
-        let continues = open == 0 && raw.starts_with([' ', '\t']);
+        //
+        // A blank or column-0 comment line ends nothing: q 5 reads `a:1+`,
+        // a blank line, `  2` as 3. It folds only when an indented line
+        // follows it, so a statement's group never takes a comment after it.
+        // The next line is the next one with code on it: an indented line
+        // inside a block comment continues nothing.
+        let continues =
+            open == 0 && (raw.starts_with([' ', '\t']) || l.trim().is_empty() && indented_next[n]);
         match out.last_mut() {
             Some(last) if continues => last.1 += l.len(),
             _ => out.push((at, at + l.len())),
@@ -3115,12 +3135,14 @@ pub fn lint_selecting(
     // nothing more.
     // Spaces and tabs only between the symbol and the operator: a symbol
     // ending one line and a `-1"..."` print opening the next are two
-    // statements, not a subtraction - the commonest shape in public q.
+    // statements, not a subtraction - the commonest shape in public q. After
+    // the operator, an indented line continues it, past blank and comment
+    // lines (#224).
     for m in
         // `&` and `|` are min and max, and 'type on a symbol too, as are the
         // word operators (q 5: `a&`b, `a mod 2, 2 xexp `a). Not `^`: a
         // symbol fills a symbol list (`none^s).
-        re!(r"(?:`[A-Za-z][A-Za-z0-9_.]*)+(?:[ \t]*[+\-*%&|]|[ \t]+(?:mod|div|xexp|xlog|and|or)[ \t])|(?:[+\-*%&|](?:[ \t]*\r?\n[ \t]+|[ \t]*)|[ \t](?:mod|div|xexp|xlog|and|or)(?:[ \t]*\r?\n[ \t]+|[ \t]+))(?:`[A-Za-z][A-Za-z0-9_.]*)+")
+        re!(r"(?:`[A-Za-z][A-Za-z0-9_.]*)+(?:[ \t]*[+\-*%&|]|[ \t]+(?:mod|div|xexp|xlog|and|or)[ \t])|(?:[+\-*%&|][ \t]*(?:(?:\r?\n[ \t]*)*\r?\n[ \t]+)?|[ \t](?:mod|div|xexp|xlog|and|or)(?:[ \t]*(?:\r?\n[ \t]*)*\r?\n[ \t]+|[ \t]+))(?:`[A-Za-z][A-Za-z0-9_.]*)+")
             .find_iter(code)
     {
         let at = m.start();

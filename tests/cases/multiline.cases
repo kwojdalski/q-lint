@@ -128,3 +128,33 @@ a:1
 f:{
   \\
 (((
+
+=== QT003 profile: general | a blank line does not end the statement (q 5: a:1+, blank, `a is 'type)
+a:1+
+
+  `a
+
+=== QT003 profile: general | nor does a column-0 comment line (q 5: 'type)
+b:1+
+/ note
+  `b
+
+=== QE008 profile: general | a monadic glyph continued past a blank line (q 5: '-)
+x:1
+a:-
+
+  x
+
+=== clean profile: general | a column-0 line after a blank line is a new statement
+a:1+2
+
+`b
+
+=== QP001 profile: uqf | an indented line inside a block comment continues nothing, so the bare slash is its own line
+f:{x}
+
+/
+g:{[x]
+ x}
+\
+h:{x}

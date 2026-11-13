@@ -728,9 +728,10 @@ const GLYPHS: &[u8] = b"+-*%!#$&|^=<>~,@?";
 
 /// What follows a glyph, past the blanks before it - and past a line break
 /// into an indented line, which q reads as the same statement: `a:-` with
-/// `  x` below it is `a:- x`.
+/// `  x` below it is `a:- x`. Blank and comment lines between them do not
+/// end the statement (#224).
 fn continued(rest: &str) -> &str {
-    let m = re!(r"^[ \t]*(?:\r?\n[ \t]+)*")
+    let m = re!(r"^[ \t]*(?:(?:\r?\n[ \t]*)*\r?\n[ \t]+)?")
         .find(rest)
         .map_or(0, |m| m.end());
     &rest[m..]
