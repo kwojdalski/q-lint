@@ -725,3 +725,27 @@ fn a_directory_the_walk_cannot_read_is_reported_and_the_rest_are_still_linted() 
     }
     assert_eq!(excluded.0, Some(1), "{}", excluded.1);
 }
+
+#[test]
+fn build_and_tool_directories_are_excludes_default_which_a_configuration_replaces() {
+    // The list was hard-coded in the walk, so `exclude = []` changed nothing
+    // and a tree of q under `build/` was "No .q files found" (#267). As in
+    // Ruff it is now `exclude`'s default.
+    let repo = Repo::new();
+    repo.write("src/build/gen.q", SOURCE)
+        .write("src/target/t.q", SOURCE)
+        .write("src/a.q", SOURCE);
+    assert_eq!(linted(&repo, &["--isolated", "src"]), ["src/a.q"]);
+    // A directory named outright is not inside one the walk skips.
+    assert_eq!(
+        linted(&repo, &["--isolated", "src/build"]),
+        ["src/build/gen.q"]
+    );
+    repo.write("qlinter.toml", "extend-exclude = [\"a.q\"]\n");
+    assert_eq!(linted(&repo, &["src"]), Vec::<String>::new());
+    repo.write("qlinter.toml", "exclude = []\n");
+    assert_eq!(
+        linted(&repo, &["src"]),
+        ["src/a.q", "src/build/gen.q", "src/target/t.q"]
+    );
+}

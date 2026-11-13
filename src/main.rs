@@ -220,7 +220,8 @@ fn is_q_source(path: &Path) -> bool {
 }
 
 /// The q files under `paths`, absolute and in order: a directory is walked,
-/// skipping what `exclude` names and the usual build and tool directories; a
+/// skipping what `exclude` names - by default, the usual build and tool
+/// directories; a
 /// file named outright is taken if it is q, excluded only with
 /// `force_exclude`. And whether any path could not be read: like a file that
 /// cannot be, it is reported and passed over, and the rest are still linted -
@@ -289,23 +290,6 @@ fn discover(
                 if entry.file_type().is_dir() {
                     walk.skip_current_dir();
                 }
-                continue;
-            }
-            if entry.depth() > 0
-                && entry.file_type().is_dir()
-                && [
-                    ".git",
-                    ".venv",
-                    "node_modules",
-                    "__pycache__",
-                    "build",
-                    "dist",
-                    "target",
-                ]
-                .iter()
-                .any(|n| entry.file_name() == *n)
-            {
-                walk.skip_current_dir();
                 continue;
             }
             if p.is_file() && is_q_source(p) {

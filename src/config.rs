@@ -23,6 +23,7 @@
 //! extend = "../qlinter.toml"        # inherit, then override
 //! exclude = ["generated/", "vendor/*"]   # a `/` anchors at this file's directory
 //! extend-exclude = ["scratch"]          # no `/`: a name at any depth
+//!                                       # (added to exclude, or its default)
 //!
 //! [lint]
 //! select = ["QE", "QF"]             # codes or prefixes; replaces the profile's set
@@ -49,6 +50,19 @@ use std::{
 };
 
 const FILES: [&str; 3] = [".qlinter.toml", "qlinter.toml", "pyproject.toml"];
+/// What `exclude` is until a configuration sets it, as Ruff's default list
+/// is: tool and build directories a walk does not enter, by their own name
+/// at any depth. A configuration's own `exclude` replaces it, and
+/// `extend-exclude` adds to it.
+const DEFAULT_EXCLUDE: [&str; 7] = [
+    ".git",
+    ".venv",
+    "node_modules",
+    "__pycache__",
+    "build",
+    "dist",
+    "target",
+];
 const KEYS: &str = "profile, select, extend-select, ignore, per-file-ignores, exclude, \
                     extend-exclude, extend and [lint]";
 
@@ -69,8 +83,9 @@ pub struct Settings {
     layers: Vec<Layer>,
     /// `exclude` and `extend-exclude`, kept apart because they inherit
     /// differently: as in Ruff, a file that `extend`s another replaces its
-    /// `exclude` and adds to its `extend-exclude`.
-    exclude: Vec<Glob>,
+    /// `exclude` and adds to its `extend-exclude`. `None` until a file sets
+    /// it, which is `DEFAULT_EXCLUDE`.
+    exclude: Option<Vec<Glob>>,
     extend_exclude: Vec<Glob>,
     /// Replaced, not added to, by a file that sets its own, as in Ruff.
     per_file_ignores: Vec<(Glob, Vec<String>)>,
@@ -203,12 +218,21 @@ impl Policy {
     pub fn excluded(&self, path: &Path) -> Result<bool, String> {
         let settings = self.settings(path)?;
         let full = absolute(path);
-        Ok(settings
-            .exclude
-            .iter()
-            .chain(&settings.extend_exclude)
-            .chain(&self.overrides.exclude)
-            .any(|glob| matches(&full, glob)))
+        // The defaults match the path's own name only, not a directory above
+        // it: `qlinter ~/dist/proj` lints proj, and a walk is what skips a
+        // `dist` below it.
+        let default = settings.exclude.is_none()
+            && full
+                .file_name()
+                .is_some_and(|n| DEFAULT_EXCLUDE.iter().any(|d| n == *d));
+        Ok(default
+            || settings
+                .exclude
+                .iter()
+                .flatten()
+                .chain(&settings.extend_exclude)
+                .chain(&self.overrides.exclude)
+                .any(|glob| matches(&full, glob)))
     }
 
     /// Whether the rule `code` reports on `path`.
@@ -527,7 +551,7 @@ fn load(path: &Path, depth: usize, patterns: Option<&Path>) -> Result<Option<Set
                 globs.push(rooted(patterns.unwrap_or(&root), p)?);
             }
             if key == "exclude" {
-                settings.exclude = globs;
+                settings.exclude = Some(globs);
             } else {
                 settings.extend_exclude.extend(globs);
             }

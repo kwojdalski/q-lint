@@ -220,6 +220,12 @@ under it. This is gitignore's anchoring rule except for the trailing slash,
 which gitignore alone treats as "directories only" rather than as an anchor;
 write `**/lib` for a `lib` at any depth.
 
+Until a configuration sets `exclude`, a walk skips directories named `.git`,
+`.venv`, `node_modules`, `__pycache__`, `build`, `dist` and `target` at any
+depth. As in Ruff, that list is `exclude`'s default: a configuration's own
+`exclude` replaces it (`exclude = []` walks them all), and `extend-exclude`
+adds to it.
+
 The root is the directory the pattern is written relative to, never the path
 being linted: a configuration file's own directory for its patterns, and the
 directory qlinter runs in for `--exclude` (and for a `--config FILE` or the
