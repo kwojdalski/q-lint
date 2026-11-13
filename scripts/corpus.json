@@ -1,0 +1,247 @@
+[
+  {
+    "repo": "finos/kdb",
+    "commit": "e54032a57fd4d9c1288ef4807f2c9f7c22d1c290",
+    "source": "original"
+  },
+  {
+    "repo": "jonathonmcmurray/qwebapi",
+    "commit": "25c802119b55ca4f3d18703fdf3c5d124781818b",
+    "source": "original"
+  },
+  {
+    "repo": "jonathonmcmurray/reQ",
+    "commit": "6728dd50ed767ffb8818940a51579d4abc8c01d9",
+    "source": "original"
+  },
+  {
+    "repo": "kxcontrib/cburke",
+    "commit": "bf516a050386b4e4b05913eb4c83d43bc6f62acb",
+    "source": "original"
+  },
+  {
+    "repo": "KxSystems/arrowkdb",
+    "commit": "2acffa3fee92e3364c9e6de6adc512d980a1b5c5",
+    "source": "original"
+  },
+  {
+    "repo": "KxSystems/automl",
+    "commit": "f9e39ec791c67c7308bad0fe3e410a85cfccf0b8",
+    "source": "original"
+  },
+  {
+    "repo": "KxSystems/cookbook",
+    "commit": "7f083085205d784c9eacf0c7a1841d66dbb58531",
+    "source": "original"
+  },
+  {
+    "repo": "KxSystems/embedPy",
+    "commit": "2a77b030e0717f5a26fdbe59b1657046eef5635d",
+    "source": "original"
+  },
+  {
+    "repo": "KxSystems/fusionx",
+    "commit": "a6192543fe6b6f6d857f889833108248c325d2a5",
+    "source": "original"
+  },
+  {
+    "repo": "KxSystems/jupyterq",
+    "commit": "1cc895e674be17d8a9992c0bb128508120a34825",
+    "source": "original"
+  },
+  {
+    "repo": "KxSystems/kafka",
+    "commit": "e1790a54d58e4288d446f51ffc8b8e9271b0fb44",
+    "source": "original"
+  },
+  {
+    "repo": "KxSystems/kdb",
+    "commit": "3af0d471926df9e04af19bb5b470174d234a4fef",
+    "source": "original"
+  },
+  {
+    "repo": "KxSystems/kdb-taq",
+    "commit": "bd1b1c68e53694810cb3bfb1df3f5b70ca20613e",
+    "source": "original"
+  },
+  {
+    "repo": "KxSystems/kdb-tick",
+    "commit": "85c08ff192b0a103b323246c7300a37919be6159",
+    "source": "original"
+  },
+  {
+    "repo": "KxSystems/ml",
+    "commit": "5509fa6cfc454c68bf3441672fe1a26cb5a19088",
+    "source": "original"
+  },
+  {
+    "repo": "KxSystems/mqtt",
+    "commit": "4d98447fcfd062fdd0040741d8778292dc1025ff",
+    "source": "original"
+  },
+  {
+    "repo": "KxSystems/nlp",
+    "commit": "9a7f2d3f8daa88a8e8de7b25c7ffc6d7c25447da",
+    "source": "original"
+  },
+  {
+    "repo": "KxSystems/protobufkdb",
+    "commit": "b78a3df44cc0921914eb3c26aedfb25bcf6471cc",
+    "source": "original"
+  },
+  {
+    "repo": "KxSystems/pykx",
+    "commit": "50ec85ba1c65f6baa5c7a2b0723497a06bfcfb5e",
+    "source": "original"
+  },
+  {
+    "repo": "psaris/funq",
+    "commit": "9c95cc27bbdcd977fa0fe498efb0a331e4a5b581",
+    "source": "original"
+  },
+  {
+    "repo": "psaris/qtips",
+    "commit": "14d6983b54147651f14a74ca951abf6a755036a0",
+    "source": "original"
+  },
+  {
+    "repo": "qbists/studyq",
+    "commit": "efe1da1a9c31044580c573f59e9f669d5a646e67",
+    "source": "original"
+  },
+  {
+    "repo": "simongarland/tick",
+    "commit": "d5fdc3d3112ecdf547c42f4a6f2f917cb3bffa50",
+    "source": "original"
+  },
+  {
+    "repo": "timeseries/kdb",
+    "commit": "18822dd8d932d429b8ebacbbde2e3624440d5777",
+    "source": "original"
+  },
+  {
+    "repo": "aa1024/strQ",
+    "commit": "7fa050ffaf385477bc16e946c6ec8ca7955833d7",
+    "source": "peachq"
+  },
+  {
+    "repo": "angusmit/qPricer",
+    "commit": "9b418d62c9a1843c175a24fc3e0610d8a57ffc61",
+    "source": "peachq"
+  },
+  {
+    "repo": "asatirahul/cryptoq",
+    "commit": "ffc72c1cdc487595df82de5a7969100bf0c4ade7",
+    "source": "peachq"
+  },
+  {
+    "repo": "BuaBook/kdb-common",
+    "commit": "d836de1eac943aa1fbc8b4c6237ed49e91333206",
+    "source": "peachq"
+  },
+  {
+    "repo": "caolanraff/q-sino",
+    "commit": "d7e1ee7b733d72c97ca3322d10588b1b09b77a52",
+    "source": "peachq"
+  },
+  {
+    "repo": "dalaing/qcheck",
+    "commit": "2c80face5167a6edfa0ae884dc43130b1a28d5c2",
+    "source": "peachq"
+  },
+  {
+    "repo": "DataIntellectTech/TorQ",
+    "commit": "4be4fc3457bf1a838e976ff2e9892b2babe8c1c3",
+    "source": "peachq"
+  },
+  {
+    "repo": "dflynch/kdb-q-ext-vscode",
+    "commit": "f363a8913bfc0d4bd7c2becbf5acff6c65a58c0a",
+    "source": "peachq"
+  },
+  {
+    "repo": "drewsteele/qYaml",
+    "commit": "d62cc5b41d235b10a49b9c572e52c530917a4f05",
+    "source": "peachq"
+  },
+  {
+    "repo": "exxeleron/enterprise-components",
+    "commit": "c1cc3bbf783bfc395d99fdb44b2754e3cc742f85",
+    "source": "peachq"
+  },
+  {
+    "repo": "hanssmail/quantQ",
+    "commit": "7a50cc9d3067ce365307b9cb211bd34561db2722",
+    "source": "peachq"
+  },
+  {
+    "repo": "jkane17/qtools",
+    "commit": "3df046566569913335fc0d1be6b73485082bab5a",
+    "source": "peachq"
+  },
+  {
+    "repo": "jlas/ml.q",
+    "commit": "bb0c8ca39717023de951351127342ad96dbb0f26",
+    "source": "peachq"
+  },
+  {
+    "repo": "jsogarro/qstats",
+    "commit": "d2f24f10735288b30fe1d712e8f9079e09efe428",
+    "source": "peachq"
+  },
+  {
+    "repo": "kimtang/btick2",
+    "commit": "d9055fe20a1c0628b9967a6840bf8f4dbe1aa7fc",
+    "source": "peachq"
+  },
+  {
+    "repo": "kwojdalski/uqf",
+    "commit": "428405789b2272efec40ce6c4e4900f54d80e2c2",
+    "source": "peachq"
+  },
+  {
+    "repo": "nugend/qspec",
+    "commit": "9b846b68a8d808e472ba504d18c325b14b468087",
+    "source": "peachq"
+  },
+  {
+    "repo": "nugend/qutil",
+    "commit": "2bce9deb5585f7166052bfb81012b8d897fedeeb",
+    "source": "peachq"
+  },
+  {
+    "repo": "Oiubrab/qSolve",
+    "commit": "bf4c3a8d93fb0b055cfe6b69b55dc36c88f083c9",
+    "source": "peachq"
+  },
+  {
+    "repo": "patmok/unparse",
+    "commit": "079b8a2ad1a18770677bd68ef31b5fa1d38c3864",
+    "source": "peachq"
+  },
+  {
+    "repo": "Piohrun/resq",
+    "commit": "1a5c4486ce821e3cb6c4f9e79ea04695d6ee98cc",
+    "source": "peachq"
+  },
+  {
+    "repo": "quintanar401/qchk",
+    "commit": "083306eae29a7e39e5577779ff89c9ce21e8ef2d",
+    "source": "peachq"
+  },
+  {
+    "repo": "quintanar401/Qute",
+    "commit": "7fd3140489a02d1b7eaa75cf532f78378d663f18",
+    "source": "peachq"
+  },
+  {
+    "repo": "SpencerFX/q-desc",
+    "commit": "99e7d0a700cbe6b39680ce46aa43d78f43b8c3cb",
+    "source": "peachq"
+  },
+  {
+    "repo": "timestored/kdb",
+    "commit": "0da819cd1eaaf7f0a7b7e5b509f9acc052770564",
+    "source": "peachq"
+  }
+]

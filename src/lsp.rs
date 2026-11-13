@@ -8,9 +8,10 @@
 //! shrinks to "launch this process". An extension that parses `--format json`
 //! is a VS Code-only asset that every other editor would have to rewrite.
 //!
-//! It also fixes the thing a CLI cannot do well: linting a buffer that has
-//! never been saved. `didChange` carries the text, so what is checked is what
-//! is on screen rather than what is on disk.
+//! It also fixes the thing a CLI cannot do well: linting edits that have not
+//! been saved. `didChange` carries the text, so what is checked is what is on
+//! screen rather than what is on disk. (A buffer that is not a `.q` file at
+//! all - an untitled scratch - is not linted; see `diagnose`.)
 //!
 //! SYNCHRONOUS, SINGLE-THREADED, AND NO ASYNC RUNTIME
 //!
@@ -72,15 +73,15 @@
 //! problem: its answer comes from rules that read text, and when there is
 //! nothing to fix, an empty answer is the true one.
 use crate::config::{Layer, Policy, selector};
-use crate::jsonrpc::{receive, send};
+use crate::jsonrpc::{INVALID_REQUEST, receive, send};
 use q_lint_rs::{
-    FileIndex, Finding, TokenKind, Workspace, fix_all, fix_for, index, semantic_tokens_in,
-    whole_edit,
+    FileIndex, Finding, TokenKind, Workspace, fix_all, fix_for, semantic_tokens_in, whole_edit,
 };
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
     io::{BufRead, Write},
+    path::Path,
 };
 
 /// Full document sync (`TextDocumentSyncKind.Full`): every change carries the
@@ -90,7 +91,8 @@ use std::{
 const SYNC_FULL: i64 = 1;
 
 const METHOD_NOT_FOUND: i64 = -32601;
-const INVALID_REQUEST: i64 = -32600;
+const INTERNAL_ERROR: i64 = -32603;
+const SERVER_NOT_INITIALIZED: i64 = -32002;
 
 /// Open documents, by URI. The editor is the authority on their contents from
 /// didOpen until didClose, so nothing here reads from disk.
@@ -108,6 +110,15 @@ type Documents = HashMap<String, String>;
 struct Index {
     files: HashMap<String, FileIndex>,
     ws: Workspace,
+    /// Bumped whenever what the workspace defines changes, which is what
+    /// makes the open documents' semantic tokens stale.
+    generation: u64,
+    /// What may be read from disk: `.q` files under these folders, less
+    /// those `exclude` names - and nothing at all while `enabled` is off,
+    /// when only open documents are indexed.
+    roots: Vec<String>,
+    exclude: Vec<glob::Pattern>,
+    enabled: bool,
 }
 
 /// Directories a workspace scan does not enter: version control, build
@@ -130,6 +141,7 @@ impl Index {
         }
         self.ws.add(&file);
         self.files.insert(path.to_string(), file);
+        self.generation += 1;
         true
     }
 
@@ -137,38 +149,72 @@ impl Index {
         match self.files.remove(&file_key(path)) {
             Some(old) => {
                 self.ws.remove(&old);
+                self.generation += 1;
                 true
             }
             None => false,
         }
     }
 
-    /// Read `path` from disk, or forget it when it is gone or unreadable.
+    /// Read `path` from disk when the index covers it, and forget it when it
+    /// does not, is gone, or is unreadable. A closed document and a file
+    /// changed on disk both come here, so neither can put back what the
+    /// settings left out of the scan.
     fn reload(&mut self, path: &str) -> bool {
+        if self.covers(path) {
+            self.read(path)
+        } else {
+            self.remove(path)
+        }
+    }
+
+    fn read(&mut self, path: &str) -> bool {
         match std::fs::read(path) {
             Ok(bytes) if is_q_path(path) => self.set(path, index(&String::from_utf8_lossy(&bytes))),
             _ => self.remove(path),
         }
     }
 
-    /// Every `.q` file under the workspace folders, less those `exclude`
-    /// names. A pattern is matched against the path relative to the folder it
-    /// is under, with `/` between components, as VS Code's globs are; a
-    /// directory it names is not entered at all.
-    fn scan(&mut self, roots: &[String], exclude: &[glob::Pattern]) {
-        let mut stack: Vec<(std::path::PathBuf, std::path::PathBuf)> =
-            roots.iter().map(|r| (r.into(), r.into())).collect();
-        let excluded = |root: &std::path::Path, path: &std::path::Path| {
-            let Ok(relative) = path.strip_prefix(root) else {
-                return false;
-            };
-            let relative = relative.to_string_lossy().replace('\\', "/");
-            let options = glob::MatchOptions {
-                require_literal_separator: true,
-                ..Default::default()
-            };
-            exclude.iter().any(|p| p.matches_with(&relative, options))
+    /// Whether the scan would have read `path`: index on, under a workspace
+    /// folder, in no directory the scan skips, not excluded, and not too big.
+    fn covers(&self, path: &str) -> bool {
+        let path = std::path::Path::new(path);
+        self.enabled
+            && is_q_path(&path.to_string_lossy())
+            && std::fs::metadata(path).is_ok_and(|m| m.len() <= MAX_BYTES)
+            && self.roots.iter().any(|root| {
+                let root = std::path::Path::new(root);
+                path.strip_prefix(root).is_ok_and(|relative| {
+                    let mut dirs = relative.parent().into_iter().flat_map(|p| p.iter());
+                    !dirs.any(|d| {
+                        let d = d.to_string_lossy();
+                        d.starts_with('.') || SKIPPED.contains(&&*d)
+                    }) && !self.excluded(root, path)
+                })
+            })
+    }
+
+    /// A pattern is matched against the path relative to the folder it is
+    /// under, with `/` between components, as VS Code's globs are.
+    fn excluded(&self, root: &std::path::Path, path: &std::path::Path) -> bool {
+        let Ok(relative) = path.strip_prefix(root) else {
+            return false;
         };
+        let relative = relative.to_string_lossy().replace('\\', "/");
+        let options = glob::MatchOptions {
+            require_literal_separator: true,
+            ..Default::default()
+        };
+        self.exclude
+            .iter()
+            .any(|p| p.matches_with(&relative, options))
+    }
+
+    /// Every `.q` file under the workspace folders, less those `exclude`
+    /// names; a directory it names is not entered at all.
+    fn scan(&mut self) {
+        let mut stack: Vec<(std::path::PathBuf, std::path::PathBuf)> =
+            self.roots.iter().map(|r| (r.into(), r.into())).collect();
         let mut seen = 0;
         while let Some((root, dir)) = stack.pop() {
             let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -180,7 +226,7 @@ impl Index {
                 let Ok(kind) = entry.file_type() else {
                     continue;
                 };
-                if excluded(&root, &path) {
+                if self.excluded(&root, &path) {
                     continue;
                 }
                 if kind.is_dir() {
@@ -191,7 +237,7 @@ impl Index {
                     && is_q_path(&name)
                     && entry.metadata().is_ok_and(|m| m.len() <= MAX_BYTES)
                 {
-                    self.reload(&path.to_string_lossy());
+                    self.read(&path.to_string_lossy());
                     seen += 1;
                     if seen >= MAX_FILES {
                         return;
@@ -389,31 +435,87 @@ pub fn serve(
 ) -> Result<u8, String> {
     let mut docs: Documents = HashMap::new();
     let mut idx = Index::default();
-    let mut roots: Vec<String> = vec![];
     let mut opts = Options::default();
     let mut problems: Vec<String> = vec![];
+    let mut initialized = false;
+    // Whether the client can take a `CodeAction` literal; see `capabilities`.
+    let mut code_action_literals = false;
+    // Whether the client re-asks for semantic tokens when told to, and the
+    // id of the next request the server sends it.
+    let mut token_refresh = false;
+    let mut next_request: u64 = 0;
     let mut shutdown_requested = false;
     loop {
-        let Some(message) = receive(reader)? else {
+        let message = match receive(reader)? {
+            Some(Ok(message)) => message,
+            // Answered, with the `id: null` JSON-RPC 2.0 §5 requires when the
+            // id could not be read, and the server carries on: the framing
+            // is intact, and exiting would drop every open document over one
+            // bad message.
+            Some(Err(malformed)) => {
+                eprintln!("qlinter: {}", malformed.message);
+                send(
+                    writer,
+                    json!({"id": Value::Null, "error": {"code": malformed.code, "message": malformed.message}}),
+                )?;
+                continue;
+            }
             // The stream closed without `exit`. Editors are supposed to send
             // it; when one dies instead, leaving cleanly is the friendlier
             // behaviour and matches what rust-analyzer does.
-            return Ok(if shutdown_requested { 0 } else { 1 });
+            None => return Ok(if shutdown_requested { 0 } else { 1 }),
         };
-        let method = message["method"].as_str().unwrap_or("").to_string();
         let id = message.get("id").cloned();
+        let method = match message.get("method") {
+            Some(Value::String(method)) => method.clone(),
+            // A response, to a request of the server's own. JSON-RPC 2.0 §5:
+            // a response is never answered - an error sent back would carry
+            // the id of one of the client's own requests.
+            None if message.get("result").is_some() || message.get("error").is_some() => continue,
+            // Not a valid Request object (JSON-RPC 2.0 §5.1): -32600, not
+            // MethodNotFound, and with the id when there is one to read.
+            _ => {
+                send(
+                    writer,
+                    json!({"id": id.unwrap_or(Value::Null), "error": {"code": INVALID_REQUEST,
+                           "message": "a request's method must be a string"}}),
+                )?;
+                continue;
+            }
+        };
         let params = message.get("params").cloned().unwrap_or(Value::Null);
 
+        let generation = idx.generation;
         match (method.as_str(), id) {
             ("initialize", Some(id)) => {
-                roots = workspace_roots(&params);
+                idx.roots = workspace_roots(&params);
                 let layer;
                 (opts, layer, problems) = Options::read(&params);
                 if layer.select.is_some() || !layer.ignore.is_empty() {
                     policy.narrow(layer);
                 }
-                send(writer, json!({"id": id, "result": capabilities(&opts)}))?;
+                code_action_literals = params
+                    .pointer("/capabilities/textDocument/codeAction/codeActionLiteralSupport")
+                    .is_some_and(|v| !v.is_null());
+                token_refresh = params
+                    .pointer("/capabilities/workspace/semanticTokens/refreshSupport")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                send(
+                    writer,
+                    json!({"id": id, "result": capabilities(&opts, code_action_literals)}),
+                )?;
+                initialized = true;
             }
+            ("exit", _) => return Ok(if shutdown_requested { 0 } else { 1 }),
+            // LSP 3.17, Initialize Request: before `initialize`, a request is
+            // answered with ServerNotInitialized and a notification dropped,
+            // `exit` excepted.
+            (_, Some(id)) if !initialized => send(
+                writer,
+                json!({"id": id, "error": {"code": SERVER_NOT_INITIALIZED, "message": "server is not initialized"}}),
+            )?,
+            (_, None) if !initialized => {}
             // Indexed once the client is ready rather than inside initialize,
             // so a large workspace does not hold up the handshake.
             ("initialized", None) => {
@@ -427,27 +529,28 @@ pub fn serve(
                                "message": format!("q-lint: ignoring a setting: {problem}")}}),
                     )?;
                 }
-                if opts.index {
-                    idx.scan(&roots, &opts.index_exclude);
+                idx.enabled = opts.index;
+                idx.exclude = opts.index_exclude.clone();
+                if idx.enabled {
+                    idx.scan();
                 }
                 for (uri, text) in &docs {
                     idx.set(&path_of(uri), index(text));
                 }
             }
+            // A request after shutdown is the one protocol error worth
+            // answering rather than ignoring: the client is confused and
+            // should be told, not left waiting for a reply that never comes.
+            // A second `shutdown` included (LSP 3.17, Shutdown Request).
+            (_, Some(id)) if shutdown_requested => send(
+                writer,
+                json!({"id": id, "error": {"code": INVALID_REQUEST, "message": "server is shut down"}}),
+            )?,
             ("shutdown", Some(id)) => {
                 shutdown_requested = true;
                 docs.clear();
                 send(writer, json!({"id": id, "result": Value::Null}))?;
             }
-            ("exit", _) => return Ok(if shutdown_requested { 0 } else { 1 }),
-
-            // A request after shutdown is the one protocol error worth
-            // answering rather than ignoring: the client is confused and
-            // should be told, not left waiting for a reply that never comes.
-            (_, Some(id)) if shutdown_requested => send(
-                writer,
-                json!({"id": id, "error": {"code": INVALID_REQUEST, "message": "server is shut down"}}),
-            )?,
 
             ("textDocument/didOpen", None) => {
                 let uri = uri_of(&params["textDocument"]);
@@ -521,23 +624,35 @@ pub fn serve(
             }
             ("textDocument/semanticTokens/full", Some(id)) => {
                 let uri = uri_of(&params["textDocument"]);
-                let data = docs
-                    .get(&uri)
-                    .filter(|_| opts.semantic_tokens && is_q_path(&path_of(&uri)))
-                    .map_or_else(Vec::new, |text| encode_tokens(text, &idx.ws));
-                send(writer, json!({"id": id, "result": {"data": data}}))?;
+                let data = guarded(|| {
+                    docs.get(&uri)
+                        .filter(|_| opts.semantic_tokens && is_q_path(&path_of(&uri)))
+                        .map_or_else(Vec::new, |text| encode_tokens(text, &idx.ws))
+                });
+                match data {
+                    Ok(data) => send(writer, json!({"id": id, "result": {"data": data}}))?,
+                    Err(panic) => send(writer, internal_error(id, &panic))?,
+                }
+            }
+            ("textDocument/codeAction", Some(id)) if !code_action_literals => {
+                send(writer, json!({"id": id, "result": []}))?
             }
             ("textDocument/codeAction", Some(id)) => {
-                let actions = code_actions(&params, &docs, &idx.ws, policy, opts.unsafe_fixes);
-                send(writer, json!({"id": id, "result": actions}))?;
+                match guarded(|| code_actions(&params, &docs, &idx.ws, policy, opts.unsafe_fixes)) {
+                    Ok(actions) => send(writer, json!({"id": id, "result": actions}))?,
+                    Err(panic) => send(writer, internal_error(id, &panic))?,
+                }
             }
             ("textDocument/formatting", Some(id)) => {
                 let edits = if opts.format {
-                    format(&params, &docs, &idx.ws, policy)
+                    guarded(|| format(&params, &docs, &idx.ws, policy))
                 } else {
-                    vec![]
+                    Ok(vec![])
                 };
-                send(writer, json!({"id": id, "result": edits}))?;
+                match edits {
+                    Ok(edits) => send(writer, json!({"id": id, "result": edits}))?,
+                    Err(panic) => send(writer, internal_error(id, &panic))?,
+                }
             }
 
             // A `.q` file created, changed or deleted outside the editor - a
@@ -548,7 +663,8 @@ pub fn serve(
                     let uri = uri_of(change);
                     // A configuration file changed: every file it governs may
                     // now report differently, so forget them all and relint.
-                    if is_config_path(&path_of(&uri)) {
+                    let path = path_of(&uri);
+                    if is_config_path(&path) || policy.is_explicit_config(Path::new(&path)) {
                         policy.reset();
                         changed = true;
                         continue;
@@ -556,7 +672,6 @@ pub fn serve(
                     if docs.contains_key(&uri) {
                         continue;
                     }
-                    let path = path_of(&uri);
                     changed |= if change["type"].as_i64() == Some(3) {
                         idx.remove(&path)
                     } else {
@@ -576,17 +691,47 @@ pub fn serve(
             // Every other NOTIFICATION is ignored, which the protocol requires.
             (_, None) => {}
         }
+        // Another file's definitions changed, so a name in an open document
+        // may now be a function, or no longer one. Its diagnostics were
+        // pushed again; its colours a client fetches only when it changes,
+        // or when asked to (LSP 3.17, workspace/semanticTokens/refresh). The
+        // client's reply is a response, and dropped as one.
+        if idx.generation != generation
+            && token_refresh
+            && opts.semantic_tokens
+            && !shutdown_requested
+        {
+            next_request += 1;
+            send(
+                writer,
+                json!({"id": format!("qlinter-{next_request}"), "method": "workspace/semanticTokens/refresh"}),
+            )?;
+        }
     }
 }
 
 /// What the server offers. Formatting and semantic tokens a client turned
 /// off are not announced at all, so the editor uses another provider - its
 /// own grammar's colours, another formatter - rather than an empty answer.
-fn capabilities(opts: &Options) -> Value {
+///
+/// Quick fixes likewise, for a client that did not declare
+/// `codeActionLiteralSupport`: LSP 3.17 lets the server return only
+/// `Command`s to it, and a fix here is an edit, not a command the server
+/// could run. Such a client still has every safe fix through formatting.
+fn capabilities(opts: &Options, code_action_literals: bool) -> Value {
     let mut capabilities = json!({
-        "textDocumentSync": SYNC_FULL,
-        "codeActionProvider": true,
+        // The options form, not the bare kind: only it can carry `save`, and
+        // LSP 3.17 has a client send `didSave` only when `save` is present -
+        // which `lint.run: "onSave"` depends on.
+        "textDocumentSync": {
+            "openClose": true,
+            "change": SYNC_FULL,
+            "save": {"includeText": false},
+        },
     });
+    if code_action_literals {
+        capabilities["codeActionProvider"] = json!(true);
+    }
     if opts.format {
         capabilities["documentFormattingProvider"] = json!(true);
     }
@@ -634,6 +779,36 @@ fn encode_tokens(source: &str, ws: &Workspace) -> Vec<u32> {
         (prev_line, prev_start) = (line, start);
     }
     data
+}
+
+/// Run `f`, and turn a panic in it into an error naming the panic.
+///
+/// The rules run on every keystroke of half-typed text, and a panic in one
+/// of them is a bug in that rule, not in the document. Contained here, it
+/// costs one answer about one document; uncontained, it ended the process and
+/// every open document's state with it. The panic hook still prints it, with
+/// its location, on stderr.
+fn guarded<T>(f: impl FnOnce() -> T) -> Result<T, String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).map_err(|payload| {
+        payload
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "a panic with no message".into())
+    })
+}
+
+/// What `text` defines, or nothing when reading it panics.
+fn index(text: &str) -> FileIndex {
+    guarded(|| q_lint_rs::index(text)).unwrap_or_default()
+}
+
+/// The reply to a request whose handler panicked: JSON-RPC 2.0 §5.1's
+/// `-32603 Internal error`, rather than no reply, which a client cannot tell
+/// from a hung server.
+fn internal_error(id: Value, panic: &str) -> Value {
+    json!({"id": id, "error": {"code": INTERNAL_ERROR,
+           "message": format!("qlinter failed on this document: {panic}")}})
 }
 
 fn is_q_path(path: &str) -> bool {
@@ -809,9 +984,30 @@ fn diagnose(
     let findings = if is_q_path(&path) {
         // Lenient, so this cannot fail: a configuration it cannot read is
         // reported once on stderr and the defaults govern its files.
-        policy.lint(text, &path, ws).unwrap_or_default()
+        guarded(|| policy.lint(text, &path, ws).unwrap_or_default())
     } else {
-        vec![]
+        Ok(vec![])
+    };
+    // A rule that panicked leaves nothing true to report, so the document
+    // gets one diagnostic saying so, at its start, until an edit gets past it.
+    let findings = match findings {
+        Ok(findings) => findings,
+        Err(panic) => {
+            let failed = json!({
+                "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}},
+                "severity": 1,
+                "source": "q-lint",
+                "message": format!(
+                    "qlinter failed on this document and reports nothing else for it: {panic}. \
+                     This is a bug in qlinter."
+                ),
+            });
+            return send(
+                writer,
+                json!({"method": "textDocument/publishDiagnostics",
+                       "params": {"uri": uri, "diagnostics": [failed]}}),
+            );
+        }
     };
     let diagnostics: Vec<Value> = findings
         .iter()
@@ -969,7 +1165,7 @@ fn utf16_len(text: &str) -> usize {
 /// matters is percent-decoding - without it every path containing a space
 /// arrives as `%20` and the filename-based rules see a file that does not
 /// exist. A URI that is not `file:` (an untitled buffer, say) is handed
-/// through unchanged, so it still gets linted and simply has no useful path.
+/// through unchanged; it names no `.q` file, so `diagnose` does not lint it.
 fn path_of(uri: &str) -> String {
     let Some(rest) = uri.strip_prefix("file://") else {
         return uri.to_string();
@@ -1126,6 +1322,19 @@ mod tests {
                 &[1, 9, 1, 1, 0][..], // f, line 2 col 9: g's parameter
                 &[0, 2, 1, 1, 0][..], // b, col 11
             ]
+        );
+    }
+
+    #[test]
+    fn a_panic_is_contained_and_named() {
+        assert_eq!(guarded(|| 1), Ok(1));
+        assert_eq!(
+            guarded(|| -> i32 { panic!("rule {} broke", 7) }),
+            Err("rule 7 broke".into())
+        );
+        assert_eq!(
+            guarded(|| -> i32 { panic!("static") }),
+            Err("static".into())
         );
     }
 

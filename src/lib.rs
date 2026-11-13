@@ -1576,8 +1576,21 @@ pub(crate) fn apply_not_subtract(name: &str, literal: &str) -> String {
     )
 }
 
+/// Whether `s` is an atom literal, a number or one symbol, which dot apply
+/// refuses as an argument list. Not `10b` or `0x0102`: each digit of a
+/// boolean, and each pair of a byte literal past the first, is another item
+/// (q 5: `f . 10b` is 1i, `.[f;0x0102]` 3i, and `f . 1b` and `f . 0x01` 'type).
+fn scalar_literal(s: &str) -> bool {
+    re!(r"^(?:-?\d[A-Za-z0-9.]*|`[A-Za-z0-9_.]*)$").is_match(s)
+        && !re!(r"^[01]{2,}b$|^0x[0-9a-fA-F]{3,}$").is_match(s)
+}
+
 fn boundary(s: &str, at: usize) -> bool {
-    let before = &s[..at];
+    // Callers walk bytes, so `at` can fall inside a multi-byte character -
+    // the middle of a token, never the start of one.
+    let Some(before) = s.get(..at) else {
+        return false;
+    };
     match before.chars().next_back() {
         None => true,
         // `_` joins a name only after that name's own letters: `x_ns` is one
@@ -1589,14 +1602,24 @@ fn boundary(s: &str, at: usize) -> bool {
     }
 }
 /// Whether `s` ends with a name - letters, digits and `_` that began with a
-/// letter - rather than a number, a bracket or an operator.
+/// letter - rather than a number, a bracket or an operator. A segment of a
+/// dotted name may begin with `_`: `.a.b.__perf` and `.h._ranks` are one name
+/// each (q 5 `parse "a._ns"` is `` `a._ns ``), so `_` after `name.` still
+/// continues it - while `._ns` with nothing before the dot is no name at all.
 fn ends_in_name(s: &str) -> bool {
     let token: Vec<char> = s
         .chars()
         .rev()
         .take_while(|c| c.is_alphanumeric() || *c == '_')
         .collect();
-    token.last().is_some_and(|c| c.is_alphabetic())
+    match token.last() {
+        Some(c) if c.is_alphabetic() => true,
+        // The caller has taken one `_` off already, so `.h._` arrives as `.h.`.
+        None | Some('_') => s[..s.len() - token.iter().map(|c| c.len_utf8()).sum::<usize>()]
+            .strip_suffix('.')
+            .is_some_and(ends_in_name),
+        _ => false,
+    }
 }
 /// Whether the expression an operand belongs to ends at `at`.
 ///
@@ -1622,7 +1645,7 @@ fn ends_in_name(s: &str) -> bool {
 fn refused_atom_condition(raw: &str) -> bool {
     re!(r#"^"((?:[^"\\]|\\.)*)"$"#)
         .captures(raw)
-        .is_some_and(|c| re!(r"\\[0-7]{3}|\\.|[^\\]").find_iter(&c[1]).count() != 1)
+        .is_some_and(|c| q_bytes(&c[1]).len() != 1)
         || re!(r"^(?:`[A-Za-z0-9_.:]*)+$").is_match(raw)
         || re!(r"^0x(?:[0-9a-fA-F]{2}){2,}$").is_match(raw)
         || re!(r"^-?(?:\d+\.\d*|\.\d+|\d+(?:\.\d*)?[eE][+-]?\d+)[ef]?$|^-?\d+[ef]$|^-?0[nwNW][ef]?$|^0Ng$")
@@ -1924,7 +1947,20 @@ fn mixed_run(line: &str) -> Option<Vec<(usize, bool)>> {
 fn statement_groups(code: &str, source: &str) -> Vec<(usize, usize)> {
     let mut out: Vec<(usize, usize)> = vec![];
     let (mut at, mut open) = (0usize, 0i32);
-    for (l, raw) in code.split_inclusive('\n').zip(source.split_inclusive('\n')) {
+    let lines: Vec<(&str, &str)> = code
+        .split_inclusive('\n')
+        .zip(source.split_inclusive('\n'))
+        .collect();
+    // For each line, whether the next line with code on it is indented.
+    let mut indented_next = vec![false; lines.len()];
+    let mut next = false;
+    for (n, &(l, raw)) in lines.iter().enumerate().rev() {
+        indented_next[n] = next;
+        if !l.trim().is_empty() {
+            next = raw.starts_with([' ', '\t']);
+        }
+    }
+    for (n, &(l, raw)) in lines.iter().enumerate() {
         // Indentation is a fact about the source, not about `code`: a
         // comment is blanked to spaces, so a bare `/` reads as indented
         // there and would fold into the line above it, taking the rule
@@ -1935,7 +1971,14 @@ fn statement_groups(code: &str, source: &str) -> Vec<(usize, usize)> {
         // already insignificant to q, and the rules below have always
         // read those lines one at a time - folding a table literal or a
         // lambda body into one unit loses findings inside it.
-        let continues = open == 0 && raw.starts_with([' ', '\t']);
+        //
+        // A blank or column-0 comment line ends nothing: q 5 reads `a:1+`,
+        // a blank line, `  2` as 3. It folds only when an indented line
+        // follows it, so a statement's group never takes a comment after it.
+        // The next line is the next one with code on it: an indented line
+        // inside a block comment continues nothing.
+        let continues =
+            open == 0 && (raw.starts_with([' ', '\t']) || l.trim().is_empty() && indented_next[n]);
         match out.last_mut() {
             Some(last) if continues => last.1 += l.len(),
             _ => out.push((at, at + l.len())),
@@ -1948,6 +1991,25 @@ fn statement_groups(code: &str, source: &str) -> Vec<(usize, usize)> {
             }
         }
         at += l.len();
+    }
+    out
+}
+/// The bytes q makes of a string literal's body, the text between its
+/// quotes. q strings are bytes, so `"é"` is two items, and an escape is the
+/// one byte it stands for: `\n`, `\"`, `\012` (#226).
+pub(crate) fn q_bytes(body: &str) -> Vec<u8> {
+    let mut out = vec![];
+    for m in re!(r"\\[0-7]{3}|\\.|[^\\]").find_iter(body) {
+        match m.as_str().strip_prefix('\\') {
+            None => out.extend_from_slice(m.as_str().as_bytes()),
+            Some(octal) if octal.len() == 3 && octal.bytes().all(|b| b.is_ascii_digit()) => {
+                out.push(u32::from_str_radix(octal, 8).unwrap_or(0) as u8)
+            }
+            Some("n") => out.push(b'\n'),
+            Some("t") => out.push(b'\t'),
+            Some("r") => out.push(b'\r'),
+            Some(other) => out.push(other.as_bytes()[0]),
+        }
     }
     out
 }
@@ -1973,6 +2035,21 @@ struct Views {
     script_end: Option<usize>,
 }
 fn views(source: &str) -> Views {
+    // A BOM is QE005's to report; the rest of the file is read as q would
+    // read it without one, so `<BOM>/ note` is still a comment line (#221).
+    if let Some(body) = source.strip_prefix('\u{feff}') {
+        let n = source.len() - body.len();
+        let mut v = views(body);
+        v.comments.insert(0, '\u{feff}');
+        v.code.insert(0, '\u{feff}');
+        let shift = |at: &mut usize| *at += n;
+        v.unterminated.iter_mut().for_each(shift);
+        v.foreign_offsets.iter_mut().for_each(shift);
+        v.open_block.iter_mut().for_each(shift);
+        v.string_starts.iter_mut().for_each(shift);
+        v.script_end.iter_mut().for_each(shift);
+        return v;
+    }
     let bytes = source.as_bytes();
     let mut comments = bytes.to_vec();
     let mut code = bytes.to_vec();
@@ -2033,6 +2110,19 @@ fn views(source: &str) -> Views {
         } else {
             0
         };
+        // `\t` and `\ts` run their argument as q, so its strings and its
+        // comment are masked as on any other line (#222); the command itself
+        // stays, for the rules that read system commands.
+        let timed = (string.is_none())
+            .then(|| re!(r"^\\ts?(?::\d+)?[ \t]").find(line))
+            .flatten()
+            .map_or(0, |m| m.end());
+        // q appends an indented line to the command before it, so after any
+        // command but `\t` the lines that follow are its argument, not q:
+        // `\d .foo` + `  b:1` defines no `b` anywhere (#223).
+        if !ended && block == 0 && string.is_none() && line.starts_with('\\') {
+            statement = timed > 0;
+        }
         if ended || block > 0 {
             blank(&mut comments[offset..end]);
             blank(&mut code[offset..end]);
@@ -2059,10 +2149,19 @@ fn views(source: &str) -> Views {
             }
             blank(&mut comments[offset..end]);
             blank(&mut code[offset..end]);
-        } else if !(string.is_none() && line.starts_with('\\')) {
+        } else if timed == 0 && string.is_none() && line.starts_with('\\') {
+            // Any other command's argument is no q: a path, a name, or text
+            // for the shell. Only what the rules read of it is kept - the
+            // command, and the namespace or file of `\d` and `\l`.
+            let kept = re!(r"^\\(?:[dl][ \t]+[^ \t\r\n]*|[^ \t\r\n]*)")
+                .find(line)
+                .map_or(0, |m| m.end());
+            blank(&mut comments[offset + kept..end]);
+            blank(&mut code[offset + kept..end]);
+        } else {
             blank(&mut comments[offset..offset + prefix]);
             blank(&mut code[offset..offset + prefix]);
-            let mut i = offset + prefix;
+            let mut i = offset + prefix + timed;
             while i < end {
                 let c = bytes[i];
                 if string.is_some() {
@@ -2242,6 +2341,19 @@ fn matching(s: &str, start: usize, open: u8, close: u8) -> Option<usize> {
     }
     None
 }
+/// Whether an expression is a boolean on its face: a boolean literal, a
+/// `not`/`null`/`all`/`any` application, or one operand compared with what
+/// follows it - q evaluates right to left, so the leftmost operator gives the
+/// result its type. Anything else, a bare name included, may be any type.
+fn boolean_test(s: &str) -> bool {
+    re!(r"^[01]+b$").is_match(s)
+        || re!(r"^(?:not|null|all|any)\b").is_match(s)
+        || re!(
+            r#"^(?:-?\d[\w.:]*|`[\w.:]*|\.?[A-Za-z][\w.]*(?:\[[^\[\]]*\])?|\([^()]*\)|"[^"]*")(?:\s*(?:<>|<=|>=|=|<|>|~)|\s+(?:in|like|within)\b)"#
+        )
+        .is_match(s)
+}
+
 pub(crate) fn slots(s: &str) -> Vec<&str> {
     let (mut start, mut depth) = (0, 0i32);
     let mut out = vec![];
@@ -2264,12 +2376,84 @@ fn is_param_name(s: &str) -> bool {
     re!(r"^\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*$").is_match(s)
 }
 
+/// A q 5 parameter pattern, as written in code with strings blanked: a name,
+/// a literal (a string is blank here, so an empty item inside a pattern
+/// passes), a list of patterns `(a;b)`, a dictionary `([k;v:p])` or a table
+/// `([]a;b:c)`. q 5 binds each and fails a call only where the argument does
+/// not match: `{[(a;b);c] a+b+c}[(1;2);3]` is 6, `{[([k;v])] k+v}[`k`v!1 2]`
+/// is 3, `{[1;b] b}[1;2]` is 2 and `{[1] 5} 2` is 'match (#298). `_` is
+/// none: `{[(a;_)] a}[(1;2)]` is 'match, as `{[_] 1}[1]` is.
+fn is_pattern(s: &str, nested: bool) -> bool {
+    let s = s.trim();
+    let items = |inner: &str, item: &dyn Fn(&str) -> bool| {
+        inner.trim().is_empty() || slots(inner).into_iter().all(item)
+    };
+    let whole = |s: &str| matching(s, 0, b'(', b')') == Some(s.len());
+    if s.is_empty() {
+        nested
+    } else if is_param_name(s)
+        || re!(r"^(?:-?[0-9.][A-Za-z0-9.:]*(?:\s+-?[0-9.][A-Za-z0-9.:]*)*|(?:`[A-Za-z0-9_.:]*)+)$")
+            .is_match(s)
+    {
+        true
+    } else if let Some(inner) = s.strip_prefix("([]").filter(|_| whole(s)) {
+        items(&inner[..inner.len() - 1], &|c| field(c))
+    } else if let Some(inner) = s
+        .strip_prefix("([")
+        .filter(|_| s.ends_with("])") && whole(s))
+    {
+        matching(s, 1, b'[', b']') == Some(s.len() - 1)
+            && items(&inner[..inner.len() - 2], &|c| field(c))
+    } else if whole(s) {
+        items(&s[1..s.len() - 1], &|c| is_pattern(c, true))
+    } else if let Some(at) = typed_at(s) {
+        is_pattern(&s[..at], nested)
+    } else {
+        false
+    }
+}
+/// Where a typed slot's `:type` starts: `a:`j`, `a:"j"` and `(a;b):`j` are
+/// the pattern on the left, checked against the type on the right when the
+/// lambda is called. q 5 defines the lambda whatever the type names, and
+/// with no type at all (`{[a:] a}`), which is also how a masked `a:"j"`
+/// reads (#304).
+fn typed_at(s: &str) -> Option<usize> {
+    re!(r#":\s*(?:(?:`[A-Za-z0-9_.:]*)+|"(?:[^"\\]|\\.)*")?\s*$"#)
+        .find(s)
+        .map(|m| m.start())
+        .filter(|&at| at > 0)
+}
+/// The names a parameter slot binds: the slot itself when it is a name, and
+/// for a pattern every name in it but the keys and columns it matches on -
+/// `(a;b)` binds a and b, `([k:p])` binds p, and `1` binds nothing.
+pub(crate) fn pattern_names(slot: &str) -> Vec<&str> {
+    let slot = typed_at(slot).map_or(slot, |at| &slot[..at]);
+    re!(r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*")
+        .find_iter(slot)
+        .filter(|m| {
+            boundary(slot, m.start())
+                && !slot[..m.start()].ends_with(['`', '.'])
+                && !slot[..m.start()].ends_with(|c: char| c.is_ascii_digit())
+                && !slot[m.end()..].trim_start().starts_with(':')
+        })
+        .map(|m| m.as_str())
+        .collect()
+}
+/// A key or column of a dictionary or table pattern: `k`, or `k:p`.
+fn field(s: &str) -> bool {
+    match s.split_once(':') {
+        Some((name, p)) => is_param_name(name.trim()) && is_pattern(p, true),
+        None => is_param_name(s.trim()),
+    }
+}
+
 /// What q makes of the `[...]` following a `{`.
 ///
-/// q reads those brackets as a parameter list only when every slot is a name.
-/// `{[a+b] ...}`, `{[1] ...}` and `{[_] ...}` are lambdas whose *body* opens
-/// with a bracket expression instead, and they take the implicit x, y and z -
-/// a different rank, from source that looks like a signature. The rules here
+/// q reads those brackets as a parameter list only when every slot is a name
+/// or, in q 5, a pattern (see `is_pattern`). `{[a+b] ...}`, `{[a b] ...}` and
+/// `{[_] ...}` are lambdas whose *body* opens with a bracket expression
+/// instead, and they take the implicit x, y and z - a different rank, from
+/// source that looks like a signature. The rules here
 /// and the scope tracking in `semantics` both have to agree with q about
 /// which of the two a given `{` is, so they share this.
 pub(crate) struct Signature<'a> {
@@ -2402,7 +2586,9 @@ pub(crate) fn signature<'a>(code: &'a str, raw: &str, brace: usize) -> Signature
     // trailing `;` in `{[a;b;] ...}` is a third argument rather than nothing.
     // "Empty" has to be judged on `raw`, or a masked literal passes for one.
     let names_only = ranges.iter().zip(&slots).all(|(&(a, b), slot)| {
-        (slot.is_empty() && raw[a..b].trim().is_empty()) || is_param_name(slot)
+        (slot.is_empty() && raw[a..b].trim().is_empty())
+            || is_param_name(slot)
+            || is_pattern(slot, !slot.is_empty() || !raw[a..b].trim().is_empty())
     });
     if !names_only {
         return implicit(slots);
@@ -2418,6 +2604,22 @@ fn structure(path: &str, source: &str, v: &Views) -> Option<Finding> {
     let mut offset = 0;
     let make = |at, detail| Finding::at(path, source, at, "QE001", detail);
     for line in v.code.split_inclusive('\n') {
+        // A line at column 0 starts a statement, so a bracket still open
+        // there never closes: q 5 refuses `f:{[y]` + `  y+1` + `}` with '{
+        // (#225). A comment line is blank here and does not count.
+        if let Some(&(c, at)) = stack.last()
+            && line.starts_with(|ch: char| !ch.is_ascii_whitespace())
+        {
+            let row = source[..offset].matches('\n').count() + 1;
+            return Some(make(
+                at,
+                format!(
+                    "Unclosed delimiter; expected '{}' before line {row}, which starts at \
+                     column 0 and so begins a new statement",
+                    c as char
+                ),
+            ));
+        }
         if !line.starts_with('\\') {
             for (i, c) in line.bytes().enumerate() {
                 if let Some(p) = b"([{ ".iter().position(|&a| a == c).filter(|&p| p < 3) {
@@ -2650,14 +2852,9 @@ pub fn lint_selecting(
                 // What q 5 does with it depends on what the slots hold. An
                 // operator in one, or a builtin applied - `{[a+b] x}`,
                 // `{[count x] 1}`, `{[tables[]] 1}` - is 'nyi where the
-                // lambda is defined. Literals alone - `{[1] x}`, `{[`s] x}`,
-                // `{[a;1] x}`, a string - give it the parameter list ,`0,
-                // and every call is 'match. Anything else - `{[a b] a}`,
+                // lambda is defined. A literal is a pattern and never gets
+                // here (`is_pattern`). Anything else - `{[a b] a}`,
                 // `{[a:1] a}` - runs the brackets as the start of the body.
-                let literal = |s: &str| {
-                    re!(r"^(?:-?[0-9.][A-Za-z0-9.:]*(?:\s+-?[0-9.][A-Za-z0-9.:]*)*|(?:`[A-Za-z0-9_.:]*)+)$")
-                        .is_match(s)
-                };
                 let applies_builtin = |s: &str| {
                     re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(s).any(|w| {
                         RESERVED.iter().any(|n| n == w.as_str())
@@ -2670,8 +2867,6 @@ pub fn lint_selecting(
                     .any(|s| re!(r"[-+*%,#$@&|^=<>~!?]").is_match(s) || applies_builtin(s))
                 {
                     "q 5 refuses the lambda where it is defined: 'nyi"
-                } else if rest.iter().all(|s| literal(s)) {
-                    "q 5 gives the lambda no parameters it can bind, and every call is 'match"
                 } else {
                     "q reads these brackets as the start of the body and the lambda takes \
                      x, y and z instead"
@@ -2691,10 +2886,14 @@ pub fn lint_selecting(
                     && let Some(close) = matching(code, open, b'[', b']')
                 {
                     let body = top_level(&code[at + 1..end - 1]);
+                    // Not as the head of a dotted name: `y.z` is a global,
+                    // and q 5 `{x+y.z}[1;2]` is 'rank.
                     let reads = |name: &str| {
-                        re!(r"[A-Za-z_][A-Za-z0-9_]*")
-                            .find_iter(&body)
-                            .any(|w| w.as_str() == name && boundary(&body, w.start()))
+                        re!(r"[A-Za-z_][A-Za-z0-9_]*").find_iter(&body).any(|w| {
+                            w.as_str() == name
+                                && boundary(&body, w.start())
+                                && !body[w.end()..].starts_with('.')
+                        })
                     };
                     let rank = if reads("z") {
                         3
@@ -2756,7 +2955,21 @@ pub fn lint_selecting(
             .into_iter()
             .filter(|p| !matches!(**p, "by" | "do" | "from" | "if" | "while"))
             .collect();
-        if !bad.is_empty() {
+        // A qSQL keyword is worse: q 5 cannot parse the lambda at all, and a
+        // script stops at its definition - `{[select] 1}` is 'from, and so
+        // are exec, update and delete.
+        if bad
+            .iter()
+            .any(|p| matches!(**p, "select" | "exec" | "update" | "delete"))
+        {
+            add(
+                at,
+                "QF001",
+                format!(
+                    "Builtin parameter name(s): {bad:?}; q refuses to define this lambda ('from)"
+                ),
+            );
+        } else if !bad.is_empty() {
             add(
                 at,
                 "QF001",
@@ -2988,6 +3201,15 @@ pub fn lint_selecting(
             let signal = v.comments[second_start..second_start + parts[1].len()]
                 .trim_start()
                 .starts_with('\'');
+            // Otherwise two slots are dyadic `$`, and q 5 defines it for more
+            // than a type on the left: `$[m;flip m]` multiplies two float
+            // matrices and `$[5;"abc"]` pads (#295). What it refuses with
+            // 'type is a boolean there - `$[1b;2]`, `$[1=1;2]`, `$[not 0b;2]`.
+            // Only a test the text shows to be boolean is reported: a name
+            // (`$[c;x]`) could hold a matrix, a count or a type, so it is not.
+            if !signal && !boolean_test(bare(parts[0].trim())) {
+                continue;
+            }
             add(
                 dollar,
                 "QA006",
@@ -3078,12 +3300,14 @@ pub fn lint_selecting(
     // nothing more.
     // Spaces and tabs only between the symbol and the operator: a symbol
     // ending one line and a `-1"..."` print opening the next are two
-    // statements, not a subtraction - the commonest shape in public q.
+    // statements, not a subtraction - the commonest shape in public q. After
+    // the operator, an indented line continues it, past blank and comment
+    // lines (#224).
     for m in
         // `&` and `|` are min and max, and 'type on a symbol too, as are the
         // word operators (q 5: `a&`b, `a mod 2, 2 xexp `a). Not `^`: a
         // symbol fills a symbol list (`none^s).
-        re!(r"(?:`[A-Za-z][A-Za-z0-9_.]*)+(?:[ \t]*[+\-*%&|]|[ \t]+(?:mod|div|xexp|xlog|and|or)[ \t])|(?:[+\-*%&|](?:[ \t]*\r?\n[ \t]+|[ \t]*)|[ \t](?:mod|div|xexp|xlog|and|or)(?:[ \t]*\r?\n[ \t]+|[ \t]+))(?:`[A-Za-z][A-Za-z0-9_.]*)+")
+        re!(r"(?:`[A-Za-z][A-Za-z0-9_.]*)+(?:[ \t]*[+\-*%&|]|[ \t]+(?:mod|div|xexp|xlog|and|or)[ \t])|(?:[+\-*%&|][ \t]*(?:(?:\r?\n[ \t]*)*\r?\n[ \t]+)?|[ \t](?:mod|div|xexp|xlog|and|or)(?:[ \t]*(?:\r?\n[ \t]*)*\r?\n[ \t]+|[ \t]+))(?:`[A-Za-z][A-Za-z0-9_.]*)+")
             .find_iter(code)
     {
         let at = m.start();
@@ -3095,6 +3319,16 @@ pub fn lint_selecting(
         // being an operand: `` `long$x-`long$y `` is subtraction of two longs,
         // which q is perfectly happy to evaluate.
         if code[m.end()..].starts_with('$') {
+            continue;
+        }
+        // `` `a -1 ``: a space before the minus and a digit straight after it
+        // make a negative literal, and the symbol is applied to it - q 5
+        // `parse "`a -1"` is `(,`a;-1)` (#293). `` `a-1 `` and `` `a - 1 ``
+        // subtract, and are 'type.
+        if m.as_str().starts_with('`')
+            && re!(r"[ \t]-$").is_match(m.as_str())
+            && re!(r"^\.?\d").is_match(&code[m.end()..])
+        {
             continue;
         }
         // A symbol on the right is only the operand when the expression ends
@@ -3544,7 +3778,7 @@ pub fn lint_selecting(
         if !operand_ends(code, m.end() + end) {
             continue;
         }
-        if re!(r"^(?:-?\d[A-Za-z0-9.]*|`[A-Za-z0-9_.]*)[ \t]*$").is_match(arg) {
+        if scalar_literal(arg.trim_end_matches([' ', '\t'])) {
             add(
                 m.start() + 1,
                 "QA009",
@@ -3564,10 +3798,21 @@ pub fn lint_selecting(
             continue;
         };
         let parts = slots(&code[at + 2..close - 1]);
+        let f_end = at + 2 + parts[0].trim_end().len();
+        // QA004 in brackets: `.[f;()]` is 'type as `f . ()` is, and so is the
+        // trap `.[f;();h]`, whose handler swallows it (q 5). With data on
+        // the left three arguments are an amend - `.[d;();f]` applies f to
+        // d - so the trap only for a lambda written out or named here.
+        let second = at + 2 + parts[0].len() + 1;
+        if (parts.len() == 2
+            || parts.len() == 3 && applied(at, parts[0].trim_end(), f_end).is_some())
+            && re!(r"^\s*\(\s*\)\s*$").is_match(&v.comments[second..second + parts[1].len()])
+        {
+            add(at, "QA004", "`.[f;()]`".into());
+        }
         if parts.len() != 2 {
             continue;
         }
-        let f_end = at + 2 + parts[0].trim_end().len();
         if let Some((rank, id)) = applied(at, parts[0].trim_end(), f_end)
             && let Some(detail) = items(parts[1]).and_then(|n| too_many(rank, n))
         {
@@ -3630,10 +3875,7 @@ pub fn lint_selecting(
             from += part.len() + 1;
             empty
         });
-        if elided
-            || parts.len() < 2
-            || !re!(r"^(?:-?\d[A-Za-z0-9.]*|`[A-Za-z0-9_.]*)$").is_match(parts[1].trim())
-        {
+        if elided || parts.len() < 2 || !scalar_literal(parts[1].trim()) {
             continue;
         }
         add(
@@ -3647,11 +3889,27 @@ pub fn lint_selecting(
     // `ss` and `ssr` are string functions and refuse a symbol in either the
     // subject or the pattern slot. `trim`, `lower` and `like` accept symbols
     // and are deliberately not here.
-    for m in re!(
-        r"\bssr?\s*\[\s*(?:`[A-Za-z0-9_.]*)+\s*[;\]]|\bssr?\s*\[[^;\]]*;\s*(?:`[A-Za-z0-9_.]*)+\s*[;\]]|(?:`[A-Za-z0-9_.]*)+\s+ssr?\b|\bss[ \t]+`[A-Za-z0-9_.]*"
-    )
-    .find_iter(code)
-    {
+    // The bracket form is split into its slots, so the `;` of a call nested
+    // in the subject does not start the pattern: `ssr[f[0;`a;s];"b";"c"]`
+    // passes a string (#294).
+    for m in re!(r"\bssr?\s*\[").find_iter(code) {
+        let open = m.end() - 1;
+        if !boundary(code, m.start()) {
+            continue;
+        }
+        let Some(close) = matching(code, open, b'[', b']') else {
+            continue;
+        };
+        let symbol = |s: &&str| re!(r"^\s*(?:`[A-Za-z0-9_.]*)+\s*$").is_match(s);
+        if slots(&code[open + 1..close - 1]).iter().take(2).any(symbol) {
+            add(
+                m.start(),
+                "QT007",
+                "ss/ssr work on strings; a symbol literal is a 'type error at runtime".into(),
+            );
+        }
+    }
+    for m in re!(r"(?:`[A-Za-z0-9_.]*)+\s+ssr?\b|\bss[ \t]+`[A-Za-z0-9_.]*").find_iter(code) {
         // `"abc" ss `a` puts the symbol in the pattern slot (q 5: 'type).
         if m.as_str().starts_with('s') && !boundary(code, m.start()) {
             continue;
@@ -3679,6 +3937,12 @@ pub fn lint_selecting(
                 .trim_start_matches([' ', '\t'])
                 .starts_with('[')
         {
+            continue;
+        }
+        // So is any second glyph that an iterator derives a function from,
+        // applied with brackets: q 5 runs `x||/[y]`, `x**\[y]`, `x==/[y]`
+        // and `x||':[y]` (#237), and refuses `x||/y` with '/, not as a pair.
+        if re!(r"^(?:[/\\']:?)+\[").is_match(&code[m.end()..]) {
             continue;
         }
         let long = !matches!(m.as_str(), "==" | "!=" | "&&" | "||" | "+=" | "-=" | "*=");
@@ -3795,9 +4059,10 @@ pub fn lint_selecting(
     }
     // `type` returns a short - 7h, not `long - so a symbol on the other side
     // of `=` is a 'type error every time. A bare `type=` is a column named
-    // type, which is QF013's business, not this rule's.
+    // type, which is QF013's business, not this rule's. `type` has to be the
+    // whole word: `typeTerminal=`count` is a name (#296).
     for m in re!(
-        r"\btype\s*(?:\[[^\]]*\]|\(?[A-Za-z_][A-Za-z0-9_.]*\)?)\s*(?:=|<>)\s*`[a-z][A-Za-z0-9_.]*(?:`[A-Za-z0-9_.]*)*|\(\s*type\b[^()]*\)\s*(?:=|<>)\s*`[a-z][A-Za-z0-9_.]*(?:`[A-Za-z0-9_.]*)*|`[a-z]+\s*(?:=|<>)\s*type\b"
+        r"\btype(?:\s*\[[^\]]*\]|\s*\([A-Za-z_][A-Za-z0-9_.]*\)|\s+\(?[A-Za-z_][A-Za-z0-9_.]*\)?)\s*(?:=|<>)\s*`[a-z][A-Za-z0-9_.]*(?:`[A-Za-z0-9_.]*)*|\(\s*type\b[^()]*\)\s*(?:=|<>)\s*`[a-z][A-Za-z0-9_.]*(?:`[A-Za-z0-9_.]*)*|`[a-z]+\s*(?:=|<>)\s*type\b"
     )
     .find_iter(code)
     {
@@ -3891,8 +4156,9 @@ pub fn lint_selecting(
         // A string column is blank in this view. Its length is in the source.
         let string_len = |v: &str, offset: usize| -> Option<Shape> {
             let raw = source[at + 1 + offset..at + 1 + offset + v.len()].trim();
-            if raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2 {
-                let n = raw.len() - 2;
+            // Counted as q holds it: `"\n\t"` is two chars, not four (#231).
+            if let Some(body) = re!(r#"^"((?:\\[0-7]{3}|\\.|[^"\\])*)"$"#).captures(raw) {
+                let n = q_bytes(&body[1]).len();
                 return Some(if n == 1 {
                     Shape::Atom
                 } else {
@@ -4102,11 +4368,15 @@ pub fn lint_selecting(
         }
     }
     // Match the Python rule's outer-body traversal, including nested assignments.
+    // Only a brace outside every lambda already scanned opens an outer body:
+    // `{a:{x}; b:{count:1; x}}` is one body, scanned once (#252).
+    let mut scanned = 0;
     for (at, _) in code.match_indices('{') {
-        if code[..at].rfind('}') < code[..at].rfind('{') {
+        if at < scanned {
             continue;
         }
         if let Some(end) = matching(code, at, b'{', b'}') {
+            scanned = end;
             let mut offset = at;
             for line in code[at..end].split_inclusive('\n') {
                 // A query keyword assigned is refused when the lambda is
@@ -4585,6 +4855,10 @@ pub fn lint_selecting(
             offset += line.len();
             continue;
         }
+        // `system "d .ns"` switches as `\d .ns` does (#261).
+        if let Some(ns) = semantics::opens(first, first_raw) {
+            namespace = !ns.is_empty();
+        }
         // More from the same guidelines:
         //
         //   "Do not use unnecessary parentheses - the compiler doesn't need
@@ -4697,42 +4971,57 @@ pub fn lint_selecting(
                 );
             }
         }
-        // Of the 181 reserved names q refuses to assign inside a namespace
-        // all but two: `from` and `by` are accepted there and read back fine,
-        // checked one by one. TorQ's email settings define `.email.from`.
-        if namespace
-            && let Some(m) = re!(r"^([a-z][a-zA-Z0-9_]*)\s*:").captures(line)
-            && RESERVED.iter().any(|n| n == &m[1])
-            && !matches!(&m[1], "from" | "by")
-        {
-            add(offset, "QF004", format!("Namespace-level `{}`", &m[1]));
+        // Each statement on the line, not only the first, when the line opens
+        // at the root: `y:1;sum:2` is 'assign as `sum:2` is (#244).
+        let mut heads = vec![(0, line)];
+        if line_depth == 0 {
+            let mut from = 0;
+            for part in slots(line) {
+                let lead = part.len() - part.trim_start().len();
+                if from > 0 {
+                    heads.push((from + lead, &part[lead..]));
+                }
+                from += part.len() + 1;
+            }
         }
-        // The root is where q is inconsistent about reserved names:
-        // `count:1` and `where:1` it refuses ('assign), `select:1` it
-        // cannot parse, but `from:1` and `by:1` it silently accepts. A
-        // lambda body at column 0 must not be mistaken for root scope,
-        // hence the brace depth.
-        if !namespace
-            && line_depth == 0
-            && let Some(m) = re!(r"^([a-z][a-zA-Z0-9_]*)\s*:").captures(line)
-            && !line[m.get(0).unwrap().end()..].starts_with(':')
-            && RESERVED.iter().any(|n| n == &m[1])
-        {
-            add(
-                offset,
-                "QF012",
-                // Checked one by one on q 5: every reserved name but these
-                // two is refused at the root.
-                if matches!(&m[1], "from" | "by") {
-                    format!(
-                        "Root-level assignment to `{}`: q accepts it, but the name is a query \
-                         keyword everywhere else",
-                        &m[1]
-                    )
-                } else {
-                    format!("Root-level assignment to `{}`: q refuses it", &m[1])
-                },
-            );
+        for (at, head) in heads {
+            // Of the 181 reserved names q refuses to assign inside a namespace
+            // all but two: `from` and `by` are accepted there and read back fine,
+            // checked one by one. TorQ's email settings define `.email.from`.
+            if namespace
+                && let Some(m) = re!(r"^([a-z][a-zA-Z0-9_]*)\s*:").captures(head)
+                && RESERVED.iter().any(|n| n == &m[1])
+                && !matches!(&m[1], "from" | "by")
+            {
+                add(offset + at, "QF004", format!("Namespace-level `{}`", &m[1]));
+            }
+            // The root is where q is inconsistent about reserved names:
+            // `count:1` and `where:1` it refuses ('assign), `select:1` it
+            // cannot parse, but `from:1` and `by:1` it silently accepts. A
+            // lambda body at column 0 must not be mistaken for root scope,
+            // hence the brace depth.
+            if !namespace
+                && line_depth == 0
+                && let Some(m) = re!(r"^([a-z][a-zA-Z0-9_]*)\s*:").captures(head)
+                && !head[m.get(0).unwrap().end()..].starts_with(':')
+                && RESERVED.iter().any(|n| n == &m[1])
+            {
+                add(
+                    offset + at,
+                    "QF012",
+                    // Checked one by one on q 5: every reserved name but these
+                    // two is refused at the root.
+                    if matches!(&m[1], "from" | "by") {
+                        format!(
+                            "Root-level assignment to `{}`: q accepts it, but the name is a query \
+                             keyword everywhere else",
+                            &m[1]
+                        )
+                    } else {
+                        format!("Root-level assignment to `{}`: q refuses it", &m[1])
+                    },
+                );
+            }
         }
         // The parentheses have to be empty in the source - a string between
         // them is blank in `line`, so `(!).("S=;")` would pass for `. ()` -
@@ -4872,7 +5161,7 @@ pub fn lint_selecting(
             let mut at = from;
             while let Some(m) = re!(r#"(?:=|<>)\s*"((?:[^"\\]|\\.)*)""#).captures_at(literals, at) {
                 let op = m.get(0).unwrap().start();
-                let n = re!(r"\\[0-7]{3}|\\.|[^\\]").find_iter(&m[1]).count();
+                let n = q_bytes(&m[1]).len();
                 if in_code(op) && n != 1 {
                     return Some((op, n));
                 }
@@ -4918,8 +5207,17 @@ pub fn lint_selecting(
                 let rest = line[whole..].trim_start_matches([' ', '\t']);
                 let ends =
                     rest.is_empty() || rest.starts_with([',', ';', ')', ']', '}', '\n', '\r']);
-                if m[1] == m[3] && ends {
-                    add(offset, "QB001", format!("`{}{}{}`", &m[1], &m[2], &m[3]));
+                // And the comparison is in the query's own statement, not
+                // another one on its line: `n:a=a; r:select from t`.
+                let start = m.get(0).unwrap().start();
+                let head = &line[line[..start].rfind(';').map_or(0, |p| p + 1)..start];
+                let query = re!(r"\b(?:where|select|exec|update|delete)\b").is_match(head);
+                if m[1] == m[3] && ends && query {
+                    add(
+                        offset + start,
+                        "QB001",
+                        format!("`{}{}{}`", &m[1], &m[2], &m[3]),
+                    );
                     search = m.get(0).unwrap().end();
                 } else {
                     search = m.get(3).unwrap().start();
@@ -5109,7 +5407,11 @@ pub fn lint_selecting(
                 );
             }
         }
-        for m in re!(r#"\blike\s*"([^"]*)""#).captures_iter(literals) {
+        // Infix, or the pattern as the second argument in brackets:
+        // `like["abc";"a*b*"]` is 'nyi as well.
+        for m in
+            re!(r#"\blike\s*(?:\[(?:[^;\[\]"]|"[^"]*")*;\s*)?"([^"]*)""#).captures_iter(literals)
+        {
             // q 5 takes one `*` anywhere, or a leading and a trailing pair:
             // "abc" like "a*c" and "*b*" are 1b, "a*b*" and "**" are 'nyi.
             // A `*` inside `[...]` is a literal star.
@@ -5117,7 +5419,11 @@ pub fn lint_selecting(
             let stars = re!(r"\[[^\]]*\]").replace_all(pat, "").matches('*').count();
             let ends = pat.len() > 2 && pat.starts_with('*') && pat.ends_with('*');
             if stars > 2 || (stars == 2 && !ends) {
-                add(offset, "QB002", format!("like {pat:?}"));
+                add(
+                    offset + m.get(0).unwrap().start(),
+                    "QB002",
+                    format!("like \"{pat}\""),
+                );
             }
         }
         // QB003: `", " sv string clash," - two workers share it"`. `,` binds
@@ -5199,9 +5505,15 @@ pub fn lint_selecting(
             add(
                 i,
                 "QE002",
+                // The whole char after the backslash, which may be more than
+                // one byte: `\é` is named as such, not half of it (#233).
                 format!(
-                    "Invalid escape {}",
-                    String::from_utf8_lossy(&b[i..(i + 2).min(b.len())])
+                    "Invalid escape \\{}",
+                    v.comments[i + 1..]
+                        .chars()
+                        .next()
+                        .map(String::from)
+                        .unwrap_or_default()
                 ),
             );
             i += 2;
@@ -5220,14 +5532,13 @@ pub fn lint_selecting(
             while j < chars.len() {
                 let c = chars[j].1;
                 if c == '"' {
+                    let start = chars[j].0 + 1;
                     j += 1;
                     while j < chars.len() && chars[j].1 != '"' {
-                        if chars[j].1 == '\\' {
-                            j += 1;
-                        }
-                        length += 1;
-                        j += 1;
+                        j += if chars[j].1 == '\\' { 2 } else { 1 };
                     }
+                    let end = chars.get(j).map_or(v.comments.len(), |c| c.0);
+                    length += q_bytes(&v.comments[start..end]).len();
                 } else if "([{ ".contains(c) && c != ' ' {
                     depth += 1;
                 } else if ")]}".contains(c) {
@@ -5240,13 +5551,14 @@ pub fn lint_selecting(
                 }
                 j += 1;
             }
-            // q 5 keeps the first 254 characters of a signalled string.
+            // q 5 keeps the first 254 bytes of a signalled string, cutting a
+            // multi-byte char in half if it must (#230).
             if length > 254 {
                 add(
                     chars[i].0,
                     "QB004",
                     format!(
-                        "Thrown message with {length} chars of literal text; q keeps only the first 254"
+                        "Thrown message with {length} bytes of literal text; q keeps only the first 254"
                     ),
                 );
             }

@@ -1,3 +1,21 @@
+=== QT001 | a string, temporal or trailing-empty-symbol vector is counted too (q 5: each is 'length)
+a:`a`b!"abc"
+b:`a`b!2024.01.01 2024.01.02 2024.01.03
+c:`a`b!`x`y`
+d:`a`b!12:00 13:00 14:00
+e:`a`b!"a\"c"
+
+=== QT006 | two strings of different lengths (q 5: "ab"="abc" is 'length)
+d:"ab"="abc"
+
+=== clean | strings of the right length, and a one-character string, which is an atom (q 5: "a"="cd" is 00b)
+a:`a`b!"ab"
+b:"ab"="cd"
+c:"a"="cd"
+d:`a`b!2024.01.01 2024.01.02
+e:s:"x 1 2+3"
+f:`dd`del`div`dfn`dl
+
 === QT001 | a literal dictionary whose sides differ in length
 f:{[] `a`b!1 2 3}
 
@@ -9,6 +27,14 @@ f:{[k;v] k!v}
 
 === QT002 | a symbol passed to a function that is visibly numeric
 f:{[r] r+1};f[`bad]
+
+=== QT002 | and one with an implicit x (q 5: g:{x+1}; g[`a] is 'type)
+g:{x+1}
+s:g[`a]
+
+=== clean | an implicit y makes it rank 2, so one argument projects (q 5: {y+1}[`a] is a projection)
+h:{y+1}
+s:h[`a]
 
 === clean | the same function given a number
 f:{[r] r+1};f[2]
@@ -31,6 +57,15 @@ r:1+`a~`b
 === clean | a symbol ending one line and a print opening the next are two statements
 y:`c`c`c`j
 -1"next";
+
+=== clean profile: general | a spaced minus before a digit is a negative literal the symbol is applied to (q 5: parse "`a -1" is (,`a;-1))
+a:10 20 30
+r:`a -1
+s:`a`b -.5
+
+=== QT003 profile: general | but unspaced, or spaced on both sides, it subtracts (q 5: `a-1 and `a - 1 are 'type)
+r:`a-1
+s:`a - 1
 
 === QT003 | a symbol on the left is the operand whatever follows
 r:`a+`b?`c
@@ -153,6 +188,14 @@ r:ssr[`abc;"a";"b"]
 
 === QT007 | a symbol as the pattern
 r:ssr["abc";`a;"b"]
+
+=== clean profile: general | a symbol inside a call nested in the subject is not a slot of ssr (q 5: returns "ab")
+f:{[r;k;d] d}
+r:ssr[f[0;`csv;"a\rb"];"\r";""]
+s:ssr[string f[0;`abc;`abc];"b";"c"]
+
+=== QT007 profile: general | a symbol pattern after a bracketed subject is still one (q 5: 'type)
+r:ssr[s[0];`a;"b"]
 
 === QT007 | infix ss on a symbol
 r:`abc ss "a"
@@ -290,6 +333,14 @@ t:([]a:"a";b:1)
 
 === clean | a two-char string is a two-row column
 t:([]a:"ab";b:1)
+
+=== clean | an escape is one char (q 5 builds both: "\n\t" is two rows, "\n" an atom)
+a:([]a:1 2;b:"\n\t")
+b:([]a:1 2 3;b:"\n")
+c:([]a:1 2;b:"\012\t")
+
+=== QT020 | a non-ASCII char is two bytes, so two rows
+t:([]a:1 2 3;b:"é")
 
 === QT021 | ss with an empty pattern
 r:ss["abc";""]

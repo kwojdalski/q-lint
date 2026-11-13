@@ -432,7 +432,7 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
             false,
         ),
         ("QA007", "f:{[c] $[c;1;2;]}", "f:{[c] $[c;1;2]}", false),
-        ("QA006", "f:{[c] $[c;1]}", "f:{[c] if[c;1]}", false),
+        ("QA006", "f:{[c] $[c=1;1]}", "f:{[c] if[c=1;1]}", false),
         (
             "QT028",
             "t:([]a:1 2);r:select from t where a:1",
@@ -510,8 +510,8 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
         ("QP005", "r:select mid:0.5*bid+ask from q"), // qSQL columns
         ("QP005", "tanh:1f-2f%1f+exp 2f*"),  // a composition
         ("QR004", "r:count {x+1}' b"),       // `{x+1}'` infix
-        ("QA006", "r:`int$[a;b]"),           // `if` would fuse onto `int
-        ("QA006", "r:x$[a;b]"),              // and onto a name
+        ("QA006", "r:`int$[a=1;b]"),         // `if` would fuse onto `int
+        ("QA006", "r:x$[a=1;b]"),            // and onto a name
         ("QF010", "f:{[a;b] x+a}"),          // which parameter?
         ("QT008", "r:til 2.5"),              // no long it spells
         ("QF020", "t:([]ab:1 2;ac:3 4);r:select a from t"), // two equally close
@@ -752,4 +752,134 @@ fn policy_findings_sit_on_the_token_they_name() {
     for w in &want {
         assert!(at.contains(w), "{w:?} not in {at:?}");
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_file_that_cannot_be_written_is_reported_and_the_rest_are_still_fixed() {
+    // One read-only file used to end the run on the spot: the files after it
+    // were neither fixed nor linted, and nothing was reported (#264).
+    use std::os::unix::fs::PermissionsExt;
+    let directory = tempfile::tempdir().unwrap();
+    let path = |name: &str| directory.path().join(name);
+    fs::write(path("a.q"), "f:{[x] x==1}\n").unwrap();
+    fs::write(path("b.q"), "f:{[x] x==1}\n").unwrap();
+    fs::write(path("c.q"), "g:{[x;y] x}\n").unwrap();
+    fs::set_permissions(path("a.q"), fs::Permissions::from_mode(0o444)).unwrap();
+    if fs::OpenOptions::new().write(true).open(path("a.q")).is_ok() {
+        return; // root writes it anyway; there is nothing to test
+    }
+    let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .current_dir(directory.path())
+        .args([
+            "--isolated",
+            "--profile",
+            "style",
+            "--fix",
+            "--format",
+            "json",
+        ])
+        .args(["a.q", "b.q", "c.q"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    assert!(
+        stderr.contains("a.q") && stderr.contains("not fixed"),
+        "{stderr}"
+    );
+    assert_eq!(fs::read_to_string(path("a.q")).unwrap(), "f:{[x] x==1}\n");
+    assert_eq!(fs::read_to_string(path("b.q")).unwrap(), "f:{[x] x=1}\n");
+    let findings: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let mut reported: Vec<_> = findings
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| {
+            let file = std::path::Path::new(f["path"].as_str().unwrap());
+            format!(
+                "{} {}",
+                file.file_name().unwrap().to_string_lossy(),
+                f["code"].as_str().unwrap()
+            )
+        })
+        .collect();
+    reported.sort();
+    assert_eq!(reported, ["a.q QE004", "c.q QF016"], "{findings}");
+}
+
+/// A name with a space ends its header in a TAB, as git and diffutils write
+/// it: without one, patch cut `my file.q` at the space and found no file
+/// (#271).
+#[test]
+fn a_diff_of_a_file_whose_name_has_a_space_applies() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("my file.q");
+    let source = "f:{[x] x==1}\n";
+    fs::write(&path, source).unwrap();
+    let diff = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .current_dir(directory.path())
+        .args(["--isolated", "--diff", "my file.q"])
+        .output()
+        .unwrap();
+    let diff = String::from_utf8(diff.stdout).unwrap();
+    assert!(
+        diff.starts_with("--- a/my file.q\t\n+++ b/my file.q\t\n"),
+        "{diff:?}"
+    );
+    fs::write(directory.path().join("fx.diff"), &diff).unwrap();
+    for tool in [
+        &["patch", "-p1", "-i", "fx.diff"][..],
+        &["git", "apply", "fx.diff"],
+    ] {
+        if cfg!(windows) && tool[0] == "patch" {
+            continue; // see a_diff_names_files_relative_to_the_current_directory_and_applies
+        }
+        fs::write(&path, source).unwrap();
+        let Ok(out) = Command::new(tool[0])
+            .current_dir(directory.path())
+            .args(&tool[1..])
+            .stdin(std::process::Stdio::null())
+            .output()
+        else {
+            continue; // not installed here
+        };
+        assert!(
+            out.status.success(),
+            "{tool:?}: {}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let applied = fs::read_to_string(&path).unwrap().replace("\r\n", "\n");
+        assert_eq!(applied, "f:{[x] x=1}\n", "{tool:?}");
+    }
+}
+
+/// Each invalid byte is one character, a truncated multi-byte sequence too:
+/// `E2 82` was read as one, and every finding after it on the line was a
+/// column early (#273).
+#[test]
+fn a_truncated_utf8_sequence_keeps_the_columns_after_it() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("lossy.q");
+    fs::write(
+        &path,
+        b"s:\"\xe2\x82\"; f:{[x] x==1}\nt:\"\xe9\xe0\"; g:{[x] x==1}\n",
+    )
+    .unwrap();
+    let lint = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .args(["--isolated", "--format", "json"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    let findings: serde_json::Value = serde_json::from_slice(&lint.stdout).unwrap();
+    let mut at: Vec<_> = findings
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["code"] == "QE004")
+        .map(|f| (f["line"].as_u64().unwrap(), f["column"].as_u64().unwrap()))
+        .collect();
+    at.sort();
+    assert_eq!(at, [(1, 17), (2, 17)], "{findings}");
 }

@@ -34,6 +34,15 @@ f:{[a_] a_}
 count:{[t] 42}
 \d .
 
+=== QF004 profile: general | and after system "d .ns", the same switch (q 5: count:1 is 'assign)
+system "d .ns"
+count:1
+
+=== QF012 | and system "d ." returns to the root
+system "d .ns"
+system "d ."
+count:1
+
 === clean | a file may end inside a namespace it opened
 \d .util
 helper:{[x] x}
@@ -58,10 +67,10 @@ f:{[tables[]] x+1}
 === QF007 | an expression in the parameter slot
 f:{[a+b] 1}
 
-=== QF007 | an integer literal reads as body text, not a parameter
+=== QF010 | a literal is a q 5 parameter pattern, so the lambda takes no implicit x (q 5: {[1] x+1}[1] is 'x)
 f:{[1] x+1}
 
-=== QF007 | a symbol literal likewise
+=== QF010 | a symbol literal likewise
 f:{[`s] x+1}
 
 === QF007 | two names without a separator is one bracket expression
@@ -73,8 +82,24 @@ f:{[a[0]] a}
 === QF007 | an assignment in the parameter slot
 f:{[a:1] a}
 
-=== QF007 | a string literal, which the rules see only as blanks
+=== clean profile: general | a string literal is a pattern too, which the rules see only as blanks (q 5: {["ab"] 5} "ab" is 5)
 f:{["s"] 1}
+
+=== clean profile: general | q 5 parameter patterns bind, and a literal one fails only on a mismatch (q 5: 6, 3, 2)
+f:{[(a;b);c] a+b+c}
+g:{[([k;v])] k+v}
+h:{[1;b] b}
+i:{[a;(b;"x")] a+b}
+j:{[([k:p;v])] p+v}
+k:{[([]a;b:c)] a,c}
+r:(f[(1;2);3]; g[`k`v!1 2]; h[1;2])
+
+=== QA012 profile: general | the rank of a pattern lambda is its slot count (q 5: f[(1;2);3;4] is 'rank)
+f:{[(a;b);c] a+b+c}
+r:f[(1;2);3;4]
+
+=== QF002 profile: general | but _ is no pattern (q 5: {[_] 1}[1] is 'match)
+f:{[_] 1}
 
 === clean | a dotted name is a legal parameter, surprising as that is
 f:{[.q.z] 1}
@@ -173,6 +198,17 @@ f:{[median] median}
 === QF012 | a reserved name assigned at the root
 count:42
 
+=== QF012 | a reserved name assigned in a later statement on the line (q 5: y:1;sum:2 is 'assign)
+y:1;sum:2
+
+=== QF004 profile: general | and inside a namespace (q 5: x:1;count:2 under \d .foo is 'assign)
+\d .foo
+x:1;count:2
+\d .
+
+=== QF003 | a later statement inside a lambda is a local, QF003's and not QF012's
+h:{[a] b:a;sum:b;sum}
+
 === QF012 | one q silently accepts, and the linter still flags
 from:1
 
@@ -183,10 +219,10 @@ m:{([] count:1)}
 n:{select
   count:1 from t}
 
-=== QF003 QF017 | a local shadow at column zero is not root scope, and nothing reads it
+=== QE001 profile: general | a line at column zero inside a lambda ends it, so it is no local (q 5: '{)
 f:{[x]
 count:1
-}
+ }
 
 === QF013 | a builtin column name in a table literal
 t:([] first:1 2 3)
@@ -313,6 +349,14 @@ f:{[a] ([]x:a)}
 === QF016 | a parameter the body never reads
 f:{[used;stale] used+1}
 
+=== QF016 | a parameter only overwritten is never read either
+f:{[a;b] a:0; b}
+
+=== clean | overwritten from its own value, read after, or `f::` with nothing to assign (q 5 parses that as a read), it is read
+f:{[a;b] a:a+1; a+b}
+g:{[a;b] a:0; a+b}
+h:{[f;b] k[b;f::;1]}
+
 === clean | a lambda that reads none of them is conforming to a signature
 f:{[t] 42}
 
@@ -394,6 +438,17 @@ bb:1
 f:{[] aa:bb; aa}
 \d .
 
+=== QF018 | a dotted root name is not the bare name (q 5: .cfg:1; b:cfg is 'cfg)
+.cfg:1
+b:cfg
+
+=== QF018 | :: on a parameter assigns the parameter, not a global (q 5: g 1 is 7, then b is 'b)
+g:{[b] b::7; b}
+r:b
+
+=== QF005 | nor does :: on a local make it a global for a nested lambda (q 5: h 1 is 'c)
+h:{[a] c:a; c::a+1; {c}[]}
+
 === clean | a global write inside another function supplies the name
 init:{[] bb::1}
 f:{[] aa:bb; aa}
@@ -401,6 +456,16 @@ f:{[] aa:bb; aa}
 === clean | literal set defines the global
 `bb set 1
 f:{[] aa:bb; aa}
+
+=== clean | insert and upsert by name create the table (q 5: `t insert ([]a:1 2) then t runs)
+`t insert ([]a:1 2)
+r:t
+`u upsert ([]a:1 2)
+s:u
+
+=== clean | set each over a symbol list defines every name (q 5: `p`q set'1 2 then p is 1)
+`p`q set'1 2
+r:p
 
 === clean | a compound assignment at the root defines the name (q 5: a,:1; b:a is ,1)
 bb,:1
@@ -525,8 +590,8 @@ show
 
 === clean | a multiline bracketed expression is not a bare name read
 r:(
-bb;
-cc)
+ bb;
+ cc)
 
 === clean | a multiline lambda is checked once in its own scope
 f:{[bb]
@@ -577,6 +642,15 @@ r:select b from t
 t:([]a:1 2)
 r:select a by b from t
 
+=== clean profile: general | names a lambda in a select item binds are its own (q 5: runs, a| "<p>h1</p>")
+files:([]title:`a`b;header:("h1";"h2"))
+r:select h:{"<p>",x,"</p>"} each header by title from files
+s:select {[p] "<",p,">"}[header] by title from files
+
+=== QF020 profile: general | a top-level item beside such a lambda is still a column (q 5: 'c)
+files:([]title:`a`b;header:("h1";"h2"))
+r:select h:{x,x} each header,c by title from files
+
 === clean | the virtual index, an alias of a real column, and a keyed table's key
 t:([]a:1 2)
 k:([k:1 2]v:3 4)
@@ -609,6 +683,43 @@ r:update c:a by d from t
 === QF020 | a symbol naming a column for xkey and its neighbours
 t:([]a:1 2;b:3 4)
 r:`c xdesc t
+
+=== QF020 | a column alias elsewhere defines no global
+k:([]a:1 2)
+r:select from k where b>0
+q:select b:a from k
+
+=== QF020 | nor does another table's column
+k:([]a:1 2)
+u:([]b:3 4)
+r:select b from k
+
+=== QF020 | nor another lambda's local
+k:([]a:1 2)
+f:{b:1; b}
+r:select b from k
+
+=== clean | a column added in place by name with @ is the table's now
+t:([]a:1 2)
+@[`t;`b;:;3 4]
+r:select b from t
+
+=== clean | a nested query's columns in a where phrase are its own table's (q 5 runs f)
+t:([]a:1 2 3)
+f:{[u] select from t where a in exec b from u}
+
+=== clean | the where phrase ends at the bracket around its query (q 5 runs the line)
+t:([]a:1 2 3)
+u:flip enlist[`c]!enlist 4 5
+r:(select from t where a>1),select a:c from u where c>4
+
+=== QF020 | but the outer phrase still reads past a nested query in brackets
+t:([]a:1 2 3)
+f:{[u] select from t where a in (exec b from u), d>0}
+
+=== QF020 | and the query after a closed one is checked in its own right
+t:([]a:1 2 3)
+r:(select from t where a>1),select from t where d>0
 
 === clean | columns it has, the virtual index, and a lambda's own names
 t:([]a:1 2;b:3 4)
@@ -726,6 +837,12 @@ h:{a:1;(a:2)+a}
 f:{$[x;[a:1;b:a];0]}
 g:{(a:1;[a:2;a])}
 
+=== clean profile: general | a block that opens the body runs in order too (q 5: {[p] [a:1; a+p]}[5] is 6)
+f:{[p] [a:1; a+p]}
+
+=== QF014 profile: general | and its reverse reads first (q 5: defining f is 'a)
+f:{[p] [r:a; a:1]; r}
+
 === QF014 profile: general | a block's slots in order, so the read comes first (q 5: 'a at definition)
 f:{$[x;[r:a;a:1];0]}
 
@@ -734,6 +851,46 @@ f:{g [a:1;a]}
 
 === clean profile: general | a slot that runs earlier still may have assigned it again (KX taq/daily.q runs)
 f:{(t;b=t:max b:x;t;a=t:min a:y)}
+
+=== QF014 profile: general | a read before dot-apply is a read, not a dotted name (q 5: defining f is 'g)
+f:{[p] r:g . p; g:{x+y}; r}
+
+=== clean profile: general | a dotted name's segment may begin with `_` and is still one name (q 5: f 10 is 11, g 3 is 6, h 3 is 6) (#299)
+contracts:5
+.a.b.__perf:{x+y}
+.h._ranks:{2*x}
+f:{[x] perf:.a.b.__perf[x;1]; perf}
+g:{[x] ranks:.h._ranks x; ranks}
+h:{[x] r:1+contracts; .registry.__contracts:x; r}
+
+=== QF014 profile: general | but a plain read of the name being assigned still is one (q 5: defining f is 'a) (#299)
+.h._ranks:{2*x}
+f:{[x] a:.h._ranks a+1}
+
+=== clean profile: general | an assignment in a query's from-clause sets a local the next statement reads (q 5: f[([] b:3 1 2);enlist`b] sorts by b) (#300)
+f:{[p;c1] k:exec c from meta data4:p; data4:(c1 inter k) xasc data4; data4}
+g:{[p] r:select from d:p where a>1; d}
+
+=== QF014 profile: general | and a from-clause is a read like any other q (q 5: defining f is 't) (#300)
+t:([]a:1 2)
+f:{r:select from t; t:([]a:1 2); r}
+
+=== clean profile: general | a query straight after `_` is a query, and its column no local (q 5: f `a`b!10 20 is ([] e:enlist 20)) (#301)
+f:{[data] tmp:([] e:`a`b); 1_update e:data e from tmp}
+
+=== QF014 profile: general | but `_` inside a name is part of it, and the rest of the lambda is still read (q 5: defining f is 'a_update, g is 'a) (#301)
+f:{r:a_update; a_update:1; r}
+g:{[d] t:([]e:1 2); r:1_update e:d from t; a:a+1}
+
+=== clean profile: general | an assignment right of the bracket holding the first runs before it (q 5: f 1 0 -1 is 1 0 0b, and g, k are defined) (#302)
+f:{[x] (b:b&x)|b:x>0}
+g:{(`$q:(),/:q)!til count q:-1_.Q.t}
+h:{x+y}
+k:{[x] (b:b&x)|h[1;b:x]}
+
+=== QF014 profile: general | but not with no such assignment, nor in a later slot of a control bracket (q 5: defining each is 'b or 'a) (#302)
+f:{[x] (b:b&x)|1}
+g:{[x] $[x;(a:a+1);a:2]}
 
 === QF003 | a query keyword as a local is refused when the lambda is defined (q 5: {select:1;0} is 'from)
 a:{select:1;0}

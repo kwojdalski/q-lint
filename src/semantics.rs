@@ -166,11 +166,14 @@ fn eval_path(text: &str, pos: usize) -> (usize, Vec<(usize, usize, bool)>) {
                 // A bracket that follows nothing it could index is a block,
                 // which runs left to right like a control bracket. Verified
                 // in q 5: `{$[1b;[a:1;a];0]}[]` and `{(a:1;[a:2;a])}` run,
-                // while `{g [a:1;a]}` and `{x:[a:1;a]}` are 'a.
+                // while `{g [a:1;a]}` and `{x:[a:1;a]}` are 'a. So does
+                // one that opens the body: `{[p] [a:1;a+p]}[5]` is 6.
+                let before = text[..i].trim_end();
                 let control = c == b'['
                     && (re!(r"(?:^|[^A-Za-z0-9_.])(?:if|while|do)\s*$|\$\s*$")
                         .is_match(&text[..i])
-                        || text[..i].trim_end().ends_with([';', '[', '(']));
+                        || before.is_empty()
+                        || before.ends_with([';', '[', '(']));
                 stack.push((i, 0, control));
             }
             b']' | b')' | b'}' => {
@@ -201,7 +204,10 @@ pub(crate) fn local_view(direct: &str, tables: bool) -> String {
         .replace_all(direct, |m: &regex::Captures| " ".repeat(m[0].len()))
         .into_owned();
     let mut out = symbols.clone().into_bytes();
-    for m in re!(r"\b(?:select|exec|update|delete)\b").find_iter(&symbols) {
+    // No `\b` before the keyword: `_` is a word character to the regex, and
+    // `1_update e:d e from t` is a drop of an update (#301). `boundary` is
+    // what tells that from the name `x_update`.
+    for m in re!(r"(?:select|exec|update|delete)\b").find_iter(&symbols) {
         if !boundary(&symbols, m.start()) || out[m.start()] == b' ' {
             continue;
         }
@@ -233,6 +239,60 @@ pub(crate) fn local_view(direct: &str, tables: bool) -> String {
     }
     String::from_utf8(out).unwrap_or_default()
 }
+/// `local_view(direct, true)` with each query's from-clause put back. The
+/// table a query reads is ordinary q, run in the lambda's scope before the
+/// query, so an assignment there sets a local: q 5 runs
+/// `{[p;c] k:exec c from meta d:p; d:(c inter k) xasc d}`, where the second
+/// statement reads the `d` the first one set. Only an outermost query's
+/// clause, and only one holding no query of its own, whose names could be
+/// columns again; table literals in it stay blank.
+fn with_from_clauses(direct: &str) -> String {
+    let keyword = re!(r"(?:select|exec|update|delete)\b");
+    let mut out = local_view(direct, true).into_bytes();
+    // The same text with no query blanked, to copy a clause back from.
+    let unblanked = keyword.replace_all(direct, |m: &regex::Captures| " ".repeat(m[0].len()));
+    let plain = local_view(&unblanked, true);
+    let symbols = re!(r"`[A-Za-z0-9_./:]*")
+        .replace_all(direct, |m: &regex::Captures| " ".repeat(m[0].len()))
+        .into_owned();
+    let mut covered = 0;
+    for m in keyword.find_iter(&symbols) {
+        if m.start() < covered || !boundary(&symbols, m.start()) {
+            continue;
+        }
+        let (mut depth, mut from, mut clause_end) = (0i32, None, None);
+        let mut end = symbols.len();
+        for (i, b) in symbols.bytes().enumerate().skip(m.end()) {
+            match b {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => depth -= 1,
+                _ => {}
+            }
+            if depth < 0 || (b == b';' && depth == 0) {
+                end = i;
+                break;
+            }
+            if depth == 0 && boundary(&symbols, i) {
+                if from.is_none() && re!(r"^from\b").is_match(&symbols[i..]) {
+                    from = Some(i + 4);
+                } else if from.is_some()
+                    && clause_end.is_none()
+                    && re!(r"^where\b").is_match(&symbols[i..])
+                {
+                    clause_end = Some(i);
+                }
+            }
+        }
+        covered = end;
+        if let Some(from) = from {
+            let to = clause_end.unwrap_or(end);
+            if !keyword.is_match(&symbols[from..to]) {
+                out[from..to].copy_from_slice(&plain.as_bytes()[from..to]);
+            }
+        }
+    }
+    String::from_utf8(out).unwrap_or_default()
+}
 /// The innermost scope containing `at`.
 ///
 /// Scopes are pushed as their `{` is met, so they are ordered by `start` and
@@ -251,9 +311,14 @@ fn statement_view(direct: &str) -> String {
     let mut out = crate::flat_filter(direct).into_bytes();
     let mut i = 0;
     while let Some(m) =
-        re!(r"\b(?:select|exec|update|delete)\b").find(std::str::from_utf8(&out[i..]).unwrap_or(""))
+        re!(r"(?:select|exec|update|delete)\b").find(std::str::from_utf8(&out[i..]).unwrap_or(""))
     {
         let start = i + m.start();
+        // `1_update` is a query, `x_update` a name: `local_view`'s test (#301).
+        if !boundary(std::str::from_utf8(&out).unwrap_or(""), start) {
+            i += m.end();
+            continue;
+        }
         let end = out[start..]
             .iter()
             .position(|&b| b == b';')
@@ -399,7 +464,8 @@ fn shape(s: &str) -> Option<usize> {
     if re!(r"^[01]+b$").is_match(s) {
         return Some(s.len() - 1);
     }
-    if re!(r"^(?:`[A-Za-z][A-Za-z0-9_.]*)+$").is_match(s) {
+    // An empty symbol is an item too: `` `x`y` `` is three.
+    if re!(r"^(?:`(?:[A-Za-z][A-Za-z0-9_.]*)?)+$").is_match(s) {
         return Some(s.bytes().filter(|&b| b == b'`').count());
     }
     // Numbers, a null or an infinity among them: `0N 0N` is two items and
@@ -409,7 +475,35 @@ fn shape(s: &str) -> Option<usize> {
     {
         return Some(s.split_whitespace().count());
     }
+    // Temporal items, digits joined by `.`, `:`, `D` or `T`: `2024.01.01`,
+    // `2024.01m`, `12:30`, `0D00:01`, `2024.01.01D12:00`.
+    if re!(r"^(?:-?\d+(?:[.:DT]\d*)+[a-z]?(?:\s+|$))+$").is_match(s) {
+        return Some(s.split_whitespace().count());
+    }
     None
+}
+
+/// The items in a string literal, read from the view that keeps strings: a
+/// byte each, an escape one item - `"a\"c"` and `"\101bc"` are three.
+fn string_items(s: &str) -> Option<usize> {
+    let inner = s.trim().strip_prefix('"')?.strip_suffix('"')?.as_bytes();
+    let (mut i, mut n) = (0, 0);
+    while i < inner.len() {
+        i += match inner[i] {
+            b'"' => return None,
+            b'\\'
+                if inner[i + 1..].len() >= 3
+                    && inner[i + 1..i + 4].iter().all(u8::is_ascii_digit) =>
+            {
+                4
+            }
+            b'\\' if i + 1 < inner.len() => 2,
+            b'\\' => return None,
+            _ => 1,
+        };
+        n += 1;
+    }
+    Some(n)
 }
 /// The context a top-level line switches to, if it switches: `""` for the
 /// root. `code_line` and `raw_line` are the same line in the two views.
@@ -463,8 +557,8 @@ fn scopes(code: &str, raw: &str) -> (Vec<Scope>, Vec<(usize, String)>) {
                 let params = if sig.named {
                     sig.slots
                         .iter()
-                        .filter(|p| !p.is_empty())
-                        .map(|p| (*p).to_string())
+                        .flat_map(|p| crate::pattern_names(p))
+                        .map(str::to_string)
                         .collect()
                 } else {
                     ["x", "y", "z"].into_iter().map(str::to_string).collect()
@@ -641,6 +735,8 @@ fn call_time(scopes: &[Scope], at: usize, name: &str) -> bool {
     !name.starts_with('.') && scope_at(scopes, at).is_some_and(|s| !scopes[s].namespace.is_empty())
 }
 
+/// Global names, each with where its assignments' values start.
+type Writes = HashMap<String, Vec<usize>>;
 /// Every name this file assigns at global scope, qualified by the namespace
 /// in force, with where each assignment's value starts. `call_time_sets`
 /// credits a `` `n set `` inside a `\d` lambda to the namespace it is written
@@ -707,7 +803,14 @@ fn global_writes(
         if !boundary(code, m.start()) {
             continue;
         }
-        if scope_at(scopes, m.start()).is_none() || a.get(2).is_some() || a[1].contains('.') {
+        // `::` assigns a parameter or local where the lambda has one: q 5
+        // `g:{[b] b::7; b}; g 1` is 7 and leaves no global `b`.
+        let local =
+            || scope_at(scopes, m.start()).is_some_and(|s| scopes[s].locals.contains(&a[1]));
+        if scope_at(scopes, m.start()).is_none()
+            || (a.get(2).is_some() && !local())
+            || a[1].contains('.')
+        {
             globals
                 .entry(qualify(&a[1], ns_at(m.start())))
                 .or_default()
@@ -735,7 +838,9 @@ fn global_writes(
                 .push(m.end());
         }
     }
-    for m in re!(r"`(\.?[A-Za-z][A-Za-z0-9_.]*)\s+set\b|\bset\s*\[\s*`(\.?[A-Za-z][A-Za-z0-9_.]*)")
+    // `` `n set ``, and `` `t insert `` and `` `t upsert ``, which create the
+    // table when there is none (q 5: `` `t insert ([]a:1 2) `` then `t`).
+    for m in re!(r"`(\.?[A-Za-z][A-Za-z0-9_.]*)\s+(?:set|insert|upsert)\b|\b(?:set|insert|upsert)\s*\[\s*`(\.?[A-Za-z][A-Za-z0-9_.]*)")
         .captures_iter(code)
     {
         let whole = m.get(0).unwrap();
@@ -747,6 +852,20 @@ fn global_writes(
             .entry(qualify(name, ns_at(whole.start())))
             .or_default()
             .push(whole.end());
+    }
+    // Each of a symbol list, `` `p`q set'1 2 `` - only with each: q 5
+    // `` `p`q set 1 2 `` defines neither name.
+    for m in re!(r"((?:`\.?[A-Za-z][A-Za-z0-9_.]*){2,})\s*set'").captures_iter(code) {
+        let whole = m.get(0).unwrap();
+        for name in m[1].split('`').skip(1) {
+            if !call_time_sets && call_time(scopes, whole.start(), name) {
+                continue;
+            }
+            globals
+                .entry(qualify(name, ns_at(whole.start())))
+                .or_default()
+                .push(whole.end());
+        }
     }
     for (at, name) in multi_assignments(code) {
         if scope_at(scopes, at).is_none() {
@@ -1170,7 +1289,15 @@ pub fn check(
             }
             end += 1;
         }
-        if let (Some(keys), Some(values)) = (shape(&m[1]), shape(&code[start.end()..end]))
+        // A string value is blank in `code`; its items are in `comments`.
+        let value = &code[start.end()..end];
+        let values = shape(value).or_else(|| {
+            value
+                .trim()
+                .is_empty()
+                .then(|| string_items(&comments[start.end()..end]))?
+        });
+        if let (Some(keys), Some(values)) = (shape(&m[1]), values)
             && keys != values
         {
             out.push(Finding::at(
@@ -1192,12 +1319,32 @@ pub fn check(
     // least two items, or a parenthesised list. `shape` decides the length of
     // each; this pattern only has to find them.
     for m in re!(
-        r"(?P<l>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*;[^()]*\))\s*(?P<op>(?:<>|<=|>=|[+*%&|=<>^-]|\b(?:and|or|mod|div|xexp|xlog)\b)'?|,')\s*(?P<r>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*;[^()]*\))"
+        r#"(?P<l>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*;[^()]*\)|"(?:[^"\\\n]|\\.)*")\s*(?P<op>(?:<>|<=|>=|[+*%&|=<>^-]|\b(?:and|or|mod|div|xexp|xlog)\b)'?|,')\s*(?P<r>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*;[^()]*\)|"(?:[^"\\\n]|\\.)*")"#
     )
-    .captures_iter(code)
+    .captures_iter(comments)
     {
         let whole = m.get(0).unwrap();
         let op = m.name("op").unwrap();
+        // Read in `comments`, where a string is still text: an operand is
+        // code, or a whole string literal - blank in `code`, and not opened
+        // by the closing quote of another - whose items `string_items` counts.
+        // One character is an atom, which pairs with anything: `"a"="cd"`.
+        let measure = |g: regex::Match| -> Option<usize> {
+            let at = g.start();
+            if g.as_str().starts_with('"') {
+                let inside = at > 0
+                    && code.as_bytes()[at - 1] == b' '
+                    && !comments.as_bytes()[at - 1].is_ascii_whitespace();
+                if inside || !code[g.range()].trim().is_empty() {
+                    return None;
+                }
+                string_items(g.as_str()).filter(|&n| n != 1)
+            } else if code.as_bytes()[at] == comments.as_bytes()[at] {
+                shape(&code[g.range()])
+            } else {
+                None
+            }
+        };
         let negative = op.as_str() == "-"
             && code[..op.start()].ends_with(char::is_whitespace)
             && !code[op.end()..].starts_with(char::is_whitespace);
@@ -1217,7 +1364,14 @@ pub fn check(
         {
             continue;
         }
-        if let (Some(l), Some(r)) = (shape(&m["l"]), shape(&m["r"]))
+        // `` `dd`del`div`dfn `` is one symbol vector, not `div` between two:
+        // a word operator written straight after a backtick is a symbol.
+        if code.get(op.range()) != Some(op.as_str())
+            || op.as_str().starts_with(char::is_alphabetic) && code[..op.start()].ends_with('`')
+        {
+            continue;
+        }
+        if let (Some(l), Some(r)) = (measure(m.name("l").unwrap()), measure(m.name("r").unwrap()))
             && l != r
         {
             out.push(Finding::at(
@@ -1253,7 +1407,9 @@ pub fn check(
             .find_iter(code)
             .filter(|m| boundary(code, m.start()))
             .find(|m| {
-                let rest = &raw[m.end()..];
+                // Strings kept, comments blanked: a quote in a comment after
+                // `value d` is not a string to evaluate (#258).
+                let rest = &comments[m.end()..];
                 let statement = &rest[..rest.find([';', '\n']).unwrap_or(rest.len())];
                 match m.as_str() {
                     "eval" => true,
@@ -1304,9 +1460,11 @@ pub fn check(
         if let Some(scope) = scope_starting_at
             .get(&start)
             .map(|&i| &scopes[i])
-            .filter(|s| s.params.len() == 1)
+            .filter(|s| s.params.len() == 1 || !s.named)
             && let Some(m)=re!(r"^\s*([A-Za-z][A-Za-z0-9_]*)\s*[+*%\-]\s*-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?[bhijef]?\s*;?\s*$").captures(&scope.direct)
-                && scope.params.contains(&m[1]) {numeric.insert(name.clone());}
+                // An implicit signature is rank 1 only when the body reads
+                // `x` alone: `{x+1}[`a]` is 'type, `{y+1}[`a]` a projection.
+                && if scope.named { scope.params.contains(&m[1]) } else { &m[1] == "x" } {numeric.insert(name.clone());}
     }
     for call in re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*\[\s*`[A-Za-z][A-Za-z0-9_.]*\s*\]").captures_iter(code) {
         if dynamic {break;}
@@ -1332,7 +1490,7 @@ pub fn check(
         if !scope.named && scope.direct.trim_start().starts_with('[') {
             continue;
         }
-        let direct = local_view(&scope.direct, true);
+        let direct = with_from_clauses(&scope.direct);
         let mut first: HashMap<&str, usize> = HashMap::new();
         let mut every: HashMap<&str, Vec<usize>> = HashMap::new();
         for a in assignment.captures_iter(&direct) {
@@ -1375,9 +1533,13 @@ pub fn check(
                 && {
                     // Unless the statement assigns the name again, which may
                     // run first: `a:a*a:sin x`, `k:2_@[k;..;k:...]` and
-                    // `c:f$[0<count c:g x;c;0]` are fine.
+                    // `c:f$[0<count c:g x;c;0]` are fine. So is one right of
+                    // the bracket that closes around the first: `(b:b&x)|b:x>0`
+                    // runs `b:x>0` first (#302). The walk ends at a `;` of the
+                    // outermost level it has reached, since a later slot of a
+                    // control bracket, `$[c;(a:a+1);a:2]`, runs after.
                     let rest = &direct[assigned..];
-                    let mut depth = 0i32;
+                    let (mut depth, mut floor) = (0i32, 0i32);
                     let end = rest
                         .bytes()
                         .position(|b| {
@@ -1386,7 +1548,8 @@ pub fn check(
                                 b')' | b']' | b'}' => depth -= 1,
                                 _ => {}
                             }
-                            depth < 0 || (b == b';' && depth == 0)
+                            floor = floor.min(depth);
+                            b == b';' && depth <= floor
                         })
                         .unwrap_or(rest.len());
                     !assignment.captures_iter(&rest[..end]).any(|a| {
@@ -1412,7 +1575,8 @@ pub fn check(
                 || scope.params.contains(name)
                 || !boundary(&direct, m.start())
                 || after.starts_with(':')
-                || after.starts_with('.')
+                // A dotted name, not dot-apply: `g . p` reads `g` (#251).
+                || direct[m.end()..].starts_with('.')
                 || (!in_value && !later && !runs_before(&direct, m.start(), assigned))
                 || !seen.insert(name)
             {
@@ -1512,14 +1676,20 @@ pub fn check(
         }
         // Names the body mentions, with symbols blanked first so `` `a `` does
         // not count as a use of `a`, and dotted names left whole so `.ns.a`
-        // does not count as one either.
+        // does not count as one either. Nor does an assignment target:
+        // `{[a;b] a:0; b}` throws the caller's `a` away unread (#262).
         let body = re!(r"`[A-Za-z0-9_./:]*")
             .replace_all(&code[scope.body..scope.end], |m: &regex::Captures| {
                 " ".repeat(m[0].len())
             });
         let mut mentioned: HashSet<&str> = parse_tree_names(&code[scope.body..scope.end]);
         for m in re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(&body) {
-            if boundary(&body, m.start()) && !body[m.end()..].starts_with('.') {
+            if boundary(&body, m.start())
+                && !body[m.end()..].starts_with('.')
+                // `f dtf::` with nothing after reads `dtf` (q 5 parses
+                // `dtf::;` as `(::;`dtf)`), as psaris/funq's ml.q does.
+                && !re!(r"^[ \t]*:(?::[ \t]*[^ \t;\])}\n]|[^:]|$)").is_match(&body[m.end()..])
+            {
                 mentioned.insert(m.as_str());
             }
         }
@@ -2036,7 +2206,8 @@ pub fn check(
             if comments[start..start + statement.len()].contains(['"', '{'])
                     || scope.is_some_and(|s| s.locals.contains(name))
                     || crate::RESERVED.iter().any(|builtin| builtin == name)
-                    || globals.contains_key(&global)
+                    // Keyed exactly: `.cfg:1` defines no root `cfg` (q 5: 'cfg).
+                    || exact.contains_key(&resolved(name, namespace))
                     || elsewhere(&global)
                     || elsewhere(&format!(".{name}"))
                     // QF010 and QF005 already explain these more precisely.
@@ -2278,7 +2449,7 @@ pub fn check(
         code,
         raw,
         comments,
-        (&scopes, &namespaces),
+        (&scopes, &namespaces, &exact),
         dynamic,
         &|name: &str| elsewhere(&qualify(name, "")),
     ));
@@ -2329,7 +2500,7 @@ fn held(code: &str, raw: &str) -> Option<Held> {
     }
     // A string is blank in `code`; its length is in the source.
     if let Some(body) = re!(r#"^"((?:\\[0-7]{3}|\\.|[^"\\])*)"$"#).captures(raw) {
-        let n = re!(r"\\[0-7]{3}|\\.|[^\\]").find_iter(&body[1]).count();
+        let n = crate::q_bytes(&body[1]).len();
         return Some(if n == 1 { Held::Atom } else { Held::Vector(n) });
     }
     // q's own temporal and float atoms: `.z.p`, `.z.d`, `.z.K` and the rest
@@ -2444,8 +2615,9 @@ fn named_values(
     code: &str,
     raw: &str,
     comments: &str,
-    // The scopes, and the `\d` namespace in force from each offset on.
-    (scopes, namespaces): (&[Scope], &[(usize, String)]),
+    // The scopes, the `\d` namespace in force from each offset on, and the
+    // file's global definitions keyed as q resolves them.
+    (scopes, namespaces, globals): (&[Scope], &[(usize, String)], &Writes),
     dynamic: bool,
     elsewhere: &dyn Fn(&str) -> bool,
 ) -> Vec<Finding> {
@@ -2496,8 +2668,9 @@ fn named_values(
         exact.entry(key(name, at)).or_default().extend([0, 0]);
     }
     // A table changed in place by name: `update c:1 from `t` adds a column,
-    // as do `![`t;...]` and `.[`t;...]`, without an assignment to say so.
-    for m in re!(r"(?:\bfrom\s*|[!.]\s*\[\s*)`(\.?[A-Za-z][A-Za-z0-9_.]*)").captures_iter(code) {
+    // as do `![`t;...]`, `.[`t;...]` and `@[`t;...]`, without an assignment
+    // to say so.
+    for m in re!(r"(?:\bfrom\s*|[!.@]\s*\[\s*)`(\.?[A-Za-z][A-Za-z0-9_.]*)").captures_iter(code) {
         let name = m.get(1).unwrap().as_str();
         writes.entry(name).or_default().extend([0, 0]);
         exact
@@ -2801,13 +2974,14 @@ fn named_values(
     // looks for a column, then a variable, and raises the name when neither
     // exists - `select b from ([]a:1 2)` is 'b. So only a name nothing in
     // this file defines: a global or local of that name changes the error
-    // or removes it. `i` is the virtual row index.
-    let defined: HashSet<&str> = writes.keys().copied().collect();
+    // or removes it. `i` is the virtual row index. A global, that is: a
+    // column alias, another table's column or another lambda's local defines
+    // nothing here - q 5 `k:([]a:1 2); f:{b:1; b}; select b from k` is 'b.
     let is_free = |name: &str, at: usize, columns: &[String]| {
         re!(r"^[A-Za-z][A-Za-z0-9_]*$").is_match(name)
             && name != "i"
             && !columns.iter().any(|c| c == name)
-            && !defined.contains(name)
+            && !globals.contains_key(&key(name, at))
             && !elsewhere(name)
             && !crate::RESERVED.iter().any(|n| n == name)
             && !scope_at(scopes, at).is_some_and(|s| scopes[s].locals.contains(name))
@@ -2834,8 +3008,27 @@ fn named_values(
         let phrase = m.get(1).unwrap();
         // Items are separated by `,`, and `by` starts the grouping list,
         // whose columns are looked up the same way.
+        // Only at the top level: a `,` inside a lambda or a call is the
+        // item's own, and so are the names it binds - `x` in
+        // `{"<p>",x,"</p>"} each header` is the lambda's argument (#297).
+        let mut depth = 0i32;
+        let top: Vec<bool> = phrase
+            .as_str()
+            .bytes()
+            .map(|c| {
+                match c {
+                    b'(' | b'[' | b'{' => depth += 1,
+                    b')' | b']' | b'}' => depth -= 1,
+                    _ => {}
+                }
+                depth == 0
+            })
+            .collect();
         let mut cuts = vec![phrase.start()];
         for sep in re!(r",|\bby\b").find_iter(phrase.as_str()) {
+            if !top[sep.start()] {
+                continue;
+            }
             cuts.push(phrase.start() + sep.start());
             cuts.push(phrase.start() + sep.end());
         }
@@ -2859,28 +3052,55 @@ fn named_values(
     }
     // The where phrase, in any of the four: `select from t where c>0` is 'c
     // when t has no c and nothing defines one. Names inside a lambda in the
-    // phrase are that lambda's own and are left alone.
-    for m in re!(r"\b(?:select|exec|update|delete)\b[^\n;]*?\bfrom\s+(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s+where\b([^\n;]*)")
-        .captures_iter(code)
+    // phrase are that lambda's own and are left alone, and so are a nested
+    // query's, which are its table's (#259). The phrase ends at a bracket it
+    // did not open: `(select from t where a>1),select ...` (#260).
+    let mut from = 0;
+    while let Some(m) = re!(r"\b(?:select|exec|update|delete)\b[^\n;]*?\bfrom\s+(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s+where\b([^\n;]*)")
+        .captures_at(code, from)
     {
+        let phrase = m.get(2).unwrap();
+        let mut flat = phrase.as_str().as_bytes().to_vec();
+        let (mut depth, mut lambda, mut nested) = (0i32, 0i32, None);
+        let mut end = flat.len();
+        for (i, &c) in phrase.as_str().as_bytes().iter().enumerate() {
+            match c {
+                b'(' | b'[' => depth += 1,
+                b'{' => lambda += 1,
+                b'}' => {
+                    lambda -= 1;
+                    flat[i] = b' ';
+                }
+                b')' | b']' if depth == 0 => {
+                    end = i;
+                    break;
+                }
+                b')' | b']' => depth -= 1,
+                _ => {}
+            }
+            if nested.is_some_and(|d| depth < d) {
+                nested = None;
+            }
+            if nested.is_none()
+                && phrase
+                    .as_str()
+                    .get(i..)
+                    .is_some_and(|rest| re!(r"^(?:select|exec|update|delete)\b").is_match(rest))
+                && boundary(code, phrase.start() + i)
+            {
+                nested = Some(depth);
+            }
+            if lambda > 0 || nested.is_some() {
+                flat[i] = b' ';
+            }
+        }
+        flat.truncate(end);
+        from = phrase.start() + end.max(1);
+        let flat = String::from_utf8_lossy(&flat).into_owned();
         let table = m.get(1).unwrap();
         let Some(Held::Table(columns, _)) = visible(table.as_str(), table.start()) else {
             continue;
         };
-        let phrase = m.get(2).unwrap();
-        let mut depth = 0i32;
-        let flat: String = phrase
-            .as_str()
-            .chars()
-            .map(|c| {
-                match c {
-                    '{' => depth += 1,
-                    '}' => depth -= 1,
-                    _ => {}
-                }
-                if depth > 0 || c == '}' { ' ' } else { c }
-            })
-            .collect();
         for name in re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(&flat) {
             let at = phrase.start() + name.start();
             if boundary(code, at) && !flat[name.end()..].starts_with('.') && is_free(name.as_str(), at, columns) {

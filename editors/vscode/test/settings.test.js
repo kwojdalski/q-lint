@@ -62,6 +62,10 @@ test("the config file is resolved against the workspace folder", () => {
     "--config",
     absolute,
   ]);
+  // And named to the client, which watches it: the server only re-reads a
+  // file it is told changed.
+  assert.strictEqual(launch(configuration({ configFile: absolute }), ws).configFile, absolute);
+  assert.strictEqual(launch(configuration(), ws).configFile, undefined);
 });
 
 test("server arguments come after the ones settings produce", () => {

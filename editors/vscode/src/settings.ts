@@ -25,6 +25,9 @@ export interface Launch {
   /// `q-lint.serverPath`, trimmed; empty means "find one".
   serverPath: string;
   args: string[];
+  /// `q-lint.configFile` as the server is given it, or undefined: a file
+  /// the client has to watch, since its name need not be `qlinter.toml`.
+  configFile: string | undefined;
   initializationOptions: InitializationOptions;
 }
 
@@ -71,12 +74,14 @@ export function launch(settings: Settings, folder: string | undefined): Launch {
   if (profile) {
     args.push("--profile", profile);
   }
-  const configFile = settings.get<string>("configFile", "").trim();
+  const setting = settings.get<string>("configFile", "").trim();
+  const configFile = !setting
+    ? undefined
+    : isAbsolute(setting) || folder === undefined
+      ? setting
+      : join(folder, setting);
   if (configFile) {
-    args.push(
-      "--config",
-      isAbsolute(configFile) || folder === undefined ? configFile : join(folder, configFile),
-    );
+    args.push("--config", configFile);
   }
   args.push(...strings(settings, "serverArgs"));
 
@@ -86,6 +91,7 @@ export function launch(settings: Settings, folder: string | undefined): Launch {
     enabled: settings.get<boolean>("enable", true),
     serverPath: settings.get<string>("serverPath", "").trim(),
     args,
+    configFile,
     initializationOptions: {
       lint: {
         select: strings(settings, "lint.select"),

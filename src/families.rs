@@ -629,10 +629,12 @@ fn tokens(s: &str) -> Option<Vec<Tok<'_>>> {
             return None;
         } else {
             let two = s.get(i..i + 2);
+            // One character, not one byte: q refuses a non-ASCII one
+            // ('char), but the next slice must not start inside it.
             let len = if matches!(two, Some("<>" | "<=" | ">=")) {
                 2
             } else {
-                1
+                s[i..].chars().next().map_or(1, char::len_utf8)
             };
             out.push(Tok::Op(&s[i..i + len]));
             i += len;
