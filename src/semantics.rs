@@ -740,7 +740,9 @@ fn global_writes(
                 .push(m.end());
         }
     }
-    for m in re!(r"`(\.?[A-Za-z][A-Za-z0-9_.]*)\s+set\b|\bset\s*\[\s*`(\.?[A-Za-z][A-Za-z0-9_.]*)")
+    // `` `n set ``, and `` `t insert `` and `` `t upsert ``, which create the
+    // table when there is none (q 5: `` `t insert ([]a:1 2) `` then `t`).
+    for m in re!(r"`(\.?[A-Za-z][A-Za-z0-9_.]*)\s+(?:set|insert|upsert)\b|\b(?:set|insert|upsert)\s*\[\s*`(\.?[A-Za-z][A-Za-z0-9_.]*)")
         .captures_iter(code)
     {
         let whole = m.get(0).unwrap();

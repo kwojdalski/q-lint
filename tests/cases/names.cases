@@ -406,6 +406,12 @@ f:{[] aa:bb; aa}
 `bb set 1
 f:{[] aa:bb; aa}
 
+=== clean | insert and upsert by name create the table (q 5: `t insert ([]a:1 2) then t runs)
+`t insert ([]a:1 2)
+r:t
+`u upsert ([]a:1 2)
+s:u
+
 === clean | a compound assignment at the root defines the name (q 5: a,:1; b:a is ,1)
 bb,:1
 f:{[] aa:bb; aa}
