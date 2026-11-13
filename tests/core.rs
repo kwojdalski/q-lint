@@ -483,3 +483,79 @@ fn a_nested_lambda_after_a_sibling_is_scanned_once() {
     let found = lint("f:{a:{x}; b:{count:1; x}; a}", "t.q", Profile::Style);
     assert_eq!(found.iter().filter(|f| f.code == "QF003").count(), 1);
 }
+
+/// A non-ASCII character right before a glyph: QE008 once sliced the two
+/// bytes before the glyph and split the `é` (#234). q refuses the line with
+/// 'char, so nothing need be reported, only nothing must panic.
+#[test]
+fn non_ascii_before_a_glyph_does_not_panic() {
+    for source in ["r:`café-x\n", "é-x\n", "x:é+1\n"] {
+        lint(source, "t.q", Profile::Uqf);
+    }
+}
+/// A non-ASCII character in a select list: the qSQL tokenizer once took it
+/// as a one-byte operator and sliced through the `€` (#235).
+#[test]
+fn non_ascii_in_a_select_list_does_not_panic() {
+    for source in [
+        "r:select a€ from t\n",
+        "r:select €,b from t\n",
+        "r:exec a+€ by b from t\n",
+    ] {
+        lint(source, "t.q", Profile::Uqf);
+    }
+}
+/// A non-ASCII symbol at the end of a qSQL phrase: the where-phrase walk
+/// asked `boundary` about every byte and it sliced through the `é` (#236).
+#[test]
+fn non_ascii_symbol_in_a_qsql_phrase_does_not_panic() {
+    for source in [
+        "r:select from t where c=`é\n",
+        "r:select `é from t\n",
+        "r:select from t where c in `é\n",
+    ] {
+        lint(source, "t.q", Profile::Uqf);
+    }
+}
+/// A qSQL keyword as a parameter is refused when the lambda is parsed, not
+/// when it is called: q 5 `parse "{[select] 1}"` is 'from, as are exec,
+/// update and delete (#240). Any other builtin still fails only its calls.
+#[test]
+fn qsql_keyword_parameter_names_the_parse_error() {
+    for source in [
+        "f:{[select] 1}\n",
+        "f:{[exec] 1}\n",
+        "f:{[update] 1}\n",
+        "f:{[count;delete] 1}\n",
+    ] {
+        let f = lint(source, "t.q", Profile::Style);
+        let f = f.iter().find(|f| f.code == "QF001").unwrap();
+        assert!(
+            f.detail.contains("refuses to define this lambda ('from)"),
+            "{source}: {}",
+            f.detail
+        );
+    }
+    let f = lint("f:{[count] 1}\n", "t.q", Profile::Style);
+    assert!(
+        f[0].detail.contains("refuses every call"),
+        "{}",
+        f[0].detail
+    );
+}
+/// QB001 and QB002 report at the code they are about, not at column 1, and
+/// QB002 quotes the pattern as it is written rather than with Rust escapes
+/// (#243).
+#[test]
+fn self_comparison_and_like_report_at_the_token() {
+    let f = lint(
+        "t:([]a:1 2)\nx:1;  y:\"abc\" like \"a\\\\*b*é*\"\nr:select from t where a=a\n",
+        "t.q",
+        Profile::Style,
+    );
+    let like = f.iter().find(|f| f.code == "QB002").unwrap();
+    assert_eq!((like.line, like.column), (2, Some(15)));
+    assert_eq!(like.detail, "like \"a\\\\*b*é*\"");
+    let same = f.iter().find(|f| f.code == "QB001").unwrap();
+    assert_eq!((same.line, same.column), (3, Some(23)));
+}

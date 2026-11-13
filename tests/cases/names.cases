@@ -182,6 +182,17 @@ f:{[median] median}
 === QF012 | a reserved name assigned at the root
 count:42
 
+=== QF012 | a reserved name assigned in a later statement on the line (q 5: y:1;sum:2 is 'assign)
+y:1;sum:2
+
+=== QF004 profile: general | and inside a namespace (q 5: x:1;count:2 under \d .foo is 'assign)
+\d .foo
+x:1;count:2
+\d .
+
+=== QF003 | a later statement inside a lambda is a local, QF003's and not QF012's
+h:{[a] b:a;sum:b;sum}
+
 === QF012 | one q silently accepts, and the linter still flags
 from:1
 

@@ -1576,8 +1576,21 @@ pub(crate) fn apply_not_subtract(name: &str, literal: &str) -> String {
     )
 }
 
+/// Whether `s` is an atom literal, a number or one symbol, which dot apply
+/// refuses as an argument list. Not `10b` or `0x0102`: each digit of a
+/// boolean, and each pair of a byte literal past the first, is another item
+/// (q 5: `f . 10b` is 1i, `.[f;0x0102]` 3i, and `f . 1b` and `f . 0x01` 'type).
+fn scalar_literal(s: &str) -> bool {
+    re!(r"^(?:-?\d[A-Za-z0-9.]*|`[A-Za-z0-9_.]*)$").is_match(s)
+        && !re!(r"^[01]{2,}b$|^0x[0-9a-fA-F]{3,}$").is_match(s)
+}
+
 fn boundary(s: &str, at: usize) -> bool {
-    let before = &s[..at];
+    // Callers walk bytes, so `at` can fall inside a multi-byte character -
+    // the middle of a token, never the start of one.
+    let Some(before) = s.get(..at) else {
+        return false;
+    };
     match before.chars().next_back() {
         None => true,
         // `_` joins a name only after that name's own letters: `x_ns` is one
@@ -2760,7 +2773,21 @@ pub fn lint_selecting(
             .into_iter()
             .filter(|p| !matches!(**p, "by" | "do" | "from" | "if" | "while"))
             .collect();
-        if !bad.is_empty() {
+        // A qSQL keyword is worse: q 5 cannot parse the lambda at all, and a
+        // script stops at its definition - `{[select] 1}` is 'from, and so
+        // are exec, update and delete.
+        if bad
+            .iter()
+            .any(|p| matches!(**p, "select" | "exec" | "update" | "delete"))
+        {
+            add(
+                at,
+                "QF001",
+                format!(
+                    "Builtin parameter name(s): {bad:?}; q refuses to define this lambda ('from)"
+                ),
+            );
+        } else if !bad.is_empty() {
             add(
                 at,
                 "QF001",
@@ -3548,7 +3575,7 @@ pub fn lint_selecting(
         if !operand_ends(code, m.end() + end) {
             continue;
         }
-        if re!(r"^(?:-?\d[A-Za-z0-9.]*|`[A-Za-z0-9_.]*)[ \t]*$").is_match(arg) {
+        if scalar_literal(arg.trim_end_matches([' ', '\t'])) {
             add(
                 m.start() + 1,
                 "QA009",
@@ -3568,10 +3595,21 @@ pub fn lint_selecting(
             continue;
         };
         let parts = slots(&code[at + 2..close - 1]);
+        let f_end = at + 2 + parts[0].trim_end().len();
+        // QA004 in brackets: `.[f;()]` is 'type as `f . ()` is, and so is the
+        // trap `.[f;();h]`, whose handler swallows it (q 5). With data on
+        // the left three arguments are an amend - `.[d;();f]` applies f to
+        // d - so the trap only for a lambda written out or named here.
+        let second = at + 2 + parts[0].len() + 1;
+        if (parts.len() == 2
+            || parts.len() == 3 && applied(at, parts[0].trim_end(), f_end).is_some())
+            && re!(r"^\s*\(\s*\)\s*$").is_match(&v.comments[second..second + parts[1].len()])
+        {
+            add(at, "QA004", "`.[f;()]`".into());
+        }
         if parts.len() != 2 {
             continue;
         }
-        let f_end = at + 2 + parts[0].trim_end().len();
         if let Some((rank, id)) = applied(at, parts[0].trim_end(), f_end)
             && let Some(detail) = items(parts[1]).and_then(|n| too_many(rank, n))
         {
@@ -3634,10 +3672,7 @@ pub fn lint_selecting(
             from += part.len() + 1;
             empty
         });
-        if elided
-            || parts.len() < 2
-            || !re!(r"^(?:-?\d[A-Za-z0-9.]*|`[A-Za-z0-9_.]*)$").is_match(parts[1].trim())
-        {
+        if elided || parts.len() < 2 || !scalar_literal(parts[1].trim()) {
             continue;
         }
         add(
@@ -3683,6 +3718,12 @@ pub fn lint_selecting(
                 .trim_start_matches([' ', '\t'])
                 .starts_with('[')
         {
+            continue;
+        }
+        // So is any second glyph that an iterator derives a function from,
+        // applied with brackets: q 5 runs `x||/[y]`, `x**\[y]`, `x==/[y]`
+        // and `x||':[y]` (#237), and refuses `x||/y` with '/, not as a pair.
+        if re!(r"^(?:[/\\']:?)+\[").is_match(&code[m.end()..]) {
             continue;
         }
         let long = !matches!(m.as_str(), "==" | "!=" | "&&" | "||" | "+=" | "-=" | "*=");
@@ -4709,42 +4750,57 @@ pub fn lint_selecting(
                 );
             }
         }
-        // Of the 181 reserved names q refuses to assign inside a namespace
-        // all but two: `from` and `by` are accepted there and read back fine,
-        // checked one by one. TorQ's email settings define `.email.from`.
-        if namespace
-            && let Some(m) = re!(r"^([a-z][a-zA-Z0-9_]*)\s*:").captures(line)
-            && RESERVED.iter().any(|n| n == &m[1])
-            && !matches!(&m[1], "from" | "by")
-        {
-            add(offset, "QF004", format!("Namespace-level `{}`", &m[1]));
+        // Each statement on the line, not only the first, when the line opens
+        // at the root: `y:1;sum:2` is 'assign as `sum:2` is (#244).
+        let mut heads = vec![(0, line)];
+        if line_depth == 0 {
+            let mut from = 0;
+            for part in slots(line) {
+                let lead = part.len() - part.trim_start().len();
+                if from > 0 {
+                    heads.push((from + lead, &part[lead..]));
+                }
+                from += part.len() + 1;
+            }
         }
-        // The root is where q is inconsistent about reserved names:
-        // `count:1` and `where:1` it refuses ('assign), `select:1` it
-        // cannot parse, but `from:1` and `by:1` it silently accepts. A
-        // lambda body at column 0 must not be mistaken for root scope,
-        // hence the brace depth.
-        if !namespace
-            && line_depth == 0
-            && let Some(m) = re!(r"^([a-z][a-zA-Z0-9_]*)\s*:").captures(line)
-            && !line[m.get(0).unwrap().end()..].starts_with(':')
-            && RESERVED.iter().any(|n| n == &m[1])
-        {
-            add(
-                offset,
-                "QF012",
-                // Checked one by one on q 5: every reserved name but these
-                // two is refused at the root.
-                if matches!(&m[1], "from" | "by") {
-                    format!(
-                        "Root-level assignment to `{}`: q accepts it, but the name is a query \
-                         keyword everywhere else",
-                        &m[1]
-                    )
-                } else {
-                    format!("Root-level assignment to `{}`: q refuses it", &m[1])
-                },
-            );
+        for (at, head) in heads {
+            // Of the 181 reserved names q refuses to assign inside a namespace
+            // all but two: `from` and `by` are accepted there and read back fine,
+            // checked one by one. TorQ's email settings define `.email.from`.
+            if namespace
+                && let Some(m) = re!(r"^([a-z][a-zA-Z0-9_]*)\s*:").captures(head)
+                && RESERVED.iter().any(|n| n == &m[1])
+                && !matches!(&m[1], "from" | "by")
+            {
+                add(offset + at, "QF004", format!("Namespace-level `{}`", &m[1]));
+            }
+            // The root is where q is inconsistent about reserved names:
+            // `count:1` and `where:1` it refuses ('assign), `select:1` it
+            // cannot parse, but `from:1` and `by:1` it silently accepts. A
+            // lambda body at column 0 must not be mistaken for root scope,
+            // hence the brace depth.
+            if !namespace
+                && line_depth == 0
+                && let Some(m) = re!(r"^([a-z][a-zA-Z0-9_]*)\s*:").captures(head)
+                && !head[m.get(0).unwrap().end()..].starts_with(':')
+                && RESERVED.iter().any(|n| n == &m[1])
+            {
+                add(
+                    offset + at,
+                    "QF012",
+                    // Checked one by one on q 5: every reserved name but these
+                    // two is refused at the root.
+                    if matches!(&m[1], "from" | "by") {
+                        format!(
+                            "Root-level assignment to `{}`: q accepts it, but the name is a query \
+                             keyword everywhere else",
+                            &m[1]
+                        )
+                    } else {
+                        format!("Root-level assignment to `{}`: q refuses it", &m[1])
+                    },
+                );
+            }
         }
         // The parentheses have to be empty in the source - a string between
         // them is blank in `line`, so `(!).("S=;")` would pass for `. ()` -
@@ -4930,8 +4986,17 @@ pub fn lint_selecting(
                 let rest = line[whole..].trim_start_matches([' ', '\t']);
                 let ends =
                     rest.is_empty() || rest.starts_with([',', ';', ')', ']', '}', '\n', '\r']);
-                if m[1] == m[3] && ends {
-                    add(offset, "QB001", format!("`{}{}{}`", &m[1], &m[2], &m[3]));
+                // And the comparison is in the query's own statement, not
+                // another one on its line: `n:a=a; r:select from t`.
+                let start = m.get(0).unwrap().start();
+                let head = &line[line[..start].rfind(';').map_or(0, |p| p + 1)..start];
+                let query = re!(r"\b(?:where|select|exec|update|delete)\b").is_match(head);
+                if m[1] == m[3] && ends && query {
+                    add(
+                        offset + start,
+                        "QB001",
+                        format!("`{}{}{}`", &m[1], &m[2], &m[3]),
+                    );
                     search = m.get(0).unwrap().end();
                 } else {
                     search = m.get(3).unwrap().start();
@@ -5121,7 +5186,11 @@ pub fn lint_selecting(
                 );
             }
         }
-        for m in re!(r#"\blike\s*"([^"]*)""#).captures_iter(literals) {
+        // Infix, or the pattern as the second argument in brackets:
+        // `like["abc";"a*b*"]` is 'nyi as well.
+        for m in
+            re!(r#"\blike\s*(?:\[(?:[^;\[\]"]|"[^"]*")*;\s*)?"([^"]*)""#).captures_iter(literals)
+        {
             // q 5 takes one `*` anywhere, or a leading and a trailing pair:
             // "abc" like "a*c" and "*b*" are 1b, "a*b*" and "**" are 'nyi.
             // A `*` inside `[...]` is a literal star.
@@ -5129,7 +5198,11 @@ pub fn lint_selecting(
             let stars = re!(r"\[[^\]]*\]").replace_all(pat, "").matches('*').count();
             let ends = pat.len() > 2 && pat.starts_with('*') && pat.ends_with('*');
             if stars > 2 || (stars == 2 && !ends) {
-                add(offset, "QB002", format!("like {pat:?}"));
+                add(
+                    offset + m.get(0).unwrap().start(),
+                    "QB002",
+                    format!("like \"{pat}\""),
+                );
             }
         }
         // QB003: `", " sv string clash," - two workers share it"`. `,` binds

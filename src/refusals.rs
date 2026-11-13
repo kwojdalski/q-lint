@@ -694,8 +694,11 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
             || rest.starts_with(":-") && rest[2..].starts_with(|c: char| c.is_ascii_digit());
         let next = continued(rest);
         let spaced = next.len() < rest.len();
+        // A `.` before a letter starts a name, not a number: q 5 refuses
+        // `-.foo.x` and `-.z.p` with '-, as it does `#.foo.x` (#241).
         let operand = colon
             || next.starts_with(|c: char| c.is_ascii_alphabetic() || "`(\"".contains(c))
+            || re!(r"^\.[A-Za-z]").is_match(next)
             || (next.starts_with(|c: char| c.is_ascii_digit() || c == '.')
                 && (g != b'-' || spaced));
         if !operand {
@@ -746,8 +749,12 @@ fn opens_expression(comments: &str, i: usize, line_start: usize) -> bool {
         "|>", ":=", "%%", "++", ">>",
     ];
     let before = comments[..i].trim_end_matches([' ', '\t', '\r', '\n']);
-    let adjacent = before.len() == i;
-    if adjacent && i > 0 && PAIRS.contains(&&comments[i - 1..=i]) {
+    // `get`, not a slice: the byte before may end a multi-byte character.
+    let paired = before.len() == i
+        && i.checked_sub(1)
+            .and_then(|p| comments.get(p..=i))
+            .is_some_and(|pair| PAIRS.contains(&pair));
+    if paired {
         return false;
     }
     // After an iterator the next glyph can only be applied monadically:
@@ -767,8 +774,7 @@ fn opens_expression(comments: &str, i: usize, line_start: usize) -> bool {
         || (before
             .bytes()
             .next_back()
-            .is_some_and(|p| GLYPHS.contains(&p))
-            && !(adjacent && PAIRS.contains(&&comments[i - 1..=i])))
+            .is_some_and(|p| GLYPHS.contains(&p)))
 }
 
 /// QE009. A derived function applied by juxtaposition at the start of an

@@ -98,6 +98,17 @@ d:= [1;1]
 e:x+=[1;1]
 f:x==[1;1]
 
+=== clean | a second glyph derived by an iterator and applied with brackets (q 5: x||/[y] is 4 4, x**/[y] 12 24)
+x:1 2;y:3 4
+a:x||/[y]
+b:x**/[y]
+c:x&&/[y]
+d:x==/[y]
+e:x:=/[y]
+f:x->/[y]
+g:x||':[y]
+h:x**\[y]
+
 === QE004 | without the brackets the pair is refused (q 5: x:=1 and x:=(1;1) are '=)
 a:=1
 b:=(1;1)

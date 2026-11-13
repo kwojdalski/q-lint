@@ -402,7 +402,8 @@ fn shape(s: &str) -> Option<usize> {
     if re!(r"^[01]+b$").is_match(s) {
         return Some(s.len() - 1);
     }
-    if re!(r"^(?:`[A-Za-z][A-Za-z0-9_.]*)+$").is_match(s) {
+    // An empty symbol is an item too: `` `x`y` `` is three.
+    if re!(r"^(?:`(?:[A-Za-z][A-Za-z0-9_.]*)?)+$").is_match(s) {
         return Some(s.bytes().filter(|&b| b == b'`').count());
     }
     // Numbers, a null or an infinity among them: `0N 0N` is two items and
@@ -412,7 +413,35 @@ fn shape(s: &str) -> Option<usize> {
     {
         return Some(s.split_whitespace().count());
     }
+    // Temporal items, digits joined by `.`, `:`, `D` or `T`: `2024.01.01`,
+    // `2024.01m`, `12:30`, `0D00:01`, `2024.01.01D12:00`.
+    if re!(r"^(?:-?\d+(?:[.:DT]\d*)+[a-z]?(?:\s+|$))+$").is_match(s) {
+        return Some(s.split_whitespace().count());
+    }
     None
+}
+
+/// The items in a string literal, read from the view that keeps strings: a
+/// byte each, an escape one item - `"a\"c"` and `"\101bc"` are three.
+fn string_items(s: &str) -> Option<usize> {
+    let inner = s.trim().strip_prefix('"')?.strip_suffix('"')?.as_bytes();
+    let (mut i, mut n) = (0, 0);
+    while i < inner.len() {
+        i += match inner[i] {
+            b'"' => return None,
+            b'\\'
+                if inner[i + 1..].len() >= 3
+                    && inner[i + 1..i + 4].iter().all(u8::is_ascii_digit) =>
+            {
+                4
+            }
+            b'\\' if i + 1 < inner.len() => 2,
+            b'\\' => return None,
+            _ => 1,
+        };
+        n += 1;
+    }
+    Some(n)
 }
 /// The context a top-level line switches to, if it switches: `""` for the
 /// root. `code_line` and `raw_line` are the same line in the two views.
@@ -1198,7 +1227,15 @@ pub fn check(
             }
             end += 1;
         }
-        if let (Some(keys), Some(values)) = (shape(&m[1]), shape(&code[start.end()..end]))
+        // A string value is blank in `code`; its items are in `comments`.
+        let value = &code[start.end()..end];
+        let values = shape(value).or_else(|| {
+            value
+                .trim()
+                .is_empty()
+                .then(|| string_items(&comments[start.end()..end]))?
+        });
+        if let (Some(keys), Some(values)) = (shape(&m[1]), values)
             && keys != values
         {
             out.push(Finding::at(
@@ -1220,12 +1257,32 @@ pub fn check(
     // least two items, or a parenthesised list. `shape` decides the length of
     // each; this pattern only has to find them.
     for m in re!(
-        r"(?P<l>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*;[^()]*\))\s*(?P<op>(?:<>|<=|>=|[+*%&|=<>^-]|\b(?:and|or|mod|div|xexp|xlog)\b)'?|,')\s*(?P<r>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*;[^()]*\))"
+        r#"(?P<l>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*;[^()]*\)|"(?:[^"\\\n]|\\.)*")\s*(?P<op>(?:<>|<=|>=|[+*%&|=<>^-]|\b(?:and|or|mod|div|xexp|xlog)\b)'?|,')\s*(?P<r>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*;[^()]*\)|"(?:[^"\\\n]|\\.)*")"#
     )
-    .captures_iter(code)
+    .captures_iter(comments)
     {
         let whole = m.get(0).unwrap();
         let op = m.name("op").unwrap();
+        // Read in `comments`, where a string is still text: an operand is
+        // code, or a whole string literal - blank in `code`, and not opened
+        // by the closing quote of another - whose items `string_items` counts.
+        // One character is an atom, which pairs with anything: `"a"="cd"`.
+        let measure = |g: regex::Match| -> Option<usize> {
+            let at = g.start();
+            if g.as_str().starts_with('"') {
+                let inside = at > 0
+                    && code.as_bytes()[at - 1] == b' '
+                    && !comments.as_bytes()[at - 1].is_ascii_whitespace();
+                if inside || !code[g.range()].trim().is_empty() {
+                    return None;
+                }
+                string_items(g.as_str()).filter(|&n| n != 1)
+            } else if code.as_bytes()[at] == comments.as_bytes()[at] {
+                shape(&code[g.range()])
+            } else {
+                None
+            }
+        };
         let negative = op.as_str() == "-"
             && code[..op.start()].ends_with(char::is_whitespace)
             && !code[op.end()..].starts_with(char::is_whitespace);
@@ -1245,7 +1302,14 @@ pub fn check(
         {
             continue;
         }
-        if let (Some(l), Some(r)) = (shape(&m["l"]), shape(&m["r"]))
+        // `` `dd`del`div`dfn `` is one symbol vector, not `div` between two:
+        // a word operator written straight after a backtick is a symbol.
+        if code.get(op.range()) != Some(op.as_str())
+            || op.as_str().starts_with(char::is_alphabetic) && code[..op.start()].ends_with('`')
+        {
+            continue;
+        }
+        if let (Some(l), Some(r)) = (measure(m.name("l").unwrap()), measure(m.name("r").unwrap()))
             && l != r
         {
             out.push(Finding::at(
@@ -1334,9 +1398,11 @@ pub fn check(
         if let Some(scope) = scope_starting_at
             .get(&start)
             .map(|&i| &scopes[i])
-            .filter(|s| s.params.len() == 1)
+            .filter(|s| s.params.len() == 1 || !s.named)
             && let Some(m)=re!(r"^\s*([A-Za-z][A-Za-z0-9_]*)\s*[+*%\-]\s*-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?[bhijef]?\s*;?\s*$").captures(&scope.direct)
-                && scope.params.contains(&m[1]) {numeric.insert(name.clone());}
+                // An implicit signature is rank 1 only when the body reads
+                // `x` alone: `{x+1}[`a]` is 'type, `{y+1}[`a]` a projection.
+                && if scope.named { scope.params.contains(&m[1]) } else { &m[1] == "x" } {numeric.insert(name.clone());}
     }
     for call in re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*\[\s*`[A-Za-z][A-Za-z0-9_.]*\s*\]").captures_iter(code) {
         if dynamic {break;}

@@ -1,3 +1,21 @@
+=== QT001 | a string, temporal or trailing-empty-symbol vector is counted too (q 5: each is 'length)
+a:`a`b!"abc"
+b:`a`b!2024.01.01 2024.01.02 2024.01.03
+c:`a`b!`x`y`
+d:`a`b!12:00 13:00 14:00
+e:`a`b!"a\"c"
+
+=== QT006 | two strings of different lengths (q 5: "ab"="abc" is 'length)
+d:"ab"="abc"
+
+=== clean | strings of the right length, and a one-character string, which is an atom (q 5: "a"="cd" is 00b)
+a:`a`b!"ab"
+b:"ab"="cd"
+c:"a"="cd"
+d:`a`b!2024.01.01 2024.01.02
+e:s:"x 1 2+3"
+f:`dd`del`div`dfn`dl
+
 === QT001 | a literal dictionary whose sides differ in length
 f:{[] `a`b!1 2 3}
 
@@ -9,6 +27,14 @@ f:{[k;v] k!v}
 
 === QT002 | a symbol passed to a function that is visibly numeric
 f:{[r] r+1};f[`bad]
+
+=== QT002 | and one with an implicit x (q 5: g:{x+1}; g[`a] is 'type)
+g:{x+1}
+s:g[`a]
+
+=== clean | an implicit y makes it rank 2, so one argument projects (q 5: {y+1}[`a] is a projection)
+h:{y+1}
+s:h[`a]
 
 === clean | the same function given a number
 f:{[r] r+1};f[2]

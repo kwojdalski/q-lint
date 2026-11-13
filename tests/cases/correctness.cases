@@ -54,6 +54,11 @@ r13:select a by a in 1 from t
 === QB001 | a qSQL filter comparing a column to itself
 select from t where a=a
 
+=== clean | a self-comparison in another statement than the query (#239)
+a:0n;t:([]b:1 2)
+isnan:a=a; r:select from t
+f:{[x] x~x}; g:{exec b from t}
+
 === clean | comparing two different columns
 select from t where a=b
 
@@ -62,6 +67,13 @@ select from t where sym like "a*b*"
 
 === QB002 | or two together (q 5: 'nyi)
 select from t where sym like "a**"
+
+=== QB002 | the pattern as like's second argument in brackets (q 5: like["abc";"a*b*"] is 'nyi)
+r:like["abc";"a*b*"]
+s:like[t`sym;"a*b*"]
+
+=== clean | and one interior wildcard in brackets is fine (q 5: like["abc";"a*c"] is 1b)
+r:like["a;b";"a*c"]
 
 === clean | one interior wildcard is supported in q 5 ("abc" like "a*c" is 1b)
 select from t where sym like "a*b"
