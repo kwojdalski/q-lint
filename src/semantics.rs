@@ -755,6 +755,20 @@ fn global_writes(
             .or_default()
             .push(whole.end());
     }
+    // Each of a symbol list, `` `p`q set'1 2 `` - only with each: q 5
+    // `` `p`q set 1 2 `` defines neither name.
+    for m in re!(r"((?:`\.?[A-Za-z][A-Za-z0-9_.]*){2,})\s*set'").captures_iter(code) {
+        let whole = m.get(0).unwrap();
+        for name in m[1].split('`').skip(1) {
+            if !call_time_sets && call_time(scopes, whole.start(), name) {
+                continue;
+            }
+            globals
+                .entry(qualify(name, ns_at(whole.start())))
+                .or_default()
+                .push(whole.end());
+        }
+    }
     for (at, name) in multi_assignments(code) {
         if scope_at(scopes, at).is_none() {
             let end = at + code[at..].find(':').unwrap() + 1;
