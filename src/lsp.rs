@@ -414,8 +414,24 @@ pub fn serve(
             // behaviour and matches what rust-analyzer does.
             None => return Ok(if shutdown_requested { 0 } else { 1 }),
         };
-        let method = message["method"].as_str().unwrap_or("").to_string();
         let id = message.get("id").cloned();
+        let method = match message.get("method") {
+            Some(Value::String(method)) => method.clone(),
+            // A response, to a request of the server's own. JSON-RPC 2.0 §5:
+            // a response is never answered - an error sent back would carry
+            // the id of one of the client's own requests.
+            None if message.get("result").is_some() || message.get("error").is_some() => continue,
+            // Not a valid Request object (JSON-RPC 2.0 §5.1): -32600, not
+            // MethodNotFound, and with the id when there is one to read.
+            _ => {
+                send(
+                    writer,
+                    json!({"id": id.unwrap_or(Value::Null), "error": {"code": INVALID_REQUEST,
+                           "message": "a request's method must be a string"}}),
+                )?;
+                continue;
+            }
+        };
         let params = message.get("params").cloned().unwrap_or(Value::Null);
 
         match (method.as_str(), id) {

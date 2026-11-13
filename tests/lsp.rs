@@ -635,6 +635,21 @@ fn a_second_shutdown_is_an_invalid_request() {
 }
 
 #[test]
+fn a_response_is_not_answered_and_a_bad_method_is_an_invalid_request() {
+    // JSON-RPC 2.0 §5: a response is never replied to. §5.1: a method that is
+    // not a string makes an Invalid Request, -32600, not MethodNotFound.
+    let mut server = Server::start();
+    server.initialize();
+    server.send(json!({"jsonrpc":"2.0","id":"x","result":{"applied":true}}));
+    server.send(json!({"jsonrpc":"2.0","id":6,"error":{"code":-1,"message":"m"}}));
+    server.send(json!({"jsonrpc":"2.0","id":5,"method":42}));
+    let reply = server.receive();
+    assert_eq!(reply["id"], 5, "the responses were answered: {reply}");
+    assert_eq!(reply["error"]["code"], -32600, "{reply}");
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
 fn exit_without_shutdown_reports_a_nonzero_code() {
     // The protocol's own rule, and the only way a supervisor can tell a
     // clean stop from an editor that died.
