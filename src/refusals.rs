@@ -402,7 +402,7 @@ fn signals(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<F
     // bracket before it: `{[x]` + `  '1}` is a signal (q 5: 'stype).
     // A list cannot be signalled either: q 5 `'(1;2)`, `'()`, `'(1)` and
     // `` '`a`b `` are each 'stype.
-    for m in re!(r#"(')(-?\d[A-Za-z0-9.]*|"(?:[^"\\]|\\.)"|\(\s*\)|\(\s*-?\d[A-Za-z0-9.]*\s*\)|\([^()"]*;[^()]*\)|(?:`[A-Za-z0-9_.]*){2,})"#).captures_iter(comments) {
+    for m in re!(r#"(')(-?\d[A-Za-z0-9.]*|"(?:\\[0-7]{3}|\\.|[^"\\])+"|\(\s*\)|\(\s*-?\d[A-Za-z0-9.]*\s*\)|\([^()"]*;[^()]*\)|(?:`[A-Za-z0-9_.]*){2,})"#).captures_iter(comments) {
         let quote = m.get(1).unwrap();
         let value = m.get(2).unwrap();
         if code.as_bytes()[quote.start()] != b'\'' {
@@ -415,6 +415,13 @@ fn signals(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<F
             || before.is_empty()
             || before.ends_with(['[', '(', ';', '{'])
             || re!(r"\{\s*\[[A-Za-z0-9_; \t]*\]$").is_match(before))
+        {
+            continue;
+        }
+        // A one-char string is a char atom, counted as q does, in bytes:
+        // `"é"` is a two-byte string and `"\012"` one char (#229).
+        if value.as_str().starts_with('"')
+            && crate::q_bytes(&value.as_str()[1..value.len() - 1]).len() != 1
         {
             continue;
         }

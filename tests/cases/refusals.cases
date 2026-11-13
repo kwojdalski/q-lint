@@ -60,6 +60,12 @@ r2:update a:1 from t
 === QT025 | signalling a number
 f:{'1}
 
+=== QT025 | an octal escape is one char (q 5: '"\012" is 'stype)
+g:{'"\012"}
+
+=== clean | a non-ASCII char is two bytes, so a string (q 5: '"é" signals "\303\251")
+f:{'"é"}
+
 === QT025 | a one-character string is a char atom, not a string
 f:{'"x"}
 
