@@ -398,6 +398,13 @@ f:{[] aa:bb; aa}
 .cfg:1
 b:cfg
 
+=== QF018 | :: on a parameter assigns the parameter, not a global (q 5: g 1 is 7, then b is 'b)
+g:{[b] b::7; b}
+r:b
+
+=== QF005 | nor does :: on a local make it a global for a nested lambda (q 5: h 1 is 'c)
+h:{[a] c:a; c::a+1; {c}[]}
+
 === clean | a global write inside another function supplies the name
 init:{[] bb::1}
 f:{[] aa:bb; aa}

@@ -712,7 +712,14 @@ fn global_writes(
         if !boundary(code, m.start()) {
             continue;
         }
-        if scope_at(scopes, m.start()).is_none() || a.get(2).is_some() || a[1].contains('.') {
+        // `::` assigns a parameter or local where the lambda has one: q 5
+        // `g:{[b] b::7; b}; g 1` is 7 and leaves no global `b`.
+        let local =
+            || scope_at(scopes, m.start()).is_some_and(|s| scopes[s].locals.contains(&a[1]));
+        if scope_at(scopes, m.start()).is_none()
+            || (a.get(2).is_some() && !local())
+            || a[1].contains('.')
+        {
             globals
                 .entry(qualify(&a[1], ns_at(m.start())))
                 .or_default()
