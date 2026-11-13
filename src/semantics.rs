@@ -204,7 +204,10 @@ pub(crate) fn local_view(direct: &str, tables: bool) -> String {
         .replace_all(direct, |m: &regex::Captures| " ".repeat(m[0].len()))
         .into_owned();
     let mut out = symbols.clone().into_bytes();
-    for m in re!(r"\b(?:select|exec|update|delete)\b").find_iter(&symbols) {
+    // No `\b` before the keyword: `_` is a word character to the regex, and
+    // `1_update e:d e from t` is a drop of an update (#301). `boundary` is
+    // what tells that from the name `x_update`.
+    for m in re!(r"(?:select|exec|update|delete)\b").find_iter(&symbols) {
         if !boundary(&symbols, m.start()) || out[m.start()] == b' ' {
             continue;
         }
@@ -236,6 +239,60 @@ pub(crate) fn local_view(direct: &str, tables: bool) -> String {
     }
     String::from_utf8(out).unwrap_or_default()
 }
+/// `local_view(direct, true)` with each query's from-clause put back. The
+/// table a query reads is ordinary q, run in the lambda's scope before the
+/// query, so an assignment there sets a local: q 5 runs
+/// `{[p;c] k:exec c from meta d:p; d:(c inter k) xasc d}`, where the second
+/// statement reads the `d` the first one set. Only an outermost query's
+/// clause, and only one holding no query of its own, whose names could be
+/// columns again; table literals in it stay blank.
+fn with_from_clauses(direct: &str) -> String {
+    let keyword = re!(r"(?:select|exec|update|delete)\b");
+    let mut out = local_view(direct, true).into_bytes();
+    // The same text with no query blanked, to copy a clause back from.
+    let unblanked = keyword.replace_all(direct, |m: &regex::Captures| " ".repeat(m[0].len()));
+    let plain = local_view(&unblanked, true);
+    let symbols = re!(r"`[A-Za-z0-9_./:]*")
+        .replace_all(direct, |m: &regex::Captures| " ".repeat(m[0].len()))
+        .into_owned();
+    let mut covered = 0;
+    for m in keyword.find_iter(&symbols) {
+        if m.start() < covered || !boundary(&symbols, m.start()) {
+            continue;
+        }
+        let (mut depth, mut from, mut clause_end) = (0i32, None, None);
+        let mut end = symbols.len();
+        for (i, b) in symbols.bytes().enumerate().skip(m.end()) {
+            match b {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => depth -= 1,
+                _ => {}
+            }
+            if depth < 0 || (b == b';' && depth == 0) {
+                end = i;
+                break;
+            }
+            if depth == 0 && boundary(&symbols, i) {
+                if from.is_none() && re!(r"^from\b").is_match(&symbols[i..]) {
+                    from = Some(i + 4);
+                } else if from.is_some()
+                    && clause_end.is_none()
+                    && re!(r"^where\b").is_match(&symbols[i..])
+                {
+                    clause_end = Some(i);
+                }
+            }
+        }
+        covered = end;
+        if let Some(from) = from {
+            let to = clause_end.unwrap_or(end);
+            if !keyword.is_match(&symbols[from..to]) {
+                out[from..to].copy_from_slice(&plain.as_bytes()[from..to]);
+            }
+        }
+    }
+    String::from_utf8(out).unwrap_or_default()
+}
 /// The innermost scope containing `at`.
 ///
 /// Scopes are pushed as their `{` is met, so they are ordered by `start` and
@@ -254,9 +311,14 @@ fn statement_view(direct: &str) -> String {
     let mut out = crate::flat_filter(direct).into_bytes();
     let mut i = 0;
     while let Some(m) =
-        re!(r"\b(?:select|exec|update|delete)\b").find(std::str::from_utf8(&out[i..]).unwrap_or(""))
+        re!(r"(?:select|exec|update|delete)\b").find(std::str::from_utf8(&out[i..]).unwrap_or(""))
     {
         let start = i + m.start();
+        // `1_update` is a query, `x_update` a name: `local_view`'s test (#301).
+        if !boundary(std::str::from_utf8(&out).unwrap_or(""), start) {
+            i += m.end();
+            continue;
+        }
         let end = out[start..]
             .iter()
             .position(|&b| b == b';')
@@ -1428,7 +1490,7 @@ pub fn check(
         if !scope.named && scope.direct.trim_start().starts_with('[') {
             continue;
         }
-        let direct = local_view(&scope.direct, true);
+        let direct = with_from_clauses(&scope.direct);
         let mut first: HashMap<&str, usize> = HashMap::new();
         let mut every: HashMap<&str, Vec<usize>> = HashMap::new();
         for a in assignment.captures_iter(&direct) {
@@ -1471,9 +1533,13 @@ pub fn check(
                 && {
                     // Unless the statement assigns the name again, which may
                     // run first: `a:a*a:sin x`, `k:2_@[k;..;k:...]` and
-                    // `c:f$[0<count c:g x;c;0]` are fine.
+                    // `c:f$[0<count c:g x;c;0]` are fine. So is one right of
+                    // the bracket that closes around the first: `(b:b&x)|b:x>0`
+                    // runs `b:x>0` first (#302). The walk ends at a `;` of the
+                    // outermost level it has reached, since a later slot of a
+                    // control bracket, `$[c;(a:a+1);a:2]`, runs after.
                     let rest = &direct[assigned..];
-                    let mut depth = 0i32;
+                    let (mut depth, mut floor) = (0i32, 0i32);
                     let end = rest
                         .bytes()
                         .position(|b| {
@@ -1482,7 +1548,8 @@ pub fn check(
                                 b')' | b']' | b'}' => depth -= 1,
                                 _ => {}
                             }
-                            depth < 0 || (b == b';' && depth == 0)
+                            floor = floor.min(depth);
+                            b == b';' && depth <= floor
                         })
                         .unwrap_or(rest.len());
                     !assignment.captures_iter(&rest[..end]).any(|a| {

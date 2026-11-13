@@ -1602,14 +1602,24 @@ fn boundary(s: &str, at: usize) -> bool {
     }
 }
 /// Whether `s` ends with a name - letters, digits and `_` that began with a
-/// letter - rather than a number, a bracket or an operator.
+/// letter - rather than a number, a bracket or an operator. A segment of a
+/// dotted name may begin with `_`: `.a.b.__perf` and `.h._ranks` are one name
+/// each (q 5 `parse "a._ns"` is `` `a._ns ``), so `_` after `name.` still
+/// continues it - while `._ns` with nothing before the dot is no name at all.
 fn ends_in_name(s: &str) -> bool {
     let token: Vec<char> = s
         .chars()
         .rev()
         .take_while(|c| c.is_alphanumeric() || *c == '_')
         .collect();
-    token.last().is_some_and(|c| c.is_alphabetic())
+    match token.last() {
+        Some(c) if c.is_alphabetic() => true,
+        // The caller has taken one `_` off already, so `.h._` arrives as `.h.`.
+        None | Some('_') => s[..s.len() - token.iter().map(|c| c.len_utf8()).sum::<usize>()]
+            .strip_suffix('.')
+            .is_some_and(ends_in_name),
+        _ => false,
+    }
 }
 /// Whether the expression an operand belongs to ends at `at`.
 ///

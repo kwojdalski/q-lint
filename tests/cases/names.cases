@@ -830,6 +830,43 @@ f:{(t;b=t:max b:x;t;a=t:min a:y)}
 === QF014 profile: general | a read before dot-apply is a read, not a dotted name (q 5: defining f is 'g)
 f:{[p] r:g . p; g:{x+y}; r}
 
+=== clean profile: general | a dotted name's segment may begin with `_` and is still one name (q 5: f 10 is 11, g 3 is 6, h 3 is 6) (#299)
+contracts:5
+.a.b.__perf:{x+y}
+.h._ranks:{2*x}
+f:{[x] perf:.a.b.__perf[x;1]; perf}
+g:{[x] ranks:.h._ranks x; ranks}
+h:{[x] r:1+contracts; .registry.__contracts:x; r}
+
+=== QF014 profile: general | but a plain read of the name being assigned still is one (q 5: defining f is 'a) (#299)
+.h._ranks:{2*x}
+f:{[x] a:.h._ranks a+1}
+
+=== clean profile: general | an assignment in a query's from-clause sets a local the next statement reads (q 5: f[([] b:3 1 2);enlist`b] sorts by b) (#300)
+f:{[p;c1] k:exec c from meta data4:p; data4:(c1 inter k) xasc data4; data4}
+g:{[p] r:select from d:p where a>1; d}
+
+=== QF014 profile: general | and a from-clause is a read like any other q (q 5: defining f is 't) (#300)
+t:([]a:1 2)
+f:{r:select from t; t:([]a:1 2); r}
+
+=== clean profile: general | a query straight after `_` is a query, and its column no local (q 5: f `a`b!10 20 is ([] e:enlist 20)) (#301)
+f:{[data] tmp:([] e:`a`b); 1_update e:data e from tmp}
+
+=== QF014 profile: general | but `_` inside a name is part of it, and the rest of the lambda is still read (q 5: defining f is 'a_update, g is 'a) (#301)
+f:{r:a_update; a_update:1; r}
+g:{[d] t:([]e:1 2); r:1_update e:d from t; a:a+1}
+
+=== clean profile: general | an assignment right of the bracket holding the first runs before it (q 5: f 1 0 -1 is 1 0 0b, and g, k are defined) (#302)
+f:{[x] (b:b&x)|b:x>0}
+g:{(`$q:(),/:q)!til count q:-1_.Q.t}
+h:{x+y}
+k:{[x] (b:b&x)|h[1;b:x]}
+
+=== QF014 profile: general | but not with no such assignment, nor in a later slot of a control bracket (q 5: defining each is 'b or 'a) (#302)
+f:{[x] (b:b&x)|1}
+g:{[x] $[x;(a:a+1);a:2]}
+
 === QF003 | a query keyword as a local is refused when the lambda is defined (q 5: {select:1;0} is 'from)
 a:{select:1;0}
 b:{delete:1;0}
