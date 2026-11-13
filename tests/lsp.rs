@@ -57,6 +57,13 @@ impl Server {
         self.stdin.flush().unwrap();
     }
 
+    /// Bytes exactly as given, framing and all, for messages a well-behaved
+    /// client would never send.
+    fn raw(&mut self, bytes: &[u8]) {
+        self.stdin.write_all(bytes).unwrap();
+        self.stdin.flush().unwrap();
+    }
+
     fn receive(&mut self) -> Value {
         let mut length = 0;
         loop {
@@ -564,6 +571,33 @@ fn an_unsupported_request_is_refused_rather_than_ignored() {
     let reply = server.receive();
     assert_eq!(reply["id"], 7);
     assert_eq!(reply["error"]["code"], -32601);
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn a_malformed_message_is_answered_and_the_server_carries_on() {
+    // Each frame is delimited correctly, so the stream is still in step:
+    // JSON-RPC 2.0 answers it with an error whose id is null, and the next
+    // message is read as usual.
+    let mut server = Server::start();
+    server.initialize();
+    let invalid_utf8 = b"{\"jsonrpc\":\"2.0\",\"method\":\"x\",\"params\":\"\xff\xfe\"}";
+    let mut frame = format!("Content-Length: {}\r\n\r\n", invalid_utf8.len()).into_bytes();
+    frame.extend_from_slice(invalid_utf8);
+    for (bytes, code) in [
+        (b"Content-Length: 5\r\n\r\n{bad}".to_vec(), -32700),
+        (b"Content-Length: 2\r\n\r\n[]".to_vec(), -32600),
+        (frame, -32700),
+        (b"X-Foo\r\nContent-Length: 2\r\n\r\n{}".to_vec(), -32700),
+    ] {
+        server.raw(&bytes);
+        let reply = server.receive();
+        assert_eq!(reply["id"], Value::Null, "{reply}");
+        assert_eq!(reply["error"]["code"], code, "{reply}");
+    }
+    let uri = "file:///tmp/after_malformed.q";
+    server.open(uri, RESERVED_PARAM);
+    assert!(!server.diagnostics_for(uri).is_empty());
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 

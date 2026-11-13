@@ -14,7 +14,9 @@ use std::{
 
 fn next(reader: &mut impl BufRead, writer: &mut impl Write) -> Result<Value, String> {
     loop {
-        let message = receive(reader)?.ok_or("qls closed stdout before analysis completed")?;
+        let message = receive(reader)?
+            .ok_or("qls closed stdout before analysis completed")?
+            .map_err(|m| format!("Invalid LSP response: {}", m.message))?;
         if message.get("id").is_none() || message.get("method").is_none() {
             return Ok(message);
         }

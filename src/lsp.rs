@@ -72,7 +72,7 @@
 //! problem: its answer comes from rules that read text, and when there is
 //! nothing to fix, an empty answer is the true one.
 use crate::config::{Layer, Policy, selector};
-use crate::jsonrpc::{receive, send};
+use crate::jsonrpc::{INVALID_REQUEST, receive, send};
 use q_lint_rs::{
     FileIndex, Finding, TokenKind, Workspace, fix_all, fix_for, index, semantic_tokens_in,
     whole_edit,
@@ -90,7 +90,6 @@ use std::{
 const SYNC_FULL: i64 = 1;
 
 const METHOD_NOT_FOUND: i64 = -32601;
-const INVALID_REQUEST: i64 = -32600;
 
 /// Open documents, by URI. The editor is the authority on their contents from
 /// didOpen until didClose, so nothing here reads from disk.
@@ -394,11 +393,24 @@ pub fn serve(
     let mut problems: Vec<String> = vec![];
     let mut shutdown_requested = false;
     loop {
-        let Some(message) = receive(reader)? else {
+        let message = match receive(reader)? {
+            Some(Ok(message)) => message,
+            // Answered, with the `id: null` JSON-RPC 2.0 §5 requires when the
+            // id could not be read, and the server carries on: the framing
+            // is intact, and exiting would drop every open document over one
+            // bad message.
+            Some(Err(malformed)) => {
+                eprintln!("qlinter: {}", malformed.message);
+                send(
+                    writer,
+                    json!({"id": Value::Null, "error": {"code": malformed.code, "message": malformed.message}}),
+                )?;
+                continue;
+            }
             // The stream closed without `exit`. Editors are supposed to send
             // it; when one dies instead, leaving cleanly is the friendlier
             // behaviour and matches what rust-analyzer does.
-            return Ok(if shutdown_requested { 0 } else { 1 });
+            None => return Ok(if shutdown_requested { 0 } else { 1 }),
         };
         let method = message["method"].as_str().unwrap_or("").to_string();
         let id = message.get("id").cloned();
