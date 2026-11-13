@@ -274,11 +274,19 @@ impl Policy {
     }
 
     /// What `--show-settings` prints: which file governs `path`, and what it
-    /// turns on there.
-    pub fn describe(&self, path: &Path) -> Result<String, String> {
+    /// turns on there - only rules that can report under `backend`. A
+    /// `python-hook` rule runs in another tool, never in this binary, and
+    /// QLS001 comes only from qls.
+    pub fn describe(&self, path: &Path, backend: &str) -> Result<String, String> {
         let settings = self.settings(path)?;
+        let runs = |scope: &str| match scope {
+            "python-hook" => false,
+            "qls" => backend != "builtin",
+            _ => backend != "qls",
+        };
         let mut codes: Vec<&str> = RULES
             .iter()
+            .filter(|r| runs(&r.scope))
             .map(|r| r.code.as_str())
             .filter(|code| {
                 self.selected(&settings, code) && !per_file_ignored(&settings, code, path)

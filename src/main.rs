@@ -384,7 +384,7 @@ fn run(args: Args) -> Result<u8, String> {
             } else {
                 path.to_path_buf()
             };
-            out!("{}\n", policy.describe(&probe)?);
+            out!("{}\n", policy.describe(&probe, &args.backend)?);
         }
         return Ok(0);
     }

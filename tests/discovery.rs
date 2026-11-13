@@ -749,3 +749,38 @@ fn build_and_tool_directories_are_excludes_default_which_a_configuration_replace
         ["src/a.q", "src/build/gen.q", "src/target/t.q"]
     );
 }
+
+#[test]
+fn show_settings_lists_only_rules_the_backend_can_report() {
+    // QF006 runs only as a Python hook and QLS001 only from qls, yet both
+    // were listed - and counted - as turned on for the builtin backend
+    // (#274).
+    let repo = Repo::new();
+    repo.write("a.q", SOURCE);
+    let rules = |args: &[&str]| {
+        let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .current_dir(repo.path("."))
+            .args(["--isolated", "--show-settings"])
+            .args(args)
+            .arg("a.q")
+            .output()
+            .unwrap();
+        let text = String::from_utf8(out.stdout).unwrap();
+        let line = text.lines().find(|l| l.starts_with("rules (")).unwrap();
+        line.split_once(": ").map_or(vec![], |(_, codes)| {
+            codes
+                .split_whitespace()
+                .map(String::from)
+                .collect::<Vec<_>>()
+        })
+    };
+    let builtin = rules(&[]);
+    assert!(builtin.contains(&"QE004".to_string()), "{builtin:?}");
+    assert!(
+        !builtin.iter().any(|c| c == "QF006" || c == "QLS001"),
+        "{builtin:?}"
+    );
+    assert_eq!(rules(&["--select", "QF006"]), Vec::<String>::new());
+    assert_eq!(rules(&["--backend", "qls"]), ["QLS001"]);
+    assert!(rules(&["--backend", "all"]).contains(&"QLS001".to_string()));
+}
