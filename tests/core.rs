@@ -72,6 +72,19 @@ fn non_ascii_in_a_select_list_does_not_panic() {
     }
 }
 
+/// A non-ASCII symbol at the end of a qSQL phrase: the where-phrase walk
+/// asked `boundary` about every byte and it sliced through the `é` (#236).
+#[test]
+fn non_ascii_symbol_in_a_qsql_phrase_does_not_panic() {
+    for source in [
+        "r:select from t where c=`é\n",
+        "r:select `é from t\n",
+        "r:select from t where c in `é\n",
+    ] {
+        lint(source, "t.q", Profile::Uqf);
+    }
+}
+
 #[test]
 fn language_prefixes_preserve_following_q_diagnostics() {
     for prefix in ["p)", "k)"] {

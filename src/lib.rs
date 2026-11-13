@@ -1577,7 +1577,11 @@ pub(crate) fn apply_not_subtract(name: &str, literal: &str) -> String {
 }
 
 fn boundary(s: &str, at: usize) -> bool {
-    let before = &s[..at];
+    // Callers walk bytes, so `at` can fall inside a multi-byte character -
+    // the middle of a token, never the start of one.
+    let Some(before) = s.get(..at) else {
+        return false;
+    };
     match before.chars().next_back() {
         None => true,
         // `_` joins a name only after that name's own letters: `x_ns` is one
