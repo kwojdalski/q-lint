@@ -394,6 +394,10 @@ bb:1
 f:{[] aa:bb; aa}
 \d .
 
+=== QF018 | a dotted root name is not the bare name (q 5: .cfg:1; b:cfg is 'cfg)
+.cfg:1
+b:cfg
+
 === clean | a global write inside another function supplies the name
 init:{[] bb::1}
 f:{[] aa:bb; aa}

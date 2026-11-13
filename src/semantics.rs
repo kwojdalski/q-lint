@@ -2038,7 +2038,8 @@ pub fn check(
             if comments[start..start + statement.len()].contains(['"', '{'])
                     || scope.is_some_and(|s| s.locals.contains(name))
                     || crate::RESERVED.iter().any(|builtin| builtin == name)
-                    || globals.contains_key(&global)
+                    // Keyed exactly: `.cfg:1` defines no root `cfg` (q 5: 'cfg).
+                    || exact.contains_key(&resolved(name, namespace))
                     || elsewhere(&global)
                     || elsewhere(&format!(".{name}"))
                     // QF010 and QF005 already explain these more precisely.
