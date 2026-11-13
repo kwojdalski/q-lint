@@ -3222,6 +3222,16 @@ pub fn lint_selecting(
         if code[m.end()..].starts_with('$') {
             continue;
         }
+        // `` `a -1 ``: a space before the minus and a digit straight after it
+        // make a negative literal, and the symbol is applied to it - q 5
+        // `parse "`a -1"` is `(,`a;-1)` (#293). `` `a-1 `` and `` `a - 1 ``
+        // subtract, and are 'type.
+        if m.as_str().starts_with('`')
+            && re!(r"[ \t]-$").is_match(m.as_str())
+            && re!(r"^\.?\d").is_match(&code[m.end()..])
+        {
+            continue;
+        }
         // A symbol on the right is only the operand when the expression ends
         // with it: `` 2*`a`b?`b `` multiplies by a long, and `` 1+`a`b!1 2 ``
         // adds to a dictionary. On the left it is the operand whatever

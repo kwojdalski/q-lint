@@ -58,6 +58,15 @@ r:1+`a~`b
 y:`c`c`c`j
 -1"next";
 
+=== clean profile: general | a spaced minus before a digit is a negative literal the symbol is applied to (q 5: parse "`a -1" is (,`a;-1))
+a:10 20 30
+r:`a -1
+s:`a`b -.5
+
+=== QT003 profile: general | but unspaced, or spaced on both sides, it subtracts (q 5: `a-1 and `a - 1 are 'type)
+r:`a-1
+s:`a - 1
+
 === QT003 | a symbol on the left is the operand whatever follows
 r:`a+`b?`c
 
