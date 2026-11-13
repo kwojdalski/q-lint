@@ -1973,6 +1973,21 @@ struct Views {
     script_end: Option<usize>,
 }
 fn views(source: &str) -> Views {
+    // A BOM is QE005's to report; the rest of the file is read as q would
+    // read it without one, so `<BOM>/ note` is still a comment line (#221).
+    if let Some(body) = source.strip_prefix('\u{feff}') {
+        let n = source.len() - body.len();
+        let mut v = views(body);
+        v.comments.insert(0, '\u{feff}');
+        v.code.insert(0, '\u{feff}');
+        let shift = |at: &mut usize| *at += n;
+        v.unterminated.iter_mut().for_each(shift);
+        v.foreign_offsets.iter_mut().for_each(shift);
+        v.open_block.iter_mut().for_each(shift);
+        v.string_starts.iter_mut().for_each(shift);
+        v.script_end.iter_mut().for_each(shift);
+        return v;
+    }
     let bytes = source.as_bytes();
     let mut comments = bytes.to_vec();
     let mut code = bytes.to_vec();

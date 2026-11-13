@@ -201,6 +201,21 @@ fn a_byte_order_mark_is_reported_and_analysis_continues() {
     assert_eq!(codes(&with_bom), ["QE005", "QT003"]);
 }
 
+/// The BOM is no part of the first line as the masker reads it: a comment
+/// or block comment that opens there is still one (#221).
+#[test]
+fn a_byte_order_mark_does_not_turn_a_first_line_comment_into_code() {
+    let codes = |s: &str| -> Vec<String> {
+        lint(s, "t.q", Profile::General)
+            .into_iter()
+            .map(|f| f.code)
+            .collect()
+    };
+    assert_eq!(codes("\u{feff}/ uses x==y\na:1\n"), ["QE005"]);
+    assert_eq!(codes("\u{feff}/\nprose x==y\n\\\na:1\n"), ["QE005"]);
+    assert_eq!(codes("\u{feff}a:\"x\"; b:x==y\n"), ["QE005", "QE004"]);
+}
+
 /// Lint time should follow the size of the file, not its square.
 ///
 /// The work per lambda was once linear in the number of lambdas - three
