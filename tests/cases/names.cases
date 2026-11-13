@@ -626,6 +626,15 @@ r:select b from t
 t:([]a:1 2)
 r:select a by b from t
 
+=== clean profile: general | names a lambda in a select item binds are its own (q 5: runs, a| "<p>h1</p>")
+files:([]title:`a`b;header:("h1";"h2"))
+r:select h:{"<p>",x,"</p>"} each header by title from files
+s:select {[p] "<",p,">"}[header] by title from files
+
+=== QF020 profile: general | a top-level item beside such a lambda is still a column (q 5: 'c)
+files:([]title:`a`b;header:("h1";"h2"))
+r:select h:{x,x} each header,c by title from files
+
 === clean | the virtual index, an alias of a real column, and a keyed table's key
 t:([]a:1 2)
 k:([k:1 2]v:3 4)

@@ -2941,8 +2941,27 @@ fn named_values(
         let phrase = m.get(1).unwrap();
         // Items are separated by `,`, and `by` starts the grouping list,
         // whose columns are looked up the same way.
+        // Only at the top level: a `,` inside a lambda or a call is the
+        // item's own, and so are the names it binds - `x` in
+        // `{"<p>",x,"</p>"} each header` is the lambda's argument (#297).
+        let mut depth = 0i32;
+        let top: Vec<bool> = phrase
+            .as_str()
+            .bytes()
+            .map(|c| {
+                match c {
+                    b'(' | b'[' | b'{' => depth += 1,
+                    b')' | b']' | b'}' => depth -= 1,
+                    _ => {}
+                }
+                depth == 0
+            })
+            .collect();
         let mut cuts = vec![phrase.start()];
         for sep in re!(r",|\bby\b").find_iter(phrase.as_str()) {
+            if !top[sep.start()] {
+                continue;
+            }
             cuts.push(phrase.start() + sep.start());
             cuts.push(phrase.start() + sep.end());
         }
