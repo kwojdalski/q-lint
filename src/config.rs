@@ -129,6 +129,15 @@ impl Policy {
         self.cache.borrow_mut().clear();
     }
 
+    /// Whether `path` is the file `--config` names, which governs every file
+    /// whatever it is called.
+    pub fn is_explicit_config(&self, path: &Path) -> bool {
+        self.overrides
+            .config
+            .as_ref()
+            .is_some_and(|config| absolute(config) == absolute(path))
+    }
+
     /// The settings for `path`, a file or a directory: the configuration
     /// nearest to it, searching from the directory that contains it.
     pub fn settings(&self, path: &Path) -> Result<Rc<Settings>, String> {

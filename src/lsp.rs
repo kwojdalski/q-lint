@@ -82,6 +82,7 @@ use serde_json::{Value, json};
 use std::{
     collections::HashMap,
     io::{BufRead, Write},
+    path::Path,
 };
 
 /// Full document sync (`TextDocumentSyncKind.Full`): every change carries the
@@ -628,7 +629,8 @@ pub fn serve(
                     let uri = uri_of(change);
                     // A configuration file changed: every file it governs may
                     // now report differently, so forget them all and relint.
-                    if is_config_path(&path_of(&uri)) {
+                    let path = path_of(&uri);
+                    if is_config_path(&path) || policy.is_explicit_config(Path::new(&path)) {
                         policy.reset();
                         changed = true;
                         continue;
@@ -636,7 +638,6 @@ pub fn serve(
                     if docs.contains_key(&uri) {
                         continue;
                     }
-                    let path = path_of(&uri);
                     changed |= if change["type"].as_i64() == Some(3) {
                         idx.remove(&path)
                     } else {

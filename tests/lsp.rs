@@ -1484,3 +1484,30 @@ fn neither_a_watched_change_nor_a_close_indexes_what_the_settings_leave_out() {
         assert_eq!(server.shutdown_and_exit(), 0);
     }
 }
+
+#[test]
+fn editing_the_file_named_by_config_relints_the_open_documents() {
+    // `--config` can name a file anything; a change to it has to be heard as
+    // a configuration change all the same, not read as a stray file.
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("lint.toml");
+    std::fs::write(&config, "select = [\"QE004\", \"QR001\"]\n").unwrap();
+    let (mut server, _) = start_with_options(
+        dir.path(),
+        &["--lsp", "--config", config.to_str().unwrap()],
+        json!({}),
+        Some(dir.path()),
+    );
+    let app = file_uri(&dir.path().join("app.q"));
+    server.open(&app, "a==b\nr:reverse asc 1 2\n");
+    let mut found = codes_of(&server.diagnostics_for(&app));
+    found.sort();
+    assert_eq!(found, ["QE004", "QR001"]);
+    std::fs::write(&config, "select = [\"QE004\"]\n").unwrap();
+    server.send(
+        json!({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles",
+        "params":{"changes":[{"uri":file_uri(&config),"type":2}]}}),
+    );
+    assert_eq!(codes_of(&server.diagnostics_for(&app)), ["QE004"]);
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
