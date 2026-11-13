@@ -4937,7 +4937,12 @@ pub fn lint_selecting(
                 let rest = line[whole..].trim_start_matches([' ', '\t']);
                 let ends =
                     rest.is_empty() || rest.starts_with([',', ';', ')', ']', '}', '\n', '\r']);
-                if m[1] == m[3] && ends {
+                // And the comparison is in the query's own statement, not
+                // another one on its line: `n:a=a; r:select from t`.
+                let start = m.get(0).unwrap().start();
+                let head = &line[line[..start].rfind(';').map_or(0, |p| p + 1)..start];
+                let query = re!(r"\b(?:where|select|exec|update|delete)\b").is_match(head);
+                if m[1] == m[3] && ends && query {
                     add(offset, "QB001", format!("`{}{}{}`", &m[1], &m[2], &m[3]));
                     search = m.get(0).unwrap().end();
                 } else {

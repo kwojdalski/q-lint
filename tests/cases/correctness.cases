@@ -54,6 +54,11 @@ r13:select a by a in 1 from t
 === QB001 | a qSQL filter comparing a column to itself
 select from t where a=a
 
+=== clean | a self-comparison in another statement than the query (#239)
+a:0n;t:([]b:1 2)
+isnan:a=a; r:select from t
+f:{[x] x~x}; g:{exec b from t}
+
 === clean | comparing two different columns
 select from t where a=b
 
