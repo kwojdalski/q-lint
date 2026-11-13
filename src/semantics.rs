@@ -2496,8 +2496,9 @@ fn named_values(
         exact.entry(key(name, at)).or_default().extend([0, 0]);
     }
     // A table changed in place by name: `update c:1 from `t` adds a column,
-    // as do `![`t;...]` and `.[`t;...]`, without an assignment to say so.
-    for m in re!(r"(?:\bfrom\s*|[!.]\s*\[\s*)`(\.?[A-Za-z][A-Za-z0-9_.]*)").captures_iter(code) {
+    // as do `![`t;...]`, `.[`t;...]` and `@[`t;...]`, without an assignment
+    // to say so.
+    for m in re!(r"(?:\bfrom\s*|[!.@]\s*\[\s*)`(\.?[A-Za-z][A-Za-z0-9_.]*)").captures_iter(code) {
         let name = m.get(1).unwrap().as_str();
         writes.entry(name).or_default().extend([0, 0]);
         exact
