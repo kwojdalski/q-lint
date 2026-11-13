@@ -89,6 +89,20 @@ r:a&&b
 === QE004 | plus-equals
 a+=1
 
+=== clean | a string and a comment on a \t line are masked (q 5 runs both: 0 and 0)
+\t count "a==b"
+\t 1+1 / x==y
+\ts:2 count "12:60"
+
+=== QE004 | the expression of a \t line is still q
+\t x==y
+
+=== clean | another command's argument is no q (q 5 loads \l inc.q / x==y and \d .foo / a==b)
+\l inc.q / x==y
+\d .foo / a==b
+\d .
+\echo "a==b"
+
 === clean | the q spellings
 if[a=1;2];if[a<>1;2];r:a and b;a+:1;if[a>=1;2]
 

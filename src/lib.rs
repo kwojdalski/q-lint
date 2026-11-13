@@ -2048,6 +2048,13 @@ fn views(source: &str) -> Views {
         } else {
             0
         };
+        // `\t` and `\ts` run their argument as q, so its strings and its
+        // comment are masked as on any other line (#222); the command itself
+        // stays, for the rules that read system commands.
+        let timed = (string.is_none())
+            .then(|| re!(r"^\\ts?(?::\d+)?[ \t]").find(line))
+            .flatten()
+            .map_or(0, |m| m.end());
         if ended || block > 0 {
             blank(&mut comments[offset..end]);
             blank(&mut code[offset..end]);
@@ -2074,10 +2081,19 @@ fn views(source: &str) -> Views {
             }
             blank(&mut comments[offset..end]);
             blank(&mut code[offset..end]);
-        } else if !(string.is_none() && line.starts_with('\\')) {
+        } else if timed == 0 && string.is_none() && line.starts_with('\\') {
+            // Any other command's argument is no q: a path, a name, or text
+            // for the shell. Only what the rules read of it is kept - the
+            // command, and the namespace or file of `\d` and `\l`.
+            let kept = re!(r"^\\(?:[dl][ \t]+[^ \t\r\n]*|[^ \t\r\n]*)")
+                .find(line)
+                .map_or(0, |m| m.end());
+            blank(&mut comments[offset + kept..end]);
+            blank(&mut code[offset + kept..end]);
+        } else {
             blank(&mut comments[offset..offset + prefix]);
             blank(&mut code[offset..offset + prefix]);
-            let mut i = offset + prefix;
+            let mut i = offset + prefix + timed;
             while i < end {
                 let c = bytes[i];
                 if string.is_some() {
