@@ -49,6 +49,16 @@ fn arbitrary_text_does_not_panic() {
     }
 }
 
+/// A non-ASCII character right before a glyph: QE008 once sliced the two
+/// bytes before the glyph and split the `é` (#234). q refuses the line with
+/// 'char, so nothing need be reported, only nothing must panic.
+#[test]
+fn non_ascii_before_a_glyph_does_not_panic() {
+    for source in ["r:`café-x\n", "é-x\n", "x:é+1\n"] {
+        lint(source, "t.q", Profile::Uqf);
+    }
+}
+
 #[test]
 fn language_prefixes_preserve_following_q_diagnostics() {
     for prefix in ["p)", "k)"] {
