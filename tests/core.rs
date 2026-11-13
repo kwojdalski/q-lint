@@ -540,3 +540,20 @@ fn qsql_keyword_parameter_names_the_parse_error() {
         f[0].detail
     );
 }
+
+/// QB001 and QB002 report at the code they are about, not at column 1, and
+/// QB002 quotes the pattern as it is written rather than with Rust escapes
+/// (#243).
+#[test]
+fn self_comparison_and_like_report_at_the_token() {
+    let f = lint(
+        "t:([]a:1 2)\nx:1;  y:\"abc\" like \"a\\\\*b*é*\"\nr:select from t where a=a\n",
+        "t.q",
+        Profile::Style,
+    );
+    let like = f.iter().find(|f| f.code == "QB002").unwrap();
+    assert_eq!((like.line, like.column), (2, Some(15)));
+    assert_eq!(like.detail, "like \"a\\\\*b*é*\"");
+    let same = f.iter().find(|f| f.code == "QB001").unwrap();
+    assert_eq!((same.line, same.column), (3, Some(23)));
+}

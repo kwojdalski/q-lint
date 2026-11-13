@@ -4954,7 +4954,11 @@ pub fn lint_selecting(
                 let head = &line[line[..start].rfind(';').map_or(0, |p| p + 1)..start];
                 let query = re!(r"\b(?:where|select|exec|update|delete)\b").is_match(head);
                 if m[1] == m[3] && ends && query {
-                    add(offset, "QB001", format!("`{}{}{}`", &m[1], &m[2], &m[3]));
+                    add(
+                        offset + start,
+                        "QB001",
+                        format!("`{}{}{}`", &m[1], &m[2], &m[3]),
+                    );
                     search = m.get(0).unwrap().end();
                 } else {
                     search = m.get(3).unwrap().start();
@@ -5146,8 +5150,8 @@ pub fn lint_selecting(
         }
         // Infix, or the pattern as the second argument in brackets:
         // `like["abc";"a*b*"]` is 'nyi as well.
-        for m in re!(r#"\blike\s*(?:\[(?:[^;\[\]"]|"[^"]*")*;\s*)?"([^"]*)""#)
-            .captures_iter(literals)
+        for m in
+            re!(r#"\blike\s*(?:\[(?:[^;\[\]"]|"[^"]*")*;\s*)?"([^"]*)""#).captures_iter(literals)
         {
             // q 5 takes one `*` anywhere, or a leading and a trailing pair:
             // "abc" like "a*c" and "*b*" are 1b, "a*b*" and "**" are 'nyi.
@@ -5156,7 +5160,11 @@ pub fn lint_selecting(
             let stars = re!(r"\[[^\]]*\]").replace_all(pat, "").matches('*').count();
             let ends = pat.len() > 2 && pat.starts_with('*') && pat.ends_with('*');
             if stars > 2 || (stars == 2 && !ends) {
-                add(offset, "QB002", format!("like {pat:?}"));
+                add(
+                    offset + m.get(0).unwrap().start(),
+                    "QB002",
+                    format!("like \"{pat}\""),
+                );
             }
         }
         // QB003: `", " sv string clash," - two workers share it"`. `,` binds
