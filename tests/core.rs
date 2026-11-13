@@ -472,9 +472,11 @@ fn a_later_vector_equality_is_reported_at_its_own_constraint() {
 fn deeply_nested_lambdas_lint_in_bounded_time() {
     // #185: every rule that matched braces from each `{` was quadratic in
     // nesting depth. Generated or hostile input can nest thousands deep, and
-    // the language server lints on every keystroke. About 3 s in a debug
-    // build after the fix, against roughly five times that before it.
-    let depth = 4000;
+    // the language server lints on every keystroke. About 1 s in a debug
+    // build after the fix, against roughly five times that before it. At 4000
+    // deep it took 3 s here and over 10 s on a shared CI runner, so the bound
+    // failed with no regression behind it.
+    let depth = 2000;
     let source = format!("f:{}{}\n", "{".repeat(depth), "}".repeat(depth));
     let started = std::time::Instant::now();
     lint(&source, "t.q", Profile::Style);
