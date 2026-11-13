@@ -1576,6 +1576,15 @@ pub(crate) fn apply_not_subtract(name: &str, literal: &str) -> String {
     )
 }
 
+/// Whether `s` is an atom literal, a number or one symbol, which dot apply
+/// refuses as an argument list. Not `10b` or `0x0102`: each digit of a
+/// boolean, and each pair of a byte literal past the first, is another item
+/// (q 5: `f . 10b` is 1i, `.[f;0x0102]` 3i, and `f . 1b` and `f . 0x01` 'type).
+fn scalar_literal(s: &str) -> bool {
+    re!(r"^(?:-?\d[A-Za-z0-9.]*|`[A-Za-z0-9_.]*)$").is_match(s)
+        && !re!(r"^[01]{2,}b$|^0x[0-9a-fA-F]{3,}$").is_match(s)
+}
+
 fn boundary(s: &str, at: usize) -> bool {
     // Callers walk bytes, so `at` can fall inside a multi-byte character -
     // the middle of a token, never the start of one.
@@ -3548,7 +3557,7 @@ pub fn lint_selecting(
         if !operand_ends(code, m.end() + end) {
             continue;
         }
-        if re!(r"^(?:-?\d[A-Za-z0-9.]*|`[A-Za-z0-9_.]*)[ \t]*$").is_match(arg) {
+        if scalar_literal(arg.trim_end_matches([' ', '\t'])) {
             add(
                 m.start() + 1,
                 "QA009",
@@ -3636,7 +3645,7 @@ pub fn lint_selecting(
         });
         if elided
             || parts.len() < 2
-            || !re!(r"^(?:-?\d[A-Za-z0-9.]*|`[A-Za-z0-9_.]*)$").is_match(parts[1].trim())
+            || !scalar_literal(parts[1].trim())
         {
             continue;
         }

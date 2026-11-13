@@ -294,6 +294,16 @@ h:{[f] @[f;1;{x}]}
 f:{x+1}
 a:f . 1
 
+=== clean | a boolean or byte vector is a list of arguments (q 5: f . 10b is 1i, .[f;0x0102] 3i)
+f:{x+y}
+a:f . 10b
+b:.[f;0x0102]
+
+=== QA009 | while one boolean or one byte is an atom (q 5: f . 1b and .[f;0x01] are 'type)
+f:{x+y}
+a:f . 1b
+b:.[f;0x01]
+
 === QA012 | too many arguments through dot apply, to a named lambda (q 5: 'rank)
 g:{x}
 c:g . (1;2)
