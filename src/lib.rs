@@ -5144,7 +5144,11 @@ pub fn lint_selecting(
                 );
             }
         }
-        for m in re!(r#"\blike\s*"([^"]*)""#).captures_iter(literals) {
+        // Infix, or the pattern as the second argument in brackets:
+        // `like["abc";"a*b*"]` is 'nyi as well.
+        for m in re!(r#"\blike\s*(?:\[(?:[^;\[\]"]|"[^"]*")*;\s*)?"([^"]*)""#)
+            .captures_iter(literals)
+        {
             // q 5 takes one `*` anywhere, or a leading and a trailing pair:
             // "abc" like "a*c" and "*b*" are 1b, "a*b*" and "**" are 'nyi.
             // A `*` inside `[...]` is a literal star.
