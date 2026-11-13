@@ -32,7 +32,7 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
 /// string is still text.
 fn attributes(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<Finding>) {
     for m in re!(
-        r#"`([spu])#[ \t]*((?:`[A-Za-z0-9_.]*){2,}|-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+|"[^"\\]{2,}")"#
+        r#"`([spu])#[ \t]*((?:`[A-Za-z0-9_.]*){2,}|-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+|"[^"\\]+")"#
     )
     .captures_iter(comments)
     {
@@ -44,14 +44,15 @@ fn attributes(path: &str, source: &str, code: &str, comments: &str, out: &mut Ve
             continue;
         }
         let items = m.get(2).unwrap().as_str();
-        // Symbols compare as bytes. Numbers compare as numbers, with q's
-        // nulls first; anything that will not parse leaves the rule silent.
+        // Symbols compare as bytes, and so do a string's items, which are
+        // bytes: `"aé"` is 0x61 0xC3 0xA9 (#228). Numbers compare as numbers,
+        // with q's nulls first; anything that will not parse leaves the rule
+        // silent.
         let keys: Option<Vec<Key>> = if let Some(chars) = items.strip_prefix('"') {
             Some(
-                chars
-                    .trim_end_matches('"')
-                    .chars()
-                    .map(|c| Key::Text(c.to_string()))
+                crate::q_bytes(chars.trim_end_matches('"'))
+                    .into_iter()
+                    .map(|b| Key::Number(f64::from(b)))
                     .collect(),
             )
         } else if items.starts_with('`') {
@@ -65,7 +66,9 @@ fn attributes(path: &str, source: &str, code: &str, comments: &str, out: &mut Ve
         } else {
             items.split_whitespace().map(number).collect()
         };
-        let Some(keys) = keys else { continue };
+        let Some(keys) = keys.filter(|k| k.len() > 1) else {
+            continue;
+        };
         let attr = &m[1];
         let fails = match attr {
             "s" => keys.windows(2).any(|w| w[0] > w[1]),

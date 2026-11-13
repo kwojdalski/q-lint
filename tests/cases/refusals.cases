@@ -10,6 +10,18 @@ r:`u#1 1 2
 === QT024 | parted attribute on a value that comes back
 r:`p#1 2 1
 
+=== QT024 | a string sorts by byte, and é is 0xC3 0xA9 (q 5: `s#"aé" is 's-fail)
+a:`s#"aé"
+
+=== QT024 | two non-ASCII chars can share a byte (q 5: `u#"éè" is 'u-fail)
+b:`u#"éè"
+
+=== QT024 | one non-ASCII char is two bytes, here descending (q 5: `s#"é" is 's-fail)
+a:`s#"é"
+
+=== clean | its two bytes differ, so it is unique (q 5: `u#"é" applies)
+b:`u#"é"
+
 === clean | ties, a null first and contiguous runs are what the attributes allow
 r1:`s#1 1 2
 r2:`s#0N 1 2
