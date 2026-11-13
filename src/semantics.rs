@@ -1414,7 +1414,8 @@ pub fn check(
                 || scope.params.contains(name)
                 || !boundary(&direct, m.start())
                 || after.starts_with(':')
-                || after.starts_with('.')
+                // A dotted name, not dot-apply: `g . p` reads `g` (#251).
+                || direct[m.end()..].starts_with('.')
                 || (!in_value && !later && !runs_before(&direct, m.start(), assigned))
                 || !seen.insert(name)
             {
