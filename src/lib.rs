@@ -3685,6 +3685,12 @@ pub fn lint_selecting(
         {
             continue;
         }
+        // So is any second glyph that an iterator derives a function from,
+        // applied with brackets: q 5 runs `x||/[y]`, `x**\[y]`, `x==/[y]`
+        // and `x||':[y]` (#237), and refuses `x||/y` with '/, not as a pair.
+        if re!(r"^(?:[/\\']:?)+\[").is_match(&code[m.end()..]) {
+            continue;
+        }
         let long = !matches!(m.as_str(), "==" | "!=" | "&&" | "||" | "+=" | "-=" | "*=");
         if long
             && code[m.end()..]
