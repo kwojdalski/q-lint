@@ -75,8 +75,7 @@
 use crate::config::{Layer, Policy, selector};
 use crate::jsonrpc::{INVALID_REQUEST, receive, send};
 use q_lint_rs::{
-    FileIndex, Finding, TokenKind, Workspace, fix_all, fix_for, index, semantic_tokens_in,
-    whole_edit,
+    FileIndex, Finding, TokenKind, Workspace, fix_all, fix_for, semantic_tokens_in, whole_edit,
 };
 use serde_json::{Value, json};
 use std::{
@@ -92,6 +91,7 @@ use std::{
 const SYNC_FULL: i64 = 1;
 
 const METHOD_NOT_FOUND: i64 = -32601;
+const INTERNAL_ERROR: i64 = -32603;
 const SERVER_NOT_INITIALIZED: i64 = -32002;
 
 /// Open documents, by URI. The editor is the authority on their contents from
@@ -602,23 +602,32 @@ pub fn serve(
             }
             ("textDocument/semanticTokens/full", Some(id)) => {
                 let uri = uri_of(&params["textDocument"]);
-                let data = docs
-                    .get(&uri)
-                    .filter(|_| opts.semantic_tokens && is_q_path(&path_of(&uri)))
-                    .map_or_else(Vec::new, |text| encode_tokens(text, &idx.ws));
-                send(writer, json!({"id": id, "result": {"data": data}}))?;
+                let data = guarded(|| {
+                    docs.get(&uri)
+                        .filter(|_| opts.semantic_tokens && is_q_path(&path_of(&uri)))
+                        .map_or_else(Vec::new, |text| encode_tokens(text, &idx.ws))
+                });
+                match data {
+                    Ok(data) => send(writer, json!({"id": id, "result": {"data": data}}))?,
+                    Err(panic) => send(writer, internal_error(id, &panic))?,
+                }
             }
             ("textDocument/codeAction", Some(id)) => {
-                let actions = code_actions(&params, &docs, &idx.ws, policy, opts.unsafe_fixes);
-                send(writer, json!({"id": id, "result": actions}))?;
+                match guarded(|| code_actions(&params, &docs, &idx.ws, policy, opts.unsafe_fixes)) {
+                    Ok(actions) => send(writer, json!({"id": id, "result": actions}))?,
+                    Err(panic) => send(writer, internal_error(id, &panic))?,
+                }
             }
             ("textDocument/formatting", Some(id)) => {
                 let edits = if opts.format {
-                    format(&params, &docs, &idx.ws, policy)
+                    guarded(|| format(&params, &docs, &idx.ws, policy))
                 } else {
-                    vec![]
+                    Ok(vec![])
                 };
-                send(writer, json!({"id": id, "result": edits}))?;
+                match edits {
+                    Ok(edits) => send(writer, json!({"id": id, "result": edits}))?,
+                    Err(panic) => send(writer, internal_error(id, &panic))?,
+                }
             }
 
             // A `.q` file created, changed or deleted outside the editor - a
@@ -715,6 +724,36 @@ fn encode_tokens(source: &str, ws: &Workspace) -> Vec<u32> {
         (prev_line, prev_start) = (line, start);
     }
     data
+}
+
+/// Run `f`, and turn a panic in it into an error naming the panic.
+///
+/// The rules run on every keystroke of half-typed text, and a panic in one
+/// of them is a bug in that rule, not in the document. Contained here, it
+/// costs one answer about one document; uncontained, it ended the process and
+/// every open document's state with it. The panic hook still prints it, with
+/// its location, on stderr.
+fn guarded<T>(f: impl FnOnce() -> T) -> Result<T, String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).map_err(|payload| {
+        payload
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "a panic with no message".into())
+    })
+}
+
+/// What `text` defines, or nothing when reading it panics.
+fn index(text: &str) -> FileIndex {
+    guarded(|| q_lint_rs::index(text)).unwrap_or_default()
+}
+
+/// The reply to a request whose handler panicked: JSON-RPC 2.0 §5.1's
+/// `-32603 Internal error`, rather than no reply, which a client cannot tell
+/// from a hung server.
+fn internal_error(id: Value, panic: &str) -> Value {
+    json!({"id": id, "error": {"code": INTERNAL_ERROR,
+           "message": format!("qlinter failed on this document: {panic}")}})
 }
 
 fn is_q_path(path: &str) -> bool {
@@ -890,9 +929,30 @@ fn diagnose(
     let findings = if is_q_path(&path) {
         // Lenient, so this cannot fail: a configuration it cannot read is
         // reported once on stderr and the defaults govern its files.
-        policy.lint(text, &path, ws).unwrap_or_default()
+        guarded(|| policy.lint(text, &path, ws).unwrap_or_default())
     } else {
-        vec![]
+        Ok(vec![])
+    };
+    // A rule that panicked leaves nothing true to report, so the document
+    // gets one diagnostic saying so, at its start, until an edit gets past it.
+    let findings = match findings {
+        Ok(findings) => findings,
+        Err(panic) => {
+            let failed = json!({
+                "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}},
+                "severity": 1,
+                "source": "q-lint",
+                "message": format!(
+                    "qlinter failed on this document and reports nothing else for it: {panic}. \
+                     This is a bug in qlinter."
+                ),
+            });
+            return send(
+                writer,
+                json!({"method": "textDocument/publishDiagnostics",
+                       "params": {"uri": uri, "diagnostics": [failed]}}),
+            );
+        }
     };
     let diagnostics: Vec<Value> = findings
         .iter()
@@ -1207,6 +1267,19 @@ mod tests {
                 &[1, 9, 1, 1, 0][..], // f, line 2 col 9: g's parameter
                 &[0, 2, 1, 1, 0][..], // b, col 11
             ]
+        );
+    }
+
+    #[test]
+    fn a_panic_is_contained_and_named() {
+        assert_eq!(guarded(|| 1), Ok(1));
+        assert_eq!(
+            guarded(|| -> i32 { panic!("rule {} broke", 7) }),
+            Err("rule 7 broke".into())
+        );
+        assert_eq!(
+            guarded(|| -> i32 { panic!("static") }),
+            Err("static".into())
         );
     }
 

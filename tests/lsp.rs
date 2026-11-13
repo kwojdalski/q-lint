@@ -1511,3 +1511,39 @@ fn editing_the_file_named_by_config_relints_the_open_documents() {
     assert_eq!(codes_of(&server.diagnostics_for(&app)), ["QE004"]);
     assert_eq!(server.shutdown_and_exit(), 0);
 }
+
+#[test]
+fn a_rule_that_panics_costs_one_answer_not_the_server() {
+    // Two inputs that panicked in rules (a char boundary inside `é`), one
+    // through the diagnostics and one through formatting. Whether or not
+    // those rules are fixed by now, the server must answer the request,
+    // keep serving other documents, and exit cleanly.
+    let mut server = Server::start();
+    server.initialize();
+    let lint_panic = "file:///tmp/panic_lint.q";
+    server.open(lint_panic, "r:select from t where \u{e9}if\n");
+    server.diagnostics_for(lint_panic);
+    let format_panic = "file:///tmp/panic_format.q";
+    server.open(format_panic, "\u{e9}==like b/+=`a  \n");
+    server.diagnostics_for(format_panic);
+    server.send(json!({"jsonrpc":"2.0","id":2,"method":"textDocument/formatting",
+        "params":{"textDocument":{"uri":format_panic},"options":{"tabSize":2,"insertSpaces":true}}}));
+    // Opening the second file re-lints the first, so its diagnostics may
+    // come before the reply.
+    let reply = (0..10)
+        .map(|_| server.receive())
+        .find(|m| m["id"] == 2)
+        .expect("formatting was answered");
+    assert!(
+        reply.get("result").is_some() || reply["error"]["code"] == -32603,
+        "{reply}"
+    );
+    let ok = "file:///tmp/after_panic.q";
+    server.open(ok, "a==b\n");
+    assert!(!server.diagnostics_for(ok).is_empty());
+    // The other documents are linted again after it, in no fixed order.
+    server.send(json!({"jsonrpc":"2.0","id":99,"method":"shutdown"}));
+    assert!((0..10).any(|_| server.receive()["id"] == 99));
+    server.send(json!({"jsonrpc":"2.0","method":"exit"}));
+    assert_eq!(server.child.wait().unwrap().code(), Some(0));
+}
