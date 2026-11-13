@@ -32,6 +32,25 @@ r4:`s#`B`a
 r1:`g#1 2 1
 r2:`s#3 1 2,0
 
+=== QE006 | a minute past 59 in a digit-form minute (q 5: parse "1260u" is '1260)
+a:1260u
+
+=== QE006 | a second past 59 in a digit-form second (q 5: '120060)
+b:120060v
+
+=== QE006 | a minute past 59 in a digit-form time (q 5: '126000)
+c:126000t
+
+=== QE006 | the minutes of a nine-digit time (q 5: '126000123)
+d:126000123t
+
+=== clean | digit forms q reads (q 5: 12:59, 60:00, 01:00, **:45, 12:00:00.123)
+a:1259u
+b:60u
+c:100v
+d:12345u
+e:120000123t
+x1260u:1
 === QE006 | a date that does not exist
 r:2024.02.30
 

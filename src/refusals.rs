@@ -160,6 +160,40 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
             ));
         }
     }
+    // The digit forms too (#232): q 5 reads `1259u` as 12:59 and refuses
+    // `1260u`, `120060v` and `126000t`. The minutes are a minute's last two
+    // digits, and a second's or time's from three to five digits; from six or
+    // seven they are followed by the seconds, and a time of nine digits ends
+    // in milliseconds. Other lengths q reads in ways not worth modelling.
+    for m in re!(r"\b(\d{3,})([uvt])\b").captures_iter(unsym) {
+        let whole = m.get(0).unwrap();
+        if command_argument(unsym, whole.start())
+            || unsym[..whole.start()].ends_with('.')
+            || unsym[whole.end()..].starts_with('.')
+        {
+            continue;
+        }
+        let d = m[1].as_bytes();
+        let two = |i: usize| u32::from(d[i] - b'0') * 10 + u32::from(d[i + 1] - b'0');
+        let fields = match (&m[2], d.len()) {
+            ("u", n) | ("v" | "t", n @ 3..=5) => vec![two(n - 2)],
+            ("v" | "t", n @ 6..=7) => vec![two(n - 4), two(n - 2)],
+            ("t", 9) => vec![two(2), two(4)],
+            _ => vec![],
+        };
+        if fields.iter().any(|&f| f > 59) {
+            out.push(Finding::at(
+                path,
+                source,
+                whole.start(),
+                "QE006",
+                format!(
+                    "`{}` is no time: minutes and seconds stop at 59, and q refuses the literal",
+                    whole.as_str()
+                ),
+            ));
+        }
+    }
     // Minutes and seconds take two digits, and so does an hour: q 5 refuses
     // `12:5`, `12:00:5`, `0D1:30` and `2023.01.01D1:30`, and takes `01:30`,
     // `123:45` and `12:345` (as 12:34). A one-digit hour with nothing on its
