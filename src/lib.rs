@@ -5294,9 +5294,15 @@ pub fn lint_selecting(
             add(
                 i,
                 "QE002",
+                // The whole char after the backslash, which may be more than
+                // one byte: `\é` is named as such, not half of it (#233).
                 format!(
-                    "Invalid escape {}",
-                    String::from_utf8_lossy(&b[i..(i + 2).min(b.len())])
+                    "Invalid escape \\{}",
+                    v.comments[i + 1..]
+                        .chars()
+                        .next()
+                        .map(String::from)
+                        .unwrap_or_default()
                 ),
             );
             i += 2;

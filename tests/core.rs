@@ -501,3 +501,12 @@ fn a_filter_string_is_counted_in_bytes() {
     let qb015 = found.iter().find(|f| f.code == "QB015").expect("QB015");
     assert!(qb015.detail.contains("exactly 3 rows"), "{}", qb015.detail);
 }
+
+/// QE002 names the whole char after the backslash, though it is more than
+/// one byte (#233).
+#[test]
+fn an_invalid_escape_names_a_non_ascii_char_whole() {
+    let found = lint("a:\"x\\éy\"\n", "t.q", Profile::General);
+    let qe002 = found.iter().find(|f| f.code == "QE002").expect("QE002");
+    assert_eq!(qe002.detail, "Invalid escape \\é");
+}
