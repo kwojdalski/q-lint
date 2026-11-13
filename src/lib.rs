@@ -3982,9 +3982,10 @@ pub fn lint_selecting(
     }
     // `type` returns a short - 7h, not `long - so a symbol on the other side
     // of `=` is a 'type error every time. A bare `type=` is a column named
-    // type, which is QF013's business, not this rule's.
+    // type, which is QF013's business, not this rule's. `type` has to be the
+    // whole word: `typeTerminal=`count` is a name (#296).
     for m in re!(
-        r"\btype\s*(?:\[[^\]]*\]|\(?[A-Za-z_][A-Za-z0-9_.]*\)?)\s*(?:=|<>)\s*`[a-z][A-Za-z0-9_.]*(?:`[A-Za-z0-9_.]*)*|\(\s*type\b[^()]*\)\s*(?:=|<>)\s*`[a-z][A-Za-z0-9_.]*(?:`[A-Za-z0-9_.]*)*|`[a-z]+\s*(?:=|<>)\s*type\b"
+        r"\btype(?:\s*\[[^\]]*\]|\s*\([A-Za-z_][A-Za-z0-9_.]*\)|\s+\(?[A-Za-z_][A-Za-z0-9_.]*\)?)\s*(?:=|<>)\s*`[a-z][A-Za-z0-9_.]*(?:`[A-Za-z0-9_.]*)*|\(\s*type\b[^()]*\)\s*(?:=|<>)\s*`[a-z][A-Za-z0-9_.]*(?:`[A-Za-z0-9_.]*)*|`[a-z]+\s*(?:=|<>)\s*type\b"
     )
     .find_iter(code)
     {
