@@ -651,6 +651,23 @@ t:([]a:1 2)
 @[`t;`b;:;3 4]
 r:select b from t
 
+=== clean | a nested query's columns in a where phrase are its own table's (q 5 runs f)
+t:([]a:1 2 3)
+f:{[u] select from t where a in exec b from u}
+
+=== clean | the where phrase ends at the bracket around its query (q 5 runs the line)
+t:([]a:1 2 3)
+u:flip enlist[`c]!enlist 4 5
+r:(select from t where a>1),select a:c from u where c>4
+
+=== QF020 | but the outer phrase still reads past a nested query in brackets
+t:([]a:1 2 3)
+f:{[u] select from t where a in (exec b from u), d>0}
+
+=== QF020 | and the query after a closed one is checked in its own right
+t:([]a:1 2 3)
+r:(select from t where a>1),select from t where d>0
+
 === clean | columns it has, the virtual index, and a lambda's own names
 t:([]a:1 2;b:3 4)
 r1:select from t where a>0, b<3

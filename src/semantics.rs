@@ -2894,28 +2894,55 @@ fn named_values(
     }
     // The where phrase, in any of the four: `select from t where c>0` is 'c
     // when t has no c and nothing defines one. Names inside a lambda in the
-    // phrase are that lambda's own and are left alone.
-    for m in re!(r"\b(?:select|exec|update|delete)\b[^\n;]*?\bfrom\s+(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s+where\b([^\n;]*)")
-        .captures_iter(code)
+    // phrase are that lambda's own and are left alone, and so are a nested
+    // query's, which are its table's (#259). The phrase ends at a bracket it
+    // did not open: `(select from t where a>1),select ...` (#260).
+    let mut from = 0;
+    while let Some(m) = re!(r"\b(?:select|exec|update|delete)\b[^\n;]*?\bfrom\s+(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s+where\b([^\n;]*)")
+        .captures_at(code, from)
     {
+        let phrase = m.get(2).unwrap();
+        let mut flat = phrase.as_str().as_bytes().to_vec();
+        let (mut depth, mut lambda, mut nested) = (0i32, 0i32, None);
+        let mut end = flat.len();
+        for (i, &c) in phrase.as_str().as_bytes().iter().enumerate() {
+            match c {
+                b'(' | b'[' => depth += 1,
+                b'{' => lambda += 1,
+                b'}' => {
+                    lambda -= 1;
+                    flat[i] = b' ';
+                }
+                b')' | b']' if depth == 0 => {
+                    end = i;
+                    break;
+                }
+                b')' | b']' => depth -= 1,
+                _ => {}
+            }
+            if nested.is_some_and(|d| depth < d) {
+                nested = None;
+            }
+            if nested.is_none()
+                && phrase
+                    .as_str()
+                    .get(i..)
+                    .is_some_and(|rest| re!(r"^(?:select|exec|update|delete)\b").is_match(rest))
+                && boundary(code, phrase.start() + i)
+            {
+                nested = Some(depth);
+            }
+            if lambda > 0 || nested.is_some() {
+                flat[i] = b' ';
+            }
+        }
+        flat.truncate(end);
+        from = phrase.start() + end.max(1);
+        let flat = String::from_utf8_lossy(&flat).into_owned();
         let table = m.get(1).unwrap();
         let Some(Held::Table(columns, _)) = visible(table.as_str(), table.start()) else {
             continue;
         };
-        let phrase = m.get(2).unwrap();
-        let mut depth = 0i32;
-        let flat: String = phrase
-            .as_str()
-            .chars()
-            .map(|c| {
-                match c {
-                    '{' => depth += 1,
-                    '}' => depth -= 1,
-                    _ => {}
-                }
-                if depth > 0 || c == '}' { ' ' } else { c }
-            })
-            .collect();
         for name in re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(&flat) {
             let at = phrase.start() + name.start();
             if boundary(code, at) && !flat[name.end()..].starts_with('.') && is_free(name.as_str(), at, columns) {
