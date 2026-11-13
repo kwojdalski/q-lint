@@ -2769,7 +2769,21 @@ pub fn lint_selecting(
             .into_iter()
             .filter(|p| !matches!(**p, "by" | "do" | "from" | "if" | "while"))
             .collect();
-        if !bad.is_empty() {
+        // A qSQL keyword is worse: q 5 cannot parse the lambda at all, and a
+        // script stops at its definition - `{[select] 1}` is 'from, and so
+        // are exec, update and delete.
+        if bad
+            .iter()
+            .any(|p| matches!(**p, "select" | "exec" | "update" | "delete"))
+        {
+            add(
+                at,
+                "QF001",
+                format!(
+                    "Builtin parameter name(s): {bad:?}; q refuses to define this lambda ('from)"
+                ),
+            );
+        } else if !bad.is_empty() {
             add(
                 at,
                 "QF001",
@@ -3643,10 +3657,7 @@ pub fn lint_selecting(
             from += part.len() + 1;
             empty
         });
-        if elided
-            || parts.len() < 2
-            || !scalar_literal(parts[1].trim())
-        {
+        if elided || parts.len() < 2 || !scalar_literal(parts[1].trim()) {
             continue;
         }
         add(

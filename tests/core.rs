@@ -513,3 +513,30 @@ fn deeply_nested_lambdas_lint_in_bounded_time() {
         "{depth} nested lambdas took {elapsed:?}"
     );
 }
+
+/// A qSQL keyword as a parameter is refused when the lambda is parsed, not
+/// when it is called: q 5 `parse "{[select] 1}"` is 'from, as are exec,
+/// update and delete (#240). Any other builtin still fails only its calls.
+#[test]
+fn qsql_keyword_parameter_names_the_parse_error() {
+    for source in [
+        "f:{[select] 1}\n",
+        "f:{[exec] 1}\n",
+        "f:{[update] 1}\n",
+        "f:{[count;delete] 1}\n",
+    ] {
+        let f = lint(source, "t.q", Profile::Style);
+        let f = f.iter().find(|f| f.code == "QF001").unwrap();
+        assert!(
+            f.detail.contains("refuses to define this lambda ('from)"),
+            "{source}: {}",
+            f.detail
+        );
+    }
+    let f = lint("f:{[count] 1}\n", "t.q", Profile::Style);
+    assert!(
+        f[0].detail.contains("refuses every call"),
+        "{}",
+        f[0].detail
+    );
+}
