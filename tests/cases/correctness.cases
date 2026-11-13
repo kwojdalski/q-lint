@@ -54,6 +54,11 @@ r13:select a by a in 1 from t
 === QB001 | a qSQL filter comparing a column to itself
 select from t where a=a
 
+=== clean | a self-comparison in another statement than the query (#239)
+a:0n;t:([]b:1 2)
+isnan:a=a; r:select from t
+f:{[x] x~x}; g:{exec b from t}
+
 === clean | comparing two different columns
 select from t where a=b
 
@@ -62,6 +67,13 @@ select from t where sym like "a*b*"
 
 === QB002 | or two together (q 5: 'nyi)
 select from t where sym like "a**"
+
+=== QB002 | the pattern as like's second argument in brackets (q 5: like["abc";"a*b*"] is 'nyi)
+r:like["abc";"a*b*"]
+s:like[t`sym;"a*b*"]
+
+=== clean | and one interior wildcard in brackets is fine (q 5: like["abc";"a*c"] is 1b)
+r:like["a;b";"a*c"]
 
 === clean | one interior wildcard is supported in q 5 ("abc" like "a*c" is 1b)
 select from t where sym like "a*b"
@@ -277,6 +289,15 @@ if[type[x]=`long;1]
 === QB013 | symbol on the left
 if[`long=type x;1]
 
+=== clean profile: general | a name that starts with type is not the keyword (q 5: f`count is 1, typeX=`a is 1b)
+f:{[typeTerminal] $[typeTerminal=`count;1;0]}
+typeX:`a
+r:typeX=`a
+
+=== QB013 profile: general | the keyword itself is still read (q 5: (type 1)=`long and type[1]=`long are 'type)
+f:{[x] (type x)=`long}
+g:{[x] type[x]=`long}
+
 === clean | the symbols on the right are the start of a find
 r:type[1]=`a`b?`a
 
@@ -326,6 +347,9 @@ select from t where sym=""
 === clean | a one-char string is a char atom
 select from t where c="a"
 
+=== QB015 | a non-ASCII char is two bytes, so no char atom (q 5: s="é" on 3 rows is 'length)
+select from t where s="é"
+
 === clean | like, match and in are the string comparisons
 select from t where sym like "EUR", s~\:"ab", c in "abc"
 
@@ -370,6 +394,12 @@ dir:1
 
 === QB004 | a thrown message long enough to be truncated
 f:{'"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+
+=== QB004 | q keeps 254 bytes, and each é is two (q 5: 200 of them, 400 bytes, signal as 254)
+f:{'"éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé"}
+
+=== clean | 127 two-byte chars are 254 bytes, which survive
+f:{'"ééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé"}
 
 === clean | 254 characters survive whole in q 5
 f:{'"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
@@ -519,6 +549,9 @@ r:{x+y}[1;2;3]
 
 === QA002 | and with no x, y or z read it still takes one
 r:{1}[1;2]
+
+=== QA002 QF021 profile: general | y.z is a global, not a read of y (q 5: {x+y.z}[1;2] is 'rank)
+r:{x+y.z}[1;2]
 
 === clean | QA002: y read means two arguments
 r:{y}[1;2]

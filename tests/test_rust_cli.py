@@ -63,10 +63,27 @@ def test_exclusions_config_discovery_and_deduplication(tmp_path):
     )
 
 
+def test_stdin_filename_alone_reads_stdin_and_refuses_paths_beside_it(tmp_path):
+    """--stdin-filename without `-` used to be ignored: stdin went unread and
+    the tree qlinter ran in was linted instead (#272)."""
+    (tmp_path / "a.q").write_text("f:{[x] x==1}\n")
+    result = run("--isolated", "--stdin-filename", "src/x.q", cwd=tmp_path, source="g:{[x] x==1}\n")
+    assert result.returncode == 1, result.stderr
+    assert "src/x.q:1:9" in result.stdout and "a.q" not in result.stdout
+    for paths in (["a.q"], ["."], ["-", "a.q"]):
+        result = run("--isolated", "--stdin-filename", "x.q", *paths, cwd=tmp_path, source="g:1\n")
+        assert result.returncode == 2 and "must be the only input" in result.stderr, paths
+
+
 def test_errors_are_not_partial_json(tmp_path):
-    for args in ([tmp_path], [tmp_path / "missing.q"], ["--config", tmp_path / "missing.toml"]):
+    for args in ([tmp_path], ["--config", tmp_path / "missing.toml"]):
         result = run(*args, "--format", "json")
         assert result.returncode == 2 and not result.stdout
+    # A path that does not exist is reported and skipped, as an unreadable
+    # file is (#265): the run still prints its whole result, and ends in 2.
+    result = run(tmp_path / "missing.q", "--format", "json")
+    assert result.returncode == 2 and json.loads(result.stdout) == []
+    assert "missing.q" in result.stderr and "skipped" in result.stderr
 
 
 @pytest.mark.parametrize(

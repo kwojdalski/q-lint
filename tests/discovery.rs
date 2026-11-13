@@ -616,3 +616,171 @@ fn an_excluded_file_named_explicitly_is_linted_unless_force_exclude() {
         Vec::<String>::new()
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn a_symlink_is_governed_excluded_and_reported_where_it_is() {
+    // The link lives in proj/tests; its target lives outside the project.
+    // Resolving it first lost the link's place and name, so proj's
+    // configuration, its per-file-ignores and every exclude passed it by,
+    // and the finding was reported against the target (#263).
+    let repo = Repo::new();
+    repo.write("elsewhere/x.q", SOURCE)
+        .write(
+            "proj/qlinter.toml",
+            "profile = \"style\"\n[lint.per-file-ignores]\n\"tests/*\" = [\"QF016\"]\n",
+        )
+        .write("proj/ok.q", "h:1\n");
+    fs::create_dir_all(repo.path("proj/tests")).unwrap();
+    std::os::unix::fs::symlink("../../elsewhere/x.q", repo.path("proj/tests/link.q")).unwrap();
+    assert_eq!(repo.codes("proj", &["tests"]), Vec::<String>::new());
+    assert_eq!(
+        linted_from(&repo, "proj", &["--isolated", "."]),
+        ["proj/tests/link.q"]
+    );
+    for exclude in ["link.q", "tests/link.q"] {
+        assert_eq!(
+            linted_from(&repo, "proj", &["--isolated", ".", "--exclude", exclude]),
+            Vec::<String>::new(),
+            "{exclude}"
+        );
+    }
+}
+
+#[test]
+fn a_path_that_does_not_exist_is_reported_and_the_rest_are_still_linted() {
+    // One stale path in a pre-commit or CI file list used to end the run
+    // before anything was linted (#265).
+    let repo = Repo::new();
+    repo.write("ok.q", SOURCE);
+    for args in [
+        &["--isolated", "--profile", "style", "ok.q", "missing.q"][..],
+        &["analyze", "graph", "ok.q", "missing.q"],
+    ] {
+        let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .current_dir(repo.path("."))
+            .args(args)
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(2), "{args:?}: {stderr}");
+        assert!(
+            stderr.contains("missing.q") && stderr.contains("skipped"),
+            "{stderr}"
+        );
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains("ok.q"),
+            "{args:?}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_directory_the_walk_cannot_read_is_reported_and_the_rest_are_still_linted() {
+    // One unreadable subdirectory used to end the walk, and with it the
+    // lint and the graph of the whole tree (#266). Excluded, it is never
+    // read and is no failure at all.
+    use std::os::unix::fs::PermissionsExt;
+    let repo = Repo::new();
+    repo.write("src/a.q", SOURCE).write("locked/b.q", "g:1\n");
+    fs::set_permissions(repo.path("locked"), fs::Permissions::from_mode(0o000)).unwrap();
+    let readable = fs::read_dir(repo.path("locked")).is_ok();
+    let status = |args: &[&str]| {
+        let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .current_dir(repo.path("."))
+            .args(args)
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+        (
+            out.status.code(),
+            stderr,
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+        )
+    };
+    let results = [
+        status(&["--isolated", "--profile", "style", "."]),
+        status(&["analyze", "graph", "."]),
+    ];
+    let excluded = status(&[
+        "--isolated",
+        "--profile",
+        "style",
+        ".",
+        "--exclude",
+        "locked",
+    ]);
+    fs::set_permissions(repo.path("locked"), fs::Permissions::from_mode(0o755)).unwrap();
+    if readable {
+        return; // root reads it anyway; there is nothing to test
+    }
+    for (code, stderr, stdout) in results {
+        assert_eq!(code, Some(2), "{stderr}");
+        assert!(
+            stderr.contains("locked") && stderr.contains("skipped"),
+            "{stderr}"
+        );
+        assert!(stdout.contains("a.q"), "{stdout}");
+    }
+    assert_eq!(excluded.0, Some(1), "{}", excluded.1);
+}
+
+#[test]
+fn build_and_tool_directories_are_excludes_default_which_a_configuration_replaces() {
+    // The list was hard-coded in the walk, so `exclude = []` changed nothing
+    // and a tree of q under `build/` was "No .q files found" (#267). As in
+    // Ruff it is now `exclude`'s default.
+    let repo = Repo::new();
+    repo.write("src/build/gen.q", SOURCE)
+        .write("src/target/t.q", SOURCE)
+        .write("src/a.q", SOURCE);
+    assert_eq!(linted(&repo, &["--isolated", "src"]), ["src/a.q"]);
+    // A directory named outright is not inside one the walk skips.
+    assert_eq!(
+        linted(&repo, &["--isolated", "src/build"]),
+        ["src/build/gen.q"]
+    );
+    repo.write("qlinter.toml", "extend-exclude = [\"a.q\"]\n");
+    assert_eq!(linted(&repo, &["src"]), Vec::<String>::new());
+    repo.write("qlinter.toml", "exclude = []\n");
+    assert_eq!(
+        linted(&repo, &["src"]),
+        ["src/a.q", "src/build/gen.q", "src/target/t.q"]
+    );
+}
+
+#[test]
+fn show_settings_lists_only_rules_the_backend_can_report() {
+    // QF006 runs only as a Python hook and QLS001 only from qls, yet both
+    // were listed - and counted - as turned on for the builtin backend
+    // (#274).
+    let repo = Repo::new();
+    repo.write("a.q", SOURCE);
+    let rules = |args: &[&str]| {
+        let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .current_dir(repo.path("."))
+            .args(["--isolated", "--show-settings"])
+            .args(args)
+            .arg("a.q")
+            .output()
+            .unwrap();
+        let text = String::from_utf8(out.stdout).unwrap();
+        let line = text.lines().find(|l| l.starts_with("rules (")).unwrap();
+        line.split_once(": ").map_or(vec![], |(_, codes)| {
+            codes
+                .split_whitespace()
+                .map(String::from)
+                .collect::<Vec<_>>()
+        })
+    };
+    let builtin = rules(&[]);
+    assert!(builtin.contains(&"QE004".to_string()), "{builtin:?}");
+    assert!(
+        !builtin.iter().any(|c| c == "QF006" || c == "QLS001"),
+        "{builtin:?}"
+    );
+    assert_eq!(rules(&["--select", "QF006"]), Vec::<String>::new());
+    assert_eq!(rules(&["--backend", "qls"]), ["QLS001"]);
+    assert!(rules(&["--backend", "all"]).contains(&"QLS001".to_string()));
+}

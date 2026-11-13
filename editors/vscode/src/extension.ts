@@ -7,10 +7,18 @@
 // line and options in `settings.ts`. The same server serves Neovim, Helix
 // and Zed with a comparable amount of their own configuration; nothing in this
 // file is knowledge those editors would have to reimplement.
-import { commands, workspace, window, type ExtensionContext, type OutputChannel } from "vscode";
+import {
+  commands,
+  RelativePattern,
+  Uri,
+  workspace,
+  window,
+  type ExtensionContext,
+  type OutputChannel,
+} from "vscode";
 import { launch, needsRestart } from "./settings";
 import { chmodSync, existsSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import {
   LanguageClient,
   type LanguageClientOptions,
@@ -118,6 +126,14 @@ async function start(context: ExtensionContext): Promise<void> {
       fileEvents: [
         workspace.createFileSystemWatcher("**/*.q"),
         workspace.createFileSystemWatcher("**/{qlinter.toml,.qlinter.toml,pyproject.toml}"),
+        // `q-lint.configFile` can be called anything and live anywhere.
+        ...(settings.configFile
+          ? [
+              workspace.createFileSystemWatcher(
+                new RelativePattern(Uri.file(dirname(settings.configFile)), basename(settings.configFile)),
+              ),
+            ]
+          : []),
       ],
     },
   };

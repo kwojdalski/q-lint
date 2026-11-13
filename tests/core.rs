@@ -79,7 +79,8 @@ fn language_prefixes_preserve_following_q_diagnostics() {
 /// reading the reference manual. q accepts more in a parameter list than one
 /// would guess - `.q.z` is a legal parameter name, `{[a;b;] ...}` takes three
 /// arguments - and reads the brackets as body text rather than a signature
-/// whenever a slot is not a name, which is the trap QF007 exists for.
+/// whenever a slot is neither a name nor, in q 5, a pattern, which is the
+/// trap QF007 exists for.
 #[test]
 fn parameter_lists_agree_with_q() {
     // q reports the declared names: these are signatures.
@@ -93,6 +94,16 @@ fn parameter_lists_agree_with_q() {
         "f:{[.q.z] 1}",
         "f:{[a;b;c;d;e;f;g;h] a}",
         "f:{x+1}",
+        // q 5 patterns bind as parameters, and a literal fails only a call
+        // that does not match it (#298): `{[1] 5} 1` is 5.
+        "f:{[1] x+1}",
+        "f:{[`s] x+1}",
+        "f:{[1;2] x}",
+        "f:{[a;1] x}",
+        "f:{[\"s\"] 1}",
+        "f:{[(a;b);c] a+b+c}",
+        "f:{[([k;v])] k+v}",
+        "f:{[([]a;b:c)] a}",
     ] {
         let found = lint(source, "t.q", Profile::Style);
         assert!(
@@ -107,14 +118,10 @@ fn parameter_lists_agree_with_q() {
         ("f:{[a+b] 1}", "'nyi"),
         ("f:{[a-b] x}", "'nyi"),
         ("f:{[count x] 1}", "'nyi"),
-        ("f:{[1] x+1}", "'match"),
-        ("f:{[`s] x+1}", "'match"),
-        ("f:{[1;2] x}", "'match"),
-        ("f:{[a;1] x}", "'match"),
         ("f:{[a b] a}", "start of the body"),
         ("f:{[a[0]] a}", "start of the body"),
         ("f:{[a:1] a}", "start of the body"),
-        ("f:{[\"s\"] 1}", "'match"), // blank once literals are masked; still not a name
+        ("f:{[(a b)] 1}", "start of the body"),
     ] {
         let found = lint(source, "t.q", Profile::Style);
         assert!(
@@ -465,9 +472,11 @@ fn a_later_vector_equality_is_reported_at_its_own_constraint() {
 fn deeply_nested_lambdas_lint_in_bounded_time() {
     // #185: every rule that matched braces from each `{` was quadratic in
     // nesting depth. Generated or hostile input can nest thousands deep, and
-    // the language server lints on every keystroke. About 3 s in a debug
-    // build after the fix, against roughly five times that before it.
-    let depth = 4000;
+    // the language server lints on every keystroke. About 1 s in a debug
+    // build after the fix, against roughly five times that before it. At 4000
+    // deep it took 3 s here and over 10 s on a shared CI runner, so the bound
+    // failed with no regression behind it.
+    let depth = 2000;
     let source = format!("f:{}{}\n", "{".repeat(depth), "}".repeat(depth));
     let started = std::time::Instant::now();
     lint(&source, "t.q", Profile::Style);
@@ -476,4 +485,134 @@ fn deeply_nested_lambdas_lint_in_bounded_time() {
         elapsed < std::time::Duration::from_secs(10),
         "{depth} nested lambdas took {elapsed:?}"
     );
+}
+#[test]
+fn a_nested_lambda_after_a_sibling_is_scanned_once() {
+    // #252: the second nested lambda was taken for a new outer body.
+    let found = lint("f:{a:{x}; b:{count:1; x}; a}", "t.q", Profile::Style);
+    assert_eq!(found.iter().filter(|f| f.code == "QF003").count(), 1);
+}
+
+/// A non-ASCII character right before a glyph: QE008 once sliced the two
+/// bytes before the glyph and split the `é` (#234). q refuses the line with
+/// 'char, so nothing need be reported, only nothing must panic.
+#[test]
+fn non_ascii_before_a_glyph_does_not_panic() {
+    for source in ["r:`café-x\n", "é-x\n", "x:é+1\n"] {
+        lint(source, "t.q", Profile::Uqf);
+    }
+}
+/// A non-ASCII character in a select list: the qSQL tokenizer once took it
+/// as a one-byte operator and sliced through the `€` (#235).
+#[test]
+fn non_ascii_in_a_select_list_does_not_panic() {
+    for source in [
+        "r:select a€ from t\n",
+        "r:select €,b from t\n",
+        "r:exec a+€ by b from t\n",
+    ] {
+        lint(source, "t.q", Profile::Uqf);
+    }
+}
+/// A non-ASCII symbol at the end of a qSQL phrase: the where-phrase walk
+/// asked `boundary` about every byte and it sliced through the `é` (#236).
+#[test]
+fn non_ascii_symbol_in_a_qsql_phrase_does_not_panic() {
+    for source in [
+        "r:select from t where c=`é\n",
+        "r:select `é from t\n",
+        "r:select from t where c in `é\n",
+    ] {
+        lint(source, "t.q", Profile::Uqf);
+    }
+}
+/// A qSQL keyword as a parameter is refused when the lambda is parsed, not
+/// when it is called: q 5 `parse "{[select] 1}"` is 'from, as are exec,
+/// update and delete (#240). Any other builtin still fails only its calls.
+#[test]
+fn qsql_keyword_parameter_names_the_parse_error() {
+    for source in [
+        "f:{[select] 1}\n",
+        "f:{[exec] 1}\n",
+        "f:{[update] 1}\n",
+        "f:{[count;delete] 1}\n",
+    ] {
+        let f = lint(source, "t.q", Profile::Style);
+        let f = f.iter().find(|f| f.code == "QF001").unwrap();
+        assert!(
+            f.detail.contains("refuses to define this lambda ('from)"),
+            "{source}: {}",
+            f.detail
+        );
+    }
+    let f = lint("f:{[count] 1}\n", "t.q", Profile::Style);
+    assert!(
+        f[0].detail.contains("refuses every call"),
+        "{}",
+        f[0].detail
+    );
+}
+/// QB001 and QB002 report at the code they are about, not at column 1, and
+/// QB002 quotes the pattern as it is written rather than with Rust escapes
+/// (#243).
+#[test]
+fn self_comparison_and_like_report_at_the_token() {
+    let f = lint(
+        "t:([]a:1 2)\nx:1;  y:\"abc\" like \"a\\\\*b*é*\"\nr:select from t where a=a\n",
+        "t.q",
+        Profile::Style,
+    );
+    let like = f.iter().find(|f| f.code == "QB002").unwrap();
+    assert_eq!((like.line, like.column), (2, Some(15)));
+    assert_eq!(like.detail, "like \"a\\\\*b*é*\"");
+    let same = f.iter().find(|f| f.code == "QB001").unwrap();
+    assert_eq!((same.line, same.column), (3, Some(23)));
+}
+
+/// The BOM is no part of the first line as the masker reads it: a comment
+/// or block comment that opens there is still one (#221).
+#[test]
+fn a_byte_order_mark_does_not_turn_a_first_line_comment_into_code() {
+    let codes = |s: &str| -> Vec<String> {
+        lint(s, "t.q", Profile::General)
+            .into_iter()
+            .map(|f| f.code)
+            .collect()
+    };
+    assert_eq!(codes("\u{feff}/ uses x==y\na:1\n"), ["QE005"]);
+    assert_eq!(codes("\u{feff}/\nprose x==y\n\\\na:1\n"), ["QE005"]);
+    assert_eq!(codes("\u{feff}a:\"x\"; b:x==y\n"), ["QE005", "QE004"]);
+}
+/// QB015 names the row count q needs, which is the string's length in bytes:
+/// `"éa"` is three, not two (#227).
+#[test]
+fn a_filter_string_is_counted_in_bytes() {
+    let found = lint("r:select from t where s=\"éa\"\n", "t.q", Profile::Style);
+    let qb015 = found.iter().find(|f| f.code == "QB015").expect("QB015");
+    assert!(qb015.detail.contains("exactly 3 rows"), "{}", qb015.detail);
+}
+/// QE002 names the whole char after the backslash, though it is more than
+/// one byte (#233).
+#[test]
+fn an_invalid_escape_names_a_non_ascii_char_whole() {
+    let found = lint("a:\"x\\éy\"\n", "t.q", Profile::General);
+    let qe002 = found.iter().find(|f| f.code == "QE002").expect("QE002");
+    assert_eq!(qe002.detail, "Invalid escape \\é");
+}
+
+/// A typed slot binds its pattern's names: q 5 defines `{[a:`j] a}` and checks
+/// the type at the call, so `a` is a parameter, not body text (#304). A slot
+/// that is no pattern at all is still reported.
+#[test]
+fn a_typed_parameter_binds_its_name() {
+    for source in [
+        "f:{[a:`j] a}\n",
+        "f:{[a:\"j\";b] a+b}\n",
+        "f:{[(a;b):`j] a+b}\n",
+    ] {
+        let found = lint(source, "t.q", Profile::General);
+        assert!(found.is_empty(), "{source}: {found:?}");
+    }
+    let found = lint("f:{[a b] a}\n", "t.q", Profile::General);
+    assert!(found.iter().any(|f| f.code == "QF007"), "{found:?}");
 }

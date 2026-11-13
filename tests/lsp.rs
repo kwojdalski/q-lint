@@ -57,6 +57,13 @@ impl Server {
         self.stdin.flush().unwrap();
     }
 
+    /// Bytes exactly as given, framing and all, for messages a well-behaved
+    /// client would never send.
+    fn raw(&mut self, bytes: &[u8]) {
+        self.stdin.write_all(bytes).unwrap();
+        self.stdin.flush().unwrap();
+    }
+
     fn receive(&mut self) -> Value {
         let mut length = 0;
         loop {
@@ -77,6 +84,15 @@ impl Server {
         serde_json::from_slice(&body).unwrap()
     }
 
+    /// Read until a message `wanted` accepts arrives, past whatever the
+    /// server sends first - other documents linted again, say.
+    fn until(&mut self, wanted: impl Fn(&Value) -> bool) -> Value {
+        (0..10)
+            .map(|_| self.receive())
+            .find(|m| wanted(m))
+            .expect("the message arrived")
+    }
+
     /// Read until a publishDiagnostics for this uri arrives.
     fn diagnostics_for(&mut self, uri: &str) -> Vec<Value> {
         for _ in 0..10 {
@@ -95,7 +111,7 @@ impl Server {
 
     fn initialize(&mut self) -> Value {
         self.send(
-            json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}),
+            json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":client_capabilities()}}),
         );
         let reply = self.receive();
         self.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
@@ -127,6 +143,13 @@ impl Server {
     }
 }
 
+/// What VS Code declares, as far as this server reads it: Quick Fixes come
+/// back as `CodeAction` literals only to a client that says it takes them.
+fn client_capabilities() -> Value {
+    json!({"textDocument": {"codeAction": {"codeActionLiteralSupport":
+        {"codeActionKind": {"valueSet": ["quickfix"]}}}}})
+}
+
 /// `desc` is a q builtin, so this is a reserved-parameter finding (QF001) -
 /// the same trap this repository has hit in real code more than once.
 const RESERVED_PARAM: &str = "f:{[desc] 1+1}\n";
@@ -137,9 +160,36 @@ fn initialize_announces_full_document_sync() {
     // it wrong means either no updates or updates the server cannot apply.
     let mut server = Server::start();
     let reply = server.initialize();
-    assert_eq!(reply["result"]["capabilities"]["textDocumentSync"], 1);
+    // `save` present, or a client that follows LSP 3.17 never sends
+    // didSave, and linting on save never lints.
+    assert_eq!(
+        reply["result"]["capabilities"]["textDocumentSync"],
+        json!({"openClose": true, "change": 1, "save": {"includeText": false}})
+    );
     assert_eq!(reply["result"]["capabilities"]["codeActionProvider"], true);
     assert_eq!(reply["result"]["serverInfo"]["name"], "q-lint");
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn quick_fixes_go_only_to_a_client_that_takes_code_action_literals() {
+    // LSP 3.17: without `codeActionLiteralSupport` a client can take only
+    // Commands, and a fix here is an edit. So the provider is not announced,
+    // and a request made anyway gets no literal back.
+    let mut server = Server::start();
+    server.send(json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}));
+    let reply = server.receive();
+    assert!(
+        reply["result"]["capabilities"]
+            .get("codeActionProvider")
+            .is_none(),
+        "{reply}"
+    );
+    server.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+    let uri = "file:///tmp/literals.q";
+    server.open(uri, "a:1==1\n");
+    let diagnostics = server.diagnostics_for(uri);
+    assert_eq!(server.code_actions(uri, &diagnostics), Vec::<Value>::new());
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 
@@ -568,6 +618,98 @@ fn an_unsupported_request_is_refused_rather_than_ignored() {
 }
 
 #[test]
+fn a_malformed_message_is_answered_and_the_server_carries_on() {
+    // Each frame is delimited correctly, so the stream is still in step:
+    // JSON-RPC 2.0 answers it with an error whose id is null, and the next
+    // message is read as usual.
+    let mut server = Server::start();
+    server.initialize();
+    let invalid_utf8 = b"{\"jsonrpc\":\"2.0\",\"method\":\"x\",\"params\":\"\xff\xfe\"}";
+    let mut frame = format!("Content-Length: {}\r\n\r\n", invalid_utf8.len()).into_bytes();
+    frame.extend_from_slice(invalid_utf8);
+    for (bytes, code) in [
+        (b"Content-Length: 5\r\n\r\n{bad}".to_vec(), -32700),
+        (b"Content-Length: 2\r\n\r\n[]".to_vec(), -32600),
+        (frame, -32700),
+        (b"X-Foo\r\nContent-Length: 2\r\n\r\n{}".to_vec(), -32700),
+    ] {
+        server.raw(&bytes);
+        let reply = server.receive();
+        assert_eq!(reply["id"], Value::Null, "{reply}");
+        assert_eq!(reply["error"]["code"], code, "{reply}");
+    }
+    let uri = "file:///tmp/after_malformed.q";
+    server.open(uri, RESERVED_PARAM);
+    assert!(!server.diagnostics_for(uri).is_empty());
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn before_initialize_requests_are_refused_and_notifications_dropped() {
+    // LSP 3.17, Initialize Request: -32002 for a request, nothing for a
+    // notification. The didOpen must not be linted, so the first message
+    // back after initialize is initialize's own reply.
+    let mut server = Server::start();
+    server.send(json!({"jsonrpc":"2.0","id":3,"method":"textDocument/formatting",
+        "params":{"textDocument":{"uri":"file:///tmp/a.q"},"options":{"tabSize":2,"insertSpaces":true}}}));
+    let reply = server.receive();
+    assert_eq!(reply["id"], 3);
+    assert_eq!(reply["error"]["code"], -32002);
+    server.open("file:///tmp/early.q", RESERVED_PARAM);
+    let reply = server.initialize();
+    assert_eq!(reply["id"], 1, "{reply}");
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn a_second_shutdown_is_an_invalid_request() {
+    // LSP 3.17, Shutdown Request: requests after it error with
+    // InvalidRequest, and `shutdown` is a request like any other.
+    let mut server = Server::start();
+    server.initialize();
+    server.send(json!({"jsonrpc":"2.0","id":2,"method":"shutdown"}));
+    assert_eq!(server.receive()["result"], Value::Null);
+    server.send(json!({"jsonrpc":"2.0","id":3,"method":"shutdown"}));
+    let reply = server.receive();
+    assert_eq!(reply["id"], 3);
+    assert_eq!(reply["error"]["code"], -32600, "{reply}");
+    server.send(json!({"jsonrpc":"2.0","method":"exit"}));
+    assert_eq!(server.child.wait().unwrap().code(), Some(0));
+}
+
+#[test]
+fn a_response_is_not_answered_and_a_bad_method_is_an_invalid_request() {
+    // JSON-RPC 2.0 §5: a response is never replied to. §5.1: a method that is
+    // not a string makes an Invalid Request, -32600, not MethodNotFound.
+    let mut server = Server::start();
+    server.initialize();
+    server.send(json!({"jsonrpc":"2.0","id":"x","result":{"applied":true}}));
+    server.send(json!({"jsonrpc":"2.0","id":6,"error":{"code":-1,"message":"m"}}));
+    server.send(json!({"jsonrpc":"2.0","id":5,"method":42}));
+    let reply = server.receive();
+    assert_eq!(reply["id"], 5, "the responses were answered: {reply}");
+    assert_eq!(reply["error"]["code"], -32600, "{reply}");
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn a_document_over_the_size_limit_is_skipped_and_the_server_carries_on() {
+    // The cap stops an unbounded allocation; Content-Length still says where
+    // the next message starts, so nothing else need be lost.
+    let mut server = Server::start();
+    server.initialize();
+    let big = "a:1\n".repeat(17 << 18);
+    server.open("file:///tmp/big.q", &big);
+    let reply = server.receive();
+    assert_eq!(reply["id"], Value::Null, "{reply}");
+    assert_eq!(reply["error"]["code"], -32600, "{reply}");
+    let uri = "file:///tmp/after_big.q";
+    server.open(uri, RESERVED_PARAM);
+    assert!(!server.diagnostics_for(uri).is_empty());
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
 fn exit_without_shutdown_reports_a_nonzero_code() {
     // The protocol's own rule, and the only way a supervisor can tell a
     // clean stop from an editor that died.
@@ -718,6 +860,7 @@ fn only_q_files_are_linted() {
 #[test]
 fn the_bracket_quick_fix_covers_the_whole_application() {
     let mut server = Server::start();
+    server.initialize();
     let uri = "file:///tmp/calls.q";
     server.open(uri, "f:{x+1}\nr:f 3+4\n");
     let diagnostics = server.diagnostics_for(uri);
@@ -807,7 +950,7 @@ fn start_with_workspace(dir: &std::path::Path) -> Server {
     let mut server = Server::start();
     let uri = file_uri(dir);
     server.send(json!({"jsonrpc":"2.0","id":1,"method":"initialize",
-        "params":{"capabilities":{},"workspaceFolders":[{"uri":uri,"name":"ws"}]}}));
+        "params":{"capabilities":client_capabilities(),"workspaceFolders":[{"uri":uri,"name":"ws"}]}}));
     server.receive();
     server.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
     server
@@ -1108,7 +1251,8 @@ fn start_with_options(
     workspace: Option<&std::path::Path>,
 ) -> (Server, Value) {
     let mut server = Server::spawn(dir, args);
-    let mut params = json!({"capabilities":{}, "initializationOptions": options});
+    let mut params =
+        json!({"capabilities":client_capabilities(), "initializationOptions": options});
     if let Some(ws) = workspace {
         params["workspaceFolders"] = json!([{"uri": file_uri(ws), "name": "ws"}]);
     }
@@ -1335,4 +1479,151 @@ fn the_workspace_index_can_be_turned_off_or_narrowed() {
         );
         assert_eq!(server.shutdown_and_exit(), 0);
     }
+}
+
+#[test]
+fn neither_a_watched_change_nor_a_close_indexes_what_the_settings_leave_out() {
+    // With the index off or vendor/ excluded, a change on disk to vendor/lib.q
+    // must not put its `cfg` in the index, nor may closing a file keep what
+    // it defined: app.q's read of cfg stays undefined either way.
+    let has_qf018 = |server: &mut Server, app: &str| {
+        server.send(json!({"jsonrpc":"2.0","method":"textDocument/didChange",
+            "params":{"textDocument":{"uri":app,"version":2},"contentChanges":[{"text":"n:cfg\n"}]}}));
+        codes_of(&server.diagnostics_for(app)).contains(&"QF018".to_string())
+    };
+    for options in [
+        json!({"workspaceIndex": {"enable": false}}),
+        json!({"workspaceIndex": {"exclude": ["vendor/**"]}}),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("vendor")).unwrap();
+        let lib = dir.path().join("vendor/lib.q");
+        let app = file_uri(&dir.path().join("app.q"));
+        let (mut server, _) = start_with_options(
+            dir.path(),
+            &["--lsp", "--profile", "uqf"],
+            options.clone(),
+            Some(dir.path()),
+        );
+        server.open(&app, "n:cfg\n");
+        assert!(codes_of(&server.diagnostics_for(&app)).contains(&"QF018".to_string()));
+        std::fs::write(&lib, "cfg:5\n").unwrap();
+        server.send(
+            json!({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles",
+            "params":{"changes":[{"uri":file_uri(&lib),"type":1}]}}),
+        );
+        assert!(
+            has_qf018(&mut server, &app),
+            "{options}: after the watched change"
+        );
+        server.open(&file_uri(&lib), "cfg:5\n");
+        server.diagnostics_for(&file_uri(&lib));
+        // Open, lib.q's buffer does define cfg, and app.q is linted again.
+        assert!(!codes_of(&server.diagnostics_for(&app)).contains(&"QF018".to_string()));
+        server.send(json!({"jsonrpc":"2.0","method":"textDocument/didClose",
+            "params":{"textDocument":{"uri":file_uri(&lib)}}}));
+        server.diagnostics_for(&app);
+        server.diagnostics_for(&file_uri(&lib));
+        assert!(has_qf018(&mut server, &app), "{options}: after the close");
+        assert_eq!(server.shutdown_and_exit(), 0);
+    }
+}
+
+#[test]
+fn editing_the_file_named_by_config_relints_the_open_documents() {
+    // `--config` can name a file anything; a change to it has to be heard as
+    // a configuration change all the same, not read as a stray file.
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("lint.toml");
+    std::fs::write(&config, "select = [\"QE004\", \"QR001\"]\n").unwrap();
+    let (mut server, _) = start_with_options(
+        dir.path(),
+        &["--lsp", "--config", config.to_str().unwrap()],
+        json!({}),
+        Some(dir.path()),
+    );
+    let app = file_uri(&dir.path().join("app.q"));
+    server.open(&app, "a==b\nr:reverse asc 1 2\n");
+    let mut found = codes_of(&server.diagnostics_for(&app));
+    found.sort();
+    assert_eq!(found, ["QE004", "QR001"]);
+    std::fs::write(&config, "select = [\"QE004\"]\n").unwrap();
+    server.send(
+        json!({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles",
+        "params":{"changes":[{"uri":file_uri(&config),"type":2}]}}),
+    );
+    assert_eq!(codes_of(&server.diagnostics_for(&app)), ["QE004"]);
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn a_rule_that_panics_costs_one_answer_not_the_server() {
+    // Two inputs that panicked in rules (a char boundary inside `é`), one
+    // through the diagnostics and one through formatting. Whether or not
+    // those rules are fixed by now, the server must answer the request,
+    // keep serving other documents, and exit cleanly.
+    let mut server = Server::start();
+    server.initialize();
+    let lint_panic = "file:///tmp/panic_lint.q";
+    server.open(lint_panic, "r:select from t where \u{e9}if\n");
+    server.diagnostics_for(lint_panic);
+    let format_panic = "file:///tmp/panic_format.q";
+    server.open(format_panic, "\u{e9}==like b/+=`a  \n");
+    server.diagnostics_for(format_panic);
+    server.send(json!({"jsonrpc":"2.0","id":2,"method":"textDocument/formatting",
+        "params":{"textDocument":{"uri":format_panic},"options":{"tabSize":2,"insertSpaces":true}}}));
+    // Opening the second file re-lints the first, so its diagnostics may
+    // come before the reply.
+    let reply = server.until(|m| m["id"] == 2);
+    assert!(
+        reply.get("result").is_some() || reply["error"]["code"] == -32603,
+        "{reply}"
+    );
+    let ok = "file:///tmp/after_panic.q";
+    server.open(ok, "a==b\n");
+    assert!(!server.diagnostics_for(ok).is_empty());
+    // The other documents are linted again after it, in no fixed order.
+    server.send(json!({"jsonrpc":"2.0","id":99,"method":"shutdown"}));
+    server.until(|m| m["id"] == 99);
+    server.send(json!({"jsonrpc":"2.0","method":"exit"}));
+    assert_eq!(server.child.wait().unwrap().code(), Some(0));
+}
+
+#[test]
+fn another_files_new_function_asks_the_client_to_refresh_its_colours() {
+    // app.q calls helper before any file defines it, so it is not coloured
+    // as a function. lib.q's arrival changes that; the client re-asks for
+    // tokens only when told to, with workspace/semanticTokens/refresh.
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start_in(dir.path(), &[]);
+    let mut capabilities = client_capabilities();
+    capabilities["workspace"] = json!({"semanticTokens": {"refreshSupport": true}});
+    server.send(
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+        "capabilities": capabilities,
+        "workspaceFolders":[{"uri":file_uri(dir.path()),"name":"ws"}]}}),
+    );
+    server.receive();
+    server.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+    let tokens = |server: &mut Server, uri: &str| {
+        server.send(
+            json!({"jsonrpc":"2.0","id":30,"method":"textDocument/semanticTokens/full",
+            "params":{"textDocument":{"uri":uri}}}),
+        );
+        server.until(|m| m["id"] == 30)["result"]["data"].clone()
+    };
+    let app = file_uri(&dir.path().join("app.q"));
+    server.open(&app, "r:helper[2]\n");
+    server.until(|m| m["method"] == "workspace/semanticTokens/refresh");
+    assert_eq!(tokens(&mut server, &app), json!([]));
+    let lib = file_uri(&dir.path().join("lib.q"));
+    server.open(&lib, "helper:{x+1}\n");
+    let refresh = server.until(|m| m["method"] == "workspace/semanticTokens/refresh");
+    // Answered as a client would; the server must not answer the answer.
+    server.send(json!({"jsonrpc":"2.0","id":refresh["id"],"result":null}));
+    assert_eq!(tokens(&mut server, &app), json!([0, 2, 6, 0, 0]));
+    server.send(json!({"jsonrpc":"2.0","id":99,"method":"shutdown"}));
+    server.until(|m| m["id"] == 99);
+    server.send(json!({"jsonrpc":"2.0","method":"exit"}));
+    assert_eq!(server.child.wait().unwrap().code(), Some(0));
 }

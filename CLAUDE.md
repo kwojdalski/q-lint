@@ -25,12 +25,25 @@ rules actually go wrong. Build the binary before and after, and diff them over
 a body of q nobody here wrote:
 
 ```sh
-python3 scripts/fetch_corpus.py ~/q-corpus      # once: 707 files of public q, pinned
+python3 scripts/fetch_corpus.py ~/q-corpus      # once: 3,665 files of public q, pinned
 python3 scripts/corpus_diff.py /tmp/qlinter-before target/release/qlinter ~/q-corpus
 ```
 
 A diff that moves nothing is only reassuring if the corpus holds the shape
 the rule reads - check that it does before taking the silence as a pass.
+
+The corpus is other people's code, and it moves. `scripts/corpus.py` keeps
+it current and says what nobody has triaged yet, against
+`scripts/corpus-baseline.json` - the findings already checked against q and
+found real:
+
+```sh
+python3 scripts/corpus.py status --peachq          # who moved upstream; projects peachq.org lists that we lack
+python3 scripts/corpus.py sync ~/q-corpus --latest # each repository at its upstream HEAD (--only to pick some)
+python3 scripts/corpus.py lint ~/q-corpus          # new findings: triage each against q; exit 1 if any
+python3 scripts/corpus.py accept ~/q-corpus        # only once every new one is real - a false positive is fixed, not accepted
+python3 scripts/corpus.py pin ~/q-corpus           # record the commits, so fetch_corpus.py and the diff use them
+```
 
 Two more checks over the same corpus catch what a diff cannot:
 
