@@ -5314,14 +5314,13 @@ pub fn lint_selecting(
             while j < chars.len() {
                 let c = chars[j].1;
                 if c == '"' {
+                    let start = chars[j].0 + 1;
                     j += 1;
                     while j < chars.len() && chars[j].1 != '"' {
-                        if chars[j].1 == '\\' {
-                            j += 1;
-                        }
-                        length += 1;
-                        j += 1;
+                        j += if chars[j].1 == '\\' { 2 } else { 1 };
                     }
+                    let end = chars.get(j).map_or(v.comments.len(), |c| c.0);
+                    length += q_bytes(&v.comments[start..end]).len();
                 } else if "([{ ".contains(c) && c != ' ' {
                     depth += 1;
                 } else if ")]}".contains(c) {
@@ -5334,13 +5333,14 @@ pub fn lint_selecting(
                 }
                 j += 1;
             }
-            // q 5 keeps the first 254 characters of a signalled string.
+            // q 5 keeps the first 254 bytes of a signalled string, cutting a
+            // multi-byte char in half if it must (#230).
             if length > 254 {
                 add(
                     chars[i].0,
                     "QB004",
                     format!(
-                        "Thrown message with {length} chars of literal text; q keeps only the first 254"
+                        "Thrown message with {length} bytes of literal text; q keeps only the first 254"
                     ),
                 );
             }
