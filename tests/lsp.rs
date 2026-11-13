@@ -144,7 +144,12 @@ fn initialize_announces_full_document_sync() {
     // it wrong means either no updates or updates the server cannot apply.
     let mut server = Server::start();
     let reply = server.initialize();
-    assert_eq!(reply["result"]["capabilities"]["textDocumentSync"], 1);
+    // `save` present, or a client that follows LSP 3.17 never sends
+    // didSave, and linting on save never lints.
+    assert_eq!(
+        reply["result"]["capabilities"]["textDocumentSync"],
+        json!({"openClose": true, "change": 1, "save": {"includeText": false}})
+    );
     assert_eq!(reply["result"]["capabilities"]["codeActionProvider"], true);
     assert_eq!(reply["result"]["serverInfo"]["name"], "q-lint");
     assert_eq!(server.shutdown_and_exit(), 0);

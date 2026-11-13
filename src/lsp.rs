@@ -674,7 +674,14 @@ pub fn serve(
 /// own grammar's colours, another formatter - rather than an empty answer.
 fn capabilities(opts: &Options) -> Value {
     let mut capabilities = json!({
-        "textDocumentSync": SYNC_FULL,
+        // The options form, not the bare kind: only it can carry `save`, and
+        // LSP 3.17 has a client send `didSave` only when `save` is present -
+        // which `lint.run: "onSave"` depends on.
+        "textDocumentSync": {
+            "openClose": true,
+            "change": SYNC_FULL,
+            "save": {"includeText": false},
+        },
         "codeActionProvider": true,
     });
     if opts.format {
