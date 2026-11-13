@@ -449,7 +449,7 @@ fn run(args: Args) -> Result<u8, String> {
                                 path.display()
                             );
                         }
-                        let source = String::from_utf8_lossy(e.as_bytes()).into_owned();
+                        let source = lossy_text(e.as_bytes());
                         let name = path.to_string_lossy().into_owned();
                         lossy.insert(name.clone());
                         sources.push((name, source));
@@ -608,6 +608,19 @@ fn run(args: Args) -> Result<u8, String> {
     })))
 }
 
+/// `bytes` as text, each byte that is not UTF-8 read as one replacement
+/// character, so every column after it stays where it was.
+/// `String::from_utf8_lossy` replaces a whole truncated sequence - `E2 82` -
+/// with one, which moves the rest of the line one column early.
+fn lossy_text(bytes: &[u8]) -> String {
+    let mut text = String::with_capacity(bytes.len());
+    for chunk in bytes.utf8_chunks() {
+        text.push_str(chunk.valid());
+        text.extend(std::iter::repeat_n('\u{FFFD}', chunk.invalid().len()));
+    }
+    text
+}
+
 /// `qlinter analyze graph`: the dependency graph of the q files under the
 /// paths given, as JSON with sorted keys, so two runs over one tree print the
 /// same bytes. Reads every file and runs none.
@@ -638,7 +651,7 @@ fn analyze_graph(args: GraphArgs) -> Result<u8, String> {
         // with each invalid byte as one replacement character.
         match fs::read(&path) {
             Ok(bytes) => {
-                let source = String::from_utf8_lossy(&bytes).into_owned();
+                let source = lossy_text(&bytes);
                 sources.push((path, source));
             }
             // A file left out is an edge the graph cannot show, so the run

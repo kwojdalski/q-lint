@@ -854,3 +854,32 @@ fn a_diff_of_a_file_whose_name_has_a_space_applies() {
         assert_eq!(applied, "f:{[x] x=1}\n", "{tool:?}");
     }
 }
+
+/// Each invalid byte is one character, a truncated multi-byte sequence too:
+/// `E2 82` was read as one, and every finding after it on the line was a
+/// column early (#273).
+#[test]
+fn a_truncated_utf8_sequence_keeps_the_columns_after_it() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("lossy.q");
+    fs::write(
+        &path,
+        b"s:\"\xe2\x82\"; f:{[x] x==1}\nt:\"\xe9\xe0\"; g:{[x] x==1}\n",
+    )
+    .unwrap();
+    let lint = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .args(["--isolated", "--format", "json"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    let findings: serde_json::Value = serde_json::from_slice(&lint.stdout).unwrap();
+    let mut at: Vec<_> = findings
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["code"] == "QE004")
+        .map(|f| (f["line"].as_u64().unwrap(), f["column"].as_u64().unwrap()))
+        .collect();
+    at.sort();
+    assert_eq!(at, [(1, 17), (2, 17)], "{findings}");
+}
