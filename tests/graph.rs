@@ -584,13 +584,15 @@ fn linting_paths_explain_and_lsp_are_unchanged_by_the_subcommand() {
     let out = qlinter(dir.path(), &["--format", "json", "./analyze"]);
     assert_eq!(out.status.code(), Some(0));
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "[]");
-    // `help` is still a path, not a subcommand.
+    // `help` is still a path, not a subcommand: reported missing and skipped.
+    // The reason between is the OS's own words, so it is not compared.
     let out = qlinter(dir.path(), &["help"]);
+    let err = String::from_utf8_lossy(&out.stderr);
     assert!(
-        String::from_utf8_lossy(&out.stderr).contains("help: No such file"),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
+        err.contains("qlinter: help: ") && err.contains(", skipped"),
+        "{err}"
     );
+    assert_eq!(out.status.code(), Some(2));
     // --explain still answers.
     let out = qlinter(dir.path(), &["--explain", "QF005"]);
     assert_eq!(out.status.code(), Some(0));
