@@ -8,9 +8,10 @@
 //! shrinks to "launch this process". An extension that parses `--format json`
 //! is a VS Code-only asset that every other editor would have to rewrite.
 //!
-//! It also fixes the thing a CLI cannot do well: linting a buffer that has
-//! never been saved. `didChange` carries the text, so what is checked is what
-//! is on screen rather than what is on disk.
+//! It also fixes the thing a CLI cannot do well: linting edits that have not
+//! been saved. `didChange` carries the text, so what is checked is what is on
+//! screen rather than what is on disk. (A buffer that is not a `.q` file at
+//! all - an untitled scratch - is not linted; see `diagnose`.)
 //!
 //! SYNCHRONOUS, SINGLE-THREADED, AND NO ASYNC RUNTIME
 //!
@@ -1008,7 +1009,7 @@ fn utf16_len(text: &str) -> usize {
 /// matters is percent-decoding - without it every path containing a space
 /// arrives as `%20` and the filename-based rules see a file that does not
 /// exist. A URI that is not `file:` (an untitled buffer, say) is handed
-/// through unchanged, so it still gets linted and simply has no useful path.
+/// through unchanged; it names no `.q` file, so `diagnose` does not lint it.
 fn path_of(uri: &str) -> String {
     let Some(rest) = uri.strip_prefix("file://") else {
         return uri.to_string();

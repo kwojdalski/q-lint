@@ -299,8 +299,11 @@ formatting is not offered.
 
 **The reason it is a server rather than an editor plugin shelling out to the
 CLI**: `didChange` carries the buffer, so what gets linted is what is on
-screen, including a file that has never been saved. A CLI over paths cannot do
-that, and `--stdin-filename` only gets you there one editor at a time.
+screen, including edits that have not been saved yet. A CLI over paths cannot
+do that, and `--stdin-filename` only gets you there one editor at a time. Only
+a `.q` file is linted: an untitled scratch or a console buffer labelled q gets
+no diagnostics, because nothing says it holds q source rather than a REPL
+transcript.
 
 Deliberately not implemented: completion, hover, go-to-definition.
 Those need a resolver and a symbol table this crate does not have — it reads
