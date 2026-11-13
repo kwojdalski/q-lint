@@ -102,7 +102,7 @@ impl Server {
 
     fn initialize(&mut self) -> Value {
         self.send(
-            json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}),
+            json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":client_capabilities()}}),
         );
         let reply = self.receive();
         self.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
@@ -134,6 +134,13 @@ impl Server {
     }
 }
 
+/// What VS Code declares, as far as this server reads it: Quick Fixes come
+/// back as `CodeAction` literals only to a client that says it takes them.
+fn client_capabilities() -> Value {
+    json!({"textDocument": {"codeAction": {"codeActionLiteralSupport":
+        {"codeActionKind": {"valueSet": ["quickfix"]}}}}})
+}
+
 /// `desc` is a q builtin, so this is a reserved-parameter finding (QF001) -
 /// the same trap this repository has hit in real code more than once.
 const RESERVED_PARAM: &str = "f:{[desc] 1+1}\n";
@@ -152,6 +159,28 @@ fn initialize_announces_full_document_sync() {
     );
     assert_eq!(reply["result"]["capabilities"]["codeActionProvider"], true);
     assert_eq!(reply["result"]["serverInfo"]["name"], "q-lint");
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn quick_fixes_go_only_to_a_client_that_takes_code_action_literals() {
+    // LSP 3.17: without `codeActionLiteralSupport` a client can take only
+    // Commands, and a fix here is an edit. So the provider is not announced,
+    // and a request made anyway gets no literal back.
+    let mut server = Server::start();
+    server.send(json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}));
+    let reply = server.receive();
+    assert!(
+        reply["result"]["capabilities"]
+            .get("codeActionProvider")
+            .is_none(),
+        "{reply}"
+    );
+    server.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+    let uri = "file:///tmp/literals.q";
+    server.open(uri, "a:1==1\n");
+    let diagnostics = server.diagnostics_for(uri);
+    assert_eq!(server.code_actions(uri, &diagnostics), Vec::<Value>::new());
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 
@@ -912,7 +941,7 @@ fn start_with_workspace(dir: &std::path::Path) -> Server {
     let mut server = Server::start();
     let uri = file_uri(dir);
     server.send(json!({"jsonrpc":"2.0","id":1,"method":"initialize",
-        "params":{"capabilities":{},"workspaceFolders":[{"uri":uri,"name":"ws"}]}}));
+        "params":{"capabilities":client_capabilities(),"workspaceFolders":[{"uri":uri,"name":"ws"}]}}));
     server.receive();
     server.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
     server
@@ -1213,7 +1242,8 @@ fn start_with_options(
     workspace: Option<&std::path::Path>,
 ) -> (Server, Value) {
     let mut server = Server::spawn(dir, args);
-    let mut params = json!({"capabilities":{}, "initializationOptions": options});
+    let mut params =
+        json!({"capabilities":client_capabilities(), "initializationOptions": options});
     if let Some(ws) = workspace {
         params["workspaceFolders"] = json!([{"uri": file_uri(ws), "name": "ws"}]);
     }

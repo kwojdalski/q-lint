@@ -433,6 +433,8 @@ pub fn serve(
     let mut opts = Options::default();
     let mut problems: Vec<String> = vec![];
     let mut initialized = false;
+    // Whether the client can take a `CodeAction` literal; see `capabilities`.
+    let mut code_action_literals = false;
     let mut shutdown_requested = false;
     loop {
         let message = match receive(reader)? {
@@ -482,7 +484,13 @@ pub fn serve(
                 if layer.select.is_some() || !layer.ignore.is_empty() {
                     policy.narrow(layer);
                 }
-                send(writer, json!({"id": id, "result": capabilities(&opts)}))?;
+                code_action_literals = params
+                    .pointer("/capabilities/textDocument/codeAction/codeActionLiteralSupport")
+                    .is_some_and(|v| !v.is_null());
+                send(
+                    writer,
+                    json!({"id": id, "result": capabilities(&opts, code_action_literals)}),
+                )?;
                 initialized = true;
             }
             ("exit", _) => return Ok(if shutdown_requested { 0 } else { 1 }),
@@ -612,6 +620,9 @@ pub fn serve(
                     Err(panic) => send(writer, internal_error(id, &panic))?,
                 }
             }
+            ("textDocument/codeAction", Some(id)) if !code_action_literals => {
+                send(writer, json!({"id": id, "result": []}))?
+            }
             ("textDocument/codeAction", Some(id)) => {
                 match guarded(|| code_actions(&params, &docs, &idx.ws, policy, opts.unsafe_fixes)) {
                     Ok(actions) => send(writer, json!({"id": id, "result": actions}))?,
@@ -672,7 +683,12 @@ pub fn serve(
 /// What the server offers. Formatting and semantic tokens a client turned
 /// off are not announced at all, so the editor uses another provider - its
 /// own grammar's colours, another formatter - rather than an empty answer.
-fn capabilities(opts: &Options) -> Value {
+///
+/// Quick fixes likewise, for a client that did not declare
+/// `codeActionLiteralSupport`: LSP 3.17 lets the server return only
+/// `Command`s to it, and a fix here is an edit, not a command the server
+/// could run. Such a client still has every safe fix through formatting.
+fn capabilities(opts: &Options, code_action_literals: bool) -> Value {
     let mut capabilities = json!({
         // The options form, not the bare kind: only it can carry `save`, and
         // LSP 3.17 has a client send `didSave` only when `save` is present -
@@ -682,8 +698,10 @@ fn capabilities(opts: &Options) -> Value {
             "change": SYNC_FULL,
             "save": {"includeText": false},
         },
-        "codeActionProvider": true,
     });
+    if code_action_literals {
+        capabilities["codeActionProvider"] = json!(true);
+    }
     if opts.format {
         capabilities["documentFormattingProvider"] = json!(true);
     }
