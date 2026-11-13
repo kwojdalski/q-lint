@@ -1281,7 +1281,9 @@ pub fn check(
             .find_iter(code)
             .filter(|m| boundary(code, m.start()))
             .find(|m| {
-                let rest = &raw[m.end()..];
+                // Strings kept, comments blanked: a quote in a comment after
+                // `value d` is not a string to evaluate (#258).
+                let rest = &comments[m.end()..];
                 let statement = &rest[..rest.find([';', '\n']).unwrap_or(rest.len())];
                 match m.as_str() {
                     "eval" => true,
