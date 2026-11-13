@@ -64,9 +64,14 @@ def test_exclusions_config_discovery_and_deduplication(tmp_path):
 
 
 def test_errors_are_not_partial_json(tmp_path):
-    for args in ([tmp_path], [tmp_path / "missing.q"], ["--config", tmp_path / "missing.toml"]):
+    for args in ([tmp_path], ["--config", tmp_path / "missing.toml"]):
         result = run(*args, "--format", "json")
         assert result.returncode == 2 and not result.stdout
+    # A path that does not exist is reported and skipped, as an unreadable
+    # file is (#265): the run still prints its whole result, and ends in 2.
+    result = run(tmp_path / "missing.q", "--format", "json")
+    assert result.returncode == 2 and json.loads(result.stdout) == []
+    assert "missing.q" in result.stderr and "skipped" in result.stderr
 
 
 @pytest.mark.parametrize(

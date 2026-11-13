@@ -222,19 +222,25 @@ fn is_q_source(path: &Path) -> bool {
 /// The q files under `paths`, absolute and in order: a directory is walked,
 /// skipping what `exclude` names and the usual build and tool directories; a
 /// file named outright is taken if it is q, excluded only with
-/// `force_exclude`.
+/// `force_exclude`. And whether any path could not be read: like a file that
+/// cannot be, it is reported and passed over, and the rest are still linted -
+/// one stale path in a pre-commit file list must not hide every finding in
+/// every other file - and the caller ends the run in 2.
 fn discover(
     paths: Vec<String>,
     policy: &Policy,
     force_exclude: bool,
-) -> Result<BTreeSet<PathBuf>, String> {
+) -> Result<(BTreeSet<PathBuf>, bool), String> {
     let mut files = BTreeSet::new();
     let mut skipped = false;
     let mut skipped_not_q = false;
+    let mut failed = false;
     for name in paths {
         let path = Path::new(&name);
-        if !path.exists() {
-            return Err(format!("Path does not exist: {name}"));
+        if let Err(e) = fs::metadata(path) {
+            eprintln!("qlinter: {name}: {e}, skipped");
+            failed = true;
+            continue;
         }
         // A path named here is linted whatever `exclude` says, unless
         // --force-exclude: exclusion is for what a walk discovers.
@@ -257,7 +263,9 @@ fn discover(
             continue;
         }
         if !path.is_dir() {
-            return Err(format!("Not a file/directory: {name}"));
+            eprintln!("qlinter: {name}: not a file or directory, skipped");
+            failed = true;
+            continue;
         }
         let mut walk = walkdir::WalkDir::new(path).into_iter();
         while let Some(entry) = walk.next() {
@@ -292,14 +300,14 @@ fn discover(
             }
         }
     }
-    if files.is_empty() && !skipped {
+    if files.is_empty() && !skipped && !failed {
         return Err(if skipped_not_q {
             "No .q files among the paths given".into()
         } else {
             "No .q files found".to_string()
         });
     }
-    Ok(files)
+    Ok((files, failed))
 }
 
 fn run(args: Args) -> Result<u8, String> {
@@ -407,7 +415,8 @@ fn run(args: Args) -> Result<u8, String> {
             sources.push((args.stdin_filename, source));
         }
     } else {
-        let files = discover(paths, &policy, args.force_exclude)?;
+        let (files, missing) = discover(paths, &policy, args.force_exclude)?;
+        failed |= missing;
         for path in files {
             // A file that cannot be read is reported and passed over, and the
             // run ends in exit 2, an input failure, whatever the others find.
@@ -621,8 +630,8 @@ fn analyze_graph(args: GraphArgs) -> Result<u8, String> {
         args.paths
     };
     let mut sources = vec![];
-    let mut failed = false;
-    for path in discover(paths, &policy, false)? {
+    let (files, mut failed) = discover(paths, &policy, false)?;
+    for path in files {
         // As when linting: a file that is not UTF-8 is still q, and is read
         // with each invalid byte as one replacement character.
         match fs::read(&path) {

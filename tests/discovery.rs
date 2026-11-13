@@ -646,3 +646,31 @@ fn a_symlink_is_governed_excluded_and_reported_where_it_is() {
         );
     }
 }
+
+#[test]
+fn a_path_that_does_not_exist_is_reported_and_the_rest_are_still_linted() {
+    // One stale path in a pre-commit or CI file list used to end the run
+    // before anything was linted (#265).
+    let repo = Repo::new();
+    repo.write("ok.q", SOURCE);
+    for args in [
+        &["--isolated", "--profile", "style", "ok.q", "missing.q"][..],
+        &["analyze", "graph", "ok.q", "missing.q"],
+    ] {
+        let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .current_dir(repo.path("."))
+            .args(args)
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(2), "{args:?}: {stderr}");
+        assert!(
+            stderr.contains("missing.q") && stderr.contains("skipped"),
+            "{stderr}"
+        );
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains("ok.q"),
+            "{args:?}"
+        );
+    }
+}
