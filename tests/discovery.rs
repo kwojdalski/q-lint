@@ -674,3 +674,54 @@ fn a_path_that_does_not_exist_is_reported_and_the_rest_are_still_linted() {
         );
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn a_directory_the_walk_cannot_read_is_reported_and_the_rest_are_still_linted() {
+    // One unreadable subdirectory used to end the walk, and with it the
+    // lint and the graph of the whole tree (#266). Excluded, it is never
+    // read and is no failure at all.
+    use std::os::unix::fs::PermissionsExt;
+    let repo = Repo::new();
+    repo.write("src/a.q", SOURCE).write("locked/b.q", "g:1\n");
+    fs::set_permissions(repo.path("locked"), fs::Permissions::from_mode(0o000)).unwrap();
+    let readable = fs::read_dir(repo.path("locked")).is_ok();
+    let status = |args: &[&str]| {
+        let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .current_dir(repo.path("."))
+            .args(args)
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+        (
+            out.status.code(),
+            stderr,
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+        )
+    };
+    let results = [
+        status(&["--isolated", "--profile", "style", "."]),
+        status(&["analyze", "graph", "."]),
+    ];
+    let excluded = status(&[
+        "--isolated",
+        "--profile",
+        "style",
+        ".",
+        "--exclude",
+        "locked",
+    ]);
+    fs::set_permissions(repo.path("locked"), fs::Permissions::from_mode(0o755)).unwrap();
+    if readable {
+        return; // root reads it anyway; there is nothing to test
+    }
+    for (code, stderr, stdout) in results {
+        assert_eq!(code, Some(2), "{stderr}");
+        assert!(
+            stderr.contains("locked") && stderr.contains("skipped"),
+            "{stderr}"
+        );
+        assert!(stdout.contains("a.q"), "{stdout}");
+    }
+    assert_eq!(excluded.0, Some(1), "{}", excluded.1);
+}

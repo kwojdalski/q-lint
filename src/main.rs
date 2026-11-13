@@ -269,7 +269,20 @@ fn discover(
         }
         let mut walk = walkdir::WalkDir::new(path).into_iter();
         while let Some(entry) = walk.next() {
-            let entry = entry.map_err(|e| e.to_string())?;
+            // A directory the walk cannot read - a root-owned cache, a
+            // mount - is reported and passed over like a file that cannot be.
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(e) => {
+                    let at = e.path().unwrap_or(path).display().to_string();
+                    match e.io_error() {
+                        Some(io) => eprintln!("qlinter: {at}: {io}, skipped"),
+                        None => eprintln!("qlinter: {e}, skipped"),
+                    }
+                    failed = true;
+                    continue;
+                }
+            };
             let p = entry.path();
             if entry.depth() > 0 && policy.excluded(p)? {
                 skipped = true;
