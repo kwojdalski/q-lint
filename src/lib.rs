@@ -4102,11 +4102,15 @@ pub fn lint_selecting(
         }
     }
     // Match the Python rule's outer-body traversal, including nested assignments.
+    // Only a brace outside every lambda already scanned opens an outer body:
+    // `{a:{x}; b:{count:1; x}}` is one body, scanned once (#252).
+    let mut scanned = 0;
     for (at, _) in code.match_indices('{') {
-        if code[..at].rfind('}') < code[..at].rfind('{') {
+        if at < scanned {
             continue;
         }
         if let Some(end) = matching(code, at, b'{', b'}') {
+            scanned = end;
             let mut offset = at;
             for line in code[at..end].split_inclusive('\n') {
                 // A query keyword assigned is refused when the lambda is

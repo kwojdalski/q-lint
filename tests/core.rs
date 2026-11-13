@@ -477,3 +477,9 @@ fn deeply_nested_lambdas_lint_in_bounded_time() {
         "{depth} nested lambdas took {elapsed:?}"
     );
 }
+#[test]
+fn a_nested_lambda_after_a_sibling_is_scanned_once() {
+    // #252: the second nested lambda was taken for a new outer body.
+    let found = lint("f:{a:{x}; b:{count:1; x}; a}", "t.q", Profile::Style);
+    assert_eq!(found.iter().filter(|f| f.code == "QF003").count(), 1);
+}
