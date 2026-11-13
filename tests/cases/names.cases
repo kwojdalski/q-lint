@@ -850,6 +850,13 @@ g:{[p] r:select from d:p where a>1; d}
 t:([]a:1 2)
 f:{r:select from t; t:([]a:1 2); r}
 
+=== clean profile: general | a query straight after `_` is a query, and its column no local (q 5: f `a`b!10 20 is ([] e:enlist 20)) (#301)
+f:{[data] tmp:([] e:`a`b); 1_update e:data e from tmp}
+
+=== QF014 profile: general | but `_` inside a name is part of it, and the rest of the lambda is still read (q 5: defining f is 'a_update, g is 'a) (#301)
+f:{r:a_update; a_update:1; r}
+g:{[d] t:([]e:1 2); r:1_update e:d from t; a:a+1}
+
 === QF003 | a query keyword as a local is refused when the lambda is defined (q 5: {select:1;0} is 'from)
 a:{select:1;0}
 b:{delete:1;0}

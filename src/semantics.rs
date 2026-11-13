@@ -204,7 +204,10 @@ pub(crate) fn local_view(direct: &str, tables: bool) -> String {
         .replace_all(direct, |m: &regex::Captures| " ".repeat(m[0].len()))
         .into_owned();
     let mut out = symbols.clone().into_bytes();
-    for m in re!(r"\b(?:select|exec|update|delete)\b").find_iter(&symbols) {
+    // No `\b` before the keyword: `_` is a word character to the regex, and
+    // `1_update e:d e from t` is a drop of an update (#301). `boundary` is
+    // what tells that from the name `x_update`.
+    for m in re!(r"(?:select|exec|update|delete)\b").find_iter(&symbols) {
         if !boundary(&symbols, m.start()) || out[m.start()] == b' ' {
             continue;
         }
@@ -308,9 +311,14 @@ fn statement_view(direct: &str) -> String {
     let mut out = crate::flat_filter(direct).into_bytes();
     let mut i = 0;
     while let Some(m) =
-        re!(r"\b(?:select|exec|update|delete)\b").find(std::str::from_utf8(&out[i..]).unwrap_or(""))
+        re!(r"(?:select|exec|update|delete)\b").find(std::str::from_utf8(&out[i..]).unwrap_or(""))
     {
         let start = i + m.start();
+        // `1_update` is a query, `x_update` a name: `local_view`'s test (#301).
+        if !boundary(std::str::from_utf8(&out).unwrap_or(""), start) {
+            i += m.end();
+            continue;
+        }
         let end = out[start..]
             .iter()
             .position(|&b| b == b';')
