@@ -1,3 +1,11 @@
+=== clean profile: general | a symbol atom value is spread over every key (#451; q 5: key is `a`b, 1 2, `a`b)
+d:`a`b!`c
+e:1 2!`x
+f:`a`b!`
+
+=== QT001 profile: general | a numeric atom value is not (#451; q 5: 'length)
+g:`a`b!1
+
 === QT001 | a string, temporal or trailing-empty-symbol vector is counted too (q 5: each is 'length)
 a:`a`b!"abc"
 b:`a`b!2024.01.01 2024.01.02 2024.01.03
