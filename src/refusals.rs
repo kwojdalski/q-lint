@@ -1047,6 +1047,21 @@ fn narrow(text: &str, last: &str) -> Option<(&'static str, u128)> {
     })
 }
 
+/// The temporal shape of a vector item, with a one-letter suffix put aside:
+/// a time (`12:00`, `12:00:00`, `12:00:00.123`) or a date (`2000.01.01`).
+fn temporal_shape(item: &str) -> Option<&'static str> {
+    let bare = item
+        .strip_suffix(|c: char| c.is_ascii_alphabetic())
+        .unwrap_or(item);
+    if re!(r"^\d\d:\d\d(?::\d\d(?:\.\d*)?)?$").is_match(bare) {
+        Some("time")
+    } else if re!(r"^\d{4}\.\d\d\.\d\d$").is_match(bare) {
+        Some("date")
+    } else {
+        None
+    }
+}
+
 /// What q 5 refuses in a null or infinity token: a type letter it has no
 /// null or infinity for, a suffix on an item but the last, and a negative
 /// null. Measured with `parse` over every letter: `0N` takes
@@ -1126,12 +1141,20 @@ fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Find
         }
         let run = &tokens[i..=j];
         let last = run[run.len() - 1].as_str();
+        // A `c` after the last item makes the vector a string, and q 5 reads
+        // any number before it as chars: `1h 2c` is " 2", and `1.5j 2c`,
+        // `1y 2c`, `0Nh 1c` and `-0N 1c` all parse. Only what q refuses as it
+        // reads the token is still refused there: a `b` it cannot read as a
+        // boolean (`2b 1c`, `0Nb 1c`), a byte (`0x1g 1c`), and an uppercase
+        // exponent's sign (`1E-3 1c`).
+        let string = last.ends_with('c') && !last.starts_with("0x");
         let mut reported = false;
         for (k, t) in run.iter().enumerate() {
             let text = t.as_str();
+            let in_string = string && k + 1 < run.len();
             // `0Ns` and `0Ws` are names to q, not literals: it parses them
             // as `0N` and `0W` and signals '0N or '0W when they are read.
-            if !reported && re!(r"^0[nNwW]s$").is_match(text) {
+            if !reported && !in_string && re!(r"^0[nNwW]s$").is_match(text) {
                 report(
                     t.start(),
                     format!(
@@ -1239,19 +1262,26 @@ fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Find
                 // at its last item but one: q 5 refuses each with the number.
                 Some(format!("`{text}` does not fit in {kind}"))
             } else if k + 1 < run.len()
-                && re!(r"^\d[\d.:]*[A-Za-z]$").is_match(text)
+                && re!(r"^\d[\d.:]*(?:e[+-]?\d+)?[A-Za-z]$").is_match(text)
                 && !text.ends_with('b')
                 && !text.starts_with("0x")
                 && !(text.ends_with(['D', 'T'])
                     && run
                         .iter()
                         .all(|t| t.as_str().contains(&text[text.len() - 1..])))
+                && !(temporal_shape(text).is_some()
+                    && run
+                        .iter()
+                        .all(|t| temporal_shape(t.as_str()) == temporal_shape(text)))
             {
                 // Any suffix, temporal, char and symbol ones included: q 5
-                // refuses `1e 2`, `1n 2`, `1s 2` and `2026.01m 2026.02m`. Not
-                // `1b 0`, which parses as an application, nor a byte - and
-                // not the `D` that ends a timespan or timestamp among others
-                // like it: `0D 0D01` and `1D 2D` parse, `0D 1` is '0D.
+                // refuses `1e 2`, `1n 2`, `1s 2`, `1e3e 1` and `2026.01m
+                // 2026.02m`. Not `1b 0`, which parses as an application, nor a
+                // byte - and not the `D` that ends a timespan or timestamp
+                // among others like it: `0D 0D01` and `1D 2D` parse, `0D 1` is
+                // '0D. Nor a time or date among others of its shape, which q
+                // reads by that shape: `12:00u 12:30`, `12:00:00x 12:30:00`
+                // and `2000.01.01z 2000.01.02` parse, `12:00u 1` is '12:00u.
                 Some(format!(
                     "`{text}`: a vector literal takes one type suffix, after its last item"
                 ))
@@ -1267,6 +1297,13 @@ fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Find
             } else {
                 None
             };
+            // In a string only what q refuses as it reads the token.
+            let detail = detail.filter(|_| {
+                !in_string
+                    || text.ends_with('b')
+                    || text.starts_with("0x")
+                    || re!(r"E[+-]").is_match(text)
+            });
             if let Some(detail) = detail
                 && !reported
             {
