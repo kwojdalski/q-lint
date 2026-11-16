@@ -1601,6 +1601,17 @@ fn boundary(s: &str, at: usize) -> bool {
         Some(c) => !c.is_alphanumeric() && !".`".contains(c),
     }
 }
+/// `code` with every symbol literal blanked. A symbol runs on past where a
+/// name would stop - over `:` anywhere, and over `/` after `` `: `` (q 5
+/// `parse` reads "`a:b" and "`:hdb/sym" as one symbol each) - so `boundary`
+/// alone takes the words inside `` `:conf/true `` for code.
+pub(crate) fn unsymbolled(code: &str) -> String {
+    let mut out = code.as_bytes().to_vec();
+    for m in re!(r"`(?::[A-Za-z0-9_.:/]*|[A-Za-z0-9_.:]*)").find_iter(code) {
+        blank(&mut out[m.range()]);
+    }
+    String::from_utf8(out).unwrap_or_default()
+}
 /// Whether `s` ends with a name - letters, digits and `_` that began with a
 /// letter - rather than a number, a bracket or an operator. A segment of a
 /// dotted name may begin with `_`: `.a.b.__perf` and `.h._ranks` are one name
@@ -3993,8 +4004,9 @@ pub fn lint_selecting(
     for m in re!(r"`([A-Za-z][A-Za-z0-9_]*)").captures_iter(code) {
         declared.insert(m.get(1).unwrap().as_str());
     }
+    let bare = unsymbolled(code);
     for m in
-        re!(r"\b(return|else|elif|elseif|true|false|None|break|continue)\b").captures_iter(code)
+        re!(r"\b(return|else|elif|elseif|true|false|None|break|continue)\b").captures_iter(&bare)
     {
         let whole = m.get(0).unwrap();
         let name = &m[1];
