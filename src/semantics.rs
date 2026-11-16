@@ -2869,7 +2869,13 @@ fn named_values(
     // top-level read after this file's own assignment meets that one,
     // whatever was loaded before (q 5: `g:{x}` loaded, then `g:2.5` + `g 0`,
     // is 'type).
+    // Inside a qSQL phrase a column of the table wins over the global of the
+    // same name, and the text cannot say which columns the table has (#465).
+    let phrases = qsql_phrases(code);
     let visible = |name: &str, at: usize| -> Option<&Held> {
+        if phrases.iter().any(|&(a, b)| a <= at && at < b) {
+            return None;
+        }
         let (assigned, value) = known.get(key(name, at).as_str())?;
         match scope_at(scopes, at) {
             Some(s) if scopes[s].locals.contains(name) => None,
@@ -3418,6 +3424,59 @@ fn named_values(
                     table.as_str(),
                 ),
             ));
+        }
+    }
+    out
+}
+
+/// The spans of `code` where a qSQL statement reads its table's columns:
+/// from `select`, `exec`, `update` or `delete` to its `from`, and from its
+/// `where` to the end of the statement. The table after `from` is an
+/// ordinary expression, and is left out. q 5 `px:2.5; select p0:px 0 from t`
+/// indexes the column `px`, not the atom.
+fn qsql_phrases(code: &str) -> Vec<(usize, usize)> {
+    let mut out = vec![];
+    let bytes = code.as_bytes();
+    for m in re!(r"\b(?:select|exec|update|delete)\b").find_iter(code) {
+        if !boundary(code, m.start()) {
+            continue;
+        }
+        let (mut i, mut depth, mut from) = (m.end(), 0i32, None);
+        while i < bytes.len() {
+            match bytes[i] {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => {
+                    if depth == 0 {
+                        break;
+                    }
+                    depth -= 1
+                }
+                b';' if depth == 0 => break,
+                b'\n' if depth == 0 && !code[i + 1..].starts_with([' ', '\t', '\r', '\n']) => break,
+                b'f' | b'w' if depth == 0 && boundary(code, i) => {
+                    let rest = &code[i..];
+                    let word = |w: &str| {
+                        rest.starts_with(w)
+                            && !rest[w.len()..]
+                                .starts_with(|c: char| c.is_alphanumeric() || c == '_')
+                    };
+                    if from.is_none() && word("from") {
+                        out.push((m.start(), i));
+                        from = Some(i);
+                    } else if from.is_some() && word("where") {
+                        from = Some(i);
+                        out.push((i, usize::MAX));
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        match (from, out.last_mut()) {
+            // No `from`: not a statement this can read, so all of it.
+            (None, _) => out.push((m.start(), i)),
+            (Some(_), Some(last)) if last.1 == usize::MAX => last.1 = i,
+            _ => {}
         }
     }
     out
