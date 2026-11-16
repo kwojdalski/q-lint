@@ -2583,8 +2583,11 @@ pub(crate) fn shadowed(code: &str, raw: &str, at: usize, name: &str) -> bool {
             continue;
         };
         let sig = signature(code, raw, brace);
+        // A pattern binds the names in it: `{[(f;a)] f[a;a]}` (#332).
         if if sig.named {
-            sig.slots.contains(&name)
+            sig.slots
+                .iter()
+                .any(|slot| pattern_names(slot).contains(&name))
         } else {
             matches!(name, "x" | "y" | "z")
         } {

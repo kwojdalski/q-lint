@@ -226,6 +226,11 @@ f:{x}
 g:{[f] f[1;2]}
 h:{[f;a] f[a;2]}
 
+=== clean profile: general | and so does a name bound by a pattern parameter (q 5: g ({x+y};1) is 2)
+f:{x}
+g:{[(f;a)] f[a;a]}
+r:g ({x+y};1)
+
 === clean | so does a local (q 5: h[] is 3)
 f:{x+y}
 g:{[f] f(1;2)}
