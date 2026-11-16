@@ -1047,6 +1047,20 @@ fn narrow(text: &str, last: &str) -> Option<(&'static str, u128)> {
     })
 }
 
+/// Whether one item makes a whole vector float, so that an integer among
+/// them is read as a float too: a fraction (`1.5`, `1.`), a lower-case
+/// exponent (`1e3`), `0n` or `0w`, or an `e` or `f` after the last item. q 5
+/// takes `1.5 9223372036854775808` and `1E5 2.5`, and refuses
+/// `9223372036854775808 0N` and `1E5 2000.01.01` - a date is no fraction.
+fn float_vector(run: &[regex::Match]) -> bool {
+    let last = run[run.len() - 1].as_str();
+    (re!(r"^\d.*[ef]$").is_match(last) && !last.starts_with("0x"))
+        || (!re!(r"[hij]$").is_match(last)
+            && run.iter().any(|t| {
+                re!(r"^(?:\d+\.\d*(?:e[+-]?\d+)?|\d+e[+-]?\d+|0[nw])$").is_match(t.as_str())
+            }))
+}
+
 /// The temporal shape of a vector item, with a one-letter suffix put aside:
 /// a time (`12:00`, `12:00:00`, `12:00:00.123`) or a date (`2000.01.01`).
 fn temporal_shape(item: &str) -> Option<&'static str> {
@@ -1183,11 +1197,7 @@ fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Find
                 Some(format!(
                     "`{text}`: an uppercase `E` exponent takes digits and no sign; write `e`"
                 ))
-            } else if re!(r"^\d+E\d+$").is_match(text)
-                && !run
-                    .iter()
-                    .any(|t| re!(r"\.|^\d+e[+-]?\d+$|^0[nw]$|[ef]$").is_match(t.as_str()))
-            {
+            } else if re!(r"^\d+E\d+$").is_match(text) && !float_vector(run) {
                 // `1E5` on an integer mantissa is a float only where another
                 // item makes the vector one: q 5 refuses `1E5`, `1 2E5` and
                 // `1E5 2j`, and takes `1E5 2.5`, `1E5 2f` and `1E5f`.
@@ -1246,6 +1256,7 @@ fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Find
             {
                 Some(format!("`{text}` is not a number or a date (yyyy.mm.dd)"))
             } else if re!(r"^\d{19,}j?$").is_match(text)
+                && !float_vector(run)
                 && text
                     .trim_end_matches('j')
                     .parse::<u128>()

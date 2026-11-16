@@ -580,6 +580,23 @@ g:2023.1.1
 === QE010 profile: general | a long that overflows (q 5: parse "9223372036854775808" is refused)
 h:9223372036854775808
 
+=== clean profile: general | a big integer in a vector another item makes float (#447; q 5: type 9h for each)
+a:1.5 9223372036854775808
+b:9223372036854775808 1.5
+d:9223372036854775808 0n
+e:9223372036854775808 1e3
+f:9223372036854775808 2f
+g:9223372036854775808 1.
+
+=== QE010 profile: general | a typed null makes no float of a big integer (#447; q 5: '9223372036854775808)
+j:9223372036854775808 0N
+
+=== QE010 profile: general | nor does a date's dots (#447; q 5: '9223372036854775808)
+k:9223372036854775808 2000.01.01
+
+=== QE010 profile: general | an uppercase exponent among dates is no float (#447; q 5: '1E5)
+n:1E5 2000.01.01
+
 === QE010 profile: general | an int that overflows (q 5: parse "2147483648i" is '2147483648)
 r:2147483648i
 
