@@ -508,6 +508,12 @@ r:answer
 s:answer
 \d .
 
+=== clean | a functional amend by name defines the global (q 5: foo is 1 and bar 2 after these) (#362)
+@[`.;`foo;:;1]
+foo
+.[`bar;();:;2]
+bar
+
 === clean | a builtin is a valid assignment value
 f:{[] aa:sum; aa}
 

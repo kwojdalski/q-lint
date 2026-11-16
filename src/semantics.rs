@@ -898,6 +898,39 @@ fn global_writes(
                 .push(whole.end());
         }
     }
+    // A functional amend that creates the global it names: `@[`.;`n;:;v]`
+    // through its context, always that context whatever `\d` is in force,
+    // and `.[`n;();:;v]` over the whole value. q 5 runs `@[`.;`foo;:;1]`
+    // and `.[`bar;();:;2]` with neither defined, then reads both (#362).
+    for m in re!(
+        r"@\s*\[\s*`(\.(?:[A-Za-z][A-Za-z0-9_.]*)?)\s*;\s*((?:`[A-Za-z][A-Za-z0-9_]*)+)\s*;\s*:\s*;"
+    )
+    .captures_iter(code)
+    {
+        let whole = m.get(0).unwrap();
+        for name in m[2].split('`').skip(1) {
+            let name = match &m[1] {
+                "." => qualify(name, ""),
+                ctx => format!("{ctx}.{name}"),
+            };
+            globals.entry(name).or_default().push(whole.end());
+        }
+    }
+    for m in re!(r"\.\s*\[\s*`(\.?[A-Za-z][A-Za-z0-9_.]*)\s*;\s*\(\s*\)\s*;").captures_iter(code) {
+        let whole = m.get(0).unwrap();
+        if code[..whole.start()]
+            .ends_with(|c: char| c.is_ascii_alphanumeric() || "_.)]}".contains(c))
+        {
+            continue;
+        }
+        if !call_time_sets && call_time(scopes, whole.start(), &m[1]) {
+            continue;
+        }
+        globals
+            .entry(qualify(&m[1], ns_at(whole.start())))
+            .or_default()
+            .push(whole.end());
+    }
     for (at, name) in multi_assignments(code) {
         if scope_at(scopes, at).is_none() {
             let close = matching(code, at, b'(', b')').unwrap_or(at);

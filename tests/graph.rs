@@ -115,6 +115,19 @@ fn a_root_name_reaches_a_definition_in_dot_q() {
 }
 
 #[test]
+fn a_functional_amend_by_name_defines_the_global() {
+    // q 5: `@[`.;`foo;:;1]` and `.[`bar;();:;2]` each create the global (#362).
+    let g = graph(
+        &[
+            ("lib.q", "@[`.;`foo;:;1]\n.[`bar;();:;2]\n"),
+            ("main.q", "r:foo+bar\n"),
+        ],
+        false,
+    );
+    assert_eq!(deps(&g, "main.q"), ["lib.q"]);
+}
+
+#[test]
 fn system_d_and_a_commented_backslash_d_open_a_context() {
     // q 5: after `system "d .b"` and `k:{1}`, `key `.b` is ``k; after
     // `\d .c  / note` and `m:1`, `key `.c` is ``m.
