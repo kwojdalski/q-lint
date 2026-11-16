@@ -1317,6 +1317,26 @@ fn an_editor_ignore_drops_a_rule_the_configuration_selects() {
 }
 
 #[test]
+fn an_editor_ignore_of_qe001_shows_nothing_the_cli_would_not() {
+    // The CLI reports only QE001 for an unbalanced file. Hiding that in the
+    // editor must not expose the findings the bracket gate held back (#414).
+    let dir = tempfile::tempdir().unwrap();
+    let uri = file_uri(&dir.path().join("a.q"));
+    let (mut server, _) = start_with_options(
+        dir.path(),
+        &["--lsp", "--profile", "style"],
+        json!({"lint": {"ignore": ["QE001"]}}),
+        None,
+    );
+    server.open(&uri, "a:1==2\nb:(1\n");
+    assert_eq!(
+        codes_of(&server.diagnostics_for(&uri)),
+        Vec::<String>::new()
+    );
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
 fn an_unreadable_setting_is_reported_and_the_rest_still_apply() {
     let dir = tempfile::tempdir().unwrap();
     let uri = file_uri(&dir.path().join("a.q"));

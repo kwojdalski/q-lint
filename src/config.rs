@@ -251,6 +251,18 @@ impl Policy {
     }
 
     fn selected(&self, settings: &Settings, code: &str) -> bool {
+        self.configured(settings, code)
+            && self
+                .narrowing
+            .borrow()
+            .as_ref()
+            .is_none_or(|layer| apply(layer, code, true))
+    }
+
+    /// Whether the configuration and flags select `code`, before the
+    /// editor's narrowing. The narrowing only hides findings; it must not
+    /// change what the analysis sees (#414).
+    fn configured(&self, settings: &Settings, code: &str) -> bool {
         let profile = parse_profile(&self.profile(settings));
         let mut on = RULES
             .iter()
@@ -259,11 +271,7 @@ impl Policy {
         for layer in settings.layers.iter().chain([&self.overrides.layer]) {
             on = apply(layer, code, on);
         }
-        on && self
-            .narrowing
-            .borrow()
-            .as_ref()
-            .is_none_or(|layer| apply(layer, code, true))
+        on
     }
 
     /// The findings for one file: every rule run, then only those the
@@ -274,7 +282,7 @@ impl Policy {
         let file = Path::new(path);
         let settings = self.settings(file)?;
         let structure =
-            self.selected(&settings, "QE001") && !per_file_ignored(&settings, "QE001", file);
+            self.configured(&settings, "QE001") && !per_file_ignored(&settings, "QE001", file);
         let mut found = lint_selecting(source, path, Profile::Uqf, ws, structure);
         found.retain(|f| {
             self.selected(&settings, &f.code) && !per_file_ignored(&settings, &f.code, file)
