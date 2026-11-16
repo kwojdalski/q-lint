@@ -704,12 +704,9 @@ fn force_exclude_skips_a_file_inside_a_default_excluded_directory() {
         .spawn()
         .unwrap();
     use std::io::Write;
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(SOURCE.as_bytes())
-        .unwrap();
+    // An excluded file is skipped without reading stdin, so the write may
+    // meet a closed pipe: that is the behaviour under test, not a failure.
+    let _ = child.stdin.take().unwrap().write_all(SOURCE.as_bytes());
     let out = child.wait_with_output().unwrap();
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "[]");
     // A file in a directory of that name above the current one is not.
