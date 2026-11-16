@@ -330,6 +330,33 @@ k:{a:count'x}
 m:{{x+y}/x}
 n:{sum/:x}
 
+=== QE009 profile: general | a bracket, parenthesis, literal or another iterator before it too (q 5: parse each is '/ or ', #430)
+r:g[x]'y
+r:(g x)'y
+r:x[1]/y
+r:{x}[1]/y
+r:(1;2)/y
+r:(+)/y
+x:"abc"'y
+x:1 2'y
+x:`a`b'y
+r:+/'x
+r:+/:'x
+r:.:'x
+
+=== clean profile: general | the same operands infix, in parentheses or with brackets (q 5 accepts each)
+r:f x[1]/y
+r:x[1]/[y]
+r:(x[1]/)y
+r:0+/'x
+r:x[1]'[y]
+r:f(x)/y
+r:x 1 2/y
+r:-2_/:x
+r:1_'x
+f:{[x;y]'e}
+r:x @[;1;-1+]/ y
+
 === clean profile: general | in parentheses, with brackets, or infix (q 5 accepts each)
 f:{(,/)x}
 g:{,/[x]}

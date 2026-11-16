@@ -957,33 +957,46 @@ fn juxtaposed_derived(
         .replace_all(comments, |m: &regex::Captures| "0".repeat(m[0].len()));
     let b = view.as_bytes();
     let c = code.as_bytes();
-    let mut opens: Vec<usize> = vec![];
-    let mut lambda = std::collections::HashMap::new();
-    for (i, &ch) in c.iter().enumerate() {
-        if ch == b'{' {
-            opens.push(i);
-        } else if ch == b'}'
-            && let Some(o) = opens.pop()
-        {
-            lambda.insert(i, o);
+    // Each closer's opener: a lambda's braces, brackets and parentheses in
+    // code, and a string's quotes in the view, where the string is text.
+    let mut opener = std::collections::HashMap::new();
+    let mut stacks: [Vec<usize>; 3] = [vec![], vec![], vec![]];
+    let mut quote = None;
+    let mut i = 0;
+    while i < b.len() {
+        match quote {
+            Some(_) if b[i] == b'\\' => i += 1,
+            Some(o) if b[i] == b'"' => {
+                opener.insert(i, o);
+                quote = None;
+            }
+            Some(_) => {}
+            None if b[i] == b'"' && c[i] != b'"' => quote = Some(i),
+            None => {
+                if let Some(k) = b"{[(".iter().position(|&o| o == c[i]) {
+                    stacks[k].push(i);
+                } else if let Some(k) = b"}])".iter().position(|&o| o == c[i])
+                    && let Some(o) = stacks[k].pop()
+                {
+                    opener.insert(i, o);
+                }
+            }
         }
+        i += 1;
     }
-    for m in re!(r"(?:[-+*%!#$&|^=<>~,@?]|\.?[A-Za-z][A-Za-z0-9_.]*|\})(?:/:|\\:|':|/|\\|')")
-        .find_iter(&view)
-    {
-        let token = m.start();
-        let iterator = token + m.as_str().find(['/', '\\', '\'']).unwrap();
-        // Both the token and the iterator are code, not string or comment.
-        if c[iterator] != b[iterator] || (c[token] != b[token] && b[token] != b'0') {
+    // A run of iterators - `/`, `':`, or `/'` after `+`, whose operand is
+    // the derived `+/` - and q names the last of them: `+/'x` is '.
+    for m in re!(r"(?:/:|\\:|':|/|\\|')+").find_iter(&view) {
+        let iterator = re!(r"/:|\\:|':|/|\\|'")
+            .find_iter(m.as_str())
+            .last()
+            .map_or(m.start(), |p| m.start() + p.start());
+        // The iterator is code, not string or comment.
+        if c[m.start()] != b[m.start()] {
             continue;
         }
-        let start = match b[token] {
-            b'}' => match lambda.get(&token) {
-                Some(&o) => o,
-                None => continue,
-            },
-            ch if (ch.is_ascii_alphabetic() || ch == b'.') && !boundary(&view, token) => continue,
-            _ => token,
+        let Some(start) = derived_operand(&view, c, &opener, m.start()) else {
+            continue;
         };
         let line_start = view[..start].rfind('\n').map_or(0, |p| p + 1);
         if b[line_start] == b'\\' {
@@ -1020,6 +1033,76 @@ fn juxtaposed_derived(
         finding.end_column = finding.column.map(|col| col + iter.len());
         out.push(finding);
     }
+}
+
+/// Where the operand of an iterator at `at` starts, if it has one: a glyph
+/// or its k form (`+/`, `.:'`), a name, a lambda, a string, a number or
+/// symbol vector, a parenthesised value, or any of these indexed with
+/// brackets (`g[x]'`, `{x}[1]/`). q 5 refuses each applied by juxtaposition.
+fn derived_operand(
+    view: &str,
+    c: &[u8],
+    opener: &std::collections::HashMap<usize, usize>,
+    at: usize,
+) -> Option<usize> {
+    let b = view.as_bytes();
+    let prev = *b.get(at.checked_sub(1)?)?;
+    if GLYPHS.contains(&prev) {
+        return Some(at - 1);
+    }
+    if prev == b':' && at >= 2 && (GLYPHS.contains(&b[at - 2]) || b[at - 2] == b'.') {
+        return Some(at - 2);
+    }
+    let mut q = at;
+    while let Some(&ch) = q.checked_sub(1).and_then(|p| b.get(p)) {
+        match ch {
+            // A signature is not an operand: `{[x]'e}` signals.
+            b']' => match opener.get(&(q - 1)) {
+                Some(&o) if o == 0 || b[o - 1] != b'{' => q = o,
+                _ => return None,
+            },
+            // A glyph indexed with brackets is a noun too: `@[;1;-1+]/`.
+            ch if GLYPHS.contains(&ch) && b[q] == b'[' => {
+                q -= 1;
+                break;
+            }
+            b')' | b'}' | b'"' => {
+                q = *opener.get(&(q - 1))?;
+                break;
+            }
+            ch if ch.is_ascii_alphanumeric() || ch == b'.' || ch == b'_' => {
+                let token = |end: usize| {
+                    let s = view[..end]
+                        .rfind(|ch: char| !(ch.is_ascii_alphanumeric() || "._".contains(ch)))
+                        .map_or(0, |p| p + 1);
+                    (s < end && boundary(view, s)).then_some(s)
+                };
+                q = token(q)?;
+                // After a number `_` is drop, not part of a name: `-2_/:x`
+                // and `1_'x` apply the derived `_/:` and `_'` infix.
+                if c[q].is_ascii_digit()
+                    && let Some(u) = view[q..at].rfind('_')
+                {
+                    q += u + 1;
+                    if q == at {
+                        return None;
+                    }
+                    break;
+                }
+                // A number vector is one operand: `1 2'y`.
+                while c[q].is_ascii_digit() {
+                    let gap = view[..q].trim_end_matches([' ', '\t']).len();
+                    match token(gap) {
+                        Some(s) if gap < q && c[s].is_ascii_digit() => q = s,
+                        _ => break,
+                    }
+                }
+                break;
+            }
+            _ => break,
+        }
+    }
+    (q < at).then_some(q)
 }
 
 /// The narrow integer type a vector item is parsed as, and the largest

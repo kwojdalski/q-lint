@@ -467,12 +467,12 @@ islong2: `long=type 1
 
 / QB014: `/` after a value is the over adverb, not division, and this is a
 / '/ parse error. Division is `%`.
-/ expect-next: QB014
+/ expect-next: QB014 QE009
 half: 10/2
 
 / QB014: after a parenthesised value too - `(a+b)/` is over applied to
 / nothing yet, and then to 2.
-/ expect-next: QB014
+/ expect-next: QB014 QE009
 half2: (a+b)/2
 
 / QB015: equality against a string in a filter pairs each row with one
