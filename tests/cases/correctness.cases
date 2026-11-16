@@ -562,6 +562,10 @@ f:{[t] select from t where a in `x, b like "="}
 === QB015 | and a real one after such a string is still found
 f:{[t] select from t where b like "=", c<>"ab"}
 
+=== clean | QB015: the `=` of `<=` or `>=` is an order comparison, not equality (#407; q 5: select from ([]c:"ab") where c<="ab" gives both rows)
+f:{[t] select from t where c<="ab"}
+g:{[t] select from t where c>="ab"}
+
 === clean | QB015: the where function on a comparison is not a filter (q 5: where s="ab" is 0 1)
 s:"ab"
 r:where s="ab"

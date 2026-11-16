@@ -5626,7 +5626,12 @@ pub fn lint_selecting(
             {
                 let op = m.get(0).unwrap().start();
                 let n = q_bytes(&m[1]).len();
-                if in_code(op) && n != 1 {
+                // The `=` of `<=` or `>=` is an order comparison, not the
+                // equality this rule is about - and the fix made `c<="ab"`
+                // into `c< like "ab"`, which q 5 cannot parse (#407).
+                let order = query_literals.as_bytes()[..op].ends_with(b"<")
+                    || query_literals.as_bytes()[..op].ends_with(b">");
+                if in_code(op) && n != 1 && !order {
                     return Some((op, n));
                 }
                 at = op + 1;
