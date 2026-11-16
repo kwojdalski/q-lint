@@ -5310,6 +5310,9 @@ pub fn lint_selecting(
                 let mut reported = vec![];
                 for m in re!(r"(?:=|<>)\s*(?:-?\d[A-Za-z0-9.]*(?:\s+-?\d[A-Za-z0-9.]*)+|`[A-Za-z][A-Za-z0-9_.]*(?:`[A-Za-z0-9_.]*)+)")
                     .find_iter(&phrase)
+                    // The `where` function is no filter: `where b=1 2 3` is
+                    // the indices of a boolean vector, and q 5 runs it (#343).
+                    .filter(|_| qsql)
                 {
                     let rest = phrase[m.end()..].trim_start();
                     if !(rest.is_empty() || rest.starts_with([',', ';'])) {

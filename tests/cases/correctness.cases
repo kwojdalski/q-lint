@@ -140,6 +140,10 @@ r:select from t where a=1 2 3?b
 s:select from t where a=0 1 2 b
 u:select from t where a=`x`y`z?s
 
+=== clean | the where function over a comparison is no filter (q 5: where 3 2 1=1 2 3 is ,1, #343)
+b:3 2 1
+r:where b=1 2 3
+
 === clean | in is the membership operator
 select from t where px in 1 2
 
