@@ -808,26 +808,26 @@
    {
     "code": "QT003",
     "detail": "Arithmetic on a symbol literal is a 'type error at runtime",
+    "path": "qlib/repository/template/cpp/qlib/__name__/test/99.q",
+    "text": ".qtx.testSuiter[`%name%1;`repo`lib`file!`%name%`%name%`001;\"test %name%\"]"
+   },
+   {
+    "code": "QT003",
+    "detail": "Arithmetic on a symbol literal is a 'type error at runtime",
+    "path": "qlib/repository/template/cpp/qlib/__name__/test/99.q",
+    "text": ".qtx.testSuiter[`%name%1;`repo`lib`file!`%name%`%name%`001;\"test %name%\"]"
+   },
+   {
+    "code": "QT003",
+    "detail": "Arithmetic on a symbol literal is a 'type error at runtime",
     "path": "qlib/repository/template/lib/test/001.q",
     "text": ".qtx.testCase[`test.%name%.1;\"test %name%\"]["
    },
    {
     "code": "QT003",
     "detail": "Arithmetic on a symbol literal is a 'type error at runtime",
-    "path": "qlib/repository/template/lib/test/001.q",
-    "text": ".qtx.testSuite[`test.%repo%.%name%;\"test %name%\"]"
-   },
-   {
-    "code": "QT003",
-    "detail": "Arithmetic on a symbol literal is a 'type error at runtime",
     "path": "qlib/repository/template/repository/qlib/__name__/test/001.q",
     "text": ".qtx.testCase[`test.%name%.1;\"test %name%\"]["
-   },
-   {
-    "code": "QT003",
-    "detail": "Arithmetic on a symbol literal is a 'type error at runtime",
-    "path": "qlib/repository/template/repository/qlib/__name__/test/001.q",
-    "text": ".qtx.testSuite[`test.%repo%.%name%;\"test %name%\"]"
    }
   ],
   "kwojdalski/uqf": [
