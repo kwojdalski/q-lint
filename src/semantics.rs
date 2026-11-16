@@ -2735,11 +2735,42 @@ fn named_values(
     let mut writes: HashMap<&str, Vec<usize>> = HashMap::new();
     // The same, keyed as q resolves each name where it is written.
     let mut exact: HashMap<String, Vec<usize>> = HashMap::new();
+    // A table literal's columns and a dictionary literal's keys, `([]n:1 2)`
+    // and `([h:2.5])`, name no variable: each `name:` directly in one is
+    // skipped (#469).
+    let literals: Vec<(usize, usize, usize)> = re!(r"\(\s*\[")
+        .find_iter(code)
+        .filter_map(|m| {
+            let header = m.end() - 1;
+            Some((
+                m.start(),
+                matching(code, header, b'[', b']')?,
+                matching(code, m.start(), b'(', b')')?,
+            ))
+        })
+        .collect();
+    let in_literal = |at: usize| {
+        literals.iter().any(|&(open, header, close)| {
+            open < at && at < close && {
+                let depth = code.as_bytes()[open + 1..at]
+                    .iter()
+                    .fold(0i32, |d, &c| match c {
+                        b'(' | b'[' | b'{' => d + 1,
+                        b')' | b']' | b'}' => d - 1,
+                        _ => d,
+                    });
+                depth == 0 || (depth == 1 && at < header)
+            }
+        })
+    };
     for m in re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*(?:\[[^\]]*\])?\s*[-+*%,&|^#_!~=<>$?@.]?::?")
         .captures_iter(code)
     {
         let whole = m.get(0).unwrap();
-        if !boundary(code, whole.start()) || code[whole.end()..].starts_with(['/', '\\', '\'']) {
+        if !boundary(code, whole.start())
+            || code[whole.end()..].starts_with(['/', '\\', '\''])
+            || in_literal(whole.start())
+        {
             continue;
         }
         writes.entry(m.get(1).unwrap().as_str()).or_default().push(whole.start());
