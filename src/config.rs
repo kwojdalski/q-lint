@@ -588,7 +588,7 @@ fn load(path: &Path, depth: usize, patterns: Option<&Path>) -> Result<Option<Set
                     .map(|s| {
                         s.as_str()
                             .ok_or_else(|| format!("{shown}: {key} must contain strings"))
-                            .and_then(|s| selector(key, s))
+                            .and_then(|s| selector(key, s).map_err(|e| format!("{shown}: {e}")))
                     })
                     .collect()
             })
@@ -613,7 +613,10 @@ fn load(path: &Path, depth: usize, patterns: Option<&Path>) -> Result<Option<Set
                     .as_str()
                     .filter(|s| !s.trim().is_empty())
                     .ok_or_else(|| format!("{shown}: {key} must contain nonempty strings"))?;
-                globs.push(rooted(patterns.unwrap_or(&root), p)?);
+                globs.push(
+                    rooted(patterns.unwrap_or(&root), p)
+                        .map_err(|e| format!("{shown}: {key}: {e}"))?,
+                );
             }
             if key == "exclude" {
                 settings.exclude = Some(globs);
@@ -635,7 +638,9 @@ fn load(path: &Path, depth: usize, patterns: Option<&Path>) -> Result<Option<Set
                 .map(|s| {
                     s.as_str()
                         .ok_or_else(|| format!("{shown}: per-file-ignores must list strings"))
-                        .and_then(|s| selector("per-file-ignores", s))
+                        .and_then(|s| {
+                            selector("per-file-ignores", s).map_err(|e| format!("{shown}: {e}"))
+                        })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             // An initial `!` negates the pattern, in per-file-ignores only:
@@ -644,7 +649,8 @@ fn load(path: &Path, depth: usize, patterns: Option<&Path>) -> Result<Option<Set
                 Some(rest) => (rest, true),
                 None => (glob.as_str(), false),
             };
-            let mut rooted = rooted(patterns.unwrap_or(&root), text)?;
+            let mut rooted = rooted(patterns.unwrap_or(&root), text)
+                .map_err(|e| format!("{shown}: per-file-ignores: {e}"))?;
             rooted.negated = negated;
             settings.per_file_ignores.push((rooted, codes));
         }

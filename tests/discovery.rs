@@ -445,6 +445,41 @@ fn a_selector_that_names_no_rule_is_refused() {
 }
 
 #[test]
+fn a_bad_selector_or_glob_in_a_configuration_names_the_file() {
+    // Every other configuration error names its file; with nested files or
+    // an `extend` chain, these two did not (#423).
+    for (config, said) in [
+        (
+            "[lint]\nselect = [\"QZ\"]\n",
+            "select: QZ is not a diagnostic code",
+        ),
+        (
+            "exclude = [\"[bad\"]\n",
+            "exclude: [bad: Pattern syntax error",
+        ),
+        (
+            "[lint.per-file-ignores]\n\"a.q\" = [\"QZ\"]\n",
+            "per-file-ignores: QZ is not",
+        ),
+        (
+            "[lint.per-file-ignores]\n\"[bad\" = [\"QF\"]\n",
+            "per-file-ignores: [bad: Pattern",
+        ),
+    ] {
+        let repo = Repo::new();
+        repo.write("a.q", SOURCE).write("sub/.qlinter.toml", config);
+        repo.write("sub/a.q", SOURCE);
+        let out = run(&repo.path("."), &["sub/a.q"]);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(2), "{stderr}");
+        assert!(
+            stderr.contains(&format!(".qlinter.toml: {said}")),
+            "{config}: {stderr}"
+        );
+    }
+}
+
+#[test]
 fn show_settings_names_the_file_in_force() {
     let repo = Repo::new();
     repo.write(
