@@ -4873,10 +4873,21 @@ pub fn lint_selecting(
             offset += line.len();
             continue;
         }
-        if first.trim_start().starts_with('\\') {
+        if system_command(first.trim_start()) {
             offset += line.len();
             continue;
         }
+        // `\t` and `\ts` run the rest of their line as q, so the statement
+        // rules read it, with the command blanked (#309).
+        let lead = first.len() - first.trim_start().len();
+        let timed = lead + timed_prefix(first.trim_start());
+        let untimed;
+        let line = if timed > lead {
+            untimed = format!("{}{}", " ".repeat(timed), &line[timed..]);
+            untimed.as_str()
+        } else {
+            line
+        };
         // `system "d .ns"` switches as `\d .ns` does (#261).
         if let Some(ns) = semantics::opens(first, first_raw) {
             namespace = !ns.is_empty();

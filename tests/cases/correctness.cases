@@ -68,6 +68,9 @@ select from t where sym like "a*b*"
 === QB002 | or two together (q 5: 'nyi)
 select from t where sym like "a**"
 
+=== QB002 profile: general | the expression after \t is q, and read as a statement (q 5: 'nyi, #309)
+\t r:"abc" like "x*y*z"
+
 === QB002 | the pattern as like's second argument in brackets (q 5: like["abc";"a*b*"] is 'nyi)
 r:like["abc";"a*b*"]
 s:like[t`sym;"a*b*"]
