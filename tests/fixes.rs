@@ -513,6 +513,9 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
         ("QA006", "r:`int$[a=1;b]"),         // `if` would fuse onto `int
         ("QA006", "r:x$[a=1;b]"),            // and onto a name
         ("QF010", "f:{[a;b] x+a}"),          // which parameter?
+        ("QF010", "f:{[`s] x+1}"),           // a literal pattern binds no name (#379)
+        ("QF010", "f:{[1] x}"),              // nor does a number (#379)
+        ("QF010", "f:{[(a;b)] x}"),          // and a list pattern is no one name (#379)
         ("QT008", "r:til 2.5"),              // no long it spells
         ("QF020", "t:([]ab:1 2;ac:3 4);r:select a from t"), // two equally close
         ("QA007", "f:{[c] $[c;1;2;3]}"),     // no empty slot

@@ -1062,7 +1062,9 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             let [param] = sig.slots[..] else {
                 return None;
             };
-            if param.is_empty() || matching(&v.code, brace, b'{', b'}')? <= start {
+            // A literal pattern, `{[`s] x+1}` or `{[1] x}`, binds no name
+            // (q 5, #298), so there is nothing to read in place of `x`.
+            if !is_param_name(param) || matching(&v.code, brace, b'{', b'}')? <= start {
                 return None;
             }
             let param = param.to_string();
