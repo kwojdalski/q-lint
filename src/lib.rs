@@ -1298,12 +1298,15 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                     false,
                 )
             } else {
-                (
-                    whole.as_str(),
-                    "".into(),
-                    "Remove the self-assignment".into(),
-                    false,
-                )
+                // A `/` comment after it needs the blank before it: `x:1;/ c`
+                // is over, which q 5 refuses to load (#403).
+                let text = whole.as_str();
+                let text = if rest.starts_with('/') {
+                    text.trim_end_matches([' ', '\t'])
+                } else {
+                    text
+                };
+                (text, "".into(), "Remove the self-assignment".into(), false)
             }
         }
         // The timestamp the convention asks for in place of datetime. A

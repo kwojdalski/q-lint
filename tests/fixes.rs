@@ -517,6 +517,9 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ("QB014", "r:10/2", "r:10%2", false),
         ("QB017", "a:1\na:a\nb:2", "a:1\nb:2", false),
         ("QB017", "a:1;a:a;b:2", "a:1;b:2", false),
+        // A comment after it keeps its blank: `;/` is over (#403).
+        ("QB017", "a:1\nx:1;a:a / note", "a:1\nx:1; / note", false),
+        ("QB017", "a:1\nx:1;a:a; / note", "a:1\nx:1; / note", false),
         // An operand, not a statement: only the assignment goes, and the
         // value it held stays where it was read (q 5: both give 3).
         ("QB017", "f:{[x;b] r:x+b:b;r}", "f:{[x;b] r:x+b;r}", false),
