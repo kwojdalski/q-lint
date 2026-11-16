@@ -9,6 +9,10 @@ r1:{[p] reverse asc each p}
 r2:{[p] reverse asc'[p]}
 r3:{[p] reverse desc peach p}
 
+=== clean | each over apply iterates too (#402; q 5: reverse asc@'x is per item, desc@'x is not the same)
+r1:{[p] reverse asc@'p}
+r2:{[p] reverse asc .'p}
+
 === clean | first asc is not min: asc puts a null first and min skips it
 r:{[p] first asc p}
 
@@ -28,6 +32,10 @@ r:{[p] distinct asc distinct p}
 r1:{[p] distinct asc distinct each p}
 r2:{[p] distinct asc distinct'[p]}
 r3:{[p] distinct asc distinct peach p}
+
+=== clean | and so does each over apply (#402; q 5: distinct asc distinct@'(3 1 2;5 4;3 1 2) has two items, asc distinct@' three)
+r1:{[p] distinct asc distinct@'p}
+r2:{[p] distinct asc distinct .'p}
 
 === QR004 | one arithmetic operation with a number, which is atomic
 r:{[p] {x+1} each p}

@@ -194,13 +194,16 @@ fn credentials(path: &str, source: &str, code: &str, comments: &str, out: &mut V
 }
 
 /// Whether the keyword that ends at `at` is the operand of an iterator -
-/// `asc each x`, `asc'[x]`, `distinct peach x` - and so applied item by item
-/// rather than to the list: `reverse asc each x` reverses the items, and
-/// `distinct each x` can make two items equal that the outer `distinct`
-/// then removes.
+/// `asc each x`, `asc'[x]`, `distinct peach x`, `asc@'x`, `asc .'x` - and so
+/// applied item by item rather than to the list: `reverse asc each x`
+/// reverses the items, and `distinct each x` can make two items equal that
+/// the outer `distinct` then removes. `@'` and `.'` are each over apply
+/// (#402): q 5 gives `(3 1 2;5 4)` for `distinct asc distinct@'x` and three
+/// items for `asc distinct@'x`.
 fn iterated(code: &str, at: usize) -> bool {
     let rest = &code[at..];
-    rest.starts_with(['\'', '/', '\\']) || re!(r"^[ \t]*(?:each|peach)\b").is_match(rest)
+    rest.starts_with(['\'', '/', '\\'])
+        || re!(r"^[ \t]*(?:each|peach)\b|^[ \t]*[@.]['/\\]").is_match(rest)
 }
 
 /// Whether `at` names a column of a table literal: the bracket around it,
