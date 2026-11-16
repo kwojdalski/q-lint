@@ -1127,8 +1127,11 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             let body_text = &v.code[sig.body..close - 1];
             let mut header = String::new();
             if sig.named {
+                // `{ [b] ...}` is a signature too: q allows space before
+                // the `[` (#323).
+                let bracket = v.code[brace + 1..].find('[')? + brace + 1;
                 header.push_str(&format!("{{[{name};"));
-                header.push_str(&source[brace + 2..sig.body]);
+                header.push_str(&source[bracket + 1..sig.body]);
             } else {
                 // Implicit arguments become explicit ones, up to the highest
                 // the body reads - and at least `x`, or the projection would

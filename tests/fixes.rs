@@ -427,6 +427,12 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ),
         (
             "QF005",
+            "f:{[a] g:{ [b] a+b}; g 1}",
+            "f:{[a] g:{[a;b] a+b}[a]; g 1}",
+            false,
+        ),
+        (
+            "QF005",
             "f:{[a] g:{a}; g 1}",
             "f:{[a] g:{[a;x] a}[a]; g 1}",
             false,
