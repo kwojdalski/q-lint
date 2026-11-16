@@ -116,9 +116,9 @@ fn number(token: &str) -> Option<Key> {
 /// Whether `at` is in the argument of a system command, which q never parses
 /// as q: `\l /data/2024.02.30/t` names a path (#198). Not `\t` or `\ts`,
 /// whose argument is an expression q runs.
-fn command_argument(unsym: &str, at: usize) -> bool {
-    let line = unsym[..at].rfind('\n').map_or(0, |p| p + 1);
-    unsym[line..].starts_with('\\') && !re!(r"^\\ts?(?::\d+)?[ \t]").is_match(&unsym[line..])
+fn command_argument(source: &str, at: usize) -> bool {
+    let line = source[..at].rfind('\n').map_or(0, |p| p + 1);
+    crate::system_command(&source[line..])
 }
 
 /// QE006. A date, month or time q refuses at parse. A date or month that does not exist:
@@ -130,7 +130,7 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
     // `12:00:60` and `0D00:00:60`, and takes `25:00` and `0D25:00:00`.
     for m in re!(r"(\d{2,}):(\d{2})(?::(\d{2}))?").captures_iter(unsym) {
         let whole = m.get(0).unwrap();
-        if command_argument(unsym, whole.start()) {
+        if command_argument(source, whole.start()) {
             continue;
         }
         // Part of a longer token: a date's or number's digits, or a name
@@ -167,7 +167,7 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
     // in milliseconds. Other lengths q reads in ways not worth modelling.
     for m in re!(r"\b(\d{3,})([uvt])\b").captures_iter(unsym) {
         let whole = m.get(0).unwrap();
-        if command_argument(unsym, whole.start())
+        if command_argument(source, whole.start())
             || unsym[..whole.start()].ends_with('.')
             || unsym[whole.end()..].starts_with('.')
         {
@@ -270,7 +270,7 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
     // A month has two digits: q 5 refuses `2023.1m`.
     for m in re!(r"\b\d{4}\.\dm\b").find_iter(unsym) {
         if unsym[..m.start()].ends_with(|c: char| c.is_ascii_alphanumeric() || c == '.')
-            || command_argument(unsym, m.start())
+            || command_argument(source, m.start())
         {
             continue;
         }
@@ -287,7 +287,7 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
     }
     for m in re!(r"\b(\d{4})\.(\d{2})(?:\.(\d{2})|m\b)").captures_iter(unsym) {
         let whole = m.get(0).unwrap();
-        if command_argument(unsym, whole.start()) {
+        if command_argument(source, whole.start()) {
             continue;
         }
         // The year has to start the token: `1.2024.02.30` is not a date.
@@ -723,7 +723,7 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
         // `1 _x` and the `_` inside `x_y` follow an operand.
         if !(GLYPHS.contains(&g) || g == b'_')
             || code.as_bytes()[i] != g
-            || crate::system_command(&comments[line_start..])
+            || crate::system_command(&source[line_start..])
         {
             continue;
         }
@@ -749,7 +749,7 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
         }
         let before = comments[..i].trim_end_matches([' ', '\t', '\r', '\n']);
         // A `\t` line's expression starts after the command (#310).
-        let expression = line_start + crate::timed_prefix(&comments[line_start..]);
+        let expression = line_start + crate::timed_prefix(&source[line_start..]);
         if !opens_expression(comments, i, expression) {
             continue;
         }
@@ -984,7 +984,7 @@ fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Find
     let tokens: Vec<regex::Match> = re!(r"\d(?:[eE][+-]\d|[0-9A-Za-z.:])*")
         .find_iter(unsym)
         .filter(|m| boundary(code, m.start()))
-        .filter(|m| !command_argument(unsym, m.start()))
+        .filter(|m| !command_argument(source, m.start()))
         .collect();
     let mut report = |at: usize, detail: String| {
         out.push(Finding::at(path, source, at, "QE010", detail));

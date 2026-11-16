@@ -585,6 +585,14 @@ r:select from t where {b:x;b>0} a
 \cd /x/12:60
 \l /h/2023.1m
 
+=== clean profile: general | and so is the argument of a q)-prefixed command (q 5 loads q)\l 2024.02.30/t.q, #316)
+q)\l 2024.02.30/t.q
+q)\cd /x/12:60
+show loaded
+
+=== QE006 profile: general | while q)\t runs its expression as q (q 5: '2024.02.30, #316)
+q)\t 2024.02.30
+
 === QE006 profile: general | but the expression after \t is q (#198)
 \t 2024.02.30
 

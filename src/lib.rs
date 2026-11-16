@@ -2034,15 +2034,26 @@ struct Views {
     /// comment, or `\\` - begins. q reads nothing after it.
     script_end: Option<usize>,
 }
-/// How much of a line is a `\t` or `\ts` command, 0 on any other line:
-/// these run their argument as q, so after the prefix the line is q (#222).
+/// How much of a source line is a `\t` or `\ts` command, with any `q)`
+/// before it, 0 on any other line: these run their argument as q, so after
+/// the prefix the line is q (#222).
+///
+/// A question about the source, not about `code`: `views` blanks the `q)`
+/// that q 5 reads `q)\t 1+1` and `q)\l f.q` past (#316), and in `code`
+/// such a line looks like an indented one.
 pub(crate) fn timed_prefix(line: &str) -> usize {
-    re!(r"^\\ts?(?::\d+)?[ \t]").find(line).map_or(0, |m| m.end())
+    let prompt = if line.starts_with("q)") { 2 } else { 0 };
+    re!(r"^\\ts?(?::\d+)?[ \t]")
+        .find(&line[prompt..])
+        .map_or(0, |m| prompt + m.end())
 }
-/// Whether a line is a system command whose argument is no q: any but `\t`
-/// and `\ts`.
+/// Whether a source line is a system command whose argument is no q: any
+/// but `\t` and `\ts`, with or without a `q)` before it.
 pub(crate) fn system_command(line: &str) -> bool {
-    line.starts_with('\\') && timed_prefix(line) == 0
+    line.strip_prefix("q)")
+        .unwrap_or(line)
+        .starts_with('\\')
+        && timed_prefix(line) == 0
 }
 fn views(source: &str) -> Views {
     // A BOM is QE005's to report; the rest of the file is read as q would
@@ -2136,10 +2147,12 @@ fn views(source: &str) -> Views {
         } else {
             0
         };
+        // q reads `q)\l f.q` as `\l f.q` (#316).
+        let command = string.is_none() && line[prefix..].starts_with('\\');
         // q appends an indented line to the command before it, so after any
         // command but `\t` the lines that follow are its argument, not q:
         // `\d .foo` + `  b:1` defines no `b` anywhere (#223).
-        if !ended && block == 0 && string.is_none() && line.starts_with('\\') {
+        if !ended && block == 0 && command {
             statement = timed > 0;
         }
         if ended || block > 0 {
@@ -2168,19 +2181,22 @@ fn views(source: &str) -> Views {
             }
             blank(&mut comments[offset..end]);
             blank(&mut code[offset..end]);
-        } else if timed == 0 && string.is_none() && line.starts_with('\\') {
+        } else if timed == 0 && command {
             // Any other command's argument is no q: a path, a name, or text
             // for the shell. Only what the rules read of it is kept - the
             // command, and the namespace or file of `\d` and `\l`.
-            let kept = re!(r"^\\(?:[dl][ \t]+[^ \t\r\n]*|[^ \t\r\n]*)")
-                .find(line)
-                .map_or(0, |m| m.end());
+            let kept = prefix
+                + re!(r"^\\(?:[dl][ \t]+[^ \t\r\n]*|[^ \t\r\n]*)")
+                    .find(&line[prefix..])
+                    .map_or(0, |m| m.end());
+            blank(&mut comments[offset..offset + prefix]);
+            blank(&mut code[offset..offset + prefix]);
             blank(&mut comments[offset + kept..end]);
             blank(&mut code[offset + kept..end]);
         } else {
             blank(&mut comments[offset..offset + prefix]);
             blank(&mut code[offset..offset + prefix]);
-            let mut i = offset + prefix + timed;
+            let mut i = offset + prefix.max(timed);
             while i < end {
                 let c = bytes[i];
                 if string.is_some() {
@@ -2650,7 +2666,7 @@ fn structure(path: &str, source: &str, v: &Views) -> Option<Finding> {
         }
         // A command's argument is no q, but `\t`'s is, and its brackets
         // close on the lines that continue it (#308).
-        if !system_command(line) {
+        if !system_command(raw) {
             for (i, c) in line.bytes().enumerate() {
                 if let Some(p) = b"([{ ".iter().position(|&a| a == c).filter(|&p| p < 3) {
                     stack.push((b")]}"[p], offset + i));
@@ -4883,16 +4899,15 @@ pub fn lint_selecting(
             offset += line.len();
             continue;
         }
-        if system_command(first.trim_start()) {
+        if system_command(first_raw) {
             offset += line.len();
             continue;
         }
         // `\t` and `\ts` run the rest of their line as q, so the statement
         // rules read it, with the command blanked (#309).
-        let lead = first.len() - first.trim_start().len();
-        let timed = lead + timed_prefix(first.trim_start());
+        let timed = timed_prefix(first_raw);
         let untimed;
-        let line = if timed > lead {
+        let line = if timed > 0 {
             untimed = format!("{}{}", " ".repeat(timed), &line[timed..]);
             untimed.as_str()
         } else {
