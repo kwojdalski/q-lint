@@ -697,3 +697,15 @@ c3:1+`x,y
 c4:til 1.5,x
 c5:select b:1+`x`y?`y from t
 c6:select from t where a in til 3, b>1
+
+=== clean | QT006: a symbol atom or a parenthesised atom pairs with a vector of any length (#461; q 5: 001b, 6 7, 00b)
+s:`x
+r:s=`a`b`x
+n:(5)
+m:n+1 2
+p:(`y)
+q:p=`a`b
+
+=== QT006 | while an enlisted atom, parenthesised or not, is a one-item vector (#461; q 5: 'length)
+e:(enlist 5)
+r:e+1 2

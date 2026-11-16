@@ -2583,6 +2583,11 @@ fn held(code: &str, raw: &str) -> Option<Held> {
             }
             return Some(Held::Table(columns, keyed));
         }
+        // `(5)` is the atom 5 and `(1 2 3)` the vector: without a top-level
+        // `;`, parentheses only group (q 5: `n:(5); n+1 2` is `6 7`).
+        if crate::slots(&code[1..code.len() - 1]).len() == 1 {
+            return held(&code[1..code.len() - 1], &raw[1..raw.len() - 1]);
+        }
     }
     // A string is blank in `code`; its length is in the source.
     if let Some(body) = re!(r#"^"((?:\\[0-7]{3}|\\.|[^"\\])*)"$"#).captures(raw) {
@@ -2603,7 +2608,9 @@ fn held(code: &str, raw: &str) -> Option<Held> {
         return Some(Held::Atom);
     }
     match shape(code)? {
-        1 if !code.starts_with(['(', '`']) && !code.starts_with("enlist") => None,
+        // One item is an atom unless enlisted: a symbol atom pairs with a
+        // vector of any length (q 5: `s:`x; s=`a`b`x` is `001b`).
+        1 if !code.starts_with("enlist") => None,
         n => Some(Held::Vector(n)),
     }
 }
