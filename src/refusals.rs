@@ -807,14 +807,18 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
         // `#:a`: the k form, a glyph and a colon, applied to an operand
         // written straight after it.
         let colon = rest.starts_with(':')
-            && rest[1..].starts_with(|c: char| c.is_ascii_alphanumeric() || "`(\".".contains(c))
+            && rest[1..].starts_with(|c: char| c.is_ascii_alphanumeric() || "`(\".{".contains(c))
             || rest.starts_with(":-") && rest[2..].starts_with(|c: char| c.is_ascii_digit());
         let next = continued(rest);
         let spaced = next.len() < rest.len();
         // A `.` before a letter starts a name, not a number: q 5 refuses
         // `-.foo.x` and `-.z.p` with '-, as it does `#.foo.x` (#241).
+        // A lambda is a noun, and so is a negative literal: q 5 refuses
+        // `#{x}`, `,-1` and `--1` with the first glyph (#438). `- -1` is
+        // refused too, but with ' .
         let operand = colon
-            || next.starts_with(|c: char| c.is_ascii_alphabetic() || "`(\"".contains(c))
+            || next.starts_with(|c: char| c.is_ascii_alphabetic() || "`(\"{".contains(c))
+            || (re!(r"^-\.?\d").is_match(next) && !(g == b'-' && spaced))
             || re!(r"^\.[A-Za-z]").is_match(next)
             || (next.starts_with(|c: char| c.is_ascii_digit() || c == '.')
                 && (g != b'-' || spaced));
