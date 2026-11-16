@@ -284,6 +284,25 @@ fn a_workspace_defines_names_for_the_files_around_it() {
 }
 
 #[test]
+fn a_workspace_keys_root_and_dotted_names_apart() {
+    use q_lint_rs::{Workspace, index, lint_in};
+    // q 5, with a.q's definitions loaded: `yy:xx` under `\d .ns` is 'xx, as
+    // there is no root fallback, and a root `cfg` is 'cfg, as `.cfg` is
+    // another name (#359).
+    let a = "xx:1\n.cfg:2\n";
+    let b = "\\d .ns\nyy:xx\n\\d .\ncfg\n";
+    let mut ws = Workspace::default();
+    ws.add(&index(a));
+    ws.add(&index(b));
+    let found: Vec<_> = lint_in(b, "b.q", Profile::Style, &ws)
+        .into_iter()
+        .filter(|f| f.code == "QF018")
+        .map(|f| f.line)
+        .collect();
+    assert_eq!(found, [2, 4]);
+}
+
+#[test]
 fn a_name_another_file_also_assigns_is_not_tracked_in_a_lambda() {
     use q_lint_rs::{Workspace, index, lint, lint_in};
     // Alone, a is the atom 1 and indexing it is 'type. With another file
@@ -321,10 +340,10 @@ fn an_enclosing_local_is_not_excused_by_another_files_global() {
 fn table_columns_and_qsql_assignments_define_no_global() {
     let index =
         q_lint_rs::index("t:([k:`a`b]handle:1 2)\nu:update c:1 from t\nclust.kmeans.update:{x}\n");
-    assert!(index.defined.contains(".t") && index.defined.contains(".u"));
-    assert!(!index.defined.contains(".handle") && !index.defined.contains(".c"));
+    assert!(index.defined.contains("t") && index.defined.contains("u"));
+    assert!(!index.defined.contains("handle") && !index.defined.contains("c"));
     // A name that ends in a qSQL keyword is still a name.
-    assert!(index.lambdas.contains(".clust.kmeans.update"));
+    assert!(index.lambdas.contains("clust.kmeans.update"));
 }
 
 #[test]

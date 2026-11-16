@@ -17,8 +17,8 @@ mod semantics;
 pub use semantics::TokenKind;
 
 /// What one file defines for the files around it: the global names it
-/// assigns, qualified by namespace (`.ns.f`, or `.f` at the root), and which
-/// of them it assigns a lambda.
+/// assigns, each as the one name q resolves it to (`.ns.f` inside `\d .ns`,
+/// and `f` - not `.f` - at the root), and which of them it assigns a lambda.
 #[derive(Default, Clone, PartialEq, Eq, Debug)]
 pub struct FileIndex {
     pub defined: std::collections::HashSet<String>,
@@ -94,9 +94,8 @@ pub struct References {
     /// context in force: `.a.f` inside `\d .a`, and `f` - not `.f` - at the
     /// root.
     pub names: Vec<String>,
-    /// Each global this file assigns, named the same way. `FileIndex` keys a
-    /// root `g` as `.g`, which the checks rely on; the graph cannot, since
-    /// to q they are two names.
+    /// Each global this file assigns, named the same way, as `FileIndex`
+    /// does.
     pub defines: Vec<String>,
     /// The paths of `\l path`, `system "l path"` and `` `:path.q ``, as
     /// written, each with the `\d` in force where it is loaded - `""` at the

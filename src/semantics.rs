@@ -731,7 +731,9 @@ pub fn tokens(code: &str, raw: &str, ws: &crate::Workspace) -> Vec<(usize, usize
         // lambda of that name is the function a call here reaches.
         let function = match lambda.get(&name) {
             Some(&is_lambda) => is_lambda,
-            None => ws.is_lambda(&name) || ws.is_lambda(&qualify(m.as_str(), "")),
+            None => {
+                ws.is_lambda(&resolved(m.as_str(), ns_at(m.start()))) || ws.is_lambda(m.as_str())
+            }
         };
         if function {
             out.push((m.start(), m.len(), TokenKind::Function));
@@ -914,7 +916,7 @@ fn global_writes(
 /// checks use, stopped before any rule.
 pub fn index(code: &str, raw: &str) -> crate::FileIndex {
     let (scopes, namespaces) = scopes(code, raw);
-    let globals = global_writes(code, &scopes, &namespaces, qualify, true);
+    let globals = global_writes(code, &scopes, &namespaces, resolved, true);
     let lambdas = globals
         .iter()
         .filter(|(_, at)| at.iter().any(|&a| assigns_lambda(code, a)))
@@ -1470,8 +1472,9 @@ pub fn check(
     // has no root fallback. After `x:1`, `\d .ns`, `f:{[a] a+x}`, calling
     // `.ns.f 1` is 'x.
     let exact = global_writes(code, &scopes, &namespaces, resolved, true);
-    // What this file defines itself; the workspace answers for the rest.
-    let own: HashSet<String> = globals.keys().cloned().collect();
+    // What this file defines itself; the workspace answers for the rest,
+    // keyed the same way (#359).
+    let own: HashSet<String> = exact.keys().cloned().collect();
     let elsewhere = |name: &str| ws.defined_elsewhere(name, &own);
     // Scopes by the offset they start at. Looking one up by scanning is linear
     // per global and quadratic over a file whose globals are mostly lambdas,
@@ -2242,8 +2245,10 @@ pub fn check(
                     // q 5 reads a bare `k` as 1, inside `\d .ns` too (#357).
                     || exact.contains_key(&format!(".q.{name}"))
                     || elsewhere(&format!(".q.{name}"))
-                    || elsewhere(&global)
-                    || elsewhere(&format!(".{name}"))
+                    // Exactly too: another file's `.cfg` is not a root
+                    // `cfg`, and q 5 does not fall back from `\d .ns` to
+                    // the root (#359).
+                    || elsewhere(&resolved(name, namespace))
                     // QF010 and QF005 already explain these more precisely.
                     || (scope.is_some() && matches!(name, "x" | "y" | "z"))
                     || std::iter::successors(scope.and_then(|s| s.parent), |&p| scopes[p].parent)
@@ -2485,7 +2490,7 @@ pub fn check(
         comments,
         (&scopes, &namespaces, &exact),
         dynamic,
-        &|name: &str| elsewhere(&qualify(name, "")),
+        &|name: &str| elsewhere(name),
     ));
     out
 }
@@ -3016,7 +3021,7 @@ fn named_values(
             && name != "i"
             && !columns.iter().any(|c| c == name)
             && !globals.contains_key(&key(name, at))
-            && !elsewhere(name)
+            && !elsewhere(&key(name, at))
             && !crate::RESERVED.iter().any(|n| n == name)
             && !scope_at(scopes, at).is_some_and(|s| scopes[s].locals.contains(name))
     };
