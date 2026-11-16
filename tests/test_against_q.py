@@ -74,6 +74,9 @@ PATTERNS = {
     "{[a:neg;b] a}": 2,
     "{[a:{x+1};b] a}": 2,
     "{[a:-7h;b] a}": 2,
+    # :: matches the generic null (#450).
+    "{[(a;b;::)] a+b}": 1,
+    "{[a;::] a}": 2,
 }
 
 

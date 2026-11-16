@@ -2558,6 +2558,10 @@ pub(crate) fn is_pattern(s: &str, nested: bool) -> bool {
     let whole = |s: &str| s.starts_with('(') && matching(s, 0, b'(', b')') == Some(s.len());
     if s.is_empty() {
         nested
+    } else if s == "::" {
+        // The generic null matches only itself: q 5 `{[(a;b;::)] a+b}
+        // (1;2;::)` is 3, and `{[a;::] a}` takes two arguments (#450).
+        true
     } else if is_param_name(s)
         || re!(r"^(?:-?[0-9.][A-Za-z0-9.:]*(?:\s+-?[0-9.][A-Za-z0-9.:]*)*|(?:`[A-Za-z0-9_.:]*)+)$")
             .is_match(s)

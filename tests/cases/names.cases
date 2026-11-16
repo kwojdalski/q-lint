@@ -148,6 +148,13 @@ u:{["ab"!(a;b)] a}
 f:{[`a`b!(a;b);c] a+b+c}
 r:f[`a`b!1 2;3;4]
 
+=== clean profile: general | :: in a pattern matches the generic null (q 5: f (1;2;::) is 3, h[1;::] is 1) (#450)
+f:{[(a;b;::)] a+b}
+r:f (1;2;::)
+g:{[(a;::)] a}
+h:{[a;::] a}
+s:h[1;::]
+
 === QA012 profile: general | the rank of a pattern lambda is its slot count (q 5: f[(1;2);3;4] is 'rank)
 f:{[(a;b);c] a+b+c}
 r:f[(1;2);3;4]
