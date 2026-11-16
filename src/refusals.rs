@@ -335,7 +335,8 @@ fn missing_from(
     unsym: &str,
     out: &mut Vec<Finding>,
 ) {
-    for m in re!(r"\b(select|exec|update|delete)\b").find_iter(unsym) {
+    // No `\b` before the keyword: `1_select` is a drop of a select (#351).
+    for m in re!(r"(select|exec|update|delete)\b").find_iter(unsym) {
         if !boundary(code, m.start()) {
             continue;
         }

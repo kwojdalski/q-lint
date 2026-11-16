@@ -68,6 +68,9 @@ s:"2024.02.30"
 === QE007 | select with no from
 r:select a by b t
 
+=== QE007 profile: general | and after a drop (q 5: parse "1_select a by b t" is 'from, #351)
+r:1_select a by b t
+
 === QE007 | inside a lambda too
 f:{select x}
 

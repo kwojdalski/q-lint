@@ -736,7 +736,9 @@ fn last_slot_name(inner: &str) -> Option<&str> {
 /// `select m:max a by a from t` runs. exec and update with the same lists
 /// run, so only select is read.
 fn select_by_duplicate(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
-    for q in re!(r"\bselect\b").find_iter(code) {
+    // No `\b` before the keyword: `1_select` is a drop of a select (#351),
+    // and `boundary` tells that from the name `x_select`.
+    for q in re!(r"select\b").find_iter(code) {
         if !crate::boundary(code, q.start()) || in_string(code, q.start()) {
             continue;
         }

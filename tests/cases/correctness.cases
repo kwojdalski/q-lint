@@ -9,6 +9,10 @@ v:select a,(select a by c from u) from t
 === QB021 | a result column named like a by group (q 5: 'dup names for cols/groups a)
 r:select a by a from t
 
+=== QB021 profile: general | and after a drop (q 5: 1_select a by a from t is 'dup names for cols/groups a, #351)
+t:([]a:1 2 3;b:4 5 6)
+r:1_select a by a from t
+
 === QB021 | an aggregate or expression takes the name of its first column (q 5: max a, a+1, a:b and 2 xbar a each clash)
 r1:select max a by a from t
 r2:select a+1 by a from t

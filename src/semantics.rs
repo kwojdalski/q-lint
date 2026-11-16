@@ -3000,9 +3000,14 @@ fn named_values(
             ),
         ));
     };
-    for m in re!(r"\b(?:select|exec|update)\b([^\n;]*?)\bfrom\s+(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\b")
+    // No `\b` before the keyword: `1_select` is a drop of a select (#351),
+    // and `boundary` tells that from the name `x_select`.
+    for m in re!(r"(?:select|exec|update)\b([^\n;]*?)\bfrom\s+(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\b")
     .captures_iter(code)
     {
+        if !boundary(code, m.get(0).unwrap().start()) {
+            continue;
+        }
         let table = m.get(2).unwrap();
         // The name has to be the whole from clause: `from t lj k`, `from t,'u`
         // and `from t uj u` bring in columns `t` does not have (#348).
@@ -3069,9 +3074,13 @@ fn named_values(
     // query's, which are its table's (#259). The phrase ends at a bracket it
     // did not open: `(select from t where a>1),select ...` (#260).
     let mut from = 0;
-    while let Some(m) = re!(r"\b(?:select|exec|update|delete)\b[^\n;]*?\bfrom\s+(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s+where\b([^\n;]*)")
+    while let Some(m) = re!(r"(?:select|exec|update|delete)\b[^\n;]*?\bfrom\s+(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s+where\b([^\n;]*)")
         .captures_at(code, from)
     {
+        if !boundary(code, m.get(0).unwrap().start()) {
+            from = m.get(0).unwrap().start() + 1;
+            continue;
+        }
         let phrase = m.get(2).unwrap();
         let mut flat = phrase.as_str().as_bytes().to_vec();
         let (mut depth, mut lambda, mut nested) = (0i32, 0i32, None);
