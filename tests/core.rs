@@ -30,6 +30,25 @@ fn utf16_ranges_and_literal_masking() {
     assert!(lint("s:\"{[desc]} / hi\"; / (]", "t.q", Profile::Style).is_empty());
 }
 #[test]
+fn a_blanked_column_0_line_is_named_as_the_one_that_starts_a_statement() {
+    // `views` blanks a whole `k)` line, but it is still the line q 5 refuses
+    // the open brace at (#307).
+    let f = lint("f:{[a]\nk)1\n  a+1}", "t.q", Profile::General);
+    assert_eq!(f.len(), 1);
+    assert!(f[0].detail.contains("before line 2"), "{}", f[0].detail);
+}
+#[test]
+fn a_multi_byte_blank_before_an_assigned_name_does_not_panic() {
+    // A no-break space pasted from a web page: q 5 refuses it with 'char,
+    // and QT028 once sliced into the middle of it (#321).
+    for source in [
+        "select from t where\u{a0}f:1",
+        "select from t where a=1,\u{a0}b:2",
+    ] {
+        lint(source, "t.q", Profile::General);
+    }
+}
+#[test]
 fn arbitrary_text_does_not_panic() {
     let chars = [
         'a', '1', 'é', '😀', ' ', '\n', '\r', '\t', '/', '\\', '\"', '\'', ':', ';', '(', ')', '[',
@@ -104,6 +123,10 @@ fn parameter_lists_agree_with_q() {
         "f:{[(a;b);c] a+b+c}",
         "f:{[([k;v])] k+v}",
         "f:{[([]a;b:c)] a}",
+        // A typed slot takes any function or type after the colon (#437).
+        "f:{[a:1] a}",
+        "f:{[a:neg;b] a}",
+        "f:{[a:{x+1};b] a}",
     ] {
         let found = lint(source, "t.q", Profile::Style);
         assert!(
@@ -120,7 +143,6 @@ fn parameter_lists_agree_with_q() {
         ("f:{[count x] 1}", "'nyi"),
         ("f:{[a b] a}", "start of the body"),
         ("f:{[a[0]] a}", "start of the body"),
-        ("f:{[a:1] a}", "start of the body"),
         ("f:{[(a b)] 1}", "start of the body"),
     ] {
         let found = lint(source, "t.q", Profile::Style);
@@ -248,6 +270,48 @@ fn scope_analysis_does_not_scale_quadratically() {
     );
 }
 
+/// The functions `semantic_tokens` colours in `text`, as the names it spans.
+fn functions(text: &str) -> Vec<&str> {
+    q_lint_rs::semantic_tokens(text)
+        .into_iter()
+        .filter(|t| t.2 == q_lint_rs::TokenKind::Function)
+        .map(|(at, len, _)| &text[at..at + len])
+        .collect()
+}
+
+#[test]
+fn a_column_named_like_a_function_does_not_uncolour_it() {
+    // q 5: after `t:([] f:1 2)` or a qSQL alias `f:`, `f 1` is still 2 and
+    // `type f` 100h - a column assigns nothing (#365).
+    assert_eq!(functions("f:{x+1}\nr:f 1\nt:([] f:1 2)\n"), ["f"]);
+    assert_eq!(
+        functions("f:{x+1}\nr:f 1\nu:select f:2*a from ([]a:1 2)\n"),
+        ["f"]
+    );
+}
+
+#[test]
+fn a_projection_is_coloured_as_a_function() {
+    // q 5: `p:{[a;b] a+b}[1;]` is type 104h, and `p 2` is 3 (#367).
+    assert_eq!(functions("p:{[a;b] a+b}[1;]\nr:p 2\n"), ["p"]);
+}
+
+#[test]
+fn a_root_lambda_is_not_coloured_inside_a_context() {
+    use q_lint_rs::{TokenKind, Workspace, index, semantic_tokens_in};
+    // q 5: under `\\d .ns`, `m:f 2` is 'f - no fallback to the root `f`,
+    // which the workspace, holding this file too, defines (#366).
+    let text = "f:{x+1}\n\\d .ns\nm:f 2\n";
+    let mut ws = Workspace::default();
+    ws.add(&index(text));
+    ws.add(&index("g:{x}\n"));
+    assert!(
+        !semantic_tokens_in(text, &ws)
+            .iter()
+            .any(|t| t.2 == TokenKind::Function)
+    );
+}
+
 #[test]
 fn semantic_tokens_survive_a_half_typed_file() {
     // The language server asks for tokens on every keystroke, so it sees
@@ -281,6 +345,37 @@ fn a_workspace_defines_names_for_the_files_around_it() {
     ws.add(&index("cfg:5\n"));
     ws.add(&index(app));
     assert!(!codes(&lint_in(app, "app.q", Profile::Style, &ws)).contains(&"QF018"));
+}
+
+#[test]
+fn a_workspace_keys_root_and_dotted_names_apart() {
+    use q_lint_rs::{Workspace, index, lint_in};
+    // q 5, with a.q's definitions loaded: `yy:xx` under `\d .ns` is 'xx, as
+    // there is no root fallback, and a root `cfg` is 'cfg, as `.cfg` is
+    // another name (#359).
+    let a = "xx:1\n.cfg:2\n";
+    let b = "\\d .ns\nyy:xx\n\\d .\ncfg\n";
+    let mut ws = Workspace::default();
+    ws.add(&index(a));
+    ws.add(&index(b));
+    let found: Vec<_> = lint_in(b, "b.q", Profile::Style, &ws)
+        .into_iter()
+        .filter(|f| f.code == "QF018")
+        .map(|f| f.line)
+        .collect();
+    assert_eq!(found, [2, 4]);
+}
+
+#[test]
+fn a_foreign_keyword_another_workspace_file_defines_is_a_name() {
+    use q_lint_rs::{Workspace, index, lint, lint_in};
+    // q 5, with lib.q's definitions loaded: `(f 1b;f 0b)` is 10b (#372).
+    let main = "f:{[a] $[a;true;false]}\n";
+    assert!(codes(&lint(main, "main.q", Profile::General)).contains(&"QF015"));
+    let mut ws = Workspace::default();
+    ws.add(&index("true:1b\nfalse:0b\n"));
+    ws.add(&index(main));
+    assert!(!codes(&lint_in(main, "main.q", Profile::General, &ws)).contains(&"QF015"));
 }
 
 #[test]
@@ -321,10 +416,10 @@ fn an_enclosing_local_is_not_excused_by_another_files_global() {
 fn table_columns_and_qsql_assignments_define_no_global() {
     let index =
         q_lint_rs::index("t:([k:`a`b]handle:1 2)\nu:update c:1 from t\nclust.kmeans.update:{x}\n");
-    assert!(index.defined.contains(".t") && index.defined.contains(".u"));
-    assert!(!index.defined.contains(".handle") && !index.defined.contains(".c"));
+    assert!(index.defined.contains("t") && index.defined.contains("u"));
+    assert!(!index.defined.contains("handle") && !index.defined.contains("c"));
     // A name that ends in a qSQL keyword is still a name.
-    assert!(index.lambdas.contains(".clust.kmeans.update"));
+    assert!(index.lambdas.contains("clust.kmeans.update"));
 }
 
 #[test]
@@ -615,4 +710,20 @@ fn a_typed_parameter_binds_its_name() {
     }
     let found = lint("f:{[a b] a}\n", "t.q", Profile::General);
     assert!(found.iter().any(|f| f.code == "QF007"), "{found:?}");
+}
+
+#[test]
+fn the_tests_exemption_from_qp002_reads_the_directories_not_the_spelling() {
+    // The CLI walk and the editor pass an absolute path; only a relative
+    // `--stdin-filename` was ever exempted (#416).
+    let qp002 = |path: &str| {
+        lint("x:.z.z\n", path, Profile::Uqf)
+            .iter()
+            .any(|f| f.code == "QP002")
+    };
+    assert!(!qp002("tests/a.q"));
+    assert!(!qp002("/work/proj/tests/a.q"));
+    assert!(!qp002("/work/proj/tests/q/a.q"));
+    assert!(qp002("/work/proj/src/a.q"));
+    assert!(qp002("/work/proj/src/tests.q"));
 }

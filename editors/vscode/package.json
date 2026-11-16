@@ -3,7 +3,7 @@
   "displayName": "q-lint",
   "description": "Linting, Quick Fixes and syntax colouring for q/kdb+. Early version; catches the most common problems.",
   "icon": "icon.png",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "publisher": "wojdalski",
   "license": "MIT",
   "engines": {
@@ -161,7 +161,7 @@
           },
           "default": [],
           "order": 31,
-          "markdownDescription": "Globs, relative to the workspace folder, of files and directories the workspace index does not read - for example `[\"vendor/**\", \"**/generated/**\"]`. An open file is still linted and indexed. Version-control, `node_modules`, `target`, `dist`, `venv` and `__pycache__` directories are always skipped."
+          "markdownDescription": "Globs, relative to the workspace folder, of files and directories the workspace index does not read - for example `[\"vendor/**\", \"**/generated/**\"]`. An open file is still linted and indexed. Whatever the configuration's `exclude` skips - by default `.git`, `.venv`, `node_modules`, `__pycache__`, `build`, `dist` and `target` - is skipped too, as `qlinter .` skips it."
         },
         "q-lint.trace.server": {
           "type": "string",

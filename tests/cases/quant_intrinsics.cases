@@ -70,6 +70,15 @@ reciprocal[`a]
 === clean profile: general | good: reciprocal[1]
 reciprocal[1]
 
+=== QT016 profile: general | bad: ceiling and signum of a symbol (#475; q 5: 'type)
+r:ceiling `a
+s:signum[`a]
+
+=== clean profile: general | good: ceiling and signum of a number, and floor of a symbol, which q 5 returns (#475)
+r:ceiling 1.5
+s:signum -2
+t:floor `a
+
 === QT017 profile: general | bad: mavg[1.5;1 2 3]
 mavg[1.5;1 2 3]
 

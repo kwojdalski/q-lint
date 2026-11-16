@@ -445,6 +445,64 @@ fn a_selector_that_names_no_rule_is_refused() {
 }
 
 #[test]
+fn a_bad_selector_or_glob_in_a_configuration_names_the_file() {
+    // Every other configuration error names its file; with nested files or
+    // an `extend` chain, these two did not (#423).
+    for (config, said) in [
+        (
+            "[lint]\nselect = [\"QZ\"]\n",
+            "select: QZ is not a diagnostic code",
+        ),
+        (
+            "exclude = [\"[bad\"]\n",
+            "exclude: [bad: Pattern syntax error",
+        ),
+        (
+            "[lint.per-file-ignores]\n\"a.q\" = [\"QZ\"]\n",
+            "per-file-ignores: QZ is not",
+        ),
+        (
+            "[lint.per-file-ignores]\n\"[bad\" = [\"QF\"]\n",
+            "per-file-ignores: [bad: Pattern",
+        ),
+    ] {
+        let repo = Repo::new();
+        repo.write("a.q", SOURCE).write("sub/.qlinter.toml", config);
+        repo.write("sub/a.q", SOURCE);
+        let out = run(&repo.path("."), &["sub/a.q"]);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(2), "{stderr}");
+        assert!(
+            stderr.contains(&format!(".qlinter.toml: {said}")),
+            "{config}: {stderr}"
+        );
+    }
+}
+
+#[test]
+fn an_extend_cycle_is_reported_as_a_cycle() {
+    // A file extending itself was reported as "more than 16 files deep" (#424).
+    for files in [
+        &[(".qlinter.toml", "extend = \".qlinter.toml\"\n")][..],
+        &[
+            (".qlinter.toml", "extend = \"b.toml\"\n"),
+            ("b.toml", "extend = \".qlinter.toml\"\n"),
+        ][..],
+    ] {
+        let repo = Repo::new();
+        repo.write("a.q", SOURCE);
+        for (name, text) in files {
+            repo.write(name, text);
+        }
+        let out = run(&repo.path("."), &["a.q"]);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(2), "{stderr}");
+        assert!(stderr.contains("`extend` cycle: "), "{stderr}");
+        assert!(stderr.trim_end().ends_with(".qlinter.toml"), "{stderr}");
+    }
+}
+
+#[test]
 fn show_settings_names_the_file_in_force() {
     let repo = Repo::new();
     repo.write(
@@ -617,6 +675,50 @@ fn an_excluded_file_named_explicitly_is_linted_unless_force_exclude() {
     );
 }
 
+#[test]
+fn force_exclude_skips_a_file_inside_a_default_excluded_directory() {
+    // The walk never enters `build/`; a hook passing `build/x.q` with
+    // --force-exclude must skip it too, by path or by --stdin-filename (#415).
+    let repo = Repo::new();
+    repo.write("build/x.q", SOURCE);
+    let style = ["--isolated", "--profile", "style"];
+    assert_eq!(repo.codes(".", &style), Vec::<String>::new());
+    assert_eq!(
+        repo.codes(".", &[&style[..], &["build/x.q"]].concat()),
+        ["QF016"]
+    );
+    let forced = [&style[..], &["--force-exclude", "build/x.q"]].concat();
+    assert_eq!(repo.codes(".", &forced), Vec::<String>::new());
+    let mut child = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .current_dir(repo.path("."))
+        .args([
+            "--format",
+            "json",
+            "--force-exclude",
+            "--stdin-filename",
+            "build/x.q",
+        ])
+        .args(style)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    use std::io::Write;
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(SOURCE.as_bytes())
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "[]");
+    // A file in a directory of that name above the current one is not.
+    assert_eq!(
+        repo.codes("build", &[&style[..], &["--force-exclude", "x.q"]].concat()),
+        ["QF016"]
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn a_symlink_is_governed_excluded_and_reported_where_it_is() {
@@ -783,4 +885,79 @@ fn show_settings_lists_only_rules_the_backend_can_report() {
     assert_eq!(rules(&["--select", "QF006"]), Vec::<String>::new());
     assert_eq!(rules(&["--backend", "qls"]), ["QLS001"]);
     assert!(rules(&["--backend", "all"]).contains(&"QLS001".to_string()));
+}
+
+#[test]
+fn stdin_that_is_not_utf8_is_linted_as_the_same_file_on_disk_is() {
+    // q 5 loads `s:"caf\xe9"` (count 4). The file route lints it lossily;
+    // stdin refused it with "stream did not contain valid UTF-8" (#417).
+    use std::io::Write;
+    let source = b"s:\"caf\xe9\"\na:1==2\n";
+    let dir = tempfile::tempdir().unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .current_dir(dir.path())
+        .args(["--isolated", "--format", "json", "--stdin-filename", "a.q"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(source).unwrap();
+    let out = child.wait_with_output().unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("a.q: not valid UTF-8"), "{stderr}");
+    let found: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(found[0]["code"], "QE004");
+    assert_eq!(found[0]["line"], 2);
+}
+
+#[test]
+fn an_empty_exclude_pattern_is_refused_rather_than_excluding_everything() {
+    // `exclude = [""]` in a file is refused; `--exclude ''`, as from an
+    // unset `$EXTRA`, linted nothing and exited 0 (#418).
+    let repo = Repo::new();
+    repo.write("a.q", SOURCE);
+    for args in [
+        &["--isolated", "--exclude", "", "."][..],
+        &["--isolated", "--exclude", "  ", "."][..],
+        &["analyze", "graph", "--exclude", "", "."][..],
+    ] {
+        let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .current_dir(repo.path("."))
+            .args(args)
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(2), "{args:?}: {stderr}");
+        assert!(
+            stderr.contains("--exclude: a pattern must not be empty"),
+            "{stderr}"
+        );
+    }
+}
+
+#[test]
+fn a_stdin_filename_that_is_not_q_is_refused_as_the_file_would_be() {
+    // `qlinter kk.k` refuses k source; `--stdin-filename kk.k` linted it as
+    // q (#421).
+    use std::io::Write;
+    let dir = tempfile::tempdir().unwrap();
+    for name in ["kk.k", "notes.txt"] {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .current_dir(dir.path())
+            .args(["--isolated", "--stdin-filename", name])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        // The refusal can come before qlinter reads stdin, so the write may
+        // meet a closed pipe: that is the behaviour under test, not a failure.
+        let _ = child.stdin.take().unwrap().write_all(b"f:{x==y}\n");
+        let out = child.wait_with_output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(2), "{name}: {stderr}");
+        assert!(stderr.contains("not a .q file"), "{stderr}");
+    }
 }

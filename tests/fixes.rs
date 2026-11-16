@@ -174,6 +174,35 @@ fn a_call_in_a_query_is_bracketed_up_to_the_column_it_belongs_to() {
     assert_eq!(remaining[0]["line"], 9);
 }
 
+/// A multi-byte character before a call in a query: the clause scan walks
+/// bytes, and once sliced the code inside `é` and panicked (#352).
+#[test]
+fn a_query_fix_after_a_multibyte_character_does_not_panic() {
+    use q_lint_rs::{Profile, fixes_for, lint};
+    let source = "g:{x}\nt:([]a:1 2)\nr:select c:`\u{e9}, d:g a from t\n";
+    let findings = lint(source, "probe.q", Profile::Uqf);
+    let fixes = fixes_for(findings.iter().filter(|f| f.code == "QP006"), source);
+    assert_eq!(fixes.len(), 1, "{findings:?}");
+    assert_eq!(fixes[0].replacement, "g[a]");
+}
+
+/// A fix whose start follows a multi-byte character inside the token before
+/// it - the BOM QE005 exists for, or `é` in a symbol: `ends_in_number` stepped
+/// one byte past that character and sliced inside it (#398).
+#[test]
+fn a_fix_after_a_multibyte_token_does_not_panic() {
+    use q_lint_rs::{Profile, fixes_for, lint};
+    for (profile, source) in [
+        (Profile::Uqf, "\u{feff}r:{x} each 1 2\n"),
+        (Profile::General, "\u{feff}a==b\n"),
+        (Profile::Uqf, "\u{feff}r:til 5.0\n"),
+        (Profile::Uqf, "r:`caf\u{e9}==`b\n"),
+    ] {
+        let findings = lint(source, "probe.q", profile);
+        assert!(!fixes_for(&findings, source).is_empty(), "{source:?}");
+    }
+}
+
 /// Nothing to rewrite outside the profile that asks for it. The CLI's own
 /// default is `uqf`; `general` is the one that answers only "would q refuse
 /// this", and juxtaposition is not something q refuses.
@@ -274,15 +303,15 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ("QB012", "f:{[x] x+1;}", "f:{[x] x+1}", false),
         ("QB010", "a:1;b:a -1", "a:1;b:a - 1", false),
         ("QR001", "r:reverse asc 3 1 2", "r:desc 3 1 2", false),
-        ("QR002", "r:{x} each 1 2 3", "r:1 2 3", true),
-        ("QR002", "r:count {x} each y", "r:count y", true),
-        ("QR002", "r:{x}' y", "r:y", true),
-        ("QR002", "a:1 2 3;r:a{x} each 0 2", "a:1 2 3;r:a 0 2", true),
-        ("QR002", "b:0 2;r:0 1 2{x} each b", "b:0 2;r:0 1 2 b", true),
+        ("QR002", "r:{x} each 1 2 3", "r:1 2 3", false),
+        ("QR002", "r:count {x} each y", "r:count y", false),
+        ("QR002", "r:{x}' y", "r:y", false),
+        ("QR002", "a:1 2 3;r:a{x} each 0 2", "a:1 2 3;r:a 0 2", false),
+        ("QR002", "b:0 2;r:0 1 2{x} each b", "b:0 2;r:0 1 2 b", false),
         // A `-` left against the number would make it a negative literal
         // and the subtraction an application (#207).
-        ("QR002", "r:a -{x} each 1 2", "r:a - 1 2", true),
-        ("QR002", "r:a -{x} each .5", "r:a - .5", true),
+        ("QR002", "r:a -{x} each 1 2", "r:a - 1 2", false),
+        ("QR002", "r:a -{x} each .5", "r:a - .5", false),
         (
             "QR003",
             "r:distinct asc distinct 3 1 1",
@@ -377,6 +406,42 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
             "s:select from t where (a=\"x\") and b=0",
             false,
         ),
+        // Nor does a bracket argument, or a derived function (#405).
+        (
+            "QB006",
+            "r:select from t where a=f[b;b] and b=0",
+            "r:select from t where (a=f[b;b]) and b=0",
+            false,
+        ),
+        (
+            "QB006",
+            "r:select from t where a=f'[b;b] and b=0",
+            "r:select from t where (a=f'[b;b]) and b=0",
+            false,
+        ),
+        (
+            "QB006",
+            "r:select from t where a=(+/)[b] and b=0",
+            "r:select from t where (a=(+/)[b]) and b=0",
+            false,
+        ),
+        // The argument ends at `from` after a drop too (#340).
+        (
+            "QP006",
+            "g:{x+1};r:1_select c:g a from t",
+            "g:{x+1};r:1_select c:g[a] from t",
+            true,
+        ),
+        // A line at the left margin that starts with a string is a new
+        // statement, even though `code` blanks its quote to a space (#399).
+        ("QP006", "f:{x}\nr:f 1\n\"s\"", "f:{x}\nr:f[1]\n\"s\"", true),
+        (
+            "QP006",
+            "f:{x}\nr:f 1\n/ c\n\"s\"",
+            "f:{x}\nr:f[1]\n/ c\n\"s\"",
+            true,
+        ),
+        ("QP005", "r:a*b+c\n\"s\"", "r:a*(b+c)\n\"s\"", true),
         ("QR004", "r:{x+1} each 1 2 3", "r:1 2 3+1", false),
         ("QR004", "r:{2-x} each a,b", "r:2-a,b", false),
         ("QR004", "r:{x%2} each a,b", "r:(a,b)%2", false),
@@ -384,6 +449,25 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ("QR004", "f:{a{x+1} each b}", "f:{a b+1}", false),
         ("QR004", "r:{x - 1} each b", "r:b-1", false),
         ("QR004", "s:a -{1+x} each 2 3", "s:a - 1+2 3", false),
+        // In a query the argument ends where the column does (#350).
+        (
+            "QR004",
+            "r:select c:{x+1} each a, d:b from t",
+            "r:select c:a+1, d:b from t",
+            false,
+        ),
+        (
+            "QR004",
+            "r:select c:{x+1} each a by b from t",
+            "r:select c:a+1 by b from t",
+            false,
+        ),
+        (
+            "QR004",
+            "r:select from t where b>{2*x} each a",
+            "r:select from t where b>2*a",
+            false,
+        ),
         ("QR004", "t:a -{x*2} each 3 4", "t:a - 3 4*2", false),
         ("QL002", "a:1\n/ old:{x+1}\nb:2", "a:1\nb:2", false),
         // The indentation goes with it, or `b:2` would continue `a:1` (#205).
@@ -407,6 +491,8 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ("QT008", "r:til 5.0", "r:til 5", true),
         ("QT008", "r:til 3f", "r:til 3", true),
         ("QT025", "f:{'5}", "f:{'\"5\"}", true),
+        ("QT025", "f:{'12:00}", "f:{'\"12:00\"}", true),
+        ("QT025", "f:{'1e-3}", "f:{'\"1e-3\"}", true),
         (
             "QF005",
             "f:{[a] {a+x} each 1 2}",
@@ -423,6 +509,12 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
             "QF005",
             "f:{[a] {a+y}'[1 2;3 4]}",
             "f:{[a] {[a;x;y] a+y}[a]'[1 2;3 4]}",
+            false,
+        ),
+        (
+            "QF005",
+            "f:{[a] g:{ [b] a+b}; g 1}",
+            "f:{[a] g:{[a;b] a+b}[a]; g 1}",
             false,
         ),
         (
@@ -444,6 +536,9 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ("QB014", "r:10/2", "r:10%2", false),
         ("QB017", "a:1\na:a\nb:2", "a:1\nb:2", false),
         ("QB017", "a:1;a:a;b:2", "a:1;b:2", false),
+        // A comment after it keeps its blank: `;/` is over (#403).
+        ("QB017", "a:1\nx:1;a:a / note", "a:1\nx:1; / note", false),
+        ("QB017", "a:1\nx:1;a:a; / note", "a:1\nx:1; / note", false),
         // An operand, not a statement: only the assignment goes, and the
         // value it held stays where it was read (q 5: both give 3).
         ("QB017", "f:{[x;b] r:x+b:b;r}", "f:{[x;b] r:x+b;r}", false),
@@ -461,6 +556,13 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
             false,
         ),
         ("QP002", "r:\"z\"$x", "r:\"p\"$x", false),
+        // The datetime fixed, and the symbol on the same line left (#409).
+        (
+            "QP002",
+            "s:`2020.01.01T10;t:2020.01.01T10",
+            "s:`2020.01.01T10;t:2020.01.01D10",
+            false,
+        ),
         (
             "QF001",
             "f:{[count] count+{count x}[count]}",
@@ -513,16 +615,60 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
         ("QA006", "r:`int$[a=1;b]"),         // `if` would fuse onto `int
         ("QA006", "r:x$[a=1;b]"),            // and onto a name
         ("QF010", "f:{[a;b] x+a}"),          // which parameter?
+        ("QF010", "f:{[`s] x+1}"),           // a literal pattern binds no name (#379)
+        ("QF010", "f:{[1] x}"),              // nor does a number (#379)
+        ("QF010", "f:{[(a;b)] x}"),          // and a list pattern is no one name (#379)
         ("QT008", "r:til 2.5"),              // no long it spells
+        ("QT008", "r:til 2e-1"),             // `til 2-1` (#389)
+        ("QT008", "r:til 2e+1"),             // nor `til 2+1` (#389)
         ("QF020", "t:([]ab:1 2;ac:3 4);r:select a from t"), // two equally close
         ("QA007", "f:{[c] $[c;1;2;3]}"),     // no empty slot
         ("QP002", "t:.z.z / old: 15h$x"),    // the cast is in a comment
         ("QP002", "t:.z.Z;s:\"0Nz\""),       // and the null in a string
+        (
+            "QF005",
+            "f:{[k] g:{[a;b;c;d;e;f;g;h] k+h}; g[1;2;3;4;5;6;7;8]}",
+        ), // a ninth parameter is 'params
+        // A bracket argument would become a key-column header (#406)
+        ("QR004", "a:1 2 3;r:{x*2}'[a]"),
+        ("QR004", "a:1 2 3;r:{x*2} each[a]"),
+        // A symbol applied to () is a projection, which `[]` would call (#408)
+        ("QA004", "f:{42};r:`f . ()"),
+        // A comment holding a `}` would go with the code (#410)
+        ("QB020", "f:{[x] :x; x / keep this comment }\n  }"),
+        // `return` before a comment returns nothing: `:/` is over (#404)
+        ("QF015", "f:{[x] a:1;\n  return / done\n  }"),
     ] {
         for finding in lint(source, "probe.q", Profile::Uqf)
             .iter()
             .filter(|f| f.code == code)
         {
+            assert!(fix_for(finding, source).is_none(), "{code} fixed {source}");
+        }
+    }
+}
+
+/// A fix that deletes a token from between two numeric literals would leave
+/// them one vector literal: q 5 gives `10 30` for `10 20 30 {x} each 0 2`
+/// and for `{r:10 20 30 a:0 2; r}[]`, and `20 30` for
+/// `10 20 30 {x+1} each 0 1`, where the rewrites read `10 20 30 0 2` and
+/// `10 20 30 0 1+1` (#374, #375).
+#[test]
+fn no_fix_that_fuses_two_numeric_literals() {
+    use q_lint_rs::{Profile, fix_for, lint};
+    for (code, source) in [
+        ("QR002", "r:10 20 30 {x} each 0 2"),
+        ("QR002", "r:0 1 2{x} each 1"),
+        ("QR002", "r:0 1 2 {x} each -1"),
+        ("QF017", "f:{r:10 20 30 a:0 2; r}"),
+        ("QR004", "g:10 20 30 {x+1} each 0 1"),
+    ] {
+        let found: Vec<_> = lint(source, "probe.q", Profile::Uqf)
+            .into_iter()
+            .filter(|f| f.code == code)
+            .collect();
+        assert!(!found.is_empty(), "{code} not reported on {source}");
+        for finding in &found {
             assert!(fix_for(finding, source).is_none(), "{code} fixed {source}");
         }
     }

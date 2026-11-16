@@ -9,6 +9,8 @@ q without running it. Two statements are the same program when their parse
 trees match, with each lambda compared by what it compiles to - bytecode,
 parameters, locals, globals, constants - and not by its source text or the
 positions q keeps for error messages, which a rewrite changes by design.
+That holds inside a dictionary too: the functional form of a qSQL phrase
+keeps its columns in one, so a lambda there is compared the same way.
 
 The first run found four rewrites that were wrong: `f g::` and `f X@\\:` are
 compositions, not calls, and `stop f/x` is the while form of over, whose
@@ -30,7 +32,8 @@ from pathlib import Path
 
 COMPARE = r"""
 p:.j.k raze read0 hsym`$getenv`PAIRS;
-norm:{$[100h=type x; .z.s each v where not (type each v:value x) in 7 10h; 0h=type x; .z.s each x; x]};
+norm:{$[100h=type x; .z.s each v where not (type each v:value x) in 7 10h; 0h=type x; .z.s each x;
+  99h=type x; (.z.s key x)!.z.s value x; x]};
 r:{[x] a:@[parse;x 0;{`ERR}]; b:@[parse;x 1;{`ERR}];
   $[(`ERR~a)&`ERR~b;`unparseable;`ERR~b;`broken;(norm a)~norm b;`same;`changed]} each p;
 -1 .j.j r;
@@ -64,22 +67,28 @@ def statements(text):
     return out
 
 
+def sources(corpus):
+    """The regular `.q` files under `corpus`: `rglob` also yields a
+    directory whose name ends in `.q`, and the corpus holds one."""
+    return sorted(p for p in corpus.rglob("*.q") if p.is_file())
+
+
 def main() -> int:
     args = sys.argv[1:]
     unsafe = "--unsafe" in args
     args = [a for a in args if a != "--unsafe"]
     binary, corpus = args[0], Path(args[1]).expanduser()
-    sources = sorted(corpus.rglob("*.q"))
+    files = sources(corpus)
     pairs = []
     with tempfile.TemporaryDirectory() as tmp:
         copies = []
-        for i, path in enumerate(sources):
+        for i, path in enumerate(files):
             copy = Path(tmp, f"{i}.q")
             shutil.copyfile(path, copy)
             copies.append(copy)
         flags = ["--fix", "--unsafe-fixes"] if unsafe else ["--fix"]
         subprocess.run([binary, "--profile", "uqf", *flags, *map(str, copies)], capture_output=True)
-        for path, copy in zip(sources, copies):
+        for path, copy in zip(files, copies):
             before = path.read_bytes().decode("utf-8", "replace").replace("\r\n", "\n")
             after = copy.read_bytes().decode("utf-8", "replace").replace("\r\n", "\n")
             if before == after:

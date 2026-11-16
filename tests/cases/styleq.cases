@@ -56,6 +56,16 @@ r:count (1_"abc")
 //@param folderRoot The root.
 readFolder:{[folderRoots] folderRoots}
 
+=== clean profile: styleq | a typed or pattern parameter is the name it binds (q 5: {[a:`j;b] a+b}[1;2] is 3)
+/ Adds.
+/ @param a a long
+/ @param b a long
+add:{[a:`j;b] a+b}
+/ Sums a pair.
+/ @param p one
+/ @param q the other
+sum2:{[(p;q)] p+q}
+
 === clean profile: styleq | the block documents a projection, which takes more than the lambda inside it
 apply:{[idx;n;function] function idx n}
 // @param pc Validation share

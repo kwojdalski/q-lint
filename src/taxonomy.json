@@ -70,6 +70,13 @@
     "scope": "builtin"
   },
   {
+    "code": "QE011",
+    "name": "infix-keyword-each",
+    "category": "syntax",
+    "summary": "An infix keyword before each or peach: q 5 refuses cor each x and x within each y; write (cor) each, cor' or cor[x] each",
+    "scope": "builtin"
+  },
+  {
     "code": "QF001",
     "name": "reserved-parameter",
     "category": "names",
@@ -458,7 +465,7 @@
     "code": "QB021",
     "name": "select-by-duplicate-name",
     "category": "correctness",
-    "summary": "A select names a result column the same as a by group, which q refuses with 'dup names for cols/groups",
+    "summary": "A select or exec names a result column the same as a by group, which q refuses with 'dup names for cols/groups",
     "scope": "builtin"
   },
   {

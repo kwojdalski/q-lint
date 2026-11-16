@@ -108,6 +108,15 @@ a:1
 f:{x+1}
 r:f 2
 
+=== QP006 profile: uqf | an hsym path argument whose `/` is part of the symbol, not over (#388; q 5: f `:db/t is f[`:db/t])
+f:{count x}
+n:f `:db/t
+
+=== clean profile: uqf | the name inside an hsym or a symbol with a colon is part of the symbol (#400; q 5: `:f 0: x is (0:;,`:f;`x))
+f:{x}
+`:f 0: x
+r:`a:f 1
+
 === clean profile: uqf | the same call with the brackets the convention asks for
 f:{x+1}
 r:f[2]
@@ -156,6 +165,10 @@ doc:(`$".z.P";"local timestamp")
 
 === clean profile: uqf | nor is a datetime spelled in a help string
 types:("datetime";"0Nz";"2006.07.21T09:13:39")
+
+=== clean profile: uqf | nor in a symbol, which holds no datetime (#409; q 5: type `2020.01.01T10 is -11h)
+r:`2020.01.01T10
+f:`2011.01.01T10.00.00.000.img.universe
 
 === QP002 profile: uqf | but the "z" cast is the one whose string is the point
 d:"z"$x

@@ -19,12 +19,26 @@ f:{[counted] counted+1}
 === clean | a builtin as a namespaced field is not a local shadow
 .email.subject:"hi"
 
-=== QF002 | the drop operator cannot be a parameter
+=== QF002 QF010 | the drop operator cannot be a parameter, and it is still a signature, so x is a global (q 5: (value f) 1 is ,`0) (#443)
 f:{[_] x+1}
 
 === QF002 profile: general | every call is refused, so the default reports it (q 5: {[_] 1}[] and {[a;_] a}[1;2] are 'match)
 f:{[_] 1}
 g:{[a;_] a}
+
+=== QF002 profile: general | a _ slot is still a slot, so two arguments are the lambda's rank and only 'match (q 5: {[a;_] a}[1;2] is 'match, three are 'rank) (#443)
+r:{[a;_] a}[1;2]
+
+=== QF002 QA002 profile: general | and a third is 'rank (#443)
+r:{[a;_] a}[1;2;3]
+
+=== QF002 QE008 profile: general | the body after such a signature opens an expression (q 5: parse "f:{[a;_] -a}" is '-) (#443)
+f:{[a;_] -a}
+
+=== QE008 QE009 profile: general | as it does after a typed slot with a function or a dictionary pattern (q 5: '- and '/) (#443)
+g:{[a:neg] -a}
+h:{[a:neg] +/a}
+k:{[`a`b!(a;b)] -a}
 
 === clean profile: general | a name with an underscore in it is a parameter (q 5: {[a_] a_}[1] is 1)
 f:{[a_] a_}
@@ -33,6 +47,16 @@ f:{[a_] a_}
 \d .util
 count:{[t] 42}
 \d .
+
+=== QF004 profile: general | a tab after \d switches too (q 5: count:{x} is 'assign in .foo, #313)
+\d	.foo
+count:{x}
+\d .
+
+=== QF012 | and \d with two spaces before the dot returns to the root (q 5: g:1 lands in `., #313)
+\d .foo
+\d  .
+count:1
 
 === QF004 profile: general | and after system "d .ns", the same switch (q 5: count:1 is 'assign)
 system "d .ns"
@@ -58,6 +82,14 @@ helper:{[x] x}
 === QF005 | a nested lambda cannot see the enclosing local
 f:{[a] g:{[b] a+b}; g[1]}
 
+=== QF005 profile: general | and a lambda on a \t line has the same scopes (q 5: 'b, #312)
+\t r:{[a] b:a; {b}[]} 1
+
+=== clean profile: uqf | the command of a \t line reads no name (#312)
+f:{[a] a+1}
+\t r:f 1
+\ts:10 f 2
+
 === clean | passing the outer local in explicitly is the fix
 f:{[a] g:{[a;b] a+b}; g[a;1]}
 
@@ -79,8 +111,19 @@ f:{[a b] a}
 === QF007 | an index in the parameter slot
 f:{[a[0]] a}
 
-=== QF007 | an assignment in the parameter slot
-f:{[a:1] a}
+=== clean profile: general | a q 5 typed slot takes any function or type after the colon (q 5: k["xy";2] is (`xy;2), and each lambda takes two) (#437)
+k:{[a:`$;b] (a;b)}
+r:k["xy";2]
+s:{[a:`$;b] (a;b)}["xy";2]
+t:{[a:{x+1};b] (a;b)}[1;2]
+u:{[a:neg;b] (a;b)}[1;2]
+v:{[a:`int$;b] (a;b)}[1;2]
+w:{[a:-7h;b] a}
+m:{[a:1] a}
+
+=== QA012 profile: general | and its rank is its slot count (q 5: k["xy";2;3] is 'rank) (#437)
+k:{[a:`$;b] (a;b)}
+r:k["xy";2;3]
 
 === clean profile: general | a string literal is a pattern too, which the rules see only as blanks (q 5: {["ab"] 5} "ab" is 5)
 f:{["s"] 1}
@@ -94,12 +137,34 @@ j:{[([k:p;v])] p+v}
 k:{[([]a;b:c)] a,c}
 r:(f[(1;2);3]; g[`k`v!1 2]; h[1;2])
 
+=== clean profile: general | a dictionary pattern with its keys in front binds too (q 5: f[`a`b!1 2;3] is 6, g[`a`b!1 2;3] is 1, h[`x`y!1 2] is `x`y) (#431)
+f:{[`a`b!(a;b);c] a+b+c}
+r:f[`a`b!1 2;3]
+s:{[(`a`b)!(x;y);c] x}[`a`b!1 2;3]
+h:{[k!(a;b)] k}
+u:{["ab"!(a;b)] a}
+
+=== QA012 profile: general | and takes one slot of the signature (q 5: f[`a`b!1 2;3;4] is 'rank) (#431)
+f:{[`a`b!(a;b);c] a+b+c}
+r:f[`a`b!1 2;3;4]
+
+=== clean profile: general | :: in a pattern matches the generic null (q 5: f (1;2;::) is 3, h[1;::] is 1) (#450)
+f:{[(a;b;::)] a+b}
+r:f (1;2;::)
+g:{[(a;::)] a}
+h:{[a;::] a}
+s:h[1;::]
+
 === QA012 profile: general | the rank of a pattern lambda is its slot count (q 5: f[(1;2);3;4] is 'rank)
 f:{[(a;b);c] a+b+c}
 r:f[(1;2);3;4]
 
 === QF002 profile: general | but _ is no pattern (q 5: {[_] 1}[1] is 'match)
 f:{[_] 1}
+
+=== QF002 profile: general | and nor is a pattern holding one: every call is refused, not read as body text (q 5: {[(a;_)] a}[(1;2)] is 'match)
+f:{[(a;_)] a}
+g:{[(a;_);b] b}
 
 === clean | a dotted name is a legal parameter, surprising as that is
 f:{[.q.z] 1}
@@ -206,6 +271,29 @@ y:1;sum:2
 x:1;count:2
 \d .
 
+=== QF003 profile: general | global and compound assignment inside a lambda (q 5: {sum::1;0}, {sum+:1;0} and {count,:1;0} are 'assign) (#432)
+f1:{sum::1;0}
+f2:{sum+:1;0}
+f3:{count,:1;0}
+
+=== clean profile: general | from and by take a compound assignment, and sum_ is a name (q 5: {from+:1;0} and {sum_:1;0} are defined) (#432)
+f:{from+:1;by,:1;sum_:1;0}
+
+=== clean profile: general | with nothing to assign, :: and op: apply the function (q 5: {a:raze::}, {(sum::)x}, {count,:;1} are defined) (#432)
+f:{a:raze::;b:(sum::)x;c:value::;count,:;sum::'x}
+
+=== QF012 | a compound assignment at the root (q 5: sum+:1 is 'assign) (#432)
+sum+:1
+
+=== clean | while :: at the root assigns (q 5: sum::1 is accepted) (#432)
+sum::1
+
+=== QF004 profile: general | a compound assignment in a namespace, but not :: (q 5: count+:1 is 'assign, count::1 accepted under \d .my) (#432)
+\d .my
+count+:1
+count::1
+\d .
+
 === QF003 | a later statement inside a lambda is a local, QF003's and not QF012's
 h:{[a] b:a;sum:b;sum}
 
@@ -238,6 +326,15 @@ t:([]a:1 2;by:3 4)
 
 === QF001 profile: general | q 5 refuses the call, so the default reports it ('match)
 f:{[count] count+1}
+
+=== QF001 profile: general | a builtin bound inside a pattern or a typed slot (q 5: {[(count;b)] b}[(1;2)] is 'match, {[(select;b)] b} is ', and {[count:`j] 1} is 'assign)
+g:{[(count;b)] b}
+h:{[(select;b)] b}
+k:{[count:`j] 1}
+
+=== clean profile: general | a pattern's column name is not a binding, and from still runs (q 5: {[(from;b)] b}[(1;2)] is 2)
+g:{[(from;b)] b}
+h:{[([]a:b)] b}
 
 === QF013 profile: general | and the literal ('assign)
 t:([]sum:1 2)
@@ -283,6 +380,15 @@ if[a;1] else 2
 === QF015 | true and false are undefined names
 f:{[x] $[x;true;false]}
 
+=== clean profile: general | a word inside an hsym path is part of the symbol (#373)
+cfg:`:conf/true
+old:`:conf/false
+p:`:x/None
+q:`:a:b/return
+
+=== QF015 profile: general | the word after the path is still read (#373)
+f:{[x] p:`:conf/a; return p}
+
 === clean | null is a q function
 f:{[x] null x}
 
@@ -296,6 +402,10 @@ f:{[t] select from t where return>0.15}
 === QF015 | a query on another line does not cover this one
 r:select from t
 f:{[x] return x}
+
+=== clean profile: general | and so does a multiple assignment (q 5: show true prints 1b) (#371)
+(true;false):10b
+show true
 
 === clean | a file that defines the name has made it one
 return:{[x] x}
@@ -327,6 +437,17 @@ f:{[x] g[if[c; c:1]]}
 
 === clean | multiple assignment binds its names
 f:{[x;y] (tx;ty):type each (x;y); if[tx=11h; tx:0h]; tx+ty}
+
+=== clean profile: general | a nested or dictionary pattern binds its names too (q 5: f (1;(2 3;4)) is 2, g `k`v!5 6 is 6) (#356)
+a:2.5
+f:{[t] (c;(a;b)):t; a 0}
+g:{[t] ([k;v]):t; v}
+
+=== clean | and at the root, as globals (q 5: e is 3, vv is 8 after these) (#356)
+(c;(d;e)):(1;(2;3))
+([kk;vv]):`kk`vv!7 8
+f:{[] aa:e; aa}
+g:{[] aa:vv; aa}
 
 === QF005 | the names a multiple assignment binds are locals, which a nested lambda cannot see
 f:{[x] (a;b):x; g:{[v] v+a}; g 1}
@@ -371,6 +492,12 @@ f:{[a] `a`b}
 
 === QF017 | a local assigned and never read
 f:{[a] b:1; a}
+
+=== QF017 | a tree given to eval resolves its symbols as globals, so the local is unread (q 5: f 1 is 'n, or 101 after n:100) (#370)
+f:{[a] n:5; eval (+;`n;a)}
+
+=== clean | while a functional query reads the local (q 5: g 1 is 8 9)
+g:{[a] u:7; ?[([]x:1 2);();0b;(enlist`y)!enlist (+;`x;`u)]}
 
 === clean | read later in the body
 f:{[a] b:1; a+b}
@@ -467,6 +594,15 @@ s:u
 `p`q set'1 2
 r:p
 
+=== clean | parenthesised too (#464; q 5: (`p`q) set'1 2 then p is 1)
+(`p`q) set'1 2
+r:p
+
+=== clean | load and rload define the global the path ends in (#470; q 5: load `:sub/k then k is the saved value)
+load `:sub/k
+rload `:sp
+r:k,sp
+
 === clean | a compound assignment at the root defines the name (q 5: a,:1; b:a is ,1)
 bb,:1
 f:{[] aa:bb; aa}
@@ -489,6 +625,31 @@ f:{[] aa:bb; aa}
 === clean | a global multiple assignment defines both names
 (bb;cc):1 2
 f:{[] aa:bb; aa}
+
+=== clean | a name the file defines in .q is read bare from any context (q 5: r is 42, and so is .ns.s) (#357)
+.q.answer:42
+r:answer
+\d .ns
+s:answer
+\d .
+
+=== clean | a functional amend by name defines the global (q 5: foo is 1 and bar 2 after these) (#362)
+@[`.;`foo;:;1]
+foo
+.[`bar;();:;2]
+bar
+
+=== clean | a parenthesised set target is defined too (q 5: r is 5) (#363)
+(`e) set 5
+r:e
+
+=== QF018 | a top-level read runs as the file loads, before a later assignment (q 5: loading this is 'limit) (#369)
+r:limit
+limit:100
+
+=== clean | but a lambda's read runs once the file has loaded
+f:{[] r:limit; r}
+limit:100
 
 === clean | a builtin is a valid assignment value
 f:{[] aa:sum; aa}
@@ -638,6 +799,13 @@ t:.z.p
 t:([]a:1 2)
 r:select b from t
 
+=== QF020 profile: general | a column list continued onto an indented line, or across a lambda's lines (q 5: 'zz)
+t:([]a:1 2;b:3 4)
+r:select zz
+  from t
+f:{select yy
+  from t}
+
 === QF020 | in the by list as well
 t:([]a:1 2)
 r:select a by b from t
@@ -676,6 +844,11 @@ f:{[t] u:1; `u}
 t:([]a:1 2;b:3 4)
 r:select from t where c>0
 
+=== QF020 profile: general | after a drop, in the list and the where phrase (q 5: each is 'zz, #351)
+t:([]a:1 2 3;b:4 5 6)
+r1:1_select zz from t
+r2:1_select from t where zz>0
+
 === QF020 | and update's by list
 t:([]a:1 2;b:3 4)
 r:update c:a by d from t
@@ -704,6 +877,19 @@ t:([]a:1 2)
 @[`t;`b;:;3 4]
 r:select b from t
 
+=== clean profile: general | a nested query's from in a select list names its table, not the outer one's (q 5 runs it, #342)
+t:([]a:1 2 3;b:4 5 6)
+u:([]c:7 8)
+r:select a, n:(exec count i from u) from t
+
+=== clean profile: general | a from clause that joins brings in the other table's columns (q 5 runs each, #348)
+t:([]a:1 2)
+k:`a xkey flip `a`c!(1 2;3 4)
+r1:select c from t lj k
+r2:select a,c from t,'flip enlist[`c]!enlist 5 6
+u:([]c:5 6)
+r3:exec c from t uj u
+
 === clean | a nested query's columns in a where phrase are its own table's (q 5 runs f)
 t:([]a:1 2 3)
 f:{[u] select from t where a in exec b from u}
@@ -720,6 +906,11 @@ f:{[u] select from t where a in (exec b from u), d>0}
 === QF020 | and the query after a closed one is checked in its own right
 t:([]a:1 2 3)
 r:(select from t where a>1),select from t where d>0
+
+=== clean profile: general | an hsym or colon symbol in a where phrase names no column (q 5 runs both, #341)
+t:([]f:`:db/trade`:db/quote;n:1 2)
+r1:select from t where f=`:db/quote
+r2:select from t where f in `a`b:zz`:hdb
 
 === clean | columns it has, the virtual index, and a lambda's own names
 t:([]a:1 2;b:3 4)
@@ -768,6 +959,18 @@ t.c
 t:([]c:1 2)
 k:{t.c}
 
+=== clean profile: general | in a context lambda, on the global its context resolves to (q 5: .ns.f 1 is 5) (#368)
+.ns.t.c:5
+\d .ns
+f:{[t] t.c}
+\d .
+
+=== QF021 profile: general | but a root global of that name is another one (q 5: .ns.f 1 is 't.c) (#368)
+t.c:5
+\d .ns
+f:{[t] t.c}
+\d .
+
 === clean profile: general | indexing with a symbol, and q's own namespaces
 m:{[t] t`c}
 n:{.z.p}
@@ -804,6 +1007,10 @@ f:{c:1; {r:select from t; c}[]}
 
 === clean profile: general | and inside its query it may be a column
 f:{c:1; {select c from t}[]}
+
+=== QF005 profile: general | but the table its query reads is no column (q 5: f[] is 'tab, #349)
+t:([]a:1 2 3;c:4 5 6)
+f:{tab:t; {select from tab where c>4}[]}
 
 === QF014 profile: general | a read in the value assigned to the same name (q 5: {a:a+1}[] is 'a)
 f:{a:a+1}
@@ -907,3 +1114,34 @@ c:select by max:a from t
 === clean profile: general | ordinary names, and a builtin used as a function
 a:select s:sum a by c:count a from t
 d:update a:sum b from t
+
+=== QF013 profile: general | a query column named from (#458; q 5: 'from)
+t:([]a:1 2)
+r:select from:a from t
+
+=== QF013 profile: general | a query column named by (#458; q 5: 'type)
+t:([]a:1 2)
+s:select by:a from t
+
+=== QF013 profile: general | a column named by after another (#458; q 5: ',)
+t:([]a:1 2)
+w:select a,by:a from t
+
+=== clean profile: general | a by phrase, and from as the keyword (#458; q 5: each runs or is no column)
+t:([]a:1 2)
+y:select a by b:a from t
+z:select from t
+v:select by a from t
+
+=== QF001 QF003 QF004 profile: general | a name the file adds to .q is reserved from there on (q 5 after .q.foo:{x+1}: {[x;foo] x}[5;6] is 'nyi, {foo:1;0} and foo:1 under \d .my are 'assign) (#434)
+.q.foo:{x+1}
+g:{[x;foo] x}
+h:{foo:1;0}
+\d .my
+foo:2
+\d .
+
+=== QF012 | and at the root, but not before it was defined (q 5: foo:0 then .q.foo:{x+1} then foo:1 is 'assign) (#434)
+foo:0
+.q.foo:{x+1}
+foo:1

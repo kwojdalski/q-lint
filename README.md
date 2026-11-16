@@ -65,7 +65,7 @@ with [docs/ruff-rules.md](docs/ruff-rules.md) as the reference.
 
 Text output is coloured on a terminal - red for an error, yellow for a
 warning, with a tally on the summary line - and plain everywhere else: a pipe,
-a file, or anywhere `NO_COLOR` is set. `--color always|never` overrides the
+a file, or anywhere `NO_COLOR` is set to a nonempty value. `--color always|never` overrides the
 guess in either direction. JSON output never carries colour.
 
 `qlinter --version` (or `-v`) reports the build, and `--stdio` is accepted and ignored
@@ -73,7 +73,8 @@ so a client that appends it gets a server rather than an exit code.
 
 The CLI supports `--profile general|style|styleq|uqf`, `--format text|json`,
 `--exclude`, `--config`, stdin (`-`, `--stdin-filename`; the name alone reads
-stdin too, as in Ruff, and either refuses other paths beside it) and
+stdin too, as in Ruff, either refuses other paths beside it, and a name that is
+not a `.q` file is refused as that file named outright is) and
 `--backend builtin|qls|all` options. The default is builtin.
 `--qls-executable` chooses the separately installed server;
 `--qls-timeout` bounds a batch, plus at most one second for cleanup.
@@ -90,7 +91,7 @@ the edits, run `qlinter --fix path/to/file.q`.
 `"C:\\data"`), `true`/`false`/`None`/`return x` → `1b`/`0b`/`(::)`/`:x`,
 a table literal of scalars (each column enlisted), a symbol used as a `like`
 pattern (`` `a* `` → `"a*"`), `f . ()` → `f[]`, `til 5.0` → `til 5` (and `2.0 rotate`, `3.0 mavg`),
-a number signalled → a string, `where a:1` → `where a=1`, `{x} each y` → `y`, `distinct asc distinct` → `asc distinct`,
+a number signalled → a string, `where a:1` → `where a=1`, `distinct asc distinct` → `asc distinct`,
 redundant parentheses around one token (styleq), and - under `--profile uqf` -
 parentheses showing the order q already evaluates `a*b+c` in, and the
 brackets QP006 asks for, rewriting `f x` as `f[x]` with whatever the
@@ -106,7 +107,8 @@ value, `a -1` → `a - 1`, a string compared with `=` in a filter → `like`
 vector in a filter → `in`, `f(a;b)` →
 `f[a;b]`, `` `int$"12" `` → `"I"$"12"`, removing a statement that never runs,
 removing an unused local's name while keeping its expression,
-`{x+1} each a` → `a+1` (they differ on an empty typed list), parentheses
+`{x} each y` → `y` and `{x+1} each a` → `a+1` (they differ on an empty typed list, and
+`{x} each` drops a `` `s# `` or `` `g# `` attribute), parentheses
 round each comparison an `and`/`or` swallows in a where phrase, `~` → `=` in
 a filter, `x` → the one declared parameter, deleting a commented-out
 definition, passing an outer local into a nested lambda that reads it
@@ -464,7 +466,7 @@ language server driven over real LSP framing as a real process.
 
 ### Rule and multiline regression corpus
 
-The taxonomy contains 88 codes. Ten literal-call rules cover excess builtin
+The taxonomy contains 120 codes. Ten literal-call rules cover excess builtin
 arguments (QA010), invalid literal types/shapes (QT008–QT014), and negative
 `til`/`where` counts (QD001–QD002). These checks leave unknown expressions
 unresolved and account for projections, seeded scans and variadic `enlist`.
@@ -472,7 +474,7 @@ unresolved and account for projections, seeded scans and variadic `enlist`.
 `examples/showcase.q` marks each expected diagnostic with `expect-next`.
 `tests/showcase.rs` checks exact code/line pairs under every profile, including
 silence in the clean section. Together with the two companion examples it
-covers all 86 rules available in this build; QF006 and QLS001 are excluded.
+covers all 118 rules available in this build; QF006 and QLS001 are excluded.
 
 Multiline fixtures cover nested lambdas, split argument lists, comments,
 scalar-only tables, dictionary lengths and assignment from control statements.

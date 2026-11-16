@@ -12,6 +12,8 @@ enum Kind {
     Char,
     /// `0x` and hex digits, two per item; an atom with exactly two.
     Byte,
+    /// A date, month, time, timespan, timestamp or datetime, unsuffixed.
+    Temporal,
 }
 struct Literal {
     kind: Kind,
@@ -25,7 +27,11 @@ fn literal(s: &str) -> Option<Literal> {
     if s.starts_with('(') && matching(s, 0, b'(', b')') == Some(s.len()) {
         return literal(&s[1..s.len() - 1]);
     }
-    if let Some(rest) = s.strip_prefix("enlist ") {
+    // Any blank parts `enlist` from its argument; q 5 reads a tab as a space.
+    if let Some(rest) = s
+        .strip_prefix("enlist")
+        .filter(|r| r.starts_with([' ', '\t']))
+    {
         let mut value = literal(rest)?;
         if value.vector {
             return None;
@@ -34,7 +40,8 @@ fn literal(s: &str) -> Option<Literal> {
         value.len = 1;
         return Some(value);
     }
-    if re!(r"^(?:`[A-Za-z][A-Za-z0-9_.]*)+$").is_match(s) {
+    // The null symbol too, a lone backtick: q 5 `asc `` ` `` is 'rank.
+    if re!(r"^(?:`(?:[A-Za-z][A-Za-z0-9_.]*)?)+$").is_match(s) {
         return Some(Literal {
             kind: Kind::Symbol,
             vector: s.bytes().filter(|&b| b == b'`').count() > 1,
@@ -90,6 +97,21 @@ fn literal(s: &str) -> Option<Literal> {
             len: numbers.len(),
             negative: numbers.iter().any(|&v| v < 0),
             short_integer: s.ends_with('h'),
+        });
+    }
+    // `2000.01.01`, `2000.01m`, `12:00`, `12:00:00.123`, `0D01`,
+    // `2000.01.01D12:00` and `2000.01.01T12:00`, and vectors of them.
+    let temporal = re!(
+        r"^(?:\d{4}\.\d\d(?:\.\d\d(?:[DT](?:\d\d(?::\d\d(?::\d\d(?:\.\d*)?)?)?)?)?|m)|\d\d:\d\d(?::\d\d(?:\.\d*)?)?|\d+D(?:\d\d(?::\d\d(?::\d\d(?:\.\d*)?)?)?)?)$"
+    );
+    let items: Vec<&str> = s.split_whitespace().collect();
+    if !items.is_empty() && items.iter().all(|item| temporal.is_match(item)) {
+        return Some(Literal {
+            kind: Kind::Temporal,
+            vector: items.len() > 1,
+            len: items.len(),
+            negative: false,
+            short_integer: false,
         });
     }
     let float = re!(
@@ -169,7 +191,7 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
     // `code` still has to hold the builtin's own name at that offset, which
     // proves the match is not the inside of a string.
     for call in re!(&format!(
-        r#"\b({BUILTINS})(?:[ \t]*\r?\n[ \t]+|[ \t]+)((?:-?\d[A-Za-z0-9.:]*(?:[ \t]+-?\d[A-Za-z0-9.:]*)*)|(?:`[A-Za-z0-9_.]*)+|"(?:\\.|[^"\\])*")"#
+        r#"\b({BUILTINS})(?:[ \t]*\r?\n[ \t]+|[ \t]+)((?:-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:[ \t]+-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)*)|(?:`[A-Za-z0-9_.]*)+|"(?:\\.|[^"\\])*")"#
     ))
     .captures_iter(comments)
     {
@@ -280,6 +302,11 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
 
 pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Finding> {
     let mut out = vec![];
+    // A keyword the file redefines in `.q` calls the new definition from
+    // there on: after q 5 `.q.ssr:{[a;b;c;d] a}`, `ssr[1;2;3;4]` is 1, and
+    // after `.q.til:{x+1}`, `til 1.5` is 2.5 (#440).
+    let dotq = crate::dotq_definitions(code);
+    let redefined = |name: &str, at: usize| dotq.iter().any(|(n, from)| n == name && at > *from);
     // QA010 for the keywords that are not in BUILTINS: arity from calling
     // each with one more argument than it takes, which q 5 refuses with
     // 'rank - `xasc[`a;t;1]`, `ssr[a;b;c;d]`, `wj[a;b;c;d;e]`.
@@ -287,10 +314,10 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
         .captures_iter(code)
     {
         let whole = m.get(0).unwrap();
-        if !boundary(code, whole.start()) {
+        let name = &m[1];
+        if !boundary(code, whole.start()) || redefined(name, whole.start()) {
             continue;
         }
-        let name = &m[1];
         let arity = match name {
             "md5" => 1,
             "ssr" | "aj" | "aj0" | "ajf" | "ajf0" | "ej" => 3,
@@ -313,6 +340,9 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
         }
     }
     for Call { at, name, args } in calls(code, comments, source) {
+        if redefined(name, at) {
+            continue;
+        }
         let args = &args;
         let arity = match name {
             "rotate" | "mavg" | "msum" | "mcount" | "mdev" | "mmin" | "mmax" | "cor" | "cov"
@@ -395,7 +425,7 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
         };
         let rule = match name {
             "sqrt" | "log" | "exp" | "abs" | "neg" | "sin" | "cos" | "tan" | "acos" | "asin"
-            | "atan" | "reciprocal"
+            | "atan" | "reciprocal" | "ceiling" | "signum"
                 if value.kind == Kind::Symbol =>
             {
                 Some(("QT016", "Numeric math cannot operate on a symbol literal"))
@@ -409,8 +439,11 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
 
             // A symbol atom runs - `til` is `key` there and lists a
             // namespace - and so does a byte atom. Any vector, a string of
-            // any length and a float are 'type.
-            "til" if value.vector || matches!(value.kind, Kind::Float | Kind::Char) => {
+            // any length, a float and a temporal atom are 'type.
+            "til"
+                if value.vector
+                    || matches!(value.kind, Kind::Float | Kind::Char | Kind::Temporal) =>
+            {
                 Some(("QT008", "til needs an integer atom, not this literal"))
             }
             "til" if value.kind == Kind::Integer && value.negative => {
@@ -441,10 +474,16 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
                     "This numeric aggregate or scan rejects this literal",
                 ))
             }
-            "sum" | "prd" | "avg" | "med" | "dev" | "var" | "sums" | "prds" | "deltas"
-            | "ratios"
+            // `sdev`, `svar`, `all` and `any` of a symbol, atom or vector,
+            // too (q 5: 'type), though each takes a string.
+            "sum" | "prd" | "avg" | "med" | "dev" | "var" | "sdev" | "svar" | "all" | "any"
+            | "sums" | "prds" | "deltas" | "ratios"
                 if (value.kind == Kind::Symbol
-                    && (value.vector || matches!(name, "avg" | "med" | "dev" | "var")))
+                    && (value.vector
+                        || matches!(
+                            name,
+                            "avg" | "med" | "dev" | "var" | "sdev" | "svar" | "all" | "any"
+                        )))
                     // A string is numeric to `sum`, `avg` and `ratios`, and
                     // not to these four.
                     || (value.kind == Kind::Char

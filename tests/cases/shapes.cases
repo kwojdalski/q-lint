@@ -1,3 +1,11 @@
+=== clean profile: general | a symbol atom value is spread over every key (#451; q 5: key is `a`b, 1 2, `a`b)
+d:`a`b!`c
+e:1 2!`x
+f:`a`b!`
+
+=== QT001 profile: general | a numeric atom value is not (#451; q 5: 'length)
+g:`a`b!1
+
 === QT001 | a string, temporal or trailing-empty-symbol vector is counted too (q 5: each is 'length)
 a:`a`b!"abc"
 b:`a`b!2024.01.01 2024.01.02 2024.01.03
@@ -126,6 +134,22 @@ n:`long$1.5
 === QT005 | every column scalar is a rank error
 t:([] a:1; b:`x)
 
+=== clean profile: general | an odd-length byte literal is a vector: 0x012 is 0x0012 (#378; q 5: count is 2)
+t:([] flags:0x012)
+u:([] a:0x012; b:1 2)
+
+=== QT020 profile: general | and its length is counted padded (#378; q 5: 'length)
+t:([] a:0x012; b:1 2 3)
+
+=== QT005 profile: general | one hex digit is still a byte atom (#378; q 5: 'rank)
+t:([] a:0x1)
+
+=== QT005 QT008 QT015 QT024 profile: general | a signed exponent is one number to the literal readers (#389; q 5: 'type, 'rank, 's-fail, 'type)
+a:`a=1e-3
+t:([] a:1; b:1e-3)
+s:`s#1 1e-3
+n:til 2e-1
+
 === QT005 | keyed too
 t:([k:1] v:2)
 
@@ -197,6 +221,11 @@ s:ssr[string f[0;`abc;`abc];"b";"c"]
 === QT007 profile: general | a symbol pattern after a bracketed subject is still one (q 5: 'type)
 r:ssr[s[0];`a;"b"]
 
+=== clean profile: general | ssr with two arguments, or ss with one, is a projection (#452; q 5: type is 104h for each)
+p:ssr["abc";`a]
+j:ssr[;`a;"b"]
+k:ss[`a]
+
 === QT007 | infix ss on a symbol
 r:`abc ss "a"
 
@@ -237,6 +266,19 @@ r:$[1;1;2]
 
 === QT015 QB018 | a symbol against a number is a type error, and both sides are literals
 r:1=`a
+
+=== QT015 profile: general | assigned to a name that ends in a digit (#382; q 5: b2:1=`a and r2:3<`a are 'type)
+b2:1=`a
+r2:3<`a
+
+=== QA011 QT015 profile: general | an hsym symbol with a / in it, as a test or compared with a number (#390; q 5: each is 'type)
+r:$[`:db/t;1;2]
+if[`:db/t;s:1]
+w:`:db/t=1
+
+=== clean profile: general | an hsym compared with an hsym, and as a result (#390)
+w:`:db/t=`:db/u
+r:$[1b;`:db/t;`:db/u]
 
 === QT015 | and against a string
 r:"abc"=`abc
@@ -347,6 +389,9 @@ r:ss["abc";""]
 
 === QT021 | ssr likewise
 r:ssr["abc";"";"b"]
+
+=== clean profile: general | an empty pattern given to a projection of ssr (#452; q 5: type is 104h)
+e:ssr["abc";""]
 
 === clean | a pattern with something in it
 r:ss["abc";"a"]
@@ -504,6 +549,16 @@ a:1
 set[`a;2 3]
 a 0
 
+=== clean profile: general | and so does each of a symbol list set' (q 5: r is 1) (#360)
+a:2.5
+`a`b set' (1 2;3 4)
+r:a 0
+
+=== clean profile: general | and so does an amend of the global by name in its context (q 5: r is 1) (#361)
+c:2.5
+@[`.;`c;:;1 2]
+r:c 0
+
 === clean | a name defined only by set in brackets is defined
 set[`b;1 2]
 b 0
@@ -549,6 +604,10 @@ w:select from t where x>a
 u:exec a from t
 
 === QT022 | an atom juxtaposed with a name that is not a qSQL word is still indexed
+a:2.5
+f:{[v] a v}
+
+=== clean | but not in a qSQL phrase, where a column `a` would win (#465; q 5: t:([]a:(1 2;3 4);v:0 1) runs, s is (1 2;3 4))
 a:2.5
 r:select s:a v from t
 
@@ -658,3 +717,159 @@ c3:1+`x,y
 c4:til 1.5,x
 c5:select b:1+`x`y?`y from t
 c6:select from t where a in til 3, b>1
+
+=== clean | QT006: a symbol atom or a parenthesised atom pairs with a vector of any length (#461; q 5: 001b, 6 7, 00b)
+s:`x
+r:s=`a`b`x
+n:(5)
+m:n+1 2
+p:(`y)
+q:p=`a`b
+
+=== QT006 | while an enlisted atom, parenthesised or not, is a one-item vector (#461; q 5: 'length)
+e:(enlist 5)
+r:e+1 2
+
+=== clean | QT006 and QT022: upsert by name appends to a global list, in place (#462; q 5: 2 4 6 8 and 2 4 6)
+a:1 2 3
+`a upsert 4
+r:a+1 2 3 4
+b:1 2
+upsert[`b;3]
+s:b+1 2 3
+
+=== QT027 | while a table upserted by name keeps its columns (#462; q 5: 'length)
+t:([]a:1 2;b:3 4)
+`t upsert (5;6)
+`t upsert (5;6;7)
+
+=== clean | QT022: amending a root global by an enlisted name is a write (#463; q 5: each is 1)
+a:2.5
+.[`.;enlist`a;:;1 2]
+r:a 0
+b:2.5
+.[`.;(enlist`b);:;1 2]
+s:b 0
+c:2.5
+@[`.;enlist`c;:;enlist 1 2]
+u:c 0
+
+=== clean | QT022: a parenthesised symbol list before set' writes each name (#464; q 5: a 0 is 1)
+a:2.5
+(`a`b) set' (1 2;3 4)
+r:a 0
+
+=== clean | QT022, QB010, QT006 and QT023: in a qSQL phrase a column shadows the global of its name (#465; q 5 runs each)
+px:2.5
+w:1 2 3
+c:"abc"
+f:{[t] select p0:px 0 from t}
+g:{[t] r:select from t where px>px -1; r}
+h:{[t] update v:w*10 20 from t}
+k:{[t] update d:c+1 from t}
+m:{[t] exec px 0 by w from t}
+
+=== QT022 QT026 | while the table after from is an ordinary expression, and so is a read after the statement (#465)
+px:2.5
+k:([]a:1 2;c:5 6)
+f:{[t] r:select from t lj k; r,px 0}
+
+=== clean | QT026: keying in place by xkey's bracket form or by n!`t (#466; q 5: both joins run)
+t:([]a:1 2;b:3 4)
+k:([]a:1 2;c:5 6)
+xkey[`a;`k]
+r:t lj k
+u:([]a:1 2;d:7 8)
+1!`u
+s:t lj u
+
+=== clean | QT027: a table literal given to insert or upsert is a table, not a row of values (#467; q 5: both run)
+t:([]a:1 2;b:3 4;c:5 6)
+`t upsert ([]a:7 8;b:9 10)
+k:([a:1 2]b:3 4;c:5 6)
+`k insert ([a:enlist 9]b:enlist 4;c:enlist 5)
+
+=== clean | QT023: a temporal literal takes char arithmetic, whatever digits it ends in (#468; q 5: 13:37, 2024.01.01D12:00:00.000000097, **:00, 48D12:00:00.000000000)
+r:12:00+"a"
+s:2024.01.01D12:00+"a"
+t:12:00*"a"
+u:0D12:00*"a"
+v:12:00:00+"a"
+
+=== clean profile: general | QT006 and QT022: a table literal's column or a dictionary literal's key assigns no global (#469; q 5: no 'length, no 'type)
+t:([]n:1 2)
+d:([h:2.5])
+k:([n:1 2]v:3 4)
+r:n+1 2 3
+s:h 0
+
+=== QT006 QT022 profile: general | so the global's own assignment is still its one write (#469; q 5: 'length and 'type)
+n:1 2 3
+h:2.5
+t:([]n:1 2)
+d:([h:2.5])
+r:n+1 2
+s:h 0
+
+=== clean | QT026 and QT022: load and rload redefine the global the path names (#470; q 5: load `:k restores the keyed k, p 0 is 1)
+k:([]a:`long$();c:`long$())
+p:2.5
+load `:k
+load `:db/p
+t:([]a:1 2;b:3 4)
+r:t lj k
+s:p 0
+u:2.5
+rload[`:u]
+v:u 0
+
+=== QT022 | an atom indexed after a word that is applied to it (#471; q 5: show a 0 and string a 0 are 'type)
+a:2.5
+show a 0
+
+=== QT022 | and after a builtin taking the result (#471)
+a:2.5
+r:string a 0
+
+=== QT022 | an atom given a string by juxtaposition (#472; q 5: k "hi" is 'type)
+k:1.5
+u:k "hi"
+
+=== QT022 | or with @ (#472; q 5: k@"hi" is 'type)
+k:1.5
+v:k@"hi"
+
+=== clean | a name inside a string is not indexing (#472)
+k:1.5
+u:"k 0"
+
+=== QB010 | a global atom applied to a negative literal that ends the lambda (#473; q 5: f[] is 'type)
+a:2.5
+f:{a -1}
+
+=== QT023 | a real refuses a char as an integer does (#474; q 5: "a"+1e, "a"*1.5e, 1e*"a", "a"-1.5e and "abc"*2.5e are 'type)
+r:"a"+1e
+s:"a"*1.5e
+t:1e*"a"
+u:"a"-1.5e
+c:"abc"
+d:c*2.5e
+e:2.5e
+f:"a"+e
+
+=== clean | while a float takes it, an exponent is a float's, and a char right of minus is fine (#474; q 5: 98f, 100097f, 97.00001, -96e)
+r:"a"+1f
+s:"a"+1e5
+t:"a"+1e-5
+u:"a"+1e+5
+v:1e -"a"
+w:"a"+2.5
+
+=== QT006 | minus before a name is subtraction, spaced or not (#476; q 5: a -b is 'length)
+a:1 2 3
+b:1 2
+r:a -b
+
+=== clean | while minus before a digit is a negative literal, so a -1 indexes (#476; q 5: 0N)
+a:1 2 3
+r:a -1

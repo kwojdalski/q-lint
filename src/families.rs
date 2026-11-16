@@ -49,7 +49,15 @@ fn query_injection(path: &str, source: &str, code: &str, comments: &str, out: &m
     // `get` of a string evaluates it as `value` does (q 5), and a string sent
     // over a handle - `h "select ...",x` - is evaluated by the remote
     // process's `.z.pg`, which is `value` by default. A name applied to a
-    // query string is taken for a handle unless it is one of q's own.
+    // query string is taken for a handle unless it is one of q's own, or a
+    // lambda this file defines: `lg "update finished"` logs a line (#345).
+    let lambda = |name: &str| {
+        regex::Regex::new(&format!(
+            r"(?:^|[^A-Za-z0-9_.`]){}[ \t]*:[ \t]*\{{",
+            regex::escape(name)
+        ))
+        .is_ok_and(|r| r.is_match(code))
+    };
     let handles: Vec<usize> =
         re!(r#"\b([A-Za-z][A-Za-z0-9_.]*)[ \t]+"(?:select|exec|update|delete)\b"#)
             .captures_iter(comments)
@@ -57,6 +65,7 @@ fn query_injection(path: &str, source: &str, code: &str, comments: &str, out: &m
                 let name = c.get(1).unwrap();
                 code[name.start()..].starts_with(name.as_str())
                     && !crate::RESERVED.iter().any(|n| n == name.as_str())
+                    && !lambda(name.as_str())
             })
             .map(|c| c.get(1).unwrap().start())
             .collect();
@@ -185,13 +194,16 @@ fn credentials(path: &str, source: &str, code: &str, comments: &str, out: &mut V
 }
 
 /// Whether the keyword that ends at `at` is the operand of an iterator -
-/// `asc each x`, `asc'[x]`, `distinct peach x` - and so applied item by item
-/// rather than to the list: `reverse asc each x` reverses the items, and
-/// `distinct each x` can make two items equal that the outer `distinct`
-/// then removes.
+/// `asc each x`, `asc'[x]`, `distinct peach x`, `asc@'x`, `asc .'x` - and so
+/// applied item by item rather than to the list: `reverse asc each x`
+/// reverses the items, and `distinct each x` can make two items equal that
+/// the outer `distinct` then removes. `@'` and `.'` are each over apply
+/// (#402): q 5 gives `(3 1 2;5 4)` for `distinct asc distinct@'x` and three
+/// items for `asc distinct@'x`.
 fn iterated(code: &str, at: usize) -> bool {
     let rest = &code[at..];
-    rest.starts_with(['\'', '/', '\\']) || re!(r"^[ \t]*(?:each|peach)\b").is_match(rest)
+    rest.starts_with(['\'', '/', '\\'])
+        || re!(r"^[ \t]*(?:each|peach)\b|^[ \t]*[@.]['/\\]").is_match(rest)
 }
 
 /// Whether `at` names a column of a table literal: the bracket around it,
@@ -724,10 +736,15 @@ fn last_slot_name(inner: &str) -> Option<&str> {
 /// QB021. A select naming a result column the same as one of its by groups.
 /// q 5 refuses it with 'dup names for cols/groups: `select a by a from t`,
 /// `select max a by a from t` and `select a:b by a from t` all fail, where
-/// `select m:max a by a from t` runs. exec and update with the same lists
-/// run, so only select is read.
+/// `select m:max a by a from t` runs. update with the same lists runs. exec
+/// names its result only when the list has several items or an alias, and
+/// its groups likewise: q 5 runs `exec a by a from t` and `exec c:a by c
+/// from t`, and refuses `exec c:a by c:b from t` and `exec a,b by a,c from t`
+/// (#354).
 fn select_by_duplicate(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
-    for q in re!(r"\bselect\b").find_iter(code) {
+    // No `\b` before the keyword: `1_select` is a drop of a select (#351),
+    // and `boundary` tells that from the name `x_select`.
+    for q in re!(r"(?:select|exec)\b").find_iter(code) {
         if !crate::boundary(code, q.start()) || in_string(code, q.start()) {
             continue;
         }
@@ -745,11 +762,20 @@ fn select_by_duplicate(path: &str, source: &str, code: &str, out: &mut Vec<Findi
             &rest[..by.start()],
             &rest[by.end()..by.end() + from.start()],
         );
-        // A `;` outside brackets, a newline, or the end of a lambda ends the
-        // statement before these lists do; `xbar[2;a]` and `{x} a` keep
-        // their own.
+        // A `;` outside brackets, a line starting at column 0, or the end of
+        // a lambda ends the statement before these lists do; `xbar[2;a]` and
+        // `{x} a` keep their own. An indented line continues it, and inside
+        // a lambda a newline is whitespace (#333).
         let both = format!("{list}{groups}");
-        if both.contains('\n') || !braces_close(&both) || items_at_depth_zero(&both, b';') {
+        if re!(r"\n\S").is_match(&both) || !braces_close(&both) || items_at_depth_zero(&both, b';')
+        {
+            continue;
+        }
+        let named = |list: &[&str]| {
+            list.len() > 1 || re!(r"^\s*[A-Za-z][A-Za-z0-9_]*\s*:[^:]").is_match(list[0])
+        };
+        let exec = q.as_str() == "exec";
+        if exec && !(named(&items(list)) && named(&items(groups))) {
             continue;
         }
         let groups: Vec<_> = items(groups).into_iter().filter_map(column_name).collect();
@@ -764,8 +790,9 @@ fn select_by_duplicate(path: &str, source: &str, code: &str, out: &mut Vec<Findi
                 q.start(),
                 "QB021",
                 format!(
-                    "`{name}` names both a result column and a by group: q 5 refuses the select \
-                     with 'dup names for cols/groups {name}; name the column, `m:max {name}`"
+                    "`{name}` names both a result column and a by group: q 5 refuses the {} \
+                     with 'dup names for cols/groups {name}; name the column, `m:max {name}`",
+                    q.as_str()
                 ),
             ));
         }

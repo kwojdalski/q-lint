@@ -75,7 +75,8 @@
 use crate::config::{Layer, Policy, selector};
 use crate::jsonrpc::{INVALID_REQUEST, receive, send};
 use q_lint_rs::{
-    FileIndex, Finding, TokenKind, Workspace, fix_all, fix_for, semantic_tokens_in, whole_edit,
+    FileIndex, Finding, TokenKind, Workspace, balanced, fix_all, fix_for, semantic_tokens_in,
+    whole_edit,
 };
 use serde_json::{Value, json};
 use std::{
@@ -121,9 +122,6 @@ struct Index {
     enabled: bool,
 }
 
-/// Directories a workspace scan does not enter: version control, build
-/// output and dependency trees hold no q the user is writing.
-const SKIPPED: [&str; 5] = ["node_modules", "target", "__pycache__", "venv", "dist"];
 /// A bound on the scan, so a workspace opened at `/` cannot stall the server.
 const MAX_FILES: usize = 20_000;
 const MAX_BYTES: u64 = 4 << 20;
@@ -160,8 +158,8 @@ impl Index {
     /// does not, is gone, or is unreadable. A closed document and a file
     /// changed on disk both come here, so neither can put back what the
     /// settings left out of the scan.
-    fn reload(&mut self, path: &str) -> bool {
-        if self.covers(path) {
+    fn reload(&mut self, path: &str, policy: &Policy) -> bool {
+        if self.covers(path, policy) {
             self.read(path)
         } else {
             self.remove(path)
@@ -177,20 +175,19 @@ impl Index {
 
     /// Whether the scan would have read `path`: index on, under a workspace
     /// folder, in no directory the scan skips, not excluded, and not too big.
-    fn covers(&self, path: &str) -> bool {
+    fn covers(&self, path: &str, policy: &Policy) -> bool {
         let path = std::path::Path::new(path);
         self.enabled
             && is_q_path(&path.to_string_lossy())
             && std::fs::metadata(path).is_ok_and(|m| m.len() <= MAX_BYTES)
             && self.roots.iter().any(|root| {
                 let root = std::path::Path::new(root);
-                path.strip_prefix(root).is_ok_and(|relative| {
-                    let mut dirs = relative.parent().into_iter().flat_map(|p| p.iter());
-                    !dirs.any(|d| {
-                        let d = d.to_string_lossy();
-                        d.starts_with('.') || SKIPPED.contains(&&*d)
-                    }) && !self.excluded(root, path)
-                })
+                path.starts_with(root)
+                    && !path
+                        .ancestors()
+                        .take_while(|p| *p != root)
+                        .any(|p| skipped(policy, p))
+                    && !self.excluded(root, path)
             })
     }
 
@@ -212,7 +209,7 @@ impl Index {
 
     /// Every `.q` file under the workspace folders, less those `exclude`
     /// names; a directory it names is not entered at all.
-    fn scan(&mut self) {
+    fn scan(&mut self, policy: &Policy) {
         let mut stack: Vec<(std::path::PathBuf, std::path::PathBuf)> =
             self.roots.iter().map(|r| (r.into(), r.into())).collect();
         let mut seen = 0;
@@ -226,13 +223,11 @@ impl Index {
                 let Ok(kind) = entry.file_type() else {
                     continue;
                 };
-                if self.excluded(&root, &path) {
+                if self.excluded(&root, &path) || skipped(policy, &path) {
                     continue;
                 }
                 if kind.is_dir() {
-                    if !name.starts_with('.') && !SKIPPED.contains(&name.as_str()) {
-                        stack.push((root.clone(), path));
-                    }
+                    stack.push((root.clone(), path));
                 } else if kind.is_file()
                     && is_q_path(&name)
                     && entry.metadata().is_ok_and(|m| m.len() <= MAX_BYTES)
@@ -246,6 +241,14 @@ impl Index {
             }
         }
     }
+}
+
+/// Whether the CLI's walk passes `path` by: what the configuration's
+/// `exclude` names, by default the usual tool and build directories. The
+/// index reads what `qlinter .` would, so the editor's undefined names are
+/// the terminal's (#420).
+fn skipped(policy: &Policy, path: &std::path::Path) -> bool {
+    policy.excluded(path).unwrap_or(false)
 }
 
 /// The folders an `initialize` request names, as filesystem paths: its
@@ -532,7 +535,7 @@ pub fn serve(
                 idx.enabled = opts.index;
                 idx.exclude = opts.index_exclude.clone();
                 if idx.enabled {
-                    idx.scan();
+                    idx.scan(policy);
                 }
                 for (uri, text) in &docs {
                     idx.set(&path_of(uri), index(text));
@@ -610,7 +613,7 @@ pub fn serve(
                 docs.remove(&uri);
                 // The buffer is gone, so the disk is the authority again - and
                 // unsaved definitions it held no longer define anything.
-                if idx.reload(&path_of(&uri)) {
+                if idx.reload(&path_of(&uri), policy) {
                     relint(writer, &docs, &idx, None, policy, &opts)?;
                 }
                 // An empty list, not silence: diagnostics are owned by the
@@ -664,7 +667,7 @@ pub fn serve(
                     // A configuration file changed: every file it governs may
                     // now report differently, so forget them all and relint.
                     let path = path_of(&uri);
-                    if is_config_path(&path) || policy.is_explicit_config(Path::new(&path)) {
+                    if is_config_path(&path) || policy.read_from(Path::new(&path)) {
                         policy.reset();
                         changed = true;
                         continue;
@@ -675,7 +678,7 @@ pub fn serve(
                     changed |= if change["type"].as_i64() == Some(3) {
                         idx.remove(&path)
                     } else {
-                        idx.reload(&path)
+                        idx.reload(&path, policy)
                     };
                 }
                 if changed {
@@ -908,7 +911,12 @@ fn code_actions(
 fn format(params: &Value, docs: &Documents, ws: &Workspace, policy: &Policy) -> Vec<Value> {
     let uri = uri_of(&params["textDocument"]);
     let path = path_of(&uri);
-    let Some(source) = docs.get(&uri).filter(|_| is_q_path(&path)) else {
+    // A document whose brackets or strings do not close gets no edits, even
+    // with QE001 deselected: the fixes would read its structure wrong (#422).
+    let Some(source) = docs
+        .get(&uri)
+        .filter(|source| is_q_path(&path) && balanced(source))
+    else {
         return vec![];
     };
     // `false`: formatting never applies an editor-only fix, whatever flags
@@ -1171,8 +1179,12 @@ fn path_of(uri: &str) -> String {
         return uri.to_string();
     };
     // Strip the empty authority: file:///a/b has a host of "", so the path
-    // begins at the third slash.
-    let rest = rest.strip_prefix('/').unwrap_or(rest);
+    // begins at the third slash. RFC 8089 makes `localhost` the same host,
+    // and file://localhost/a/b the same file (#425).
+    let rest = match rest.get(..10) {
+        Some(host) if host.eq_ignore_ascii_case("localhost/") => &rest[10..],
+        _ => rest.strip_prefix('/').unwrap_or(rest),
+    };
     // Percent-escapes decode to bytes, and the bytes are UTF-8: `%C3%A9` is
     // one `é`. Pushing each byte as a char read it as two Latin-1 ones, and
     // a workspace under a folder with a non-ASCII name lost every path.
@@ -1240,6 +1252,8 @@ mod tests {
     fn percent_escapes_decode_and_other_schemes_pass_through() {
         assert_eq!(path_of("file:///tmp/a%20b/c.q"), "/tmp/a b/c.q");
         assert_eq!(path_of("file:///tmp/plain.q"), "/tmp/plain.q");
+        assert_eq!(path_of("file://localhost/tmp/plain.q"), "/tmp/plain.q");
+        assert_eq!(path_of("file://LOCALHOST/c%3A/a.q"), "c:/a.q");
         assert_eq!(path_of("untitled:Untitled-1"), "untitled:Untitled-1");
         // Escapes are UTF-8 bytes, not one character each.
         assert_eq!(path_of("file:///Users/Jos%C3%A9/a.q"), "/Users/José/a.q");

@@ -1,6 +1,6 @@
 # Rules
 
-All 119 rules, generated from `src/taxonomy.json` - the same data
+All 120 rules, generated from `src/taxonomy.json` - the same data
 `qlinter --rules` and `qlinter --explain <CODE>` print from. Regenerate with
 `python3 scripts/rules_doc.py > docs/rules.md`; a test fails when this is stale.
 
@@ -52,6 +52,7 @@ that wants fewer findings narrows in its own configuration.
 | `QE008` | monadic-glyph | A glyph applied to one argument; q 5 refuses -x, ,x, #x and the rest - the keyword is neg, enlist, count, not... | every profile |
 | `QE009` | juxtaposed-derived-function | A derived function applied by juxtaposition: q 5 refuses +/x, count'x and x/y; write (+/)x, +/[x] or sum x | every profile |
 | `QE010` | malformed-number | A number q 5 cannot parse: 1.5j, 2b, 3i 4j, 1y, 1.2.3, or an integer that overflows its type (2147483648i, 32768h) | every profile |
+| `QE011` | infix-keyword-each | An infix keyword before each or peach: q 5 refuses cor each x and x within each y; write (cor) each, cor' or cor[x] each | every profile |
 
 ## Names - parameters, locals, globals and what they shadow
 
@@ -155,7 +156,7 @@ that wants fewer findings narrows in its own configuration.
 | `QB018` | constant-comparison | Two literals compared, so the answer never varies | `style` and above |
 | `QB019` | duplicate-column | A table literal names a column twice; q renames the second instead of refusing | `style` and above |
 | `QB020` | unreachable-statement | A statement after a top-level return or signal in a lambda never runs | `style` and above |
-| `QB021` | select-by-duplicate-name | A select names a result column the same as a by group, which q refuses with 'dup names for cols/groups | every profile |
+| `QB021` | select-by-duplicate-name | A select or exec names a result column the same as a by group, which q refuses with 'dup names for cols/groups | every profile |
 
 ## Domain - literal arguments outside what a builtin accepts
 

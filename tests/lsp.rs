@@ -1073,6 +1073,57 @@ fn editing_the_configuration_relints_the_open_documents() {
 }
 
 #[test]
+fn editing_a_base_the_configuration_extends_relints_the_open_documents() {
+    // A base reached through `extend` can be called anything; the CLI reads
+    // it fresh each run, and the editor must re-read it too (#419).
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path().join("base.toml");
+    std::fs::write(&base, "profile = \"style\"\n").unwrap();
+    std::fs::write(dir.path().join(".qlinter.toml"), "extend = \"base.toml\"\n").unwrap();
+    let uri = file_uri(&dir.path().join("a.q"));
+    let mut server = Server::spawn(dir.path(), &["--lsp"]);
+    server.initialize();
+    server.open(&uri, "my_var:1;f:{[desc] desc}");
+    assert_eq!(codes_of(&server.diagnostics_for(&uri)), ["QF001"]);
+    std::fs::write(&base, "profile = \"style\"\n[lint]\nignore = [\"QF\"]\n").unwrap();
+    server.send(
+        json!({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles",
+        "params":{"changes":[{"uri":file_uri(&base),"type":2}]}}),
+    );
+    assert_eq!(
+        codes_of(&server.diagnostics_for(&uri)),
+        Vec::<String>::new()
+    );
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn a_localhost_file_uri_finds_the_project_configuration() {
+    // RFC 8089: file://localhost/p is file:///p. The authority was read as
+    // the first directory, so no configuration was found (#425).
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join(".qlinter.toml"),
+        "[lint]\nignore = [\"QE004\"]\n",
+    )
+    .unwrap();
+    let plain = file_uri(&dir.path().join("a.q"));
+    let local = plain.replacen("file://", "file://localhost", 1);
+    assert!(local.starts_with("file://localhost/"), "{local}");
+    let mut server = Server::spawn(dir.path(), &["--lsp"]);
+    server.initialize();
+    for uri in [&plain, &local] {
+        server.open(uri, "a:1==2\n");
+        assert_eq!(
+            codes_of(&server.diagnostics_for(uri)),
+            Vec::<String>::new(),
+            "{uri}"
+        );
+    }
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
 fn every_rule_with_a_fix_offers_it_in_the_editor() {
     // Not only the three the server first knew: a fix `--fix` applies, and
     // one only a person should accept, are both offered here.
@@ -1196,6 +1247,20 @@ fn formatting_applies_the_safe_fixes_and_is_idempotent() {
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 
+#[test]
+fn formatting_leaves_an_unbalanced_document_alone_with_qe001_deselected() {
+    // Deselecting QE001 hides the finding; it does not make the brackets
+    // close, and the fixes would read line 2 as inside `f` (#422).
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start_in(dir.path(), &["--ignore", "QE001"]);
+    server.initialize();
+    let uri = "file:///tmp/unbalanced-format.q";
+    server.open(uri, "f:{x==1\ng:{y!=2}\n");
+    server.diagnostics_for(uri);
+    assert_eq!(server.format(uri)["result"], json!([]));
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
 /// `&&` has a fix, but one only a person should accept: formatting leaves it,
 /// even from a server started with `--unsafe-fixes`.
 #[test]
@@ -1313,6 +1378,26 @@ fn an_editor_ignore_drops_a_rule_the_configuration_selects() {
     let found = codes_of(&server.diagnostics_for(&uri));
     assert!(!found.contains(&"QF001".to_string()), "{found:?}");
     assert!(found.contains(&"QS001".to_string()), "{found:?}");
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn an_editor_ignore_of_qe001_shows_nothing_the_cli_would_not() {
+    // The CLI reports only QE001 for an unbalanced file. Hiding that in the
+    // editor must not expose the findings the bracket gate held back (#414).
+    let dir = tempfile::tempdir().unwrap();
+    let uri = file_uri(&dir.path().join("a.q"));
+    let (mut server, _) = start_with_options(
+        dir.path(),
+        &["--lsp", "--profile", "style"],
+        json!({"lint": {"ignore": ["QE001"]}}),
+        None,
+    );
+    server.open(&uri, "a:1==2\nb:(1\n");
+    assert_eq!(
+        codes_of(&server.diagnostics_for(&uri)),
+        Vec::<String>::new()
+    );
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 
@@ -1479,6 +1564,47 @@ fn the_workspace_index_can_be_turned_off_or_narrowed() {
         );
         assert_eq!(server.shutdown_and_exit(), 0);
     }
+}
+
+#[test]
+fn the_workspace_index_reads_the_directories_the_cli_walk_reads() {
+    // `qlinter .` skips build/ and what `exclude` names, and walks a
+    // dot-directory; the index used a list of its own (#420).
+    let dir = tempfile::tempdir().unwrap();
+    for (file, text) in [
+        ("build/defs.q", "inbuild:5\n"),
+        ("gen/defs.q", "ingen:5\n"),
+        (".hidden/defs.q", "inhidden:5\n"),
+        ("venv/defs.q", "invenv:5\n"),
+    ] {
+        let path = dir.path().join(file);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    std::fs::write(
+        dir.path().join("qlinter.toml"),
+        "profile = \"uqf\"\nextend-exclude = [\"gen\"]\n",
+    )
+    .unwrap();
+    let app = file_uri(&dir.path().join("app.q"));
+    let (mut server, _) = start_with_options(dir.path(), &["--lsp"], json!({}), Some(dir.path()));
+    let undefined = |server: &mut Server, name: &str| {
+        server.open(&app, &format!("n:{name}\n"));
+        codes_of(&server.diagnostics_for(&app)).contains(&"QF018".to_string())
+    };
+    assert!(undefined(&mut server, "inbuild"));
+    assert!(undefined(&mut server, "ingen"));
+    assert!(!undefined(&mut server, "inhidden"));
+    assert!(!undefined(&mut server, "invenv"));
+    // A file changed on disk is held to the same: build/ stays out.
+    let late = dir.path().join("build/late.q");
+    std::fs::write(&late, "late:5\n").unwrap();
+    server.send(
+        json!({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles",
+        "params":{"changes":[{"uri":file_uri(&late),"type":1}]}}),
+    );
+    assert!(undefined(&mut server, "late"));
+    assert_eq!(server.shutdown_and_exit(), 0);
 }
 
 #[test]

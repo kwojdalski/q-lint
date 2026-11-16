@@ -19,6 +19,7 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
     cast_character(path, source, code, comments, &mut out);
     monadic_glyph(path, source, code, comments, &mut out);
     juxtaposed_derived(path, source, code, comments, &mut out);
+    keyword_each(path, source, &unsym, &mut out);
     numbers(path, source, code, &unsym, &mut out);
     out
 }
@@ -32,7 +33,7 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
 /// string is still text.
 fn attributes(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<Finding>) {
     for m in re!(
-        r#"`([spu])#[ \t]*((?:`[A-Za-z0-9_.]*){2,}|-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+|"[^"\\]+")"#
+        r#"`([spu])#[ \t]*((?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[eE][+-]\d|[A-Za-z0-9.])*(?:[ \t]+-?\d(?:[eE][+-]\d|[A-Za-z0-9.])*)+|"[^"\\]+")"#
     )
     .captures_iter(comments)
     {
@@ -116,9 +117,47 @@ fn number(token: &str) -> Option<Key> {
 /// Whether `at` is in the argument of a system command, which q never parses
 /// as q: `\l /data/2024.02.30/t` names a path (#198). Not `\t` or `\ts`,
 /// whose argument is an expression q runs.
-fn command_argument(unsym: &str, at: usize) -> bool {
-    let line = unsym[..at].rfind('\n').map_or(0, |p| p + 1);
-    unsym[line..].starts_with('\\') && !re!(r"^\\ts?(?::\d+)?[ \t]").is_match(&unsym[line..])
+fn command_argument(source: &str, at: usize) -> bool {
+    let line = source[..at].rfind('\n').map_or(0, |p| p + 1);
+    crate::system_command(&source[line..])
+}
+
+/// How many days q 5 gives `month` of `year`, or 0 where it has no such
+/// month. Leap years are Gregorian: 2000.02.29 parses and 1900.02.29 does not.
+fn days_in(year: u32, month: u32) -> u32 {
+    // Nor any month of year 0: q 5 refuses `0000.01.01` and `0000.01m`.
+    if year == 0 {
+        return 0;
+    }
+    let leap = year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => 0,
+    }
+}
+
+/// The letter after the last item of the vector literal whose token runs
+/// through `end`, if it ends in one: `u` for `23:59:60u` and for
+/// `12:00:60 12:00u` alike, since that suffix types every item.
+fn vector_suffix(unsym: &str, end: usize) -> Option<char> {
+    let token_end = |from: usize| {
+        from + unsym[from..]
+            .find(|c: char| !(c.is_ascii_alphanumeric() || ".:".contains(c)))
+            .unwrap_or(unsym.len() - from)
+    };
+    let mut at = token_end(end);
+    loop {
+        let rest = &unsym[at..];
+        let gap = rest.len() - rest.trim_start_matches([' ', '\t']).len();
+        if gap == 0 || !rest[gap..].starts_with(|c: char| c.is_ascii_digit()) {
+            break;
+        }
+        at = token_end(at + gap);
+    }
+    unsym[..at].chars().last().filter(char::is_ascii_alphabetic)
 }
 
 /// QE006. A date, month or time q refuses at parse. A date or month that does not exist:
@@ -128,26 +167,32 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
     // Minutes and seconds stop at 59 wherever they appear - a minute, second,
     // time, timespan or timestamp - while hours run on: q 5 refuses `12:60`,
     // `12:00:60` and `0D00:00:60`, and takes `25:00` and `0D25:00:00`.
-    for m in re!(r"(\d{2,}):(\d{2})(?::(\d{2}))?").captures_iter(unsym) {
-        let whole = m.get(0).unwrap();
-        if command_argument(unsym, whole.start()) {
-            continue;
-        }
-        // Part of a longer token: a date's or number's digits, or a name
-        // such as `p60` in `p60:60`, which assigns 60 rather than writing a
-        // time. The `D` of `0D00:00:60` and the `T` of a datetime start no name.
-        let head = &unsym[..whole.start()];
+    // Part of a longer token: a date's or number's digits, or a name such as
+    // `p60` in `p60:60`, which assigns 60 rather than writing a time. The `D`
+    // of `0D00:00:60` and the `T` of a datetime start no name. Such a match
+    // is looked past, not skipped whole: in `t12:12:60` the first is
+    // `12:12`, and the time is the `12:60` after it.
+    let whole_token = |m: &regex::Captures| {
+        let head = &unsym[..m.get(0).unwrap().start()];
         let word = head.trim_end_matches(|c: char| c.is_ascii_alphanumeric() || "._".contains(c));
-        if head.ends_with(|c: char| c.is_ascii_digit() || c == '.')
-            || head[word.len()..].starts_with(|c: char| c.is_ascii_alphabetic() || "._".contains(c))
-        {
+        !(head.ends_with(|c: char| c.is_ascii_digit() || c == '.')
+            || head[word.len()..]
+                .starts_with(|c: char| c.is_ascii_alphabetic() || "._".contains(c)))
+    };
+    for m in crate::captures_where(re!(r"(\d{2,}):(\d{2})(?::(\d{2}))?"), unsym, whole_token) {
+        let whole = m.get(0).unwrap();
+        if command_argument(source, whole.start()) {
             continue;
         }
         let field = |i| {
             m.get(i)
                 .map_or(0, |f: regex::Match| f.as_str().parse::<u32>().unwrap())
         };
-        if field(2) > 59 || field(3) > 59 {
+        // A minute's seconds are never read: q 5 takes `23:59:60u` as 23:59,
+        // and `12:00:60 12:00u` too, while `23:59:60u 12:00` is a vector of
+        // seconds and '23:59:60u.
+        let minute = vector_suffix(unsym, whole.end()) == Some('u');
+        if field(2) > 59 || (field(3) > 59 && !minute) {
             out.push(Finding::at(
                 path,
                 source,
@@ -160,6 +205,31 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
             ));
         }
     }
+    // A time's hour of three digits or more leaves room for three digits of
+    // fraction: q 5 refuses `100:00:00.1234`, and takes `10:00:00.1234`,
+    // `100:00:00.123` and `100:00:00.1234t`, where a `t`, `u` or `v` after
+    // the vector cuts the fraction. (A timespan or timestamp refuses such an
+    // hour whatever follows it: `0D100:00:00` is '0D100:00:00.)
+    for m in crate::captures_where(re!(r"\d{3,}:\d{2}:\d{2}\.\d{4,}"), unsym, whole_token) {
+        let whole = m.get(0).unwrap();
+        if command_argument(source, whole.start())
+            || unsym[..whole.start()].ends_with(['D', 'T'])
+            || matches!(vector_suffix(unsym, whole.end()), Some('t' | 'u' | 'v'))
+        {
+            continue;
+        }
+        out.push(Finding::at(
+            path,
+            source,
+            whole.start(),
+            "QE006",
+            format!(
+                "`{}` is no time: after an hour of three digits it takes three digits of \
+                 fraction at most, and q refuses the literal",
+                whole.as_str()
+            ),
+        ));
+    }
     // The digit forms too (#232): q 5 reads `1259u` as 12:59 and refuses
     // `1260u`, `120060v` and `126000t`. The minutes are a minute's last two
     // digits, and a second's or time's from three to five digits; from six or
@@ -167,7 +237,7 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
     // in milliseconds. Other lengths q reads in ways not worth modelling.
     for m in re!(r"\b(\d{3,})([uvt])\b").captures_iter(unsym) {
         let whole = m.get(0).unwrap();
-        if command_argument(unsym, whole.start())
+        if command_argument(source, whole.start())
             || unsym[..whole.start()].ends_with('.')
             || unsym[whole.end()..].starts_with('.')
         {
@@ -208,7 +278,21 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
             format!("`{text}` is no time: {why}"),
         ));
     };
-    for m in re!(r"(\d+)[DT](\d):\d|(\d+):(\d+)(?::(\d+))?").captures_iter(unsym) {
+    // A match that starts inside a name is looked past, not skipped whole:
+    // in `x10:12:5` the first is `10:12`, and the time is the `12:5` after it.
+    let starts_token = |m: &regex::Captures| {
+        let at = m.get(0).unwrap().start();
+        let before = &unsym[..at];
+        m.get(1).is_some()
+            || boundary(unsym, at)
+            || (before.ends_with(['D', 'T'])
+                && before[..before.len() - 1].ends_with(|c: char| c.is_ascii_digit()))
+    };
+    for m in crate::captures_where(
+        re!(r"(\d+)[DT](\d):\d|(\d+):(\d+)(?::(\d+))?"),
+        unsym,
+        starts_token,
+    ) {
         let whole = m.get(0).unwrap();
         let before = &unsym[..whole.start()];
         let line = before.rfind('\n').map_or(0, |p| p + 1);
@@ -243,7 +327,10 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
         }
         let text = &unsym[whole.start()..whole.end() + tail];
         if m[3].len() >= 2 {
-            if m[4].len() == 1 || m.get(5).is_some_and(|s| s.as_str().len() == 1) {
+            if m[4].len() == 1
+                || (m.get(5).is_some_and(|s| s.as_str().len() == 1)
+                    && vector_suffix(unsym, whole.end()) != Some('u'))
+            {
                 refuse(
                     whole.start(),
                     text,
@@ -270,7 +357,7 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
     // A month has two digits: q 5 refuses `2023.1m`.
     for m in re!(r"\b\d{4}\.\dm\b").find_iter(unsym) {
         if unsym[..m.start()].ends_with(|c: char| c.is_ascii_alphanumeric() || c == '.')
-            || command_argument(unsym, m.start())
+            || command_argument(source, m.start())
         {
             continue;
         }
@@ -287,7 +374,7 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
     }
     for m in re!(r"\b(\d{4})\.(\d{2})(?:\.(\d{2})|m\b)").captures_iter(unsym) {
         let whole = m.get(0).unwrap();
-        if command_argument(unsym, whole.start()) {
+        if command_argument(source, whole.start()) {
             continue;
         }
         // The year has to start the token: `1.2024.02.30` is not a date.
@@ -298,14 +385,7 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
         }
         let (year, month): (u32, u32) = (m[1].parse().unwrap(), m[2].parse().unwrap());
         let day: Option<u32> = m.get(3).map(|d| d.as_str().parse().unwrap());
-        let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
-        let days = match month {
-            1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-            4 | 6 | 9 | 11 => 30,
-            2 if leap => 29,
-            2 => 28,
-            _ => 0,
-        };
+        let days = days_in(year, month);
         let impossible = days == 0 || day.is_some_and(|d| d == 0 || d > days);
         if impossible {
             out.push(Finding::at(
@@ -335,7 +415,8 @@ fn missing_from(
     unsym: &str,
     out: &mut Vec<Finding>,
 ) {
-    for m in re!(r"\b(select|exec|update|delete)\b").find_iter(unsym) {
+    // No `\b` before the keyword: `1_select` is a drop of a select (#351).
+    for m in re!(r"(select|exec|update|delete)\b").find_iter(unsym) {
         if !boundary(code, m.start()) {
             continue;
         }
@@ -426,7 +507,7 @@ fn missing_from(
 }
 
 /// QT025. A signal of something that is not a symbol or a string. Verified:
-/// `'1`, `'1.5`, `'0N` and `'(1;2)` are 'stype - and so is `'"x"`, since a
+/// `'1`, `'1.5`, `'0N`, `'12:00`, `'1e-3` and `'(1;2)` are 'stype - and so is `'"x"`, since a
 /// one-character string is a char atom, not a string.
 fn signals(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<Finding>) {
     // A signal opens an expression; after an operand the quote is each.
@@ -436,7 +517,9 @@ fn signals(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<F
     // bracket before it: `{[x]` + `  '1}` is a signal (q 5: 'stype).
     // A list cannot be signalled either: q 5 `'(1;2)`, `'()`, `'(1)` and
     // `` '`a`b `` are each 'stype.
-    for m in re!(r#"(')(-?\d[A-Za-z0-9.]*|"(?:\\[0-7]{3}|\\.|[^"\\])+"|\(\s*\)|\(\s*-?\d[A-Za-z0-9.]*\s*\)|\([^()"]*;[^()]*\)|(?:`[A-Za-z0-9_.]*){2,})"#).captures_iter(comments) {
+    // A number runs on over `:` and an exponent's sign: `'12:00`,
+    // `'2026.01.01D12:00` and `'1e-3` are each 'stype.
+    for m in re!(r#"(')(-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*|"(?:\\[0-7]{3}|\\.|[^"\\])+"|\(\s*\)|\(\s*-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*\s*\)|\([^()"]*;[^()]*\)|(?:`[A-Za-z0-9_.]*){2,})"#).captures_iter(comments) {
         let quote = m.get(1).unwrap();
         let value = m.get(2).unwrap();
         if code.as_bytes()[quote.start()] != b'\'' {
@@ -448,7 +531,7 @@ fn signals(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<F
         if !(at == line_start
             || before.is_empty()
             || before.ends_with(['[', '(', ';', '{'])
-            || re!(r"\{\s*\[[A-Za-z0-9_; \t]*\]$").is_match(before))
+            || after_signature(code, source, before.len()))
         {
             continue;
         }
@@ -495,11 +578,21 @@ fn where_assignment(path: &str, source: &str, code: &str, out: &mut Vec<Finding>
         }
         // The qSQL keyword, and its `from` before this `where`: in
         // `exec where m:a>0 from t` the `where` is the function, in a column.
-        let head = &code[code[..w.start()].rfind(['\n', ';']).map_or(0, |p| p + 1)..w.start()];
+        // The statement runs back to a `;` or a line starting at column 0:
+        // an indented line continues it, and in a lambda a newline is
+        // whitespace (#335).
+        let bytes = code.as_bytes();
+        let mut from = w.start();
+        while from > 0
+            && bytes[from - 1] != b';'
+            && !(bytes[from - 1] == b'\n' && !bytes[from].is_ascii_whitespace())
+        {
+            from -= 1;
+        }
+        let head = &code[from..w.start()];
         if !re!(r"\b(?:select|exec|update|delete)\b[\s\S]*\bfrom\b").is_match(head) {
             continue;
         }
-        let bytes = code.as_bytes();
         // `depth` counts every bracket, `nested` only those that are not
         // parentheses: an assignment in `(a:1)` is still the phrase's own
         // (q 5: 'type), one in a lambda or a bracket is not.
@@ -529,7 +622,13 @@ fn where_assignment(path: &str, source: &str, code: &str, out: &mut Vec<Finding>
                         nested -= 1;
                     }
                 }
-                b';' | b'\n' if depth == 0 => break,
+                b';' if depth == 0 => break,
+                b'\n'
+                    if depth == 0
+                        && bytes.get(at + 1).is_some_and(|b| !b.is_ascii_whitespace()) =>
+                {
+                    break;
+                }
                 b':' if nested == 0
                     && code[..at]
                         .trim_end()
@@ -537,14 +636,20 @@ fn where_assignment(path: &str, source: &str, code: &str, out: &mut Vec<Finding>
                     && !code[at + 1..].starts_with([':', '/', '\\', '\''])
                     && !code[..at].ends_with([':', '/', '\\', '\'']) =>
                 {
+                    // Past the whole of the character before the name, which
+                    // may be wider than a byte: a no-break space (#321).
                     let name_start = code[..at]
                         .trim_end()
-                        .rfind(|c: char| !(c.is_alphanumeric() || c == '_'))
-                        .map_or(0, |p| p + 1);
+                        .char_indices()
+                        .rfind(|&(_, c)| !(c.is_alphanumeric() || c == '_'))
+                        .map_or(0, |(p, c)| p + c.len_utf8());
                     // A name starts with a letter and stands alone: `09:35`
                     // and the `D00:00` of a timestamp are literals, and
                     // their colons are part of them.
-                    if !code[name_start..].starts_with(|c: char| c.is_ascii_alphabetic())
+                    // Nor is `where` itself one: `where:1` is the phrase
+                    // `(:;1)` in q 5, and assigns nothing (#320).
+                    if name_start < sub
+                        || !code[name_start..].starts_with(|c: char| c.is_ascii_alphabetic())
                         || code[..name_start].ends_with(['.', '`'])
                         || !whole_sub_phrase(code, sub, name_start, at)
                     {
@@ -703,6 +808,39 @@ fn atom_literal(lit: &str) -> bool {
     !re!(r"^[01]{2,}b$").is_match(lit)
 }
 
+/// Whether the `]` ending at `end` closes a lambda's parameter list, so that
+/// what follows it opens the body's first expression. Any signature q reads
+/// as one: `{[a;b]`, a pattern `{[(a;b)]` or a typed slot `{[a:`j]` (#325).
+fn after_signature(code: &str, raw: &str, end: usize) -> bool {
+    if !code[..end].ends_with(']') {
+        return false;
+    }
+    let mut depth = 0usize;
+    let mut open = None;
+    for (i, b) in code.as_bytes()[..end].iter().enumerate().rev() {
+        match b {
+            b')' | b']' | b'}' => depth += 1,
+            b'(' | b'[' | b'{' => {
+                depth -= 1;
+                if depth == 0 {
+                    open = Some(i);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let Some(open) = open.filter(|&o| code.as_bytes()[o] == b'[') else {
+        return false;
+    };
+    let head = code[..open].trim_end();
+    if !head.ends_with('{') {
+        return false;
+    }
+    let sig = crate::signature(code, raw, head.len() - 1);
+    sig.named && sig.body == end
+}
+
 /// QE008. A glyph applied to one argument by juxtaposition. q 5 has no
 /// monadic form for any of them: `-x`, `,x`, `#x`, `~x`, `_x`, `a:-x` and `1*-x`
 /// are each refused by `parse` with the glyph as the error, and a lambda
@@ -718,13 +856,12 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
         if i > 0 && b[i - 1] == b'\n' {
             line_start = i;
         }
-        // Not in a string or a comment, nor on a system command or `#!` line.
+        // Not in a string or a comment, nor on a system command.
         // `_` too: `_x`, `_1.5` and `1+_x` are '_ in q 5, while `x _1`,
         // `1 _x` and the `_` inside `x_y` follow an operand.
         if !(GLYPHS.contains(&g) || g == b'_')
             || code.as_bytes()[i] != g
-            || b[line_start] == b'\\'
-            || comments[line_start..].starts_with("#!")
+            || crate::system_command(&source[line_start..])
         {
             continue;
         }
@@ -734,14 +871,18 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
         // `#:a`: the k form, a glyph and a colon, applied to an operand
         // written straight after it.
         let colon = rest.starts_with(':')
-            && rest[1..].starts_with(|c: char| c.is_ascii_alphanumeric() || "`(\".".contains(c))
+            && rest[1..].starts_with(|c: char| c.is_ascii_alphanumeric() || "`(\".{".contains(c))
             || rest.starts_with(":-") && rest[2..].starts_with(|c: char| c.is_ascii_digit());
         let next = continued(rest);
         let spaced = next.len() < rest.len();
         // A `.` before a letter starts a name, not a number: q 5 refuses
         // `-.foo.x` and `-.z.p` with '-, as it does `#.foo.x` (#241).
+        // A lambda is a noun, and so is a negative literal: q 5 refuses
+        // `#{x}`, `,-1` and `--1` with the first glyph (#438). `- -1` is
+        // refused too, but with ' .
         let operand = colon
-            || next.starts_with(|c: char| c.is_ascii_alphabetic() || "`(\"".contains(c))
+            || next.starts_with(|c: char| c.is_ascii_alphabetic() || "`(\"{".contains(c))
+            || (re!(r"^-\.?\d").is_match(next) && !(g == b'-' && spaced))
             || re!(r"^\.[A-Za-z]").is_match(next)
             || (next.starts_with(|c: char| c.is_ascii_digit() || c == '.')
                 && (g != b'-' || spaced));
@@ -749,7 +890,9 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
             continue;
         }
         let before = comments[..i].trim_end_matches([' ', '\t', '\r', '\n']);
-        if !opens_expression(comments, i, line_start) {
+        // A `\t` line's expression starts after the command (#310).
+        let expression = line_start + crate::timed_prefix(&source[line_start..]);
+        if !opens_expression(code, source, comments, i, expression) {
             continue;
         }
         // A symbol ending in `:` or `/` is still an operand: `` `:,srvr ``
@@ -760,11 +903,30 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
         {
             continue;
         }
-        // The sort in `select[>a]` and `select[2;<a]` is q's own syntax.
-        if matches!(g, b'<' | b'>')
-            && re!(r"(?:^|[^A-Za-z0-9.])select\s*\[(?:[^\[\];]*;)?$").is_match(before)
-        {
-            continue;
+        // The sort in `select[>a]` and `select[2;<a]` is q's own syntax, and
+        // the count before it may hold brackets of its own: `select[til[2];>a]`
+        // and `select[(1;2);>a]` (q 5 runs both, #346).
+        if matches!(g, b'<' | b'>') && before.ends_with(['[', ';']) {
+            let (mut depth, mut slots, mut open) = (0i32, 0, None);
+            for (j, c) in before.bytes().enumerate().rev() {
+                match c {
+                    b')' | b']' | b'}' => depth += 1,
+                    b'(' | b'[' | b'{' if depth == 0 => {
+                        open = Some(j);
+                        break;
+                    }
+                    b'(' | b'[' | b'{' => depth -= 1,
+                    b';' if depth == 0 => slots += 1,
+                    _ => {}
+                }
+            }
+            if open.is_some_and(|o| {
+                before.as_bytes()[o] == b'['
+                    && slots <= 1
+                    && re!(r"(?:^|[^A-Za-z0-9.])select\s*$").is_match(&before[..o])
+            }) {
+                continue;
+            }
         }
         let mut finding = Finding::at(path, source, i, "QE008", {
             let glyph = if colon {
@@ -794,8 +956,8 @@ fn continued(rest: &str) -> &str {
 
 /// Whether the token at `i` starts an expression, so that whatever it applies
 /// to is applied by juxtaposition: the start of a line or statement, after
-/// `:`, an opening bracket or a signature, or after another glyph.
-fn opens_expression(comments: &str, i: usize, line_start: usize) -> bool {
+/// `:`, an opening bracket, a signature or a qSQL word, or after another glyph.
+fn opens_expression(code: &str, raw: &str, comments: &str, i: usize, line_start: usize) -> bool {
     // Pairs QE004 already reports, or that are one operator.
     const PAIRS: &[&str] = &[
         "<>", "<=", ">=", "==", "!=", "&&", "||", "+=", "-=", "*=", "->", "=>", "**", "=<", "<<",
@@ -819,11 +981,25 @@ fn opens_expression(comments: &str, i: usize, line_start: usize) -> bool {
             .bytes()
             .next_back()
             .is_some_and(|p| !p.is_ascii_whitespace());
+    // A qSQL word opens an expression too: q 5 refuses `select -a from t`
+    // and `select from t where -a<0` with '-. `by` and `where` only inside a
+    // query - `where -a` alone is the where function minus a (#355). A `_`
+    // written against the word continues it: `exec_rows` is a name.
+    let glued = before.len() == i && comments.as_bytes().get(i) == Some(&b'_');
+    let qsql = !glued
+        && re!(r"(?:select|exec|update|delete|by|where)$")
+            .find(before)
+            .is_some_and(|m| {
+                boundary(comments, m.start())
+                    && (!matches!(m.as_str(), "by" | "where")
+                        || crate::in_qsql_phrase(comments, m.end()))
+            });
     i == line_start
         || before.is_empty()
         || iterator
+        || qsql
         || before.ends_with([':', '(', '[', '{', ';'])
-        || re!(r"\{\s*\[[A-Za-z0-9_; \t]*\]$").is_match(before)
+        || after_signature(code, raw, before.len())
         || (before
             .bytes()
             .next_back()
@@ -849,33 +1025,46 @@ fn juxtaposed_derived(
         .replace_all(comments, |m: &regex::Captures| "0".repeat(m[0].len()));
     let b = view.as_bytes();
     let c = code.as_bytes();
-    let mut opens: Vec<usize> = vec![];
-    let mut lambda = std::collections::HashMap::new();
-    for (i, &ch) in c.iter().enumerate() {
-        if ch == b'{' {
-            opens.push(i);
-        } else if ch == b'}'
-            && let Some(o) = opens.pop()
-        {
-            lambda.insert(i, o);
+    // Each closer's opener: a lambda's braces, brackets and parentheses in
+    // code, and a string's quotes in the view, where the string is text.
+    let mut opener = std::collections::HashMap::new();
+    let mut stacks: [Vec<usize>; 3] = [vec![], vec![], vec![]];
+    let mut quote = None;
+    let mut i = 0;
+    while i < b.len() {
+        match quote {
+            Some(_) if b[i] == b'\\' => i += 1,
+            Some(o) if b[i] == b'"' => {
+                opener.insert(i, o);
+                quote = None;
+            }
+            Some(_) => {}
+            None if b[i] == b'"' && c[i] != b'"' => quote = Some(i),
+            None => {
+                if let Some(k) = b"{[(".iter().position(|&o| o == c[i]) {
+                    stacks[k].push(i);
+                } else if let Some(k) = b"}])".iter().position(|&o| o == c[i])
+                    && let Some(o) = stacks[k].pop()
+                {
+                    opener.insert(i, o);
+                }
+            }
         }
+        i += 1;
     }
-    for m in re!(r"(?:[-+*%!#$&|^=<>~,@?]|\.?[A-Za-z][A-Za-z0-9_.]*|\})(?:/:|\\:|':|/|\\|')")
-        .find_iter(&view)
-    {
-        let token = m.start();
-        let iterator = token + m.as_str().find(['/', '\\', '\'']).unwrap();
-        // Both the token and the iterator are code, not string or comment.
-        if c[iterator] != b[iterator] || (c[token] != b[token] && b[token] != b'0') {
+    // A run of iterators - `/`, `':`, or `/'` after `+`, whose operand is
+    // the derived `+/` - and q names the last of them: `+/'x` is '.
+    for m in re!(r"(?:/:|\\:|':|/|\\|')+").find_iter(&view) {
+        let iterator = re!(r"/:|\\:|':|/|\\|'")
+            .find_iter(m.as_str())
+            .last()
+            .map_or(m.start(), |p| m.start() + p.start());
+        // The iterator is code, not string or comment.
+        if c[m.start()] != b[m.start()] {
             continue;
         }
-        let start = match b[token] {
-            b'}' => match lambda.get(&token) {
-                Some(&o) => o,
-                None => continue,
-            },
-            ch if (ch.is_ascii_alphabetic() || ch == b'.') && !boundary(&view, token) => continue,
-            _ => token,
+        let Some(start) = derived_operand(&view, c, &opener, m.start()) else {
+            continue;
         };
         let line_start = view[..start].rfind('\n').map_or(0, |p| p + 1);
         if b[line_start] == b'\\' {
@@ -893,7 +1082,7 @@ fn juxtaposed_derived(
             || (next.starts_with('-')
                 && next[1..]
                     .starts_with(|ch: char| ch.is_ascii_alphabetic() || "`(\"".contains(ch)));
-        if !operand || !opens_expression(&view, start, line_start) {
+        if !operand || !opens_expression(code, source, &view, start, line_start) {
             continue;
         }
         let iter = &view[iterator..m.end()];
@@ -910,6 +1099,113 @@ fn juxtaposed_derived(
             ),
         );
         finding.end_column = finding.column.map(|col| col + iter.len());
+        out.push(finding);
+    }
+}
+
+/// Where the operand of an iterator at `at` starts, if it has one: a glyph
+/// or its k form (`+/`, `.:'`), a name, a lambda, a string, a number or
+/// symbol vector, a parenthesised value, or any of these indexed with
+/// brackets (`g[x]'`, `{x}[1]/`). q 5 refuses each applied by juxtaposition.
+fn derived_operand(
+    view: &str,
+    c: &[u8],
+    opener: &std::collections::HashMap<usize, usize>,
+    at: usize,
+) -> Option<usize> {
+    let b = view.as_bytes();
+    let prev = *b.get(at.checked_sub(1)?)?;
+    if GLYPHS.contains(&prev) {
+        return Some(at - 1);
+    }
+    if prev == b':' && at >= 2 && (GLYPHS.contains(&b[at - 2]) || b[at - 2] == b'.') {
+        return Some(at - 2);
+    }
+    let mut q = at;
+    while let Some(&ch) = q.checked_sub(1).and_then(|p| b.get(p)) {
+        match ch {
+            // A signature is not an operand: `{[x]'e}` signals.
+            b']' => match opener.get(&(q - 1)) {
+                Some(&o) if o == 0 || b[o - 1] != b'{' => q = o,
+                _ => return None,
+            },
+            // A glyph indexed with brackets is a noun too: `@[;1;-1+]/`.
+            ch if GLYPHS.contains(&ch) && b[q] == b'[' => {
+                q -= 1;
+                break;
+            }
+            b')' | b'}' | b'"' => {
+                q = *opener.get(&(q - 1))?;
+                break;
+            }
+            ch if ch.is_ascii_alphanumeric() || ch == b'.' || ch == b'_' => {
+                let token = |end: usize| {
+                    let s = view[..end]
+                        .rfind(|ch: char| !(ch.is_ascii_alphanumeric() || "._".contains(ch)))
+                        .map_or(0, |p| p + 1);
+                    (s < end && boundary(view, s)).then_some(s)
+                };
+                q = token(q)?;
+                // After a number `_` is drop, not part of a name: `-2_/:x`
+                // and `1_'x` apply the derived `_/:` and `_'` infix.
+                if c[q].is_ascii_digit()
+                    && let Some(u) = view[q..at].rfind('_')
+                {
+                    q += u + 1;
+                    if q == at {
+                        return None;
+                    }
+                    break;
+                }
+                // A number vector is one operand: `1 2'y`.
+                while c[q].is_ascii_digit() {
+                    let gap = view[..q].trim_end_matches([' ', '\t']).len();
+                    match token(gap) {
+                        Some(s) if gap < q && c[s].is_ascii_digit() => q = s,
+                        _ => break,
+                    }
+                }
+                break;
+            }
+            _ => break,
+        }
+    }
+    (q < at).then_some(q)
+}
+
+/// QE011. An infix keyword before `each` or `peach`. q 5 refuses the line
+/// at parse whatever stands on its left: `cor each x`, `x mavg each y` and
+/// `x in each y` are each an error, while `(cor) each x`, `cor'[x;y]` and
+/// `cor[x] each y` parse. The list is every reserved word q 5 refuses there,
+/// checked one by one (`each`, `over`, `scan`, `prior` and `peach` are
+/// iterators themselves, and the qSQL words have their own rule).
+fn keyword_each(path: &str, source: &str, unsym: &str, out: &mut Vec<Finding>) {
+    for m in re!(
+        r"\b(and|asof|bin|binr|cor|cov|cross|cut|div|dsave|ema|except|fby|ij|ijf|in|insert|inter|like|lj|ljf|lsq|mavg|mcount|mdev|mmax|mmin|mmu|mod|msum|or|pj|rotate|scov|set|setenv|ss|sublist|sv|uj|ujf|union|upsert|vs|wavg|within|wsum|xasc|xbar|xcol|xcols|xdesc|xexp|xgroup|xkey|xlog|xprev|xrank)[ \t]+(each|peach)\b"
+    )
+    .captures_iter(unsym)
+    {
+        let word = m.get(1).unwrap();
+        let line_start = unsym[..word.start()].rfind('\n').map_or(0, |p| p + 1);
+        if !boundary(unsym, word.start())
+            || unsym[..word.start()].ends_with('.')
+            || crate::system_command(&source[line_start..])
+        {
+            continue;
+        }
+        let mut finding = Finding::at(
+            path,
+            source,
+            word.start(),
+            "QE011",
+            format!(
+                "`{w}` is infix, so q 5 refuses `{w} {it}` at parse: write `({w}) {it}`, \
+                 `{w}'` or `{w}[x] {it}`",
+                w = word.as_str(),
+                it = &m[2]
+            ),
+        );
+        finding.end_column = finding.column.map(|c| c + word.len());
         out.push(finding);
     }
 }
@@ -933,6 +1229,35 @@ fn narrow(text: &str, last: &str) -> Option<(&'static str, u128)> {
     })
 }
 
+/// Whether one item makes a whole vector float, so that an integer among
+/// them is read as a float too: a fraction (`1.5`, `1.`), a lower-case
+/// exponent (`1e3`), `0n` or `0w`, or an `e` or `f` after the last item. q 5
+/// takes `1.5 9223372036854775808` and `1E5 2.5`, and refuses
+/// `9223372036854775808 0N` and `1E5 2000.01.01` - a date is no fraction.
+fn float_vector(run: &[regex::Match]) -> bool {
+    let last = run[run.len() - 1].as_str();
+    (re!(r"^\d.*[ef]$").is_match(last) && !last.starts_with("0x"))
+        || (!re!(r"[hij]$").is_match(last)
+            && run.iter().any(|t| {
+                re!(r"^(?:\d+\.\d*(?:e[+-]?\d+)?|\d+e[+-]?\d+|0[nw])$").is_match(t.as_str())
+            }))
+}
+
+/// The temporal shape of a vector item, with a one-letter suffix put aside:
+/// a time (`12:00`, `12:00:00`, `12:00:00.123`) or a date (`2000.01.01`).
+fn temporal_shape(item: &str) -> Option<&'static str> {
+    let bare = item
+        .strip_suffix(|c: char| c.is_ascii_alphabetic())
+        .unwrap_or(item);
+    if re!(r"^\d\d:\d\d(?::\d\d(?:\.\d*)?)?$").is_match(bare) {
+        Some("time")
+    } else if re!(r"^\d{4}\.\d\d\.\d\d$").is_match(bare) {
+        Some("date")
+    } else {
+        None
+    }
+}
+
 /// What q 5 refuses in a null or infinity token: a type letter it has no
 /// null or infinity for, a suffix on an item but the last, and a negative
 /// null. Measured with `parse` over every letter: `0N` takes
@@ -940,7 +1265,8 @@ fn narrow(text: &str, last: &str) -> Option<(&'static str, u128)> {
 /// `0W` takes the same but `g` (`'0Wg`, and no guid infinity). `0n` and `0w`
 /// read as `0N` and `0W`. `0Ni 1` is '0Ni and `0Nh 0Nh` '0Nh, while `1 0Ni`
 /// and `0N 0Nh` parse. `-0N`, of any type but char, is '-0N; `-0W` and `-0n`
-/// parse.
+/// parse - but `-0n` as the timespan 0D00:00, so with a suffix other than
+/// `c`, or before another item, it is '-0n: `-0ne`, `-0nj` and `-0n 1`.
 fn null_literal(text: &str, not_last: bool, negative: bool) -> Option<String> {
     let caps = re!(r"^0([nNwW])([A-Za-z])?$").captures(text)?;
     let null = caps[1].eq_ignore_ascii_case("n");
@@ -966,6 +1292,11 @@ fn null_literal(text: &str, not_last: bool, negative: bool) -> Option<String> {
     if negative && &caps[1] == "N" && letter != Some("c") {
         return Some(format!("`-{text}`: a null has no negative"));
     }
+    if negative && &caps[1] == "n" && (not_last || letter.is_some_and(|l| l != "c")) {
+        return Some(format!(
+            "`-{text}`: `-0n` is the timespan 0D00:00, which takes no suffix and starts no vector"
+        ));
+    }
     None
 }
 
@@ -977,17 +1308,18 @@ fn null_literal(text: &str, not_last: bool, negative: bool) -> Option<String> {
 /// (`1.2.3`, `2023.1.1`), a long past 9223372036854775807, and an int or
 /// short past its own range (`2147483648i`, `32768h`). A boolean
 /// vector of atoms is not a vector at all - `1b 0b` parses, as two atoms -
-/// and `0N 1`, `3 4i`, `1e5` and `2023.01.01` are fine.
+/// and `0N 1`, `3 4i`, `1e5` and `2023.01.01` are fine - though `1E5`,
+/// with its exponent in upper case, is not.
 fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Finding>) {
     // An exponent's sign is part of its number: `1.5e-3` is one float.
-    let tokens: Vec<regex::Match> = re!(r"\d(?:[eE][+-]\d|[0-9A-Za-z.:])*")
-        .find_iter(unsym)
-        .filter(|m| boundary(code, m.start()))
-        .filter(|m| {
-            let line = unsym[..m.start()].rfind('\n').map_or(0, |p| p + 1);
-            !unsym[line..].starts_with('\\')
-        })
-        .collect();
+    // A token that starts inside a name - the `1` of `x1:1.5j` - is passed
+    // over one character at a time, so the literal after it is still read.
+    let tokens: Vec<regex::Match> =
+        crate::boundary_captures(re!(r"\d(?:[eE][+-]\d|[0-9A-Za-z.:])*"), unsym, code)
+            .into_iter()
+            .map(|c| c.get(0).unwrap())
+            .filter(|m| !command_argument(source, m.start()))
+            .collect();
     let mut report = |at: usize, detail: String| {
         out.push(Finding::at(path, source, at, "QE010", detail));
     };
@@ -1005,12 +1337,20 @@ fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Find
         }
         let run = &tokens[i..=j];
         let last = run[run.len() - 1].as_str();
+        // A `c` after the last item makes the vector a string, and q 5 reads
+        // any number before it as chars: `1h 2c` is " 2", and `1.5j 2c`,
+        // `1y 2c`, `0Nh 1c` and `-0N 1c` all parse. Only what q refuses as it
+        // reads the token is still refused there: a `b` it cannot read as a
+        // boolean (`2b 1c`, `0Nb 1c`), a byte (`0x1g 1c`), and an uppercase
+        // exponent's sign (`1E-3 1c`).
+        let string = last.ends_with('c') && !last.starts_with("0x");
         let mut reported = false;
         for (k, t) in run.iter().enumerate() {
             let text = t.as_str();
+            let in_string = string && k + 1 < run.len();
             // `0Ns` and `0Ws` are names to q, not literals: it parses them
             // as `0N` and `0W` and signals '0N or '0W when they are read.
-            if !reported && re!(r"^0[nNwW]s$").is_match(text) {
+            if !reported && !in_string && re!(r"^0[nNwW]s$").is_match(text) {
                 report(
                     t.start(),
                     format!(
@@ -1030,8 +1370,44 @@ fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Find
                     .ends_with(|c: char| c.is_ascii_alphanumeric() || "_.)]}\"`".contains(c));
             // A null or infinity is judged on its own terms: the `w` of `0w`
             // is no type suffix, but the token is no number either.
+            let date = |t: &str| re!(r"^\d{4}\.\d\d\.\d\d$").is_match(t);
             let detail = if re!(r"^0[nNwW][A-Za-z]?$").is_match(text) {
                 null_literal(text, k + 1 < run.len(), negative)
+            } else if re!(r"^0[nNwW][A-Za-z]?[0-9.:]").is_match(text) {
+                // Nothing continues a null or infinity: q 5 refuses `0W.5`,
+                // `0N1`, `0Ni5` and `0N:1`.
+                Some(format!(
+                    "`{text}`: nothing but a type letter follows a null or infinity"
+                ))
+            } else if negative
+                && date(text)
+                && run[1..]
+                    .iter()
+                    .all(|t| re!(r"^(?:\d+(?:\.\d*)?|0[NW])$").is_match(t.as_str()))
+            {
+                // A date takes no minus: q 5 refuses `-2000.01.01`, `x
+                // -2000.01.01`, `-2000.01.01 1` and `-2000.01.01 0N`, though
+                // not a minus before a vector of dates, a timestamp or a time
+                // (`-2000.01.01 2000.01.02`, `-2000.01.01D12:00`, `-12:00`).
+                // Before other temporal items it parses or not by rules not
+                // worth modelling: `-2000.01.01 12:00` is refused, and
+                // `-2000.01.01 0Wn` and `-2000.01.01 2000.01m` are not.
+                Some(format!("`-{text}`: a date has no negative"))
+            } else if re!(r"^(?:\d+\.?\d*)E(?:[+-]|[A-Za-z]|$)").is_match(text) {
+                // An uppercase exponent takes no sign and needs digits: q 5
+                // refuses `1E-3`, `1.5E+3`, `2E` and `1Ef`, where `1e-3`,
+                // `1.5e+3` and `2e` parse.
+                Some(format!(
+                    "`{text}`: an uppercase `E` exponent takes digits and no sign; write `e`"
+                ))
+            } else if re!(r"^\d+E\d+$").is_match(text) && !float_vector(run) {
+                // `1E5` on an integer mantissa is a float only where another
+                // item makes the vector one: q 5 refuses `1E5`, `1 2E5` and
+                // `1E5 2j`, and takes `1E5 2.5`, `1E5 2f` and `1E5f`.
+                Some(format!(
+                    "`{text}`: an uppercase `E` exponent on an integer makes no number \
+                     unless another item makes the vector float; write `e`"
+                ))
             } else if re!(r"^\d+(?:\.\d*)?(?:[eE][+-]?\d+)?[hij]$").is_match(text)
                 && !re!(r"^\d+[hij]$").is_match(text)
             {
@@ -1048,11 +1424,41 @@ fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Find
                 Some(format!(
                     "`{text}`: a byte literal is written with hex digits only"
                 ))
-            } else if re!(r"^\d+[adgklmoqrwyz]$").is_match(text)
+            } else if let Some(d) = re!(r"^(\d{4})(\d\d)(\d\d)d$").captures(text)
+                && {
+                    let field = |i: usize| d[i].parse::<u32>().unwrap();
+                    field(3) == 0 || field(3) > days_in(field(1), field(2))
+                }
+            {
+                // Eight digits and a `d` are a date, yyyymmdd: q 5 reads
+                // `20000101d` as 2000.01.01 and refuses `20001301d`, while
+                // `1d` and `2000010d` are no date at all.
+                Some(format!("`{text}` is no date (yyyymmdd)"))
+            } else if (re!(r"^\d+[adgklmoqrwyz]$").is_match(text)
+                && !re!(r"^\d{8}d$").is_match(text))
                 || (re!(r"^\d+x$").is_match(text) && text != "0x")
             {
                 Some(format!(
                     "`{text}`: `{}` is not a type suffix",
+                    &text[text.len() - 1..]
+                ))
+            } else if let Some(m) = re!(r"^(\d{4})\d+\.(\d\d)m$").captures(text)
+                && days_in(m[1].parse().unwrap(), m[2].parse().unwrap()) == 0
+            {
+                // A month's year past four digits is cut to its first four:
+                // q 5 reads `20000.01m` as 2000.01m and `12345.01m` as
+                // 1234.01m, and refuses `20000.13m`.
+                Some(format!("`{text}` is no month"))
+            } else if re!(r"^\d+\.\d*[A-Za-z]$").is_match(text)
+                && !re!(r"[cefnpt]$|^\d{4}\.\d*m$|^\d{5,}\.\d\dm$").is_match(text)
+            {
+                // After a fraction only a float, real, char or temporal
+                // suffix reads: q 5 refuses `1.5d`, `1.5m`, `1.5u`, `1.5v`
+                // and `1.5x` - `u` and `v` although `1u` and `1v` parse -
+                // and takes `1.5n`, `1.5p`, `1.5t` and the month `2024.01m` (a
+                // month's digits, `2023.1m`, are QE006's).
+                Some(format!(
+                    "`{text}`: `{}` is no type a fraction takes",
                     &text[text.len() - 1..]
                 ))
             } else if re!(r"^\d+(?:\.\d+){2,}$").is_match(text)
@@ -1060,6 +1466,7 @@ fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Find
             {
                 Some(format!("`{text}` is not a number or a date (yyyy.mm.dd)"))
             } else if re!(r"^\d{19,}j?$").is_match(text)
+                && !float_vector(run)
                 && text
                     .trim_end_matches('j')
                     .parse::<u128>()
@@ -1075,7 +1482,27 @@ fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Find
                 // The suffix types every item, so `1 2 2147483648i` overflows
                 // at its last item but one: q 5 refuses each with the number.
                 Some(format!("`{text}` does not fit in {kind}"))
-            } else if k + 1 < run.len() && re!(r"^\d+(?:\.\d*)?[hijef]$").is_match(text) {
+            } else if k + 1 < run.len()
+                && re!(r"^\d[\d.:]*(?:e[+-]?\d+)?[A-Za-z]$").is_match(text)
+                && !text.ends_with('b')
+                && !text.starts_with("0x")
+                && !(text.ends_with(['D', 'T'])
+                    && run
+                        .iter()
+                        .all(|t| t.as_str().contains(&text[text.len() - 1..])))
+                && !(temporal_shape(text).is_some()
+                    && run
+                        .iter()
+                        .all(|t| temporal_shape(t.as_str()) == temporal_shape(text)))
+            {
+                // Any suffix, temporal, char and symbol ones included: q 5
+                // refuses `1e 2`, `1n 2`, `1s 2`, `1e3e 1` and `2026.01m
+                // 2026.02m`. Not `1b 0`, which parses as an application, nor a
+                // byte - and not the `D` that ends a timespan or timestamp
+                // among others like it: `0D 0D01` and `1D 2D` parse, `0D 1` is
+                // '0D. Nor a time or date among others of its shape, which q
+                // reads by that shape: `12:00u 12:30`, `12:00:00x 12:30:00`
+                // and `2000.01.01z 2000.01.02` parse, `12:00u 1` is '12:00u.
                 Some(format!(
                     "`{text}`: a vector literal takes one type suffix, after its last item"
                 ))
@@ -1091,6 +1518,13 @@ fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Find
             } else {
                 None
             };
+            // In a string only what q refuses as it reads the token.
+            let detail = detail.filter(|_| {
+                !in_string
+                    || text.ends_with('b')
+                    || text.starts_with("0x")
+                    || re!(r"E[+-]").is_match(text)
+            });
             if let Some(detail) = detail
                 && !reported
             {
