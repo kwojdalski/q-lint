@@ -985,10 +985,7 @@ fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Find
     let tokens: Vec<regex::Match> = re!(r"\d(?:[eE][+-]\d|[0-9A-Za-z.:])*")
         .find_iter(unsym)
         .filter(|m| boundary(code, m.start()))
-        .filter(|m| {
-            let line = unsym[..m.start()].rfind('\n').map_or(0, |p| p + 1);
-            !unsym[line..].starts_with('\\')
-        })
+        .filter(|m| !command_argument(unsym, m.start()))
         .collect();
     let mut report = |at: usize, detail: String| {
         out.push(Finding::at(path, source, at, "QE010", detail));

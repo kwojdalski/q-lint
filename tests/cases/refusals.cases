@@ -335,6 +335,12 @@ w:select from t where
 === QE010 profile: general | an integer type with a fraction (q 5: parse "1.5j" is '1.5)
 a:1.5j
 
+=== QE010 profile: general | in the expression a \t line times (q 5: '1.5, #311)
+\t x:1.5j
+
+=== clean profile: general | while a command's argument is no number (q 5 loads \l 1.5j/t.q as a path, #311)
+\l 1.5j/t.q
+
 === QE010 profile: general | a suffix on an item that is not the last (q 5: '3i)
 c:3i 4j
 
