@@ -17,8 +17,8 @@ mod semantics;
 pub use semantics::TokenKind;
 
 /// What one file defines for the files around it: the global names it
-/// assigns, qualified by namespace (`.ns.f`, or `.f` at the root), and which
-/// of them it assigns a lambda.
+/// assigns, each as the one name q resolves it to (`.ns.f` inside `\d .ns`,
+/// and `f` - not `.f` - at the root), and which of them it assigns a lambda.
 #[derive(Default, Clone, PartialEq, Eq, Debug)]
 pub struct FileIndex {
     pub defined: std::collections::HashSet<String>,
@@ -94,9 +94,8 @@ pub struct References {
     /// context in force: `.a.f` inside `\d .a`, and `f` - not `.f` - at the
     /// root.
     pub names: Vec<String>,
-    /// Each global this file assigns, named the same way. `FileIndex` keys a
-    /// root `g` as `.g`, which the checks rely on; the graph cannot, since
-    /// to q they are two names.
+    /// Each global this file assigns, named the same way, as `FileIndex`
+    /// does.
     pub defines: Vec<String>,
     /// The paths of `\l path`, `system "l path"` and `` `:path.q ``, as
     /// written, each with the `\d` in force where it is loaded - `""` at the
@@ -2449,7 +2448,7 @@ fn is_param_name(s: &str) -> bool {
 /// not match: `{[(a;b);c] a+b+c}[(1;2);3]` is 6, `{[([k;v])] k+v}[`k`v!1 2]`
 /// is 3, `{[1;b] b}[1;2]` is 2 and `{[1] 5} 2` is 'match (#298). `_` is
 /// none: `{[(a;_)] a}[(1;2)]` is 'match, as `{[_] 1}[1]` is.
-fn is_pattern(s: &str, nested: bool) -> bool {
+pub(crate) fn is_pattern(s: &str, nested: bool) -> bool {
     let s = s.trim();
     let items = |inner: &str, item: &dyn Fn(&str) -> bool| {
         inner.trim().is_empty() || slots(inner).into_iter().all(item)
@@ -4229,11 +4228,17 @@ pub fn lint_selecting(
     for m in re!(r"([A-Za-z][A-Za-z0-9_]*)\s*:").captures_iter(code) {
         declared.insert(m.get(1).unwrap().as_str());
     }
+    // And a multiple assignment's names: q 5 `(true;false):10b` then
+    // `show true` prints 1b (#371).
+    declared.extend(semantics::multi_assignments(code).map(|(_, n)| n));
     // A column: named as a symbol somewhere (`` `sym`return!... ``), or read
     // inside a query, where a bare name is the column before any global.
     for m in re!(r"`([A-Za-z][A-Za-z0-9_]*)").captures_iter(code) {
         declared.insert(m.get(1).unwrap().as_str());
     }
+    // Another file of the workspace may define it too: with lib.q's
+    // `true:1b` loaded, q 5 runs `{[a] $[a;true;false]}` (#372).
+    let elsewhere = |key: &str| ws.defined_elsewhere(key, &Default::default());
     for m in
         re!(r"\b(return|else|elif|elseif|true|false|None|break|continue)\b").captures_iter(code)
     {
@@ -4246,6 +4251,8 @@ pub fn lint_selecting(
             || after.starts_with('.')
             || declared.contains(name)
             || in_query
+            || elsewhere(name)
+            || elsewhere(&format!(".q.{name}"))
         {
             continue;
         }

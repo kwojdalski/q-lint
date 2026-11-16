@@ -95,6 +95,46 @@ fn a_root_name_is_not_the_dotted_name_of_the_same_spelling() {
 }
 
 #[test]
+fn a_root_name_reaches_a_definition_in_dot_q() {
+    // q 5: after `.q.answer:{42}`, `answer[]` is 42 - q searches `.q` from
+    // every context (#358). A root definition of its own still comes first.
+    let g = graph(
+        &[("lib.q", ".q.answer:{42}\n"), ("main.q", "r:answer[]\n")],
+        false,
+    );
+    assert_eq!(deps(&g, "main.q"), ["lib.q"]);
+    let g = graph(
+        &[
+            ("lib.q", ".q.answer:{42}\n"),
+            ("root.q", "answer:{1}\n"),
+            ("main.q", "r:answer[]\n"),
+        ],
+        false,
+    );
+    assert_eq!(deps(&g, "main.q"), ["root.q"]);
+}
+
+#[test]
+fn a_functional_amend_by_name_defines_the_global() {
+    // q 5: `@[`.;`foo;:;1]` and `.[`bar;();:;2]` each create the global (#362).
+    let g = graph(
+        &[
+            ("lib.q", "@[`.;`foo;:;1]\n.[`bar;();:;2]\n"),
+            ("main.q", "r:foo+bar\n"),
+        ],
+        false,
+    );
+    assert_eq!(deps(&g, "main.q"), ["lib.q"]);
+}
+
+#[test]
+fn a_parenthesised_set_target_is_a_definition() {
+    // q 5: `(`e) set 5` defines `e` (#363).
+    let g = graph(&[("lib.q", "(`e) set 5\n"), ("main.q", "r:e\n")], false);
+    assert_eq!(deps(&g, "main.q"), ["lib.q"]);
+}
+
+#[test]
 fn system_d_and_a_commented_backslash_d_open_a_context() {
     // q 5: after `system "d .b"` and `k:{1}`, `key `.b` is ``k; after
     // `\d .c  / note` and `m:1`, `key `.c` is ``m.
@@ -232,6 +272,7 @@ fn literal_targets_and_file_access_are_not_dynamic() {
 set[`.a.c;2]
 (`:data/t) set t
 (hsym `t) set t
+`p`q set' 1 2
 x:get `:data/t
 y:get hsym `t
 z:get `.a.b
@@ -241,7 +282,7 @@ u:{value \"1\"}
 ";
     let g = graph(&[("static.q", source)], false);
     // Only the string handed to `value` is out of reach.
-    assert_eq!(kinds(&g, "static.q"), [(10, "value")]);
+    assert_eq!(kinds(&g, "static.q"), [(11, "value")]);
 }
 
 #[test]
