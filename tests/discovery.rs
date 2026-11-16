@@ -878,3 +878,31 @@ fn an_empty_exclude_pattern_is_refused_rather_than_excluding_everything() {
         );
     }
 }
+
+#[test]
+fn a_stdin_filename_that_is_not_q_is_refused_as_the_file_would_be() {
+    // `qlinter kk.k` refuses k source; `--stdin-filename kk.k` linted it as
+    // q (#421).
+    use std::io::Write;
+    let dir = tempfile::tempdir().unwrap();
+    for name in ["kk.k", "notes.txt"] {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .current_dir(dir.path())
+            .args(["--isolated", "--stdin-filename", name])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(b"f:{x==y}\n")
+            .unwrap();
+        let out = child.wait_with_output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(2), "{name}: {stderr}");
+        assert!(stderr.contains("not a .q file"), "{stderr}");
+    }
+}

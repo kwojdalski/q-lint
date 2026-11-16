@@ -410,6 +410,12 @@ fn run(args: Args) -> Result<u8, String> {
             return Err("Stdin (- or --stdin-filename) must be the only input".into());
         }
         let name = args.stdin_filename.unwrap_or_else(|| "<stdin>".into());
+        // Only q source, however the path arrived: a `.k` buffer is a
+        // different language, refused as the same file named outright is
+        // (#421).
+        if name != "<stdin>" && !is_q_source(Path::new(&name)) {
+            return Err(format!("--stdin-filename {name}: not a .q file"));
+        }
         if name == "<stdin>" || !args.force_exclude || !policy.force_excluded(Path::new(&name))? {
             // Read as bytes and decoded as a file is: a buffer that is not
             // UTF-8 is still q, and is linted but never fixed (#417).
