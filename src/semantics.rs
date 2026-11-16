@@ -357,10 +357,14 @@ fn top_level_statements<'a>(code: &'a str, raw: &str) -> Vec<(usize, &'a str)> {
             statements.push((start, &code[start..at]));
             start = at;
         }
-        if depth == 0 && line.starts_with('\\') {
+        if depth == 0 && crate::system_command(&raw[at..]) {
             at += line.len();
             start = at;
             continue;
+        }
+        // A `\t` line's statement is the expression after the command (#312).
+        if depth == 0 && start == at {
+            start += crate::timed_prefix(&raw[at..]);
         }
         for (i, b) in line.bytes().enumerate() {
             match b {
@@ -514,6 +518,12 @@ fn string_items(s: &str) -> Option<usize> {
 /// one, `system "d ",x`, names a context no reading can know, and the
 /// context in force is left as it was rather than guessed.
 pub(crate) fn opens(code_line: &str, raw_line: &str) -> Option<String> {
+    // q reads `q)\d .foo` as `\d .foo`; `views` has blanked the prompt (#315).
+    let code_line = if raw_line.starts_with("q)") {
+        &code_line[2..]
+    } else {
+        code_line
+    };
     let ns = if let Some(m) =
         re!(r"^\\d[ \t]+(\.[\w.]*)(?:[ \t]+/.*)?[ \t\r]*\n?$").captures(code_line)
     {
@@ -544,7 +554,8 @@ fn scopes(code: &str, raw: &str) -> (Vec<Scope>, Vec<(usize, String)>) {
             namespace = ns;
         }
         namespaces.push((offset, namespace.clone()));
-        if line.starts_with('\\') {
+        // `\t` and `\ts` run their argument as q, lambdas and all (#312).
+        if crate::system_command(&raw[offset..]) {
             offset += line.len();
             continue;
         }
@@ -920,8 +931,11 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
     let mut view = code.as_bytes().to_vec();
     let mut offset = 0;
     for line in code.split_inclusive('\n') {
-        if line.starts_with('\\') {
+        if crate::system_command(&raw[offset..]) {
             blank(&mut view[offset..offset + line.len()]);
+        } else {
+            // `\t`'s argument is an expression; only the command is not (#312).
+            blank(&mut view[offset..offset + crate::timed_prefix(&raw[offset..])]);
         }
         offset += line.len();
     }

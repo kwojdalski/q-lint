@@ -123,6 +123,16 @@ a:1
 (((
 b:1+`a
 
+=== clean profile: general | and so does \\ with a comment or anything after a blank (q 5 stops at each, #322)
+show 0
+\\ / bye
+x:1==2
+
+=== QE004 profile: general | while a lone \ with a comment after it does not end the script (q 5 runs on, #322)
+show 0
+\ / end
+x:1==2
+
 === QE001 | an indented \\ is not the exit line
 a:1
 f:{
@@ -149,6 +159,13 @@ a:-
 a:1+2
 
 `b
+
+=== QP001 profile: uqf | a bare slash between a statement and its continuation still opens a block comment (q 5: a is 3, #318)
+a:1+
+/
+note
+\
+  2
 
 === QP001 profile: uqf | an indented line inside a block comment continues nothing, so the bare slash is its own line
 f:{x}

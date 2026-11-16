@@ -21,6 +21,14 @@ s:"abc
 
  def"
 
+=== clean profile: general | q skips a #! first line, so it is no q (q 5 loads both and prints 1, #314)
+#!/opt/kx/2024.02.30/q -p 12:60
+show 1
+
+=== QE001 profile: general | the line after it is the first statement, and a bracket it leaves open is still refused (#314)
+#!/usr/bin/env q
+f:{
+
 === clean | a brace inside a string is not a delimiter
 s:"{[desc]}"
 
@@ -38,6 +46,24 @@ f:{[y]
 === QE001 profile: general | so does any line at column 0 inside a bracket (q 5: '()
 a:(1;
 2)
+
+=== QE001 profile: general | a column-0 line that opens with a string starts a statement too (q 5: '{, #307)
+f:{[a]
+"abc",a}
+
+=== QE001 profile: general | and so does a `q)` line (q 5: '{, #307)
+f:{[a]
+q)a+1}
+
+=== QE001 profile: general | and a foreign `k)` line (q 5: '{, #307)
+f:{[a]
+k)1
+  a+1}
+
+=== clean profile: general | a column-0 comment line inside a bracket starts nothing (q 5: 2)
+f:{[a]
+/ c
+  a+1}
 
 === clean profile: general | indented closers, and a column-0 comment inside a lambda (q 5: f 1 is 2)
 f:{[y]
@@ -120,6 +146,11 @@ a+=1
 \d .
 \echo "a==b"
 
+=== clean | nor is the file \l loads, which keeps its name in the code (q 5 loads qe4/a==b.q, #319)
+\l qe4/a==b.q
+\l /tmp/a&&b.q
+q)\l qe4/a==b.q
+
 === clean | an indented line after a command is the command's argument (q 5 loads this, ctx .foo)
 a:0
 \d .foo
@@ -130,6 +161,14 @@ a:0
 a:0
 \t 1+
   x==y
+
+=== clean profile: general | a bracket a \t line opens closes on its continuation (q 5: 0, 0, then 6, #308)
+a:0
+\t {a::x+
+  y}[1;2]
+\t do[3;a+:1
+  ]
+show a
 
 === clean | the q spellings
 if[a=1;2];if[a<>1;2];r:a and b;a+:1;if[a>=1;2]

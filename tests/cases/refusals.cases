@@ -167,6 +167,19 @@ f:{-x}
 a:-x
 b:1*-x
 
+=== QE008 profile: general | in the expression a \t line times (q 5: '-, #310)
+x:1 2
+\t r:-x
+
+=== QE008 profile: general | and at the start of that expression (q 5: '-, #310)
+x:1 2
+\t -x
+
+=== clean profile: general | while a \t expression that subtracts runs (q 5: 0 and 0 752)
+x:1 2
+\t 1-x
+\ts:3 x-1
+
 === QE008 profile: general | monadic minus on a dotted name, which is not a number (q 5: -.foo.x and -.z.p are '-)
 a:-.foo.x
 b:-.z.p
@@ -347,6 +360,12 @@ w:select from t where
 
 === QE010 profile: general | an integer type with a fraction (q 5: parse "1.5j" is '1.5)
 a:1.5j
+
+=== QE010 profile: general | in the expression a \t line times (q 5: '1.5, #311)
+\t x:1.5j
+
+=== clean profile: general | while a command's argument is no number (q 5 loads \l 1.5j/t.q as a path, #311)
+\l 1.5j/t.q
 
 === QE010 profile: general | a suffix on an item that is not the last (q 5: '3i)
 c:3i 4j
@@ -573,6 +592,9 @@ e:"C"$2024.01.01
 === QT028 profile: general | an assignment in parentheses in a where phrase (q 5: 'type)
 r:select from t where (a:1)
 
+=== clean profile: general | a colon straight after where assigns no name (q 5 parses the phrase as (:;1), #320)
+r:select from t where:1
+
 === QT028 profile: general | an assignment heading a later sub-phrase (q 5: 'type)
 r:select from t where a=1,b:2
 
@@ -591,6 +613,14 @@ r:select from t where {b:x;b>0} a
 \l /data/2024.02.30/t
 \cd /x/12:60
 \l /h/2023.1m
+
+=== clean profile: general | and so is the argument of a q)-prefixed command (q 5 loads q)\l 2024.02.30/t.q, #316)
+q)\l 2024.02.30/t.q
+q)\cd /x/12:60
+show loaded
+
+=== QE006 profile: general | while q)\t runs its expression as q (q 5: '2024.02.30, #316)
+q)\t 2024.02.30
 
 === QE006 profile: general | but the expression after \t is q (#198)
 \t 2024.02.30

@@ -276,6 +276,12 @@ f:{x}
 \d .
 .foo.f[1;2]
 
+=== QA012 profile: general | and under q)\d, which q reads as \d (q 5: .foo.f[1;2] is 'rank, #315)
+q)\d .foo
+f:{x}
+q)\d .
+show .foo.f[1;2]
+
 === QA012 | or by its short name inside the namespace
 \d .foo
 f:{x}

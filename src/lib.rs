@@ -2044,6 +2044,24 @@ struct Views {
     /// comment, or `\\` - begins. q reads nothing after it.
     script_end: Option<usize>,
 }
+/// How much of a source line is a `\t` or `\ts` command, with any `q)`
+/// before it, 0 on any other line: these run their argument as q, so after
+/// the prefix the line is q (#222).
+///
+/// A question about the source, not about `code`: `views` blanks the `q)`
+/// that q 5 reads `q)\t 1+1` and `q)\l f.q` past (#316), and in `code`
+/// such a line looks like an indented one.
+pub(crate) fn timed_prefix(line: &str) -> usize {
+    let prompt = if line.starts_with("q)") { 2 } else { 0 };
+    re!(r"^\\ts?(?::\d+)?[ \t]")
+        .find(&line[prompt..])
+        .map_or(0, |m| prompt + m.end())
+}
+/// Whether a source line is a system command whose argument is no q: any
+/// but `\t` and `\ts`, with or without a `q)` before it.
+pub(crate) fn system_command(line: &str) -> bool {
+    line.strip_prefix("q)").unwrap_or(line).starts_with('\\') && timed_prefix(line) == 0
+}
 fn views(source: &str) -> Views {
     // A BOM is QE005's to report; the rest of the file is read as q would
     // read it without one, so `<BOM>/ note` is still a comment line (#221).
@@ -2076,7 +2094,15 @@ fn views(source: &str) -> Views {
     // undefined. Comments, blank lines and system commands are not
     // statements, so none of them ends that stretch.
     let mut statement = false;
-    for line in source.split_inclusive('\n') {
+    // q skips a first line that starts `#!`, the interpreter line of an
+    // executable script: q 5 loads `#!/usr/bin/env q` + `show 1` and prints
+    // 1. Only the first - a later one is refused with '# (#314).
+    if source.starts_with("#!") {
+        offset = source.find('\n').map_or(source.len(), |p| p + 1);
+        blank(&mut comments[..offset]);
+        blank(&mut code[..offset]);
+    }
+    for line in source[offset..].split_inclusive('\n') {
         let end = offset + line.len();
         let stripped = line.trim_end_matches(['\r', '\n', ' ', '\t']);
         // A string runs on over indented and blank lines only. A line at
@@ -2095,7 +2121,20 @@ fn views(source: &str) -> Views {
             }
             statement = !stripped.is_empty() && !line.starts_with(['\\', '/', ' ', '\t']);
         }
-        if foreign && !(line.starts_with([' ', '\t']) || stripped.is_empty()) {
+        // A column-0 comment line ends nothing an indented line continues
+        // after it: q 5 hands `t)a`, `/ note`, `  b` to `.t.e` as one
+        // statement, and `t)a`, `/ note`, `c:1` as `t)a` and then q (#317).
+        let carried = || {
+            source[end..]
+                .lines()
+                .find(|l| !l.trim().is_empty() && !l.starts_with('/'))
+                .is_some_and(|l| l.starts_with([' ', '\t']))
+        };
+        if foreign
+            && !(line.starts_with([' ', '\t'])
+                || stripped.is_empty()
+                || line.starts_with('/') && carried())
+        {
             foreign = false;
         }
         if !ended && block == 0 && string.is_none() {
@@ -2123,14 +2162,17 @@ fn views(source: &str) -> Views {
         // `\t` and `\ts` run their argument as q, so its strings and its
         // comment are masked as on any other line (#222); the command itself
         // stays, for the rules that read system commands.
-        let timed = (string.is_none())
-            .then(|| re!(r"^\\ts?(?::\d+)?[ \t]").find(line))
-            .flatten()
-            .map_or(0, |m| m.end());
+        let timed = if string.is_none() {
+            timed_prefix(line)
+        } else {
+            0
+        };
+        // q reads `q)\l f.q` as `\l f.q` (#316).
+        let command = string.is_none() && line[prefix..].starts_with('\\');
         // q appends an indented line to the command before it, so after any
         // command but `\t` the lines that follow are its argument, not q:
         // `\d .foo` + `  b:1` defines no `b` anywhere (#223).
-        if !ended && block == 0 && string.is_none() && line.starts_with('\\') {
+        if !ended && block == 0 && command {
             statement = timed > 0;
         }
         if ended || block > 0 {
@@ -2147,8 +2189,12 @@ fn views(source: &str) -> Views {
                     open_block = None;
                 }
             }
-        } else if string.is_none() && matches!(stripped, "/" | "\\" | "\\\\") {
-            // `\\` exits q, so a script ends there as it does at a lone `\`.
+        } else if string.is_none()
+            && (matches!(stripped, "/" | "\\" | "\\\\") || re!(r"^\\\\[ \t]").is_match(stripped))
+        {
+            // `\\` exits q, so a script ends there as it does at a lone `\`
+            // - whatever follows it past a blank: q 5 stops at `\\ / bye`
+            // and `\\ 3` (#322), and runs on past `\ / end`.
             block = usize::from(stripped == "/");
             ended = stripped != "/";
             if ended {
@@ -2159,19 +2205,22 @@ fn views(source: &str) -> Views {
             }
             blank(&mut comments[offset..end]);
             blank(&mut code[offset..end]);
-        } else if timed == 0 && string.is_none() && line.starts_with('\\') {
+        } else if timed == 0 && command {
             // Any other command's argument is no q: a path, a name, or text
             // for the shell. Only what the rules read of it is kept - the
             // command, and the namespace or file of `\d` and `\l`.
-            let kept = re!(r"^\\(?:[dl][ \t]+[^ \t\r\n]*|[^ \t\r\n]*)")
-                .find(line)
-                .map_or(0, |m| m.end());
+            let kept = prefix
+                + re!(r"^\\(?:[dl][ \t]+[^ \t\r\n]*|[^ \t\r\n]*)")
+                    .find(&line[prefix..])
+                    .map_or(0, |m| m.end());
+            blank(&mut comments[offset..offset + prefix]);
+            blank(&mut code[offset..offset + prefix]);
             blank(&mut comments[offset + kept..end]);
             blank(&mut code[offset + kept..end]);
         } else {
             blank(&mut comments[offset..offset + prefix]);
             blank(&mut code[offset..offset + prefix]);
-            let mut i = offset + prefix + timed;
+            let mut i = offset + prefix.max(timed);
             while i < end {
                 let c = bytes[i];
                 if string.is_some() {
@@ -2616,9 +2665,18 @@ fn structure(path: &str, source: &str, v: &Views) -> Option<Finding> {
     for line in v.code.split_inclusive('\n') {
         // A line at column 0 starts a statement, so a bracket still open
         // there never closes: q 5 refuses `f:{[y]` + `  y+1` + `}` with '{
-        // (#225). A comment line is blank here and does not count.
+        // (#225). A comment line is blank here and does not count. Column 0
+        // is read from the source: `views` blanks a line's opening quote, its
+        // `q)` prefix and a whole `k)` line, and each still starts a
+        // statement - q 5 refuses `f:{[a]` + `"abc",a}` with '{ (#307).
+        let raw = &source[offset..offset + line.len()];
+        let lead = if raw.starts_with("q)") { 2 } else { 0 };
+        let begins = raw.starts_with(|ch: char| !ch.is_ascii_whitespace())
+            && (!line.trim().is_empty()
+                || v.string_starts.binary_search(&(offset + lead)).is_ok()
+                || v.foreign_offsets.binary_search(&offset).is_ok());
         if let Some(&(c, at)) = stack.last()
-            && line.starts_with(|ch: char| !ch.is_ascii_whitespace())
+            && begins
         {
             let row = source[..offset].matches('\n').count() + 1;
             return Some(make(
@@ -2630,7 +2688,9 @@ fn structure(path: &str, source: &str, v: &Views) -> Option<Finding> {
                 ),
             ));
         }
-        if !line.starts_with('\\') {
+        // A command's argument is no q, but `\t`'s is, and its brackets
+        // close on the lines that continue it (#308).
+        if !system_command(raw) {
             for (i, c) in line.bytes().enumerate() {
                 if let Some(p) = b"([{ ".iter().position(|&a| a == c).filter(|&p| p < 3) {
                     stack.push((b")]}"[p], offset + i));
@@ -3955,6 +4015,11 @@ pub fn lint_selecting(
         if re!(r"^(?:[/\\']:?)+\[").is_match(&code[m.end()..]) {
             continue;
         }
+        // The file `\l` loads and the context `\d` opens stay in `code`,
+        // and are no q: q 5 loads `\l qe4/a==b.q` (#319).
+        if system_command(&source[code[..m.start()].rfind('\n').map_or(0, |p| p + 1)..]) {
+            continue;
+        }
         let long = !matches!(m.as_str(), "==" | "!=" | "&&" | "||" | "+=" | "-=" | "*=");
         if long
             && code[m.end()..]
@@ -4845,26 +4910,43 @@ pub fn lint_selecting(
         }
         // Not after the end of the script: q 5 reads nothing past a lone `\`.
         // Only a `/` alone in column 0 opens one, as the masker reads it: an
-        // indented `/` line is not a block comment.
-        if uqf
-            && source[..start].rfind('\n').map_or(0, |at| at + 1) == start
-            && first_raw.trim_end_matches([' ', '\t', '\r', '\n']) == "/"
-            && !v.foreign_offsets.contains(&offset)
-            && v.script_end.is_none_or(|end| offset < end)
-        {
-            add(offset, "QP001", "Bare slash opens a block comment".into());
+        // indented `/` line is not a block comment. Any line of the group:
+        // a block between `a:1+` and its continuation `  2` folds into the
+        // statement, and still opens a block comment (#318).
+        let mut at = start;
+        for physical in raw.split_inclusive('\n') {
+            if uqf
+                && physical.trim_end_matches([' ', '\t', '\r', '\n']) == "/"
+                && !v.foreign_offsets.contains(&at)
+                && v.script_end.is_none_or(|end| at < end)
+            {
+                add(at, "QP001", "Bare slash opens a block comment".into());
+            }
+            at += physical.len();
         }
-        if first.trim().starts_with("\\d ") {
-            namespace = first.trim() != "\\d .";
+        // Any blanks between `\d` and its argument, as q 5 reads them:
+        // `\d<TAB>.foo` switches and `\d  .` returns to the root (#313).
+        if let Some(d) = re!(r"^\\d[ \t]+(\S*)$").captures(first.trim()) {
+            namespace = &d[1] != ".";
             // Point at the directive that is still in force at EOF, so the
             // finding names the namespace the file actually ends in.
             offset += line.len();
             continue;
         }
-        if first.trim_start().starts_with('\\') {
+        if system_command(first_raw) {
             offset += line.len();
             continue;
         }
+        // `\t` and `\ts` run the rest of their line as q, so the statement
+        // rules read it, with the command blanked (#309).
+        let timed = timed_prefix(first_raw);
+        let untimed;
+        let line = if timed > 0 {
+            untimed = format!("{}{}", " ".repeat(timed), &line[timed..]);
+            untimed.as_str()
+        } else {
+            line
+        };
         // `system "d .ns"` switches as `\d .ns` does (#261).
         if let Some(ns) = semantics::opens(first, first_raw) {
             namespace = !ns.is_empty();
