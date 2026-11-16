@@ -3995,6 +3995,9 @@ pub fn lint_selecting(
     for m in re!(r"`([A-Za-z][A-Za-z0-9_]*)").captures_iter(code) {
         declared.insert(m.get(1).unwrap().as_str());
     }
+    // Another file of the workspace may define it too: with lib.q's
+    // `true:1b` loaded, q 5 runs `{[a] $[a;true;false]}` (#372).
+    let elsewhere = |key: &str| ws.defined_elsewhere(key, &Default::default());
     for m in
         re!(r"\b(return|else|elif|elseif|true|false|None|break|continue)\b").captures_iter(code)
     {
@@ -4007,6 +4010,8 @@ pub fn lint_selecting(
             || after.starts_with('.')
             || declared.contains(name)
             || in_query
+            || elsewhere(name)
+            || elsewhere(&format!(".q.{name}"))
         {
             continue;
         }

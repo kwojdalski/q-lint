@@ -345,6 +345,18 @@ fn a_workspace_keys_root_and_dotted_names_apart() {
 }
 
 #[test]
+fn a_foreign_keyword_another_workspace_file_defines_is_a_name() {
+    use q_lint_rs::{Workspace, index, lint, lint_in};
+    // q 5, with lib.q's definitions loaded: `(f 1b;f 0b)` is 10b (#372).
+    let main = "f:{[a] $[a;true;false]}\n";
+    assert!(codes(&lint(main, "main.q", Profile::General)).contains(&"QF015"));
+    let mut ws = Workspace::default();
+    ws.add(&index("true:1b\nfalse:0b\n"));
+    ws.add(&index(main));
+    assert!(!codes(&lint_in(main, "main.q", Profile::General, &ws)).contains(&"QF015"));
+}
+
+#[test]
 fn a_name_another_file_also_assigns_is_not_tracked_in_a_lambda() {
     use q_lint_rs::{Workspace, index, lint, lint_in};
     // Alone, a is the atom 1 and indexing it is 'type. With another file
