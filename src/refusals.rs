@@ -814,7 +814,7 @@ fn continued(rest: &str) -> &str {
 
 /// Whether the token at `i` starts an expression, so that whatever it applies
 /// to is applied by juxtaposition: the start of a line or statement, after
-/// `:`, an opening bracket or a signature, or after another glyph.
+/// `:`, an opening bracket, a signature or a qSQL word, or after another glyph.
 fn opens_expression(comments: &str, i: usize, line_start: usize) -> bool {
     // Pairs QE004 already reports, or that are one operator.
     const PAIRS: &[&str] = &[
@@ -839,9 +839,23 @@ fn opens_expression(comments: &str, i: usize, line_start: usize) -> bool {
             .bytes()
             .next_back()
             .is_some_and(|p| !p.is_ascii_whitespace());
+    // A qSQL word opens an expression too: q 5 refuses `select -a from t`
+    // and `select from t where -a<0` with '-. `by` and `where` only inside a
+    // query - `where -a` alone is the where function minus a (#355). A `_`
+    // written against the word continues it: `exec_rows` is a name.
+    let glued = before.len() == i && comments.as_bytes().get(i) == Some(&b'_');
+    let qsql = !glued
+        && re!(r"(?:select|exec|update|delete|by|where)$")
+            .find(before)
+            .is_some_and(|m| {
+                boundary(comments, m.start())
+                    && (!matches!(m.as_str(), "by" | "where")
+                        || crate::in_qsql_phrase(comments, m.end()))
+            });
     i == line_start
         || before.is_empty()
         || iterator
+        || qsql
         || before.ends_with([':', '(', '[', '{', ';'])
         || re!(r"\{\s*\[[A-Za-z0-9_; \t]*\]$").is_match(before)
         || (before

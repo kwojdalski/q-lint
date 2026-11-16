@@ -249,6 +249,18 @@ t:([]a:3 1 2;b:4 5 6)
 r:select[til[2];>a] from t
 s:select[(1;2);>a] from t
 
+=== QE008 profile: general | a qSQL word opens an expression (q 5: parse of each is '-, #355)
+t:([]a:1 2;b:3 4)
+r1:select -a from t
+r2:select from t where -a<0
+r3:select a by -b from t
+
+=== clean profile: general | where and by outside a query are a function and a name, and a _ against a qSQL word continues a name (q 5 parses each)
+a:1 2
+r:where -a
+x:by -a
+f:{n:1; exec_rows:sum a; select_n:n; exec_rows+select_n}
+
 === QE008 profile: general | after an iterator the next glyph is monadic (q 5: x,\-y, x,'-y, x,/-y and x' -y are '-)
 b:x,\-y
 c:x,'-y
