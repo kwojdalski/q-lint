@@ -4866,8 +4866,10 @@ pub fn lint_selecting(
         {
             add(offset, "QP001", "Bare slash opens a block comment".into());
         }
-        if first.trim().starts_with("\\d ") {
-            namespace = first.trim() != "\\d .";
+        // Any blanks between `\d` and its argument, as q 5 reads them:
+        // `\d<TAB>.foo` switches and `\d  .` returns to the root (#313).
+        if let Some(d) = re!(r"^\\d[ \t]+(\S*)$").captures(first.trim()) {
+            namespace = &d[1] != ".";
             // Point at the directive that is still in force at EOF, so the
             // finding names the namespace the file actually ends in.
             offset += line.len();

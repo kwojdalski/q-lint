@@ -34,6 +34,16 @@ f:{[a_] a_}
 count:{[t] 42}
 \d .
 
+=== QF004 profile: general | a tab after \d switches too (q 5: count:{x} is 'assign in .foo, #313)
+\d	.foo
+count:{x}
+\d .
+
+=== QF012 | and \d with two spaces before the dot returns to the root (q 5: g:1 lands in `., #313)
+\d .foo
+\d  .
+count:1
+
 === QF004 profile: general | and after system "d .ns", the same switch (q 5: count:1 is 'assign)
 system "d .ns"
 count:1
