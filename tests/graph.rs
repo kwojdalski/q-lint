@@ -272,6 +272,7 @@ fn literal_targets_and_file_access_are_not_dynamic() {
 set[`.a.c;2]
 (`:data/t) set t
 (hsym `t) set t
+`p`q set' 1 2
 x:get `:data/t
 y:get hsym `t
 z:get `.a.b
@@ -281,7 +282,7 @@ u:{value \"1\"}
 ";
     let g = graph(&[("static.q", source)], false);
     // Only the string handed to `value` is out of reach.
-    assert_eq!(kinds(&g, "static.q"), [(10, "value")]);
+    assert_eq!(kinds(&g, "static.q"), [(11, "value")]);
 }
 
 #[test]

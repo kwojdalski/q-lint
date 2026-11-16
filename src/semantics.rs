@@ -1295,7 +1295,9 @@ fn dynamic(raw: &str, view: &str, call_time: &[(usize, &'static str)]) -> Vec<cr
                     .map_or("", |t| t.as_str())
             }
         };
-        let literal = re!(r"^\(?\s*`[A-Za-z0-9_.:/]*\s*\)?$").is_match(target);
+        // A symbol list too, for `` `a`b set' 1 2 ``, which q 5 runs as two
+        // literal definitions (#364).
+        let literal = re!(r"^\(?\s*(?:`[A-Za-z0-9_.:/]*)+\s*\)?$").is_match(target);
         if !literal && !target.contains("hsym") && !target.contains("`:") {
             push(m.start(), "set");
         }
