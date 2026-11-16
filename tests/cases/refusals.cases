@@ -41,6 +41,21 @@ p60:60
 t12:12:30
 x10:12:05
 
+=== clean profile: general | a minute's seconds are never read (#449; q 5: 23:59, 12:00, 12:00 12:00 for each)
+a:23:59:60u
+b:12:00:1u
+c:12:00:60 12:00u
+d:12:00:1 12:00u
+
+=== QE006 profile: general | a minute suffix on an earlier item makes no minute vector (#449; q 5: '23:59:60u)
+e:23:59:60u 12:00
+
+=== QE006 profile: general | a minute past 59 with the minute suffix (#449; q 5: '12:60:00)
+f:12:60:00u
+
+=== QE006 profile: general | a second's seconds are read (#449; q 5: '12:00:60)
+g:12:00:60v
+
 === QE006 | a minute past 59 in a digit-form minute (q 5: parse "1260u" is '1260)
 a:1260u
 

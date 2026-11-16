@@ -134,6 +134,27 @@ fn days_in(year: u32, month: u32) -> u32 {
     }
 }
 
+/// The letter after the last item of the vector literal whose token runs
+/// through `end`, if it ends in one: `u` for `23:59:60u` and for
+/// `12:00:60 12:00u` alike, since that suffix types every item.
+fn vector_suffix(unsym: &str, end: usize) -> Option<char> {
+    let token_end = |from: usize| {
+        from + unsym[from..]
+            .find(|c: char| !(c.is_ascii_alphanumeric() || ".:".contains(c)))
+            .unwrap_or(unsym.len() - from)
+    };
+    let mut at = token_end(end);
+    loop {
+        let rest = &unsym[at..];
+        let gap = rest.len() - rest.trim_start_matches([' ', '\t']).len();
+        if gap == 0 || !rest[gap..].starts_with(|c: char| c.is_ascii_digit()) {
+            break;
+        }
+        at = token_end(at + gap);
+    }
+    unsym[..at].chars().last().filter(char::is_ascii_alphabetic)
+}
+
 /// QE006. A date, month or time q refuses at parse. A date or month that does not exist:
 /// `2024.02.30` is '2024.02.30 and `2024.13m` is '2024.13; leap years are
 /// Gregorian, so 2000.02.29 parses and 1900.02.29 does not.
@@ -162,7 +183,11 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
             m.get(i)
                 .map_or(0, |f: regex::Match| f.as_str().parse::<u32>().unwrap())
         };
-        if field(2) > 59 || field(3) > 59 {
+        // A minute's seconds are never read: q 5 takes `23:59:60u` as 23:59,
+        // and `12:00:60 12:00u` too, while `23:59:60u 12:00` is a vector of
+        // seconds and '23:59:60u.
+        let minute = vector_suffix(unsym, whole.end()) == Some('u');
+        if field(2) > 59 || (field(3) > 59 && !minute) {
             out.push(Finding::at(
                 path,
                 source,
@@ -272,7 +297,10 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
         }
         let text = &unsym[whole.start()..whole.end() + tail];
         if m[3].len() >= 2 {
-            if m[4].len() == 1 || m.get(5).is_some_and(|s| s.as_str().len() == 1) {
+            if m[4].len() == 1
+                || (m.get(5).is_some_and(|s| s.as_str().len() == 1)
+                    && vector_suffix(unsym, whole.end()) != Some('u'))
+            {
                 refuse(
                     whole.start(),
                     text,
