@@ -2439,6 +2439,12 @@ pub fn check(
             if !boundary(code, at) {
                 continue;
             }
+            // Inside a symbol, which runs on over `:` - the `f` of the hsym
+            // `` `:f 0: x `` or of `` `a:f 1 `` is part of that one token, not
+            // a name after an assignment (#400).
+            if unsymbolled.as_bytes()[at] != code.as_bytes()[at] {
+                continue;
+            }
             // A system command is a directive, not an expression: the name
             // after `\d` is not an argument and `\l` was ruled out above.
             let line_start = code[..at].rfind('\n').map_or(0, |i| i + 1);
