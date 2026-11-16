@@ -782,7 +782,7 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
             continue;
         }
         let before = comments[..i].trim_end_matches([' ', '\t', '\r', '\n']);
-        if !opens_expression(comments, i, line_start) {
+        if !opens_expression(code, source, comments, i, line_start) {
             continue;
         }
         // A symbol ending in `:` or `/` is still an operand: `` `:,srvr ``
@@ -828,7 +828,7 @@ fn continued(rest: &str) -> &str {
 /// Whether the token at `i` starts an expression, so that whatever it applies
 /// to is applied by juxtaposition: the start of a line or statement, after
 /// `:`, an opening bracket or a signature, or after another glyph.
-fn opens_expression(comments: &str, i: usize, line_start: usize) -> bool {
+fn opens_expression(code: &str, raw: &str, comments: &str, i: usize, line_start: usize) -> bool {
     // Pairs QE004 already reports, or that are one operator.
     const PAIRS: &[&str] = &[
         "<>", "<=", ">=", "==", "!=", "&&", "||", "+=", "-=", "*=", "->", "=>", "**", "=<", "<<",
@@ -856,7 +856,7 @@ fn opens_expression(comments: &str, i: usize, line_start: usize) -> bool {
         || before.is_empty()
         || iterator
         || before.ends_with([':', '(', '[', '{', ';'])
-        || re!(r"\{\s*\[[A-Za-z0-9_; \t]*\]$").is_match(before)
+        || after_signature(code, raw, before.len())
         || (before
             .bytes()
             .next_back()
@@ -926,7 +926,7 @@ fn juxtaposed_derived(
             || (next.starts_with('-')
                 && next[1..]
                     .starts_with(|ch: char| ch.is_ascii_alphabetic() || "`(\"".contains(ch)));
-        if !operand || !opens_expression(&view, start, line_start) {
+        if !operand || !opens_expression(code, source, &view, start, line_start) {
             continue;
         }
         let iter = &view[iterator..m.end()];

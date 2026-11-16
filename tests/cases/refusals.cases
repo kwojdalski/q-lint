@@ -244,6 +244,11 @@ d:x,/-y
 e:+/-x
 f:count'-x
 
+=== QE008 QE009 profile: general | right after a pattern or a typed signature (q 5: parse each is '/ or '-)
+f:{[(a;b)] +/a}
+g:{[a:`j] -a}
+h:{[a:`j] +/a}
+
 === clean profile: general | a file handle ending in : or / is the left operand (q 5: `:,`s1.err`s1.std is `:`s1.err`s1.std)
 srvr:`s1.err`s1.std
 x:`:,srvr
