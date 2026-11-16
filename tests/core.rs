@@ -248,6 +248,26 @@ fn scope_analysis_does_not_scale_quadratically() {
     );
 }
 
+/// The functions `semantic_tokens` colours in `text`, as the names it spans.
+fn functions(text: &str) -> Vec<&str> {
+    q_lint_rs::semantic_tokens(text)
+        .into_iter()
+        .filter(|t| t.2 == q_lint_rs::TokenKind::Function)
+        .map(|(at, len, _)| &text[at..at + len])
+        .collect()
+}
+
+#[test]
+fn a_column_named_like_a_function_does_not_uncolour_it() {
+    // q 5: after `t:([] f:1 2)` or a qSQL alias `f:`, `f 1` is still 2 and
+    // `type f` 100h - a column assigns nothing (#365).
+    assert_eq!(functions("f:{x+1}\nr:f 1\nt:([] f:1 2)\n"), ["f"]);
+    assert_eq!(
+        functions("f:{x+1}\nr:f 1\nu:select f:2*a from ([]a:1 2)\n"),
+        ["f"]
+    );
+}
+
 #[test]
 fn semantic_tokens_survive_a_half_typed_file() {
     // The language server asks for tokens on every keystroke, so it sees

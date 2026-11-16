@@ -682,32 +682,24 @@ pub fn tokens(code: &str, raw: &str, ws: &crate::Workspace) -> Vec<(usize, usize
     let name = re!(r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*");
     // A global is a function when every assignment to it is a lambda that
     // the statement ends with - `f:{...} each x` assigns a list, as QA012's
-    // rank table already knows.
-    let mut lambda: HashMap<String, bool> = HashMap::new();
-    for m in
-        re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*(::?)").captures_iter(code)
-    {
-        let whole = m.get(0).unwrap();
-        let rest = &code[whole.end()..];
-        // `/:` and `\:` are iterators, and `a::` inside a lambda is global.
-        if !boundary(code, whole.start()) || rest.starts_with(['/', '\\', '\'']) {
-            continue;
-        }
-        let local =
-            scope_at(&scopes, whole.start()).is_some() && &m[2] == ":" && !m[1].starts_with('.');
-        if local {
-            continue;
-        }
-        let brace = whole.end() + (rest.len() - rest.trim_start().len());
-        let is_lambda = code.as_bytes().get(brace) == Some(&b'{')
-            && matching(code, brace, b'{', b'}').is_some_and(|end| {
-                let after = code[end..].trim_start_matches([' ', '\t']);
-                after.is_empty() || after.starts_with([';', '\n', '\r'])
+    // rank table already knows. The writes are `global_writes`', which a
+    // table column or a qSQL alias is not: after `t:([] f:1 2)`, q 5's `f`
+    // is still the lambda, type 100h (#365).
+    let lambda: HashMap<String, bool> = global_writes(code, &scopes, &namespaces, qualify, true)
+        .into_iter()
+        .map(|(key, at)| {
+            let every = at.iter().all(|&at| {
+                let rest = code[at..].trim_start();
+                let brace = code.len() - rest.len();
+                rest.starts_with('{')
+                    && matching(code, brace, b'{', b'}').is_some_and(|end| {
+                        let after = code[end..].trim_start_matches([' ', '\t']);
+                        after.is_empty() || after.starts_with([';', '\n', '\r'])
+                    })
             });
-        let key = qualify(&m[1], ns_at(whole.start()));
-        let entry = lambda.entry(key).or_insert(true);
-        *entry &= is_lambda;
-    }
+            (key, every)
+        })
+        .collect();
     let mut out = vec![];
     for m in name.find_iter(code) {
         if !boundary(code, m.start()) {
