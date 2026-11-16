@@ -99,6 +99,10 @@ select from t where sym~`x
 === clean | each-left match is the row-wise form
 select from t where sym~/:`x
 
+=== clean | each-both match is row-wise too (q 5 returns the rows "ab" and "ef", #347)
+t:([]s:("ab";"cd";"ef"))
+r:select from t where s~'("ab";"xx";"ef")
+
 === clean | equality in a filter is row-wise
 select from t where sym=`x
 

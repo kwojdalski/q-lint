@@ -5231,9 +5231,9 @@ pub fn lint_selecting(
                 // `~` matches whole operands, so a filter gets one boolean for
                 // the entire table where it wanted one per row: a 'type error
                 // against a column, or worse, a single-row result against a
-                // scalar. `~/:` and `~\:` supply the row-wise forms and are
-                // left alone, which the trailing character class encodes: any
-                // next byte that is not those two slash forms is the trap.
+                // scalar. `~/:`, `~\:` and each-both `~'` supply the row-wise
+                // forms and are left alone, which the trailing character class
+                // encodes: any other next byte is the trap (#347).
                 //
                 // Only the filter itself is scanned. A `~` elsewhere on the
                 // line is a different expression that happens to share it -
@@ -5246,7 +5246,7 @@ pub fn lint_selecting(
                 // column semantics this rule is about, so one has to be named
                 // to its left before the phrase counts as a filter at all.
                 let qsql = re!(r"\b(?:select|exec|update|delete)\b").is_match(&line[..w.start()]);
-                for m in re!(r"~[^/\\]").find_iter(&phrase).filter(|_| qsql) {
+                for m in re!(r"~[^/\\']").find_iter(&phrase).filter(|_| qsql) {
                     add(
                         offset + w.end() + m.start(),
                         "QB005",
