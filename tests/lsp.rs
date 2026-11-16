@@ -1527,6 +1527,47 @@ fn the_workspace_index_can_be_turned_off_or_narrowed() {
 }
 
 #[test]
+fn the_workspace_index_reads_the_directories_the_cli_walk_reads() {
+    // `qlinter .` skips build/ and what `exclude` names, and walks a
+    // dot-directory; the index used a list of its own (#420).
+    let dir = tempfile::tempdir().unwrap();
+    for (file, text) in [
+        ("build/defs.q", "inbuild:5\n"),
+        ("gen/defs.q", "ingen:5\n"),
+        (".hidden/defs.q", "inhidden:5\n"),
+        ("venv/defs.q", "invenv:5\n"),
+    ] {
+        let path = dir.path().join(file);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    std::fs::write(
+        dir.path().join("qlinter.toml"),
+        "profile = \"uqf\"\nextend-exclude = [\"gen\"]\n",
+    )
+    .unwrap();
+    let app = file_uri(&dir.path().join("app.q"));
+    let (mut server, _) = start_with_options(dir.path(), &["--lsp"], json!({}), Some(dir.path()));
+    let undefined = |server: &mut Server, name: &str| {
+        server.open(&app, &format!("n:{name}\n"));
+        codes_of(&server.diagnostics_for(&app)).contains(&"QF018".to_string())
+    };
+    assert!(undefined(&mut server, "inbuild"));
+    assert!(undefined(&mut server, "ingen"));
+    assert!(!undefined(&mut server, "inhidden"));
+    assert!(!undefined(&mut server, "invenv"));
+    // A file changed on disk is held to the same: build/ stays out.
+    let late = dir.path().join("build/late.q");
+    std::fs::write(&late, "late:5\n").unwrap();
+    server.send(
+        json!({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles",
+        "params":{"changes":[{"uri":file_uri(&late),"type":1}]}}),
+    );
+    assert!(undefined(&mut server, "late"));
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
 fn neither_a_watched_change_nor_a_close_indexes_what_the_settings_leave_out() {
     // With the index off or vendor/ excluded, a change on disk to vendor/lib.q
     // must not put its `cfg` in the index, nor may closing a file keep what

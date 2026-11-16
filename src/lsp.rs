@@ -121,9 +121,6 @@ struct Index {
     enabled: bool,
 }
 
-/// Directories a workspace scan does not enter: version control, build
-/// output and dependency trees hold no q the user is writing.
-const SKIPPED: [&str; 5] = ["node_modules", "target", "__pycache__", "venv", "dist"];
 /// A bound on the scan, so a workspace opened at `/` cannot stall the server.
 const MAX_FILES: usize = 20_000;
 const MAX_BYTES: u64 = 4 << 20;
@@ -160,8 +157,8 @@ impl Index {
     /// does not, is gone, or is unreadable. A closed document and a file
     /// changed on disk both come here, so neither can put back what the
     /// settings left out of the scan.
-    fn reload(&mut self, path: &str) -> bool {
-        if self.covers(path) {
+    fn reload(&mut self, path: &str, policy: &Policy) -> bool {
+        if self.covers(path, policy) {
             self.read(path)
         } else {
             self.remove(path)
@@ -177,20 +174,19 @@ impl Index {
 
     /// Whether the scan would have read `path`: index on, under a workspace
     /// folder, in no directory the scan skips, not excluded, and not too big.
-    fn covers(&self, path: &str) -> bool {
+    fn covers(&self, path: &str, policy: &Policy) -> bool {
         let path = std::path::Path::new(path);
         self.enabled
             && is_q_path(&path.to_string_lossy())
             && std::fs::metadata(path).is_ok_and(|m| m.len() <= MAX_BYTES)
             && self.roots.iter().any(|root| {
                 let root = std::path::Path::new(root);
-                path.strip_prefix(root).is_ok_and(|relative| {
-                    let mut dirs = relative.parent().into_iter().flat_map(|p| p.iter());
-                    !dirs.any(|d| {
-                        let d = d.to_string_lossy();
-                        d.starts_with('.') || SKIPPED.contains(&&*d)
-                    }) && !self.excluded(root, path)
-                })
+                path.starts_with(root)
+                    && !path
+                        .ancestors()
+                        .take_while(|p| *p != root)
+                        .any(|p| skipped(policy, p))
+                    && !self.excluded(root, path)
             })
     }
 
@@ -212,7 +208,7 @@ impl Index {
 
     /// Every `.q` file under the workspace folders, less those `exclude`
     /// names; a directory it names is not entered at all.
-    fn scan(&mut self) {
+    fn scan(&mut self, policy: &Policy) {
         let mut stack: Vec<(std::path::PathBuf, std::path::PathBuf)> =
             self.roots.iter().map(|r| (r.into(), r.into())).collect();
         let mut seen = 0;
@@ -226,13 +222,11 @@ impl Index {
                 let Ok(kind) = entry.file_type() else {
                     continue;
                 };
-                if self.excluded(&root, &path) {
+                if self.excluded(&root, &path) || skipped(policy, &path) {
                     continue;
                 }
                 if kind.is_dir() {
-                    if !name.starts_with('.') && !SKIPPED.contains(&name.as_str()) {
-                        stack.push((root.clone(), path));
-                    }
+                    stack.push((root.clone(), path));
                 } else if kind.is_file()
                     && is_q_path(&name)
                     && entry.metadata().is_ok_and(|m| m.len() <= MAX_BYTES)
@@ -246,6 +240,14 @@ impl Index {
             }
         }
     }
+}
+
+/// Whether the CLI's walk passes `path` by: what the configuration's
+/// `exclude` names, by default the usual tool and build directories. The
+/// index reads what `qlinter .` would, so the editor's undefined names are
+/// the terminal's (#420).
+fn skipped(policy: &Policy, path: &std::path::Path) -> bool {
+    policy.excluded(path).unwrap_or(false)
 }
 
 /// The folders an `initialize` request names, as filesystem paths: its
@@ -532,7 +534,7 @@ pub fn serve(
                 idx.enabled = opts.index;
                 idx.exclude = opts.index_exclude.clone();
                 if idx.enabled {
-                    idx.scan();
+                    idx.scan(policy);
                 }
                 for (uri, text) in &docs {
                     idx.set(&path_of(uri), index(text));
@@ -610,7 +612,7 @@ pub fn serve(
                 docs.remove(&uri);
                 // The buffer is gone, so the disk is the authority again - and
                 // unsaved definitions it held no longer define anything.
-                if idx.reload(&path_of(&uri)) {
+                if idx.reload(&path_of(&uri), policy) {
                     relint(writer, &docs, &idx, None, policy, &opts)?;
                 }
                 // An empty list, not silence: diagnostics are owned by the
@@ -675,7 +677,7 @@ pub fn serve(
                     changed |= if change["type"].as_i64() == Some(3) {
                         idx.remove(&path)
                     } else {
-                        idx.reload(&path)
+                        idx.reload(&path, policy)
                     };
                 }
                 if changed {
