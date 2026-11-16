@@ -3081,8 +3081,14 @@ fn named_values(
         let negative = op.as_str() == "-"
             && comments[..op.start()].ends_with(char::is_whitespace)
             && !comments[op.end()..].starts_with(char::is_whitespace);
+        // Nor the digits after a temporal literal's `:` - the `00` of
+        // `12:00` - which q 5 adds to a char: `12:00+"a"` is 13:37 (#468).
+        let temporal = l.as_str().starts_with(|c: char| c.is_ascii_digit())
+            && comments[..l.start()].ends_with(':')
+            && comments[..l.start() - 1].ends_with(|c: char| c.is_ascii_digit());
         if code.get(op.range()) != Some(op.as_str())
             || negative
+            || temporal
             || !boundary(comments, l.start())
             || !operand_ends(code, r.end())
         {
