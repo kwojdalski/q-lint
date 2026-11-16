@@ -97,8 +97,19 @@ f:{[a b] a}
 === QF007 | an index in the parameter slot
 f:{[a[0]] a}
 
-=== QF007 | an assignment in the parameter slot
-f:{[a:1] a}
+=== clean profile: general | a q 5 typed slot takes any function or type after the colon (q 5: k["xy";2] is (`xy;2), and each lambda takes two) (#437)
+k:{[a:`$;b] (a;b)}
+r:k["xy";2]
+s:{[a:`$;b] (a;b)}["xy";2]
+t:{[a:{x+1};b] (a;b)}[1;2]
+u:{[a:neg;b] (a;b)}[1;2]
+v:{[a:`int$;b] (a;b)}[1;2]
+w:{[a:-7h;b] a}
+m:{[a:1] a}
+
+=== QA012 profile: general | and its rank is its slot count (q 5: k["xy";2;3] is 'rank) (#437)
+k:{[a:`$;b] (a;b)}
+r:k["xy";2;3]
 
 === clean profile: general | a string literal is a pattern too, which the rules see only as blanks (q 5: {["ab"] 5} "ab" is 5)
 f:{["s"] 1}

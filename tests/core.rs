@@ -123,6 +123,10 @@ fn parameter_lists_agree_with_q() {
         "f:{[(a;b);c] a+b+c}",
         "f:{[([k;v])] k+v}",
         "f:{[([]a;b:c)] a}",
+        // A typed slot takes any function or type after the colon (#437).
+        "f:{[a:1] a}",
+        "f:{[a:neg;b] a}",
+        "f:{[a:{x+1};b] a}",
     ] {
         let found = lint(source, "t.q", Profile::Style);
         assert!(
@@ -139,7 +143,6 @@ fn parameter_lists_agree_with_q() {
         ("f:{[count x] 1}", "'nyi"),
         ("f:{[a b] a}", "start of the body"),
         ("f:{[a[0]] a}", "start of the body"),
-        ("f:{[a:1] a}", "start of the body"),
         ("f:{[(a b)] 1}", "start of the body"),
     ] {
         let found = lint(source, "t.q", Profile::Style);

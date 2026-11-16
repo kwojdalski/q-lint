@@ -2618,12 +2618,12 @@ fn first_outside(s: &str, byte: u8) -> Option<usize> {
 /// the pattern on the left, checked against the type on the right when the
 /// lambda is called. q 5 defines the lambda whatever the type names, and
 /// with no type at all (`{[a:] a}`), which is also how a masked `a:"j"`
-/// reads (#304).
+/// reads (#304). Any function after the colon is applied to the argument -
+/// `{[a:`$;b] (a;b)}["xy";2]` is (`xy;2), and `a:neg`, `a:{x+1}`, `a:-7h`
+/// and `a:0h` each define a slot (#437) - so the slot is typed at its first
+/// colon outside brackets.
 fn typed_at(s: &str) -> Option<usize> {
-    re!(r#":\s*(?:(?:`[A-Za-z0-9_.:]*)+|"(?:[^"\\]|\\.)*")?\s*$"#)
-        .find(s)
-        .map(|m| m.start())
-        .filter(|&at| at > 0)
+    first_outside(s, b':').filter(|&at| at > 0)
 }
 /// The names a parameter slot binds: the slot itself when it is a name, and
 /// for a pattern every name in it but the keys and columns it matches on -
@@ -3168,9 +3168,10 @@ pub fn lint_selecting(
                 // What q 5 does with it depends on what the slots hold. An
                 // operator in one, or a builtin applied - `{[a+b] x}`,
                 // `{[count x] 1}`, `{[tables[]] 1}` - is 'nyi where the
-                // lambda is defined. A literal is a pattern and never gets
-                // here (`is_pattern`). Anything else - `{[a b] a}`,
-                // `{[a:1] a}` - runs the brackets as the start of the body.
+                // lambda is defined. A literal or a typed slot (`{[a:1] a}`)
+                // is a pattern and never gets here (`is_pattern`). Anything
+                // else - `{[a b] a}` - runs the brackets as the start of the
+                // body.
                 let applies_builtin = |s: &str| {
                     re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(s).any(|w| {
                         RESERVED.iter().any(|n| n == w.as_str())

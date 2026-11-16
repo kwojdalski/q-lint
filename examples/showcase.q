@@ -66,12 +66,6 @@ apply:{[scale] f:{[v] v*scale}; f each 1 2 3}
 / expect-next: QF007
 broken:{[tables[]] x+1}
 
-/ QF007: accepted where it is defined, and worse for it: the brackets are
-/ body text, not the `n` it appears to declare, and q 5 refuses every call
-/ with 'type.
-/ expect-next: QF007
-scaled:{[n:1] n*2}
-
 / QF007: two names without a separator is one bracket expression, not two
 / parameters. The lambda is rank 1, taking x.
 / expect-next: QF007
