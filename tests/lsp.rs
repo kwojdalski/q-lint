@@ -1098,6 +1098,32 @@ fn editing_a_base_the_configuration_extends_relints_the_open_documents() {
 }
 
 #[test]
+fn a_localhost_file_uri_finds_the_project_configuration() {
+    // RFC 8089: file://localhost/p is file:///p. The authority was read as
+    // the first directory, so no configuration was found (#425).
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join(".qlinter.toml"),
+        "[lint]\nignore = [\"QE004\"]\n",
+    )
+    .unwrap();
+    let plain = file_uri(&dir.path().join("a.q"));
+    let local = plain.replacen("file://", "file://localhost", 1);
+    assert!(local.starts_with("file://localhost/"), "{local}");
+    let mut server = Server::spawn(dir.path(), &["--lsp"]);
+    server.initialize();
+    for uri in [&plain, &local] {
+        server.open(uri, "a:1==2\n");
+        assert_eq!(
+            codes_of(&server.diagnostics_for(uri)),
+            Vec::<String>::new(),
+            "{uri}"
+        );
+    }
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
 fn every_rule_with_a_fix_offers_it_in_the_editor() {
     // Not only the three the server first knew: a fix `--fix` applies, and
     // one only a person should accept, are both offered here.

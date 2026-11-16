@@ -1179,8 +1179,12 @@ fn path_of(uri: &str) -> String {
         return uri.to_string();
     };
     // Strip the empty authority: file:///a/b has a host of "", so the path
-    // begins at the third slash.
-    let rest = rest.strip_prefix('/').unwrap_or(rest);
+    // begins at the third slash. RFC 8089 makes `localhost` the same host,
+    // and file://localhost/a/b the same file (#425).
+    let rest = match rest.get(..10) {
+        Some(host) if host.eq_ignore_ascii_case("localhost/") => &rest[10..],
+        _ => rest.strip_prefix('/').unwrap_or(rest),
+    };
     // Percent-escapes decode to bytes, and the bytes are UTF-8: `%C3%A9` is
     // one `é`. Pushing each byte as a char read it as two Latin-1 ones, and
     // a workspace under a folder with a non-ASCII name lost every path.
@@ -1248,6 +1252,8 @@ mod tests {
     fn percent_escapes_decode_and_other_schemes_pass_through() {
         assert_eq!(path_of("file:///tmp/a%20b/c.q"), "/tmp/a b/c.q");
         assert_eq!(path_of("file:///tmp/plain.q"), "/tmp/plain.q");
+        assert_eq!(path_of("file://localhost/tmp/plain.q"), "/tmp/plain.q");
+        assert_eq!(path_of("file://LOCALHOST/c%3A/a.q"), "c:/a.q");
         assert_eq!(path_of("untitled:Untitled-1"), "untitled:Untitled-1");
         // Escapes are UTF-8 bytes, not one character each.
         assert_eq!(path_of("file:///Users/Jos%C3%A9/a.q"), "/Users/José/a.q");
