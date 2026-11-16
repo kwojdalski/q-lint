@@ -721,6 +721,11 @@ f:{[u] select from t where a in (exec b from u), d>0}
 t:([]a:1 2 3)
 r:(select from t where a>1),select from t where d>0
 
+=== clean profile: general | an hsym or colon symbol in a where phrase names no column (q 5 runs both, #341)
+t:([]f:`:db/trade`:db/quote;n:1 2)
+r1:select from t where f=`:db/quote
+r2:select from t where f in `a`b:zz`:hdb
+
 === clean | columns it has, the virtual index, and a lambda's own names
 t:([]a:1 2;b:3 4)
 r1:select from t where a>0, b<3

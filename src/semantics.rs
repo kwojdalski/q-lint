@@ -3095,6 +3095,11 @@ fn named_values(
             }
         }
         flat.truncate(end);
+        // A symbol names no column, and runs on through `:` and `/`:
+        // `` `:db/quote `` and `` `a:zz `` are one symbol each (#341).
+        for sym in re!(r"`[A-Za-z0-9_./:]*").find_iter(&phrase.as_str()[..end]) {
+            flat[sym.range()].fill(b' ');
+        }
         from = phrase.start() + end.max(1);
         let flat = String::from_utf8_lossy(&flat).into_owned();
         let table = m.get(1).unwrap();
