@@ -87,6 +87,10 @@ f:{[x] x~x}; g:{exec b from t}
 === clean | comparing two different columns
 select from t where a=b
 
+=== clean profile: general | a class starting with ] holds the ] and the * (q 5: "]x" like "[]*]*" and "ax" like "[^]*]*" are 1b) (#436)
+r:"]x" like "[]*]*"
+s:"ax" like "[^]*]*"
+
 === QB002 | two wildcards, not a leading and trailing pair (q 5: "abc" like "a*b*" is 'nyi)
 select from t where sym like "a*b*"
 

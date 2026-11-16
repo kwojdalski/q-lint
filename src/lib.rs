@@ -5933,9 +5933,14 @@ pub fn lint_selecting(
         {
             // q 5 takes one `*` anywhere, or a leading and a trailing pair:
             // "abc" like "a*c" and "*b*" are 1b, "a*b*" and "**" are 'nyi.
-            // A `*` inside `[...]` is a literal star.
+            // A `*` inside `[...]` is a literal star, and a `]` straight after
+            // the `[` (or `[^`) is a member, not the end: q 5 `"*x" like
+            // "[]*]*"` is 1b (#436).
             let pat = &m[1];
-            let stars = re!(r"\[[^\]]*\]").replace_all(pat, "").matches('*').count();
+            let stars = re!(r"\[\^?\]?[^\]]*\]")
+                .replace_all(pat, "")
+                .matches('*')
+                .count();
             let ends = pat.len() > 2 && pat.starts_with('*') && pat.ends_with('*');
             if stars > 2 || (stars == 2 && !ends) {
                 add(
