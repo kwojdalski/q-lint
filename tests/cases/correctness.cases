@@ -17,6 +17,14 @@ r4:select a by 2 xbar a from t
 r5:select a by xbar[2;a] from t
 r6:f:{select b,a by a from x where b>3}
 
+=== QB021 profile: general | a select continued onto an indented line, or across a lambda's lines (q 5: 'dup names for cols/groups a)
+t:([]a:1 2;b:3 4)
+r:select a
+  by a from t
+f:{[t] r:select a,b
+  by a
+  from t; r}
+
 === clean | a renamed column, another first name, or exec and update (q 5: each runs)
 c1:select m:max a by a from t
 c2:select b*a by a from t
