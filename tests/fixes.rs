@@ -406,6 +406,25 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
             "s:select from t where (a=\"x\") and b=0",
             false,
         ),
+        // Nor does a bracket argument, or a derived function (#405).
+        (
+            "QB006",
+            "r:select from t where a=f[b;b] and b=0",
+            "r:select from t where (a=f[b;b]) and b=0",
+            false,
+        ),
+        (
+            "QB006",
+            "r:select from t where a=f'[b;b] and b=0",
+            "r:select from t where (a=f'[b;b]) and b=0",
+            false,
+        ),
+        (
+            "QB006",
+            "r:select from t where a=(+/)[b] and b=0",
+            "r:select from t where (a=(+/)[b]) and b=0",
+            false,
+        ),
         // The argument ends at `from` after a drop too (#340).
         (
             "QP006",

@@ -970,7 +970,7 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                     }
                 })
                 .collect();
-            let groups = swallowed_comparisons(&flat_filter(&filled));
+            let groups = swallowed_comparisons(&grouped(&filled));
             if groups.is_empty() {
                 return None;
             }
@@ -1966,6 +1966,18 @@ pub(crate) fn flat_filter(phrase: &str) -> String {
         i += 1;
     }
     String::from_utf8(flat).unwrap()
+}
+/// `flat_filter` with each blanked bracket and its text filled with `_`
+/// rather than blanks, so an operand's extent keeps them: `a=f[b;b] and b=0`
+/// groups as `(a=f[b;b])`, not `(a=f)[b;b]` (#405). A group still hides its
+/// own `and`/`or` and comparisons, now as `_`.
+fn grouped(phrase: &str) -> String {
+    let filled = flat_filter(phrase)
+        .bytes()
+        .zip(phrase.bytes())
+        .map(|(f, p)| if f != p && p != b' ' { b'_' } else { f })
+        .collect();
+    String::from_utf8(filled).unwrap()
 }
 /// Whether `before` ends in a character that would fuse with a token
 /// written straight after it: `a` and `b` are `ab`, `1` and `b` are `1b`.
@@ -5724,7 +5736,8 @@ pub fn lint_selecting(
                     // Quote the reader's own clause where it is short enough
                     // to read: `a=1 and b=3` reads as `a=(1 and b=3)`.
                     let raw_phrase = &raw[w.end()..];
-                    let example = swallowed_comparisons(&phrase).first().and_then(|&(a, b)| {
+                    let groups = grouped(&line[w.end()..w.end() + phrase.len()]);
+                    let example = swallowed_comparisons(&groups).first().and_then(|&(a, b)| {
                         let operand = &raw_phrase[a..b];
                         let op = re!(r"<>|<=|>=|[<>=]").find_iter(operand).last()?;
                         let clause_end = phrase[b..].find(',').map_or(phrase.len(), |c| b + c);
