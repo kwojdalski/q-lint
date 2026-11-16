@@ -509,6 +509,20 @@ f:1e3e
 === QE010 profile: general | a letter that is no type (q 5: '1y)
 m:1y
 
+=== QE010 profile: general | eight digits and a d that make no date (#444; q 5: '20001301)
+d:20001301d
+
+=== QE010 profile: general | a d on fewer digits than a date's eight (#444; q 5: '2000010)
+d:2000010d
+
+=== QE010 profile: general | a yyyymmdd date before another item (#444; q 5: '20000101d)
+d:20000101d 1
+
+=== clean profile: general | eight digits and a d are a date, yyyymmdd (#444; q 5: 2000.01.01, 2000.02.29)
+d:20000101d
+e:20000229d
+f:20000101 20000102d
+
 === QE010 profile: general | dots that make no date (q 5: '2023.1.1 and '1.2.3)
 g:2023.1.1
 

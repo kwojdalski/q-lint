@@ -121,6 +121,19 @@ fn command_argument(source: &str, at: usize) -> bool {
     crate::system_command(&source[line..])
 }
 
+/// How many days q 5 gives `month` of `year`, or 0 where it has no such
+/// month. Leap years are Gregorian: 2000.02.29 parses and 1900.02.29 does not.
+fn days_in(year: u32, month: u32) -> u32 {
+    let leap = year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => 0,
+    }
+}
+
 /// QE006. A date, month or time q refuses at parse. A date or month that does not exist:
 /// `2024.02.30` is '2024.02.30 and `2024.13m` is '2024.13; leap years are
 /// Gregorian, so 2000.02.29 parses and 1900.02.29 does not.
@@ -314,14 +327,7 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
         }
         let (year, month): (u32, u32) = (m[1].parse().unwrap(), m[2].parse().unwrap());
         let day: Option<u32> = m.get(3).map(|d| d.as_str().parse().unwrap());
-        let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
-        let days = match month {
-            1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-            4 | 6 | 9 | 11 => 30,
-            2 if leap => 29,
-            2 => 28,
-            _ => 0,
-        };
+        let days = days_in(year, month);
         let impossible = days == 0 || day.is_some_and(|d| d == 0 || d > days);
         if impossible {
             out.push(Finding::at(
@@ -1182,7 +1188,18 @@ fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Find
                 Some(format!(
                     "`{text}`: a byte literal is written with hex digits only"
                 ))
-            } else if re!(r"^\d+[adgklmoqrwyz]$").is_match(text)
+            } else if let Some(d) = re!(r"^(\d{4})(\d\d)(\d\d)d$").captures(text)
+                && {
+                    let field = |i: usize| d[i].parse::<u32>().unwrap();
+                    field(3) == 0 || field(3) > days_in(field(1), field(2))
+                }
+            {
+                // Eight digits and a `d` are a date, yyyymmdd: q 5 reads
+                // `20000101d` as 2000.01.01 and refuses `20001301d`, while
+                // `1d` and `2000010d` are no date at all.
+                Some(format!("`{text}` is no date (yyyymmdd)"))
+            } else if (re!(r"^\d+[adgklmoqrwyz]$").is_match(text)
+                && !re!(r"^\d{8}d$").is_match(text))
                 || (re!(r"^\d+x$").is_match(text) && text != "0x")
             {
                 Some(format!(
