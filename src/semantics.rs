@@ -518,6 +518,12 @@ fn string_items(s: &str) -> Option<usize> {
 /// one, `system "d ",x`, names a context no reading can know, and the
 /// context in force is left as it was rather than guessed.
 pub(crate) fn opens(code_line: &str, raw_line: &str) -> Option<String> {
+    // q reads `q)\d .foo` as `\d .foo`; `views` has blanked the prompt (#315).
+    let code_line = if raw_line.starts_with("q)") {
+        &code_line[2..]
+    } else {
+        code_line
+    };
     let ns = if let Some(m) =
         re!(r"^\\d[ \t]+(\.[\w.]*)(?:[ \t]+/.*)?[ \t\r]*\n?$").captures(code_line)
     {
