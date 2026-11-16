@@ -222,7 +222,7 @@ pub(crate) fn argument_end(code: &str, comments: &str, raw: &str, from: usize) -
             // indented; an unindented one starts a new expression. This is
             // the rule the dictionary-literal check in `semantics` uses, and
             // the two have to agree about where an expression stops.
-            b'\n' if depth == 0 && !code[at + 1..].starts_with([' ', '\t']) => break,
+            b'\n' if depth == 0 && !continues_after(comments, raw, at) => break,
             _ => {}
         }
         at += 1;
@@ -233,6 +233,19 @@ pub(crate) fn argument_end(code: &str, comments: &str, raw: &str, from: usize) -
         end -= 1;
     }
     (end > from).then_some(end)
+}
+
+/// Whether the statement running through the newline at `at` goes on: the
+/// next line with code on it is indented. Indentation is read on the raw
+/// source - `code` blanks a string's opening quote, so a line that starts
+/// with a string looks indented there (#399). A blank or comment-only line
+/// is skipped, as q 5 skips it: `a:1+`, a column-0 comment, `  2` is 3.
+fn continues_after(comments: &str, raw: &str, at: usize) -> bool {
+    comments[at + 1..]
+        .split_inclusive('\n')
+        .zip(raw[at + 1..].split_inclusive('\n'))
+        .find(|(line, _)| !line.trim().is_empty())
+        .is_some_and(|(_, line)| line.starts_with([' ', '\t']))
 }
 
 /// The qSQL words, in the order a phrase writes them.

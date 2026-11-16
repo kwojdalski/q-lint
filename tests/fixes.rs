@@ -413,6 +413,16 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
             "g:{x+1};r:1_select c:g[a] from t",
             true,
         ),
+        // A line at the left margin that starts with a string is a new
+        // statement, even though `code` blanks its quote to a space (#399).
+        ("QP006", "f:{x}\nr:f 1\n\"s\"", "f:{x}\nr:f[1]\n\"s\"", true),
+        (
+            "QP006",
+            "f:{x}\nr:f 1\n/ c\n\"s\"",
+            "f:{x}\nr:f[1]\n/ c\n\"s\"",
+            true,
+        ),
+        ("QP005", "r:a*b+c\n\"s\"", "r:a*(b+c)\n\"s\"", true),
         ("QR004", "r:{x+1} each 1 2 3", "r:1 2 3+1", false),
         ("QR004", "r:{2-x} each a,b", "r:2-a,b", false),
         ("QR004", "r:{x%2} each a,b", "r:(a,b)%2", false),
