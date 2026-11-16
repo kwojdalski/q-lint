@@ -720,12 +720,12 @@ pub fn tokens(code: &str, raw: &str, ws: &crate::Workspace) -> Vec<(usize, usize
         }
         let name = qualify(m.as_str(), ns_at(m.start()));
         // This file's own assignment decides; failing one, another file's
-        // lambda of that name is the function a call here reaches.
+        // lambda of that name is the function a call here reaches - that
+        // name and no other: q 5 does not fall back from `\d .ns` to a root
+        // `f`, and `m:f 2` there is 'f (#366).
         let function = match lambda.get(&name) {
             Some(&is_lambda) => is_lambda,
-            None => {
-                ws.is_lambda(&resolved(m.as_str(), ns_at(m.start()))) || ws.is_lambda(m.as_str())
-            }
+            None => ws.is_lambda(&resolved(m.as_str(), ns_at(m.start()))),
         };
         if function {
             out.push((m.start(), m.len(), TokenKind::Function));

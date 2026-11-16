@@ -269,6 +269,22 @@ fn a_column_named_like_a_function_does_not_uncolour_it() {
 }
 
 #[test]
+fn a_root_lambda_is_not_coloured_inside_a_context() {
+    use q_lint_rs::{TokenKind, Workspace, index, semantic_tokens_in};
+    // q 5: under `\\d .ns`, `m:f 2` is 'f - no fallback to the root `f`,
+    // which the workspace, holding this file too, defines (#366).
+    let text = "f:{x+1}\n\\d .ns\nm:f 2\n";
+    let mut ws = Workspace::default();
+    ws.add(&index(text));
+    ws.add(&index("g:{x}\n"));
+    assert!(
+        !semantic_tokens_in(text, &ws)
+            .iter()
+            .any(|t| t.2 == TokenKind::Function)
+    );
+}
+
+#[test]
 fn semantic_tokens_survive_a_half_typed_file() {
     // The language server asks for tokens on every keystroke, so it sees
     // every unbalanced state a file passes through on the way to being
