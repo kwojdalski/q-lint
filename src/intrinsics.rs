@@ -446,10 +446,16 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
                     "This numeric aggregate or scan rejects this literal",
                 ))
             }
-            "sum" | "prd" | "avg" | "med" | "dev" | "var" | "sums" | "prds" | "deltas"
-            | "ratios"
+            // `sdev`, `svar`, `all` and `any` of a symbol, atom or vector,
+            // too (q 5: 'type), though each takes a string.
+            "sum" | "prd" | "avg" | "med" | "dev" | "var" | "sdev" | "svar" | "all" | "any"
+            | "sums" | "prds" | "deltas" | "ratios"
                 if (value.kind == Kind::Symbol
-                    && (value.vector || matches!(name, "avg" | "med" | "dev" | "var")))
+                    && (value.vector
+                        || matches!(
+                            name,
+                            "avg" | "med" | "dev" | "var" | "sdev" | "svar" | "all" | "any"
+                        )))
                     // A string is numeric to `sum`, `avg` and `ratios`, and
                     // not to these four.
                     || (value.kind == Kind::Char

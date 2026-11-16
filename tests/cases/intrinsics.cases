@@ -584,3 +584,21 @@ h:max `
 i:`$"a"
 k:`a`b!`
 o:`$x-`$y
+
+=== QT010 profile: general | sdev of a symbol vector (#456; q 5: 'type)
+a:sdev `a`b
+
+=== QT010 profile: general | svar of a symbol vector (#456; q 5: 'type)
+b:svar `a`b
+
+=== QT010 profile: general | all of a symbol vector (#456; q 5: 'type)
+c:all `a`b
+
+=== QT010 profile: general | any of a symbol atom (#456; q 5: 'type)
+d:any `a
+
+=== clean profile: general | each takes a string (#456; q 5: 0.7071068, 0.5, 1b, 1b)
+f:sdev "ab"
+g:svar "ab"
+h:all "ab"
+i:any "ab"
