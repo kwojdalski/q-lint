@@ -853,3 +853,28 @@ fn stdin_that_is_not_utf8_is_linted_as_the_same_file_on_disk_is() {
     assert_eq!(found[0]["code"], "QE004");
     assert_eq!(found[0]["line"], 2);
 }
+
+#[test]
+fn an_empty_exclude_pattern_is_refused_rather_than_excluding_everything() {
+    // `exclude = [""]` in a file is refused; `--exclude ''`, as from an
+    // unset `$EXTRA`, linted nothing and exited 0 (#418).
+    let repo = Repo::new();
+    repo.write("a.q", SOURCE);
+    for args in [
+        &["--isolated", "--exclude", "", "."][..],
+        &["--isolated", "--exclude", "  ", "."][..],
+        &["analyze", "graph", "--exclude", "", "."][..],
+    ] {
+        let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .current_dir(repo.path("."))
+            .args(args)
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(2), "{args:?}: {stderr}");
+        assert!(
+            stderr.contains("--exclude: a pattern must not be empty"),
+            "{stderr}"
+        );
+    }
+}

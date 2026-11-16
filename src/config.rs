@@ -669,6 +669,11 @@ pub struct Glob {
 /// no `/` in it at all, also matches the name anywhere below it.
 pub fn rooted(root: &Path, text: &str) -> Result<Glob, String> {
     let trimmed = text.trim();
+    // An empty pattern names its root, so it would exclude everything: a
+    // script's `--exclude "$UNSET"` would lint nothing and pass (#418).
+    if trimmed.is_empty() {
+        return Err("a pattern must not be empty".into());
+    }
     let written = Path::new(trimmed);
     if written.is_absolute() {
         // The literal part of the path is resolved the way the files are,
