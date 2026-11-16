@@ -67,6 +67,9 @@ PATTERNS = {
     "{[a: `long] a}": 1,
     "{[a:`j;b] a+b}": 2,
     "{[(a;b):`j] a+b}": 1,
+    # A dictionary pattern with its keys in front (#431).
+    "{[`a`b!(a;b);c] a+b+c}": 2,
+    "{[k!(a;b)] k}": 1,
 }
 
 

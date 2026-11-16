@@ -112,6 +112,17 @@ j:{[([k:p;v])] p+v}
 k:{[([]a;b:c)] a,c}
 r:(f[(1;2);3]; g[`k`v!1 2]; h[1;2])
 
+=== clean profile: general | a dictionary pattern with its keys in front binds too (q 5: f[`a`b!1 2;3] is 6, g[`a`b!1 2;3] is 1, h[`x`y!1 2] is `x`y) (#431)
+f:{[`a`b!(a;b);c] a+b+c}
+r:f[`a`b!1 2;3]
+s:{[(`a`b)!(x;y);c] x}[`a`b!1 2;3]
+h:{[k!(a;b)] k}
+u:{["ab"!(a;b)] a}
+
+=== QA012 profile: general | and takes one slot of the signature (q 5: f[`a`b!1 2;3;4] is 'rank) (#431)
+f:{[`a`b!(a;b);c] a+b+c}
+r:f[`a`b!1 2;3;4]
+
 === QA012 profile: general | the rank of a pattern lambda is its slot count (q 5: f[(1;2);3;4] is 'rank)
 f:{[(a;b);c] a+b+c}
 r:f[(1;2);3;4]

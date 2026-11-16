@@ -2544,9 +2544,9 @@ fn is_param_name(s: &str) -> bool {
 
 /// A q 5 parameter pattern, as written in code with strings blanked: a name,
 /// a literal (a string is blank here, so an empty item inside a pattern
-/// passes), a list of patterns `(a;b)`, a dictionary `([k;v:p])` or a table
-/// `([]a;b:c)`. q 5 binds each and fails a call only where the argument does
-/// not match: `{[(a;b);c] a+b+c}[(1;2);3]` is 6, `{[([k;v])] k+v}[`k`v!1 2]`
+/// passes), a list of patterns `(a;b)`, a dictionary `([k;v:p])` or
+/// `` `a`b!(a;b) ``, or a table `([]a;b:c)`. q 5 binds each and fails a call
+/// only where the argument does not match: `{[(a;b);c] a+b+c}[(1;2);3]` is 6, `{[([k;v])] k+v}[`k`v!1 2]`
 /// is 3, `{[1;b] b}[1;2]` is 2 and `{[1] 5} 2` is 'match (#298). `_` is
 /// none: `{[(a;_)] a}[(1;2)]` is 'match, as `{[_] 1}[1]` is.
 pub(crate) fn is_pattern(s: &str, nested: bool) -> bool {
@@ -2554,7 +2554,7 @@ pub(crate) fn is_pattern(s: &str, nested: bool) -> bool {
     let items = |inner: &str, item: &dyn Fn(&str) -> bool| {
         inner.trim().is_empty() || slots(inner).into_iter().all(item)
     };
-    let whole = |s: &str| matching(s, 0, b'(', b')') == Some(s.len());
+    let whole = |s: &str| s.starts_with('(') && matching(s, 0, b'(', b')') == Some(s.len());
     if s.is_empty() {
         nested
     } else if is_param_name(s)
@@ -2574,9 +2574,28 @@ pub(crate) fn is_pattern(s: &str, nested: bool) -> bool {
         items(&s[1..s.len() - 1], &|c| is_pattern(c, true))
     } else if let Some(at) = typed_at(s) {
         is_pattern(&s[..at], nested)
+    } else if let Some(at) = first_outside(s, b'!') {
+        // A dictionary pattern: keys, then the pattern its values match.
+        // q 5 `{[`a`b!(a;b);c] a+b+c}[`a`b!1 2;3]` is 6, and
+        // `{[k!(a;b)] k}[`x`y!1 2]` binds the keys to k (#431). No keys is
+        // '!, while no values (`{[a!] 1}`) is defined.
+        at > 0 && is_pattern(&s[..at], false) && is_pattern(&s[at + 1..], true)
     } else {
         false
     }
+}
+/// The first `byte` in `s` outside any bracket, brace or parenthesis.
+fn first_outside(s: &str, byte: u8) -> Option<usize> {
+    let mut depth = 0i32;
+    for (i, b) in s.bytes().enumerate() {
+        match b {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            _ if b == byte && depth == 0 => return Some(i),
+            _ => {}
+        }
+    }
+    None
 }
 /// Where a typed slot's `:type` starts: `a:`j`, `a:"j"` and `(a;b):`j` are
 /// the pattern on the left, checked against the type on the right when the
@@ -2826,10 +2845,22 @@ pub(crate) fn signature<'a>(code: &'a str, raw: &str, brace: usize) -> Signature
     // An empty slot is still a parameter - q names it by position, so the
     // trailing `;` in `{[a;b;] ...}` is a third argument rather than nothing.
     // "Empty" has to be judged on `raw`, or a masked literal passes for one.
+    // A string is blank in `code`; as a pattern it is a literal like any
+    // other, so it is read as one: `{["ab"!(a;b)] a}` has keys (#431).
+    let literal = |a: usize, b: usize| -> String {
+        code.as_bytes()[a..b]
+            .iter()
+            .zip(&raw.as_bytes()[a..b])
+            .map(|(&c, &r)| if c == r { c as char } else { '0' })
+            .collect()
+    };
     let names_only = ranges.iter().zip(&slots).all(|(&(a, b), slot)| {
         (slot.is_empty() && raw[a..b].trim().is_empty())
             || is_param_name(slot)
-            || is_pattern(slot, !slot.is_empty() || !raw[a..b].trim().is_empty())
+            || is_pattern(
+                &literal(a, b),
+                !slot.is_empty() || !raw[a..b].trim().is_empty(),
+            )
     });
     if !names_only {
         return implicit(slots);
