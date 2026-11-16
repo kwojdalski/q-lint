@@ -1430,6 +1430,22 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         .chain(source[begin + old.len()..].chars())
         .take(2)
         .collect();
+    // Nor may an edit leave two numeric literals with only blanks between:
+    // `10 20 30 {x} each 0 2` would become `10 20 30 0 2`, one vector where
+    // q 5 indexed (`10 30`), and `r:10 20 30 a:0 2` loses `a:` the same
+    // way. No rewrite says the same without brackets, so there is no fix -
+    // unless the two were neighbours before the edit too.
+    let after: String = replacement
+        .chars()
+        .chain(source[begin + old.len()..].chars())
+        .collect();
+    let blank = source[..begin].ends_with([' ', '\t']);
+    if ends_in_number(&source[..begin])
+        && starts_number(&after, blank)
+        && !starts_number(&source[begin..], blank)
+    {
+        return None;
+    }
     let replacement =
         if source[..begin].ends_with('-') && !numeric(&source[begin..]) && numeric(&next) {
             format!(" {replacement}").into()
@@ -1872,6 +1888,34 @@ pub(crate) fn flat_filter(phrase: &str) -> String {
 /// written straight after it: `a` and `b` are `ab`, `1` and `b` are `1b`.
 fn ends_in_token(before: &str) -> bool {
     before.ends_with(|c: char| c.is_ascii_alphanumeric() || "_.`\")]}".contains(c))
+}
+/// Whether `before`, less trailing blanks, ends in a numeric literal: a
+/// token of letters, digits, `.` and `:` that begins with a digit or `.5`,
+/// so `10 20 30` and `12:00` do, and the name `x1` does not.
+fn ends_in_number(before: &str) -> bool {
+    let t = before.trim_end_matches([' ', '\t']);
+    let start = t
+        .rfind(|c: char| !(c.is_ascii_alphanumeric() || "._:".contains(c)))
+        .map_or(0, |i| i + 1);
+    let token = &t[start..];
+    !t[..start].ends_with('`') && starts_number(token, false)
+}
+/// Whether `after`, less leading blanks, opens a numeric literal - `-1`
+/// included where a blank comes first (`blank` says one ends the text
+/// before), since `1 -1` is a vector and `1-1` a subtraction.
+fn starts_number(after: &str, blank: bool) -> bool {
+    let t = after.trim_start_matches([' ', '\t']);
+    let blank = blank || t.len() < after.len();
+    let t = match t.strip_prefix('-') {
+        Some(rest) if blank => rest,
+        _ => t,
+    };
+    let mut c = t.chars();
+    match c.next() {
+        Some(d) if d.is_ascii_digit() => true,
+        Some('.') => c.next().is_some_and(|d| d.is_ascii_digit()),
+        _ => false,
+    }
 }
 /// Where the where phrase that starts at `from` in masked `code` ends: at a
 /// `;` outside brackets, or the bracket that closes around it.

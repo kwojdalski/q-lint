@@ -528,6 +528,32 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
     }
 }
 
+/// A fix that deletes a token from between two numeric literals would leave
+/// them one vector literal: q 5 gives `10 30` for `10 20 30 {x} each 0 2`
+/// and for `{r:10 20 30 a:0 2; r}[]`, and `20 30` for
+/// `10 20 30 {x+1} each 0 1`, where the rewrites read `10 20 30 0 2` and
+/// `10 20 30 0 1+1` (#374, #375).
+#[test]
+fn no_fix_that_fuses_two_numeric_literals() {
+    use q_lint_rs::{Profile, fix_for, lint};
+    for (code, source) in [
+        ("QR002", "r:10 20 30 {x} each 0 2"),
+        ("QR002", "r:0 1 2{x} each 1"),
+        ("QR002", "r:0 1 2 {x} each -1"),
+        ("QF017", "f:{r:10 20 30 a:0 2; r}"),
+        ("QR004", "g:10 20 30 {x+1} each 0 1"),
+    ] {
+        let found: Vec<_> = lint(source, "probe.q", Profile::Uqf)
+            .into_iter()
+            .filter(|f| f.code == code)
+            .collect();
+        assert!(!found.is_empty(), "{code} not reported on {source}");
+        for finding in &found {
+            assert!(fix_for(finding, source).is_none(), "{code} fixed {source}");
+        }
+    }
+}
+
 /// `--unsafe-fixes` adds the editor-only fixes to `--diff` and `--fix`, and
 /// `--diff` stays a patch that applies when a fix removes a whole line: the
 /// hunks are built from the edits, not by pairing lines, and a last line
