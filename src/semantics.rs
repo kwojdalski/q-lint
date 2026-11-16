@@ -2998,7 +2998,9 @@ fn named_values(
             ),
         ));
     };
-    for m in re!(r"\b(?:select|exec|update)\b([^\n;]*?)\bfrom\s+(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\b")
+    // An indented line continues the column list, as it does any statement,
+    // and in a lambda a newline is whitespace (#336).
+    for m in re!(r"\b(?:select|exec|update)\b((?:[^\n;]|\n[ \t])*?)\bfrom\s+(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\b")
     .captures_iter(code)
     {
         let table = m.get(2).unwrap();
