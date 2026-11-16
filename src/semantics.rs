@@ -3024,6 +3024,12 @@ fn named_values(
                 depth == 0
             })
             .collect();
+        // A `from` inside a bracket is a nested query's, and the table it
+        // names is not this list's: `select a, n:(exec count i from u) from t`
+        // (#342). The where pass reads such a query in its own right.
+        if depth != 0 {
+            continue;
+        }
         let mut cuts = vec![phrase.start()];
         for sep in re!(r",|\bby\b").find_iter(phrase.as_str()) {
             if !top[sep.start()] {
