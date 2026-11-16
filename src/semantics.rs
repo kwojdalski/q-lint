@@ -878,9 +878,21 @@ fn global_writes(
             .or_default()
             .push(whole.end());
     }
+    // `` load `:k `` defines the global its path ends in (#470).
+    for m in re!(LOAD).captures_iter(code) {
+        let whole = m.get(0).unwrap();
+        if !call_time_sets && call_time(scopes, whole.start(), &m[1]) {
+            continue;
+        }
+        globals
+            .entry(qualify(&m[1], ns_at(whole.start())))
+            .or_default()
+            .push(whole.end());
+    }
     // Each of a symbol list, `` `p`q set'1 2 `` - only with each: q 5
     // `` `p`q set 1 2 `` defines neither name.
-    for m in re!(r"((?:`\.?[A-Za-z][A-Za-z0-9_.]*){2,})\s*set'").captures_iter(code) {
+    // Parenthesised too: `` (`a`b) set' (1 2;3 4) `` (#464).
+    for m in re!(r"((?:`\.?[A-Za-z][A-Za-z0-9_.]*){2,})\s*(?:\)\s*)?set'").captures_iter(code) {
         let whole = m.get(0).unwrap();
         for name in m[1].split('`').skip(1) {
             if !call_time_sets && call_time(scopes, whole.start(), name) {
@@ -2548,6 +2560,9 @@ pub fn check(
     out
 }
 
+/// `` load `:path/name `` or `rload`, infix or bracketed: the name it defines.
+const LOAD: &str = r"\br?load\s*\[?\s*`:?(?:[^\s;\]\[()`]*/)?([A-Za-z][A-Za-z0-9_]*)\b";
+
 /// What a global holds, when the file assigns it once, at the top level, to
 /// a literal. Anything else - assigned twice, amended, `set`, assigned to an
 /// expression - is unknown, and the rules below say nothing about it.
@@ -2589,6 +2604,11 @@ fn held(code: &str, raw: &str) -> Option<Held> {
             }
             return Some(Held::Table(columns, keyed));
         }
+        // `(5)` is the atom 5 and `(1 2 3)` the vector: without a top-level
+        // `;`, parentheses only group (q 5: `n:(5); n+1 2` is `6 7`).
+        if crate::slots(&code[1..code.len() - 1]).len() == 1 {
+            return held(&code[1..code.len() - 1], &raw[1..raw.len() - 1]);
+        }
     }
     // A string is blank in `code`; its length is in the source.
     if let Some(body) = re!(r#"^"((?:\\[0-7]{3}|\\.|[^"\\])*)"$"#).captures(raw) {
@@ -2609,7 +2629,9 @@ fn held(code: &str, raw: &str) -> Option<Held> {
         return Some(Held::Atom);
     }
     match shape(code)? {
-        1 if !code.starts_with(['(', '`']) && !code.starts_with("enlist") => None,
+        // One item is an atom unless enlisted: a symbol atom pairs with a
+        // vector of any length (q 5: `s:`x; s=`a`b`x` is `001b`).
+        1 if !code.starts_with("enlist") => None,
         n => Some(Held::Vector(n)),
     }
 }
@@ -2733,11 +2755,42 @@ fn named_values(
     let mut writes: HashMap<&str, Vec<usize>> = HashMap::new();
     // The same, keyed as q resolves each name where it is written.
     let mut exact: HashMap<String, Vec<usize>> = HashMap::new();
+    // A table literal's columns and a dictionary literal's keys, `([]n:1 2)`
+    // and `([h:2.5])`, name no variable: each `name:` directly in one is
+    // skipped (#469).
+    let literals: Vec<(usize, usize, usize)> = re!(r"\(\s*\[")
+        .find_iter(code)
+        .filter_map(|m| {
+            let header = m.end() - 1;
+            Some((
+                m.start(),
+                matching(code, header, b'[', b']')?,
+                matching(code, m.start(), b'(', b')')?,
+            ))
+        })
+        .collect();
+    let in_literal = |at: usize| {
+        literals.iter().any(|&(open, header, close)| {
+            open < at && at < close && {
+                let depth = code.as_bytes()[open + 1..at]
+                    .iter()
+                    .fold(0i32, |d, &c| match c {
+                        b'(' | b'[' | b'{' => d + 1,
+                        b')' | b']' | b'}' => d - 1,
+                        _ => d,
+                    });
+                depth == 0 || (depth == 1 && at < header)
+            }
+        })
+    };
     for m in re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*(?:\[[^\]]*\])?\s*[-+*%,&|^#_!~=<>$?@.]?::?")
         .captures_iter(code)
     {
         let whole = m.get(0).unwrap();
-        if !boundary(code, whole.start()) || code[whole.end()..].starts_with(['/', '\\', '\'']) {
+        if !boundary(code, whole.start())
+            || code[whole.end()..].starts_with(['/', '\\', '\''])
+            || in_literal(whole.start())
+        {
             continue;
         }
         writes.entry(m.get(1).unwrap().as_str()).or_default().push(whole.start());
@@ -2757,8 +2810,19 @@ fn named_values(
             .or_default()
             .extend([0, 0]);
     }
-    // Each of a symbol list: q 5 `a:2.5; `a`b set' (1 2;3 4); a 0` is 1 (#360).
-    for m in re!(r"((?:`\.?[A-Za-z][A-Za-z0-9_.]*){2,})\s*set'").captures_iter(code) {
+    // `` load `:k `` and `rload` restore the global named by the path's last
+    // part: q 5 `` k:([]a:`long$()); load `:k `` redefines `k` (#470).
+    for m in re!(LOAD).captures_iter(code) {
+        let name = m.get(1).unwrap().as_str();
+        writes.entry(name).or_default().extend([0, 0]);
+        exact
+            .entry(key(name, m.get(0).unwrap().start()))
+            .or_default()
+            .extend([0, 0]);
+    }
+    // Each of a symbol list: q 5 `a:2.5; `a`b set' (1 2;3 4); a 0` is 1
+    // (#360), parenthesised or not (#464).
+    for m in re!(r"((?:`\.?[A-Za-z][A-Za-z0-9_.]*){2,})\s*(?:\)\s*)?set'").captures_iter(code) {
         for name in m.get(1).unwrap().as_str().split('`').skip(1) {
             writes.entry(name).or_default().extend([0, 0]);
             exact
@@ -2774,8 +2838,10 @@ fn named_values(
     // A table changed in place by name: `update c:1 from `t` adds a column,
     // as do `![`t;...]`, `.[`t;...]` and `@[`t;...]`, without an assignment
     // to say so. So does `` `a xkey `t ``, which keys it (q 5: `t lj k`
-    // after `` `a xkey `k `` joins), and its neighbours (#353).
-    for m in re!(r"(?:\bfrom\s*|[!.@]\s*\[\s*|\b(?:xkey|xasc|xdesc|xcols|xcol)\s*)`(\.?[A-Za-z][A-Za-z0-9_.]*)").captures_iter(code) {
+    // after `` `a xkey `k `` joins), and its neighbours (#353), in the
+    // bracket form too, and `` 1!`k `` (q 5: `xkey[`a;`k]` and `` 1!`k ``
+    // return `` `k `` and key it) (#466).
+    for m in re!(r"(?:\bfrom\s*|[!.@]\s*\[\s*|\b(?:xkey|xasc|xdesc|xcols|xcol)\s*(?:\[[^;\[\]]*;\s*)?|\b\d+\s*!\s*)`(\.?[A-Za-z][A-Za-z0-9_.]*)").captures_iter(code) {
         let name = m.get(1).unwrap().as_str();
         writes.entry(name).or_default().extend([0, 0]);
         exact
@@ -2785,8 +2851,10 @@ fn named_values(
     }
     // A global amended by name in a context: `@[`.;`c;:;v]` writes the root
     // `c`, `@[`.ns;`c;..]` writes `.ns.c`, whatever `\d` is in force (q 5:
-    // `c:2.5; @[`.;`c;:;1 2]; c 0` is 1) (#361).
-    for m in re!(r"@\s*\[\s*`(\.(?:[A-Za-z][A-Za-z0-9_.]*)?)\s*;\s*((?:`[A-Za-z][A-Za-z0-9_]*)+)")
+    // `c:2.5; @[`.;`c;:;1 2]; c 0` is 1) (#361). So does `.`, and either
+    // with the names enlisted: q 5 `.[`.;enlist`a;:;1 2]` and
+    // `.[`.;(enlist`a);:;1 2]` write `a` (#463).
+    for m in re!(r"[@.]\s*\[\s*`(\.(?:[A-Za-z][A-Za-z0-9_.]*)?)\s*;\s*(?:enlist\b\s*|\(\s*)*((?:`[A-Za-z][A-Za-z0-9_]*)+)")
         .captures_iter(code)
     {
         for name in m[2].split('`').skip(1) {
@@ -2797,6 +2865,15 @@ fn named_values(
             exact.entry(name).or_default().extend([0, 0]);
         }
     }
+    // A global appended to by name: `` `a upsert 4 `` makes `a:1 2 3` four
+    // items (q 5). A table keeps its columns, so QT026 and QT027 still read
+    // it; any other value is no longer known.
+    let upserted: HashSet<String> = re!(
+        r"`(\.?[A-Za-z][A-Za-z0-9_.]*)(?:\s+|\s*\)\s*)upsert\b|\bupsert\s*\[\s*`(\.?[A-Za-z][A-Za-z0-9_.]*)"
+    )
+    .captures_iter(code)
+    .map(|m| key(m.get(1).or(m.get(2)).unwrap().as_str(), m.get(0).unwrap().start()))
+    .collect();
     let mut known: HashMap<&str, (usize, Held)> = HashMap::new();
     let mut kinds: HashMap<&str, Arithmetic> = HashMap::new();
     // Names bound to an integer atom, which q applies as a file handle rather
@@ -2836,8 +2913,9 @@ fn named_values(
         }
         if let Some(value) = held(&code[start..end], &comments[start..end]) {
             // `0N` and `0W` are integers too: uqf's tick.q starts a log
-            // handle as `0N` and sets it with hopen later.
-            if re!(r"^\s*-?(?:\d+|0[NW])[hij]?\s*$").is_match(&comments[start..end]) {
+            // handle as `0N` and sets it with hopen later. Not a short: q 5
+            // `h:1h; h "hi"` is 'type, where `2i "hi"` writes (#477).
+            if re!(r"^\s*-?(?:\d+|0[NW])[ij]?\s*$").is_match(&comments[start..end]) {
                 handles.insert(name);
             }
             known.insert(name, (end, value));
@@ -2846,6 +2924,8 @@ fn named_values(
             }
         }
     }
+    known.retain(|name, (_, value)| matches!(value, Held::Table(..)) || !upserted.contains(*name));
+    kinds.retain(|name, _| known.contains_key(name));
     // A read sees the global only after it is assigned, at the top level, and
     // only where no local of the same name hides it. Where another file of
     // the workspace assigns the name too, a lambda body may run after either
@@ -2853,7 +2933,13 @@ fn named_values(
     // top-level read after this file's own assignment meets that one,
     // whatever was loaded before (q 5: `g:{x}` loaded, then `g:2.5` + `g 0`,
     // is 'type).
+    // Inside a qSQL phrase a column of the table wins over the global of the
+    // same name, and the text cannot say which columns the table has (#465).
+    let phrases = qsql_phrases(code);
     let visible = |name: &str, at: usize| -> Option<&Held> {
+        if phrases.iter().any(|&(a, b)| a <= at && at < b) {
+            return None;
+        }
         let (assigned, value) = known.get(key(name, at).as_str())?;
         match scope_at(scopes, at) {
             Some(s) if scopes[s].locals.contains(name) => None,
@@ -2872,8 +2958,18 @@ fn named_values(
     let indexed = re!(
         r#"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)(?:\[|[ \t]*@[ \t]*[0-9"`(A-Za-z]|[ \t]+\.[ \t]+[0-9"`(A-Za-z]|[ \t]+([0-9"`(]|\.?[A-Za-z][A-Za-z0-9_]*))"#
     );
-    for m in indexed.captures_iter(code) {
+    // From each name on, not match after match: in `show a 0` the match
+    // `show a` would hide `a 0` (q 5: 'type) (#471).
+    // Over `comments`, where a string keeps its quotes: `k "hi"` and
+    // `k@"hi"` index an atom with a string (q 5: 'type) (#472). The name
+    // itself must be code, not inside a string.
+    let mut at = 0;
+    while let Some(m) = indexed.captures_at(comments, at) {
         let name = m.get(1).unwrap();
+        at = name.end();
+        if code.get(name.range()) != Some(name.as_str()) {
+            continue;
+        }
         // Nor before a qSQL word, which ends the column list or the clause:
         // `update time:t0 from t` fills the column from the atom (q 5, #114).
         if m.get(2).is_some_and(|next| {
@@ -2931,8 +3027,9 @@ fn named_values(
     // than subtracting, and an atom cannot be applied - q 5 `a:3; a -1` is
     // 'domain, `a:1.5; a -1` and `w:.z.p; w -0D00:01` are 'type. A name that
     // may hold a list is left alone: `a:1 2 3; a -1` indexes, and is 0N.
-    // The literal has to end the statement or bracket, as in `lib.rs`.
-    for m in re!(r"(?m)(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)[ \t]+(-\d[A-Za-z0-9.:]*)[ \t\r]*(?:[;\])]|$)")
+    // The literal has to end the statement or bracket, as in `lib.rs`, or
+    // the lambda: q 5 `a:2.5; f:{a -1}; f[]` is 'type (#473).
+    for m in re!(r"(?m)(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)[ \t]+(-\d[A-Za-z0-9.:]*)[ \t\r]*(?:[;\])}]|$)")
         .captures_iter(code)
     {
         let name = m.get(1).unwrap();
@@ -3000,9 +3097,11 @@ fn named_values(
             x.as_str()
                 .starts_with(|c: char| c.is_alphabetic() || c == '.')
         });
+        // Only a digit makes `-` part of a literal: q 5 parses `a -b` as
+        // `(-;`a;`b)`, a subtraction (#476).
         let negative = op.as_str() == "-"
             && code[..op.start()].ends_with(char::is_whitespace)
-            && !code[op.end()..].starts_with(char::is_whitespace);
+            && re!(r"^\.?\d").is_match(&code[op.end()..]);
         if !named || negative || !boundary(code, l.start()) || !operand_ends(code, r.end()) {
             continue;
         }
@@ -3031,7 +3130,7 @@ fn named_values(
     // those operand kinds. An older note in this repository had `"a"*3` as
     // 291, on a version it did not record.
     // Booleans and bytes before plain integers, or `1b` matches as `1`.
-    let operand = r#""(?:\\.|[^"\\])*"|[01]+b|0x[0-9a-fA-F]+|-?\d+[hij]?(?:[ \t]+-?\d+[hij]?)*|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*"#;
+    let operand = r#""(?:\\.|[^"\\])*"|[01]+b|0x[0-9a-fA-F]+|-?(?:\d+(?:\.\d*)?|\.\d+)e\b|-?\d+[hij]?(?:[ \t]+-?\d+[hij]?)*|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*"#;
     let infix = regex::Regex::new(&format!(
         r"(?P<l>{operand})\s*(?P<op>[-+*])\s*(?P<r>{operand})"
     ))
@@ -3057,8 +3156,22 @@ fn named_values(
         let negative = op.as_str() == "-"
             && comments[..op.start()].ends_with(char::is_whitespace)
             && !comments[op.end()..].starts_with(char::is_whitespace);
+        // Nor the digits after a temporal literal's `:` - the `00` of
+        // `12:00` - which q 5 adds to a char: `12:00+"a"` is 13:37 (#468).
+        // A real's `e` before a signed digit is a float's exponent: `1e+5`
+        // and `1e-5` are 100000f and 0.00001.
+        let exponent = |x: &regex::Match| {
+            x.as_str().ends_with('e') && re!(r"^[+-]\d").is_match(&comments[x.end()..])
+        };
+        if exponent(&l) || exponent(&r) {
+            continue;
+        }
+        let temporal = l.as_str().starts_with(|c: char| c.is_ascii_digit())
+            && comments[..l.start()].ends_with(':')
+            && comments[..l.start() - 1].ends_with(|c: char| c.is_ascii_digit());
         if code.get(op.range()) != Some(op.as_str())
             || negative
+            || temporal
             || !boundary(comments, l.start())
             || !operand_ends(code, r.end())
         {
@@ -3329,6 +3442,12 @@ fn named_values(
             let Some(close) = matching(code, r.start(), b'(', b')') else {
                 continue;
             };
+            // A table literal is a table, matched by column name, not a row
+            // of values: q 5 runs `` `t upsert ([]a:7 8;b:9 10) `` on a
+            // three-column `t` (#467).
+            if code[r.start() + 1..close].trim_start().starts_with('[') {
+                continue;
+            }
             let slots = crate::slots(&code[r.start() + 1..close - 1]);
             // upsert also takes a list of rows: q 5 runs
             // `t upsert ((1;`a);(3;`b);(5;`c))` on a two-column t, and
@@ -3407,6 +3526,59 @@ fn named_values(
     out
 }
 
+/// The spans of `code` where a qSQL statement reads its table's columns:
+/// from `select`, `exec`, `update` or `delete` to its `from`, and from its
+/// `where` to the end of the statement. The table after `from` is an
+/// ordinary expression, and is left out. q 5 `px:2.5; select p0:px 0 from t`
+/// indexes the column `px`, not the atom.
+fn qsql_phrases(code: &str) -> Vec<(usize, usize)> {
+    let mut out = vec![];
+    let bytes = code.as_bytes();
+    for m in re!(r"\b(?:select|exec|update|delete)\b").find_iter(code) {
+        if !boundary(code, m.start()) {
+            continue;
+        }
+        let (mut i, mut depth, mut from) = (m.end(), 0i32, None);
+        while i < bytes.len() {
+            match bytes[i] {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => {
+                    if depth == 0 {
+                        break;
+                    }
+                    depth -= 1
+                }
+                b';' if depth == 0 => break,
+                b'\n' if depth == 0 && !code[i + 1..].starts_with([' ', '\t', '\r', '\n']) => break,
+                b'f' | b'w' if depth == 0 && boundary(code, i) => {
+                    let rest = &code[i..];
+                    let word = |w: &str| {
+                        rest.starts_with(w)
+                            && !rest[w.len()..]
+                                .starts_with(|c: char| c.is_alphanumeric() || c == '_')
+                    };
+                    if from.is_none() && word("from") {
+                        out.push((m.start(), i));
+                        from = Some(i);
+                    } else if from.is_some() && word("where") {
+                        from = Some(i);
+                        out.push((i, usize::MAX));
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        match (from, out.last_mut()) {
+            // No `from`: not a statement this can read, so all of it.
+            (None, _) => out.push((m.start(), i)),
+            (Some(_), Some(last)) if last.1 == usize::MAX => last.1 = i,
+            _ => {}
+        }
+    }
+    out
+}
+
 /// What an operand is, for the char-arithmetic rule. `Float` stands for
 /// anything a char may meet under `+`, `-` and `*` on q 5.
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -3423,6 +3595,10 @@ fn arithmetic_kind(text: &str) -> Option<Arithmetic> {
     if re!(r#"^"(?:\\.|[^"\\])*"$"#).is_match(text) {
         Some(Arithmetic::Char)
     } else if re!(r"^(?:-?\d+[hij]?(?:\s+-?\d+[hij]?)*|[01]+b|0x[0-9a-fA-F]+)$").is_match(text) {
+        Some(Arithmetic::Integral)
+    } else if re!(r"^(?:-?(?:\d+(?:\.\d*)?|\.\d+)\s+)*-?(?:\d+(?:\.\d*)?|\.\d+)e$").is_match(text) {
+        // A real refuses a char as an integer does, under all three: q 5
+        // `"a"+1e`, `1e*"a"` and `"a"-1.5e` are 'type, `1e -"a"` is -96e (#474).
         Some(Arithmetic::Integral)
     } else if re!(r"^-?(?:\d+\.\d*|\.\d+|\d+[ef]|\d+(?:\.\d*)?e[+-]?\d+)(?:\s+-?(?:\d+\.?\d*(?:e[+-]?\d+)?[ef]?))*$|^\d{4}\.\d{2}")
         .is_match(text)

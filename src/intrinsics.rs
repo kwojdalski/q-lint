@@ -399,7 +399,7 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
         };
         let rule = match name {
             "sqrt" | "log" | "exp" | "abs" | "neg" | "sin" | "cos" | "tan" | "acos" | "asin"
-            | "atan" | "reciprocal"
+            | "atan" | "reciprocal" | "ceiling" | "signum"
                 if value.kind == Kind::Symbol =>
             {
                 Some(("QT016", "Numeric math cannot operate on a symbol literal"))
