@@ -495,11 +495,21 @@ fn where_assignment(path: &str, source: &str, code: &str, out: &mut Vec<Finding>
         }
         // The qSQL keyword, and its `from` before this `where`: in
         // `exec where m:a>0 from t` the `where` is the function, in a column.
-        let head = &code[code[..w.start()].rfind(['\n', ';']).map_or(0, |p| p + 1)..w.start()];
+        // The statement runs back to a `;` or a line starting at column 0:
+        // an indented line continues it, and in a lambda a newline is
+        // whitespace (#335).
+        let bytes = code.as_bytes();
+        let mut from = w.start();
+        while from > 0
+            && bytes[from - 1] != b';'
+            && !(bytes[from - 1] == b'\n' && !bytes[from].is_ascii_whitespace())
+        {
+            from -= 1;
+        }
+        let head = &code[from..w.start()];
         if !re!(r"\b(?:select|exec|update|delete)\b[\s\S]*\bfrom\b").is_match(head) {
             continue;
         }
-        let bytes = code.as_bytes();
         // `depth` counts every bracket, `nested` only those that are not
         // parentheses: an assignment in `(a:1)` is still the phrase's own
         // (q 5: 'type), one in a lambda or a bracket is not.
@@ -529,7 +539,13 @@ fn where_assignment(path: &str, source: &str, code: &str, out: &mut Vec<Finding>
                         nested -= 1;
                     }
                 }
-                b';' | b'\n' if depth == 0 => break,
+                b';' if depth == 0 => break,
+                b'\n'
+                    if depth == 0
+                        && bytes.get(at + 1).is_some_and(|b| !b.is_ascii_whitespace()) =>
+                {
+                    break;
+                }
                 b':' if nested == 0
                     && code[..at]
                         .trim_end()

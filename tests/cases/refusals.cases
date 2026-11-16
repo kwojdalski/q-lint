@@ -559,6 +559,15 @@ r:select from t where (a:1)
 === QT028 profile: general | an assignment heading a later sub-phrase (q 5: 'type)
 r:select from t where a=1,b:2
 
+=== QT028 profile: general | a where phrase continued onto an indented line, or across a lambda's lines (q 5: each is 'type)
+t:([]a:1 2;b:3 4)
+r:select from t
+  where a:1
+f:{[t] select from t
+  where a:1}
+g:{[t] select from t where a>0,
+  b:1}
+
 === clean profile: general | an assignment that is an operand runs (q 5: one row each)
 r:select from t where a in b:1 2
 s:select from t where a in (b:1 2)
