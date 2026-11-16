@@ -519,6 +519,8 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
         ("QF010", "f:{[1] x}"),              // nor does a number (#379)
         ("QF010", "f:{[(a;b)] x}"),          // and a list pattern is no one name (#379)
         ("QT008", "r:til 2.5"),              // no long it spells
+        ("QT008", "r:til 2e-1"),             // `til 2-1` (#389)
+        ("QT008", "r:til 2e+1"),             // nor `til 2+1` (#389)
         ("QF020", "t:([]ab:1 2;ac:3 4);r:select a from t"), // two equally close
         ("QA007", "f:{[c] $[c;1;2;3]}"),     // no empty slot
         ("QP002", "t:.z.z / old: 15h$x"),    // the cast is in a comment

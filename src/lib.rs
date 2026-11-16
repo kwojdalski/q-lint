@@ -1096,7 +1096,10 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         "QT008" => {
             let m = re!(r"^til(\s+)(\d+)(?:\.0*[ef]?|[ef])").captures(source.get(start..)?)?;
             let end = m.get(0)?.end();
-            if source[start + end..].starts_with(|c: char| c.is_ascii_alphanumeric() || c == '.') {
+            // Nor an exponent's sign: `til 2e-1` is no `til 2-1`.
+            if source[start + end..].starts_with(|c: char| c.is_ascii_alphanumeric() || c == '.')
+                || (m[0].ends_with(['e', 'E']) && re!(r"^[+-]\d").is_match(&source[start + end..]))
+            {
                 return None;
             }
             (
@@ -3450,7 +3453,8 @@ pub fn lint_selecting(
         // A symbol, or a symbol vector: `1 in `a`b` is 'type just as `1=`a` is,
         // and the vector is what `in` is usually given.
         let sym = r"(?:`[A-Za-z][A-Za-z0-9_.]*)+";
-        let num = r"-?\d[A-Za-z0-9.:]*(?:[ \t]+-?\d[A-Za-z0-9.:]*)*";
+        // An exponent's sign is part of its number: `1e-3` is one float.
+        let num = r"-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:[ \t]+-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)*";
         let string = r#""(?:[^"\\]|\\.)*""#;
         let op = r"(?:<=|>=|<>|<|>|=|\bin\b)";
         // A string literal is blanks by the time `code` is built, so the
@@ -4236,13 +4240,15 @@ pub fn lint_selecting(
             if re!(r"^(?:`[A-Za-z0-9_.]*){2,}$").is_match(v) {
                 return Some(Shape::Vector(Some(v.matches('`').count())));
             }
-            if re!(r"^-?\d[A-Za-z0-9.:]*(?:\s+-?\d[A-Za-z0-9.:]*)+$").is_match(v) {
+            if re!(r"^-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:\s+-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)+$")
+                .is_match(v)
+            {
                 return Some(Shape::Vector(Some(v.split_whitespace().count())));
             }
             if v == "()" {
                 return Some(Shape::Vector(Some(0)));
             }
-            if re!(r"^[01]b$|^0x[0-9a-fA-F]{1,2}$|^-?\d[A-Za-z0-9.:]*$|^`[A-Za-z0-9_.]*$")
+            if re!(r"^[01]b$|^0x[0-9a-fA-F]{1,2}$|^-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*$|^`[A-Za-z0-9_.]*$")
                 .is_match(v)
             {
                 return Some(Shape::Atom);

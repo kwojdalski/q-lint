@@ -32,7 +32,7 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
 /// string is still text.
 fn attributes(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<Finding>) {
     for m in re!(
-        r#"`([spu])#[ \t]*((?:`[A-Za-z0-9_.]*){2,}|-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+|"[^"\\]+")"#
+        r#"`([spu])#[ \t]*((?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[eE][+-]\d|[A-Za-z0-9.])*(?:[ \t]+-?\d(?:[eE][+-]\d|[A-Za-z0-9.])*)+|"[^"\\]+")"#
     )
     .captures_iter(comments)
     {

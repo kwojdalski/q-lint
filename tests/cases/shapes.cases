@@ -136,6 +136,12 @@ t:([] a:0x012; b:1 2 3)
 === QT005 profile: general | one hex digit is still a byte atom (#378; q 5: 'rank)
 t:([] a:0x1)
 
+=== QT005 QT008 QT015 QT024 profile: general | a signed exponent is one number to the literal readers (#389; q 5: 'type, 'rank, 's-fail, 'type)
+a:`a=1e-3
+t:([] a:1; b:1e-3)
+s:`s#1 1e-3
+n:til 2e-1
+
 === QT005 | keyed too
 t:([k:1] v:2)
 
