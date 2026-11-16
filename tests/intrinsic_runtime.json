@@ -264,6 +264,18 @@
     "error": "type"
   },
   {
+    "code": "QT016",
+    "bad": "ceiling[`a]",
+    "good": "ceiling[1.5]",
+    "error": "type"
+  },
+  {
+    "code": "QT016",
+    "bad": "signum[`a]",
+    "good": "signum[-2]",
+    "error": "type"
+  },
+  {
     "code": "QT017",
     "bad": "mavg[1.5;1 2 3]",
     "good": "mavg[-1;1 2 3]",
