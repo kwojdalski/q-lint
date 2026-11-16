@@ -2972,7 +2972,11 @@ fn suppress(out: &mut Vec<Finding>, source: &str, comments: &str) {
         let start = (offset..end).find(|&i| {
             raw[i] == b'/'
                 && blanked[i] == b' '
-                && (i == offset || raw[i - 1].is_ascii_whitespace())
+                && (i == offset
+                    || raw[i - 1].is_ascii_whitespace()
+                    // `views` reads `<BOM>/ note` as a comment line (#221),
+                    // and so does its noqa (#427).
+                    || i == 3 && source.starts_with('\u{feff}'))
         });
         if let Some(caps) = start.and_then(|i| {
             re!(r"(?:^|\s)/+\s*(?i:noqa)\s*:\s*([A-Z]+[0-9]+\b(?:\s*,\s*[A-Z]+[0-9]+\b|\s+[A-Z]+[0-9]+\b)*)")
