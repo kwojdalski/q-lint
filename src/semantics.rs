@@ -2727,6 +2727,20 @@ fn named_values(
             .or_default()
             .extend([0, 0]);
     }
+    // A global amended by name in a context: `@[`.;`c;:;v]` writes the root
+    // `c`, `@[`.ns;`c;..]` writes `.ns.c`, whatever `\d` is in force (q 5:
+    // `c:2.5; @[`.;`c;:;1 2]; c 0` is 1) (#361).
+    for m in re!(r"@\s*\[\s*`(\.(?:[A-Za-z][A-Za-z0-9_.]*)?)\s*;\s*((?:`[A-Za-z][A-Za-z0-9_]*)+)")
+        .captures_iter(code)
+    {
+        for name in m[2].split('`').skip(1) {
+            let name = match &m[1] {
+                "." => name.to_string(),
+                ctx => format!("{ctx}.{name}"),
+            };
+            exact.entry(name).or_default().extend([0, 0]);
+        }
+    }
     let mut known: HashMap<&str, (usize, Held)> = HashMap::new();
     let mut kinds: HashMap<&str, Arithmetic> = HashMap::new();
     // Names bound to an integer atom, which q applies as a file handle rather
