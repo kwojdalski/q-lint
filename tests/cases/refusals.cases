@@ -566,6 +566,9 @@ e:"C"$2024.01.01
 === QT028 profile: general | an assignment in parentheses in a where phrase (q 5: 'type)
 r:select from t where (a:1)
 
+=== clean profile: general | a colon straight after where assigns no name (q 5 parses the phrase as (:;1), #320)
+r:select from t where:1
+
 === QT028 profile: general | an assignment heading a later sub-phrase (q 5: 'type)
 r:select from t where a=1,b:2
 

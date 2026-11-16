@@ -544,7 +544,10 @@ fn where_assignment(path: &str, source: &str, code: &str, out: &mut Vec<Finding>
                     // A name starts with a letter and stands alone: `09:35`
                     // and the `D00:00` of a timestamp are literals, and
                     // their colons are part of them.
-                    if !code[name_start..].starts_with(|c: char| c.is_ascii_alphabetic())
+                    // Nor is `where` itself one: `where:1` is the phrase
+                    // `(:;1)` in q 5, and assigns nothing (#320).
+                    if name_start < sub
+                        || !code[name_start..].starts_with(|c: char| c.is_ascii_alphabetic())
                         || code[..name_start].ends_with(['.', '`'])
                         || !whole_sub_phrase(code, sub, name_start, at)
                     {
