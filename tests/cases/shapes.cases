@@ -258,6 +258,15 @@ r:1=`a
 b2:1=`a
 r2:3<`a
 
+=== QA011 QT015 profile: general | an hsym symbol with a / in it, as a test or compared with a number (#390; q 5: each is 'type)
+r:$[`:db/t;1;2]
+if[`:db/t;s:1]
+w:`:db/t=1
+
+=== clean profile: general | an hsym compared with an hsym, and as a result (#390)
+w:`:db/t=`:db/u
+r:$[1b;`:db/t;`:db/u]
+
 === QT015 | and against a string
 r:"abc"=`abc
 

@@ -1718,7 +1718,8 @@ fn refused_atom_condition(raw: &str) -> bool {
     re!(r#"^"((?:[^"\\]|\\.)*)"$"#)
         .captures(raw)
         .is_some_and(|c| q_bytes(&c[1]).len() != 1)
-        || re!(r"^(?:`[A-Za-z0-9_.:]*)+$").is_match(raw)
+        // An hsym runs on over `/`: `` `:db/t `` is one symbol (q 5).
+        || re!(r"^(?:`(?::[A-Za-z0-9_.:/]*|[A-Za-z0-9_.:]*))+$").is_match(raw)
         || re!(r"^0x(?:[0-9a-fA-F]{2}){2,}$").is_match(raw)
         || re!(r"^-?(?:\d+\.\d*|\.\d+|\d+(?:\.\d*)?[eE][+-]?\d+)[ef]?$|^-?\d+[ef]$|^0[nwNW][ef]?$|^-0[wW][ef]?$|^0Ng$")
             .is_match(raw)
@@ -3452,7 +3453,8 @@ pub fn lint_selecting(
     {
         // A symbol, or a symbol vector: `1 in `a`b` is 'type just as `1=`a` is,
         // and the vector is what `in` is usually given.
-        let sym = r"(?:`[A-Za-z][A-Za-z0-9_.]*)+";
+        // A file symbol too, `` `:db/t ``, which runs on over `/` (q 5).
+        let sym = r"(?:`(?:[A-Za-z][A-Za-z0-9_.]*|:[A-Za-z0-9_.:/]*))+";
         // An exponent's sign is part of its number: `1e-3` is one float.
         let num = r"-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:[ \t]+-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)*";
         let string = r#""(?:[^"\\]|\\.)*""#;
