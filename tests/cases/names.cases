@@ -518,6 +518,14 @@ bar
 (`e) set 5
 r:e
 
+=== QF018 | a top-level read runs as the file loads, before a later assignment (q 5: loading this is 'limit) (#369)
+r:limit
+limit:100
+
+=== clean | but a lambda's read runs once the file has loaded
+f:{[] r:limit; r}
+limit:100
+
 === clean | a builtin is a valid assignment value
 f:{[] aa:sum; aa}
 

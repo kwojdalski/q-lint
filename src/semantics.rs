@@ -2258,7 +2258,17 @@ pub fn check(
                     || scope.is_some_and(|s| s.locals.contains(name))
                     || crate::RESERVED.iter().any(|builtin| builtin == name)
                     // Keyed exactly: `.cfg:1` defines no root `cfg` (q 5: 'cfg).
-                    || exact.contains_key(&resolved(name, namespace))
+                    // A lambda runs once the file has loaded, but a top-level
+                    // read runs as it loads: q 5 refuses `r:limit` above
+                    // `limit:100` with 'limit (#369).
+                    || exact.get(&resolved(name, namespace)).is_some_and(|at| {
+                        scope.is_some()
+                            || at.iter().any(|&at| at < start + value.start())
+                            // `a:a` is QB017's, which says more.
+                            || statement.trim_start().strip_prefix(name).is_some_and(|rest| {
+                                rest.trim_start().starts_with(':')
+                            })
+                    })
                     // q searches `.q` from every context: after `.q.k:1`,
                     // q 5 reads a bare `k` as 1, inside `\d .ns` too (#357).
                     || exact.contains_key(&format!(".q.{name}"))
