@@ -1777,6 +1777,21 @@ fn vector_comparison(cond: &str) -> bool {
 /// its columns. q 5: `select b:1+`x from t`, `select b:1+`x,c:a from t`,
 /// `select by b:1+`x from t` and `select from t where a=1+`x, a>1` are
 /// each 'type, as the same expression on a line of its own is.
+/// Whether `ss[...]` or `ssr[...]`, its slots split at `open`, gets every
+/// argument: two for `ss` and three for `ssr`, none of them empty. Short of
+/// that it is a projection, and nothing has run: q 5 `ssr["abc";`a]` and
+/// `ssr["abc";""]` are both a function (104h). A slot is judged empty in
+/// `comments`, where a string is still text.
+fn complete_call(comments: &str, open: usize, parts: &[&str], ssr: bool) -> bool {
+    let mut from = open + 1;
+    parts.len() == if ssr { 3 } else { 2 }
+        && parts.iter().all(|part| {
+            let full = !comments[from..from + part.len()].trim().is_empty();
+            from += part.len() + 1;
+            full
+        })
+}
+
 pub(crate) fn operand_ends(code: &str, at: usize) -> bool {
     let rest = code[at..].trim_start_matches([' ', '\t']);
     // A line break ends the operand unless the next line is indented and not
@@ -4238,7 +4253,10 @@ pub fn lint_selecting(
             continue;
         };
         let symbol = |s: &&str| re!(r"^\s*(?:`[A-Za-z0-9_.]*)+\s*$").is_match(s);
-        if slots(&code[open + 1..close - 1]).iter().take(2).any(symbol) {
+        let parts = slots(&code[open + 1..close - 1]);
+        if complete_call(&v.comments, open, &parts, m.as_str().starts_with("ssr"))
+            && parts.iter().take(2).any(symbol)
+        {
             add(
                 m.start(),
                 "QT007",
@@ -4612,7 +4630,7 @@ pub fn lint_selecting(
             continue;
         };
         let parts = slots(&code[open + 1..close - 1]);
-        if parts.len() < 2 {
+        if !complete_call(&v.comments, open, &parts, &m.as_str()[..3] == "ssr") {
             continue;
         }
         // The second slot's span in the source.
