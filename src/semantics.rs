@@ -2349,6 +2349,9 @@ pub fn check(
         }
         candidates.sort_unstable();
         candidates.dedup();
+        // Symbols blanked, for the iterator test: the `/` of `` f `:db/t ``
+        // is part of the path, not over.
+        let unsymbolled = crate::unsymbolled(code);
         for (at, bare) in candidates {
             if !boundary(code, at) {
                 continue;
@@ -2384,7 +2387,7 @@ pub fn check(
             if let Some(end) = crate::argument_end(code, comments, raw, argument) {
                 let text = &code[argument..end];
                 let mut depth = 0i32;
-                let iterated = text.bytes().any(|b| {
+                let iterated = unsymbolled[argument..end].bytes().any(|b| {
                     match b {
                         b'(' | b'[' | b'{' => depth += 1,
                         b')' | b']' | b'}' => depth -= 1,

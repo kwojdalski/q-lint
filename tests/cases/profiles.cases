@@ -108,6 +108,10 @@ a:1
 f:{x+1}
 r:f 2
 
+=== QP006 profile: uqf | an hsym path argument whose `/` is part of the symbol, not over (#388; q 5: f `:db/t is f[`:db/t])
+f:{count x}
+n:f `:db/t
+
 === clean profile: uqf | the same call with the brackets the convention asks for
 f:{x+1}
 r:f[2]
