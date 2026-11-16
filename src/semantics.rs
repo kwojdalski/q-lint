@@ -1683,9 +1683,9 @@ pub fn check(
             if !boundary(&direct, m.start())
                 || !(scope.params.contains(name)
                     || (scope.locals.contains(name) && set_before(name, m.start())))
-                || re!(r"(?:^|[^A-Za-z0-9_.`])([A-Za-z][A-Za-z0-9_.]*)\s*::?")
-                    .captures_iter(code)
-                    .any(|a| &a[1] == whole)
+                // A global of that name, as q resolves it in the lambda's
+                // context: under `\d .ns`, `t.c` is `.ns.t.c` (#368).
+                || exact.contains_key(&resolved(whole, &scope.namespace))
             {
                 continue;
             }

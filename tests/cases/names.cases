@@ -796,6 +796,18 @@ t.c
 t:([]c:1 2)
 k:{t.c}
 
+=== clean profile: general | in a context lambda, on the global its context resolves to (q 5: .ns.f 1 is 5) (#368)
+.ns.t.c:5
+\d .ns
+f:{[t] t.c}
+\d .
+
+=== QF021 profile: general | but a root global of that name is another one (q 5: .ns.f 1 is 't.c) (#368)
+t.c:5
+\d .ns
+f:{[t] t.c}
+\d .
+
 === clean profile: general | indexing with a symbol, and q's own namespaces
 m:{[t] t`c}
 n:{.z.p}
