@@ -4667,7 +4667,13 @@ pub fn lint_selecting(
         if !sig.named || sig.slots.is_empty() {
             continue;
         }
-        if !sig.slots.contains(&name.as_str()) {
+        // A typed or pattern slot binds names of its own: `a:`j` binds a,
+        // `(p;q)` binds p and q (#331).
+        if !sig
+            .slots
+            .iter()
+            .any(|slot| pattern_names(slot).contains(&name.as_str()))
+        {
             add(
                 name.start(),
                 "QS007",
