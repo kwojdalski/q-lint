@@ -871,7 +871,8 @@ fn global_writes(
     }
     // `` `n set ``, and `` `t insert `` and `` `t upsert ``, which create the
     // table when there is none (q 5: `` `t insert ([]a:1 2) `` then `t`).
-    for m in re!(r"`(\.?[A-Za-z][A-Za-z0-9_.]*)\s+(?:set|insert|upsert)\b|\b(?:set|insert|upsert)\s*\[\s*`(\.?[A-Za-z][A-Za-z0-9_.]*)")
+    // The target may be parenthesised: q 5 `` (`e) set 5 `` defines `e` (#363).
+    for m in re!(r"`(\.?[A-Za-z][A-Za-z0-9_.]*)(?:\s+|\s*\)\s*)(?:set|insert|upsert)\b|\b(?:set|insert|upsert)\s*\[\s*`(\.?[A-Za-z][A-Za-z0-9_.]*)")
         .captures_iter(code)
     {
         let whole = m.get(0).unwrap();
@@ -1045,7 +1046,7 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
         }
     }
     call_time_access.extend(value_of_symbols(&view, &scopes, &ns_at));
-    for m in re!(r"`(\.?[A-Za-z][A-Za-z0-9_.]*)\s+set\b|\bset\s*\[\s*`(\.?[A-Za-z][A-Za-z0-9_.]*)")
+    for m in re!(r"`(\.?[A-Za-z][A-Za-z0-9_.]*)(?:\s+|\s*\)\s*)set\b|\bset\s*\[\s*`(\.?[A-Za-z][A-Za-z0-9_.]*)")
         .captures_iter(&view)
     {
         let whole = m.get(0).unwrap();
@@ -2724,7 +2725,7 @@ fn named_values(
             .or_default()
             .push(whole.start());
     }
-    for m in re!(r"`(\.?[A-Za-z][A-Za-z0-9_.]*)\s+set\b|\bset\s*\[\s*`(\.?[A-Za-z][A-Za-z0-9_.]*)")
+    for m in re!(r"`(\.?[A-Za-z][A-Za-z0-9_.]*)(?:\s+|\s*\)\s*)set\b|\bset\s*\[\s*`(\.?[A-Za-z][A-Za-z0-9_.]*)")
         .captures_iter(code)
     {
         // Infix and bracket form alike: q 5 `a:1;set[`a;2 3];a 0` is 2.

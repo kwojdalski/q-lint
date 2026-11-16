@@ -128,6 +128,13 @@ fn a_functional_amend_by_name_defines_the_global() {
 }
 
 #[test]
+fn a_parenthesised_set_target_is_a_definition() {
+    // q 5: `(`e) set 5` defines `e` (#363).
+    let g = graph(&[("lib.q", "(`e) set 5\n"), ("main.q", "r:e\n")], false);
+    assert_eq!(deps(&g, "main.q"), ["lib.q"]);
+}
+
+#[test]
 fn system_d_and_a_commented_backslash_d_open_a_context() {
     // q 5: after `system "d .b"` and `k:{1}`, `key `.b` is ``k; after
     // `\d .c  / note` and `m:1`, `key `.c` is ``m.

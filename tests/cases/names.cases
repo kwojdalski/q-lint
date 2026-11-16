@@ -514,6 +514,10 @@ foo
 .[`bar;();:;2]
 bar
 
+=== clean | a parenthesised set target is defined too (q 5: r is 5) (#363)
+(`e) set 5
+r:e
+
 === clean | a builtin is a valid assignment value
 f:{[] aa:sum; aa}
 
