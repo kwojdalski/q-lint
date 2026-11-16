@@ -733,3 +733,8 @@ s:b 0
 c:2.5
 @[`.;enlist`c;:;enlist 1 2]
 u:c 0
+
+=== clean | QT022: a parenthesised symbol list before set' writes each name (#464; q 5: a 0 is 1)
+a:2.5
+(`a`b) set' (1 2;3 4)
+r:a 0

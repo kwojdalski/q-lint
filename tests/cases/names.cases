@@ -528,6 +528,10 @@ s:u
 `p`q set'1 2
 r:p
 
+=== clean | parenthesised too (#464; q 5: (`p`q) set'1 2 then p is 1)
+(`p`q) set'1 2
+r:p
+
 === clean | a compound assignment at the root defines the name (q 5: a,:1; b:a is ,1)
 bb,:1
 f:{[] aa:bb; aa}

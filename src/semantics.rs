@@ -880,7 +880,8 @@ fn global_writes(
     }
     // Each of a symbol list, `` `p`q set'1 2 `` - only with each: q 5
     // `` `p`q set 1 2 `` defines neither name.
-    for m in re!(r"((?:`\.?[A-Za-z][A-Za-z0-9_.]*){2,})\s*set'").captures_iter(code) {
+    // Parenthesised too: `` (`a`b) set' (1 2;3 4) `` (#464).
+    for m in re!(r"((?:`\.?[A-Za-z][A-Za-z0-9_.]*){2,})\s*(?:\)\s*)?set'").captures_iter(code) {
         let whole = m.get(0).unwrap();
         for name in m[1].split('`').skip(1) {
             if !call_time_sets && call_time(scopes, whole.start(), name) {
@@ -2758,8 +2759,9 @@ fn named_values(
             .or_default()
             .extend([0, 0]);
     }
-    // Each of a symbol list: q 5 `a:2.5; `a`b set' (1 2;3 4); a 0` is 1 (#360).
-    for m in re!(r"((?:`\.?[A-Za-z][A-Za-z0-9_.]*){2,})\s*set'").captures_iter(code) {
+    // Each of a symbol list: q 5 `a:2.5; `a`b set' (1 2;3 4); a 0` is 1
+    // (#360), parenthesised or not (#464).
+    for m in re!(r"((?:`\.?[A-Za-z][A-Za-z0-9_.]*){2,})\s*(?:\)\s*)?set'").captures_iter(code) {
         for name in m.get(1).unwrap().as_str().split('`').skip(1) {
             writes.entry(name).or_default().extend([0, 0]);
             exact
