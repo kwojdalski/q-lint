@@ -5225,7 +5225,9 @@ pub fn lint_selecting(
                 }
             }
             if let Some(w) = re!(r"\bwhere\b").find(line) {
-                let phrase = flat_filter(&line[w.end()..]);
+                // To the end of the query's statement: after a `;` is another
+                // statement, not more of the filter (#344).
+                let phrase = flat_filter(&line[w.end()..phrase_end(line, w.end())]);
                 // `~` matches whole operands, so a filter gets one boolean for
                 // the entire table where it wanted one per row: a 'type error
                 // against a column, or worse, a single-row result against a

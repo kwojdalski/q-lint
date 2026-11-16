@@ -144,6 +144,13 @@ u:select from t where a=`x`y`z?s
 b:3 2 1
 r:where b=1 2 3
 
+=== clean | the where phrase ends at the statement's ; (q 5 runs each line, #344)
+t:([]a:1 2 3)
+a:3 2 1
+r1:select from t where a>1; v:a=1 2 3
+r2:select from t where a>1; ok:a~3 2 1
+r3:select from t where a>1; w:(a=3) and 101b
+
 === clean | in is the membership operator
 select from t where px in 1 2
 
