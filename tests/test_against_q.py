@@ -48,7 +48,6 @@ NOT_SIGNATURES = [
     "{[_] x+1}",
     "{[a b] a}",
     "{[a[0]] a}",
-    "{[a:1] a}",
 ]
 # q 5 parameter patterns: q binds one positional parameter per slot (`0, `1,
 # ...) and destructures the argument into the names inside, so the lambda has
@@ -67,6 +66,17 @@ PATTERNS = {
     "{[a: `long] a}": 1,
     "{[a:`j;b] a+b}": 2,
     "{[(a;b):`j] a+b}": 1,
+    # A dictionary pattern with its keys in front (#431).
+    "{[`a`b!(a;b);c] a+b+c}": 2,
+    "{[k!(a;b)] k}": 1,
+    # Any function or type after a slot's colon (#437).
+    "{[a:1] a}": 1,
+    "{[a:neg;b] a}": 2,
+    "{[a:{x+1};b] a}": 2,
+    "{[a:-7h;b] a}": 2,
+    # :: matches the generic null (#450).
+    "{[(a;b;::)] a+b}": 1,
+    "{[a;::] a}": 2,
 }
 
 

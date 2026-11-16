@@ -642,8 +642,10 @@ fn scopes(code: &str, raw: &str) -> (Vec<Scope>, Vec<(usize, String)>) {
             // same byte, and the child's closing brace is not there to blank.
             // The checks never see such a file - QE001 stops them - but the
             // editor's semantic tokens are asked for mid-keystroke.
-            let end = (child.end + 1).min(scope.end);
-            direct[child.start - scope.body..end - scope.body].fill(b' ');
+            // A lambda in a typed slot, `{[a:{x+1}] a}`, sits before the
+            // body (#437).
+            let end = (child.end + 1).min(scope.end).max(scope.body);
+            direct[child.start.max(scope.body) - scope.body..end - scope.body].fill(b' ');
         }
         let direct = String::from_utf8(direct).unwrap();
         // A column is not a local: after `t:([]c:1 2)` or `update c:1 from t`,

@@ -302,6 +302,11 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
 
 pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Finding> {
     let mut out = vec![];
+    // A keyword the file redefines in `.q` calls the new definition from
+    // there on: after q 5 `.q.ssr:{[a;b;c;d] a}`, `ssr[1;2;3;4]` is 1, and
+    // after `.q.til:{x+1}`, `til 1.5` is 2.5 (#440).
+    let dotq = crate::dotq_definitions(code);
+    let redefined = |name: &str, at: usize| dotq.iter().any(|(n, from)| n == name && at > *from);
     // QA010 for the keywords that are not in BUILTINS: arity from calling
     // each with one more argument than it takes, which q 5 refuses with
     // 'rank - `xasc[`a;t;1]`, `ssr[a;b;c;d]`, `wj[a;b;c;d;e]`.
@@ -309,10 +314,10 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
         .captures_iter(code)
     {
         let whole = m.get(0).unwrap();
-        if !boundary(code, whole.start()) {
+        let name = &m[1];
+        if !boundary(code, whole.start()) || redefined(name, whole.start()) {
             continue;
         }
-        let name = &m[1];
         let arity = match name {
             "md5" => 1,
             "ssr" | "aj" | "aj0" | "ajf" | "ajf0" | "ej" => 3,
@@ -335,6 +340,9 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
         }
     }
     for Call { at, name, args } in calls(code, comments, source) {
+        if redefined(name, at) {
+            continue;
+        }
         let args = &args;
         let arity = match name {
             "rotate" | "mavg" | "msum" | "mcount" | "mdev" | "mmin" | "mmax" | "cor" | "cov"

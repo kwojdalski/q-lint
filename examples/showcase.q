@@ -45,7 +45,7 @@ wave:{[sin] sin*2}
 
 / QF002: `_` is the drop operator, not a name; q 5 refuses every call with 'match.
 / expect-next: QF002
-drop:{[_] x+1}
+drop:{[_] 1}
 
 / QF003: assignment to `count` inside the lambda shadows the builtin there.
 / expect-next: QF003
@@ -65,12 +65,6 @@ apply:{[scale] f:{[v] v*scale}; f each 1 2 3}
 / refuses where the lambda is defined: 'nyi.
 / expect-next: QF007
 broken:{[tables[]] x+1}
-
-/ QF007: accepted where it is defined, and worse for it: the brackets are
-/ body text, not the `n` it appears to declare, and q 5 refuses every call
-/ with 'type.
-/ expect-next: QF007
-scaled:{[n:1] n*2}
 
 / QF007: two names without a separator is one bracket expression, not two
 / parameters. The lambda is rank 1, taking x.
@@ -275,8 +269,9 @@ now:{[] .z.p};stamp:now . ()
 / expect-next: QA005
 pairsum:{[a;b]a+b} each 1 2 3
 
-/ QA005: the same trap through a binary builtin rather than a lambda.
-/ expect-next: QA005
+/ QE011: not the same trap through a binary builtin: `cor` is infix, so q 5
+/ refuses `cor each` at parse. `(cor) each` would project.
+/ expect-next: QE011
 corrs: cor each 1 2 3
 
 / QA006: one slot projects, three or more are conditionals - exactly two is
@@ -467,12 +462,12 @@ islong2: `long=type 1
 
 / QB014: `/` after a value is the over adverb, not division, and this is a
 / '/ parse error. Division is `%`.
-/ expect-next: QB014
+/ expect-next: QB014 QE009
 half: 10/2
 
 / QB014: after a parenthesised value too - `(a+b)/` is over applied to
 / nothing yet, and then to 2.
-/ expect-next: QB014
+/ expect-next: QB014 QE009
 half2: (a+b)/2
 
 / QB015: equality against a string in a filter pairs each row with one

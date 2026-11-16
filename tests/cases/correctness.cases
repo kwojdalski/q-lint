@@ -87,6 +87,23 @@ f:{[x] x~x}; g:{exec b from t}
 === clean | comparing two different columns
 select from t where a=b
 
+=== clean profile: general | a class starting with ] holds the ] and the * (q 5: "]x" like "[]*]*" and "ax" like "[^]*]*" are 1b) (#436)
+r:"]x" like "[]*]*"
+s:"ax" like "[^]*]*"
+
+=== QB002 profile: general | behind an iterator, in parentheses, in a list of patterns, or after a projection (q 5: each line is 'nyi) (#442)
+a:("ab";"cd") like\: "a*b*"
+b:("ab";"cd") like' ("a*b*";"c*d*")
+c:"ab" like/: ("a*b*";"c")
+d:like["ab";] "a*b*"
+e:"ab" like ("a*b*")
+f:"ab" like/: ("a*";"c*d*")
+
+=== clean profile: general | a list q fails on first for another reason, or one with no refused pattern (q 5: f and g are 'type, h is 11b) (#442)
+f:"ab" like/: ("c";"a*b*")
+g:("ab";"cd") like ("a*";"c*d*")
+h:("ab";"cd") like' ("a*";"c*")
+
 === QB002 | two wildcards, not a leading and trailing pair (q 5: "abc" like "a*b*" is 'nyi)
 select from t where sym like "a*b*"
 
@@ -359,29 +376,34 @@ r:type[1]=`a`b?`a
 === QB013 | but a symbol vector that ends the comparison is still one
 r:type[x]=`a`b;
 
+=== clean profile: general | type applied by juxtaposition takes the whole comparison (q 5: type x=`long is -1h, #429)
+f:{[x] type x=`long}
+g:{[x] type (x)=`long}
+h:{[x] type(x)<>`a}
+
 === clean | type compared to a short
 if[type[x]=7h;1]
 
 === clean | a column named type is another rule's business
 select from t where type=`a
 
-=== QB014 | slash between literals is the over adverb
+=== QB014 QE009 | slash between literals is the over adverb (q 5 refuses it at parse: '/, #430)
 r:10/2
 
 === clean | the slashes of a file path are not the adverb
 x:`:data/2024/01
 
-=== QB014 | but a path beside a division still has one
+=== QB014 QE009 | but a path beside a division still has one (q 5 refuses it at parse: '/, #430)
 x:(`:data/2024;10/2)
 
-=== QB014 | after a parenthesised value too
+=== QB014 QE009 | after a parenthesised value too (q 5 refuses it at parse: '/, #430)
 r:(a+b)/2
 
 === clean | a bracketed projection with a left operand is over, as meant
 mem:{(3#system"w")%x (1024*)/ 1}
 p:(10000>pi::)(2*)/1000
 
-=== QB014 | without the left operand q refuses it: (2*)/1 is '/
+=== QB014 QE009 | without the left operand q refuses it: (2*)/1 is '/
 r:(2*)/1
 
 === clean | percent divides
@@ -555,6 +577,16 @@ g:{.lg.o[`c;"types "," " sv string procs,:()]}
 
 === clean | a comparison and an or in different comma-separated clauses
 r:select from t where abs[port]=1,(lower[h]=x) or h=`a
+
+=== clean profile: general | QB015: a string that only starts the compared operand (q 5: n="abcd"?"b" is n=1, n="abcd"[1] is n="b") (#435)
+t:([]s:`ab`cd`ab;c:("ab";"cd";"ab");n:1 2 3)
+r:select from t where n="abcd"?"b"
+u:select from t where n="abcd"[1]
+
+=== QB015 profile: general | QB015: a string before a comma, a by or the end of the statement still is one (#435)
+t:([]s:`ab`cd`ab;n:1 2 3)
+r:select from t where s="ab", n>1
+u:select from t where s="ab";
 
 === clean | QB015: an `=` inside a string is not a comparison
 f:{[t] select from t where a in `x, b like "="}

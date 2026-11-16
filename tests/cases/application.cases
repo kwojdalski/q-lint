@@ -36,8 +36,18 @@ f:{[a] 1};f . enlist 1
 === clean | each on a unary lambda applies per element
 {[a]a+1} each 1 2 3
 
-=== QA005 | a binary builtin under each projects too
-cor each 1 2 3
+=== QE011 profile: general | an infix keyword before each or peach is refused at parse, whatever is on its left (q 5: parse each line is refused) (#439)
+r:cor each (1 2;3 4)
+f:{mavg each x}
+s:x mavg each y
+t:x in peach y
+
+=== clean profile: general | in parentheses, with brackets, or with an iterator glyph (q 5 parses each) (#439)
+r:(cor) each x
+s:cor[x] each y
+t:x cor/: y
+u:`cor each `a`b
+v:.q.cor each x
 
 === clean | a unary builtin under each is the idiom
 count each (1 2;3 4 5)
@@ -113,6 +123,18 @@ r:h(1;2)
 === clean | a name the file does not define is not judged
 r:k(1;2)
 
+=== QA002 QA012 QA009 profile: general | dot apply with no blank on one side or both (q 5: r1-r4 are 'rank, r5 'type) (#441)
+f:{[a] a}
+r1:{x}. (1;2)
+r2:{x} .(1;2)
+r3:{x}.(1;2)
+r4:f .(1;2)
+r5:{x}. 1
+
+=== clean profile: general | a digit straight after the dot is a float, applied by juxtaposition (q 5: {x} .1 is 0.1) (#441)
+r:{x} .1
+s:{x}.1
+
 === QA009 | dot apply with a scalar argument
 r:.[{x+y};1]
 
@@ -174,6 +196,14 @@ r:@[{[(a;b)] a+b};(1;2);{x}]
 
 === QA003 | but a pattern beside another parameter is two (q 5: @[{[(a;b);c] a+b+c};(1;2);{x}] is a projection)
 r:@[{[(a;b);c] a+b+c};(1;2);{x}]
+
+=== clean | an operand juxtaposed after the lambda is an argument it already holds (q 5: 3, -1 and 6, each handler live) (#433)
+r:@[{[a;b] a+b} 1;2;{x}]
+s:@[{[f;a] f a}neg;1;{`err}]
+t:@[{[a;b;c] a+b+c}[1] 2;3;{x}]
+
+=== QA003 | but one argument held of three still leaves two (q 5: @[{[a;b;c] a+b+c} 1;2;{x}] is a projection) (#433)
+r:@[{[a;b;c] a+b+c} 1;2;{x}]
 
 === QA010 | a complete builtin call given more
 r:sum[1;2]

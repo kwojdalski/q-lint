@@ -209,6 +209,22 @@ r:string[1;2]
 r:deltas[1;1 2 3]
 
 
+=== QE008 profile: general | before a lambda or a negative literal too (q 5: parse each is refused with the first glyph) (#438)
+x:-{x}1
+y:#{x}
+z:,{x}
+a:--1
+b:#-1
+c:,-1
+d:#:{x}
+e:#-.5
+
+=== clean profile: general | the same operands after an operand, or the glyph in parentheses (q 5 parses each) (#438)
+f:x- -1
+h:x,-1
+i:x-{x}1
+j:(#)-1
+
 === QE008 profile: general | monadic minus on a name (q 5: parse "-x" is '-)
 f:{-x}
 
@@ -364,6 +380,33 @@ h:{x/y}
 k:{a:count'x}
 m:{{x+y}/x}
 n:{sum/:x}
+
+=== QE009 profile: general | a bracket, parenthesis, literal or another iterator before it too (q 5: parse each is '/ or ', #430)
+r:g[x]'y
+r:(g x)'y
+r:x[1]/y
+r:{x}[1]/y
+r:(1;2)/y
+r:(+)/y
+x:"abc"'y
+x:1 2'y
+x:`a`b'y
+r:+/'x
+r:+/:'x
+r:.:'x
+
+=== clean profile: general | the same operands infix, in parentheses or with brackets (q 5 accepts each)
+r:f x[1]/y
+r:x[1]/[y]
+r:(x[1]/)y
+r:0+/'x
+r:x[1]'[y]
+r:f(x)/y
+r:x 1 2/y
+r:-2_/:x
+r:1_'x
+f:{[x;y]'e}
+r:x @[;1;-1+]/ y
 
 === clean profile: general | in parentheses, with brackets, or infix (q 5 accepts each)
 f:{(,/)x}

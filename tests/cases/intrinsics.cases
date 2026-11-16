@@ -626,3 +626,15 @@ k:max 12:00 13:00
 m:sqrt 12:00
 n:avg 2000.01.01
 p:x within 12:00 13:00
+
+=== clean profile: general | a keyword the file redefines in .q takes the new arity and types (q 5: ssr[1;2;3;4] is 1, til 1.5 is 2.5, sum[2;3] is 6) (#440)
+.q.ssr:{[a;b;c;d] a}
+r:ssr[1;2;3;4]
+.q.til:{x+1}
+s:til 1.5
+.q.sum:{[a;b] a*b}
+t:sum[2;3]
+
+=== QA010 profile: general | but not before the file redefines it (#440)
+r:sum[2;3]
+.q.sum:{[a;b] a*b}

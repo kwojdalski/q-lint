@@ -19,6 +19,7 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
     cast_character(path, source, code, comments, &mut out);
     monadic_glyph(path, source, code, comments, &mut out);
     juxtaposed_derived(path, source, code, comments, &mut out);
+    keyword_each(path, source, &unsym, &mut out);
     numbers(path, source, code, &unsym, &mut out);
     out
 }
@@ -870,14 +871,18 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
         // `#:a`: the k form, a glyph and a colon, applied to an operand
         // written straight after it.
         let colon = rest.starts_with(':')
-            && rest[1..].starts_with(|c: char| c.is_ascii_alphanumeric() || "`(\".".contains(c))
+            && rest[1..].starts_with(|c: char| c.is_ascii_alphanumeric() || "`(\".{".contains(c))
             || rest.starts_with(":-") && rest[2..].starts_with(|c: char| c.is_ascii_digit());
         let next = continued(rest);
         let spaced = next.len() < rest.len();
         // A `.` before a letter starts a name, not a number: q 5 refuses
         // `-.foo.x` and `-.z.p` with '-, as it does `#.foo.x` (#241).
+        // A lambda is a noun, and so is a negative literal: q 5 refuses
+        // `#{x}`, `,-1` and `--1` with the first glyph (#438). `- -1` is
+        // refused too, but with ' .
         let operand = colon
-            || next.starts_with(|c: char| c.is_ascii_alphabetic() || "`(\"".contains(c))
+            || next.starts_with(|c: char| c.is_ascii_alphabetic() || "`(\"{".contains(c))
+            || (re!(r"^-\.?\d").is_match(next) && !(g == b'-' && spaced))
             || re!(r"^\.[A-Za-z]").is_match(next)
             || (next.starts_with(|c: char| c.is_ascii_digit() || c == '.')
                 && (g != b'-' || spaced));
@@ -1020,33 +1025,46 @@ fn juxtaposed_derived(
         .replace_all(comments, |m: &regex::Captures| "0".repeat(m[0].len()));
     let b = view.as_bytes();
     let c = code.as_bytes();
-    let mut opens: Vec<usize> = vec![];
-    let mut lambda = std::collections::HashMap::new();
-    for (i, &ch) in c.iter().enumerate() {
-        if ch == b'{' {
-            opens.push(i);
-        } else if ch == b'}'
-            && let Some(o) = opens.pop()
-        {
-            lambda.insert(i, o);
+    // Each closer's opener: a lambda's braces, brackets and parentheses in
+    // code, and a string's quotes in the view, where the string is text.
+    let mut opener = std::collections::HashMap::new();
+    let mut stacks: [Vec<usize>; 3] = [vec![], vec![], vec![]];
+    let mut quote = None;
+    let mut i = 0;
+    while i < b.len() {
+        match quote {
+            Some(_) if b[i] == b'\\' => i += 1,
+            Some(o) if b[i] == b'"' => {
+                opener.insert(i, o);
+                quote = None;
+            }
+            Some(_) => {}
+            None if b[i] == b'"' && c[i] != b'"' => quote = Some(i),
+            None => {
+                if let Some(k) = b"{[(".iter().position(|&o| o == c[i]) {
+                    stacks[k].push(i);
+                } else if let Some(k) = b"}])".iter().position(|&o| o == c[i])
+                    && let Some(o) = stacks[k].pop()
+                {
+                    opener.insert(i, o);
+                }
+            }
         }
+        i += 1;
     }
-    for m in re!(r"(?:[-+*%!#$&|^=<>~,@?]|\.?[A-Za-z][A-Za-z0-9_.]*|\})(?:/:|\\:|':|/|\\|')")
-        .find_iter(&view)
-    {
-        let token = m.start();
-        let iterator = token + m.as_str().find(['/', '\\', '\'']).unwrap();
-        // Both the token and the iterator are code, not string or comment.
-        if c[iterator] != b[iterator] || (c[token] != b[token] && b[token] != b'0') {
+    // A run of iterators - `/`, `':`, or `/'` after `+`, whose operand is
+    // the derived `+/` - and q names the last of them: `+/'x` is '.
+    for m in re!(r"(?:/:|\\:|':|/|\\|')+").find_iter(&view) {
+        let iterator = re!(r"/:|\\:|':|/|\\|'")
+            .find_iter(m.as_str())
+            .last()
+            .map_or(m.start(), |p| m.start() + p.start());
+        // The iterator is code, not string or comment.
+        if c[m.start()] != b[m.start()] {
             continue;
         }
-        let start = match b[token] {
-            b'}' => match lambda.get(&token) {
-                Some(&o) => o,
-                None => continue,
-            },
-            ch if (ch.is_ascii_alphabetic() || ch == b'.') && !boundary(&view, token) => continue,
-            _ => token,
+        let Some(start) = derived_operand(&view, c, &opener, m.start()) else {
+            continue;
         };
         let line_start = view[..start].rfind('\n').map_or(0, |p| p + 1);
         if b[line_start] == b'\\' {
@@ -1081,6 +1099,113 @@ fn juxtaposed_derived(
             ),
         );
         finding.end_column = finding.column.map(|col| col + iter.len());
+        out.push(finding);
+    }
+}
+
+/// Where the operand of an iterator at `at` starts, if it has one: a glyph
+/// or its k form (`+/`, `.:'`), a name, a lambda, a string, a number or
+/// symbol vector, a parenthesised value, or any of these indexed with
+/// brackets (`g[x]'`, `{x}[1]/`). q 5 refuses each applied by juxtaposition.
+fn derived_operand(
+    view: &str,
+    c: &[u8],
+    opener: &std::collections::HashMap<usize, usize>,
+    at: usize,
+) -> Option<usize> {
+    let b = view.as_bytes();
+    let prev = *b.get(at.checked_sub(1)?)?;
+    if GLYPHS.contains(&prev) {
+        return Some(at - 1);
+    }
+    if prev == b':' && at >= 2 && (GLYPHS.contains(&b[at - 2]) || b[at - 2] == b'.') {
+        return Some(at - 2);
+    }
+    let mut q = at;
+    while let Some(&ch) = q.checked_sub(1).and_then(|p| b.get(p)) {
+        match ch {
+            // A signature is not an operand: `{[x]'e}` signals.
+            b']' => match opener.get(&(q - 1)) {
+                Some(&o) if o == 0 || b[o - 1] != b'{' => q = o,
+                _ => return None,
+            },
+            // A glyph indexed with brackets is a noun too: `@[;1;-1+]/`.
+            ch if GLYPHS.contains(&ch) && b[q] == b'[' => {
+                q -= 1;
+                break;
+            }
+            b')' | b'}' | b'"' => {
+                q = *opener.get(&(q - 1))?;
+                break;
+            }
+            ch if ch.is_ascii_alphanumeric() || ch == b'.' || ch == b'_' => {
+                let token = |end: usize| {
+                    let s = view[..end]
+                        .rfind(|ch: char| !(ch.is_ascii_alphanumeric() || "._".contains(ch)))
+                        .map_or(0, |p| p + 1);
+                    (s < end && boundary(view, s)).then_some(s)
+                };
+                q = token(q)?;
+                // After a number `_` is drop, not part of a name: `-2_/:x`
+                // and `1_'x` apply the derived `_/:` and `_'` infix.
+                if c[q].is_ascii_digit()
+                    && let Some(u) = view[q..at].rfind('_')
+                {
+                    q += u + 1;
+                    if q == at {
+                        return None;
+                    }
+                    break;
+                }
+                // A number vector is one operand: `1 2'y`.
+                while c[q].is_ascii_digit() {
+                    let gap = view[..q].trim_end_matches([' ', '\t']).len();
+                    match token(gap) {
+                        Some(s) if gap < q && c[s].is_ascii_digit() => q = s,
+                        _ => break,
+                    }
+                }
+                break;
+            }
+            _ => break,
+        }
+    }
+    (q < at).then_some(q)
+}
+
+/// QE011. An infix keyword before `each` or `peach`. q 5 refuses the line
+/// at parse whatever stands on its left: `cor each x`, `x mavg each y` and
+/// `x in each y` are each an error, while `(cor) each x`, `cor'[x;y]` and
+/// `cor[x] each y` parse. The list is every reserved word q 5 refuses there,
+/// checked one by one (`each`, `over`, `scan`, `prior` and `peach` are
+/// iterators themselves, and the qSQL words have their own rule).
+fn keyword_each(path: &str, source: &str, unsym: &str, out: &mut Vec<Finding>) {
+    for m in re!(
+        r"\b(and|asof|bin|binr|cor|cov|cross|cut|div|dsave|ema|except|fby|ij|ijf|in|insert|inter|like|lj|ljf|lsq|mavg|mcount|mdev|mmax|mmin|mmu|mod|msum|or|pj|rotate|scov|set|setenv|ss|sublist|sv|uj|ujf|union|upsert|vs|wavg|within|wsum|xasc|xbar|xcol|xcols|xdesc|xexp|xgroup|xkey|xlog|xprev|xrank)[ \t]+(each|peach)\b"
+    )
+    .captures_iter(unsym)
+    {
+        let word = m.get(1).unwrap();
+        let line_start = unsym[..word.start()].rfind('\n').map_or(0, |p| p + 1);
+        if !boundary(unsym, word.start())
+            || unsym[..word.start()].ends_with('.')
+            || crate::system_command(&source[line_start..])
+        {
+            continue;
+        }
+        let mut finding = Finding::at(
+            path,
+            source,
+            word.start(),
+            "QE011",
+            format!(
+                "`{w}` is infix, so q 5 refuses `{w} {it}` at parse: write `({w}) {it}`, \
+                 `{w}'` or `{w}[x] {it}`",
+                w = word.as_str(),
+                it = &m[2]
+            ),
+        );
+        finding.end_column = finding.column.map(|c| c + word.len());
         out.push(finding);
     }
 }

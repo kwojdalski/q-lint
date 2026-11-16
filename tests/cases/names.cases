@@ -19,12 +19,26 @@ f:{[counted] counted+1}
 === clean | a builtin as a namespaced field is not a local shadow
 .email.subject:"hi"
 
-=== QF002 | the drop operator cannot be a parameter
+=== QF002 QF010 | the drop operator cannot be a parameter, and it is still a signature, so x is a global (q 5: (value f) 1 is ,`0) (#443)
 f:{[_] x+1}
 
 === QF002 profile: general | every call is refused, so the default reports it (q 5: {[_] 1}[] and {[a;_] a}[1;2] are 'match)
 f:{[_] 1}
 g:{[a;_] a}
+
+=== QF002 profile: general | a _ slot is still a slot, so two arguments are the lambda's rank and only 'match (q 5: {[a;_] a}[1;2] is 'match, three are 'rank) (#443)
+r:{[a;_] a}[1;2]
+
+=== QF002 QA002 profile: general | and a third is 'rank (#443)
+r:{[a;_] a}[1;2;3]
+
+=== QF002 QE008 profile: general | the body after such a signature opens an expression (q 5: parse "f:{[a;_] -a}" is '-) (#443)
+f:{[a;_] -a}
+
+=== QE008 QE009 profile: general | as it does after a typed slot with a function or a dictionary pattern (q 5: '- and '/) (#443)
+g:{[a:neg] -a}
+h:{[a:neg] +/a}
+k:{[`a`b!(a;b)] -a}
 
 === clean profile: general | a name with an underscore in it is a parameter (q 5: {[a_] a_}[1] is 1)
 f:{[a_] a_}
@@ -97,8 +111,19 @@ f:{[a b] a}
 === QF007 | an index in the parameter slot
 f:{[a[0]] a}
 
-=== QF007 | an assignment in the parameter slot
-f:{[a:1] a}
+=== clean profile: general | a q 5 typed slot takes any function or type after the colon (q 5: k["xy";2] is (`xy;2), and each lambda takes two) (#437)
+k:{[a:`$;b] (a;b)}
+r:k["xy";2]
+s:{[a:`$;b] (a;b)}["xy";2]
+t:{[a:{x+1};b] (a;b)}[1;2]
+u:{[a:neg;b] (a;b)}[1;2]
+v:{[a:`int$;b] (a;b)}[1;2]
+w:{[a:-7h;b] a}
+m:{[a:1] a}
+
+=== QA012 profile: general | and its rank is its slot count (q 5: k["xy";2;3] is 'rank) (#437)
+k:{[a:`$;b] (a;b)}
+r:k["xy";2;3]
 
 === clean profile: general | a string literal is a pattern too, which the rules see only as blanks (q 5: {["ab"] 5} "ab" is 5)
 f:{["s"] 1}
@@ -111,6 +136,24 @@ i:{[a;(b;"x")] a+b}
 j:{[([k:p;v])] p+v}
 k:{[([]a;b:c)] a,c}
 r:(f[(1;2);3]; g[`k`v!1 2]; h[1;2])
+
+=== clean profile: general | a dictionary pattern with its keys in front binds too (q 5: f[`a`b!1 2;3] is 6, g[`a`b!1 2;3] is 1, h[`x`y!1 2] is `x`y) (#431)
+f:{[`a`b!(a;b);c] a+b+c}
+r:f[`a`b!1 2;3]
+s:{[(`a`b)!(x;y);c] x}[`a`b!1 2;3]
+h:{[k!(a;b)] k}
+u:{["ab"!(a;b)] a}
+
+=== QA012 profile: general | and takes one slot of the signature (q 5: f[`a`b!1 2;3;4] is 'rank) (#431)
+f:{[`a`b!(a;b);c] a+b+c}
+r:f[`a`b!1 2;3;4]
+
+=== clean profile: general | :: in a pattern matches the generic null (q 5: f (1;2;::) is 3, h[1;::] is 1) (#450)
+f:{[(a;b;::)] a+b}
+r:f (1;2;::)
+g:{[(a;::)] a}
+h:{[a;::] a}
+s:h[1;::]
 
 === QA012 profile: general | the rank of a pattern lambda is its slot count (q 5: f[(1;2);3;4] is 'rank)
 f:{[(a;b);c] a+b+c}
@@ -226,6 +269,29 @@ y:1;sum:2
 === QF004 profile: general | and inside a namespace (q 5: x:1;count:2 under \d .foo is 'assign)
 \d .foo
 x:1;count:2
+\d .
+
+=== QF003 profile: general | global and compound assignment inside a lambda (q 5: {sum::1;0}, {sum+:1;0} and {count,:1;0} are 'assign) (#432)
+f1:{sum::1;0}
+f2:{sum+:1;0}
+f3:{count,:1;0}
+
+=== clean profile: general | from and by take a compound assignment, and sum_ is a name (q 5: {from+:1;0} and {sum_:1;0} are defined) (#432)
+f:{from+:1;by,:1;sum_:1;0}
+
+=== clean profile: general | with nothing to assign, :: and op: apply the function (q 5: {a:raze::}, {(sum::)x}, {count,:;1} are defined) (#432)
+f:{a:raze::;b:(sum::)x;c:value::;count,:;sum::'x}
+
+=== QF012 | a compound assignment at the root (q 5: sum+:1 is 'assign) (#432)
+sum+:1
+
+=== clean | while :: at the root assigns (q 5: sum::1 is accepted) (#432)
+sum::1
+
+=== QF004 profile: general | a compound assignment in a namespace, but not :: (q 5: count+:1 is 'assign, count::1 accepted under \d .my) (#432)
+\d .my
+count+:1
+count::1
 \d .
 
 === QF003 | a later statement inside a lambda is a local, QF003's and not QF012's
@@ -1066,3 +1132,16 @@ t:([]a:1 2)
 y:select a by b:a from t
 z:select from t
 v:select by a from t
+
+=== QF001 QF003 QF004 profile: general | a name the file adds to .q is reserved from there on (q 5 after .q.foo:{x+1}: {[x;foo] x}[5;6] is 'nyi, {foo:1;0} and foo:1 under \d .my are 'assign) (#434)
+.q.foo:{x+1}
+g:{[x;foo] x}
+h:{foo:1;0}
+\d .my
+foo:2
+\d .
+
+=== QF012 | and at the root, but not before it was defined (q 5: foo:0 then .q.foo:{x+1} then foo:1 is 'assign) (#434)
+foo:0
+.q.foo:{x+1}
+foo:1
