@@ -993,7 +993,8 @@ fn null_literal(text: &str, not_last: bool, negative: bool) -> Option<String> {
 /// (`1.2.3`, `2023.1.1`), a long past 9223372036854775807, and an int or
 /// short past its own range (`2147483648i`, `32768h`). A boolean
 /// vector of atoms is not a vector at all - `1b 0b` parses, as two atoms -
-/// and `0N 1`, `3 4i`, `1e5` and `2023.01.01` are fine.
+/// and `0N 1`, `3 4i`, `1e5` and `2023.01.01` are fine - though `1E5`,
+/// with its exponent in upper case, is not.
 fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Finding>) {
     // An exponent's sign is part of its number: `1.5e-3` is one float.
     // A token that starts inside a name - the `1` of `x1:1.5j` - is passed
@@ -1051,6 +1052,25 @@ fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Find
             // is no type suffix, but the token is no number either.
             let detail = if re!(r"^0[nNwW][A-Za-z]?$").is_match(text) {
                 null_literal(text, k + 1 < run.len(), negative)
+            } else if re!(r"^(?:\d+\.?\d*)E(?:[+-]|[A-Za-z]|$)").is_match(text) {
+                // An uppercase exponent takes no sign and needs digits: q 5
+                // refuses `1E-3`, `1.5E+3`, `2E` and `1Ef`, where `1e-3`,
+                // `1.5e+3` and `2e` parse.
+                Some(format!(
+                    "`{text}`: an uppercase `E` exponent takes digits and no sign; write `e`"
+                ))
+            } else if re!(r"^\d+E\d+$").is_match(text)
+                && !run
+                    .iter()
+                    .any(|t| re!(r"\.|^\d+e[+-]?\d+$|^0[nw]$|[ef]$").is_match(t.as_str()))
+            {
+                // `1E5` on an integer mantissa is a float only where another
+                // item makes the vector one: q 5 refuses `1E5`, `1 2E5` and
+                // `1E5 2j`, and takes `1E5 2.5`, `1E5 2f` and `1E5f`.
+                Some(format!(
+                    "`{text}`: an uppercase `E` exponent on an integer makes no number \
+                     unless another item makes the vector float; write `e`"
+                ))
             } else if re!(r"^\d+(?:\.\d*)?(?:[eE][+-]?\d+)?[hij]$").is_match(text)
                 && !re!(r"^\d+[hij]$").is_match(text)
             {

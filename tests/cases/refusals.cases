@@ -341,6 +341,23 @@ x1:1.5
 v2:1b
 t12:12:30
 
+=== QE010 profile: general | an uppercase exponent on an integer, with a sign, or with no digits (#383; q 5: '1E5, '1E, '2E, '1.5E, '1E)
+a:1E5
+b:1E-3
+c:2E
+d:1.5E-3
+e:1Ef
+f:1 2E5
+
+=== clean profile: general | an uppercase exponent where the number is float anyway, and lowercase (#383; q 5: each parses)
+a:1.5E3
+b:1E5f
+c:1E5 2.5
+d:1E5 2f
+e:1e5
+f:1e-3
+g:2e
+
 === QE010 profile: general | a suffix on an item that is not the last (q 5: '3i)
 c:3i 4j
 
