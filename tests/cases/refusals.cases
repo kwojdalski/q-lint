@@ -283,6 +283,11 @@ d:x,/-y
 e:+/-x
 f:count'-x
 
+=== QE008 QE009 profile: general | right after a pattern or a typed signature (q 5: parse each is '/ or '-)
+f:{[(a;b)] +/a}
+g:{[a:`j] -a}
+h:{[a:`j] +/a}
+
 === clean profile: general | a file handle ending in : or / is the left operand (q 5: `:,`s1.err`s1.std is `:`s1.err`s1.std)
 srvr:`s1.err`s1.std
 x:`:,srvr
@@ -330,6 +335,10 @@ a:1
 === QT025 | or on a lambda's continued line, after its signature
 f:{[x]
   '1}
+
+=== QT025 profile: general | after a pattern or a typed signature too (q 5: {[(a;b)] '1}[(1;2)] and {[a:`j] '1}[1] are 'stype)
+f:{[(a;b)] '1}
+g:{[a:`j] '1}
 
 === clean | a continued line after an operand makes it each
 h:{a
@@ -597,6 +606,15 @@ r:select from t where:1
 
 === QT028 profile: general | an assignment heading a later sub-phrase (q 5: 'type)
 r:select from t where a=1,b:2
+
+=== QT028 profile: general | a where phrase continued onto an indented line, or across a lambda's lines (q 5: each is 'type)
+t:([]a:1 2;b:3 4)
+r:select from t
+  where a:1
+f:{[t] select from t
+  where a:1}
+g:{[t] select from t where a>0,
+  b:1}
 
 === clean profile: general | an assignment that is an operand runs (q 5: one row each)
 r:select from t where a in b:1 2

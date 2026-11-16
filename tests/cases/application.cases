@@ -169,6 +169,12 @@ r:@[{[a;b] a+b};1;2]
 === clean | a unary lambda is what @ wants
 r:@[{[a] a+1};1;{`err}]
 
+=== clean | a pattern is one parameter, however many `;` it holds (q 5: @[{[(a;b)] a+b};(1;2);{x}] is 3)
+r:@[{[(a;b)] a+b};(1;2);{x}]
+
+=== QA003 | but a pattern beside another parameter is two (q 5: @[{[(a;b);c] a+b+c};(1;2);{x}] is a projection)
+r:@[{[(a;b);c] a+b+c};(1;2);{x}]
+
 === QA010 | a complete builtin call given more
 r:sum[1;2]
 
@@ -196,6 +202,18 @@ r:qs(1 2;3)
 qs:{$[2>count x;x;raze .z.s each 1_x]}
 r:qs[1;2]
 
+=== clean profile: general | a name after a drop is read: `1_y` reads y (q 5: {x,1_y}[0;1 2 3] is 0 2 3)
+f:{x,1_y}
+r:f[0;1 2 3]
+s:{x,1_y}[0;1 2 3]
+u:{x,y,-1_z}[0;1;2 3]
+
+=== QA012 QA002 profile: general | while an underscore inside a name is part of it (q 5: {x+a_y}[1;2] is 'rank)
+a_y:1
+f:{x+a_y}
+r:f[1;2]
+s:{x+a_y}[1;2]
+
 === clean | a name defined twice is left alone: which definition a call meets depends on when it runs
 f:{x+y+z}
 r:f(1;2)
@@ -220,6 +238,11 @@ f:{x}
 g:{[f] f[1;2]}
 h:{[f;a] f[a;2]}
 
+=== clean profile: general | and so does a name bound by a pattern parameter (q 5: g ({x+y};1) is 2)
+f:{x}
+g:{[(f;a)] f[a;a]}
+r:g ({x+y};1)
+
 === clean | so does a local (q 5: h[] is 3)
 f:{x+y}
 g:{[f] f(1;2)}
@@ -228,6 +251,21 @@ h:{f:sum; f(1;2)}
 === QA012 | a global assignment inside the lambda does not
 f:{x}
 g:{f::{x}; f[1;2]}
+
+=== clean profile: general | but a global reassigned anywhere has no single rank (q 5: r, s and t are 3, u is 2)
+f:{x}
+init:{f::{[a;b] a+b}}
+init[]
+r:f[1;2]
+g:{x}
+`g set {[a;b] a+b}
+s:g[1;2]
+h:{x}
+set[`h;{[a;b] a+b}]
+t:h[1;2]
+k:{x}
+k:(1 2;3 4)
+u:k[0;1]
 
 === QA012 | nor does a parameter of a different lambda
 f:{x}
@@ -299,6 +337,21 @@ a:{x+y} each 1 2
 === clean | rank one under each, or a y read only by an inner lambda
 a:{x,1} each 1 2
 b:{x,{y}1} each 1 2
+
+=== QA012 QA002 profile: general | a name in a query's columns, by or where phrase is not an implicit argument (q 5: {select from x where a=y}[([]a:1 2);1] is 'rank)
+t:([]a:1 2)
+f:{select from x where a=y}
+r:f[t;1]
+s:{exec y from x where a=z}[t;1]
+
+=== clean | while the table after from, a select[n] limit, a read after the query, and the where function outside one count (q 5: each is rank 2)
+t:([]a:1 2)
+f:{select y from x}
+d:@[f;t;{`err}]
+r:{select from y}[t;t]
+s:{select[y] from x}[t;1]
+u:{(select from x where a=y;y)}[t;1]
+v:{x where (lower x) like lower y}[("ab";"Bc");"b*"]
 
 === QA003 | protected apply of an implicit-rank lambda (q 5: @[{x+y};1;{x}] is {x+y}[1])
 c:@[{x+y};1;{x}]

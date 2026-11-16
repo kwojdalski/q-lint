@@ -34,6 +34,14 @@ r4:select a by 2 xbar a from t
 r5:select a by xbar[2;a] from t
 r6:f:{select b,a by a from x where b>3}
 
+=== QB021 profile: general | a select continued onto an indented line, or across a lambda's lines (q 5: 'dup names for cols/groups a)
+t:([]a:1 2;b:3 4)
+r:select a
+  by a from t
+f:{[t] r:select a,b
+  by a
+  from t; r}
+
 === clean | a renamed column, another first name, or exec and update (q 5: each runs)
 c1:select m:max a by a from t
 c2:select b*a by a from t
@@ -315,6 +323,18 @@ f:{[x] r:x+1;}
 === clean | a side-effecting call at the end
 f:{[x] .lg.o[x];}
 
+=== clean | a call continued onto the next line is one statement (q 5: f leaves 2 rows in tbl)
+f:{[t]
+  `tbl upsert
+    t;
+  }
+
+=== QB012 | and a value continued onto the next line is still discarded
+f:{[a;b]
+  a+
+    b;
+  }
+
 === clean | a print at the end
 f:{[x] -1 "done";}
 
@@ -393,6 +413,19 @@ delete a from t where b>3
 
 === QB016 | the table may be a literal
 delete a from ([]a:1 2;b:3 4) where b>3
+
+=== QB016 QB015 profile: general | a query continued onto the next line inside a lambda (q 5: f t is 'nyi, g t is 'length)
+t:([]a:1 2;b:3 4;s:`x`y)
+f:{[t] delete a from t
+  where b>0}
+g:{[t] select from t
+  where s="abc"}
+
+=== QB015 profile: general | reported once, from the line the query starts on, whatever precedes it in the lambda
+g:{[t]
+  n:count t;
+  select from t
+    where s="abc"}
 
 === clean | a select after from takes the where phrase for itself
 r:delete a from select from t where b>3

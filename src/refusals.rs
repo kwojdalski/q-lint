@@ -449,7 +449,7 @@ fn signals(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<F
         if !(at == line_start
             || before.is_empty()
             || before.ends_with(['[', '(', ';', '{'])
-            || re!(r"\{\s*\[[A-Za-z0-9_; \t]*\]$").is_match(before))
+            || after_signature(code, source, before.len()))
         {
             continue;
         }
@@ -496,11 +496,21 @@ fn where_assignment(path: &str, source: &str, code: &str, out: &mut Vec<Finding>
         }
         // The qSQL keyword, and its `from` before this `where`: in
         // `exec where m:a>0 from t` the `where` is the function, in a column.
-        let head = &code[code[..w.start()].rfind(['\n', ';']).map_or(0, |p| p + 1)..w.start()];
+        // The statement runs back to a `;` or a line starting at column 0:
+        // an indented line continues it, and in a lambda a newline is
+        // whitespace (#335).
+        let bytes = code.as_bytes();
+        let mut from = w.start();
+        while from > 0
+            && bytes[from - 1] != b';'
+            && !(bytes[from - 1] == b'\n' && !bytes[from].is_ascii_whitespace())
+        {
+            from -= 1;
+        }
+        let head = &code[from..w.start()];
         if !re!(r"\b(?:select|exec|update|delete)\b[\s\S]*\bfrom\b").is_match(head) {
             continue;
         }
-        let bytes = code.as_bytes();
         // `depth` counts every bracket, `nested` only those that are not
         // parentheses: an assignment in `(a:1)` is still the phrase's own
         // (q 5: 'type), one in a lambda or a bracket is not.
@@ -530,7 +540,13 @@ fn where_assignment(path: &str, source: &str, code: &str, out: &mut Vec<Finding>
                         nested -= 1;
                     }
                 }
-                b';' | b'\n' if depth == 0 => break,
+                b';' if depth == 0 => break,
+                b'\n'
+                    if depth == 0
+                        && bytes.get(at + 1).is_some_and(|b| !b.is_ascii_whitespace()) =>
+                {
+                    break;
+                }
                 b':' if nested == 0
                     && code[..at]
                         .trim_end()
@@ -710,6 +726,39 @@ fn atom_literal(lit: &str) -> bool {
     !re!(r"^[01]{2,}b$").is_match(lit)
 }
 
+/// Whether the `]` ending at `end` closes a lambda's parameter list, so that
+/// what follows it opens the body's first expression. Any signature q reads
+/// as one: `{[a;b]`, a pattern `{[(a;b)]` or a typed slot `{[a:`j]` (#325).
+fn after_signature(code: &str, raw: &str, end: usize) -> bool {
+    if !code[..end].ends_with(']') {
+        return false;
+    }
+    let mut depth = 0usize;
+    let mut open = None;
+    for (i, b) in code.as_bytes()[..end].iter().enumerate().rev() {
+        match b {
+            b')' | b']' | b'}' => depth += 1,
+            b'(' | b'[' | b'{' => {
+                depth -= 1;
+                if depth == 0 {
+                    open = Some(i);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let Some(open) = open.filter(|&o| code.as_bytes()[o] == b'[') else {
+        return false;
+    };
+    let head = code[..open].trim_end();
+    if !head.ends_with('{') {
+        return false;
+    }
+    let sig = crate::signature(code, raw, head.len() - 1);
+    sig.named && sig.body == end
+}
+
 /// QE008. A glyph applied to one argument by juxtaposition. q 5 has no
 /// monadic form for any of them: `-x`, `,x`, `#x`, `~x`, `_x`, `a:-x` and `1*-x`
 /// are each refused by `parse` with the glyph as the error, and a lambda
@@ -757,7 +806,7 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
         let before = comments[..i].trim_end_matches([' ', '\t', '\r', '\n']);
         // A `\t` line's expression starts after the command (#310).
         let expression = line_start + crate::timed_prefix(&source[line_start..]);
-        if !opens_expression(comments, i, expression) {
+        if !opens_expression(code, source, comments, i, expression) {
             continue;
         }
         // A symbol ending in `:` or `/` is still an operand: `` `:,srvr ``
@@ -822,7 +871,7 @@ fn continued(rest: &str) -> &str {
 /// Whether the token at `i` starts an expression, so that whatever it applies
 /// to is applied by juxtaposition: the start of a line or statement, after
 /// `:`, an opening bracket, a signature or a qSQL word, or after another glyph.
-fn opens_expression(comments: &str, i: usize, line_start: usize) -> bool {
+fn opens_expression(code: &str, raw: &str, comments: &str, i: usize, line_start: usize) -> bool {
     // Pairs QE004 already reports, or that are one operator.
     const PAIRS: &[&str] = &[
         "<>", "<=", ">=", "==", "!=", "&&", "||", "+=", "-=", "*=", "->", "=>", "**", "=<", "<<",
@@ -864,7 +913,7 @@ fn opens_expression(comments: &str, i: usize, line_start: usize) -> bool {
         || iterator
         || qsql
         || before.ends_with([':', '(', '[', '{', ';'])
-        || re!(r"\{\s*\[[A-Za-z0-9_; \t]*\]$").is_match(before)
+        || after_signature(code, raw, before.len())
         || (before
             .bytes()
             .next_back()
@@ -934,7 +983,7 @@ fn juxtaposed_derived(
             || (next.starts_with('-')
                 && next[1..]
                     .starts_with(|ch: char| ch.is_ascii_alphabetic() || "`(\"".contains(ch)));
-        if !operand || !opens_expression(&view, start, line_start) {
+        if !operand || !opens_expression(code, source, &view, start, line_start) {
             continue;
         }
         let iter = &view[iterator..m.end()];

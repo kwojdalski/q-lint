@@ -3016,8 +3016,9 @@ fn named_values(
         ));
     };
     // No `\b` before the keyword: `1_select` is a drop of a select (#351),
-    // and `boundary` tells that from the name `x_select`.
-    for m in re!(r"(?:select|exec|update)\b([^\n;]*?)\bfrom\s+(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\b")
+    // and `boundary` tells that from the name `x_select`. An indented line
+    // continues the column list, and in a lambda a newline is whitespace (#336).
+    for m in re!(r"(?:select|exec|update)\b((?:[^\n;]|\n[ \t])*?)\bfrom\s+(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\b")
     .captures_iter(code)
     {
         if !boundary(code, m.get(0).unwrap().start()) {

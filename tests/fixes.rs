@@ -465,6 +465,12 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ),
         (
             "QF005",
+            "f:{[a] g:{ [b] a+b}; g 1}",
+            "f:{[a] g:{[a;b] a+b}[a]; g 1}",
+            false,
+        ),
+        (
+            "QF005",
             "f:{[a] g:{a}; g 1}",
             "f:{[a] g:{[a;x] a}[a]; g 1}",
             false,
@@ -556,6 +562,10 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
         ("QA007", "f:{[c] $[c;1;2;3]}"),     // no empty slot
         ("QP002", "t:.z.z / old: 15h$x"),    // the cast is in a comment
         ("QP002", "t:.z.Z;s:\"0Nz\""),       // and the null in a string
+        (
+            "QF005",
+            "f:{[k] g:{[a;b;c;d;e;f;g;h] k+h}; g[1;2;3;4;5;6;7;8]}",
+        ), // a ninth parameter is 'params
     ] {
         for finding in lint(source, "probe.q", Profile::Uqf)
             .iter()

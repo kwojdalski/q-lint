@@ -759,11 +759,13 @@ fn select_by_duplicate(path: &str, source: &str, code: &str, out: &mut Vec<Findi
             &rest[..by.start()],
             &rest[by.end()..by.end() + from.start()],
         );
-        // A `;` outside brackets, a newline, or the end of a lambda ends the
-        // statement before these lists do; `xbar[2;a]` and `{x} a` keep
-        // their own.
+        // A `;` outside brackets, a line starting at column 0, or the end of
+        // a lambda ends the statement before these lists do; `xbar[2;a]` and
+        // `{x} a` keep their own. An indented line continues it, and inside
+        // a lambda a newline is whitespace (#333).
         let both = format!("{list}{groups}");
-        if both.contains('\n') || !braces_close(&both) || items_at_depth_zero(&both, b';') {
+        if re!(r"\n\S").is_match(&both) || !braces_close(&both) || items_at_depth_zero(&both, b';')
+        {
             continue;
         }
         let named = |list: &[&str]| {
