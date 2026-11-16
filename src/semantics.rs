@@ -95,7 +95,7 @@ fn resolved(name: &str, ns: &str) -> String {
 /// The target is a q 5 pattern, so it nests and takes a dictionary:
 /// `(c;(a;b)):t` binds all three and `([k;v]):d` binds k and v, while
 /// `([k:p]):d` binds only p (q 5: `([k:p]):`k`v!5 6` sets p to 5).
-fn multi_assignments(text: &str) -> impl Iterator<Item = (usize, &str)> {
+pub(crate) fn multi_assignments(text: &str) -> impl Iterator<Item = (usize, &str)> {
     let bytes = text.as_bytes();
     re!(r"\)\s*:[^:]")
         .find_iter(text)

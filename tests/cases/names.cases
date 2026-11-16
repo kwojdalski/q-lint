@@ -297,6 +297,10 @@ f:{[t] select from t where return>0.15}
 r:select from t
 f:{[x] return x}
 
+=== clean profile: general | and so does a multiple assignment (q 5: show true prints 1b) (#371)
+(true;false):10b
+show true
+
 === clean | a file that defines the name has made it one
 return:{[x] x}
 f:{[x] return x}
