@@ -733,12 +733,15 @@ fn last_slot_name(inner: &str) -> Option<&str> {
 /// QB021. A select naming a result column the same as one of its by groups.
 /// q 5 refuses it with 'dup names for cols/groups: `select a by a from t`,
 /// `select max a by a from t` and `select a:b by a from t` all fail, where
-/// `select m:max a by a from t` runs. exec and update with the same lists
-/// run, so only select is read.
+/// `select m:max a by a from t` runs. update with the same lists runs. exec
+/// names its result only when the list has several items or an alias, and
+/// its groups likewise: q 5 runs `exec a by a from t` and `exec c:a by c
+/// from t`, and refuses `exec c:a by c:b from t` and `exec a,b by a,c from t`
+/// (#354).
 fn select_by_duplicate(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
     // No `\b` before the keyword: `1_select` is a drop of a select (#351),
     // and `boundary` tells that from the name `x_select`.
-    for q in re!(r"select\b").find_iter(code) {
+    for q in re!(r"(?:select|exec)\b").find_iter(code) {
         if !crate::boundary(code, q.start()) || in_string(code, q.start()) {
             continue;
         }
@@ -763,6 +766,13 @@ fn select_by_duplicate(path: &str, source: &str, code: &str, out: &mut Vec<Findi
         if both.contains('\n') || !braces_close(&both) || items_at_depth_zero(&both, b';') {
             continue;
         }
+        let named = |list: &[&str]| {
+            list.len() > 1 || re!(r"^\s*[A-Za-z][A-Za-z0-9_]*\s*:[^:]").is_match(list[0])
+        };
+        let exec = q.as_str() == "exec";
+        if exec && !(named(&items(list)) && named(&items(groups))) {
+            continue;
+        }
         let groups: Vec<_> = items(groups).into_iter().filter_map(column_name).collect();
         if let Some(name) = items(list)
             .into_iter()
@@ -775,8 +785,9 @@ fn select_by_duplicate(path: &str, source: &str, code: &str, out: &mut Vec<Findi
                 q.start(),
                 "QB021",
                 format!(
-                    "`{name}` names both a result column and a by group: q 5 refuses the select \
-                     with 'dup names for cols/groups {name}; name the column, `m:max {name}`"
+                    "`{name}` names both a result column and a by group: q 5 refuses the {} \
+                     with 'dup names for cols/groups {name}; name the column, `m:max {name}`",
+                    q.as_str()
                 ),
             ));
         }
