@@ -132,7 +132,7 @@ struct Args {
     /// Run as a language server on stdin/stdout instead of linting paths.
     #[arg(long, conflicts_with_all = ["paths", "rules", "explain", "fix", "diff", "show_settings"])]
     lsp: bool,
-    /// Colour the text output: `auto` (a terminal, and NO_COLOR unset),
+    /// Colour the text output: `auto` (a terminal, and NO_COLOR unset or empty),
     /// `always`, or `never`.
     #[arg(long, default_value = "auto", value_parser = ["auto", "always", "never"])]
     color: String,
@@ -894,10 +894,17 @@ fn main() -> ExitCode {
     }
 }
 
+/// `--color auto`: a terminal, unless `NO_COLOR` holds something - an empty
+/// `NO_COLOR=` does not turn colour off (#426).
+fn auto_colour(terminal: bool, no_color: Option<&std::ffi::OsStr>) -> bool {
+    terminal && no_color.is_none_or(|v| v.is_empty())
+}
+
 /// ANSI colour for the text output, or none.
 ///
-/// Off unless stdout is a terminal, off whenever `NO_COLOR` is set to anything
-/// (https://no-color.org), and overridable either way by `--color`. A pipe
+/// Off unless stdout is a terminal, off whenever `NO_COLOR` is set to a
+/// nonempty value (https://no-color.org: "when present and not an empty
+/// string"), and overridable either way by `--color`. A pipe
 /// into grep or a file gets plain text, which is what the tools on the other
 /// end of it expect.
 struct Paint {
@@ -909,7 +916,10 @@ impl Paint {
         let on = match flag {
             "always" => true,
             "never" => false,
-            _ => std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none(),
+            _ => auto_colour(
+                std::io::stdout().is_terminal(),
+                std::env::var_os("NO_COLOR").as_deref(),
+            ),
         };
         Self { on }
     }
@@ -931,5 +941,19 @@ impl Paint {
     }
     fn dim(&self, text: &str) -> String {
         self.wrap("2", text)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::auto_colour;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn an_empty_no_color_leaves_colour_on() {
+        assert!(auto_colour(true, None));
+        assert!(auto_colour(true, Some(OsStr::new(""))));
+        assert!(!auto_colour(true, Some(OsStr::new("1"))));
+        assert!(!auto_colour(false, None));
     }
 }
