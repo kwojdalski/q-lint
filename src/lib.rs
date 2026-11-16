@@ -242,9 +242,10 @@ const QUERY_WORDS: [&str; 7] = ["select", "exec", "update", "delete", "by", "fro
 /// The qSQL word at `at` in the masked code, if one starts there.
 fn query_word(code: &str, at: usize) -> Option<&'static str> {
     // Part of a longer name - `.req.delete`, `clust.dbscan.update` - or a
-    // symbol, `` `update ``, is not the keyword.
+    // symbol, `` `update ``, is not the keyword; after a drop, `1_select`,
+    // it is (#340).
     let word = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'.';
-    if at > 0 && (word(code.as_bytes()[at - 1]) || code.as_bytes()[at - 1] == b'`') {
+    if !boundary(code, at) {
         return None;
     }
     QUERY_WORDS.into_iter().find(|w| {

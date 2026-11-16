@@ -377,6 +377,13 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
             "s:select from t where (a=\"x\") and b=0",
             false,
         ),
+        // The argument ends at `from` after a drop too (#340).
+        (
+            "QP006",
+            "g:{x+1};r:1_select c:g a from t",
+            "g:{x+1};r:1_select c:g[a] from t",
+            true,
+        ),
         ("QR004", "r:{x+1} each 1 2 3", "r:1 2 3+1", false),
         ("QR004", "r:{2-x} each a,b", "r:2-a,b", false),
         ("QR004", "r:{x%2} each a,b", "r:(a,b)%2", false),
