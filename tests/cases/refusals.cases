@@ -158,6 +158,19 @@ f:{-x}
 a:-x
 b:1*-x
 
+=== QE008 profile: general | in the expression a \t line times (q 5: '-, #310)
+x:1 2
+\t r:-x
+
+=== QE008 profile: general | and at the start of that expression (q 5: '-, #310)
+x:1 2
+\t -x
+
+=== clean profile: general | while a \t expression that subtracts runs (q 5: 0 and 0 752)
+x:1 2
+\t 1-x
+\ts:3 x-1
+
 === QE008 profile: general | monadic minus on a dotted name, which is not a number (q 5: -.foo.x and -.z.p are '-)
 a:-.foo.x
 b:-.z.p

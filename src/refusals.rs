@@ -723,7 +723,7 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
         // `1 _x` and the `_` inside `x_y` follow an operand.
         if !(GLYPHS.contains(&g) || g == b'_')
             || code.as_bytes()[i] != g
-            || b[line_start] == b'\\'
+            || crate::system_command(&comments[line_start..])
             || comments[line_start..].starts_with("#!")
         {
             continue;
@@ -749,7 +749,9 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
             continue;
         }
         let before = comments[..i].trim_end_matches([' ', '\t', '\r', '\n']);
-        if !opens_expression(comments, i, line_start) {
+        // A `\t` line's expression starts after the command (#310).
+        let expression = line_start + crate::timed_prefix(&comments[line_start..]);
+        if !opens_expression(comments, i, expression) {
             continue;
         }
         // A symbol ending in `:` or `/` is still an operand: `` `:,srvr ``
