@@ -2798,6 +2798,15 @@ fn named_values(
             exact.entry(name).or_default().extend([0, 0]);
         }
     }
+    // A global appended to by name: `` `a upsert 4 `` makes `a:1 2 3` four
+    // items (q 5). A table keeps its columns, so QT026 and QT027 still read
+    // it; any other value is no longer known.
+    let upserted: HashSet<String> = re!(
+        r"`(\.?[A-Za-z][A-Za-z0-9_.]*)(?:\s+|\s*\)\s*)upsert\b|\bupsert\s*\[\s*`(\.?[A-Za-z][A-Za-z0-9_.]*)"
+    )
+    .captures_iter(code)
+    .map(|m| key(m.get(1).or(m.get(2)).unwrap().as_str(), m.get(0).unwrap().start()))
+    .collect();
     let mut known: HashMap<&str, (usize, Held)> = HashMap::new();
     let mut kinds: HashMap<&str, Arithmetic> = HashMap::new();
     // Names bound to an integer atom, which q applies as a file handle rather
@@ -2847,6 +2856,8 @@ fn named_values(
             }
         }
     }
+    known.retain(|name, (_, value)| matches!(value, Held::Table(..)) || !upserted.contains(*name));
+    kinds.retain(|name, _| known.contains_key(name));
     // A read sees the global only after it is assigned, at the top level, and
     // only where no local of the same name hides it. Where another file of
     // the workspace assigns the name too, a lambda body may run after either
