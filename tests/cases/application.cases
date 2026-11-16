@@ -175,6 +175,14 @@ r:@[{[(a;b)] a+b};(1;2);{x}]
 === QA003 | but a pattern beside another parameter is two (q 5: @[{[(a;b);c] a+b+c};(1;2);{x}] is a projection)
 r:@[{[(a;b);c] a+b+c};(1;2);{x}]
 
+=== clean | an operand juxtaposed after the lambda is an argument it already holds (q 5: 3, -1 and 6, each handler live) (#433)
+r:@[{[a;b] a+b} 1;2;{x}]
+s:@[{[f;a] f a}neg;1;{`err}]
+t:@[{[a;b;c] a+b+c}[1] 2;3;{x}]
+
+=== QA003 | but one argument held of three still leaves two (q 5: @[{[a;b;c] a+b+c} 1;2;{x}] is a projection) (#433)
+r:@[{[a;b;c] a+b+c} 1;2;{x}]
+
 === QA010 | a complete builtin call given more
 r:sum[1;2]
 

@@ -3399,6 +3399,7 @@ pub fn lint_selecting(
             let rest = code[end..].trim_start();
             let open = code.len() - rest.len();
             let mut supplied = 0;
+            let mut after = end;
             if rest.starts_with('[')
                 && let Some(close) = matching(code, open, b'[', b']')
             {
@@ -3406,6 +3407,16 @@ pub fn lint_selecting(
                     .iter()
                     .filter(|s| !s.trim().is_empty())
                     .count();
+                after = close;
+            }
+            // An operand juxtaposed after it is one more argument: q 5
+            // `@[{[a;b] a+b} 1;2;{x}]` is 3 and `@[{[f;a] f a}neg;1;{x}]` -1,
+            // each a complete call (#433).
+            if source[after..]
+                .trim_start_matches([' ', '\t'])
+                .starts_with(|c: char| c.is_ascii_alphanumeric() || "`(\"{.".contains(c))
+            {
+                supplied += 1;
             }
             if arity.saturating_sub(supplied) >= 2 {
                 add(
