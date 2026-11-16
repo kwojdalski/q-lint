@@ -3002,6 +3002,11 @@ fn named_values(
     .captures_iter(code)
     {
         let table = m.get(2).unwrap();
+        // The name has to be the whole from clause: `from t lj k`, `from t,'u`
+        // and `from t uj u` bring in columns `t` does not have (#348).
+        if !operand_ends(code, table.end()) {
+            continue;
+        }
         let Some(Held::Table(columns, _)) = visible(table.as_str(), table.start()) else {
             continue;
         };

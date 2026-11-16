@@ -709,6 +709,14 @@ t:([]a:1 2 3;b:4 5 6)
 u:([]c:7 8)
 r:select a, n:(exec count i from u) from t
 
+=== clean profile: general | a from clause that joins brings in the other table's columns (q 5 runs each, #348)
+t:([]a:1 2)
+k:`a xkey flip `a`c!(1 2;3 4)
+r1:select c from t lj k
+r2:select a,c from t,'flip enlist[`c]!enlist 5 6
+u:([]c:5 6)
+r3:exec c from t uj u
+
 === clean | a nested query's columns in a where phrase are its own table's (q 5 runs f)
 t:([]a:1 2 3)
 f:{[u] select from t where a in exec b from u}
