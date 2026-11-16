@@ -664,7 +664,7 @@ pub fn serve(
                     // A configuration file changed: every file it governs may
                     // now report differently, so forget them all and relint.
                     let path = path_of(&uri);
-                    if is_config_path(&path) || policy.is_explicit_config(Path::new(&path)) {
+                    if is_config_path(&path) || policy.read_from(Path::new(&path)) {
                         policy.reset();
                         changed = true;
                         continue;

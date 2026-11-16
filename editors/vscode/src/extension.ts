@@ -125,7 +125,9 @@ async function start(context: ExtensionContext): Promise<void> {
     synchronize: {
       fileEvents: [
         workspace.createFileSystemWatcher("**/*.q"),
-        workspace.createFileSystemWatcher("**/{qlinter.toml,.qlinter.toml,pyproject.toml}"),
+        // Every `.toml`: a file `extend`s a base by any name, and the server
+        // re-reads only the ones its settings were made from.
+        workspace.createFileSystemWatcher("**/*.toml"),
         // `q-lint.configFile` can be called anything and live anywhere.
         ...(settings.configFile
           ? [

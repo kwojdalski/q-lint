@@ -89,6 +89,10 @@ pub struct Settings {
     extend_exclude: Vec<Glob>,
     /// Replaced, not added to, by a file that sets its own, as in Ruff.
     per_file_ignores: Vec<(Glob, Vec<String>)>,
+    /// Every file read to make this: `file` and each it extends, whatever
+    /// they are called - so a language server knows to re-read when a base
+    /// changes (#419).
+    sources: Vec<PathBuf>,
 }
 
 /// What the command line says, which wins over any file.
@@ -151,6 +155,18 @@ impl Policy {
             .config
             .as_ref()
             .is_some_and(|config| absolute(config) == absolute(path))
+    }
+
+    /// Whether `path` is a file some settings read so far were made from -
+    /// one found beside the source, one it extends, or `--config`.
+    pub fn read_from(&self, path: &Path) -> bool {
+        let path = absolute(path);
+        self.is_explicit_config(&path)
+            || self
+                .cache
+                .borrow()
+                .values()
+                .any(|settings| settings.sources.contains(&path))
     }
 
     /// The settings for `path`, a file or a directory: the configuration
@@ -553,6 +569,7 @@ fn load(path: &Path, depth: usize, patterns: Option<&Path>) -> Result<Option<Set
         }
     };
     settings.file = Some(absolute(path));
+    settings.sources.push(absolute(path));
     if let Some(v) = table.get("profile") {
         let name = v
             .as_str()

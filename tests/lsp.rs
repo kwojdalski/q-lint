@@ -1073,6 +1073,31 @@ fn editing_the_configuration_relints_the_open_documents() {
 }
 
 #[test]
+fn editing_a_base_the_configuration_extends_relints_the_open_documents() {
+    // A base reached through `extend` can be called anything; the CLI reads
+    // it fresh each run, and the editor must re-read it too (#419).
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path().join("base.toml");
+    std::fs::write(&base, "profile = \"style\"\n").unwrap();
+    std::fs::write(dir.path().join(".qlinter.toml"), "extend = \"base.toml\"\n").unwrap();
+    let uri = file_uri(&dir.path().join("a.q"));
+    let mut server = Server::spawn(dir.path(), &["--lsp"]);
+    server.initialize();
+    server.open(&uri, "my_var:1;f:{[desc] desc}");
+    assert_eq!(codes_of(&server.diagnostics_for(&uri)), ["QF001"]);
+    std::fs::write(&base, "profile = \"style\"\n[lint]\nignore = [\"QF\"]\n").unwrap();
+    server.send(
+        json!({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles",
+        "params":{"changes":[{"uri":file_uri(&base),"type":2}]}}),
+    );
+    assert_eq!(
+        codes_of(&server.diagnostics_for(&uri)),
+        Vec::<String>::new()
+    );
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
 fn every_rule_with_a_fix_offers_it_in_the_editor() {
     // Not only the three the server first knew: a fix `--fix` applies, and
     // one only a person should accept, are both offered here.
