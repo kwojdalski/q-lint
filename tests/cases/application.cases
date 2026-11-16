@@ -300,6 +300,21 @@ a:{x+y} each 1 2
 a:{x,1} each 1 2
 b:{x,{y}1} each 1 2
 
+=== QA012 QA002 profile: general | a name in a query's columns, by or where phrase is not an implicit argument (q 5: {select from x where a=y}[([]a:1 2);1] is 'rank)
+t:([]a:1 2)
+f:{select from x where a=y}
+r:f[t;1]
+s:{exec y from x where a=z}[t;1]
+
+=== clean | while the table after from, a select[n] limit, a read after the query, and the where function outside one count (q 5: each is rank 2)
+t:([]a:1 2)
+f:{select y from x}
+d:@[f;t;{`err}]
+r:{select from y}[t;t]
+s:{select[y] from x}[t;1]
+u:{(select from x where a=y;y)}[t;1]
+v:{x where (lower x) like lower y}[("ab";"Bc");"b*"]
+
 === QA003 | protected apply of an implicit-rank lambda (q 5: @[{x+y};1;{x}] is {x+y}[1])
 c:@[{x+y};1;{x}]
 

@@ -2497,6 +2497,7 @@ pub(crate) fn lambda_rank(code: &str, raw: &str, brace: usize, end: usize) -> us
             " ".repeat(m[0].len())
         })
         .into_owned();
+    let body = outside_query_phrases(&body);
     // Not as part of a dotted name: `.z.s` is the lambda itself, and
     // reading it says nothing about a third argument.
     if re!(r"(?:^|[^A-Za-z0-9_.])z(?:[^A-Za-z0-9_.]|$)").is_match(&body) {
@@ -2506,6 +2507,69 @@ pub(crate) fn lambda_rank(code: &str, raw: &str, brace: usize, end: usize) -> us
     } else {
         1
     }
+}
+/// A lambda body with the column, by and where phrases of its queries
+/// blanked: q leaves the names there out of the implicit signature, so
+/// `{select from x where a=y}` takes one argument and `{select from y}` two
+/// (q 5, #326). The table after `from` and a `select[n]` limit stay, as
+/// does anything after the `;` ending the query. Same length as `body`.
+fn outside_query_phrases(body: &str) -> String {
+    #[derive(Clone, Copy, PartialEq)]
+    enum In {
+        Code,
+        Phrase,
+        Table,
+    }
+    let b = body.as_bytes();
+    let mut out = b.to_vec();
+    // Each open bracket: the state it opened in, which a `;` inside it
+    // returns to - `(y;1)` in a where phrase is still the phrase, while
+    // `f[select ...; y]` reads `y` - and the state now.
+    let mut stack = vec![(In::Code, In::Code)];
+    let mut keyword_end = None;
+    let mut i = 0;
+    while i < b.len() {
+        let state = stack.last().unwrap().1;
+        match b[i] {
+            b'(' | b'[' | b'{' => {
+                // `select[n]` is a limit, read where the query is.
+                let limit =
+                    b[i] == b'[' && keyword_end.is_some_and(|k| body[k..i].trim().is_empty());
+                let open = if limit { In::Code } else { state };
+                stack.push((open, open));
+            }
+            b')' | b']' | b'}' if stack.len() > 1 => {
+                stack.pop();
+            }
+            b';' => {
+                let top = stack.last_mut().unwrap();
+                top.1 = top.0;
+            }
+            _ => {
+                // Outside a query, `where` is the function: `{x where y}`.
+                if let Some(word) = query_word(body, i)
+                    .filter(|w| state != In::Code || !matches!(*w, "by" | "from" | "where"))
+                {
+                    let next = match word {
+                        "select" | "exec" | "update" | "delete" => {
+                            keyword_end = Some(i + word.len());
+                            In::Phrase
+                        }
+                        "from" => In::Table,
+                        _ => In::Phrase,
+                    };
+                    stack.last_mut().unwrap().1 = next;
+                    i += word.len();
+                    continue;
+                }
+            }
+        }
+        if stack.last().unwrap().1 == In::Phrase && b[i].is_ascii_alphanumeric() {
+            out[i] = b' ';
+        }
+        i += 1;
+    }
+    String::from_utf8(out).unwrap()
 }
 /// Whether `name`, read at `at`, is a parameter or local of a lambda around
 /// it - and so not the global a rule may know the rank of. q 5:
@@ -2888,7 +2952,7 @@ pub fn lint_selecting(
                     && !re!(r"\n\S").is_match(&code[end..open + 1])
                     && let Some(close) = matching(code, open, b'[', b']')
                 {
-                    let body = top_level(&code[at + 1..end - 1]);
+                    let body = outside_query_phrases(&top_level(&code[at + 1..end - 1]));
                     // Not as the head of a dotted name: `y.z` is a global,
                     // and q 5 `{x+y.z}[1;2]` is 'rank.
                     let reads = |name: &str| {
