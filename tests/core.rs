@@ -38,6 +38,17 @@ fn a_blanked_column_0_line_is_named_as_the_one_that_starts_a_statement() {
     assert!(f[0].detail.contains("before line 2"), "{}", f[0].detail);
 }
 #[test]
+fn a_multi_byte_blank_before_an_assigned_name_does_not_panic() {
+    // A no-break space pasted from a web page: q 5 refuses it with 'char,
+    // and QT028 once sliced into the middle of it (#321).
+    for source in [
+        "select from t where\u{a0}f:1",
+        "select from t where a=1,\u{a0}b:2",
+    ] {
+        lint(source, "t.q", Profile::General);
+    }
+}
+#[test]
 fn arbitrary_text_does_not_panic() {
     let chars = [
         'a', '1', 'é', '😀', ' ', '\n', '\r', '\t', '/', '\\', '\"', '\'', ':', ';', '(', ')', '[',

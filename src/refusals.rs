@@ -537,10 +537,13 @@ fn where_assignment(path: &str, source: &str, code: &str, out: &mut Vec<Finding>
                     && !code[at + 1..].starts_with([':', '/', '\\', '\''])
                     && !code[..at].ends_with([':', '/', '\\', '\'']) =>
                 {
+                    // Past the whole of the character before the name, which
+                    // may be wider than a byte: a no-break space (#321).
                     let name_start = code[..at]
                         .trim_end()
-                        .rfind(|c: char| !(c.is_alphanumeric() || c == '_'))
-                        .map_or(0, |p| p + 1);
+                        .char_indices()
+                        .rfind(|&(_, c)| !(c.is_alphanumeric() || c == '_'))
+                        .map_or(0, |(p, c)| p + c.len_utf8());
                     // A name starts with a letter and stands alone: `09:35`
                     // and the `D00:00` of a timestamp are literals, and
                     // their colons are part of them.
