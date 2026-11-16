@@ -450,15 +450,15 @@ fn shape(s: &str) -> Option<usize> {
     if let Some(rest) = s.strip_prefix("enlist ") {
         return shape(rest).map(|_| 1);
     }
-    // A byte vector: `0x` and an even run of hex digits, two per item. With
-    // exactly two it is an atom, which `Shape` reports as a one-item vector
-    // the way a lone number is - the length check treats both alike.
+    // A byte vector: `0x` and a run of hex digits, two per item, an odd
+    // first one padded (q 5: `0x012` is `0x0012`, and `0x` the empty byte
+    // vector). With one or two digits it is an atom, which `Shape` reports
+    // as a one-item vector the way a lone number is - the length check
+    // treats both alike.
     if let Some(hex) = s.strip_prefix("0x")
-        && !hex.is_empty()
-        && hex.len() % 2 == 0
         && hex.bytes().all(|b| b.is_ascii_hexdigit())
     {
-        return Some(hex.len() / 2);
+        return Some(hex.len().div_ceil(2));
     }
     // A boolean vector is one token, a digit per item: `10b` is two.
     if re!(r"^[01]+b$").is_match(s) {
@@ -2510,7 +2510,9 @@ fn held(code: &str, raw: &str) -> Option<Held> {
         return Some(Held::Atom);
     }
     if re!(r"^(?:-?\d[A-Za-z0-9.:]*|0x[0-9a-fA-F]{2})$").is_match(code)
-        && !re!(r"^[01]{2,}b$|^0x(?:[0-9a-fA-F]{2}){2,}$").is_match(code)
+        // `0x` is the empty byte vector and `0x012` the two bytes `0x0012`
+        // (q 5): only one or two hex digits make an atom.
+        && !re!(r"^[01]{2,}b$|^0x(?:[0-9a-fA-F]{3,})?$").is_match(code)
     {
         return Some(Held::Atom);
     }
