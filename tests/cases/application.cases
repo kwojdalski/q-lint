@@ -123,6 +123,18 @@ r:h(1;2)
 === clean | a name the file does not define is not judged
 r:k(1;2)
 
+=== QA002 QA012 QA009 profile: general | dot apply with no blank on one side or both (q 5: r1-r4 are 'rank, r5 'type) (#441)
+f:{[a] a}
+r1:{x}. (1;2)
+r2:{x} .(1;2)
+r3:{x}.(1;2)
+r4:f .(1;2)
+r5:{x}. 1
+
+=== clean profile: general | a digit straight after the dot is a float, applied by juxtaposition (q 5: {x} .1 is 0.1) (#441)
+r:{x} .1
+s:{x}.1
+
 === QA009 | dot apply with a scalar argument
 r:.[{x+y};1]
 

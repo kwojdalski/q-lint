@@ -4144,12 +4144,19 @@ pub fn lint_selecting(
             )
         })
     };
-    for m in re!(r"[ \t]\.[ \t]+").find_iter(code) {
-        let left = code[..m.start()].trim_end_matches([' ', '\t']);
-        let Some((rank, id)) = applied(m.start(), left, left.len()) else {
+    // The blanks around the dot are optional after a lambda and before a
+    // parenthesis: q 5 parses `{x}.(1;2)`, `{x}. 1` and `f .(1;2)` as the
+    // same dot apply (#441). A digit straight after it is a float: `f .1`.
+    for m in re!(r"(?:\}[ \t]*|[ \t])\.(?:[ \t]+|\()").find_iter(code) {
+        let dot = m.start() + m.as_str().find('.').unwrap();
+        let left = code[..dot].trim_end_matches([' ', '\t']);
+        let Some((rank, id)) = applied(dot, left, left.len()) else {
             continue;
         };
-        let rest = &code[m.end()..];
+        let after = dot
+            + 1
+            + (code[dot + 1..].len() - code[dot + 1..].trim_start_matches([' ', '\t']).len());
+        let rest = &code[after..];
         let end = if rest.starts_with('(') {
             match matching(rest, 0, b'(', b')') {
                 Some(e) => e,
@@ -4160,19 +4167,19 @@ pub fn lint_selecting(
                 .unwrap_or(rest.len())
         };
         let arg = &rest[..end];
-        if !operand_ends(code, m.end() + end) {
+        if !operand_ends(code, after + end) {
             continue;
         }
         if scalar_literal(arg.trim_end_matches([' ', '\t'])) {
             add(
-                m.start() + 1,
+                dot,
                 "QA009",
                 "Dot apply takes a list of arguments; a scalar here is a 'type error at runtime \
                  (`enlist` it, or use `@`)"
                     .into(),
             );
         } else if let Some(detail) = items(arg).and_then(|n| too_many(rank, n)) {
-            add(m.start() + 1, id, detail);
+            add(dot, id, detail);
         }
     }
     for (at, _) in code.match_indices(".[") {
