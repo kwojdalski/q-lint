@@ -186,6 +186,23 @@ fn a_query_fix_after_a_multibyte_character_does_not_panic() {
     assert_eq!(fixes[0].replacement, "g[a]");
 }
 
+/// A fix whose start follows a multi-byte character inside the token before
+/// it - the BOM QE005 exists for, or `é` in a symbol: `ends_in_number` stepped
+/// one byte past that character and sliced inside it (#398).
+#[test]
+fn a_fix_after_a_multibyte_token_does_not_panic() {
+    use q_lint_rs::{Profile, fixes_for, lint};
+    for (profile, source) in [
+        (Profile::Uqf, "\u{feff}r:{x} each 1 2\n"),
+        (Profile::General, "\u{feff}a==b\n"),
+        (Profile::Uqf, "\u{feff}r:til 5.0\n"),
+        (Profile::Uqf, "r:`caf\u{e9}==`b\n"),
+    ] {
+        let findings = lint(source, "probe.q", profile);
+        assert!(!fixes_for(&findings, source).is_empty(), "{source:?}");
+    }
+}
+
 /// Nothing to rewrite outside the profile that asks for it. The CLI's own
 /// default is `uqf`; `general` is the one that answers only "would q refuse
 /// this", and juxtaposition is not something q refuses.

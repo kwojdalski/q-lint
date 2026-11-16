@@ -1957,8 +1957,9 @@ fn ends_in_token(before: &str) -> bool {
 fn ends_in_number(before: &str) -> bool {
     let t = before.trim_end_matches([' ', '\t']);
     let start = t
-        .rfind(|c: char| !(c.is_ascii_alphanumeric() || "._:".contains(c)))
-        .map_or(0, |i| i + 1);
+        .char_indices()
+        .rfind(|&(_, c)| !(c.is_ascii_alphanumeric() || "._:".contains(c)))
+        .map_or(0, |(i, c)| i + c.len_utf8());
     let token = &t[start..];
     !t[..start].ends_with('`') && starts_number(token, false)
 }
