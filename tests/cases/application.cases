@@ -202,6 +202,18 @@ r:qs(1 2;3)
 qs:{$[2>count x;x;raze .z.s each 1_x]}
 r:qs[1;2]
 
+=== clean profile: general | a name after a drop is read: `1_y` reads y (q 5: {x,1_y}[0;1 2 3] is 0 2 3)
+f:{x,1_y}
+r:f[0;1 2 3]
+s:{x,1_y}[0;1 2 3]
+u:{x,y,-1_z}[0;1;2 3]
+
+=== QA012 QA002 profile: general | while an underscore inside a name is part of it (q 5: {x+a_y}[1;2] is 'rank)
+a_y:1
+f:{x+a_y}
+r:f[1;2]
+s:{x+a_y}[1;2]
+
 === clean | a name defined twice is left alone: which definition a call meets depends on when it runs
 f:{x+y+z}
 r:f(1;2)

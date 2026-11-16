@@ -2503,10 +2503,18 @@ pub(crate) fn lambda_rank(code: &str, raw: &str, brace: usize, end: usize) -> us
         .into_owned();
     let body = outside_query_phrases(&body);
     // Not as part of a dotted name: `.z.s` is the lambda itself, and
-    // reading it says nothing about a third argument.
-    if re!(r"(?:^|[^A-Za-z0-9_.])z(?:[^A-Za-z0-9_.]|$)").is_match(&body) {
+    // reading it says nothing about a third argument. After a drop it is a
+    // read: `{x,1_y}` takes two (q 5, #339), while `a_y` is one name.
+    let reads = |name: &str| {
+        body.match_indices(name).any(|(i, _)| {
+            boundary(&body, i)
+                && !body[i + 1..]
+                    .starts_with(|c: char| c.is_ascii_alphanumeric() || "_.".contains(c))
+        })
+    };
+    if reads("z") {
         3
-    } else if re!(r"(?:^|[^A-Za-z0-9_.])y(?:[^A-Za-z0-9_.]|$)").is_match(&body) {
+    } else if reads("y") {
         2
     } else {
         1
@@ -2972,7 +2980,9 @@ pub fn lint_selecting(
                     // Not as the head of a dotted name: `y.z` is a global,
                     // and q 5 `{x+y.z}[1;2]` is 'rank.
                     let reads = |name: &str| {
-                        re!(r"[A-Za-z_][A-Za-z0-9_]*").find_iter(&body).any(|w| {
+                        // A name starts with a letter: `_y` in `1_y` is a
+                        // drop and `y` (#339).
+                        re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(&body).any(|w| {
                             w.as_str() == name
                                 && boundary(&body, w.start())
                                 && !body[w.end()..].starts_with('.')
