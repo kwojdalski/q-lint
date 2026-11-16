@@ -2034,6 +2034,16 @@ struct Views {
     /// comment, or `\\` - begins. q reads nothing after it.
     script_end: Option<usize>,
 }
+/// How much of a line is a `\t` or `\ts` command, 0 on any other line:
+/// these run their argument as q, so after the prefix the line is q (#222).
+pub(crate) fn timed_prefix(line: &str) -> usize {
+    re!(r"^\\ts?(?::\d+)?[ \t]").find(line).map_or(0, |m| m.end())
+}
+/// Whether a line is a system command whose argument is no q: any but `\t`
+/// and `\ts`.
+pub(crate) fn system_command(line: &str) -> bool {
+    line.starts_with('\\') && timed_prefix(line) == 0
+}
 fn views(source: &str) -> Views {
     // A BOM is QE005's to report; the rest of the file is read as q would
     // read it without one, so `<BOM>/ note` is still a comment line (#221).
@@ -2113,10 +2123,11 @@ fn views(source: &str) -> Views {
         // `\t` and `\ts` run their argument as q, so its strings and its
         // comment are masked as on any other line (#222); the command itself
         // stays, for the rules that read system commands.
-        let timed = (string.is_none())
-            .then(|| re!(r"^\\ts?(?::\d+)?[ \t]").find(line))
-            .flatten()
-            .map_or(0, |m| m.end());
+        let timed = if string.is_none() {
+            timed_prefix(line)
+        } else {
+            0
+        };
         // q appends an indented line to the command before it, so after any
         // command but `\t` the lines that follow are its argument, not q:
         // `\d .foo` + `  b:1` defines no `b` anywhere (#223).
@@ -2629,7 +2640,9 @@ fn structure(path: &str, source: &str, v: &Views) -> Option<Finding> {
                 ),
             ));
         }
-        if !line.starts_with('\\') {
+        // A command's argument is no q, but `\t`'s is, and its brackets
+        // close on the lines that continue it (#308).
+        if !system_command(line) {
             for (i, c) in line.bytes().enumerate() {
                 if let Some(p) = b"([{ ".iter().position(|&a| a == c).filter(|&p| p < 3) {
                     stack.push((b")]}"[p], offset + i));

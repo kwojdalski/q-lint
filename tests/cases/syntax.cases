@@ -149,6 +149,14 @@ a:0
 \t 1+
   x==y
 
+=== clean profile: general | a bracket a \t line opens closes on its continuation (q 5: 0, 0, then 6, #308)
+a:0
+\t {a::x+
+  y}[1;2]
+\t do[3;a+:1
+  ]
+show a
+
 === clean | the q spellings
 if[a=1;2];if[a<>1;2];r:a and b;a+:1;if[a>=1;2]
 
