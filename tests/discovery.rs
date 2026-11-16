@@ -480,6 +480,29 @@ fn a_bad_selector_or_glob_in_a_configuration_names_the_file() {
 }
 
 #[test]
+fn an_extend_cycle_is_reported_as_a_cycle() {
+    // A file extending itself was reported as "more than 16 files deep" (#424).
+    for files in [
+        &[(".qlinter.toml", "extend = \".qlinter.toml\"\n")][..],
+        &[
+            (".qlinter.toml", "extend = \"b.toml\"\n"),
+            ("b.toml", "extend = \".qlinter.toml\"\n"),
+        ][..],
+    ] {
+        let repo = Repo::new();
+        repo.write("a.q", SOURCE);
+        for (name, text) in files {
+            repo.write(name, text);
+        }
+        let out = run(&repo.path("."), &["a.q"]);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(2), "{stderr}");
+        assert!(stderr.contains("`extend` cycle: "), "{stderr}");
+        assert!(stderr.trim_end().ends_with(".qlinter.toml"), "{stderr}");
+    }
+}
+
+#[test]
 fn show_settings_names_the_file_in_force() {
     let repo = Repo::new();
     repo.write(

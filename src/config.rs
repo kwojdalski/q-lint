@@ -200,7 +200,7 @@ impl Policy {
             // the file is chosen for this run, not found beside the source.
             let cwd = absolute(&std::env::current_dir().map_err(|e| e.to_string())?);
             let settings = Rc::new(
-                load(&key, 0, Some(&cwd))?
+                load(&key, &[], Some(&cwd))?
                     .ok_or_else(|| format!("{}: no [tool.qlinter] table", explicit.display()))?,
             );
             self.cache.borrow_mut().insert(key, settings.clone());
@@ -447,7 +447,7 @@ fn in_directory(dir: &Path) -> Result<Option<Settings>, String> {
     for name in FILES {
         let path = dir.join(name);
         if path.is_file()
-            && let Some(settings) = load(&path, 0, None)?
+            && let Some(settings) = load(&path, &[], None)?
         {
             return Ok(Some(settings));
         }
@@ -468,7 +468,7 @@ fn user_config() -> Result<Option<Settings>, String> {
     match base.map(|b| b.join("qlinter").join("qlinter.toml")) {
         Some(path) if path.is_file() => {
             let cwd = absolute(&std::env::current_dir().map_err(|e| e.to_string())?);
-            load(&path, 0, Some(&cwd))
+            load(&path, &[], Some(&cwd))
         }
         _ => Ok(None),
     }
@@ -477,9 +477,24 @@ fn user_config() -> Result<Option<Settings>, String> {
 /// Read one configuration file, and what it extends. `None` for a
 /// `pyproject.toml` that has no qlinter table, which is not a configuration.
 /// Its patterns are rooted at its own directory unless `patterns` says
-/// otherwise.
-fn load(path: &Path, depth: usize, patterns: Option<&Path>) -> Result<Option<Settings>, String> {
-    if depth > 16 {
+/// otherwise. `chain` is the files that extend it, outermost first.
+fn load(
+    path: &Path,
+    chain: &[PathBuf],
+    patterns: Option<&Path>,
+) -> Result<Option<Settings>, String> {
+    // A file that extends itself, directly or through others, is a cycle,
+    // not a deep chain (#424).
+    let here = absolute(path);
+    if chain.contains(&here) {
+        let names: Vec<_> = chain
+            .iter()
+            .chain([&here])
+            .map(|p| p.display().to_string())
+            .collect();
+        return Err(format!("`extend` cycle: {}", names.join(" -> ")));
+    }
+    if chain.len() > 16 {
         return Err(format!(
             "{}: `extend` goes more than 16 files deep",
             path.display()
@@ -564,7 +579,8 @@ fn load(path: &Path, depth: usize, patterns: Option<&Path>) -> Result<Option<Set
                 .as_str()
                 .ok_or_else(|| format!("{shown}: extend must be a path"))?;
             let base = root.join(base);
-            load(&base, depth + 1, patterns)?
+            let chain = [chain, std::slice::from_ref(&here)].concat();
+            load(&base, &chain, patterns)?
                 .ok_or_else(|| format!("{}: no [tool.qlinter] table to extend", base.display()))?
         }
     };
