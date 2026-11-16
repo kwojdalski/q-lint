@@ -58,6 +58,14 @@ helper:{[x] x}
 === QF005 | a nested lambda cannot see the enclosing local
 f:{[a] g:{[b] a+b}; g[1]}
 
+=== QF005 profile: general | and a lambda on a \t line has the same scopes (q 5: 'b, #312)
+\t r:{[a] b:a; {b}[]} 1
+
+=== clean profile: uqf | the command of a \t line reads no name (#312)
+f:{[a] a+1}
+\t r:f 1
+\ts:10 f 2
+
 === clean | passing the outer local in explicitly is the fix
 f:{[a] g:{[a;b] a+b}; g[a;1]}
 

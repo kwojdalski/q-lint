@@ -357,10 +357,14 @@ fn top_level_statements<'a>(code: &'a str, raw: &str) -> Vec<(usize, &'a str)> {
             statements.push((start, &code[start..at]));
             start = at;
         }
-        if depth == 0 && line.starts_with('\\') {
+        if depth == 0 && crate::system_command(line) {
             at += line.len();
             start = at;
             continue;
+        }
+        // A `\t` line's statement is the expression after the command (#312).
+        if depth == 0 && start == at {
+            start += crate::timed_prefix(line);
         }
         for (i, b) in line.bytes().enumerate() {
             match b {
@@ -544,7 +548,8 @@ fn scopes(code: &str, raw: &str) -> (Vec<Scope>, Vec<(usize, String)>) {
             namespace = ns;
         }
         namespaces.push((offset, namespace.clone()));
-        if line.starts_with('\\') {
+        // `\t` and `\ts` run their argument as q, lambdas and all (#312).
+        if crate::system_command(line) {
             offset += line.len();
             continue;
         }
@@ -920,8 +925,11 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
     let mut view = code.as_bytes().to_vec();
     let mut offset = 0;
     for line in code.split_inclusive('\n') {
-        if line.starts_with('\\') {
+        if crate::system_command(line) {
             blank(&mut view[offset..offset + line.len()]);
+        } else {
+            // `\t`'s argument is an expression; only the command is not (#312).
+            blank(&mut view[offset..offset + crate::timed_prefix(line)]);
         }
         offset += line.len();
     }
