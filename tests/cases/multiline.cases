@@ -150,6 +150,13 @@ a:1+2
 
 `b
 
+=== QP001 profile: uqf | a bare slash between a statement and its continuation still opens a block comment (q 5: a is 3, #318)
+a:1+
+/
+note
+\
+  2
+
 === QP001 profile: uqf | an indented line inside a block comment continues nothing, so the bare slash is its own line
 f:{x}
 

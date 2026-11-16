@@ -4894,14 +4894,19 @@ pub fn lint_selecting(
         }
         // Not after the end of the script: q 5 reads nothing past a lone `\`.
         // Only a `/` alone in column 0 opens one, as the masker reads it: an
-        // indented `/` line is not a block comment.
-        if uqf
-            && source[..start].rfind('\n').map_or(0, |at| at + 1) == start
-            && first_raw.trim_end_matches([' ', '\t', '\r', '\n']) == "/"
-            && !v.foreign_offsets.contains(&offset)
-            && v.script_end.is_none_or(|end| offset < end)
-        {
-            add(offset, "QP001", "Bare slash opens a block comment".into());
+        // indented `/` line is not a block comment. Any line of the group:
+        // a block between `a:1+` and its continuation `  2` folds into the
+        // statement, and still opens a block comment (#318).
+        let mut at = start;
+        for physical in raw.split_inclusive('\n') {
+            if uqf
+                && physical.trim_end_matches([' ', '\t', '\r', '\n']) == "/"
+                && !v.foreign_offsets.contains(&at)
+                && v.script_end.is_none_or(|end| at < end)
+            {
+                add(at, "QP001", "Bare slash opens a block comment".into());
+            }
+            at += physical.len();
         }
         // Any blanks between `\d` and its argument, as q 5 reads them:
         // `\d<TAB>.foo` switches and `\d  .` returns to the root (#313).
