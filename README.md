@@ -65,7 +65,7 @@ with [docs/ruff-rules.md](docs/ruff-rules.md) as the reference.
 
 Text output is coloured on a terminal - red for an error, yellow for a
 warning, with a tally on the summary line - and plain everywhere else: a pipe,
-a file, or anywhere `NO_COLOR` is set. `--color always|never` overrides the
+a file, or anywhere `NO_COLOR` is set to a nonempty value. `--color always|never` overrides the
 guess in either direction. JSON output never carries colour.
 
 `qlinter --version` (or `-v`) reports the build, and `--stdio` is accepted and ignored
@@ -73,7 +73,8 @@ so a client that appends it gets a server rather than an exit code.
 
 The CLI supports `--profile general|style|styleq|uqf`, `--format text|json`,
 `--exclude`, `--config`, stdin (`-`, `--stdin-filename`; the name alone reads
-stdin too, as in Ruff, and either refuses other paths beside it) and
+stdin too, as in Ruff, either refuses other paths beside it, and a name that is
+not a `.q` file is refused as that file named outright is) and
 `--backend builtin|qls|all` options. The default is builtin.
 `--qls-executable` chooses the separately installed server;
 `--qls-timeout` bounds a batch, plus at most one second for cleanup.
@@ -465,7 +466,7 @@ language server driven over real LSP framing as a real process.
 
 ### Rule and multiline regression corpus
 
-The taxonomy contains 88 codes. Ten literal-call rules cover excess builtin
+The taxonomy contains 119 codes. Ten literal-call rules cover excess builtin
 arguments (QA010), invalid literal types/shapes (QT008–QT014), and negative
 `til`/`where` counts (QD001–QD002). These checks leave unknown expressions
 unresolved and account for projections, seeded scans and variadic `enlist`.
@@ -473,7 +474,7 @@ unresolved and account for projections, seeded scans and variadic `enlist`.
 `examples/showcase.q` marks each expected diagnostic with `expect-next`.
 `tests/showcase.rs` checks exact code/line pairs under every profile, including
 silence in the clean section. Together with the two companion examples it
-covers all 86 rules available in this build; QF006 and QLS001 are excluded.
+covers all 117 rules available in this build; QF006 and QLS001 are excluded.
 
 Multiline fixtures cover nested lambdas, split argument lists, comments,
 scalar-only tables, dictionary lengths and assignment from control statements.

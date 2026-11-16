@@ -89,6 +89,10 @@ pub struct Settings {
     extend_exclude: Vec<Glob>,
     /// Replaced, not added to, by a file that sets its own, as in Ruff.
     per_file_ignores: Vec<(Glob, Vec<String>)>,
+    /// Every file read to make this: `file` and each it extends, whatever
+    /// they are called - so a language server knows to re-read when a base
+    /// changes (#419).
+    sources: Vec<PathBuf>,
 }
 
 /// What the command line says, which wins over any file.
@@ -153,6 +157,18 @@ impl Policy {
             .is_some_and(|config| absolute(config) == absolute(path))
     }
 
+    /// Whether `path` is a file some settings read so far were made from -
+    /// one found beside the source, one it extends, or `--config`.
+    pub fn read_from(&self, path: &Path) -> bool {
+        let path = absolute(path);
+        self.is_explicit_config(&path)
+            || self
+                .cache
+                .borrow()
+                .values()
+                .any(|settings| settings.sources.contains(&path))
+    }
+
     /// The settings for `path`, a file or a directory: the configuration
     /// nearest to it, searching from the directory that contains it.
     pub fn settings(&self, path: &Path) -> Result<Rc<Settings>, String> {
@@ -184,7 +200,7 @@ impl Policy {
             // the file is chosen for this run, not found beside the source.
             let cwd = absolute(&std::env::current_dir().map_err(|e| e.to_string())?);
             let settings = Rc::new(
-                load(&key, 0, Some(&cwd))?
+                load(&key, &[], Some(&cwd))?
                     .ok_or_else(|| format!("{}: no [tool.qlinter] table", explicit.display()))?,
             );
             self.cache.borrow_mut().insert(key, settings.clone());
@@ -244,6 +260,29 @@ impl Policy {
                 .any(|glob| matches(&full, glob)))
     }
 
+    /// `excluded`, for a path named on the command line with
+    /// `--force-exclude`: the default list is also checked against the
+    /// directories above it below the current directory, as a configured
+    /// pattern is against those below its root - so a hook that passes
+    /// `build/a.q` skips it, as the walk would (#415).
+    pub fn force_excluded(&self, path: &Path) -> Result<bool, String> {
+        if self.excluded(path)? {
+            return Ok(true);
+        }
+        if self.settings(path)?.exclude.is_some() {
+            return Ok(false);
+        }
+        let cwd = absolute(&std::env::current_dir().map_err(|e| e.to_string())?);
+        let full = absolute(path);
+        Ok(full.strip_prefix(&cwd).is_ok_and(|relative| {
+            relative
+                .parent()
+                .into_iter()
+                .flat_map(Path::components)
+                .any(|c| DEFAULT_EXCLUDE.iter().any(|d| c.as_os_str() == *d))
+        }))
+    }
+
     /// Whether the rule `code` reports on `path`.
     pub fn enabled(&self, code: &str, path: &Path) -> Result<bool, String> {
         let settings = self.settings(path)?;
@@ -251,6 +290,18 @@ impl Policy {
     }
 
     fn selected(&self, settings: &Settings, code: &str) -> bool {
+        self.configured(settings, code)
+            && self
+                .narrowing
+                .borrow()
+                .as_ref()
+                .is_none_or(|layer| apply(layer, code, true))
+    }
+
+    /// Whether the configuration and flags select `code`, before the
+    /// editor's narrowing. The narrowing only hides findings; it must not
+    /// change what the analysis sees (#414).
+    fn configured(&self, settings: &Settings, code: &str) -> bool {
         let profile = parse_profile(&self.profile(settings));
         let mut on = RULES
             .iter()
@@ -259,11 +310,7 @@ impl Policy {
         for layer in settings.layers.iter().chain([&self.overrides.layer]) {
             on = apply(layer, code, on);
         }
-        on && self
-            .narrowing
-            .borrow()
-            .as_ref()
-            .is_none_or(|layer| apply(layer, code, true))
+        on
     }
 
     /// The findings for one file: every rule run, then only those the
@@ -274,7 +321,7 @@ impl Policy {
         let file = Path::new(path);
         let settings = self.settings(file)?;
         let structure =
-            self.selected(&settings, "QE001") && !per_file_ignored(&settings, "QE001", file);
+            self.configured(&settings, "QE001") && !per_file_ignored(&settings, "QE001", file);
         let mut found = lint_selecting(source, path, Profile::Uqf, ws, structure);
         found.retain(|f| {
             self.selected(&settings, &f.code) && !per_file_ignored(&settings, &f.code, file)
@@ -400,7 +447,7 @@ fn in_directory(dir: &Path) -> Result<Option<Settings>, String> {
     for name in FILES {
         let path = dir.join(name);
         if path.is_file()
-            && let Some(settings) = load(&path, 0, None)?
+            && let Some(settings) = load(&path, &[], None)?
         {
             return Ok(Some(settings));
         }
@@ -421,7 +468,7 @@ fn user_config() -> Result<Option<Settings>, String> {
     match base.map(|b| b.join("qlinter").join("qlinter.toml")) {
         Some(path) if path.is_file() => {
             let cwd = absolute(&std::env::current_dir().map_err(|e| e.to_string())?);
-            load(&path, 0, Some(&cwd))
+            load(&path, &[], Some(&cwd))
         }
         _ => Ok(None),
     }
@@ -430,9 +477,24 @@ fn user_config() -> Result<Option<Settings>, String> {
 /// Read one configuration file, and what it extends. `None` for a
 /// `pyproject.toml` that has no qlinter table, which is not a configuration.
 /// Its patterns are rooted at its own directory unless `patterns` says
-/// otherwise.
-fn load(path: &Path, depth: usize, patterns: Option<&Path>) -> Result<Option<Settings>, String> {
-    if depth > 16 {
+/// otherwise. `chain` is the files that extend it, outermost first.
+fn load(
+    path: &Path,
+    chain: &[PathBuf],
+    patterns: Option<&Path>,
+) -> Result<Option<Settings>, String> {
+    // A file that extends itself, directly or through others, is a cycle,
+    // not a deep chain (#424).
+    let here = absolute(path);
+    if chain.contains(&here) {
+        let names: Vec<_> = chain
+            .iter()
+            .chain([&here])
+            .map(|p| p.display().to_string())
+            .collect();
+        return Err(format!("`extend` cycle: {}", names.join(" -> ")));
+    }
+    if chain.len() > 16 {
         return Err(format!(
             "{}: `extend` goes more than 16 files deep",
             path.display()
@@ -517,11 +579,13 @@ fn load(path: &Path, depth: usize, patterns: Option<&Path>) -> Result<Option<Set
                 .as_str()
                 .ok_or_else(|| format!("{shown}: extend must be a path"))?;
             let base = root.join(base);
-            load(&base, depth + 1, patterns)?
+            let chain = [chain, std::slice::from_ref(&here)].concat();
+            load(&base, &chain, patterns)?
                 .ok_or_else(|| format!("{}: no [tool.qlinter] table to extend", base.display()))?
         }
     };
     settings.file = Some(absolute(path));
+    settings.sources.push(absolute(path));
     if let Some(v) = table.get("profile") {
         let name = v
             .as_str()
@@ -540,7 +604,7 @@ fn load(path: &Path, depth: usize, patterns: Option<&Path>) -> Result<Option<Set
                     .map(|s| {
                         s.as_str()
                             .ok_or_else(|| format!("{shown}: {key} must contain strings"))
-                            .and_then(|s| selector(key, s))
+                            .and_then(|s| selector(key, s).map_err(|e| format!("{shown}: {e}")))
                     })
                     .collect()
             })
@@ -565,7 +629,10 @@ fn load(path: &Path, depth: usize, patterns: Option<&Path>) -> Result<Option<Set
                     .as_str()
                     .filter(|s| !s.trim().is_empty())
                     .ok_or_else(|| format!("{shown}: {key} must contain nonempty strings"))?;
-                globs.push(rooted(patterns.unwrap_or(&root), p)?);
+                globs.push(
+                    rooted(patterns.unwrap_or(&root), p)
+                        .map_err(|e| format!("{shown}: {key}: {e}"))?,
+                );
             }
             if key == "exclude" {
                 settings.exclude = Some(globs);
@@ -587,7 +654,9 @@ fn load(path: &Path, depth: usize, patterns: Option<&Path>) -> Result<Option<Set
                 .map(|s| {
                     s.as_str()
                         .ok_or_else(|| format!("{shown}: per-file-ignores must list strings"))
-                        .and_then(|s| selector("per-file-ignores", s))
+                        .and_then(|s| {
+                            selector("per-file-ignores", s).map_err(|e| format!("{shown}: {e}"))
+                        })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             // An initial `!` negates the pattern, in per-file-ignores only:
@@ -596,7 +665,8 @@ fn load(path: &Path, depth: usize, patterns: Option<&Path>) -> Result<Option<Set
                 Some(rest) => (rest, true),
                 None => (glob.as_str(), false),
             };
-            let mut rooted = rooted(patterns.unwrap_or(&root), text)?;
+            let mut rooted = rooted(patterns.unwrap_or(&root), text)
+                .map_err(|e| format!("{shown}: per-file-ignores: {e}"))?;
             rooted.negated = negated;
             settings.per_file_ignores.push((rooted, codes));
         }
@@ -638,6 +708,11 @@ pub struct Glob {
 /// no `/` in it at all, also matches the name anywhere below it.
 pub fn rooted(root: &Path, text: &str) -> Result<Glob, String> {
     let trimmed = text.trim();
+    // An empty pattern names its root, so it would exclude everything: a
+    // script's `--exclude "$UNSET"` would lint nothing and pass (#418).
+    if trimmed.is_empty() {
+        return Err("a pattern must not be empty".into());
+    }
     let written = Path::new(trimmed);
     if written.is_absolute() {
         // The literal part of the path is resolved the way the files are,

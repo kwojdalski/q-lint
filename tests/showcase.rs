@@ -72,8 +72,42 @@ fn examples_cover_all_available_rules() {
     }
     let available: BTreeSet<_> = RULES
         .iter()
-        .filter(|r| !["QF006", "QLS001"].contains(&r.code.as_str()))
+        .filter(|r| !NOT_SHOWN.contains(&r.code.as_str()))
         .map(|r| r.code.clone())
         .collect();
     assert_eq!(shown, available);
+}
+
+/// The rules no example can show, because this binary never reports them:
+/// QF006 runs in a Python hook, and QLS001 comes only from qls.
+const NOT_SHOWN: [&str; 2] = ["QF006", "QLS001"];
+
+/// The README states how many codes the taxonomy holds and how many the
+/// examples cover. Counts nobody checks go stale: they said 88 and 86 while
+/// the taxonomy held 119 (#428).
+#[test]
+fn the_readme_rule_counts_match_the_taxonomy() {
+    let readme = include_str!("../README.md")
+        .replace("\r\n", "\n")
+        .replace('\n', " ");
+    let count = |before: &str, after: &str| -> usize {
+        let start = readme
+            .find(before)
+            .unwrap_or_else(|| panic!("README lost `{before}`"));
+        let rest = &readme[start + before.len()..];
+        let end = rest
+            .find(after)
+            .unwrap_or_else(|| panic!("README lost `{after}`"));
+        rest[..end].trim().parse().unwrap()
+    };
+    assert_eq!(count("The taxonomy contains", "codes."), RULES.len());
+    assert_eq!(
+        count("covers all", "rules available in this build"),
+        RULES.len() - NOT_SHOWN.len()
+    );
+    let excluded = NOT_SHOWN.join(" and ");
+    assert!(
+        readme.contains(&format!("{excluded} are excluded")),
+        "{excluded}"
+    );
 }

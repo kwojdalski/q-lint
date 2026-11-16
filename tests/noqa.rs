@@ -44,6 +44,24 @@ fn a_suppressed_structure_finding_leaves_the_other_rules_running() {
 }
 
 #[test]
+fn a_suppressed_structure_finding_does_not_hide_the_next_one() {
+    // q 5 refuses `b:(2` on its own with '(. Accepting line 1's QE001 must
+    // leave line 2's reported (#413).
+    let source = "a:(1 / noqa: QE001\nb:(2\n";
+    assert_eq!(codes(source), [(2, "QE001".to_string())]);
+    let stray = "a:(1 / noqa: QE001\nb:2)\n";
+    assert_eq!(codes(stray), [(2, "QE001".to_string())]);
+}
+
+#[test]
+fn a_noqa_on_a_bom_prefixed_comment_line_is_read() {
+    // `<BOM>/ note` is a comment line; its noqa accepted nothing (#427).
+    assert!(has("\u{feff}/ note\na:1\n", 1, "QE005"));
+    assert!(!has("\u{feff}/ noqa: QE005\na:1\n", 1, "QE005"));
+    assert!(!has("\u{feff}a:1 / noqa: QE005\n", 1, "QE005"));
+}
+
+#[test]
 fn other_codes_on_the_same_line_are_still_reported() {
     let source = "f:{[dt;data] s:1; dt} / noqa: QF016\n";
     assert!(!has(source, 1, "QF016"));
