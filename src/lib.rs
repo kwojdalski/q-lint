@@ -1125,6 +1125,10 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             let close = matching(&v.code, brace, b'{', b'}')?;
             let sig = signature(&v.code, source, brace);
             let body_text = &v.code[sig.body..close - 1];
+            // q takes at most 8 parameters: a ninth is 'params at load (#337).
+            if sig.named && sig.slots.len() >= 8 {
+                return None;
+            }
             let mut header = String::new();
             if sig.named {
                 // `{ [b] ...}` is a signature too: q allows space before
