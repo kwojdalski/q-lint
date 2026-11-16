@@ -952,12 +952,9 @@ fn a_stdin_filename_that_is_not_q_is_refused_as_the_file_would_be() {
             .stderr(std::process::Stdio::piped())
             .spawn()
             .unwrap();
-        child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(b"f:{x==y}\n")
-            .unwrap();
+        // The refusal can come before qlinter reads stdin, so the write may
+        // meet a closed pipe: that is the behaviour under test, not a failure.
+        let _ = child.stdin.take().unwrap().write_all(b"f:{x==y}\n");
         let out = child.wait_with_output().unwrap();
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert_eq!(out.status.code(), Some(2), "{name}: {stderr}");
