@@ -3845,6 +3845,16 @@ pub fn lint_selecting(
         if !m.as_str().starts_with('`') && !operand_ends(code, m.end()) {
             continue;
         }
+        // Unless what is on its right ends in an operator: that is a
+        // projection, and the symbol composes with it - q 5 `` `+n% `` is
+        // `+[`]%[n]`, no error - as a template's `` `%name%] `` reads.
+        if m.as_str().starts_with('`') {
+            let end = phrase_end(code, m.end());
+            let end = code[m.end()..end].find('\n').map_or(end, |n| m.end() + n);
+            if code[m.end()..end].trim_end().ends_with(['+', '-', '*', '%', '&', '|']) {
+                continue;
+            }
+        }
         add(
             at,
             "QT003",
