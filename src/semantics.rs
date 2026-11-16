@@ -2786,8 +2786,10 @@ fn named_values(
     }
     // A global amended by name in a context: `@[`.;`c;:;v]` writes the root
     // `c`, `@[`.ns;`c;..]` writes `.ns.c`, whatever `\d` is in force (q 5:
-    // `c:2.5; @[`.;`c;:;1 2]; c 0` is 1) (#361).
-    for m in re!(r"@\s*\[\s*`(\.(?:[A-Za-z][A-Za-z0-9_.]*)?)\s*;\s*((?:`[A-Za-z][A-Za-z0-9_]*)+)")
+    // `c:2.5; @[`.;`c;:;1 2]; c 0` is 1) (#361). So does `.`, and either
+    // with the names enlisted: q 5 `.[`.;enlist`a;:;1 2]` and
+    // `.[`.;(enlist`a);:;1 2]` write `a` (#463).
+    for m in re!(r"[@.]\s*\[\s*`(\.(?:[A-Za-z][A-Za-z0-9_.]*)?)\s*;\s*(?:enlist\b\s*|\(\s*)*((?:`[A-Za-z][A-Za-z0-9_]*)+)")
         .captures_iter(code)
     {
         for name in m[2].split('`').skip(1) {

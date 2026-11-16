@@ -722,3 +722,14 @@ s:b+1 2 3
 t:([]a:1 2;b:3 4)
 `t upsert (5;6)
 `t upsert (5;6;7)
+
+=== clean | QT022: amending a root global by an enlisted name is a write (#463; q 5: each is 1)
+a:2.5
+.[`.;enlist`a;:;1 2]
+r:a 0
+b:2.5
+.[`.;(enlist`b);:;1 2]
+s:b 0
+c:2.5
+@[`.;enlist`c;:;enlist 1 2]
+u:c 0
