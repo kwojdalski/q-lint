@@ -239,6 +239,15 @@ t:([]a:1 2;by:3 4)
 === QF001 profile: general | q 5 refuses the call, so the default reports it ('match)
 f:{[count] count+1}
 
+=== QF001 profile: general | a builtin bound inside a pattern or a typed slot (q 5: {[(count;b)] b}[(1;2)] is 'match, {[(select;b)] b} is ', and {[count:`j] 1} is 'assign)
+g:{[(count;b)] b}
+h:{[(select;b)] b}
+k:{[count:`j] 1}
+
+=== clean profile: general | a pattern's column name is not a binding, and from still runs (q 5: {[(from;b)] b}[(1;2)] is 2)
+g:{[(from;b)] b}
+h:{[([]a:b)] b}
+
 === QF013 profile: general | and the literal ('assign)
 t:([]sum:1 2)
 

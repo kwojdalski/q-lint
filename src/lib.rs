@@ -3011,7 +3011,10 @@ pub fn lint_selecting(
             }
         }
         let params: Vec<_> = sig.slots.clone();
-        let bad: Vec<_> = params
+        // Every name a slot binds, a pattern's and a typed slot's included:
+        // q 5 `{[(count;b)] b}[(1;2)]` is 'match (#327).
+        let bound: Vec<&str> = params.iter().flat_map(|p| pattern_names(p)).collect();
+        let bad: Vec<_> = bound
             .iter()
             .filter(|p| RESERVED.iter().any(|n| n == **p))
             .collect();
@@ -3022,18 +3025,42 @@ pub fn lint_selecting(
             .into_iter()
             .filter(|p| !matches!(**p, "by" | "do" | "from" | "if" | "while"))
             .collect();
+        // A typed slot is refused where it is defined: q 5 `{[count:`j] 1}`
+        // is 'assign.
+        let typed = params
+            .iter()
+            .any(|p| typed_at(p).is_some() && pattern_names(p).iter().any(|n| bad.contains(&n)));
         // A qSQL keyword is worse: q 5 cannot parse the lambda at all, and a
         // script stops at its definition - `{[select] 1}` is 'from, and so
-        // are exec, update and delete.
+        // are exec, update and delete; inside a pattern, `{[(select;b)] b}`
+        // is ',.
         if bad
             .iter()
             .any(|p| matches!(**p, "select" | "exec" | "update" | "delete"))
         {
+            let error = if params
+                .iter()
+                .any(|p| matches!(*p, "select" | "exec" | "update" | "delete"))
+            {
+                "from"
+            } else {
+                ","
+            };
             add(
                 at,
                 "QF001",
                 format!(
-                    "Builtin parameter name(s): {bad:?}; q refuses to define this lambda ('from)"
+                    "Builtin parameter name(s): {bad:?}; q refuses to define this lambda \
+                     ('{error})"
+                ),
+            );
+        } else if typed {
+            add(
+                at,
+                "QF001",
+                format!(
+                    "Builtin parameter name(s): {bad:?}; q refuses to define this lambda \
+                     ('assign)"
                 ),
             );
         } else if !bad.is_empty() {
@@ -4473,10 +4500,16 @@ pub fn lint_selecting(
             for a in re!(r"([a-z][a-z0-9_]*)\s*:").captures_iter(&view) {
                 let m = a.get(0).unwrap();
                 // q 5 takes from and by as locals: {from:1;from+1}[] is 2.
+                // A typed parameter, `{[count:`j] 1}`, is QF001's (#327).
+                let typed_parameter = enclosing_brace(code, at + m.start()).is_some_and(|b| {
+                    let sig = signature(code, source, b);
+                    sig.named && at + m.start() < sig.body
+                });
                 if boundary(&view, m.start())
                     && !view[m.end()..].starts_with(':')
                     && !matches!(&a[1], "from" | "by")
                     && RESERVED.iter().any(|n| n == &a[1])
+                    && !typed_parameter
                 {
                     add(
                         at + m.start(),
