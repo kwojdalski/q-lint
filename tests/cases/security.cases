@@ -49,6 +49,11 @@ g:{[h;x] h "select from t where a=",x}
 g:{[h] h "select from t"}
 k:{show "select from t where a=",x}
 
+=== clean | a lambda the file defines, applied to text, is a call and not a handle (q 5 prints the line, #345)
+lg:{-1 x;}
+n:5
+lg "update finished for ",string n
+
 === clean | QX002: a column in an update or select phrase is not a variable - this one redacts it (#204)
 r:update password:"***" from users
 s:select user,password:"***" from users

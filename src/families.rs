@@ -49,7 +49,15 @@ fn query_injection(path: &str, source: &str, code: &str, comments: &str, out: &m
     // `get` of a string evaluates it as `value` does (q 5), and a string sent
     // over a handle - `h "select ...",x` - is evaluated by the remote
     // process's `.z.pg`, which is `value` by default. A name applied to a
-    // query string is taken for a handle unless it is one of q's own.
+    // query string is taken for a handle unless it is one of q's own, or a
+    // lambda this file defines: `lg "update finished"` logs a line (#345).
+    let lambda = |name: &str| {
+        regex::Regex::new(&format!(
+            r"(?:^|[^A-Za-z0-9_.`]){}[ \t]*:[ \t]*\{{",
+            regex::escape(name)
+        ))
+        .is_ok_and(|r| r.is_match(code))
+    };
     let handles: Vec<usize> =
         re!(r#"\b([A-Za-z][A-Za-z0-9_.]*)[ \t]+"(?:select|exec|update|delete)\b"#)
             .captures_iter(comments)
@@ -57,6 +65,7 @@ fn query_injection(path: &str, source: &str, code: &str, comments: &str, out: &m
                 let name = c.get(1).unwrap();
                 code[name.start()..].starts_with(name.as_str())
                     && !crate::RESERVED.iter().any(|n| n == name.as_str())
+                    && !lambda(name.as_str())
             })
             .map(|c| c.get(1).unwrap().start())
             .collect();
