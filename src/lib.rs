@@ -2050,10 +2050,7 @@ pub(crate) fn timed_prefix(line: &str) -> usize {
 /// Whether a source line is a system command whose argument is no q: any
 /// but `\t` and `\ts`, with or without a `q)` before it.
 pub(crate) fn system_command(line: &str) -> bool {
-    line.strip_prefix("q)")
-        .unwrap_or(line)
-        .starts_with('\\')
-        && timed_prefix(line) == 0
+    line.strip_prefix("q)").unwrap_or(line).starts_with('\\') && timed_prefix(line) == 0
 }
 fn views(source: &str) -> Views {
     // A BOM is QE005's to report; the rest of the file is read as q would
@@ -2182,8 +2179,12 @@ fn views(source: &str) -> Views {
                     open_block = None;
                 }
             }
-        } else if string.is_none() && matches!(stripped, "/" | "\\" | "\\\\") {
-            // `\\` exits q, so a script ends there as it does at a lone `\`.
+        } else if string.is_none()
+            && (matches!(stripped, "/" | "\\" | "\\\\") || re!(r"^\\\\[ \t]").is_match(stripped))
+        {
+            // `\\` exits q, so a script ends there as it does at a lone `\`
+            // - whatever follows it past a blank: q 5 stops at `\\ / bye`
+            // and `\\ 3` (#322), and runs on past `\ / end`.
             block = usize::from(stripped == "/");
             ended = stripped != "/";
             if ended {

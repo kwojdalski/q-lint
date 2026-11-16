@@ -123,6 +123,16 @@ a:1
 (((
 b:1+`a
 
+=== clean profile: general | and so does \\ with a comment or anything after a blank (q 5 stops at each, #322)
+show 0
+\\ / bye
+x:1==2
+
+=== QE004 profile: general | while a lone \ with a comment after it does not end the script (q 5 runs on, #322)
+show 0
+\ / end
+x:1==2
+
 === QE001 | an indented \\ is not the exit line
 a:1
 f:{
