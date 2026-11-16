@@ -874,3 +874,15 @@ a:select a from t where b in exec c from u where
 
 === QE007 profile: general | and once when the nested query is in brackets (#200)
 c:select from t where a in (exec b from u where)
+
+=== QE010 profile: general | nothing continues an infinity (#459; q 5: '0W.5)
+a:0W.5
+
+=== QE010 profile: general | nor a null, typed or not (#459; q 5: '0N1, '0Ni5)
+b:0N1
+c:0Ni5
+
+=== clean profile: general | a null or infinity with its type letter, and in a string (#459; q 5: each parses)
+e:0W
+f:0Wi
+g:0W.5 1c

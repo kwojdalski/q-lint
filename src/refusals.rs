@@ -1219,6 +1219,12 @@ fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Find
             let date = |t: &str| re!(r"^\d{4}\.\d\d\.\d\d$").is_match(t);
             let detail = if re!(r"^0[nNwW][A-Za-z]?$").is_match(text) {
                 null_literal(text, k + 1 < run.len(), negative)
+            } else if re!(r"^0[nNwW][A-Za-z]?[0-9.:]").is_match(text) {
+                // Nothing continues a null or infinity: q 5 refuses `0W.5`,
+                // `0N1`, `0Ni5` and `0N:1`.
+                Some(format!(
+                    "`{text}`: nothing but a type letter follows a null or infinity"
+                ))
             } else if negative
                 && date(text)
                 && run[1..]

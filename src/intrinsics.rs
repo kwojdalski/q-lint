@@ -433,7 +433,8 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
             // namespace - and so does a byte atom. Any vector, a string of
             // any length, a float and a temporal atom are 'type.
             "til"
-                if value.vector || matches!(value.kind, Kind::Float | Kind::Char | Kind::Temporal) =>
+                if value.vector
+                    || matches!(value.kind, Kind::Float | Kind::Char | Kind::Temporal) =>
             {
                 Some(("QT008", "til needs an integer atom, not this literal"))
             }
