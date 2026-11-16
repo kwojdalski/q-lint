@@ -112,6 +112,12 @@ t:([]a:1 2;b:3 4)
 r1:t lj ([a:1 2]c:3 4)
 r2:t uj ([]a:1 2;c:3 4)
 
+=== clean profile: general | nor one keyed in place by name (q 5: t lj k joins after `a xkey `k, #353)
+t:([]a:1 2;b:3 4)
+k:([]a:1 2;c:5 6)
+`a xkey `k
+r:t lj k
+
 === QT027 | one value per column
 t:([]a:1 2;b:3 4)
 `t insert (5;6;7)
