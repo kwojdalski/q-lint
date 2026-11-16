@@ -19,12 +19,26 @@ f:{[counted] counted+1}
 === clean | a builtin as a namespaced field is not a local shadow
 .email.subject:"hi"
 
-=== QF002 | the drop operator cannot be a parameter
+=== QF002 QF010 | the drop operator cannot be a parameter, and it is still a signature, so x is a global (q 5: (value f) 1 is ,`0) (#443)
 f:{[_] x+1}
 
 === QF002 profile: general | every call is refused, so the default reports it (q 5: {[_] 1}[] and {[a;_] a}[1;2] are 'match)
 f:{[_] 1}
 g:{[a;_] a}
+
+=== QF002 profile: general | a _ slot is still a slot, so two arguments are the lambda's rank and only 'match (q 5: {[a;_] a}[1;2] is 'match, three are 'rank) (#443)
+r:{[a;_] a}[1;2]
+
+=== QF002 QA002 profile: general | and a third is 'rank (#443)
+r:{[a;_] a}[1;2;3]
+
+=== QF002 QE008 profile: general | the body after such a signature opens an expression (q 5: parse "f:{[a;_] -a}" is '-) (#443)
+f:{[a;_] -a}
+
+=== QE008 QE009 profile: general | as it does after a typed slot with a function or a dictionary pattern (q 5: '- and '/) (#443)
+g:{[a:neg] -a}
+h:{[a:neg] +/a}
+k:{[`a`b!(a;b)] -a}
 
 === clean profile: general | a name with an underscore in it is a parameter (q 5: {[a_] a_}[1] is 1)
 f:{[a_] a_}

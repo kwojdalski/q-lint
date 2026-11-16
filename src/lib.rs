@@ -2941,13 +2941,15 @@ pub(crate) fn signature<'a>(code: &'a str, raw: &str, brace: usize) -> Signature
             .map(|(&c, &r)| if c == r { c as char } else { '0' })
             .collect()
     };
+    // `_` binds no name but is still a slot: q 5 defines `{[a;_] a}` with two
+    // parameters and refuses every call with 'match (QF002), and only a
+    // third argument is 'rank (#443).
     let names_only = ranges.iter().zip(&slots).all(|(&(a, b), slot)| {
+        let nested = !slot.is_empty() || !raw[a..b].trim().is_empty();
         (slot.is_empty() && raw[a..b].trim().is_empty())
             || is_param_name(slot)
-            || is_pattern(
-                &literal(a, b),
-                !slot.is_empty() || !raw[a..b].trim().is_empty(),
-            )
+            || is_pattern(&literal(a, b), nested)
+            || (slot.contains('_') && is_pattern(&literal(a, b).replace('_', "u"), nested))
     });
     if !names_only {
         return implicit(slots);
@@ -3191,35 +3193,33 @@ pub fn lint_selecting(
     for brace in code.match_indices('{').map(|(i, _)| i) {
         let sig = signature(code, source, brace);
         let at = brace;
+        let offenders: Vec<&str> = sig
+            .slots
+            .iter()
+            .copied()
+            .filter(|s| !s.is_empty() && !is_param_name(s))
+            .collect();
+        // `_` has its own code because it has its own cause: it reads as a
+        // name but is the drop operator. q 5 defines the lambda and keeps no
+        // usable name for the slot - `{[_] 1}[]`, `{[_] 1}[1]` and
+        // `{[a;_] a}[1;2]` are each 'match - so it fails on every call.
+        // Inside a pattern it is the same: q 5 binds `{[(a;_)] a}` as a
+        // one-argument pattern and `{[(a;_)] a}[(1;2)]` is 'match (#338).
+        // Either way the brackets are a signature (#443), unless another
+        // slot is not.
+        let underscore_in =
+            |s: &str| s == "_" || (s.contains('_') && is_pattern(&s.replace('_', "u"), false));
+        if offenders.iter().any(|s| underscore_in(s)) {
+            add(
+                at,
+                "QF002",
+                "`_` as a lambda parameter: q 5 refuses every call with 'match".into(),
+            );
+        }
         if !sig.named {
             // Not a parameter list, so none of the rules below apply to it -
             // and neither does the rank the source appears to declare.
             if !sig.slots.is_empty() {
-                let offenders: Vec<&str> = sig
-                    .slots
-                    .iter()
-                    .copied()
-                    .filter(|s| !s.is_empty() && !is_param_name(s))
-                    .collect();
-                // `_` has its own code because it has its own cause: it reads
-                // as a name but is the drop operator. q 5 defines the lambda
-                // and keeps no usable name for the slot - `{[_] 1}[]`,
-                // `{[_] 1}[1]` and `{[a;_] a}[1;2]` are each 'match - so it
-                // fails on every call.
-                // Inside a pattern it is the same: q 5 binds `{[(a;_)] a}` as
-                // a one-argument pattern and `{[(a;_)] a}[(1;2)]` is 'match
-                // (#338), so the brackets are not body text.
-                let underscore_in = |s: &str| {
-                    s == "_" || (s.contains('_') && is_pattern(&s.replace('_', "u"), false))
-                };
-                if offenders.iter().any(|s| underscore_in(s)) {
-                    add(
-                        at,
-                        "QF002",
-                        "`_` as a lambda parameter: q 5 refuses every call with 'match".into(),
-                    );
-                }
-
                 let underscore = offenders.iter().any(|s| underscore_in(s));
                 let rest: Vec<&str> = offenders
                     .into_iter()

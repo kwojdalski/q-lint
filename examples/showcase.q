@@ -45,7 +45,7 @@ wave:{[sin] sin*2}
 
 / QF002: `_` is the drop operator, not a name; q 5 refuses every call with 'match.
 / expect-next: QF002
-drop:{[_] x+1}
+drop:{[_] 1}
 
 / QF003: assignment to `count` inside the lambda shadows the builtin there.
 / expect-next: QF003
