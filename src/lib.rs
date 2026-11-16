@@ -1117,6 +1117,13 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             if !ends_in_token(function) {
                 return None;
             }
+            // A symbol naming the function is no failure to replace: q 5
+            // gives the projection `` `f[] `` for `` `f . () ``, and `` `f[] ``
+            // calls it (#408).
+            let named = &v.code[..function.len()];
+            if unsymbolled(named).as_bytes().last() != named.as_bytes().last() {
+                return None;
+            }
             begin = function.len();
             (
                 &source[begin..start + m.end()],
