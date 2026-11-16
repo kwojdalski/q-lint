@@ -166,6 +166,10 @@ doc:(`$".z.P";"local timestamp")
 === clean profile: uqf | nor is a datetime spelled in a help string
 types:("datetime";"0Nz";"2006.07.21T09:13:39")
 
+=== clean profile: uqf | nor in a symbol, which holds no datetime (#409; q 5: type `2020.01.01T10 is -11h)
+r:`2020.01.01T10
+f:`2011.01.01T10.00.00.000.img.universe
+
 === QP002 profile: uqf | but the "z" cast is the one whose string is the point
 d:"z"$x
 

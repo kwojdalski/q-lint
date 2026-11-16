@@ -556,6 +556,13 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
             false,
         ),
         ("QP002", "r:\"z\"$x", "r:\"p\"$x", false),
+        // The datetime fixed, and the symbol on the same line left (#409).
+        (
+            "QP002",
+            "s:`2020.01.01T10;t:2020.01.01T10",
+            "s:`2020.01.01T10;t:2020.01.01D10",
+            false,
+        ),
         (
             "QF001",
             "f:{[count] count+{count x}[count]}",

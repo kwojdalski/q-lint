@@ -1340,11 +1340,17 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             // its `$` has to be code.
             let line = &v.comments[start..line_end];
             let code = &v.code[start..line_end];
+            // Nor a symbol, which may spell a datetime and hold none (#409).
+            let line_start = v.code[..start].rfind('\n').map_or(0, |at| at + 1);
+            let symbols = unsymbolled(&v.code[line_start..line_end]);
+            let symbols = &symbols[start - line_start..];
             let in_code = |m: &regex::Match| {
                 if m.as_str().starts_with('"') {
                     code.as_bytes()[m.end() - 1] == b'$'
                 } else {
                     code[m.range()] == *m.as_str()
+                        && (!m.as_str().starts_with(|c: char| c.is_ascii_digit())
+                            || symbols.as_bytes()[m.start()] == code.as_bytes()[m.start()])
                 }
             };
             let swaps: [(&regex::Regex, &str); 5] = [
@@ -5827,6 +5833,15 @@ pub fn lint_selecting(
             // that spells `".z.Z"` or `"0Nz"` in a string uses neither. The
             // first is the one pattern whose string is the point - `"z"$`.
             let in_code = |m: &regex::Match| line[m.range()] == *m.as_str();
+            // A symbol may spell a datetime and hold none: `` `2020.01.01T10 ``
+            // is -11h in q 5 (#409). Only the literal's own spelling: a
+            // symbol naming the clock, `` `.z.z ``, is there to be looked up.
+            let symbols = unsymbolled(line);
+            let in_code = |m: &regex::Match| {
+                in_code(m)
+                    && (!m.as_str().starts_with(|c: char| c.is_ascii_digit())
+                        || symbols.as_bytes()[m.start()] == line.as_bytes()[m.start()])
+            };
             // Reported at the first of them, which is where the fix starts.
             if let Some(at) = re!(r#""z"\s*\$"#)
                 .find(literals)
