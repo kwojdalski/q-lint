@@ -828,3 +828,28 @@ fn show_settings_lists_only_rules_the_backend_can_report() {
     assert_eq!(rules(&["--backend", "qls"]), ["QLS001"]);
     assert!(rules(&["--backend", "all"]).contains(&"QLS001".to_string()));
 }
+
+#[test]
+fn stdin_that_is_not_utf8_is_linted_as_the_same_file_on_disk_is() {
+    // q 5 loads `s:"caf\xe9"` (count 4). The file route lints it lossily;
+    // stdin refused it with "stream did not contain valid UTF-8" (#417).
+    use std::io::Write;
+    let source = b"s:\"caf\xe9\"\na:1==2\n";
+    let dir = tempfile::tempdir().unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .current_dir(dir.path())
+        .args(["--isolated", "--format", "json", "--stdin-filename", "a.q"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(source).unwrap();
+    let out = child.wait_with_output().unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("a.q: not valid UTF-8"), "{stderr}");
+    let found: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(found[0]["code"], "QE004");
+    assert_eq!(found[0]["line"], 2);
+}

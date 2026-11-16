@@ -410,10 +410,28 @@ fn run(args: Args) -> Result<u8, String> {
         }
         let name = args.stdin_filename.unwrap_or_else(|| "<stdin>".into());
         if name == "<stdin>" || !args.force_exclude || !policy.force_excluded(Path::new(&name))? {
-            let mut source = String::new();
+            // Read as bytes and decoded as a file is: a buffer that is not
+            // UTF-8 is still q, and is linted but never fixed (#417).
+            let mut bytes = vec![];
             io::stdin()
-                .read_to_string(&mut source)
+                .read_to_end(&mut bytes)
                 .map_err(|e| e.to_string())?;
+            let source = match String::from_utf8(bytes) {
+                Ok(source) => source,
+                Err(e) => {
+                    if args.diff {
+                        eprintln!(
+                            "qlinter: {name}: not valid UTF-8; linted with each invalid byte read as one character, and not fixed: a fix would rewrite bytes it cannot read"
+                        );
+                    } else {
+                        eprintln!(
+                            "qlinter: {name}: not valid UTF-8; each invalid byte is read as one character"
+                        );
+                    }
+                    lossy.insert(name.clone());
+                    lossy_text(e.as_bytes())
+                }
+            };
             sources.push((name, source));
         }
     } else {
