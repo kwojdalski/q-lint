@@ -1619,6 +1619,44 @@ fn boundary(s: &str, at: usize) -> bool {
         Some(c) => !c.is_alphanumeric() && !".`".contains(c),
     }
 }
+/// Each match of `re` in `hay` that `keep` accepts, looking again one
+/// character on from a match it rejects. A plain iterator resumes after the
+/// rejected match, so a literal it swallowed is never seen: a number
+/// pattern that lets `:` in starts at the `1` of `x1:1.5j`, inside the name,
+/// and takes `1.5j` with it.
+pub(crate) fn captures_where<'h>(
+    re: &regex::Regex,
+    hay: &'h str,
+    keep: impl Fn(&regex::Captures) -> bool,
+) -> Vec<regex::Captures<'h>> {
+    let mut out = vec![];
+    let mut at = 0;
+    while at <= hay.len()
+        && let Some(c) = re.captures_at(hay, at)
+    {
+        let m = c.get(0).unwrap();
+        let step = hay[m.start()..].chars().next().map_or(1, char::len_utf8);
+        if keep(&c) {
+            at = if m.is_empty() {
+                m.end() + step
+            } else {
+                m.end()
+            };
+            out.push(c);
+        } else {
+            at = m.start() + step;
+        }
+    }
+    out
+}
+/// `captures_where`, keeping the matches that start a token in `view`.
+pub(crate) fn boundary_captures<'h>(
+    re: &regex::Regex,
+    hay: &'h str,
+    view: &str,
+) -> Vec<regex::Captures<'h>> {
+    captures_where(re, hay, |c| boundary(view, c.get(0).unwrap().start()))
+}
 /// `code` with every symbol literal blanked. A symbol runs on past where a
 /// name would stop - over `:` anywhere, and over `/` after `` `: `` (q 5
 /// `parse` reads "`a:b" and "`:hdb/sym" as one symbol each) - so `boundary`
@@ -4204,7 +4242,8 @@ pub fn lint_selecting(
             if v == "()" {
                 return Some(Shape::Vector(Some(0)));
             }
-            if re!(r"^[01]b$|^0x[0-9a-fA-F]{1,2}$|^-?\d[A-Za-z0-9.:]*$|^`[A-Za-z0-9_.]*$").is_match(v)
+            if re!(r"^[01]b$|^0x[0-9a-fA-F]{1,2}$|^-?\d[A-Za-z0-9.:]*$|^`[A-Za-z0-9_.]*$")
+                .is_match(v)
             {
                 return Some(Shape::Atom);
             }

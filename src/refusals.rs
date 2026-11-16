@@ -980,14 +980,17 @@ fn null_literal(text: &str, not_last: bool, negative: bool) -> Option<String> {
 /// and `0N 1`, `3 4i`, `1e5` and `2023.01.01` are fine.
 fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Finding>) {
     // An exponent's sign is part of its number: `1.5e-3` is one float.
-    let tokens: Vec<regex::Match> = re!(r"\d(?:[eE][+-]\d|[0-9A-Za-z.:])*")
-        .find_iter(unsym)
-        .filter(|m| boundary(code, m.start()))
-        .filter(|m| {
-            let line = unsym[..m.start()].rfind('\n').map_or(0, |p| p + 1);
-            !unsym[line..].starts_with('\\')
-        })
-        .collect();
+    // A token that starts inside a name - the `1` of `x1:1.5j` - is passed
+    // over one character at a time, so the literal after it is still read.
+    let tokens: Vec<regex::Match> =
+        crate::boundary_captures(re!(r"\d(?:[eE][+-]\d|[0-9A-Za-z.:])*"), unsym, code)
+            .into_iter()
+            .map(|c| c.get(0).unwrap())
+            .filter(|m| {
+                let line = unsym[..m.start()].rfind('\n').map_or(0, |p| p + 1);
+                !unsym[line..].starts_with('\\')
+            })
+            .collect();
     let mut report = |at: usize, detail: String| {
         out.push(Finding::at(path, source, at, "QE010", detail));
     };

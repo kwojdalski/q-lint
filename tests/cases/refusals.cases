@@ -322,6 +322,16 @@ w:select from t where
 === QE010 profile: general | an integer type with a fraction (q 5: parse "1.5j" is '1.5)
 a:1.5j
 
+=== QE010 profile: general | assigned to a name that ends in a digit (#380; q 5: x1:1.5j is '1.5, v2:2b '2b, c9:1f 2 '1f)
+x1:1.5j
+v2:2b
+c9:1f 2
+
+=== clean profile: general | a name ending in digits, with a good number after it (#380)
+x1:1.5
+v2:1b
+t12:12:30
+
 === QE010 profile: general | a suffix on an item that is not the last (q 5: '3i)
 c:3i 4j
 
