@@ -3061,10 +3061,15 @@ pub fn lint_selecting(
             }
         }
     }
-    for m in re!(r"@\[\s*\{\s*\[([^\]]*)\]").captures_iter(code) {
-        let at = m.get(0).unwrap().start();
-        let arity = m[1].split(';').filter(|p| !p.trim().is_empty()).count();
+    for m in re!(r"@\[\s*\{\s*\[").find_iter(code) {
+        let at = m.start();
         let brace = at + code[at..].find('{').unwrap();
+        // The slots, not the `;`s: `{[(a;b)] a+b}` takes one argument (#324).
+        let sig = signature(code, source, brace);
+        if !sig.named {
+            continue;
+        }
+        let arity = sig.slots.iter().filter(|p| !p.is_empty()).count();
         if let Some(end) = matching(code, brace, b'{', b'}') {
             let rest = code[end..].trim_start();
             let open = code.len() - rest.len();

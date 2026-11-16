@@ -169,6 +169,12 @@ r:@[{[a;b] a+b};1;2]
 === clean | a unary lambda is what @ wants
 r:@[{[a] a+1};1;{`err}]
 
+=== clean | a pattern is one parameter, however many `;` it holds (q 5: @[{[(a;b)] a+b};(1;2);{x}] is 3)
+r:@[{[(a;b)] a+b};(1;2);{x}]
+
+=== QA003 | but a pattern beside another parameter is two (q 5: @[{[(a;b);c] a+b+c};(1;2);{x}] is a projection)
+r:@[{[(a;b);c] a+b+c};(1;2);{x}]
+
 === QA010 | a complete builtin call given more
 r:sum[1;2]
 
