@@ -2840,6 +2840,12 @@ pub(crate) fn signature<'a>(code: &'a str, raw: &str, brace: usize) -> Signature
         body: close,
     }
 }
+/// Whether every bracket and string in `source` closes - what QE001 reports
+/// on, asked whether or not QE001 is selected.
+pub fn balanced(source: &str) -> bool {
+    structure("", source, &views(source)).is_empty()
+}
+
 /// Every structural problem in the file, in source order. Each is reported
 /// and then recovered from - a statement at column 0 starts with no bracket
 /// open, a stray closer is skipped, a mismatched one closes what it meets -

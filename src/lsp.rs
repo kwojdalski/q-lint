@@ -75,7 +75,8 @@
 use crate::config::{Layer, Policy, selector};
 use crate::jsonrpc::{INVALID_REQUEST, receive, send};
 use q_lint_rs::{
-    FileIndex, Finding, TokenKind, Workspace, fix_all, fix_for, semantic_tokens_in, whole_edit,
+    FileIndex, Finding, TokenKind, Workspace, balanced, fix_all, fix_for, semantic_tokens_in,
+    whole_edit,
 };
 use serde_json::{Value, json};
 use std::{
@@ -910,7 +911,12 @@ fn code_actions(
 fn format(params: &Value, docs: &Documents, ws: &Workspace, policy: &Policy) -> Vec<Value> {
     let uri = uri_of(&params["textDocument"]);
     let path = path_of(&uri);
-    let Some(source) = docs.get(&uri).filter(|_| is_q_path(&path)) else {
+    // A document whose brackets or strings do not close gets no edits, even
+    // with QE001 deselected: the fixes would read its structure wrong (#422).
+    let Some(source) = docs
+        .get(&uri)
+        .filter(|source| is_q_path(&path) && balanced(source))
+    else {
         return vec![];
     };
     // `false`: formatting never applies an editor-only fix, whatever flags

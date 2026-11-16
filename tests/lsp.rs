@@ -1221,6 +1221,20 @@ fn formatting_applies_the_safe_fixes_and_is_idempotent() {
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 
+#[test]
+fn formatting_leaves_an_unbalanced_document_alone_with_qe001_deselected() {
+    // Deselecting QE001 hides the finding; it does not make the brackets
+    // close, and the fixes would read line 2 as inside `f` (#422).
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start_in(dir.path(), &["--ignore", "QE001"]);
+    server.initialize();
+    let uri = "file:///tmp/unbalanced-format.q";
+    server.open(uri, "f:{x==1\ng:{y!=2}\n");
+    server.diagnostics_for(uri);
+    assert_eq!(server.format(uri)["result"], json!([]));
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
 /// `&&` has a fix, but one only a person should accept: formatting leaves it,
 /// even from a server started with `--unsafe-fixes`.
 #[test]
