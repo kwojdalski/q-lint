@@ -589,6 +589,17 @@ p:"/" sv string a,""
 out:1
 out["hello"]
 
+=== clean profile: general | QT022 and QB010: 0x is the empty byte vector and 0x012 two bytes, not atoms (#377; q 5: buf 0 and buf -1 are 0x00)
+buf:0x
+b0:buf 0
+b1:buf -1
+odd:0x012
+o0:odd 0
+
+=== QT022 profile: general | while one or two hex digits are a byte atom (#377; q 5: 'type)
+b:0x1
+r:b 0
+
 === QT022 | a float atom indexed by juxtaposition, as with brackets
 f:2.5
 r:f 0

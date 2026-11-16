@@ -555,3 +555,9 @@ c:asc 3\x
 
 === QT008 | a comment after the literal leaves it the whole argument (#194)
 d:til 1.5 / c
+
+=== QT010 QT017 QT019 QT020 profile: general | a tab after enlist is a blank like a space (#391; q 5: 'type, 'domain, 'length, 'length)
+a:sum[enlist	`a]
+b:mavg[enlist	1;1 2 3]
+c:within[1;enlist	1]
+t:([]a:enlist	1;b:2 3)

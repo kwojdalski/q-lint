@@ -1071,7 +1071,9 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             let [param] = sig.slots[..] else {
                 return None;
             };
-            if param.is_empty() || matching(&v.code, brace, b'{', b'}')? <= start {
+            // A literal pattern, `{[`s] x+1}` or `{[1] x}`, binds no name
+            // (q 5, #298), so there is nothing to read in place of `x`.
+            if !is_param_name(param) || matching(&v.code, brace, b'{', b'}')? <= start {
                 return None;
             }
             let param = param.to_string();
@@ -1103,7 +1105,10 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         "QT008" => {
             let m = re!(r"^til(\s+)(\d+)(?:\.0*[ef]?|[ef])").captures(source.get(start..)?)?;
             let end = m.get(0)?.end();
-            if source[start + end..].starts_with(|c: char| c.is_ascii_alphanumeric() || c == '.') {
+            // Nor an exponent's sign: `til 2e-1` is no `til 2-1`.
+            if source[start + end..].starts_with(|c: char| c.is_ascii_alphanumeric() || c == '.')
+                || (m[0].ends_with(['e', 'E']) && re!(r"^[+-]\d").is_match(&source[start + end..]))
+            {
                 return None;
             }
             (
@@ -1115,7 +1120,8 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         }
         // A number signalled is 'stype; signal it as a string.
         "QT025" => {
-            let m = re!(r"^'(\s*)(-?\d[A-Za-z0-9.]*)").captures(source.get(start..)?)?;
+            let m = re!(r"^'(\s*)(-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)")
+                .captures(source.get(start..)?)?;
             (
                 m.get(0)?.as_str(),
                 format!("'{}\"{}\"", &m[1], &m[2]).into(),
@@ -1446,6 +1452,22 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         .chain(source[begin + old.len()..].chars())
         .take(2)
         .collect();
+    // Nor may an edit leave two numeric literals with only blanks between:
+    // `10 20 30 {x} each 0 2` would become `10 20 30 0 2`, one vector where
+    // q 5 indexed (`10 30`), and `r:10 20 30 a:0 2` loses `a:` the same
+    // way. No rewrite says the same without brackets, so there is no fix -
+    // unless the two were neighbours before the edit too.
+    let after: String = replacement
+        .chars()
+        .chain(source[begin + old.len()..].chars())
+        .collect();
+    let blank = source[..begin].ends_with([' ', '\t']);
+    if ends_in_number(&source[..begin])
+        && starts_number(&after, blank)
+        && !starts_number(&source[begin..], blank)
+    {
+        return None;
+    }
     let replacement =
         if source[..begin].ends_with('-') && !numeric(&source[begin..]) && numeric(&next) {
             format!(" {replacement}").into()
@@ -1617,6 +1639,55 @@ fn boundary(s: &str, at: usize) -> bool {
         Some(c) => !c.is_alphanumeric() && !".`".contains(c),
     }
 }
+/// Each match of `re` in `hay` that `keep` accepts, looking again one
+/// character on from a match it rejects. A plain iterator resumes after the
+/// rejected match, so a literal it swallowed is never seen: a number
+/// pattern that lets `:` in starts at the `1` of `x1:1.5j`, inside the name,
+/// and takes `1.5j` with it.
+pub(crate) fn captures_where<'h>(
+    re: &regex::Regex,
+    hay: &'h str,
+    keep: impl Fn(&regex::Captures) -> bool,
+) -> Vec<regex::Captures<'h>> {
+    let mut out = vec![];
+    let mut at = 0;
+    while at <= hay.len()
+        && let Some(c) = re.captures_at(hay, at)
+    {
+        let m = c.get(0).unwrap();
+        let step = hay[m.start()..].chars().next().map_or(1, char::len_utf8);
+        if keep(&c) {
+            at = if m.is_empty() {
+                m.end() + step
+            } else {
+                m.end()
+            };
+            out.push(c);
+        } else {
+            at = m.start() + step;
+        }
+    }
+    out
+}
+/// `captures_where`, keeping the matches that start a token in `view`.
+pub(crate) fn boundary_captures<'h>(
+    re: &regex::Regex,
+    hay: &'h str,
+    view: &str,
+) -> Vec<regex::Captures<'h>> {
+    captures_where(re, hay, |c| boundary(view, c.get(0).unwrap().start()))
+}
+/// `code` with every symbol literal blanked. A symbol runs on past where a
+/// name would stop - over `:` anywhere, and over `/` after `` `: `` (q 5
+/// `parse` reads "`a:b" and "`:hdb/sym" as one symbol each) - so `boundary`
+/// alone takes the words inside `` `:conf/true `` for code.
+pub(crate) fn unsymbolled(code: &str) -> String {
+    let mut out = code.as_bytes().to_vec();
+    for m in re!(r"`(?::[A-Za-z0-9_.:/]*|[A-Za-z0-9_.:]*)").find_iter(code) {
+        blank(&mut out[m.range()]);
+    }
+    String::from_utf8(out).unwrap_or_default()
+}
 /// Whether `s` ends with a name - letters, digits and `_` that began with a
 /// letter - rather than a number, a bracket or an operator. A segment of a
 /// dotted name may begin with `_`: `.a.b.__perf` and `.h._ranks` are one name
@@ -1657,14 +1728,16 @@ fn ends_in_name(s: &str) -> bool {
 /// string of other than one char, a symbol or byte vector, or a float, real
 /// or guid atom. `$["ab";..]`, `$[`a`b;..]`, `$[0x0102;..]`, `$[1.5;..]`,
 /// `$[0n;..]`, `$[1e;..]`, `if[`a;..]` and `do[1.5;..]` are each 'type;
-/// `0N` and `0W` are longs and are not.
+/// `0N` and `0W` are longs and are not, and nor is `-0n`: q 5 reads it as
+/// the timespan `0D00:00` (type -16h), while `-0w` is the float.
 fn refused_atom_condition(raw: &str) -> bool {
     re!(r#"^"((?:[^"\\]|\\.)*)"$"#)
         .captures(raw)
         .is_some_and(|c| q_bytes(&c[1]).len() != 1)
-        || re!(r"^(?:`[A-Za-z0-9_.:]*)+$").is_match(raw)
+        // An hsym runs on over `/`: `` `:db/t `` is one symbol (q 5).
+        || re!(r"^(?:`(?::[A-Za-z0-9_.:/]*|[A-Za-z0-9_.:]*))+$").is_match(raw)
         || re!(r"^0x(?:[0-9a-fA-F]{2}){2,}$").is_match(raw)
-        || re!(r"^-?(?:\d+\.\d*|\.\d+|\d+(?:\.\d*)?[eE][+-]?\d+)[ef]?$|^-?\d+[ef]$|^-?0[nwNW][ef]?$|^0Ng$")
+        || re!(r"^-?(?:\d+\.\d*|\.\d+|\d+(?:\.\d*)?[eE][+-]?\d+)[ef]?$|^-?\d+[ef]$|^0[nwNW][ef]?$|^-0[wW][ef]?$|^0Ng$")
             .is_match(raw)
             && !re!(r"^-?0[NW]$").is_match(raw)
 }
@@ -1877,6 +1950,34 @@ pub(crate) fn flat_filter(phrase: &str) -> String {
 /// written straight after it: `a` and `b` are `ab`, `1` and `b` are `1b`.
 fn ends_in_token(before: &str) -> bool {
     before.ends_with(|c: char| c.is_ascii_alphanumeric() || "_.`\")]}".contains(c))
+}
+/// Whether `before`, less trailing blanks, ends in a numeric literal: a
+/// token of letters, digits, `.` and `:` that begins with a digit or `.5`,
+/// so `10 20 30` and `12:00` do, and the name `x1` does not.
+fn ends_in_number(before: &str) -> bool {
+    let t = before.trim_end_matches([' ', '\t']);
+    let start = t
+        .rfind(|c: char| !(c.is_ascii_alphanumeric() || "._:".contains(c)))
+        .map_or(0, |i| i + 1);
+    let token = &t[start..];
+    !t[..start].ends_with('`') && starts_number(token, false)
+}
+/// Whether `after`, less leading blanks, opens a numeric literal - `-1`
+/// included where a blank comes first (`blank` says one ends the text
+/// before), since `1 -1` is a vector and `1-1` a subtraction.
+fn starts_number(after: &str, blank: bool) -> bool {
+    let t = after.trim_start_matches([' ', '\t']);
+    let blank = blank || t.len() < after.len();
+    let t = match t.strip_prefix('-') {
+        Some(rest) if blank => rest,
+        _ => t,
+    };
+    let mut c = t.chars();
+    match c.next() {
+        Some(d) if d.is_ascii_digit() => true,
+        Some('.') => c.next().is_some_and(|d| d.is_ascii_digit()),
+        _ => false,
+    }
 }
 /// Where the where phrase that starts at `from` in masked `code` ends: at a
 /// `;` outside brackets, or the bracket that closes around it.
@@ -3546,8 +3647,10 @@ pub fn lint_selecting(
     {
         // A symbol, or a symbol vector: `1 in `a`b` is 'type just as `1=`a` is,
         // and the vector is what `in` is usually given.
-        let sym = r"(?:`[A-Za-z][A-Za-z0-9_.]*)+";
-        let num = r"-?\d[A-Za-z0-9.:]*(?:[ \t]+-?\d[A-Za-z0-9.:]*)*";
+        // A file symbol too, `` `:db/t ``, which runs on over `/` (q 5).
+        let sym = r"(?:`(?:[A-Za-z][A-Za-z0-9_.]*|:[A-Za-z0-9_.:/]*))+";
+        // An exponent's sign is part of its number: `1e-3` is one float.
+        let num = r"-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:[ \t]+-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)*";
         let string = r#""(?:[^"\\]|\\.)*""#;
         let op = r"(?:<=|>=|<>|<|>|=|\bin\b)";
         // A string literal is blanks by the time `code` is built, so the
@@ -3569,11 +3672,10 @@ pub fn lint_selecting(
                 Some(2),
             ),
         ] {
-            for m in regex::Regex::new(&pattern).unwrap().captures_iter(view) {
+            // A match that starts inside a name, the `2` of `b2:1=`a`, is
+            // looked past rather than taking the comparison with it.
+            for m in boundary_captures(&regex::Regex::new(&pattern).unwrap(), view, view) {
                 let (at, end) = (m.get(0).unwrap().start(), m.get(0).unwrap().end());
-                if !boundary(view, at) {
-                    continue;
-                }
                 if let Some(group) = quoted
                     && v.string_starts
                         .binary_search(&m.get(group).unwrap().start())
@@ -4239,8 +4341,9 @@ pub fn lint_selecting(
     // Another file of the workspace may define it too: with lib.q's
     // `true:1b` loaded, q 5 runs `{[a] $[a;true;false]}` (#372).
     let elsewhere = |key: &str| ws.defined_elsewhere(key, &Default::default());
+    let bare = unsymbolled(code);
     for m in
-        re!(r"\b(return|else|elif|elseif|true|false|None|break|continue)\b").captures_iter(code)
+        re!(r"\b(return|else|elif|elseif|true|false|None|break|continue)\b").captures_iter(&bare)
     {
         let whole = m.get(0).unwrap();
         let name = &m[1];
@@ -4333,8 +4436,9 @@ pub fn lint_selecting(
     //
     // q checked, per literal shape (`type` of the value; negative is an atom):
     //   `1b` atom, `10b` vector - a boolean literal is an atom only with one
-    //   digit; `0x01` atom, `0x0102` vector - a byte literal is an atom only
-    //   with exactly two hex digits; `"a"` atom, `"ab"` vector.
+    //   digit; `0x1` and `0x01` atoms, `0x`, `0x012` and `0x0102` vectors -
+    //   a byte literal is an atom only with one or two hex digits, and an
+    //   odd run is padded (`0x012` is `0x0012`); `"a"` atom, `"ab"` vector.
     //
     // And per table, what q raises:
     //   `([]a:1;b:2)`         'rank   - every column an atom needs `enlist`
@@ -4374,27 +4478,34 @@ pub fn lint_selecting(
             let v = v.trim();
             // Vectors first. The general numeric-atom pattern would otherwise
             // take `10b` and `0x0102` as atoms, and q says they are not.
-            if let Some(rest) = v.strip_prefix("enlist ") {
+            // A tab after `enlist` as much as a space (q 5).
+            if let Some(rest) = v
+                .strip_prefix("enlist")
+                .filter(|r| r.starts_with([' ', '\t']))
+            {
                 return shape_of_enlist(rest);
             }
-            if re!(r"^[01]{2,}b$|^0x(?:[0-9a-fA-F]{2}){2,}$|^0x$").is_match(v) {
+            if re!(r"^[01]{2,}b$|^0x(?:[0-9a-fA-F]{3,})?$").is_match(v) {
                 let n = if v.ends_with('b') {
                     v.len() - 1
                 } else {
-                    (v.len() - 2) / 2
+                    (v.len() - 2).div_ceil(2)
                 };
                 return Some(Shape::Vector(Some(n)));
             }
             if re!(r"^(?:`[A-Za-z0-9_.]*){2,}$").is_match(v) {
                 return Some(Shape::Vector(Some(v.matches('`').count())));
             }
-            if re!(r"^-?\d[A-Za-z0-9.:]*(?:\s+-?\d[A-Za-z0-9.:]*)+$").is_match(v) {
+            if re!(r"^-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:\s+-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)+$")
+                .is_match(v)
+            {
                 return Some(Shape::Vector(Some(v.split_whitespace().count())));
             }
             if v == "()" {
                 return Some(Shape::Vector(Some(0)));
             }
-            if re!(r"^[01]b$|^0x[0-9a-fA-F]{2}$|^-?\d[A-Za-z0-9.:]*$|^`[A-Za-z0-9_.]*$").is_match(v)
+            if re!(r"^[01]b$|^0x[0-9a-fA-F]{1,2}$|^-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*$|^`[A-Za-z0-9_.]*$")
+                .is_match(v)
             {
                 return Some(Shape::Atom);
             }

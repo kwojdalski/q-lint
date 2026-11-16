@@ -32,7 +32,7 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
 /// string is still text.
 fn attributes(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<Finding>) {
     for m in re!(
-        r#"`([spu])#[ \t]*((?:`[A-Za-z0-9_.]*){2,}|-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+|"[^"\\]+")"#
+        r#"`([spu])#[ \t]*((?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[eE][+-]\d|[A-Za-z0-9.])*(?:[ \t]+-?\d(?:[eE][+-]\d|[A-Za-z0-9.])*)+|"[^"\\]+")"#
     )
     .captures_iter(comments)
     {
@@ -128,19 +128,21 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
     // Minutes and seconds stop at 59 wherever they appear - a minute, second,
     // time, timespan or timestamp - while hours run on: q 5 refuses `12:60`,
     // `12:00:60` and `0D00:00:60`, and takes `25:00` and `0D25:00:00`.
-    for m in re!(r"(\d{2,}):(\d{2})(?::(\d{2}))?").captures_iter(unsym) {
+    // Part of a longer token: a date's or number's digits, or a name such as
+    // `p60` in `p60:60`, which assigns 60 rather than writing a time. The `D`
+    // of `0D00:00:60` and the `T` of a datetime start no name. Such a match
+    // is looked past, not skipped whole: in `t12:12:60` the first is
+    // `12:12`, and the time is the `12:60` after it.
+    let whole_token = |m: &regex::Captures| {
+        let head = &unsym[..m.get(0).unwrap().start()];
+        let word = head.trim_end_matches(|c: char| c.is_ascii_alphanumeric() || "._".contains(c));
+        !(head.ends_with(|c: char| c.is_ascii_digit() || c == '.')
+            || head[word.len()..]
+                .starts_with(|c: char| c.is_ascii_alphabetic() || "._".contains(c)))
+    };
+    for m in crate::captures_where(re!(r"(\d{2,}):(\d{2})(?::(\d{2}))?"), unsym, whole_token) {
         let whole = m.get(0).unwrap();
         if command_argument(source, whole.start()) {
-            continue;
-        }
-        // Part of a longer token: a date's or number's digits, or a name
-        // such as `p60` in `p60:60`, which assigns 60 rather than writing a
-        // time. The `D` of `0D00:00:60` and the `T` of a datetime start no name.
-        let head = &unsym[..whole.start()];
-        let word = head.trim_end_matches(|c: char| c.is_ascii_alphanumeric() || "._".contains(c));
-        if head.ends_with(|c: char| c.is_ascii_digit() || c == '.')
-            || head[word.len()..].starts_with(|c: char| c.is_ascii_alphabetic() || "._".contains(c))
-        {
             continue;
         }
         let field = |i| {
@@ -208,7 +210,21 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
             format!("`{text}` is no time: {why}"),
         ));
     };
-    for m in re!(r"(\d+)[DT](\d):\d|(\d+):(\d+)(?::(\d+))?").captures_iter(unsym) {
+    // A match that starts inside a name is looked past, not skipped whole:
+    // in `x10:12:5` the first is `10:12`, and the time is the `12:5` after it.
+    let starts_token = |m: &regex::Captures| {
+        let at = m.get(0).unwrap().start();
+        let before = &unsym[..at];
+        m.get(1).is_some()
+            || boundary(unsym, at)
+            || (before.ends_with(['D', 'T'])
+                && before[..before.len() - 1].ends_with(|c: char| c.is_ascii_digit()))
+    };
+    for m in crate::captures_where(
+        re!(r"(\d+)[DT](\d):\d|(\d+):(\d+)(?::(\d+))?"),
+        unsym,
+        starts_token,
+    ) {
         let whole = m.get(0).unwrap();
         let before = &unsym[..whole.start()];
         let line = before.rfind('\n').map_or(0, |p| p + 1);
@@ -427,7 +443,7 @@ fn missing_from(
 }
 
 /// QT025. A signal of something that is not a symbol or a string. Verified:
-/// `'1`, `'1.5`, `'0N` and `'(1;2)` are 'stype - and so is `'"x"`, since a
+/// `'1`, `'1.5`, `'0N`, `'12:00`, `'1e-3` and `'(1;2)` are 'stype - and so is `'"x"`, since a
 /// one-character string is a char atom, not a string.
 fn signals(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<Finding>) {
     // A signal opens an expression; after an operand the quote is each.
@@ -437,7 +453,9 @@ fn signals(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<F
     // bracket before it: `{[x]` + `  '1}` is a signal (q 5: 'stype).
     // A list cannot be signalled either: q 5 `'(1;2)`, `'()`, `'(1)` and
     // `` '`a`b `` are each 'stype.
-    for m in re!(r#"(')(-?\d[A-Za-z0-9.]*|"(?:\\[0-7]{3}|\\.|[^"\\])+"|\(\s*\)|\(\s*-?\d[A-Za-z0-9.]*\s*\)|\([^()"]*;[^()]*\)|(?:`[A-Za-z0-9_.]*){2,})"#).captures_iter(comments) {
+    // A number runs on over `:` and an exponent's sign: `'12:00`,
+    // `'2026.01.01D12:00` and `'1e-3` are each 'stype.
+    for m in re!(r#"(')(-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*|"(?:\\[0-7]{3}|\\.|[^"\\])+"|\(\s*\)|\(\s*-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*\s*\)|\([^()"]*;[^()]*\)|(?:`[A-Za-z0-9_.]*){2,})"#).captures_iter(comments) {
         let quote = m.get(1).unwrap();
         let value = m.get(2).unwrap();
         if code.as_bytes()[quote.start()] != b'\'' {
@@ -1030,7 +1048,8 @@ fn narrow(text: &str, last: &str) -> Option<(&'static str, u128)> {
 /// `0W` takes the same but `g` (`'0Wg`, and no guid infinity). `0n` and `0w`
 /// read as `0N` and `0W`. `0Ni 1` is '0Ni and `0Nh 0Nh` '0Nh, while `1 0Ni`
 /// and `0N 0Nh` parse. `-0N`, of any type but char, is '-0N; `-0W` and `-0n`
-/// parse.
+/// parse - but `-0n` as the timespan 0D00:00, so with a suffix other than
+/// `c`, or before another item, it is '-0n: `-0ne`, `-0nj` and `-0n 1`.
 fn null_literal(text: &str, not_last: bool, negative: bool) -> Option<String> {
     let caps = re!(r"^0([nNwW])([A-Za-z])?$").captures(text)?;
     let null = caps[1].eq_ignore_ascii_case("n");
@@ -1056,6 +1075,11 @@ fn null_literal(text: &str, not_last: bool, negative: bool) -> Option<String> {
     if negative && &caps[1] == "N" && letter != Some("c") {
         return Some(format!("`-{text}`: a null has no negative"));
     }
+    if negative && &caps[1] == "n" && (not_last || letter.is_some_and(|l| l != "c")) {
+        return Some(format!(
+            "`-{text}`: `-0n` is the timespan 0D00:00, which takes no suffix and starts no vector"
+        ));
+    }
     None
 }
 
@@ -1067,14 +1091,18 @@ fn null_literal(text: &str, not_last: bool, negative: bool) -> Option<String> {
 /// (`1.2.3`, `2023.1.1`), a long past 9223372036854775807, and an int or
 /// short past its own range (`2147483648i`, `32768h`). A boolean
 /// vector of atoms is not a vector at all - `1b 0b` parses, as two atoms -
-/// and `0N 1`, `3 4i`, `1e5` and `2023.01.01` are fine.
+/// and `0N 1`, `3 4i`, `1e5` and `2023.01.01` are fine - though `1E5`,
+/// with its exponent in upper case, is not.
 fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Finding>) {
     // An exponent's sign is part of its number: `1.5e-3` is one float.
-    let tokens: Vec<regex::Match> = re!(r"\d(?:[eE][+-]\d|[0-9A-Za-z.:])*")
-        .find_iter(unsym)
-        .filter(|m| boundary(code, m.start()))
-        .filter(|m| !command_argument(source, m.start()))
-        .collect();
+    // A token that starts inside a name - the `1` of `x1:1.5j` - is passed
+    // over one character at a time, so the literal after it is still read.
+    let tokens: Vec<regex::Match> =
+        crate::boundary_captures(re!(r"\d(?:[eE][+-]\d|[0-9A-Za-z.:])*"), unsym, code)
+            .into_iter()
+            .map(|c| c.get(0).unwrap())
+            .filter(|m| !command_argument(source, m.start()))
+            .collect();
     let mut report = |at: usize, detail: String| {
         out.push(Finding::at(path, source, at, "QE010", detail));
     };
@@ -1119,6 +1147,25 @@ fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Find
             // is no type suffix, but the token is no number either.
             let detail = if re!(r"^0[nNwW][A-Za-z]?$").is_match(text) {
                 null_literal(text, k + 1 < run.len(), negative)
+            } else if re!(r"^(?:\d+\.?\d*)E(?:[+-]|[A-Za-z]|$)").is_match(text) {
+                // An uppercase exponent takes no sign and needs digits: q 5
+                // refuses `1E-3`, `1.5E+3`, `2E` and `1Ef`, where `1e-3`,
+                // `1.5e+3` and `2e` parse.
+                Some(format!(
+                    "`{text}`: an uppercase `E` exponent takes digits and no sign; write `e`"
+                ))
+            } else if re!(r"^\d+E\d+$").is_match(text)
+                && !run
+                    .iter()
+                    .any(|t| re!(r"\.|^\d+e[+-]?\d+$|^0[nw]$|[ef]$").is_match(t.as_str()))
+            {
+                // `1E5` on an integer mantissa is a float only where another
+                // item makes the vector one: q 5 refuses `1E5`, `1 2E5` and
+                // `1E5 2j`, and takes `1E5 2.5`, `1E5 2f` and `1E5f`.
+                Some(format!(
+                    "`{text}`: an uppercase `E` exponent on an integer makes no number \
+                     unless another item makes the vector float; write `e`"
+                ))
             } else if re!(r"^\d+(?:\.\d*)?(?:[eE][+-]?\d+)?[hij]$").is_match(text)
                 && !re!(r"^\d+[hij]$").is_match(text)
             {
@@ -1142,6 +1189,18 @@ fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Find
                     "`{text}`: `{}` is not a type suffix",
                     &text[text.len() - 1..]
                 ))
+            } else if re!(r"^\d+\.\d*[A-Za-z]$").is_match(text)
+                && !re!(r"[cefnpt]$|^\d{4}\.\d*m$").is_match(text)
+            {
+                // After a fraction only a float, real, char or temporal
+                // suffix reads: q 5 refuses `1.5d`, `1.5m`, `1.5u`, `1.5v`
+                // and `1.5x` - `u` and `v` although `1u` and `1v` parse -
+                // and takes `1.5n`, `1.5p`, `1.5t` and the month `2024.01m` (a
+                // month's digits, `2023.1m`, are QE006's).
+                Some(format!(
+                    "`{text}`: `{}` is no type a fraction takes",
+                    &text[text.len() - 1..]
+                ))
             } else if re!(r"^\d+(?:\.\d+){2,}$").is_match(text)
                 && !re!(r"^\d{4}\.\d{2}\.\d{2}$").is_match(text)
             {
@@ -1162,7 +1221,20 @@ fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Find
                 // The suffix types every item, so `1 2 2147483648i` overflows
                 // at its last item but one: q 5 refuses each with the number.
                 Some(format!("`{text}` does not fit in {kind}"))
-            } else if k + 1 < run.len() && re!(r"^\d+(?:\.\d*)?[hijef]$").is_match(text) {
+            } else if k + 1 < run.len()
+                && re!(r"^\d[\d.:]*[A-Za-z]$").is_match(text)
+                && !text.ends_with('b')
+                && !text.starts_with("0x")
+                && !(text.ends_with(['D', 'T'])
+                    && run
+                        .iter()
+                        .all(|t| t.as_str().contains(&text[text.len() - 1..])))
+            {
+                // Any suffix, temporal, char and symbol ones included: q 5
+                // refuses `1e 2`, `1n 2`, `1s 2` and `2026.01m 2026.02m`. Not
+                // `1b 0`, which parses as an application, nor a byte - and
+                // not the `D` that ends a timespan or timestamp among others
+                // like it: `0D 0D01` and `1D 2D` parse, `0D 1` is '0D.
                 Some(format!(
                     "`{text}`: a vector literal takes one type suffix, after its last item"
                 ))

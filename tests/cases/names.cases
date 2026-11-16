@@ -314,6 +314,15 @@ if[a;1] else 2
 === QF015 | true and false are undefined names
 f:{[x] $[x;true;false]}
 
+=== clean profile: general | a word inside an hsym path is part of the symbol (#373)
+cfg:`:conf/true
+old:`:conf/false
+p:`:x/None
+q:`:a:b/return
+
+=== QF015 profile: general | the word after the path is still read (#373)
+f:{[x] p:`:conf/a; return p}
+
 === clean | null is a q function
 f:{[x] null x}
 

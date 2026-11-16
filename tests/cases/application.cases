@@ -408,6 +408,14 @@ e:$[1.5;1;2]
 f:$[0n;1;2]
 g:$[1e;1;2]
 
+=== clean profile: general | -0n is the timespan 0D00:00, a temporal atom q accepts as a test (#376; q 5: type -0n is -16h, $[-0n;`yes;`no] is `no)
+r:$[-0n;`yes;`no]
+if[-0n;s:1]
+
+=== QA011 profile: general | while -0w and -0we are a float and a real (#376; q 5: 'type)
+r:$[-0w;1;2]
+s:$[-0we;1;2]
+
 === QA011 profile: general | a later test is refused the same way once reached (q 5: $[0b;1;`a;2;3] and $[0b;1;"ab";2;3] are 'type)
 a:$[0b;1;`a;2;3]
 b:$[0b;1;"ab";2;3]

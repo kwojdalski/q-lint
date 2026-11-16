@@ -482,15 +482,15 @@ fn shape(s: &str) -> Option<usize> {
     if let Some(rest) = s.strip_prefix("enlist ") {
         return shape(rest).map(|_| 1);
     }
-    // A byte vector: `0x` and an even run of hex digits, two per item. With
-    // exactly two it is an atom, which `Shape` reports as a one-item vector
-    // the way a lone number is - the length check treats both alike.
+    // A byte vector: `0x` and a run of hex digits, two per item, an odd
+    // first one padded (q 5: `0x012` is `0x0012`, and `0x` the empty byte
+    // vector). With one or two digits it is an atom, which `Shape` reports
+    // as a one-item vector the way a lone number is - the length check
+    // treats both alike.
     if let Some(hex) = s.strip_prefix("0x")
-        && !hex.is_empty()
-        && hex.len() % 2 == 0
         && hex.bytes().all(|b| b.is_ascii_hexdigit())
     {
-        return Some(hex.len() / 2);
+        return Some(hex.len().div_ceil(2));
     }
     // A boolean vector is one token, a digit per item: `10b` is two.
     if re!(r"^[01]+b$").is_match(s) {
@@ -2432,6 +2432,9 @@ pub fn check(
         }
         candidates.sort_unstable();
         candidates.dedup();
+        // Symbols blanked, for the iterator test: the `/` of `` f `:db/t ``
+        // is part of the path, not over.
+        let unsymbolled = crate::unsymbolled(code);
         for (at, bare) in candidates {
             if !boundary(code, at) {
                 continue;
@@ -2467,7 +2470,7 @@ pub fn check(
             if let Some(end) = crate::argument_end(code, comments, raw, argument) {
                 let text = &code[argument..end];
                 let mut depth = 0i32;
-                let iterated = text.bytes().any(|b| {
+                let iterated = unsymbolled[argument..end].bytes().any(|b| {
                     match b {
                         b'(' | b'[' | b'{' => depth += 1,
                         b')' | b']' | b'}' => depth -= 1,
@@ -2593,7 +2596,9 @@ fn held(code: &str, raw: &str) -> Option<Held> {
         return Some(Held::Atom);
     }
     if re!(r"^(?:-?\d[A-Za-z0-9.:]*|0x[0-9a-fA-F]{2})$").is_match(code)
-        && !re!(r"^[01]{2,}b$|^0x(?:[0-9a-fA-F]{2}){2,}$").is_match(code)
+        // `0x` is the empty byte vector and `0x012` the two bytes `0x0012`
+        // (q 5): only one or two hex digits make an atom.
+        && !re!(r"^[01]{2,}b$|^0x(?:[0-9a-fA-F]{3,})?$").is_match(code)
     {
         return Some(Held::Atom);
     }

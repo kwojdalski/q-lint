@@ -445,6 +445,8 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ("QT008", "r:til 5.0", "r:til 5", true),
         ("QT008", "r:til 3f", "r:til 3", true),
         ("QT025", "f:{'5}", "f:{'\"5\"}", true),
+        ("QT025", "f:{'12:00}", "f:{'\"12:00\"}", true),
+        ("QT025", "f:{'1e-3}", "f:{'\"1e-3\"}", true),
         (
             "QF005",
             "f:{[a] {a+x} each 1 2}",
@@ -557,7 +559,12 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
         ("QA006", "r:`int$[a=1;b]"),         // `if` would fuse onto `int
         ("QA006", "r:x$[a=1;b]"),            // and onto a name
         ("QF010", "f:{[a;b] x+a}"),          // which parameter?
+        ("QF010", "f:{[`s] x+1}"),           // a literal pattern binds no name (#379)
+        ("QF010", "f:{[1] x}"),              // nor does a number (#379)
+        ("QF010", "f:{[(a;b)] x}"),          // and a list pattern is no one name (#379)
         ("QT008", "r:til 2.5"),              // no long it spells
+        ("QT008", "r:til 2e-1"),             // `til 2-1` (#389)
+        ("QT008", "r:til 2e+1"),             // nor `til 2+1` (#389)
         ("QF020", "t:([]ab:1 2;ac:3 4);r:select a from t"), // two equally close
         ("QA007", "f:{[c] $[c;1;2;3]}"),     // no empty slot
         ("QP002", "t:.z.z / old: 15h$x"),    // the cast is in a comment
@@ -571,6 +578,32 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
             .iter()
             .filter(|f| f.code == code)
         {
+            assert!(fix_for(finding, source).is_none(), "{code} fixed {source}");
+        }
+    }
+}
+
+/// A fix that deletes a token from between two numeric literals would leave
+/// them one vector literal: q 5 gives `10 30` for `10 20 30 {x} each 0 2`
+/// and for `{r:10 20 30 a:0 2; r}[]`, and `20 30` for
+/// `10 20 30 {x+1} each 0 1`, where the rewrites read `10 20 30 0 2` and
+/// `10 20 30 0 1+1` (#374, #375).
+#[test]
+fn no_fix_that_fuses_two_numeric_literals() {
+    use q_lint_rs::{Profile, fix_for, lint};
+    for (code, source) in [
+        ("QR002", "r:10 20 30 {x} each 0 2"),
+        ("QR002", "r:0 1 2{x} each 1"),
+        ("QR002", "r:0 1 2 {x} each -1"),
+        ("QF017", "f:{r:10 20 30 a:0 2; r}"),
+        ("QR004", "g:10 20 30 {x+1} each 0 1"),
+    ] {
+        let found: Vec<_> = lint(source, "probe.q", Profile::Uqf)
+            .into_iter()
+            .filter(|f| f.code == code)
+            .collect();
+        assert!(!found.is_empty(), "{code} not reported on {source}");
+        for finding in &found {
             assert!(fix_for(finding, source).is_none(), "{code} fixed {source}");
         }
     }
