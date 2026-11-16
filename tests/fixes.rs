@@ -391,6 +391,25 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ("QR004", "f:{a{x+1} each b}", "f:{a b+1}", false),
         ("QR004", "r:{x - 1} each b", "r:b-1", false),
         ("QR004", "s:a -{1+x} each 2 3", "s:a - 1+2 3", false),
+        // In a query the argument ends where the column does (#350).
+        (
+            "QR004",
+            "r:select c:{x+1} each a, d:b from t",
+            "r:select c:a+1, d:b from t",
+            false,
+        ),
+        (
+            "QR004",
+            "r:select c:{x+1} each a by b from t",
+            "r:select c:a+1 by b from t",
+            false,
+        ),
+        (
+            "QR004",
+            "r:select from t where b>{2*x} each a",
+            "r:select from t where b>2*a",
+            false,
+        ),
         ("QR004", "t:a -{x*2} each 3 4", "t:a - 3 4*2", false),
         ("QL002", "a:1\n/ old:{x+1}\nb:2", "a:1\nb:2", false),
         // The indentation goes with it, or `b:2` would continue `a:1` (#205).

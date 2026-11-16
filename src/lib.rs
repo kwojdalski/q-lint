@@ -992,7 +992,14 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 return None;
             }
             let from = start + m.get(0)?.end();
-            let end = argument_end(&v.code, &v.comments, source, from)?;
+            let mut end = argument_end(&v.code, &v.comments, source, from)?;
+            // In a qSQL phrase the argument ends at the column's `,` or at
+            // `by`, `from` or `where`, as QP006's does (#350).
+            match query_clause(&v.code, start) {
+                None => {}
+                Some("from") => return None,
+                Some(_) => end = query_argument_end(&v.code, &v.comments, source, from, end)?,
+            }
             let argument = &source[from..end];
             if argument.trim().is_empty() {
                 return None;
