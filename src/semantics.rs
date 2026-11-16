@@ -3353,6 +3353,12 @@ fn named_values(
             let Some(close) = matching(code, r.start(), b'(', b')') else {
                 continue;
             };
+            // A table literal is a table, matched by column name, not a row
+            // of values: q 5 runs `` `t upsert ([]a:7 8;b:9 10) `` on a
+            // three-column `t` (#467).
+            if code[r.start() + 1..close].trim_start().starts_with('[') {
+                continue;
+            }
             let slots = crate::slots(&code[r.start() + 1..close - 1]);
             // upsert also takes a list of rows: q 5 runs
             // `t upsert ((1;`a);(3;`b);(5;`c))` on a two-column t, and

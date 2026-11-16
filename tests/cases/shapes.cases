@@ -766,3 +766,9 @@ r:t lj k
 u:([]a:1 2;d:7 8)
 1!`u
 s:t lj u
+
+=== clean | QT027: a table literal given to insert or upsert is a table, not a row of values (#467; q 5: both run)
+t:([]a:1 2;b:3 4;c:5 6)
+`t upsert ([]a:7 8;b:9 10)
+k:([a:1 2]b:3 4;c:5 6)
+`k insert ([a:enlist 9]b:enlist 4;c:enlist 5)
