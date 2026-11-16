@@ -504,6 +504,11 @@ a:1
 set[`a;2 3]
 a 0
 
+=== clean profile: general | and so does each of a symbol list set' (q 5: r is 1) (#360)
+a:2.5
+`a`b set' (1 2;3 4)
+r:a 0
+
 === clean | a name defined only by set in brackets is defined
 set[`b;1 2]
 b 0

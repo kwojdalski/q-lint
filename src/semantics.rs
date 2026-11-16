@@ -2702,6 +2702,16 @@ fn named_values(
             .or_default()
             .extend([0, 0]);
     }
+    // Each of a symbol list: q 5 `a:2.5; `a`b set' (1 2;3 4); a 0` is 1 (#360).
+    for m in re!(r"((?:`\.?[A-Za-z][A-Za-z0-9_.]*){2,})\s*set'").captures_iter(code) {
+        for name in m.get(1).unwrap().as_str().split('`').skip(1) {
+            writes.entry(name).or_default().extend([0, 0]);
+            exact
+                .entry(key(name, m.get(0).unwrap().start()))
+                .or_default()
+                .extend([0, 0]);
+        }
+    }
     for (at, name) in multi_assignments(code) {
         writes.entry(name).or_default().extend([0, 0]);
         exact.entry(key(name, at)).or_default().extend([0, 0]);
