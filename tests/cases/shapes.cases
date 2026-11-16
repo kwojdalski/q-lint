@@ -757,3 +757,12 @@ m:{[t] exec px 0 by w from t}
 px:2.5
 k:([]a:1 2;c:5 6)
 f:{[t] r:select from t lj k; r,px 0}
+
+=== clean | QT026: keying in place by xkey's bracket form or by n!`t (#466; q 5: both joins run)
+t:([]a:1 2;b:3 4)
+k:([]a:1 2;c:5 6)
+xkey[`a;`k]
+r:t lj k
+u:([]a:1 2;d:7 8)
+1!`u
+s:t lj u

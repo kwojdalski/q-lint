@@ -2777,8 +2777,10 @@ fn named_values(
     // A table changed in place by name: `update c:1 from `t` adds a column,
     // as do `![`t;...]`, `.[`t;...]` and `@[`t;...]`, without an assignment
     // to say so. So does `` `a xkey `t ``, which keys it (q 5: `t lj k`
-    // after `` `a xkey `k `` joins), and its neighbours (#353).
-    for m in re!(r"(?:\bfrom\s*|[!.@]\s*\[\s*|\b(?:xkey|xasc|xdesc|xcols|xcol)\s*)`(\.?[A-Za-z][A-Za-z0-9_.]*)").captures_iter(code) {
+    // after `` `a xkey `k `` joins), and its neighbours (#353), in the
+    // bracket form too, and `` 1!`k `` (q 5: `xkey[`a;`k]` and `` 1!`k ``
+    // return `` `k `` and key it) (#466).
+    for m in re!(r"(?:\bfrom\s*|[!.@]\s*\[\s*|\b(?:xkey|xasc|xdesc|xcols|xcol)\s*(?:\[[^;\[\]]*;\s*)?|\b\d+\s*!\s*)`(\.?[A-Za-z][A-Za-z0-9_.]*)").captures_iter(code) {
         let name = m.get(1).unwrap().as_str();
         writes.entry(name).or_default().extend([0, 0]);
         exact
