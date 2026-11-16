@@ -12,6 +12,8 @@ enum Kind {
     Char,
     /// `0x` and hex digits, two per item; an atom with exactly two.
     Byte,
+    /// A date, month, time, timespan, timestamp or datetime, unsuffixed.
+    Temporal,
 }
 struct Literal {
     kind: Kind,
@@ -95,6 +97,21 @@ fn literal(s: &str) -> Option<Literal> {
             len: numbers.len(),
             negative: numbers.iter().any(|&v| v < 0),
             short_integer: s.ends_with('h'),
+        });
+    }
+    // `2000.01.01`, `2000.01m`, `12:00`, `12:00:00.123`, `0D01`,
+    // `2000.01.01D12:00` and `2000.01.01T12:00`, and vectors of them.
+    let temporal = re!(
+        r"^(?:\d{4}\.\d\d(?:\.\d\d(?:[DT](?:\d\d(?::\d\d(?::\d\d(?:\.\d*)?)?)?)?)?|m)|\d\d:\d\d(?::\d\d(?:\.\d*)?)?|\d+D(?:\d\d(?::\d\d(?::\d\d(?:\.\d*)?)?)?)?)$"
+    );
+    let items: Vec<&str> = s.split_whitespace().collect();
+    if !items.is_empty() && items.iter().all(|item| temporal.is_match(item)) {
+        return Some(Literal {
+            kind: Kind::Temporal,
+            vector: items.len() > 1,
+            len: items.len(),
+            negative: false,
+            short_integer: false,
         });
     }
     let float = re!(
@@ -414,8 +431,10 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
 
             // A symbol atom runs - `til` is `key` there and lists a
             // namespace - and so does a byte atom. Any vector, a string of
-            // any length and a float are 'type.
-            "til" if value.vector || matches!(value.kind, Kind::Float | Kind::Char) => {
+            // any length, a float and a temporal atom are 'type.
+            "til"
+                if value.vector || matches!(value.kind, Kind::Float | Kind::Char | Kind::Temporal) =>
+            {
                 Some(("QT008", "til needs an integer atom, not this literal"))
             }
             "til" if value.kind == Kind::Integer && value.negative => {
