@@ -359,6 +359,11 @@ r:type[1]=`a`b?`a
 === QB013 | but a symbol vector that ends the comparison is still one
 r:type[x]=`a`b;
 
+=== clean profile: general | type applied by juxtaposition takes the whole comparison (q 5: type x=`long is -1h, #429)
+f:{[x] type x=`long}
+g:{[x] type (x)=`long}
+h:{[x] type(x)<>`a}
+
 === clean | type compared to a short
 if[type[x]=7h;1]
 
