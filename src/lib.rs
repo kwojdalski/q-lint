@@ -2840,7 +2840,12 @@ pub(crate) fn signature<'a>(code: &'a str, raw: &str, brace: usize) -> Signature
         body: close,
     }
 }
-fn structure(path: &str, source: &str, v: &Views) -> Option<Finding> {
+/// Every structural problem in the file, in source order. Each is reported
+/// and then recovered from - a statement at column 0 starts with no bracket
+/// open, a stray closer is skipped, a mismatched one closes what it meets -
+/// so a `noqa` on the first does not hide the next (#413).
+fn structure(path: &str, source: &str, v: &Views) -> Vec<Finding> {
+    let mut found = vec![];
     let mut stack = vec![];
     let mut offset = 0;
     let make = |at, detail| Finding::at(path, source, at, "QE001", detail);
@@ -2861,7 +2866,7 @@ fn structure(path: &str, source: &str, v: &Views) -> Option<Finding> {
             && begins
         {
             let row = source[..offset].matches('\n').count() + 1;
-            return Some(make(
+            found.push(make(
                 at,
                 format!(
                     "Unclosed delimiter; expected '{}' before line {row}, which starts at \
@@ -2869,6 +2874,7 @@ fn structure(path: &str, source: &str, v: &Views) -> Option<Finding> {
                     c as char
                 ),
             ));
+            stack.clear();
         }
         // A command's argument is no q, but `\t`'s is, and its brackets
         // close on the lines that continue it (#308).
@@ -2879,13 +2885,13 @@ fn structure(path: &str, source: &str, v: &Views) -> Option<Finding> {
                 } else if b")]}".contains(&c) {
                     match stack.pop() {
                         None => {
-                            return Some(make(
+                            found.push(make(
                                 offset + i,
                                 format!("Unexpected closing '{}'", c as char),
                             ));
                         }
                         Some((want, _)) if want != c => {
-                            return Some(make(
+                            found.push(make(
                                 offset + i,
                                 format!("Expected '{}', got '{}'", want as char, c as char),
                             ));
@@ -2898,11 +2904,14 @@ fn structure(path: &str, source: &str, v: &Views) -> Option<Finding> {
         offset += line.len();
     }
     if let Some(at) = v.unterminated {
-        return Some(make(at, "Unterminated string literal".into()));
+        found.push(make(at, "Unterminated string literal".into()));
+    } else if let Some(&(c, at)) = stack.last() {
+        found.push(make(
+            at,
+            format!("Unclosed delimiter; expected '{}'", c as char),
+        ));
     }
-    stack
-        .last()
-        .map(|&(c, at)| make(at, format!("Unclosed delimiter; expected '{}'", c as char)))
+    found
 }
 
 /// Which rules a run is asking for.
@@ -3004,10 +3013,11 @@ pub fn lint_selecting(
 ) -> Vec<Finding> {
     let uqf = profile == Profile::Uqf;
     let v = views(source);
-    if structure_selected && let Some(f) = structure(path, source, &v) {
-        let mut out = vec![f];
+    if structure_selected {
+        let mut out = structure(path, source, &v);
         suppress(&mut out, source, &v.comments);
         if !out.is_empty() {
+            out.truncate(1);
             return out;
         }
     }
