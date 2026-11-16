@@ -1668,14 +1668,15 @@ fn ends_in_name(s: &str) -> bool {
 /// string of other than one char, a symbol or byte vector, or a float, real
 /// or guid atom. `$["ab";..]`, `$[`a`b;..]`, `$[0x0102;..]`, `$[1.5;..]`,
 /// `$[0n;..]`, `$[1e;..]`, `if[`a;..]` and `do[1.5;..]` are each 'type;
-/// `0N` and `0W` are longs and are not.
+/// `0N` and `0W` are longs and are not, and nor is `-0n`: q 5 reads it as
+/// the timespan `0D00:00` (type -16h), while `-0w` is the float.
 fn refused_atom_condition(raw: &str) -> bool {
     re!(r#"^"((?:[^"\\]|\\.)*)"$"#)
         .captures(raw)
         .is_some_and(|c| q_bytes(&c[1]).len() != 1)
         || re!(r"^(?:`[A-Za-z0-9_.:]*)+$").is_match(raw)
         || re!(r"^0x(?:[0-9a-fA-F]{2}){2,}$").is_match(raw)
-        || re!(r"^-?(?:\d+\.\d*|\.\d+|\d+(?:\.\d*)?[eE][+-]?\d+)[ef]?$|^-?\d+[ef]$|^-?0[nwNW][ef]?$|^0Ng$")
+        || re!(r"^-?(?:\d+\.\d*|\.\d+|\d+(?:\.\d*)?[eE][+-]?\d+)[ef]?$|^-?\d+[ef]$|^0[nwNW][ef]?$|^-0[wW][ef]?$|^0Ng$")
             .is_match(raw)
             && !re!(r"^-?0[NW]$").is_match(raw)
 }
