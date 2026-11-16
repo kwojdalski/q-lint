@@ -2907,8 +2907,9 @@ fn named_values(
         }
         if let Some(value) = held(&code[start..end], &comments[start..end]) {
             // `0N` and `0W` are integers too: uqf's tick.q starts a log
-            // handle as `0N` and sets it with hopen later.
-            if re!(r"^\s*-?(?:\d+|0[NW])[hij]?\s*$").is_match(&comments[start..end]) {
+            // handle as `0N` and sets it with hopen later. Not a short: q 5
+            // `h:1h; h "hi"` is 'type, where `2i "hi"` writes (#477).
+            if re!(r"^\s*-?(?:\d+|0[NW])[ij]?\s*$").is_match(&comments[start..end]) {
                 handles.insert(name);
             }
             known.insert(name, (end, value));

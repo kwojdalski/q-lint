@@ -589,6 +589,14 @@ p:"/" sv string a,""
 out:1
 out["hello"]
 
+=== clean | an int is a handle too (#477; q 5: h:2i; h "hi\n" writes to stderr)
+h:2i
+h["hi\n"]
+
+=== QT022 | but a short is no handle (#477; q 5: h:1h; h["hi"] and h:0Nh; h "hi" are 'type)
+h:1h
+s:h["hi"]
+
 === clean profile: general | QT022 and QB010: 0x is the empty byte vector and 0x012 two bytes, not atoms (#377; q 5: buf 0 and buf -1 are 0x00)
 buf:0x
 b0:buf 0
