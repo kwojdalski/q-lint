@@ -561,6 +561,16 @@ g:{.lg.o[`c;"types "," " sv string procs,:()]}
 === clean | a comparison and an or in different comma-separated clauses
 r:select from t where abs[port]=1,(lower[h]=x) or h=`a
 
+=== clean profile: general | QB015: a string that only starts the compared operand (q 5: n="abcd"?"b" is n=1, n="abcd"[1] is n="b") (#435)
+t:([]s:`ab`cd`ab;c:("ab";"cd";"ab");n:1 2 3)
+r:select from t where n="abcd"?"b"
+u:select from t where n="abcd"[1]
+
+=== QB015 profile: general | QB015: a string before a comma, a by or the end of the statement still is one (#435)
+t:([]s:`ab`cd`ab;n:1 2 3)
+r:select from t where s="ab", n>1
+u:select from t where s="ab";
+
 === clean | QB015: an `=` inside a string is not a comparison
 f:{[t] select from t where a in `x, b like "="}
 

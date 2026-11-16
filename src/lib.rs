@@ -5668,7 +5668,10 @@ pub fn lint_selecting(
             {
                 let op = m.get(0).unwrap().start();
                 let n = q_bytes(&m[1]).len();
-                if in_code(op) && n != 1 {
+                // The string has to be the whole right operand: q 5
+                // `n="abcd"?"b"` compares n with 1, and `n="abcd"[1]` with
+                // "b" (#435).
+                if in_code(op) && n != 1 && operand_ends(query, m.get(0).unwrap().end()) {
                     return Some((op, n));
                 }
                 at = op + 1;
