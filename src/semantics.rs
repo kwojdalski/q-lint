@@ -2951,8 +2951,12 @@ fn named_values(
     let indexed = re!(
         r#"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)(?:\[|[ \t]*@[ \t]*[0-9"`(A-Za-z]|[ \t]+\.[ \t]+[0-9"`(A-Za-z]|[ \t]+([0-9"`(]|\.?[A-Za-z][A-Za-z0-9_]*))"#
     );
-    for m in indexed.captures_iter(code) {
+    // From each name on, not match after match: in `show a 0` the match
+    // `show a` would hide `a 0` (q 5: 'type) (#471).
+    let mut at = 0;
+    while let Some(m) = indexed.captures_at(code, at) {
         let name = m.get(1).unwrap();
+        at = name.end();
         // Nor before a qSQL word, which ends the column list or the clause:
         // `update time:t0 from t` fills the column from the atom (q 5, #114).
         if m.get(2).is_some_and(|next| {
