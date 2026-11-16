@@ -95,6 +95,26 @@ fn a_root_name_is_not_the_dotted_name_of_the_same_spelling() {
 }
 
 #[test]
+fn a_root_name_reaches_a_definition_in_dot_q() {
+    // q 5: after `.q.answer:{42}`, `answer[]` is 42 - q searches `.q` from
+    // every context (#358). A root definition of its own still comes first.
+    let g = graph(
+        &[("lib.q", ".q.answer:{42}\n"), ("main.q", "r:answer[]\n")],
+        false,
+    );
+    assert_eq!(deps(&g, "main.q"), ["lib.q"]);
+    let g = graph(
+        &[
+            ("lib.q", ".q.answer:{42}\n"),
+            ("root.q", "answer:{1}\n"),
+            ("main.q", "r:answer[]\n"),
+        ],
+        false,
+    );
+    assert_eq!(deps(&g, "main.q"), ["root.q"]);
+}
+
+#[test]
 fn system_d_and_a_commented_backslash_d_open_a_context() {
     // q 5: after `system "d .b"` and `k:{1}`, `key `.b` is ``k; after
     // `\d .c  / note` and `m:1`, `key `.c` is ``m.

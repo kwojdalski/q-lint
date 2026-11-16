@@ -95,7 +95,16 @@ pub fn build(files: &[(PathBuf, String)], symbols: bool, cwd: &Path) -> BTreeMap
             ..Node::default()
         };
         for name in &reads[i].names {
-            let Some((name, defs)) = resolve(name, &definers) else {
+            // A root name nobody defines is looked for in `.q`, which q
+            // searches from every context: after `.q.answer:{42}`, q 5's
+            // `answer[]` is 42 (#358).
+            let in_q = format!(".q.{name}");
+            let Some((name, defs)) = resolve(name, &definers).or_else(|| {
+                (!name.contains('.'))
+                    .then(|| definers.get_key_value(&in_q))
+                    .flatten()
+                    .map(|(k, d)| (k.as_str(), d.as_slice()))
+            }) else {
                 continue;
             };
             let others: Vec<_> = defs.iter().filter(|&&d| d != i).collect();
