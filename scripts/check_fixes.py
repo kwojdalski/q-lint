@@ -64,22 +64,28 @@ def statements(text):
     return out
 
 
+def sources(corpus):
+    """The regular `.q` files under `corpus`: `rglob` also yields a
+    directory whose name ends in `.q`, and the corpus holds one."""
+    return sorted(p for p in corpus.rglob("*.q") if p.is_file())
+
+
 def main() -> int:
     args = sys.argv[1:]
     unsafe = "--unsafe" in args
     args = [a for a in args if a != "--unsafe"]
     binary, corpus = args[0], Path(args[1]).expanduser()
-    sources = sorted(corpus.rglob("*.q"))
+    files = sources(corpus)
     pairs = []
     with tempfile.TemporaryDirectory() as tmp:
         copies = []
-        for i, path in enumerate(sources):
+        for i, path in enumerate(files):
             copy = Path(tmp, f"{i}.q")
             shutil.copyfile(path, copy)
             copies.append(copy)
         flags = ["--fix", "--unsafe-fixes"] if unsafe else ["--fix"]
         subprocess.run([binary, "--profile", "uqf", *flags, *map(str, copies)], capture_output=True)
-        for path, copy in zip(sources, copies):
+        for path, copy in zip(files, copies):
             before = path.read_bytes().decode("utf-8", "replace").replace("\r\n", "\n")
             after = copy.read_bytes().decode("utf-8", "replace").replace("\r\n", "\n")
             if before == after:
