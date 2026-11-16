@@ -2584,6 +2584,13 @@ pub(crate) fn is_pattern(s: &str, nested: bool) -> bool {
         false
     }
 }
+/// Whether a compound or `::` assignment has a value to assign: q 5 refuses
+/// `{sum::x}` and `{count,:x}` with 'assign, but `{a:sum::}`, `(sum::)x`,
+/// `sum::'x` and `count,:;` apply the function instead (#432).
+fn assigns_operand(rest: &str) -> bool {
+    let rest = rest.trim_start_matches([' ', '\t']);
+    !rest.is_empty() && !rest.starts_with([';', ')', ']', '}', '\'', '[', '/', '\\', '\r', '\n'])
+}
 /// The first `byte` in `s` outside any bracket, brace or parenthesis.
 fn first_outside(s: &str, byte: u8) -> Option<usize> {
     let mut depth = 0i32;
@@ -4792,8 +4799,14 @@ pub fn lint_selecting(
             // view blanks both over their own extent, whatever lines they
             // span.
             let view = semantics::local_view(&code[at..end], true);
-            for a in re!(r"([a-z][a-z0-9_]*)\s*:").captures_iter(&view) {
+            // Global (`sum::1`) and compound (`sum+:1`, `count,:1`) assignment
+            // are refused the same: q 5 'assign where the lambda is defined
+            // (#432). `sum_:1` is the name `sum_`.
+            for a in re!(r"([a-z][a-z0-9_]*)\s*(?:[-+*%,#_^&|!?@$~=<>]|:)?:").captures_iter(&view) {
                 let m = a.get(0).unwrap();
+                if m.as_str().len() > a[1].len() + 1 && !assigns_operand(&view[m.end()..]) {
+                    continue;
+                }
                 // q 5 takes from and by as locals: {from:1;from+1}[] is 2.
                 // A typed parameter, `{[count:`j] 1}`, is QF001's (#327).
                 let typed_parameter = enclosing_brace(code, at + m.start()).is_some_and(|b| {
@@ -5439,8 +5452,18 @@ pub fn lint_selecting(
             // Of the 181 reserved names q refuses to assign inside a namespace
             // all but two: `from` and `by` are accepted there and read back fine,
             // checked one by one. TorQ's email settings define `.email.from`.
+            // Compound assignment too: q 5 `count+:1` is 'assign at the root
+            // and in a namespace, while `count::1` is accepted in both (#432).
+            let compound = |m: &regex::Captures| {
+                let end = m.get(0).unwrap().end();
+                !head[end..].starts_with(':')
+                    && (m[0].trim_end_matches(':').trim_end().len() == m[1].len()
+                        || assigns_operand(&head[end..]))
+            };
             if namespace
-                && let Some(m) = re!(r"^([a-z][a-zA-Z0-9_]*)\s*:").captures(head)
+                && let Some(m) =
+                    re!(r"^([a-z][a-zA-Z0-9_]*)\s*[-+*%,#_^&|!?@$~=<>]?:").captures(head)
+                && compound(&m)
                 && RESERVED.iter().any(|n| n == &m[1])
                 && !matches!(&m[1], "from" | "by")
             {
@@ -5453,8 +5476,9 @@ pub fn lint_selecting(
             // hence the brace depth.
             if !namespace
                 && line_depth == 0
-                && let Some(m) = re!(r"^([a-z][a-zA-Z0-9_]*)\s*:").captures(head)
-                && !head[m.get(0).unwrap().end()..].starts_with(':')
+                && let Some(m) =
+                    re!(r"^([a-z][a-zA-Z0-9_]*)\s*[-+*%,#_^&|!?@$~=<>]?:").captures(head)
+                && compound(&m)
                 && RESERVED.iter().any(|n| n == &m[1])
             {
                 add(

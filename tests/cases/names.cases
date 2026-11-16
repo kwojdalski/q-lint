@@ -239,6 +239,29 @@ y:1;sum:2
 x:1;count:2
 \d .
 
+=== QF003 profile: general | global and compound assignment inside a lambda (q 5: {sum::1;0}, {sum+:1;0} and {count,:1;0} are 'assign) (#432)
+f1:{sum::1;0}
+f2:{sum+:1;0}
+f3:{count,:1;0}
+
+=== clean profile: general | from and by take a compound assignment, and sum_ is a name (q 5: {from+:1;0} and {sum_:1;0} are defined) (#432)
+f:{from+:1;by,:1;sum_:1;0}
+
+=== clean profile: general | with nothing to assign, :: and op: apply the function (q 5: {a:raze::}, {(sum::)x}, {count,:;1} are defined) (#432)
+f:{a:raze::;b:(sum::)x;c:value::;count,:;sum::'x}
+
+=== QF012 | a compound assignment at the root (q 5: sum+:1 is 'assign) (#432)
+sum+:1
+
+=== clean | while :: at the root assigns (q 5: sum::1 is accepted) (#432)
+sum::1
+
+=== QF004 profile: general | a compound assignment in a namespace, but not :: (q 5: count+:1 is 'assign, count::1 accepted under \d .my) (#432)
+\d .my
+count+:1
+count::1
+\d .
+
 === QF003 | a later statement inside a lambda is a local, QF003's and not QF012's
 h:{[a] b:a;sum:b;sum}
 
