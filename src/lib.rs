@@ -898,8 +898,10 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 end -= 1;
             }
             // Across lines the edit would take layout and comments with it;
-            // the single-line case is the one with one right edit.
-            if end <= start || source[semi..end].contains('\n') {
+            // the single-line case is the one with one right edit. Measured
+            // to the brace in code, not the trimmed end: a `}` inside a
+            // trailing comment stops the trim on the first line (#410).
+            if end <= start || source[semi..at].contains('\n') {
                 return None;
             }
             (

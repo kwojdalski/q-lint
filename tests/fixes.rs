@@ -634,6 +634,8 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
         ("QR004", "a:1 2 3;r:{x*2} each[a]"),
         // A symbol applied to () is a projection, which `[]` would call (#408)
         ("QA004", "f:{42};r:`f . ()"),
+        // A comment holding a `}` would go with the code (#410)
+        ("QB020", "f:{[x] :x; x / keep this comment }\n  }"),
         // `return` before a comment returns nothing: `:/` is over (#404)
         ("QF015", "f:{[x] a:1;\n  return / done\n  }"),
     ] {
