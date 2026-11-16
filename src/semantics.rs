@@ -682,23 +682,13 @@ pub fn tokens(code: &str, raw: &str, ws: &crate::Workspace) -> Vec<(usize, usize
     let name = re!(r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*");
     // A global is a function when every assignment to it is a lambda that
     // the statement ends with - `f:{...} each x` assigns a list, as QA012's
-    // rank table already knows. The writes are `global_writes`', which a
-    // table column or a qSQL alias is not: after `t:([] f:1 2)`, q 5's `f`
-    // is still the lambda, type 100h (#365).
+    // rank table already knows - or a projection of one, as `index` decides:
+    // q 5's `p:{[a;b] a+b}[1;]` is type 104h and `p 2` is 3 (#367). The
+    // writes are `global_writes`', which a table column or a qSQL alias is
+    // not: after `t:([] f:1 2)`, q 5's `f` is still the lambda (#365).
     let lambda: HashMap<String, bool> = global_writes(code, &scopes, &namespaces, qualify, true)
         .into_iter()
-        .map(|(key, at)| {
-            let every = at.iter().all(|&at| {
-                let rest = code[at..].trim_start();
-                let brace = code.len() - rest.len();
-                rest.starts_with('{')
-                    && matching(code, brace, b'{', b'}').is_some_and(|end| {
-                        let after = code[end..].trim_start_matches([' ', '\t']);
-                        after.is_empty() || after.starts_with([';', '\n', '\r'])
-                    })
-            });
-            (key, every)
-        })
+        .map(|(key, at)| (key, at.iter().all(|&at| assigns_lambda(code, at))))
         .collect();
     let mut out = vec![];
     for m in name.find_iter(code) {

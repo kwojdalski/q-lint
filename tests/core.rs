@@ -269,6 +269,12 @@ fn a_column_named_like_a_function_does_not_uncolour_it() {
 }
 
 #[test]
+fn a_projection_is_coloured_as_a_function() {
+    // q 5: `p:{[a;b] a+b}[1;]` is type 104h, and `p 2` is 3 (#367).
+    assert_eq!(functions("p:{[a;b] a+b}[1;]\nr:p 2\n"), ["p"]);
+}
+
+#[test]
 fn a_root_lambda_is_not_coloured_inside_a_context() {
     use q_lint_rs::{TokenKind, Workspace, index, semantic_tokens_in};
     // q 5: under `\\d .ns`, `m:f 2` is 'f - no fallback to the root `f`,
