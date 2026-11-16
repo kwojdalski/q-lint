@@ -21,6 +21,14 @@ s:"abc
 
  def"
 
+=== clean profile: general | q skips a #! first line, so it is no q (q 5 loads both and prints 1, #314)
+#!/opt/kx/2024.02.30/q -p 12:60
+show 1
+
+=== QE001 profile: general | the line after it is the first statement, and a bracket it leaves open is still refused (#314)
+#!/usr/bin/env q
+f:{
+
 === clean | a brace inside a string is not a delimiter
 s:"{[desc]}"
 

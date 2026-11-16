@@ -2076,7 +2076,15 @@ fn views(source: &str) -> Views {
     // undefined. Comments, blank lines and system commands are not
     // statements, so none of them ends that stretch.
     let mut statement = false;
-    for line in source.split_inclusive('\n') {
+    // q skips a first line that starts `#!`, the interpreter line of an
+    // executable script: q 5 loads `#!/usr/bin/env q` + `show 1` and prints
+    // 1. Only the first - a later one is refused with '# (#314).
+    if source.starts_with("#!") {
+        offset = source.find('\n').map_or(source.len(), |p| p + 1);
+        blank(&mut comments[..offset]);
+        blank(&mut code[..offset]);
+    }
+    for line in source[offset..].split_inclusive('\n') {
         let end = offset + line.len();
         let stripped = line.trim_end_matches(['\r', '\n', ' ', '\t']);
         // A string runs on over indented and blank lines only. A line at

@@ -718,13 +718,12 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
         if i > 0 && b[i - 1] == b'\n' {
             line_start = i;
         }
-        // Not in a string or a comment, nor on a system command or `#!` line.
+        // Not in a string or a comment, nor on a system command.
         // `_` too: `_x`, `_1.5` and `1+_x` are '_ in q 5, while `x _1`,
         // `1 _x` and the `_` inside `x_y` follow an operand.
         if !(GLYPHS.contains(&g) || g == b'_')
             || code.as_bytes()[i] != g
             || crate::system_command(&comments[line_start..])
-            || comments[line_start..].starts_with("#!")
         {
             continue;
         }
