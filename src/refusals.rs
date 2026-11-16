@@ -760,11 +760,30 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
         {
             continue;
         }
-        // The sort in `select[>a]` and `select[2;<a]` is q's own syntax.
-        if matches!(g, b'<' | b'>')
-            && re!(r"(?:^|[^A-Za-z0-9.])select\s*\[(?:[^\[\];]*;)?$").is_match(before)
-        {
-            continue;
+        // The sort in `select[>a]` and `select[2;<a]` is q's own syntax, and
+        // the count before it may hold brackets of its own: `select[til[2];>a]`
+        // and `select[(1;2);>a]` (q 5 runs both, #346).
+        if matches!(g, b'<' | b'>') && before.ends_with(['[', ';']) {
+            let (mut depth, mut slots, mut open) = (0i32, 0, None);
+            for (j, c) in before.bytes().enumerate().rev() {
+                match c {
+                    b')' | b']' | b'}' => depth += 1,
+                    b'(' | b'[' | b'{' if depth == 0 => {
+                        open = Some(j);
+                        break;
+                    }
+                    b'(' | b'[' | b'{' => depth -= 1,
+                    b';' if depth == 0 => slots += 1,
+                    _ => {}
+                }
+            }
+            if open.is_some_and(|o| {
+                before.as_bytes()[o] == b'['
+                    && slots <= 1
+                    && re!(r"(?:^|[^A-Za-z0-9.])select\s*$").is_match(&before[..o])
+            }) {
+                continue;
+            }
         }
         let mut finding = Finding::at(path, source, i, "QE008", {
             let glyph = if colon {

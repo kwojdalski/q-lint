@@ -235,6 +235,11 @@ r:select[>a] from t
 s:select[2;<a] from t
 u:75_select[>a] from t
 
+=== clean profile: general | and its count may hold brackets (q 5 runs both, #346)
+t:([]a:3 1 2;b:4 5 6)
+r:select[til[2];>a] from t
+s:select[(1;2);>a] from t
+
 === QE008 profile: general | after an iterator the next glyph is monadic (q 5: x,\-y, x,'-y, x,/-y and x' -y are '-)
 b:x,\-y
 c:x,'-y
