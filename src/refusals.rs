@@ -956,7 +956,8 @@ fn narrow(text: &str, last: &str) -> Option<(&'static str, u128)> {
 /// `0W` takes the same but `g` (`'0Wg`, and no guid infinity). `0n` and `0w`
 /// read as `0N` and `0W`. `0Ni 1` is '0Ni and `0Nh 0Nh` '0Nh, while `1 0Ni`
 /// and `0N 0Nh` parse. `-0N`, of any type but char, is '-0N; `-0W` and `-0n`
-/// parse.
+/// parse - but `-0n` as the timespan 0D00:00, so with a suffix other than
+/// `c`, or before another item, it is '-0n: `-0ne`, `-0nj` and `-0n 1`.
 fn null_literal(text: &str, not_last: bool, negative: bool) -> Option<String> {
     let caps = re!(r"^0([nNwW])([A-Za-z])?$").captures(text)?;
     let null = caps[1].eq_ignore_ascii_case("n");
@@ -981,6 +982,11 @@ fn null_literal(text: &str, not_last: bool, negative: bool) -> Option<String> {
     }
     if negative && &caps[1] == "N" && letter != Some("c") {
         return Some(format!("`-{text}`: a null has no negative"));
+    }
+    if negative && &caps[1] == "n" && (not_last || letter.is_some_and(|l| l != "c")) {
+        return Some(format!(
+            "`-{text}`: `-0n` is the timespan 0D00:00, which takes no suffix and starts no vector"
+        ));
     }
     None
 }
