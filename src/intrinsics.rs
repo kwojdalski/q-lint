@@ -38,7 +38,8 @@ fn literal(s: &str) -> Option<Literal> {
         value.len = 1;
         return Some(value);
     }
-    if re!(r"^(?:`[A-Za-z][A-Za-z0-9_.]*)+$").is_match(s) {
+    // The null symbol too, a lone backtick: q 5 `asc `` ` `` is 'rank.
+    if re!(r"^(?:`(?:[A-Za-z][A-Za-z0-9_.]*)?)+$").is_match(s) {
         return Some(Literal {
             kind: Kind::Symbol,
             vector: s.bytes().filter(|&b| b == b'`').count() > 1,
