@@ -1011,6 +1011,12 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 return None;
             }
             let from = start + m.get(0)?.end();
+            // `{x*2}'[a]` applies in brackets; in the parentheses the
+            // rewrite would put round it, `([a])*2` is a keyed table header
+            // and gives a dictionary in q 5. QR002 refuses it the same way.
+            if source[from..].starts_with('[') {
+                return None;
+            }
             let mut end = argument_end(&v.code, &v.comments, source, from)?;
             // In a qSQL phrase the argument ends at the column's `,` or at
             // `by`, `from` or `where`, as QP006's does (#350).

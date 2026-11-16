@@ -622,6 +622,9 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
             "QF005",
             "f:{[k] g:{[a;b;c;d;e;f;g;h] k+h}; g[1;2;3;4;5;6;7;8]}",
         ), // a ninth parameter is 'params
+        // A bracket argument would become a key-column header (#406)
+        ("QR004", "a:1 2 3;r:{x*2}'[a]"),
+        ("QR004", "a:1 2 3;r:{x*2} each[a]"),
         // `return` before a comment returns nothing: `:/` is over (#404)
         ("QF015", "f:{[x] a:1;\n  return / done\n  }"),
     ] {
