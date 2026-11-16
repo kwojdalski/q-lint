@@ -25,7 +25,11 @@ fn literal(s: &str) -> Option<Literal> {
     if s.starts_with('(') && matching(s, 0, b'(', b')') == Some(s.len()) {
         return literal(&s[1..s.len() - 1]);
     }
-    if let Some(rest) = s.strip_prefix("enlist ") {
+    // Any blank parts `enlist` from its argument; q 5 reads a tab as a space.
+    if let Some(rest) = s
+        .strip_prefix("enlist")
+        .filter(|r| r.starts_with([' ', '\t']))
+    {
         let mut value = literal(rest)?;
         if value.vector {
             return None;

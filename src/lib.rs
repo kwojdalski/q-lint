@@ -4228,7 +4228,11 @@ pub fn lint_selecting(
             let v = v.trim();
             // Vectors first. The general numeric-atom pattern would otherwise
             // take `10b` and `0x0102` as atoms, and q says they are not.
-            if let Some(rest) = v.strip_prefix("enlist ") {
+            // A tab after `enlist` as much as a space (q 5).
+            if let Some(rest) = v
+                .strip_prefix("enlist")
+                .filter(|r| r.starts_with([' ', '\t']))
+            {
                 return shape_of_enlist(rest);
             }
             if re!(r"^[01]{2,}b$|^0x(?:[0-9a-fA-F]{3,})?$").is_match(v) {
