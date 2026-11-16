@@ -91,6 +91,19 @@ select from t where a=b
 r:"]x" like "[]*]*"
 s:"ax" like "[^]*]*"
 
+=== QB002 profile: general | behind an iterator, in parentheses, in a list of patterns, or after a projection (q 5: each line is 'nyi) (#442)
+a:("ab";"cd") like\: "a*b*"
+b:("ab";"cd") like' ("a*b*";"c*d*")
+c:"ab" like/: ("a*b*";"c")
+d:like["ab";] "a*b*"
+e:"ab" like ("a*b*")
+f:"ab" like/: ("a*";"c*d*")
+
+=== clean profile: general | a list q fails on first for another reason, or one with no refused pattern (q 5: f and g are 'type, h is 11b) (#442)
+f:"ab" like/: ("c";"a*b*")
+g:("ab";"cd") like ("a*";"c*d*")
+h:("ab";"cd") like' ("a*";"c*")
+
 === QB002 | two wildcards, not a leading and trailing pair (q 5: "abc" like "a*b*" is 'nyi)
 select from t where sym like "a*b*"
 

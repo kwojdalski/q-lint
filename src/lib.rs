@@ -2585,6 +2585,75 @@ pub(crate) fn is_pattern(s: &str, nested: bool) -> bool {
         false
     }
 }
+/// The patterns `like` at `at` is given, in the order q 5 tries them: a
+/// string straight after it, after an iterator on it (`like\\:`, `like/:`,
+/// `like'`), in parentheses, as the second argument in brackets, or after a
+/// projection `like[x;]`. Through an iterator a list of patterns is tried
+/// item by item, up to the first that is not a string of two or more chars -
+/// q 5 `"ab" like/: ("c";"a*b*")` is 'type at the "c" - and without one a
+/// list is no pattern at all (#442). `code` has strings blanked, `literals`
+/// keeps them, at the same offsets.
+fn like_patterns<'a>(code: &str, literals: &'a str, at: usize) -> Vec<&'a str> {
+    // Blanks are read from `literals`: in `code` a string is blank too.
+    let skip =
+        |i: usize| i + (literals[i..].len() - literals[i..].trim_start_matches([' ', '\t']).len());
+    let mut i = skip(at);
+    let iterated = if code[i..].starts_with("\\:") || code[i..].starts_with("/:") {
+        i += 2;
+        true
+    } else if code[i..].starts_with('\'') {
+        i += 1;
+        true
+    } else {
+        false
+    };
+    i = skip(i);
+    if !iterated && code[i..].starts_with('[') {
+        let Some(close) = matching(code, i, b'[', b']') else {
+            return vec![];
+        };
+        let args = slots(&code[i + 1..close - 1]);
+        if args.len() != 2 {
+            return vec![];
+        }
+        let second = args[1].as_ptr() as usize - code.as_ptr() as usize;
+        i = if literals[second..second + args[1].len()].trim().is_empty() {
+            skip(close)
+        } else {
+            skip(second)
+        };
+    }
+    // One operand: a string, or a parenthesised group of them.
+    fn operand<'a>(code: &str, literals: &'a str, i: usize, list: bool, out: &mut Vec<&'a str>) {
+        if literals[i..].starts_with('"') {
+            if let Some(end) = literals[i + 1..].find('"') {
+                out.push(&literals[i + 1..i + 1 + end]);
+            }
+        } else if code[i..].starts_with('(')
+            && let Some(close) = matching(code, i, b'(', b')')
+        {
+            let items = slots(&code[i + 1..close - 1]);
+            if items.len() > 1 && !list {
+                return;
+            }
+            for item in items {
+                let from = item.as_ptr() as usize - code.as_ptr() as usize;
+                let lit = &literals[from..from + item.len()];
+                let from = from + (lit.len() - lit.trim_start().len());
+                let before = out.len();
+                operand(code, literals, from, false, out);
+                // A char atom or anything but a string ends the list there.
+                if out.len() == before || out.last().is_some_and(|p| p.len() == 1) {
+                    out.truncate(before);
+                    return;
+                }
+            }
+        }
+    }
+    let mut out = vec![];
+    operand(code, literals, i, iterated, &mut out);
+    out
+}
 /// Each name the source assigns under `.q` (`.q.foo:{x+1}`), with where.
 /// q 5 then resolves `foo` from every namespace and refuses it as a
 /// parameter, a local or a global, as it does `count`.
@@ -5920,26 +5989,28 @@ pub fn lint_selecting(
         }
         // Infix, or the pattern as the second argument in brackets:
         // `like["abc";"a*b*"]` is 'nyi as well.
-        for m in
-            re!(r#"\blike\s*(?:\[(?:[^;\[\]"]|"[^"]*")*;\s*)?"([^"]*)""#).captures_iter(literals)
-        {
+        for m in re!(r"\blike\b").find_iter(line) {
+            if !boundary(line, m.start()) || line[..m.start()].ends_with('.') {
+                continue;
+            }
             // q 5 takes one `*` anywhere, or a leading and a trailing pair:
             // "abc" like "a*c" and "*b*" are 1b, "a*b*" and "**" are 'nyi.
             // A `*` inside `[...]` is a literal star, and a `]` straight after
             // the `[` (or `[^`) is a member, not the end: q 5 `"*x" like
             // "[]*]*"` is 1b (#436).
-            let pat = &m[1];
-            let stars = re!(r"\[\^?\]?[^\]]*\]")
-                .replace_all(pat, "")
-                .matches('*')
-                .count();
-            let ends = pat.len() > 2 && pat.starts_with('*') && pat.ends_with('*');
-            if stars > 2 || (stars == 2 && !ends) {
-                add(
-                    offset + m.get(0).unwrap().start(),
-                    "QB002",
-                    format!("like \"{pat}\""),
-                );
+            let refused = |pat: &str| {
+                let stars = re!(r"\[\^?\]?[^\]]*\]")
+                    .replace_all(pat, "")
+                    .matches('*')
+                    .count();
+                let ends = pat.len() > 2 && pat.starts_with('*') && pat.ends_with('*');
+                stars > 2 || (stars == 2 && !ends)
+            };
+            if let Some(pat) = like_patterns(line, literals, m.end())
+                .into_iter()
+                .find(|p| refused(p))
+            {
+                add(offset + m.start(), "QB002", format!("like \"{pat}\""));
             }
         }
         // QB003: `", " sv string clash," - two workers share it"`. `,` binds
