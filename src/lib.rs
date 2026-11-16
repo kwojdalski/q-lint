@@ -4972,11 +4972,39 @@ pub fn lint_selecting(
             .collect()
     };
     let statements = statement_groups(code, source);
-    for (start, end) in statements {
+    // Where each group's top-level statement ends. Inside a bracket every
+    // line is a group of its own, but a query there may go on over the next
+    // lines - a newline in a lambda is whitespace - so the query rules read
+    // on to here, keeping only what starts in the group (#334).
+    let statement_end: Vec<usize> = {
+        let (mut open, mut ends) = (0i32, vec![0; statements.len()]);
+        let mut first = 0;
+        for (n, &(start, end)) in statements.iter().enumerate() {
+            if open <= 0 {
+                first = n;
+            }
+            for b in code[start..end].bytes() {
+                match b {
+                    b'(' | b'[' | b'{' => open += 1,
+                    b')' | b']' | b'}' => open -= 1,
+                    _ => {}
+                }
+            }
+            for e in &mut ends[first..=n] {
+                *e = end;
+            }
+        }
+        ends
+    };
+    for (group, (start, end)) in statements.into_iter().enumerate() {
         let (raw, line, literals) = (
             &source[start..end],
             &code[start..end],
             &v.comments[start..end],
+        );
+        let (query, query_literals) = (
+            &code[start..statement_end[group]],
+            &v.comments[start..statement_end[group]],
         );
         // The directives and the bare-slash rule are about one physical line,
         // so they read the first of the group rather than the whole of it.
@@ -5242,10 +5270,14 @@ pub fn lint_selecting(
         // `delete` takes columns or a where phrase, never both; q says 'nyi.
         // The table is a name or a parenthesised expression - a `select`
         // after `from` would take the `where` for itself, and so is neither.
-        for m in re!(r"\bdelete\s+[A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*\s+from\s+").find_iter(line) {
-            let rest = &line[m.end()..];
+        for m in re!(r"\bdelete\s+[A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*\s+from\s+").find_iter(query)
+        {
+            if m.start() >= line.len() {
+                break;
+            }
+            let rest = &query[m.end()..];
             let after = if rest.starts_with('(') {
-                matching(line, m.end(), b'(', b')').map(|close| &line[close..])
+                matching(query, m.end(), b'(', b')').map(|close| &query[close..])
             } else {
                 re!(r"^`?[A-Za-z_][\w.]*")
                     .find(rest)
@@ -5311,12 +5343,14 @@ pub fn lint_selecting(
         // read as the opening one of the compared string - and the fix turned
         // `"="` into `" like "`. An operator that is code can only be followed
         // by a string's opening quote, so checking it is enough.
-        let in_code = |at: usize| line.as_bytes().get(at) == literals.as_bytes().get(at);
+        let in_code = |at: usize| query.as_bytes().get(at) == query_literals.as_bytes().get(at);
         // Searched one start at a time, not match after match: a rejected
         // match runs on to the next quote and would swallow a real one.
         let comparison = |from: usize| {
             let mut at = from;
-            while let Some(m) = re!(r#"(?:=|<>)\s*"((?:[^"\\]|\\.)*)""#).captures_at(literals, at) {
+            while let Some(m) =
+                re!(r#"(?:=|<>)\s*"((?:[^"\\]|\\.)*)""#).captures_at(query_literals, at)
+            {
                 let op = m.get(0).unwrap().start();
                 let n = q_bytes(&m[1]).len();
                 if in_code(op) && n != 1 {
@@ -5329,13 +5363,18 @@ pub fn lint_selecting(
         // A where phrase: a qSQL keyword earlier in the statement, and the
         // `=` before the phrase ends. `r:where s="ab"` is the where
         // function on a comparison, and `a:where b; c:x="ab"` two statements.
-        let filter = re!(r"\bwhere\b").find_iter(line).find(|w| {
-            let head = &line[line[..w.start()].rfind(';').map_or(0, |p| p + 1)..w.start()];
-            re!(r"\b(?:select|exec|update|delete)\b").is_match(head)
+        // The query has to start in this group; one starting in a later
+        // group is that group's to report.
+        let filter = re!(r"\bwhere\b").find_iter(query).find(|w| {
+            let from = query[..w.start()].rfind(';').map_or(0, |p| p + 1);
+            re!(r"\b(?:select|exec|update|delete)\b")
+                .find_iter(&query[from..w.start()])
+                .last()
+                .is_some_and(|k| from + k.start() < line.len())
         });
         if let Some(w) = filter
             && let Some((op, n)) = comparison(w.end())
-            && op < phrase_end(line, w.end())
+            && op < phrase_end(query, w.end())
         {
             let rows = match n {
                 0 => "the table is empty".to_string(),

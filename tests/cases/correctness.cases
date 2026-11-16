@@ -379,6 +379,19 @@ delete a from t where b>3
 === QB016 | the table may be a literal
 delete a from ([]a:1 2;b:3 4) where b>3
 
+=== QB016 QB015 profile: general | a query continued onto the next line inside a lambda (q 5: f t is 'nyi, g t is 'length)
+t:([]a:1 2;b:3 4;s:`x`y)
+f:{[t] delete a from t
+  where b>0}
+g:{[t] select from t
+  where s="abc"}
+
+=== QB015 profile: general | reported once, from the line the query starts on, whatever precedes it in the lambda
+g:{[t]
+  n:count t;
+  select from t
+    where s="abc"}
+
 === clean | a select after from takes the where phrase for itself
 r:delete a from select from t where b>3
 
