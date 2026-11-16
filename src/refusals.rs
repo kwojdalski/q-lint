@@ -1126,7 +1126,20 @@ fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Find
                 // The suffix types every item, so `1 2 2147483648i` overflows
                 // at its last item but one: q 5 refuses each with the number.
                 Some(format!("`{text}` does not fit in {kind}"))
-            } else if k + 1 < run.len() && re!(r"^\d+(?:\.\d*)?[hijef]$").is_match(text) {
+            } else if k + 1 < run.len()
+                && re!(r"^\d[\d.:]*[A-Za-z]$").is_match(text)
+                && !text.ends_with('b')
+                && !text.starts_with("0x")
+                && !(text.ends_with(['D', 'T'])
+                    && run
+                        .iter()
+                        .all(|t| t.as_str().contains(&text[text.len() - 1..])))
+            {
+                // Any suffix, temporal, char and symbol ones included: q 5
+                // refuses `1e 2`, `1n 2`, `1s 2` and `2026.01m 2026.02m`. Not
+                // `1b 0`, which parses as an application, nor a byte - and
+                // not the `D` that ends a timespan or timestamp among others
+                // like it: `0D 0D01` and `1D 2D` parse, `0D 1` is '0D.
                 Some(format!(
                     "`{text}`: a vector literal takes one type suffix, after its last item"
                 ))

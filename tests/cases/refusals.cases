@@ -379,6 +379,23 @@ g:2024.01.01d
 === QE010 profile: general | a suffix on an item that is not the last (q 5: '3i)
 c:3i 4j
 
+=== QE010 profile: general | a temporal, char or symbol suffix on an item before the last (#385; q 5: '2026.01m, '1n, '1p, '1t, '1s, '1D)
+a:2026.01m 2026.02m
+b:1n 2
+c:1p 2
+d:1t 2
+e:1s 2
+f:1D 2
+
+=== clean profile: general | the suffix after the last item, and dates and times spaced (#385; q 5: each parses)
+a:2026.01 2026.02m
+b:1 2n
+c:2026.01.01 2026.01.02
+d:12:00 13:00
+e:0D 0D01
+f:1D 2D
+g:2026.01.01D 2026.01.02D
+
 === QE010 profile: general | a fraction in a vector the suffix makes integer (q 5: parse "1.5 2j" is '1.5)
 n:1.5 2j
 
