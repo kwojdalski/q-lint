@@ -1094,6 +1094,18 @@ fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Find
                     "`{text}`: `{}` is not a type suffix",
                     &text[text.len() - 1..]
                 ))
+            } else if re!(r"^\d+\.\d*[A-Za-z]$").is_match(text)
+                && !re!(r"[cefnpt]$|^\d{4}\.\d*m$").is_match(text)
+            {
+                // After a fraction only a float, real, char or temporal
+                // suffix reads: q 5 refuses `1.5d`, `1.5m`, `1.5u`, `1.5v`
+                // and `1.5x` - `u` and `v` although `1u` and `1v` parse -
+                // and takes `1.5n`, `1.5p`, `1.5t` and the month `2024.01m` (a
+                // month's digits, `2023.1m`, are QE006's).
+                Some(format!(
+                    "`{text}`: `{}` is no type a fraction takes",
+                    &text[text.len() - 1..]
+                ))
             } else if re!(r"^\d+(?:\.\d+){2,}$").is_match(text)
                 && !re!(r"^\d{4}\.\d{2}\.\d{2}$").is_match(text)
             {

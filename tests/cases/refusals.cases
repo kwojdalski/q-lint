@@ -358,6 +358,24 @@ e:1e5
 f:1e-3
 g:2e
 
+=== QE010 profile: general | a fraction followed by a letter that is no type for it (#384; q 5: '1.5 or '1.5x for each)
+a:1.5d
+b:1.5x
+c:1.5u
+d:1.5v
+e:1.5m
+f:1.5s
+g:1.5 2.5z
+
+=== clean profile: general | a fraction with a float, real, char or temporal suffix, and a month (#384; q 5: each parses)
+a:1.5e
+b:1.5f
+c:1.5n
+d:1.5p
+e:1.5t
+f:2024.01m
+g:2024.01.01d
+
 === QE010 profile: general | a suffix on an item that is not the last (q 5: '3i)
 c:3i 4j
 
