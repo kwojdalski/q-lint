@@ -101,6 +101,10 @@ r:f[(1;2);3;4]
 === QF002 profile: general | but _ is no pattern (q 5: {[_] 1}[1] is 'match)
 f:{[_] 1}
 
+=== QF002 profile: general | and nor is a pattern holding one: every call is refused, not read as body text (q 5: {[(a;_)] a}[(1;2)] is 'match)
+f:{[(a;_)] a}
+g:{[(a;_);b] b}
+
 === clean | a dotted name is a legal parameter, surprising as that is
 f:{[.q.z] 1}
 

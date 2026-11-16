@@ -2903,7 +2903,13 @@ pub fn lint_selecting(
                 // and keeps no usable name for the slot - `{[_] 1}[]`,
                 // `{[_] 1}[1]` and `{[a;_] a}[1;2]` are each 'match - so it
                 // fails on every call.
-                if offenders.contains(&"_") {
+                // Inside a pattern it is the same: q 5 binds `{[(a;_)] a}` as
+                // a one-argument pattern and `{[(a;_)] a}[(1;2)]` is 'match
+                // (#338), so the brackets are not body text.
+                let underscore_in = |s: &str| {
+                    s == "_" || (s.contains('_') && is_pattern(&s.replace('_', "u"), false))
+                };
+                if offenders.iter().any(|s| underscore_in(s)) {
                     add(
                         at,
                         "QF002",
@@ -2911,8 +2917,11 @@ pub fn lint_selecting(
                     );
                 }
 
-                let underscore = offenders.contains(&"_");
-                let rest: Vec<&str> = offenders.into_iter().filter(|s| *s != "_").collect();
+                let underscore = offenders.iter().any(|s| underscore_in(s));
+                let rest: Vec<&str> = offenders
+                    .into_iter()
+                    .filter(|s| !underscore_in(s))
+                    .collect();
                 // A string literal is blank by the time the rules see it, so
                 // there is nothing to quote back - it is still why q refused
                 // to read the brackets as a signature.
