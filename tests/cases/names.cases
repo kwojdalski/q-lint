@@ -501,6 +501,13 @@ f:{[] aa:bb; aa}
 (bb;cc):1 2
 f:{[] aa:bb; aa}
 
+=== clean | a name the file defines in .q is read bare from any context (q 5: r is 42, and so is .ns.s) (#357)
+.q.answer:42
+r:answer
+\d .ns
+s:answer
+\d .
+
 === clean | a builtin is a valid assignment value
 f:{[] aa:sum; aa}
 

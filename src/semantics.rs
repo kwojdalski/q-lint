@@ -2238,6 +2238,10 @@ pub fn check(
                     || crate::RESERVED.iter().any(|builtin| builtin == name)
                     // Keyed exactly: `.cfg:1` defines no root `cfg` (q 5: 'cfg).
                     || exact.contains_key(&resolved(name, namespace))
+                    // q searches `.q` from every context: after `.q.k:1`,
+                    // q 5 reads a bare `k` as 1, inside `\d .ns` too (#357).
+                    || exact.contains_key(&format!(".q.{name}"))
+                    || elsewhere(&format!(".q.{name}"))
                     || elsewhere(&global)
                     || elsewhere(&format!(".{name}"))
                     // QF010 and QF005 already explain these more precisely.
