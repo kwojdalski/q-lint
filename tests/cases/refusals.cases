@@ -663,6 +663,30 @@ a:-0Nh
 b:-0N
 c:x -0N
 
+=== QE010 profile: general | a date has no negative (#453; q 5: '-2000.01.01)
+d:-2000.01.01
+
+=== QE010 profile: general | nor before an item that is no date (#453; q 5: '-2000.01.01)
+f:-2000.01.01 1
+
+=== QE010 profile: general | nor in parentheses (#453; q 5: '-2000.01.01)
+o:(-2000.01.01)
+
+=== QE010 profile: general | nor before a null (#453; q 5: '-2000.01.01)
+c:-2000.01.01 0N
+
+=== clean profile: general | a minus before a date among some temporal items parses (#453; q 5: 0D00:00 0W, 2000.01 2000.01m)
+d:-2000.01.01 0Wn
+e:-2000.01.01 2000.01m
+
+=== clean profile: general | a minus before dates, a timestamp, a time or a timespan, or subtracting (#453; q 5: each parses)
+g:-2000.01.01 2000.01.02
+h:-2000.01.01D12:00
+i:-12:00
+j:-0D12
+x:2000.01.02
+k:x-2000.01.01
+
 === QE010 profile: general | a fraction in a vector a typed null makes integer (q 5: '1.5)
 a:1.5 0Ni
 

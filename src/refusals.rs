@@ -1216,8 +1216,23 @@ fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Find
                     .ends_with(|c: char| c.is_ascii_alphanumeric() || "_.)]}\"`".contains(c));
             // A null or infinity is judged on its own terms: the `w` of `0w`
             // is no type suffix, but the token is no number either.
+            let date = |t: &str| re!(r"^\d{4}\.\d\d\.\d\d$").is_match(t);
             let detail = if re!(r"^0[nNwW][A-Za-z]?$").is_match(text) {
                 null_literal(text, k + 1 < run.len(), negative)
+            } else if negative
+                && date(text)
+                && run[1..]
+                    .iter()
+                    .all(|t| re!(r"^(?:\d+(?:\.\d*)?|0[NW])$").is_match(t.as_str()))
+            {
+                // A date takes no minus: q 5 refuses `-2000.01.01`, `x
+                // -2000.01.01`, `-2000.01.01 1` and `-2000.01.01 0N`, though
+                // not a minus before a vector of dates, a timestamp or a time
+                // (`-2000.01.01 2000.01.02`, `-2000.01.01D12:00`, `-12:00`).
+                // Before other temporal items it parses or not by rules not
+                // worth modelling: `-2000.01.01 12:00` is refused, and
+                // `-2000.01.01 0Wn` and `-2000.01.01 2000.01m` are not.
+                Some(format!("`-{text}`: a date has no negative"))
             } else if re!(r"^(?:\d+\.?\d*)E(?:[+-]|[A-Za-z]|$)").is_match(text) {
                 // An uppercase exponent takes no sign and needs digits: q 5
                 // refuses `1E-3`, `1.5E+3`, `2E` and `1Ef`, where `1e-3`,
