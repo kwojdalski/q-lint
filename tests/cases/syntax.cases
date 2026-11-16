@@ -146,6 +146,11 @@ a+=1
 \d .
 \echo "a==b"
 
+=== clean | nor is the file \l loads, which keeps its name in the code (q 5 loads qe4/a==b.q, #319)
+\l qe4/a==b.q
+\l /tmp/a&&b.q
+q)\l qe4/a==b.q
+
 === clean | an indented line after a command is the command's argument (q 5 loads this, ctx .foo)
 a:0
 \d .foo

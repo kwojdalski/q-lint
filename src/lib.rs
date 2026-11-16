@@ -4004,6 +4004,11 @@ pub fn lint_selecting(
         if re!(r"^(?:[/\\']:?)+\[").is_match(&code[m.end()..]) {
             continue;
         }
+        // The file `\l` loads and the context `\d` opens stay in `code`,
+        // and are no q: q 5 loads `\l qe4/a==b.q` (#319).
+        if system_command(&source[code[..m.start()].rfind('\n').map_or(0, |p| p + 1)..]) {
+            continue;
+        }
         let long = !matches!(m.as_str(), "==" | "!=" | "&&" | "||" | "+=" | "-=" | "*=");
         if long
             && code[m.end()..]
