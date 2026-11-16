@@ -4135,7 +4135,8 @@ pub fn lint_selecting(
             match c {
                 b'(' | b'[' | b'{' => depth += 1,
                 b')' | b']' | b'}' => depth -= 1,
-                b';' | b'\n' if depth == 0 => start = i + 1,
+                // Only `;`: in a lambda a newline is whitespace (#328).
+                b';' if depth == 0 => start = i + 1,
                 _ => {}
             }
         }
@@ -4146,6 +4147,7 @@ pub fn lint_selecting(
         // A string is blank in this view; `f "done"` must not pass for `f`.
         let quoted = v.comments[sig.body + start..sig.body + semi].contains('"');
         if simple && !builtin && !quoted {
+            let stmt = stmt.split_whitespace().collect::<Vec<_>>().join(" ");
             add(
                 sig.body + semi,
                 "QB012",

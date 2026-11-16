@@ -280,6 +280,18 @@ f:{[x] r:x+1;}
 === clean | a side-effecting call at the end
 f:{[x] .lg.o[x];}
 
+=== clean | a call continued onto the next line is one statement (q 5: f leaves 2 rows in tbl)
+f:{[t]
+  `tbl upsert
+    t;
+  }
+
+=== QB012 | and a value continued onto the next line is still discarded
+f:{[a;b]
+  a+
+    b;
+  }
+
 === clean | a print at the end
 f:{[x] -1 "done";}
 
