@@ -826,3 +826,7 @@ v:k@"hi"
 === clean | a name inside a string is not indexing (#472)
 k:1.5
 u:"k 0"
+
+=== QB010 | a global atom applied to a negative literal that ends the lambda (#473; q 5: f[] is 'type)
+a:2.5
+f:{a -1}

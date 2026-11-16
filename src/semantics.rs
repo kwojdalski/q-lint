@@ -3020,8 +3020,9 @@ fn named_values(
     // than subtracting, and an atom cannot be applied - q 5 `a:3; a -1` is
     // 'domain, `a:1.5; a -1` and `w:.z.p; w -0D00:01` are 'type. A name that
     // may hold a list is left alone: `a:1 2 3; a -1` indexes, and is 0N.
-    // The literal has to end the statement or bracket, as in `lib.rs`.
-    for m in re!(r"(?m)(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)[ \t]+(-\d[A-Za-z0-9.:]*)[ \t\r]*(?:[;\])]|$)")
+    // The literal has to end the statement or bracket, as in `lib.rs`, or
+    // the lambda: q 5 `a:2.5; f:{a -1}; f[]` is 'type (#473).
+    for m in re!(r"(?m)(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)[ \t]+(-\d[A-Za-z0-9.:]*)[ \t\r]*(?:[;\])}]|$)")
         .captures_iter(code)
     {
         let name = m.get(1).unwrap();
