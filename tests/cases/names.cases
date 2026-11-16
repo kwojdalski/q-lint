@@ -383,6 +383,12 @@ f:{[a] `a`b}
 === QF017 | a local assigned and never read
 f:{[a] b:1; a}
 
+=== QF017 | a tree given to eval resolves its symbols as globals, so the local is unread (q 5: f 1 is 'n, or 101 after n:100) (#370)
+f:{[a] n:5; eval (+;`n;a)}
+
+=== clean | while a functional query reads the local (q 5: g 1 is 8 9)
+g:{[a] u:7; ?[([]x:1 2);();0b;(enlist`y)!enlist (+;`x;`u)]}
+
 === clean | read later in the body
 f:{[a] b:1; a+b}
 

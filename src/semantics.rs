@@ -3379,13 +3379,16 @@ fn arithmetic_kind(text: &str) -> Option<Arithmetic> {
     }
 }
 
-/// Names a body reads through a parse tree. In a functional query, or a parse
-/// tree given to `eval`, a symbol is a name: `?[t;();0b;(enlist`x)!enlist
-/// (+;`a;`u)]` reads the local `u`, and q confirms the local wins over a
-/// global of the same name. So where a body builds one, each plain symbol in
-/// it may be a read, and the unused-name rules must not call it unread.
+/// Names a body reads through a parse tree. In a functional query a symbol
+/// is a name: `?[t;();0b;(enlist`x)!enlist (+;`a;`u)]` reads the local `u`,
+/// and q confirms the local wins over a global of the same name. So where a
+/// body builds one, each plain symbol in it may be a read, and the
+/// unused-name rules must not call it unread. A tree given to `eval` is not
+/// one: it resolves its symbols as globals, even for a query - q 5's
+/// `{[a] n:5; eval (+;`n;a)}` is 'n with no global `n`, and with `n:100`
+/// gives 101, never reading the local (#370).
 fn parse_tree_names(body: &str) -> HashSet<&str> {
-    if !re!(r"[?!]\s*\[|\beval\b").is_match(body) {
+    if !re!(r"[?!]\s*\[").is_match(body) {
         return HashSet::new();
     }
     re!(r"`([A-Za-z][A-Za-z0-9_]*)")
