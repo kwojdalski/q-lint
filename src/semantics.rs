@@ -239,19 +239,19 @@ pub(crate) fn local_view(direct: &str, tables: bool) -> String {
     }
     String::from_utf8(out).unwrap_or_default()
 }
-/// `local_view(direct, true)` with each query's from-clause put back. The
+/// `local_view(direct, tables)` with each query's from-clause put back. The
 /// table a query reads is ordinary q, run in the lambda's scope before the
 /// query, so an assignment there sets a local: q 5 runs
 /// `{[p;c] k:exec c from meta d:p; d:(c inter k) xasc d}`, where the second
 /// statement reads the `d` the first one set. Only an outermost query's
 /// clause, and only one holding no query of its own, whose names could be
 /// columns again; table literals in it stay blank.
-fn with_from_clauses(direct: &str) -> String {
+fn with_from_clauses(direct: &str, tables: bool) -> String {
     let keyword = re!(r"(?:select|exec|update|delete)\b");
-    let mut out = local_view(direct, true).into_bytes();
+    let mut out = local_view(direct, tables).into_bytes();
     // The same text with no query blanked, to copy a clause back from.
     let unblanked = keyword.replace_all(direct, |m: &regex::Captures| " ".repeat(m[0].len()));
-    let plain = local_view(&unblanked, true);
+    let plain = local_view(&unblanked, tables);
     let symbols = re!(r"`[A-Za-z0-9_./:]*")
         .replace_all(direct, |m: &regex::Captures| " ".repeat(m[0].len()))
         .into_owned();
@@ -1490,7 +1490,7 @@ pub fn check(
         if !scope.named && scope.direct.trim_start().starts_with('[') {
             continue;
         }
-        let direct = with_from_clauses(&scope.direct);
+        let direct = with_from_clauses(&scope.direct, true);
         let mut first: HashMap<&str, usize> = HashMap::new();
         let mut every: HashMap<&str, Vec<usize>> = HashMap::new();
         for a in assignment.captures_iter(&direct) {
@@ -1934,7 +1934,9 @@ pub fn check(
             }
             false
         };
-        let direct = local_view(&scope.direct, false);
+        // A query's from clause is ordinary q, not a column: the nested
+        // lambda in `{tab:t; {select from tab}[]}` reads `tab` (#349).
+        let direct = with_from_clauses(&scope.direct, false);
         let mut seen = HashSet::new();
         for m in re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(&direct) {
             let name = m.as_str();

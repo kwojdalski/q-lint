@@ -823,6 +823,10 @@ f:{c:1; {r:select from t; c}[]}
 === clean profile: general | and inside its query it may be a column
 f:{c:1; {select c from t}[]}
 
+=== QF005 profile: general | but the table its query reads is no column (q 5: f[] is 'tab, #349)
+t:([]a:1 2 3;c:4 5 6)
+f:{tab:t; {select from tab where c>4}[]}
+
 === QF014 profile: general | a read in the value assigned to the same name (q 5: {a:a+1}[] is 'a)
 f:{a:a+1}
 g:{n:n,1;n}
