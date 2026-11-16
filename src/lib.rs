@@ -701,7 +701,9 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                             .is_some_and(|b| b.trim_end().ends_with('{'));
                     let m = re!(r"^return[ \t]*").find(rest)?;
                     let next = rest[m.end()..].chars().next();
-                    if !opens || next.is_none_or(|c| ";}]\r\n".contains(c)) {
+                    // Nothing after it but a comment is nothing after it:
+                    // `:/ c` would be over, which q 5 refuses to load (#404).
+                    if !opens || next.is_none_or(|c| ";}]\r\n/".contains(c)) {
                         return None;
                     }
                     (m.as_str(), ":")

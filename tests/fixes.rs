@@ -603,6 +603,8 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
             "QF005",
             "f:{[k] g:{[a;b;c;d;e;f;g;h] k+h}; g[1;2;3;4;5;6;7;8]}",
         ), // a ninth parameter is 'params
+        // `return` before a comment returns nothing: `:/` is over (#404)
+        ("QF015", "f:{[x] a:1;\n  return / done\n  }"),
     ] {
         for finding in lint(source, "probe.q", Profile::Uqf)
             .iter()
