@@ -3121,7 +3121,7 @@ fn named_values(
     // those operand kinds. An older note in this repository had `"a"*3` as
     // 291, on a version it did not record.
     // Booleans and bytes before plain integers, or `1b` matches as `1`.
-    let operand = r#""(?:\\.|[^"\\])*"|[01]+b|0x[0-9a-fA-F]+|-?\d+[hij]?(?:[ \t]+-?\d+[hij]?)*|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*"#;
+    let operand = r#""(?:\\.|[^"\\])*"|[01]+b|0x[0-9a-fA-F]+|-?(?:\d+(?:\.\d*)?|\.\d+)e\b|-?\d+[hij]?(?:[ \t]+-?\d+[hij]?)*|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*"#;
     let infix = regex::Regex::new(&format!(
         r"(?P<l>{operand})\s*(?P<op>[-+*])\s*(?P<r>{operand})"
     ))
@@ -3149,6 +3149,14 @@ fn named_values(
             && !comments[op.end()..].starts_with(char::is_whitespace);
         // Nor the digits after a temporal literal's `:` - the `00` of
         // `12:00` - which q 5 adds to a char: `12:00+"a"` is 13:37 (#468).
+        // A real's `e` before a signed digit is a float's exponent: `1e+5`
+        // and `1e-5` are 100000f and 0.00001.
+        let exponent = |x: &regex::Match| {
+            x.as_str().ends_with('e') && re!(r"^[+-]\d").is_match(&comments[x.end()..])
+        };
+        if exponent(&l) || exponent(&r) {
+            continue;
+        }
         let temporal = l.as_str().starts_with(|c: char| c.is_ascii_digit())
             && comments[..l.start()].ends_with(':')
             && comments[..l.start() - 1].ends_with(|c: char| c.is_ascii_digit());
@@ -3578,6 +3586,10 @@ fn arithmetic_kind(text: &str) -> Option<Arithmetic> {
     if re!(r#"^"(?:\\.|[^"\\])*"$"#).is_match(text) {
         Some(Arithmetic::Char)
     } else if re!(r"^(?:-?\d+[hij]?(?:\s+-?\d+[hij]?)*|[01]+b|0x[0-9a-fA-F]+)$").is_match(text) {
+        Some(Arithmetic::Integral)
+    } else if re!(r"^(?:-?(?:\d+(?:\.\d*)?|\.\d+)\s+)*-?(?:\d+(?:\.\d*)?|\.\d+)e$").is_match(text) {
+        // A real refuses a char as an integer does, under all three: q 5
+        // `"a"+1e`, `1e*"a"` and `"a"-1.5e` are 'type, `1e -"a"` is -96e (#474).
         Some(Arithmetic::Integral)
     } else if re!(r"^-?(?:\d+\.\d*|\.\d+|\d+[ef]|\d+(?:\.\d*)?e[+-]?\d+)(?:\s+-?(?:\d+\.?\d*(?:e[+-]?\d+)?[ef]?))*$|^\d{4}\.\d{2}")
         .is_match(text)

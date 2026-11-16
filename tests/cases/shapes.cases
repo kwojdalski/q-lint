@@ -830,3 +830,21 @@ u:"k 0"
 === QB010 | a global atom applied to a negative literal that ends the lambda (#473; q 5: f[] is 'type)
 a:2.5
 f:{a -1}
+
+=== QT023 | a real refuses a char as an integer does (#474; q 5: "a"+1e, "a"*1.5e, 1e*"a", "a"-1.5e and "abc"*2.5e are 'type)
+r:"a"+1e
+s:"a"*1.5e
+t:1e*"a"
+u:"a"-1.5e
+c:"abc"
+d:c*2.5e
+e:2.5e
+f:"a"+e
+
+=== clean | while a float takes it, an exponent is a float's, and a char right of minus is fine (#474; q 5: 98f, 100097f, 97.00001, -96e)
+r:"a"+1f
+s:"a"+1e5
+t:"a"+1e-5
+u:"a"+1e+5
+v:1e -"a"
+w:"a"+2.5
