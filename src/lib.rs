@@ -3661,6 +3661,47 @@ pub fn lint_selecting(
                 redefined.insert(name);
             }
         }
+        // Any other assignment to the global counts as well, whatever it
+        // assigns: `f::{...}` inside a lambda, `f:expr` at the top level, and
+        // `` `f set `` or `set[`f;...]`. q 5: `f:{x}; init:{f::{[a;b] a+b}};
+        // init[]; f[1;2]` is 3 (#329). Columns and symbols are not names.
+        let mut assigned: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        let view = semantics::local_view(code, true);
+        for m in re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)\s*(::?)").captures_iter(&view) {
+            let at = m.get(0).unwrap().start();
+            let global = &m[2] == "::" || global_definition(&m);
+            let end = m.get(0).unwrap().end();
+            if !boundary(&view, at) || view[end..].starts_with(':') || !global {
+                continue;
+            }
+            let key = qualified(at, &m[1]);
+            // `f::{x}` again at the rank `f` already has changes nothing.
+            let brace = end + (view[end..].len() - view[end..].trim_start().len());
+            if &m[2] == "::"
+                && view[brace..].starts_with('{')
+                && matching(code, brace, b'{', b'}')
+                    .is_some_and(|e| ranks.get(&key) == Some(&lambda_rank(code, source, brace, e)))
+            {
+                continue;
+            }
+            *assigned.entry(key).or_default() += 1;
+        }
+        for m in
+            re!(r"`(\.?[A-Za-z][A-Za-z0-9_.]*)\s+set\b|\bset\s*\[\s*`(\.?[A-Za-z][A-Za-z0-9_.]*)")
+                .captures_iter(code)
+        {
+            let name = m.get(1).or(m.get(2)).unwrap();
+            *assigned
+                .entry(qualified(name.start(), name.as_str()))
+                .or_default() += 1;
+        }
+        redefined.extend(
+            assigned
+                .into_iter()
+                .filter(|(_, n)| *n > 1)
+                .map(|(name, _)| name),
+        );
     }
     for m in re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)\s*\[").captures_iter(code) {
         let (whole, name) = (m.get(0).unwrap(), m.get(1).unwrap().as_str());

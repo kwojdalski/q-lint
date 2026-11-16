@@ -235,6 +235,21 @@ h:{f:sum; f(1;2)}
 f:{x}
 g:{f::{x}; f[1;2]}
 
+=== clean profile: general | but a global reassigned anywhere has no single rank (q 5: r, s and t are 3, u is 2)
+f:{x}
+init:{f::{[a;b] a+b}}
+init[]
+r:f[1;2]
+g:{x}
+`g set {[a;b] a+b}
+s:g[1;2]
+h:{x}
+set[`h;{[a;b] a+b}]
+t:h[1;2]
+k:{x}
+k:(1 2;3 4)
+u:k[0;1]
+
 === QA012 | nor does a parameter of a different lambda
 f:{x}
 g:{[f] f}
