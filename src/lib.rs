@@ -2606,9 +2606,18 @@ fn structure(path: &str, source: &str, v: &Views) -> Option<Finding> {
     for line in v.code.split_inclusive('\n') {
         // A line at column 0 starts a statement, so a bracket still open
         // there never closes: q 5 refuses `f:{[y]` + `  y+1` + `}` with '{
-        // (#225). A comment line is blank here and does not count.
+        // (#225). A comment line is blank here and does not count. Column 0
+        // is read from the source: `views` blanks a line's opening quote, its
+        // `q)` prefix and a whole `k)` line, and each still starts a
+        // statement - q 5 refuses `f:{[a]` + `"abc",a}` with '{ (#307).
+        let raw = &source[offset..offset + line.len()];
+        let lead = if raw.starts_with("q)") { 2 } else { 0 };
+        let begins = raw.starts_with(|ch: char| !ch.is_ascii_whitespace())
+            && (!line.trim().is_empty()
+                || v.string_starts.binary_search(&(offset + lead)).is_ok()
+                || v.foreign_offsets.binary_search(&offset).is_ok());
         if let Some(&(c, at)) = stack.last()
-            && line.starts_with(|ch: char| !ch.is_ascii_whitespace())
+            && begins
         {
             let row = source[..offset].matches('\n').count() + 1;
             return Some(make(

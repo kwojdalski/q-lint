@@ -39,6 +39,24 @@ f:{[y]
 a:(1;
 2)
 
+=== QE001 profile: general | a column-0 line that opens with a string starts a statement too (q 5: '{, #307)
+f:{[a]
+"abc",a}
+
+=== QE001 profile: general | and so does a `q)` line (q 5: '{, #307)
+f:{[a]
+q)a+1}
+
+=== QE001 profile: general | and a foreign `k)` line (q 5: '{, #307)
+f:{[a]
+k)1
+  a+1}
+
+=== clean profile: general | a column-0 comment line inside a bracket starts nothing (q 5: 2)
+f:{[a]
+/ c
+  a+1}
+
 === clean profile: general | indented closers, and a column-0 comment inside a lambda (q 5: f 1 is 2)
 f:{[y]
 / a note
