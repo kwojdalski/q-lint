@@ -292,6 +292,10 @@ a:1
 f:{[x]
   '1}
 
+=== QT025 profile: general | after a pattern or a typed signature too (q 5: {[(a;b)] '1}[(1;2)] and {[a:`j] '1}[1] are 'stype)
+f:{[(a;b)] '1}
+g:{[a:`j] '1}
+
 === clean | a continued line after an operand makes it each
 h:{a
   '1}

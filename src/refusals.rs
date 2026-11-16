@@ -448,7 +448,7 @@ fn signals(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<F
         if !(at == line_start
             || before.is_empty()
             || before.ends_with(['[', '(', ';', '{'])
-            || re!(r"\{\s*\[[A-Za-z0-9_; \t]*\]$").is_match(before))
+            || after_signature(code, source, before.len()))
         {
             continue;
         }
@@ -701,6 +701,39 @@ fn atom_literal(lit: &str) -> bool {
         return hex.len() == 2;
     }
     !re!(r"^[01]{2,}b$").is_match(lit)
+}
+
+/// Whether the `]` ending at `end` closes a lambda's parameter list, so that
+/// what follows it opens the body's first expression. Any signature q reads
+/// as one: `{[a;b]`, a pattern `{[(a;b)]` or a typed slot `{[a:`j]` (#325).
+fn after_signature(code: &str, raw: &str, end: usize) -> bool {
+    if !code[..end].ends_with(']') {
+        return false;
+    }
+    let mut depth = 0usize;
+    let mut open = None;
+    for (i, b) in code.as_bytes()[..end].iter().enumerate().rev() {
+        match b {
+            b')' | b']' | b'}' => depth += 1,
+            b'(' | b'[' | b'{' => {
+                depth -= 1;
+                if depth == 0 {
+                    open = Some(i);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let Some(open) = open.filter(|&o| code.as_bytes()[o] == b'[') else {
+        return false;
+    };
+    let head = code[..open].trim_end();
+    if !head.ends_with('{') {
+        return false;
+    }
+    let sig = crate::signature(code, raw, head.len() - 1);
+    sig.named && sig.body == end
 }
 
 /// QE008. A glyph applied to one argument by juxtaposition. q 5 has no
