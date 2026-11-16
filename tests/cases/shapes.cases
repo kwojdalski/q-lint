@@ -848,3 +848,12 @@ t:"a"+1e-5
 u:"a"+1e+5
 v:1e -"a"
 w:"a"+2.5
+
+=== QT006 | minus before a name is subtraction, spaced or not (#476; q 5: a -b is 'length)
+a:1 2 3
+b:1 2
+r:a -b
+
+=== clean | while minus before a digit is a negative literal, so a -1 indexes (#476; q 5: 0N)
+a:1 2 3
+r:a -1

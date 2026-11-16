@@ -3090,9 +3090,11 @@ fn named_values(
             x.as_str()
                 .starts_with(|c: char| c.is_alphabetic() || c == '.')
         });
+        // Only a digit makes `-` part of a literal: q 5 parses `a -b` as
+        // `(-;`a;`b)`, a subtraction (#476).
         let negative = op.as_str() == "-"
             && code[..op.start()].ends_with(char::is_whitespace)
-            && !code[op.end()..].starts_with(char::is_whitespace);
+            && re!(r"^\.?\d").is_match(&code[op.end()..]);
         if !named || negative || !boundary(code, l.start()) || !operand_ends(code, r.end()) {
             continue;
         }
