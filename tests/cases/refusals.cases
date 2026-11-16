@@ -32,6 +32,15 @@ r4:`s#`B`a
 r1:`g#1 2 1
 r2:`s#3 1 2,0
 
+=== QE006 profile: general | an impossible time assigned to a name that ends in digits (#381; q 5: t12:12:60 is '12:60, x10:12:5 '12:5)
+t12:12:60
+x10:12:5
+
+=== clean profile: general | while p60:60 assigns 60, and a good time after a digit name is fine (#381)
+p60:60
+t12:12:30
+x10:12:05
+
 === QE006 | a minute past 59 in a digit-form minute (q 5: parse "1260u" is '1260)
 a:1260u
 

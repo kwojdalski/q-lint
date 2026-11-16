@@ -128,19 +128,21 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
     // Minutes and seconds stop at 59 wherever they appear - a minute, second,
     // time, timespan or timestamp - while hours run on: q 5 refuses `12:60`,
     // `12:00:60` and `0D00:00:60`, and takes `25:00` and `0D25:00:00`.
-    for m in re!(r"(\d{2,}):(\d{2})(?::(\d{2}))?").captures_iter(unsym) {
+    // Part of a longer token: a date's or number's digits, or a name such as
+    // `p60` in `p60:60`, which assigns 60 rather than writing a time. The `D`
+    // of `0D00:00:60` and the `T` of a datetime start no name. Such a match
+    // is looked past, not skipped whole: in `t12:12:60` the first is
+    // `12:12`, and the time is the `12:60` after it.
+    let whole_token = |m: &regex::Captures| {
+        let head = &unsym[..m.get(0).unwrap().start()];
+        let word = head.trim_end_matches(|c: char| c.is_ascii_alphanumeric() || "._".contains(c));
+        !(head.ends_with(|c: char| c.is_ascii_digit() || c == '.')
+            || head[word.len()..]
+                .starts_with(|c: char| c.is_ascii_alphabetic() || "._".contains(c)))
+    };
+    for m in crate::captures_where(re!(r"(\d{2,}):(\d{2})(?::(\d{2}))?"), unsym, whole_token) {
         let whole = m.get(0).unwrap();
         if command_argument(unsym, whole.start()) {
-            continue;
-        }
-        // Part of a longer token: a date's or number's digits, or a name
-        // such as `p60` in `p60:60`, which assigns 60 rather than writing a
-        // time. The `D` of `0D00:00:60` and the `T` of a datetime start no name.
-        let head = &unsym[..whole.start()];
-        let word = head.trim_end_matches(|c: char| c.is_ascii_alphanumeric() || "._".contains(c));
-        if head.ends_with(|c: char| c.is_ascii_digit() || c == '.')
-            || head[word.len()..].starts_with(|c: char| c.is_ascii_alphabetic() || "._".contains(c))
-        {
             continue;
         }
         let field = |i| {
@@ -208,7 +210,21 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
             format!("`{text}` is no time: {why}"),
         ));
     };
-    for m in re!(r"(\d+)[DT](\d):\d|(\d+):(\d+)(?::(\d+))?").captures_iter(unsym) {
+    // A match that starts inside a name is looked past, not skipped whole:
+    // in `x10:12:5` the first is `10:12`, and the time is the `12:5` after it.
+    let starts_token = |m: &regex::Captures| {
+        let at = m.get(0).unwrap().start();
+        let before = &unsym[..at];
+        m.get(1).is_some()
+            || boundary(unsym, at)
+            || (before.ends_with(['D', 'T'])
+                && before[..before.len() - 1].ends_with(|c: char| c.is_ascii_digit()))
+    };
+    for m in crate::captures_where(
+        re!(r"(\d+)[DT](\d):\d|(\d+):(\d+)(?::(\d+))?"),
+        unsym,
+        starts_token,
+    ) {
         let whole = m.get(0).unwrap();
         let before = &unsym[..whole.start()];
         let line = before.rfind('\n').map_or(0, |p| p + 1);
