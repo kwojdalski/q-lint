@@ -2584,6 +2584,16 @@ pub(crate) fn is_pattern(s: &str, nested: bool) -> bool {
         false
     }
 }
+/// Each name the source assigns under `.q` (`.q.foo:{x+1}`), with where.
+/// q 5 then resolves `foo` from every namespace and refuses it as a
+/// parameter, a local or a global, as it does `count`.
+pub(crate) fn dotq_definitions(code: &str) -> Vec<(String, usize)> {
+    re!(r"\.q\.([A-Za-z][A-Za-z0-9_]*)\s*:")
+        .captures_iter(code)
+        .filter(|c| boundary(code, c.get(0).unwrap().start()))
+        .map(|c| (c[1].to_string(), c.get(0).unwrap().start()))
+        .collect()
+}
 /// Whether a compound or `::` assignment has a value to assign: q 5 refuses
 /// `{sum::x}` and `{count,:x}` with 'assign, but `{a:sum::}`, `(sum::)x`,
 /// `sum::'x` and `count,:;` apply the function instead (#432).
@@ -3051,6 +3061,13 @@ pub fn lint_selecting(
     }
     let code = &v.code;
     let _matches = MatchScope::install(code);
+    // A name the file adds to `.q` is reserved from there on, as a builtin
+    // is: after q 5 `.q.foo:{x+1}`, `{[x;foo] x}[5;6]` is 'nyi and
+    // `{foo:1;0}` and `foo:1` are 'assign (#434).
+    let dotq = dotq_definitions(code);
+    let reserved = |name: &str, at: usize| {
+        RESERVED.iter().any(|n| n == name) || dotq.iter().any(|(n, from)| n == name && at > *from)
+    };
     // A UTF-8 BOM is not something q tolerates: it reports 'char on the first
     // line and loads nothing. Reported and then carried on past, because the
     // author still wants to know what else is wrong with a file they are
@@ -3248,10 +3265,7 @@ pub fn lint_selecting(
         // Every name a slot binds, a pattern's and a typed slot's included:
         // q 5 `{[(count;b)] b}[(1;2)]` is 'match (#327).
         let bound: Vec<&str> = params.iter().flat_map(|p| pattern_names(p)).collect();
-        let bad: Vec<_> = bound
-            .iter()
-            .filter(|p| RESERVED.iter().any(|n| n == **p))
-            .collect();
+        let bad: Vec<_> = bound.iter().filter(|p| reserved(p, at)).collect();
         // q 5 defines such a lambda but refuses every call to it: 'match for
         // a `.q` name such as count, 'nyi for a k primitive such as til.
         // The keywords by, do, from, if and while still run, and are left out.
@@ -4827,7 +4841,7 @@ pub fn lint_selecting(
                 if boundary(&view, m.start())
                     && !view[m.end()..].starts_with(':')
                     && !matches!(&a[1], "from" | "by")
-                    && RESERVED.iter().any(|n| n == &a[1])
+                    && reserved(&a[1], at + m.start())
                     && !typed_parameter
                 {
                     add(
@@ -5475,7 +5489,7 @@ pub fn lint_selecting(
                 && let Some(m) =
                     re!(r"^([a-z][a-zA-Z0-9_]*)\s*[-+*%,#_^&|!?@$~=<>]?:").captures(head)
                 && compound(&m)
-                && RESERVED.iter().any(|n| n == &m[1])
+                && reserved(&m[1], offset + at)
                 && !matches!(&m[1], "from" | "by")
             {
                 add(offset + at, "QF004", format!("Namespace-level `{}`", &m[1]));
@@ -5490,7 +5504,7 @@ pub fn lint_selecting(
                 && let Some(m) =
                     re!(r"^([a-z][a-zA-Z0-9_]*)\s*[-+*%,#_^&|!?@$~=<>]?:").captures(head)
                 && compound(&m)
-                && RESERVED.iter().any(|n| n == &m[1])
+                && reserved(&m[1], offset + at)
             {
                 add(
                     offset + at,

@@ -1073,3 +1073,16 @@ c:select by max:a from t
 === clean profile: general | ordinary names, and a builtin used as a function
 a:select s:sum a by c:count a from t
 d:update a:sum b from t
+
+=== QF001 QF003 QF004 profile: general | a name the file adds to .q is reserved from there on (q 5 after .q.foo:{x+1}: {[x;foo] x}[5;6] is 'nyi, {foo:1;0} and foo:1 under \d .my are 'assign) (#434)
+.q.foo:{x+1}
+g:{[x;foo] x}
+h:{foo:1;0}
+\d .my
+foo:2
+\d .
+
+=== QF012 | and at the root, but not before it was defined (q 5: foo:0 then .q.foo:{x+1} then foo:1 is 'assign) (#434)
+foo:0
+.q.foo:{x+1}
+foo:1
