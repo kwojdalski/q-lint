@@ -1108,7 +1108,8 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         }
         // A number signalled is 'stype; signal it as a string.
         "QT025" => {
-            let m = re!(r"^'(\s*)(-?\d[A-Za-z0-9.]*)").captures(source.get(start..)?)?;
+            let m = re!(r"^'(\s*)(-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)")
+                .captures(source.get(start..)?)?;
             (
                 m.get(0)?.as_str(),
                 format!("'{}\"{}\"", &m[1], &m[2]).into(),

@@ -442,7 +442,7 @@ fn missing_from(
 }
 
 /// QT025. A signal of something that is not a symbol or a string. Verified:
-/// `'1`, `'1.5`, `'0N` and `'(1;2)` are 'stype - and so is `'"x"`, since a
+/// `'1`, `'1.5`, `'0N`, `'12:00`, `'1e-3` and `'(1;2)` are 'stype - and so is `'"x"`, since a
 /// one-character string is a char atom, not a string.
 fn signals(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<Finding>) {
     // A signal opens an expression; after an operand the quote is each.
@@ -452,7 +452,9 @@ fn signals(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<F
     // bracket before it: `{[x]` + `  '1}` is a signal (q 5: 'stype).
     // A list cannot be signalled either: q 5 `'(1;2)`, `'()`, `'(1)` and
     // `` '`a`b `` are each 'stype.
-    for m in re!(r#"(')(-?\d[A-Za-z0-9.]*|"(?:\\[0-7]{3}|\\.|[^"\\])+"|\(\s*\)|\(\s*-?\d[A-Za-z0-9.]*\s*\)|\([^()"]*;[^()]*\)|(?:`[A-Za-z0-9_.]*){2,})"#).captures_iter(comments) {
+    // A number runs on over `:` and an exponent's sign: `'12:00`,
+    // `'2026.01.01D12:00` and `'1e-3` are each 'stype.
+    for m in re!(r#"(')(-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*|"(?:\\[0-7]{3}|\\.|[^"\\])+"|\(\s*\)|\(\s*-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*\s*\)|\([^()"]*;[^()]*\)|(?:`[A-Za-z0-9_.]*){2,})"#).captures_iter(comments) {
         let quote = m.get(1).unwrap();
         let value = m.get(2).unwrap();
         if code.as_bytes()[quote.start()] != b'\'' {

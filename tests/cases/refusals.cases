@@ -88,6 +88,11 @@ r2:update a:1 from t
 === QT025 | signalling a number
 f:{'1}
 
+=== QT025 profile: general | a time, a timestamp or a signed exponent (#387; q 5: each is 'stype)
+f:{'12:00}
+g:{'1e-3}
+h:{'2026.01.01D12:00}
+
 === QT025 | an octal escape is one char (q 5: '"\012" is 'stype)
 g:{'"\012"}
 
