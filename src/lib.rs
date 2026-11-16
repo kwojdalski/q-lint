@@ -598,9 +598,12 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 false,
             )
         }
-        // `{x} each y` is `y`: q 5 gives the same on a list, a string, a
-        // dictionary and a table. Only where it has an argument -
-        // `g:{x} each` is a function, which dropping the words would end.
+        // `{x} each y` is `y` on a non-empty list, string, dictionary or
+        // table, but not always: q 5 gives a general empty list for an
+        // empty typed list or table (`type {x} each 0#0` is 0h), and drops
+        // `s#`, `g#` and `u#` - so, like QR004, only in the editor (#401).
+        // Only where it has an argument - `g:{x} each` is a function, which
+        // dropping the words would end.
         "QR002" => {
             let m = re!(r"^\{\s*x\s*\}[ \t]*(?:each\b|')[ \t]*").find(source.get(start..)?)?;
             let before = v.code[..start].trim_end();
@@ -626,7 +629,7 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 &source[start..start + m.end()],
                 gap.into(),
                 "Remove the identity `{x} each`".into(),
-                true,
+                false,
             )
         }
         // Sorting adds no duplicates, and q 5 agrees on the value and the

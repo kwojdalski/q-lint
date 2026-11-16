@@ -90,7 +90,7 @@ the edits, run `qlinter --fix path/to/file.q`.
 `"C:\\data"`), `true`/`false`/`None`/`return x` → `1b`/`0b`/`(::)`/`:x`,
 a table literal of scalars (each column enlisted), a symbol used as a `like`
 pattern (`` `a* `` → `"a*"`), `f . ()` → `f[]`, `til 5.0` → `til 5` (and `2.0 rotate`, `3.0 mavg`),
-a number signalled → a string, `where a:1` → `where a=1`, `{x} each y` → `y`, `distinct asc distinct` → `asc distinct`,
+a number signalled → a string, `where a:1` → `where a=1`, `distinct asc distinct` → `asc distinct`,
 redundant parentheses around one token (styleq), and - under `--profile uqf` -
 parentheses showing the order q already evaluates `a*b+c` in, and the
 brackets QP006 asks for, rewriting `f x` as `f[x]` with whatever the
@@ -106,7 +106,8 @@ value, `a -1` → `a - 1`, a string compared with `=` in a filter → `like`
 vector in a filter → `in`, `f(a;b)` →
 `f[a;b]`, `` `int$"12" `` → `"I"$"12"`, removing a statement that never runs,
 removing an unused local's name while keeping its expression,
-`{x+1} each a` → `a+1` (they differ on an empty typed list), parentheses
+`{x} each y` → `y` and `{x+1} each a` → `a+1` (they differ on an empty typed list, and
+`{x} each` drops a `` `s# `` or `` `g# `` attribute), parentheses
 round each comparison an `and`/`or` swallows in a where phrase, `~` → `=` in
 a filter, `x` → the one declared parameter, deleting a commented-out
 definition, passing an outer local into a nested lambda that reads it
