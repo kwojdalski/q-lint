@@ -92,20 +92,41 @@ fn resolved(name: &str, ns: &str) -> String {
     }
 }
 /// The names a multiple assignment `(a;b):...` binds, with where it starts.
+/// The target is a q 5 pattern, so it nests and takes a dictionary:
+/// `(c;(a;b)):t` binds all three and `([k;v]):d` binds k and v, while
+/// `([k:p]):d` binds only p (q 5: `([k:p]):`k`v!5 6` sets p to 5).
 fn multi_assignments(text: &str) -> impl Iterator<Item = (usize, &str)> {
-    re!(r"\(([A-Za-z0-9_;\s]+)\)\s*:[^:]")
-        .captures_iter(text)
-        .flat_map(|m| {
-            let at = m.get(0).unwrap().start();
-            m.get(1)
-                .unwrap()
-                .as_str()
-                .split(';')
-                .map(str::trim)
-                .filter(|n| !n.is_empty() && n.starts_with(|c: char| c.is_ascii_alphabetic()))
-                .map(move |n| (at, n))
-                .collect::<Vec<_>>()
+    let bytes = text.as_bytes();
+    re!(r"\)\s*:[^:]")
+        .find_iter(text)
+        .filter_map(move |m| {
+            // Back to the `(` that opens the target, over nothing a pattern
+            // could not hold, so a string or a call is never walked into.
+            let mut depth = 0usize;
+            let mut at = m.start();
+            loop {
+                match bytes[at] {
+                    b')' => depth += 1,
+                    b'(' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    b if b.is_ascii_alphanumeric() || b" \t\r\n;_.`[]".contains(&b) => {}
+                    _ => return None,
+                }
+                at = at.checked_sub(1)?;
+            }
+            let target = &text[at..=m.start()];
+            crate::is_pattern(target, false).then(|| {
+                crate::pattern_names(target)
+                    .into_iter()
+                    .filter(|n| !n.contains('.'))
+                    .map(move |n| (at, n))
+            })
         })
+        .flatten()
 }
 /// Whether q runs the expression at `read` before the one at `assign`, both
 /// offsets into one lambda body. Statements run top to bottom, and the slots
@@ -232,12 +253,19 @@ pub(crate) fn local_view(direct: &str, tables: bool) -> String {
     if tables {
         let text = String::from_utf8(out.clone()).unwrap_or_default();
         for (at, _) in text.match_indices("([") {
-            if let Some(close) = matching(&text, at, b'(', b')') {
+            if let Some(close) = matching(&text, at, b'(', b')')
+                && !destructures(&text[close..])
+            {
                 out[at..close].fill(b' ');
             }
         }
     }
     String::from_utf8(out).unwrap_or_default()
+}
+/// Whether `rest`, the text after a `(...)` group, assigns to it: the group
+/// is then a pattern being destructured, `([k;v]):d`, not a table literal.
+fn destructures(rest: &str) -> bool {
+    re!(r"^\s*:([^:]|$)").is_match(rest)
 }
 /// `local_view(direct, true)` with each query's from-clause put back. The
 /// table a query reads is ordinary q, run in the lambda's scope before the
@@ -767,6 +795,7 @@ fn global_writes(
     for (open, _) in code.match_indices('(') {
         if code[open + 1..].trim_start().starts_with('[')
             && let Some(close) = matching(code, open, b'(', b')')
+            && !destructures(&code[close..])
         {
             blank(&mut view[open + 1..close - 1]);
         }
@@ -869,7 +898,8 @@ fn global_writes(
     }
     for (at, name) in multi_assignments(code) {
         if scope_at(scopes, at).is_none() {
-            let end = at + code[at..].find(':').unwrap() + 1;
+            let close = matching(code, at, b'(', b')').unwrap_or(at);
+            let end = close + code[close..].find(':').unwrap() + 1;
             globals
                 .entry(qualify(name, ns_at(at)))
                 .or_default()

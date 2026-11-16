@@ -2383,7 +2383,7 @@ fn is_param_name(s: &str) -> bool {
 /// not match: `{[(a;b);c] a+b+c}[(1;2);3]` is 6, `{[([k;v])] k+v}[`k`v!1 2]`
 /// is 3, `{[1;b] b}[1;2]` is 2 and `{[1] 5} 2` is 'match (#298). `_` is
 /// none: `{[(a;_)] a}[(1;2)]` is 'match, as `{[_] 1}[1]` is.
-fn is_pattern(s: &str, nested: bool) -> bool {
+pub(crate) fn is_pattern(s: &str, nested: bool) -> bool {
     let s = s.trim();
     let items = |inner: &str, item: &dyn Fn(&str) -> bool| {
         inner.trim().is_empty() || slots(inner).into_iter().all(item)

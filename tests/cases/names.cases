@@ -328,6 +328,17 @@ f:{[x] g[if[c; c:1]]}
 === clean | multiple assignment binds its names
 f:{[x;y] (tx;ty):type each (x;y); if[tx=11h; tx:0h]; tx+ty}
 
+=== clean profile: general | a nested or dictionary pattern binds its names too (q 5: f (1;(2 3;4)) is 2, g `k`v!5 6 is 6) (#356)
+a:2.5
+f:{[t] (c;(a;b)):t; a 0}
+g:{[t] ([k;v]):t; v}
+
+=== clean | and at the root, as globals (q 5: e is 3, vv is 8 after these) (#356)
+(c;(d;e)):(1;(2;3))
+([kk;vv]):`kk`vv!7 8
+f:{[] aa:e; aa}
+g:{[] aa:vv; aa}
+
 === QF005 | the names a multiple assignment binds are locals, which a nested lambda cannot see
 f:{[x] (a;b):x; g:{[v] v+a}; g 1}
 
