@@ -174,6 +174,18 @@ fn a_call_in_a_query_is_bracketed_up_to_the_column_it_belongs_to() {
     assert_eq!(remaining[0]["line"], 9);
 }
 
+/// A multi-byte character before a call in a query: the clause scan walks
+/// bytes, and once sliced the code inside `é` and panicked (#352).
+#[test]
+fn a_query_fix_after_a_multibyte_character_does_not_panic() {
+    use q_lint_rs::{Profile, fixes_for, lint};
+    let source = "g:{x}\nt:([]a:1 2)\nr:select c:`\u{e9}, d:g a from t\n";
+    let findings = lint(source, "probe.q", Profile::Uqf);
+    let fixes = fixes_for(findings.iter().filter(|f| f.code == "QP006"), source);
+    assert_eq!(fixes.len(), 1, "{findings:?}");
+    assert_eq!(fixes[0].replacement, "g[a]");
+}
+
 /// Nothing to rewrite outside the profile that asks for it. The CLI's own
 /// default is `uqf`; `general` is the one that answers only "would q refuse
 /// this", and juxtaposition is not something q refuses.

@@ -243,7 +243,9 @@ const QUERY_WORDS: [&str; 7] = ["select", "exec", "update", "delete", "by", "fro
 fn query_word(code: &str, at: usize) -> Option<&'static str> {
     // Part of a longer name - `.req.delete`, `clust.dbscan.update` - or a
     // symbol, `` `update ``, is not the keyword; after a drop, `1_select`,
-    // it is (#340).
+    // it is (#340). `boundary` also refuses an offset inside a multi-byte
+    // character, which the callers' byte walk reaches and `code[at..]`
+    // would panic on (#352).
     let word = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'.';
     if !boundary(code, at) {
         return None;
