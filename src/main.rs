@@ -248,7 +248,7 @@ fn discover(
         }
         // A path named here is linted whatever `exclude` says, unless
         // --force-exclude: exclusion is for what a walk discovers.
-        if force_exclude && policy.excluded(path)? {
+        if force_exclude && policy.force_excluded(path)? {
             skipped = true;
             continue;
         }
@@ -409,7 +409,7 @@ fn run(args: Args) -> Result<u8, String> {
             return Err("Stdin (- or --stdin-filename) must be the only input".into());
         }
         let name = args.stdin_filename.unwrap_or_else(|| "<stdin>".into());
-        if name == "<stdin>" || !args.force_exclude || !policy.excluded(Path::new(&name))? {
+        if name == "<stdin>" || !args.force_exclude || !policy.force_excluded(Path::new(&name))? {
             let mut source = String::new();
             io::stdin()
                 .read_to_string(&mut source)

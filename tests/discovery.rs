@@ -617,6 +617,50 @@ fn an_excluded_file_named_explicitly_is_linted_unless_force_exclude() {
     );
 }
 
+#[test]
+fn force_exclude_skips_a_file_inside_a_default_excluded_directory() {
+    // The walk never enters `build/`; a hook passing `build/x.q` with
+    // --force-exclude must skip it too, by path or by --stdin-filename (#415).
+    let repo = Repo::new();
+    repo.write("build/x.q", SOURCE);
+    let style = ["--isolated", "--profile", "style"];
+    assert_eq!(repo.codes(".", &style), Vec::<String>::new());
+    assert_eq!(
+        repo.codes(".", &[&style[..], &["build/x.q"]].concat()),
+        ["QF016"]
+    );
+    let forced = [&style[..], &["--force-exclude", "build/x.q"]].concat();
+    assert_eq!(repo.codes(".", &forced), Vec::<String>::new());
+    let mut child = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .current_dir(repo.path("."))
+        .args([
+            "--format",
+            "json",
+            "--force-exclude",
+            "--stdin-filename",
+            "build/x.q",
+        ])
+        .args(style)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    use std::io::Write;
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(SOURCE.as_bytes())
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "[]");
+    // A file in a directory of that name above the current one is not.
+    assert_eq!(
+        repo.codes("build", &[&style[..], &["--force-exclude", "x.q"]].concat()),
+        ["QF016"]
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn a_symlink_is_governed_excluded_and_reported_where_it_is() {

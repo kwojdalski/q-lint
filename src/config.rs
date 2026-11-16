@@ -244,6 +244,29 @@ impl Policy {
                 .any(|glob| matches(&full, glob)))
     }
 
+    /// `excluded`, for a path named on the command line with
+    /// `--force-exclude`: the default list is also checked against the
+    /// directories above it below the current directory, as a configured
+    /// pattern is against those below its root - so a hook that passes
+    /// `build/a.q` skips it, as the walk would (#415).
+    pub fn force_excluded(&self, path: &Path) -> Result<bool, String> {
+        if self.excluded(path)? {
+            return Ok(true);
+        }
+        if self.settings(path)?.exclude.is_some() {
+            return Ok(false);
+        }
+        let cwd = absolute(&std::env::current_dir().map_err(|e| e.to_string())?);
+        let full = absolute(path);
+        Ok(full.strip_prefix(&cwd).is_ok_and(|relative| {
+            relative
+                .parent()
+                .into_iter()
+                .flat_map(Path::components)
+                .any(|c| DEFAULT_EXCLUDE.iter().any(|d| c.as_os_str() == *d))
+        }))
+    }
+
     /// Whether the rule `code` reports on `path`.
     pub fn enabled(&self, code: &str, path: &Path) -> Result<bool, String> {
         let settings = self.settings(path)?;
@@ -254,9 +277,9 @@ impl Policy {
         self.configured(settings, code)
             && self
                 .narrowing
-            .borrow()
-            .as_ref()
-            .is_none_or(|layer| apply(layer, code, true))
+                .borrow()
+                .as_ref()
+                .is_none_or(|layer| apply(layer, code, true))
     }
 
     /// Whether the configuration and flags select `code`, before the
