@@ -2114,7 +2114,20 @@ fn views(source: &str) -> Views {
             }
             statement = !stripped.is_empty() && !line.starts_with(['\\', '/', ' ', '\t']);
         }
-        if foreign && !(line.starts_with([' ', '\t']) || stripped.is_empty()) {
+        // A column-0 comment line ends nothing an indented line continues
+        // after it: q 5 hands `t)a`, `/ note`, `  b` to `.t.e` as one
+        // statement, and `t)a`, `/ note`, `c:1` as `t)a` and then q (#317).
+        let carried = || {
+            source[end..]
+                .lines()
+                .find(|l| !l.trim().is_empty() && !l.starts_with('/'))
+                .is_some_and(|l| l.starts_with([' ', '\t']))
+        };
+        if foreign
+            && !(line.starts_with([' ', '\t'])
+                || stripped.is_empty()
+                || line.starts_with('/') && carried())
+        {
             foreign = false;
         }
         if !ended && block == 0 && string.is_none() {

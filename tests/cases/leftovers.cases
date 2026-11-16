@@ -21,6 +21,12 @@ p)class> reader(object):
 === clean profile: styleq | XXX as a placeholder in a namespace is a name, not a marker
 / Calling .kdb.XXX forwards the call to a service
 
+=== clean profile: general | a column-0 comment line does not end an embedded statement an indented line continues (q 5 hands all three lines to .t.e, #317)
+.t.e:{-1 "T:",x;}
+t)first
+/ note
+  -second == x
+
 === QL001 profile: styleq | the line after an embedded block is q again
 p)x=1
 / TODO handle the empty case
