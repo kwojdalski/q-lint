@@ -3471,11 +3471,10 @@ pub fn lint_selecting(
                 Some(2),
             ),
         ] {
-            for m in regex::Regex::new(&pattern).unwrap().captures_iter(view) {
+            // A match that starts inside a name, the `2` of `b2:1=`a`, is
+            // looked past rather than taking the comparison with it.
+            for m in boundary_captures(&regex::Regex::new(&pattern).unwrap(), view, view) {
                 let (at, end) = (m.get(0).unwrap().start(), m.get(0).unwrap().end());
-                if !boundary(view, at) {
-                    continue;
-                }
                 if let Some(group) = quoted
                     && v.string_starts
                         .binary_search(&m.get(group).unwrap().start())

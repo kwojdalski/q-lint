@@ -248,6 +248,10 @@ r:$[1;1;2]
 === QT015 QB018 | a symbol against a number is a type error, and both sides are literals
 r:1=`a
 
+=== QT015 profile: general | assigned to a name that ends in a digit (#382; q 5: b2:1=`a and r2:3<`a are 'type)
+b2:1=`a
+r2:3<`a
+
 === QT015 | and against a string
 r:"abc"=`abc
 
