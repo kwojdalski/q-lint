@@ -1239,8 +1239,15 @@ fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Find
                     "`{text}`: `{}` is not a type suffix",
                     &text[text.len() - 1..]
                 ))
+            } else if let Some(m) = re!(r"^(\d{4})\d+\.(\d\d)m$").captures(text)
+                && days_in(m[1].parse().unwrap(), m[2].parse().unwrap()) == 0
+            {
+                // A month's year past four digits is cut to its first four:
+                // q 5 reads `20000.01m` as 2000.01m and `12345.01m` as
+                // 1234.01m, and refuses `20000.13m`.
+                Some(format!("`{text}` is no month"))
             } else if re!(r"^\d+\.\d*[A-Za-z]$").is_match(text)
-                && !re!(r"[cefnpt]$|^\d{4}\.\d*m$").is_match(text)
+                && !re!(r"[cefnpt]$|^\d{4}\.\d*m$|^\d{5,}\.\d\dm$").is_match(text)
             {
                 // After a fraction only a float, real, char or temporal
                 // suffix reads: q 5 refuses `1.5d`, `1.5m`, `1.5u`, `1.5v`

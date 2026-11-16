@@ -557,6 +557,17 @@ d:0xAB
 e:0x
 f:1e3e
 
+=== clean profile: general | a month's year past four digits is cut to four (#448; q 5: 2000.01m, 1234.01m, 2000.01m)
+a:20000.01m
+b:12345.01m
+c:200001.01m
+
+=== QE010 profile: general | and the month still has to exist (#448; q 5: '20000.13)
+d:20000.13m
+
+=== QE010 profile: general | and to have two digits (#448; q 5: '20000.1)
+e:20000.1m
+
 === QE010 profile: general | a letter that is no type (q 5: '1y)
 m:1y
 
