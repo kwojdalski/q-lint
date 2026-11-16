@@ -41,6 +41,41 @@ p60:60
 t12:12:30
 x10:12:05
 
+=== clean profile: general | a minute's seconds are never read (#449; q 5: 23:59, 12:00, 12:00 12:00 for each)
+a:23:59:60u
+b:12:00:1u
+c:12:00:60 12:00u
+d:12:00:1 12:00u
+
+=== QE006 profile: general | a minute suffix on an earlier item makes no minute vector (#449; q 5: '23:59:60u)
+e:23:59:60u 12:00
+
+=== QE006 profile: general | a minute past 59 with the minute suffix (#449; q 5: '12:60:00)
+f:12:60:00u
+
+=== QE006 profile: general | a second's seconds are read (#449; q 5: '12:00:60)
+g:12:00:60v
+
+=== QE006 profile: general | year 0 has no date (#460; q 5: '0000.01.01)
+d:0000.01.01
+
+=== QE006 profile: general | nor any month (#460; q 5: '0000.01)
+a:0000.01m
+
+=== QE010 profile: general | nor a yyyymmdd date (#460; q 5: '00000101)
+c:00000101d
+
+=== QE006 profile: general | four digits of fraction after an hour of three (#460; q 5: '100:00:00.1234)
+t:100:00:00.1234
+
+=== clean profile: general | year 1, a two-digit hour, three digits of fraction, a cutting suffix (#460; q 5: each parses)
+m:0001.01.01
+i:10:00:00.1234
+j:100:00:00.123
+k:100:00:00.1234t
+l:100:00:00.1234 100:00t
+n:1000:00:00.1
+
 === QE006 | a minute past 59 in a digit-form minute (q 5: parse "1260u" is '1260)
 a:1260u
 
@@ -467,6 +502,57 @@ e:0D 0D01
 f:1D 2D
 g:2026.01.01D 2026.01.02D
 
+=== clean profile: general | a c after the last item makes a string of every number before it (#445; q 5: " 2", " 1", " 2", " 2", " 1", " 1", " 1", "1 1", "12")
+a:1h 2c
+b:0Nh 1c
+c:1.5j 2c
+d:1y 2c
+e:-0N 1c
+f:0Ns 2c
+g:1E5 1c
+h:1 2147483648 1c
+i:1 2c
+
+=== QE010 profile: general | a string still refuses a b that is no boolean (#445; q 5: '2b)
+i:2b 1c
+
+=== QE010 profile: general | a string still refuses a null of no type (#445; q 5: '0Nb)
+j:0Nb 1c
+
+=== QE010 profile: general | a string still refuses a bad byte (#445; q 5: '0x1g)
+k:0x1g 1c
+
+=== QE010 profile: general | a string still refuses an uppercase exponent's sign (#445; q 5: '1E)
+l:1E-3 1c
+
+=== clean profile: general | a time or date suffix among items of its shape (#446; q 5: 12:00 12:30, 12:00:00 13:00:00, 12:00:00 12:30:00, 0W 2000.01.01)
+m:12:00u 12:30
+n:12:00:00t 13:00:00
+o:12:00:00x 12:30:00
+p:2000.01.01z 2000.01.01
+
+=== QE010 profile: general | a time's suffix before an item of another shape (#446; q 5: '12:00u)
+p:12:00u 1
+
+=== QE010 profile: general | a date's suffix before an item of another shape (#446; q 5: '2000.01.01z)
+q:2000.01.01z 1
+
+=== QE010 profile: general | a time's suffix before a float (#446; q 5: '12:00x)
+w:12:00x 1.5
+
+=== QE010 profile: general | a suffix after an exponent, before another item (#454; q 5: '1e3e)
+s:1e3e 1
+
+=== QE010 profile: general | a float suffix after an exponent, before another item (#454; q 5: '1e3f)
+t:1e3f 2
+
+=== QE010 profile: general | after a fraction and a signed exponent (#454; q 5: '1.5e3e, '1e-3e)
+u:1.5e3e 1
+v:1e-3e 1
+
+=== clean profile: general | an exponent with no suffix before a suffixed item (#454; q 5: 1000 1e)
+z:1e3 1e
+
 === QE010 profile: general | a fraction in a vector the suffix makes integer (q 5: parse "1.5 2j" is '1.5)
 n:1.5 2j
 
@@ -506,14 +592,56 @@ d:0xAB
 e:0x
 f:1e3e
 
+=== clean profile: general | a month's year past four digits is cut to four (#448; q 5: 2000.01m, 1234.01m, 2000.01m)
+a:20000.01m
+b:12345.01m
+c:200001.01m
+
+=== QE010 profile: general | and the month still has to exist (#448; q 5: '20000.13)
+d:20000.13m
+
+=== QE010 profile: general | and to have two digits (#448; q 5: '20000.1)
+e:20000.1m
+
 === QE010 profile: general | a letter that is no type (q 5: '1y)
 m:1y
+
+=== QE010 profile: general | eight digits and a d that make no date (#444; q 5: '20001301)
+d:20001301d
+
+=== QE010 profile: general | a d on fewer digits than a date's eight (#444; q 5: '2000010)
+d:2000010d
+
+=== QE010 profile: general | a yyyymmdd date before another item (#444; q 5: '20000101d)
+d:20000101d 1
+
+=== clean profile: general | eight digits and a d are a date, yyyymmdd (#444; q 5: 2000.01.01, 2000.02.29)
+d:20000101d
+e:20000229d
+f:20000101 20000102d
 
 === QE010 profile: general | dots that make no date (q 5: '2023.1.1 and '1.2.3)
 g:2023.1.1
 
 === QE010 profile: general | a long that overflows (q 5: parse "9223372036854775808" is refused)
 h:9223372036854775808
+
+=== clean profile: general | a big integer in a vector another item makes float (#447; q 5: type 9h for each)
+a:1.5 9223372036854775808
+b:9223372036854775808 1.5
+d:9223372036854775808 0n
+e:9223372036854775808 1e3
+f:9223372036854775808 2f
+g:9223372036854775808 1.
+
+=== QE010 profile: general | a typed null makes no float of a big integer (#447; q 5: '9223372036854775808)
+j:9223372036854775808 0N
+
+=== QE010 profile: general | nor does a date's dots (#447; q 5: '9223372036854775808)
+k:9223372036854775808 2000.01.01
+
+=== QE010 profile: general | an uppercase exponent among dates is no float (#447; q 5: '1E5)
+n:1E5 2000.01.01
 
 === QE010 profile: general | an int that overflows (q 5: parse "2147483648i" is '2147483648)
 r:2147483648i
@@ -554,6 +682,30 @@ b:0Ws
 a:-0Nh
 b:-0N
 c:x -0N
+
+=== QE010 profile: general | a date has no negative (#453; q 5: '-2000.01.01)
+d:-2000.01.01
+
+=== QE010 profile: general | nor before an item that is no date (#453; q 5: '-2000.01.01)
+f:-2000.01.01 1
+
+=== QE010 profile: general | nor in parentheses (#453; q 5: '-2000.01.01)
+o:(-2000.01.01)
+
+=== QE010 profile: general | nor before a null (#453; q 5: '-2000.01.01)
+c:-2000.01.01 0N
+
+=== clean profile: general | a minus before a date among some temporal items parses (#453; q 5: 0D00:00 0W, 2000.01 2000.01m)
+d:-2000.01.01 0Wn
+e:-2000.01.01 2000.01m
+
+=== clean profile: general | a minus before dates, a timestamp, a time or a timespan, or subtracting (#453; q 5: each parses)
+g:-2000.01.01 2000.01.02
+h:-2000.01.01D12:00
+i:-12:00
+j:-0D12
+x:2000.01.02
+k:x-2000.01.01
 
 === QE010 profile: general | a fraction in a vector a typed null makes integer (q 5: '1.5)
 a:1.5 0Ni
@@ -742,3 +894,15 @@ a:select a from t where b in exec c from u where
 
 === QE007 profile: general | and once when the nested query is in brackets (#200)
 c:select from t where a in (exec b from u where)
+
+=== QE010 profile: general | nothing continues an infinity (#459; q 5: '0W.5)
+a:0W.5
+
+=== QE010 profile: general | nor a null, typed or not (#459; q 5: '0N1, '0Ni5)
+b:0N1
+c:0Ni5
+
+=== clean profile: general | a null or infinity with its type letter, and in a string (#459; q 5: each parses)
+e:0W
+f:0Wi
+g:0W.5 1c

@@ -1,3 +1,11 @@
+=== clean profile: general | a symbol atom value is spread over every key (#451; q 5: key is `a`b, 1 2, `a`b)
+d:`a`b!`c
+e:1 2!`x
+f:`a`b!`
+
+=== QT001 profile: general | a numeric atom value is not (#451; q 5: 'length)
+g:`a`b!1
+
 === QT001 | a string, temporal or trailing-empty-symbol vector is counted too (q 5: each is 'length)
 a:`a`b!"abc"
 b:`a`b!2024.01.01 2024.01.02 2024.01.03
@@ -213,6 +221,11 @@ s:ssr[string f[0;`abc;`abc];"b";"c"]
 === QT007 profile: general | a symbol pattern after a bracketed subject is still one (q 5: 'type)
 r:ssr[s[0];`a;"b"]
 
+=== clean profile: general | ssr with two arguments, or ss with one, is a projection (#452; q 5: type is 104h for each)
+p:ssr["abc";`a]
+j:ssr[;`a;"b"]
+k:ss[`a]
+
 === QT007 | infix ss on a symbol
 r:`abc ss "a"
 
@@ -376,6 +389,9 @@ r:ss["abc";""]
 
 === QT021 | ssr likewise
 r:ssr["abc";"";"b"]
+
+=== clean profile: general | an empty pattern given to a projection of ssr (#452; q 5: type is 104h)
+e:ssr["abc";""]
 
 === clean | a pattern with something in it
 r:ss["abc";"a"]

@@ -1367,6 +1367,11 @@ pub fn check(
         }
         // A string value is blank in `code`; its items are in `comments`.
         let value = &code[start.end()..end];
+        // A symbol atom is spread over every key, as no other atom is: q 5
+        // builds `` `a`b!`c `` and `` 1 2!` ``, and `1 2!3` is 'length.
+        if re!(r"^\s*`[A-Za-z0-9_.:/]*\s*$").is_match(value) {
+            continue;
+        }
         let values = shape(value).or_else(|| {
             value
                 .trim()

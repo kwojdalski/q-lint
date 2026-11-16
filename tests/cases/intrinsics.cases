@@ -561,3 +561,68 @@ a:sum[enlist	`a]
 b:mavg[enlist	1;1 2 3]
 c:within[1;enlist	1]
 t:([]a:enlist	1;b:2 3)
+
+=== QT003 profile: general | arithmetic on the null symbol (#455; q 5: ` + 1 is 'type)
+a:` + 1
+
+=== QT003 profile: general | the null symbol on the right of an operator (#455; q 5: 1 + ` is 'type)
+e:1 + `
+
+=== QT009 profile: general | where of the null symbol (#455; q 5: 'type)
+b:where `
+
+=== QT011 profile: general | asc of the null symbol (#455; q 5: 'rank)
+c:asc `
+
+=== QT016 profile: general | sqrt of the null symbol (#455; q 5: 'type)
+d:sqrt `
+
+=== clean profile: general | what the null symbol takes (#455; q 5: til ` lists namespaces, sum ` and max ` are `)
+f:til `
+g:sum `
+h:max `
+i:`$"a"
+k:`a`b!`
+o:`$x-`$y
+
+=== QT010 profile: general | sdev of a symbol vector (#456; q 5: 'type)
+a:sdev `a`b
+
+=== QT010 profile: general | svar of a symbol vector (#456; q 5: 'type)
+b:svar `a`b
+
+=== QT010 profile: general | all of a symbol vector (#456; q 5: 'type)
+c:all `a`b
+
+=== QT010 profile: general | any of a symbol atom (#456; q 5: 'type)
+d:any `a
+
+=== clean profile: general | each takes a string (#456; q 5: 0.7071068, 0.5, 1b, 1b)
+f:sdev "ab"
+g:svar "ab"
+h:all "ab"
+i:any "ab"
+
+=== QT008 profile: general | til of a date (#457; q 5: 'type)
+a:til 2000.01.01
+
+=== QT008 profile: general | til of a minute (#457; q 5: 'type)
+b:til 12:00
+
+=== QT008 profile: general | til of a timespan (#457; q 5: 'type)
+c:til 0D01
+
+=== QT008 profile: general | til of a month or a timestamp (#457; q 5: 'type)
+d:til 2000.01m
+e:til 2000.01.01D12:00
+
+=== QT011 profile: general | asc of a temporal atom (#457; q 5: 'rank)
+f:asc 2000.01.01
+
+=== clean profile: general | what takes a temporal literal (#457; q 5: each runs)
+g:distinct 12:00 13:00
+j:sum 2000.01.01 2000.01.02
+k:max 12:00 13:00
+m:sqrt 12:00
+n:avg 2000.01.01
+p:x within 12:00 13:00
