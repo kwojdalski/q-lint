@@ -1039,3 +1039,21 @@ c:select by max:a from t
 === clean profile: general | ordinary names, and a builtin used as a function
 a:select s:sum a by c:count a from t
 d:update a:sum b from t
+
+=== QF013 profile: general | a query column named from (#458; q 5: 'from)
+t:([]a:1 2)
+r:select from:a from t
+
+=== QF013 profile: general | a query column named by (#458; q 5: 'type)
+t:([]a:1 2)
+s:select by:a from t
+
+=== QF013 profile: general | a column named by after another (#458; q 5: ',)
+t:([]a:1 2)
+w:select a,by:a from t
+
+=== clean profile: general | a by phrase, and from as the keyword (#458; q 5: each runs or is no column)
+t:([]a:1 2)
+y:select a by b:a from t
+z:select from t
+v:select by a from t

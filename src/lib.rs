@@ -4705,14 +4705,20 @@ pub fn lint_selecting(
     }
     // The same in a query's column or by list: q 5 `select sum:a from t`,
     // `update count:a from t` and `select by max:a from t` are 'assign when
-    // parsed. by and from are not reserved there either, but q reads them
-    // as the keywords, so they never reach this pattern as names.
+    // parsed. A column named by or from is read as the keyword, and the
+    // query fails: `select from:a from t` is 'from, `select by:a from t`
+    // 'type and `select a,by:a from t` ', - though `select a by:a from t`
+    // is a by phrase, and not this.
     for q in re!(r"\b(?:select|exec|update)\b").find_iter(code) {
         if !boundary(code, q.start()) {
             continue;
         }
         let rest = &code[q.end()..];
-        let Some(from) = re!(r"\bfrom\b").find(rest) else {
+        let named = |f: &regex::Match| {
+            let after = rest[f.end()..].trim_start_matches([' ', '\t']);
+            after.starts_with(':') && !after.starts_with("::")
+        };
+        let Some(from) = re!(r"\bfrom\b").find_iter(rest).find(|f| !named(f)) else {
             continue;
         };
         let list = &rest[..from.start()];
@@ -4731,11 +4737,23 @@ pub fn lint_selecting(
         }
         for a in re!(r"(?:^|[,\s])([a-z][A-Za-z0-9_]*)\s*:").captures_iter(list) {
             let name = a.get(1).unwrap();
-            if opens[name.start()]
-                && !list[a.get(0).unwrap().end()..].starts_with(':')
-                && !matches!(name.as_str(), "by" | "from")
-                && RESERVED.iter().any(|n| n == name.as_str())
-            {
+            if !opens[name.start()] || list[a.get(0).unwrap().end()..].starts_with(':') {
+                continue;
+            }
+            let before = list[..name.start()].trim_end();
+            if matches!(name.as_str(), "by" | "from") {
+                if before.is_empty() || before.ends_with(',') {
+                    add(
+                        q.end() + name.start(),
+                        "QF013",
+                        format!(
+                            "Column `{}`: q reads it as the keyword, not a column name, and \
+                             the query fails",
+                            name.as_str()
+                        ),
+                    );
+                }
+            } else if RESERVED.iter().any(|n| n == name.as_str()) {
                 add(
                     q.end() + name.start(),
                     "QF013",
