@@ -269,8 +269,9 @@ now:{[] .z.p};stamp:now . ()
 / expect-next: QA005
 pairsum:{[a;b]a+b} each 1 2 3
 
-/ QA005: the same trap through a binary builtin rather than a lambda.
-/ expect-next: QA005
+/ QE011: not the same trap through a binary builtin: `cor` is infix, so q 5
+/ refuses `cor each` at parse. `(cor) each` would project.
+/ expect-next: QE011
 corrs: cor each 1 2 3
 
 / QA006: one slot projects, three or more are conditionals - exactly two is

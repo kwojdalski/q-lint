@@ -36,8 +36,18 @@ f:{[a] 1};f . enlist 1
 === clean | each on a unary lambda applies per element
 {[a]a+1} each 1 2 3
 
-=== QA005 | a binary builtin under each projects too
-cor each 1 2 3
+=== QE011 profile: general | an infix keyword before each or peach is refused at parse, whatever is on its left (q 5: parse each line is refused) (#439)
+r:cor each (1 2;3 4)
+f:{mavg each x}
+s:x mavg each y
+t:x in peach y
+
+=== clean profile: general | in parentheses, with brackets, or with an iterator glyph (q 5 parses each) (#439)
+r:(cor) each x
+s:cor[x] each y
+t:x cor/: y
+u:`cor each `a`b
+v:.q.cor each x
 
 === clean | a unary builtin under each is the idiom
 count each (1 2;3 4 5)

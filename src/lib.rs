@@ -1502,6 +1502,7 @@ impl Finding {
                     | "QE008"
                     | "QE009"
                     | "QE010"
+                    | "QE011"
                     | "QT031"
                     | "QA001"
                     | "QA002"
@@ -3446,23 +3447,6 @@ pub fn lint_selecting(
                 );
             }
         }
-    }
-    // Binary builtins under `each`: verified against q - `cor each 1 2 3`
-    // returns `cor[1;] cor[2;] cor[3;]`, not values. `dev` is unary and
-    // absent from this list for that reason; additions must be verified
-    // against the runtime, not assumed.
-    for m in re!(r"\b(cor|cov|wsum|within|mavg|msum|mmax|mmin|mdev|mcount|cross|bin|binr)\s+each\b")
-        .captures_iter(code)
-    {
-        let at = m.get(0).unwrap().start();
-        add(
-            at,
-            "QA005",
-            format!(
-                "`{}` is binary, so `{} each` yields projections, not values",
-                &m[1], &m[1]
-            ),
-        );
     }
     // `$[c;a]`: one slot is a projection and three or more are conditional
     // expressions, but exactly two is an error q raises only at runtime.
