@@ -4140,8 +4140,9 @@ pub fn lint_selecting(
     //
     // q checked, per literal shape (`type` of the value; negative is an atom):
     //   `1b` atom, `10b` vector - a boolean literal is an atom only with one
-    //   digit; `0x01` atom, `0x0102` vector - a byte literal is an atom only
-    //   with exactly two hex digits; `"a"` atom, `"ab"` vector.
+    //   digit; `0x1` and `0x01` atoms, `0x`, `0x012` and `0x0102` vectors -
+    //   a byte literal is an atom only with one or two hex digits, and an
+    //   odd run is padded (`0x012` is `0x0012`); `"a"` atom, `"ab"` vector.
     //
     // And per table, what q raises:
     //   `([]a:1;b:2)`         'rank   - every column an atom needs `enlist`
@@ -4184,11 +4185,11 @@ pub fn lint_selecting(
             if let Some(rest) = v.strip_prefix("enlist ") {
                 return shape_of_enlist(rest);
             }
-            if re!(r"^[01]{2,}b$|^0x(?:[0-9a-fA-F]{2}){2,}$|^0x$").is_match(v) {
+            if re!(r"^[01]{2,}b$|^0x(?:[0-9a-fA-F]{3,})?$").is_match(v) {
                 let n = if v.ends_with('b') {
                     v.len() - 1
                 } else {
-                    (v.len() - 2) / 2
+                    (v.len() - 2).div_ceil(2)
                 };
                 return Some(Shape::Vector(Some(n)));
             }
@@ -4201,7 +4202,7 @@ pub fn lint_selecting(
             if v == "()" {
                 return Some(Shape::Vector(Some(0)));
             }
-            if re!(r"^[01]b$|^0x[0-9a-fA-F]{2}$|^-?\d[A-Za-z0-9.:]*$|^`[A-Za-z0-9_.]*$").is_match(v)
+            if re!(r"^[01]b$|^0x[0-9a-fA-F]{1,2}$|^-?\d[A-Za-z0-9.:]*$|^`[A-Za-z0-9_.]*$").is_match(v)
             {
                 return Some(Shape::Atom);
             }

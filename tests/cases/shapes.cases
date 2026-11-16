@@ -126,6 +126,16 @@ n:`long$1.5
 === QT005 | every column scalar is a rank error
 t:([] a:1; b:`x)
 
+=== clean profile: general | an odd-length byte literal is a vector: 0x012 is 0x0012 (#378; q 5: count is 2)
+t:([] flags:0x012)
+u:([] a:0x012; b:1 2)
+
+=== QT020 profile: general | and its length is counted padded (#378; q 5: 'length)
+t:([] a:0x012; b:1 2 3)
+
+=== QT005 profile: general | one hex digit is still a byte atom (#378; q 5: 'rank)
+t:([] a:0x1)
+
 === QT005 | keyed too
 t:([k:1] v:2)
 
