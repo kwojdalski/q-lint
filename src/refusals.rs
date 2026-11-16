@@ -124,6 +124,10 @@ fn command_argument(source: &str, at: usize) -> bool {
 /// How many days q 5 gives `month` of `year`, or 0 where it has no such
 /// month. Leap years are Gregorian: 2000.02.29 parses and 1900.02.29 does not.
 fn days_in(year: u32, month: u32) -> u32 {
+    // Nor any month of year 0: q 5 refuses `0000.01.01` and `0000.01m`.
+    if year == 0 {
+        return 0;
+    }
     let leap = year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
     match month {
         1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
@@ -199,6 +203,31 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
                 ),
             ));
         }
+    }
+    // A time's hour of three digits or more leaves room for three digits of
+    // fraction: q 5 refuses `100:00:00.1234`, and takes `10:00:00.1234`,
+    // `100:00:00.123` and `100:00:00.1234t`, where a `t`, `u` or `v` after
+    // the vector cuts the fraction. (A timespan or timestamp refuses such an
+    // hour whatever follows it: `0D100:00:00` is '0D100:00:00.)
+    for m in crate::captures_where(re!(r"\d{3,}:\d{2}:\d{2}\.\d{4,}"), unsym, whole_token) {
+        let whole = m.get(0).unwrap();
+        if command_argument(source, whole.start())
+            || unsym[..whole.start()].ends_with(['D', 'T'])
+            || matches!(vector_suffix(unsym, whole.end()), Some('t' | 'u' | 'v'))
+        {
+            continue;
+        }
+        out.push(Finding::at(
+            path,
+            source,
+            whole.start(),
+            "QE006",
+            format!(
+                "`{}` is no time: after an hour of three digits it takes three digits of \
+                 fraction at most, and q refuses the literal",
+                whole.as_str()
+            ),
+        ));
     }
     // The digit forms too (#232): q 5 reads `1259u` as 12:59 and refuses
     // `1260u`, `120060v` and `126000t`. The minutes are a minute's last two

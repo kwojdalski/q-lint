@@ -56,6 +56,26 @@ f:12:60:00u
 === QE006 profile: general | a second's seconds are read (#449; q 5: '12:00:60)
 g:12:00:60v
 
+=== QE006 profile: general | year 0 has no date (#460; q 5: '0000.01.01)
+d:0000.01.01
+
+=== QE006 profile: general | nor any month (#460; q 5: '0000.01)
+a:0000.01m
+
+=== QE010 profile: general | nor a yyyymmdd date (#460; q 5: '00000101)
+c:00000101d
+
+=== QE006 profile: general | four digits of fraction after an hour of three (#460; q 5: '100:00:00.1234)
+t:100:00:00.1234
+
+=== clean profile: general | year 1, a two-digit hour, three digits of fraction, a cutting suffix (#460; q 5: each parses)
+m:0001.01.01
+i:10:00:00.1234
+j:100:00:00.123
+k:100:00:00.1234t
+l:100:00:00.1234 100:00t
+n:1000:00:00.1
+
 === QE006 | a minute past 59 in a digit-form minute (q 5: parse "1260u" is '1260)
 a:1260u
 
