@@ -532,6 +532,11 @@ r:p
 (`p`q) set'1 2
 r:p
 
+=== clean | load and rload define the global the path ends in (#470; q 5: load `:sub/k then k is the saved value)
+load `:sub/k
+rload `:sp
+r:k,sp
+
 === clean | a compound assignment at the root defines the name (q 5: a,:1; b:a is ,1)
 bb,:1
 f:{[] aa:bb; aa}

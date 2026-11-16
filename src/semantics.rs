@@ -878,6 +878,17 @@ fn global_writes(
             .or_default()
             .push(whole.end());
     }
+    // `` load `:k `` defines the global its path ends in (#470).
+    for m in re!(LOAD).captures_iter(code) {
+        let whole = m.get(0).unwrap();
+        if !call_time_sets && call_time(scopes, whole.start(), &m[1]) {
+            continue;
+        }
+        globals
+            .entry(qualify(&m[1], ns_at(whole.start())))
+            .or_default()
+            .push(whole.end());
+    }
     // Each of a symbol list, `` `p`q set'1 2 `` - only with each: q 5
     // `` `p`q set 1 2 `` defines neither name.
     // Parenthesised too: `` (`a`b) set' (1 2;3 4) `` (#464).
@@ -2543,6 +2554,9 @@ pub fn check(
     out
 }
 
+/// `` load `:path/name `` or `rload`, infix or bracketed: the name it defines.
+const LOAD: &str = r"\br?load\s*\[?\s*`:?(?:[^\s;\]\[()`]*/)?([A-Za-z][A-Za-z0-9_]*)\b";
+
 /// What a global holds, when the file assigns it once, at the top level, to
 /// a literal. Anything else - assigned twice, amended, `set`, assigned to an
 /// expression - is unknown, and the rules below say nothing about it.
@@ -2784,6 +2798,16 @@ fn named_values(
     {
         // Infix and bracket form alike: q 5 `a:1;set[`a;2 3];a 0` is 2.
         let name = m.get(1).or(m.get(2)).unwrap().as_str();
+        writes.entry(name).or_default().extend([0, 0]);
+        exact
+            .entry(key(name, m.get(0).unwrap().start()))
+            .or_default()
+            .extend([0, 0]);
+    }
+    // `` load `:k `` and `rload` restore the global named by the path's last
+    // part: q 5 `` k:([]a:`long$()); load `:k `` redefines `k` (#470).
+    for m in re!(LOAD).captures_iter(code) {
+        let name = m.get(1).unwrap().as_str();
         writes.entry(name).or_default().extend([0, 0]);
         exact
             .entry(key(name, m.get(0).unwrap().start()))
