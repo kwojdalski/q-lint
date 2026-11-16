@@ -814,3 +814,15 @@ show a 0
 === QT022 | and after a builtin taking the result (#471)
 a:2.5
 r:string a 0
+
+=== QT022 | an atom given a string by juxtaposition (#472; q 5: k "hi" is 'type)
+k:1.5
+u:k "hi"
+
+=== QT022 | or with @ (#472; q 5: k@"hi" is 'type)
+k:1.5
+v:k@"hi"
+
+=== clean | a name inside a string is not indexing (#472)
+k:1.5
+u:"k 0"

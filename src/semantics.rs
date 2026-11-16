@@ -2953,10 +2953,16 @@ fn named_values(
     );
     // From each name on, not match after match: in `show a 0` the match
     // `show a` would hide `a 0` (q 5: 'type) (#471).
+    // Over `comments`, where a string keeps its quotes: `k "hi"` and
+    // `k@"hi"` index an atom with a string (q 5: 'type) (#472). The name
+    // itself must be code, not inside a string.
     let mut at = 0;
-    while let Some(m) = indexed.captures_at(code, at) {
+    while let Some(m) = indexed.captures_at(comments, at) {
         let name = m.get(1).unwrap();
         at = name.end();
+        if code.get(name.range()) != Some(name.as_str()) {
+            continue;
+        }
         // Nor before a qSQL word, which ends the column list or the clause:
         // `update time:t0 from t` fills the column from the atom (q 5, #114).
         if m.get(2).is_some_and(|next| {
