@@ -3340,7 +3340,22 @@ fn named_values(
     };
     for (name, at) in exact.iter().filter(|_| !dynamic) {
         let name = name.as_str();
-        let [at] = at[..] else { continue };
+        // One write, or later ones that only index into it at the top level:
+        // `a:2.5` + `a[0]:9` leaves `a` an atom, and the indexed assignment
+        // is itself the 'type QT022 reports below (q 5, #607).
+        let Some((&at, rest)) = at.split_first() else {
+            continue;
+        };
+        let indexes = |&r: &usize| {
+            r > at
+                && scope_at(scopes, r).is_none()
+                && code[r..]
+                    .strip_prefix(name)
+                    .is_some_and(|after| after.trim_start().starts_with('['))
+        };
+        if !rest.iter().all(indexes) {
+            continue;
+        }
         if whole(name) {
             continue;
         }
@@ -3371,7 +3386,11 @@ fn named_values(
             }
             end += 1;
         }
-        if let Some(value) = held(&code[start..end], &comments[start..end]) {
+        if let Some(value) = held(&code[start..end], &comments[start..end])
+            // An indexed write into anything but an atom may change it:
+            // `d[`c]:3` adds a key.
+            && (rest.is_empty() || value == Held::Atom)
+        {
             // `0N` and `0W` are integers too: uqf's tick.q starts a log
             // handle as `0N` and sets it with hopen later. Not a short: q 5
             // `h:1h; h "hi"` is 'type, where `2i "hi"` writes (#477).

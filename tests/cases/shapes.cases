@@ -1127,3 +1127,17 @@ h:+'[1 2 3;4 5]
 a:-[1;"a"]
 b:+[1.5;"a"]
 c:mod[7;2]
+
+=== QT022 profile: general | an indexed assignment into a name bound to an atom (q 5: each 'type; #607)
+a:2.5
+a[0]:9
+b:"x"
+b[0]:"y"
+
+=== clean profile: general | an indexed assignment into a vector or dictionary keeps it a list (q 5: d 2 is 3)
+v:1 2 3
+v[0]:9
+d:`a`b!1 2
+d[`c]:3
+r:v 0
+s:d `c
