@@ -6460,7 +6460,11 @@ pub fn lint_selecting(
                         || symbols.as_bytes()[m.start()] == line.as_bytes()[m.start()])
             };
             // Reported at the first of them, which is where the fix starts.
-            if let Some(at) = re!(r#""z"\s*\$"#)
+            // Any cast whose type string holds a `z` or `Z`: q 5 `"Z"$"2023.01.01"`
+            // parses a datetime, and `"zj"$(1.5;2)` makes one item of one;
+            // and a date with a bare `T` or a `z`, `2023.01.01T` and
+            // `2023.01.01z`, is a datetime too (#501).
+            if let Some(at) = re!(r#""[A-Za-z ]*[zZ][A-Za-z ]*"\s*\$"#)
                 .find(literals)
                 .into_iter()
                 .chain(
@@ -6468,7 +6472,7 @@ pub fn lint_selecting(
                         re!(r"`datetime\s*\$"),
                         re!(r"\b15h\s*\$"),
                         re!(r"(?:^|[^\w.])-?0[NW]z\b"),
-                        re!(r"\b\d{4}\.\d{2}\.\d{2}T\d"),
+                        re!(r"\b\d{4}\.\d{2}\.\d{2}(?:T|z\b)"),
                         // `.z.z` and `.z.Z` are the clock as a datetime (-15h).
                         re!(r"\.z\.[zZ]\b"),
                     ]
