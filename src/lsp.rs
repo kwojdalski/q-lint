@@ -1225,9 +1225,23 @@ fn re_drive(path: &str) -> bool {
 }
 
 /// One spelling per file, for the index: the editor's URI and the folder scan
-/// reach the same file as `c:/a/b.q` and `C:\a\b.q` on Windows, and two keys
-/// for one file would count its own definitions as another file's.
+/// reach the same file as `c:/a/b.q` and `C:\a\b.q` on Windows, through a
+/// symlinked folder (`/tmp` and `/private/tmp`), or in another case on a
+/// case-insensitive disk, and two keys for one file would count its own
+/// definitions as another file's (#528). The real path where the file
+/// exists, or its folder's real path where it does not - a deleted file is
+/// still forgotten under the key it was read under.
 fn file_key(path: &str) -> String {
+    let real = std::path::Path::new(path);
+    if let Ok(real) = std::fs::canonicalize(real).or_else(|e| match real.file_name() {
+        Some(name) => real
+            .parent()
+            .map_or(Err(e), std::fs::canonicalize)
+            .map(|p| p.join(name)),
+        None => Err(e),
+    }) {
+        return real.to_string_lossy().into_owned();
+    }
     // Only on Windows is a backslash a separator; elsewhere it can be part of
     // a file name.
     let path = if cfg!(windows) {

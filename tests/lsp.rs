@@ -1753,3 +1753,22 @@ fn another_files_new_function_asks_the_client_to_refresh_its_colours() {
     server.send(json!({"jsonrpc":"2.0","method":"exit"}));
     assert_eq!(server.child.wait().unwrap().code(), Some(0));
 }
+
+#[cfg(unix)]
+#[test]
+fn a_document_opened_by_another_spelling_of_its_path_is_one_file() {
+    // The folder is opened through a symlink and the document by its real
+    // path. Keyed by both spellings, the file's own `a` was "defined
+    // elsewhere" and q 5's 'type went unreported (#528).
+    let dir = tempfile::tempdir().unwrap();
+    let real = dir.path().join("real");
+    std::fs::create_dir(&real).unwrap();
+    std::fs::write(real.join("real.q"), "a:1\nf:{a 0}\n").unwrap();
+    std::os::unix::fs::symlink(&real, dir.path().join("link")).unwrap();
+    let mut server = start_with_workspace(&dir.path().join("link"));
+    let uri = file_uri(&real.canonicalize().unwrap().join("real.q"));
+    server.open(&uri, "a:1\nf:{a 0}\n");
+    let found = codes_of(&server.diagnostics_for(&uri));
+    assert!(found.contains(&"QT022".to_string()), "{found:?}");
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
