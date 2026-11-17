@@ -3633,24 +3633,30 @@ fn named_values(
     // without that column, and nothing renames into it by symbol (`` `t ``
     // in an `update ... from `t` may add one): q 5 `px:2.5; t:([]a:1 2);
     // select p0:px 0 from t` is 'type (#576).
+    // Every name a symbol spells, gathered once: searching the file for each
+    // read in a phrase made a long where phrase quadratic (#707).
+    let symbols: HashSet<&str> = re!(r"`(\.?[A-Za-z][A-Za-z0-9_.]*)")
+        .captures_iter(code)
+        .map(|c| c.get(1).unwrap().as_str())
+        .collect();
     let visible = |name: &str, at: usize| -> Option<&Held> {
         if let Some(&(a, b, table)) = phrases.iter().find(|&&(a, b, _)| a <= at && at < b) {
             let columns = table
-                .filter(|&(t, e)| {
-                    !re!(r"`(\.?[A-Za-z][A-Za-z0-9_.]*)")
-                        .captures_iter(code)
-                        .any(|c| c[1] == code[t..e])
-                })
+                .filter(|&(t, e)| !symbols.contains(&code[t..e]))
                 .and_then(|(t, e)| match global(&code[t..e], t) {
                     Some(Held::Table(columns, _)) => Some(columns),
                     _ => None,
                 });
-            let assigned_here = re!(r"([A-Za-z][A-Za-z0-9_]*)\s*:")
-                .captures_iter(&code[a..b.min(code.len())])
-                .any(|c| &c[1] == name);
+            // Only once the table is known: read for every name in a phrase,
+            // a long where phrase was quadratic (#707).
+            let assigned_here = || {
+                re!(r"([A-Za-z][A-Za-z0-9_]*)\s*:")
+                    .captures_iter(&code[a..b.min(code.len())])
+                    .any(|c| &c[1] == name)
+            };
             match columns {
                 Some(columns)
-                    if name != "i" && !assigned_here && !columns.iter().any(|c| c == name) => {}
+                    if name != "i" && !columns.iter().any(|c| c == name) && !assigned_here() => {}
                 _ => return None,
             }
         }

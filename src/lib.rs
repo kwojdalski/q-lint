@@ -7264,6 +7264,11 @@ pub fn lint_selecting(
         }
         if re!(r"\b(?:where|select|exec|update|delete)\b").is_match(line) {
             let mut search = 0;
+            // The statement each comparison is in, and whether a qSQL keyword
+            // starts before it there, read on from the last comparison: from
+            // the line's start for each, a long where phrase was quadratic
+            // (#707).
+            let (mut semi, mut scanned, mut keyword) = (0, 0, false);
             // Any comparison is constant against itself: `a<>a` and `a<a`
             // keep no row, `a<=a` every one (#638).
             while let Some(m) =
@@ -7282,8 +7287,17 @@ pub fn lint_selecting(
                 // And the comparison is in the query's own statement, not
                 // another one on its line: `n:a=a; r:select from t`.
                 let start = m.get(0).unwrap().start();
-                let head = &line[line[..start].rfind(';').map_or(0, |p| p + 1)..start];
-                let query = re!(r"\b(?:where|select|exec|update|delete)\b").is_match(head);
+                if let Some(p) = line[scanned.min(start)..start].rfind(';') {
+                    (semi, keyword) = (scanned.min(start) + p + 1, false);
+                    scanned = semi;
+                }
+                if !keyword {
+                    keyword = re!(r"\b(?:where|select|exec|update|delete)\b")
+                        .find_at(&line[..start], scanned.saturating_sub(8).max(semi))
+                        .is_some();
+                }
+                scanned = start;
+                let query = keyword;
                 // The left name whole too: `.cfg.a=a` compares a global with
                 // the column (#498).
                 if m[1] == m[3] && ends && query && boundary(line, start) {
