@@ -750,10 +750,11 @@ pub fn tokens(code: &str, raw: &str, ws: &crate::Workspace) -> Vec<(usize, usize
     // q 5's `p:{[a;b] a+b}[1;]` is type 104h and `p 2` is 3 (#367). The
     // writes are `global_writes`', which a table column or a qSQL alias is
     // not: after `t:([] f:1 2)`, q 5's `f` is still the lambda (#365).
-    let lambda: HashMap<String, bool> = global_writes(code, &scopes, &namespaces, qualify, true)
-        .into_iter()
-        .map(|(key, at)| (key, at.iter().all(|&at| assigns_lambda(code, at))))
-        .collect();
+    let lambda: HashMap<String, bool> =
+        global_writes(code, raw, &scopes, &namespaces, qualify, true)
+            .into_iter()
+            .map(|(key, at)| (key, at.iter().all(|&at| assigns_lambda(code, at))))
+            .collect();
     let mut out = vec![];
     for m in name.find_iter(code) {
         if !boundary(code, m.start()) {
@@ -820,6 +821,7 @@ type Writes = HashMap<String, Vec<usize>>;
 /// has a definition; the graph says it cannot know instead.
 fn global_writes(
     code: &str,
+    raw: &str,
     scopes: &[Scope],
     namespaces: &[(usize, String)],
     qualify: fn(&str, &str) -> String,
@@ -945,18 +947,15 @@ fn global_writes(
     // So does `\l` of a table's directory or file: q 5's `.Q.lo` sets the
     // last part of the path, and `\l data/trades` defines `trades` (#534).
     // Not a script, `\l x.q`, whose name defines nothing.
-    let mut offset = 0;
-    for line in code.split_inclusive('\n') {
+    for (at, rest) in load_lines(code, raw) {
         if let Some(m) =
-            re!(r"^\\l[ \t]+(?:\S*/)?([A-Za-z][A-Za-z0-9_]*)/?[ \t\r]*\n?$").captures(line)
+            re!(r"^[ \t]+(?:\S*/)?([A-Za-z][A-Za-z0-9_]*)/?[ \t\r]*\n?$").captures(rest)
         {
-            let end = offset + m.get(1).unwrap().end();
             globals
-                .entry(qualify(&m[1], ns_at(offset)))
+                .entry(qualify(&m[1], ns_at(at)))
                 .or_default()
-                .push(end);
+                .push(at + rest.len());
         }
-        offset += line.len();
     }
     // Each of a symbol list, `` `p`q set'1 2 ``, parenthesised too (#464).
     for (whole, names) in each_set_targets(code) {
@@ -1040,6 +1039,19 @@ fn global_writes(
 /// What one file defines for the files around it: its global names, and
 /// which of them it assigns a lambda. Read, never run - the same passes the
 /// checks use, stopped before any rule.
+/// Each `\l` line, with where it starts and what follows the `\l` in the
+/// code view. `q)\l b.q` loads as `\l b.q` does (q 5), though `views` has
+/// blanked the prompt (#536).
+fn load_lines<'a>(code: &'a str, raw: &'a str) -> impl Iterator<Item = (usize, &'a str)> {
+    let mut offset = 0;
+    code.split_inclusive('\n').filter_map(move |line| {
+        let at = offset;
+        offset += line.len();
+        let prompt = if raw[at..].starts_with("q)") { 2 } else { 0 };
+        line[prompt..].strip_prefix("\\l").map(|rest| (at, rest))
+    })
+}
+
 /// The global each `k)` line assigns at its start, `k)lim:100`, under the
 /// `\d` in force: k assigns q's globals, though both views blank the line.
 fn k_writes(raw: &str, namespaces: &[(usize, String)]) -> Vec<String> {
@@ -1058,7 +1070,7 @@ fn k_writes(raw: &str, namespaces: &[(usize, String)]) -> Vec<String> {
 
 pub fn index(code: &str, raw: &str) -> crate::FileIndex {
     let (scopes, namespaces) = scopes(code, raw);
-    let mut globals = global_writes(code, &scopes, &namespaces, resolved, true);
+    let mut globals = global_writes(code, raw, &scopes, &namespaces, resolved, true);
     for name in k_writes(raw, &namespaces) {
         globals.entry(name).or_default();
     }
@@ -1221,7 +1233,7 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
     names.sort();
     let mut relative: Vec<_> = relative.into_iter().collect();
     relative.sort();
-    let writes = global_writes(code, &scopes, &namespaces, resolved, false);
+    let writes = global_writes(code, raw, &scopes, &namespaces, resolved, false);
     let mut implicit_defines: Vec<_> = writes
         .iter()
         .filter(|(name, at)| !name.starts_with('.') && at.iter().any(|&a| a < first_switch))
@@ -1370,12 +1382,10 @@ fn loads(
     namespace_at: impl Fn(usize) -> String,
 ) -> Vec<(String, String)> {
     let mut loads = vec![];
-    let mut offset = 0;
-    for line in code.split_inclusive('\n') {
-        if let Some(m) = re!(r"^\\l\s+(\S+)").captures(line) {
-            loads.push((m[1].to_string(), namespace_at(offset)));
+    for (at, rest) in load_lines(code, raw) {
+        if let Some(m) = re!(r"^\s+(\S+)").captures(rest) {
+            loads.push((m[1].to_string(), namespace_at(at)));
         }
-        offset += line.len();
     }
     for m in re!(r#"\bsystem\s*"l\s+([^"\s]+)\s*""#).captures_iter(raw) {
         let at = m.get(0).unwrap().start();
@@ -1512,9 +1522,9 @@ pub(crate) enum Unnamed {
 
 /// Where `opaque` finds each write it cannot name, and of what kind.
 pub(crate) fn unnamed_writes(code: &str, comments: &str, raw: &str) -> Vec<(usize, Unnamed)> {
-    let mut found: Vec<(usize, Unnamed)> = re!(r"(?m)^\\l\b")
-        .find_iter(code)
-        .map(|m| (m.start(), Unnamed::Evaluation))
+    let mut found: Vec<(usize, Unnamed)> = load_lines(code, raw)
+        .filter(|(_, rest)| !rest.starts_with(|c: char| c.is_alphanumeric() || c == '_'))
+        .map(|(at, _)| (at, Unnamed::Evaluation))
         .collect();
     // A `k)` line is blank in both views, as another language's, but k
     // assigns q's globals: q 5 `a:1`, `k)a:1 2 3`, then `a 0` is 1.
@@ -1844,12 +1854,12 @@ pub fn check(
         .1
         .as_str()
     };
-    let globals = global_writes(code, &scopes, &namespaces, qualify, true);
+    let globals = global_writes(code, raw, &scopes, &namespaces, qualify, true);
     // The same writes keyed as q resolves them, root `x` apart from `.x`:
     // a name read in a `\d .ns` lambda is `.ns.x` and nothing else - q 5
     // has no root fallback. After `x:1`, `\d .ns`, `f:{[a] a+x}`, calling
     // `.ns.f 1` is 'x.
-    let exact = global_writes(code, &scopes, &namespaces, resolved, true);
+    let exact = global_writes(code, raw, &scopes, &namespaces, resolved, true);
     // What this file defines itself; the workspace answers for the rest,
     // keyed the same way (#359).
     let own: HashSet<String> = exact.keys().cloned().collect();

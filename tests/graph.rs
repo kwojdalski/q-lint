@@ -789,3 +789,10 @@ fn loading_a_table_by_its_path_defines_it() {
     );
     assert_eq!(deps(&g, "use.q"), ["init.q"]);
 }
+
+#[test]
+fn a_load_after_a_q_prompt_is_an_edge() {
+    // q 5 reads `q)\l b.q` as `\l b.q` (#536).
+    let g = graph(&[("b.q", "zz:1\n"), ("a.q", "q)\\l b.q\n")], false);
+    assert_eq!(deps(&g, "a.q"), ["b.q"]);
+}

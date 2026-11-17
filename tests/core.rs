@@ -543,6 +543,15 @@ fn system_d_switches_context_without_hiding_the_files_names() {
 }
 
 #[test]
+fn a_load_after_a_q_prompt_may_define_anything() {
+    // q 5 loads `q)\l b.q`, and b.q's `zz:1` is then defined (#536).
+    for load in ["\\l b.q", "q)\\l b.q"] {
+        let style = lint(&format!("{load}\nr:zz\n"), "e.q", Profile::Style);
+        assert!(!codes(&style).contains(&"QF018"), "{load}");
+    }
+}
+
+#[test]
 fn table_columns_and_qsql_assignments_define_no_global() {
     let index =
         q_lint_rs::index("t:([k:`a`b]handle:1 2)\nu:update c:1 from t\nclust.kmeans.update:{x}\n");
