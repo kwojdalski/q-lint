@@ -10,6 +10,15 @@ macro_rules! re {
         &*RE
     }};
 }
+/// Blanks inside one statement, for a pattern to span: spaces and tabs, and a
+/// line break only into an indented line, which q continues the statement
+/// with. `\s` would run on into the next statement - `r:x like "a*"`, then
+/// `` `t insert 1 `` at column 0, is no `like` of a symbol (#722, #725, #730).
+macro_rules! blank {
+    () => {
+        r"(?:[ \t\r]|\n[\r\n]*[ \t])"
+    };
+}
 mod families;
 mod intrinsics;
 mod refusals;
@@ -511,7 +520,7 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         // spelling is 'type or a projection, never a boolean, so no
         // working program changes.
         "QB007" => {
-            let lead = re!(r"^like\s*`").find(source.get(start..)?)?;
+            let lead = re!(concat!(r"^like", blank!(), "*`")).find(source.get(start..)?)?;
             let pattern = start + lead.end();
             let mut depth = 0;
             let len = source[pattern..]
@@ -3960,7 +3969,7 @@ pub fn lint_selecting(
     // `"abc" like `a*` is `like["abc"]*[`a]`, a projection, returned
     // silently where a boolean was wanted - except in a where phrase, which
     // wants booleans and raises 'type on it.
-    for m in re!(r"\blike\s*`[A-Za-z0-9_.:]*").find_iter(code) {
+    for m in re!(concat!(r"\blike", blank!(), r"*`[A-Za-z0-9_.:]*")).find_iter(code) {
         // A backtick before it makes this the symbol `` `like ``, an element of
         // a list rather than the operator - `` `abs`cor`like`mins `` is data.
         if !boundary(code, m.start()) {
