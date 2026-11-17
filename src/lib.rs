@@ -2484,9 +2484,12 @@ struct Views {
 /// A question about the source, not about `code`: `views` blanks the `q)`
 /// that q 5 reads `q)\t 1+1` and `q)\l f.q` past (#316), and in `code`
 /// such a line looks like an indented one.
+///
+/// Only a space makes one: q 5 reads `\t<TAB>x` as setting the timer from
+/// a non-number ('domain) and `\ts<TAB>x` as the shell command `ts` (#664).
 pub(crate) fn timed_prefix(line: &str) -> usize {
     let prompt = if line.starts_with("q)") { 2 } else { 0 };
-    re!(r"^\\ts?(?::\d+)?[ \t]")
+    re!(r"^\\ts?(?::\d+)? ")
         .find(&line[prompt..])
         .map_or(0, |m| prompt + m.end())
 }
