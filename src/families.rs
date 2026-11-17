@@ -50,10 +50,11 @@ fn query_injection(path: &str, source: &str, code: &str, comments: &str, out: &m
     // over a handle - `h "select ...",x` - is evaluated by the remote
     // process's `.z.pg`, which is `value` by default. A name applied to a
     // query string is taken for a handle unless it is one of q's own, or a
-    // lambda this file defines: `lg "update finished"` logs a line (#345).
+    // lambda this file defines, with `:` or `::`: `lg "update finished"` logs
+    // a line (#345, #654).
     let lambda = |name: &str| {
         regex::Regex::new(&format!(
-            r"(?:^|[^A-Za-z0-9_.`]){}[ \t]*:[ \t]*\{{",
+            r"(?:^|[^A-Za-z0-9_.`]){}[ \t]*::?[ \t]*\{{",
             regex::escape(name)
         ))
         .is_ok_and(|r| r.is_match(code))
