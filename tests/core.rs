@@ -406,6 +406,33 @@ fn a_foreign_keyword_is_looked_up_in_the_namespace_it_is_read_in() {
 }
 
 #[test]
+fn a_lambda_another_file_redefines_has_no_known_rank_in_a_lambda() {
+    use q_lint_rs::{Workspace, index, lint, lint_in};
+    // q 5, b.q then a.q loaded: `g[]` is 3, as a.q's `f:{x+y}` replaced
+    // b.q's `f:{x}` before g ran. A top-level call straight after b.q's own
+    // definition meets that one, and is 'rank (#521).
+    let in_lambda = "f:{x}\ng:{f[1;2]}\nh:{f(1;2)}\n";
+    let found = |src: &str, ws: &Workspace| {
+        codes(&lint_in(src, "b.q", Profile::General, ws))
+            .into_iter()
+            .filter(|c| ["QA012", "QA008"].contains(c))
+            .count()
+    };
+    assert_eq!(found(in_lambda, &Workspace::default()), 1);
+    let mut ws = Workspace::default();
+    ws.add(&index("f:{x+y}\n"));
+    ws.add(&index(in_lambda));
+    assert_eq!(found(in_lambda, &ws), 0);
+
+    let top = "f:{x}\nf[1;2]\n";
+    assert!(codes(&lint(top, "b.q", Profile::General)).contains(&"QA012"));
+    let mut ws = Workspace::default();
+    ws.add(&index("f:{x+y}\n"));
+    ws.add(&index(top));
+    assert!(codes(&lint_in(top, "b.q", Profile::General, &ws)).contains(&"QA012"));
+}
+
+#[test]
 fn a_name_another_file_also_assigns_is_not_tracked_in_a_lambda() {
     use q_lint_rs::{Workspace, index, lint, lint_in};
     // Alone, a is the atom 1 and indexing it is 'type. With another file

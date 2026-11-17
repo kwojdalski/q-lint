@@ -4294,10 +4294,21 @@ pub fn lint_selecting(
         let defined = defined_at.get(key).copied().unwrap_or(0);
         unnamed.iter().any(|&at| at > defined || in_lambda(at))
     };
+    // Nor is the rank known to a call in a lambda when another file assigns
+    // the name: the lambda runs once both are loaded, and meets whichever
+    // ran last - q 5 runs b.q's `g:{f[1;2]}` to 3 after a.q's `f:{x+y}`
+    // replaced b.q's `f:{x}` (#521). A top-level call after this file's
+    // own definition meets that one.
+    let own = semantics::index(code, source).defined;
+    let foreign = |at: usize, key: &str| ws.defined_elsewhere(key, &own) && in_lambda(at);
     for m in re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)\s*\[").captures_iter(code) {
         let (whole, name) = (m.get(0).unwrap(), m.get(1).unwrap().as_str());
         let key = qualified(whole.start(), name);
-        if !boundary(code, whole.start()) || redefined.contains(&key) || overwritten(&key) {
+        if !boundary(code, whole.start())
+            || redefined.contains(&key)
+            || overwritten(&key)
+            || foreign(whole.start(), &key)
+        {
             continue;
         }
         let Some(&rank) = ranks.get(&key) else {
@@ -4336,6 +4347,7 @@ pub fn lint_selecting(
         // A name defined twice has whichever rank ran last, as QA012 knows.
         if !boundary(code, whole.start())
             || redefined.contains(&qualified(whole.start(), name))
+            || foreign(whole.start(), &qualified(whole.start(), name))
             || ranks
                 .get(&qualified(whole.start(), name))
                 .is_none_or(|&r| r < 2)
@@ -4410,7 +4422,7 @@ pub fn lint_selecting(
             }
         } else if re!(r"^\.?[A-Za-z][A-Za-z0-9_.]*$").is_match(f) {
             let key = qualified(f_at, f);
-            if redefined.contains(&key) || shadowed(code, source, f_at, f) {
+            if redefined.contains(&key) || foreign(f_at, &key) || shadowed(code, source, f_at, f) {
                 continue;
             }
             match ranks.get(&key) {
@@ -4465,6 +4477,7 @@ pub fn lint_selecting(
             let key = qualified(at, name);
             if !boundary(code, start)
                 || redefined.contains(&key)
+                || foreign(at, &key)
                 || shadowed(code, source, at, name)
             {
                 return None;
