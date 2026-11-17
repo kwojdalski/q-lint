@@ -1104,3 +1104,46 @@ fn force_exclude_applies_a_name_pattern_to_a_file_outside_its_root() {
     let unforced = [&args[..], &["../other/gen/f.q"]].concat();
     assert_eq!(repo.codes("here", &unforced), ["QF016"]);
 }
+
+#[test]
+fn an_exclude_naming_the_whole_tree_is_refused_like_an_empty_one() {
+    // `--exclude "$UNSET/"` is `/`, and `./` names the root: both linted
+    // nothing and exited 0, while `.` excluded nothing at all (#803).
+    let repo = Repo::new();
+    repo.write("src/a.q", SOURCE).write("sub/.keep", "");
+    for (cwd, pattern) in [
+        (".", "/"),
+        (".", "./"),
+        (".", "."),
+        ("sub", ".."),
+        (".", " ./ "),
+    ] {
+        for args in [
+            &["--isolated", "--exclude", pattern, "."][..],
+            &["analyze", "graph", "--exclude", pattern, "."][..],
+        ] {
+            let out = run(&repo.path(cwd), args);
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            assert_eq!(out.status.code(), Some(2), "{args:?}: {stderr}");
+            assert!(stderr.contains("whole tree"), "{args:?}: {stderr}");
+        }
+    }
+    repo.write("qlinter.toml", "exclude = [\"./\"]\n");
+    let out = run(&repo.path("."), &["."]);
+    assert_eq!(out.status.code(), Some(2));
+    // A per-file-ignore for the whole tree is meaningful, and `.` now
+    // means what `./` does there.
+    repo.write(
+        "qlinter.toml",
+        "profile = \"style\"\n[lint]\nper-file-ignores = {\".\" = [\"QF016\"]}\n",
+    );
+    assert_eq!(repo.codes(".", &["src/a.q"]), Vec::<String>::new());
+    // A directory in the tree is still a pattern like any other.
+    assert_eq!(
+        repo.codes(
+            ".",
+            &["--isolated", "--profile", "style", "--exclude", "src", "."]
+        ),
+        Vec::<String>::new()
+    );
+}

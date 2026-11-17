@@ -213,7 +213,7 @@ fn overrides(args: &Args) -> Result<Overrides, String> {
         exclude: args
             .exclude
             .iter()
-            .map(|p| config::rooted(&config::absolute(&cwd), p))
+            .map(|p| config::excluding(&config::absolute(&cwd), p))
             .collect::<Result<_, _>>()
             .map_err(|e| format!("--exclude: {e}"))?,
         config: args.config.clone(),
@@ -720,7 +720,7 @@ fn analyze_graph(args: GraphArgs) -> Result<u8, String> {
         exclude: args
             .exclude
             .iter()
-            .map(|p| config::rooted(&cwd, p))
+            .map(|p| config::excluding(&cwd, p))
             .collect::<Result<_, _>>()
             .map_err(|e| format!("--exclude: {e}"))?,
         config: None,

@@ -704,7 +704,7 @@ fn load(
                     .filter(|s| !s.trim().is_empty())
                     .ok_or_else(|| format!("{shown}: {key} must contain nonempty strings"))?;
                 globs.push(
-                    rooted(patterns.unwrap_or(&root), p)
+                    excluding(patterns.unwrap_or(&root), p)
                         .map_err(|e| format!("{shown}: {key}: {e}"))?,
                 );
             }
@@ -780,6 +780,20 @@ pub struct Glob {
 /// root before matching, so `gen/`, `./gen` and an absolute `/abs/root/gen`
 /// all name the root's `gen` - anchored there - and only a bare `gen`, with
 /// no `/` in it at all, also matches the name anywhere below it.
+/// `rooted`, for an exclusion: one that names its root or a directory above
+/// it - `.`, `./`, `..`, or `/` from anywhere - would leave nothing to lint
+/// and pass, as an empty one would, so it is refused like one (#803).
+pub fn excluding(root: &Path, text: &str) -> Result<Glob, String> {
+    let glob = rooted(root, text)?;
+    if glob.pattern.as_str().is_empty() && absolute(root).starts_with(&glob.root) {
+        return Err(format!(
+            "{}: the pattern names the whole tree, so it would exclude every file",
+            text.trim()
+        ));
+    }
+    Ok(glob)
+}
+
 pub fn rooted(root: &Path, text: &str) -> Result<Glob, String> {
     let trimmed = text.trim();
     // An empty pattern names its root, so it would exclude everything: a
@@ -820,6 +834,9 @@ pub fn rooted(root: &Path, text: &str) -> Result<Glob, String> {
         } else if rest == ".." {
             rest = "";
             root.pop();
+        } else if rest == "." {
+            // The root itself, as `./` is: not a file named `.` (#803).
+            rest = "";
         } else {
             break;
         }
