@@ -470,6 +470,21 @@ r:+/1 2 3
 === clean | over on a function, in brackets
 r:+/[1 2 3]
 
+=== QE009 profile: general | an iterator with nothing on its left before an operand (q 5: '/ for each, and ' for a:1;/ TODO, #656)
+r:(1;/x)
+s:f[/x]
+t:{[x]/x}
+u:(1;/:x)
+a:1;/ TODO
+
+=== clean profile: general | with no operand after it, applied with brackets, or a signal (q 5 parses each, #656)
+r:(/)
+s:(/;1)
+t:{/}
+u:(/[x])
+v:(1;'x)
+a:1;/
+
 === QB015 | a string literal in a filter
 select from t where sym="EUR"
 

@@ -1295,16 +1295,6 @@ fn juxtaposed_derived(
         if c[m.start()] != b[m.start()] {
             continue;
         }
-        let Some(start) = derived_operand(&view, c, &opener, m.start()) else {
-            continue;
-        };
-        // Not on a system command, but in a `\t` line's expression (#583)
-        // and after a `q)` prompt (#582).
-        let line_start = view[..start].rfind('\n').map_or(0, |p| p + 1);
-        if crate::system_command(&source[line_start..]) {
-            continue;
-        }
-        let line_start = line_start + expression_start(&source[line_start..]);
         // Applied to an operand right after the iterator: a name, a symbol,
         // a bracketed or quoted value, or a number.
         // A `-` before an operand is one too: `+/-x` holds the same derived
@@ -1321,6 +1311,42 @@ fn juxtaposed_derived(
             || (next.starts_with('-')
                 && next[1..]
                     .starts_with(|ch: char| ch.is_ascii_alphabetic() || "`(\"".contains(ch)));
+        let Some(start) = derived_operand(&view, c, &opener, m.start()) else {
+            // Nothing on its left at all - right after `(`, `[`, `{`, `;` or
+            // a signature - an iterator derives no function, and q 5 refuses
+            // `(1;/x)`, `f[/x]` and `{[x]/x}` with '/ (#656). A blank before
+            // it makes it a comment, and a lone `'` is a signal.
+            let line_start = view[..m.start()].rfind('\n').map_or(0, |p| p + 1);
+            if operand
+                && m.start() > line_start
+                && !crate::system_command(&source[line_start..])
+                && (b"([{;".contains(&c[m.start() - 1])
+                    || after_signature(code, source, m.start()))
+                && !(m.as_str().starts_with('\'') && !m.as_str().starts_with("':"))
+            {
+                let iter = &view[iterator..m.end()];
+                let mut finding = Finding::at(
+                    path,
+                    source,
+                    m.start(),
+                    "QE009",
+                    format!(
+                        "q 5 refuses an iterator with nothing on its left ('{iter}): it derives \
+                         no function to apply"
+                    ),
+                );
+                finding.end_column = finding.column.map(|col| col + m.len());
+                out.push(finding);
+            }
+            continue;
+        };
+        // Not on a system command, but in a `\t` line's expression (#583)
+        // and after a `q)` prompt (#582).
+        let line_start = view[..start].rfind('\n').map_or(0, |p| p + 1);
+        if crate::system_command(&source[line_start..]) {
+            continue;
+        }
+        let line_start = line_start + expression_start(&source[line_start..]);
         if !operand || !opens_expression(code, source, &view, start, line_start) {
             continue;
         }
