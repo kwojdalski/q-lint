@@ -3546,6 +3546,10 @@ fn named_values(
             && !columns.iter().any(|c| c == name)
             && !globals.contains_key(&key(name, at))
             && !elsewhere(&key(name, at))
+            // Nor one defined in `.q`, which every context reads: q 5 runs
+            // `.q.bb:10 20` then `select bb from ([]a:1 2)` (#524).
+            && !globals.contains_key(&format!(".q.{name}"))
+            && !elsewhere(&format!(".q.{name}"))
             && !crate::RESERVED.iter().any(|n| n == name)
             && !scope_at(scopes, at).is_some_and(|s| scopes[s].locals.contains(name))
     };

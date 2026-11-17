@@ -494,6 +494,20 @@ fn a_call_to_another_files_lambda_may_reassign_a_top_level_name() {
 }
 
 #[test]
+fn a_name_defined_in_dot_q_is_not_an_unknown_column() {
+    use q_lint_rs::{Workspace, index, lint, lint_in};
+    // q 5: after `.q.bb:10 20`, `select bb from t` returns bb (#524).
+    let query = "t:([]a:1 2)\nr:select bb from t\n";
+    assert!(codes(&lint(query, "use.q", Profile::General)).contains(&"QF020"));
+    let one = format!(".q.bb:10 20\n{query}");
+    assert!(!codes(&lint(&one, "one.q", Profile::General)).contains(&"QF020"));
+    let mut ws = Workspace::default();
+    ws.add(&index(".q.bb:10 20\n"));
+    ws.add(&index(query));
+    assert!(!codes(&lint_in(query, "use.q", Profile::General, &ws)).contains(&"QF020"));
+}
+
+#[test]
 fn an_enclosing_local_is_not_excused_by_another_files_global() {
     use q_lint_rs::{Workspace, index, lint_in};
     // The inner lambda reads its enclosing lambda's parameter, which q does
