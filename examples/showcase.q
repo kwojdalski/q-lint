@@ -10,10 +10,12 @@
 / with the other findings. The unclosed delimiter lives in syntax-error.q
 / instead: it stops the file being analysed at all and would hide the rest.
 
-/ Coverage: of the 88 rules in the taxonomy, 86 can fire on q source and
-/ every one is marked below or in syntax-error.q. The two that cannot are
-/ QF006 (python-hook, no raiser in this build) and QLS001 (external qls
-/ server, demonstrated in its own section near the end).
+/ Coverage: every rule in the taxonomy but two can fire on q source, and
+/ each of those is marked below or in one of the three companion files:
+/ syntax-error.q (QE001), byte-order-mark.q (QE005) and query-injection.q
+/ (QX001). The two that cannot are QF006 (python-hook, no raiser in this
+/ build) and QLS001 (external qls server, demonstrated in its own section
+/ near the end).
 / Comment spacers here are slash-plus-text on purpose: a line that is only
 / a slash opens a q block comment and would swallow the rest of the file,
 / which is exactly what QP001 (uqf profile) is about.
