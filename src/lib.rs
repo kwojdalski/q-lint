@@ -3980,18 +3980,24 @@ pub fn lint_selecting(
     // 'type errors. Chars are another matter, version by version - see
     // QT023 - so this rule is a symbol literal next to an infix + - * % and
     // nothing more.
-    // Spaces and tabs only between the symbol and the operator: a symbol
-    // ending one line and a `-1"..."` print opening the next are two
-    // statements, not a subtraction - the commonest shape in public q. After
-    // the operator, an indented line continues it, past blank and comment
-    // lines (#224).
+    // Between the symbol and the operator, the statement's blanks: a symbol
+    // ending one line and a `-1"..."` print opening the next at column 0 are
+    // two statements, not a subtraction - the commonest shape in public q -
+    // but an indented line continues it, on either side of the operator and
+    // past blank and comment lines (#224, #688).
     for m in
         // `&` and `|` are min and max, and 'type on a symbol too, as are the
         // word operators (q 5: `a&`b, `a mod 2, 2 xexp `a). Not `^`: a
         // symbol fills a symbol list (`none^s).
         // The null symbol, a lone backtick, is one too: q 5 `` ` + 1 `` is 'type.
-        re!(r"(?:`(?:[A-Za-z][A-Za-z0-9_.]*)?)+(?:[ \t]*[+\-*%&|]|[ \t]+(?:mod|div|xexp|xlog|and|or)[ \t])|(?:[+\-*%&|][ \t]*(?:(?:\r?\n[ \t]*)*\r?\n[ \t]+)?|[ \t](?:mod|div|xexp|xlog|and|or)(?:[ \t]*(?:\r?\n[ \t]*)*\r?\n[ \t]+|[ \t]+))(?:`(?:[A-Za-z][A-Za-z0-9_.]*)?)+")
-            .find_iter(code)
+        re!(concat!(
+            r"(?:`(?:[A-Za-z][A-Za-z0-9_.]*)?)+(?:",
+            blank!(),
+            r"*[+\-*%&|]|",
+            blank!(),
+            r"+(?:mod|div|xexp|xlog|and|or)[ \t])|(?:[+\-*%&|][ \t]*(?:(?:\r?\n[ \t]*)*\r?\n[ \t]+)?|[ \t](?:mod|div|xexp|xlog|and|or)(?:[ \t]*(?:\r?\n[ \t]*)*\r?\n[ \t]+|[ \t]+))(?:`(?:[A-Za-z][A-Za-z0-9_.]*)?)+"
+        ))
+        .find_iter(code)
     {
         let at = m.start();
         // `like `a*` is a glob, not a product; QB007 owns that one.

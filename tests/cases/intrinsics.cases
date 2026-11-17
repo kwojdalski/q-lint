@@ -599,6 +599,13 @@ t:([]a:enlist	1;b:2 3)
 === QT003 profile: general | arithmetic on the null symbol (#455; q 5: ` + 1 is 'type)
 a:` + 1
 
+=== QT003 profile: general | with the operator starting the indented next line, past a blank line too (q 5: each 'type, #688)
+z:`
+  + 1
+a:`a
+
+  * 2
+
 === clean profile: general | a symbol composing with a projection on its right (q 5: `+n% is +[`]%[n], `a*n* is *[`a]*[n]; btick2 templates write `%name%])
 n:1
 a:`+n%
