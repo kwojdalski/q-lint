@@ -1435,33 +1435,49 @@ fn dynamic(raw: &str, view: &str, call_time: &[(usize, &'static str)]) -> Vec<cr
 /// `value f` decomposes a lambda - so `value` counts only with a string in
 /// its statement, read from a file (`value each read0 f`), or held in a name
 /// the file binds to a string (q 5: `s:"a:1 2 3"; value s; a 0` is 1). A
-/// `system` command counts unless it is a literal that neither loads nor
-/// changes context, however it is applied: `system ("l ",f)`, `system c`,
+/// `system` command counts when it visibly loads or changes context,
+/// however it is applied: `system ("l ",f)`, `system c` after `c:"l f"`,
 /// `system["l f"]`, `system@"l f"` and `@[system;"l f";h]` all load.
 pub(crate) fn opaque(code: &str, comments: &str, raw: &str) -> bool {
     !unnamed_writes(code, comments, raw).is_empty()
 }
 
-/// Where `opaque` finds each write it cannot name, and whether it only
-/// changes `\d` - `system "d ..."`, which moves later definitions to a
-/// context rather than defining anything itself.
-pub(crate) fn unnamed_writes(code: &str, comments: &str, raw: &str) -> Vec<(usize, bool)> {
-    let mut found: Vec<(usize, bool)> = re!(r"(?m)^\\l\b")
+/// What kind of write `unnamed_writes` found.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Unnamed {
+    /// `system "d ..."`, which moves later definitions to a context rather
+    /// than defining anything itself.
+    Context,
+    /// Code the file runs without spelling it out - a load, `eval`, `value`
+    /// or `get` of a string - which may define anything, functions included.
+    Evaluation,
+    /// A value put into a name the text does not say: a `set` into a computed
+    /// name, an upsert into `` `. ``, an assignment on a `k)` line.
+    Overwrite,
+}
+
+/// Where `opaque` finds each write it cannot name, and of what kind.
+pub(crate) fn unnamed_writes(code: &str, comments: &str, raw: &str) -> Vec<(usize, Unnamed)> {
+    let mut found: Vec<(usize, Unnamed)> = re!(r"(?m)^\\l\b")
         .find_iter(code)
-        .map(|m| (m.start(), false))
+        .map(|m| (m.start(), Unnamed::Evaluation))
         .collect();
     // A `k)` line is blank in both views, as another language's, but k
     // assigns q's globals: q 5 `a:1`, `k)a:1 2 3`, then `a 0` is 1.
     found.extend(
         re!(r"(?m)^k\)[^\n]*:")
             .find_iter(raw)
-            .map(|m| (m.start(), false)),
+            .map(|m| (m.start(), Unnamed::Overwrite)),
     );
-    let strings: HashSet<&str> = re!(r#"(\.?[A-Za-z][A-Za-z0-9_.]*)\s*::?\s*""#)
-        .captures_iter(comments)
-        .filter(|m| boundary(comments, m.get(0).unwrap().start()))
-        .map(|m| m.get(1).unwrap().as_str())
-        .collect();
+    // A name bound to a string literal and nothing else: `s:"a:1 2 3"`, not
+    // `s:" " sv parts`, which starts with one (BuaBook's cargs.q values a
+    // dictionary built so).
+    let strings: HashMap<&str, &str> =
+        re!(r#"(\.?[A-Za-z][A-Za-z0-9_.]*)\s*::?\s*"((?:[^"\\]|\\.)*)"\s*(?:[;)\]}\n]|$)"#)
+            .captures_iter(comments)
+            .filter(|m| boundary(comments, m.get(0).unwrap().start()))
+            .map(|m| (m.get(1).unwrap().as_str(), m.get(2).unwrap().as_str()))
+            .collect();
     for m in re!(r"\b(?:eval|value|get|system)\b").find_iter(code) {
         if !boundary(code, m.start()) {
             continue;
@@ -1469,34 +1485,58 @@ pub(crate) fn unnamed_writes(code: &str, comments: &str, raw: &str) -> Vec<(usiz
         // Strings kept, comments blanked: a quote in a comment after
         // `value d` is not a string to evaluate (#258).
         let rest = &comments[m.end()..];
-        // The argument, past what only hands it on: brackets, `@`, the
-        // slots of a trap, and `each`, `enlist` and `raze`.
-        let skip = re!(r"^(?:[\s\[\]()@;']|\b(?:each|peach|enlist|raze)\b)*");
+        // The argument, past what only hands it on: an opening bracket, `@`,
+        // the slots of a trap, and `each`, `enlist` and `raze`. Not past a
+        // closing one or an each: in `(get'') " -> " vs/:x` the string is
+        // not what `get` is given.
+        let skip = re!(r"^(?:[\s\[(@;]|\b(?:each|peach|enlist|raze)\b)*");
         let arg = |text: &'_ str| text[skip.find(text).map_or(0, |p| p.end())..].to_string();
         let statement = &rest[..rest.find([';', '\n']).unwrap_or(rest.len())];
+        // The string literal the argument is, or the name holding one.
+        let literal = |a: &str| -> Option<String> {
+            if let Some(text) = a.strip_prefix('"') {
+                return Some(text.to_string());
+            }
+            let n = re!(r"^\.?[A-Za-z][A-Za-z0-9_.]*").find(a)?;
+            strings.get(n.as_str()).map(|s| s.to_string())
+        };
         let name = |a: &str| {
             re!(r"^\.?[A-Za-z][A-Za-z0-9_.]*")
                 .find(a)
-                .is_some_and(|n| n.as_str() == "read0" || strings.contains(n.as_str()))
+                .is_some_and(|n| n.as_str() == "read0" || strings.contains_key(n.as_str()))
         };
         let write = match m.as_str() {
-            "eval" => Some(false),
-            "system" => {
-                let a = arg(rest);
-                if re!(r#"^"d\b"#).is_match(&a) {
-                    Some(true)
+            "eval" => Some(Unnamed::Evaluation),
+            // A shell command built at run time is the usual `system` with
+            // no literal after it - `system$[WIN;"del ";"rm "],f`, `@[system;
+            // cmd;h]` - so only a command that visibly starts with `l` or `d`
+            // counts: written so, or held in a name bound to such a literal.
+            "system" => literal(&arg(rest)).and_then(|command| {
+                if re!(r"^d\b").is_match(&command) {
+                    Some(Unnamed::Context)
                 } else {
-                    (!a.starts_with('"') || re!(r#"^"l\b"#).is_match(&a)).then_some(false)
+                    re!(r"^l\b")
+                        .is_match(&command)
+                        .then_some(Unnamed::Evaluation)
                 }
+            }),
+            "value" => {
+                (statement.contains('"') || name(&arg(statement))).then_some(Unnamed::Evaluation)
             }
-            "value" => (statement.contains('"') || name(&arg(statement))).then_some(false),
+            // `get` of a string whole, written so or bound to a name: not
+            // one built by joining, `get[".ns.",n,".predict"]`, which names
+            // a function to read; nor a system command but `\l` and `\d`
+            // (`get"\w"` reads memory stats).
             _ => {
                 let a = arg(statement);
-                (a.starts_with('"') || name(&a)).then_some(false)
+                let whole = re!(r#"^"((?:[^"\\]|\\.)*)"\s*(?:[;)\]}]|$)"#)
+                    .captures(&a)
+                    .is_some_and(|c| !c[1].starts_with('\\') || re!(r"^\\[ld]\b").is_match(&c[1]));
+                (whole || name(&a)).then_some(Unnamed::Evaluation)
             }
         };
-        if let Some(context) = write {
-            found.push((m.start(), context));
+        if let Some(kind) = write {
+            found.push((m.start(), kind));
         }
     }
     // An upsert into the root context adds or replaces globals by the
@@ -1505,7 +1545,7 @@ pub(crate) fn unnamed_writes(code: &str, comments: &str, raw: &str) -> Vec<(usiz
     found.extend(
         re!(r"`\.(?:\s+|\s*\)\s*)upsert\b|\bupsert\s*\[\s*`\.\s*;")
             .find_iter(code)
-            .map(|m| (m.start(), false)),
+            .map(|m| (m.start(), Unnamed::Overwrite)),
     );
     // A `set` into a name computed at run time - a name holding a symbol, a
     // lambda's parameter, a cast: q 5 `n:`a; a:1; n set 1 2 3; a 0` is 1.
@@ -1557,7 +1597,7 @@ pub(crate) fn unnamed_writes(code: &str, comments: &str, raw: &str) -> Vec<(usiz
         let literal = re!(r"^\(?\s*(?:`[A-Za-z0-9_.:/]*\s*;?\s*)+\)?$").is_match(target);
         let file = target.contains("`:") || target.contains("hsym") || target.starts_with(".Q.");
         if !literal && !file {
-            found.push((m.start(), false));
+            found.push((m.start(), Unnamed::Overwrite));
         }
     }
     found
@@ -1720,7 +1760,15 @@ pub fn check(
     // every file that builds a query dynamically buries the ones that mean
     // something. `` `name set v `` defines a name the file does spell out:
     // it counts as an assignment below rather than as a reason to stop.
-    let dynamic = opaque(code, comments, raw);
+    let unnamed = unnamed_writes(code, comments, raw);
+    let dynamic = !unnamed.is_empty();
+    // QP006 is a convention about how the file calls a function it defines
+    // by a literal lambda, not a claim about a value, so only code the file
+    // runs without spelling out - which may define that function anew -
+    // stands it down. A `set` into a computed name, typically a lambda
+    // installing one name it is handed, leaves the file's own definitions
+    // as they read.
+    let evaluates = unnamed.iter().any(|&(_, kind)| kind != Unnamed::Overwrite);
     let assignment = re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*:(:)?");
     let (scopes, namespaces) = scopes(code, raw);
     let ns_at = |at| {
@@ -2556,7 +2604,7 @@ pub fn check(
     // assigns a lambda is reported: juxtaposition after anything else is
     // indexing, where brackets would be saying something different about the
     // code.
-    if !dynamic {
+    if !evaluates {
         // Whether `name` holds a lambda where it is used at `at`. A name can be
         // assigned more than once - qbists's aoc 02.q makes `d2` a function
         // and later a dictionary, and `d2 inp` after that is indexing - so it

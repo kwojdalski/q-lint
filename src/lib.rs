@@ -4280,7 +4280,7 @@ pub fn lint_selecting(
     // One that only changes `\d` defines nothing.
     let unnamed: Vec<usize> = semantics::unnamed_writes(code, &v.comments, source)
         .into_iter()
-        .filter(|&(_, context)| !context)
+        .filter(|&(_, kind)| kind != semantics::Unnamed::Context)
         .map(|(at, _)| at)
         .collect();
     let in_lambda = |at: usize| {
