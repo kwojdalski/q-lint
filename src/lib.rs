@@ -4597,6 +4597,14 @@ pub fn lint_selecting(
                 slots(&arg[1..arg.len() - 1]).len()
             } else if re!(r"^-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)*$").is_match(arg) {
                 arg.split_whitespace().count()
+            } else if let Some(rest) = arg.strip_prefix("enlist")
+                && rest.starts_with([' ', '\t'])
+            {
+                // `enlist x` is a one-item list whatever x is: q 5
+                // `.[f;enlist 1;{x}]` is a projection too (#734).
+                1
+            } else if re!(r"^(?:`[A-Za-z0-9_.:]*){2,}$").is_match(arg) {
+                arg.matches('`').count()
             } else {
                 continue;
             }
