@@ -746,6 +746,12 @@ t:([]s:`ab`cd`ab;n:1 2 3)
 r:select from t where s="ab", n>1
 u:select from t where s="ab";
 
+=== QB015 profile: general | QB015: and before a comma that starts the next line (q 5: 'length; #700)
+t:([]s:`ab`cd`ab;n:1 2 3)
+r:select from t
+  where s="ab"
+  ,n>1
+
 === clean | QB015: an `=` inside a string is not a comparison
 f:{[t] select from t where a in `x, b like "="}
 
