@@ -1161,3 +1161,16 @@ r:select[2] a
 === clean profile: general | a row-limited select with its from (#489)
 t:([]a:1 2)
 r:select[2;>a] a from t
+
+=== QE010 profile: general | a C-style binary literal (q 5: parse "0b101" is '0b101) (#490)
+a:0b101
+
+=== QE010 profile: general | one digit after the b is refused too (q 5: '0b1) (#490)
+b:0b1
+
+=== QE010 profile: general | a trailing dot after a fraction (q 5: parse "1.5." is '1.5.) (#490)
+c:1.5.
+
+=== clean profile: general | false alone, and a float with a trailing dot (#490)
+a:0b
+b:1.

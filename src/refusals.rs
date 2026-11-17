@@ -1408,7 +1408,7 @@ fn null_literal(text: &str, not_last: bool, negative: bool) -> Option<String> {
 /// `1.5 2j`, where the suffix types every item), a suffix on any item but
 /// the last (`3i 4j`, `1e 2`), a boolean digit that is not 0 or 1 (`2b`), a
 /// letter that is no type (`1y`, `1d`, `1m`), dots that make no date
-/// (`1.2.3`, `2023.1.1`), a long past 9223372036854775807, and an int or
+/// (`1.2.3`, `2023.1.1`, `1.5.`), digits after a boolean's `b` (`0b101`), a long past 9223372036854775807, and an int or
 /// short past its own range (`2147483648i`, `32768h`). A boolean
 /// vector of atoms is not a vector at all - `1b 0b` parses, as two atoms -
 /// and `0N 1`, `3 4i`, `1e5` and `2023.01.01` are fine - though `1E5`,
@@ -1532,6 +1532,12 @@ fn numbers(
                     && !re!(r"^\d+b$").is_match(text))
             {
                 Some(format!("`{text}`: a boolean is written with 0 and 1 only"))
+            } else if re!(r"^\d+b[0-9A-Za-z]").is_match(text) {
+                // Nothing follows a boolean's `b`: q 5 refuses `0b101`, `1b0`
+                // and `0b1b` (#490).
+                Some(format!(
+                    "`{text}`: a boolean vector is written with its digits before the `b`, as `101b`"
+                ))
             } else if re!(r"^0x[0-9a-fA-F]*[g-zG-Z][0-9A-Za-z]*$").is_match(text) {
                 Some(format!(
                     "`{text}`: a byte literal is written with hex digits only"
@@ -1580,7 +1586,7 @@ fn numbers(
                     "`{text}`: `{}` is no type a fraction takes",
                     &text[text.len() - 1..]
                 ))
-            } else if re!(r"^\d+(?:\.\d+){2,}$").is_match(text)
+            } else if re!(r"^\d+(?:\.\d*){2,}$").is_match(text)
                 && !re!(r"^\d{4}\.\d{2}\.\d{2}$").is_match(text)
             {
                 Some(format!("`{text}` is not a number or a date (yyyy.mm.dd)"))
