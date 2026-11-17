@@ -1235,6 +1235,12 @@ b:. v
 c:.:v
 d:.{x}
 
+=== QE008 profile: general | a lone . with a glyph straight after it (#487; q 5: parse refuses each with '.)
+a:`test.%repo%.%name%
+b:x%.%y
+c:x+.-1
+d:x:.%y
+
 === clean profile: general | but not . as a noun, applied with brackets, dyadic, in a name or a number (#571)
 v:1 2;f:{x}
 e:(.)v

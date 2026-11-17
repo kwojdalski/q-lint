@@ -1033,7 +1033,11 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
             || (re!(r"^-\.?\d").is_match(next) && !(g == b'-' && spaced))
             || re!(r"^\.[A-Za-z]").is_match(next)
             || (next.starts_with(|c: char| c.is_ascii_digit() || c == '.')
-                && (g != b'-' || spaced || glued_to_signature));
+                && (g != b'-' || spaced || glued_to_signature))
+            // A lone `.` with a glyph straight after it starts no operand
+            // either: q 5 refuses `a%.%b`, `a+.-1` and `` `t.%r%.%n `` with '.
+            // (#487).
+            || (dot && !spaced && next.starts_with(|c: char| GLYPHS.contains(&(c as u8))));
         if !operand {
             continue;
         }
