@@ -3805,9 +3805,10 @@ fn named_values(
     // when t has no c and nothing defines one. Names inside a lambda in the
     // phrase are that lambda's own and are left alone, and so are a nested
     // query's, which are its table's (#259). The phrase ends at a bracket it
-    // did not open: `(select from t where a>1),select ...` (#260).
+    // did not open: `(select from t where a>1),select ...` (#260), or a `;`
+    // outside every bracket.
     let mut from = 0;
-    while let Some(m) = re!(r"(?:select|exec|update|delete)\b[^\n;]*?\bfrom\s+(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s+where\b([^\n;]*)")
+    while let Some(m) = re!(r"(?:select|exec|update|delete)\b[^\n;]*?\bfrom\s+(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s+where\b([^\n]*)")
         .captures_at(code, from)
     {
         if !boundary(code, m.get(0).unwrap().start()) {
@@ -3826,7 +3827,9 @@ fn named_values(
                     lambda -= 1;
                     flat[i] = b' ';
                 }
-                b')' | b']' if depth == 0 => {
+                // A `;` ends the statement only outside brackets: `where a
+                // within (1;c)` reads `c` too (#494).
+                b')' | b']' | b';' if depth == 0 && lambda == 0 => {
                     end = i;
                     break;
                 }

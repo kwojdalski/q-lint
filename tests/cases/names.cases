@@ -1212,3 +1212,12 @@ r4:select x:2*c from t
 === clean profile: general | known columns, builtins, a lambda and a symbol in the select list (#493)
 t:([]a:1 2;b:3 4)
 r1:select m:max a, s:{x+y}[a;b], k:`zz from t
+
+=== QF020 profile: general | a where phrase read past a `;` inside parentheses (q 5: 'c) (#494)
+t:([]a:1 2;b:3 4)
+r1:select from t where a within (1;c)
+r2:select from t where a in (1;c)
+
+=== clean profile: general | the statement after a top-level `;` is not the phrase's (#494)
+t:([]a:1 2;b:3 4)
+r1:select from t where a>1;c:2
