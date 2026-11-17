@@ -767,7 +767,9 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                     let next = rest[m.end()..].chars().next();
                     // Nothing after it but a comment is nothing after it:
                     // `:/ c` would be over, which q 5 refuses to load (#404).
-                    if !opens || next.is_none_or(|c| ";}]\r\n/".contains(c)) {
+                    // Nor an argument in brackets or an iterator: `:[x]` and
+                    // `:'[x]` apply `:`, and return its projection (#770).
+                    if !opens || next.is_none_or(|c| ";}]\r\n/['".contains(c)) {
                         return None;
                     }
                     (m.as_str(), ":")

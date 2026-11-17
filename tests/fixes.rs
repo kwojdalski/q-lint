@@ -659,6 +659,9 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
         ("QB020", "f:{[x] :x; x / keep this comment }\n  }"),
         // `return` before a comment returns nothing: `:/` is over (#404)
         ("QF015", "f:{[x] a:1;\n  return / done\n  }"),
+        // `:[x]` and `:'[x]` return a projection of `:`, not x (#770).
+        ("QF015", "f:{return[x]}"),
+        ("QF015", "f:{return'[x]}"),
     ] {
         for finding in lint(source, "probe.q", Profile::Uqf)
             .iter()
