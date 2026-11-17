@@ -1901,6 +1901,48 @@ fn vector_comparison(cond: &str) -> bool {
 /// its columns. q 5: `select b:1+`x from t`, `select b:1+`x,c:a from t`,
 /// `select by b:1+`x from t` and `select from t where a=1+`x, a>1` are
 /// each 'type, as the same expression on a line of its own is.
+/// Where the parentheses around the function from `start` to `end` close,
+/// when nothing else is in them: `({...})` or `(f)`.
+fn parenthesised(code: &str, start: usize, end: usize) -> Option<usize> {
+    let before = code[..start].trim_end_matches([' ', '\t']);
+    let open = before.strip_suffix('(').map(|b| b.len())?;
+    let close = matching(code, open, b'(', b')')?;
+    code[end..close - 1].trim().is_empty().then_some(close)
+}
+/// The bracket in a chain of them, from the one at `open` given a function
+/// of `rank`, that holds more arguments than what it is applied to takes:
+/// its `[`, its slot count and that rank. Each bracket short of a call
+/// leaves a projection of the slots still open, and the next applies to it:
+/// q 5 `{[a;b] a+b}[1][2;3]` and `[;1][2;3]` are 'rank (#628). A projection
+/// given an elided slot is not checked until it runs - q 5 `f[1][;2]` is a
+/// projection - so a later bracket counts only when it fills every slot.
+fn over_applied(code: &str, open: usize, rank: usize) -> Option<(usize, usize, usize)> {
+    let (mut open, mut rank, mut first) = (open, rank, true);
+    loop {
+        let close = matching(code, open, b'[', b']')?;
+        let parts = slots(&code[open + 1..close - 1]);
+        let filled = parts.iter().filter(|p| !p.trim().is_empty()).count();
+        if filled == 0 && parts.len() == 1 {
+            // `f[]`: a call of a rank-1 function, nothing at any other.
+            if rank <= 1 {
+                return None;
+            }
+        } else if parts.len() > rank {
+            return (first || filled == parts.len()).then_some((open, parts.len(), rank));
+        } else {
+            rank -= filled;
+        }
+        if rank == 0 {
+            return None;
+        }
+        let next =
+            close + (code[close..].len() - code[close..].trim_start_matches([' ', '\t']).len());
+        if !code[next..].starts_with('[') {
+            return None;
+        }
+        (open, first) = (next, false);
+    }
+}
 /// Whether `ss[...]` or `ssr[...]`, its slots split at `open`, gets every
 /// argument: two for `ss` and three for `ssr`, none of them empty. Short of
 /// that it is a projection, and nothing has run: q 5 `ssr["abc";`a]` and
@@ -3812,27 +3854,36 @@ pub fn lint_selecting(
             );
         }
         if let Some(end) = matching(code, at, b'{', b'}') {
+            // In parentheses of its own it is still the function applied:
+            // q 5 `({[a;b] a+b})[1;2;3]` is 'rank (#629).
+            let end = parenthesised(code, at, end).unwrap_or(end);
             let rest = code[end..].trim_start();
             if rest.starts_with('[')
                 && !re!(r"\n\S").is_match(&code[end..code.len() - rest.len() + 1])
             {
                 let open = code.len() - rest.len();
-                if let Some(close) = matching(code, open, b'[', b']') {
-                    let arity = if params.iter().all(|p| p.is_empty()) {
-                        0
-                    } else {
-                        params.len()
-                    };
-                    let count = slots(&code[open + 1..close - 1]).len();
-                    if arity <= 8 && count > arity.max(1) {
-                        add(
-                            open,
-                            "QA002",
+                let arity = if params.iter().all(|p| p.is_empty()) {
+                    0
+                } else {
+                    params.len()
+                };
+                if arity <= 8
+                    && let Some((at, count, rank)) = over_applied(code, open, arity.max(1))
+                {
+                    add(
+                        at,
+                        "QA002",
+                        if at == open {
                             format!(
                                 "{count} argument slots applied to a {arity}-parameter literal lambda"
-                            ),
-                        );
-                    }
+                            )
+                        } else {
+                            format!(
+                                "{count} argument slots applied to a projection of a literal \
+                                 lambda that takes {rank} more"
+                            )
+                        },
+                    );
                 }
             }
             // `each` supplies one argument, so a rank-2-or-more lambda
@@ -4550,9 +4601,15 @@ pub fn lint_selecting(
     // own definition meets that one.
     let own = semantics::index(code, source).defined;
     let foreign = |at: usize, key: &str| ws.defined_elsewhere(key, &own) && in_lambda(at);
-    for m in re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)\s*\[").captures_iter(code) {
+    for m in re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)\s*(\)\s*)?\[").captures_iter(code) {
         let (whole, name) = (m.get(0).unwrap(), m.get(1).unwrap().as_str());
         let key = qualified(whole.start(), name);
+        // `(f)[...]` applies `f` as surely: q 5 `(f)[1;2;3]` is 'rank (#629).
+        if m.get(2).is_some_and(|p| {
+            parenthesised(code, whole.start(), m.get(1).unwrap().end()) != Some(p.start() + 1)
+        }) {
+            continue;
+        }
         if !boundary(code, whole.start())
             || redefined.contains(&key)
             || overwritten(&key)
@@ -4567,22 +4624,23 @@ pub fn lint_selecting(
             continue;
         }
         let open = whole.end() - 1;
-        let Some(close) = matching(code, open, b'[', b']') else {
-            continue;
-        };
-        let inner = &code[open + 1..close - 1];
-        let parts = slots(inner);
-        if rank == 0 || inner.trim().is_empty() {
+        if rank == 0 {
             continue;
         }
-        if parts.len() > rank {
+        if let Some((at, count, left)) = over_applied(code, open, rank) {
             add(
-                whole.start(),
+                if at == open { whole.start() } else { at },
                 "QA012",
-                format!(
-                    "{} argument slots applied to `{name}`, which takes {rank}: 'rank at runtime",
-                    parts.len()
-                ),
+                if at == open {
+                    format!(
+                        "{count} argument slots applied to `{name}`, which takes {rank}: 'rank at runtime"
+                    )
+                } else {
+                    format!(
+                        "{count} argument slots applied to a projection of `{name}` that takes \
+                         {left} more: 'rank at runtime"
+                    )
+                },
             );
         }
     }
