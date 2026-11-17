@@ -349,6 +349,13 @@ r:1 2 -3
 === QB011 | if assigned as a value is null
 x:if[a;1]
 
+=== QB011 | in parentheses of its own, or assigned globally (q 5: a and b are ::) (#644)
+a:(if[1b;2])
+b::if[1b;2]
+
+=== clean | while a list holding one is no assignment of it (#644)
+c:(if[1b;2];3)
+
 === QB011 | while likewise
 x:while[a;1]
 

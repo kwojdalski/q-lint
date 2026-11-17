@@ -6144,7 +6144,19 @@ pub fn lint_selecting(
     }
     // `if`, `while` and `do` are statements: each returns `::`, so
     // assigning one assigns null. `$[...]` is the expression form.
-    for m in re!(r"[A-Za-z0-9_\])]\s*:\s*(if|while|do)\s*\[").captures_iter(code) {
+    // A global assignment does the same, and so do parentheses of its own:
+    // q 5 `a:(if[1b;2])` and `a::if[1b;2]` leave a as `::` (#644).
+    for m in re!(r"[A-Za-z0-9_\])]\s*::?\s*(\(\s*)?(if|while|do)\s*\[").captures_iter(code) {
+        if let Some(paren) = m.get(1) {
+            let open = m.get(0).unwrap().end() - 1;
+            let alone = matching(code, open, b'[', b']').is_some_and(|close| {
+                matching(code, paren.start(), b'(', b')')
+                    .is_some_and(|end| code[close..end - 1].trim().is_empty())
+            });
+            if !alone {
+                continue;
+            }
+        }
         // The gap may legitimately span lines - an assignment continued onto
         // an indented line is ordinary q, inside a lambda body as much as at
         // the top level. What it may not span is a string: that arrives here
@@ -6165,7 +6177,7 @@ pub fn lint_selecting(
             format!(
                 "`{}` is a statement and always returns null; `$[...]` is the conditional \
                      that has a value",
-                &m[1]
+                &m[2]
             ),
         );
     }
