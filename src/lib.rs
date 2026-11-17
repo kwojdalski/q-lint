@@ -6389,8 +6389,10 @@ pub fn lint_selecting(
                 // vector into indices - `first where v~x` is not a filter and
                 // has no rows to compare. Only a qSQL statement brings the
                 // column semantics this rule is about, so one has to be named
-                // to its left before the phrase counts as a filter at all.
-                let qsql = re!(r"\b(?:select|exec|update|delete)\b").is_match(&line[..w.start()]);
+                // to its left before the phrase counts as a filter at all -
+                // in the `where`'s own statement: `r:select from t; where
+                // b=1 2 3` is the function again (#701).
+                let qsql = qsql_phrase(query, w.start(), false);
                 for m in re!(r"~[^/\\']").find_iter(&phrase).filter(|_| qsql) {
                     add(
                         offset + w.end() + m.start(),
