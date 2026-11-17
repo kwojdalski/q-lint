@@ -972,6 +972,9 @@ fn global_writes(
     // `` load `:k `` defines the global its path ends in (#470).
     for m in re!(LOAD).captures_iter(code) {
         let whole = m.get(0).unwrap();
+        if !boundary(code, whole.start()) {
+            continue;
+        }
         if !call_time_sets && call_time(scopes, whole.start(), &m[1]) {
             continue;
         }
@@ -3012,6 +3015,8 @@ pub fn check(
 }
 
 /// `` load `:path/name `` or `rload`, infix or bracketed: the name it defines.
+/// Its users check `boundary`, as `\b` matches after a dot: `.my.load` and
+/// `.Q.load` are not q's `load` (#699).
 const LOAD: &str = r"\br?load\s*\[?\s*`:?(?:[^\s;\]\[()`]*/)?([A-Za-z][A-Za-z0-9_]*)\b";
 
 /// A table changed in place by name: `update c:1 from `t`, `![`t;...]`,
@@ -3303,6 +3308,9 @@ fn named_values(
     // `` load `:k `` and `rload` restore the global named by the path's last
     // part: q 5 `` k:([]a:`long$()); load `:k `` redefines `k` (#470).
     for m in re!(LOAD).captures_iter(code) {
+        if !boundary(code, m.get(0).unwrap().start()) {
+            continue;
+        }
         let name = m.get(1).unwrap().as_str();
         writes.entry(name).or_default().extend([0, 0]);
         exact
