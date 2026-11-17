@@ -6665,6 +6665,22 @@ pub fn lint_selecting(
             }
             None
         };
+        // The string on the left is the same comparison: q 5 `select from
+        // ([]s:`ab`cd) where "ab"=s` is 'type (#639). It is the whole left
+        // operand when the operator follows its closing quote - q reads
+        // right to left, so whatever is before it is applied to the result.
+        let left = |from: usize| {
+            re!(r#""((?:[^"\\]|\\.)*)"[ \t]*(?:=|<>)"#)
+                .captures_iter(&query_literals[from..])
+                .map(|m| (from + m.get(0).unwrap().end(), q_bytes(&m[1]).len()))
+                .map(|(end, n)| {
+                    (
+                        end - 1 - usize::from(query_literals[..end].ends_with("<>")),
+                        n,
+                    )
+                })
+                .find(|&(op, n)| in_code(op) && n != 1)
+        };
         // A where phrase: a qSQL keyword earlier in the statement, and the
         // `=` before the phrase ends. `r:where s="ab"` is the where
         // function on a comparison, and `a:where b; c:x="ab"` two statements.
@@ -6678,7 +6694,7 @@ pub fn lint_selecting(
                 .is_some_and(|k| from + k.start() < line.len())
         });
         if let Some(w) = filter
-            && let Some((op, n)) = comparison(w.end())
+            && let Some((op, n)) = comparison(w.end()).into_iter().chain(left(w.end())).min()
             && op < phrase_end(query, w.end())
         {
             let rows = match n {

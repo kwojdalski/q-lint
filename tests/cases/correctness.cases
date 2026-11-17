@@ -457,6 +457,15 @@ r:+/[1 2 3]
 === QB015 | a string literal in a filter
 select from t where sym="EUR"
 
+=== QB015 profile: general | and on the left of the operator (q 5: "ab"=s and "ab"<>s are 'type) (#639)
+t:([]s:`ab`cd)
+r:select from t where "ab"=s
+u:select from t where "ab"<>s
+
+=== clean profile: general | while a one-char string on the left is a char atom (#639)
+t:([]c:"ab")
+r:select from t where "a"=c
+
 === QB015 | the empty string is no better
 select from t where sym=""
 
