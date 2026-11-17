@@ -1823,3 +1823,39 @@ fn the_workspace_index_reads_a_file_however_large() {
     assert!(!found.contains(&"QF018".to_string()), "{found:?}");
     assert_eq!(server.shutdown_and_exit(), 0);
 }
+
+#[test]
+fn a_workspace_folder_added_later_is_indexed_and_a_removed_one_forgotten() {
+    // B is added to the workspace after start, as a multi-root workspace
+    // does; what it defines must count, as it does for `qlinter A B` (#797).
+    let dir = tempfile::tempdir().unwrap();
+    let (a, b) = (dir.path().join("A"), dir.path().join("B"));
+    std::fs::create_dir_all(&a).unwrap();
+    std::fs::create_dir_all(&b).unwrap();
+    std::fs::write(b.join("lib.q"), "helper:{[a] a+1}\n").unwrap();
+    let (mut server, reply) = start_with_options(
+        dir.path(),
+        &["--lsp", "--profile", "uqf"],
+        json!({}),
+        Some(&a),
+    );
+    assert_eq!(
+        reply["result"]["capabilities"]["workspace"]["workspaceFolders"]["changeNotifications"],
+        true
+    );
+    let app = file_uri(&a.join("b.q"));
+    server.open(&app, "f:{[a] r:helper; r}\n");
+    assert!(codes_of(&server.diagnostics_for(&app)).contains(&"QF018".to_string()));
+    let folder = json!([{"uri": file_uri(&b), "name": "B"}]);
+    server.send(
+        json!({"jsonrpc":"2.0","method":"workspace/didChangeWorkspaceFolders",
+        "params":{"event":{"added":folder,"removed":[]}}}),
+    );
+    assert!(!codes_of(&server.diagnostics_for(&app)).contains(&"QF018".to_string()));
+    server.send(
+        json!({"jsonrpc":"2.0","method":"workspace/didChangeWorkspaceFolders",
+        "params":{"event":{"added":[],"removed":folder}}}),
+    );
+    assert!(codes_of(&server.diagnostics_for(&app)).contains(&"QF018".to_string()));
+    assert_eq!(server.shutdown_and_exit(), 0);
+}

@@ -213,6 +213,35 @@ impl Index {
 
     /// Every `.q` file under the workspace folders, less those `exclude`
     /// names; a directory it names is not entered at all.
+    /// Workspace folders the client added and removed after `initialize`:
+    /// the added ones scanned, and what only the removed ones held forgotten.
+    fn change_roots(&mut self, added: Vec<String>, removed: Vec<String>, policy: &Policy) {
+        self.roots.retain(|r| !removed.contains(r));
+        let kept: Vec<String> = self.roots.iter().map(|r| file_key(r)).collect();
+        for gone in removed.iter().map(|r| file_key(r)) {
+            let under = |key: &str, root: &str| std::path::Path::new(key).starts_with(root);
+            let stale: Vec<String> = self
+                .files
+                .keys()
+                .filter(|key| under(key, &gone) && !kept.iter().any(|k| under(key, k)))
+                .cloned()
+                .collect();
+            for key in stale {
+                self.remove(&key);
+            }
+        }
+        let added: Vec<String> = added
+            .into_iter()
+            .filter(|r| !self.roots.contains(r))
+            .collect();
+        if self.enabled && !added.is_empty() {
+            let all = std::mem::replace(&mut self.roots, added.clone());
+            self.scan(policy);
+            self.roots = all;
+        }
+        self.roots.extend(added);
+    }
+
     fn scan(&mut self, policy: &Policy) {
         self.scan_within(policy, MAX_FILES, MAX_ENTRIES)
     }
@@ -730,6 +759,19 @@ pub fn serve(
                     relint(writer, &docs, &idx, None, policy, &opts)?;
                 }
             }
+            // A folder added to or removed from a multi-root workspace (#797).
+            ("workspace/didChangeWorkspaceFolders", None) => {
+                let folders =
+                    |key: &str| workspace_roots(&json!({"workspaceFolders": params["event"][key]}));
+                idx.change_roots(folders("added"), folders("removed"), policy);
+                // An open buffer still wins over what a folder held.
+                for (uri, text) in &docs {
+                    idx.set(&path_of(uri), index(text));
+                }
+                if idx.generation != generation {
+                    relint(writer, &docs, &idx, None, policy, &opts)?;
+                }
+            }
             // Every other REQUEST gets an error, because a client waiting on a
             // reply that never arrives looks like a hung server.
             (_, Some(id)) => send(
@@ -780,6 +822,9 @@ fn capabilities(opts: &Options, code_action_literals: bool) -> Value {
     if code_action_literals {
         capabilities["codeActionProvider"] = json!(true);
     }
+    capabilities["workspace"] = json!({
+        "workspaceFolders": {"supported": true, "changeNotifications": true},
+    });
     if opts.format {
         capabilities["documentFormattingProvider"] = json!(true);
     }
