@@ -4714,6 +4714,27 @@ pub fn lint_selecting(
         }
         add(whole.start(), "QB010", apply_not_subtract(name, literal));
     }
+    // A literal atom is applied the same way: q 5 `"a" -1`, `1b -1`,
+    // `0x01 -1` and `(1) -1` are each 'type, while `"ab" -1`, `10b -1` and
+    // `(1 2) -1` index (#500). Read where strings are kept, with the atom's
+    // quote a real opening one and the minus code.
+    for m in re!(r#"(?m)("(?:[^"\\]|\\[0-7]{3}|\\.)"|[01]b|0x[0-9a-fA-F]{1,2}|\([ \t]*(?:"(?:[^"\\]|\\[0-7]{3}|\\.)"|-?\d+(?:\.\d*)?(?:e[+-]?\d+)?[hijef]?|[01]b)[ \t]*\))[ \t]+(-\d[A-Za-z0-9.:]*)[ \t\r]*(?:[;\])]|$)"#)
+        .captures_iter(&v.comments)
+    {
+        let atom = m.get(1).unwrap();
+        let quoted = atom
+            .as_str()
+            .find('"')
+            .is_none_or(|q| v.string_starts.contains(&(atom.start() + q)));
+        if !quoted
+            || !boundary(code, atom.start())
+            || (!atom.as_str().starts_with('"') && code.as_bytes()[atom.start()] == b' ')
+            || code.as_bytes()[m.get(2).unwrap().start()] != b'-'
+        {
+            continue;
+        }
+        add(atom.start(), "QB010", apply_not_subtract(atom.as_str(), &m[2]));
+    }
     // Dot apply wants a list of arguments, and a scalar in that slot is a
     // 'type error - even when the left side is itself a list to index.
     // Verified: `.[{x+y};1]`, `.[f;`a]`, `.[1 2 3;0]` all 'type.
