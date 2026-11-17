@@ -1277,3 +1277,55 @@ r1:select from t where a>1;c:2
 === QF020 profile: general | a row-limited select's items are read past its limit (q 5: 'c) (#493)
 t:([]a:1 2)
 r:select[1] m:max c from t
+
+=== QF007 profile: general | a type or dictionary values that start with an iterator or a colon are 'nyi (#577; q 5: parse refuses each with 'nyi)
+r1:{[a!::] a}
+r2:{[a:'] a}
+r3:{[a:/] a}
+r4:{[a::] a}
+r5:{[a!:] a}
+r6:{[a:'b] a}
+
+=== clean profile: general | while a glyph, a trailing iterator or an empty type is a type (#577; q 5 parses each)
+r1:{[a:+] a}
+r2:{[a:b'] a}
+r3:{[a:] a}
+r4:{[a!b:] a}
+r5:{[a;::] a}
+
+=== QF007 profile: general | a literal pattern with a stray dot is refused (#594; q 5: '. and 'nyi)
+r1:{[..] 1}
+r2:{[1 .] 1}
+r3:{[a;..] 1}
+
+=== clean profile: general | while a lone dot, a dotted number or a negative fraction is a pattern (#594; q 5 parses each)
+r1:{[.] 1}
+r2:{[1.] 1}
+r3:{[.5] 1}
+r4:{[-.5] 1}
+r5:{[1 2] 1}
+
+=== QF001 QF003 profile: general | a definition under \d .q reserves the name as .q.foo: does (#589; q 5: g 1 is 'nyi, h is 'assign)
+\d .q
+foo:{x+1}
+\d .
+g:{[foo] foo}
+h:{foo:1; foo}
+
+=== clean profile: general | while a definition under another context reserves nothing (#589)
+\d .r
+foo:{x+1}
+\d .
+g:{[foo] foo}
+h:{foo:1; foo}
+
+=== QF003 profile: general | a string or symbol assigned to a builtin with :: or a compound is 'assign (#592; q 5: both refused where defined)
+f:{sum::"a"}
+g:{count,:`a}
+
+=== QF004 profile: general | and in a namespace (#592; q 5: 'assign)
+\d .x
+count,:"a"
+
+=== QF012 | and at the root (#592; q 5: 'assign)
+max,:"a"

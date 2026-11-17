@@ -744,3 +744,8 @@ d:mavg[2.5][1 2 3]
 a:.[til;enlist 3]
 b:rotate[1][1 2 3]
 c:til[3][0]
+
+=== QT008 profile: general | til of a time written with its type letter (#593; q 5: each is 'type)
+r:til 12:00u
+s:til 12:00:00v
+t:til 12:00t

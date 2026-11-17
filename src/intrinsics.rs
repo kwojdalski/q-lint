@@ -130,7 +130,13 @@ fn literal(s: &str) -> Option<Literal> {
     let temporal = re!(
         r"^(?:\d{4}\.\d\d(?:\.\d\d(?:[DT](?:\d\d(?::\d\d(?::\d\d(?:\.\d*)?)?)?)?)?|m)|\d\d:\d\d(?::\d\d(?:\.\d*)?)?|\d+D(?:\d\d(?::\d\d(?::\d\d(?:\.\d*)?)?)?)?)$"
     );
-    let items: Vec<&str> = s.split_whitespace().collect();
+    // A time vector may end in the letter of its type: `12:00u`,
+    // `12:00:00v`, `12:00 13:00t` (#593).
+    let unsuffixed = s
+        .strip_suffix(['u', 'v', 't'])
+        .filter(|t| re!(r"\d\d:\d\d(?::\d\d(?:\.\d*)?)?$").is_match(t))
+        .unwrap_or(s);
+    let items: Vec<&str> = unsuffixed.split_whitespace().collect();
     if !items.is_empty() && items.iter().all(|item| temporal.is_match(item)) {
         return Some(Literal {
             kind: Kind::Temporal,
@@ -370,7 +376,7 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
     // A keyword the file redefines in `.q` calls the new definition from
     // there on: after q 5 `.q.ssr:{[a;b;c;d] a}`, `ssr[1;2;3;4]` is 1, and
     // after `.q.til:{x+1}`, `til 1.5` is 2.5 (#440).
-    let dotq = crate::dotq_definitions(code);
+    let dotq = crate::dotq_definitions(code, source);
     let redefined = |name: &str, at: usize| dotq.iter().any(|(n, from)| n == name && at > *from);
     // QA010 for the keywords that are not in BUILTINS: arity from calling
     // each with one more argument than it takes, which q 5 refuses with

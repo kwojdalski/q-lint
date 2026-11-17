@@ -1817,7 +1817,8 @@ pub fn check(
         let value = &code[start.end()..end];
         // A symbol atom is spread over every key, as no other atom is: q 5
         // builds `` `a`b!`c `` and `` 1 2!` ``, and `1 2!3` is 'length.
-        if re!(r"^\s*`[A-Za-z0-9_.:/]*\s*$").is_match(value) {
+        // Parentheses only group it: `` `a`b!(`c) `` is `` `a`b!`c`c `` (#591).
+        if re!(r"^\s*(?:\(\s*)*`[A-Za-z0-9_.:/]*\s*(?:\)\s*)*$").is_match(value) {
             continue;
         }
         let values = shape(value).or_else(|| {
@@ -3064,8 +3065,10 @@ const LOAD: &str = r"\br?load\s*\[?\s*`:?(?:[^\s;\]\[()`]*/)?([A-Za-z][A-Za-z0-9
 
 /// A table changed in place by name: `update c:1 from `t`, `![`t;...]`,
 /// `.[`t;...]`, `@[`t;...]`, `` `a xkey `t `` and its neighbours, in the
-/// bracket form too, and `` 1!`t ``. The name is the capture.
-const IN_PLACE: &str = r"(?:\bfrom\s*|[!.@]\s*\[\s*|\b(?:xkey|xasc|xdesc|xcols|xcol)\s*(?:\[[^;\[\]]*;\s*)?|\b\d+\s*!\s*)`(\.?[A-Za-z][A-Za-z0-9_.]*)";
+/// bracket form too, and `` 1!`t ``. The name is the capture. Only a
+/// positive count, starting an expression, keys in place: `` 1 2!`a`b `` is
+/// a dictionary, and `` 0!`k `` takes keys away (#588).
+const IN_PLACE: &str = r"(?:\bfrom\s*|[!.@]\s*\[\s*|\b(?:xkey|xasc|xdesc|xcols|xcol)\s*(?:\[[^;\[\]]*;\s*)?|(?m:^|[;:(\[{])[ \t]*[1-9]\d*\s*!\s*)`(\.?[A-Za-z][A-Za-z0-9_.]*)";
 
 /// What a global holds, when the file assigns it once, at the top level, to
 /// a literal. Anything else - assigned twice, amended, `set`, assigned to an
@@ -3282,7 +3285,8 @@ fn named_values(
     let mut exact: HashMap<String, Vec<usize>> = HashMap::new();
     // A table literal's columns and a dictionary literal's keys, `([]n:1 2)`
     // and `([h:2.5])`, name no variable: each `name:` directly in one is
-    // skipped (#469).
+    // skipped (#469). Only a name that opens a column does: `m:` in
+    // `([]a:m:1 2)` assigns the global (#575).
     let literals: Vec<(usize, usize, usize)> = re!(r"\(\s*\[")
         .find_iter(code)
         .filter_map(|m| {
@@ -3304,7 +3308,11 @@ fn named_values(
                         b')' | b']' | b'}' => d - 1,
                         _ => d,
                     });
-                depth == 0 || (depth == 1 && at < header)
+                (depth == 0 || (depth == 1 && at < header))
+                    && matches!(
+                        code[..at].trim_end().as_bytes().last(),
+                        Some(b'[' | b']' | b';')
+                    )
             }
         })
     };
@@ -3519,10 +3527,7 @@ fn named_values(
         foreign_calls.get(i).is_some_and(|&c| c < to)
     };
     let phrases = qsql_phrases(code);
-    let visible = |name: &str, at: usize| -> Option<&Held> {
-        if phrases.iter().any(|&(a, b)| a <= at && at < b) {
-            return None;
-        }
+    let global = |name: &str, at: usize| -> Option<&Held> {
         let (assigned, value) = known.get(key(name, at).as_str())?;
         match scope_at(scopes, at) {
             Some(s) if scopes[s].locals.contains(name) => None,
@@ -3531,6 +3536,33 @@ fn named_values(
             None if elsewhere(&key(name, at)) && called_between(*assigned, at) => None,
             _ => Some(value),
         }
+    };
+    // In a phrase, a name is a column unless the table is a known literal
+    // without that column, and nothing renames into it by symbol (`` `t ``
+    // in an `update ... from `t` may add one): q 5 `px:2.5; t:([]a:1 2);
+    // select p0:px 0 from t` is 'type (#576).
+    let visible = |name: &str, at: usize| -> Option<&Held> {
+        if let Some(&(a, b, table)) = phrases.iter().find(|&&(a, b, _)| a <= at && at < b) {
+            let columns = table
+                .filter(|&(t, e)| {
+                    !re!(r"`(\.?[A-Za-z][A-Za-z0-9_.]*)")
+                        .captures_iter(code)
+                        .any(|c| c[1] == code[t..e])
+                })
+                .and_then(|(t, e)| match global(&code[t..e], t) {
+                    Some(Held::Table(columns, _)) => Some(columns),
+                    _ => None,
+                });
+            let assigned_here = re!(r"([A-Za-z][A-Za-z0-9_]*)\s*:")
+                .captures_iter(&code[a..b.min(code.len())])
+                .any(|c| &c[1] == name);
+            match columns {
+                Some(columns)
+                    if name != "i" && !assigned_here && !columns.iter().any(|c| c == name) => {}
+                _ => return None,
+            }
+        }
+        global(name, at)
     };
     // Indexing an atom. Verified: 1, 1b, 1.5, "x" and 2020.01.01 bound to a
     // name and then indexed - `a[0]`, `a[]`, `a[0]:5` - are all 'type.
@@ -3776,7 +3808,7 @@ fn named_values(
     // those operand kinds. An older note in this repository had `"a"*3` as
     // 291, on a version it did not record.
     // Booleans and bytes before plain integers, or `1b` matches as `1`.
-    let operand = r#""(?:\\.|[^"\\])*"|[01]+b|0x[0-9a-fA-F]+|-?(?:\d+(?:\.\d*)?|\.\d+)e\b|-?0[NW][hij]?\b|-?\d+[hij]?(?:[ \t]+-?\d+[hij]?)*|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*"#;
+    let operand = r#""(?:\\.|[^"\\])*"|[01]+b|0x[0-9a-fA-F]+|(?:-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?[ \t]+)*-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?e\b|-?0[NW][hij]?\b|-?\d+[hij]?(?:[ \t]+-?\d+[hij]?)*|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*"#;
     // The statement's blanks around the operator: `inc:x+` and then a
     // column-0 `"done"` are two statements (#741).
     let infix = regex::Regex::new(&format!(
@@ -3791,7 +3823,8 @@ fn named_values(
     ))
     .unwrap();
     let kind_of = |text: &str, at: usize| -> Option<Arithmetic> {
-        if text.starts_with(|c: char| c.is_alphabetic() || c == '.') {
+        // `.5e` is a number, `.ns.a` a name (#587).
+        if text.starts_with(char::is_alphabetic) || re!(r"^\.[A-Za-z]").is_match(text) {
             visible(text, at)?;
             kinds.get(key(text, at).as_str()).copied()
         } else {
@@ -4289,12 +4322,16 @@ fn named_values(
     out
 }
 
+/// A qSQL phrase's span, and the span of the table named after its `from`.
+type Phrase = (usize, usize, Option<(usize, usize)>);
+
 /// The spans of `code` where a qSQL statement reads its table's columns:
 /// from `select`, `exec`, `update` or `delete` to its `from`, and from its
 /// `where` to the end of the statement. The table after `from` is an
 /// ordinary expression, and is left out. q 5 `px:2.5; select p0:px 0 from t`
-/// indexes the column `px`, not the atom.
-fn qsql_phrases(code: &str) -> Vec<(usize, usize)> {
+/// indexes the column `px`, not the atom. Each span carries where the name
+/// after `from` spans, when the table is written as a plain name.
+fn qsql_phrases(code: &str) -> Vec<Phrase> {
     let mut out = vec![];
     let bytes = code.as_bytes();
     for m in re!(r"\b(?:select|exec|update|delete)\b").find_iter(code) {
@@ -4321,11 +4358,22 @@ fn qsql_phrases(code: &str) -> Vec<(usize, usize)> {
                                 .starts_with(|c: char| c.is_alphanumeric() || c == '_')
                     };
                     if from.is_none() && word("from") {
-                        out.push((m.start(), i));
+                        let table = crate::past_blanks(code, i + 4);
+                        let table = re!(r"^\.?[A-Za-z][A-Za-z0-9_.]*")
+                            .find(&code[table..])
+                            .filter(|t| {
+                                let rest = code[table + t.end()..].trim_start_matches([' ', '\t']);
+                                rest.is_empty()
+                                    || rest.starts_with([';', ')', ']', '}', '\n', '\r'])
+                                    || rest.starts_with("where")
+                            })
+                            .map(|t| (table, table + t.end()));
+                        out.push((m.start(), i, table));
                         from = Some(i);
                     } else if from.is_some() && word("where") {
                         from = Some(i);
-                        out.push((i, usize::MAX));
+                        let table = out.last().and_then(|p| p.2);
+                        out.push((i, usize::MAX, table));
                     }
                 }
                 _ => {}
@@ -4334,7 +4382,7 @@ fn qsql_phrases(code: &str) -> Vec<(usize, usize)> {
         }
         match (from, out.last_mut()) {
             // No `from`: not a statement this can read, so all of it.
-            (None, _) => out.push((m.start(), i)),
+            (None, _) => out.push((m.start(), i, None)),
             (Some(_), Some(last)) if last.1 == usize::MAX => last.1 = i,
             _ => {}
         }
@@ -4361,9 +4409,10 @@ fn arithmetic_kind(text: &str) -> Option<Arithmetic> {
         // A long null or infinity is a long: q 5 `"a"+0N` and `"a"*0W` are
         // 'type, where `"a"+0n` is 0n (#609).
         Some(Arithmetic::Integral)
-    } else if re!(r"^(?:-?(?:\d+(?:\.\d*)?|\.\d+)\s+)*-?(?:\d+(?:\.\d*)?|\.\d+)e$").is_match(text) {
+    } else if re!(r"^(?:-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?\s+)*-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?e$").is_match(text) {
         // A real refuses a char as an integer does, under all three: q 5
-        // `"a"+1e`, `1e*"a"` and `"a"-1.5e` are 'type, `1e -"a"` is -96e (#474).
+        // `"a"+1e`, `1e*"a"` and `"a"-1.5e` are 'type, `1e -"a"` is -96e (#474),
+        // and so are a vector and an exponent: `"a"*1 2e`, `"a"+1e3e` (#587).
         Some(Arithmetic::Integral)
     } else if re!(r"^-?(?:\d+\.\d*|\.\d+|\d+[ef]|\d+(?:\.\d*)?e[+-]?\d+)(?:\s+-?(?:\d+\.?\d*(?:e[+-]?\d+)?[ef]?))*$|^\d{4}\.\d{2}")
         .is_match(text)
