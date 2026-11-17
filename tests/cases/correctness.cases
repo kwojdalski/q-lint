@@ -696,6 +696,10 @@ r:"abc" ss ""
 === clean | QT021: a non-empty pattern infix
 r:"abc" ss "b"
 
+=== clean profile: general | QT021: a pattern that only starts with the empty string (q 5: ,1 and ,2; #597)
+x:"abc" ss "","b"
+y:"abc" ss "",enlist "c"
+
 === clean | QT022: a null integer is a handle not yet opened, written to by juxtaposition
 log_handle:0N
 f:{[msg] log_handle enlist msg}

@@ -1934,6 +1934,32 @@ fn complete_call(comments: &str, open: usize, parts: &[&str], ssr: bool) -> bool
         })
 }
 
+/// Whether the right operand starting at `at` is the empty string and
+/// nothing else, in any number of parentheses: `""` and `("")`, but not
+/// `"","b"`, which is the pattern "b" (q 5: `"abc" ss "","b"` is ,1, #597).
+/// The string is blank in `code`, so it is read from `source`.
+fn empty_pattern(source: &str, code: &str, at: usize) -> bool {
+    let skip =
+        |i: usize| i + (source[i..].len() - source[i..].trim_start_matches([' ', '\t']).len());
+    let (mut i, mut opens) = (skip(at), 0);
+    while source[i..].starts_with('(') {
+        opens += 1;
+        i = skip(i + 1);
+    }
+    if !source[i..].starts_with("\"\"") || source[i + 2..].starts_with('"') {
+        return false;
+    }
+    i += 2;
+    for _ in 0..opens {
+        i = skip(i);
+        if !source[i..].starts_with(')') {
+            return false;
+        }
+        i += 1;
+    }
+    operand_ends(code, i)
+}
+
 pub(crate) fn operand_ends(code: &str, at: usize) -> bool {
     let rest = code[at..].trim_start_matches([' ', '\t']);
     // A line break ends the operand unless the next line is indented and not
@@ -5094,9 +5120,7 @@ pub fn lint_selecting(
         if !boundary(code, m.start()) {
             continue;
         }
-        let pattern = source[m.end()..].trim_start_matches([' ', '\t']);
-        let spaced = pattern.len() < source.len() - m.end();
-        if spaced && pattern.starts_with("\"\"") && !pattern[2..].starts_with('"') {
+        if empty_pattern(source, code, m.end()) {
             add(
                 m.start(),
                 "QT021",
