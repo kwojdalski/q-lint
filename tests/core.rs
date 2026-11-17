@@ -727,3 +727,15 @@ fn the_tests_exemption_from_qp002_reads_the_directories_not_the_spelling() {
     assert!(qp002("/work/proj/src/a.q"));
     assert!(qp002("/work/proj/src/tests.q"));
 }
+
+#[test]
+fn a_k_line_in_another_file_defines_its_name() {
+    use q_lint_rs::{Workspace, index, lint_in};
+    // q 5: with x.q's `k)lim:100` loaded, `r:lim` is 100 (#751).
+    let reader = "r:lim\n";
+    let mut ws = Workspace::default();
+    ws.add(&index(reader));
+    assert!(codes(&lint_in(reader, "y.q", Profile::Style, &ws)).contains(&"QF018"));
+    ws.add(&index("k)lim:100\n"));
+    assert!(!codes(&lint_in(reader, "y.q", Profile::Style, &ws)).contains(&"QF018"));
+}

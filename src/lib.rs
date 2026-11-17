@@ -4130,7 +4130,7 @@ pub fn lint_selecting(
     // it runs after the definition - later in the file, or from a lambda
     // called at any time: q 5 `f:{x}; value "f:{x+y}"; f[1;2]` is 3 (#745).
     // One that only changes `\d` defines nothing.
-    let unnamed: Vec<usize> = semantics::unnamed_writes(code, &v.comments)
+    let unnamed: Vec<usize> = semantics::unnamed_writes(code, &v.comments, source)
         .into_iter()
         .filter(|&(_, context)| !context)
         .map(|(at, _)| at)
@@ -4600,7 +4600,7 @@ pub fn lint_selecting(
     // Nor can a file that writes globals it does not name say the name is
     // undefined: q 5 runs `\l lib.q` (`true:0b`) then `$[true;`yes;`no]` to
     // `no, which the fix to 1b would turn to `yes (#750).
-    let opaque = semantics::opaque(code, &v.comments);
+    let opaque = semantics::opaque(code, &v.comments, source);
     let bare = unsymbolled(code);
 
     for m in

@@ -955,9 +955,28 @@ fn global_writes(
 /// What one file defines for the files around it: its global names, and
 /// which of them it assigns a lambda. Read, never run - the same passes the
 /// checks use, stopped before any rule.
+/// The global each `k)` line assigns at its start, `k)lim:100`, under the
+/// `\d` in force: k assigns q's globals, though both views blank the line.
+fn k_writes(raw: &str, namespaces: &[(usize, String)]) -> Vec<String> {
+    re!(r"(?m)^k\)\s*(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*:")
+        .captures_iter(raw)
+        .map(|m| {
+            let at = m.get(0).unwrap().start();
+            let ns = &namespaces[namespaces
+                .partition_point(|(p, _)| *p <= at)
+                .saturating_sub(1)]
+            .1;
+            resolved(&m[1], ns)
+        })
+        .collect()
+}
+
 pub fn index(code: &str, raw: &str) -> crate::FileIndex {
     let (scopes, namespaces) = scopes(code, raw);
-    let globals = global_writes(code, &scopes, &namespaces, resolved, true);
+    let mut globals = global_writes(code, &scopes, &namespaces, resolved, true);
+    for name in k_writes(raw, &namespaces) {
+        globals.entry(name).or_default();
+    }
     let lambdas = globals
         .iter()
         .filter(|(_, at)| at.iter().any(|&a| assigns_lambda(code, a)))
@@ -1081,8 +1100,10 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
     names.sort();
     let mut defines: Vec<_> = global_writes(code, &scopes, &namespaces, resolved, false)
         .into_keys()
+        .chain(k_writes(raw, &namespaces))
         .collect();
     defines.sort();
+    defines.dedup();
     crate::References {
         names,
         defines,
@@ -1324,8 +1345,10 @@ fn dynamic(raw: &str, view: &str, call_time: &[(usize, &'static str)]) -> Vec<cr
 
 /// Whether the file writes globals its text does not name, so that nothing
 /// it assigns by name can be taken as known: a `\l`, `eval`, a `system`
-/// command that loads a script or changes `\d`, and `value` or `get` of a
-/// string. `code` has strings and comments blank, `comments` only comments.
+/// command that loads a script or changes `\d`, `value` or `get` of a
+/// string, a `set` into a computed name and an assignment on a `k)` line.
+/// `code` has strings and comments blank, `comments` only comments, and
+/// `raw` is the source.
 ///
 /// Not every `value` is evaluation - `value d` reads a dictionary and
 /// `value f` decomposes a lambda - so `value` counts only with a string in
@@ -1334,18 +1357,25 @@ fn dynamic(raw: &str, view: &str, call_time: &[(usize, &'static str)]) -> Vec<cr
 /// `system` command counts unless it is a literal that neither loads nor
 /// changes context, however it is applied: `system ("l ",f)`, `system c`,
 /// `system["l f"]`, `system@"l f"` and `@[system;"l f";h]` all load.
-pub(crate) fn opaque(code: &str, comments: &str) -> bool {
-    !unnamed_writes(code, comments).is_empty()
+pub(crate) fn opaque(code: &str, comments: &str, raw: &str) -> bool {
+    !unnamed_writes(code, comments, raw).is_empty()
 }
 
 /// Where `opaque` finds each write it cannot name, and whether it only
 /// changes `\d` - `system "d ..."`, which moves later definitions to a
 /// context rather than defining anything itself.
-pub(crate) fn unnamed_writes(code: &str, comments: &str) -> Vec<(usize, bool)> {
+pub(crate) fn unnamed_writes(code: &str, comments: &str, raw: &str) -> Vec<(usize, bool)> {
     let mut found: Vec<(usize, bool)> = re!(r"(?m)^\\l\b")
         .find_iter(code)
         .map(|m| (m.start(), false))
         .collect();
+    // A `k)` line is blank in both views, as another language's, but k
+    // assigns q's globals: q 5 `a:1`, `k)a:1 2 3`, then `a 0` is 1.
+    found.extend(
+        re!(r"(?m)^k\)[^\n]*:")
+            .find_iter(raw)
+            .map(|m| (m.start(), false)),
+    );
     let strings: HashSet<&str> = re!(r#"(\.?[A-Za-z][A-Za-z0-9_.]*)\s*::?\s*""#)
         .captures_iter(comments)
         .filter(|m| boundary(comments, m.get(0).unwrap().start()))
@@ -1601,7 +1631,7 @@ pub fn check(
     // every file that builds a query dynamically buries the ones that mean
     // something. `` `name set v `` defines a name the file does spell out:
     // it counts as an assignment below rather than as a reason to stop.
-    let dynamic = opaque(code, comments);
+    let dynamic = opaque(code, comments, raw);
     let assignment = re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*:(:)?");
     let (scopes, namespaces) = scopes(code, raw);
     let ns_at = |at| {

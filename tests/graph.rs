@@ -672,3 +672,10 @@ fn the_language_server_still_starts_and_exits() {
     assert_eq!(out.status.code(), Some(0));
     assert!(String::from_utf8_lossy(&out.stdout).contains("capabilities"));
 }
+
+#[test]
+fn a_k_line_defines_the_global_it_assigns() {
+    // q 5: with x.q's `k)lim:100` loaded, y.q's `r:lim` is 100 (#751).
+    let g = graph(&[("x.q", "k)lim:100\n"), ("y.q", "r:lim\n")], false);
+    assert_eq!(deps(&g, "y.q"), ["x.q"]);
+}
