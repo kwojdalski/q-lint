@@ -2628,6 +2628,18 @@ fn is_param_name(s: &str) -> bool {
 /// is 3, `{[1;b] b}[1;2]` is 2 and `{[1] 5} 2` is 'match (#298). `_` is
 /// none: `{[(a;_)] a}[(1;2)]` is 'match, as `{[_] 1}[1]` is.
 pub(crate) fn is_pattern(s: &str, nested: bool) -> bool {
+    pattern_within(s, nested, 0)
+}
+/// More levels of brackets than q parses: q 5 refuses a hundred-odd levels of
+/// parentheses with '(. Code that walks into nesting gives up past it, which
+/// keeps tens of thousands of levels from overflowing the stack (#703).
+pub(crate) const MAX_NESTING: usize = 256;
+/// `is_pattern` at a nesting `depth`; past `MAX_NESTING` it is no pattern.
+fn pattern_within(s: &str, nested: bool, depth: usize) -> bool {
+    if depth > MAX_NESTING {
+        return false;
+    }
+    let is_pattern = |s: &str, nested: bool| pattern_within(s, nested, depth + 1);
     let s = s.trim();
     let items = |inner: &str, item: &dyn Fn(&str) -> bool| {
         inner.trim().is_empty() || slots(inner).into_iter().all(item)

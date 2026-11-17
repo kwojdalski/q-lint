@@ -468,16 +468,24 @@ fn shape(s: &str) -> Option<usize> {
     if re!(r"\n\S").is_match(s) {
         return None;
     }
-    if s.starts_with('(') && matching(s, 0, b'(', b')') == Some(s.len()) {
-        // `(1;2;3)` is a three-item list, however its items are shaped, and
-        // `(1 2 3)` is the same vector as without the parentheses. Only a
-        // top-level `;` makes a list; so count those.
+    // `(1;2;3)` is a three-item list, however its items are shaped, and
+    // `(1 2 3)` is the same vector as without the parentheses. Only a
+    // top-level `;` makes a list; so count those. A loop, so that deep
+    // nesting cannot overflow the stack, and only as deep as q parses (#703).
+    let mut s = s;
+    for depth in 0.. {
+        if !(s.starts_with('(') && matching(s, 0, b'(', b')') == Some(s.len())) {
+            break;
+        }
+        if depth == crate::MAX_NESTING {
+            return None;
+        }
         let inner = &s[1..s.len() - 1];
         let items = crate::slots(inner);
         if items.len() > 1 {
             return Some(items.len());
         }
-        return shape(inner);
+        s = inner.trim();
     }
     if let Some(rest) = s.strip_prefix("enlist ") {
         return shape(rest).map(|_| 1);
@@ -2585,7 +2593,23 @@ enum Held {
 
 /// The value text of a top-level `name:...`, judged as a literal.
 fn held(code: &str, raw: &str) -> Option<Held> {
-    let (code, raw) = (code.trim(), raw.trim());
+    let (mut code, mut raw) = (code.trim(), raw.trim());
+    // `(5)` is the atom 5 and `(1 2 3)` the vector: without a top-level
+    // `;`, parentheses only group (q 5: `n:(5); n+1 2` is `6 7`). Unwrapped
+    // in a loop, not by recursion, which tens of thousands of levels would
+    // overflow, and only as deep as q parses (#703).
+    let mut depth = 0;
+    while code.starts_with('(')
+        && !code[1..].trim_start().starts_with('[')
+        && matching(code, 0, b'(', b')') == Some(code.len())
+        && crate::slots(&code[1..code.len() - 1]).len() == 1
+    {
+        depth += 1;
+        if depth > crate::MAX_NESTING {
+            return None;
+        }
+        (code, raw) = (code[1..code.len() - 1].trim(), raw[1..raw.len() - 1].trim());
+    }
     if code.starts_with('(') && matching(code, 0, b'(', b')') == Some(code.len()) {
         let inner = code[1..code.len() - 1].trim_start();
         if inner.starts_with('[') {
@@ -2610,11 +2634,6 @@ fn held(code: &str, raw: &str) -> Option<Held> {
                 columns.push(name.to_string());
             }
             return Some(Held::Table(columns, keyed));
-        }
-        // `(5)` is the atom 5 and `(1 2 3)` the vector: without a top-level
-        // `;`, parentheses only group (q 5: `n:(5); n+1 2` is `6 7`).
-        if crate::slots(&code[1..code.len() - 1]).len() == 1 {
-            return held(&code[1..code.len() - 1], &raw[1..raw.len() - 1]);
         }
     }
     // A string is blank in `code`; its length is in the source.

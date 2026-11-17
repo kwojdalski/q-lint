@@ -23,9 +23,17 @@ struct Literal {
     short_integer: bool,
 }
 fn literal(s: &str) -> Option<Literal> {
-    let s = s.trim();
-    if s.starts_with('(') && matching(s, 0, b'(', b')') == Some(s.len()) {
-        return literal(&s[1..s.len() - 1]);
+    let mut s = s.trim();
+    // Stripped in a loop, as deep as q parses: one call per level overflows
+    // the stack (#703).
+    for depth in 0.. {
+        if !(s.starts_with('(') && matching(s, 0, b'(', b')') == Some(s.len())) {
+            break;
+        }
+        if depth == crate::MAX_NESTING {
+            return None;
+        }
+        s = s[1..s.len() - 1].trim();
     }
     // Any blank parts `enlist` from its argument; q 5 reads a tab as a space.
     if let Some(rest) = s
