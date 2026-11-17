@@ -117,6 +117,12 @@ f:{x}
 `:f 0: x
 r:`a:f 1
 
+=== clean profile: uqf | a name before the I/O verb 0:, 1: or 2: is its left operand, not applied (#508; q 5: parse "fmt 0: x" is (0:;`fmt;`x), and f[1:`a] does not parse)
+fmt:{x}
+w:fmt 0: ("a";"b")
+v:fmt 1: 0x0102
+u:fmt 2:00
+
 === clean profile: uqf | the same call with the brackets the convention asks for
 f:{x+1}
 r:f[2]

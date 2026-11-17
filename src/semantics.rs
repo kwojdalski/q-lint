@@ -2952,9 +2952,13 @@ pub fn check(
                     continue;
                 }
             }
+            // An infix keyword, or the I/O verb `0:`, `1:` or `2:`, makes the
+            // name its left operand: q 5 parses `fmt 0: x` as
+            // `(0:;`fmt;`x)`, and even `f 0:00` as `(0:;`f;0)` (#508).
             if re!(r"^[A-Za-z][A-Za-z0-9_]*")
                 .find(&code[argument..])
                 .is_some_and(|w| INFIX.contains(&w.as_str()))
+                || re!(r"^[012]:").is_match(&code[argument..])
             {
                 continue;
             }
