@@ -39,6 +39,11 @@ token:""
 f:{[x] token:"," vs x; token}
 g:{[x] token:"Bearer ",x; token}
 
+=== clean | a lexer's tokens are syntax: punctuation, or a q word (#655)
+sepToken:","
+token:"if"
+endToken:" ; "
+
 === QX002 | the whole value, before a comment or inside a lambda
 apiKey:"abc123" / rotate yearly
 f:{secret:"s3cr3t"; secret}

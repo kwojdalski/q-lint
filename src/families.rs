@@ -201,7 +201,12 @@ fn credentials(path: &str, source: &str, code: &str, comments: &str, out: &mut V
             .as_ref()
             .is_some_and(|c| crate::operand_ends(comments, quote + c.get(0).unwrap().end()));
         let value = value.map(|c| c.get(1).unwrap().as_str());
-        if whole && value.is_some_and(|v| !v.trim().is_empty()) {
+        // A secret has letters or digits in it, and is no q word: a lexer's
+        // `sepToken:","` and `token:"if"` are syntax (#655).
+        let opaque = |v: &str| {
+            v.bytes().any(|b| b.is_ascii_alphanumeric()) && !crate::RESERVED.iter().any(|n| n == v)
+        };
+        if whole && value.is_some_and(opaque) {
             out.push(Finding::at(
                 path,
                 source,
