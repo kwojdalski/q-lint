@@ -2151,6 +2151,13 @@ fn ends_in_token(before: &str) -> bool {
 /// so `10 20 30` and `12:00` do, and the name `x1` does not.
 fn ends_in_number(before: &str) -> bool {
     let t = before.trim_end_matches([' ', '\t']);
+    // A line break into an indented line is a blank too: q joins the two,
+    // so `10 20 30` over `  0 2` is one vector (#774).
+    let t = if t.len() < before.len() && t.ends_with('\n') {
+        t.trim_end()
+    } else {
+        t
+    };
     let start = t
         .char_indices()
         .rfind(|&(_, c)| !(c.is_ascii_alphanumeric() || "._:".contains(c)))
@@ -2162,7 +2169,7 @@ fn ends_in_number(before: &str) -> bool {
 /// included where a blank comes first (`blank` says one ends the text
 /// before), since `1 -1` is a vector and `1-1` a subtraction.
 fn starts_number(after: &str, blank: bool) -> bool {
-    let t = after.trim_start_matches([' ', '\t']);
+    let t = refusals::continued(after);
     let blank = blank || t.len() < after.len();
     let t = match t.strip_prefix('-') {
         Some(rest) if blank => rest,

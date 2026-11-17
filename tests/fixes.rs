@@ -687,6 +687,8 @@ fn no_fix_that_fuses_two_numeric_literals() {
         ("QR002", "r:0 1 2{x} each 1"),
         ("QR002", "r:0 1 2 {x} each -1"),
         ("QF017", "f:{r:10 20 30 a:0 2; r}"),
+        // An indented line goes on with the one before it (#774).
+        ("QF017", "g:{r:10 20 30\n  m:0 2; r}"),
         ("QR004", "g:10 20 30 {x+1} each 0 1"),
     ] {
         let found: Vec<_> = lint(source, "probe.q", Profile::Uqf)
