@@ -1743,10 +1743,13 @@ pub fn check(
                 depth += 1;
             } else if b == b';' && depth == 0 {
                 break;
-            } else if b == b'\n' && depth == 0 && !code[end + 1..].starts_with([' ', '\t', '\n']) {
+            } else if b == b'\n' && depth == 0 && !comments[end + 1..].starts_with([' ', '\t', '\n'])
+            {
                 // An unindented next line starts a new top-level expression.
                 // Indented continuations (including masked comments) still
                 // belong to this literal, even when they start after `!`.
+                // Read in `comments`: in `code` a column-0 string is blanks,
+                // and looks indented (#743).
                 break;
             }
             end += 1;
@@ -3934,8 +3937,22 @@ fn named_values(
     // `` `t insert 1 2 3 ``, whose items are the values.
     let name = r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*";
     let row = r"\(|-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+";
+    // Infix, the row is in the same statement: `add:`t insert` and then a
+    // column-0 `(1;2;3)` are two statements (#743).
     let forms = regex::Regex::new(&format!(
-        r"`(?P<a>{name})\s+(?P<op1>insert|upsert)\s*(?P<r1>{row})|(?:^|[^A-Za-z0-9_.`])(?P<b>{name})\s+(?P<op2>upsert)\s*(?P<r2>{row})|\b(?P<op3>insert|upsert)\s*\[\s*`(?P<c>{name})\s*;\s*(?P<r3>{row})"
+        concat!(
+            r"`(?P<a>{name})",
+            blank!(),
+            r"+(?P<op1>insert|upsert)",
+            blank!(),
+            r"*(?P<r1>{row})|(?:^|[^A-Za-z0-9_.`])(?P<b>{name})",
+            blank!(),
+            r"+(?P<op2>upsert)",
+            blank!(),
+            r"*(?P<r2>{row})|\b(?P<op3>insert|upsert)\s*\[\s*`(?P<c>{name})\s*;\s*(?P<r3>{row})"
+        ),
+        name = name,
+        row = row
     ))
     .unwrap();
     let dictionary = re!(r"^\(?\s*(?:`[A-Za-z][A-Za-z0-9_.]*)+\s*\)?\s*!");

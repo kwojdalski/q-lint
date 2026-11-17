@@ -4137,16 +4137,19 @@ pub fn lint_selecting(
         // blanks comments. A quote there is not necessarily one that opens a
         // string - `("";"=`b")` has `";"` between two - so the string operand
         // has to start where `views` saw a string start.
+        // Around the operator, the statement's blanks: `match:`x=` and then a
+        // column-0 `1 2 3` are two statements (#743).
+        let gap = concat!(blank!(), "*");
         for (pattern, view, quoted) in [
-            (format!(r"({sym})\s*{op}\s*({num})"), code.as_str(), None),
-            (format!(r"({num})\s*{op}\s*({sym})"), code.as_str(), None),
+            (format!(r"({sym}){gap}{op}{gap}({num})"), code.as_str(), None),
+            (format!(r"({num}){gap}{op}{gap}({sym})"), code.as_str(), None),
             (
-                format!(r"({string})\s*{op}\s*({sym})"),
+                format!(r"({string}){gap}{op}{gap}({sym})"),
                 v.comments.as_str(),
                 Some(1),
             ),
             (
-                format!(r"({sym})\s*{op}\s*({string})"),
+                format!(r"({sym}){gap}{op}{gap}({string})"),
                 v.comments.as_str(),
                 Some(2),
             ),
@@ -5061,9 +5064,23 @@ pub fn lint_selecting(
     // whole word: `typeTerminal=`count` is a name (#296). Applied by
     // juxtaposition, `type x=`long` is `type (x=`long)`, right to left: only
     // `type[x]=` and `(type x)=` compare the short (q 5: -1h, #429).
-    for m in re!(
-        r"\btype\s*\[[^\]]*\]\s*(?:=|<>)\s*`[a-z][A-Za-z0-9_.]*(?:`[A-Za-z0-9_.]*)*|\(\s*type\b[^()]*\)\s*(?:=|<>)\s*`[a-z][A-Za-z0-9_.]*(?:`[A-Za-z0-9_.]*)*|`[a-z]+\s*(?:=|<>)\s*type\b"
-    )
+    // Around the operator, the statement's blanks: `is:type[t]=` and then a
+    // column-0 `` `a `` are two statements (#743).
+    for m in re!(concat!(
+        r"\btype\s*\[[^\]]*\]",
+        blank!(),
+        r"*(?:=|<>)",
+        blank!(),
+        r"*`[a-z][A-Za-z0-9_.]*(?:`[A-Za-z0-9_.]*)*|\(\s*type\b[^()]*\)",
+        blank!(),
+        r"*(?:=|<>)",
+        blank!(),
+        r"*`[a-z][A-Za-z0-9_.]*(?:`[A-Za-z0-9_.]*)*|`[a-z]+",
+        blank!(),
+        r"*(?:=|<>)",
+        blank!(),
+        r"*type\b"
+    ))
     .find_iter(code)
     {
         // The symbol on the right has to be the whole operand:
@@ -5686,8 +5703,16 @@ pub fn lint_selecting(
     // either the comparison is dead or one side was meant to be a name.
     // A side may be a vector - `1 2 3>2` compares the whole of `1 2 3`, so
     // the operand quoted back is all of it, not its last item.
-    for m in re!(r"(-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)*|(?:`[A-Za-z][A-Za-z0-9_.]*)+)\s*(=|<>|<=|>=|<|>)\s*(-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)*|(?:`[A-Za-z][A-Za-z0-9_.]*)+)")
-        .captures_iter(code)
+    // The statement's blanks around the operator: `same:`a=` and then a
+    // column-0 `` `a `` are two statements (#743).
+    for m in re!(concat!(
+        r"(-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)*|(?:`[A-Za-z][A-Za-z0-9_.]*)+)",
+        blank!(),
+        r"*(=|<>|<=|>=|<|>)",
+        blank!(),
+        r"*(-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)*|(?:`[A-Za-z][A-Za-z0-9_.]*)+)"
+    ))
+    .captures_iter(code)
     {
         let whole = m.get(0).unwrap();
         // The right operand has to be the whole of one. Saying which
