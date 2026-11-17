@@ -199,6 +199,13 @@ h2:hopen `:localhost:5000
 === QT030 | a cast to a character that is no type
 r:"Q"$"1"
 
+=== clean profile: general | a one-letter string ending a line, and a conditional starting the next (q 5 prints 1 and 3, #725)
+a:1b
+mode:"w"
+$[a;show 1;show 2]
+fmt:"J"
+$[a;show 3;show 4]
+
 === clean | a lowercase type is refused only for some arguments, so it is left alone
 c:([]sym:"s"$())
 

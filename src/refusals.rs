@@ -749,7 +749,7 @@ fn hopen_literal(path: &str, source: &str, code: &str, comments: &str, out: &mut
 /// refused for some arguments - `"s"$()` is an empty symbol list, while
 /// `"s"$"abc"` is 'type - and depend on what is cast, so are not here.
 fn cast_character(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<Finding>) {
-    for m in re!(r#""([A-Za-z])"\s*\$"#).captures_iter(comments) {
+    for m in re!(concat!(r#""([A-Za-z])""#, blank!(), r"*\$")).captures_iter(comments) {
         let whole = m.get(0).unwrap();
         // A string in the source - blank in `code` - and not inside a longer one.
         if code.as_bytes()[whole.start()] != b' ' || comments[..whole.start()].ends_with('\\') {
