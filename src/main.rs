@@ -86,9 +86,9 @@ struct Args {
     /// Ignore every configuration file; use the defaults and the flags.
     #[arg(long)]
     isolated: bool,
-    /// Print which configuration governs each path and the rules it turns
-    /// on, then exit.
-    #[arg(long)]
+    /// Print which configuration governs each path (or `--stdin-filename`)
+    /// and the rules it turns on, then exit.
+    #[arg(long, conflicts_with_all = ["fix", "diff"])]
     show_settings: bool,
     /// Only these rules: codes or prefixes, comma-separated or repeated.
     /// Replaces the profile's set and the configuration's `select`.
@@ -380,7 +380,10 @@ fn run(args: Args) -> Result<u8, String> {
     }
     let policy = Policy::new(overrides(&args)?, false);
     if args.show_settings {
-        let paths = if args.paths.is_empty() {
+        // The buffer an editor pipes is the file it asks about (#806).
+        let paths = if let (true, Some(name)) = (args.paths.is_empty(), &args.stdin_filename) {
+            vec![name.clone()]
+        } else if args.paths.is_empty() {
             vec![".".to_string()]
         } else {
             args.paths.clone()

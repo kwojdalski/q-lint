@@ -1147,3 +1147,34 @@ fn an_exclude_naming_the_whole_tree_is_refused_like_an_empty_one() {
         Vec::<String>::new()
     );
 }
+
+#[test]
+fn show_settings_describes_the_stdin_filename_and_refuses_fix() {
+    // It described the cwd instead of the buffer's path, and a --fix beside
+    // it exited 0 having fixed nothing (#806).
+    let repo = Repo::new();
+    repo.write(
+        ".qlinter.toml",
+        "profile = \"style\"\n[lint]\nper-file-ignores = {\"tests/*\" = [\"QE\"]}\n",
+    )
+    .write("a.q", "g:{c==d}\n");
+    let out = run(
+        &repo.path("."),
+        &["--show-settings", "--stdin-filename", "tests/x.q"],
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(text.contains("tests/x.q"), "{text}");
+    assert!(!text.contains("QE004"), "{text}");
+    for flag in ["--fix", "--diff"] {
+        let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .current_dir(repo.path("."))
+            .args(["--show-settings", flag, "a.q"])
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(2), "{flag}: {stderr}");
+        assert!(stderr.contains("--show-settings"), "{flag}: {stderr}");
+    }
+    assert_eq!(fs::read_to_string(repo.path("a.q")).unwrap(), "g:{c==d}\n");
+}
