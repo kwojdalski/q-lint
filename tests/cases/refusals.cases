@@ -1087,3 +1087,18 @@ a:v,'{x}
 .foo.v:1 2
 a:+/.foo.v
 b:count'.z.x
+
+=== QE008 profile: general | monadic . (q 5: '., ' , '.: and '.; #571)
+v:1 2
+a:.(v)
+b:. v
+c:.:v
+d:.{x}
+
+=== clean profile: general | but not . as a noun, applied with brackets, dyadic, in a name or a number (#571)
+v:1 2;f:{x}
+e:(.)v
+g:.[f;v]
+h:f . v
+i:.Q.s v
+j:.5
