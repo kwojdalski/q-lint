@@ -581,9 +581,16 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             if text.is_empty() || depth != 0 || source[pattern + len..].starts_with('`') {
                 return None;
             }
+            // One character in quotes is a char atom, which `like` refuses
+            // with 'type as it does the symbol (q 5, #564).
+            let string = if text.len() == 1 {
+                format!("enlist\"{text}\"")
+            } else {
+                format!("\"{text}\"")
+            };
             (
                 &source[start..pattern + len],
-                format!("{}\"{text}\"", &lead.as_str()[..lead.len() - 1]).into(),
+                format!("{}{string}", &lead.as_str()[..lead.len() - 1]).into(),
                 format!("Write the pattern as the string \"{text}\"").into(),
                 true,
             )
