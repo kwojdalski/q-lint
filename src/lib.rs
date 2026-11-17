@@ -7021,8 +7021,16 @@ pub fn lint_selecting(
             // is -11h in q 5 (#409). Only the literal's own spelling: a
             // symbol naming the clock, `` `.z.z ``, is there to be looked up.
             let symbols = unsymbolled(line);
+            // A file handle names a file whatever it spells: `` `:.z.P `` and
+            // `` `:log/.z.Z `` read no clock (#651).
+            let paths: Vec<_> = re!(r"`:[A-Za-z0-9_.:/]*")
+                .find_iter(line)
+                .map(|p| p.range())
+                .collect();
+            let in_path = |at: usize| paths.iter().any(|p| p.contains(&at));
             let in_code = |m: &regex::Match| {
                 in_code(m)
+                    && !in_path(m.start())
                     && (!m.as_str().starts_with(|c: char| c.is_ascii_digit())
                         || symbols.as_bytes()[m.start()] == line.as_bytes()[m.start()])
             };
@@ -7073,7 +7081,7 @@ pub fn lint_selecting(
                     !line[..m.start()]
                         .ends_with(|c: char| c.is_ascii_alphanumeric() || "_.".contains(c))
                 })
-                .filter(|m| line[m.range()] == *m.as_str())
+                .filter(|m| line[m.range()] == *m.as_str() && !in_path(m.start()))
             {
                 let utc = utc_clock(m.as_str());
                 add(
