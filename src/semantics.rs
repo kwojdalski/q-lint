@@ -1112,6 +1112,17 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
     }
     let unsymbolled = String::from_utf8(unsymbolled).unwrap_or_default();
     let mut names: HashSet<String> = HashSet::new();
+    let mut relative: HashSet<crate::Relative> = HashSet::new();
+    let mut read = |name: &str, at: usize| {
+        let key = resolved(name, ns_at(at));
+        if !name.starts_with('.') {
+            relative.insert(crate::Relative {
+                name: name.into(),
+                resolved: key.clone(),
+            });
+        }
+        names.insert(key);
+    };
     let name = re!(r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*");
     for m in name.find_iter(&unsymbolled) {
         if !boundary(&unsymbolled, m.start()) {
@@ -1129,7 +1140,7 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
         {
             continue;
         }
-        names.insert(resolved(m.as_str(), ns_at(m.start())));
+        read(m.as_str(), m.start());
     }
     // A symbol handed straight to `get` or `value` names the global it reads
     // as plainly as writing the name would - unless it is resolved at call
@@ -1152,7 +1163,7 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
             let kind = if &m[1] == "get" { "get" } else { "value" };
             call_time_access.push((whole.start(), kind));
         } else {
-            names.insert(resolved(&m[2], ns_at(whole.start())));
+            read(&m[2], whole.start());
         }
     }
     call_time_access.extend(value_of_symbols(&view, &scopes, &ns_at));
@@ -1179,6 +1190,8 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
     }
     let mut names: Vec<_> = names.into_iter().collect();
     names.sort();
+    let mut relative: Vec<_> = relative.into_iter().collect();
+    relative.sort();
     let mut defines: Vec<_> = global_writes(code, &scopes, &namespaces, resolved, false)
         .into_keys()
         .chain(k_writes(raw, &namespaces))
@@ -1187,6 +1200,7 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
     defines.dedup();
     crate::References {
         names,
+        relative,
         defines,
         loads: loads(code, raw, &view, |at| {
             if scope_at(&scopes, at).is_some() {

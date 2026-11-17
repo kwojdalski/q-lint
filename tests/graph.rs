@@ -714,3 +714,19 @@ fn a_load_of_a_symlink_is_an_edge_to_the_link() {
         serde_json::json!({"lib/link.q": [], "main.q": ["lib/link.q"]})
     );
 }
+
+#[test]
+fn a_bare_name_inside_a_context_reaches_a_definition_in_dot_q() {
+    // q 5: `.q.answer:{42}` loaded, then `\d .a`, `g:{answer[]}`: `.a.g[]`
+    // is 42. A qualified `.a.answer` is not looked for in `.q` (#530).
+    let g = graph(
+        &[
+            ("lib.q", ".q.answer:{42}\n"),
+            ("use.q", "\\d .a\ng:{answer[]}\n\\d .\n"),
+            ("dotted.q", "h:{.a.answer[]}\n"),
+        ],
+        false,
+    );
+    assert_eq!(deps(&g, "use.q"), ["lib.q"]);
+    assert!(deps(&g, "dotted.q").is_empty());
+}

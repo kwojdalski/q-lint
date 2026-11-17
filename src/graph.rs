@@ -118,15 +118,20 @@ pub fn build(files: &[(PathBuf, String)], symbols: bool, cwd: &Path) -> BTreeMap
             dynamic: reads[i].dynamic.clone(),
             ..Node::default()
         };
+        // A name written without a dot that nobody defines is looked for in
+        // `.q`, which q searches from every context: after
+        // `.q.answer:{42}`, q 5's `answer[]` is 42 at the root (#358) and
+        // in a `\d .a` lambda (#530).
+        let in_q: HashMap<&str, String> = reads[i]
+            .relative
+            .iter()
+            .filter(|r| !r.name.contains('.'))
+            .map(|r| (r.resolved.as_str(), format!(".q.{}", r.name)))
+            .collect();
         for name in &reads[i].names {
-            // A root name nobody defines is looked for in `.q`, which q
-            // searches from every context: after `.q.answer:{42}`, q 5's
-            // `answer[]` is 42 (#358).
-            let in_q = format!(".q.{name}");
             let Some((name, defs)) = resolve(name, &definers).or_else(|| {
-                (!name.contains('.'))
-                    .then(|| definers.get_key_value(&in_q))
-                    .flatten()
+                in_q.get(name.as_str())
+                    .and_then(|q| definers.get_key_value(q))
                     .map(|(k, d)| (k.as_str(), d.as_slice()))
             }) else {
                 continue;

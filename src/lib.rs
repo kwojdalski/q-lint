@@ -111,6 +111,9 @@ pub struct References {
     /// context in force: `.a.f` inside `\d .a`, and `f` - not `.f` - at the
     /// root.
     pub names: Vec<String>,
+    /// The reads written without a leading dot, which q resolves in a
+    /// context and, failing that, in `.q`.
+    pub relative: Vec<Relative>,
     /// Each global this file assigns, named the same way, as `FileIndex`
     /// does.
     pub defines: Vec<String>,
@@ -120,6 +123,14 @@ pub struct References {
     pub loads: Vec<(String, String)>,
     /// Where a name is reached by a value computed at run time.
     pub dynamic: Vec<Dynamic>,
+}
+
+/// A global read by a name without a leading dot: `name` as written, and
+/// `resolved` as it appears in `References::names`.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct Relative {
+    pub name: String,
+    pub resolved: String,
 }
 
 /// A place reading cannot see through: `kind` is `value` (of a string),
