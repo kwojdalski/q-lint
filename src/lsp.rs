@@ -867,8 +867,9 @@ fn code_actions(
     // Every finding that has a fix, the editor-only ones included unless the
     // client turned them off: here a person sees each edit and accepts it or
     // not.
+    let lines = Lines::new(source);
     for finding in policy.lint(source, &path, ws).unwrap_or_default() {
-        let current = diagnostic(&finding, source);
+        let current = diagnostic(&finding, &lines);
         let Some(client_diagnostic) = context.iter().find(|d| {
             d["code"] == current["code"]
                 && d["range"]["start"] == current["range"]["start"]
@@ -883,7 +884,6 @@ fn code_actions(
         // two coincide for an operator swapped in place, but `f x` becomes
         // `f[x]` by replacing the whole application while the diagnostic
         // underlines only the name.
-        let lines = Lines::new(source);
         let range = json!({
             "start": lines.json(fix.start),
             "end": lines.json(fix.end),
@@ -1017,10 +1017,11 @@ fn diagnose(
             );
         }
     };
+    let lines = Lines::new(text);
     let diagnostics: Vec<Value> = findings
         .iter()
         .map(|f| {
-            let mut d = diagnostic(f, text);
+            let mut d = diagnostic(f, &lines);
             if let Some(level) = opts.severity_of(&f.code) {
                 d["severity"] = json!(level);
             }
@@ -1046,7 +1047,10 @@ fn diagnose(
 /// line only at `\n`; an LSP client also ends one at a lone `\r`. So a
 /// finding is turned back into the byte offset it names, and that offset
 /// into the client's line and character.
-fn diagnostic(f: &Finding, source: &str) -> Value {
+///
+/// `lines` is built once per document, not once per finding: rebuilding it
+/// here made a file with many findings quadratic to publish (#540).
+fn diagnostic(f: &Finding, lines: &Lines) -> Value {
     let line = f.line.saturating_sub(1);
     let end_line = f.end_line.map_or(line, |l| l.saturating_sub(1));
     // No column means the rule found a line, not a span. Underlining from the
@@ -1054,17 +1058,16 @@ fn diagnostic(f: &Finding, source: &str) -> Value {
     // by "this line": starting at 0 would decorate the indentation, and an
     // empty range would show nothing at all in some clients.
     let start = match f.column {
-        Some(c) => q_offset(source, line, c.saturating_sub(1)),
+        Some(c) => lines.q_offset(line, c.saturating_sub(1)),
         None => {
-            let text = q_line(source, line);
-            q_offset(source, line, 0) + text.len() - text.trim_start().len()
+            let text = lines.q_line(line);
+            lines.q_offset(line, 0) + text.len() - text.trim_start().len()
         }
     };
     let end = match f.end_column {
-        Some(c) => q_offset(source, end_line, c.saturating_sub(1)),
-        None => q_offset(source, end_line, 0) + q_line(source, end_line).len(),
+        Some(c) => lines.q_offset(end_line, c.saturating_sub(1)),
+        None => lines.q_offset(end_line, 0) + lines.q_line(end_line).len(),
     };
-    let lines = Lines::new(source);
     let mut d = json!({
         "range": {
             "start": lines.json(start),
@@ -1104,18 +1107,29 @@ fn severity(name: &str) -> i64 {
 struct Lines<'a> {
     source: &'a str,
     starts: Vec<usize>,
+    /// Where each line starts as q counts them - ended by `\n` alone - which
+    /// is how a finding names its line.
+    q_starts: Vec<usize>,
 }
 
 impl<'a> Lines<'a> {
     fn new(source: &'a str) -> Self {
         let bytes = source.as_bytes();
         let mut starts = vec![0];
+        let mut q_starts = vec![0];
         for (i, &b) in bytes.iter().enumerate() {
             if b == b'\n' || b == b'\r' && bytes.get(i + 1) != Some(&b'\n') {
                 starts.push(i + 1);
             }
+            if b == b'\n' {
+                q_starts.push(i + 1);
+            }
         }
-        Lines { source, starts }
+        Lines {
+            source,
+            starts,
+            q_starts,
+        }
     }
 
     /// A byte offset as the line and UTF-16 character a client addresses it
@@ -1130,36 +1144,37 @@ impl<'a> Lines<'a> {
         let (line, character) = self.position(byte);
         json!({"line": line, "character": character})
     }
-}
 
-/// The text of a 0-based line as q counts lines - ended by `\n` alone - less
-/// its line ending.
-fn q_line(source: &str, line: usize) -> &str {
-    let text = source.split('\n').nth(line).unwrap_or("");
-    text.strip_suffix('\r').unwrap_or(text)
-}
-
-/// The byte offset of a finding's position: the 0-based `line` as q counts
-/// lines, and `column` UTF-16 code units into it, which is how a finding
-/// measures one. A column past the line's end is its end.
-fn q_offset(source: &str, line: usize, column: usize) -> usize {
-    let start = if line == 0 {
-        0
-    } else {
-        match source.match_indices('\n').nth(line - 1) {
-            Some((at, _)) => at + 1,
-            None => return source.len(),
-        }
-    };
-    let text = q_line(source, line);
-    let mut units = 0;
-    for (i, c) in text.char_indices() {
-        if units >= column {
-            return start + i;
-        }
-        units += c.len_utf16();
+    /// The text of a 0-based line as q counts lines, less its line ending.
+    fn q_line(&self, line: usize) -> &'a str {
+        let Some(&start) = self.q_starts.get(line) else {
+            return "";
+        };
+        let end = self
+            .q_starts
+            .get(line + 1)
+            .map_or(self.source.len(), |&next| next - 1);
+        let text = &self.source[start..end];
+        text.strip_suffix('\r').unwrap_or(text)
     }
-    start + text.len()
+
+    /// The byte offset of a finding's position: the 0-based `line` as q
+    /// counts lines, and `column` UTF-16 code units into it, which is how a
+    /// finding measures one. A column past the line's end is its end.
+    fn q_offset(&self, line: usize, column: usize) -> usize {
+        let Some(&start) = self.q_starts.get(line) else {
+            return self.source.len();
+        };
+        let text = self.q_line(line);
+        let mut units = 0;
+        for (i, c) in text.char_indices() {
+            if units >= column {
+                return start + i;
+            }
+            units += c.len_utf16();
+        }
+        start + text.len()
+    }
 }
 
 fn utf16_len(text: &str) -> usize {
@@ -1299,9 +1314,29 @@ mod tests {
         // one unit short of the line end.
         let source = "a:1 / \u{1F600}\n";
         let f = Finding::new("x.q", 1, "QP001", "detail".into());
-        let d = diagnostic(&f, source);
+        let d = diagnostic(&f, &Lines::new(source));
         assert_eq!(d["range"]["start"]["line"], 0);
         assert_eq!(d["range"]["end"]["character"], utf16_len("a:1 / \u{1F600}"));
+    }
+
+    #[test]
+    fn a_finding_per_line_converts_in_linear_time() {
+        // One finding on each of 20,000 lines. Rebuilding the line table and
+        // rescanning from the start for every finding took minutes here, and
+        // 30 s per keystroke in an editor (#540); once per document it is
+        // milliseconds.
+        let source = "a:1==1\n".repeat(20_000);
+        let lines = Lines::new(&source);
+        let started = std::time::Instant::now();
+        for line in 1..=20_000 {
+            let mut f = Finding::new("x.q", line, "QE004", "detail".into());
+            f.column = Some(4);
+            f.end_column = Some(6);
+            let d = diagnostic(&f, &lines);
+            assert_eq!(d["range"]["start"]["line"], line - 1);
+            assert_eq!(d["range"]["start"]["character"], 3);
+        }
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
     }
 
     #[test]
@@ -1315,7 +1350,7 @@ mod tests {
         );
         let tagged: Vec<Value> = found
             .iter()
-            .map(|f| diagnostic(f, source))
+            .map(|f| diagnostic(f, &Lines::new(source)))
             .filter(|d| d["tags"] == json!([DIAGNOSTIC_TAG_UNNECESSARY]))
             .collect();
         let mut spans: Vec<(&str, u64, u64)> = tagged
