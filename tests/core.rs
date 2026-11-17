@@ -795,3 +795,22 @@ fn a_table_another_file_keys_in_place_is_not_tracked_in_a_lambda() {
     ws.add(&index("`a xkey `k\n"));
     assert!(!codes(&lint_in(a, "a.q", Profile::General, &ws)).contains(&"QT026"));
 }
+
+#[test]
+fn a_global_another_file_amends_through_its_context_is_not_tracked_in_a_lambda() {
+    use q_lint_rs::{Workspace, index, lint_in};
+    // q 5: a.q, then b.q's amend, and `f[]` is 2 4 6 8 (#758).
+    let a = "v:1 2 3\nf:{v+1 2 3 4}\n";
+    let mut ws = Workspace::default();
+    ws.add(&index(a));
+    assert!(codes(&lint_in(a, "a.q", Profile::General, &ws)).contains(&"QT006"));
+    for b in ["@[`.;`v;,;4]\n", ".[`.;enlist`v;,;4]\n"] {
+        let mut ws = Workspace::default();
+        ws.add(&index(a));
+        ws.add(&index(b));
+        assert!(
+            !codes(&lint_in(a, "a.q", Profile::General, &ws)).contains(&"QT006"),
+            "{b}"
+        );
+    }
+}

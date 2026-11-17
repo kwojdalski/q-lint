@@ -927,8 +927,11 @@ fn global_writes(
     // through its context, always that context whatever `\d` is in force,
     // and `.[`n;();:;v]` over the whole value. q 5 runs `@[`.;`foo;:;1]`
     // and `.[`bar;();:;2]` with neither defined, then reads both (#362).
+    // Through a context with any function, and by `.` with the names
+    // enlisted, it writes the name as `named_values` takes it: q 5
+    // `@[`.;`v;,;4]` makes `v:1 2 3` four items (#758).
     for m in re!(
-        r"@\s*\[\s*`(\.(?:[A-Za-z][A-Za-z0-9_.]*)?)\s*;\s*((?:`[A-Za-z][A-Za-z0-9_]*)+)\s*;\s*:\s*;"
+        r"[@.]\s*\[\s*`(\.(?:[A-Za-z][A-Za-z0-9_.]*)?)\s*;\s*(?:enlist\b\s*|\(\s*)*((?:`[A-Za-z][A-Za-z0-9_]*)+)\s*\)?\s*;"
     )
     .captures_iter(code)
     {
