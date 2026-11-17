@@ -554,6 +554,11 @@ fn shape(s: &str) -> Option<usize> {
             return None;
         }
         let inner = &s[1..s.len() - 1];
+        // A table literal's `;` separate columns, and its length is its
+        // rows: q 5 builds `([]a:1 2 3;b:4 5 6)!(1;2;3)` (#667).
+        if inner.trim_start().starts_with('[') {
+            return None;
+        }
         let items = crate::slots(inner);
         if items.len() > 1 {
             return Some(items.len());

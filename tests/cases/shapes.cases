@@ -709,6 +709,10 @@ r:.t.lj[`y;([] y:`a`b; v:1 2);([] y:`a`c; w:3 4)]
 s:.u.lj[1;([] y:`a`b; v:1 2);([] y:`a`c; w:3 4)]
 x.ij[1;([] y:`a`b; v:1 2);([] y:`a`c; w:3 4)]
 
+=== clean profile: general | a table literal as dictionary keys has as many items as rows, not columns (#667; q 5 builds both as a keyed table)
+d:([]a:1 2 3;b:4 5 6)!(1;2;3)
+e:![([]a:1 2 3;b:4 5 6);1 2 3]
+
 === clean | a keyed right table
 t:([]a:1 2)
 s:([]a:1 2;b:3 4)
