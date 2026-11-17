@@ -2735,14 +2735,35 @@ fn like_patterns<'a>(code: &str, literals: &'a str, at: usize) -> Vec<&'a str> {
     operand(code, literals, i, iterated, &mut out);
     out
 }
-/// Each name the source assigns under `.q` (`.q.foo:{x+1}`), with where.
-/// q 5 then resolves `foo` from every namespace and refuses it as a
-/// parameter, a local or a global, as it does `count`.
+/// Each name the source assigns under `.q` (`.q.foo:{x+1}`), with the end
+/// of the top-level statement that assigns it. q 5 then resolves `foo` from
+/// every namespace and refuses it as a parameter, a local or a global, as it
+/// does `count` - but only in what it parses afterwards: the statement
+/// holding the assignment, lambda and indented lines included, was parsed
+/// before it ran, so `g:{.q.foo:{x+1}; foo:2; foo}` still runs (#697).
 pub(crate) fn dotq_definitions(code: &str) -> Vec<(String, usize)> {
+    let b = code.as_bytes();
+    let statement_end = |from: usize| {
+        let mut depth = 0i32;
+        for i in from..b.len() {
+            match b[i] {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => depth -= 1,
+                b'\n'
+                    if depth <= 0
+                        && !matches!(b.get(i + 1), Some(b' ' | b'\t' | b'\r' | b'\n')) =>
+                {
+                    return i;
+                }
+                _ => {}
+            }
+        }
+        b.len()
+    };
     re!(r"\.q\.([A-Za-z][A-Za-z0-9_]*)\s*:")
         .captures_iter(code)
         .filter(|c| boundary(code, c.get(0).unwrap().start()))
-        .map(|c| (c[1].to_string(), c.get(0).unwrap().start()))
+        .map(|c| (c[1].to_string(), statement_end(c.get(0).unwrap().start())))
         .collect()
 }
 /// Whether a compound or `::` assignment has a value to assign: q 5 refuses
