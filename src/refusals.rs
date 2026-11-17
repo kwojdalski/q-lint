@@ -542,6 +542,22 @@ fn signals(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<F
         {
             continue;
         }
+        // Two items headed by a symbol signal that symbol: q 5 `'(`err;"detail")`
+        // is 'err and `'(`a;1)` is 'a. Only a second symbol makes the pair a
+        // symbol vector, `'(`a;`b)`, and so 'stype again (#739).
+        let items: Vec<&str> = code[value.range()]
+            .trim_matches(['(', ')'])
+            .split(';')
+            .map(str::trim)
+            .collect();
+        let symbol = |s: &str| re!(r"^`[A-Za-z0-9_.:]*$").is_match(s);
+        if value.as_str().starts_with('(')
+            && items.len() == 2
+            && symbol(items[0])
+            && !symbol(items[1])
+        {
+            continue;
+        }
         let rest = &code[value.end()..];
         if !rest
             .trim_start_matches([' ', '\t'])
