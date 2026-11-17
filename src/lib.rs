@@ -2143,8 +2143,12 @@ fn grouped(phrase: &str) -> String {
 }
 /// Whether `before` ends in a character that would fuse with a token
 /// written straight after it: `a` and `b` are `ab`, `1` and `b` are `1b`.
+/// A symbol ending in `:` or `/` is one: `` `:db/ `` and `t` are `` `:db/t ``,
+/// and `` `a: `` and `k` are `` `a:k `` (#776).
 fn ends_in_token(before: &str) -> bool {
+    let line = &before[before.rfind('\n').map_or(0, |p| p + 1)..];
     before.ends_with(|c: char| c.is_ascii_alphanumeric() || "_.`\")]}".contains(c))
+        || re!(r"`(?::[A-Za-z0-9_.:/]*|[A-Za-z0-9_.][A-Za-z0-9_.:]*)$").is_match(line)
 }
 /// Whether `before`, less trailing blanks, ends in a numeric literal: a
 /// token of letters, digits, `.` and `:` that begins with a digit or `.5`,

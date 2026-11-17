@@ -360,6 +360,10 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ("QS004", "a:1;r:(a)b", "a:1;r:a b", true),
         ("QS004", "a:1;r:a (b)", "a:1;r:a b", true),
         ("QS004", "a:1;r:\"ab\"(1)", "a:1;r:\"ab\" 1", true),
+        // A symbol ending in `:` or `/` would take the name in (#776).
+        ("QS004", "`:db/(t)", "`:db/ t", true),
+        ("QS004", "`:(k)", "`: k", true),
+        ("QS004", "`a:(k)", "`a: k", true),
         ("QE002", "p:\"C:\\data\"", "p:\"C:\\\\data\"", true),
         (
             "QF015",
