@@ -58,6 +58,11 @@ r3:{[p] distinct asc distinct peach p}
 r1:{[p] distinct asc distinct@'p}
 r2:{[p] distinct asc distinct .'p}
 
+=== clean | a column-0 composition under the lambda is a statement of its own (q 5 prints -abs and 5) (#727)
+id:{x}
+'[neg;abs]
+show id 5
+
 === QR004 | one arithmetic operation with a number, which is atomic
 r:{[p] {x+1} each p}
 

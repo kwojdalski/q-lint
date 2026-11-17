@@ -183,9 +183,9 @@ fn credentials(path: &str, source: &str, code: &str, comments: &str, out: &mut V
         // The literal has to be the whole value: in `token:"," vs x` and
         // `token:"Bearer ",x` it is a delimiter and a prefix, and the token
         // is computed.
-        let whole = value
-            .as_ref()
-            .is_some_and(|c| crate::operand_ends(comments, quote + c.get(0).unwrap().end()));
+        let whole = value.as_ref().is_some_and(|c| {
+            crate::operand_ends(comments, comments, quote + c.get(0).unwrap().end())
+        });
         let value = value.map(|c| c.get(1).unwrap().as_str());
         if whole && value.is_some_and(|v| !v.trim().is_empty()) {
             out.push(Finding::at(
@@ -269,7 +269,15 @@ fn simplifications(path: &str, source: &str, code: &str, out: &mut Vec<Finding>)
         }
     }
     // QR002: an identity lambda under each gives back what it was given.
-    for m in re!(r"\{\s*x\s*\}\s*(?:each\b|'(?:[^:]|$))").find_iter(code) {
+    // The `each` has to be in the same statement: `id:{x}` and then a
+    // column-0 `'[neg;abs]` is no each at all (#727).
+    for m in re!(concat!(
+        r"\{\s*x\s*\}",
+        blank!(),
+        r"*(?:each\b|'(?:[^:]|$))"
+    ))
+    .find_iter(code)
+    {
         add(
             m.start(),
             "QR002",
@@ -300,9 +308,11 @@ fn simplifications(path: &str, source: &str, code: &str, out: &mut Vec<Finding>)
     // numeric literal. `{x -1}` is not one: a `-` after a space and before a
     // digit is a negative literal, so that is x indexed at -1, and q 5 gives
     // `0N 0N` for `{x -1} each (1 2;3 4)` where `(1 2;3 4)-1` is `(0 1;2 3)`.
-    for m in re!(
-        r"\{\s*(?:x\s*[-+*%]\s*-?\d[A-Za-z0-9.]*|-?\d[A-Za-z0-9.]*\s*[-+*%]\s*x)\s*\}\s*(?:each\b|'(?:[^:]|$))"
-    )
+    for m in re!(concat!(
+        r"\{\s*(?:x\s*[-+*%]\s*-?\d[A-Za-z0-9.]*|-?\d[A-Za-z0-9.]*\s*[-+*%]\s*x)\s*\}",
+        blank!(),
+        r"*(?:each\b|'(?:[^:]|$))"
+    ))
     .find_iter(code)
     {
         if re!(r"^\{\s*x\s+-\d").is_match(m.as_str()) {

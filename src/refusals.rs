@@ -44,7 +44,7 @@ fn attributes(path: &str, source: &str, code: &str, comments: &str, out: &mut Ve
         let whole = m.get(0).unwrap();
         if code.as_bytes()[whole.start()] != b'`'
             || !boundary(code, whole.start())
-            || !operand_ends(code, whole.end())
+            || !operand_ends(code, comments, whole.end())
         {
             continue;
         }
@@ -490,15 +490,24 @@ fn missing_from(
         if !boundary(code, m.start()) {
             continue;
         }
-        // The name assigned or passed rather than run: `select:1`, `.q.select`.
-        // But `select[n]` is q's own row limit, and still wants its `from`:
-        // q 5 `parse "select[2] a"` is 'from (#489).
+        // A bracket after select is its row limit or sort, `select[2]`, and
+        // the query still wants its `from`: q 5 `parse "select[2] a"` is
+        // 'from (#489). Nothing lets the word be a value: q 5 refuses
+        // `select:1`, `{[t] select}`, `{x}[select]` and `(exec;delete)`
+        // alike - only the symbol `` `select `` or a dotted `.q.select`
+        // names it (#728).
         let after = unsym[m.end()..].trim_start_matches([' ', '\t']);
-        if after.starts_with(':')
-            || (after.starts_with('[') && m.as_str() != "select")
-            || after.starts_with([';', ')', ']', '}'])
-            || after.is_empty()
-        {
+        if after.starts_with('[') && m.as_str() != "select" {
+            continue;
+        }
+        // In a lambda the word as a parameter is QF001's, and assigned as a
+        // local QF003's: one finding for one mistake.
+        let lambda = crate::enclosing_brace(code, m.start());
+        if lambda.is_some_and(|b| {
+            let sig = crate::signature(code, source, b);
+            (sig.named && m.start() < sig.body)
+                || (after.starts_with(':') && !after.starts_with("::"))
+        }) {
             continue;
         }
         // The statement runs to a `;` at this depth, the bracket that closes
@@ -549,6 +558,11 @@ fn missing_from(
         let statement = &flat[..own];
         let from = re!(r"\bfrom\b").find_iter(statement).last();
         let detail = match from {
+            // The bare word straight before a `;`: q 5 `parse "r:select;1"`
+            // and `parse "(exec;delete)"` are ',.
+            None if statement.trim().is_empty() && bytes.get(at) == Some(&b';') => {
+                "has no `from` before its statement ends: q raises ',"
+            }
             None => "has no `from` before its statement ends: q raises 'from",
             // Read from `comments`, where `` from `t `` still has its table
             // and `from "t"` its string (#199).
@@ -791,7 +805,7 @@ fn refused_where_value(code: &str, comments: &str, at: usize) -> bool {
     while code[end..].starts_with([' ', '\t', ')']) {
         end += 1;
     }
-    operand_ends(code, end)
+    operand_ends(code, comments, end)
 }
 
 /// Whether the assignment to the name at `name`, its `:` at `colon`, is the
@@ -833,9 +847,15 @@ fn hopen_literal(path: &str, source: &str, code: &str, comments: &str, out: &mut
         // A real (`1.5e`, `2e`), the empty symbol and the empty string are
         // 'type too (q 5); the string is read from `comments`. A number is
         // read whole, sign and exponent with it: `-1.5`, `1e3` and `-1e3`
-        // are floats, and 'type (#504).
-        re!(r#"\bhopen\s*(?:\[\s*)?(-?(?:\d+\.\d*|\.\d+|\d+)(?:e[+-]?\d*)?|`(?:[A-Za-z0-9_.][A-Za-z0-9_.:]*)?|"")"#)
-            .captures_iter(comments)
+        // are floats, and 'type (#504). Applied by juxtaposition, the
+        // argument is in the same statement: `open:hopen` and then a
+        // column-0 `1.5` are two (#741).
+        re!(concat!(
+            r"\bhopen",
+            blank!(),
+            r#"*(?:\[\s*)?(-?(?:\d+\.\d*|\.\d+|\d+)(?:e[+-]?\d*)?|`(?:[A-Za-z0-9_.][A-Za-z0-9_.:]*)?|"")"#
+        ))
+        .captures_iter(comments)
     {
         let whole = m.get(0).unwrap();
         let value = m.get(1).unwrap();
@@ -843,7 +863,7 @@ fn hopen_literal(path: &str, source: &str, code: &str, comments: &str, out: &mut
             continue;
         }
         // A plain handle number is what hopen takes.
-        if !crate::operand_ends(code, value.end()) || re!(r"^\d+$").is_match(value.as_str()) {
+        if !crate::operand_ends(code, comments, value.end()) || re!(r"^\d+$").is_match(value.as_str()) {
             continue;
         }
         // `-0` is the integer 0, and q 5 tries to connect: 'hop, not
@@ -899,7 +919,7 @@ fn cast_character(path: &str, source: &str, code: &str, comments: &str, out: &mu
                 r"^(?:-?\.?\d[A-Za-z0-9.:]*(?:[ \t]+-?\.?\d[A-Za-z0-9.:]*)*|(?:`[A-Za-z0-9_.:]*)+)"
             )
             .find(operand)
-            && crate::operand_ends(code, start + lit.end())
+            && crate::operand_ends(code, comments, start + lit.end())
             && (c != "C" || !atom_literal(lit.as_str()))
         {
             out.push(Finding::at(
@@ -1253,7 +1273,9 @@ fn juxtaposed_derived(
 ) {
     // Symbols filled with digits: a path such as `:hdb/2024 is not a name
     // and an iterator, and `` ` sv'x `` still has an operand on the left.
-    let view = re!(r"`[A-Za-z0-9_.:/]*")
+    // A symbol takes a `/` only from its first `:` on: q 5 parses `` `a:b/x ``
+    // as one symbol and refuses `` `a/x `` and `` `a`b/x `` with '/ (#733).
+    let view = re!(r"`[A-Za-z0-9_.]*(?::[A-Za-z0-9_.:/]*)?")
         .replace_all(comments, |m: &regex::Captures| "0".repeat(m[0].len()));
     let b = view.as_bytes();
     let c = code.as_bytes();

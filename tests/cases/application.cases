@@ -139,6 +139,18 @@ r:f[1;2]
 h:{x}
 r:h(1;2)
 
+=== clean | a column-0 parenthesised line is a statement of its own, not the call (q 5 runs all four) (#724)
+f:{[a;b] a+b}
+r:f
+(1;2)
+s:f "x"
+(3;4)
+
+=== QA008 | but an indented one continues the statement
+f:{[a;b] a+b}
+r:f
+  (1;2)
+
 === clean | a name the file does not define is not judged
 r:k(1;2)
 
@@ -167,11 +179,30 @@ r:.[{x+y};1]
 === QA009 | the trap form is no different
 r:.[f;`a;{x}]
 
+=== QA009 profile: general | a char atom or a time-of-day literal is a scalar too (q 5: each is 'type) (#738)
+k:{[a] a}
+r1:.[k;"a"]
+r2:.[k;12:00]
+r3:k . "a"
+r4:k . 12:00:01
+r5:.[k;0D01:00]
+r6:.[k;2000.01.01D12:00]
+
+=== clean profile: general | while a string of two chars is a list (#738)
+k:{[a;b] a}
+r1:.[k;"ab"]
+r2:k . "ab"
+
 === clean | a list of arguments
 r:.[{x+y};1 2]
 
 === clean | enlist makes the list
 r:.[{x};enlist 1]
+
+=== clean profile: general | a column-0 bracket block is a statement of its own, not the arguments (q 5: r is f) (#729)
+f:{[a] a}
+r:f
+[1;2;3]
 
 === QA012 | more arguments than the named lambda takes
 f:{[a] a+1}
@@ -451,6 +482,15 @@ d:@[f;1;{x}]
 
 === QA003 | and under dot, against the items of the list (q 5: .[{[a;b;c]a};1 2;{x}] is a projection)
 e:.[{[a;b;c]a+b+c};1 2;{x}]
+
+=== QA003 | an enlist under dot is one argument (q 5: .[f;enlist 1;{x}] is {[a;b;c] a+b+c}[1]) (#734)
+f:{[a;b;c] a+b+c}
+r3:.[f;enlist 1;{x}]
+r4:.[{[a;b] a+b};enlist 1;{x}]
+
+=== QA003 | and a symbol vector one per item (q 5: .[f;`a`b;{x}] is a projection) (#734)
+f:{[a;b;c] a+b+c}
+r:.[f;`a`b;{x}]
 
 === clean | enough arguments, an amend, or a parameter of that name
 f:{[a;b]a+b}
