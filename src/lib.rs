@@ -6533,8 +6533,9 @@ pub fn lint_selecting(
                         re!(r"\b15h\s*\$"),
                         re!(r"(?:^|[^\w.])-?0[NW]z\b"),
                         re!(r"\b\d{4}\.\d{2}\.\d{2}T\d"),
-                        // `.z.z` and `.z.Z` are the clock as a datetime (-15h).
-                        re!(r"\.z\.[zZ]\b"),
+                        // `.z.z` and `.z.Z` are the clock as a datetime (-15h),
+                        // and `.my.z.z` is one dotted name of the file's (#510).
+                        re!(r"(?:^|[^\w.])\.z\.[zZ]\b"),
                     ]
                     .iter()
                     .filter_map(|regex| regex.find_iter(literals).find(in_code)),
@@ -6547,6 +6548,8 @@ pub fn lint_selecting(
                     // The `"z"` cast on its `$`: the string is not code, and
                     // a fix only starts in code.
                     _ if m.as_str().starts_with('"') => m.end() - 1,
+                    // The clock's pattern takes in the byte before it too.
+                    _ if m.as_str().ends_with(['z', 'Z']) => m.end() - 4,
                     _ => m.start(),
                 })
                 .min()

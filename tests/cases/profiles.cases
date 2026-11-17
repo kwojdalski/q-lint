@@ -279,6 +279,11 @@ r:x.z.P
 === QP002 profile: uqf | .z.z is UTC, but still a datetime
 c:.z.z
 
+=== clean profile: uqf | a dotted name that ends in .z.z or .z.Z is a variable, not the clock (#510; q 5: .my.z.z[] is 1)
+.my.z.z:{1}
+.my.z.Z:2
+b:.my.z.z[]
+
 === clean profile: uqf | .z.d and .z.p are UTC and not datetimes
 d:.z.d
 e:.z.p
