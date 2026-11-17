@@ -304,6 +304,18 @@ fn a_column_named_like_a_function_does_not_uncolour_it() {
 fn a_projection_is_coloured_as_a_function() {
     // q 5: `p:{[a;b] a+b}[1;]` is type 104h, and `p 2` is 3 (#367).
     assert_eq!(functions("p:{[a;b] a+b}[1;]\nr:p 2\n"), ["p"]);
+    // So is one given fewer arguments than it takes, in brackets or by
+    // juxtaposition: q 5 types each of these 104h (#551).
+    assert_eq!(functions("p:{[a;b] a+b}[1]\nr:p 2\n"), ["p"]);
+    assert_eq!(functions("q:{[a;b;c] a+b+c}[1;2]\nr:q 3\n"), ["q"]);
+    assert_eq!(functions("r:{x+y} 1\nw:r 2\n"), ["r"]);
+    assert_eq!(functions("r:{x+y} \"ab\"\nw:r 2\n"), ["r"]);
+    // Given all of them, or one to a lambda of one, it is applied: q 5's
+    // `{x} 1` is -7h.
+    assert!(functions("p:{[a;b] a+b}[1;2]\nr:p 2\n").is_empty());
+    assert!(functions("v:{x} 1\nr:v 2\n").is_empty());
+    // `each` is applied, not given to the lambda.
+    assert!(functions("v:{x+y} each 1\nr:v 2\n").is_empty());
 }
 
 #[test]
