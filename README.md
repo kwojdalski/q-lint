@@ -351,8 +351,8 @@ Then either press <kbd>F5</kbd> in that directory to open an Extension
 Development Host, or package and install it:
 
 ```sh
-npx vsce package                           # produces q-lint-0.2.0.vsix
-code --install-extension q-lint-0.2.0.vsix
+npx vsce package --out q-lint.vsix         # a name no release bump makes stale
+code --install-extension q-lint.vsix
 ```
 
 Its settings - the server binary and arguments, the profile, a configuration
