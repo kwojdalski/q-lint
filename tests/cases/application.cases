@@ -33,6 +33,17 @@ f:{[a] 1};f . enlist 1
 === QA005 | each supplies one argument, so a rank-2 lambda projects
 {[a;b]a+b} each 1 2 3
 
+=== QA005 | and so do each in brackets and each with @ (q 5: each[{[a;b] a+b};1 2] and {[a;b] a+b}@'1 2 are projections) (#632)
+a:each[{[a;b] a+b};1 2]
+b:{[a;b] a+b}@'1 2
+c:each[{x+y};1 2]
+d:{x+y}@'1 2
+
+=== clean | while a rank-1 lambda under them, or @ without each, is a call (#632)
+a:each[{x};1 2]
+b:{[a] a}@'1 2
+c:{[a;b] a+b}@1 2
+
 === clean | each on a unary lambda applies per element
 {[a]a+1} each 1 2 3
 

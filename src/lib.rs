@@ -3920,8 +3920,9 @@ pub fn lint_selecting(
                 params.len()
             };
             let rest = code[end..].trim_start();
+            // `@'` is each as well: q 5 `{[a;b] a+b}@'1 2` is two projections.
             if arity >= 2
-                && let Some(it) = re!(r"\A(?:each|peach)\b").find(rest)
+                && let Some(it) = re!(r"\A(?:(?:each|peach)\b|@')").find(rest)
             {
                 add(
                     end,
@@ -4707,26 +4708,46 @@ pub fn lint_selecting(
     // `{x+y} each 1 2` is `{x+y}'[1 2]`, and `@[{x+y};1;{x}]`,
     // `f:{[a;b]a};@[f;1;{x}]` and `.[{[a;b;c]a};1 2;{x}]` each return a
     // projection, so the handler never runs.
+    //
+    // `each[f;x]` is the same each, for a lambda with a parameter list too:
+    // q 5 `each[{[a;b] a+b};1 2]` is `{[a;b] a+b}'[1 2]` (#632).
     for (brace, _) in code.match_indices('{') {
-        if signature(code, source, brace).named {
-            continue;
-        }
+        let named = signature(code, source, brace).named;
         let Some(end) = matching(code, brace, b'{', b'}') else {
             continue;
         };
+        let before = code[..brace].trim_end();
+        let bracketed = before.ends_with('[')
+            && re!(r"\beach\s*$")
+                .find(&before[..before.len() - 1])
+                .is_some_and(|m| boundary(code, m.start()))
+            && code[end..].trim_start().starts_with(';')
+            && matching(code, before.len() - 1, b'[', b']')
+                .is_some_and(|close| slots(&code[before.len()..close - 1]).len() == 2);
+        if !bracketed && named {
+            continue;
+        }
         let rank = lambda_rank(code, source, brace, end);
-        if rank >= 2
-            && let Some(it) = re!(r"\A(?:each|peach)\b").find(code[end..].trim_start())
-        {
+        let it = re!(r"\A(?:(?:each|peach)\b|@')")
+            .find(code[end..].trim_start())
+            .map(|m| m.as_str());
+        if rank >= 2 && (bracketed || it.is_some()) {
             add(
                 end,
                 "QA005",
-                peach_detail(it.as_str(), rank).unwrap_or_else(|| {
-                    format!(
-                        "`each` supplies one argument to a lambda of rank {rank} (it reads {}), \
-                         so the results are projections, not values",
-                        if rank == 3 { "x, y and z" } else { "x and y" }
-                    )
+                it.and_then(|it| peach_detail(it, rank)).unwrap_or_else(|| {
+                    if named {
+                        format!(
+                            "`each` supplies one argument to a {rank}-parameter lambda, so the \
+                             results are projections, not values"
+                        )
+                    } else {
+                        format!(
+                            "`each` supplies one argument to a lambda of rank {rank} (it reads \
+                             {}), so the results are projections, not values",
+                            if rank == 3 { "x, y and z" } else { "x and y" }
+                        )
+                    }
                 }),
             );
         }
