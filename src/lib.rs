@@ -6522,8 +6522,10 @@ pub fn lint_selecting(
         }
         if re!(r"\b(?:where|select|exec|update|delete)\b").is_match(line) {
             let mut search = 0;
+            // Any comparison is constant against itself: `a<>a` and `a<a`
+            // keep no row, `a<=a` every one (#638).
             while let Some(m) =
-                re!(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\s*(=|~)\s*([a-zA-Z_][a-zA-Z0-9_]*)\b")
+                re!(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\s*(<>|<=|>=|=|~|<|>)\s*([a-zA-Z_][a-zA-Z0-9_]*)\b")
                     .captures_at(line, search)
             {
                 // The right name has to be the whole operand: `c=c i` compares

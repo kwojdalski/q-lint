@@ -79,6 +79,12 @@ r13:select a by a in 1 from t
 === QB001 | a qSQL filter comparing a column to itself
 select from t where a=a
 
+=== QB001 | every comparison of a column with itself is constant (q 5: a<>a and a<a keep no row, a>=a every one) (#638)
+t:([]a:1 2)
+r:select from t where a<>a
+s:select from t where a<a
+u:select from t where a>=a
+
 === clean | a self-comparison in another statement than the query (#239)
 a:0n;t:([]b:1 2)
 isnan:a=a; r:select from t
