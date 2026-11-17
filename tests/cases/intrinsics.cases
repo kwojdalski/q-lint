@@ -660,3 +660,11 @@ a:12:00 rotate 1 2 3
 b:12:00 mavg 1 2 3
 c:2000.01.01 msum 1 2 3
 d:rotate[0D01;1 2 3]
+
+=== QT010 profile: general | avgs of a symbol or a string (q 5: avgs `a, avgs `a`b and avgs "ab" are 'type; #606)
+a:avgs `a`b
+b:avgs "ab"
+c:avgs `a
+
+=== clean profile: general | avgs of one char is a number (q 5: 97f)
+a:avgs "a"

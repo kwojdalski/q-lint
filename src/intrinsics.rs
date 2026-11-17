@@ -499,18 +499,18 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
             // `sdev`, `svar`, `all` and `any` of a symbol, atom or vector,
             // too (q 5: 'type), though each takes a string.
             "sum" | "prd" | "avg" | "med" | "dev" | "var" | "sdev" | "svar" | "all" | "any"
-            | "sums" | "prds" | "deltas" | "ratios"
+            | "sums" | "prds" | "deltas" | "ratios" | "avgs"
                 if (value.kind == Kind::Symbol
                     && (value.vector
                         || matches!(
                             name,
-                            "avg" | "med" | "dev" | "var" | "sdev" | "svar" | "all" | "any"
+                            "avg" | "med" | "dev" | "var" | "sdev" | "svar" | "all" | "any" | "avgs"
                         )))
                     // A string is numeric to `sum`, `avg` and `ratios`, and
-                    // not to these four.
+                    // not to these five (q 5: `avgs "ab"` is 'type, #606).
                     || (value.kind == Kind::Char
                         && value.vector
-                        && matches!(name, "prd" | "sums" | "prds" | "deltas")) =>
+                        && matches!(name, "prd" | "sums" | "prds" | "deltas" | "avgs")) =>
             {
                 Some((
                     "QT010",
