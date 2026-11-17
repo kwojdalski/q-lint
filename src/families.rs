@@ -445,12 +445,11 @@ fn literal_columns(list: &str) -> Vec<&str> {
         .filter(|name| re!(r"^[A-Za-z][A-Za-z0-9_]*$").is_match(name))
         .collect()
 }
-/// The first name in `list` that an earlier one already gave.
+/// The first name in `list` that an earlier one already gave. A set: a wide
+/// literal compared each name with every one before it (#711).
 fn named_twice<'a>(list: &[&'a str]) -> Option<&'a str> {
-    list.iter()
-        .enumerate()
-        .find(|&(i, name)| list[..i].contains(name))
-        .map(|(_, &name)| name)
+    let mut seen = std::collections::HashSet::new();
+    list.iter().find(|name| !seen.insert(**name)).copied()
 }
 
 /// QB019. A table literal naming one column twice. q 5 does not refuse it: it
@@ -490,7 +489,10 @@ fn duplicate_columns(path: &str, source: &str, code: &str, out: &mut Vec<Finding
                 "QB019",
                 format!("Column `{name}` is named twice: q keeps both and renames the second, so `{name}` reads the first"),
             ));
-        } else if let Some(name) = keys.iter().find(|name| values.contains(name)) {
+        } else if let Some(name) = {
+            let values: std::collections::HashSet<&str> = values.iter().copied().collect();
+            keys.iter().find(|name| values.contains(*name))
+        } {
             out.push(Finding::at(
                 path,
                 source,
@@ -505,8 +507,9 @@ fn duplicate_columns(path: &str, source: &str, code: &str, out: &mut Vec<Finding
     // and `select a,max a`, each item named as `column_name` says. A select's
     // by list is renamed the same way - `select a by b,b` groups by b and b1 -
     // where update's by names no column and is left alone.
+    let mut strings = InString::new(code);
     for q in re!(r"\b(?:select|update)\b").find_iter(code) {
-        if !crate::boundary(code, q.start()) || in_string(code, q.start()) {
+        if !crate::boundary(code, q.start()) || strings.at(q.start()) {
             continue;
         }
         let rest = &code[q.end()..];
@@ -526,9 +529,9 @@ fn duplicate_columns(path: &str, source: &str, code: &str, out: &mut Vec<Finding
             if list.contains('\n') || !braces_close(list) || items_at_depth_zero(list, b';') {
                 continue;
             }
-            let mut seen: Vec<&str> = vec![];
+            let mut seen = std::collections::HashSet::new();
             for name in items(list).into_iter().filter_map(column_name) {
-                if seen.contains(&name) {
+                if !seen.insert(name) {
                     out.push(Finding::at(
                         path,
                         source,
@@ -538,7 +541,6 @@ fn duplicate_columns(path: &str, source: &str, code: &str, out: &mut Vec<Finding
                     ));
                     break;
                 }
-                seen.push(name);
             }
         }
     }
@@ -590,23 +592,43 @@ fn items(list: &str) -> Vec<&str> {
     items
 }
 
-/// Whether `at` sits inside a string on its line. The masked view blanks
+/// Whether a position sits inside a string on its line. The masked view blanks
 /// most strings, but not on a `\t` line, where `\t f "select min(p) ..."`
 /// carries SQL that is not q.
-fn in_string(code: &str, at: usize) -> bool {
-    let line = code[..at].rfind('\n').map_or(0, |n| n + 1);
-    let mut inside = false;
-    let b = code.as_bytes();
-    let mut i = line;
-    while i < at {
-        match b[i] {
-            b'\\' if inside => i += 1,
-            b'"' => inside = !inside,
-            _ => {}
+/// Asked for positions in increasing order, it reads on from where the last
+/// question stopped rather than from the line's start: a long line of qSQL
+/// keywords was quadratic (#709).
+struct InString<'a> {
+    code: &'a str,
+    i: usize,
+    inside: bool,
+}
+
+impl<'a> InString<'a> {
+    fn new(code: &'a str) -> Self {
+        InString {
+            code,
+            i: 0,
+            inside: false,
         }
-        i += 1;
     }
-    inside
+
+    fn at(&mut self, at: usize) -> bool {
+        if at < self.i {
+            (self.i, self.inside) = (0, false);
+        }
+        let b = self.code.as_bytes();
+        while self.i < at {
+            match b[self.i] {
+                b'\n' => self.inside = false,
+                b'\\' if self.inside => self.i += 1,
+                b'"' => self.inside = !self.inside,
+                _ => {}
+            }
+            self.i += 1;
+        }
+        self.inside
+    }
 }
 
 /// Whether every `{` in `text` closes inside it, and no `}` closes one
@@ -856,8 +878,9 @@ fn last_slot_name(inner: &str) -> Option<&str> {
 fn select_by_duplicate(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
     // No `\b` before the keyword: `1_select` is a drop of a select (#351),
     // and `boundary` tells that from the name `x_select`.
+    let mut strings = InString::new(code);
     for q in re!(r"(?:select|exec)\b").find_iter(code) {
-        if !crate::boundary(code, q.start()) || in_string(code, q.start()) {
+        if !crate::boundary(code, q.start()) || strings.at(q.start()) {
             continue;
         }
         // A limit or sort is no column: `select[1] a by a from t` and
@@ -930,20 +953,15 @@ fn unreachable(path: &str, source: &str, code: &str, comments: &str, out: &mut V
         let sig = crate::signature(code, source, brace);
         let body_start = sig.body;
         let body = &code[body_start..end - 1];
-        let (mut depth, mut start) = (0i32, 0usize);
-        let mut statements = vec![];
-        for (i, b) in body.bytes().enumerate() {
-            match b {
-                b'(' | b'[' | b'{' => depth += 1,
-                b')' | b']' | b'}' => depth -= 1,
-                b';' if depth == 0 => {
-                    statements.push((start, i));
-                    start = i + 1;
-                }
-                _ => {}
-            }
-        }
-        statements.push((start, body.len()));
+        // From `slots`, which jumps over nested lambdas rather than reading
+        // through them: a nest of lambdas was quadratic (#704).
+        let statements: Vec<(usize, usize)> = crate::slots(body)
+            .into_iter()
+            .map(|s| {
+                let a = s.as_ptr() as usize - body.as_ptr() as usize;
+                (a, a + s.len())
+            })
+            .collect();
         // Emptiness read from `comments`, where a string is still there:
         // `{[a] :a; "x"}` has a statement after the return (#216).
         let kept = &comments[body_start..end - 1];

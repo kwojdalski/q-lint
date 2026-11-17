@@ -24,7 +24,9 @@ than reasoned about.
 
 ## Already covered
 
-Arrived at independently rather than ported.
+Some were arrived at independently, others added from the list further down.
+Where the q rewrite is not the same program in every case, the row says where
+it differs.
 
 | ruff | q equivalent |
 |---|---|
@@ -33,12 +35,23 @@ Arrived at independently rather than ported.
 | `PLR0913` too many arguments | **QA001** - nine parameters is `'params` at parse, not a convention |
 | `B023` closure does not bind loop variable | **QF005** - a nested lambda cannot see an enclosing local |
 | `B905` `zip()` without `strict` | **QT006** - infix on two literal vectors of different lengths |
-| `PLW0127` self-assignment | **QB001** - a qSQL filter comparing a column to itself |
+| `PLR0124` comparison with itself | **QB001** - a qSQL filter comparing a column to itself |
+| `PLW0127` self-assignment | **QB017** - `b:b` |
 | `DTZ005` naive `now()` | **QP003** - `.z.P` is wall clock, `.z.p` is UTC |
 | `UP` deprecated constructs | **QP002** - the legacy `datetime` type |
 | `EM101` string literal in exception | **QB004** - an overlong thrown message |
 | `F823` local referenced before assignment | **QF014** - in q the assignment makes the name local for the whole lambda, so the read above it finds nothing |
 | `F821` undefined name | **QF018** - a warning rather than an error, and the difference is the language's: Python resolves a global within the module, while q takes them from `\l`, from IPC and from whatever loaded first, so an absent definition here is a suspicion and not a proof |
+| `PERF401` manual list building | **QR004** - `{x+1} each a` for `a+1`; the two differ on an empty typed list, where `each` returns a general `()` |
+| `C413` unnecessary call around `sorted` | **QR001** - `reverse asc x` for `desc x`; on a dictionary with tied values the keys come out in a different order |
+| `C414` nested redundant call | **QR003** - `distinct asc distinct x` for `asc distinct x` |
+| `PIE807` useless lambda | **QR002** - `{x} each x` for `x`; the two differ on an empty typed list, and `each` drops a `` `s# `` or `` `g# `` attribute |
+| `FIX001`-`FIX004` TODO/FIXME/XXX/HACK | **QL001** - the same, in q comments |
+| `eradicate` commented-out code | **QL002** - a lambda definition kept as a comment |
+| `S608` SQL injection by string building | **QX001** - a qSQL statement built by concatenation and handed to `value` |
+| `S105`/`S106` hardcoded password | **QX002** - credentials written into a `.q` file |
+| `ARG005` unused lambda argument | **QF016** - `{[a;b] a+1}` |
+| `F841` unused local | **QF017** - `{[a] b:1; a}` |
 
 ## Worth adding
 
@@ -49,14 +62,10 @@ are `style` unless noted.
 the primitive is vectorised and the loop is not, which makes this family worth
 more here than in Python.
 
-| ruff | in q | checked |
+| ruff | in q | checked in q 5 |
 |---|---|---|
-| `PERF401` manual list building | `{x+1} each til 5` for `1+til 5` | same result |
-| `RUF015` single-element slice | `first asc x` for `min x` | same result |
-| `C413` unnecessary call around `sorted` | `reverse asc x` for `desc x` | same result |
-| `C414` nested redundant call | `distinct asc distinct x` | same result |
-| `PIE807` useless lambda | `{x} each x` for `x` | same result |
-| `FURB118` lambda where an operator exists | `{x+y}/[x]` for `sum x` | same result |
+| `RUF015` single-element slice | `first asc x` for `min x` | differs where `x` holds a null (`0N` against `1` for `0N 3 1`) and on an empty list (`0N` against `0W`) |
+| `FURB118` lambda where an operator exists | `{x+y}/[x]` for `sum x` | differs where `x` holds a null (`0N` against `4` for `0N 3 1`) and on an empty list (`()` against `0`) |
 | `RUF017` quadratic accumulation | `,` in a loop where `raze` does it once | |
 
 **Things left in code that should not ship.**
@@ -65,8 +74,6 @@ more here than in Python.
 |---|---|
 | `T201` `print` found | `show`, `0N!` or `-1` left in a library |
 | `T100` debugger trace | debugging hooks left set |
-| `FIX001`-`FIX004` TODO/FIXME/XXX/HACK | the same, in q comments |
-| `eradicate` commented-out code | a `/` block that is q rather than prose |
 
 **Resources and state.**
 
@@ -81,8 +88,6 @@ processes commonly listen on a port and evaluate what arrives.
 
 | ruff | in q |
 |---|---|
-| `S608` SQL injection by string building | a qSQL statement built by concatenation and handed to `value` |
-| `S105`/`S106` hardcoded password | credentials written into a `.q` file |
 | `S307` insecure eval | `value` on a string from outside the process |
 
 **Shape and size.**
@@ -92,8 +97,6 @@ processes commonly listen on a port and evaluate what arrives.
 | `C901`, `PLR0912` complexity | a lambda of many branches - harder to eyeball in q's density, not easier |
 | `PLR0911` too many returns | several `:` exits from one lambda |
 | `PLR2004` magic value | a literal threshold in a filter |
-| `ARG005` unused lambda argument | `{[a;b] a+1}` |
-| `F841` unused local | `{[a] b:1; a}` |
 | `PLR1704` parameter reassigned | `{[a] a:2; a}` - the caller's value is gone from that point |
 | `RET504` assignment used once, immediately | `r:...; :r` |
 

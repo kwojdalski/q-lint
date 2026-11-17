@@ -20,7 +20,7 @@ and why there is no completion, hover or go-to-definition.
 
 - **Diagnostics** for what q would refuse, plus likely mistakes and style
   conventions, depending on the profile.
-- **Quick Fixes** for 41 rules, among them operators and keywords
+- **Quick Fixes** for over forty rules, among them operators and keywords
   from other languages (`==`, `&&`, `+=`, `true`, `return`), invalid string
   escapes, symbols where q wants strings, `f(a;b)` calls, one-row tables,
   dead code, unused locals, comparisons a where phrase groups wrongly, and

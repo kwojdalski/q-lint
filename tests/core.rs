@@ -1,4 +1,4 @@
-use q_lint_rs::{Profile, lint};
+use q_lint_rs::{Profile, Workspace, lint, lint_selecting};
 #[test]
 fn mutation_classes_and_valid_boundaries() {
     for (source, code) in [
@@ -775,14 +775,151 @@ fn deeply_nested_lambdas_lint_in_bounded_time() {
     // build after the fix, against roughly five times that before it. At 4000
     // deep it took 3 s here and over 10 s on a shared CI runner, so the bound
     // failed with no regression behind it.
+    // Past q's own limit of 100, which QE001 reports alone (#717), so the
+    // rules are run as they are with QE001 deselected.
     let depth = 2000;
     let source = format!("f:{}{}\n", "{".repeat(depth), "}".repeat(depth));
+    let started = std::time::Instant::now();
+    lint_selecting(&source, "t.q", Profile::Style, &Workspace::default(), false);
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < std::time::Duration::from_secs(10),
+        "{depth} nested lambdas took {elapsed:?}"
+    );
+}
+/// Every finding is placed by its line, which was counted from the file's
+/// start for each: a file of block comments, each a QP001 finding built and
+/// dropped later, took time quadratic in their number (#706). About 1 s in a
+/// debug build after the fix.
+#[test]
+fn many_findings_lint_in_bounded_time() {
+    let source = "/\nsome text here {[ ( \"\n\\\n".repeat(20000);
+    let started = std::time::Instant::now();
+    lint(&source, "t.q", Profile::Uqf);
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < std::time::Duration::from_secs(10),
+        "20000 block comments took {elapsed:?}"
+    );
+}
+/// Each name read asked whether a lambda around it binds the name by walking
+/// every `{` before it, so a file of one-line functions took time quadratic
+/// in their number (#705).
+#[test]
+fn many_functions_lint_in_bounded_time() {
+    // The ratio of two sizes, not a bound: a file this size is a few seconds
+    // in a debug build on its own. Linear is 8 times the time for 8 times the
+    // functions, and quadratic was 17.
+    let time = |n: usize| {
+        let source: String = (0..n)
+            .map(|i| format!("f{i}:{{[x;y] g{i}:x+y; f{}[x;g{i}]}};\n", i.max(1) - 1))
+            .collect();
+        let started = std::time::Instant::now();
+        lint(&source, "t.q", Profile::Style);
+        started.elapsed()
+    };
+    let (small, large) = (time(2000), time(16000));
+    assert!(
+        large < small * 12,
+        "2000 functions took {small:?} and 16000 took {large:?}"
+    );
+}
+/// Each `,` of a where phrase asked whether it is in one by walking back to
+/// the keyword past every condition before it, so a long where phrase took
+/// time quadratic in its conditions (#707).
+#[test]
+fn a_long_where_phrase_lints_in_bounded_time() {
+    // The ratio of two sizes, as for many_functions: linear is 8 times the
+    // time for 8 times the conditions.
+    let time = |n: usize| {
+        let conditions: Vec<String> = (0..n).map(|i| format!("c{i}=x{i}")).collect();
+        let source = format!("r:select from t where {}\n", conditions.join(","));
+        let started = std::time::Instant::now();
+        lint(&source, "t.q", Profile::Style);
+        started.elapsed()
+    };
+    let (small, large) = (time(4000), time(32000));
+    assert!(
+        large < small * 12,
+        "4000 conditions took {small:?} and 32000 took {large:?}"
+    );
+}
+/// A long lambda body: each read was placed in the body's order by walking
+/// from its start, each assignment found its lambda by walking back to it,
+/// and each line read on to the lambda's end - each quadratic in the body's
+/// length (#708).
+#[test]
+fn a_long_lambda_body_lints_in_bounded_time() {
+    let body: String = (0..16000).map(|i| format!("  a{i}:x+y*{i};\n")).collect();
+    let source = format!("f:{{[x;y]\n{body}  a0}}\n");
     let started = std::time::Instant::now();
     lint(&source, "t.q", Profile::Style);
     let elapsed = started.elapsed();
     assert!(
         elapsed < std::time::Duration::from_secs(10),
-        "{depth} nested lambdas took {elapsed:?}"
+        "a 16000-line lambda took {elapsed:?}"
+    );
+}
+/// Chained qSQL keywords: each one scanned on to the statement's end, more
+/// than once over, so a chain took time quadratic in its length (#709).
+#[test]
+fn chained_queries_lint_in_bounded_time() {
+    let source = format!("r:{}t\n", "select from ".repeat(8000));
+    let started = std::time::Instant::now();
+    lint(&source, "t.q", Profile::Uqf);
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < std::time::Duration::from_secs(10),
+        "8000 chained queries took {elapsed:?}"
+    );
+}
+/// Nested `$[`, `@[` and `.[`: each split its whole contents into slots, the
+/// brackets nested in it included, so a deep nest was quadratic (#710). Past
+/// q's limit of 100, so read as with QE001 deselected.
+#[test]
+fn nested_conditionals_lint_in_bounded_time() {
+    let depth = 16000;
+    for (open, close) in [("$[x;", ";0]"), ("@[f;", ";0]"), (".[f;", ";0]")] {
+        let source = format!("a:{}1{}\n", open.repeat(depth), close.repeat(depth));
+        let started = std::time::Instant::now();
+        lint_selecting(&source, "t.q", Profile::Style, &Workspace::default(), false);
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < std::time::Duration::from_secs(10),
+            "{depth} nested {open} took {elapsed:?}"
+        );
+    }
+}
+/// A wide table literal: each column counted its depth from the literal's
+/// start (#469), was compared with every column before it for QB019, and
+/// each number on the line looked back for the line's start (#711).
+#[test]
+fn a_wide_table_literal_lints_in_bounded_time() {
+    let keys: Vec<String> = (0..16000).map(|i| format!("k{i}:1 2")).collect();
+    let columns: Vec<String> = (0..16000).map(|i| format!("c{i}:3 4")).collect();
+    let source = format!("t:([{}] {})\n", keys.join("; "), columns.join("; "));
+    let started = std::time::Instant::now();
+    lint(&source, "t.q", Profile::Style);
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < std::time::Duration::from_secs(10),
+        "32000 columns took {elapsed:?}"
+    );
+}
+/// Lambdas nested in each other's bodies: each scope copied its whole body,
+/// and each implicit lambda's rank and each body's statements were read over
+/// the lambdas nested in it, so time and memory were quadratic in the depth -
+/// 4 GB for 32000 (#704). Past q's limit, so read as with QE001 deselected.
+#[test]
+fn nested_lambda_bodies_lint_in_bounded_time() {
+    let depth = 16000;
+    let source = format!("a:{}1{}\n", "{x+".repeat(depth), "}".repeat(depth));
+    let started = std::time::Instant::now();
+    lint_selecting(&source, "t.q", Profile::Style, &Workspace::default(), false);
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < std::time::Duration::from_secs(10),
+        "{depth} nested lambda bodies took {elapsed:?}"
     );
 }
 /// Tens of thousands of nested parentheses - beyond q's own limit, which
@@ -800,8 +937,39 @@ fn deeply_nested_parentheses_do_not_overflow_the_stack() {
         format!("f:{{[{open}a{}] a}}\n", ";b)".repeat(depth)),
     ] {
         for profile in [Profile::General, Profile::Uqf] {
-            lint(&source, "t.q", profile);
+            // QE001 reports the depth alone (#717); deselected, every rule
+            // still reads the file.
+            assert!(
+                lint(&source, "t.q", profile)
+                    .iter()
+                    .any(|f| f.code == "QE001")
+            );
+            lint_selecting(&source, "t.q", profile, &Workspace::default(), false);
         }
+    }
+}
+/// q 5 holds at most a hundred brackets, braces and parentheses open at once,
+/// of any kinds, and refuses the next with '( or '{ or '[ (#717).
+#[test]
+fn more_than_a_hundred_open_brackets_are_refused() {
+    let deep =
+        |n: usize, open: &str, close: &str| format!("a:{}1{}\n", open.repeat(n), close.repeat(n));
+    for (source, refused) in [
+        (deep(100, "(", ")"), false),
+        (deep(101, "(", ")"), true),
+        (deep(100, "{", "}"), false),
+        (deep(101, "{", "}"), true),
+        (deep(100, "f[", "]"), false),
+        (deep(101, "f[", "]"), true),
+        (deep(50, "({", "})"), false),
+        (deep(51, "({", "})"), true),
+        (deep(101, "$[x;", ";0]"), true),
+    ] {
+        let found: Vec<_> = lint(&source, "t.q", Profile::General)
+            .into_iter()
+            .filter(|f| f.code == "QE001")
+            .collect();
+        assert_eq!(found.len(), usize::from(refused), "{source}");
     }
 }
 #[test]

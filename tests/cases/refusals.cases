@@ -148,7 +148,7 @@ r:1_select a by b t
 === QE007 | inside a lambda too
 f:{select x}
 
-=== QE007 profile: general | the bare keyword is never a value (q 5: each line is 'from or ',) (#728)
+=== QE007 QF004 profile: general | the bare keyword is never a value (q 5: each line is 'from or ',) (#728), and assigning it at the root is QF004's as in a namespace (#778)
 f:{[t] select}
 g:{x}[select]
 h:(exec;delete)
@@ -710,6 +710,54 @@ d:1.5p
 e:1.5t
 f:2024.01m
 g:2024.01.01d
+
+=== QE010 profile: general | an integer suffix on a fraction that starts at its point (#715; q 5: '.5)
+a:.5j
+
+=== QE010 profile: general | after a closing parenthesis too (#715; q 5: '.5)
+a:(x).5i
+
+=== QE010 profile: general | and a vector's integer suffix over such a fraction (#715; q 5: '.5)
+a:.5 2j
+
+=== clean profile: general | a fraction from its point with a suffix it takes, and one making a vector float (#715; q 5: each parses)
+a:.5e
+b:.5f
+c:.5p
+d:1E5 .5
+
+=== QE010 profile: general | a date with a suffix no date takes (#716; q 5: '2000.01.01)
+a:2000.01.01j
+
+=== QE010 profile: general | a time with one (#716; q 5: '12:00:00)
+a:12:00:00f
+
+=== QE010 profile: general | a minute-shaped time with one (#716; q 5: '12:00)
+a:12:00m
+
+=== QE010 profile: general | a timespan with one (#716; q 5: '0D12)
+a:0D12h
+
+=== QE010 profile: general | a timestamp with one (#716; q 5: '2000.01.01D12)
+a:2000.01.01D12t
+
+=== QE010 profile: general | a datetime with one (#716; q 5: '2000.01.01T12)
+a:2000.01.01T12u
+
+=== QE010 profile: general | a float with an exponent and a temporal suffix (#716; q 5: '1e5)
+a:1e5p
+
+=== QE010 profile: general | the last time of a vector with one (#716; q 5: '12:00)
+a:12:00 12:30j
+
+=== clean profile: general | temporal literals with suffixes they take (#716; q 5: each parses)
+a:12:00u
+b:12:00:00.000 12:00:01.000t
+c:2000.01.01z
+d:2000.01.01D12:00:00.000000000p
+e:0D12n
+f:1e5f
+g:2000.01.01 2000.01.02d
 
 === QE010 profile: general | -0n with a suffix or before another item (#386; q 5: '-0n for each)
 a:-0ne
@@ -1442,7 +1490,7 @@ a:123m
 r:12:00:60 -12:00u
 s:12:00:60 -12:00:60u
 
-=== QE006 profile: general | a `u` does not save the seconds when another item is no time (#581; q 5: '2000.01.01)
+=== QE006 QE010 profile: general | a `u` does not save the seconds when another item is no time (#581; q 5: '2000.01.01), and a date takes no `u` (#716)
 r:12:00:60 2000.01.01u
 
 === QE008 profile: general | a glyph at the start of a q)-prefixed line (#582; q 5: '#)

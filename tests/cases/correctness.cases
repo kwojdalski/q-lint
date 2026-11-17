@@ -240,6 +240,21 @@ r1:select from t where a>1; v:a=1 2 3
 r2:select from t where a>1; ok:a~3 2 1
 r3:select from t where a>1; w:(a=3) and 101b
 
+=== clean | the where function after an earlier statement's select is still no filter (#701; q 5: f[t;3 2 1] is ,1)
+t:([]a:1 2 3)
+f:{[t;b] r:select from t; r,where b=1 2 3}
+x:select from t; r:where b=1 2 3
+
+=== QB008 | a filter after a where function on the same line is still read (#702; q 5: 'length)
+t:([]a:1 2 3;c:1 2 3)
+b:3 2 1
+s:where b=1 2 3; u:select from t where c=1 2
+
+=== QB005 | and so is a match in it (#702)
+t:([]a:1 2 3)
+b:3 2 1
+n:where b~a; r:select from t where a~b
+
 === clean | in is the membership operator
 select from t where px in 1 2
 
@@ -746,6 +761,12 @@ u:select from t where n="abcd"[1]
 t:([]s:`ab`cd`ab;n:1 2 3)
 r:select from t where s="ab", n>1
 u:select from t where s="ab";
+
+=== QB015 profile: general | QB015: and before a comma that starts the next line (q 5: 'length; #700)
+t:([]s:`ab`cd`ab;n:1 2 3)
+r:select from t
+  where s="ab"
+  ,n>1
 
 === clean | QB015: an `=` inside a string is not a comparison
 f:{[t] select from t where a in `x, b like "="}
