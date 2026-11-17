@@ -1495,6 +1495,10 @@ fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Find
                 Some(format!("`{text}` is no month"))
             } else if re!(r"^\d+\.\d*[A-Za-z]$").is_match(text)
                 && !re!(r"[cefnpt]$|^\d{4}\.\d*m$|^\d{5,}\.\d\dm$").is_match(text)
+                // A fraction nine characters long or more and a `z` are a
+                // datetime, seconds from 1970: q 5 reads `1234567.5z` as
+                // 1970.01.15T06:56:07.500 and refuses `123456.5z` (#811).
+                && !(text.len() >= 10 && text.ends_with('z'))
             {
                 // After a fraction only a float, real, char or temporal
                 // suffix reads: q 5 refuses `1.5d`, `1.5m`, `1.5u`, `1.5v`
