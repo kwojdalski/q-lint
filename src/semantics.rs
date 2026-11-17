@@ -2948,13 +2948,16 @@ pub fn check(
                 _ => None,
             }
         };
-        let mut candidates: Vec<(usize, &str)> = named
-            .captures_iter(code)
-            .map(|m| {
-                let name = m.get(1).unwrap();
-                (name.start(), name.as_str())
-            })
-            .collect();
+        // Overlapping: in `select g s` or `in g 1` the keyword's match takes
+        // the `g`, so each search resumes at the argument rather than past
+        // it (#780).
+        let mut candidates: Vec<(usize, &str)> = Vec::new();
+        let mut from = 0;
+        while let Some(m) = named.captures_at(code, from) {
+            let name = m.get(1).unwrap();
+            candidates.push((name.start(), name.as_str()));
+            from = m.get(2).unwrap().start();
+        }
         for m in named.captures_iter(raw).filter(|m| &m[2] == "\"") {
             let name = m.get(1).unwrap();
             let quote = m.get(2).unwrap().start();
@@ -2990,10 +2993,22 @@ pub fn check(
             // whose own argument this rule cannot delimit, so a name is
             // reported only where it opens the expression it belongs to -
             // after a separator or an operator, or alone at the left margin.
+            // A qSQL keyword opens its phrase, and an infix keyword's right
+            // operand is an expression of its own: q 5 reads `select g s
+            // from t` and `s in g 1` as calls of `g` (#780).
             let before = code[..at].trim_end();
+            let keyword = re!(r"(?:^|[^A-Za-z0-9_.`])([a-z][a-z0-9]*)$")
+                .captures(before)
+                .is_some_and(|m| {
+                    let word = &m[1];
+                    matches!(word, "select" | "exec" | "update" | "by" | "from" | "where")
+                        || INFIX.contains(&word)
+                });
             let head = match before.chars().next_back() {
                 None => true,
-                Some(c) => ";([{:,+-*%&|<>=~!^#$?@".contains(c) || at == line_start,
+                Some(c) => {
+                    ";([{:,+-*%&|<>=~!^#$?@".contains(c) || at == line_start || keyword
+                }
             };
             if !head {
                 continue;
@@ -3028,10 +3043,13 @@ pub fn check(
             }
             // An infix keyword, or the I/O verb `0:`, `1:` or `2:`, makes the
             // name its left operand: q 5 parses `fmt 0: x` as
-            // `(0:;`fmt;`x)`, and even `f 0:00` as `(0:;`f;0)` (#508).
+            // `(0:;`fmt;`x)`, and even `f 0:00` as `(0:;`f;0)` (#508). A
+            // qSQL keyword ends the phrase: `select g from t` names a column.
             if re!(r"^[A-Za-z][A-Za-z0-9_]*")
                 .find(&code[argument..])
-                .is_some_and(|w| INFIX.contains(&w.as_str()))
+                .is_some_and(|w| {
+                    INFIX.contains(&w.as_str()) || matches!(w.as_str(), "from" | "by" | "where")
+                })
                 || re!(r"^[012]:").is_match(&code[argument..])
             {
                 continue;
