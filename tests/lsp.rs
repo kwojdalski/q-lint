@@ -1772,3 +1772,34 @@ fn a_document_opened_by_another_spelling_of_its_path_is_one_file() {
     assert!(found.contains(&"QT022".to_string()), "{found:?}");
     assert_eq!(server.shutdown_and_exit(), 0);
 }
+
+#[test]
+fn a_client_that_waits_for_registration_is_asked_to_watch_files() {
+    // Neovim and Helix send didChangeWatchedFiles only for watchers a server
+    // registers; with none registered, an edited qlinter.toml was never
+    // heard until a restart (#792).
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start_in(dir.path(), &[]);
+    let mut capabilities = client_capabilities();
+    capabilities["workspace"] = json!({"didChangeWatchedFiles": {"dynamicRegistration": true}});
+    server.send(
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+        "capabilities": capabilities,
+        "workspaceFolders":[{"uri":file_uri(dir.path()),"name":"ws"}]}}),
+    );
+    server.receive();
+    server.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+    let request = server.until(|m| m["method"] == "client/registerCapability");
+    let registration = &request["params"]["registrations"][0];
+    assert_eq!(registration["method"], "workspace/didChangeWatchedFiles");
+    let globs: Vec<&str> = registration["registerOptions"]["watchers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| w["globPattern"].as_str().unwrap())
+        .collect();
+    assert!(globs.contains(&"**/*.q"), "{globs:?}");
+    assert!(globs.contains(&"**/qlinter.toml"), "{globs:?}");
+    server.send(json!({"jsonrpc":"2.0","id":request["id"],"result":null}));
+    assert_eq!(server.shutdown_and_exit(), 0);
+}

@@ -446,6 +446,9 @@ pub fn serve(
     // Whether the client re-asks for semantic tokens when told to, and the
     // id of the next request the server sends it.
     let mut token_refresh = false;
+    // Whether the client sends `workspace/didChangeWatchedFiles` only for
+    // watchers a server registers, as Neovim and Helix do.
+    let mut watch_registration = false;
     let mut next_request: u64 = 0;
     let mut shutdown_requested = false;
     loop {
@@ -504,6 +507,10 @@ pub fn serve(
                     .pointer("/capabilities/workspace/semanticTokens/refreshSupport")
                     .and_then(Value::as_bool)
                     .unwrap_or(false);
+                watch_registration = params
+                    .pointer("/capabilities/workspace/didChangeWatchedFiles/dynamicRegistration")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
                 send(
                     writer,
                     json!({"id": id, "result": capabilities(&opts, code_action_literals)}),
@@ -530,6 +537,29 @@ pub fn serve(
                         writer,
                         json!({"method": "window/showMessage", "params": {"type": 2,
                                "message": format!("q-lint: ignoring a setting: {problem}")}}),
+                    )?;
+                }
+                // LSP 3.17 has the server register the files it watches; a
+                // client other than VS Code's extension, which watches on its
+                // own, otherwise never reports a configuration or a `.q` file
+                // changed on disk (#792). The reply is a response, dropped.
+                if watch_registration {
+                    next_request += 1;
+                    let watchers: Vec<Value> = [
+                        "**/*.q",
+                        "**/qlinter.toml",
+                        "**/.qlinter.toml",
+                        "**/pyproject.toml",
+                    ]
+                    .iter()
+                    .map(|glob| json!({"globPattern": glob}))
+                    .collect();
+                    send(
+                        writer,
+                        json!({"id": format!("qlinter-{next_request}"), "method": "client/registerCapability",
+                               "params": {"registrations": [{"id": "qlinter-watched-files",
+                                   "method": "workspace/didChangeWatchedFiles",
+                                   "registerOptions": {"watchers": watchers}}]}}),
                     )?;
                 }
                 idx.enabled = opts.index;
