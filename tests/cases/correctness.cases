@@ -661,6 +661,14 @@ out["hello"]
 h:2i
 h["hi\n"]
 
+=== clean | and so in grouping parentheses (#693; q 5: out:(1); out["hello\n"] writes, as do h:(2i) and l:(0N) once opened)
+out:(1)
+out["hello"]
+h:(2i)
+h["hi\n"]
+l:(0N)
+l["x"]
+
 === QT022 | but a short is no handle (#477; q 5: h:1h; h["hi"] and h:0Nh; h "hi" are 'type)
 h:1h
 s:h["hi"]

@@ -2958,13 +2958,13 @@ enum Held {
     Table(Vec<String>, bool),
 }
 
-/// The value text of a top-level `name:...`, judged as a literal.
-fn held(code: &str, raw: &str) -> Option<Held> {
+/// A value's text, in two views at the same offsets, without the
+/// parentheses that only group it. `(5)` is the atom 5 and `(1 2 3)` the
+/// vector: without a top-level `;`, parentheses only group (q 5: `n:(5);
+/// n+1 2` is `6 7`). Unwrapped in a loop, not by recursion, which tens of
+/// thousands of levels would overflow, and only as deep as q parses (#703).
+fn ungrouped<'a>(code: &'a str, raw: &'a str) -> Option<(&'a str, &'a str)> {
     let (mut code, mut raw) = (code.trim(), raw.trim());
-    // `(5)` is the atom 5 and `(1 2 3)` the vector: without a top-level
-    // `;`, parentheses only group (q 5: `n:(5); n+1 2` is `6 7`). Unwrapped
-    // in a loop, not by recursion, which tens of thousands of levels would
-    // overflow, and only as deep as q parses (#703).
     let mut depth = 0;
     while code.starts_with('(')
         && !code[1..].trim_start().starts_with('[')
@@ -2977,6 +2977,12 @@ fn held(code: &str, raw: &str) -> Option<Held> {
         }
         (code, raw) = (code[1..code.len() - 1].trim(), raw[1..raw.len() - 1].trim());
     }
+    Some((code, raw))
+}
+
+/// The value text of a top-level `name:...`, judged as a literal.
+fn held(code: &str, raw: &str) -> Option<Held> {
+    let (code, raw) = ungrouped(code, raw)?;
     if code.starts_with('(') && matching(code, 0, b'(', b')') == Some(code.len()) {
         let inner = code[1..code.len() - 1].trim_start();
         if inner.starts_with('[') {
@@ -3334,14 +3340,17 @@ fn named_values(
             end += 1;
         }
         if let Some(value) = held(&code[start..end], &comments[start..end]) {
+            // Read as `held` reads it, inside any grouping parentheses:
+            // `out:(1)` is a handle and `a:("abc")` a string (#693).
+            let text = ungrouped(&code[start..end], &comments[start..end]).map_or("", |v| v.1);
             // `0N` and `0W` are integers too: uqf's tick.q starts a log
             // handle as `0N` and sets it with hopen later. Not a short: q 5
             // `h:1h; h "hi"` is 'type, where `2i "hi"` writes (#477).
-            if re!(r"^\s*-?(?:\d+|0[NW])[ij]?\s*$").is_match(&comments[start..end]) {
+            if re!(r"^\s*-?(?:\d+|0[NW])[ij]?\s*$").is_match(text) {
                 handles.insert(name);
             }
             known.insert(name, (end, value));
-            if let Some(kind) = arithmetic_kind(&comments[start..end]) {
+            if let Some(kind) = arithmetic_kind(text) {
                 kinds.insert(name, kind);
             }
         }

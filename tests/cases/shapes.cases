@@ -86,6 +86,10 @@ r3:2-"x"
 === QT023 | but integer arithmetic on a char is 'type on q 5
 r:"a"*3
 
+=== QT023 profile: general | a string in grouping parentheses is a string (q 5: a:("abc"); a*2 is 'type, #693)
+a:("abc")
+b:a*2
+
 === QT023 | a char left of minus too
 r:"a"-1
 
