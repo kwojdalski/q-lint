@@ -86,7 +86,9 @@ one before left:
    decides, as in the configuration.
 
 So with no editor settings the editor shows what `qlinter` prints in a
-terminal and in CI. `q-lint.profile`, `q-lint.configFile` and
+terminal and in CI only when the configuration names a `profile`: without
+one the server's default is `style`, while the command line's is `uqf`, and
+the editor shows fewer findings than CI. `q-lint.profile`, `q-lint.configFile` and
 `q-lint.serverArgs` replace parts of the repository's configuration;
 `q-lint.lint.*` only narrows it. `q-lint.lint.severity` changes how a finding
 looks, not whether it is reported. Neither the configuration's `exclude` nor
