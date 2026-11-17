@@ -1242,7 +1242,6 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             let brace = enclosing_brace(&v.code, start)?;
             let close = matching(&v.code, brace, b'{', b'}')?;
             let sig = signature(&v.code, source, brace);
-            let body_text = &v.code[sig.body..close - 1];
             // q takes at most 8 parameters: a ninth is 'params at load (#337).
             if sig.named && sig.slots.len() >= 8 {
                 return None;
@@ -1255,21 +1254,12 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 header.push_str(&format!("{{[{name};"));
                 header.push_str(&source[bracket + 1..sig.body]);
             } else {
-                // Implicit arguments become explicit ones, up to the highest
-                // the body reads - and at least `x`, or the projection would
-                // fill every slot and run on the spot.
-                let used = |p: &str| {
-                    re!(r"[A-Za-z0-9_.`]?\b[xyz]\b")
-                        .find_iter(&top_level(body_text))
-                        .any(|m| m.as_str().ends_with(p) && m.as_str().len() == 1)
-                };
-                let params = if used("z") {
-                    "x;y;z"
-                } else if used("y") {
-                    "x;y"
-                } else {
-                    "x"
-                };
+                // Implicit arguments become explicit ones, as many as q
+                // gives the lambda - and at least `x`, or the projection
+                // would fill every slot and run on the spot. A column in a
+                // query is no argument: `{exec sum y from t}` takes one (#777).
+                let params =
+                    ["x", "x;y", "x;y;z"][lambda_rank(&v.code, source, brace, close - 1) - 1];
                 header.push_str(&format!("{{[{name};{params}] "));
             }
             // Passed in, the local is read where the lambda is written, so it

@@ -575,6 +575,13 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
             "f:{a:2; {[a;x] a+x}[a] each 1 2}",
             false,
         ),
+        // A column in a query is no argument: q 5 gives the lambda one (#777).
+        (
+            "QF005",
+            "f:{[a] {a+x+exec sum y from t} each 1 2}",
+            "f:{[a] {[a;x] a+x+exec sum y from t}[a] each 1 2}",
+            false,
+        ),
         ("QA007", "f:{[c] $[c;1;2;]}", "f:{[c] $[c;1;2]}", false),
         ("QA006", "f:{[c] $[c=1;1]}", "f:{[c] if[c=1;1]}", false),
         (
