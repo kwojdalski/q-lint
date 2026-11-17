@@ -3903,9 +3903,11 @@ pub fn lint_selecting(
             // An operand juxtaposed after it is one more argument: q 5
             // `@[{[a;b] a+b} 1;2;{x}]` is 3 and `@[{[f;a] f a}neg;1;{x}]` -1,
             // each a complete call (#433). On the next line too: inside the
-            // brackets a line break is a blank (#686).
-            if source[past_blanks(code, after)..]
-                .starts_with(|c: char| c.is_ascii_alphanumeric() || "`(\"{.".contains(c))
+            // brackets a line break is a blank (#686). A negative literal
+            // past a blank is one too: `@[{[a;b] a+b} -1;2;{x}]` is 1 (#590).
+            let next = &source[past_blanks(code, after)..];
+            if next.starts_with(|c: char| c.is_ascii_alphanumeric() || "`(\"{.".contains(c))
+                || (past_blanks(code, after) > after && re!(r"^-\.?\d").is_match(next))
             {
                 supplied += 1;
             }
