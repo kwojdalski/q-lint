@@ -1075,3 +1075,14 @@ r1:f `a!1
 === QT023 profile: general | char arithmetic assigned to a name ending in a digit (q 5: 'type) (#497)
 r21:1*"a"
 x2:2+"a"
+
+=== QT032 profile: general | the symbol and guid casts by type char and number (q 5: each is 'type) (#505)
+r1:"s"$"ab"
+r2:"g"$"ab"
+r3:11h$"ab"
+r4:2h$"ab"
+
+=== clean profile: general | the negative type numbers parse, and a cast spelled in a string is data (#505)
+r1:-11h$"ab"
+r2:-2h$"ab"
+r3:"\"s\"$\"ab\""

@@ -6223,12 +6223,29 @@ pub fn lint_selecting(
         // to say so. The uppercase-char cast `"J"$` parses text. `char` and
         // `byte` are legitimate on a string. `symbol` and `guid` convert
         // nothing: q 5 refuses them with 'type, which is QT032's, in general.
+        // The symbol and guid casts by type char and by type number too: q 5
+        // `"s"$"ab"`, `"g"$"ab"`, `11h$"ab"` and `2h$"ab"` are 'type, while
+        // `-11h$` and `-2h$` parse (#505). The `$` has to be code.
         if let Some(m) = re!(
-            r#"`(long|int|short|float|real|boolean|date|time|timestamp|timespan|month|minute|second|datetime|symbol|guid)\s*\$\s*""#
+            r#"(?:`(long|int|short|float|real|boolean|date|time|timestamp|timespan|month|minute|second|datetime|symbol|guid)|"([sg])"|(?:^|[^-\w.])(11|2)h)\s*\$\s*""#
         )
-        .captures(literals)
+        .captures_iter(literals)
+        .find(|m| line.as_bytes()[m.get(0).unwrap().start() + m[0].rfind('$').unwrap()] == b'$')
         {
-            let name = &m[1];
+            let name = match (m.get(1), m.get(2), m.get(3)) {
+                (Some(n), _, _) => n.as_str(),
+                (_, Some(c), _) | (_, _, Some(c)) => match c.as_str() {
+                    "s" | "11" => "symbol",
+                    _ => "guid",
+                },
+                _ => unreachable!(),
+            };
+            // At the backtick or the quote, or the number's first digit.
+            let at = match (m.get(1).or(m.get(2)), m.get(3)) {
+                (Some(n), _) => n.start() - 1,
+                (_, Some(n)) => n.start(),
+                _ => unreachable!(),
+            };
             let ch = match name {
                 "long" => "J", "int" => "I", "short" => "H", "float" => "F", "real" => "E",
                 "boolean" => "B", "date" => "D", "time" => "T", "timestamp" => "P",
@@ -6253,7 +6270,7 @@ pub fn lint_selecting(
                      text is \"{ch}\"$\"...\""
                 )
             };
-            add(offset + m.get(0).unwrap().start(), code, detail);
+            add(offset + at, code, detail);
         }
         // Equality against a string literal in a filter pairs each row with
         // one character. q 5: 'length whenever the row count differs from
