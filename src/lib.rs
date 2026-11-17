@@ -2121,6 +2121,16 @@ fn edit_distance(a: &str, b: &str) -> usize {
     }
     row[b.len()]
 }
+/// QB006's logic: the words only. `&` and `|` read the same way, but they
+/// are min and max as often as and and or, and there the right-to-left
+/// reading is the point: `n>=4|.00002*count text`, `0<x&y`.
+static LOGIC: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"\b(?:and|or)\b").unwrap());
+/// A comparison to the left of one: the glyphs, and the words applied infix.
+/// q 5 `where a in 1 3 and b=0` is `a in (1 3 and b=0)` too (#735).
+static COMPARISON: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"[<>=~]|\b(?:in|within|like)(?:[^A-Za-z0-9_.\[]|$)").unwrap()
+});
 /// The comparisons in a where phrase that an `and`/`or` to their right
 /// swallows, as byte ranges into `flat` - a phrase `flat_filter` has
 /// flattened. Each is an operand left of an `and`/`or` in its clause; q reads
@@ -2131,9 +2141,9 @@ pub(crate) fn swallowed_comparisons(flat: &str) -> Vec<(usize, usize)> {
     let mut clause_start = 0;
     for clause in flat.split(',') {
         let mut from = 0;
-        for logic in re!(r"\b(?:and|or)\b").find_iter(clause) {
+        for logic in LOGIC.find_iter(clause) {
             let operand = &clause[from..logic.start()];
-            if re!(r"[<>=]").is_match(operand) {
+            if COMPARISON.is_match(operand) {
                 let lead = operand.len() - operand.trim_start().len();
                 let start = clause_start + from + lead;
                 out.push((start, start + operand.trim().len()));
@@ -5783,9 +5793,9 @@ pub fn lint_selecting(
             continue;
         }
         let condition = flat_filter(parts[0]);
-        if re!(r"\b(?:and|or)\b")
+        if LOGIC
             .find(&condition)
-            .is_some_and(|logic| re!(r"[<>=]").is_match(&condition[..logic.start()]))
+            .is_some_and(|logic| COMPARISON.is_match(&condition[..logic.start()]))
         {
             add(
                 m.start(),
@@ -6401,9 +6411,9 @@ pub fn lint_selecting(
                 // Parenthesised groups are blank in `phrase`, so a comma
                 // left in it is a top-level one.
                 if phrase.split(',').any(|clause| {
-                    re!(r"\b(?:and|or)\b")
+                    LOGIC
                         .find(clause)
-                        .is_some_and(|logic| re!(r"[<>=]").is_match(&clause[..logic.start()]))
+                        .is_some_and(|logic| COMPARISON.is_match(&clause[..logic.start()]))
                 }) {
                     // Quote the reader's own clause where it is short enough
                     // to read: `a=1 and b=3` reads as `a=(1 and b=3)`.

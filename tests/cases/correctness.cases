@@ -157,6 +157,16 @@ select from t where a=1 and b=0
 === clean | parenthesised, the comparison is said out loud
 select from t where (a=1) and b=0
 
+=== QB006 | a word comparison left of and reads the same (q 5: where a in 1 3 and b=0 is a in (1 3 and b=0), 'length) (#735)
+select from t where a in 1 3 and b=0
+
+=== QB006 | in a condition too (q 5: `rdb in key d and 7h~tp is 1b whatever tp is) (#735)
+f:{if[`rdb in key d and 7h~tp; :1]; 0}
+
+=== clean | but like applied with brackets is no infix comparison, and & and | are min and max as often as not (#735)
+f:{if[not like[a;"ms://*"]|all like[a]each("*?";"h*"); :1]; 0}
+g:{where n>=4|.00002*count x}
+
 === clean | a comparison to the right of and is its operand
 select from t where flag and b=0
 
