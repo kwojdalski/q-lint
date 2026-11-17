@@ -1325,3 +1325,11 @@ s:12:00:60 -12:00:60u
 
 === QE006 profile: general | a `u` does not save the seconds when another item is no time (#581; q 5: '2000.01.01)
 r:12:00:60 2000.01.01u
+
+=== QE008 profile: general | a glyph at the start of a q)-prefixed line (#582; q 5: '#)
+a:1 2
+q)#a
+
+=== QE009 profile: general | a derived function at the start of a q)-prefixed line (#582; q 5: '/)
+a:1 2
+q)+/a

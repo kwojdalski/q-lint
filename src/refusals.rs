@@ -1035,7 +1035,7 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
         }
         let before = comments[..i].trim_end_matches([' ', '\t', '\r', '\n']);
         // A `\t` line's expression starts after the command (#310).
-        let expression = line_start + crate::timed_prefix(&source[line_start..]);
+        let expression = line_start + expression_start(&source[line_start..]);
         if !opens_expression(code, source, comments, i, expression) {
             continue;
         }
@@ -1131,6 +1131,12 @@ const GLYPHS: &[u8] = b"+-*%!#$&|^=<>~,@?";
 fn bracket_form(next: &str) -> bool {
     let b = next.as_bytes();
     b.len() > 1 && (GLYPHS.contains(&b[0]) || b[0] == b'.' || b[0] == b'_') && b[1] == b'['
+}
+
+/// Where a line's first expression starts: after a `q)` prompt (#582) and
+/// after a `\t` or `\ts` command (#310).
+fn expression_start(line: &str) -> usize {
+    crate::timed_prefix(line).max(if line.starts_with("q)") { 2 } else { 0 })
 }
 
 /// What follows a glyph, past the blanks before it - and past a line break
@@ -1288,10 +1294,12 @@ fn juxtaposed_derived(
         let Some(start) = derived_operand(&view, c, &opener, m.start()) else {
             continue;
         };
+        // After a `q)` prompt too (#582).
         let line_start = view[..start].rfind('\n').map_or(0, |p| p + 1);
         if b[line_start] == b'\\' {
             continue;
         }
+        let line_start = line_start + expression_start(&source[line_start..]);
         // Applied to an operand right after the iterator: a name, a symbol,
         // a bracketed or quoted value, or a number.
         // A `-` before an operand is one too: `+/-x` holds the same derived
