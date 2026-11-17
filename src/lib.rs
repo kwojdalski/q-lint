@@ -6184,8 +6184,10 @@ pub fn lint_selecting(
                 // The right name has to be the whole operand: `c=c i` compares
                 // a column with an item of itself. In a filter a `,` ends one
                 // condition as well as the statement's own terminators do.
+                // An indented next line continues the operand, in a lambda
+                // too, where `query` runs on past this line (#695).
                 let whole = m.get(3).unwrap().end();
-                let rest = line[whole..].trim_start_matches([' ', '\t']);
+                let rest = &query[past_blanks(query, whole)..];
                 let ends =
                     rest.is_empty() || rest.starts_with([',', ';', ')', ']', '}', '\n', '\r']);
                 // And the comparison is in the query's own statement, not
