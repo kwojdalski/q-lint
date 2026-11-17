@@ -4466,6 +4466,34 @@ pub fn lint_selecting(
                 *assigned.entry(qualified(whole.start, name)).or_default() += 1;
             }
         }
+        // Each name of a multiple assignment, `(f;g):v` or `([f;g]):d` at
+        // the top level and `(f;g)::v` anywhere, and the target of a
+        // functional amend: `` .[`f;();:;v] ``, or `` @[`.;`f;:;v] `` on a
+        // namespace. q 5: `f:{[a;b] a+b}; (f;g):({[a;b;c] a+b+c};1);
+        // f[1;2;3]` is 6, and so is each amend (#623).
+        for (at, name) in semantics::multi_assignments(code)
+            .filter(|&(at, _)| lambda_depth[at] == 0)
+            .chain(semantics::global_multi_assignments(code))
+        {
+            *assigned.entry(qualified(at, name)).or_default() += 1;
+        }
+        for m in re!(r"[.@]\s*\[\s*`(\.?[A-Za-z][A-Za-z0-9_.]*|\.)\s*;\s*((?:`[A-Za-z][A-Za-z0-9_]*)*)")
+            .captures_iter(code)
+        {
+            let (target, members) = (m.get(1).unwrap(), &m[2]);
+            if members.is_empty() {
+                *assigned
+                    .entry(qualified(target.start(), target.as_str()))
+                    .or_default() += 1;
+            }
+            for member in members.split('`').filter(|s| !s.is_empty()) {
+                let key = match target.as_str() {
+                    "." => member.to_string(),
+                    ns => format!("{}.{member}", qualified(target.start(), ns)),
+                };
+                *assigned.entry(key).or_default() += 1;
+            }
+        }
         // A namespace or dictionary written as a whole, by any of those or
         // indexed, `.cfg[`f]:v`, or appended, `` `.cfg upsert d ``, may
         // replace each member: q 5 `.ns.f:{x}; .ns:(``f)!(::;{x+y});

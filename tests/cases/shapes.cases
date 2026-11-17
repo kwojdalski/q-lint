@@ -1053,6 +1053,26 @@ f:{x}
 set'[`b`d;(5 6 7;8)]
 r:(f[1;2];a 0;b 0)
 
+=== clean profile: general | QA012: a multiple assignment or a functional amend gives the name another rank (#623; q 5: each call is 6)
+f:{[a;b] a+b}
+(f;g):({[a;b;c] a+b+c};1)
+r:f[1;2;3]
+h:{[a;b] a+b}
+.[`h;();:;{[a;b;c] a+b+c}]
+r:h[1;2;3]
+k:{[a;b] a+b}
+@[`.;`k;:;{[a;b;c] a+b+c}]
+r:k[1;2;3]
+p:{[a;b] a+b}
+init:{(p;q)::({[a;b;c] a+b+c};1)}
+init[]
+r:p[1;2;3]
+
+=== QA012 profile: general | while an amend of another name leaves the rank known (#623)
+f:{[a;b] a+b}
+@[`.;`g;:;{[a;b;c] a+b+c}]
+r:f[1;2;3]
+
 === QT022 profile: general | while set without each writes neither name (#753)
 a:1
 `a`b set 1 2
