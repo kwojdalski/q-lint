@@ -4685,7 +4685,11 @@ pub fn lint_selecting(
     }
     for m in re!(r"(?:`[A-Za-z0-9_.]*)+\s+ssr?\b|\bss[ \t]+`[A-Za-z0-9_.]*").find_iter(code) {
         // `"abc" ss `a` puts the symbol in the pattern slot (q 5: 'type).
-        if m.as_str().starts_with('s') && !boundary(code, m.start()) {
+        // Only when the symbol is the whole pattern: `` `char$98 `` is the
+        // char "b", and `"abc" ss `char$98` runs (#598).
+        if m.as_str().starts_with('s')
+            && (!boundary(code, m.start()) || !operand_ends(code, m.end()))
+        {
             continue;
         }
         add(
