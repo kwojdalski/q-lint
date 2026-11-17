@@ -87,9 +87,19 @@ fn query_injection(path: &str, source: &str, code: &str, comments: &str, out: &m
         if !boundary(code, m.start()) || code[line..].starts_with('\\') {
             continue;
         }
-        let Some((start, end)) = argument(code, comments, source, m.end()) else {
+        let Some((mut start, mut end)) = argument(code, comments, source, m.end()) else {
             continue;
         };
+        // Parentheses around the whole argument only group it: `value
+        // ("select ...",x)` runs the same query (#502).
+        loop {
+            let s = start + (code[start..end].len() - code[start..end].trim_start().len());
+            let e = start + code[start..end].trim_end().len();
+            if code.as_bytes().get(s) != Some(&b'(') || matching(code, s, b'(', b')') != Some(e) {
+                break;
+            }
+            (start, end) = (s + 1, e - 1);
+        }
         let (text, masked) = (&comments[start..end], &code[start..end]);
         // Joined at the top level of the argument, with a name in the join:
         // the masked view has the strings blanked, so any name left in it is
