@@ -2058,7 +2058,7 @@ fn blank(b: &mut [u8]) {
 /// A filter phrase with parenthesised groups blanked out. The questions the
 /// filter rules ask - which operators sit beside which - are about the
 /// The `{` of the innermost lambda around `at`, in masked code.
-fn enclosing_brace(code: &str, at: usize) -> Option<usize> {
+pub(crate) fn enclosing_brace(code: &str, at: usize) -> Option<usize> {
     let mut depth = 0i32;
     for (i, b) in code.as_bytes()[..at].iter().enumerate().rev() {
         match b {

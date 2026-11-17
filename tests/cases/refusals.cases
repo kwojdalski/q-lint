@@ -148,6 +148,18 @@ r:1_select a by b t
 === QE007 | inside a lambda too
 f:{select x}
 
+=== QE007 profile: general | the bare keyword is never a value (q 5: each line is 'from or ',) (#728)
+f:{[t] select}
+g:{x}[select]
+h:(exec;delete)
+k:(1;update)
+select:1
+
+=== clean profile: general | but a symbol, a dotted name and a row limit are not the keyword (#728)
+x:`select
+a.select:1
+r:select[2] from t
+
 === clean | a from anywhere before the statement ends, or the name assigned
 r1:select from t
 r2:update a:1 from t

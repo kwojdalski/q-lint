@@ -440,12 +440,22 @@ fn missing_from(
         if !boundary(code, m.start()) {
             continue;
         }
-        // The name assigned or passed rather than run: `select:1`, `.q.select`.
+        // A bracket after the keyword is its row limit or sort, `select[2]`.
+        // Nothing else lets the word be a value: q 5 refuses `select:1`,
+        // `{[t] select}`, `{x}[select]` and `(exec;delete)` alike - only the
+        // symbol `` `select `` or a dotted `.q.select` names it (#728).
         let after = unsym[m.end()..].trim_start_matches([' ', '\t']);
-        if after.starts_with(':')
-            || after.starts_with(['[', ';', ')', ']', '}'])
-            || after.is_empty()
-        {
+        if after.starts_with('[') {
+            continue;
+        }
+        // In a lambda the word as a parameter is QF001's, and assigned as a
+        // local QF003's: one finding for one mistake.
+        let lambda = crate::enclosing_brace(code, m.start());
+        if lambda.is_some_and(|b| {
+            let sig = crate::signature(code, source, b);
+            (sig.named && m.start() < sig.body)
+                || (after.starts_with(':') && !after.starts_with("::"))
+        }) {
             continue;
         }
         // The statement runs to a `;` at this depth, the bracket that closes
@@ -496,6 +506,11 @@ fn missing_from(
         let statement = &flat[..own];
         let from = re!(r"\bfrom\b").find_iter(statement).last();
         let detail = match from {
+            // The bare word straight before a `;`: q 5 `parse "r:select;1"`
+            // and `parse "(exec;delete)"` are ',.
+            None if statement.trim().is_empty() && bytes.get(at) == Some(&b';') => {
+                "has no `from` before its statement ends: q raises ',"
+            }
             None => "has no `from` before its statement ends: q raises 'from",
             // Read from `comments`, where `` from `t `` still has its table
             // and `from "t"` its string (#199).
