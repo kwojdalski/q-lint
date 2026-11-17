@@ -745,7 +745,7 @@
     "code": "QT028",
     "name": "where-assignment",
     "category": "types-and-shapes",
-    "summary": "An assignment in a where phrase, where a comparison was meant; q raises 'type",
+    "summary": "An assignment of a non-boolean literal in a where phrase, where a comparison was meant; q raises 'type",
     "scope": "builtin"
   },
   {

@@ -63,14 +63,15 @@ fn convention(name: &str) -> Option<Convention> {
 // Builtins q accepts infix. `f in x` and `f mod 2` put `f` on the left
 // of an operator rather than calling it, and `f each x` applies the
 // adverb to `f` instead of applying `f`. Brackets around what follows
-// would change the line, not respell it.
+// would change the line, not respell it. The `f` joins too: q 5
+// `a:2.5; a ljf 2` is 'rank, as `a ij 2` is, not an index (#621).
 pub(crate) const INFIX: &[&str] = &[
     "aj", "aj0", "and", "asof", "bin", "binr", "cor", "cov", "cross", "cut", "div", "each",
     "except", "ej", "find", "ij", "in", "insert", "inter", "like", "lj", "lsq", "mmu", "mod", "or",
     "over", "peach", "pj", "prior", "rotate", "scan", "set", "ss", "sublist", "sv", "uj", "union",
     "upsert", "vs", "wavg", "within", "wsum", "xasc", "xbar", "xcol", "xcols", "xdesc", "xexp",
     "xgroup", "xkey", "xlog", "xprev", "xrank", "ema", "fby", "mavg", "mcount", "mdev", "mmax",
-    "mmin", "msum", "scov",
+    "mmin", "msum", "scov", "ijf", "ljf", "ujf",
 ];
 fn qualify(name: &str, ns: &str) -> String {
     if name.starts_with('.') {
@@ -451,26 +452,57 @@ fn top_level_statements<'a>(code: &'a str, raw: &str) -> Vec<(usize, &'a str)> {
 /// A glyph applied with brackets to two whole slots, `+[l;r]`, is the infix
 /// `l+r`, and fails the same way: q 5 `+[1;`a]` and `=[1;`a]` are 'type,
 /// `+[1 2 3;4 5]` and `![`a`b;1 2 3]` 'length. Only literal slots are read,
-/// so this is QT003, QT015, QT006 and QT001 for the bracket spelling - the
-/// length first, since q 5 checks it first (`+[`a`b;1 2 3]` is 'length).
+/// so this is QT003, QT015, QT006, QT023 and QT001 for the bracket spelling -
+/// the length first, since q 5 checks it first (`+[`a`b;1 2 3]` is 'length).
+/// The same call spelled `(+)[l;r]`, `+'[l;r]` or with a word operator,
+/// `mod[l;r]`, fails alike (q 5, #604).
 fn glyph_brackets(path: &str, raw: &str, code: &str, out: &mut Vec<Finding>) {
-    let symbol = |s: &str| re!(r"^(?:`[A-Za-z][A-Za-z0-9_.]*)+$").is_match(s);
-    let number = |s: &str| re!(r"^-?\d[A-Za-z0-9.:]*(?:[ \t]+-?\d[A-Za-z0-9.:]*)*$").is_match(s);
-    for m in re!(r"(<=|>=|<>|[+\-*%&|=<>^!])\[").captures_iter(code) {
-        let glyph = m.get(1).unwrap();
-        let open = m.get(0).unwrap().end() - 1;
+    let symbol = |s: &str| re!(r"^(?:`\.?[A-Za-z][A-Za-z0-9_.:]*)+$").is_match(s);
+    let number =
+        |s: &str| re!(r"^-?\.?\d[A-Za-z0-9.:]*(?:[ \t]+-?\.?\d[A-Za-z0-9.:]*)*$").is_match(s);
+    for m in re!(
+        r"\((?P<p><=|>=|<>|[+\-*%&|=<>^!])\)\[|(?P<g><=|>=|<>|[+\-*%&|=<>^!])(?P<e>')?\[|\b(?P<w>and|or|mod|div|xexp|xlog)(?P<we>')?\["
+    )
+    .captures_iter(code)
+    {
+        let glyph = m.name("p").or(m.name("g")).or(m.name("w")).unwrap();
+        let whole = m.get(0).unwrap();
+        if m.name("w").is_some() && (!boundary(code, whole.start()) || code[..whole.start()].ends_with('`')) {
+            continue;
+        }
+        let open = whole.end() - 1;
         let Some(close) = matching(code, open, b'[', b']') else {
             continue;
         };
-        let [l, r] = crate::slots(&code[open + 1..close - 1])[..] else {
+        let parts = crate::slots(&code[open + 1..close - 1]);
+        let [l, r] = parts[..] else {
             continue;
         };
+        // Strings are blank in `code`: whether a slot is empty, and a
+        // string's kind, are read from the source at the same offsets.
+        let (raw_l, raw_r) = (
+            raw[open + 1..open + 1 + l.len()].trim(),
+            raw[open + 2 + l.len()..close - 1].trim(),
+        );
         let (l, r) = (l.trim(), r.trim());
-        if l.is_empty() || r.is_empty() || re!(r"\n\S").is_match(&code[open..close]) {
+        if raw_l.is_empty() || raw_r.is_empty() || re!(r"\n\S").is_match(&code[open..close]) {
             continue;
         }
         let g = glyph.as_str();
-        let text = &raw[glyph.start()..close];
+        let text = &raw[whole.start()..close];
+        let arithmetic = ["+", "-", "*", "%", "&", "|", "and", "or", "mod", "div", "xexp", "xlog"];
+        let char_refused = matches!(g, "+" | "-" | "*")
+            && match (arithmetic_kind(raw_l), arithmetic_kind(raw_r)) {
+                (Some(a), Some(b)) => {
+                    let refused = if g == "-" {
+                        a == Arithmetic::Char
+                    } else {
+                        a == Arithmetic::Char || b == Arithmetic::Char
+                    };
+                    refused && a != Arithmetic::Float && b != Arithmetic::Float
+                }
+                _ => false,
+            };
         let (code, detail) = match (shape(l), shape(r)) {
             (Some(k), Some(v)) if g == "!" && k >= 2 && k != v => (
                 "QT001",
@@ -480,7 +512,7 @@ fn glyph_brackets(path: &str, raw: &str, code: &str, out: &mut Vec<Finding>) {
                 "QT006",
                 format!("`{g}` pairs a {a}-vector with a {b}-vector; that is a 'length error"),
             ),
-            _ if "+-*%&|".contains(g) && (symbol(l) || symbol(r)) => (
+            _ if arithmetic.contains(&g) && (symbol(l) || symbol(r)) => (
                 "QT003",
                 "Arithmetic on a symbol literal is a 'type error at runtime".into(),
             ),
@@ -494,9 +526,13 @@ fn glyph_brackets(path: &str, raw: &str, code: &str, out: &mut Vec<Finding>) {
                     ),
                 )
             }
+            _ if char_refused => (
+                "QT023",
+                format!("`{text}` is 'type: q 5 does no integer arithmetic on a char"),
+            ),
             _ => continue,
         };
-        out.push(Finding::at(path, raw, glyph.start(), code, detail));
+        out.push(Finding::at(path, raw, whole.start(), code, detail));
     }
 }
 
@@ -1719,13 +1755,28 @@ pub fn check(
     // Keys: symbols, as before, and the other literal lists q takes - a
     // numeric or byte vector, or a parenthesised list. Not a numeric atom:
     // `1!t` keys a table and `0!t` unkeys one, which is not a dictionary.
+    // A boolean vector and a string are key lists too: q 5 `101b!3 4` and
+    // `"ab"!3 4 5` are 'length (#610). Read in `comments`, where a string is
+    // still text; anything else has to be code there, and so does the `!`.
     for m in re!(
-        r"((?:`[A-Za-z][A-Za-z0-9_.]*)+|-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*;[^()]*\)|\(\s*(?:`[A-Za-z][A-Za-z0-9_.]*){2,}\s*\))\s*!"
+        r#"((?:`[A-Za-z][A-Za-z0-9_.]*)+|-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+|[01]{2,}b|0x(?:[0-9a-fA-F]{2}){2,}|"(?:[^"\\\n]|\\.)*"|\([^()]*;[^()]*\)|\(\s*(?:`[A-Za-z][A-Za-z0-9_.]*){2,}\s*\))\s*!"#
     )
-    .captures_iter(code)
+    .captures_iter(comments)
     {
         let start = m.get(0).unwrap();
-        if !boundary(code, start.start()) {
+        let quoted = m[1].starts_with('"');
+        let key_in_code = if quoted {
+            // An opening quote: not straight after a string's text, which
+            // would make it a closing one.
+            let at = start.start();
+            code[m.get(1).unwrap().range()].trim().is_empty()
+                && !(at > 0
+                    && code.as_bytes()[at - 1] == b' '
+                    && !comments.as_bytes()[at - 1].is_ascii_whitespace())
+        } else {
+            code.get(m.get(1).unwrap().range()) == Some(&m[1])
+        };
+        if !key_in_code || code.as_bytes()[start.end() - 1] != b'!' || !boundary(code, start.start()) {
             continue;
         }
         // One symbol on the left is an enumeration, not a dictionary:
@@ -1766,7 +1817,14 @@ pub fn check(
                 .is_empty()
                 .then(|| string_items(&comments[start.end()..end]))?
         });
-        if let (Some(keys), Some(values)) = (shape(&m[1]), values)
+        // One char is an atom, which no dictionary takes as keys: q 5
+        // `"a"!1 2` is 'type, not a count mismatch.
+        let keys = if quoted {
+            string_items(&m[1]).filter(|&n| n != 1)
+        } else {
+            shape(&m[1])
+        };
+        if let (Some(keys), Some(values)) = (keys, values)
             && keys != values
         {
             out.push(Finding::at(
@@ -1785,10 +1843,10 @@ pub fn check(
     // `1 2 3+'4 5` are 'length. A `-` with space before and none after is a negative literal rather than
     // the operator (`1 2 3 -1 2` is one five-vector), and is skipped.
     // An operand is a symbol vector, a numeric vector, a byte vector with at
-    // least two items, or a parenthesised list. `shape` decides the length of
+    // least two items, or a parenthesised list or vector. `shape` decides the length of
     // each; this pattern only has to find them.
     for m in re!(
-        r#"(?P<l>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*;[^()]*\)|"(?:[^"\\\n]|\\.)*")\s*(?P<op>(?:<>|<=|>=|[+*%&|=<>^-]|\b(?:and|or|mod|div|xexp|xlog)\b)'?|,')\s*(?P<r>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*;[^()]*\)|"(?:[^"\\\n]|\\.)*")"#
+        r#"(?P<l>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*\)|"(?:[^"\\\n]|\\.)*")\s*(?P<op>(?:<>|<=|>=|[+*%&|=<>^-]|\b(?:and|or|mod|div|xexp|xlog)\b)'?|,')\s*(?P<r>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*\)|"(?:[^"\\\n]|\\.)*")"#
     )
     .captures_iter(comments)
     {
@@ -1809,7 +1867,10 @@ pub fn check(
                 }
                 string_items(g.as_str()).filter(|&n| n != 1)
             } else if code.as_bytes()[at] == comments.as_bytes()[at] {
-                shape(&code[g.range()])
+                // At least two items: a parenthesised operand may group an
+                // atom, `(1)`, which pairs with anything (q 5: `(1 2 3)+(4 5)`
+                // is 'length, `(1)+4 5` runs; #603).
+                shape(&code[g.range()]).filter(|&n| n >= 2)
             } else {
                 None
             }
@@ -1919,7 +1980,7 @@ pub fn check(
     // Called in brackets, with `@`, or by juxtaposition - `f[`a]`, `f@`a` and
     // `f `a` are all 'type in q 5 (#495). The last two only when the symbol
     // is the whole argument: `f `a!1` adds to a dictionary's values.
-    for call in re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)(?:\s*\[\s*`[A-Za-z][A-Za-z0-9_.]*\s*\]|(\s*@\s*|[ \t]+)`[A-Za-z][A-Za-z0-9_.]*)").captures_iter(code) {
+    for call in re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)(?:\s*\[\s*`\.?[A-Za-z][A-Za-z0-9_.:]*\s*\]|(\s*@\s*|[ \t]+)`\.?[A-Za-z][A-Za-z0-9_.:]*)").captures_iter(code) {
         if dynamic {break;}
         let at=call.get(0).unwrap().start();let name=&call[1];if !boundary(code,at){continue;}
         if call.get(2).is_some() && !operand_ends(code, call.get(0).unwrap().end()) {continue;}
@@ -3039,7 +3100,7 @@ fn held(code: &str, raw: &str) -> Option<Held> {
     if crate::Z_ATOMS.contains(&code) {
         return Some(Held::Atom);
     }
-    if re!(r"^(?:-?\d[A-Za-z0-9.:]*|0x[0-9a-fA-F]{2})$").is_match(code)
+    if re!(r"^(?:-?\.?\d[A-Za-z0-9.:]*|0x[0-9a-fA-F]{2})$").is_match(code)
         // `0x` is the empty byte vector and `0x012` the two bytes `0x0012`
         // (q 5): only one or two hex digits make an atom.
         && !re!(r"^[01]{2,}b$|^0x(?:[0-9a-fA-F]{3,})?$").is_match(code)
@@ -3327,7 +3388,22 @@ fn named_values(
     };
     for (name, at) in exact.iter().filter(|_| !dynamic) {
         let name = name.as_str();
-        let [at] = at[..] else { continue };
+        // One write, or later ones that only index into it at the top level:
+        // `a:2.5` + `a[0]:9` leaves `a` an atom, and the indexed assignment
+        // is itself the 'type QT022 reports below (q 5, #607).
+        let Some((&at, rest)) = at.split_first() else {
+            continue;
+        };
+        let indexes = |&r: &usize| {
+            r > at
+                && scope_at(scopes, r).is_none()
+                && code[r..]
+                    .strip_prefix(name)
+                    .is_some_and(|after| after.trim_start().starts_with('['))
+        };
+        if !rest.iter().all(indexes) {
+            continue;
+        }
         if whole(name) {
             continue;
         }
@@ -3358,7 +3434,11 @@ fn named_values(
             }
             end += 1;
         }
-        if let Some(value) = held(&code[start..end], &comments[start..end]) {
+        if let Some(value) = held(&code[start..end], &comments[start..end])
+            // An indexed write into anything but an atom may change it:
+            // `d[`c]:3` adds a key.
+            && (rest.is_empty() || value == Held::Atom)
+        {
             // Read as `held` reads it, inside any grouping parentheses:
             // `out:(1)` is a handle and `a:("abc")` a string (#693).
             let text = ungrouped(&code[start..end], &comments[start..end]).map_or("", |v| v.1);
@@ -3419,8 +3499,11 @@ fn named_values(
     // and not before a negative literal, which is QB010's. The argument may
     // start the indented line that continues the statement, past blank and
     // comment lines (`blank!`): q 5 `s:b` over `  0` is 'type (#687).
+    // Iterated too, `a'[0 1]` and `a each 0 1`, and with nothing between the
+    // name and a symbol or parenthesis, `` a`b `` and `a(0)` (q 5: 'type).
+    // `@[a;0]` and `.[a;enlist 0]` are read after this loop (#608).
     let indexed = re!(concat!(
-        r#"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)(?:\[|[ \t]*@[ \t]*[0-9"`(A-Za-z]|[ \t]+\.[ \t]+[0-9"`(A-Za-z]|"#,
+        r#"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)(?:\[|'[ \t]*\[|[`(]|[ \t]*@[ \t]*[0-9"`(A-Za-z]|[ \t]+\.[ \t]+[0-9"`(A-Za-z]|"#,
         blank!(),
         r#"+([0-9"`(]|\.?[A-Za-z][A-Za-z0-9_]*))"#
     ));
@@ -3439,7 +3522,8 @@ fn named_values(
         // Nor before a qSQL word, which ends the column list or the clause:
         // `update time:t0 from t` fills the column from the atom (q 5, #114).
         if m.get(2).is_some_and(|next| {
-            INFIX.contains(&next.as_str()) || matches!(next.as_str(), "by" | "from" | "where")
+            (INFIX.contains(&next.as_str()) && next.as_str() != "each")
+                || matches!(next.as_str(), "by" | "from" | "where")
         }) {
             continue;
         }
@@ -3478,6 +3562,34 @@ fn named_values(
                     ),
                 ));
             }
+            continue;
+        }
+        out.push(Finding::at(
+            path,
+            raw,
+            name.start(),
+            "QT022",
+            format!(
+                "`{}` is an atom here, and an atom has no items to index: 'type",
+                name.as_str()
+            ),
+        ));
+    }
+    for m in re!(r"[@.][ \t]*\[[ \t]*(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)[ \t]*;")
+        .captures_iter(code)
+    {
+        let name = m.get(1).unwrap();
+        let open = m.get(0).unwrap().start() + code[m.get(0).unwrap().start()..].find('[').unwrap();
+        // Two slots: a third is a protected call's handler, which catches
+        // the error, and four amend.
+        let Some(close) = matching(code, open, b'[', b']') else {
+            continue;
+        };
+        if crate::slots(&code[open + 1..close - 1]).len() != 2
+            || !boundary(code, m.get(0).unwrap().start())
+            || visible(name.as_str(), name.start()) != Some(&Held::Atom)
+            || handles.contains(key(name.as_str(), name.start()).as_str())
+        {
             continue;
         }
         out.push(Finding::at(
@@ -3608,7 +3720,7 @@ fn named_values(
     // those operand kinds. An older note in this repository had `"a"*3` as
     // 291, on a version it did not record.
     // Booleans and bytes before plain integers, or `1b` matches as `1`.
-    let operand = r#""(?:\\.|[^"\\])*"|[01]+b|0x[0-9a-fA-F]+|-?(?:\d+(?:\.\d*)?|\.\d+)e\b|-?\d+[hij]?(?:[ \t]+-?\d+[hij]?)*|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*"#;
+    let operand = r#""(?:\\.|[^"\\])*"|[01]+b|0x[0-9a-fA-F]+|-?(?:\d+(?:\.\d*)?|\.\d+)e\b|-?0[NW][hij]?\b|-?\d+[hij]?(?:[ \t]+-?\d+[hij]?)*|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*"#;
     let infix = regex::Regex::new(&format!(
         r"(?P<l>{operand})\s*(?P<op>[-+*])\s*(?P<r>{operand})"
     ))
@@ -3915,17 +4027,28 @@ fn named_values(
     }
     // QT026. lj, ij and pj join on the right table's key, so an unkeyed right
     // table is 'type - checked for all three; uj takes any and is not here.
-    // ljf and ijf too, and the bracket form `lj[t;s]` (q 5: 'type).
-    for m in re!(r"\b(ljf|ijf|lj|ij|pj)(?:\s+|\s*\[[^;\[\]]*;\s*)(\(\s*\[|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)")
+    // ljf and ijf too, and the bracket form `lj[t;s]` (q 5: 'type). The
+    // keyword or the right table may be parenthesised, `(lj)[t;s]` and
+    // `t lj (s)` (q 5: 'type, #618).
+    for m in re!(r"(?:\b(ljf|ijf|lj|ij|pj)|\((ljf|ijf|lj|ij|pj)\))(?:\s+|\s*\[[^;\[\]]*;\s*)(\(\s*\[|\(\s*(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*\)|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)")
         .captures_iter(code)
     {
-        let right = m.get(2).unwrap();
-        let unkeyed = if right.as_str().starts_with('(') {
+        let keyword = m.get(1).or(m.get(2)).unwrap();
+        let whole = m.get(3).unwrap();
+        let unkeyed = if let Some(right) = m.get(4) {
+            operand_ends(code, whole.end())
+                && matches!(
+                    visible(right.as_str(), right.start()),
+                    Some(Held::Table(_, false))
+                )
+        } else if whole.as_str().starts_with('(') {
+            let right = whole;
             let open = right.start();
             matching(code, open, b'(', b')').is_some_and(|close| {
                 operand_ends(code, close) && code[open + 1..].trim_start().starts_with("[]")
             })
         } else {
+            let right = whole;
             operand_ends(code, right.end())
                 && matches!(
                     visible(right.as_str(), right.start()),
@@ -3936,11 +4059,11 @@ fn named_values(
             out.push(Finding::at(
                 path,
                 raw,
-                m.get(1).unwrap().start(),
+                m.get(0).unwrap().start(),
                 "QT026",
                 format!(
                     "`{}` joins on the right table's key, and this one has none: 'type; key it with `xkey`",
-                    &m[1]
+                    keyword.as_str()
                 ),
             ));
         }
@@ -4146,7 +4269,9 @@ fn arithmetic_kind(text: &str) -> Option<Arithmetic> {
     let text = text.trim();
     if re!(r#"^"(?:\\.|[^"\\])*"$"#).is_match(text) {
         Some(Arithmetic::Char)
-    } else if re!(r"^(?:-?\d+[hij]?(?:\s+-?\d+[hij]?)*|[01]+b|0x[0-9a-fA-F]+)$").is_match(text) {
+    } else if re!(r"^(?:-?\d+[hij]?(?:\s+-?\d+[hij]?)*|-?0[NW][hij]?|[01]+b|0x[0-9a-fA-F]+)$").is_match(text) {
+        // A long null or infinity is a long: q 5 `"a"+0N` and `"a"*0W` are
+        // 'type, where `"a"+0n` is 0n (#609).
         Some(Arithmetic::Integral)
     } else if re!(r"^(?:-?(?:\d+(?:\.\d*)?|\.\d+)\s+)*-?(?:\d+(?:\.\d*)?|\.\d+)e$").is_match(text) {
         // A real refuses a char as an integer does, under all three: q 5

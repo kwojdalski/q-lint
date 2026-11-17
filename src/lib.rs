@@ -1964,6 +1964,32 @@ fn complete_call(comments: &str, open: usize, parts: &[&str], ssr: bool) -> bool
         })
 }
 
+/// Whether the right operand starting at `at` is the empty string and
+/// nothing else, in any number of parentheses: `""` and `("")`, but not
+/// `"","b"`, which is the pattern "b" (q 5: `"abc" ss "","b"` is ,1, #597).
+/// The string is blank in `code`, so it is read from `source`.
+fn empty_pattern(source: &str, code: &str, at: usize) -> bool {
+    let skip =
+        |i: usize| i + (source[i..].len() - source[i..].trim_start_matches([' ', '\t']).len());
+    let (mut i, mut opens) = (skip(at), 0);
+    while source[i..].starts_with('(') {
+        opens += 1;
+        i = skip(i + 1);
+    }
+    if !source[i..].starts_with("\"\"") || source[i + 2..].starts_with('"') {
+        return false;
+    }
+    i += 2;
+    for _ in 0..opens {
+        i = skip(i);
+        if !source[i..].starts_with(')') {
+            return false;
+        }
+        i += 1;
+    }
+    operand_ends(code, i)
+}
+
 /// Where the next token after `at` starts, past the blanks of its statement
 /// (`blank!`): across a line break only into the indented line that continues
 /// it. Where the statement ends at a line break, the offset of a line break.
@@ -4057,12 +4083,14 @@ pub fn lint_selecting(
         // word operators (q 5: `a&`b, `a mod 2, 2 xexp `a). Not `^`: a
         // symbol fills a symbol list (`none^s).
         // The null symbol, a lone backtick, is one too: q 5 `` ` + 1 `` is 'type.
+        // So is a name that starts with `.` or holds a `:` past its first
+        // character: `` `.a+1 `` and `` `a:b+1 `` (q 5: 'type, #600).
         re!(concat!(
-            r"(?:`(?:[A-Za-z][A-Za-z0-9_.]*)?)+(?:",
+            r"(?:`(?:\.?[A-Za-z][A-Za-z0-9_.:]*)?)+(?:",
             blank!(),
             r"*[+\-*%&|]|",
             blank!(),
-            r"+(?:mod|div|xexp|xlog|and|or)[ \t])|(?:[+\-*%&|][ \t]*(?:(?:\r?\n[ \t]*)*\r?\n[ \t]+)?|[ \t](?:mod|div|xexp|xlog|and|or)(?:[ \t]*(?:\r?\n[ \t]*)*\r?\n[ \t]+|[ \t]+))(?:`(?:[A-Za-z][A-Za-z0-9_.]*)?)+"
+            r"+(?:mod|div|xexp|xlog|and|or)[ \t])|(?:[+\-*%&|][ \t]*(?:(?:\r?\n[ \t]*)*\r?\n[ \t]+)?|[ \t](?:mod|div|xexp|xlog|and|or)(?:[ \t]*(?:\r?\n[ \t]*)*\r?\n[ \t]+|[ \t]+))(?:`(?:\.?[A-Za-z][A-Za-z0-9_.:]*)?)+"
         ))
         .find_iter(code)
     {
@@ -4087,6 +4115,15 @@ pub fn lint_selecting(
         {
             continue;
         }
+        // A glyph with nothing on its left is monadic, and q 5 refuses
+        // `` -`a `` at parse with '-, not 'type: QE008 reports that (#613).
+        if m.as_str().starts_with(['+', '-', '*', '%', '&', '|']) {
+            let line_start = code[..at].rfind('\n').map_or(0, |n| n + 1);
+            let expression = line_start + timed_prefix(&source[line_start..]);
+            if refusals::opens_expression(code, source, &v.comments, at, expression) {
+                continue;
+            }
+        }
         // A symbol on the right is only the operand when the expression ends
         // with it: `` 2*`a`b?`b `` multiplies by a long, and `` 1+`a`b!1 2 ``
         // adds to a dictionary. On the left it is the operand whatever
@@ -4097,6 +4134,11 @@ pub fn lint_selecting(
         // Unless what is on its right ends in an operator: that is a
         // projection, and the symbol composes with it - q 5 `` `+n% `` is
         // `+[`]%[n]`, no error - as a template's `` `%name%] `` reads.
+        // Nothing on its right at all is a projection too: `` `a+ ``,
+        // `` (`a*;1) `` and `` f[`a%] `` build `+[`a]` and run (q 5, #599).
+        if m.as_str().starts_with('`') && operand_ends(code, m.end()) {
+            continue;
+        }
         if m.as_str().starts_with('`') {
             let end = phrase_end(code, m.end());
             let end = code[m.end()..end].find('\n').map_or(end, |n| m.end() + n);
@@ -4119,9 +4161,10 @@ pub fn lint_selecting(
         // A symbol, or a symbol vector: `1 in `a`b` is 'type just as `1=`a` is,
         // and the vector is what `in` is usually given.
         // A file symbol too, `` `:db/t ``, which runs on over `/` (q 5).
-        let sym = r"(?:`(?:[A-Za-z][A-Za-z0-9_.]*|:[A-Za-z0-9_.:/]*))+";
+        let sym = r"(?:`(?:\.?[A-Za-z][A-Za-z0-9_.:]*|:[A-Za-z0-9_.:/]*))+";
         // An exponent's sign is part of its number: `1e-3` is one float.
-        let num = r"-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:[ \t]+-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)*";
+        let num =
+            r"-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:[ \t]+-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)*";
         let string = r#""(?:[^"\\]|\\.)*""#;
         let op = r"(?:<=|>=|<>|<|>|=|\bin\b)";
         // A string literal is blanks by the time `code` is built, so the
@@ -4874,8 +4917,12 @@ pub fn lint_selecting(
     .find_iter(code)
     {
         // `"abc" ss `a` puts the symbol in the pattern slot (q 5: 'type), on
-        // the indented next line too (#692).
-        if m.as_str().starts_with('s') && !boundary(code, m.start()) {
+        // the indented next line too (#692). Only when the symbol is the
+        // whole pattern: `` `char$98 `` is the char "b", and
+        // `"abc" ss `char$98` runs (#598).
+        if m.as_str().starts_with('s')
+            && (!boundary(code, m.start()) || !operand_ends(code, m.end()))
+        {
             continue;
         }
         add(
@@ -5115,7 +5162,23 @@ pub fn lint_selecting(
             Vector(Option<usize>),
         }
         let shape = |v: &str| -> Option<Shape> {
-            let v = v.trim();
+            let mut v = v.trim();
+            // Parentheses only group, and a top-level `;` makes a general
+            // list of that many items: `([]a:(1);b:2)` is 'rank and
+            // `([]a:(1 2);b:1 2 3)` 'length, as without them (q 5, #620).
+            for depth in 0.. {
+                if depth == MAX_NESTING
+                    || !(v.starts_with('(') && matching(v, 0, b'(', b')') == Some(v.len()))
+                    || v[1..v.len() - 1].trim().is_empty()
+                {
+                    break;
+                }
+                let items = slots(&v[1..v.len() - 1]);
+                if items.len() > 1 {
+                    return Some(Shape::Vector(Some(items.len())));
+                }
+                v = v[1..v.len() - 1].trim();
+            }
             // Vectors first. The general numeric-atom pattern would otherwise
             // take `10b` and `0x0102` as atoms, and q says they are not.
             // A tab after `enlist` as much as a space (q 5).
@@ -5142,7 +5205,7 @@ pub fn lint_selecting(
                 re!(r"^-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?[a-mo-vx-zA-MO-VX-Z]$|^-?0[nNwW][a-z]$")
                     .is_match(item)
             };
-            if re!(r"^-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:\s+-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)+$")
+            if re!(r"^-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:\s+-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)+$")
                 .is_match(v)
             {
                 let items: Vec<&str> = v.split_whitespace().collect();
@@ -5155,7 +5218,7 @@ pub fn lint_selecting(
             if v == "()" {
                 return Some(Shape::Vector(Some(0)));
             }
-            if re!(r"^[01]b$|^0x[0-9a-fA-F]{1,2}$|^-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*$|^`[A-Za-z0-9_.]*$")
+            if re!(r"^[01]b$|^0x[0-9a-fA-F]{1,2}$|^-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*$|^`[A-Za-z0-9_.]*$")
                 .is_match(v)
             {
                 return Some(Shape::Atom);
@@ -5259,26 +5322,30 @@ pub fn lint_selecting(
     // offsets - a pair of quotes with nothing between them.
     // Only a space or tab may come between: q refuses any other blank with
     // 'char, and a multi-byte one would leave the name's slice mid-character.
-    for m in re!(r"\b(ss|ssr)[ \t]*\[").find_iter(code) {
-        let open = m.end() - 1;
+    // The function may be parenthesised, `(ss)["abc";""]`, and so may the
+    // pattern, `("")` (q 5: both 'length, #619).
+    for m in re!(r"(?:\b(ss|ssr)|\((ss|ssr)\))[ \t]*\[").captures_iter(code) {
+        let whole = m.get(0).unwrap();
+        let name = m.get(1).or(m.get(2)).unwrap().as_str();
+        let open = whole.end() - 1;
         let Some(close) = matching(code, open, b'[', b']') else {
             continue;
         };
         let parts = slots(&code[open + 1..close - 1]);
-        if !complete_call(&v.comments, open, &parts, m.as_str().starts_with("ssr")) {
+        if !complete_call(&v.comments, open, &parts, name == "ssr") {
             continue;
         }
         // The second slot's span in the source.
         let second_start = open + 1 + parts[0].len() + 1;
-        let second = source[second_start..second_start + parts[1].len()].trim();
+        let mut second = source[second_start..second_start + parts[1].len()].trim();
+        while let Some(inner) = second.strip_prefix('(').and_then(|s| s.strip_suffix(')')) {
+            second = inner.trim();
+        }
         if second == "\"\"" {
             add(
-                m.start(),
+                whole.start(),
                 "QT021",
-                format!(
-                    "`{}` with an empty pattern is a 'length error",
-                    code[m.start()..m.end() - 1].trim()
-                ),
+                format!("`{name}` with an empty pattern is a 'length error"),
             );
         }
     }
@@ -5290,9 +5357,7 @@ pub fn lint_selecting(
         if !boundary(code, m.start()) {
             continue;
         }
-        let pattern = source[m.end()..].trim_start_matches([' ', '\t']);
-        let spaced = pattern.len() < source.len() - m.end();
-        if spaced && pattern.starts_with("\"\"") && !pattern[2..].starts_with('"') {
+        if empty_pattern(source, code, m.end()) {
             add(
                 m.start(),
                 "QT021",
@@ -6239,15 +6304,35 @@ pub fn lint_selecting(
         // to say so. The uppercase-char cast `"J"$` parses text. `char` and
         // `byte` are legitimate on a string. `symbol` and `guid` convert
         // nothing: q 5 refuses them with 'type, which is QT032's, in general.
+        // The backtick has to be code: in `"use `symbol$"` the string's own
+        // closing quote once read as the cast's operand (#596). A string in
+        // parentheses is the same operand: `` `symbol$("ab") `` (#615). Searched one
+        // start at a time, so a rejected match does not hide a later one.
         // The symbol and guid casts by type char and by type number too: q 5
         // `"s"$"ab"`, `"g"$"ab"`, `11h$"ab"` and `2h$"ab"` are 'type, while
-        // `-11h$` and `-2h$` parse (#505). The `$` has to be code.
-        if let Some(m) = re!(
-            r#"(?:`(long|int|short|float|real|boolean|date|time|timestamp|timespan|month|minute|second|datetime|symbol|guid)|"([sg])"|(?:^|[^-\w.])(11|2)h)\s*\$\s*""#
-        )
-        .captures_iter(literals)
-        .find(|m| line.as_bytes()[m.get(0).unwrap().start() + m[0].rfind('$').unwrap()] == b'$')
-        {
+        // `-11h$` and `-2h$` parse (#505); for those the `$` has to be code.
+        let cast = |mut at: usize| {
+            while let Some(m) = re!(
+                r#"(?:`(long|int|short|float|real|boolean|date|time|timestamp|timespan|month|minute|second|datetime|symbol|guid)|"([sg])"|(?:^|[^-\w.])(11|2)h)\s*\$\s*(?:"|\(\s*"(?:[^"\\\n]|\\.)*"\s*\))"#
+            )
+            .captures_at(literals, at)
+            {
+                let start = m.get(0).unwrap().start();
+                let typed = m.get(1).or(m.get(2)).or(m.get(3)).unwrap();
+                let dollar = typed.end() + literals[typed.end()..].find('$').unwrap();
+                let in_code = if m.get(1).is_some() {
+                    line.as_bytes()[typed.start() - 1] == b'`'
+                } else {
+                    line.as_bytes()[dollar] == b'$'
+                };
+                if in_code {
+                    return Some(m);
+                }
+                at = start + 1;
+            }
+            None
+        };
+        if let Some(m) = cast(0) {
             let name = match (m.get(1), m.get(2), m.get(3)) {
                 (Some(n), _, _) => n.as_str(),
                 (_, Some(c), _) | (_, _, Some(c)) => match c.as_str() {
@@ -6263,10 +6348,22 @@ pub fn lint_selecting(
                 _ => unreachable!(),
             };
             let ch = match name {
-                "long" => "J", "int" => "I", "short" => "H", "float" => "F", "real" => "E",
-                "boolean" => "B", "date" => "D", "time" => "T", "timestamp" => "P",
-                "timespan" => "N", "month" => "M", "minute" => "U", "second" => "V",
-                "datetime" => "Z", "guid" => "G", _ => "",
+                "long" => "J",
+                "int" => "I",
+                "short" => "H",
+                "float" => "F",
+                "real" => "E",
+                "boolean" => "B",
+                "date" => "D",
+                "time" => "T",
+                "timestamp" => "P",
+                "timespan" => "N",
+                "month" => "M",
+                "minute" => "U",
+                "second" => "V",
+                "datetime" => "Z",
+                "guid" => "G",
+                _ => "",
             };
             // `symbol` and `guid` are the exceptions: q 5 refuses them with
             // 'type rather than converting codes, so they are another rule
