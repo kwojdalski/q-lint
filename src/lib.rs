@@ -4217,6 +4217,29 @@ pub fn lint_selecting(
             .into(),
         );
     }
+    // The bracket form is the same call: q 5 `like[`abc;`a]` and
+    // `like["abc";`a`b]` are 'type (#723). Only a complete call - with an
+    // empty first slot, `like[;`a]` is a projection and nothing has run.
+    for m in re!(concat!(r"\blike", blank!(), r"*\[")).find_iter(code) {
+        let open = m.end() - 1;
+        if !boundary(code, m.start()) {
+            continue;
+        }
+        let Some(close) = matching(code, open, b'[', b']') else {
+            continue;
+        };
+        let parts = slots(&code[open + 1..close - 1]);
+        if parts.len() == 2
+            && !v.comments[open + 1..open + 1 + parts[0].len()].trim().is_empty()
+            && re!(r"^\s*(?:`[A-Za-z0-9_.:]*)+\s*$").is_match(parts[1])
+        {
+            add(
+                m.start(),
+                "QB007",
+                "like needs a string pattern; a symbol literal is a 'type error at runtime".into(),
+            );
+        }
+    }
     // The rank of every lambda this file names, for the two call-shape rules
     // below. An implicit signature's rank is the highest of x, y, z its own
     // body mentions, with nested lambdas blanked so theirs do not count.

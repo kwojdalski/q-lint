@@ -172,6 +172,15 @@ r:"abc" like `abc
 === QB007 | and a glob after the symbol parses as an operator, a silent projection
 r:"abc" like `a*
 
+=== QB007 profile: general | the bracket form is the same call (q 5: like[`abc;`a] is 'type) (#723)
+r:like[`abc;`a]
+
+=== QB007 profile: general | with a string first and a symbol list second (q 5: 'type) (#723)
+r:like["abc";`a`b]
+
+=== clean profile: general | but an empty first slot is a projection, and nothing has run (#723)
+p:like[;`abc]
+
 === clean | like with a string pattern
 select from t where sym like "a*"
 
