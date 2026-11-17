@@ -737,6 +737,28 @@ fn many_findings_lint_in_bounded_time() {
         "20000 block comments took {elapsed:?}"
     );
 }
+/// Each name read asked whether a lambda around it binds the name by walking
+/// every `{` before it, so a file of one-line functions took time quadratic
+/// in their number (#705).
+#[test]
+fn many_functions_lint_in_bounded_time() {
+    // The ratio of two sizes, not a bound: a file this size is a few seconds
+    // in a debug build on its own. Linear is 8 times the time for 8 times the
+    // functions, and quadratic was 17.
+    let time = |n: usize| {
+        let source: String = (0..n)
+            .map(|i| format!("f{i}:{{[x;y] g{i}:x+y; f{}[x;g{i}]}};\n", i.max(1) - 1))
+            .collect();
+        let started = std::time::Instant::now();
+        lint(&source, "t.q", Profile::Style);
+        started.elapsed()
+    };
+    let (small, large) = (time(2000), time(16000));
+    assert!(
+        large < small * 12,
+        "2000 functions took {small:?} and 16000 took {large:?}"
+    );
+}
 /// Tens of thousands of nested parentheses - beyond q's own limit, which
 /// refuses a hundred-odd levels with '( - once overflowed the stack, which
 /// aborts the whole run and cannot be caught like a panic (#703).

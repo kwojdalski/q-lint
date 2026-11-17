@@ -2686,6 +2686,10 @@ struct MatchTable {
     /// it never closes, or `NOT_OPEN` if the position opens no group as
     /// `matching` would read it from there.
     ends: Vec<u32>,
+    /// Each `{` in order, with the index in this list of the `{` it opened
+    /// inside, `NO_MATCH` at the top level: the lambdas around a position
+    /// are found by climbing from the last one before it (#705).
+    braces: Vec<(u32, u32)>,
 }
 
 const NO_MATCH: u32 = u32::MAX;
@@ -2707,9 +2711,11 @@ impl MatchScope {
     pub(crate) fn install(text: &str) -> MatchScope {
         let b = text.as_bytes();
         let mut ends = vec![NOT_OPEN; b.len()];
+        let mut braces = vec![];
         // Applicable only below u32 offsets; a larger text keeps scanning.
         if b.len() < NOT_OPEN as usize {
             let mut stacks: [Vec<usize>; 3] = [vec![], vec![], vec![]];
+            let mut open_braces: Vec<u32> = vec![];
             let mut i = 0;
             // The same walk `matching` makes, so a position it reads as
             // outside a string is one this reads as outside a string too: from
@@ -2725,10 +2731,17 @@ impl MatchScope {
                     c @ (b'{' | b'[' | b'(') => {
                         ends[i] = NO_MATCH;
                         stacks[bracket_kind(c)].push(i);
+                        if c == b'{' {
+                            braces.push((i as u32, *open_braces.last().unwrap_or(&NO_MATCH)));
+                            open_braces.push(braces.len() as u32 - 1);
+                        }
                     }
                     c @ (b'}' | b']' | b')') => {
                         if let Some(o) = stacks[bracket_kind(c)].pop() {
                             ends[o] = (i + 1) as u32;
+                        }
+                        if c == b'}' {
+                            open_braces.pop();
                         }
                     }
                     _ => {}
@@ -2740,6 +2753,7 @@ impl MatchScope {
             start: text.as_ptr() as usize,
             len: text.len(),
             ends,
+            braces,
         });
         MatchScope(MATCHES.with(|m| m.replace(Some(table))))
     }
@@ -2758,6 +2772,32 @@ fn bracket_kind(c: u8) -> usize {
         b'[' | b']' => 1,
         _ => 2,
     }
+}
+
+/// Every `{` before `at` in `s` whose lambda closes after `at`, innermost
+/// first, from the installed table when `s` is its text. `None` means "not
+/// answerable here".
+fn enclosing_braces(s: &str, at: usize) -> Option<Vec<usize>> {
+    MATCHES.with(|m| {
+        let m = m.borrow();
+        let t = m.as_ref()?;
+        if s.as_ptr() as usize != t.start || s.len() != t.len {
+            return None;
+        }
+        let mut out = vec![];
+        let mut i = t.braces.partition_point(|&(open, _)| (open as usize) < at);
+        let mut next = if i == 0 { NO_MATCH } else { i as u32 - 1 };
+        while next != NO_MATCH {
+            i = next as usize;
+            let (open, parent) = t.braces[i];
+            let end = t.ends[open as usize];
+            if end != NO_MATCH && end as usize > at {
+                out.push(open as usize);
+            }
+            next = parent;
+        }
+        Some(out)
+    })
 }
 
 /// `matching` from the installed table, when `s` is a slice of its text and
@@ -3194,7 +3234,11 @@ pub(crate) fn shadowed(code: &str, raw: &str, at: usize, name: &str) -> bool {
     if name.contains('.') {
         return false;
     }
-    for (brace, _) in code[..at].match_indices('{') {
+    // Only the lambdas around `at`: walking every `{` before it made each
+    // call linear in the file, and a file of functions quadratic (#705).
+    let braces = enclosing_braces(code, at)
+        .unwrap_or_else(|| code[..at].match_indices('{').map(|(i, _)| i).collect());
+    for brace in braces {
         let Some(end) = matching(code, brace, b'{', b'}').filter(|&end| end > at) else {
             continue;
         };
