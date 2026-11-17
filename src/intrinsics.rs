@@ -440,6 +440,8 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
         let Some(value) = literal(args[0]) else {
             continue;
         };
+        // A temporal atom is no count or window either: q 5 `12:00 rotate x`
+        // and `2000.01.01 msum x` are 'type (#605).
         let rule = match name {
             "sqrt" | "log" | "exp" | "abs" | "neg" | "sin" | "cos" | "tan" | "acos" | "asin"
             | "atan" | "reciprocal" | "ceiling" | "signum"
@@ -449,7 +451,10 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
             }
             "mavg" | "msum" | "mcount" | "mdev" | "mmin" | "mmax"
                 if value.vector
-                    || matches!(value.kind, Kind::Float | Kind::Symbol | Kind::Char) =>
+                    || matches!(
+                        value.kind,
+                        Kind::Float | Kind::Symbol | Kind::Char | Kind::Temporal
+                    ) =>
             {
                 Some(("QT017", "Moving-window size must be an integer atom"))
             }
@@ -524,7 +529,10 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
             "flip" => Some(("QT013", "flip cannot transpose an atom or a flat vector")),
             "rotate"
                 if value.vector
-                    || matches!(value.kind, Kind::Float | Kind::Symbol | Kind::Char) =>
+                    || matches!(
+                        value.kind,
+                        Kind::Float | Kind::Symbol | Kind::Char | Kind::Temporal
+                    ) =>
             {
                 Some(("QT014", "rotate requires an integer atom for its count"))
             }

@@ -654,3 +654,9 @@ t:sum[2;3]
 === QA010 profile: general | but not before the file redefines it (#440)
 r:sum[2;3]
 .q.sum:{[a;b] a*b}
+
+=== QT014 QT017 profile: general | a temporal count or window (q 5: each 'type; #605)
+a:12:00 rotate 1 2 3
+b:12:00 mavg 1 2 3
+c:2000.01.01 msum 1 2 3
+d:rotate[0D01;1 2 3]
