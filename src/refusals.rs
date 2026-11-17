@@ -1424,7 +1424,7 @@ fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Find
                 Some(format!(
                     "`{text}`: a byte literal is written with hex digits only"
                 ))
-            } else if let Some(d) = re!(r"^(\d{4})(\d\d)(\d\d)d$").captures(text)
+            } else if let Some(d) = re!(r"^(\d{4})(\d\d)(\d\d)[dz]$").captures(text)
                 && {
                     let field = |i: usize| d[i].parse::<u32>().unwrap();
                     field(3) == 0 || field(3) > days_in(field(1), field(2))
@@ -1432,10 +1432,13 @@ fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Find
             {
                 // Eight digits and a `d` are a date, yyyymmdd: q 5 reads
                 // `20000101d` as 2000.01.01 and refuses `20001301d`, while
-                // `1d` and `2000010d` are no date at all.
+                // `1d` and `2000010d` are no date at all. A `z` reads the
+                // same eight digits as that date's datetime (#713).
                 Some(format!("`{text}` is no date (yyyymmdd)"))
             } else if (re!(r"^\d+[adgklmoqrwyz]$").is_match(text)
-                && !re!(r"^\d{8}d$").is_match(text))
+                // Nine digits or more and a `z` are a datetime too: q 5
+                // reads `202401011z` as 1976.05.31T14:30:11.000 (#713).
+                && !re!(r"^\d{8}d$|^\d{8,}z$").is_match(text))
                 || (re!(r"^\d+x$").is_match(text) && text != "0x")
             {
                 Some(format!(
