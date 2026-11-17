@@ -598,7 +598,7 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         // dictionary with tied values - q 5 orders the tied keys
         // differently - so only in the editor.
         "QR001" => {
-            let m = re!(r"^reverse\s+(asc|desc)\b").captures(source.get(start..)?)?;
+            let m = re!(concat!(r"^reverse", blank!(), r"+(asc|desc)\b")).captures(source.get(start..)?)?;
             let other = if &m[1] == "asc" { "desc" } else { "asc" };
             (
                 m.get(0)?.as_str(),
@@ -644,7 +644,7 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         // Sorting adds no duplicates, and q 5 agrees on the value and the
         // sorted attribute both.
         "QR003" => {
-            let m = re!(r"^distinct\s+asc\s+distinct\b").find(source.get(start..)?)?;
+            let m = re!(concat!(r"^distinct", blank!(), "+asc", blank!(), r"+distinct\b")).find(source.get(start..)?)?;
             (
                 m.as_str(),
                 "asc distinct".into(),

@@ -4,6 +4,14 @@ r:{[p] reverse asc p}
 === QR001 | and reverse desc is asc
 r:{[p] reverse desc p}
 
+=== clean | reverse at a line's end is the function, and the next line a statement of its own (q 5, #730)
+s:reverse
+asc 3 1 2
+
+=== QR001 | an indented line continues the statement
+s:reverse
+  asc 3 1 2
+
 === clean | under an iterator the sort is per item, and reverse reorders the items (q 5: reverse asc each (2 1;4 3) is (3 4;1 2), desc each is (2 1;4 3))
 r1:{[p] reverse asc each p}
 r2:{[p] reverse asc'[p]}
@@ -27,6 +35,10 @@ r:{[p] {x}':[p]}
 
 === QR003 | distinct after sorting distinct items
 r:{[p] distinct asc distinct p}
+
+=== clean | distinct at a line's end is the function, and the next line a statement of its own (q 5, #730)
+d:distinct
+asc distinct 1 1 2
 
 === clean | distinct each can make two items equal, which the outer distinct removes (q 5: (1 1 2;1 2) gives enlist 1 2, not two items)
 r1:{[p] distinct asc distinct each p}
