@@ -4612,8 +4612,12 @@ pub fn lint_selecting(
         // silently lost. Every file git checks out on Windows is CRLF.
         // No `_` in the literal: no q number has one, and `-1_x` is drop.
         // `:` in the literal for a temporal one: `-0D00:01`, `-00:00:01`.
-        re!(r"(?m)(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]+(-\d[A-Za-z0-9.:]*)[ \t\r]*(?:[;\])]|$)")
-                .captures_iter(code)
+        // A lambda's closing brace ends it too: q 5 `{.z.p -1}[]` is 'type
+        // (#678).
+        re!(
+            r"(?m)(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]+(-\d[A-Za-z0-9.:]*)[ \t\r]*(?:[;\])}]|$)"
+        )
+        .captures_iter(code)
     {
         let whole = m.get(0).unwrap();
         let (name, literal) = (&m[1], &m[2]);

@@ -249,6 +249,10 @@ window_to:.z.p;r:window_to -0D00:01
 === QB010 | .z.p is a value, so applying it is never meant
 r:0D00:01 xbar .z.p -0D00:01
 
+=== QB010 | and so it is where the literal ends a lambda (q 5: each 'type, #678)
+f:{0D00:01 xbar .z.p -0D00:01}
+k:{[x] .z.p -1}
+
 === QB010 | inside a conditional
 window_to:.z.p
 r:$[null c; window_to -0D00:01; c]
