@@ -1916,9 +1916,13 @@ pub fn check(
                 // `x` alone: `{x+1}[`a]` is 'type, `{y+1}[`a]` a projection.
                 && if scope.named { scope.params.contains(&m[1]) } else { &m[1] == "x" } {numeric.insert(name.clone());}
     }
-    for call in re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*\[\s*`[A-Za-z][A-Za-z0-9_.]*\s*\]").captures_iter(code) {
+    // Called in brackets, with `@`, or by juxtaposition - `f[`a]`, `f@`a` and
+    // `f `a` are all 'type in q 5 (#495). The last two only when the symbol
+    // is the whole argument: `f `a!1` adds to a dictionary's values.
+    for call in re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)(?:\s*\[\s*`[A-Za-z][A-Za-z0-9_.]*\s*\]|(\s*@\s*|[ \t]+)`[A-Za-z][A-Za-z0-9_.]*)").captures_iter(code) {
         if dynamic {break;}
         let at=call.get(0).unwrap().start();let name=&call[1];if !boundary(code,at){continue;}
+        if call.get(2).is_some() && !operand_ends(code, call.get(0).unwrap().end()) {continue;}
         if scope_at(&scopes,at).is_some_and(|s|scopes[s].locals.contains(name)){continue;}
         // A lambda runs once every file is loaded, and meets whichever `f`
         // another file assigned last: q 5 runs b.q's `g:{f[`a]}` to `a after

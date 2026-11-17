@@ -1059,3 +1059,15 @@ r3:([]a:enlist 1;b:1 0b)
 
 === QT006 | a suffix on the last item still ends a vector (#496)
 r4:1 2 3+1 2h
+
+=== QT002 | a symbol passed by juxtaposition (q 5: f:{x+1}; f `a is 'type) (#495)
+f:{x+1}
+r1:f `a
+
+=== QT002 | and with @ (q 5: f@`a is 'type) (#495)
+f:{x+1}
+r2:f@`a
+
+=== clean | a symbol that is not the whole argument (#495)
+f:{x+1}
+r1:f `a!1
