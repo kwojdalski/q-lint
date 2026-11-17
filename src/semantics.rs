@@ -3275,7 +3275,8 @@ fn named_values(
     let mut exact: HashMap<String, Vec<usize>> = HashMap::new();
     // A table literal's columns and a dictionary literal's keys, `([]n:1 2)`
     // and `([h:2.5])`, name no variable: each `name:` directly in one is
-    // skipped (#469).
+    // skipped (#469). Only a name that opens a column does: `m:` in
+    // `([]a:m:1 2)` assigns the global (#575).
     let literals: Vec<(usize, usize, usize)> = re!(r"\(\s*\[")
         .find_iter(code)
         .filter_map(|m| {
@@ -3297,7 +3298,11 @@ fn named_values(
                         b')' | b']' | b'}' => d - 1,
                         _ => d,
                     });
-                depth == 0 || (depth == 1 && at < header)
+                (depth == 0 || (depth == 1 && at < header))
+                    && matches!(
+                        code[..at].trim_end().as_bytes().last(),
+                        Some(b'[' | b']' | b';')
+                    )
             }
         })
     };

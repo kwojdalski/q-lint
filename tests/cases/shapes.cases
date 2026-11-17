@@ -1276,3 +1276,9 @@ r2:(lj)[t;s]
 
 === QT032 profile: general | the char spelling with its string in parentheses (q 5: 'type) (#505, #615)
 r1:"s"$("ab")
+
+=== clean profile: general | a second `name:` inside a table-literal column assigns the global (#575; q 5: `m:5; u:([]a:m:1 2); m 0` is 1)
+m:5
+u:([]a:m:1 2)
+k:([c:m:1 2]v:3 4)
+r:m 0
