@@ -63,14 +63,15 @@ fn convention(name: &str) -> Option<Convention> {
 // Builtins q accepts infix. `f in x` and `f mod 2` put `f` on the left
 // of an operator rather than calling it, and `f each x` applies the
 // adverb to `f` instead of applying `f`. Brackets around what follows
-// would change the line, not respell it.
+// would change the line, not respell it. The `f` joins too: q 5
+// `a:2.5; a ljf 2` is 'rank, as `a ij 2` is, not an index (#621).
 const INFIX: &[&str] = &[
     "aj", "aj0", "and", "asof", "bin", "binr", "cor", "cov", "cross", "cut", "div", "each",
     "except", "ej", "find", "ij", "in", "insert", "inter", "like", "lj", "lsq", "mmu", "mod", "or",
     "over", "peach", "pj", "prior", "rotate", "scan", "set", "ss", "sublist", "sv", "uj", "union",
     "upsert", "vs", "wavg", "within", "wsum", "xasc", "xbar", "xcol", "xcols", "xdesc", "xexp",
     "xgroup", "xkey", "xlog", "xprev", "xrank", "ema", "fby", "mavg", "mcount", "mdev", "mmax",
-    "mmin", "msum", "scov",
+    "mmin", "msum", "scov", "ijf", "ljf", "ujf",
 ];
 fn qualify(name: &str, ns: &str) -> String {
     if name.starts_with('.') {

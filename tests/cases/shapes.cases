@@ -1184,3 +1184,10 @@ a:101b!1 2 3
 b:"ab"!1 2
 c:"x 1 2!3"
 d:("x";"ab")
+
+=== clean profile: general | ljf, ijf and ujf are infix joins, not an argument the atom indexes by (q 5: 'rank, 'rank, 'type from the join; #621)
+a:2.5
+b:a ljf 2
+c:a ijf 2
+d:a ij 2
+e:a ujf 2
