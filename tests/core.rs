@@ -1,4 +1,4 @@
-use q_lint_rs::{Profile, lint};
+use q_lint_rs::{Profile, Workspace, lint, lint_selecting};
 #[test]
 fn mutation_classes_and_valid_boundaries() {
     for (source, code) in [
@@ -710,10 +710,12 @@ fn deeply_nested_lambdas_lint_in_bounded_time() {
     // build after the fix, against roughly five times that before it. At 4000
     // deep it took 3 s here and over 10 s on a shared CI runner, so the bound
     // failed with no regression behind it.
+    // Past q's own limit of 100, which QE001 reports alone (#717), so the
+    // rules are run as they are with QE001 deselected.
     let depth = 2000;
     let source = format!("f:{}{}\n", "{".repeat(depth), "}".repeat(depth));
     let started = std::time::Instant::now();
-    lint(&source, "t.q", Profile::Style);
+    lint_selecting(&source, "t.q", Profile::Style, &Workspace::default(), false);
     let elapsed = started.elapsed();
     assert!(
         elapsed < std::time::Duration::from_secs(10),
@@ -735,8 +737,34 @@ fn deeply_nested_parentheses_do_not_overflow_the_stack() {
         format!("f:{{[{open}a{}] a}}\n", ";b)".repeat(depth)),
     ] {
         for profile in [Profile::General, Profile::Uqf] {
-            lint(&source, "t.q", profile);
+            // QE001 reports the depth alone (#717); deselected, every rule
+            // still reads the file.
+            assert!(lint(&source, "t.q", profile).iter().any(|f| f.code == "QE001"));
+            lint_selecting(&source, "t.q", profile, &Workspace::default(), false);
         }
+    }
+}
+/// q 5 holds at most a hundred brackets, braces and parentheses open at once,
+/// of any kinds, and refuses the next with '( or '{ or '[ (#717).
+#[test]
+fn more_than_a_hundred_open_brackets_are_refused() {
+    let deep = |n: usize, open: &str, close: &str| format!("a:{}1{}\n", open.repeat(n), close.repeat(n));
+    for (source, refused) in [
+        (deep(100, "(", ")"), false),
+        (deep(101, "(", ")"), true),
+        (deep(100, "{", "}"), false),
+        (deep(101, "{", "}"), true),
+        (deep(100, "f[", "]"), false),
+        (deep(101, "f[", "]"), true),
+        (deep(50, "({", "})"), false),
+        (deep(51, "({", "})"), true),
+        (deep(101, "$[x;", ";0]"), true),
+    ] {
+        let found: Vec<_> = lint(&source, "t.q", Profile::General)
+            .into_iter()
+            .filter(|f| f.code == "QE001")
+            .collect();
+        assert_eq!(found.len(), usize::from(refused), "{source}");
     }
 }
 #[test]

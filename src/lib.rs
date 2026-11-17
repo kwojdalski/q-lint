@@ -3284,6 +3284,9 @@ pub fn balanced(source: &str) -> bool {
     structure("", source, &views(source)).is_empty()
 }
 
+/// The most brackets, braces and parentheses q 5 holds open at once.
+const DEPTH: usize = 100;
+
 /// Every structural problem in the file, in source order. Each is reported
 /// and then recovered from - a statement at column 0 starts with no bracket
 /// open, a stray closer is skipped, a mismatched one closes what it meets -
@@ -3326,6 +3329,19 @@ fn structure(path: &str, source: &str, v: &Views) -> Vec<Finding> {
             for (i, c) in line.bytes().enumerate() {
                 if let Some(p) = b"([{ ".iter().position(|&a| a == c).filter(|&p| p < 3) {
                     stack.push((b")]}"[p], offset + i));
+                    // q 5 refuses a hundred and one open at once, of any
+                    // kinds, with the innermost: `(` 101 deep is '(, and
+                    // `({` 51 deep is '{ (#717).
+                    if stack.len() == DEPTH + 1 {
+                        found.push(make(
+                            offset + i,
+                            format!(
+                                "More than {DEPTH} brackets, braces and parentheses open at \
+                                 once; q 5 refuses this one with '{}",
+                                c as char
+                            ),
+                        ));
+                    }
                 } else if b")]}".contains(&c) {
                     match stack.pop() {
                         None => {
