@@ -3777,11 +3777,11 @@ pub fn lint_selecting(
                 ),
             );
         }
+        // Each name `bound`, so a pattern's count too: q 5 defines
+        // `{[(a;a)] a}` and `{[a;(a;b)] a}`, and one binding overwrites the
+        // other (#635).
         let mut seen = std::collections::HashSet::new();
-        let repeated: Vec<&&str> = params
-            .iter()
-            .filter(|p| !p.is_empty() && !seen.insert(**p))
-            .collect();
+        let repeated: Vec<&&str> = bound.iter().filter(|p| !seen.insert(**p)).collect();
         if !repeated.is_empty() {
             add(
                 at,

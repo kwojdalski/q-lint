@@ -207,6 +207,15 @@ f:{[a;a] a}
 === QF008 QF016 | and not only adjacently, and `b` is left unread
 f:{[a;b;a] a}
 
+=== QF008 | or bound twice by a pattern, which q 5 defines (q 5: {[(a;a)] a}[(1;2)] is 2) (#635)
+f:{[(a;a)] a}
+
+=== QF008 QF016 | or by a slot and a pattern beside it (q 5: g[1;(2;3)] is 2) (#635)
+g:{[a;(a;b)] a}
+
+=== clean | a key a table pattern matches on is no binding (q 5: {[([k:a]);k] a+k}[([k:1 2]);3] is 4 5) (#635)
+f:{[([k:a]);k] a+k}
+
 === QF009 QF016 | a trailing separator is a third parameter, named `2` by q
 f:{[a;b;] a}
 
