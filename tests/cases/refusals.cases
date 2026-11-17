@@ -288,6 +288,20 @@ h:{(1:)x}
 i:{x 1:y 0}
 t:12:00:00
 
+=== QE008 profile: general | a glyph with :: before an operand (q 5: '-::, '#::, ',:: and ' for -:: a, #661)
+a:1 2
+r:-::a
+s:#::a
+t:,::"a"
+u:-:: a
+
+=== clean profile: general | with nothing after it, in brackets, or infix (q 5 parses each, #661)
+a:1 2
+r:-::
+s:(-::;1)
+t:a-::a
+u:-::[a]
+
 === QE008 profile: general | monadic minus on a name (q 5: parse "-x" is '-)
 f:{-x}
 

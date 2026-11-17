@@ -1010,7 +1010,12 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
         // written straight after it.
         let colon = rest.starts_with(':')
             && rest[1..].starts_with(|c: char| c.is_ascii_alphanumeric() || "`(\".{".contains(c))
-            || rest.starts_with(":-") && rest[2..].starts_with(|c: char| c.is_ascii_digit());
+            || rest.starts_with(":-") && rest[2..].starts_with(|c: char| c.is_ascii_digit())
+            // And with `::`, before any operand, past a blank too: q 5
+            // refuses `-::a` with '-::, `,::"a"` with ',::, and `-:: a` (#661).
+            || rest.starts_with("::")
+                && continued(&rest[2..])
+                    .starts_with(|c: char| c.is_ascii_alphanumeric() || "`(\".{-".contains(c));
         let next = continued(rest);
         let spaced = next.len() < rest.len();
         // Straight after a signature's `]` a `-` is the glyph, not a sign:
