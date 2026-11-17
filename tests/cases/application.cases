@@ -119,6 +119,14 @@ r:$[a;1;2]
 f:{[a;b] a+b}
 r:f(1;2)
 
+=== QA008 | and a lambda written out, with or without a parameter list (q 5: {[a;b] a+b}(1;2) is {[a;b] a+b}[1 2]) (#643)
+r:{[a;b] a+b}(1;2)
+s:{x+y} (1;2)
+
+=== clean | while a rank-1 lambda takes the list as its argument, and a list with an empty item is a projection applied on purpose (#643)
+r:{x}(1;2)
+s:{x y}(`a;;)
+
 === QA008 | implicit y makes the rank
 g:{x+y}
 r:g(1;2)

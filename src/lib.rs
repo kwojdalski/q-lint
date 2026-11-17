@@ -4714,6 +4714,37 @@ pub fn lint_selecting(
             );
         }
     }
+    // The same for a lambda written out: q 5 `{[a;b] a+b}(1;2)` is
+    // `{[a;b] a+b}[1 2]` (#643).
+    for (brace, _) in code.match_indices('{') {
+        let Some(end) = matching(code, brace, b'{', b'}') else {
+            continue;
+        };
+        let open = end + (code[end..].len() - code[end..].trim_start_matches([' ', '\t']).len());
+        let rank = lambda_rank(code, source, brace, end);
+        // A list with an empty item - read in `comments`, where `""` is
+        // still text - is itself a projection, applied on purpose: PyKX's
+        // `{x y}(`..python;;)` is a conversion function.
+        if rank >= 2
+            && code[open..].starts_with('(')
+            && let Some(close) = matching(code, open, b'(', b')')
+            && let items = slots(&code[open + 1..close - 1])
+            && items.len() >= 2
+            && items.iter().all(|i| {
+                let at = i.as_ptr() as usize - code.as_ptr() as usize;
+                !v.comments[at..at + i.len()].trim().is_empty()
+            })
+        {
+            add(
+                brace,
+                "QA008",
+                format!(
+                    "`{{...}}(...)` passes one list argument to a rank-{rank} lambda, so this is \
+                     a projection, not a call; square brackets separate arguments"
+                ),
+            );
+        }
+    }
     // QA005 and QA003 for a lambda with no parameter list, whose rank is the
     // x, y and z it reads, and QA003 for a lambda named in this file. q 5:
     // `{x+y} each 1 2` is `{x+y}'[1 2]`, and `@[{x+y};1;{x}]`,
