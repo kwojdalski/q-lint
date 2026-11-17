@@ -5250,7 +5250,10 @@ pub fn lint_selecting(
             .find(&code[m.end()..])
             .map_or(0, |d| d.end());
         let rest = &code[past_blanks(code, m.end() + derived)..];
-        if rest.is_empty() || rest.starts_with([';', ')', ']', '}', '\r', '\n']) {
+        // A string is blank in `code`, and an operand all the same: q 5
+        // refuses `2**"a"` with '* and `t:="a"` with '= (#658).
+        let string = source[past_blanks(source, m.end() + derived)..].starts_with('"');
+        if !string && (rest.is_empty() || rest.starts_with([';', ')', ']', '}', '\r', '\n'])) {
             continue;
         }
         let (op, meant) = match m.as_str() {

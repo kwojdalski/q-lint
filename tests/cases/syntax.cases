@@ -194,6 +194,12 @@ h:x**\[y]
 a:=1
 b:=(1;1)
 
+=== QE004 profile: general | a string is an operand too (q 5: 2**"a" is '*, 1=>"b" '>, t:="a" and 2=="a" '=, #658)
+r:2**"a"
+s:1=>"b"
+t:="a"
+u:2== "a"
+
 === clean | operators inside a string are text
 s:"a==b"
 
