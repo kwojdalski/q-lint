@@ -24,6 +24,12 @@ cargo build --release
 ./target/release/qlinter --explain QF005
 ```
 
+A finding prints as `path:line:column`. The column, and `column` and
+`end_column` in the JSON, are 1-based and count UTF-16 code units, the unit
+the language server protocol and VS Code use. So after a character outside
+the Basic Multilingual Plane, such as an emoji in a string, the column is one
+more than a count of characters (and less than a count of bytes).
+
 The executable is independently deployable once built. Compilation uses the
 checked-in Cargo lockfile; this version was tested with Rust 1.98.1 on macOS
 ARM64.

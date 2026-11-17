@@ -1044,3 +1044,12 @@ fn a_finding_is_an_error_exactly_when_q_refuses_the_code() {
         ("QT004", "warning")
     );
 }
+
+#[test]
+fn a_column_counts_utf16_code_units_as_the_readme_says() {
+    // `==` is the 8th character and the 11th byte; the emoji before it is
+    // two UTF-16 units, so the documented column is 9 (#804).
+    let found = lint("s:\"\u{1F600}\";a==b\n", "t.q", Profile::General);
+    let qe004 = found.iter().find(|f| f.code == "QE004").expect("QE004");
+    assert_eq!(qe004.column, Some(9));
+}
