@@ -21,6 +21,15 @@ r3:{[p] reverse desc peach p}
 r1:{[p] reverse asc@'p}
 r2:{[p] reverse asc .'p}
 
+=== clean | and so does one on the next line (q 5: reverse asc over   .'p is per item, desc .'p is not, #685)
+r0:{[p] reverse asc
+  .'p}
+r1:{[p] distinct asc distinct
+  .'p}
+r2:{[p] reverse asc
+
+  each p}
+
 === clean | first asc is not min: asc puts a null first and min skips it
 r:{[p] first asc p}
 

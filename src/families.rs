@@ -200,10 +200,19 @@ fn credentials(path: &str, source: &str, code: &str, comments: &str, out: &mut V
 /// the outer `distinct` then removes. `@'` and `.'` are each over apply
 /// (#402): q 5 gives `(3 1 2;5 4)` for `distinct asc distinct@'x` and three
 /// items for `asc distinct@'x`.
+/// The iterator may start the indented line that continues the statement:
+/// `reverse asc` over `  .'p` is `reverse asc .'p` (#685).
 fn iterated(code: &str, at: usize) -> bool {
     let rest = &code[at..];
     rest.starts_with(['\'', '/', '\\'])
-        || re!(r"^[ \t]*(?:each|peach)\b|^[ \t]*[@.]['/\\]").is_match(rest)
+        || re!(concat!(
+            "^",
+            blank!(),
+            r"*(?:each|peach)\b|^",
+            blank!(),
+            r"*[@.]['/\\]"
+        ))
+        .is_match(rest)
 }
 
 /// Whether `at` names a column of a table literal: the bracket around it,
