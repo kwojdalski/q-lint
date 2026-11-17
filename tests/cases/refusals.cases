@@ -148,7 +148,7 @@ r:1_select a by b t
 === QE007 | inside a lambda too
 f:{select x}
 
-=== QE007 profile: general | the bare keyword is never a value (q 5: each line is 'from or ',) (#728)
+=== QE007 QF004 profile: general | the bare keyword is never a value (q 5: each line is 'from or ',) (#728), and assigning it at the root is QF004's as in a namespace (#778)
 f:{[t] select}
 g:{x}[select]
 h:(exec;delete)

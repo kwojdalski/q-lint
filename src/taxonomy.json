@@ -108,7 +108,7 @@
     "code": "QF004",
     "name": "reserved-definition",
     "category": "names",
-    "summary": "Namespace-level assignment to a builtin, which q refuses",
+    "summary": "Assignment to a builtin outside a lambda, which q refuses",
     "scope": "builtin"
   },
   {
@@ -157,7 +157,7 @@
     "code": "QF012",
     "name": "reserved-root-assignment",
     "category": "names",
-    "summary": "Root-level assignment to a reserved name",
+    "summary": "Root-level assignment to `from` or `by`, which q accepts though both are query keywords",
     "scope": "style"
   },
   {
@@ -528,7 +528,7 @@
     "code": "QT009",
     "name": "literal-where-type",
     "category": "types-and-shapes",
-    "summary": "where called with counts other than booleans or longs",
+    "summary": "where called with counts other than booleans, ints or longs",
     "scope": "builtin"
   },
   {

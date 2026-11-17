@@ -111,7 +111,7 @@ Fixes that you choose individually: `&&` → `&`, `||` → `|`, `reverse asc` �
 value, `a -1` → `a - 1`, a string compared with `=` in a filter → `like`
 (on a char column as long as the string, `=` is valid q), `=` against a
 vector in a filter → `in`, `f(a;b)` →
-`f[a;b]`, `` `int$"12" `` → `"I"$"12"`, removing a statement that never runs,
+`f[a;b]`, `` `int$"12" `` → `"I"$"12"`, `` `symbol$"abc" `` → `` `$"abc" ``, removing a statement that never runs,
 removing an unused local's name while keeping its expression,
 `{x} each y` → `y` and `{x+1} each a` → `a+1` (they differ on an empty typed list, and
 `{x} each` drops a `` `s# `` or `` `g# `` attribute), parentheses
@@ -119,7 +119,7 @@ round each comparison an `and`/`or` swallows in a where phrase, `~` → `=` in
 a filter, `x` → the one declared parameter, deleting a commented-out
 definition, passing an outer local into a nested lambda that reads it
 (`{a+x}` → `{[x;a] a+x}[;a]`), dropping the trailing `;` of `$[c;a;b;]`,
-`$[c;a]` → `if[c;a]`, `10/2` → `10%2`, removing `a:a`, renaming a parameter
+`$[c;a]` → `if[c;a]` where nothing takes its value, `10/2` → `10%2`, removing `a:a`, renaming a parameter
 that shadows a builtin, a column one typo from the table's, and (uqf)
 `.z.P` → `.z.p` and datetime → timestamp. Add
 `--unsafe-fixes` - Ruff's flag of the same name - to have `--diff` and `--fix`
@@ -494,8 +494,10 @@ unresolved and account for projections, seeded scans and variadic `enlist`.
 
 `examples/showcase.q` marks each expected diagnostic with `expect-next`.
 `tests/showcase.rs` checks exact code/line pairs under every profile, including
-silence in the clean section. Together with the two companion examples it
-covers all 119 rules available in this build; QF006 and QLS001 are excluded.
+silence in the clean section. Together with the three companion examples -
+`syntax-error.q`, `byte-order-mark.q` and `query-injection.q`, each holding
+a rule that would hide or stop the others - it covers all 119 rules available
+in this build; QF006 and QLS001 are excluded.
 
 Multiline fixtures cover nested lambdas, split argument lists, comments,
 scalar-only tables, dictionary lengths and assignment from control statements.

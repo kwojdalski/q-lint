@@ -357,13 +357,25 @@ fn run(args: Args) -> Result<u8, String> {
             out!("{}", serde_json::to_string(&entries).unwrap());
         } else {
             for r in entries {
+                // Where the rule runs, in the words docs/rules.md uses: the
+                // taxonomy's `builtin` scope is no profile a user can name
+                // (#791). JSON keeps the scope as data.
+                let runs = match r.scope.as_str() {
+                    "builtin" => "every profile",
+                    "style" => "style and above",
+                    "styleq" => "styleq and above",
+                    "uqf" => "uqf",
+                    "python-hook" => "a Python hook",
+                    "qls" => "the qls backend",
+                    other => other,
+                };
                 out!(
                     "{} [{}] {}: {} ({})",
                     r.code,
                     r.category,
                     r.name,
                     r.summary,
-                    r.scope
+                    runs
                 );
             }
         }

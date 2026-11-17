@@ -1337,8 +1337,14 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         }
         // `$[c;a]` is 'type; `if[c;a]` runs `a` when `c` holds.
         // Not straight after a value: `` `int$[a;b] `` would become
-        // `` `intif[a;b] ``.
-        "QA006" if source.get(start..)?.starts_with("$[") && !ends_in_token(&source[..start]) => {
+        // `` `intif[a;b] ``. And only as a statement of its own: `if` has
+        // no value, so `1+if[..]` is still 'type and `enlist if[..]` a silent
+        // `::` where q used to raise (#781).
+        "QA006"
+            if source.get(start..)?.starts_with("$[")
+                && !ends_in_token(&source[..start])
+                && value_discarded(&v.code, start) =>
+        {
             ("$[", "if[".into(), "Use `if[...]`".into(), false)
         }
         // `where a:1` is 'type; the comparison is `=`.
@@ -2215,6 +2221,55 @@ fn blank(b: &mut [u8]) {
 }
 /// A filter phrase with parenthesised groups blanked out. The questions the
 /// filter rules ask - which operators sit beside which - are about the
+/// Whether the `$[...]` at `at` (masked code) is a
+/// statement whose value nothing takes: it starts a statement at the root, in
+/// a lambda or in the body of `if`, `do` or `while`, and a `;`, the body's
+/// `]` or - at the root - the end of the line follows it. The last statement
+/// of a lambda is its value.
+fn value_discarded(code: &str, at: usize) -> bool {
+    let bytes = code.as_bytes();
+    // One past the `]`.
+    let Some(end) = matching(code, at + 1, b'[', b']') else {
+        return false;
+    };
+    // The innermost bracket open around `at`.
+    let mut depth = 0i32;
+    let mut open = None;
+    for (i, b) in bytes[..at].iter().enumerate().rev() {
+        match b {
+            b')' | b']' | b'}' => depth += 1,
+            b'(' | b'[' | b'{' if depth == 0 => {
+                open = Some(i);
+                break;
+            }
+            b'(' | b'[' | b'{' => depth -= 1,
+            _ => {}
+        }
+    }
+    let before = code[..at].trim_end_matches([' ', '\t']);
+    let line_start = before.is_empty() || before.ends_with('\n');
+    let after = code[end..].trim_start_matches([' ', '\t']);
+    match open {
+        None => {
+            (line_start || before.ends_with(';'))
+                && (after.is_empty() || after.starts_with([';', '\n', '\r']))
+        }
+        // Inside brackets a line break is only whitespace (q 5).
+        Some(o) if bytes[o] == b'{' => {
+            let head = code[..at].trim_end();
+            // The first statement follows the `{` or the signature.
+            let signature = bytes.get(o + 1) == Some(&b'[')
+                && matching(code, o + 1, b'[', b']') == Some(head.len());
+            (head.ends_with([';', '{']) || signature) && after.trim_start().starts_with(';')
+        }
+        Some(o) if bytes[o] == b'[' => {
+            re!(r"(?:^|[^A-Za-z0-9_.])(?:if|do|while)\s*$").is_match(&code[..o])
+                && code[..at].trim_end().ends_with(';')
+                && after.trim_start().starts_with([';', ']'])
+        }
+        _ => false,
+    }
+}
 /// The `{` of the innermost lambda around `at`, in masked code.
 pub(crate) fn enclosing_brace(code: &str, at: usize) -> Option<usize> {
     // From the installed table where there is one: walking back to the brace
@@ -6259,9 +6314,11 @@ pub fn lint_selecting(
             } else if namespaces.iter().rev().find(|(o, _)| *o <= at).unwrap().1 {
                 add(at, "QF004", format!("Namespace-level `{name}`"));
             } else {
+                // Refused at the root as in a namespace, so QF004's, which
+                // `general` holds (#778).
                 add(
                     at,
-                    "QF012",
+                    "QF004",
                     format!("Root-level assignment to `{name}`: q refuses it"),
                 );
             }
@@ -6995,21 +7052,26 @@ pub fn lint_selecting(
                 && compound(&m)
                 && reserved(&m[1], offset + at)
             {
-                add(
-                    offset + at,
-                    "QF012",
-                    // Checked one by one on q 5: every reserved name but these
-                    // two is refused at the root.
-                    if matches!(&m[1], "from" | "by") {
+                // Checked one by one on q 5: every reserved name but these
+                // two is refused at the root, which makes it QF004's and
+                // `general`'s; the two q accepts are a habit (#778).
+                if matches!(&m[1], "from" | "by") {
+                    add(
+                        offset + at,
+                        "QF012",
                         format!(
                             "Root-level assignment to `{}`: q accepts it, but the name is a query \
                              keyword everywhere else",
                             &m[1]
-                        )
-                    } else {
-                        format!("Root-level assignment to `{}`: q refuses it", &m[1])
-                    },
-                );
+                        ),
+                    );
+                } else {
+                    add(
+                        offset + at,
+                        "QF004",
+                        format!("Root-level assignment to `{}`: q refuses it", &m[1]),
+                    );
+                }
             }
         }
         // The parentheses have to be empty in the source - a string between
