@@ -2817,8 +2817,10 @@ fn pattern_within(s: &str, nested: bool, depth: usize) -> bool {
         // (1;2;::)` is 3, and `{[a;::] a}` takes two arguments (#450).
         true
     } else if is_param_name(s)
-        || re!(r"^(?:-?[0-9.][A-Za-z0-9.:]*(?:\s+-?[0-9.][A-Za-z0-9.:]*)*|(?:`[A-Za-z0-9_.:]*)+)$")
+        || s == "."
+        || re!(r"^(?:-?(?:\d|\.\d)[A-Za-z0-9.:]*(?:\s+-?(?:\d|\.\d)[A-Za-z0-9.:]*)*|(?:`[A-Za-z0-9_.:]*)+)$")
             .is_match(s)
+            && !s.contains("..")
     {
         true
     } else if let Some(inner) = s.strip_prefix("([]").filter(|_| whole(s)) {
@@ -3610,6 +3612,13 @@ pub fn lint_selecting(
                     || rest.iter().any(|s| iterated_type(s))
                 {
                     "q 5 refuses the lambda where it is defined: 'nyi"
+                } else if rest
+                    .iter()
+                    .any(|s| re!(r"^[-0-9.\s]*\.[-0-9.\s]*$").is_match(s))
+                {
+                    // A literal with a stray dot: q 5 refuses `{[..] 1}`
+                    // with '. and `{[1 .] 1}` with 'nyi (#594).
+                    "q 5 refuses the lambda where it is defined"
                 } else {
                     "q reads these brackets as the start of the body and the lambda takes \
                      x, y and z instead"

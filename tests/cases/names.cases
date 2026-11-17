@@ -1274,3 +1274,15 @@ r2:{[a:b'] a}
 r3:{[a:] a}
 r4:{[a!b:] a}
 r5:{[a;::] a}
+
+=== QF007 profile: general | a literal pattern with a stray dot is refused (#594; q 5: '. and 'nyi)
+r1:{[..] 1}
+r2:{[1 .] 1}
+r3:{[a;..] 1}
+
+=== clean profile: general | while a lone dot, a dotted number or a negative fraction is a pattern (#594; q 5 parses each)
+r1:{[.] 1}
+r2:{[1.] 1}
+r3:{[.5] 1}
+r4:{[-.5] 1}
+r5:{[1 2] 1}
