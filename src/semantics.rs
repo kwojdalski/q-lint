@@ -1752,13 +1752,28 @@ pub fn check(
     // Keys: symbols, as before, and the other literal lists q takes - a
     // numeric or byte vector, or a parenthesised list. Not a numeric atom:
     // `1!t` keys a table and `0!t` unkeys one, which is not a dictionary.
+    // A boolean vector and a string are key lists too: q 5 `101b!3 4` and
+    // `"ab"!3 4 5` are 'length (#610). Read in `comments`, where a string is
+    // still text; anything else has to be code there, and so does the `!`.
     for m in re!(
-        r"((?:`[A-Za-z][A-Za-z0-9_.]*)+|-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*;[^()]*\)|\(\s*(?:`[A-Za-z][A-Za-z0-9_.]*){2,}\s*\))\s*!"
+        r#"((?:`[A-Za-z][A-Za-z0-9_.]*)+|-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+|[01]{2,}b|0x(?:[0-9a-fA-F]{2}){2,}|"(?:[^"\\\n]|\\.)*"|\([^()]*;[^()]*\)|\(\s*(?:`[A-Za-z][A-Za-z0-9_.]*){2,}\s*\))\s*!"#
     )
-    .captures_iter(code)
+    .captures_iter(comments)
     {
         let start = m.get(0).unwrap();
-        if !boundary(code, start.start()) {
+        let quoted = m[1].starts_with('"');
+        let key_in_code = if quoted {
+            // An opening quote: not straight after a string's text, which
+            // would make it a closing one.
+            let at = start.start();
+            code[m.get(1).unwrap().range()].trim().is_empty()
+                && !(at > 0
+                    && code.as_bytes()[at - 1] == b' '
+                    && !comments.as_bytes()[at - 1].is_ascii_whitespace())
+        } else {
+            code.get(m.get(1).unwrap().range()) == Some(&m[1])
+        };
+        if !key_in_code || code.as_bytes()[start.end() - 1] != b'!' || !boundary(code, start.start()) {
             continue;
         }
         // One symbol on the left is an enumeration, not a dictionary:
@@ -1799,7 +1814,14 @@ pub fn check(
                 .is_empty()
                 .then(|| string_items(&comments[start.end()..end]))?
         });
-        if let (Some(keys), Some(values)) = (shape(&m[1]), values)
+        // One char is an atom, which no dictionary takes as keys: q 5
+        // `"a"!1 2` is 'type, not a count mismatch.
+        let keys = if quoted {
+            string_items(&m[1]).filter(|&n| n != 1)
+        } else {
+            shape(&m[1])
+        };
+        if let (Some(keys), Some(values)) = (keys, values)
             && keys != values
         {
             out.push(Finding::at(

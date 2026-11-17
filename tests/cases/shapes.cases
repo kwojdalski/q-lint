@@ -1167,3 +1167,13 @@ d:"a"-0Wh
 === clean profile: general | a float null or infinity takes a char (q 5: 0n, 0w)
 a:"a"+0n
 b:"a"*0w
+
+=== QT001 profile: general | a boolean vector or a string as the keys (q 5: 'length each; #610)
+a:101b!3 4
+b:"ab"!3 4 5
+
+=== clean profile: general | the same keys with as many values, and a string holding a bang
+a:101b!1 2 3
+b:"ab"!1 2
+c:"x 1 2!3"
+d:("x";"ab")
