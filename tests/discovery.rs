@@ -1054,3 +1054,35 @@ fn the_tests_exemption_from_qp002_counts_only_directories_below_the_root() {
         &["--isolated", "--profile", "uqf", "a.q"]
     ));
 }
+
+#[test]
+fn force_exclude_reads_default_directories_from_the_project_root_not_the_cwd() {
+    // Run from inside build/, or beside it, the file is still in build/
+    // below the configuration's root: the walk of the project skips it, so
+    // --force-exclude does too. Measured from the cwd, it was linted (#801).
+    let repo = Repo::new();
+    repo.write("qlinter.toml", "profile = \"style\"\n")
+        .write("build/x.q", SOURCE)
+        .write("src/a.q", SOURCE);
+    assert_eq!(
+        repo.codes(".", &["--force-exclude", "build/x.q"]),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        repo.codes("build", &["--force-exclude", "x.q"]),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        repo.codes("src", &["--force-exclude", "../build/x.q"]),
+        Vec::<String>::new()
+    );
+    // A `build` above the root is not one the walk would skip.
+    let outer = Repo::new();
+    outer
+        .write("build/proj/qlinter.toml", "profile = \"style\"\n")
+        .write("build/proj/a.q", SOURCE);
+    assert_eq!(
+        outer.codes(".", &["--force-exclude", "build/proj/a.q"]),
+        ["QF016"]
+    );
+}

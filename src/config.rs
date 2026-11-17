@@ -265,19 +265,21 @@ impl Policy {
 
     /// `excluded`, for a path named on the command line with
     /// `--force-exclude`: the default list is also checked against the
-    /// directories above it below the current directory, as a configured
-    /// pattern is against those below its root - so a hook that passes
-    /// `build/a.q` skips it, as the walk would (#415).
+    /// directories above it below the project root, as a configured pattern
+    /// is against those below its root - so a hook that passes `build/a.q`
+    /// skips it, as the walk would (#415), from whatever directory it runs
+    /// in (#801).
     pub fn force_excluded(&self, path: &Path) -> Result<bool, String> {
         if self.excluded(path)? {
             return Ok(true);
         }
-        if self.settings(path)?.exclude.is_some() {
+        let settings = self.settings(path)?;
+        if settings.exclude.is_some() {
             return Ok(false);
         }
-        let cwd = absolute(&std::env::current_dir().map_err(|e| e.to_string())?);
+        let root = project_root(&settings)?;
         let full = absolute(path);
-        Ok(full.strip_prefix(&cwd).is_ok_and(|relative| {
+        Ok(full.strip_prefix(&root).is_ok_and(|relative| {
             relative
                 .parent()
                 .into_iter()
@@ -354,12 +356,8 @@ impl Policy {
         {
             return false;
         }
-        let root = match &settings.root {
-            Some(dir) => dir.clone(),
-            None => match std::env::current_dir() {
-                Ok(cwd) => absolute(&cwd),
-                Err(_) => return false,
-            },
+        let Ok(root) = project_root(settings) else {
+            return false;
         };
         let full = absolute(path);
         full.strip_prefix(&root).is_ok_and(|relative| {
@@ -436,6 +434,18 @@ fn per_file_ignored(settings: &Settings, code: &str, path: &Path) -> bool {
     settings.per_file_ignores.iter().any(|(glob, codes)| {
         codes.iter().any(|s| names(s, code)) && matches(&full, glob) != glob.negated
     })
+}
+
+/// The directory a file's settings take as the project's top: where the
+/// configuration's patterns are rooted, or the current directory when no
+/// configuration governs it.
+fn project_root(settings: &Settings) -> Result<PathBuf, String> {
+    match &settings.root {
+        Some(dir) => Ok(dir.clone()),
+        None => Ok(absolute(
+            &std::env::current_dir().map_err(|e| e.to_string())?,
+        )),
+    }
 }
 
 /// Ruff's matching: a pattern is tried against the path relative to the
