@@ -1,6 +1,10 @@
 === QT024 | sorted attribute on a literal out of order
 r:`s#3 1 2
 
+=== QT024 profile: general | and so on a literal continued on an indented line (q 5: 's-fail, #689)
+w:`s#1
+  1e-3
+
 === QT024 | symbols sort by byte, so a lowercase before an uppercase is out of order
 r:`s#`a`B
 
