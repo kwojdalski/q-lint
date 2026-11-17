@@ -1074,9 +1074,8 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
         if !matches!(d, b'0'..=b'2')
             || c.get(i + 1) != Some(&b':')
             || comments.as_bytes()[i] != d
-            || i.checked_sub(1).is_some_and(|p| {
-                c[p].is_ascii_alphanumeric() || b"._`-:".contains(&c[p])
-            })
+            || i.checked_sub(1)
+                .is_some_and(|p| c[p].is_ascii_alphanumeric() || b"._`-:".contains(&c[p]))
             || crate::system_command(&source[line_start..])
         {
             continue;

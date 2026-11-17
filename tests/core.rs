@@ -1012,11 +1012,21 @@ fn a_finding_is_an_error_exactly_when_q_refuses_the_code() {
     use q_lint_rs::{Finding, RULES};
     for rule in RULES.iter().filter(|r| r.scope != "qls") {
         let f = Finding::new("t.q", 1, &rule.code, String::new());
-        let expected = if rule.scope == "builtin" { "error" } else { "warning" };
+        let expected = if rule.scope == "builtin" {
+            "error"
+        } else {
+            "warning"
+        };
         assert_eq!(f.severity, expected, "{} ({})", rule.code, rule.scope);
     }
     let f = lint("a:\"abc\" like \"a*b*\"", "t.q", Profile::General);
-    assert_eq!((f[0].code.as_str(), f[0].severity.as_str()), ("QB002", "error"));
+    assert_eq!(
+        (f[0].code.as_str(), f[0].severity.as_str()),
+        ("QB002", "error")
+    );
     let f = lint("a:`int$\"12\"", "t.q", Profile::Style);
-    assert_eq!((f[0].code.as_str(), f[0].severity.as_str()), ("QT004", "warning"));
+    assert_eq!(
+        (f[0].code.as_str(), f[0].severity.as_str()),
+        ("QT004", "warning")
+    );
 }

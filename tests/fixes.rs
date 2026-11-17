@@ -1152,7 +1152,14 @@ fn diff_keeps_untouched_lines_inside_a_change_as_context() {
         let path = directory.path().join(name);
         fs::write(&path, source).unwrap();
         let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
-            .args(["--isolated", "--profile", "uqf", "--select", "QP006", "--diff"])
+            .args([
+                "--isolated",
+                "--profile",
+                "uqf",
+                "--select",
+                "QP006",
+                "--diff",
+            ])
             .arg(&path)
             .output()
             .unwrap();
