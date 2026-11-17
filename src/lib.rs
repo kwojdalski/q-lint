@@ -4202,6 +4202,22 @@ pub fn lint_selecting(
             format!("`{}` is read-only: q refuses any assignment to it with 'domain", name.as_str()),
         );
     }
+    // And a multiple assignment: q 5 `(.z.i;.z.h):(1;`a)` is 'domain (#506).
+    for (at, name) in semantics::global_multi_assignments(code) {
+        if re!(r"^\.z\.[A-Za-z]$").is_match(name) && name != ".z.m" {
+            // `at` is the target's start; the finding goes on the name.
+            add(
+                at + code[at..]
+                    .match_indices(name)
+                    .find(|(p, _)| {
+                        !code[at + p + name.len()..].starts_with(|c: char| c.is_alphanumeric())
+                    })
+                    .map_or(0, |(p, _)| p),
+                "QF019",
+                format!("`{name}` is read-only: q refuses any assignment to it with 'domain"),
+            );
+        }
+    }
     // like's pattern is a string, and a symbol literal is the obvious wrong
     // spelling of one. What q does with it depends on what follows. Verified:
     // `"abc" like `abc` is 'type, but a glob character is not part of a
