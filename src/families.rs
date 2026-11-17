@@ -756,7 +756,15 @@ fn select_by_duplicate(path: &str, source: &str, code: &str, out: &mut Vec<Findi
         if !crate::boundary(code, q.start()) || in_string(code, q.start()) {
             continue;
         }
-        let rest = &code[q.end()..];
+        // A limit or sort is no column: `select[1] a by a from t` and
+        // `select[2;>a] ...` name their columns after it (#573).
+        let mut rest = &code[q.end()..];
+        if q.as_str() == "select" && rest.starts_with('[') {
+            let Some(close) = crate::matching(code, q.end(), b'[', b']') else {
+                continue;
+            };
+            rest = &code[close..];
+        }
         let Some(by) = top_level_word(rest, re!(r"\b(?:by|from)\b")) else {
             continue;
         };
