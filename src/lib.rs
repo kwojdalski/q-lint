@@ -4477,8 +4477,9 @@ pub fn lint_selecting(
         {
             *assigned.entry(qualified(at, name)).or_default() += 1;
         }
-        for m in re!(r"[.@]\s*\[\s*`(\.?[A-Za-z][A-Za-z0-9_.]*|\.)\s*;\s*((?:`[A-Za-z][A-Za-z0-9_]*)*)")
-            .captures_iter(code)
+        for m in
+            re!(r"[.@]\s*\[\s*`(\.?[A-Za-z][A-Za-z0-9_.]*|\.)\s*;\s*((?:`[A-Za-z][A-Za-z0-9_]*)*)")
+                .captures_iter(code)
         {
             let (target, members) = (m.get(1).unwrap(), &m[2]);
             if members.is_empty() {
@@ -6907,7 +6908,14 @@ pub fn lint_selecting(
             while i < chars.len() && chars[i].1 != '"' {
                 i += if chars[i].1 == '\\' { 2 } else { 1 };
             }
-        } else if chars[i].1 == '\'' && chars.get(i + 1).is_some_and(|c| c.1 == '"') {
+        } else if chars[i].1 == '\''
+            && chars.get(i + 1).is_some_and(|c| c.1 == '"')
+            // Straight after an operand or a verb, `'` is each, not a
+            // signal: q 5 `"ab",'"xy"` is ("ax";"by") (#625).
+            && !i
+                .checked_sub(1)
+                .is_some_and(|p| chars[p].1.is_alphanumeric() || "_)]}\"`+-*%,#$@&|^=<>~!?.".contains(chars[p].1))
+        {
             let (mut j, mut depth, mut length) = (i + 1, 0usize, 0);
             while j < chars.len() {
                 let c = chars[j].1;
