@@ -1006,3 +1006,12 @@ r:(f[1;2];a 0;b 0)
 a:1
 `a`b set 1 2
 r:a 0
+
+=== clean profile: general | QT027: a list of dictionaries given to insert or upsert is a table (#752; q 5: count t is 8)
+t:([]a:`long$();b:`symbol$();c:`float$())
+`t insert (`a`b`c!(1;`x;1f);`a`b`c!(2;`y;2f))
+`t upsert (`a`b`c!(3;`z;3f);`a`b`c!(4;`w;4f))
+insert[`t;(`a`b`c!(5;`v;5f);`a`b`c!(6;`u;6f))]
+d1:`a`b`c!(7;`t;7f)
+d2:`a`b`c!(8;`s;8f)
+`t insert (d1;d2)

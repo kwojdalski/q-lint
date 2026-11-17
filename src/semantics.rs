@@ -3625,6 +3625,14 @@ fn named_values(
         r"`(?P<a>{name})\s+(?P<op1>insert|upsert)\s*(?P<r1>{row})|(?:^|[^A-Za-z0-9_.`])(?P<b>{name})\s+(?P<op2>upsert)\s*(?P<r2>{row})|\b(?P<op3>insert|upsert)\s*\[\s*`(?P<c>{name})\s*;\s*(?P<r3>{row})"
     ))
     .unwrap();
+    let dictionary = re!(r"^\(?\s*(?:`[A-Za-z][A-Za-z0-9_.]*)+\s*\)?\s*!");
+    let dictionaries: HashSet<&str> = re!(
+        r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*:\s*\(?\s*(?:`[A-Za-z][A-Za-z0-9_.]*)+\s*\)?\s*!"
+    )
+    .captures_iter(code)
+    .filter(|m| boundary(code, m.get(0).unwrap().start()))
+    .map(|m| m.get(1).unwrap().as_str())
+    .collect();
     for m in forms.captures_iter(code) {
         let table = m.name("a").or(m.name("b")).or(m.name("c")).unwrap();
         let op = m
@@ -3646,6 +3654,15 @@ fn named_values(
                 continue;
             }
             let slots = crate::slots(&code[r.start() + 1..close - 1]);
+            // Nor is a list of dictionaries, which is a table too: q 5 runs
+            // `` `t insert (`a`b`c!(1;`x;1f);`a`b`c!(2;`y;2f)) ``, and the
+            // same with each dictionary bound to a name first (#752).
+            if slots.iter().any(|slot| {
+                let slot = slot.trim();
+                dictionary.is_match(slot) || dictionaries.contains(slot)
+            }) {
+                continue;
+            }
             // upsert also takes a list of rows: q 5 runs
             // `t upsert ((1;`a);(3;`b);(5;`c))` on a two-column t, and
             // `s upsert (1 2;3 4;5 6)`, where insert raises 'length. Read
