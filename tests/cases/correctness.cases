@@ -84,6 +84,11 @@ a:0n;t:([]b:1 2)
 isnan:a=a; r:select from t
 f:{[x] x~x}; g:{exec b from t}
 
+=== clean | a symbol or a dotted name against the column is no self-comparison (q 5: one row) (#626)
+t:([]a:`a`b)
+r:select from t where `a=a
+s:select from t where .cfg.a=a
+
 === clean | comparing two different columns
 select from t where a=b
 
