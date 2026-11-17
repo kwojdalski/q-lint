@@ -42,15 +42,27 @@ pub fn build(files: &[(PathBuf, String)], symbols: bool, cwd: &Path) -> BTreeMap
         }
         reads.push(read);
     }
-    let position: HashMap<&Path, usize> = files
+    // A file is keyed by the path it was found at, a symlink by its own
+    // name: `\l lib/link.q` is an edge to `lib/link.q`, which q 5 loads
+    // (#526). A load reaching it through another name - a symlinked
+    // directory, the link's target - finds it by the real path.
+    let mut position: HashMap<PathBuf, usize> = files
         .iter()
         .enumerate()
-        .map(|(i, (p, _))| (p.as_path(), i))
+        .map(|(i, (p, _))| (p.clone(), i))
         .collect();
+    for (i, (p, _)) in files.iter().enumerate() {
+        if let Ok(real) = std::fs::canonicalize(p) {
+            position.entry(real).or_insert(i);
+        }
+    }
     let target = |i: usize, load: &str| {
-        load_targets(&files[i].0, load, cwd)
-            .iter()
-            .find_map(|p| position.get(p.as_path()).copied())
+        load_targets(&files[i].0, load, cwd).iter().find_map(|p| {
+            position
+                .get(p)
+                .or_else(|| position.get(&std::fs::canonicalize(p).ok()?))
+                .copied()
+        })
     };
     // A script loaded under `\d .a` runs in `.a`, so what it writes at its
     // root is `.a.name` too: q 5, after `\d .a` and `\l b.q` with b.q's
@@ -159,20 +171,16 @@ fn resolve<'a>(
 fn load_targets(from: &Path, load: &str, cwd: &Path) -> Vec<PathBuf> {
     let load = Path::new(load);
     if load.is_absolute() {
-        return vec![normal(load)];
+        return vec![lexical(load)];
     }
     std::iter::once(cwd)
         .chain(from.ancestors().skip(1))
-        .map(|dir| normal(&dir.join(load)))
+        .map(|dir| lexical(&dir.join(load)))
         .collect()
 }
 
-/// `path` resolved through symlinks when it exists, as the files in the graph
-/// were, and lexically otherwise.
-fn normal(path: &Path) -> PathBuf {
-    if let Ok(real) = std::fs::canonicalize(path) {
-        return real;
-    }
+/// `path` with its `.` and `..` resolved by reading it, not the disk.
+fn lexical(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
     for c in path.components() {
         match c {

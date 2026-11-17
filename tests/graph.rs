@@ -695,3 +695,22 @@ fn a_relative_load_is_tried_against_the_process_directory_first() {
     let deps: Vec<_> = g["sub/a.q"].dependencies.iter().collect();
     assert_eq!(deps, [Path::new("/no-such-root/b.q")]);
 }
+
+#[cfg(unix)]
+#[test]
+fn a_load_of_a_symlink_is_an_edge_to_the_link() {
+    // The link is a file of the graph under its own name, and `\l` of that
+    // name loads it (q 5); the target was looked up instead (#526).
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("shared")).unwrap();
+    fs::create_dir_all(dir.path().join("p/lib")).unwrap();
+    fs::write(dir.path().join("shared/real.q"), "f:{x+1}\n").unwrap();
+    std::os::unix::fs::symlink("../../shared/real.q", dir.path().join("p/lib/link.q")).unwrap();
+    fs::write(dir.path().join("p/main.q"), "\\l lib/link.q\n").unwrap();
+    let out = stdout(&qlinter(&dir.path().join("p"), &["analyze", "graph", "."]));
+    let found: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(
+        found,
+        serde_json::json!({"lib/link.q": [], "main.q": ["lib/link.q"]})
+    );
+}
