@@ -1130,3 +1130,34 @@ fn a_truncated_utf8_sequence_keeps_the_columns_after_it() {
     at.sort();
     assert_eq!(at, [(1, 17), (2, 17)], "{findings}");
 }
+
+/// A line a nested or multi-pass fix leaves alone is context in `--diff`,
+/// as `diff -u` prints it, not a line removed and written back (#518, #671).
+#[test]
+fn diff_keeps_untouched_lines_inside_a_change_as_context() {
+    let directory = tempfile::tempdir().unwrap();
+    for (name, source, expected) in [
+        (
+            "nested.q",
+            "f:{x}\nc:f f 1\nd:4\ne:5\nh:f 2\n",
+            "@@ -1,5 +1,5 @@\n f:{x}\n-c:f f 1\n+c:f[f[1]]\n d:4\n e:5\n-h:f 2\n+h:f[2]\n",
+        ),
+        (
+            "passes.q",
+            "hs:{x}\nsq:{x}\nf:{(sq hs x)}\nmid:1\ng:{(sq hs x)}\n",
+            "@@ -1,5 +1,5 @@\n hs:{x}\n sq:{x}\n-f:{(sq hs x)}\n+f:{(sq[hs[x]])}\n mid:1\n\
+             -g:{(sq hs x)}\n+g:{(sq[hs[x]])}\n",
+        ),
+    ] {
+        let path = directory.path().join(name);
+        fs::write(&path, source).unwrap();
+        let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .args(["--isolated", "--profile", "uqf", "--select", "QP006", "--diff"])
+            .arg(&path)
+            .output()
+            .unwrap();
+        let patch = String::from_utf8(out.stdout).unwrap();
+        let hunks = &patch[patch.find("@@").unwrap()..];
+        assert_eq!(hunks, expected, "{name}");
+    }
+}
