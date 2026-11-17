@@ -315,7 +315,11 @@ qlinter --lsp --profile uqf
 It implements `initialize`/`initialized`, `didOpen`/`didChange`/`didSave`/
 `didClose`, `shutdown`/`exit`, and pushes `textDocument/publishDiagnostics`.
 It also offers Quick Fixes through `textDocument/codeAction` for `==` → `=`,
-`!=` → `<>`, `+=`/`-=`/`*=` → `+:`/`-:`/`*:`, and a leading UTF-8 BOM.
+`!=` → `<>`, `+=`/`-=`/`*=` → `+:`/`-:`/`*:`, and a leading UTF-8 BOM -
+the BOM only where the editor sends one: VS Code decodes a UTF-8 file's BOM
+away before the server sees the text and writes it back on save, so there
+QE005 is never shown and Format Document leaves the BOM, which
+`qlinter --fix` removes.
 It also fixes `&&` → `&` and `||` → `|` when selected in the editor, and
 `f x` → `f[x]` for QP006 under the uqf profile - where the edit covers the
 whole application, not just the underlined name - along with every other
@@ -359,9 +363,14 @@ Then either press <kbd>F5</kbd> in that directory to open an Extension
 Development Host, or package and install it:
 
 ```sh
-npx vsce package                           # produces q-lint-0.2.0.vsix
-code --install-extension q-lint-0.2.0.vsix
+mkdir -p server && install -m 755 ../../target/release/qlinter server/qlinter
+npx vsce package --out q-lint.vsix         # a name no release bump makes stale
+code --install-extension q-lint.vsix
 ```
+
+`server/` is not committed: a package carries the binary built from the
+tree it is packaged from, never an older one under the same version.
+`python3 scripts/dist.py build` does all of this for this machine.
 
 Its settings - the server binary and arguments, the profile, a configuration
 file, rule selection that can only narrow the repository's, when to lint,
@@ -429,10 +438,13 @@ default used.
 
 ### What the server does not read
 
-`--exclude`, and the `exclude` and `extend-exclude` of any configuration, are
-not consulted in server mode. Everything else a configuration says is: the
-server finds `qlinter.toml` or `pyproject.toml` above each document as the
-command line does, and `--config FILE` replaces that search with the one file,
+`--exclude`, and the `exclude` and `extend-exclude` of any configuration, do
+not hide diagnostics on a document the editor opens. They do decide which
+closed files the workspace index reads, as they decide which files
+`qlinter .` visits, so a name only an excluded file defines is undefined in
+the editor as it is in the terminal. Everything else a configuration says is
+read too: the server finds `qlinter.toml` or `pyproject.toml` above each
+document as the command line does, and `--config FILE` replaces that search with the one file,
 whose per-file-ignores are then read relative to the directory the server was
 started in. `--isolated`, `--profile`, `--select`, `--extend-select` and
 `--ignore` apply as they do on the command line. An editor asking

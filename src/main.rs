@@ -132,10 +132,11 @@ struct Args {
     /// Run as a language server on stdin/stdout instead of linting paths.
     /// The flags that shape a CLI run are refused rather than ignored: the
     /// server reads none of them, and one put in an editor's server
-    /// arguments would otherwise do nothing and say nothing (#798).
+    /// arguments would otherwise do nothing and say nothing (#798). It lints
+    /// with the builtin backend alone, so `--backend` is one too (#544).
     #[arg(long, conflicts_with_all = ["paths", "rules", "explain", "fix", "diff", "show_settings",
         "stdin_filename", "format", "color", "force_exclude", "unsafe_fixes",
-        "qls_executable", "qls_timeout"])]
+        "backend", "qls_executable", "qls_timeout"])]
     lsp: bool,
     /// Colour the text output: `auto` (a terminal, and NO_COLOR unset or empty),
     /// `always`, or `never`.

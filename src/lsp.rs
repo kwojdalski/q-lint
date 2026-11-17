@@ -36,6 +36,8 @@
 //! from open buffers, closes, and workspace/didChangeWatchedFiles. A name
 //! another file defines is not undefined here, a name two files assign is not
 //! tracked by value, and another file's function is coloured as one.
+//! The server registers the watchers itself (`watchers`), for a client that
+//! takes dynamic registration, so no editor has to know which files matter.
 //!
 //! FORMATTING IS THE SAFE AUTOFIXES, NOT A LAYOUT ENGINE
 //!
@@ -72,7 +74,7 @@
 //! stops offering its own word-based fallback. Formatting does not share the
 //! problem: its answer comes from rules that read text, and when there is
 //! nothing to fix, an empty answer is the true one.
-use crate::config::{Layer, Policy, selector};
+use crate::config::{FILES, Layer, Policy, selector};
 use crate::jsonrpc::{INVALID_REQUEST, receive, send};
 use q_lint_rs::{
     FileIndex, Finding, TokenKind, Workspace, balanced, fix_all, fix_for, semantic_tokens_in,
@@ -80,7 +82,7 @@ use q_lint_rs::{
 };
 use serde_json::{Value, json};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     io::{BufRead, Write},
     path::Path,
 };
@@ -99,6 +101,10 @@ const SERVER_NOT_INITIALIZED: i64 = -32002;
 /// Open documents, by URI. The editor is the authority on their contents from
 /// didOpen until didClose, so nothing here reads from disk.
 type Documents = HashMap<String, String>;
+
+/// Open documents edited since they were last linted, which with
+/// `lint.run: "onSave"` is since they were last saved.
+type Unsaved = HashSet<String>;
 
 /// What every `.q` file in the workspace defines, so a name another file
 /// defines is not undefined in this one and another file's function is
@@ -159,6 +165,26 @@ impl Index {
         }
     }
 
+    /// Forget `path` and, when it was a directory, every file under it but
+    /// the open documents, whose buffers still hold their text. A watcher
+    /// reports a deleted folder as one event for the folder, not one per
+    /// file inside it (#543).
+    fn remove_tree(&mut self, path: &str, docs: &Documents) -> bool {
+        let gone = std::path::PathBuf::from(file_key(path));
+        let open: Vec<String> = docs.keys().map(|uri| file_key(&path_of(uri))).collect();
+        let under: Vec<String> = self
+            .files
+            .keys()
+            .filter(|k| std::path::Path::new(k).starts_with(&gone) && !open.contains(k))
+            .cloned()
+            .collect();
+        let mut changed = false;
+        for key in under {
+            changed |= self.remove(&key);
+        }
+        changed
+    }
+
     /// Read `path` from disk when the index covers it, and forget it when it
     /// does not, is gone, or is unreadable. A closed document and a file
     /// changed on disk both come here, so neither can put back what the
@@ -210,6 +236,20 @@ impl Index {
         self.exclude
             .iter()
             .any(|p| p.matches_with(&relative, options))
+    }
+
+    /// Forget everything and read it all again: the workspace from disk,
+    /// then the open documents over it, whose buffers win.
+    fn rebuild(&mut self, policy: &Policy, docs: &Documents) {
+        self.files.clear();
+        self.ws = Workspace::default();
+        self.generation += 1;
+        if self.enabled {
+            self.scan(policy);
+        }
+        for (uri, text) in docs.iter().filter(|(uri, _)| is_q_uri(uri)) {
+            self.set(&path_of(uri), index(text));
+        }
     }
 
     /// Every `.q` file under the workspace folders, less those `exclude`
@@ -266,7 +306,12 @@ impl Index {
                 // Anything but a directory or a `.q` file is passed by before
                 // the settings are asked about it: finding them costs a
                 // canonicalize, and a tree of other files paid it per entry.
-                let is_q = kind.is_file() && is_q_path(&entry.file_name().to_string_lossy());
+                // A symlink to a file is read, as the CLI's walk lints it
+                // (#542); one to a directory is not entered, as there.
+                let is_q = is_q_path(&entry.file_name().to_string_lossy())
+                    && (kind.is_file()
+                        || kind.is_symlink()
+                            && std::fs::metadata(entry.path()).is_ok_and(|m| m.is_file()));
                 if !kind.is_dir() && !is_q {
                     continue;
                 }
@@ -304,15 +349,12 @@ fn workspace_roots(params: &Value) -> Vec<String> {
         .into_iter()
         .flatten()
         .filter_map(|f| f["uri"].as_str())
-        .filter(|u| u.starts_with("file://"))
-        .map(path_of)
+        .filter_map(file_path)
         .collect();
     if roots.is_empty()
-        && let Some(root) = params["rootUri"]
-            .as_str()
-            .filter(|u| u.starts_with("file://"))
+        && let Some(root) = params["rootUri"].as_str().and_then(file_path)
     {
-        roots.push(path_of(root));
+        roots.push(root);
     }
     roots
 }
@@ -507,6 +549,7 @@ pub fn serve(
     policy: &Policy,
 ) -> Result<u8, String> {
     let mut docs: Documents = HashMap::new();
+    let mut unsaved = Unsaved::new();
     let mut idx = Index::default();
     let mut opts = Options::default();
     let mut problems: Vec<String> = vec![];
@@ -516,10 +559,16 @@ pub fn serve(
     // Whether the client re-asks for semantic tokens when told to, and the
     // id of the next request the server sends it.
     let mut token_refresh = false;
-    // Whether the client sends `workspace/didChangeWatchedFiles` only for
-    // watchers a server registers, as Neovim and Helix do.
-    let mut watch_registration = false;
     let mut next_request: u64 = 0;
+    // Whether the client takes file watchers the server registers - Neovim
+    // and Helix send didChangeWatchedFiles only for those (#792) - and ones
+    // rooted outside the workspace; the watchers registered, once the client
+    // is ready for them.
+    let mut watch_registration = false;
+    let mut relative_patterns = false;
+    let mut ready = false;
+    let mut watching: Vec<Value> = vec![];
+    let mut watch_id: Option<String> = None;
     let mut shutdown_requested = false;
     loop {
         let message = match receive(reader)? {
@@ -559,10 +608,31 @@ pub fn serve(
                 continue;
             }
         };
+        // JSON-RPC 2.0 §4: an id is a string, a number or null. Any other is
+        // not a Request, and the reply cannot carry it back (#548).
+        if id
+            .as_ref()
+            .is_some_and(|id| !(id.is_string() || id.is_number() || id.is_null()))
+        {
+            send(
+                writer,
+                json!({"id": Value::Null, "error": {"code": INVALID_REQUEST,
+                       "message": "a request's id must be a string, a number or null"}}),
+            )?;
+            continue;
+        }
         let params = message.get("params").cloned().unwrap_or(Value::Null);
 
         let generation = idx.generation;
         match (method.as_str(), id) {
+            // LSP 3.17: "The initialize request may only be sent once." A
+            // second is refused and changes nothing - answered, its options
+            // were installed over a narrowing it could not undo (#547).
+            ("initialize", Some(id)) if initialized => send(
+                writer,
+                json!({"id": id, "error": {"code": INVALID_REQUEST,
+                       "message": "initialize may only be sent once"}}),
+            )?,
             ("initialize", Some(id)) => {
                 idx.roots = workspace_roots(&params);
                 let layer;
@@ -577,10 +647,16 @@ pub fn serve(
                     .pointer("/capabilities/workspace/semanticTokens/refreshSupport")
                     .and_then(Value::as_bool)
                     .unwrap_or(false);
-                watch_registration = params
-                    .pointer("/capabilities/workspace/didChangeWatchedFiles/dynamicRegistration")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false);
+                let watched = |key: &str| {
+                    params
+                        .pointer(&format!(
+                            "/capabilities/workspace/didChangeWatchedFiles/{key}"
+                        ))
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false)
+                };
+                watch_registration = watched("dynamicRegistration");
+                relative_patterns = watched("relativePatternSupport");
                 send(
                     writer,
                     json!({"id": id, "result": capabilities(&opts, code_action_literals)}),
@@ -609,37 +685,10 @@ pub fn serve(
                                "message": format!("q-lint: ignoring a setting: {problem}")}}),
                     )?;
                 }
-                // LSP 3.17 has the server register the files it watches; a
-                // client other than VS Code's extension, which watches on its
-                // own, otherwise never reports a configuration or a `.q` file
-                // changed on disk (#792). The reply is a response, dropped.
-                if watch_registration {
-                    next_request += 1;
-                    let watchers: Vec<Value> = [
-                        "**/*.q",
-                        "**/qlinter.toml",
-                        "**/.qlinter.toml",
-                        "**/pyproject.toml",
-                    ]
-                    .iter()
-                    .map(|glob| json!({"globPattern": glob}))
-                    .collect();
-                    send(
-                        writer,
-                        json!({"id": format!("qlinter-{next_request}"), "method": "client/registerCapability",
-                               "params": {"registrations": [{"id": "qlinter-watched-files",
-                                   "method": "workspace/didChangeWatchedFiles",
-                                   "registerOptions": {"watchers": watchers}}]}}),
-                    )?;
-                }
                 idx.enabled = opts.index;
                 idx.exclude = opts.index_exclude.clone();
-                if idx.enabled {
-                    idx.scan(policy);
-                }
-                for (uri, text) in &docs {
-                    idx.set(&path_of(uri), index(text));
-                }
+                idx.rebuild(policy, &docs);
+                ready = true;
             }
             // A request after shutdown is the one protocol error worth
             // answering rather than ignoring: the client is confused and
@@ -652,6 +701,7 @@ pub fn serve(
             ("shutdown", Some(id)) => {
                 shutdown_requested = true;
                 docs.clear();
+                unsaved.clear();
                 send(writer, json!({"id": id, "result": Value::Null}))?;
             }
 
@@ -681,9 +731,11 @@ pub fn serve(
             ("textDocument/didOpen", None) => {
                 let uri = uri_of(&params["textDocument"]);
                 let text = params["textDocument"]["text"].as_str().unwrap_or("");
+                unsaved.remove(&uri);
                 publish(
                     writer,
                     &mut docs,
+                    &unsaved,
                     &mut idx,
                     uri,
                     text.to_string(),
@@ -704,11 +756,13 @@ pub fn serve(
                     if opts.on_save {
                         // Kept, so a Quick Fix or a format reads what is on
                         // screen; linted, and indexed, when it is saved.
-                        docs.insert(uri, text.to_string());
+                        docs.insert(uri.clone(), text.to_string());
+                        unsaved.insert(uri);
                     } else {
                         publish(
                             writer,
                             &mut docs,
+                            &unsaved,
                             &mut idx,
                             uri,
                             text.to_string(),
@@ -728,16 +782,20 @@ pub fn serve(
                     .map(str::to_string)
                     .or_else(|| docs.get(&uri).cloned());
                 if let Some(text) = text {
-                    publish(writer, &mut docs, &mut idx, uri, text, policy, &opts)?;
+                    unsaved.remove(&uri);
+                    publish(
+                        writer, &mut docs, &unsaved, &mut idx, uri, text, policy, &opts,
+                    )?;
                 }
             }
             ("textDocument/didClose", None) => {
                 let uri = uri_of(&params["textDocument"]);
                 docs.remove(&uri);
+                unsaved.remove(&uri);
                 // The buffer is gone, so the disk is the authority again - and
                 // unsaved definitions it held no longer define anything.
                 if idx.reload(&path_of(&uri), policy) {
-                    relint(writer, &docs, &idx, None, policy, &opts)?;
+                    relint(writer, &docs, &unsaved, &idx, None, policy, &opts)?;
                 }
                 // An empty list, not silence: diagnostics are owned by the
                 // server until it says otherwise, so a closed file would keep
@@ -752,7 +810,7 @@ pub fn serve(
                 let uri = uri_of(&params["textDocument"]);
                 let data = guarded(|| {
                     docs.get(&uri)
-                        .filter(|_| opts.semantic_tokens && is_q_path(&path_of(&uri)))
+                        .filter(|_| opts.semantic_tokens && is_q_uri(&uri))
                         .map_or_else(Vec::new, |text| encode_tokens(text, &idx.ws))
                 });
                 match data {
@@ -785,6 +843,7 @@ pub fn serve(
             // pull, a checkout, another tool. An open file's buffer still wins.
             ("workspace/didChangeWatchedFiles", None) => {
                 let mut changed = false;
+                let mut config_changed = false;
                 for change in params["changes"].as_array().into_iter().flatten() {
                     let uri = uri_of(change);
                     // A configuration file changed: every file it governs may
@@ -792,20 +851,25 @@ pub fn serve(
                     let path = path_of(&uri);
                     if is_config_path(&path) || policy.read_from(Path::new(&path)) {
                         policy.reset();
-                        changed = true;
+                        config_changed = true;
                         continue;
                     }
                     if docs.contains_key(&uri) {
                         continue;
                     }
                     changed |= if change["type"].as_i64() == Some(3) {
-                        idx.remove(&path)
+                        idx.remove_tree(&path, &docs)
                     } else {
                         idx.reload(&path, policy)
                     };
                 }
-                if changed {
-                    relint(writer, &docs, &idx, None, policy, &opts)?;
+                // And its `exclude` decides which files the index reads, so
+                // the index is read again as a fresh server would (#541).
+                if config_changed {
+                    idx.rebuild(policy, &docs);
+                }
+                if changed || config_changed {
+                    relint(writer, &docs, &unsaved, &idx, None, policy, &opts)?;
                 }
             }
             // A folder added to or removed from a multi-root workspace (#797).
@@ -814,11 +878,11 @@ pub fn serve(
                     |key: &str| workspace_roots(&json!({"workspaceFolders": params["event"][key]}));
                 idx.change_roots(folders("added"), folders("removed"), policy);
                 // An open buffer still wins over what a folder held.
-                for (uri, text) in &docs {
+                for (uri, text) in docs.iter().filter(|(uri, _)| is_q_uri(uri)) {
                     idx.set(&path_of(uri), index(text));
                 }
                 if idx.generation != generation {
-                    relint(writer, &docs, &idx, None, policy, &opts)?;
+                    relint(writer, &docs, &unsaved, &idx, None, policy, &opts)?;
                 }
             }
             // Every other REQUEST gets an error, because a client waiting on a
@@ -835,6 +899,35 @@ pub fn serve(
         // pushed again; its colours a client fetches only when it changes,
         // or when asked to (LSP 3.17, workspace/semanticTokens/refresh). The
         // client's reply is a response, and dropped as one.
+        // What the settings were read from changes as documents open and
+        // configurations change, so the watchers follow it (LSP 3.17,
+        // client/registerCapability). A changed set replaces the old one.
+        if ready && watch_registration && !shutdown_requested {
+            let want = watchers(&idx.roots, policy, relative_patterns);
+            if want != watching {
+                next_request += 1;
+                let id = format!("qlinter-watch-{next_request}");
+                send(
+                    writer,
+                    json!({"id": format!("qlinter-{next_request}"),
+                           "method": "client/registerCapability",
+                           "params": {"registrations": [{"id": id,
+                                      "method": "workspace/didChangeWatchedFiles",
+                                      "registerOptions": {"watchers": want}}]}}),
+                )?;
+                if let Some(old) = watch_id.replace(id) {
+                    next_request += 1;
+                    send(
+                        writer,
+                        json!({"id": format!("qlinter-{next_request}"),
+                               "method": "client/unregisterCapability",
+                               "params": {"unregisterations": [{"id": old,
+                                          "method": "workspace/didChangeWatchedFiles"}]}}),
+                    )?;
+                }
+                watching = want;
+            }
+        }
         if idx.generation != generation
             && token_refresh
             && opts.semantic_tokens
@@ -968,9 +1061,76 @@ fn uri_of(text_document: &Value) -> String {
 /// code-action request can otherwise apply an old fix after another edit.
 /// A file whose change can change what any document reports.
 fn is_config_path(path: &str) -> bool {
-    std::path::Path::new(path).file_name().is_some_and(|n| {
-        ["qlinter.toml", ".qlinter.toml", "pyproject.toml"].contains(&&*n.to_string_lossy())
-    })
+    std::path::Path::new(path)
+        .file_name()
+        .is_some_and(|n| FILES.contains(&&*n.to_string_lossy()))
+}
+
+/// What the server asks a client to watch for it: the workspace's `.q`
+/// files, and every `.toml` in it, since a base is `extend`ed by any name.
+/// And, for a client that takes a pattern rooted elsewhere, the files and
+/// directories outside the workspace that the settings came from or were
+/// searched for in - a configuration above the folder, an `extend`ed base
+/// beside it, the user-level file - which no workspace pattern reaches and
+/// whose change the server otherwise never heard of (#554).
+fn watchers(roots: &[String], policy: &Policy, relative: bool) -> Vec<Value> {
+    let mut out = vec![
+        json!({"globPattern": "**/*.q"}),
+        json!({"globPattern": "**/*.toml"}),
+    ];
+    if !relative {
+        return out;
+    }
+    let roots: Vec<std::path::PathBuf> = roots.iter().map(|r| file_key(r).into()).collect();
+    // Both sides as keys: a real path is verbatim on Windows, and
+    // `C:\a` does not start with `\\?\C:\a` (#554).
+    let outside = |p: &std::path::Path| {
+        let p = std::path::PathBuf::from(file_key(&p.to_string_lossy()));
+        !roots.iter().any(|r| p.starts_with(r))
+    };
+    let (files, dirs) = policy.watched();
+    let names = format!("{{{}}}", FILES.join(","));
+    for dir in dirs.iter().filter(|d| outside(d)) {
+        out.push(json!({"globPattern": {"baseUri": path_uri(dir), "pattern": names}}));
+    }
+    // `--config` names a file by any name, which `**/*.toml` may not match.
+    let toml = |p: &std::path::Path| p.extension().is_some_and(|e| e == "toml");
+    for file in files.iter().filter(|f| outside(f) || !toml(f)) {
+        if let (Some(dir), Some(name)) = (file.parent(), file.file_name()) {
+            out.push(json!({"globPattern":
+                {"baseUri": path_uri(dir), "pattern": name.to_string_lossy()}}));
+        }
+    }
+    out
+}
+
+/// A filesystem path as a `file:` URI, `path_of` undone.
+///
+/// A real path on Windows is verbatim - `\\?\C:\a`, `\\?\UNC\host\share` -
+/// and an editor knows that file as `file:///C:/a` and `file://host/share`:
+/// spelled through, it named no folder a client could watch.
+fn path_uri(path: &std::path::Path) -> String {
+    let text = path.to_string_lossy();
+    let text = match text.strip_prefix(r"\\?\UNC\") {
+        Some(unc) => format!(r"\\{unc}"),
+        None => text.strip_prefix(r"\\?\").unwrap_or(&text).to_string(),
+    };
+    let text = text.replace('\\', "/");
+    let mut uri = String::from(if text.starts_with("//") {
+        "file:"
+    } else if text.starts_with('/') {
+        "file://"
+    } else {
+        "file:///"
+    });
+    for b in text.bytes() {
+        if b.is_ascii_alphanumeric() || b"/-._~:".contains(&b) {
+            uri.push(b as char);
+        } else {
+            uri.push_str(&format!("%{b:02X}"));
+        }
+    }
+    uri
 }
 
 fn code_actions(
@@ -992,13 +1152,10 @@ fn code_actions(
     let Some(source) = docs.get(&uri) else {
         return vec![];
     };
-    let path = path_of(&uri);
-    if !std::path::Path::new(&path)
-        .extension()
-        .is_some_and(|e| e.eq_ignore_ascii_case("q"))
-    {
+    if !is_q_uri(&uri) {
         return vec![];
     }
+    let path = path_of(&uri);
     let Some(context) = params["context"]["diagnostics"].as_array() else {
         return vec![];
     };
@@ -1006,8 +1163,9 @@ fn code_actions(
     // Every finding that has a fix, the editor-only ones included unless the
     // client turned them off: here a person sees each edit and accepts it or
     // not.
+    let lines = Lines::new(source);
     for finding in policy.lint(source, &path, ws).unwrap_or_default() {
-        let current = diagnostic(&finding, source);
+        let current = diagnostic(&finding, &lines);
         let Some(client_diagnostic) = context.iter().find(|d| {
             d["code"] == current["code"]
                 && d["range"]["start"] == current["range"]["start"]
@@ -1022,7 +1180,6 @@ fn code_actions(
         // two coincide for an operator swapped in place, but `f x` becomes
         // `f[x]` by replacing the whole application while the diagnostic
         // underlines only the name.
-        let lines = Lines::new(source);
         let range = json!({
             "start": lines.json(fix.start),
             "end": lines.json(fix.end),
@@ -1054,7 +1211,7 @@ fn format(params: &Value, docs: &Documents, ws: &Workspace, policy: &Policy) -> 
     // with QE001 deselected: the fixes would read its structure wrong (#422).
     let Some(source) = docs
         .get(&uri)
-        .filter(|source| is_q_path(&path) && balanced(source))
+        .filter(|source| is_q_uri(&uri) && balanced(source))
     else {
         return vec![];
     };
@@ -1076,9 +1233,11 @@ fn format(params: &Value, docs: &Documents, ws: &Workspace, policy: &Policy) -> 
 /// Take a document's new text: index it, lint it, push its diagnostics - and
 /// when what it defines changed, lint the other open documents again, since a
 /// name it now defines (or no longer does) can change their findings.
+#[allow(clippy::too_many_arguments)]
 fn publish(
     writer: &mut impl Write,
     docs: &mut Documents,
+    unsaved: &Unsaved,
     idx: &mut Index,
     uri: String,
     text: String,
@@ -1086,26 +1245,29 @@ fn publish(
     opts: &Options,
 ) -> Result<(), String> {
     let path = path_of(&uri);
-    let changed = is_q_path(&path) && idx.set(&path, index(&text));
+    let changed = is_q_uri(&uri) && idx.set(&path, index(&text));
     docs.insert(uri.clone(), text);
     diagnose(writer, &uri, &docs[&uri], &idx.ws, policy, opts)?;
     if changed {
-        relint(writer, docs, idx, Some(&uri), policy, opts)?;
+        relint(writer, docs, unsaved, idx, Some(&uri), policy, opts)?;
     }
     Ok(())
 }
 
-/// Lint every open document but `except` again.
+/// Lint every open document but `except` again - and but those `unsaved`:
+/// with `lint.run: "onSave"` a buffer is linted only when saved, and another
+/// file's change does not lint its unsaved text either (#550).
 fn relint(
     writer: &mut impl Write,
     docs: &Documents,
+    unsaved: &Unsaved,
     idx: &Index,
     except: Option<&str>,
     policy: &Policy,
     opts: &Options,
 ) -> Result<(), String> {
     for (uri, text) in docs {
-        if Some(uri.as_str()) != except {
+        if Some(uri.as_str()) != except && !unsaved.contains(uri) {
             diagnose(writer, uri, text, &idx.ws, policy, opts)?;
         }
     }
@@ -1126,9 +1288,9 @@ fn diagnose(
     // buffer, an untitled scratch, a `.txt` - and hand it to whichever server
     // claims the language. The rules here describe q and say nothing true
     // about k or about a REPL transcript, so a document that is not a `.q`
-    // file gets an empty diagnostic list: that clears anything stale without
+    // file on disk gets an empty diagnostic list: that clears anything stale without
     // asserting something about a file this linter cannot read.
-    let findings = if is_q_path(&path) {
+    let findings = if is_q_uri(uri) {
         // Lenient, so this cannot fail: a configuration it cannot read is
         // reported once on stderr and the defaults govern its files.
         guarded(|| policy.lint(text, &path, ws).unwrap_or_default())
@@ -1156,10 +1318,11 @@ fn diagnose(
             );
         }
     };
+    let lines = Lines::new(text);
     let diagnostics: Vec<Value> = findings
         .iter()
         .map(|f| {
-            let mut d = diagnostic(f, text);
+            let mut d = diagnostic(f, &lines);
             if let Some(level) = opts.severity_of(&f.code) {
                 d["severity"] = json!(level);
             }
@@ -1185,7 +1348,10 @@ fn diagnose(
 /// line only at `\n`; an LSP client also ends one at a lone `\r`. So a
 /// finding is turned back into the byte offset it names, and that offset
 /// into the client's line and character.
-fn diagnostic(f: &Finding, source: &str) -> Value {
+///
+/// `lines` is built once per document, not once per finding: rebuilding it
+/// here made a file with many findings quadratic to publish (#540).
+fn diagnostic(f: &Finding, lines: &Lines) -> Value {
     let line = f.line.saturating_sub(1);
     let end_line = f.end_line.map_or(line, |l| l.saturating_sub(1));
     // No column means the rule found a line, not a span. Underlining from the
@@ -1193,17 +1359,16 @@ fn diagnostic(f: &Finding, source: &str) -> Value {
     // by "this line": starting at 0 would decorate the indentation, and an
     // empty range would show nothing at all in some clients.
     let start = match f.column {
-        Some(c) => q_offset(source, line, c.saturating_sub(1)),
+        Some(c) => lines.q_offset(line, c.saturating_sub(1)),
         None => {
-            let text = q_line(source, line);
-            q_offset(source, line, 0) + text.len() - text.trim_start().len()
+            let text = lines.q_line(line);
+            lines.q_offset(line, 0) + text.len() - text.trim_start().len()
         }
     };
     let end = match f.end_column {
-        Some(c) => q_offset(source, end_line, c.saturating_sub(1)),
-        None => q_offset(source, end_line, 0) + q_line(source, end_line).len(),
+        Some(c) => lines.q_offset(end_line, c.saturating_sub(1)),
+        None => lines.q_offset(end_line, 0) + lines.q_line(end_line).len(),
     };
-    let lines = Lines::new(source);
     let mut d = json!({
         "range": {
             "start": lines.json(start),
@@ -1243,18 +1408,29 @@ fn severity(name: &str) -> i64 {
 struct Lines<'a> {
     source: &'a str,
     starts: Vec<usize>,
+    /// Where each line starts as q counts them - ended by `\n` alone - which
+    /// is how a finding names its line.
+    q_starts: Vec<usize>,
 }
 
 impl<'a> Lines<'a> {
     fn new(source: &'a str) -> Self {
         let bytes = source.as_bytes();
         let mut starts = vec![0];
+        let mut q_starts = vec![0];
         for (i, &b) in bytes.iter().enumerate() {
             if b == b'\n' || b == b'\r' && bytes.get(i + 1) != Some(&b'\n') {
                 starts.push(i + 1);
             }
+            if b == b'\n' {
+                q_starts.push(i + 1);
+            }
         }
-        Lines { source, starts }
+        Lines {
+            source,
+            starts,
+            q_starts,
+        }
     }
 
     /// A byte offset as the line and UTF-16 character a client addresses it
@@ -1269,60 +1445,79 @@ impl<'a> Lines<'a> {
         let (line, character) = self.position(byte);
         json!({"line": line, "character": character})
     }
-}
 
-/// The text of a 0-based line as q counts lines - ended by `\n` alone - less
-/// its line ending.
-fn q_line(source: &str, line: usize) -> &str {
-    let text = source.split('\n').nth(line).unwrap_or("");
-    text.strip_suffix('\r').unwrap_or(text)
-}
-
-/// The byte offset of a finding's position: the 0-based `line` as q counts
-/// lines, and `column` UTF-16 code units into it, which is how a finding
-/// measures one. A column past the line's end is its end.
-fn q_offset(source: &str, line: usize, column: usize) -> usize {
-    let start = if line == 0 {
-        0
-    } else {
-        match source.match_indices('\n').nth(line - 1) {
-            Some((at, _)) => at + 1,
-            None => return source.len(),
-        }
-    };
-    let text = q_line(source, line);
-    let mut units = 0;
-    for (i, c) in text.char_indices() {
-        if units >= column {
-            return start + i;
-        }
-        units += c.len_utf16();
+    /// The text of a 0-based line as q counts lines, less its line ending.
+    fn q_line(&self, line: usize) -> &'a str {
+        let Some(&start) = self.q_starts.get(line) else {
+            return "";
+        };
+        let end = self
+            .q_starts
+            .get(line + 1)
+            .map_or(self.source.len(), |&next| next - 1);
+        let text = &self.source[start..end];
+        text.strip_suffix('\r').unwrap_or(text)
     }
-    start + text.len()
+
+    /// The byte offset of a finding's position: the 0-based `line` as q
+    /// counts lines, and `column` UTF-16 code units into it, which is how a
+    /// finding measures one. A column past the line's end is its end.
+    fn q_offset(&self, line: usize, column: usize) -> usize {
+        let Some(&start) = self.q_starts.get(line) else {
+            return self.source.len();
+        };
+        let text = self.q_line(line);
+        let mut units = 0;
+        for (i, c) in text.char_indices() {
+            if units >= column {
+                return start + i;
+            }
+            units += c.len_utf16();
+        }
+        start + text.len()
+    }
 }
 
 fn utf16_len(text: &str) -> usize {
     text.chars().map(char::len_utf16).sum()
 }
 
-/// A `file:` URI as a filesystem path.
+/// A URI as a filesystem path: `file_path`'s, or the URI unchanged when it
+/// is not `file:` - a key for an untitled buffer, never a file to read.
+fn path_of(uri: &str) -> String {
+    file_path(uri).unwrap_or_else(|| uri.to_string())
+}
+
+/// Whether `uri` is a `.q` file on disk, the only document linted, indexed
+/// or coloured. An untitled buffer, or an old revision another scheme names
+/// (`fugitive:`, `git:`), is not one whatever its name ends in (#545).
+fn is_q_uri(uri: &str) -> bool {
+    file_path(uri).is_some_and(|path| is_q_path(&path))
+}
+
+/// A `file:` URI as a filesystem path, and `None` for any other scheme.
 ///
 /// Hand-rolled rather than pulling in a URL crate: the only scheme an editor
 /// sends for a document on disk is `file:`, and the only transformation that
 /// matters is percent-decoding - without it every path containing a space
 /// arrives as `%20` and the filename-based rules see a file that does not
-/// exist. A URI that is not `file:` (an untitled buffer, say) is handed
-/// through unchanged; it names no `.q` file, so `diagnose` does not lint it.
-fn path_of(uri: &str) -> String {
-    let Some(rest) = uri.strip_prefix("file://") else {
-        return uri.to_string();
-    };
-    // Strip the empty authority: file:///a/b has a host of "", so the path
-    // begins at the third slash. RFC 8089 makes `localhost` the same host,
-    // and file://localhost/a/b the same file (#425).
-    let rest = match rest.get(..10) {
-        Some(host) if host.eq_ignore_ascii_case("localhost/") => &rest[10..],
-        _ => rest.strip_prefix('/').unwrap_or(rest),
+/// exist.
+fn file_path(uri: &str) -> Option<String> {
+    // A scheme is case-insensitive (RFC 3986 3.1): `FILE:` is `file:`.
+    let rest = &uri[uri
+        .get(..5)
+        .filter(|s| s.eq_ignore_ascii_case("file:"))?
+        .len()..];
+    let rest = match rest.strip_prefix("//") {
+        // Strip the empty authority: file:///a/b has a host of "", so the
+        // path begins at the third slash. RFC 8089 makes `localhost` the
+        // same host, and file://localhost/a/b the same file (#425).
+        Some(rest) => match rest.get(..10) {
+            Some(host) if host.eq_ignore_ascii_case("localhost/") => &rest[10..],
+            _ => rest.strip_prefix('/').unwrap_or(rest),
+        },
+        // RFC 8089's form with no authority at all: file:/a/b (#546).
+        None => rest.strip_prefix('/')?,
     };
     // Percent-escapes decode to bytes, and the bytes are UTF-8: `%C3%A9` is
     // one `é`. Pushing each byte as a char read it as two Latin-1 ones, and
@@ -1351,11 +1546,11 @@ fn path_of(uri: &str) -> String {
     let decoded = String::from_utf8_lossy(&bytes).into_owned();
     // A Windows path is a drive letter, not a root: VS Code sends
     // `file:///c%3A/Users/...`, and `/c:/Users/...` is no path at all.
-    if re_drive(&decoded) {
+    Some(if re_drive(&decoded) {
         decoded
     } else {
         format!("/{decoded}")
-    }
+    })
 }
 
 fn re_drive(path: &str) -> bool {
@@ -1368,16 +1563,20 @@ fn re_drive(path: &str) -> bool {
 /// symlinked folder (`/tmp` and `/private/tmp`), or in another case on a
 /// case-insensitive disk, and two keys for one file would count its own
 /// definitions as another file's (#528). The real path where the file
-/// exists, or its folder's real path where it does not - a deleted file is
-/// still forgotten under the key it was read under.
+/// exists, or the real path of the nearest folder above it that does - a
+/// deleted file, or one in a deleted folder, is still forgotten under the
+/// key it was read under. A key is itself a path that gives itself back:
+/// on Windows it is `\\?\C:\...`, which a fallback that only looked one
+/// folder up turned into `//?/C:/...` once the folder was gone (#543).
 fn file_key(path: &str) -> String {
-    let real = std::path::Path::new(path);
-    if let Ok(real) = std::fs::canonicalize(real).or_else(|e| match real.file_name() {
-        Some(name) => real
-            .parent()
-            .map_or(Err(e), std::fs::canonicalize)
-            .map(|p| p.join(name)),
-        None => Err(e),
+    let given = std::path::Path::new(path);
+    if let Some(real) = given.ancestors().find_map(|dir| {
+        let real = std::fs::canonicalize(dir).ok()?;
+        // `join("")` would add a trailing separator.
+        Some(match given.strip_prefix(dir).ok()? {
+            rest if rest.as_os_str().is_empty() => real,
+            rest => real.join(rest),
+        })
     }) {
         return real.to_string_lossy().into_owned();
     }
@@ -1408,6 +1607,16 @@ mod tests {
         assert_eq!(path_of("file://localhost/tmp/plain.q"), "/tmp/plain.q");
         assert_eq!(path_of("file://LOCALHOST/c%3A/a.q"), "c:/a.q");
         assert_eq!(path_of("untitled:Untitled-1"), "untitled:Untitled-1");
+        // A real path on Windows is verbatim; its URI is the editor's.
+        let p = std::path::Path::new;
+        assert_eq!(path_uri(p(r"\\?\C:\a b\c")), "file:///C:/a%20b/c");
+        assert_eq!(path_uri(p(r"\\?\UNC\host\share\c")), "file://host/share/c");
+        assert_eq!(path_uri(p("/tmp/a b")), "file:///tmp/a%20b");
+        // No authority, and the scheme in any case, are the same file (#546).
+        assert_eq!(path_of("file:/tmp/plain.q"), "/tmp/plain.q");
+        assert_eq!(path_of("FILE:///tmp/plain.q"), "/tmp/plain.q");
+        assert_eq!(path_of("File:/c%3A/a.q"), "c:/a.q");
+        assert_eq!(file_path("file:tmp/a.q"), None);
         // Escapes are UTF-8 bytes, not one character each.
         assert_eq!(path_of("file:///Users/Jos%C3%A9/a.q"), "/Users/José/a.q");
         // A Windows drive is not under a root.
@@ -1438,9 +1647,29 @@ mod tests {
         // one unit short of the line end.
         let source = "a:1 / \u{1F600}\n";
         let f = Finding::new("x.q", 1, "QP001", "detail".into());
-        let d = diagnostic(&f, source);
+        let d = diagnostic(&f, &Lines::new(source));
         assert_eq!(d["range"]["start"]["line"], 0);
         assert_eq!(d["range"]["end"]["character"], utf16_len("a:1 / \u{1F600}"));
+    }
+
+    #[test]
+    fn a_finding_per_line_converts_in_linear_time() {
+        // One finding on each of 20,000 lines. Rebuilding the line table and
+        // rescanning from the start for every finding took minutes here, and
+        // 30 s per keystroke in an editor (#540); once per document it is
+        // milliseconds.
+        let source = "a:1==1\n".repeat(20_000);
+        let lines = Lines::new(&source);
+        let started = std::time::Instant::now();
+        for line in 1..=20_000 {
+            let mut f = Finding::new("x.q", line, "QE004", "detail".into());
+            f.column = Some(4);
+            f.end_column = Some(6);
+            let d = diagnostic(&f, &lines);
+            assert_eq!(d["range"]["start"]["line"], line - 1);
+            assert_eq!(d["range"]["start"]["character"], 3);
+        }
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
     }
 
     #[test]
@@ -1454,7 +1683,7 @@ mod tests {
         );
         let tagged: Vec<Value> = found
             .iter()
-            .map(|f| diagnostic(f, source))
+            .map(|f| diagnostic(f, &Lines::new(source)))
             .filter(|d| d["tags"] == json!([DIAGNOSTIC_TAG_UNNECESSARY]))
             .collect();
         let mut spans: Vec<(&str, u64, u64)> = tagged

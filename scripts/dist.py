@@ -101,28 +101,23 @@ def build(args) -> Path:
             for f in (binary, ROOT / "README.md", ROOT / "LICENSE"):
                 t.add(f, f"{stem}/{f.name}")
 
-    # The VS Code extension for this platform, carrying this binary. The
-    # extension's own `server/qlinter` is a committed file; it is swapped for
-    # the fresh build only while packaging, and put back after.
+    # The VS Code extension for this platform, carrying this binary. Its
+    # `server/` is not committed (#558): the binary just built is copied in
+    # before packaging, so the package never carries an older server.
     if target in VSCODE and shutil.which("npx"):
-        server = EXTENSION / "server" / exe
-        saved = server.read_bytes() if server.exists() else None
-        try:
-            server.parent.mkdir(exist_ok=True)
-            shutil.copy2(binary, server)
-            server.chmod(0o755)
-            if not (EXTENSION / "node_modules").is_dir():
-                run("npm", "ci", cwd=EXTENSION)
-            vsix = folder / f"qlinter-v{ver}-{VSCODE[target]}.vsix"
-            run(
-                "npx", "--yes", "@vscode/vsce", "package",
-                "--target", VSCODE[target], "--out", str(vsix),
-                cwd=EXTENSION,
-            )
-        finally:
-            if saved is not None:
-                server.write_bytes(saved)
-                server.chmod(0o755)
+        server = EXTENSION / "server"
+        shutil.rmtree(server, ignore_errors=True)
+        server.mkdir()
+        shutil.copy2(binary, server / exe)
+        (server / exe).chmod(0o755)
+        if not (EXTENSION / "node_modules").is_dir():
+            run("npm", "ci", cwd=EXTENSION)
+        vsix = folder / f"qlinter-v{ver}-{VSCODE[target]}.vsix"
+        run(
+            "npx", "--yes", "@vscode/vsce", "package",
+            "--target", VSCODE[target], "--out", str(vsix),
+            cwd=EXTENSION,
+        )
     else:
         print("no VS Code package: npx is not installed or this platform has no build", file=sys.stderr)
 
@@ -203,12 +198,10 @@ def bump(args) -> None:
     package = EXTENSION / "package.json"
     data = package.read_text()
     package.write_text(re.sub(r'"version": "[^"]+"', f'"version": "{new}"', data, count=1))
-    # Cargo.lock follows the build, and the extension's committed server is
-    # the binary that version ships for local packaging.
+    # Cargo.lock follows the build.
     run("cargo", "build", "--release")
-    shutil.copy2(ROOT / "target" / "release" / "qlinter", EXTENSION / "server" / "qlinter")
-    print(f"{old} -> {new}: Cargo.toml, Cargo.lock, pyproject.toml, editors/vscode/package.json, "
-          "editors/vscode/server/qlinter. Commit, tag v" + new + " and push to release.")
+    print(f"{old} -> {new}: Cargo.toml, Cargo.lock, pyproject.toml, editors/vscode/package.json. "
+          "Commit, tag v" + new + " and push to release.")
 
 
 def main() -> None:

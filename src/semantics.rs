@@ -847,11 +847,21 @@ pub fn tokens(code: &str, raw: &str, ws: &crate::Workspace) -> Vec<(usize, usize
     let lambda: HashMap<String, bool> =
         global_writes(code, raw, &scopes, &namespaces, qualify, true)
             .into_iter()
-            .map(|(key, at)| (key, at.iter().all(|&at| assigns_lambda(code, at))))
+            .map(|(key, at)| (key, at.iter().all(|&at| assigns_lambda(code, raw, at))))
             .collect();
+    // In a qSQL phrase a name is a column whenever the table has one by
+    // that name - q 5's `select f from t` is the column even where `f` is a
+    // lambda - and only the table says which, so none is coloured (#552).
+    let outside_queries = crate::outside_query_phrases(code);
     let mut out = vec![];
     for m in name.find_iter(code) {
-        if !boundary(code, m.start()) {
+        if !boundary(code, m.start()) || outside_queries.as_bytes()[m.start()] == b' ' {
+            continue;
+        }
+        // A system command's argument is no q: `\l f/a.q` names a file,
+        // whatever lambda `f` is (#553).
+        let line = code[..m.start()].rfind('\n').map_or(0, |p| p + 1);
+        if crate::system_command(&raw[line..]) {
             continue;
         }
         // The assignment itself is the grammar's to colour, as a definition.
@@ -1207,7 +1217,7 @@ pub fn index(code: &str, raw: &str) -> crate::FileIndex {
     }
     let lambdas = globals
         .iter()
-        .filter(|(_, at)| at.iter().any(|&a| assigns_lambda(code, a)))
+        .filter(|(_, at)| at.iter().any(|&a| assigns_lambda(code, raw, a)))
         .map(|(name, _)| name.clone())
         .collect();
     crate::FileIndex {
@@ -2782,7 +2792,7 @@ pub fn check(
         // `{...}LOADFMTS` applies the lambda and assigns what it returns.
         let lambda = re!(r"^\s*::?")
             .find(&code[at + name.len()..])
-            .is_some_and(|m| assigns_lambda(code, at + name.len() + m.end()));
+            .is_some_and(|m| assigns_lambda(code, raw, at + name.len() + m.end()));
         let word = name.rsplit('.').next().unwrap_or(name);
         // Capitals are the guidelines' spelling for a constant, so a function
         // spelled that way has borrowed the other convention.
@@ -3038,8 +3048,8 @@ pub fn check(
                 root.iter().rev().find(|&&a| a < at)
             };
             match live {
-                Some(&a) => assigns_lambda(code, a),
-                None => root.iter().any(|&a| assigns_lambda(code, a)),
+                Some(&a) => assigns_lambda(code, raw, a),
+                None => root.iter().any(|&a| assigns_lambda(code, raw, a)),
             }
         };
         // Two passes, because the two views disagree about what an argument
@@ -4853,7 +4863,7 @@ fn parse_tree_names(body: &str) -> HashSet<&str> {
 /// one returns. `f:{...}` defines a function; `t:{x!...} (),y` - TorQ's
 /// chainedtp.q - applies one on the spot and assigns the result, a
 /// dictionary there, and calling that a function made `t k` a "call".
-fn assigns_lambda(code: &str, at: usize) -> bool {
+fn assigns_lambda(code: &str, raw: &str, at: usize) -> bool {
     let rest = code[at..].trim_start();
     let brace = code.len() - rest.len();
     let ends = |from: usize| {
@@ -4865,15 +4875,26 @@ fn assigns_lambda(code: &str, at: usize) -> bool {
             if ends(end) {
                 return true;
             }
+            let rank = || crate::lambda_rank(code, raw, brace, end - 1);
             // A projection is still a function: qbists's klondike writes
             // `turn:{[g;n] ...}[;TURN]`, one argument fixed and one slot
-            // left open, and `turn g` is a call.
-            code[end..].starts_with('[')
-                && matching(code, end, b'[', b']').is_some_and(|close| {
-                    crate::slots(&code[end + 1..close - 1])
-                        .iter()
-                        .any(|slot| slot.trim().is_empty())
+            // left open, and `turn g` is a call. So is one given fewer
+            // arguments than it takes: q 5's `{[a;b] a+b}[1]` is 104h (#551).
+            if code[end..].starts_with('[') {
+                return matching(code, end, b'[', b']').is_some_and(|close| {
+                    let slots = crate::slots(&code[end + 1..close - 1]);
+                    (slots.iter().any(|slot| slot.trim().is_empty()) || slots.len() < rank())
                         && ends(close)
-                })
+                });
+            }
+            // And juxtaposition gives exactly one argument, everything to its
+            // right: `{x+y} 1` and `{x+y} 1+2` are 104h in q 5. Only after a
+            // literal, since a name there may be an infix keyword - `{x+y}
+            // each l` applies `each`, not the lambda.
+            code[end..].starts_with([' ', '\t'])
+                && code[end..]
+                    .trim_start_matches([' ', '\t'])
+                    .starts_with(|c: char| c.is_ascii_digit() || "\"`(".contains(c))
+                && rank() >= 2
         })
 }

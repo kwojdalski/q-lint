@@ -8,12 +8,59 @@ use serde_json::{Value, json};
 use std::{
     io::{BufRead, BufReader, Read, Write},
     process::{Child, ChildStdin, ChildStdout, Command, Stdio},
+    sync::mpsc::{Receiver, RecvTimeoutError, channel},
+    time::Duration,
 };
 
 struct Server {
     child: Child,
     stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
+    /// The server's messages, read off its stdout by a thread of their own,
+    /// so a wait for one can give up: a reply that never comes fails the
+    /// test instead of hanging it, and CI with it.
+    messages: Receiver<Value>,
+}
+
+/// How long a test waits for the server's next message.
+const WAIT: Duration = Duration::from_secs(30);
+
+/// Every framed message on `stdout`, until it closes.
+fn read_messages(stdout: ChildStdout) -> Receiver<Value> {
+    let (sender, messages) = channel();
+    std::thread::spawn(move || {
+        let mut stdout = BufReader::new(stdout);
+        loop {
+            let mut length = 0;
+            loop {
+                let mut line = String::new();
+                if stdout.read_line(&mut line).unwrap_or(0) == 0 {
+                    return;
+                }
+                if line == "\r\n" {
+                    break;
+                }
+                if let Some(v) = line.strip_prefix("Content-Length: ") {
+                    length = v.trim().parse().unwrap();
+                }
+            }
+            let mut body = vec![0; length];
+            if stdout.read_exact(&mut body).is_err()
+                || sender.send(serde_json::from_slice(&body).unwrap()).is_err()
+            {
+                return;
+            }
+        }
+    });
+    messages
+}
+
+impl Drop for Server {
+    /// A test that failed while the server still ran leaves no process
+    /// behind.
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
 }
 
 impl Server {
@@ -42,11 +89,11 @@ impl Server {
             .spawn()
             .expect("spawn qlinter --lsp");
         let stdin = child.stdin.take().unwrap();
-        let stdout = BufReader::new(child.stdout.take().unwrap());
+        let messages = read_messages(child.stdout.take().unwrap());
         Self {
             child,
             stdin,
-            stdout,
+            messages,
         }
     }
 
@@ -65,23 +112,15 @@ impl Server {
     }
 
     fn receive(&mut self) -> Value {
-        let mut length = 0;
-        loop {
-            let mut line = String::new();
-            assert!(
-                self.stdout.read_line(&mut line).unwrap() > 0,
-                "server closed stdout while a reply was expected"
-            );
-            if line == "\r\n" {
-                break;
+        match self.messages.recv_timeout(WAIT) {
+            Ok(message) => message,
+            Err(RecvTimeoutError::Timeout) => {
+                panic!("no message from the server in {} s", WAIT.as_secs())
             }
-            if let Some(v) = line.strip_prefix("Content-Length: ") {
-                length = v.trim().parse().unwrap();
+            Err(RecvTimeoutError::Disconnected) => {
+                panic!("server closed stdout while a reply was expected")
             }
         }
-        let mut body = vec![0; length];
-        self.stdout.read_exact(&mut body).unwrap();
-        serde_json::from_slice(&body).unwrap()
     }
 
     /// Read until a message `wanted` accepts arrives, past whatever the
@@ -662,6 +701,44 @@ fn before_initialize_requests_are_refused_and_notifications_dropped() {
 }
 
 #[test]
+fn a_second_initialize_is_an_invalid_request_and_changes_nothing() {
+    // The first ignores QE; a second that sent no options
+    // was answered and left that narrowing under its own defaults (#547).
+    let mut server = Server::start();
+    server.send(
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+        "capabilities":client_capabilities(),
+        "initializationOptions":{"lint":{"ignore":["QE"]},"format":{"enable":false}}}}),
+    );
+    server.receive();
+    server.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+    server.send(json!({"jsonrpc":"2.0","id":2,"method":"initialize",
+        "params":{"capabilities":client_capabilities()}}));
+    let reply = server.receive();
+    assert_eq!(reply["id"], 2);
+    assert_eq!(reply["error"]["code"], -32600, "{reply}");
+    // The first initialize's options still hold.
+    let uri = "file:///tmp/second.q";
+    server.open(uri, "a:1==1\n");
+    assert_eq!(server.diagnostics_for(uri), Vec::<Value>::new());
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn a_request_whose_id_is_an_object_or_array_is_an_invalid_request() {
+    // JSON-RPC 2.0 §4; the shutdown it names is not performed (#548).
+    let mut server = Server::start();
+    server.initialize();
+    for id in [json!({"a": 1}), json!([1])] {
+        server.send(json!({"jsonrpc":"2.0","id":id,"method":"shutdown"}));
+        let reply = server.receive();
+        assert_eq!(reply["id"], Value::Null, "{reply}");
+        assert_eq!(reply["error"]["code"], -32600, "{reply}");
+    }
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
 fn a_second_shutdown_is_an_invalid_request() {
     // LSP 3.17, Shutdown Request: requests after it error with
     // InvalidRequest, and `shutdown` is a request like any other.
@@ -761,6 +838,29 @@ fn the_flags_an_lsp_client_adds_are_accepted() {
 /// The version has to be askable from a shell. It is in `serverInfo`, which
 /// is no help to anyone holding a binary and wondering which one it is.
 #[test]
+fn flags_the_server_would_ignore_are_refused() {
+    // The server never runs qls and never reads stdin as a document, so
+    // `--backend all` in an editor's server arguments would show no qls
+    // diagnostics and say nothing (#544).
+    for flag in [
+        "--backend=qls",
+        "--backend=all",
+        "--qls-executable=qls",
+        "--qls-timeout=5",
+        "--stdin-filename=a.q",
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .args(["--lsp", flag])
+            .stdin(Stdio::null())
+            .output()
+            .expect("run");
+        assert_eq!(output.status.code(), Some(2), "{flag}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("cannot be used with"), "{flag}: {stderr}");
+    }
+}
+
+#[test]
 fn the_binary_reports_its_version() {
     // All three spellings. clap's default short form is `-V`, and `-v` is the
     // one people type first.
@@ -834,13 +934,15 @@ fn colour_appears_only_when_asked_for_and_never_in_a_pipe() {
 #[test]
 fn only_q_files_are_linted() {
     for (uri, want) in [
-        ("file:///tmp/a.k", 0),          // k, not q
-        ("output:q-console", 0),         // a REPL transcript
-        ("untitled:Untitled-1", 0),      // an unsaved scratch
-        ("file:///tmp/a.txt", 0),        // not q at all
-        ("file:///tmp/a.q", 1),          // q
-        ("file:///tmp/A.Q", 1),          // q, shouted
-        ("file:///tmp/my%20dir/b.q", 1), // q, with an escaped space
+        ("file:///tmp/a.k", 0),           // k, not q
+        ("output:q-console", 0),          // a REPL transcript
+        ("untitled:Untitled-1", 0),       // an unsaved scratch
+        ("untitled:/tmp/new.q", 0),       // an unsaved scratch with a q name (#545)
+        ("fugitive:///r/.git//0/a.q", 0), // an old revision, not a file on disk
+        ("file:///tmp/a.txt", 0),         // not q at all
+        ("file:///tmp/a.q", 1),           // q
+        ("file:///tmp/A.Q", 1),           // q, shouted
+        ("file:///tmp/my%20dir/b.q", 1),  // q, with an escaped space
     ] {
         let mut server = Server::start();
         server.initialize();
@@ -857,6 +959,23 @@ fn only_q_files_are_linted() {
 /// A Quick Fix for QP006 has to replace the whole application. The
 /// diagnostic underlines only the name, so an edit taking its range would
 /// leave `f[x] x` behind - which is why the range comes from the fix.
+#[test]
+fn a_buffer_that_is_not_a_file_defines_nothing_for_the_others() {
+    // An old revision open in another scheme is not the workspace (#545).
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = start_with_workspace(dir.path());
+    let old = "fugitive:///r/.git//0/def.q";
+    server.open(old, "helper:{x+1}\n");
+    server.diagnostics_for(old);
+    let app = file_uri(&dir.path().join("app.q"));
+    server.open(&app, "f:{y:helper; y}\n");
+    let found = codes_of(&server.diagnostics_for(&app));
+    assert!(found.contains(&"QF018".to_string()), "{found:?}");
+    // app.q's `f` is new to the index, so the other buffer is linted again.
+    server.diagnostics_for(old);
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
 #[test]
 fn the_bracket_quick_fix_covers_the_whole_application() {
     let mut server = Server::start();
@@ -1023,6 +1142,66 @@ fn a_file_changed_outside_the_editor_is_read_again() {
 }
 
 #[test]
+fn excluding_a_folder_in_the_configuration_drops_it_from_the_index() {
+    // The index was read once, under the old `exclude`; a fresh server and
+    // the CLI read the new one, and so must this server (#541).
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("vendor")).unwrap();
+    std::fs::write(dir.path().join("vendor/def.q"), "helper:{x+1}\n").unwrap();
+    let mut server = start_with_workspace(dir.path());
+    let app = file_uri(&dir.path().join("app.q"));
+    server.open(&app, "f:{y:helper; y}\n");
+    assert!(!codes_of(&server.diagnostics_for(&app)).contains(&"QF018".to_string()));
+    let config = dir.path().join("qlinter.toml");
+    std::fs::write(&config, "extend-exclude = [\"vendor\"]\n").unwrap();
+    server.send(
+        json!({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles",
+        "params":{"changes":[{"uri":file_uri(&config),"type":1}]}}),
+    );
+    let found = codes_of(&server.diagnostics_for(&app));
+    assert!(found.contains(&"QF018".to_string()), "{found:?}");
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlinked_q_file_is_indexed_as_the_cli_walk_lints_it() {
+    // `qlinter .` follows a symlink to a file; the index skipped it, and
+    // reported a name it defines as undefined (#542).
+    let dir = tempfile::tempdir().unwrap();
+    let shared = tempfile::tempdir().unwrap();
+    std::fs::write(shared.path().join("def.q"), "helper:{x+1}\n").unwrap();
+    std::os::unix::fs::symlink(shared.path().join("def.q"), dir.path().join("def.q")).unwrap();
+    let mut server = start_with_workspace(dir.path());
+    let app = file_uri(&dir.path().join("app.q"));
+    server.open(&app, "f:{y:helper; y}\n");
+    let found = codes_of(&server.diagnostics_for(&app));
+    assert!(!found.contains(&"QF018".to_string()), "{found:?}");
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn deleting_a_folder_forgets_every_definition_under_it() {
+    // A watcher reports a deleted folder as one event for the folder (#543).
+    let dir = tempfile::tempdir().unwrap();
+    let sub = dir.path().join("sub");
+    std::fs::create_dir(&sub).unwrap();
+    std::fs::write(sub.join("def.q"), "helper:{x+1}\n").unwrap();
+    let mut server = start_with_workspace(dir.path());
+    let app = file_uri(&dir.path().join("app.q"));
+    server.open(&app, "f:{y:helper; y}\n");
+    assert!(!codes_of(&server.diagnostics_for(&app)).contains(&"QF018".to_string()));
+    std::fs::remove_dir_all(&sub).unwrap();
+    server.send(
+        json!({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles",
+        "params":{"changes":[{"uri":file_uri(&sub),"type":3}]}}),
+    );
+    let found = codes_of(&server.diagnostics_for(&app));
+    assert!(found.contains(&"QF018".to_string()), "{found:?}");
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
 fn a_document_takes_the_profile_of_the_qlinter_toml_above_it() {
     // An editor starts the server with no --profile when the user has not set
     // one, so the repository's configuration decides; and the server finds
@@ -1098,6 +1277,68 @@ fn editing_a_base_the_configuration_extends_relints_the_open_documents() {
 }
 
 #[test]
+fn the_server_asks_to_watch_the_configuration_outside_the_workspace() {
+    // A base the folder's configuration extends from above it, and the
+    // user-level file, are outside every workspace pattern; the server asks
+    // for them itself, so their edits reach it in any editor (#554).
+    let top = tempfile::tempdir().unwrap();
+    // The real path, which is what the server reports: /private/var for
+    // /var on macOS, and the long name for `RUNNER~1` on Windows - less
+    // Windows' verbatim `\\?\`, which no editor's URI carries.
+    let top_path = top.path().canonicalize().unwrap();
+    let top_path = std::path::PathBuf::from(
+        top_path
+            .to_string_lossy()
+            .strip_prefix(r"\\?\")
+            .map_or_else(|| top_path.to_string_lossy().into_owned(), str::to_string),
+    );
+    let ws = top_path.join("ws");
+    std::fs::create_dir(&ws).unwrap();
+    std::fs::write(top_path.join("base.toml"), "profile = \"style\"\n").unwrap();
+    std::fs::write(ws.join(".qlinter.toml"), "extend = \"../base.toml\"\n").unwrap();
+    // Started above the folder, so the user-level file the tests point at
+    // is outside it too.
+    let mut server = Server::spawn(&top_path, &["--lsp"]);
+    let mut capabilities = client_capabilities();
+    capabilities["workspace"] = json!({"didChangeWatchedFiles":
+        {"dynamicRegistration": true, "relativePatternSupport": true}});
+    server.send(
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+        "capabilities":capabilities,"workspaceFolders":[{"uri":file_uri(&ws),"name":"ws"}]}}),
+    );
+    server.receive();
+    server.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+    let uri = file_uri(&ws.join("a.q"));
+    server.open(&uri, "a:1\n");
+    // The base is read for the document, after a first registration made
+    // without it; the diagnostics come between the two.
+    server.diagnostics_for(&uri);
+    let wants = |m: &Value, base: &std::path::Path, pattern: &str| {
+        m["method"] == "client/registerCapability"
+            && m["params"]["registrations"][0]["registerOptions"]["watchers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|w| w["globPattern"] == json!({"baseUri": file_uri(base), "pattern": pattern}))
+    };
+    let registration = server.until(|m| wants(m, &top_path, "base.toml"));
+    let user = top_path.join("no-such-config-home/qlinter");
+    assert!(
+        wants(&registration, &user, "qlinter.toml"),
+        "{registration}"
+    );
+    let watchers = &registration["params"]["registrations"][0]["registerOptions"]["watchers"];
+    assert_eq!(watchers[0], json!({"globPattern": "**/*.q"}));
+    // And the registration it replaces is withdrawn.
+    let withdrawn = server.until(|m| m["method"] == "client/unregisterCapability");
+    assert_eq!(
+        withdrawn["params"]["unregisterations"][0]["method"],
+        "workspace/didChangeWatchedFiles"
+    );
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
 fn a_localhost_file_uri_finds_the_project_configuration() {
     // RFC 8089: file://localhost/p is file:///p. The authority was read as
     // the first directory, so no configuration was found (#425).
@@ -1110,9 +1351,12 @@ fn a_localhost_file_uri_finds_the_project_configuration() {
     let plain = file_uri(&dir.path().join("a.q"));
     let local = plain.replacen("file://", "file://localhost", 1);
     assert!(local.starts_with("file://localhost/"), "{local}");
+    // RFC 8089's form with no authority, and a scheme in capitals (#546).
+    let bare = plain.replacen("file://", "file:", 1);
+    let shouted = plain.replacen("file:", "FILE:", 1);
     let mut server = Server::spawn(dir.path(), &["--lsp"]);
     server.initialize();
-    for uri in [&plain, &local] {
+    for uri in [&plain, &local, &bare, &shouted] {
         server.open(uri, "a:1==2\n");
         assert_eq!(
             codes_of(&server.diagnostics_for(uri)),
@@ -1511,6 +1755,38 @@ fn with_run_on_save_a_change_is_linted_only_when_saved() {
 }
 
 #[test]
+fn with_run_on_save_another_files_save_does_not_lint_an_unsaved_buffer() {
+    // Saving b.q changes what the workspace defines, so the other open
+    // documents are linted again - but not a.q's unsaved text (#550).
+    let dir = tempfile::tempdir().unwrap();
+    let (mut server, _) = start_with_options(
+        dir.path(),
+        &["--lsp"],
+        json!({"lint": {"run": "onSave"}}),
+        None,
+    );
+    let a = "file:///tmp/on-save-a.q";
+    let b = "file:///tmp/on-save-b.q";
+    server.open(a, "a:1\n");
+    assert!(server.diagnostics_for(a).is_empty());
+    server.change(a, 2, RESERVED_PARAM);
+    server.open(b, "x:1\n");
+    assert!(server.diagnostics_for(b).is_empty());
+    server.change(b, 2, "y:1\n");
+    server.send(json!({"jsonrpc":"2.0","method":"textDocument/didSave",
+        "params":{"textDocument":{"uri":b}}}));
+    assert!(server.diagnostics_for(b).is_empty());
+    // Nothing for a.q: the next message is the reply to this request.
+    server.send(
+        json!({"jsonrpc":"2.0","id":41,"method":"textDocument/semanticTokens/full",
+        "params":{"textDocument":{"uri":a}}}),
+    );
+    let next = server.receive();
+    assert_eq!(next["id"], 41, "{next}");
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
 fn a_severity_setting_overrides_by_the_longest_prefix() {
     let dir = tempfile::tempdir().unwrap();
     let (mut server, _) = start_with_options(
@@ -1802,7 +2078,8 @@ fn a_client_that_waits_for_registration_is_asked_to_watch_files() {
         .map(|w| w["globPattern"].as_str().unwrap())
         .collect();
     assert!(globs.contains(&"**/*.q"), "{globs:?}");
-    assert!(globs.contains(&"**/qlinter.toml"), "{globs:?}");
+    // Every configuration by any name, `extend`ed bases included (#554).
+    assert!(globs.contains(&"**/*.toml"), "{globs:?}");
     server.send(json!({"jsonrpc":"2.0","id":request["id"],"result":null}));
     assert_eq!(server.shutdown_and_exit(), 0);
 }
