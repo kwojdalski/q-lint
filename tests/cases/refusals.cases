@@ -1322,3 +1322,6 @@ a:123m
 === clean profile: general | a `u` past a negative item still types the whole vector as minutes (#580; q 5: 12:00 -12:00)
 r:12:00:60 -12:00u
 s:12:00:60 -12:00:60u
+
+=== QE006 profile: general | a `u` does not save the seconds when another item is no time (#581; q 5: '2000.01.01)
+r:12:00:60 2000.01.01u

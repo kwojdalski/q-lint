@@ -246,8 +246,13 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
         };
         // A minute's seconds are never read: q 5 takes `23:59:60u` as 23:59,
         // and `12:00:60 12:00u` too, while `23:59:60u 12:00` is a vector of
-        // seconds and '23:59:60u.
-        let minute = vector_suffix(comments, unsym, whole.end()) == Some('u');
+        // seconds and '23:59:60u. Only while every item is a time or a
+        // number: q 5 refuses `12:00:60 2000.01.01u` and `12:00:60 1.5u`
+        // (#581).
+        let minute = vector_suffix(comments, unsym, whole.end()) == Some('u')
+            && unsym[whole.start()..vector_end(comments, unsym, whole.end())]
+                .split_whitespace()
+                .all(|item| re!(r"^-?(?:\d+(?::\d+)+(?:\.\d*)?|\d+|0N)u?$").is_match(item));
         if field(2) > 59 || (field(3) > 59 && !minute) {
             out.push(Finding::at(
                 path,
