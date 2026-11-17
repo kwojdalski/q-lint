@@ -6267,7 +6267,9 @@ pub fn lint_selecting(
                 let start = m.get(0).unwrap().start();
                 let head = &line[line[..start].rfind(';').map_or(0, |p| p + 1)..start];
                 let query = re!(r"\b(?:where|select|exec|update|delete)\b").is_match(head);
-                if m[1] == m[3] && ends && query {
+                // The left name whole too: `.cfg.a=a` compares a global with
+                // the column (#498).
+                if m[1] == m[3] && ends && query && boundary(line, start) {
                     add(
                         offset + start,
                         "QB001",

@@ -923,3 +923,8 @@ k:{!
   [t;enlist(>;`a;1);0b;enlist`c]}
 g:{if
   [`a;:1]; 2}
+
+=== clean | a dotted global compared with the column of its last name (#498)
+t:([]a:1 2;b:3 4)
+.cfg.a:1
+r:select from t where .cfg.a=a
