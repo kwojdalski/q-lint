@@ -105,7 +105,7 @@ Fixes that you choose individually: `&&` → `&`, `||` → `|`, `reverse asc` �
 value, `a -1` → `a - 1`, a string compared with `=` in a filter → `like`
 (on a char column as long as the string, `=` is valid q), `=` against a
 vector in a filter → `in`, `f(a;b)` →
-`f[a;b]`, `` `int$"12" `` → `"I"$"12"`, removing a statement that never runs,
+`f[a;b]`, `` `int$"12" `` → `"I"$"12"`, `` `symbol$"abc" `` → `` `$"abc" ``, removing a statement that never runs,
 removing an unused local's name while keeping its expression,
 `{x} each y` → `y` and `{x+1} each a` → `a+1` (they differ on an empty typed list, and
 `{x} each` drops a `` `s# `` or `` `g# `` attribute), parentheses
