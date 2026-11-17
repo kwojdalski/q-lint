@@ -182,6 +182,15 @@ fn days_in(year: u32, month: u32) -> u32 {
 /// through `end`, if it ends in one: `u` for `23:59:60u` and for
 /// `12:00:60 12:00u` alike, since that suffix types every item.
 fn vector_suffix(comments: &str, unsym: &str, end: usize) -> Option<char> {
+    unsym[..vector_end(comments, unsym, end)]
+        .chars()
+        .last()
+        .filter(char::is_ascii_alphabetic)
+}
+
+/// Where the vector literal whose token runs through `end` stops: past its
+/// last item, a negative one included (`12:00:60 -12:00u`, #580).
+fn vector_end(comments: &str, unsym: &str, end: usize) -> usize {
     let token_end = |from: usize| {
         from + unsym[from..]
             .find(|c: char| !(c.is_ascii_alphanumeric() || ".:".contains(c)))
@@ -195,12 +204,13 @@ fn vector_suffix(comments: &str, unsym: &str, end: usize) -> Option<char> {
         // `comments`, where a symbol starting the next line is still there
         // to say that line is not indented.
         let gap = crate::past_blanks(comments, at) - at;
-        if gap == 0 || !rest[gap..].starts_with(|c: char| c.is_ascii_digit()) {
+        let item = rest[gap..].strip_prefix('-').unwrap_or(&rest[gap..]);
+        if gap == 0 || !item.starts_with(|c: char| c.is_ascii_digit()) {
             break;
         }
-        at = token_end(at + gap);
+        at = token_end(at + gap + (rest.len() - gap - item.len()));
     }
-    unsym[..at].chars().last().filter(char::is_ascii_alphabetic)
+    at
 }
 
 /// QE006. A date, month or time q refuses at parse. A date or month that does not exist:
@@ -236,8 +246,13 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
         };
         // A minute's seconds are never read: q 5 takes `23:59:60u` as 23:59,
         // and `12:00:60 12:00u` too, while `23:59:60u 12:00` is a vector of
-        // seconds and '23:59:60u.
-        let minute = vector_suffix(comments, unsym, whole.end()) == Some('u');
+        // seconds and '23:59:60u. Only while every item is a time or a
+        // number: q 5 refuses `12:00:60 2000.01.01u` and `12:00:60 1.5u`
+        // (#581).
+        let minute = vector_suffix(comments, unsym, whole.end()) == Some('u')
+            && unsym[whole.start()..vector_end(comments, unsym, whole.end())]
+                .split_whitespace()
+                .all(|item| re!(r"^-?(?:\d+(?::\d+)+(?:\.\d*)?|\d+|0N)u?$").is_match(item));
         if field(2) > 59 || (field(3) > 59 && !minute) {
             out.push(Finding::at(
                 path,
@@ -996,6 +1011,10 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
             || rest.starts_with(":-") && rest[2..].starts_with(|c: char| c.is_ascii_digit());
         let next = continued(rest);
         let spaced = next.len() < rest.len();
+        // Straight after a signature's `]` a `-` is the glyph, not a sign:
+        // q 5 refuses `{[a]-1}` and `{[]-.5}` with '-, and takes `{[a] -1}`
+        // (#586).
+        let glued_to_signature = after_signature(code, source, i);
         // A `.` before a letter starts a name, not a number: q 5 refuses
         // `-.foo.x` and `-.z.p` with '-, as it does `#.foo.x` (#241).
         // A lambda is a noun, and so is a negative literal: q 5 refuses
@@ -1014,13 +1033,13 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
             || (re!(r"^-\.?\d").is_match(next) && !(g == b'-' && spaced))
             || re!(r"^\.[A-Za-z]").is_match(next)
             || (next.starts_with(|c: char| c.is_ascii_digit() || c == '.')
-                && (g != b'-' || spaced));
+                && (g != b'-' || spaced || glued_to_signature));
         if !operand {
             continue;
         }
         let before = comments[..i].trim_end_matches([' ', '\t', '\r', '\n']);
         // A `\t` line's expression starts after the command (#310).
-        let expression = line_start + crate::timed_prefix(&source[line_start..]);
+        let expression = line_start + expression_start(&source[line_start..]);
         if !opens_expression(code, source, comments, i, expression) {
             continue;
         }
@@ -1116,6 +1135,12 @@ const GLYPHS: &[u8] = b"+-*%!#$&|^=<>~,@?";
 fn bracket_form(next: &str) -> bool {
     let b = next.as_bytes();
     b.len() > 1 && (GLYPHS.contains(&b[0]) || b[0] == b'.' || b[0] == b'_') && b[1] == b'['
+}
+
+/// Where a line's first expression starts: after a `q)` prompt (#582) and
+/// after a `\t` or `\ts` command (#310).
+fn expression_start(line: &str) -> usize {
+    crate::timed_prefix(line).max(if line.starts_with("q)") { 2 } else { 0 })
 }
 
 /// What follows a glyph, past the blanks before it - and past a line break
@@ -1273,10 +1298,13 @@ fn juxtaposed_derived(
         let Some(start) = derived_operand(&view, c, &opener, m.start()) else {
             continue;
         };
+        // Not on a system command, but in a `\t` line's expression (#583)
+        // and after a `q)` prompt (#582).
         let line_start = view[..start].rfind('\n').map_or(0, |p| p + 1);
-        if b[line_start] == b'\\' {
+        if crate::system_command(&source[line_start..]) {
             continue;
         }
+        let line_start = line_start + expression_start(&source[line_start..]);
         // Applied to an operand right after the iterator: a name, a symbol,
         // a bracketed or quoted value, or a number.
         // A `-` before an operand is one too: `+/-x` holds the same derived
@@ -1681,7 +1709,20 @@ fn numbers(
                 // `1d` and `2000010d` are no date at all. A `z` reads the
                 // same eight digits as that date's datetime (#713).
                 Some(format!("`{text}` is no date (yyyymmdd)"))
+            } else if re!(r"^\d+m$").is_match(text) && {
+                let month = |m: &str| matches!(m.parse::<u32>(), Ok(1..=12));
+                let n = text.len() - 1;
+                !(n == 4 && month(&text[2..4])
+                    || n >= 5 && &text[..4] != "0000" && month(&text[n - 2..n]))
+            } {
+                // Digits and an `m` are a month: q 5 reads four as yymm
+                // (`2001m` is 2020.01m) and five or more as a year from the
+                // first four and a month from the last two (`200001m`,
+                // `20001m` and `20000101m` are 2000.01m), and refuses
+                // `2000m`, `200013m`, `00001m` and `123m` (#578).
+                Some(format!("`{text}` is no month (yymm or yyyymm)"))
             } else if (re!(r"^\d+[adgklmoqrwyz]$").is_match(text)
+                && !re!(r"^\d+m$").is_match(text)
                 // Nine digits or more and a `z` are a datetime too: q 5
                 // reads `202401011z` as 1976.05.31T14:30:11.000 (#713).
                 && !re!(r"^\d{8}d$|^\d{8,}z$").is_match(text))
