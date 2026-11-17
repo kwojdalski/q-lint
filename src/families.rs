@@ -850,10 +850,11 @@ fn unreachable(path: &str, source: &str, code: &str, comments: &str, out: &mut V
         }
         statements.push((start, body.len()));
         // `'[f;g]` - or `' [f;g]` - is a composition, not a signal: q 5
-        // `{'[neg;abs]; 2}[]` is 2.
+        // `{'[neg;abs]; 2}[]` is 2. And `:[a;b]` is the assign verb, not a
+        // return: `{a:0; :[a;5]; a}[]` is 5, and with a space 7 (#515).
         let exits = |text: &str| {
             let t = text.trim_start();
-            (t.starts_with(':') && !t.starts_with("::"))
+            (t.starts_with(':') && !t.starts_with("::") && !t[1..].trim_start().starts_with('['))
                 || (t.starts_with('\'')
                     && !t.starts_with("':")
                     && !t[1..].trim_start().starts_with('['))

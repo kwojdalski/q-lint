@@ -590,6 +590,11 @@ d:([a:1;a:2])
 === QB020 | a statement after a top-level return never runs
 f:{:1;2}
 
+=== clean | :[a;b] is the assign verb, not a return, and what follows runs (#515; q 5: {:[x;y]; 3}[1;2] is 3, {a:0; :[a;5]; a}[] is 5)
+f:{:[x;y]; 3}
+g:{a:0; :[a;5]; a}
+h:{a:0; : [a;5]; a}
+
 === QB020 | a string is a statement too, and never runs after the return (#216)
 f:{[a] :a; "x"}
 
