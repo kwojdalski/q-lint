@@ -1434,13 +1434,18 @@ fn dynamic(raw: &str, view: &str, call_time: &[(usize, &'static str)]) -> Vec<cr
         push(at, kind);
     }
     let next = |at: usize| view[at..].trim_start_matches([' ', '\t']);
+    // Bracketed or parenthesised too: q 5 `value("e5")` is e5 (#538).
     for m in re!(r"\bvalue\b").find_iter(view) {
-        if boundary(view, m.start())
-            && raw[m.end()..]
-                .trim_start_matches([' ', '\t'])
-                .starts_with('"')
+        if boundary(view, m.start()) && re!(r#"^[ \t]*(?:[\[(][ \t]*)?""#).is_match(&raw[m.end()..])
         {
             push(m.start(), "value");
+        }
+    }
+    // `eval` and `reval` run a parse tree, whose names reading cannot see:
+    // q 5 `eval parse "e5+1"` reads e5 (#538).
+    for m in re!(r"\br?eval\b").find_iter(view) {
+        if boundary(view, m.start()) {
+            push(m.start(), "eval");
         }
     }
     // A symbol literal after `get`, bracketed or not, is a read the names

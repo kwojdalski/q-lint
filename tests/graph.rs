@@ -807,3 +807,20 @@ fn a_bracketed_symbol_handed_to_get_or_value_is_a_read() {
         assert!(kinds(&g, "use.q").is_empty(), "{read}");
     }
 }
+
+#[test]
+fn eval_and_a_bracketed_value_of_a_string_are_dynamic() {
+    // q 5, after `e5:7`: `eval parse "e5+1"` is 8 and `value("e5")` 7, each
+    // reading a name inside a string (#538).
+    let g = graph(
+        &[(
+            "dyn.q",
+            "a:eval parse \"e5+1\"\nb:value(\"e5\")\nc:value[\"e5\"]\nd:reval parse \"e5\"\n",
+        )],
+        false,
+    );
+    assert_eq!(
+        kinds(&g, "dyn.q"),
+        [(1, "eval"), (2, "value"), (3, "value"), (4, "eval")]
+    );
+}

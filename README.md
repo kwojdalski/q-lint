@@ -172,7 +172,8 @@ entry is `{"dependencies" (or "dependents"): [...], "ambiguous": {name:
 [every file defining it]}, "dynamic": [{"line", "kind"}]}`. `dynamic` lists
 each line where a name is reached by a value computed at run time, which no
 amount of reading resolves: `value` of a string, `get` of anything but a
-literal, a name built with `` ` sv ``, `set` into a computed name, and a
+literal, `eval` or `reval` of a parse tree, a name built with `` ` sv ``,
+`set` into a computed name, and a
 concatenated `system "l ",path`. `value` is the same function as `get` (q 5:
 `get~value` is 1b), but it is listed only where the source shows its argument
 is a symbol - `` value `$x ``, `value .Q.dd[...]`, or `value nm` where the

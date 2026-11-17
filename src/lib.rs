@@ -142,8 +142,9 @@ pub struct Relative {
 }
 
 /// A place reading cannot see through: `kind` is `value` (of a string),
-/// `get` (of anything but a literal), `sv` (a name built from parts), `set`
-/// (into a computed name) or `load` (a concatenated `system "l ..."`). A
+/// `get` (of anything but a literal), `eval` (or `reval`, of a parse tree),
+/// `sv` (a name built from parts), `set` (into a computed name) or `load` (a
+/// concatenated `system "l ..."`). A
 /// `get`, `value` or `set` of an unqualified symbol inside a lambda written
 /// under `\d` is one too: q looks the symbol up in the `\d` current when the
 /// lambda is called, which the source does not say.
