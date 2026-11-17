@@ -1591,7 +1591,7 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
     let next: String = replacement
         .chars()
         .chain(source[begin + old.len()..].chars())
-        .take(2)
+        .take(3)
         .collect();
     // Nor may an edit leave two numeric literals with only blanks between:
     // `10 20 30 {x} each 0 2` would become `10 20 30 0 2`, one vector where
@@ -1609,8 +1609,14 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
     {
         return None;
     }
+    // Nor may it leave a negative literal against an operand, where its
+    // `-` would read as minus: `{[x]r:-1;x}` would become `{[x]-1;x}`,
+    // which q 5 refuses with '- (#563). A blank keeps it a literal.
+    let negative = next.starts_with('-') && numeric(&next[1..]);
     let replacement =
-        if source[..begin].ends_with('-') && !numeric(&source[begin..]) && numeric(&next) {
+        if source[..begin].ends_with('-') && !numeric(&source[begin..]) && numeric(&next)
+            || ends_in_token(&source[..begin]) && negative && !source[begin..].starts_with('-')
+        {
             format!(" {replacement}").into()
         } else {
             replacement
@@ -3160,11 +3166,18 @@ pub(crate) fn signature<'a>(code: &'a str, raw: &str, brace: usize) -> Signature
                 } else if c[i] != r[i]
                     && r[i] == b'/'
                     && (i == 0 || r[i - 1].is_ascii_whitespace())
-                    && code[i..].split('\n').next().is_some_and(|l| l.trim().is_empty())
+                    && code[i..]
+                        .split('\n')
+                        .next()
+                        .is_some_and(|l| l.trim().is_empty())
                 {
                     comment = true;
                 }
-                if c[i] == r[i] || comment { c[i] as char } else { '0' }
+                if c[i] == r[i] || comment {
+                    c[i] as char
+                } else {
+                    '0'
+                }
             })
             .collect()
     };

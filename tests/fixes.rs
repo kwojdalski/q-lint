@@ -383,6 +383,8 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ("QB020", "f:{[x] :x; x+1}", "f:{[x] :x}", false),
         ("QF017", "f:{[x] a:x+1; x}", "f:{[x] x+1; x}", false),
         ("QF017", "f:{[a] r:a -m:1; r}", "f:{[a] r:a - 1; r}", false),
+        // A negative literal left against a signature stays one (#563).
+        ("QF017", "f:{[x]r:-1;x}", "f:{[x] -1;x}", false),
         ("QP003", "r:.z.P", "r:.z.p", false),
         // The clock named is the clock fixed, on the line it is on (#206).
         ("QP003", "a:(.z.D;.z.P)", "a:(.z.d;.z.P)", false),
