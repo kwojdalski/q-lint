@@ -1314,3 +1314,14 @@ v:.5e*"a"
 === clean profile: general | while a float exponent or a char on the right of `-` is fine (#587; q 5: 1097f, -96e)
 w:"a"+1e3
 y:1e -"a"
+
+=== QT022 profile: general | a dictionary literal's symbol values write no global (#588; q 5: 'type)
+a:2.5
+d:1 2!`a`b
+r:a 0
+
+=== QT026 profile: general | nor does unkeying with 0! key the table (#588; q 5: 'type)
+k:([]a:1 2;c:5 6)
+0!`k
+t:([]a:1 2;b:3 4)
+s:t lj k

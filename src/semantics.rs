@@ -3058,8 +3058,10 @@ const LOAD: &str = r"\br?load\s*\[?\s*`:?(?:[^\s;\]\[()`]*/)?([A-Za-z][A-Za-z0-9
 
 /// A table changed in place by name: `update c:1 from `t`, `![`t;...]`,
 /// `.[`t;...]`, `@[`t;...]`, `` `a xkey `t `` and its neighbours, in the
-/// bracket form too, and `` 1!`t ``. The name is the capture.
-const IN_PLACE: &str = r"(?:\bfrom\s*|[!.@]\s*\[\s*|\b(?:xkey|xasc|xdesc|xcols|xcol)\s*(?:\[[^;\[\]]*;\s*)?|\b\d+\s*!\s*)`(\.?[A-Za-z][A-Za-z0-9_.]*)";
+/// bracket form too, and `` 1!`t ``. The name is the capture. Only a
+/// positive count, starting an expression, keys in place: `` 1 2!`a`b `` is
+/// a dictionary, and `` 0!`k `` takes keys away (#588).
+const IN_PLACE: &str = r"(?:\bfrom\s*|[!.@]\s*\[\s*|\b(?:xkey|xasc|xdesc|xcols|xcol)\s*(?:\[[^;\[\]]*;\s*)?|(?m:^|[;:(\[{])[ \t]*[1-9]\d*\s*!\s*)`(\.?[A-Za-z][A-Za-z0-9_.]*)";
 
 /// What a global holds, when the file assigns it once, at the top level, to
 /// a literal. Anything else - assigned twice, amended, `set`, assigned to an
