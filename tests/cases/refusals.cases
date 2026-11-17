@@ -1174,3 +1174,17 @@ c:1.5.
 === clean profile: general | false alone, and a float with a trailing dot (#490)
 a:0b
 b:1.
+
+=== QE010 profile: general | a suffix before a negative item (q 5: parse "3i -1" is '3i) (#491)
+a:3i -1
+b:1h -2
+c:1e -2
+d:1.5e -2
+
+=== QE010 profile: general | a date as a negative item (q 5: parse "1 -2000.01.01" is '-2000.01.01) (#491)
+a:1 -2000.01.01
+
+=== clean profile: general | a negative item after a plain one, and a minus between operands (#491)
+a:1 -2i
+b:1 -2 3i
+c:3i - 1

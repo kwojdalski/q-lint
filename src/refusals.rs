@@ -1439,10 +1439,12 @@ fn numbers(
         // line break too, into the indented line that continues it: q 5
         // reads `c:1E5`, `  2.5` as `1E5 2.5` (#681). Read in `comments`,
         // where a symbol or a string at column 0 is not blanks: `1:-1` over
-        // `` `:f 0:x ``, or `0:x` over `"\t" 0:x`, is two statements.
+        // `` `:f 0:x ``, or `0:x` over `"\t" 0:x`, is two statements. A minus
+        // that starts the next item continues the run: q 5 reads `1 -2` as a
+        // vector and refuses `3i -1` as it does `3i 4` (#491).
         let mut j = i;
         while j + 1 < tokens.len()
-            && re!(concat!("^", blank!(), "+$"))
+            && re!(concat!("^", blank!(), "+-?$"))
                 .is_match(&comments[tokens[j].end()..tokens[j + 1].start()])
         {
             j += 1;
@@ -1493,7 +1495,7 @@ fn numbers(
                 ))
             } else if negative
                 && date(text)
-                && run[1..]
+                && run[k + 1..]
                     .iter()
                     .all(|t| re!(r"^(?:\d+(?:\.\d*)?|0[NW])$").is_match(t.as_str()))
             {
