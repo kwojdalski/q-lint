@@ -4624,7 +4624,11 @@ pub fn lint_selecting(
     }
     // And a multiple assignment's names: q 5 `(true;false):10b` then
     // `show true` prints 1b (#371).
-    declared.extend(semantics::multi_assignments(code).map(|(_, n)| n));
+    declared.extend(
+        semantics::multi_assignments(code)
+            .chain(semantics::global_multi_assignments(code))
+            .map(|(_, n)| n),
+    );
     // A column: named as a symbol somewhere (`` `sym`return!... ``), or read
     // inside a query, where a bare name is the column before any global.
     for m in re!(r"`([A-Za-z][A-Za-z0-9_]*)").captures_iter(code) {

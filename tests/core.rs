@@ -814,3 +814,23 @@ fn a_global_another_file_amends_through_its_context_is_not_tracked_in_a_lambda()
         );
     }
 }
+
+#[test]
+fn a_multiple_global_assignment_in_another_file_defines_its_names() {
+    use q_lint_rs::{Workspace, index, lint_in};
+    // q 5: after b.q's `init[]`, `lim` is 1; after c.q, `.ns.lim` is 1
+    // (#759).
+    for (reader, writer) in [
+        ("r:lim\n", "init:{(lim;b)::1 2}\n"),
+        ("\\d .ns\nr:lim\n", "(.ns.lim;.ns.b):1 2\n"),
+    ] {
+        let mut ws = Workspace::default();
+        ws.add(&index(reader));
+        assert!(codes(&lint_in(reader, "a.q", Profile::Style, &ws)).contains(&"QF018"));
+        ws.add(&index(writer));
+        assert!(
+            !codes(&lint_in(reader, "a.q", Profile::Style, &ws)).contains(&"QF018"),
+            "{writer}"
+        );
+    }
+}

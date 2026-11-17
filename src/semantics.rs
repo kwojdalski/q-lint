@@ -96,10 +96,28 @@ fn resolved(name: &str, ns: &str) -> String {
 /// `(c;(a;b)):t` binds all three and `([k;v]):d` binds k and v, while
 /// `([k:p]):d` binds only p (q 5: `([k:p]):`k`v!5 6` sets p to 5).
 pub(crate) fn multi_assignments(text: &str) -> impl Iterator<Item = (usize, &str)> {
+    pattern_assignments(text)
+        .filter(|&(_, _, global)| !global)
+        .map(|(at, name, _)| (at, name))
+}
+/// The globals a multiple assignment binds wherever it is written: each name
+/// of `(a;b)::v`, which in a lambda assigns the globals (q 5
+/// `init:{(n;m)::(1 2 3;4)}; init[]; n 0` is 1), and a dotted name in any
+/// target, which no lambda has as a local (q 5 `(.ns.n;.ns.m):(1 2 3;4)`).
+pub(crate) fn global_multi_assignments(text: &str) -> impl Iterator<Item = (usize, &str)> {
+    pattern_assignments(text)
+        .filter(|&(_, _, global)| global)
+        .map(|(at, name, _)| (at, name))
+}
+/// Each name a pattern assignment binds, with where it starts and whether
+/// it is a global wherever it is written.
+fn pattern_assignments(text: &str) -> impl Iterator<Item = (usize, &str, bool)> {
     let bytes = text.as_bytes();
-    re!(r"\)\s*:[^:]")
-        .find_iter(text)
-        .filter_map(move |m| {
+    re!(r"\)\s*(::?)[^:]")
+        .captures_iter(text)
+        .filter_map(move |c| {
+            let m = c.get(0).unwrap();
+            let double = c[1].len() == 2;
             // Back to the `(` that opens the target, over nothing a pattern
             // could not hold, so a string or a call is never walked into.
             let mut depth = 0usize;
@@ -122,8 +140,7 @@ pub(crate) fn multi_assignments(text: &str) -> impl Iterator<Item = (usize, &str
             crate::is_pattern(target, false).then(|| {
                 crate::pattern_names(target)
                     .into_iter()
-                    .filter(|n| !n.contains('.'))
-                    .map(move |n| (at, n))
+                    .map(move |n| (at, n, double || n.contains('.')))
             })
         })
         .flatten()
@@ -975,15 +992,17 @@ fn global_writes(
                 .push(whole.end());
         }
     }
-    for (at, name) in multi_assignments(code) {
-        if scope_at(scopes, at).is_none() {
-            let close = matching(code, at, b'(', b')').unwrap_or(at);
-            let end = close + code[close..].find(':').unwrap() + 1;
-            globals
-                .entry(qualify(name, ns_at(at)))
-                .or_default()
-                .push(end);
-        }
+    for (at, name) in multi_assignments(code)
+        .filter(|&(at, _)| scope_at(scopes, at).is_none())
+        .chain(global_multi_assignments(code))
+    {
+        let close = matching(code, at, b'(', b')').unwrap_or(at);
+        let colon = close + code[close..].find(':').unwrap() + 1;
+        let end = colon + usize::from(code[colon..].starts_with(':'));
+        globals
+            .entry(qualify(name, ns_at(at)))
+            .or_default()
+            .push(end);
     }
     globals
 }
@@ -3036,7 +3055,7 @@ fn named_values(
                 .extend([0, 0]);
         }
     }
-    for (at, name) in multi_assignments(code) {
+    for (at, name) in multi_assignments(code).chain(global_multi_assignments(code)) {
         writes.entry(name).or_default().extend([0, 0]);
         exact.entry(key(name, at)).or_default().extend([0, 0]);
     }

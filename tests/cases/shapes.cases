@@ -1015,3 +1015,14 @@ insert[`t;(`a`b`c!(5;`v;5f);`a`b`c!(6;`u;6f))]
 d1:`a`b`c!(7;`t;7f)
 d2:`a`b`c!(8;`s;8f)
 `t insert (d1;d2)
+
+=== clean profile: general | QT022: a multiple global assignment in a lambda, or of dotted names, is a write (#759; q 5: 1 and 1)
+n:5
+f:{n 0}
+init:{(n;m)::(1 2 3;4)}
+init[]
+r:f[]
+.ns.k:5
+g:{.ns.k 0}
+(.ns.k;.ns.j):(1 2 3;4)
+s:g[]
