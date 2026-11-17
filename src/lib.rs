@@ -3950,7 +3950,9 @@ pub fn lint_selecting(
     // `while["ab";1]`, `if[101b;1]`, `if[1 2;1]`, `do[1.5;1]`, `do[`a;1]`
     // and `do[1 2;1]` are each 'type, while `if[0N;1]`, `do["a";1]`,
     // `do[1b;1]`, `do[2h;1]` and `do[2024.01.01;1]` run.
-    for m in re!(r"\b(if|while|do)\[").captures_iter(code) {
+    // The bracket may follow a blank, or an indented next line: q 5 reads
+    // `if` over `  [`a;:1]` as `if[`a;:1]` (#574).
+    for m in re!(r"\b(if|while|do)[ \t]*(?:(?:\r?\n[ \t]*)*\r?\n[ \t]+)?\[").captures_iter(code) {
         let at = m.get(0).unwrap().start();
         let open = m.get(0).unwrap().end() - 1;
         if !boundary(code, at) {
@@ -5591,11 +5593,13 @@ pub fn lint_selecting(
     }
     // QB016 in functional form: `![t;c;0b;cols]` with both a where list
     // and columns is 'nyi (q 5), as the delete phrase is.
-    for (bang, _) in code.match_indices("![") {
-        let Some(close) = matching(code, bang + 1, b'[', b']') else {
+    // On the next line too, where q joins it: `!` over `  [t;...]` (#574).
+    for m in re!(r"![ \t]*(?:(?:\r?\n[ \t]*)*\r?\n[ \t]+)?\[").find_iter(code) {
+        let (bang, open) = (m.start(), m.end() - 1);
+        let Some(close) = matching(code, open, b'[', b']') else {
             continue;
         };
-        let parts = slots(&code[bang + 2..close - 1]);
+        let parts = slots(&code[open + 1..close - 1]);
         if parts.len() != 4 || parts[2].trim() != "0b" {
             continue;
         }
