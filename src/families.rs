@@ -410,8 +410,9 @@ fn duplicate_columns(path: &str, source: &str, code: &str, out: &mut Vec<Finding
     // and `select a,max a`, each item named as `column_name` says. A select's
     // by list is renamed the same way - `select a by b,b` groups by b and b1 -
     // where update's by names no column and is left alone.
+    let mut strings = InString::new(code);
     for q in re!(r"\b(?:select|update)\b").find_iter(code) {
-        if !crate::boundary(code, q.start()) || in_string(code, q.start()) {
+        if !crate::boundary(code, q.start()) || strings.at(q.start()) {
             continue;
         }
         let rest = &code[q.end()..];
@@ -495,23 +496,43 @@ fn items(list: &str) -> Vec<&str> {
     items
 }
 
-/// Whether `at` sits inside a string on its line. The masked view blanks
+/// Whether a position sits inside a string on its line. The masked view blanks
 /// most strings, but not on a `\t` line, where `\t f "select min(p) ..."`
 /// carries SQL that is not q.
-fn in_string(code: &str, at: usize) -> bool {
-    let line = code[..at].rfind('\n').map_or(0, |n| n + 1);
-    let mut inside = false;
-    let b = code.as_bytes();
-    let mut i = line;
-    while i < at {
-        match b[i] {
-            b'\\' if inside => i += 1,
-            b'"' => inside = !inside,
-            _ => {}
+/// Asked for positions in increasing order, it reads on from where the last
+/// question stopped rather than from the line's start: a long line of qSQL
+/// keywords was quadratic (#709).
+struct InString<'a> {
+    code: &'a str,
+    i: usize,
+    inside: bool,
+}
+
+impl<'a> InString<'a> {
+    fn new(code: &'a str) -> Self {
+        InString {
+            code,
+            i: 0,
+            inside: false,
         }
-        i += 1;
     }
-    inside
+
+    fn at(&mut self, at: usize) -> bool {
+        if at < self.i {
+            (self.i, self.inside) = (0, false);
+        }
+        let b = self.code.as_bytes();
+        while self.i < at {
+            match b[self.i] {
+                b'\n' => self.inside = false,
+                b'\\' if self.inside => self.i += 1,
+                b'"' => self.inside = !self.inside,
+                _ => {}
+            }
+            self.i += 1;
+        }
+        self.inside
+    }
 }
 
 /// Whether every `{` in `text` closes inside it, and no `}` closes one
@@ -761,8 +782,9 @@ fn last_slot_name(inner: &str) -> Option<&str> {
 fn select_by_duplicate(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
     // No `\b` before the keyword: `1_select` is a drop of a select (#351),
     // and `boundary` tells that from the name `x_select`.
+    let mut strings = InString::new(code);
     for q in re!(r"(?:select|exec)\b").find_iter(code) {
-        if !crate::boundary(code, q.start()) || in_string(code, q.start()) {
+        if !crate::boundary(code, q.start()) || strings.at(q.start()) {
             continue;
         }
         // A limit or sort is no column: `select[1] a by a from t` and

@@ -470,25 +470,24 @@ fn missing_from(
     unsym: &str,
     out: &mut Vec<Finding>,
 ) {
-    // No `\b` before the keyword: `1_select` is a drop of a select (#351).
-    for m in re!(r"(select|exec|update|delete)\b").find_iter(unsym) {
-        if !boundary(code, m.start()) {
-            continue;
-        }
-        // The name assigned or passed rather than run: `select:1`, `.q.select`.
-        let after = unsym[m.end()..].trim_start_matches([' ', '\t']);
-        if after.starts_with(':')
-            || after.starts_with(['[', ';', ')', ']', '}'])
-            || after.is_empty()
-        {
-            continue;
-        }
-        // The statement runs to a `;` at this depth, the bracket that closes
-        // around it, or an unindented next line - skipping a blank line, as
-        // q does: `r:select a`, an empty line, `  from t` is one query (#559).
+    // Each keyword's statement end, read from the last keyword back: a scan
+    // that meets a later keyword at its own level ends where that one's
+    // does, and a chain of them was quadratic (#709).
+    let keywords: Vec<regex::Match> = re!(r"(select|exec|update|delete)\b")
+        .find_iter(unsym)
+        .filter(|m| boundary(code, m.start()))
+        .collect();
+    let mut ends: std::collections::HashMap<usize, usize> = Default::default();
+    for m in keywords.iter().rev() {
         let bytes = unsym.as_bytes();
         let (mut at, mut depth) = (m.end(), 0i32);
         while at < bytes.len() {
+            if depth == 0
+                && let Some(&end) = ends.get(&at)
+            {
+                at = end;
+                break;
+            }
             match bytes[at] {
                 b'(' | b'[' | b'{' => depth += 1,
                 b')' | b']' | b'}' => {
@@ -503,31 +502,65 @@ fn missing_from(
             }
             at += 1;
         }
+        ends.insert(m.start(), at);
+    }
+    // No `\b` before the keyword: `1_select` is a drop of a select (#351).
+    for m in keywords {
+        // The name assigned or passed rather than run: `select:1`, `.q.select`.
+        let after = unsym[m.end()..].trim_start_matches([' ', '\t']);
+        if after.starts_with(':')
+            || after.starts_with(['[', ';', ')', ']', '}'])
+            || after.is_empty()
+        {
+            continue;
+        }
+        // The statement runs to a `;` at this depth, the bracket that closes
+        // around it, or an unindented next line - skipping a blank line, as
+        // q does: `r:select a`, an empty line, `  from t` is one query (#559).
+        let at = ends[&m.start()];
         // This phrase's own `from` and `where` only: not one inside a
         // bracket, nor one that belongs to a query nested after this one's
         // `from` - `... where b in exec c from u where` leaves the outer
-        // where its operand (#200).
-        let mut flat = unsym.as_bytes()[m.end()..at].to_vec();
-        let mut depth = 0i32;
-        for b in &mut flat {
-            let c = *b;
-            if c == b')' || c == b']' || c == b'}' {
-                depth -= 1;
+        // where its operand (#200). Built a window at a time, and only as
+        // far as that next query: the whole statement for each keyword was
+        // quadratic too (#709). A match counts once a byte follows it, so
+        // that its `\b` is read against the text.
+        let whole = &unsym.as_bytes()[m.end()..at];
+        let (mut flat, mut depth) = (Vec::new(), 0i32);
+        let own = loop {
+            let target = whole.len().min((flat.len() * 2).max(256));
+            for &c in &whole[flat.len()..target] {
+                if c == b')' || c == b']' || c == b'}' {
+                    depth -= 1;
+                }
+                flat.push(if depth > 0 { b' ' } else { c });
+                if c == b'(' || c == b'[' || c == b'{' {
+                    depth += 1;
+                }
             }
-            if depth > 0 {
-                *b = b' ';
+            let text = std::str::from_utf8(&flat).unwrap_or_default();
+            let complete = flat.len() == whole.len();
+            let read = |end: usize| complete || end < text.len();
+            match re!(r"\bfrom\b").find(text).filter(|f| read(f.end())) {
+                None if complete => break text.len(),
+                None => continue,
+                Some(first) => {
+                    if let Some(n) = re!(r"\b(?:select|exec|update|delete)\b")
+                        .find_iter(&text[first.end()..])
+                        .find(|n| {
+                            read(first.end() + n.end())
+                                && boundary(code, m.end() + first.end() + n.start())
+                        })
+                    {
+                        break first.end() + n.start();
+                    }
+                    if complete {
+                        break text.len();
+                    }
+                }
             }
-            if c == b'(' || c == b'[' || c == b'{' {
-                depth += 1;
-            }
-        }
+        };
         let flat = String::from_utf8(flat).unwrap_or_default();
-        let own = re!(r"\bfrom\b").find(&flat).map_or(flat.len(), |first| {
-            re!(r"\b(?:select|exec|update|delete)\b")
-                .find_iter(&flat[first.end()..])
-                .find(|n| boundary(code, m.end() + first.end() + n.start()))
-                .map_or(flat.len(), |n| first.end() + n.start())
-        });
         let statement = &flat[..own];
         let from = re!(r"\bfrom\b").find_iter(statement).last();
         let detail = match from {

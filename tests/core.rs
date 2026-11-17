@@ -790,6 +790,19 @@ fn a_long_lambda_body_lints_in_bounded_time() {
         "a 16000-line lambda took {elapsed:?}"
     );
 }
+/// Chained qSQL keywords: each one scanned on to the statement's end, more
+/// than once over, so a chain took time quadratic in its length (#709).
+#[test]
+fn chained_queries_lint_in_bounded_time() {
+    let source = format!("r:{}t\n", "select from ".repeat(8000));
+    let started = std::time::Instant::now();
+    lint(&source, "t.q", Profile::Uqf);
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < std::time::Duration::from_secs(10),
+        "8000 chained queries took {elapsed:?}"
+    );
+}
 /// Tens of thousands of nested parentheses - beyond q's own limit, which
 /// refuses a hundred-odd levels with '( - once overflowed the stack, which
 /// aborts the whole run and cannot be caught like a panic (#703).

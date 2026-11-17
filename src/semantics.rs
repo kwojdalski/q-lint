@@ -908,10 +908,14 @@ fn global_writes(
             blank(&mut view[open + 1..close - 1]);
         }
     }
+    // A keyword inside a range already blanked ends no later than it, so it
+    // is passed over: `select from select from t` scanned to the statement's
+    // end once per keyword (#709).
+    let mut blanked = 0;
     for m in re!(r"\b(?:select|exec|update|delete)\b").find_iter(code) {
         // The keyword, not the end of a dotted name: `clust.kmeans.update:{...}`
         // defines a function KX ml calls, and `\b` alone would blank it.
-        if !boundary(code, m.start()) {
+        if m.start() < blanked || !boundary(code, m.start()) {
             continue;
         }
         let (mut at, mut depth) = (m.start(), 0i32);
@@ -932,6 +936,7 @@ fn global_writes(
             at += 1;
         }
         blank(&mut view[m.start()..at]);
+        blanked = at;
     }
     let code = std::str::from_utf8(&view).unwrap_or(code);
     let mut globals: HashMap<String, Vec<usize>> = HashMap::new();
@@ -3503,7 +3508,8 @@ fn named_values(
     };
     let phrases = qsql_phrases(code);
     let visible = |name: &str, at: usize| -> Option<&Held> {
-        if phrases.iter().any(|&(a, b)| a <= at && at < b) {
+        let i = phrases.partition_point(|&(a, _)| a <= at);
+        if i > 0 && at < phrases[i - 1].1 {
             return None;
         }
         let (assigned, value) = known.get(key(name, at).as_str())?;
@@ -4186,12 +4192,33 @@ fn named_values(
 fn qsql_phrases(code: &str) -> Vec<(usize, usize)> {
     let mut out = vec![];
     let bytes = code.as_bytes();
-    for m in re!(r"\b(?:select|exec|update|delete)\b").find_iter(code) {
-        if !boundary(code, m.start()) {
-            continue;
-        }
+    let keywords: Vec<regex::Match> = re!(r"\b(?:select|exec|update|delete)\b")
+        .find_iter(code)
+        .filter(|m| boundary(code, m.start()))
+        .collect();
+    // Each keyword's statement end and every `where` at its level, read from
+    // the last keyword back. A scan past its `from` that meets a later
+    // keyword at its own level ends where that one's does and finds the same
+    // `where`s, so it takes them rather than scanning on: `select from select
+    // from ... t` was quadratic (#709).
+    let mut read: HashMap<usize, (usize, Vec<usize>)> = HashMap::new();
+    for m in keywords.iter().rev() {
         let (mut i, mut depth, mut from) = (m.end(), 0i32, None);
+        let mut wheres = vec![];
+        let mut own = vec![];
         while i < bytes.len() {
+            if depth == 0
+                && from.is_some()
+                && let Some((end, later)) = read.get(&i)
+            {
+                for &w in later {
+                    wheres.push(w);
+                    own.push((w, usize::MAX));
+                    from = Some(w);
+                }
+                i = *end;
+                break;
+            }
             match bytes[i] {
                 b'(' | b'[' | b'{' => depth += 1,
                 b')' | b']' | b'}' => {
@@ -4209,26 +4236,40 @@ fn qsql_phrases(code: &str) -> Vec<(usize, usize)> {
                             && !rest[w.len()..]
                                 .starts_with(|c: char| c.is_alphanumeric() || c == '_')
                     };
+                    if word("where") {
+                        wheres.push(i);
+                    }
                     if from.is_none() && word("from") {
-                        out.push((m.start(), i));
+                        own.push((m.start(), i));
                         from = Some(i);
                     } else if from.is_some() && word("where") {
                         from = Some(i);
-                        out.push((i, usize::MAX));
+                        own.push((i, usize::MAX));
                     }
                 }
                 _ => {}
             }
             i += 1;
         }
-        match (from, out.last_mut()) {
+        match (from, own.last_mut()) {
             // No `from`: not a statement this can read, so all of it.
-            (None, _) => out.push((m.start(), i)),
+            (None, _) => own.push((m.start(), i)),
             (Some(_), Some(last)) if last.1 == usize::MAX => last.1 = i,
             _ => {}
         }
+        read.insert(m.start(), (i, wheres));
+        out.extend(own);
     }
-    out
+    // As disjoint spans in order, for a reader to find by binary search.
+    out.sort_unstable();
+    let mut merged: Vec<(usize, usize)> = vec![];
+    for (a, b) in out {
+        match merged.last_mut() {
+            Some(last) if a <= last.1 => last.1 = last.1.max(b),
+            _ => merged.push((a, b)),
+        }
+    }
+    merged
 }
 
 /// What an operand is, for the char-arithmetic rule. `Float` stands for
