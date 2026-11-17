@@ -3642,9 +3642,18 @@ fn named_values(
         if exponent(&l) || exponent(&r) {
             continue;
         }
+        // Digits that end a name are no time: `r21:1*"a"` and `x2:2+"a"`
+        // assign, and are 'type (#497), while `2024.01.01D12:00+"a"` is not.
+        let named = |end: usize| {
+            let start = comments[..end]
+                .trim_end_matches(|c: char| c.is_ascii_alphanumeric() || "_.".contains(c))
+                .len();
+            comments[start..].starts_with(|c: char| c.is_alphabetic() || c == '.')
+        };
         let temporal = l.as_str().starts_with(|c: char| c.is_ascii_digit())
             && comments[..l.start()].ends_with(':')
-            && comments[..l.start() - 1].ends_with(|c: char| c.is_ascii_digit());
+            && comments[..l.start() - 1].ends_with(|c: char| c.is_ascii_digit())
+            && !named(l.start() - 1);
         if code.get(op.range()) != Some(op.as_str())
             || negative
             || temporal
