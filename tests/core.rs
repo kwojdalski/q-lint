@@ -739,3 +739,16 @@ fn a_k_line_in_another_file_defines_its_name() {
     ws.add(&index("k)lim:100\n"));
     assert!(!codes(&lint_in(reader, "y.q", Profile::Style, &ws)).contains(&"QF018"));
 }
+
+#[test]
+fn a_namespace_another_file_writes_whole_writes_its_members() {
+    use q_lint_rs::{Workspace, index, lint_in};
+    // q 5: a.q then b.q's `.cfg,:(enlist`n)!enlist 1 2 3`, and `f[]` is 1
+    // (#746).
+    let a = ".cfg.n:5\nf:{.cfg.n 0}\n";
+    let mut ws = Workspace::default();
+    ws.add(&index(a));
+    assert!(codes(&lint_in(a, "a.q", Profile::General, &ws)).contains(&"QT022"));
+    ws.add(&index(".cfg,:(enlist`n)!enlist 1 2 3\n"));
+    assert!(!codes(&lint_in(a, "a.q", Profile::General, &ws)).contains(&"QT022"));
+}

@@ -939,6 +939,22 @@ fn global_writes(
             .or_default()
             .push(whole.end());
     }
+    // A member of a namespace assigned by a literal index: q 5
+    // `.cfg[`a]:1 2 3` defines `.cfg.a`.
+    for m in re!(r"(\.[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\[\s*((?:`[A-Za-z][A-Za-z0-9_]*)+)\s*\]\s*:")
+        .captures_iter(code)
+    {
+        let whole = m.get(0).unwrap();
+        if !boundary(code, whole.start()) || code[whole.end()..].starts_with(':') {
+            continue;
+        }
+        for name in m[2].split('`').skip(1) {
+            globals
+                .entry(format!("{}.{name}", &m[1]))
+                .or_default()
+                .push(whole.end());
+        }
+    }
     for (at, name) in multi_assignments(code) {
         if scope_at(scopes, at).is_none() {
             let close = matching(code, at, b'(', b')').unwrap_or(at);
@@ -1418,6 +1434,14 @@ pub(crate) fn unnamed_writes(code: &str, comments: &str, raw: &str) -> Vec<(usiz
             found.push((m.start(), context));
         }
     }
+    // An upsert into the root context adds or replaces globals by the
+    // dictionary's keys: q 5 `a:1; `. upsert enlist[`a]!enlist 1 2 3; a 0`
+    // is 1.
+    found.extend(
+        re!(r"`\.(?:\s+|\s*\)\s*)upsert\b|\bupsert\s*\[\s*`\.\s*;")
+            .find_iter(code)
+            .map(|m| (m.start(), false)),
+    );
     // A `set` into a name computed at run time - a name holding a symbol, a
     // lambda's parameter, a cast: q 5 `n:`a; a:1; n set 1 2 3; a 0` is 1.
     // Not into a literal symbol, which names what it writes, nor into a file
@@ -2925,10 +2949,23 @@ fn named_values(
             continue;
         }
         writes.entry(m.get(1).unwrap().as_str()).or_default().push(whole.start());
-        exact
-            .entry(key(m.get(1).unwrap().as_str(), whole.start()))
-            .or_default()
-            .push(whole.start());
+        // A namespace indexed by literal symbols writes just those members:
+        // `.cfg[`a]:v` is `.cfg.a`, and leaves `.cfg.b` alone.
+        let name = key(m.get(1).unwrap().as_str(), whole.start());
+        let members = re!(r"^\.[^\[]*\[\s*((?:`[A-Za-z][A-Za-z0-9_]*)+)\s*\]")
+            .captures(whole.as_str())
+            .filter(|_| name.starts_with('.'));
+        match members {
+            Some(c) => {
+                for member in c[1].split('`').skip(1) {
+                    exact
+                        .entry(format!("{name}.{member}"))
+                        .or_default()
+                        .push(whole.start());
+                }
+            }
+            None => exact.entry(name).or_default().push(whole.start()),
+        }
     }
     for m in re!(r"`(\.?[A-Za-z][A-Za-z0-9_.]*)(?:\s+|\s*\)\s*)set\b|\bset\s*\[\s*`(\.?[A-Za-z][A-Za-z0-9_.]*)")
         .captures_iter(code)
@@ -3012,9 +3049,21 @@ fn named_values(
     let mut handles: HashSet<&str> = HashSet::new();
     // A file that evaluates strings can define anything, so nothing is known
     // by name there; the literal-only checks below still hold.
+    // Nor is a member of a namespace or dictionary written as a whole:
+    // `.cfg:d`, `` `.cfg set d ``, `.cfg,:d`, `` `.cfg upsert d `` and
+    // `.cfg[`a]:v` all replace or add members (q 5: `.cfg.a:1`, then any of
+    // them giving `a` the value 1 2 3, and `.cfg.a 0` is 1).
+    let whole = |name: &str| {
+        name.match_indices('.')
+            .filter(|&(i, _)| i > 0)
+            .any(|(i, _)| exact.contains_key(&name[..i]) || upserted.contains(&name[..i]))
+    };
     for (name, at) in exact.iter().filter(|_| !dynamic) {
         let name = name.as_str();
         let [at] = at[..] else { continue };
+        if whole(name) {
+            continue;
+        }
         if scope_at(scopes, at).is_some() || !boundary(code, at) {
             continue;
         }

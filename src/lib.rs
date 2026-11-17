@@ -71,7 +71,15 @@ impl Workspace {
         name: &str,
         own: &std::collections::HashSet<String>,
     ) -> bool {
-        self.defined.get(name).copied().unwrap_or(0) > usize::from(own.contains(name))
+        // Or a namespace holding it, written as a whole: `.cfg:d` elsewhere
+        // may give `.cfg.n` any value.
+        std::iter::once(name)
+            .chain(
+                name.match_indices('.')
+                    .filter(|&(i, _)| i > 0)
+                    .map(|(i, _)| &name[..i]),
+            )
+            .any(|n| self.defined.get(n).copied().unwrap_or(0) > usize::from(own.contains(n)))
     }
 
     pub(crate) fn is_lambda(&self, name: &str) -> bool {
@@ -4119,6 +4127,27 @@ pub fn lint_selecting(
                 .entry(qualified(name.start(), name.as_str()))
                 .or_default() += 1;
         }
+        // A namespace or dictionary written as a whole, by any of those or
+        // indexed, `.cfg[`f]:v`, or appended, `` `.cfg upsert d ``, may
+        // replace each member: q 5 `.ns.f:{x}; .ns:(``f)!(::;{x+y});
+        // .ns.f[1;2]` is 3 (#746, #747).
+        let mut written: std::collections::HashSet<String> = assigned.keys().cloned().collect();
+        for m in re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)\s*\[[^\]]*\]\s*[-+*%&|^=<>,#~!?@$]?:|`(\.?[A-Za-z][A-Za-z0-9_.]*)(?:\s+|\s*\)\s*)upsert\b|\bupsert\s*\[\s*`(\.?[A-Za-z][A-Za-z0-9_.]*)")
+            .captures_iter(code)
+        {
+            let name = m.get(1).or(m.get(2)).or(m.get(3)).unwrap();
+            written.insert(qualified(name.start(), name.as_str()));
+        }
+        redefined.extend(
+            ranks
+                .keys()
+                .filter(|key| {
+                    key.match_indices('.')
+                        .filter(|&(i, _)| i > 0)
+                        .any(|(i, _)| written.contains(&key[..i]))
+                })
+                .cloned(),
+        );
         redefined.extend(
             assigned
                 .into_iter()

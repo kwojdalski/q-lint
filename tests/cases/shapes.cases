@@ -945,3 +945,50 @@ r:(a 0;f[1;2];select d from t)
 === clean profile: general | QF015: and may define a name the file's q never assigns (#751; q 5: 1)
 k)true:1b
 r:$[true;1;0]
+
+=== clean profile: general | QT022, QA012 and QF020: a namespace written as a whole writes its members (#746; q 5: (1;3;+(,`d)!,3 4))
+.cfg.a:1
+.cfg.f:{x}
+.cfg.t:([]c:1 2)
+`.cfg set (``a`f`t)!(::;1 2 3;{x+y};([]c:1 2;d:3 4))
+r:.cfg.a 0
+s:.cfg.f[1;2]
+u:select d from .cfg.t
+
+=== clean profile: general | QT022 and QA012: assigned, appended or upserted as a whole too (#746; q 5: 1, 1, 3)
+.cfg.n:5
+.cfg:`n`m!(1 2 3;4)
+r:.cfg.n 0
+.ns.a:1
+.ns,:enlist[`a]!enlist 1 2 3
+s:.ns.a 0
+.up.f:{x}
+`.up upsert enlist[`f]!enlist {x+y}
+u:.up.f[1;2]
+
+=== clean profile: general | QT022 and QF005: and an upsert into the root context writes any global (#746; q 5: 1)
+a:1
+`. upsert enlist[`a]!enlist 1 2 3
+r:a 0
+f:{b:1;{b}[]}
+
+=== clean profile: general | QT022, QA012, QF020 and QT026: a namespace member assigned by index (#747; q 5: (1;3;+(,`d)!,3 4), and the join runs)
+.cfg.a:1
+.cfg.f:{x}
+.cfg.t:([]c:1 2)
+.cfg[`a]:1 2 3
+.cfg[`f]:{x+y}
+.cfg[`t]:([]c:1 2;d:3 4)
+r:.cfg.a 0
+s:.cfg.f[1;2]
+u:select d from .cfg.t
+.n.s:([]k:`a`b;w:3 4)
+.n[`s]:1!.n.s
+t:([]k:`a`b;v:1 2)
+v:t lj .n.s
+
+=== QT022 profile: general | while a member written beside it leaves it known (#746)
+.cfg.a:1
+.cfg.b:2 3
+.cfg[`b]:4 5
+r:.cfg.a 0
