@@ -241,3 +241,8 @@ a:a++
 b:a**
 c:x>>2
 d:x<-1
+
+=== clean profile: general | `q)\\` ends the script as `\\` does (#584; q 5 prints 0 and stops)
+show 0
+q)\\
+x:1==2

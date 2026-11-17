@@ -2537,11 +2537,14 @@ fn views(source: &str) -> Views {
                 }
             }
         } else if string.is_none()
-            && (matches!(stripped, "/" | "\\" | "\\\\") || re!(r"^\\\\[ \t]").is_match(stripped))
+            && (matches!(stripped, "/" | "\\" | "\\\\")
+                || re!(r"^(?:q\))?\\\\(?:[ \t]|$)").is_match(stripped))
         {
             // `\\` exits q, so a script ends there as it does at a lone `\`
             // - whatever follows it past a blank: q 5 stops at `\\ / bye`
-            // and `\\ 3` (#322), and runs on past `\ / end`.
+            // and `\\ 3` (#322), and runs on past `\ / end`. With a `q)`
+            // prefix too: q 5 stops at `q)\\` (#584), though `q)\` and `q)/`
+            // end nothing.
             block = usize::from(stripped == "/");
             ended = stripped != "/";
             if ended {
