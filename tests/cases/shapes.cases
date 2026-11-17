@@ -1141,3 +1141,19 @@ d:`a`b!1 2
 d[`c]:3
 r:v 0
 s:d `c
+
+=== QT022 profile: general | an atom indexed by @ or . with brackets, iterated, or with nothing before a symbol or parenthesis (q 5: each 'type; #608)
+a:2.5
+b:@[a;0]
+c:.[a;enlist 0]
+d:a'[0 1]
+e:a each 0 1
+f:a`b
+g:a(0)
+
+=== clean profile: general | a protected call catches the error, and a vector indexes
+a:2.5
+b:@[a;0;{x}]
+v:1 2 3
+c:@[v;0]
+d:v each 0 1

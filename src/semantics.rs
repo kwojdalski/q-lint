@@ -3446,8 +3446,11 @@ fn named_values(
     // only before something that is an argument - a literal, a bracket, a
     // name that is not an infix builtin (`f mod 2` is not indexing `f`) -
     // and not before a negative literal, which is QB010's.
+    // Iterated too, `a'[0 1]` and `a each 0 1`, and with nothing between the
+    // name and a symbol or parenthesis, `` a`b `` and `a(0)` (q 5: 'type).
+    // `@[a;0]` and `.[a;enlist 0]` are read after this loop (#608).
     let indexed = re!(
-        r#"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)(?:\[|[ \t]*@[ \t]*[0-9"`(A-Za-z]|[ \t]+\.[ \t]+[0-9"`(A-Za-z]|[ \t]+([0-9"`(]|\.?[A-Za-z][A-Za-z0-9_]*))"#
+        r#"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)(?:\[|'[ \t]*\[|[`(]|[ \t]*@[ \t]*[0-9"`(A-Za-z]|[ \t]+\.[ \t]+[0-9"`(A-Za-z]|[ \t]+([0-9"`(]|\.?[A-Za-z][A-Za-z0-9_]*))"#
     );
     // From each name on, not match after match: in `show a 0` the match
     // `show a` would hide `a 0` (q 5: 'type) (#471).
@@ -3464,7 +3467,8 @@ fn named_values(
         // Nor before a qSQL word, which ends the column list or the clause:
         // `update time:t0 from t` fills the column from the atom (q 5, #114).
         if m.get(2).is_some_and(|next| {
-            INFIX.contains(&next.as_str()) || matches!(next.as_str(), "by" | "from" | "where")
+            (INFIX.contains(&next.as_str()) && next.as_str() != "each")
+                || matches!(next.as_str(), "by" | "from" | "where")
         }) {
             continue;
         }
@@ -3501,6 +3505,34 @@ fn named_values(
                     ),
                 ));
             }
+            continue;
+        }
+        out.push(Finding::at(
+            path,
+            raw,
+            name.start(),
+            "QT022",
+            format!(
+                "`{}` is an atom here, and an atom has no items to index: 'type",
+                name.as_str()
+            ),
+        ));
+    }
+    for m in re!(r"[@.][ \t]*\[[ \t]*(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)[ \t]*;")
+        .captures_iter(code)
+    {
+        let name = m.get(1).unwrap();
+        let open = m.get(0).unwrap().start() + code[m.get(0).unwrap().start()..].find('[').unwrap();
+        // Two slots: a third is a protected call's handler, which catches
+        // the error, and four amend.
+        let Some(close) = matching(code, open, b'[', b']') else {
+            continue;
+        };
+        if crate::slots(&code[open + 1..close - 1]).len() != 2
+            || !boundary(code, m.get(0).unwrap().start())
+            || visible(name.as_str(), name.start()) != Some(&Held::Atom)
+            || handles.contains(key(name.as_str(), name.start()).as_str())
+        {
             continue;
         }
         out.push(Finding::at(
