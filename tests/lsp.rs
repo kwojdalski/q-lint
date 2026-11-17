@@ -360,7 +360,7 @@ fn opening_a_document_publishes_its_findings() {
     assert_eq!(diagnostics.len(), 1, "one finding: {diagnostics:?}");
     assert_eq!(diagnostics[0]["code"], "QF001");
     assert_eq!(diagnostics[0]["source"], "q-lint");
-    assert_eq!(diagnostics[0]["severity"], 2);
+    assert_eq!(diagnostics[0]["severity"], 1);
     // Zero-based, unlike the finding's own 1-based line.
     assert_eq!(diagnostics[0]["range"]["start"]["line"], 0);
     assert_eq!(server.shutdown_and_exit(), 0);

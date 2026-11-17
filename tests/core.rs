@@ -1005,3 +1005,18 @@ fn a_builtin_assigned_in_a_namespace_is_refused_not_shadowed() {
     assert!(f[0].detail.contains("'assign"), "{}", f[0].detail);
     assert!(!f[0].why.contains("shadow"), "{}", f[0].why);
 }
+#[test]
+fn a_finding_is_an_error_exactly_when_q_refuses_the_code() {
+    // The scope says whether q refuses the construct, so it decides the
+    // severity: a hand-kept list of codes drifted from it (#512, #513).
+    use q_lint_rs::{Finding, RULES};
+    for rule in RULES.iter().filter(|r| r.scope != "qls") {
+        let f = Finding::new("t.q", 1, &rule.code, String::new());
+        let expected = if rule.scope == "builtin" { "error" } else { "warning" };
+        assert_eq!(f.severity, expected, "{} ({})", rule.code, rule.scope);
+    }
+    let f = lint("a:\"abc\" like \"a*b*\"", "t.q", Profile::General);
+    assert_eq!((f[0].code.as_str(), f[0].severity.as_str()), ("QB002", "error"));
+    let f = lint("a:`int$\"12\"", "t.q", Profile::Style);
+    assert_eq!((f[0].code.as_str(), f[0].severity.as_str()), ("QT004", "warning"));
+}
