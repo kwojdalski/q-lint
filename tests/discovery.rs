@@ -1164,7 +1164,8 @@ fn show_settings_describes_the_stdin_filename_and_refuses_fix() {
     );
     let text = String::from_utf8(out.stdout).unwrap();
     assert_eq!(out.status.code(), Some(0), "{text}");
-    assert!(text.contains("tests/x.q"), "{text}");
+    // Windows prints the path with its own separator.
+    assert!(text.replace('\\', "/").contains("tests/x.q"), "{text}");
     assert!(!text.contains("QE004"), "{text}");
     for flag in ["--fix", "--diff"] {
         let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
