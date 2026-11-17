@@ -1554,8 +1554,16 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 false,
             )
         }
+        // With the blanks after it: q 5 skips an indented first line, so
+        // `<BOM> r:1` would load leaving `r` undefined (#663).
         "QE005" if start == 0 && source.starts_with('\u{feff}') => {
-            ("\u{feff}", "".into(), "Remove byte-order mark".into(), true)
+            let blanks = source[3..].len() - source[3..].trim_start_matches([' ', '\t']).len();
+            (
+                &source[..3 + blanks],
+                "".into(),
+                "Remove byte-order mark".into(),
+                true,
+            )
         }
         // `f x` becomes `f[x]`. The name is what the finding points at;
         // the argument is everything the application swallows, which the
