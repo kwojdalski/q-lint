@@ -844,10 +844,19 @@ fn many_functions_lint_in_bounded_time() {
         let source: String = (0..n)
             .map(|i| format!("f{i}:{{[x;y] g{i}:x+y; f{}[x;g{i}]}};\n", i.max(1) - 1))
             .collect();
-        let started = std::time::Instant::now();
-        lint(&source, "t.q", Profile::Style);
-        started.elapsed()
+        // The best of three, as in scope_analysis_does_not_scale_quadratically:
+        // one preempted run on a shared runner (or under Rosetta, as the
+        // x86_64-apple-darwin release leg is) is enough to break the ratio.
+        (0..3)
+            .map(|_| {
+                let started = std::time::Instant::now();
+                std::hint::black_box(lint(&source, "t.q", Profile::Style));
+                started.elapsed()
+            })
+            .min()
+            .unwrap()
     };
+    time(2000); // warm the allocator and the regex caches
     let (small, large) = (time(2000), time(16000));
     assert!(
         large < small * 12,
@@ -859,15 +868,21 @@ fn many_functions_lint_in_bounded_time() {
 /// time quadratic in its conditions (#707).
 #[test]
 fn a_long_where_phrase_lints_in_bounded_time() {
-    // The ratio of two sizes, as for many_functions: linear is 8 times the
-    // time for 8 times the conditions.
+    // The ratio of two sizes, best of three, as for many_functions: linear is
+    // 8 times the time for 8 times the conditions.
     let time = |n: usize| {
         let conditions: Vec<String> = (0..n).map(|i| format!("c{i}=x{i}")).collect();
         let source = format!("r:select from t where {}\n", conditions.join(","));
-        let started = std::time::Instant::now();
-        lint(&source, "t.q", Profile::Style);
-        started.elapsed()
+        (0..3)
+            .map(|_| {
+                let started = std::time::Instant::now();
+                std::hint::black_box(lint(&source, "t.q", Profile::Style));
+                started.elapsed()
+            })
+            .min()
+            .unwrap()
     };
+    time(4000); // warm the allocator and the regex caches
     let (small, large) = (time(4000), time(32000));
     assert!(
         large < small * 12,
