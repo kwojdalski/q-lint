@@ -4441,10 +4441,18 @@ pub fn lint_selecting(
     // own definition meets that one.
     let own = semantics::index(code, source).defined;
     let foreign = |at: usize, key: &str| ws.defined_elsewhere(key, &own) && in_lambda(at);
-    for m in re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)\s*\[").captures_iter(code) {
+    // Between the name and its bracket, the statement's blanks and nothing
+    // else: a column-0 `[1;2;3]` under `r:f` is a statement of its own
+    // (#729), and in `code` a string is blanks too - `f "x" [1]` indexes the
+    // string - so the gap is read in `comments`, where a string still shows.
+    let gap = |m: &regex::Captures| v.comments[m.get(1).unwrap().end()..m.get(0).unwrap().end() - 1]
+        .trim()
+        .is_empty();
+    for m in re!(concat!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)", blank!(), r"*\[")).captures_iter(code) {
         let (whole, name) = (m.get(0).unwrap(), m.get(1).unwrap().as_str());
         let key = qualified(whole.start(), name);
         if !boundary(code, whole.start())
+            || !gap(&m)
             || redefined.contains(&key)
             || overwritten(&key)
             || foreign(whole.start(), &key)
@@ -4481,11 +4489,13 @@ pub fn lint_selecting(
     // more that is a projection, not a call, and it goes on to produce wrong
     // data downstream. Verified: `f:{x+y}; f(1;2)` is `{x+y}[1 2]`. A rank-1
     // lambda given a list is an ordinary call and stays quiet.
-    for m in re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)\s*\(").captures_iter(code) {
+    for m in re!(concat!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)", blank!(), r"*\(")).captures_iter(code) {
         let whole = m.get(0).unwrap();
         let name = m.get(1).unwrap().as_str();
         // A name defined twice has whichever rank ran last, as QA012 knows.
+        // A column-0 `(1;2)` under `r:f` is its own statement (#724).
         if !boundary(code, whole.start())
+            || !gap(&m)
             || redefined.contains(&qualified(whole.start(), name))
             || foreign(whole.start(), &qualified(whole.start(), name))
             || ranks

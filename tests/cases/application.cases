@@ -120,6 +120,18 @@ r:f[1;2]
 h:{x}
 r:h(1;2)
 
+=== clean | a column-0 parenthesised line is a statement of its own, not the call (q 5 runs all four) (#724)
+f:{[a;b] a+b}
+r:f
+(1;2)
+s:f "x"
+(3;4)
+
+=== QA008 | but an indented one continues the statement
+f:{[a;b] a+b}
+r:f
+  (1;2)
+
 === clean | a name the file does not define is not judged
 r:k(1;2)
 
@@ -153,6 +165,11 @@ r:.[{x+y};1 2]
 
 === clean | enlist makes the list
 r:.[{x};enlist 1]
+
+=== clean profile: general | a column-0 bracket block is a statement of its own, not the arguments (q 5: r is f) (#729)
+f:{[a] a}
+r:f
+[1;2;3]
 
 === QA012 | more arguments than the named lambda takes
 f:{[a] a+1}
