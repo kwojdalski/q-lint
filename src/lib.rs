@@ -4169,9 +4169,15 @@ pub fn lint_selecting(
     // q 5, where `.z.m` alone takes an assignment: `.z.m:{x}` succeeds.
     // The longer names are the callbacks (`.z.pg`, `.z.ts`, `.z.exit`), and
     // assigning those is how a process installs a handler.
-    for m in re!(
-        r"(?:^|[^A-Za-z0-9_.`])(\.z\.[A-Za-z])(?:\[[^\]]*\])?\s*[-+*%,&|^#_]?::?|`(\.z\.[A-Za-z])\s+set\b"
-    )
+    // Between the name and the colon, the statement's blanks: `start:.z.p`
+    // and then a column-0 `::` are two statements (#726).
+    for m in re!(concat!(
+        r"(?:^|[^A-Za-z0-9_.`])(\.z\.[A-Za-z])(?:\[[^\]]*\])?",
+        blank!(),
+        r"*[-+*%,&|^#_]?::?|`(\.z\.[A-Za-z])",
+        blank!(),
+        r"+set\b"
+    ))
     .captures_iter(code)
     {
         let name = m.get(1).or_else(|| m.get(2)).unwrap();

@@ -812,6 +812,15 @@ f:{.z.p+:1}
 === clean | reading one is what it is for
 t:.z.p
 
+=== clean profile: general | a column-0 :: under a read is a statement of its own (q 5: prints 1b) (#726)
+start:.z.p
+::
+show start<.z.p
+
+=== QF019 | but an indented one continues the statement
+.z.p
+  ::1
+
 === QF020 | a column the table literal does not have, and nothing defines
 t:([]a:1 2)
 r:select b from t
