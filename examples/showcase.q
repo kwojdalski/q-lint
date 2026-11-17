@@ -66,10 +66,11 @@ apply:{[scale] f:{[v] v*scale}; f each 1 2 3}
 / expect-next: QF007
 broken:{[tables[]] x+1}
 
-/ QF007: two names without a separator is one bracket expression, not two
-/ parameters. The lambda is rank 1, taking x.
+/ QF007: a slot that starts with a literal is no name or pattern either.
+/ q 5 refuses `{[1 a] ...}` where it is defined: 'nyi. (`{[a b] ...}` is
+/ a q 5 pattern, one parameter that binds no name.)
 / expect-next: QF007
-pair:{[a b] a+b}
+pair:{[1 a] a+1}
 
 / QF008: q gives this rank 2 and then binds neither; applying it projects.
 / expect-next: QF008
