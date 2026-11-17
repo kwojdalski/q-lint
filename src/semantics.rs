@@ -3846,10 +3846,11 @@ fn named_values(
         );
         at = l.end();
         // The operator has to be code - not inside a string or a comment -
-        // and the right operand the whole of one.
+        // and the right operand the whole of one. Only a digit makes `-`
+        // part of a literal: q 5 parses `c -n` as `(-;`c;`n)` (#485).
         let negative = op.as_str() == "-"
             && comments[..op.start()].ends_with(char::is_whitespace)
-            && !comments[op.end()..].starts_with(char::is_whitespace);
+            && re!(r"^\.?\d").is_match(&comments[op.end()..]);
         // Nor the digits after a temporal literal's `:` - the `00` of
         // `12:00` - which q 5 adds to a char: `12:00+"a"` is 13:37 (#468).
         // A real's `e` before a signed digit is a float's exponent: `1e+5`
