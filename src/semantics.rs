@@ -3653,7 +3653,7 @@ fn named_values(
     // those operand kinds. An older note in this repository had `"a"*3` as
     // 291, on a version it did not record.
     // Booleans and bytes before plain integers, or `1b` matches as `1`.
-    let operand = r#""(?:\\.|[^"\\])*"|[01]+b|0x[0-9a-fA-F]+|-?(?:\d+(?:\.\d*)?|\.\d+)e\b|-?\d+[hij]?(?:[ \t]+-?\d+[hij]?)*|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*"#;
+    let operand = r#""(?:\\.|[^"\\])*"|[01]+b|0x[0-9a-fA-F]+|-?(?:\d+(?:\.\d*)?|\.\d+)e\b|-?0[NW][hij]?\b|-?\d+[hij]?(?:[ \t]+-?\d+[hij]?)*|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*"#;
     let infix = regex::Regex::new(&format!(
         r"(?P<l>{operand})\s*(?P<op>[-+*])\s*(?P<r>{operand})"
     ))
@@ -4138,7 +4138,9 @@ fn arithmetic_kind(text: &str) -> Option<Arithmetic> {
     let text = text.trim();
     if re!(r#"^"(?:\\.|[^"\\])*"$"#).is_match(text) {
         Some(Arithmetic::Char)
-    } else if re!(r"^(?:-?\d+[hij]?(?:\s+-?\d+[hij]?)*|[01]+b|0x[0-9a-fA-F]+)$").is_match(text) {
+    } else if re!(r"^(?:-?\d+[hij]?(?:\s+-?\d+[hij]?)*|-?0[NW][hij]?|[01]+b|0x[0-9a-fA-F]+)$").is_match(text) {
+        // A long null or infinity is a long: q 5 `"a"+0N` and `"a"*0W` are
+        // 'type, where `"a"+0n` is 0n (#609).
         Some(Arithmetic::Integral)
     } else if re!(r"^(?:-?(?:\d+(?:\.\d*)?|\.\d+)\s+)*-?(?:\d+(?:\.\d*)?|\.\d+)e$").is_match(text) {
         // A real refuses a char as an integer does, under all three: q 5

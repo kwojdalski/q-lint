@@ -1157,3 +1157,13 @@ b:@[a;0;{x}]
 v:1 2 3
 c:@[v;0]
 d:v each 0 1
+
+=== QT023 profile: general | a char beside an integer null or infinity (q 5: each 'type; #609)
+a:"a"+0N
+b:"a"*0W
+c:"a"+0Ni
+d:"a"-0Wh
+
+=== clean profile: general | a float null or infinity takes a char (q 5: 0n, 0w)
+a:"a"+0n
+b:"a"*0w
