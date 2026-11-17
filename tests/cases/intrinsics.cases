@@ -496,6 +496,11 @@ r:where 1 2i
 === QT009 | a short one does not (q 5: where 1 2h is 'type)
 r:where 1 2h
 
+=== QT009 profile: general | nor a date, time or timespan vector (q 5: each is 'type) (#736)
+r1:where 2000.01.01 2000.01.02
+r2:where 12:00 13:00
+r3:where 0D01 0D02
+
 === QT009 | nor does an atom (q 5: where 2 is 'type)
 r:where 2
 
