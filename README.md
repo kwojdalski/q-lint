@@ -24,6 +24,12 @@ cargo build --release
 ./target/release/qlinter --explain QF005
 ```
 
+A finding prints as `path:line:column`. The column, and `column` and
+`end_column` in the JSON, are 1-based and count UTF-16 code units, the unit
+the language server protocol and VS Code use. So after a character outside
+the Basic Multilingual Plane, such as an emoji in a string, the column is one
+more than a count of characters (and less than a count of bytes).
+
 The executable is independently deployable once built. Compilation uses the
 checked-in Cargo lockfile; this version was tested with Rust 1.98.1 on macOS
 ARM64.
@@ -248,6 +254,12 @@ user-level file). So `qlinter .. --exclude src/`, run from `proj/tests`,
 names `proj/tests/src`; a leading `../` climbs from the root, as Ruff resolves
 it, and `qlinter .. --exclude ../src` is the one that names `proj/src`.
 
+Under `uqf`, QP002, QP003 and QP005 pass over a file in a `tests`
+directory below that root - the configuration's directory, or the current
+one without a configuration - since a test may build a datetime or read the
+local clock on purpose. A `tests` above the root exempts nothing, and
+`--select` naming one of them reports it regardless.
+
 In `pyproject.toml` the same keys go under `[tool.qlinter]`, and
 `[tool.qlinter.lint]`. Also: `extend-exclude`, and `extend = "../qlinter.toml"`
 to inherit another file and override it - a key the extending file sets
@@ -408,6 +420,10 @@ when the configuration selects it and they do too. `lint.run` is `onType` or
 only the fixes `--fix` applies; `format.enable` and `semanticTokens.enable`
 set to `false` leave the capability unannounced. `workspaceIndex.exclude`
 holds globs relative to each workspace folder that the index does not read.
+The index stops after 20,000 `.q` files or 500,000 directory entries of any
+kind, whichever comes first, so a folder opened at `/` cannot stall the
+server; past that, a name defined only in a file it did not reach is
+reported as undefined in the editor where `qlinter .` would not.
 A value the server cannot read is reported with `window/showMessage` and its
 default used.
 

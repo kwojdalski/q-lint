@@ -7238,15 +7238,11 @@ pub fn lint_selecting(
                 }
             }
         }
-        // A test may build a legacy datetime, read the local clock or mix
-        // infix arithmetic on purpose, so QP002, QP003 and QP005 pass over a
-        // file under a `tests` directory. That is read from its directories,
-        // not its spelling: the CLI and the editor pass an absolute path
-        // (#416).
-        let in_tests = std::path::Path::new(path)
-            .parent()
-            .is_some_and(|dir| dir.components().any(|c| c.as_os_str() == "tests"));
-        if uqf && !in_tests {
+        // QP002, QP003 and QP005 pass over a test file, but which file is a
+        // test is the configuration's to say - a `tests` directory below its
+        // root - so that exemption is applied where the root is known, in
+        // `Policy::lint` (#800).
+        if uqf {
             // Every pattern but the first has to match code: a help table
             // that spells `".z.Z"` or `"0Nz"` in a string uses neither. The
             // first is the one pattern whose string is the point - `"z"$`.

@@ -901,22 +901,6 @@ fn a_typed_parameter_binds_its_name() {
 }
 
 #[test]
-fn the_tests_exemption_from_qp002_reads_the_directories_not_the_spelling() {
-    // The CLI walk and the editor pass an absolute path; only a relative
-    // `--stdin-filename` was ever exempted (#416).
-    let qp002 = |path: &str| {
-        lint("x:.z.z\n", path, Profile::Uqf)
-            .iter()
-            .any(|f| f.code == "QP002")
-    };
-    assert!(!qp002("tests/a.q"));
-    assert!(!qp002("/work/proj/tests/a.q"));
-    assert!(!qp002("/work/proj/tests/q/a.q"));
-    assert!(qp002("/work/proj/src/a.q"));
-    assert!(qp002("/work/proj/src/tests.q"));
-}
-
-#[test]
 fn a_k_line_in_another_file_defines_its_name() {
     use q_lint_rs::{Workspace, index, lint_in};
     // q 5: with x.q's `k)lim:100` loaded, `r:lim` is 100 (#751).
@@ -1059,4 +1043,13 @@ fn a_finding_is_an_error_exactly_when_q_refuses_the_code() {
         (f[0].code.as_str(), f[0].severity.as_str()),
         ("QT004", "warning")
     );
+}
+
+#[test]
+fn a_column_counts_utf16_code_units_as_the_readme_says() {
+    // `==` is the 8th character and the 11th byte; the emoji before it is
+    // two UTF-16 units, so the documented column is 9 (#804).
+    let found = lint("s:\"\u{1F600}\";a==b\n", "t.q", Profile::General);
+    let qe004 = found.iter().find(|f| f.code == "QE004").expect("QE004");
+    assert_eq!(qe004.column, Some(9));
 }
