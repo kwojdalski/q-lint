@@ -472,6 +472,28 @@ fn a_name_another_file_also_assigns_is_not_tracked_in_a_lambda() {
 }
 
 #[test]
+fn a_call_to_another_files_lambda_may_reassign_a_top_level_name() {
+    use q_lint_rs::{Workspace, index, lint, lint_in};
+    // q 5, lib.q then use.q loaded: `r` is 2 4 6 and the insert appends,
+    // since lib.q's `init` replaced `b` and `t` first (#523). Without the
+    // call between, the read meets use.q's own `b`, and q 5 is 'length.
+    let lib = "init:{b::1 2 3; t::([]a:1 2;b:3 4;c:5 6)}\n";
+    let found = |src: &str| {
+        let mut ws = Workspace::default();
+        ws.add(&index(lib));
+        ws.add(&index(src));
+        codes(&lint_in(src, "use.q", Profile::General, &ws))
+            .into_iter()
+            .filter(|c| ["QT006", "QT027", "QT022"].contains(c))
+            .count()
+    };
+    let calls = "a:1 2 3\nb:1 2\nt:([]a:1 2;b:3 4)\ninit[]\nr:a+b\n`t insert (7;8;9)\n";
+    assert_eq!(codes(&lint(calls, "use.q", Profile::General)).len(), 2);
+    assert_eq!(found(calls), 0);
+    assert_eq!(found("a:1 2 3\nb:1 2\nr:a+b\ninit[]\n"), 1);
+}
+
+#[test]
 fn an_enclosing_local_is_not_excused_by_another_files_global() {
     use q_lint_rs::{Workspace, index, lint_in};
     // The inner lambda reads its enclosing lambda's parameter, which q does

@@ -2827,7 +2827,9 @@ pub fn check(
         comments,
         (&scopes, &namespaces, &exact),
         dynamic,
-        &|name: &str| elsewhere(name),
+        (&|name: &str| elsewhere(name), &|name: &str| {
+            elsewhere(name) && ws.is_lambda(name)
+        }),
     ));
     out
 }
@@ -3014,6 +3016,8 @@ fn local_atom(scopes: &[Scope], code: &str, comments: &str, name: &str, at: usiz
 /// The rules that need to know what a name holds: indexing an atom, two
 /// vectors of different lengths paired by an operator, and a select of a
 /// column the table does not have. Each one only for a name `held` knows.
+/// A question asked of a name.
+type Test<'a> = &'a dyn Fn(&str) -> bool;
 fn named_values(
     path: &str,
     code: &str,
@@ -3023,7 +3027,9 @@ fn named_values(
     // file's global definitions keyed as q resolves them.
     (scopes, namespaces, globals): (&[Scope], &[(usize, String)], &Writes),
     dynamic: bool,
-    elsewhere: &dyn Fn(&str) -> bool,
+    // Whether another file assigns the name, and whether it assigns it a
+    // lambda.
+    (elsewhere, foreign_lambda): (Test, Test),
 ) -> Vec<Finding> {
     let mut out = vec![];
     // A name as q resolves it at `at`, under the `\d` in force there: after
@@ -3245,9 +3251,20 @@ fn named_values(
     // assignment, which load order decides and the text cannot say; but a
     // top-level read after this file's own assignment meets that one,
     // whatever was loaded before (q 5: `g:{x}` loaded, then `g:2.5` + `g 0`,
-    // is 'type).
+    // is 'type) - unless the file calls, in between, a lambda another file
+    // defines, which may assign the name: q 5 runs `b:1 2`, `init[]`, `a+b`
+    // to 2 4 6 once lib.q's `init:{b::1 2 3}` is loaded (#523).
     // Inside a qSQL phrase a column of the table wins over the global of the
     // same name, and the text cannot say which columns the table has (#465).
+    let foreign_calls: Vec<usize> = re!(r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*")
+        .find_iter(code)
+        .filter(|m| boundary(code, m.start()) && foreign_lambda(&key(m.as_str(), m.start())))
+        .map(|m| m.start())
+        .collect();
+    let called_between = |from: usize, to: usize| {
+        let i = foreign_calls.partition_point(|&c| c < from);
+        foreign_calls.get(i).is_some_and(|&c| c < to)
+    };
     let phrases = qsql_phrases(code);
     let visible = |name: &str, at: usize| -> Option<&Held> {
         if phrases.iter().any(|&(a, b)| a <= at && at < b) {
@@ -3258,6 +3275,7 @@ fn named_values(
             Some(s) if scopes[s].locals.contains(name) => None,
             Some(_) if elsewhere(&key(name, at)) => None,
             None if at < *assigned => None,
+            None if elsewhere(&key(name, at)) && called_between(*assigned, at) => None,
             _ => Some(value),
         }
     };
