@@ -161,7 +161,8 @@ A file depends on another when:
   the source does not name, so it is tried against the current directory,
   then the loading file's directory and each directory above it. A script loaded under `\d .a`
   runs in `.a`, so what it defines at its root is `.a.name` as well as
-  `name`, and so is what the scripts it loads at its root define.
+  `name`, and so is what the scripts it loads at its root define; a name it
+  reads there is looked up in `.a` as well.
 
 A name several files define gives an edge to each of them - which one wins is
 load order, and load order is not in the source. With `--detail` each file's

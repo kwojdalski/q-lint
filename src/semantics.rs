@@ -1081,6 +1081,18 @@ pub fn index(code: &str, raw: &str) -> crate::FileIndex {
 /// files.
 pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
     let (scopes, namespaces) = scopes(code, raw);
+    // Where the file first switches context. Before it the file runs in the
+    // context it is loaded in, which the file does not say.
+    let first_switch = {
+        let mut offset = 0;
+        code.split_inclusive('\n')
+            .find_map(|line| {
+                let at = offset;
+                offset += line.len();
+                opens(line, &raw[at..at + line.len()]).map(|_| at)
+            })
+            .unwrap_or(code.len())
+    };
     let ns_at = |at: usize| {
         namespaces[namespaces
             .partition_point(|(p, _)| *p <= at)
@@ -1119,6 +1131,7 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
             relative.insert(crate::Relative {
                 name: name.into(),
                 resolved: key.clone(),
+                implicit: at < first_switch,
             });
         }
         names.insert(key);

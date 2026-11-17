@@ -126,11 +126,14 @@ pub struct References {
 }
 
 /// A global read by a name without a leading dot: `name` as written, and
-/// `resolved` as it appears in `References::names`.
+/// `resolved` as it appears in `References::names`. `implicit` when it is
+/// read before the file's first `\d`, where the context is whichever one
+/// the file is loaded in.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct Relative {
     pub name: String,
     pub resolved: String,
+    pub implicit: bool,
 }
 
 /// A place reading cannot see through: `kind` is `value` (of a string),

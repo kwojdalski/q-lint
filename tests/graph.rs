@@ -730,3 +730,21 @@ fn a_bare_name_inside_a_context_reaches_a_definition_in_dot_q() {
     assert_eq!(deps(&g, "use.q"), ["lib.q"]);
     assert!(deps(&g, "dotted.q").is_empty());
 }
+
+#[test]
+fn a_script_loaded_under_a_context_reads_in_it() {
+    // q 5: main.q loads d.q, then b.q under `\d .a`; b.q's `g:{helper[]}`
+    // reads `.a.helper`, which d.q defines, and `.a.g[]` is 7 (#531). After
+    // b.q's own `\d .` a read is the root's again.
+    let g = graph(
+        &[
+            ("d.q", "\\d .a\nhelper:{7}\n\\d .\n"),
+            ("b.q", "g:{helper[]}\n"),
+            ("c.q", "\\d .\ng:{helper[]}\n"),
+            ("main.q", "\\l d.q\n\\d .a\n\\l b.q\n\\l c.q\n\\d .\n"),
+        ],
+        false,
+    );
+    assert_eq!(deps(&g, "b.q"), ["d.q"]);
+    assert!(deps(&g, "c.q").is_empty());
+}

@@ -122,15 +122,28 @@ pub fn build(files: &[(PathBuf, String)], symbols: bool, cwd: &Path) -> BTreeMap
         // `.q`, which q searches from every context: after
         // `.q.answer:{42}`, q 5's `answer[]` is 42 at the root (#358) and
         // in a `\d .a` lambda (#530).
-        let in_q: HashMap<&str, String> = reads[i]
+        let mut in_q: HashMap<String, String> = reads[i]
             .relative
             .iter()
             .filter(|r| !r.name.contains('.'))
-            .map(|r| (r.resolved.as_str(), format!(".q.{}", r.name)))
+            .map(|r| (r.resolved.clone(), format!(".q.{}", r.name)))
             .collect();
-        for name in &reads[i].names {
+        // Read before the file's own first `\d`, a bare name is resolved in
+        // each context the file is loaded in as well: with b.q loaded under
+        // `\d .a`, its `g:{helper[]}` reads `.a.helper` (q 5, #531).
+        let mut names = reads[i].names.clone();
+        for namespace in &contexts[i] {
+            for r in reads[i].relative.iter().filter(|r| r.implicit) {
+                let name = format!("{namespace}.{}", r.name);
+                if !r.name.contains('.') {
+                    in_q.insert(name.clone(), format!(".q.{}", r.name));
+                }
+                names.push(name);
+            }
+        }
+        for name in &names {
             let Some((name, defs)) = resolve(name, &definers).or_else(|| {
-                in_q.get(name.as_str())
+                in_q.get(name)
                     .and_then(|q| definers.get_key_value(q))
                     .map(|(k, d)| (k.as_str(), d.as_slice()))
             }) else {
