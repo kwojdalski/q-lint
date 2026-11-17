@@ -2055,22 +2055,32 @@ pub fn check(
                     // `c:f$[0<count c:g x;c;0]` are fine. So is one right of
                     // the bracket that closes around the first: `(b:b&x)|b:x>0`
                     // runs `b:x>0` first (#302). The walk ends at a `;` of the
-                    // outermost level it has reached, since a later slot of a
-                    // control bracket, `$[c;(a:a+1);a:2]`, runs after.
+                    // outermost level it has reached that ends a statement or
+                    // a slot of a control bracket, since a later slot of one,
+                    // `$[c;(a:a+1);a:2]`, runs after. A later slot of a call
+                    // or a list runs first: q 5 `{h[d:d+1;d:1]}[]` is 3 and
+                    // `{(b:b+1;b:1)}[]` is 2 1 (#669).
                     let rest = &direct[assigned..];
                     let (mut depth, mut floor) = (0i32, 0i32);
-                    let end = rest
-                        .bytes()
-                        .position(|b| {
-                            match b {
-                                b'(' | b'[' | b'{' => depth += 1,
-                                b')' | b']' | b'}' => depth -= 1,
-                                _ => {}
-                            }
-                            floor = floor.min(depth);
-                            b == b';' && depth <= floor
-                        })
-                        .unwrap_or(rest.len());
+                    let mut end = rest.len();
+                    for (i, b) in rest.bytes().enumerate() {
+                        match b {
+                            b'(' | b'[' | b'{' => depth += 1,
+                            b')' | b']' | b'}' => depth -= 1,
+                            _ => {}
+                        }
+                        floor = floor.min(depth);
+                        if b == b';'
+                            && depth <= floor
+                            && !eval_path(&direct, assigned + i)
+                                .1
+                                .last()
+                                .is_some_and(|&(_, _, control)| !control)
+                        {
+                            end = i;
+                            break;
+                        }
+                    }
                     !assignment.captures_iter(&rest[..end]).any(|a| {
                         let at = a.get(0).unwrap().start();
                         at > 0 && &a[1] == name && a.get(2).is_none() && boundary(rest, at)

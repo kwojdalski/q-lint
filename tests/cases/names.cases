@@ -361,6 +361,14 @@ g:{[p] (a:`s;b):p; b:b+1; b}
 h:{[p] (a:{x*2};b):p; b:b+1; b}
 k:{[(a:neg;b)] a+b}
 
+=== clean profile: general | a later slot of a call or a list runs first, and may assign the name the earlier one reads (#669; q 5: f[] is 3 and g[] is 2 1)
+h:{x+y}
+f:{h[d:d+1;d:1]}
+g:{(b:b+1;b:1)}
+
+=== QF014 profile: general | while a later slot of a control bracket runs after
+f:{$[1b;(a:a+1);a:2]}
+
 === QF014 | but a semicolon on the line before does end the statement
 f:{r:a;
   a:5; r}
