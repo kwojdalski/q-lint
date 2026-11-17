@@ -3937,17 +3937,28 @@ fn named_values(
     }
     // QT026. lj, ij and pj join on the right table's key, so an unkeyed right
     // table is 'type - checked for all three; uj takes any and is not here.
-    // ljf and ijf too, and the bracket form `lj[t;s]` (q 5: 'type).
-    for m in re!(r"\b(ljf|ijf|lj|ij|pj)(?:\s+|\s*\[[^;\[\]]*;\s*)(\(\s*\[|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)")
+    // ljf and ijf too, and the bracket form `lj[t;s]` (q 5: 'type). The
+    // keyword or the right table may be parenthesised, `(lj)[t;s]` and
+    // `t lj (s)` (q 5: 'type, #618).
+    for m in re!(r"(?:\b(ljf|ijf|lj|ij|pj)|\((ljf|ijf|lj|ij|pj)\))(?:\s+|\s*\[[^;\[\]]*;\s*)(\(\s*\[|\(\s*(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*\)|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)")
         .captures_iter(code)
     {
-        let right = m.get(2).unwrap();
-        let unkeyed = if right.as_str().starts_with('(') {
+        let keyword = m.get(1).or(m.get(2)).unwrap();
+        let whole = m.get(3).unwrap();
+        let unkeyed = if let Some(right) = m.get(4) {
+            operand_ends(code, whole.end())
+                && matches!(
+                    visible(right.as_str(), right.start()),
+                    Some(Held::Table(_, false))
+                )
+        } else if whole.as_str().starts_with('(') {
+            let right = whole;
             let open = right.start();
             matching(code, open, b'(', b')').is_some_and(|close| {
                 operand_ends(code, close) && code[open + 1..].trim_start().starts_with("[]")
             })
         } else {
+            let right = whole;
             operand_ends(code, right.end())
                 && matches!(
                     visible(right.as_str(), right.start()),
@@ -3958,11 +3969,11 @@ fn named_values(
             out.push(Finding::at(
                 path,
                 raw,
-                m.get(1).unwrap().start(),
+                m.get(0).unwrap().start(),
                 "QT026",
                 format!(
                     "`{}` joins on the right table's key, and this one has none: 'type; key it with `xkey`",
-                    &m[1]
+                    keyword.as_str()
                 ),
             ));
         }
