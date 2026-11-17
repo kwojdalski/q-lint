@@ -1234,7 +1234,7 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         }
         // A nested lambda cannot see its parent's locals; the repair q
         // programmers write is to pass the local in: `{a+x} each l` inside
-        // `{[a] ...}` becomes `{[a;x] a+x}[a] each l`. Verified in q 5. Not
+        // `{[a] ...}` becomes `{[x;a] a+x}[;a] each l`. Verified in q 5. Not
         // unattended: where a global of that name exists the old code reads
         // it, and the new one reads the local.
         "QF005" => {
@@ -1246,26 +1246,27 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             if sig.named && sig.slots.len() >= 8 {
                 return None;
             }
-            let mut header = String::new();
-            if sig.named {
+            // The local goes last and the projection fills only its slot:
+            // first, it would push `x` to a position QS008 then reports (#772).
+            let (header, slots) = if sig.named {
                 // `{ [b] ...}` is a signature too: q allows space before
                 // the `[` (#323).
                 let bracket = v.code[brace + 1..].find('[')? + brace + 1;
-                header.push_str(&format!("{{[{name};"));
-                header.push_str(&source[bracket + 1..sig.body]);
+                let inner = &source[bracket + 1..sig.body - 1];
+                (format!("{{[{inner};{name}]"), sig.slots.len())
             } else {
                 // Implicit arguments become explicit ones, as many as q
                 // gives the lambda - and at least `x`, or the projection
                 // would fill every slot and run on the spot. A column in a
                 // query is no argument: `{exec sum y from t}` takes one (#777).
-                let params =
-                    ["x", "x;y", "x;y;z"][lambda_rank(&v.code, source, brace, close - 1) - 1];
-                header.push_str(&format!("{{[{name};{params}] "));
-            }
+                let rank = lambda_rank(&v.code, source, brace, close - 1);
+                let params = ["x", "x;y", "x;y;z"][rank - 1];
+                (format!("{{[{params};{name}] "), rank)
+            };
             // Passed in, the local is read where the lambda is written, so it
             // has to hold a value there: a parameter of the lambda around it,
             // or assigned in an earlier statement. Otherwise q 5 refuses the
-            // rewrite with 'a - `{a:{[a;x] a+1}[a];a}`, and a read before a
+            // rewrite with 'a - `{a:{[x;a] a+1}[;a];a}`, and a read before a
             // later `a:2` alike (#769).
             let parent = enclosing_brace(&v.code, brace)?;
             let outer = signature(&v.code, source, parent);
@@ -1308,7 +1309,7 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             begin = brace;
             (
                 &source[brace..close],
-                format!("{header}{rest}[{name}]").into(),
+                format!("{header}{rest}[{}{name}]", ";".repeat(slots)).into(),
                 format!("Pass `{name}` in as a parameter").into(),
                 false,
             )

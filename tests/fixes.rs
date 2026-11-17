@@ -542,44 +542,44 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         (
             "QF005",
             "f:{[a] {a+x} each 1 2}",
-            "f:{[a] {[a;x] a+x}[a] each 1 2}",
+            "f:{[a] {[x;a] a+x}[;a] each 1 2}",
             false,
         ),
         (
             "QF005",
             "f:{[a] {[x;y] a+y}'[1 2;3 4]}",
-            "f:{[a] {[a;x;y] a+y}[a]'[1 2;3 4]}",
+            "f:{[a] {[x;y;a] a+y}[;;a]'[1 2;3 4]}",
             false,
         ),
         (
             "QF005",
             "f:{[a] {a+y}'[1 2;3 4]}",
-            "f:{[a] {[a;x;y] a+y}[a]'[1 2;3 4]}",
+            "f:{[a] {[x;y;a] a+y}[;;a]'[1 2;3 4]}",
             false,
         ),
         (
             "QF005",
             "f:{[a] g:{ [b] a+b}; g 1}",
-            "f:{[a] g:{[a;b] a+b}[a]; g 1}",
+            "f:{[a] g:{[b;a] a+b}[;a]; g 1}",
             false,
         ),
         (
             "QF005",
             "f:{[a] g:{a}; g 1}",
-            "f:{[a] g:{[a;x] a}[a]; g 1}",
+            "f:{[a] g:{[x;a] a}[;a]; g 1}",
             false,
         ),
         (
             "QF005",
             "f:{a:2; {a+x} each 1 2}",
-            "f:{a:2; {[a;x] a+x}[a] each 1 2}",
+            "f:{a:2; {[x;a] a+x}[;a] each 1 2}",
             false,
         ),
         // A column in a query is no argument: q 5 gives the lambda one (#777).
         (
             "QF005",
             "f:{[a] {a+x+exec sum y from t} each 1 2}",
-            "f:{[a] {[a;x] a+x+exec sum y from t}[a] each 1 2}",
+            "f:{[a] {[x;a] a+x+exec sum y from t}[;a] each 1 2}",
             false,
         ),
         ("QA007", "f:{[c] $[c;1;2;]}", "f:{[c] $[c;1;2]}", false),
@@ -917,14 +917,40 @@ fn fixes_repeat_until_nothing_applies() {
     };
     let diff = run(&["--diff"]);
     assert!(
-        diff.contains("+f10:{p:1;q:2;{[q;p;x] p+q+x}[q][p][3]}"),
+        diff.contains("+f10:{p:1;q:2;{[x;p;q] p+q+x}[;;q][;p][3]}"),
         "{diff}"
     );
     run(&["--fix"]);
     assert_eq!(
         fs::read_to_string(&path).unwrap(),
-        "f10:{p:1;q:2;{[q;p;x] p+q+x}[q][p][3]}\n"
+        "f10:{p:1;q:2;{[x;p;q] p+q+x}[;;q][;p][3]}\n"
     );
+}
+
+/// QF005's rewrite puts the local after `x`, `y` and `z`, so it is not a
+/// new QS008 finding in the profiles that carry that rule (#772).
+#[test]
+fn qf005_fix_raises_no_qs008() {
+    use q_lint_rs::{Profile, fix_for, lint};
+    let source = "f:{[a] {a+x} each 1 2}";
+    for profile in [Profile::StyleQ, Profile::Uqf] {
+        let finding = lint(source, "probe.q", profile)
+            .into_iter()
+            .find(|f| f.code == "QF005")
+            .expect("QF005");
+        let fix = fix_for(&finding, source).expect("a fix");
+        let fixed = format!(
+            "{}{}{}",
+            &source[..fix.start],
+            fix.replacement,
+            &source[fix.end..]
+        );
+        let after: Vec<_> = lint(&fixed, "probe.q", profile)
+            .into_iter()
+            .filter(|f| f.code == "QS008")
+            .collect();
+        assert!(after.is_empty(), "{fixed}: {after:?}");
+    }
 }
 
 /// Two fixes that touch are applied in one pass, each against the source
