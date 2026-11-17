@@ -1049,3 +1049,13 @@ m:get[".ns.",string`f]
 w:get"\\w"
 p:(get'') " -> " vs/:("1,2 -> 3,4";"5,6 -> 7,8")
 r:a 0
+
+=== clean | a b suffix does not continue a numeric run: `1 0b` is 1 applied to 0b (#496)
+r1:1 2 3+1 0b
+r2:1 2 3=1 0b
+
+=== clean | the same application makes a one-row table column (#496)
+r3:([]a:enlist 1;b:1 0b)
+
+=== QT006 | a suffix on the last item still ends a vector (#496)
+r4:1 2 3+1 2h

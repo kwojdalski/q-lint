@@ -547,7 +547,9 @@ fn shape(s: &str) -> Option<usize> {
     }
     // Numbers, a null or an infinity among them: `0N 0N` is two items and
     // `0W 1` two, as q 5's 'length on `` `a`b`c!0N 0N `` and `0W 1+1 2 3` shows.
-    if re!(r"^(?:-?(?:(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?[bhijef]?|0[nNwW][a-z]?)(?:\s+|$))+$")
+    // A type suffix ends the run: q 5 parses `1 2h` as one vector, but `1h 2`
+    // does not parse and `1 0b` is the atom `1` applied to `0b` (#496).
+    if re!(r"^(?:-?(?:(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?|0[nNwW])\s+)*-?(?:(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?[hijef]?|0[nNwW][a-z]?)$")
         .is_match(s)
     {
         return Some(s.split_whitespace().count());

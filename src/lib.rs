@@ -5045,9 +5045,20 @@ pub fn lint_selecting(
             if re!(r"^(?:`[A-Za-z0-9_.]*){2,}$").is_match(v) {
                 return Some(Shape::Vector(Some(v.matches('`').count())));
             }
+            // Only the last item takes a type suffix, and never `b`: `1 0b` is
+            // the atom `1` applied to `0b`, and `1h 2` does not parse (q 5, #496).
+            let suffixed = |item: &str| {
+                re!(r"^-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?[a-mo-vx-zA-MO-VX-Z]$|^-?0[nNwW][a-z]$")
+                    .is_match(item)
+            };
             if re!(r"^-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:\s+-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)+$")
                 .is_match(v)
             {
+                let items: Vec<&str> = v.split_whitespace().collect();
+                let (last, init) = items.split_last().expect("two items or more");
+                if init.iter().any(|i| suffixed(i)) || re!(r"\d[bx]$").is_match(last) {
+                    return None;
+                }
                 return Some(Shape::Vector(Some(v.split_whitespace().count())));
             }
             if v == "()" {
