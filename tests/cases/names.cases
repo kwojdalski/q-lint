@@ -409,6 +409,17 @@ f:{[t] select from t where return>0.15}
 r:select from t
 f:{[x] return x}
 
+=== clean profile: general | a where phrase continued on an indented line is still the query's (q 5 with t:([]return:0.1 0.2): the row 0.2, #680)
+r:select from t
+  where return>0.15
+f:{[t] select from t where
+  return>0.15}
+g:{[t] select from t where h[a;return]}
+
+=== QF015 profile: general | nor does one ended by `;`, or a lambda inside the query (q 5: f 1 is 'return, #680)
+r:select from t;f:{[x] return x}
+s:select from t where {return x} each a
+
 === clean profile: general | and so does a multiple assignment (q 5: show true prints 1b) (#371)
 (true;false):10b
 show true

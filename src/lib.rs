@@ -2004,6 +2004,39 @@ fn qsql_phrase(code: &str, at: usize, joins: bool) -> bool {
     }
     false
 }
+/// Whether `at` is inside a select, exec, update or delete: walking back
+/// through its statement, across the indented lines that continue it and out
+/// of any parenthesis or bracket around it, meets the keyword. A `;` ends the
+/// statement unless a bracket it sits in is crossed later, and a lambda's
+/// `{` ends it, since a name in a lambda is the lambda's: `r:select from t`
+/// with `  where return>0.15` reads the column, and `r:select from t;` then
+/// `f:{[x] return x}` does not (#680).
+fn in_query(code: &str, at: usize) -> bool {
+    let b = code.as_bytes();
+    let (mut depth, mut ended) = (0i32, false);
+    let mut i = at;
+    while i > 0 {
+        i -= 1;
+        match b[i] {
+            b')' | b']' | b'}' => depth += 1,
+            b'{' if depth == 0 => return false,
+            b'(' | b'[' if depth == 0 => ended = false,
+            b'(' | b'[' | b'{' => depth -= 1,
+            b';' if depth == 0 => ended = true,
+            b'\n' if !code[i + 1..].starts_with([' ', '\t', '\r', '\n']) => return false,
+            _ => {}
+        }
+        if depth == 0
+            && !ended
+            && b[i].is_ascii_lowercase()
+            && boundary(code, i)
+            && re!(r"^(?:select|exec|update|delete)\b").is_match(&code[i..])
+        {
+            return true;
+        }
+    }
+    false
+}
 fn blank(b: &mut [u8]) {
     for c in b {
         if !matches!(*c, b'\n' | b'\r') {
@@ -4803,8 +4836,7 @@ pub fn lint_selecting(
         let whole = m.get(0).unwrap();
         let name = &m[1];
         let after = code[whole.end()..].trim_start();
-        let line = &code[code[..whole.start()].rfind('\n').map_or(0, |i| i + 1)..whole.start()];
-        let in_query = re!(r"\b(?:select|exec|update|delete)\b").is_match(line);
+        let in_query = in_query(code, whole.start());
         if opaque
             || !boundary(code, whole.start())
             || after.starts_with('.')
