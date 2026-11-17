@@ -1757,6 +1757,25 @@ pub(crate) const Z_ATOMS: &[&str] = &[
 
 /// QB010's message, shared by the `.z` case here and the bound-name case in
 /// `semantics`.
+/// QA005's message for `peach`, which is `':`: on a rank-2 lambda that is
+/// each-prior, not a parallel each - q 5 `{[a;b] a*b} peach 1 2` is `0N 2`,
+/// with or without secondaries - and on a higher rank a projection, as under
+/// `each`. None for `each`, whose message each caller words itself.
+fn peach_detail(iterator: &str, rank: usize) -> Option<String> {
+    (iterator == "peach").then(|| {
+        if rank == 2 {
+            "`peach` is `':`, which on a rank-2 lambda is each-prior: it pairs each item \
+             with the one before it rather than running in parallel"
+                .to_string()
+        } else {
+            format!(
+                "`peach` supplies one argument to a rank-{rank} lambda, so the result is a \
+                 projection, not values"
+            )
+        }
+    })
+}
+
 pub(crate) fn apply_not_subtract(name: &str, literal: &str) -> String {
     format!(
         "`{name} {literal}` applies the atom `{name}` to the negative literal `{literal}`, which \
@@ -3771,14 +3790,18 @@ pub fn lint_selecting(
                 params.len()
             };
             let rest = code[end..].trim_start();
-            if arity >= 2 && re!(r"\Aeach\b").is_match(rest) {
+            if arity >= 2
+                && let Some(it) = re!(r"\A(?:each|peach)\b").find(rest)
+            {
                 add(
                     end,
                     "QA005",
-                    format!(
-                        "`each` supplies one argument to a {arity}-parameter lambda, so the \
-                         results are projections, not values"
-                    ),
+                    peach_detail(it.as_str(), arity).unwrap_or_else(|| {
+                        format!(
+                            "`each` supplies one argument to a {arity}-parameter lambda, so the \
+                             results are projections, not values"
+                        )
+                    }),
                 );
             }
         }
@@ -4489,17 +4512,48 @@ pub fn lint_selecting(
             continue;
         };
         let rank = lambda_rank(code, source, brace, end);
-        if rank >= 2 && re!(r"\Aeach\b").is_match(code[end..].trim_start()) {
+        if rank >= 2
+            && let Some(it) = re!(r"\A(?:each|peach)\b").find(code[end..].trim_start())
+        {
             add(
                 end,
                 "QA005",
-                format!(
-                    "`each` supplies one argument to a lambda of rank {rank} (it reads {}), so \
-                     the results are projections, not values",
-                    if rank == 3 { "x, y and z" } else { "x and y" }
-                ),
+                peach_detail(it.as_str(), rank).unwrap_or_else(|| {
+                    format!(
+                        "`each` supplies one argument to a lambda of rank {rank} (it reads {}), \
+                         so the results are projections, not values",
+                        if rank == 3 { "x, y and z" } else { "x and y" }
+                    )
+                }),
             );
         }
+    }
+    // And a lambda reached by name: q 5 `g:{x+y}; g each 1 2` is
+    // `{x+y}'[1 2]`, projections, as the literal is (#503). A name defined
+    // twice has whichever rank ran last, as QA012 knows.
+    for m in re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]+(each|peach)\b").captures_iter(code) {
+        let (whole, name) = (m.get(0).unwrap(), m.get(1).unwrap().as_str());
+        let key = qualified(whole.start(), name);
+        if !boundary(code, whole.start())
+            || redefined.contains(&key)
+            || overwritten(&key)
+            || shadowed(code, source, whole.start(), name)
+        {
+            continue;
+        }
+        let Some(&rank) = ranks.get(&key).filter(|&&r| r >= 2) else {
+            continue;
+        };
+        add(
+            whole.start(),
+            "QA005",
+            peach_detail(&m[2], rank).unwrap_or_else(|| {
+                format!(
+                    "`each` supplies one argument to `{name}`, which takes {rank}, so the \
+                     results are projections, not values"
+                )
+            }),
+        );
     }
     for m in re!(r"([@.])\[").find_iter(code) {
         let open = m.end() - 1;
