@@ -901,22 +901,6 @@ fn a_typed_parameter_binds_its_name() {
 }
 
 #[test]
-fn the_tests_exemption_from_qp002_reads_the_directories_not_the_spelling() {
-    // The CLI walk and the editor pass an absolute path; only a relative
-    // `--stdin-filename` was ever exempted (#416).
-    let qp002 = |path: &str| {
-        lint("x:.z.z\n", path, Profile::Uqf)
-            .iter()
-            .any(|f| f.code == "QP002")
-    };
-    assert!(!qp002("tests/a.q"));
-    assert!(!qp002("/work/proj/tests/a.q"));
-    assert!(!qp002("/work/proj/tests/q/a.q"));
-    assert!(qp002("/work/proj/src/a.q"));
-    assert!(qp002("/work/proj/src/tests.q"));
-}
-
-#[test]
 fn a_k_line_in_another_file_defines_its_name() {
     use q_lint_rs::{Workspace, index, lint_in};
     // q 5: with x.q's `k)lim:100` loaded, `r:lim` is 100 (#751).

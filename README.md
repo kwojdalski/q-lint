@@ -248,6 +248,12 @@ user-level file). So `qlinter .. --exclude src/`, run from `proj/tests`,
 names `proj/tests/src`; a leading `../` climbs from the root, as Ruff resolves
 it, and `qlinter .. --exclude ../src` is the one that names `proj/src`.
 
+Under `uqf`, QP002, QP003 and QP005 pass over a file in a `tests`
+directory below that root - the configuration's directory, or the current
+one without a configuration - since a test may build a datetime or read the
+local clock on purpose. A `tests` above the root exempts nothing, and
+`--select` naming one of them reports it regardless.
+
 In `pyproject.toml` the same keys go under `[tool.qlinter]`, and
 `[tool.qlinter.lint]`. Also: `extend-exclude`, and `extend = "../qlinter.toml"`
 to inherit another file and override it - a key the extending file sets

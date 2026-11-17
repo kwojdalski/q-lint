@@ -79,6 +79,9 @@ pub struct Layer {
 pub struct Settings {
     /// The file this came from; `None` for the built-in defaults.
     pub file: Option<PathBuf>,
+    /// The directory its patterns are rooted at: the file's own, or the
+    /// current one for `--config` and a user-level file.
+    root: Option<PathBuf>,
     profile: Option<String>,
     layers: Vec<Layer>,
     /// `exclude` and `extend-exclude`, kept apart because they inherit
@@ -324,9 +327,46 @@ impl Policy {
             self.configured(&settings, "QE001") && !per_file_ignored(&settings, "QE001", file);
         let mut found = lint_selecting(source, path, Profile::Uqf, ws, structure);
         found.retain(|f| {
-            self.selected(&settings, &f.code) && !per_file_ignored(&settings, &f.code, file)
+            self.selected(&settings, &f.code)
+                && !per_file_ignored(&settings, &f.code, file)
+                && !self.test_exempt(&settings, &f.code, file)
         });
         Ok(found)
+    }
+
+    /// A test may build a legacy datetime, read the local clock or mix infix
+    /// arithmetic on purpose, so QP002, QP003 and QP005 pass over a file in
+    /// a `tests` directory below the project root: where the configuration's
+    /// patterns are rooted, or the current directory when there is none. A `tests` above the
+    /// root - a checkout under `~/tests` - exempts nothing, and a rule the
+    /// command line selects by code reports regardless (#800, #416).
+    fn test_exempt(&self, settings: &Settings, code: &str, path: &Path) -> bool {
+        if !["QP002", "QP003", "QP005"].contains(&code) {
+            return false;
+        }
+        let cli = &self.overrides.layer;
+        if cli
+            .select
+            .iter()
+            .flatten()
+            .chain(&cli.extend_select)
+            .any(|s| s != "ALL" && names(s, code))
+        {
+            return false;
+        }
+        let root = match &settings.root {
+            Some(dir) => dir.clone(),
+            None => match std::env::current_dir() {
+                Ok(cwd) => absolute(&cwd),
+                Err(_) => return false,
+            },
+        };
+        let full = absolute(path);
+        full.strip_prefix(&root).is_ok_and(|relative| {
+            relative
+                .parent()
+                .is_some_and(|dir| dir.components().any(|c| c.as_os_str() == "tests"))
+        })
     }
 
     /// What `--show-settings` prints: which file governs `path`, and what it
@@ -345,7 +385,9 @@ impl Policy {
             .filter(|r| runs(&r.scope))
             .map(|r| r.code.as_str())
             .filter(|code| {
-                self.selected(&settings, code) && !per_file_ignored(&settings, code, path)
+                self.selected(&settings, code)
+                    && !per_file_ignored(&settings, code, path)
+                    && !self.test_exempt(&settings, code, path)
             })
             .collect();
         codes.sort_unstable();
@@ -585,6 +627,7 @@ fn load(
         }
     };
     settings.file = Some(absolute(path));
+    settings.root = Some(patterns.unwrap_or(&root).to_path_buf());
     settings.sources.push(absolute(path));
     if let Some(v) = table.get("profile") {
         let name = v

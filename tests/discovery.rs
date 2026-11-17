@@ -1021,3 +1021,36 @@ fn a_stdin_filename_that_is_not_q_is_refused_as_the_file_would_be() {
         assert!(stderr.contains("not a .q file"), "{stderr}");
     }
 }
+
+#[test]
+fn the_tests_exemption_from_qp002_counts_only_directories_below_the_root() {
+    // A `tests` directory below the project root exempts its files, wherever
+    // qlinter runs and however the path is spelled (#416); one above the
+    // root - a checkout under `~/tests` - exempts nothing, and a code the
+    // command line selects reports regardless (#800).
+    let repo = Repo::new();
+    repo.write("tests/proj/.qlinter.toml", "profile = \"uqf\"\n")
+        .write("tests/proj/src/a.q", "x:.z.z\n")
+        .write("tests/proj/src/tests.q", "x:.z.z\n")
+        .write("tests/proj/tests/a.q", "x:.z.z\n")
+        .write("tests/proj/tests/q/a.q", "x:.z.z\n");
+    let qp002 = |cwd: &str, args: &[&str]| repo.codes(cwd, args).contains(&"QP002".to_string());
+    assert!(qp002("tests/proj", &["src/a.q"]));
+    assert!(qp002("tests/proj/src", &["a.q"]));
+    assert!(qp002("tests/proj", &["src/tests.q"]));
+    assert!(!qp002("tests/proj", &["tests/a.q"]));
+    assert!(!qp002("tests/proj/src", &["../tests/q/a.q"]));
+    let absolute = repo.path("tests/proj/tests/a.q");
+    assert!(!qp002(".", &[absolute.to_str().unwrap()]));
+    assert!(qp002("tests/proj", &["--select", "QP002", "tests/a.q"]));
+    // With no configuration the root is the current directory.
+    repo.write("bare/tests/a.q", "x:.z.z\n");
+    assert!(!qp002(
+        "bare",
+        &["--isolated", "--profile", "uqf", "tests/a.q"]
+    ));
+    assert!(qp002(
+        "bare/tests",
+        &["--isolated", "--profile", "uqf", "a.q"]
+    ));
+}
