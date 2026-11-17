@@ -1055,3 +1055,19 @@ m:get[".ns.",string`f]
 w:get"\\w"
 p:(get'') " -> " vs/:("1,2 -> 3,4";"5,6 -> 7,8")
 r:a 0
+
+=== QT002 QT003 QT010 QT011 QT012 QT015 QT016 profile: general | a symbol starting with a dot or holding a colon is a symbol (q 5: 'type, 'rank; #600)
+a:`.a+1
+b:`.a=1
+c:`a:b+1
+d:sqrt `.a
+e:asc `.a
+f:distinct `.a
+g:sum `.a`.b
+h:{x+1}
+i:h[`.a]
+
+=== clean profile: general | a handle symbol keeps its own shape, and a template placeholder after a bare dot is no name
+a:`:dir/file
+b:`.a`.b!1 2
+c:`.%name%.lib.type

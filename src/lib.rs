@@ -3980,7 +3980,9 @@ pub fn lint_selecting(
         // word operators (q 5: `a&`b, `a mod 2, 2 xexp `a). Not `^`: a
         // symbol fills a symbol list (`none^s).
         // The null symbol, a lone backtick, is one too: q 5 `` ` + 1 `` is 'type.
-        re!(r"(?:`(?:[A-Za-z][A-Za-z0-9_.]*)?)+(?:[ \t]*[+\-*%&|]|[ \t]+(?:mod|div|xexp|xlog|and|or)[ \t])|(?:[+\-*%&|][ \t]*(?:(?:\r?\n[ \t]*)*\r?\n[ \t]+)?|[ \t](?:mod|div|xexp|xlog|and|or)(?:[ \t]*(?:\r?\n[ \t]*)*\r?\n[ \t]+|[ \t]+))(?:`(?:[A-Za-z][A-Za-z0-9_.]*)?)+")
+        // So is a name that starts with `.` or holds a `:` past its first
+        // character: `` `.a+1 `` and `` `a:b+1 `` (q 5: 'type, #600).
+        re!(r"(?:`(?:\.?[A-Za-z][A-Za-z0-9_.:]*)?)+(?:[ \t]*[+\-*%&|]|[ \t]+(?:mod|div|xexp|xlog|and|or)[ \t])|(?:[+\-*%&|][ \t]*(?:(?:\r?\n[ \t]*)*\r?\n[ \t]+)?|[ \t](?:mod|div|xexp|xlog|and|or)(?:[ \t]*(?:\r?\n[ \t]*)*\r?\n[ \t]+|[ \t]+))(?:`(?:\.?[A-Za-z][A-Za-z0-9_.:]*)?)+")
             .find_iter(code)
     {
         let at = m.start();
@@ -4050,7 +4052,7 @@ pub fn lint_selecting(
         // A symbol, or a symbol vector: `1 in `a`b` is 'type just as `1=`a` is,
         // and the vector is what `in` is usually given.
         // A file symbol too, `` `:db/t ``, which runs on over `/` (q 5).
-        let sym = r"(?:`(?:[A-Za-z][A-Za-z0-9_.]*|:[A-Za-z0-9_.:/]*))+";
+        let sym = r"(?:`(?:\.?[A-Za-z][A-Za-z0-9_.:]*|:[A-Za-z0-9_.:/]*))+";
         // An exponent's sign is part of its number: `1e-3` is one float.
         let num = r"-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:[ \t]+-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)*";
         let string = r#""(?:[^"\\]|\\.)*""#;

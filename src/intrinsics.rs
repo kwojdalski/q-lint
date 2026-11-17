@@ -48,8 +48,9 @@ fn literal(s: &str) -> Option<Literal> {
         value.len = 1;
         return Some(value);
     }
-    // The null symbol too, a lone backtick: q 5 `asc `` ` `` is 'rank.
-    if re!(r"^(?:`(?:[A-Za-z][A-Za-z0-9_.]*)?)+$").is_match(s) {
+    // The null symbol too, a lone backtick: q 5 `asc `` ` `` is 'rank. And a
+    // name starting with `.` or holding `:`, `` `.a `` and `` `a:b `` (#600).
+    if re!(r"^(?:`(?:\.?[A-Za-z][A-Za-z0-9_.:]*)?)+$").is_match(s) {
         return Some(Literal {
             kind: Kind::Symbol,
             vector: s.bytes().filter(|&b| b == b'`').count() > 1,
@@ -199,7 +200,7 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
     // `code` still has to hold the builtin's own name at that offset, which
     // proves the match is not the inside of a string.
     for call in re!(&format!(
-        r#"\b({BUILTINS})(?:[ \t]*\r?\n[ \t]+|[ \t]+)((?:-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:[ \t]+-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)*)|(?:`[A-Za-z0-9_.]*)+|"(?:\\.|[^"\\])*")"#
+        r#"\b({BUILTINS})(?:[ \t]*\r?\n[ \t]+|[ \t]+)((?:-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:[ \t]+-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)*)|(?:`[A-Za-z0-9_.:]*)+|"(?:\\.|[^"\\])*")"#
     ))
     .captures_iter(comments)
     {
@@ -233,7 +234,7 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
     // and 'type alike (q 5). Two slots only - `@[til;2.5;{x}]` is a protected
     // call whose handler catches the error. A dyadic builtin under `@` is a
     // projection, which the argument count in `check` already passes over.
-    const LITERAL: &str = r#"(?:-?\d[A-Za-z0-9.:]*(?:[ \t]+-?\d[A-Za-z0-9.:]*)*)|(?:`[A-Za-z0-9_.]*)+|"(?:\\.|[^"\\])*""#;
+    const LITERAL: &str = r#"(?:-?\d[A-Za-z0-9.:]*(?:[ \t]+-?\d[A-Za-z0-9.:]*)*)|(?:`[A-Za-z0-9_.:]*)+|"(?:\\.|[^"\\])*""#;
     for (pattern, name_group, arg_group) in [
         (format!(r"\b({BUILTINS})[ \t]*@[ \t]*({LITERAL})"), 1, 2),
         (
@@ -294,7 +295,7 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
         let mut left = "";
         let mut from_at = 0;
         while let Some(l) = re!(
-            r#"(?:-?\d[A-Za-z0-9.:]*(?:[ \t]+-?\d[A-Za-z0-9.:]*)*|(?:`[A-Za-z0-9_.]*)+|"(?:\\.|[^"\\])*"|\([^()]*\))$"#
+            r#"(?:-?\d[A-Za-z0-9.:]*(?:[ \t]+-?\d[A-Za-z0-9.:]*)*|(?:`[A-Za-z0-9_.:]*)+|"(?:\\.|[^"\\])*"|\([^()]*\))$"#
         )
         .find_at(before, from_at)
         {

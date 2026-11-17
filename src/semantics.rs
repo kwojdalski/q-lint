@@ -1914,7 +1914,7 @@ pub fn check(
                 // `x` alone: `{x+1}[`a]` is 'type, `{y+1}[`a]` a projection.
                 && if scope.named { scope.params.contains(&m[1]) } else { &m[1] == "x" } {numeric.insert(name.clone());}
     }
-    for call in re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*\[\s*`[A-Za-z][A-Za-z0-9_.]*\s*\]").captures_iter(code) {
+    for call in re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*\[\s*`\.?[A-Za-z][A-Za-z0-9_.:]*\s*\]").captures_iter(code) {
         if dynamic {break;}
         let at=call.get(0).unwrap().start();let name=&call[1];if !boundary(code,at){continue;}
         if scope_at(&scopes,at).is_some_and(|s|scopes[s].locals.contains(name)){continue;}
