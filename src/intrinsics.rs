@@ -198,8 +198,13 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
     // `til "3"` would never be seen there. A comment is blank in both, and
     // `code` still has to hold the builtin's own name at that offset, which
     // proves the match is not the inside of a string.
+    //
+    // Between the name and its argument, and between vector items, the gap
+    // is the statement's blanks: a line break into an indented line
+    // continues it, past any blank or comment lines (#193, #676).
+    const GAP: &str = blank!();
     for call in re!(&format!(
-        r#"\b({BUILTINS})(?:[ \t]*\r?\n[ \t]+|[ \t]+)((?:-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:[ \t]+-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)*)|(?:`[A-Za-z0-9_.]*)+|"(?:\\.|[^"\\])*")"#
+        r#"\b({BUILTINS}){GAP}+((?:-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:{GAP}+-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)*)|(?:`[A-Za-z0-9_.]*)+|"(?:\\.|[^"\\])*")"#
     ))
     .captures_iter(comments)
     {

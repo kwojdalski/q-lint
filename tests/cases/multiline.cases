@@ -111,6 +111,17 @@ b:3 mod
 r:til
   1.5
 
+=== QT008 profile: general | and past a blank or comment line, which ends nothing (q 5: each 'type, #676)
+r:til
+
+  1.5
+q:til
+  / c
+  1.5
+s:til
+/ c
+  1.5
+
 === clean profile: general | at column 0 the next line is a statement of its own (q 5: +[1] and 1.5)
 a:1+
 `a
