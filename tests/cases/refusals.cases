@@ -50,6 +50,16 @@ d:12:00:1 12:00u
 === QE006 profile: general | a minute suffix on an earlier item makes no minute vector (#449; q 5: '23:59:60u)
 e:23:59:60u 12:00
 
+=== clean profile: general | the suffix types a vector continued on an indented line (q 5: each ~ its one-line form, #682)
+c:12:00:60
+  12:00u
+l:100:00:00.1234
+  100:00t
+
+=== QE006 profile: general | and on an earlier line it still makes no minute vector (q 5: '23:59:60u, #682)
+e:23:59:60u
+  12:00
+
 === QE006 profile: general | a minute past 59 with the minute suffix (#449; q 5: '12:60:00)
 f:12:60:00u
 
