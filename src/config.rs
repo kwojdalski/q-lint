@@ -79,6 +79,9 @@ pub struct Layer {
 pub struct Settings {
     /// The file this came from; `None` for the built-in defaults.
     pub file: Option<PathBuf>,
+    /// The directory its patterns are rooted at: the file's own, or the
+    /// current one for `--config` and a user-level file.
+    root: Option<PathBuf>,
     profile: Option<String>,
     layers: Vec<Layer>,
     /// `exclude` and `extend-exclude`, kept apart because they inherit
@@ -262,19 +265,42 @@ impl Policy {
 
     /// `excluded`, for a path named on the command line with
     /// `--force-exclude`: the default list is also checked against the
-    /// directories above it below the current directory, as a configured
-    /// pattern is against those below its root - so a hook that passes
-    /// `build/a.q` skips it, as the walk would (#415).
+    /// directories above it below the project root, as a configured pattern
+    /// is against those below its root - so a hook that passes `build/a.q`
+    /// skips it, as the walk would (#415), from whatever directory it runs
+    /// in (#801).
     pub fn force_excluded(&self, path: &Path) -> Result<bool, String> {
         if self.excluded(path)? {
             return Ok(true);
         }
-        if self.settings(path)?.exclude.is_some() {
+        let settings = self.settings(path)?;
+        let root = project_root(&settings)?;
+        let full = absolute(path);
+        // A name pattern names a directory at any depth, and the walk asks
+        // about each directory before entering it - so `gen` skips
+        // `../other/gen/f.q` in a walk of `../other`. `matches` sees a
+        // file's directories only below a pattern's root; past it, as Ruff
+        // does, each directory above the file is asked here (#802).
+        if full
+            .ancestors()
+            .skip(1)
+            .take_while(|dir| *dir != root)
+            .any(|dir| {
+                settings
+                    .exclude
+                    .iter()
+                    .flatten()
+                    .chain(&settings.extend_exclude)
+                    .chain(&self.overrides.exclude)
+                    .any(|glob| glob.anywhere && matches(dir, glob))
+            })
+        {
+            return Ok(true);
+        }
+        if settings.exclude.is_some() {
             return Ok(false);
         }
-        let cwd = absolute(&std::env::current_dir().map_err(|e| e.to_string())?);
-        let full = absolute(path);
-        Ok(full.strip_prefix(&cwd).is_ok_and(|relative| {
+        Ok(full.strip_prefix(&root).is_ok_and(|relative| {
             relative
                 .parent()
                 .into_iter()
@@ -324,9 +350,42 @@ impl Policy {
             self.configured(&settings, "QE001") && !per_file_ignored(&settings, "QE001", file);
         let mut found = lint_selecting(source, path, Profile::Uqf, ws, structure);
         found.retain(|f| {
-            self.selected(&settings, &f.code) && !per_file_ignored(&settings, &f.code, file)
+            self.selected(&settings, &f.code)
+                && !per_file_ignored(&settings, &f.code, file)
+                && !self.test_exempt(&settings, &f.code, file)
         });
         Ok(found)
+    }
+
+    /// A test may build a legacy datetime, read the local clock or mix infix
+    /// arithmetic on purpose, so QP002, QP003 and QP005 pass over a file in
+    /// a `tests` directory below the project root: where the configuration's
+    /// patterns are rooted, or the current directory when there is none. A `tests` above the
+    /// root - a checkout under `~/tests` - exempts nothing, and a rule the
+    /// command line selects by code reports regardless (#800, #416).
+    fn test_exempt(&self, settings: &Settings, code: &str, path: &Path) -> bool {
+        if !["QP002", "QP003", "QP005"].contains(&code) {
+            return false;
+        }
+        let cli = &self.overrides.layer;
+        if cli
+            .select
+            .iter()
+            .flatten()
+            .chain(&cli.extend_select)
+            .any(|s| s != "ALL" && names(s, code))
+        {
+            return false;
+        }
+        let Ok(root) = project_root(settings) else {
+            return false;
+        };
+        let full = absolute(path);
+        full.strip_prefix(&root).is_ok_and(|relative| {
+            relative
+                .parent()
+                .is_some_and(|dir| dir.components().any(|c| c.as_os_str() == "tests"))
+        })
     }
 
     /// What `--show-settings` prints: which file governs `path`, and what it
@@ -345,7 +404,9 @@ impl Policy {
             .filter(|r| runs(&r.scope))
             .map(|r| r.code.as_str())
             .filter(|code| {
-                self.selected(&settings, code) && !per_file_ignored(&settings, code, path)
+                self.selected(&settings, code)
+                    && !per_file_ignored(&settings, code, path)
+                    && !self.test_exempt(&settings, code, path)
             })
             .collect();
         codes.sort_unstable();
@@ -394,6 +455,18 @@ fn per_file_ignored(settings: &Settings, code: &str, path: &Path) -> bool {
     settings.per_file_ignores.iter().any(|(glob, codes)| {
         codes.iter().any(|s| names(s, code)) && matches(&full, glob) != glob.negated
     })
+}
+
+/// The directory a file's settings take as the project's top: where the
+/// configuration's patterns are rooted, or the current directory when no
+/// configuration governs it.
+fn project_root(settings: &Settings) -> Result<PathBuf, String> {
+    match &settings.root {
+        Some(dir) => Ok(dir.clone()),
+        None => Ok(absolute(
+            &std::env::current_dir().map_err(|e| e.to_string())?,
+        )),
+    }
 }
 
 /// Ruff's matching: a pattern is tried against the path relative to the
@@ -585,6 +658,7 @@ fn load(
         }
     };
     settings.file = Some(absolute(path));
+    settings.root = Some(patterns.unwrap_or(&root).to_path_buf());
     settings.sources.push(absolute(path));
     if let Some(v) = table.get("profile") {
         let name = v
@@ -630,7 +704,7 @@ fn load(
                     .filter(|s| !s.trim().is_empty())
                     .ok_or_else(|| format!("{shown}: {key} must contain nonempty strings"))?;
                 globs.push(
-                    rooted(patterns.unwrap_or(&root), p)
+                    excluding(patterns.unwrap_or(&root), p)
                         .map_err(|e| format!("{shown}: {key}: {e}"))?,
                 );
             }
@@ -706,6 +780,20 @@ pub struct Glob {
 /// root before matching, so `gen/`, `./gen` and an absolute `/abs/root/gen`
 /// all name the root's `gen` - anchored there - and only a bare `gen`, with
 /// no `/` in it at all, also matches the name anywhere below it.
+/// `rooted`, for an exclusion: one that names its root or a directory above
+/// it - `.`, `./`, `..`, or `/` from anywhere - would leave nothing to lint
+/// and pass, as an empty one would, so it is refused like one (#803).
+pub fn excluding(root: &Path, text: &str) -> Result<Glob, String> {
+    let glob = rooted(root, text)?;
+    if glob.pattern.as_str().is_empty() && absolute(root).starts_with(&glob.root) {
+        return Err(format!(
+            "{}: the pattern names the whole tree, so it would exclude every file",
+            text.trim()
+        ));
+    }
+    Ok(glob)
+}
+
 pub fn rooted(root: &Path, text: &str) -> Result<Glob, String> {
     let trimmed = text.trim();
     // An empty pattern names its root, so it would exclude everything: a
@@ -746,6 +834,9 @@ pub fn rooted(root: &Path, text: &str) -> Result<Glob, String> {
         } else if rest == ".." {
             rest = "";
             root.pop();
+        } else if rest == "." {
+            // The root itself, as `./` is: not a file named `.` (#803).
+            rest = "";
         } else {
             break;
         }
