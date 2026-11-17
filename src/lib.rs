@@ -1737,7 +1737,7 @@ impl Finding {
 }
 /// The line `at` is on, from 1, and the offset that line starts at: from the
 /// installed `LineScope` when `s` is its text, by counting otherwise.
-fn line_at(s: &str, at: usize) -> (usize, usize) {
+pub(crate) fn line_at(s: &str, at: usize) -> (usize, usize) {
     LINES.with(|l| {
         let l = l.borrow();
         let t = l.as_ref().filter(|t| t.0 == s.as_ptr() as usize && t.1 == s.len())?;

@@ -157,7 +157,9 @@ fn number(token: &str) -> Option<Key> {
 /// as q: `\l /data/2024.02.30/t` names a path (#198). Not `\t` or `\ts`,
 /// whose argument is an expression q runs.
 fn command_argument(source: &str, at: usize) -> bool {
-    let line = source[..at].rfind('\n').map_or(0, |p| p + 1);
+    // From the line table: searching back for the line's start was linear
+    // in a long line for each number on it (#711).
+    let (_, line) = crate::line_at(source, at);
     crate::system_command(&source[line..])
 }
 

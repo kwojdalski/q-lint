@@ -380,7 +380,9 @@ fn duplicate_columns(path: &str, source: &str, code: &str, out: &mut Vec<Finding
         if inner[key_close..].trim().is_empty() {
             continue;
         }
-        let mut seen: Vec<&str> = vec![];
+        // A set: a wide literal compared each name with every one before it
+        // (#711).
+        let mut seen = std::collections::HashSet::new();
         for part in slots(&inner[bracket + 1..key_close - 1])
             .into_iter()
             .chain(slots(&inner[key_close..]))
@@ -392,7 +394,7 @@ fn duplicate_columns(path: &str, source: &str, code: &str, out: &mut Vec<Finding
             if !re!(r"^[A-Za-z][A-Za-z0-9_]*$").is_match(name) {
                 continue;
             }
-            if seen.contains(&name) {
+            if !seen.insert(name) {
                 out.push(Finding::at(
                     path,
                     source,
@@ -402,7 +404,6 @@ fn duplicate_columns(path: &str, source: &str, code: &str, out: &mut Vec<Finding
                 ));
                 break;
             }
-            seen.push(name);
         }
     }
     // The same in a select or update list, where q 5 renames as well:
@@ -432,9 +433,9 @@ fn duplicate_columns(path: &str, source: &str, code: &str, out: &mut Vec<Finding
             if list.contains('\n') || !braces_close(list) || items_at_depth_zero(list, b';') {
                 continue;
             }
-            let mut seen: Vec<&str> = vec![];
+            let mut seen = std::collections::HashSet::new();
             for name in items(list).into_iter().filter_map(column_name) {
-                if seen.contains(&name) {
+                if !seen.insert(name) {
                     out.push(Finding::at(
                         path,
                         source,
@@ -444,7 +445,6 @@ fn duplicate_columns(path: &str, source: &str, code: &str, out: &mut Vec<Finding
                     ));
                     break;
                 }
-                seen.push(name);
             }
         }
     }

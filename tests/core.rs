@@ -820,6 +820,22 @@ fn nested_conditionals_lint_in_bounded_time() {
         );
     }
 }
+/// A wide table literal: each column counted its depth from the literal's
+/// start (#469), was compared with every column before it for QB019, and
+/// each number on the line looked back for the line's start (#711).
+#[test]
+fn a_wide_table_literal_lints_in_bounded_time() {
+    let keys: Vec<String> = (0..16000).map(|i| format!("k{i}:1 2")).collect();
+    let columns: Vec<String> = (0..16000).map(|i| format!("c{i}:3 4")).collect();
+    let source = format!("t:([{}] {})\n", keys.join("; "), columns.join("; "));
+    let started = std::time::Instant::now();
+    lint(&source, "t.q", Profile::Style);
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < std::time::Duration::from_secs(10),
+        "32000 columns took {elapsed:?}"
+    );
+}
 /// Tens of thousands of nested parentheses - beyond q's own limit, which
 /// refuses a hundred-odd levels with '( - once overflowed the stack, which
 /// aborts the whole run and cannot be caught like a panic (#703).

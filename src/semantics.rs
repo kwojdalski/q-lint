@@ -3279,16 +3279,27 @@ fn named_values(
             ))
         })
         .collect();
+    // The bracket depth before each offset, so a name's depth inside a
+    // literal is a difference rather than a count over the literal up to it,
+    // which made a wide literal quadratic (#711).
+    let depth: Vec<i32> = if literals.is_empty() {
+        vec![]
+    } else {
+        std::iter::once(0)
+            .chain(code.bytes().scan(0i32, |d, c| {
+                match c {
+                    b'(' | b'[' | b'{' => *d += 1,
+                    b')' | b']' | b'}' => *d -= 1,
+                    _ => {}
+                }
+                Some(*d)
+            }))
+            .collect()
+    };
     let in_literal = |at: usize| {
         literals.iter().any(|&(open, header, close)| {
             open < at && at < close && {
-                let depth = code.as_bytes()[open + 1..at]
-                    .iter()
-                    .fold(0i32, |d, &c| match c {
-                        b'(' | b'[' | b'{' => d + 1,
-                        b')' | b']' | b'}' => d - 1,
-                        _ => d,
-                    });
+                let depth = depth[at] - depth[open + 1];
                 depth == 0 || (depth == 1 && at < header)
             }
         })
