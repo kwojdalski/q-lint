@@ -2648,12 +2648,13 @@ pub(crate) fn is_pattern(s: &str, nested: bool) -> bool {
         true
     } else if let Some(inner) = s.strip_prefix("([]").filter(|_| whole(s)) {
         items(&inner[..inner.len() - 1], &|c| field(c))
-    } else if let Some(inner) = s
-        .strip_prefix("([")
-        .filter(|_| s.ends_with("])") && whole(s))
+    } else if s.starts_with("([")
+        && whole(s)
+        && let Some(close) = matching(s, 1, b'[', b']')
     {
-        matching(s, 1, b'[', b']') == Some(s.len() - 1)
-            && items(&inner[..inner.len() - 2], &|c| field(c))
+        // A keyed table: its keys, then any value columns - q 5
+        // `{[([k]v)] v} ([k:1 2]v:3 4)` is 3 4 (#740).
+        items(&s[2..close - 1], &|c| field(c)) && items(&s[close..s.len() - 1], &|c| field(c))
     } else if whole(s) {
         items(&s[1..s.len() - 1], &|c| is_pattern(c, true))
     } else if let Some(at) = typed_at(s) {
