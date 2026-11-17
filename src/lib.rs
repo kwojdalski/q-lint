@@ -6292,6 +6292,8 @@ pub fn lint_selecting(
             .collect()
     };
     let statements = statement_groups(code, source);
+    // QB015's exception: a char column compared with a string as long (#754).
+    let char_columns = semantics::char_column_comparisons(code, &v.comments);
     // Where each group's top-level statement ends. Inside a bracket every
     // line is a group of its own, but a query there may go on over the next
     // lines - a newline in a lambda is whitespace - so the query rules read
@@ -6816,6 +6818,7 @@ pub fn lint_selecting(
         if let Some(w) = filter
             && let Some((op, n)) = comparison(w.end()).into_iter().chain(left(w.end())).min()
             && op < phrase_end(query, w.end())
+            && !char_columns.contains(&(offset + op))
         {
             let rows = match n {
                 0 => "the table is empty".to_string(),

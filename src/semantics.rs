@@ -4376,6 +4376,90 @@ fn qsql_phrases(code: &str) -> Vec<Phrase> {
     out
 }
 
+/// Where a where phrase compares a char column of a table literal with a
+/// string exactly as long: the offset of each such operator. q 5 compares
+/// row by row and runs it - `t:([]c:"ab";v:1 2); select from t where c="ab"`
+/// keeps both rows (#754). Only a table this file assigns once, at column 0,
+/// with no `\d` in the file and no symbol naming it: `` `t upsert ``, `` `t
+/// insert `` and the rest change its rows.
+pub(crate) fn char_column_comparisons(code: &str, comments: &str) -> Vec<usize> {
+    let mut out = vec![];
+    if re!(r#"(?m)^\\d\b|system\s*"d\b"#).is_match(comments) {
+        return out;
+    }
+    for (start, end, table) in qsql_phrases(code) {
+        let Some((t, e)) = table else {
+            continue;
+        };
+        if !code[start..].starts_with("where") {
+            continue;
+        }
+        let name = &code[t..e];
+        let whole = |m: &regex::Match| {
+            !code[..m.start()].ends_with(|c: char| c.is_alphanumeric() || "_.".contains(c))
+                && !code[m.end()..].starts_with(|c: char| c.is_alphanumeric() || "_.".contains(c))
+        };
+        let uses: Vec<regex::Match> = regex::Regex::new(&regex::escape(name))
+            .unwrap()
+            .find_iter(code)
+            .filter(whole)
+            .collect();
+        let writes: Vec<&regex::Match> = uses
+            .iter()
+            .filter(|m| {
+                code[..m.start()].ends_with('`')
+                    || re!(r"^\s*(?:[,\[]|:(?:[^:]|$))").is_match(&code[m.end()..])
+            })
+            .collect();
+        let [only] = writes[..] else {
+            continue;
+        };
+        if only.start() != 0 && !code[..only.start()].ends_with('\n') {
+            continue;
+        }
+        let value = crate::past_blanks(code, only.end() + 1);
+        let Some(inner) = re!(r"^\(\s*\[\s*\]").find(&code[value..]) else {
+            continue;
+        };
+        let Some(close) = matching(code, value, b'(', b')') else {
+            continue;
+        };
+        let body = value + inner.end();
+        let mut columns = vec![];
+        let mut at = body;
+        for part in crate::slots(&code[body..close - 1]) {
+            if let Some(colon) = part.find(':') {
+                let column = part[..colon].trim();
+                let text = comments[at + colon + 1..at + part.len()].trim();
+                if let Some(chars) = re!(r#"^"((?:\\[0-7]{3}|\\.|[^"\\])*)"$"#).captures(text) {
+                    columns.push((column, crate::q_bytes(&chars[1]).len()));
+                }
+            }
+            at += part.len() + 1;
+        }
+        let end = end.min(code.len());
+        for (column, n) in columns {
+            let column = regex::escape(column);
+            let string = r#""((?:\\[0-7]{3}|\\.|[^"\\])*)""#;
+            for (pattern, op, chars) in [
+                (format!(r"\b{column}[ \t]*(=|<>)[ \t]*{string}"), 1, 2),
+                (format!(r"{string}[ \t]*(=|<>)[ \t]*{column}\b"), 2, 1),
+            ] {
+                for m in regex::Regex::new(&pattern)
+                    .unwrap()
+                    .captures_iter(&comments[start..end])
+                {
+                    let (op, chars) = (m.get(op).unwrap(), m.get(chars).unwrap());
+                    if crate::q_bytes(chars.as_str()).len() == n {
+                        out.push(start + op.start());
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
 /// What an operand is, for the char-arithmetic rule. `Float` stands for
 /// anything a char may meet under `+`, `-` and `*` on q 5.
 #[derive(Clone, Copy, PartialEq, Debug)]
