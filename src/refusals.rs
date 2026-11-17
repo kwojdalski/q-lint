@@ -1436,6 +1436,38 @@ fn temporal_shape(item: &str) -> Option<&'static str> {
     }
 }
 
+/// A temporal or exponent token with one lowercase suffix: its shape, and
+/// every suffix q 5 parses after some spelling of that shape. Measured with
+/// `parse` over every letter and many spellings of each (`12:00`, `1:00`,
+/// `12:00:00.5`, `0D`, `0D12:00:00.123456789`, ...): `2000.01.01j`,
+/// `12:00:00f`, `0D12h`, `2000.01.01D12t`, `2000.01.01T12u` and `1e5p` are
+/// refused with the token (#716). A letter q parses but runs as a name,
+/// `12:00s`, is left alone.
+fn temporal_suffixes(text: &str) -> Option<(&'static str, &'static str)> {
+    let bare = text.strip_suffix(|c: char| c.is_ascii_lowercase())?;
+    // The clock a timespan, timestamp or datetime may carry after its letter.
+    macro_rules! clock {
+        () => {
+            r"(?:\d+(?::\d+(?::\d+(?:\.\d*)?)?)?)?$"
+        };
+    }
+    if re!(r"^\d+:\d+(?::\d+(?:\.\d*)?)?$").is_match(bare) {
+        Some(("time", "acklnopqrstuvwxy"))
+    } else if re!(r"^\d{4}\.\d\d\.\d\d$").is_match(bare) {
+        Some(("date", "cdmnpsz"))
+    } else if re!(concat!(r"^\d+D", clock!())).is_match(bare) {
+        Some(("timespan", "acklnopqrswxy"))
+    } else if re!(concat!(r"^\d{4}\.\d\d\.\d\dD", clock!())).is_match(bare) {
+        Some(("timestamp", "acdklmnopqrswxyz"))
+    } else if re!(concat!(r"^\d{4}\.\d\d\.\d\dT", clock!())).is_match(bare) {
+        Some(("datetime", "acdklmnopqrswxyz"))
+    } else if re!(r"^\d+\.?\d*e[+-]?\d+$").is_match(bare) {
+        Some(("float with an exponent", "cefs"))
+    } else {
+        None
+    }
+}
+
 /// What q 5 refuses in a null or infinity token: a type letter it has no
 /// null or infinity for, a suffix on an item but the last, and a negative
 /// null. Measured with `parse` over every letter: `0N` takes
@@ -1666,6 +1698,14 @@ fn numbers(
                 && !re!(r"^\d{4}\.\d{2}\.\d{2}$").is_match(text)
             {
                 Some(format!("`{text}` is not a number or a date (yyyy.mm.dd)"))
+            } else if k + 1 == run.len()
+                && let Some((shape, takes)) = temporal_suffixes(text)
+                && !takes.contains(&text[text.len() - 1..])
+            {
+                Some(format!(
+                    "`{text}`: a {shape} takes no `{}` suffix",
+                    &text[text.len() - 1..]
+                ))
             } else if re!(r"^\d{19,}j?$").is_match(text)
                 && !float_vector(run)
                 && text
