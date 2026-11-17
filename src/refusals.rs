@@ -1621,7 +1621,8 @@ fn float_vector(run: &[regex::Match]) -> bool {
     (re!(r"^\.?\d.*[ef]$").is_match(last) && !last.starts_with("0x"))
         || (!re!(r"[hij]$").is_match(last)
             && run.iter().any(|t| {
-                re!(r"^(?:(?:\d+\.\d*|\.\d+)(?:e[+-]?\d+)?|\d+e[+-]?\d+|0[nw])$").is_match(t.as_str())
+                re!(r"^(?:(?:\d+\.\d*|\.\d+)(?:e[+-]?\d+)?|\d+e[+-]?\d+|0[nw])$")
+                    .is_match(t.as_str())
             }))
 }
 

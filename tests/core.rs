@@ -904,7 +904,11 @@ fn deeply_nested_parentheses_do_not_overflow_the_stack() {
         for profile in [Profile::General, Profile::Uqf] {
             // QE001 reports the depth alone (#717); deselected, every rule
             // still reads the file.
-            assert!(lint(&source, "t.q", profile).iter().any(|f| f.code == "QE001"));
+            assert!(
+                lint(&source, "t.q", profile)
+                    .iter()
+                    .any(|f| f.code == "QE001")
+            );
             lint_selecting(&source, "t.q", profile, &Workspace::default(), false);
         }
     }
@@ -913,7 +917,8 @@ fn deeply_nested_parentheses_do_not_overflow_the_stack() {
 /// of any kinds, and refuses the next with '( or '{ or '[ (#717).
 #[test]
 fn more_than_a_hundred_open_brackets_are_refused() {
-    let deep = |n: usize, open: &str, close: &str| format!("a:{}1{}\n", open.repeat(n), close.repeat(n));
+    let deep =
+        |n: usize, open: &str, close: &str| format!("a:{}1{}\n", open.repeat(n), close.repeat(n));
     for (source, refused) in [
         (deep(100, "(", ")"), false),
         (deep(101, "(", ")"), true),

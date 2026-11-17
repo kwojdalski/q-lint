@@ -1692,22 +1692,28 @@ impl Finding {
 /// The line `at` is on, from 1, and the offset that line starts at: from the
 /// installed `LineScope` when `s` is its text, by counting otherwise.
 pub(crate) fn line_at(s: &str, at: usize) -> (usize, usize) {
-    LINES.with(|l| {
-        let l = l.borrow();
-        let t = l.as_ref().filter(|t| t.0 == s.as_ptr() as usize && t.1 == s.len())?;
-        let line = t.2.partition_point(|&start| start <= at);
-        Some((line, t.2[line - 1]))
-    })
-    .unwrap_or_else(|| {
-        let line = s.as_bytes()[..at].iter().filter(|&&b| b == b'\n').count() + 1;
-        (line, s[..at].rfind('\n').map_or(0, |p| p + 1))
-    })
+    LINES
+        .with(|l| {
+            let l = l.borrow();
+            let t = l
+                .as_ref()
+                .filter(|t| t.0 == s.as_ptr() as usize && t.1 == s.len())?;
+            let line = t.2.partition_point(|&start| start <= at);
+            Some((line, t.2[line - 1]))
+        })
+        .unwrap_or_else(|| {
+            let line = s.as_bytes()[..at].iter().filter(|&&b| b == b'\n').count() + 1;
+            (line, s[..at].rfind('\n').map_or(0, |p| p + 1))
+        })
 }
+
+/// A text's address and length, and the offset each of its lines starts at.
+type LineTable = (usize, usize, Vec<usize>);
 
 thread_local! {
     /// The text `LineScope` was installed for, by address and length, and
     /// the offset each of its lines starts at.
-    static LINES: std::cell::RefCell<Option<std::rc::Rc<(usize, usize, Vec<usize>)>>> =
+    static LINES: std::cell::RefCell<Option<std::rc::Rc<LineTable>>> =
         const { std::cell::RefCell::new(None) };
 }
 
@@ -1715,7 +1721,7 @@ thread_local! {
 /// as `MatchScope` does its brackets: every finding is placed by its line,
 /// and counting from the file's start for each was quadratic (#706). The
 /// caller keeps the text alive and unchanged while the scope lives.
-pub(crate) struct LineScope(Option<std::rc::Rc<(usize, usize, Vec<usize>)>>);
+pub(crate) struct LineScope(Option<std::rc::Rc<LineTable>>);
 
 impl LineScope {
     pub(crate) fn install(text: &str) -> LineScope {
@@ -2111,7 +2117,10 @@ fn qsql_phrase(code: &str, at: usize, joins: bool) -> bool {
         hit.filter(|_| cached)
     });
     if !passed.is_empty() {
-        PHRASES.with(|p| p.borrow_mut().extend(passed.into_iter().map(|k| (k, found))));
+        PHRASES.with(|p| {
+            p.borrow_mut()
+                .extend(passed.into_iter().map(|k| (k, found)))
+        });
     }
     found
 }
@@ -2899,7 +2908,10 @@ impl MatchScope {
                     b'(' | b'[' | b'{' => depth += 1,
                     b')' | b']' | b'}' => depth -= 1,
                     b';' => {
-                        semicolons.entry(depth).or_insert_with(Vec::new).push(i as u32);
+                        semicolons
+                            .entry(depth)
+                            .or_insert_with(Vec::new)
+                            .push(i as u32);
                         continue;
                     }
                     _ => continue,
