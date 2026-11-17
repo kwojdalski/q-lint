@@ -423,6 +423,12 @@ r:(a+b)/2
 mem:{(3#system"w")%x (1024*)/ 1}
 p:(10000>pi::)(2*)/1000
 
+=== clean | so is a parenthesised name or lambda with a left operand (#509; q 5: 3 (g)/1 is 8, {x<100} ({x*2})/1 is 128)
+g:{x*2}
+a:3 (g)/1
+b:{x<100} ({x*2})/1
+c:3 (.ns.g)/1
+
 === QB014 QE009 | without the left operand q refuses it: (2*)/1 is '/
 r:(2*)/1
 

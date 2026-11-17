@@ -6174,9 +6174,12 @@ pub fn lint_selecting(
                 }
             }
             let Some(open) = open else { return false };
-            let projection = unsym[open + 1..m.start()]
-                .trim_end()
-                .ends_with(|c: char| "+-*%&|^=<>~,#_!?@.$:".contains(c));
+            // A function named or written in the parentheses too: q 5
+            // `3 (g)/1` is 8 and `{x<100} ({x*2})/1` is 128 (#509).
+            let inner = unsym[open + 1..m.start()].trim();
+            let projection = inner.ends_with(|c: char| "+-*%&|^=<>~,#_!?@.$:".contains(c))
+                || re!(r"^\.?[A-Za-z][A-Za-z0-9_.]*$").is_match(inner)
+                || (inner.starts_with('{') && inner.ends_with('}'));
             let operand = unsym[..open]
                 .trim_end()
                 .ends_with(|c: char| c.is_alphanumeric() || ")]}".contains(c));
