@@ -4054,7 +4054,8 @@ pub fn lint_selecting(
         // A file symbol too, `` `:db/t ``, which runs on over `/` (q 5).
         let sym = r"(?:`(?:\.?[A-Za-z][A-Za-z0-9_.:]*|:[A-Za-z0-9_.:/]*))+";
         // An exponent's sign is part of its number: `1e-3` is one float.
-        let num = r"-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:[ \t]+-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)*";
+        let num =
+            r"-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:[ \t]+-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)*";
         let string = r#""(?:[^"\\]|\\.)*""#;
         let op = r"(?:<=|>=|<>|<|>|=|\bin\b)";
         // A string literal is blanks by the time `code` is built, so the
@@ -4993,7 +4994,7 @@ pub fn lint_selecting(
             if re!(r"^(?:`[A-Za-z0-9_.]*){2,}$").is_match(v) {
                 return Some(Shape::Vector(Some(v.matches('`').count())));
             }
-            if re!(r"^-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:\s+-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)+$")
+            if re!(r"^-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:\s+-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)+$")
                 .is_match(v)
             {
                 return Some(Shape::Vector(Some(v.split_whitespace().count())));
@@ -5001,7 +5002,7 @@ pub fn lint_selecting(
             if v == "()" {
                 return Some(Shape::Vector(Some(0)));
             }
-            if re!(r"^[01]b$|^0x[0-9a-fA-F]{1,2}$|^-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*$|^`[A-Za-z0-9_.]*$")
+            if re!(r"^[01]b$|^0x[0-9a-fA-F]{1,2}$|^-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*$|^`[A-Za-z0-9_.]*$")
                 .is_match(v)
             {
                 return Some(Shape::Atom);

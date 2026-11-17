@@ -1071,3 +1071,15 @@ i:h[`.a]
 a:`:dir/file
 b:`.a`.b!1 2
 c:`.%name%.lib.type
+
+=== QT005 QT008 QT011 QT014 QT015 QT017 QT022 QT025 QT031 profile: general | a float written with a leading dot is a float (q 5: each 'type, 'rank or 'stype; #601)
+a:til .5
+b:asc .5
+c:.5 rotate 1 2
+d:.5 mavg 1 2 3
+e:`a=.5
+f:([]a:.5)
+g:"J"$.5
+h:.5
+h 0
+'.5

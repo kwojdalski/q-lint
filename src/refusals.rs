@@ -531,7 +531,7 @@ fn signals(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<F
     // `` '`a`b `` are each 'stype.
     // A number runs on over `:` and an exponent's sign: `'12:00`,
     // `'2026.01.01D12:00` and `'1e-3` are each 'stype.
-    for m in re!(r#"(')(-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*|"(?:\\[0-7]{3}|\\.|[^"\\])+"|\(\s*\)|\(\s*-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*\s*\)|\([^()"]*;[^()]*\)|(?:`[A-Za-z0-9_.]*){2,})"#).captures_iter(comments) {
+    for m in re!(r#"(')(-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*|"(?:\\[0-7]{3}|\\.|[^"\\])+"|\(\s*\)|\(\s*-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*\s*\)|\([^()"]*;[^()]*\)|(?:`[A-Za-z0-9_.]*){2,})"#).captures_iter(comments) {
         let quote = m.get(1).unwrap();
         let value = m.get(2).unwrap();
         if code.as_bytes()[quote.start()] != b'\'' {
@@ -819,9 +819,10 @@ fn cast_character(path: &str, source: &str, code: &str, comments: &str, out: &mu
         let start = whole.end() + comments[whole.end()..].len() - operand.len();
         if c.chars().all(|c| c.is_ascii_uppercase())
             && !"AKLOQRWY".contains(c)
-            && let Some(lit) =
-                re!(r"^(?:-?\d[A-Za-z0-9.:]*(?:[ \t]+-?\d[A-Za-z0-9.:]*)*|(?:`[A-Za-z0-9_.:]*)+)")
-                    .find(operand)
+            && let Some(lit) = re!(
+                r"^(?:-?\.?\d[A-Za-z0-9.:]*(?:[ \t]+-?\.?\d[A-Za-z0-9.:]*)*|(?:`[A-Za-z0-9_.:]*)+)"
+            )
+            .find(operand)
             && crate::operand_ends(code, start + lit.end())
             && (c != "C" || !atom_literal(lit.as_str()))
         {

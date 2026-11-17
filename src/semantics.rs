@@ -3014,7 +3014,7 @@ fn held(code: &str, raw: &str) -> Option<Held> {
     if crate::Z_ATOMS.contains(&code) {
         return Some(Held::Atom);
     }
-    if re!(r"^(?:-?\d[A-Za-z0-9.:]*|0x[0-9a-fA-F]{2})$").is_match(code)
+    if re!(r"^(?:-?\.?\d[A-Za-z0-9.:]*|0x[0-9a-fA-F]{2})$").is_match(code)
         // `0x` is the empty byte vector and `0x012` the two bytes `0x0012`
         // (q 5): only one or two hex digits make an atom.
         && !re!(r"^[01]{2,}b$|^0x(?:[0-9a-fA-F]{3,})?$").is_match(code)
