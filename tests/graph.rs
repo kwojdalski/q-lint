@@ -474,6 +474,23 @@ fn a_relative_load_after_a_change_of_directory_is_dynamic() {
 }
 
 #[test]
+fn a_trailing_double_colon_composes_and_defines_nothing() {
+    // q 5: `g:f[1] count::` composes, and `count` stays q's; `h:f lim::`
+    // leaves no `lim`. A line that is only `a::` does define `a` (#764).
+    let g = graph(
+        &[
+            ("a.q", "f:{x+y}\ng:f[1] count::\nh:f lim::\n"),
+            ("b.q", "n:count 1 2 3\nr:lim\n"),
+            ("c.q", "a::\n"),
+            ("d.q", "r:a\n"),
+        ],
+        false,
+    );
+    assert!(deps(&g, "b.q").is_empty());
+    assert_eq!(deps(&g, "d.q"), ["c.q"]);
+}
+
+#[test]
 fn a_script_loaded_under_a_context_defines_in_it() {
     // q 5: after `\d .a`, `\l b.q`, `\d .` with b.q's `ff:{1}`, `.a.ff[]`
     // is 1 and `ff` is 'ff. b.q's own `\d .b` does not leak back out: a.q's

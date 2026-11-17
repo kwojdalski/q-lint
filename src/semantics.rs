@@ -930,6 +930,19 @@ fn global_writes(
         // `g:{[b] b::7; b}; g 1` is 7 and leaves no global `b`.
         let local =
             || scope_at(scopes, m.start()).is_some_and(|s| scopes[s].locals.contains(&a[1]));
+        // A `::` with nothing after it composes, `f[1] count::`, and assigns
+        // nothing - unless it is the whole line: q 5 defines `a` for a line
+        // `a::`, and reads it for `x:1;a::`, `{a::}` and `d:a::` (#764).
+        let value = code[m.end()..].trim_start_matches([' ', '\t', '\r']);
+        let continued = value.starts_with('\n') && value[1..].starts_with([' ', '\t']);
+        if a.get(2).is_some()
+            && (value.is_empty() || value.starts_with([';', '\n', ')', ']', '}']))
+            && !continued
+            && !((m.start() == 0 || code[..m.start()].ends_with('\n'))
+                && (value.is_empty() || value.starts_with('\n')))
+        {
+            continue;
+        }
         if scope_at(scopes, m.start()).is_none()
             || (a.get(2).is_some() && !local())
             || a[1].contains('.')
