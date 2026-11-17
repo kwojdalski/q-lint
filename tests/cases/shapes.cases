@@ -78,6 +78,14 @@ s:`a - 1
 === QT003 | a symbol on the left is the operand whatever follows
 r:`a+`b?`c
 
+=== clean profile: general | a symbol and an operator with nothing after it is a projection (q 5: +[`a], (*[`a];1), %[`a]; #599)
+x:`a+
+y:(`a*;1)
+f:{x}
+z:f[`a%]
+w:`b-
+u:`a mod
+
 === clean | a char meets a float, or sits right of minus, or is divided: q 5 runs all three
 r1:1.5+"a"
 r2:"ab"%2

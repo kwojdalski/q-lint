@@ -4014,6 +4014,11 @@ pub fn lint_selecting(
         // Unless what is on its right ends in an operator: that is a
         // projection, and the symbol composes with it - q 5 `` `+n% `` is
         // `+[`]%[n]`, no error - as a template's `` `%name%] `` reads.
+        // Nothing on its right at all is a projection too: `` `a+ ``,
+        // `` (`a*;1) `` and `` f[`a%] `` build `+[`a]` and run (q 5, #599).
+        if m.as_str().starts_with('`') && operand_ends(code, m.end()) {
+            continue;
+        }
         if m.as_str().starts_with('`') {
             let end = phrase_end(code, m.end());
             let end = code[m.end()..end].find('\n').map_or(end, |n| m.end() + n);
