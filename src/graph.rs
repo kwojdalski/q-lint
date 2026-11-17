@@ -82,13 +82,16 @@ pub fn build(files: &[(PathBuf, String)], symbols: bool, cwd: &Path) -> BTreeMap
     // run at the root elsewhere, and one loaded from several contexts
     // defines in each. A load at a loaded script's root runs in the context
     // that script runs in: `\l c.q` at b.q's root, with b.q loaded under
-    // `\d .a`, puts c.q's `gg` at `.a.gg` (q 5).
+    // `\d .a`, puts c.q's `gg` at `.a.gg` (q 5). Only before the script's
+    // own first `\d`: after its `\d .`, `yy:2` is the root's `yy` and no
+    // `.a.yy` (q 5, #532).
     let mut contexts: Vec<BTreeSet<&str>> = vec![BTreeSet::new(); files.len()];
     let mut pending: Vec<(usize, &str)> = vec![];
     for (i, read) in reads.iter().enumerate() {
         for (load, namespace) in &read.loads {
             if let Some(d) = target(i, load)
                 && !namespace.is_empty()
+                && namespace != "."
             {
                 pending.push((d, namespace));
             }
@@ -98,7 +101,7 @@ pub fn build(files: &[(PathBuf, String)], symbols: bool, cwd: &Path) -> BTreeMap
         if !contexts[d].insert(namespace) {
             continue;
         }
-        for name in reads[d].defines.iter().filter(|n| !n.starts_with('.')) {
+        for name in &reads[d].implicit_defines {
             let defs = definers.entry(format!("{namespace}.{name}")).or_default();
             if !defs.contains(&d) {
                 defs.push(d);

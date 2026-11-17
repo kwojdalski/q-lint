@@ -748,3 +748,19 @@ fn a_script_loaded_under_a_context_reads_in_it() {
     assert_eq!(deps(&g, "b.q"), ["d.q"]);
     assert!(deps(&g, "c.q").is_empty());
 }
+
+#[test]
+fn a_loaded_scripts_own_root_is_not_the_loaders_context() {
+    // q 5, a.q loading b.q under `\d .a`: b.q's `xx` is `.a.xx`, but after
+    // b.q's own `\d .` its `yy` and what it loads stay at the root (#532).
+    let g = graph(
+        &[
+            ("b.q", "xx:1\n\\d .\nyy:2\n\\l e.q\n"),
+            ("e.q", "zz:3\n"),
+            ("a.q", "\\d .a\n\\l b.q\n\\d .\n"),
+            ("c.q", "r:{.a.yy}\ns:{.a.zz}\nt:{.a.xx}\n"),
+        ],
+        false,
+    );
+    assert_eq!(deps(&g, "c.q"), ["b.q"]);
+}

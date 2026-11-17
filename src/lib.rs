@@ -117,9 +117,14 @@ pub struct References {
     /// Each global this file assigns, named the same way, as `FileIndex`
     /// does.
     pub defines: Vec<String>,
+    /// Those of `defines` assigned before the file's first `\d`, by a name
+    /// without a leading dot: a load under `\d .a` puts them in `.a`.
+    pub implicit_defines: Vec<String>,
     /// The paths of `\l path`, `system "l path"` and `` `:path.q ``, as
-    /// written, each with the `\d` in force where it is loaded - `""` at the
-    /// root - since the loaded script runs in it.
+    /// written, each with the `\d` in force where it is loaded, since the
+    /// loaded script runs in it: `""` before the file's first `\d`, where
+    /// that is whichever context the file is loaded in, and `"."` at the
+    /// root after it.
     pub loads: Vec<(String, String)>,
     /// Where a name is reached by a value computed at run time.
     pub dynamic: Vec<Dynamic>,

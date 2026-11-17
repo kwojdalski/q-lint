@@ -1205,7 +1205,14 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
     names.sort();
     let mut relative: Vec<_> = relative.into_iter().collect();
     relative.sort();
-    let mut defines: Vec<_> = global_writes(code, &scopes, &namespaces, resolved, false)
+    let writes = global_writes(code, &scopes, &namespaces, resolved, false);
+    let mut implicit_defines: Vec<_> = writes
+        .iter()
+        .filter(|(name, at)| !name.starts_with('.') && at.iter().any(|&a| a < first_switch))
+        .map(|(name, _)| name.clone())
+        .collect();
+    implicit_defines.sort();
+    let mut defines: Vec<_> = writes
         .into_keys()
         .chain(k_writes(raw, &namespaces))
         .collect();
@@ -1215,9 +1222,12 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
         names,
         relative,
         defines,
+        implicit_defines,
         loads: loads(code, raw, &view, |at| {
-            if scope_at(&scopes, at).is_some() {
+            if scope_at(&scopes, at).is_some() || at < first_switch {
                 String::new()
+            } else if ns_at(at).is_empty() {
+                ".".into()
             } else {
                 ns_at(at).to_string()
             }
