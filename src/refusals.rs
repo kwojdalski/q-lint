@@ -1425,14 +1425,14 @@ fn derived_operand(
 }
 
 /// QE011. An infix keyword or glyph before an iterator keyword - `each`,
-/// `peach`, `over`, `scan` or `prior`. q 5 refuses the line at parse whatever
-/// stands on its left: `cor each x`, `x mavg each y`, `x in over y` and
-/// `x + each y` are each an error, while `(cor) each x`, `cor'[x;y]`,
-/// `cor[x] each y` and `(+) each y` parse (#492). The list is every reserved
-/// word q 5 refuses there, checked one by one (the iterator keywords are
-/// iterators themselves, and the qSQL words have their own rule). Of the
-/// glyphs, `:` is left to assignment and `.` and `_` to names; `/`, `\` and
-/// `'` are iterators.
+/// `peach`, `over`, `scan` or `prior`. q 5 refuses the line at parse when
+/// nothing is on its left or an operand follows: `cor each x`,
+/// `x mavg each y`, `x in over y` and `x + each y` are each an error, while
+/// `(cor) each x`, `cor'[x;y]`, `cor[x] each y` and `(+) each y` parse (#492).
+/// The list is every reserved word q 5 refuses there, checked one by one (the
+/// iterator keywords are iterators themselves, and the qSQL words have their
+/// own rule). Of the glyphs, `:` is left to assignment and `.` and `_` to
+/// names; `/`, `\` and `'` are iterators.
 fn keyword_each(path: &str, source: &str, unsym: &str, out: &mut Vec<Finding>) {
     for m in re!(
         r"(?:\b(and|asof|bin|binr|cor|cov|cross|cut|div|dsave|ema|except|fby|ij|ijf|in|insert|inter|like|lj|ljf|lsq|mavg|mcount|mdev|mmax|mmin|mmu|mod|msum|or|pj|rotate|scov|set|setenv|ss|sublist|sv|uj|ujf|union|upsert|vs|wavg|within|wsum|xasc|xbar|xcol|xcols|xdesc|xexp|xgroup|xkey|xlog|xprev|xrank)[ \t]+|([-+*%!&|<>=~,^#$?@])[ \t]*)(each|peach|over|scan|prior)\b"
@@ -1445,6 +1445,34 @@ fn keyword_each(path: &str, source: &str, unsym: &str, out: &mut Vec<Finding>) {
         if (keyword.is_some()
             && (!boundary(unsym, word.start()) || unsym[..word.start()].ends_with('.')))
             || crate::system_command(&source[line_start..])
+        {
+            continue;
+        }
+        // With an operand on its left and nothing applied after `each`, the
+        // pair is a projection: q 5 parses `a mod each`, `(a mod each;1)`,
+        // `a in each[b]` and `a mod each'`, and refuses `a mod each' x` (#647).
+        let line = &source[line_start..];
+        let prompt = if line.starts_with("q)") { 2 } else { 0 };
+        let left = source[line_start + crate::timed_prefix(line).max(prompt)..word.start()]
+            .trim_end_matches([' ', '\t']);
+        // A signature is no operand: q 5 refuses `{[x] cor each}`.
+        let signature = left.ends_with(']')
+            && left
+                .bytes()
+                .rev()
+                .scan(0i32, |depth, c| {
+                    *depth += i32::from(c == b']') - i32::from(c == b'[');
+                    Some(*depth)
+                })
+                .position(|depth| depth == 0)
+                .is_some_and(|p| left[..left.len() - 1 - p].ends_with('{'));
+        let infix = !signature
+            && left.ends_with(|c: char| c.is_ascii_alphanumeric() || "_.)]}\"`".contains(c));
+        let it = m.get(3).unwrap().end();
+        let derived = it + re!(r"^(?:[/\\']:?)*").find(&source[it..]).map_or(0, |d| d.end());
+        // A `/` after a blank opens a comment.
+        let rest = &source[crate::past_blanks(source, derived)..];
+        if infix && (rest.is_empty() || rest.starts_with([';', ')', ']', '}', '\r', '\n', '[', '/']))
         {
             continue;
         }
