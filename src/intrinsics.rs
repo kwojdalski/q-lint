@@ -193,14 +193,16 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
     // expression. Only a literal argument is worth collecting - the rules can
     // say nothing about a name - so the argument is taken as far as the
     // literal extends: digits, dots, a type suffix, backtick symbols, spaces
-    // between vector items, or one quoted string.
+    // between vector items, or one quoted string - or one of those in
+    // parentheses or after `enlist`, which `literal` reads: `til (2.5)` and
+    // `flip enlist 1` are 'type and 'rank as their bracket forms are (#602).
     //
     // Matched in `comments`, not `code`: a string is blanks in `code`, so
     // `til "3"` would never be seen there. A comment is blank in both, and
     // `code` still has to hold the builtin's own name at that offset, which
     // proves the match is not the inside of a string.
     for call in re!(&format!(
-        r#"\b({BUILTINS})(?:[ \t]*\r?\n[ \t]+|[ \t]+)((?:-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:[ \t]+-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)*)|(?:`[A-Za-z0-9_.:]*)+|"(?:\\.|[^"\\])*")"#
+        r#"\b({BUILTINS})(?:[ \t]*\r?\n[ \t]+|[ \t]+)((?:-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:[ \t]+-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)*)|(?:`[A-Za-z0-9_.:]*)+|"(?:\\.|[^"\\])*"|\((?:[^()"\n]|"(?:\\.|[^"\\])*")*\)|enlist[ \t]+(?:-?\.?\d[A-Za-z0-9.:]*(?:[ \t]+-?\.?\d[A-Za-z0-9.:]*)*|(?:`[A-Za-z0-9_.:]*)+|"(?:\\.|[^"\\])*"))"#
     ))
     .captures_iter(comments)
     {

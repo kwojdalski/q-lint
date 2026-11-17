@@ -1083,3 +1083,21 @@ g:"J"$.5
 h:.5
 h 0
 '.5
+
+=== QT008 QT009 QT011 QT012 QT013 QT016 profile: general | a juxtaposed literal in parentheses or after enlist (q 5: each 'type or 'rank; #602)
+a:til (2.5)
+b:asc (3)
+c:distinct (3)
+d:where (2)
+e:til enlist 2
+f:flip enlist 1
+g:flip (1 2)
+h:sqrt (`a)
+
+=== clean profile: general | the same shapes where q runs them
+a:sum (1 2 3)
+b:first enlist 1
+c:count enlist 1
+d:til (3)
+e:asc (3 1 2)
+f:til (x)
