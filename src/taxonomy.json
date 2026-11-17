@@ -381,7 +381,7 @@
     "code": "QB008",
     "name": "vector-equality-filter",
     "category": "correctness",
-    "summary": "Column equality against a vector literal in a filter",
+    "summary": "Column compared with a vector literal in a filter, row by row rather than for membership",
     "scope": "style"
   },
   {
@@ -703,7 +703,7 @@
     "code": "QT022",
     "name": "index-into-atom",
     "category": "types-and-shapes",
-    "summary": "A name bound to an atom is indexed; an atom has no items, and q raises 'type",
+    "summary": "A name bound to an atom is indexed; an atom has no items, and q raises 'type, or for an integer tries to write to it as a handle",
     "scope": "builtin"
   },
   {
@@ -745,7 +745,7 @@
     "code": "QT028",
     "name": "where-assignment",
     "category": "types-and-shapes",
-    "summary": "An assignment in a where phrase, where a comparison was meant; q raises 'type",
+    "summary": "An assignment of a non-boolean literal in a where phrase, where a comparison was meant; q raises 'type",
     "scope": "builtin"
   },
   {

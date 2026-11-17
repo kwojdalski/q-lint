@@ -71,3 +71,9 @@ password:"abc"
 password:"abc"
 
   ,x
+
+=== QX001 | the joined query in parentheses is the same query (#502)
+f:{value ("select from t where s=`",x)}
+
+=== clean | a parenthesised constant query (#502)
+f:{value ("select from t")}

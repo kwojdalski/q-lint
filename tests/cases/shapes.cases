@@ -75,8 +75,20 @@ s:`a`b -.5
 r:`a-1
 s:`a - 1
 
+=== QE008 profile: general | a glyph with nothing on its left is refused at parse, not 'type (q 5: -`a and 1+ -`a are '-; #613)
+x:-`a
+y:1+ -`a
+
 === QT003 | a symbol on the left is the operand whatever follows
 r:`a+`b?`c
+
+=== clean profile: general | a symbol and an operator with nothing after it is a projection (q 5: +[`a], (*[`a];1), %[`a]; #599)
+x:`a+
+y:(`a*;1)
+f:{x}
+z:f[`a%]
+w:`b-
+u:`a mod
 
 === clean | a char meets a float, or sits right of minus, or is divided: q 5 runs all three
 r1:1.5+"a"
@@ -122,6 +134,21 @@ g:`guid$"abc"
 
 === clean profile: general | the casts that convert char codes run, so they are style (q 5: `long$"12" is 49 50)
 n:`long$"12"
+
+=== clean | a cast written inside a string is text, not a cast (#596)
+s:"`long$"
+-1 "use `symbol$";
+h:"cast with `guid$"
+
+=== QT032 profile: general | a string mentioning a cast does not hide a real one after it (q 5: 'type)
+s:("`long$";`symbol$"abc")
+
+=== QT032 profile: general | a string in parentheses is the same operand (q 5: `symbol$("ab") and `guid$("ab") are 'type; #615)
+a:`symbol$("ab")
+b:`guid$("ab")
+
+=== QT004 | and casts its codes alike (q 5: `long$("12") is 49 50)
+c:`long$("12")
 
 === clean | the uppercase-char cast parses text
 n:"J"$"123"
@@ -676,6 +703,16 @@ r1:t ljf s
 r2:lj[t;s]
 r3:ij[t;s]
 
+=== clean profile: general | a dotted name ending in lj or ij is the file's own function, not the keyword (#666; q 5 runs both and returns the joined table)
+.t.lj:{[k;a;b] a lj k xkey b}
+r:.t.lj[`y;([] y:`a`b; v:1 2);([] y:`a`c; w:3 4)]
+s:.u.lj[1;([] y:`a`b; v:1 2);([] y:`a`c; w:3 4)]
+x.ij[1;([] y:`a`b; v:1 2);([] y:`a`c; w:3 4)]
+
+=== clean profile: general | a table literal as dictionary keys has as many items as rows, not columns (#667; q 5 builds both as a keyed table)
+d:([]a:1 2 3;b:4 5 6)!(1;2;3)
+e:![([]a:1 2 3;b:4 5 6);1 2 3]
+
 === clean | a keyed right table
 t:([]a:1 2)
 s:([]a:1 2;b:3 4)
@@ -1076,3 +1113,193 @@ same:`a=
   `a
 match:`x=
   1 2 3
+
+=== clean | a b suffix does not continue a numeric run: `1 0b` is 1 applied to 0b (#496)
+r1:1 2 3+1 0b
+r2:1 2 3=1 0b
+
+=== clean | the same application makes a one-row table column (#496)
+r3:([]a:enlist 1;b:1 0b)
+
+=== QT006 | a suffix on the last item still ends a vector (#496)
+r4:1 2 3+1 2h
+
+=== QT002 | a symbol passed by juxtaposition (q 5: f:{x+1}; f `a is 'type) (#495)
+f:{x+1}
+r1:f `a
+
+=== QT002 | and with @ (q 5: f@`a is 'type) (#495)
+f:{x+1}
+r2:f@`a
+
+=== clean | a symbol that is not the whole argument (#495)
+f:{x+1}
+r1:f `a!1
+
+=== QT023 profile: general | char arithmetic assigned to a name ending in a digit (q 5: 'type) (#497)
+r21:1*"a"
+x2:2+"a"
+
+=== QT032 profile: general | the symbol and guid casts by type char and number (q 5: each is 'type) (#505)
+r1:"s"$"ab"
+r2:"g"$"ab"
+r3:11h$"ab"
+r4:2h$"ab"
+
+=== clean profile: general | the negative type numbers parse, and a cast spelled in a string is data (#505)
+r1:-11h$"ab"
+r2:-2h$"ab"
+r3:"\"s\"$\"ab\""
+
+=== QT002 QT003 QT010 QT011 QT012 QT015 QT016 profile: general | a symbol starting with a dot or holding a colon is a symbol (q 5: 'type, 'rank; #600)
+a:`.a+1
+b:`.a=1
+c:`a:b+1
+d:sqrt `.a
+e:asc `.a
+f:distinct `.a
+g:sum `.a`.b
+h:{x+1}
+i:h[`.a]
+
+=== clean profile: general | a handle symbol keeps its own shape, and a template placeholder after a bare dot is no name
+a:`:dir/file
+b:`.a`.b!1 2
+c:`.%name%.lib.type
+
+=== QT005 QT008 QT011 QT014 QT015 QT017 QT022 QT025 QT031 profile: general | a float written with a leading dot is a float (q 5: each 'type, 'rank or 'stype; #601)
+a:til .5
+b:asc .5
+c:.5 rotate 1 2
+d:.5 mavg 1 2 3
+e:`a=.5
+f:([]a:.5)
+g:"J"$.5
+h:.5
+h 0
+'.5
+
+=== QT008 QT009 QT011 QT012 QT013 QT016 profile: general | a juxtaposed literal in parentheses or after enlist (q 5: each 'type or 'rank; #602)
+a:til (2.5)
+b:asc (3)
+c:distinct (3)
+d:where (2)
+e:til enlist 2
+f:flip enlist 1
+g:flip (1 2)
+h:sqrt (`a)
+
+=== clean profile: general | the same shapes where q runs them
+a:sum (1 2 3)
+b:first enlist 1
+c:count enlist 1
+d:til (3)
+e:asc (3 1 2)
+f:til (x)
+
+=== QT006 profile: general | a vector in parentheses with no semicolon is still a vector (q 5: each 'length; #603)
+a:(1 2 3)+(4 5)
+b:(1 2 3)+4 5
+c:1 2 3+(4 5)
+d:(`a`b`c)=`a`b
+
+=== clean profile: general | a parenthesised atom pairs with any vector (q 5: 5 6, 2 3 4)
+a:(1)+4 5
+b:1 2 3+(1)
+c:(x)+4 5
+
+=== QT003 QT006 QT015 QT023 profile: general | a parenthesised glyph, an iterated glyph or a word operator applied with brackets is the infix (q 5: 'length or 'type each; #604)
+a:(+)[1 2 3;4 5]
+b:and[1 2 3;4 5]
+c:mod[1 2 3;4 5]
+d:(+)[`a;1]
+e:mod[`a;2]
+f:(=)[`a;1]
+g:+["a";1]
+h:+'[1 2 3;4 5]
+
+=== clean profile: general | where the bracket call runs (q 5: -96, 2.5 and a char right of minus)
+a:-[1;"a"]
+b:+[1.5;"a"]
+c:mod[7;2]
+
+=== QT022 profile: general | an indexed assignment into a name bound to an atom (q 5: each 'type; #607)
+a:2.5
+a[0]:9
+b:"x"
+b[0]:"y"
+
+=== clean profile: general | an indexed assignment into a vector or dictionary keeps it a list (q 5: d 2 is 3)
+v:1 2 3
+v[0]:9
+d:`a`b!1 2
+d[`c]:3
+r:v 0
+s:d `c
+
+=== QT022 profile: general | an atom indexed by @ or . with brackets, iterated, or with nothing before a symbol or parenthesis (q 5: each 'type; #608)
+a:2.5
+b:@[a;0]
+c:.[a;enlist 0]
+d:a'[0 1]
+e:a each 0 1
+f:a`b
+g:a(0)
+
+=== clean profile: general | a protected call catches the error, and a vector indexes
+a:2.5
+b:@[a;0;{x}]
+v:1 2 3
+c:@[v;0]
+d:v each 0 1
+
+=== QT023 profile: general | a char beside an integer null or infinity (q 5: each 'type; #609)
+a:"a"+0N
+b:"a"*0W
+c:"a"+0Ni
+d:"a"-0Wh
+
+=== clean profile: general | a float null or infinity takes a char (q 5: 0n, 0w)
+a:"a"+0n
+b:"a"*0w
+
+=== QT001 profile: general | a boolean vector or a string as the keys (q 5: 'length each; #610)
+a:101b!3 4
+b:"ab"!3 4 5
+
+=== clean profile: general | the same keys with as many values, and a string holding a bang
+a:101b!1 2 3
+b:"ab"!1 2
+c:"x 1 2!3"
+d:("x";"ab")
+
+=== clean profile: general | ljf, ijf and ujf are infix joins, not an argument the atom indexes by (q 5: 'rank, 'rank, 'type from the join; #621)
+a:2.5
+b:a ljf 2
+c:a ijf 2
+d:a ij 2
+e:a ujf 2
+
+=== QT005 QT020 profile: general | a parenthesised column value is the value it groups (q 5: 'rank, 'length, 'length; #620)
+a:([]a:(1);b:2)
+b:([]a:(1 2);b:1 2 3)
+c:([]a:1 2;b:(1;2;3))
+
+=== clean profile: general | parenthesised columns of agreeing lengths
+a:([]a:(1 2);b:3 4)
+b:([]a:(1;2);b:(x))
+
+=== QT026 profile: general | a parenthesised right table or a parenthesised lj (q 5: each 'type; #618)
+t:([]a:1 2)
+s:([]a:1 2;b:3 4)
+r1:t lj (s)
+r2:(lj)[t;s]
+
+=== clean profile: general | the same joins on a keyed right table
+t:([]a:1 2)
+s:([a:1 2]b:3 4)
+r1:t lj (s)
+r2:(lj)[t;s]
+
+=== QT032 profile: general | the char spelling with its string in parentheses (q 5: 'type) (#505, #615)
+r1:"s"$("ab")

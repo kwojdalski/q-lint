@@ -442,6 +442,12 @@ r:(a+b)/2
 mem:{(3#system"w")%x (1024*)/ 1}
 p:(10000>pi::)(2*)/1000
 
+=== clean | so is a parenthesised name or lambda with a left operand (#509; q 5: 3 (g)/1 is 8, {x<100} ({x*2})/1 is 128)
+g:{x*2}
+a:3 (g)/1
+b:{x<100} ({x*2})/1
+c:3 (.ns.g)/1
+
 === QB014 QE009 | without the left operand q refuses it: (2*)/1 is '/
 r:(2*)/1
 
@@ -603,6 +609,11 @@ d:([a:1;a:2])
 === QB020 | a statement after a top-level return never runs
 f:{:1;2}
 
+=== clean | :[a;b] is the assign verb, not a return, and what follows runs (#515; q 5: {:[x;y]; 3}[1;2] is 3, {a:0; :[a;5]; a}[] is 5)
+f:{:[x;y]; 3}
+g:{a:0; :[a;5]; a}
+h:{a:0; : [a;5]; a}
+
 === QB020 | a string is a statement too, and never runs after the return (#216)
 f:{[a] :a; "x"}
 
@@ -754,6 +765,16 @@ r:"abc" ss ""
 === clean | QT021: a non-empty pattern infix
 r:"abc" ss "b"
 
+=== clean profile: general | QT021: a pattern that only starts with the empty string (q 5: ,1 and ,2; #597)
+x:"abc" ss "","b"
+y:"abc" ss "",enlist "c"
+
+=== QT021 | an empty pattern with no space, in parentheses, or to a parenthesised ss (q 5: each 'length; #619)
+a:"abc" ss""
+b:ss["abc";("")]
+c:"abc" ss ("")
+d:(ss)["abc";""]
+
 === clean | QT022: a null integer is a handle not yet opened, written to by juxtaposition
 log_handle:0N
 f:{[msg] log_handle enlist msg}
@@ -812,6 +833,11 @@ f:"a"="b",x
 
 === QT007 profile: general | a symbol pattern in infix ss (q 5: "abc" ss `a is 'type)
 a:"abc" ss `a
+
+=== clean profile: general | a symbol cast to char is a char pattern (q 5: each ,1; #598)
+x:"abc" ss `char$98
+y:"abc" ss `char$"b"
+z:ss["abc";`char$98]
 
 === QT007 profile: general | and on the indented next line (q 5: 'type, #692)
 y:"abc" ss
@@ -949,3 +975,20 @@ k:{!
   [t;enlist(>;`a;1);0b;enlist`c]}
 g:{if
   [`a;:1]; 2}
+
+=== clean | a dotted global compared with the column of its last name (#498)
+t:([]a:1 2;b:3 4)
+.cfg.a:1
+r:select from t where .cfg.a=a
+
+=== QB010 profile: general | a literal atom before a negative literal (q 5: each is 'type) (#500)
+r1:"a" -1
+r2:1b -1
+r3:0x01 -1
+r4:(1) -1
+
+=== clean profile: general | a literal list before one indexes it (q 5: " ", 0b, 0N) (#500)
+r1:"ab" -1
+r2:10b -1
+r3:(1 2) -1
+r5:s:"x \"a\" -1"

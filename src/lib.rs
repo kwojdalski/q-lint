@@ -997,7 +997,7 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         // The finding sits on the clock it names.
         "QP003" => {
             let m = re!(r"^\.z\.[PTNZD]\b").find(v.code.get(start..)?)?;
-            let clock = m.as_str().to_ascii_lowercase();
+            let clock = utc_clock(m.as_str());
             (
                 &source[start..start + m.end()],
                 clock.clone().into(),
@@ -1646,68 +1646,9 @@ impl Finding {
             detail,
             why: rule.summary.clone(),
             source: "q-lint".into(),
-            severity: if matches!(
-                code,
-                "QE001"
-                    | "QE003"
-                    | "QE008"
-                    | "QE009"
-                    | "QE010"
-                    | "QE011"
-                    | "QT031"
-                    | "QA001"
-                    | "QA002"
-                    | "QA005"
-                    | "QA006"
-                    | "QT001"
-                    | "QT002"
-                    | "QT003"
-                    | "QB005"
-                    | "QB007"
-                    | "QB008"
-                    | "QF012"
-                    | "QF004"
-                    | "QE004"
-                    | "QF014"
-                    | "QF015"
-                    | "QA009"
-                    | "QT004"
-                    | "QT005"
-                    | "QT006"
-                    | "QT007"
-                    | "QB013"
-                    | "QB014"
-                    | "QB015"
-                    | "QB016"
-                    | "QA010"
-                    | "QT008"
-                    | "QT009"
-                    | "QT010"
-                    | "QT011"
-                    | "QT012"
-                    | "QT013"
-                    | "QT014"
-                    | "QT016"
-                    | "QT017"
-                    | "QT018"
-                    | "QT019"
-                    | "QD001"
-                    | "QD002"
-                    | "QF019"
-                    | "QF020"
-                    | "QT022"
-                    | "QT023"
-                    | "QT024"
-                    | "QT025"
-                    | "QT026"
-                    | "QT027"
-                    | "QT028"
-                    | "QT029"
-                    | "QT030"
-                    | "QT032"
-                    | "QE006"
-                    | "QE007"
-            ) {
+            // An error is what q refuses, which is what the `builtin` scope
+            // means (#512); everything q accepts is a warning (#513).
+            severity: if rule.scope == "builtin" {
                 "error"
             } else {
                 "warning"
@@ -1757,6 +1698,25 @@ pub(crate) const Z_ATOMS: &[&str] = &[
 
 /// QB010's message, shared by the `.z` case here and the bound-name case in
 /// `semantics`.
+/// QA005's message for `peach`, which is `':`: on a rank-2 lambda that is
+/// each-prior, not a parallel each - q 5 `{[a;b] a*b} peach 1 2` is `0N 2`,
+/// with or without secondaries - and on a higher rank a projection, as under
+/// `each`. None for `each`, whose message each caller words itself.
+fn peach_detail(iterator: &str, rank: usize) -> Option<String> {
+    (iterator == "peach").then(|| {
+        if rank == 2 {
+            "`peach` is `':`, which on a rank-2 lambda is each-prior: it pairs each item \
+             with the one before it rather than running in parallel"
+                .to_string()
+        } else {
+            format!(
+                "`peach` supplies one argument to a rank-{rank} lambda, so the result is a \
+                 projection, not values"
+            )
+        }
+    })
+}
+
 pub(crate) fn apply_not_subtract(name: &str, literal: &str) -> String {
     format!(
         "`{name} {literal}` applies the atom `{name}` to the negative literal `{literal}`, which \
@@ -1784,6 +1744,17 @@ fn scalar_literal(s: &str) -> bool {
 fn char_atom(s: &str) -> Option<usize> {
     let m = re!(r#"^"((?:\\[0-7]{3}|\\.|[^"\\])*)""#).captures(s)?;
     (q_bytes(&m[1]).len() == 1).then(|| m.get(0).unwrap().end())
+}
+
+/// The UTC clock QP003 asks for in place of a local one: the same clock in
+/// lower case, but a timestamp for the local datetime `.z.Z`, since `.z.z`
+/// is the legacy datetime QP002 reports in the same profile (#519).
+fn utc_clock(local: &str) -> String {
+    if local == ".z.Z" {
+        ".z.p".into()
+    } else {
+        local.to_ascii_lowercase()
+    }
 }
 
 fn boundary(s: &str, at: usize) -> bool {
@@ -1953,6 +1924,32 @@ fn complete_call(comments: &str, open: usize, parts: &[&str], ssr: bool) -> bool
             from += part.len() + 1;
             full
         })
+}
+
+/// Whether the right operand starting at `at` is the empty string and
+/// nothing else, in any number of parentheses: `""` and `("")`, but not
+/// `"","b"`, which is the pattern "b" (q 5: `"abc" ss "","b"` is ,1, #597).
+/// The string is blank in `code`, so it is read from `source`.
+fn empty_pattern(source: &str, code: &str, comments: &str, at: usize) -> bool {
+    let skip =
+        |i: usize| i + (source[i..].len() - source[i..].trim_start_matches([' ', '\t']).len());
+    let (mut i, mut opens) = (skip(at), 0);
+    while source[i..].starts_with('(') {
+        opens += 1;
+        i = skip(i + 1);
+    }
+    if !source[i..].starts_with("\"\"") || source[i + 2..].starts_with('"') {
+        return false;
+    }
+    i += 2;
+    for _ in 0..opens {
+        i = skip(i);
+        if !source[i..].starts_with(')') {
+            return false;
+        }
+        i += 1;
+    }
+    operand_ends(code, comments, i)
 }
 
 /// Where the next token after `at` starts, past the blanks of its statement
@@ -2263,22 +2260,30 @@ fn phrase_end(code: &str, from: usize) -> usize {
 /// `-b`, while `a-b`, `a- b` and `a - b` are subtraction. Braces and `;`
 /// start fresh statements rather than nesting, so a lambda body on one line
 /// is still checked.
-/// The `*`/`%` and `+`/`-` operators at bracket depth 0 of `line`, as runs
-/// that a `;`, a brace or a depth-0 `,` separates - each operator with its
-/// offset and whether it multiplies. A `+`/`-` counts only after an operand,
-/// and not as the sign of a literal.
+/// The `*`/`%` and `+`/`-` operators of `line`, as runs of one expression
+/// each - each operator with its offset and whether it multiplies. A `;`, a
+/// brace or a `,` ends a run, and a bracket holds runs of its own: in
+/// `(a*b)+c` the `*` and the `+` are never in one run, while `(a*b+c)`,
+/// `f[a*b+c]` and `r:a*b+c;` each hold one that mixes (#511). A `+`/`-`
+/// counts only after an operand, and not as the sign of a literal.
 fn infix_runs(line: &str) -> Vec<Vec<(usize, bool)>> {
     let b = line.as_bytes();
-    let mut runs = vec![vec![]];
-    let (mut depth, mut prev) = (0i32, b'\0');
+    let mut runs = vec![];
+    // The run open at each bracket level, the outermost first.
+    let mut open: Vec<Vec<(usize, bool)>> = vec![vec![]];
+    let mut prev = b'\0';
     for (i, &c) in b.iter().enumerate() {
         match c {
-            b'(' | b'[' => depth += 1,
-            b')' | b']' => depth -= 1,
-            b'{' | b'}' | b';' => runs.push(vec![]),
-            b',' if depth == 0 => runs.push(vec![]),
-            b'*' | b'%' if depth == 0 => runs.last_mut().unwrap().push((i, true)),
-            b'+' | b'-' if depth == 0 => {
+            b'(' | b'[' => open.push(vec![]),
+            // A bracket opened on an earlier line closes the run it held.
+            b')' | b']' => runs.push(if open.len() > 1 {
+                open.pop().unwrap()
+            } else {
+                std::mem::take(&mut open[0])
+            }),
+            b'{' | b'}' | b';' | b',' => runs.push(std::mem::take(open.last_mut().unwrap())),
+            b'*' | b'%' => open.last_mut().unwrap().push((i, true)),
+            b'+' | b'-' => {
                 let operand = matches!(
                     prev,
                     b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b')' | b']' | b'.'
@@ -2303,7 +2308,7 @@ fn infix_runs(line: &str) -> Vec<Vec<(usize, bool)>> {
                         && !before.is_some_and(|c| c.is_ascii_alphanumeric() || *c == b'_')
                 };
                 if operand && !introduces && !exponent {
-                    runs.last_mut().unwrap().push((i, false));
+                    open.last_mut().unwrap().push((i, false));
                 }
             }
             _ => {}
@@ -2312,14 +2317,14 @@ fn infix_runs(line: &str) -> Vec<Vec<(usize, bool)>> {
             prev = c;
         }
     }
+    runs.extend(open);
     runs
 }
-/// The run QP005 judges: the line's last. Earlier runs on the line are not
-/// read, which is how the rule has always behaved on the corpus.
+/// The run QP005 judges: the line's last that mixes the two families.
 fn mixed_run(line: &str) -> Option<Vec<(usize, bool)>> {
     infix_runs(line)
-        .pop()
-        .filter(|run| run.iter().any(|o| o.1) && run.iter().any(|o| !o.1))
+        .into_iter()
+        .rfind(|run| run.iter().any(|o| o.1) && run.iter().any(|o| !o.1))
 }
 /// The top-level statements of a file as byte ranges: a line and the indented
 /// lines q continues it with. Shared by the rules that read a statement and
@@ -3006,7 +3011,26 @@ fn typed_at(s: &str) -> Option<usize> {
 /// for a pattern every name in it but the keys and columns it matches on -
 /// `(a;b)` binds a and b, `([k:p])` binds p, and `1` binds nothing.
 pub(crate) fn pattern_names(slot: &str) -> Vec<&str> {
+    names_within(slot, 0)
+}
+/// `pattern_names` at a nesting `depth`; past `MAX_NESTING` it binds nothing.
+fn names_within(slot: &str, depth: usize) -> Vec<&str> {
+    if depth > MAX_NESTING {
+        return vec![];
+    }
     let slot = typed_at(slot).map_or(slot, |at| &slot[..at]);
+    // A list pattern's items each take their own filter: `(a:neg;b)` binds
+    // a and b, and not neg (q 5 `{[(a:neg;b)] (a;b)} 1 2` is -1 2, #668).
+    let trimmed = slot.trim();
+    if trimmed.starts_with('(')
+        && !trimmed.starts_with("([")
+        && matching(trimmed, 0, b'(', b')') == Some(trimmed.len())
+    {
+        return slots(&trimmed[1..trimmed.len() - 1])
+            .into_iter()
+            .flat_map(|item| names_within(item, depth + 1))
+            .collect();
+    }
     re!(r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*")
         .find_iter(slot)
         .filter(|m| {
@@ -3806,14 +3830,18 @@ pub fn lint_selecting(
                 params.len()
             };
             let rest = code[end..].trim_start();
-            if arity >= 2 && re!(r"\Aeach\b").is_match(rest) {
+            if arity >= 2
+                && let Some(it) = re!(r"\A(?:each|peach)\b").find(rest)
+            {
                 add(
                     end,
                     "QA005",
-                    format!(
-                        "`each` supplies one argument to a {arity}-parameter lambda, so the \
-                         results are projections, not values"
-                    ),
+                    peach_detail(it.as_str(), arity).unwrap_or_else(|| {
+                        format!(
+                            "`each` supplies one argument to a {arity}-parameter lambda, so the \
+                             results are projections, not values"
+                        )
+                    }),
                 );
             }
         }
@@ -3850,7 +3878,11 @@ pub fn lint_selecting(
             {
                 supplied += 1;
             }
-            if arity.saturating_sub(supplied) >= 2 {
+            // Over or scan on a binary function, given one argument, reduces
+            // it: q 5 `@[{[a;b] a+b}/;1 2;{x}]` is 3 and with `\` it is 1 3
+            // (#514). Each, each-left and each-right still project.
+            let iterated = re!(r"^\s*[/\\](?:[^:]|$)").is_match(&code[after..]);
+            if arity.saturating_sub(supplied) >= 2 && !(iterated && arity - supplied == 2) {
                 add(
                     at,
                     "QA003",
@@ -4068,12 +4100,14 @@ pub fn lint_selecting(
     // word operators (q 5: `a&`b, `a mod 2, 2 xexp `a). Not `^`: a
     // symbol fills a symbol list (`none^s).
     // The null symbol, a lone backtick, is one too: q 5 `` ` + 1 `` is 'type.
+    // So is a name that starts with `.` or holds a `:` past its first
+    // character: `` `.a+1 `` and `` `a:b+1 `` (q 5: 'type, #600).
     let arithmetic = re!(concat!(
-        r"(?:`(?:[A-Za-z][A-Za-z0-9_.]*)?)+(?:",
+        r"(?:`(?:\.?[A-Za-z][A-Za-z0-9_.:]*)?)+(?:",
         blank!(),
         r"*[+\-*%&|]|",
         blank!(),
-        r"+(?:mod|div|xexp|xlog|and|or)[ \t])|(?:[+\-*%&|][ \t]*(?:(?:\r?\n[ \t]*)*\r?\n[ \t]+)?|[ \t](?:mod|div|xexp|xlog|and|or)(?:[ \t]*(?:\r?\n[ \t]*)*\r?\n[ \t]+|[ \t]+))(?:`(?:[A-Za-z][A-Za-z0-9_.]*)?)+"
+        r"+(?:mod|div|xexp|xlog|and|or)[ \t])|(?:[+\-*%&|][ \t]*(?:(?:\r?\n[ \t]*)*\r?\n[ \t]+)?|[ \t](?:mod|div|xexp|xlog|and|or)(?:[ \t]*(?:\r?\n[ \t]*)*\r?\n[ \t]+|[ \t]+))(?:`(?:\.?[A-Za-z][A-Za-z0-9_.:]*)?)+"
     ));
     // Searched one match at a time: a symbol rejected as the right operand
     // may still be the left one of the operator after it - `` 1+`a+1 `` is
@@ -4102,6 +4136,15 @@ pub fn lint_selecting(
         {
             continue;
         }
+        // A glyph with nothing on its left is monadic, and q 5 refuses
+        // `` -`a `` at parse with '-, not 'type: QE008 reports that (#613).
+        if m.as_str().starts_with(['+', '-', '*', '%', '&', '|']) {
+            let line_start = code[..at].rfind('\n').map_or(0, |n| n + 1);
+            let expression = line_start + timed_prefix(&source[line_start..]);
+            if refusals::opens_expression(code, source, &v.comments, at, expression) {
+                continue;
+            }
+        }
         // A symbol on the right is only the operand when the expression ends
         // with it: `` 2*`a`b?`b `` multiplies by a long, and `` 1+`a`b!1 2 ``
         // adds to a dictionary. On the left it is the operand whatever
@@ -4113,6 +4156,11 @@ pub fn lint_selecting(
         // Unless what is on its right ends in an operator: that is a
         // projection, and the symbol composes with it - q 5 `` `+n% `` is
         // `+[`]%[n]`, no error - as a template's `` `%name%] `` reads.
+        // Nothing on its right at all is a projection too: `` `a+ ``,
+        // `` (`a*;1) `` and `` f[`a%] `` build `+[`a]` and run (q 5, #599).
+        if m.as_str().starts_with('`') && operand_ends(code, &v.comments, m.end()) {
+            continue;
+        }
         if m.as_str().starts_with('`') {
             let end = phrase_end(code, m.end());
             let end = code[m.end()..end].find('\n').map_or(end, |n| m.end() + n);
@@ -4138,9 +4186,10 @@ pub fn lint_selecting(
         // A symbol, or a symbol vector: `1 in `a`b` is 'type just as `1=`a` is,
         // and the vector is what `in` is usually given.
         // A file symbol too, `` `:db/t ``, which runs on over `/` (q 5).
-        let sym = r"(?:`(?:[A-Za-z][A-Za-z0-9_.]*|:[A-Za-z0-9_.:/]*))+";
+        let sym = r"(?:`(?:\.?[A-Za-z][A-Za-z0-9_.:]*|:[A-Za-z0-9_.:/]*))+";
         // An exponent's sign is part of its number: `1e-3` is one float.
-        let num = r"-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:[ \t]+-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)*";
+        let num =
+            r"-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:[ \t]+-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)*";
         let string = r#""(?:[^"\\]|\\.)*""#;
         let op = r"(?:<=|>=|<>|<|>|=|\bin\b)";
         // A string literal is blanks by the time `code` is built, so the
@@ -4240,6 +4289,22 @@ pub fn lint_selecting(
                 name.as_str()
             ),
         );
+    }
+    // And a multiple assignment: q 5 `(.z.i;.z.h):(1;`a)` is 'domain (#506).
+    for (at, name) in semantics::global_multi_assignments(code) {
+        if re!(r"^\.z\.[A-Za-z]$").is_match(name) && name != ".z.m" {
+            // `at` is the target's start; the finding goes on the name.
+            add(
+                at + code[at..]
+                    .match_indices(name)
+                    .find(|(p, _)| {
+                        !code[at + p + name.len()..].starts_with(|c: char| c.is_alphanumeric())
+                    })
+                    .map_or(0, |(p, _)| p),
+                "QF019",
+                format!("`{name}` is read-only: q refuses any assignment to it with 'domain"),
+            );
+        }
     }
     // like's pattern is a string, and a symbol literal is the obvious wrong
     // spelling of one. What q does with it depends on what follows. Verified:
@@ -4588,17 +4653,48 @@ pub fn lint_selecting(
             continue;
         };
         let rank = lambda_rank(code, source, brace, end);
-        if rank >= 2 && re!(r"\Aeach\b").is_match(code[end..].trim_start()) {
+        if rank >= 2
+            && let Some(it) = re!(r"\A(?:each|peach)\b").find(code[end..].trim_start())
+        {
             add(
                 end,
                 "QA005",
-                format!(
-                    "`each` supplies one argument to a lambda of rank {rank} (it reads {}), so \
-                     the results are projections, not values",
-                    if rank == 3 { "x, y and z" } else { "x and y" }
-                ),
+                peach_detail(it.as_str(), rank).unwrap_or_else(|| {
+                    format!(
+                        "`each` supplies one argument to a lambda of rank {rank} (it reads {}), \
+                         so the results are projections, not values",
+                        if rank == 3 { "x, y and z" } else { "x and y" }
+                    )
+                }),
             );
         }
+    }
+    // And a lambda reached by name: q 5 `g:{x+y}; g each 1 2` is
+    // `{x+y}'[1 2]`, projections, as the literal is (#503). A name defined
+    // twice has whichever rank ran last, as QA012 knows.
+    for m in re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]+(each|peach)\b").captures_iter(code) {
+        let (whole, name) = (m.get(0).unwrap(), m.get(1).unwrap().as_str());
+        let key = qualified(whole.start(), name);
+        if !boundary(code, whole.start())
+            || redefined.contains(&key)
+            || overwritten(&key)
+            || shadowed(code, source, whole.start(), name)
+        {
+            continue;
+        }
+        let Some(&rank) = ranks.get(&key).filter(|&&r| r >= 2) else {
+            continue;
+        };
+        add(
+            whole.start(),
+            "QA005",
+            peach_detail(&m[2], rank).unwrap_or_else(|| {
+                format!(
+                    "`each` supplies one argument to `{name}`, which takes {rank}, so the \
+                     results are projections, not values"
+                )
+            }),
+        );
     }
     for m in re!(r"([@.])\[").find_iter(code) {
         let open = m.end() - 1;
@@ -4834,6 +4930,27 @@ pub fn lint_selecting(
         }
         add(whole.start(), "QB010", apply_not_subtract(name, literal));
     }
+    // A literal atom is applied the same way: q 5 `"a" -1`, `1b -1`,
+    // `0x01 -1` and `(1) -1` are each 'type, while `"ab" -1`, `10b -1` and
+    // `(1 2) -1` index (#500). Read where strings are kept, with the atom's
+    // quote a real opening one and the minus code.
+    for m in re!(r#"(?m)("(?:[^"\\]|\\[0-7]{3}|\\.)"|[01]b|0x[0-9a-fA-F]{1,2}|\([ \t]*(?:"(?:[^"\\]|\\[0-7]{3}|\\.)"|-?\d+(?:\.\d*)?(?:e[+-]?\d+)?[hijef]?|[01]b)[ \t]*\))[ \t]+(-\d[A-Za-z0-9.:]*)[ \t\r]*(?:[;\])]|$)"#)
+        .captures_iter(&v.comments)
+    {
+        let atom = m.get(1).unwrap();
+        let quoted = atom
+            .as_str()
+            .find('"')
+            .is_none_or(|q| v.string_starts.contains(&(atom.start() + q)));
+        if !quoted
+            || !boundary(code, atom.start())
+            || (!atom.as_str().starts_with('"') && code.as_bytes()[atom.start()] == b' ')
+            || code.as_bytes()[m.get(2).unwrap().start()] != b'-'
+        {
+            continue;
+        }
+        add(atom.start(), "QB010", apply_not_subtract(atom.as_str(), &m[2]));
+    }
     // Dot apply wants a list of arguments, and a scalar in that slot is a
     // 'type error - even when the left side is itself a list to index.
     // Verified: `.[{x+y};1]`, `.[f;`a]`, `.[1 2 3;0]` all 'type.
@@ -4910,8 +5027,12 @@ pub fn lint_selecting(
     .find_iter(code)
     {
         // `"abc" ss `a` puts the symbol in the pattern slot (q 5: 'type), on
-        // the indented next line too (#692).
-        if m.as_str().starts_with('s') && !boundary(code, m.start()) {
+        // the indented next line too (#692). Only when the symbol is the
+        // whole pattern: `` `char$98 `` is the char "b", and
+        // `"abc" ss `char$98` runs (#598).
+        if m.as_str().starts_with('s')
+            && (!boundary(code, m.start()) || !operand_ends(code, &v.comments, m.end()))
+        {
             continue;
         }
         add(
@@ -5165,7 +5286,23 @@ pub fn lint_selecting(
             Vector(Option<usize>),
         }
         let shape = |v: &str| -> Option<Shape> {
-            let v = v.trim();
+            let mut v = v.trim();
+            // Parentheses only group, and a top-level `;` makes a general
+            // list of that many items: `([]a:(1);b:2)` is 'rank and
+            // `([]a:(1 2);b:1 2 3)` 'length, as without them (q 5, #620).
+            for depth in 0.. {
+                if depth == MAX_NESTING
+                    || !(v.starts_with('(') && matching(v, 0, b'(', b')') == Some(v.len()))
+                    || v[1..v.len() - 1].trim().is_empty()
+                {
+                    break;
+                }
+                let items = slots(&v[1..v.len() - 1]);
+                if items.len() > 1 {
+                    return Some(Shape::Vector(Some(items.len())));
+                }
+                v = v[1..v.len() - 1].trim();
+            }
             // Vectors first. The general numeric-atom pattern would otherwise
             // take `10b` and `0x0102` as atoms, and q says they are not.
             // A tab after `enlist` as much as a space (q 5).
@@ -5186,15 +5323,26 @@ pub fn lint_selecting(
             if re!(r"^(?:`[A-Za-z0-9_.]*){2,}$").is_match(v) {
                 return Some(Shape::Vector(Some(v.matches('`').count())));
             }
-            if re!(r"^-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:\s+-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)+$")
+            // Only the last item takes a type suffix, and never `b`: `1 0b` is
+            // the atom `1` applied to `0b`, and `1h 2` does not parse (q 5, #496).
+            let suffixed = |item: &str| {
+                re!(r"^-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?[a-mo-vx-zA-MO-VX-Z]$|^-?0[nNwW][a-z]$")
+                    .is_match(item)
+            };
+            if re!(r"^-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:\s+-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)+$")
                 .is_match(v)
             {
+                let items: Vec<&str> = v.split_whitespace().collect();
+                let (last, init) = items.split_last().expect("two items or more");
+                if init.iter().any(|i| suffixed(i)) || re!(r"\d[bx]$").is_match(last) {
+                    return None;
+                }
                 return Some(Shape::Vector(Some(v.split_whitespace().count())));
             }
             if v == "()" {
                 return Some(Shape::Vector(Some(0)));
             }
-            if re!(r"^[01]b$|^0x[0-9a-fA-F]{1,2}$|^-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*$|^`[A-Za-z0-9_.]*$")
+            if re!(r"^[01]b$|^0x[0-9a-fA-F]{1,2}$|^-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*$|^`[A-Za-z0-9_.]*$")
                 .is_match(v)
             {
                 return Some(Shape::Atom);
@@ -5298,26 +5446,30 @@ pub fn lint_selecting(
     // offsets - a pair of quotes with nothing between them.
     // Only a space or tab may come between: q refuses any other blank with
     // 'char, and a multi-byte one would leave the name's slice mid-character.
-    for m in re!(r"\b(ss|ssr)[ \t]*\[").find_iter(code) {
-        let open = m.end() - 1;
+    // The function may be parenthesised, `(ss)["abc";""]`, and so may the
+    // pattern, `("")` (q 5: both 'length, #619).
+    for m in re!(r"(?:\b(ss|ssr)|\((ss|ssr)\))[ \t]*\[").captures_iter(code) {
+        let whole = m.get(0).unwrap();
+        let name = m.get(1).or(m.get(2)).unwrap().as_str();
+        let open = whole.end() - 1;
         let Some(close) = matching(code, open, b'[', b']') else {
             continue;
         };
         let parts = slots(&code[open + 1..close - 1]);
-        if !complete_call(&v.comments, open, &parts, m.as_str().starts_with("ssr")) {
+        if !complete_call(&v.comments, open, &parts, name == "ssr") {
             continue;
         }
         // The second slot's span in the source.
         let second_start = open + 1 + parts[0].len() + 1;
-        let second = source[second_start..second_start + parts[1].len()].trim();
+        let mut second = source[second_start..second_start + parts[1].len()].trim();
+        while let Some(inner) = second.strip_prefix('(').and_then(|s| s.strip_suffix(')')) {
+            second = inner.trim();
+        }
         if second == "\"\"" {
             add(
-                m.start(),
+                whole.start(),
                 "QT021",
-                format!(
-                    "`{}` with an empty pattern is a 'length error",
-                    code[m.start()..m.end() - 1].trim()
-                ),
+                format!("`{name}` with an empty pattern is a 'length error"),
             );
         }
     }
@@ -5329,9 +5481,7 @@ pub fn lint_selecting(
         if !boundary(code, m.start()) {
             continue;
         }
-        let pattern = source[m.end()..].trim_start_matches([' ', '\t']);
-        let spaced = pattern.len() < source.len() - m.end();
-        if spaced && pattern.starts_with("\"\"") && !pattern[2..].starts_with('"') {
+        if empty_pattern(source, code, &v.comments, m.end()) {
             add(
                 m.start(),
                 "QT021",
@@ -6052,11 +6202,15 @@ pub fn lint_selecting(
             // Next to another literal the parentheses are what keep two
             // tokens apart: `1 2 (3)` indexes `1 2` at 3 (q 5: 0N), and
             // `3 (-1)` applies 3, where `1 2 3` and `3 -1` are vectors.
+            // So is one held in parentheses of its own: `(1.5)(2)` is 'type,
+            // and with both pairs gone it would be the vector `1.5 2`. The
+            // first pair alone can go - `1.5(2)` is the same application -
+            // so only the second is left (#516).
             let numeric = m[1]
                 .trim()
                 .starts_with(|c: char| c == '-' || c.is_ascii_digit());
             if numeric
-                && (re!(r"(?:^|[^A-Za-z0-9_.])-?\d[A-Za-z0-9.:]*$")
+                && (re!(r"(?:^|[^A-Za-z0-9_.])-?\d[A-Za-z0-9.:]*$|\(\s*-?\d[A-Za-z0-9.:]*\s*\)$")
                     .is_match(line[..whole.start()].trim_end())
                     || line[whole.end()..]
                         .trim_start_matches([' ', '\t'])
@@ -6243,9 +6397,12 @@ pub fn lint_selecting(
                 }
             }
             let Some(open) = open else { return false };
-            let projection = unsym[open + 1..m.start()]
-                .trim_end()
-                .ends_with(|c: char| "+-*%&|^=<>~,#_!?@.$:".contains(c));
+            // A function named or written in the parentheses too: q 5
+            // `3 (g)/1` is 8 and `{x<100} ({x*2})/1` is 128 (#509).
+            let inner = unsym[open + 1..m.start()].trim();
+            let projection = inner.ends_with(|c: char| "+-*%&|^=<>~,#_!?@.$:".contains(c))
+                || re!(r"^\.?[A-Za-z][A-Za-z0-9_.]*$").is_match(inner)
+                || (inner.starts_with('{') && inner.ends_with('}'));
             let operand = unsym[..open]
                 .trim_end()
                 .ends_with(|c: char| c.is_alphanumeric() || ")]}".contains(c));
@@ -6290,17 +6447,66 @@ pub fn lint_selecting(
         // to say so. The uppercase-char cast `"J"$` parses text. `char` and
         // `byte` are legitimate on a string. `symbol` and `guid` convert
         // nothing: q 5 refuses them with 'type, which is QT032's, in general.
-        if let Some(m) = re!(
-            r#"`(long|int|short|float|real|boolean|date|time|timestamp|timespan|month|minute|second|datetime|symbol|guid)\s*\$\s*""#
-        )
-        .captures(literals)
-        {
-            let name = &m[1];
+        // The backtick has to be code: in `"use `symbol$"` the string's own
+        // closing quote once read as the cast's operand (#596). A string in
+        // parentheses is the same operand: `` `symbol$("ab") `` (#615). Searched one
+        // start at a time, so a rejected match does not hide a later one.
+        // The symbol and guid casts by type char and by type number too: q 5
+        // `"s"$"ab"`, `"g"$"ab"`, `11h$"ab"` and `2h$"ab"` are 'type, while
+        // `-11h$` and `-2h$` parse (#505); for those the `$` has to be code.
+        let cast = |mut at: usize| {
+            while let Some(m) = re!(
+                r#"(?:`(long|int|short|float|real|boolean|date|time|timestamp|timespan|month|minute|second|datetime|symbol|guid)|"([sg])"|(?:^|[^-\w.])(11|2)h)\s*\$\s*(?:"|\(\s*"(?:[^"\\\n]|\\.)*"\s*\))"#
+            )
+            .captures_at(literals, at)
+            {
+                let start = m.get(0).unwrap().start();
+                let typed = m.get(1).or(m.get(2)).or(m.get(3)).unwrap();
+                let dollar = typed.end() + literals[typed.end()..].find('$').unwrap();
+                let in_code = if m.get(1).is_some() {
+                    line.as_bytes()[typed.start() - 1] == b'`'
+                } else {
+                    line.as_bytes()[dollar] == b'$'
+                };
+                if in_code {
+                    return Some(m);
+                }
+                at = start + 1;
+            }
+            None
+        };
+        if let Some(m) = cast(0) {
+            let name = match (m.get(1), m.get(2), m.get(3)) {
+                (Some(n), _, _) => n.as_str(),
+                (_, Some(c), _) | (_, _, Some(c)) => match c.as_str() {
+                    "s" | "11" => "symbol",
+                    _ => "guid",
+                },
+                _ => unreachable!(),
+            };
+            // At the backtick or the quote, or the number's first digit.
+            let at = match (m.get(1).or(m.get(2)), m.get(3)) {
+                (Some(n), _) => n.start() - 1,
+                (_, Some(n)) => n.start(),
+                _ => unreachable!(),
+            };
             let ch = match name {
-                "long" => "J", "int" => "I", "short" => "H", "float" => "F", "real" => "E",
-                "boolean" => "B", "date" => "D", "time" => "T", "timestamp" => "P",
-                "timespan" => "N", "month" => "M", "minute" => "U", "second" => "V",
-                "datetime" => "Z", "guid" => "G", _ => "",
+                "long" => "J",
+                "int" => "I",
+                "short" => "H",
+                "float" => "F",
+                "real" => "E",
+                "boolean" => "B",
+                "date" => "D",
+                "time" => "T",
+                "timestamp" => "P",
+                "timespan" => "N",
+                "month" => "M",
+                "minute" => "U",
+                "second" => "V",
+                "datetime" => "Z",
+                "guid" => "G",
+                _ => "",
             };
             // `symbol` and `guid` are the exceptions: q 5 refuses them with
             // 'type rather than converting codes, so they are another rule
@@ -6320,7 +6526,7 @@ pub fn lint_selecting(
                      text is \"{ch}\"$\"...\""
                 )
             };
-            add(offset + m.get(0).unwrap().start(), code, detail);
+            add(offset + at, code, detail);
         }
         // Equality against a string literal in a filter pairs each row with
         // one character. q 5: 'length whenever the row count differs from
@@ -6413,7 +6619,9 @@ pub fn lint_selecting(
                 let start = m.get(0).unwrap().start();
                 let head = &line[line[..start].rfind(';').map_or(0, |p| p + 1)..start];
                 let query = re!(r"\b(?:where|select|exec|update|delete)\b").is_match(head);
-                if m[1] == m[3] && ends && query {
+                // The left name whole too: `.cfg.a=a` compares a global with
+                // the column (#498).
+                if m[1] == m[3] && ends && query && boundary(line, start) {
                     add(
                         offset + start,
                         "QB001",
@@ -6535,12 +6743,27 @@ pub fn lint_selecting(
                         continue;
                     }
                     reported.push(at);
+                    // Row by row, so q 5 runs it when the table has as many
+                    // rows as the vector has items (#499).
+                    let literal = m.as_str().trim_start_matches(['=', '<', '>']).trim();
+                    let n = if literal.starts_with('`') {
+                        literal.matches('`').count()
+                    } else {
+                        literal.split_whitespace().count()
+                    };
+                    let (op, meant) = if m.as_str().starts_with("<>") {
+                        ("<>", "`not` with `in` tests")
+                    } else {
+                        ("=", "`in` tests")
+                    };
                     add(
                         at,
                         "QB008",
-                        "Equality against a vector literal in a filter is a 'length error at \
-                         runtime; `in` is the operator for membership"
-                            .into(),
+                        format!(
+                            "`{op}` against a {n}-item vector literal in a filter compares row \
+                             by row: q raises 'length unless the table has exactly {n} rows; \
+                             {meant} membership"
+                        ),
                     );
                 }
             }
@@ -6568,7 +6791,11 @@ pub fn lint_selecting(
                         || symbols.as_bytes()[m.start()] == line.as_bytes()[m.start()])
             };
             // Reported at the first of them, which is where the fix starts.
-            if let Some(at) = re!(r#""z"\s*\$"#)
+            // Any cast whose type string holds a `z` or `Z`: q 5 `"Z"$"2023.01.01"`
+            // parses a datetime, and `"zj"$(1.5;2)` makes one item of one;
+            // and a date with a bare `T` or a `z`, `2023.01.01T` and
+            // `2023.01.01z`, is a datetime too (#501).
+            if let Some(at) = re!(r#""[A-Za-z ]*[zZ][A-Za-z ]*"\s*\$"#)
                 .find(literals)
                 .into_iter()
                 .chain(
@@ -6576,9 +6803,10 @@ pub fn lint_selecting(
                         re!(r"`datetime\s*\$"),
                         re!(r"\b15h\s*\$"),
                         re!(r"(?:^|[^\w.])-?0[NW]z\b"),
-                        re!(r"\b\d{4}\.\d{2}\.\d{2}T\d"),
-                        // `.z.z` and `.z.Z` are the clock as a datetime (-15h).
-                        re!(r"\.z\.[zZ]\b"),
+                        re!(r"\b\d{4}\.\d{2}\.\d{2}(?:T|z\b)"),
+                        // `.z.z` and `.z.Z` are the clock as a datetime (-15h),
+                        // and `.my.z.z` is one dotted name of the file's (#510).
+                        re!(r"(?:^|[^\w.])\.z\.[zZ]\b"),
                     ]
                     .iter()
                     .filter_map(|regex| regex.find_iter(literals).find(in_code)),
@@ -6591,6 +6819,11 @@ pub fn lint_selecting(
                     // The `"z"` cast on its `$`: the string is not code, and
                     // a fix only starts in code.
                     _ if m.as_str().starts_with('"') => m.end() - 1,
+                    // The clock's pattern takes in the byte before it too;
+                    // a date's `z`, `2023.01.01z`, is no clock (#501).
+                    _ if m.as_str().ends_with(".z.z") || m.as_str().ends_with(".z.Z") => {
+                        m.end() - 4
+                    }
                     _ => m.start(),
                 })
                 .min()
@@ -6606,14 +6839,7 @@ pub fn lint_selecting(
                 })
                 .filter(|m| line[m.range()] == *m.as_str())
             {
-                let utc: String = m
-                    .as_str()
-                    .chars()
-                    .map(|c| match c {
-                        'P' | 'T' | 'N' | 'Z' | 'D' => c.to_ascii_lowercase(),
-                        _ => c,
-                    })
-                    .collect();
+                let utc = utc_clock(m.as_str());
                 add(
                     offset + m.start(),
                     "QP003",

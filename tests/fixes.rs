@@ -390,6 +390,10 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ("QP005", "r:2*3+4", "r:2*(3+4)", true),
         ("QP005", "a:1;r:a*a*a+1", "a:1;r:a*a*(a+1)", true),
         ("QP005", "a:1;r:a+a*a-1", "a:1;r:a+(a*a-1)", true),
+        // Before a semicolon, in a lambda and in a bracket (#511).
+        ("QP005", "h:2*3+4;", "h:2*(3+4);", true),
+        ("QP005", "g:{[a;b] a*b+1}", "g:{[a;b] a*(b+1)}", true),
+        ("QP005", "k:(2*3+4)", "k:(2*(3+4))", true),
         (
             "QB008",
             "t:([]s:`a`b`c);r:select from t where s=`a`b",
@@ -425,6 +429,8 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         // The clock named is the clock fixed, on the line it is on (#206).
         ("QP003", "a:(.z.D;.z.P)", "a:(.z.d;.z.P)", false),
         ("QP003", "f:{x}\n  .z.P", "f:{x}\n  .z.p", false),
+        // Not `.z.z`, the datetime QP002 reports in the same profile (#519).
+        ("QP003", "a:.z.Z", "a:.z.p", false),
         (
             "QB006",
             "t:([]a:1 2;b:3 4);r:select from t where a=1 and b=3",
@@ -960,7 +966,13 @@ fn qf005_fix_raises_no_qs008() {
 fn touching_fixes_keep_their_tokens_apart() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("adjacent.q");
-    fs::write(&path, "x:10 20 30;y:2\nr:(x)(y)\nf:{(-1)(x)}\n").unwrap();
+    // And two numbers stay two tokens: q 5 `(1.5)(2)` is 'type, and `1.5 2`
+    // would be a vector (#516).
+    fs::write(
+        &path,
+        "x:10 20 30;y:2\nr:(x)(y)\nf:{(-1)(x)}\na:(1.5)(2)\nb:(2) (3)\n",
+    )
+    .unwrap();
     Command::new(env!("CARGO_BIN_EXE_qlinter"))
         .args(["--profile", "styleq", "--fix"])
         .arg(&path)
@@ -968,7 +980,7 @@ fn touching_fixes_keep_their_tokens_apart() {
         .unwrap();
     assert_eq!(
         fs::read_to_string(&path).unwrap(),
-        "x:10 20 30;y:2\nr:x y\nf:{-1 x}\n"
+        "x:10 20 30;y:2\nr:x y\nf:{-1 x}\na:1.5(2)\nb:2 (3)\n"
     );
 }
 
@@ -1123,4 +1135,42 @@ fn a_truncated_utf8_sequence_keeps_the_columns_after_it() {
         .collect();
     at.sort();
     assert_eq!(at, [(1, 17), (2, 17)], "{findings}");
+}
+
+/// A line a nested or multi-pass fix leaves alone is context in `--diff`,
+/// as `diff -u` prints it, not a line removed and written back (#518, #671).
+#[test]
+fn diff_keeps_untouched_lines_inside_a_change_as_context() {
+    let directory = tempfile::tempdir().unwrap();
+    for (name, source, expected) in [
+        (
+            "nested.q",
+            "f:{x}\nc:f f 1\nd:4\ne:5\nh:f 2\n",
+            "@@ -1,5 +1,5 @@\n f:{x}\n-c:f f 1\n+c:f[f[1]]\n d:4\n e:5\n-h:f 2\n+h:f[2]\n",
+        ),
+        (
+            "passes.q",
+            "hs:{x}\nsq:{x}\nf:{(sq hs x)}\nmid:1\ng:{(sq hs x)}\n",
+            "@@ -1,5 +1,5 @@\n hs:{x}\n sq:{x}\n-f:{(sq hs x)}\n+f:{(sq[hs[x]])}\n mid:1\n\
+             -g:{(sq hs x)}\n+g:{(sq[hs[x]])}\n",
+        ),
+    ] {
+        let path = directory.path().join(name);
+        fs::write(&path, source).unwrap();
+        let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .args([
+                "--isolated",
+                "--profile",
+                "uqf",
+                "--select",
+                "QP006",
+                "--diff",
+            ])
+            .arg(&path)
+            .output()
+            .unwrap();
+        let patch = String::from_utf8(out.stdout).unwrap();
+        let hunks = &patch[patch.find("@@").unwrap()..];
+        assert_eq!(hunks, expected, "{name}");
+    }
 }

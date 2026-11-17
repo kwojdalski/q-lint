@@ -165,6 +165,14 @@ r1:select from t
 r2:update a:1 from t
 .my.select:1
 
+=== QT025 profile: general | signalling a number strand or an enlisted atom, which are lists (q 5: each 'stype; #612)
+f:{'1 2}
+g:{'enlist 1}
+h:{'enlist `a}
+
+=== clean profile: general | an enlisted one-char string is a string (q 5: 'enlist "a" signals 'a)
+f:{'enlist "a"}
+
 === QT025 | signalling a number
 f:{'1}
 
@@ -266,6 +274,10 @@ inc:x+
 open:hopen
   1.5
 
+=== clean profile: general | minus zero is the integer 0, which q tries to connect to (q 5: hopen -0 is 'hop; #614)
+h:hopen -0
+g:hopen -00
+
 === QT029 | hopen on a float
 h:hopen 1.5
 
@@ -311,6 +323,20 @@ f:x- -1
 h:x,-1
 i:x-{x}1
 j:(#)-1
+
+=== QE008 profile: general | the I/O verbs have no monadic form either (#672; q 5: parse "0: x" is ' , "a:1:`x" '1:, "0:00" '0:)
+f:{0: x}
+g:{1: x}
+h:{2:x}
+a:1:`x
+b:(0: "a")
+
+=== clean profile: general | 0:, 1: and 2: with a left operand, in brackets or in parentheses (q 5 parses each)
+f:{x 0: y}
+g:{0:[x;y]}
+h:{(1:)x}
+i:{x 1:y 0}
+t:12:00:00
 
 === QE008 profile: general | monadic minus on a name (q 5: parse "-x" is '-)
 f:{-x}
@@ -555,6 +581,28 @@ s:select where from t
 u:select from t where a in (exec b from v where c)
 w:select from t where
   a>1
+
+=== clean profile: general | 0:, 1: or 2: before a name applied to a number is the I/O verb, not a suffixed number (#665; q 5: parse "x 0:y 1" is (0:;`x;(`y;1)))
+f:{x 0:y 1}
+g:{x 1:y 0}
+h:{`:lib 2:x 1}
+
+=== QE010 profile: general | a time followed by a plain number (#673; q 5: parse "12:00 1" is '12:00, "01:00 30" '01:00)
+a:12:00 1
+b:01:00 30
+c:1 12:00 2
+d:0D12:00 1
+e:12:00 0Ni
+
+=== clean profile: general | a time after a number, before a null or another time, or under a temporal suffix (q 5 parses each)
+a:12:00 0N
+b:1 12:00
+c:12:00 12:30
+d:12:00 12:00:00
+e:-0D00:00:00.250 0D 0D00:00:00.500
+f:2026.09.17D10:00:01.500 0Np
+g:12:00 1u
+h:0D00:01 5n
 
 === QE010 profile: general | an integer type with a fraction (q 5: parse "1.5j" is '1.5)
 a:1.5j
@@ -1065,6 +1113,20 @@ r:select from t where a in b:1 2
 s:select from t where a in (b:1 2)
 u:select from t where (b:1)>0
 
+=== clean profile: general | an assignment of a boolean value runs: q filters on the value (q 5: one row, two rows, one row; #595)
+t:([]a:1 2;b:01b)
+r:select from t where a:a>1
+s:select from t where a:1b
+u:select from t where a:b
+
+=== QT028 profile: general | an assignment of a literal that is not boolean (q 5: each is 'type)
+t:([]a:1 2;s:`x`y)
+r:select from t where s:`x
+s:select from t where a:"x"
+u:select from t where a:1 0
+v:select from t where a:2000.01.01
+w:select from t where a:-1
+
 === clean profile: general | a where before from is the function, in a column
 r:exec where m:a>0 from t
 
@@ -1110,6 +1172,26 @@ c:0Ni5
 e:0W
 f:0Wi
 g:0W.5 1c
+
+=== QT024 profile: general | infinities, temporals, boolean and byte vectors, escaped strings and a parenthesised vector (q 5: each 's-fail or 'u-fail; #611)
+a:`s#0w 1
+b:`s#2001.01.02 2001.01.01
+c:`s#12:00 11:00
+d:`s#10b
+e:`s#0x0201
+f:`s#"\002\001"
+g:`s#(3 1 2)
+h:`u#11b
+
+=== clean profile: general | the same shapes in order
+a:`s#-0w 1 0w
+b:`s#2001.01.01 2001.01.02
+c:`s#11:00 12:00
+d:`s#01b
+e:`s#0x0102
+f:`s#"\001\002"
+g:`s#(1 2 3)
+h:`u#10b
 
 === clean profile: general | QE007: a blank line inside a query does not end it (q 5 runs it, #559)
 t:([]a:1 2)
@@ -1213,3 +1295,66 @@ h:0xab
 i:2000.01m
 j:1e
 k:0:`:f.csv
+
+=== QE007 profile: general | a row-limited select with no from (q 5: parse "select[2] a" is 'from) (#489)
+t:([]a:1 2)
+r:select[2] a
+
+=== clean profile: general | a row-limited select with its from (#489)
+t:([]a:1 2)
+r:select[2;>a] a from t
+
+=== QE010 profile: general | a C-style binary literal (q 5: parse "0b101" is '0b101) (#490)
+a:0b101
+
+=== QE010 profile: general | one digit after the b is refused too (q 5: '0b1) (#490)
+b:0b1
+
+=== QE010 profile: general | a trailing dot after a fraction (q 5: parse "1.5." is '1.5.) (#490)
+c:1.5.
+
+=== clean profile: general | false alone, and a float with a trailing dot (#490)
+a:0b
+b:1.
+
+=== QE010 profile: general | a suffix before a negative item (q 5: parse "3i -1" is '3i) (#491)
+a:3i -1
+b:1h -2
+c:1e -2
+d:1.5e -2
+
+=== QE010 profile: general | a date as a negative item (q 5: parse "1 -2000.01.01" is '-2000.01.01) (#491)
+a:1 -2000.01.01
+
+=== clean profile: general | a negative item after a plain one, and a minus between operands (#491)
+a:1 -2i
+b:1 -2 3i
+c:3i - 1
+
+=== QE011 profile: general | an infix keyword before over, scan or prior (q 5: parse "x in over y" is ' ) (#492)
+x:1 2 3;y:2 3 4
+a:x in over y
+b:x mod scan y
+c:x cor prior y
+d:and over y
+
+=== QE011 profile: general | a glyph before an iterator keyword (q 5: parse "x + each y" is ' ) (#492)
+x:1 2 3;y:2 3 4
+a:x + each y
+b:x , peach y
+c:x+over y
+
+=== clean profile: general | a glyph in parentheses, a lambda, and a string are fine (#492)
+x:1 2 3;y:2 3 4
+a:(+) each y
+b:{x+y} over y
+c:"x + each y"
+d:max over y
+
+=== QT029 profile: general | a negative or exponent float, read whole (q 5: each is 'type) (#504)
+a:hopen -1.5
+b:hopen 1e3
+c:hopen -1e3
+
+=== clean profile: general | a plain handle number (#504)
+a:hopen 5000

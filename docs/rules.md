@@ -121,13 +121,13 @@ that wants fewer findings narrows in its own configuration.
 | `QT019` | literal-within-bounds | within bounds are not a two-item list | every profile |
 | `QT020` | table-column-length | Table literal columns of different lengths | every profile |
 | `QT021` | empty-search-pattern | ss or ssr with an empty pattern is a length error | every profile |
-| `QT022` | index-into-atom | A name bound to an atom is indexed; an atom has no items, and q raises 'type | every profile |
+| `QT022` | index-into-atom | A name bound to an atom is indexed; an atom has no items, and q raises 'type, or for an integer tries to write to it as a handle | every profile |
 | `QT023` | char-integer-arithmetic | Integer arithmetic on a char, which q 5 refuses with 'type | every profile |
 | `QT024` | attribute-literal-fail | An s#, u# or p# attribute applied to a literal it does not describe | every profile |
 | `QT025` | signal-non-string | A number or a char atom signalled, which q refuses with 'stype | every profile |
 | `QT026` | join-unkeyed-right | lj, ij or pj with a right table that has no key, which q refuses with 'type | every profile |
 | `QT027` | insert-value-count | insert or upsert given a different number of values than the table has columns | every profile |
-| `QT028` | where-assignment | An assignment in a where phrase, where a comparison was meant; q raises 'type | every profile |
+| `QT028` | where-assignment | An assignment of a non-boolean literal in a where phrase, where a comparison was meant; q raises 'type | every profile |
 | `QT029` | hopen-literal | hopen given a float, a negative number, or a symbol without its leading colon | every profile |
 | `QT030` | cast-unknown-type | A cast to a type character q does not have | every profile |
 | `QT031` | uppercase-cast-literal | An uppercase cast parses a string; given a number or a symbol it is 'type, and "C"$ refuses only a vector | every profile |
@@ -144,7 +144,7 @@ that wants fewer findings narrows in its own configuration.
 | `QB005` | match-in-where | Match in a qSQL filter compares whole vectors, not rows | `style` and above |
 | `QB006` | comparison-with-logic | Unparenthesised comparison mixed with and/or reads right-to-left | `style` and above |
 | `QB007` | like-symbol-pattern | like with a symbol pattern is a type error or, with a glob, a projection instead of a boolean | every profile |
-| `QB008` | vector-equality-filter | Column equality against a vector literal in a filter | `style` and above |
+| `QB008` | vector-equality-filter | Column compared with a vector literal in a filter, row by row rather than for membership | `style` and above |
 | `QB010` | apply-not-subtract | An atom, a space and a negative literal applies the atom rather than subtracting, which q refuses | every profile |
 | `QB011` | control-as-value | if, while or do assigned as a value is always null | `style` and above |
 | `QB012` | trailing-semicolon-body | Lambda ends in ; so its last expression is discarded | `style` and above |
