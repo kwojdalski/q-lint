@@ -3769,9 +3769,35 @@ fn named_values(
                 ),
                 _ => (item, 0),
             };
-            if is_free(bare, phrase.start(), columns) {
-                let at = offset + lead + skip + item[skip..].find(bare).unwrap_or(0);
-                column(at, bare, table.as_str(), columns);
+            // Every name in the item, not only a bare one: q 5 raises 'c on
+            // `select max c from t` and `select c+1 from t` alike (#493). A
+            // lambda's names are its own, and a symbol names nothing.
+            let base = offset + lead + skip;
+            let mut flat = bare.as_bytes().to_vec();
+            let mut lambda = 0i32;
+            for (i, &c) in bare.as_bytes().iter().enumerate() {
+                if c == b'{' {
+                    lambda += 1;
+                }
+                if lambda > 0 {
+                    flat[i] = b' ';
+                }
+                if c == b'}' {
+                    lambda -= 1;
+                }
+            }
+            for sym in re!(r"`[A-Za-z0-9_./:]*").find_iter(bare) {
+                flat[sym.range()].fill(b' ');
+            }
+            let flat = String::from_utf8_lossy(&flat).into_owned();
+            for name in re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(&flat) {
+                let at = base + name.start();
+                if boundary(code, at)
+                    && !flat[name.end()..].starts_with('.')
+                    && is_free(name.as_str(), phrase.start(), columns)
+                {
+                    column(at, name.as_str(), table.as_str(), columns);
+                }
             }
         }
     }
