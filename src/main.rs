@@ -4,7 +4,7 @@ mod lsp;
 mod qls;
 use clap::Parser;
 use config::{Layer, Overrides, Policy};
-use q_lint_rs::{RULES, Workspace, fix_all, fixes_for, index, whole_edit};
+use q_lint_rs::{RULES, Workspace, balanced, fix_all, fixes_for, index, whole_edit};
 use std::{
     collections::BTreeSet,
     fs,
@@ -548,6 +548,12 @@ fn run(args: Args) -> Result<u8, String> {
                     .into_iter()
                     .filter(|fix| fix.batch_safe || args.unsafe_fixes)
                     .count();
+                continue;
+            }
+            // A file whose brackets or strings do not close is never
+            // rewritten, even with QE001 deselected: the fixes would read its
+            // structure wrong, as Format Document refuses to (#422, #775).
+            if !balanced(source) {
                 continue;
             }
             let q_lint_rs::Fixed {

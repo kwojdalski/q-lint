@@ -287,6 +287,36 @@ fn a_file_that_is_not_utf8_is_linted_but_never_rewritten() {
 /// ones were checked in q 5 to leave the program's value alone, or to replace
 /// code that could only fail; the others change behaviour or guess at
 /// intent, so the editor offers them and a person accepts or not.
+/// A file whose brackets or strings do not close is never rewritten, even
+/// with QE001 deselected: after the open `"` q reads `t:f 2` as string, and
+/// bracketing it would write into that string (#775, the CLI side of #422).
+#[test]
+fn a_file_whose_structure_does_not_close_is_not_fixed() {
+    let directory = tempfile::tempdir().unwrap();
+    for (name, original) in [
+        ("string.q", "f:{x+1}\nr:f \"a\nt:f 2\n"),
+        ("paren.q", "f:{x+1}\ns:(1;2\nt:f 2\n"),
+    ] {
+        let path = directory.path().join(name);
+        fs::write(&path, original).unwrap();
+        for flag in ["--diff", "--fix"] {
+            let run = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+                .args(["--isolated", "--select", "QP006", flag])
+                .arg(&path)
+                .output()
+                .unwrap();
+            if flag == "--diff" {
+                assert!(run.stdout.is_empty(), "{name}: {run:?}");
+            }
+            assert_eq!(
+                fs::read_to_string(&path).unwrap(),
+                original,
+                "{name} {flag}"
+            );
+        }
+    }
+}
+
 #[test]
 fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
     use q_lint_rs::{Profile, fix_for, lint};
