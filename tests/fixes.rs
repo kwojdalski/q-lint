@@ -390,6 +390,10 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ("QP005", "r:2*3+4", "r:2*(3+4)", true),
         ("QP005", "a:1;r:a*a*a+1", "a:1;r:a*a*(a+1)", true),
         ("QP005", "a:1;r:a+a*a-1", "a:1;r:a+(a*a-1)", true),
+        // Before a semicolon, in a lambda and in a bracket (#511).
+        ("QP005", "h:2*3+4;", "h:2*(3+4);", true),
+        ("QP005", "g:{[a;b] a*b+1}", "g:{[a;b] a*(b+1)}", true),
+        ("QP005", "k:(2*3+4)", "k:(2*(3+4))", true),
         (
             "QB008",
             "t:([]s:`a`b`c);r:select from t where s=`a`b",

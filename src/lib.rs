@@ -2272,22 +2272,30 @@ fn phrase_end(code: &str, from: usize) -> usize {
 /// `-b`, while `a-b`, `a- b` and `a - b` are subtraction. Braces and `;`
 /// start fresh statements rather than nesting, so a lambda body on one line
 /// is still checked.
-/// The `*`/`%` and `+`/`-` operators at bracket depth 0 of `line`, as runs
-/// that a `;`, a brace or a depth-0 `,` separates - each operator with its
-/// offset and whether it multiplies. A `+`/`-` counts only after an operand,
-/// and not as the sign of a literal.
+/// The `*`/`%` and `+`/`-` operators of `line`, as runs of one expression
+/// each - each operator with its offset and whether it multiplies. A `;`, a
+/// brace or a `,` ends a run, and a bracket holds runs of its own: in
+/// `(a*b)+c` the `*` and the `+` are never in one run, while `(a*b+c)`,
+/// `f[a*b+c]` and `r:a*b+c;` each hold one that mixes (#511). A `+`/`-`
+/// counts only after an operand, and not as the sign of a literal.
 fn infix_runs(line: &str) -> Vec<Vec<(usize, bool)>> {
     let b = line.as_bytes();
-    let mut runs = vec![vec![]];
-    let (mut depth, mut prev) = (0i32, b'\0');
+    let mut runs = vec![];
+    // The run open at each bracket level, the outermost first.
+    let mut open: Vec<Vec<(usize, bool)>> = vec![vec![]];
+    let mut prev = b'\0';
     for (i, &c) in b.iter().enumerate() {
         match c {
-            b'(' | b'[' => depth += 1,
-            b')' | b']' => depth -= 1,
-            b'{' | b'}' | b';' => runs.push(vec![]),
-            b',' if depth == 0 => runs.push(vec![]),
-            b'*' | b'%' if depth == 0 => runs.last_mut().unwrap().push((i, true)),
-            b'+' | b'-' if depth == 0 => {
+            b'(' | b'[' => open.push(vec![]),
+            // A bracket opened on an earlier line closes the run it held.
+            b')' | b']' => runs.push(if open.len() > 1 {
+                open.pop().unwrap()
+            } else {
+                std::mem::take(&mut open[0])
+            }),
+            b'{' | b'}' | b';' | b',' => runs.push(std::mem::take(open.last_mut().unwrap())),
+            b'*' | b'%' => open.last_mut().unwrap().push((i, true)),
+            b'+' | b'-' => {
                 let operand = matches!(
                     prev,
                     b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b')' | b']' | b'.'
@@ -2312,7 +2320,7 @@ fn infix_runs(line: &str) -> Vec<Vec<(usize, bool)>> {
                         && !before.is_some_and(|c| c.is_ascii_alphanumeric() || *c == b'_')
                 };
                 if operand && !introduces && !exponent {
-                    runs.last_mut().unwrap().push((i, false));
+                    open.last_mut().unwrap().push((i, false));
                 }
             }
             _ => {}
@@ -2321,14 +2329,14 @@ fn infix_runs(line: &str) -> Vec<Vec<(usize, bool)>> {
             prev = c;
         }
     }
+    runs.extend(open);
     runs
 }
-/// The run QP005 judges: the line's last. Earlier runs on the line are not
-/// read, which is how the rule has always behaved on the corpus.
+/// The run QP005 judges: the line's last that mixes the two families.
 fn mixed_run(line: &str) -> Option<Vec<(usize, bool)>> {
     infix_runs(line)
-        .pop()
-        .filter(|run| run.iter().any(|o| o.1) && run.iter().any(|o| !o.1))
+        .into_iter()
+        .rfind(|run| run.iter().any(|o| o.1) && run.iter().any(|o| !o.1))
 }
 /// The top-level statements of a file as byte ranges: a line and the indented
 /// lines q continues it with. Shared by the rules that read a statement and

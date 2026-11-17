@@ -32,6 +32,19 @@ r:2*3+4
 === clean profile: uqf | parenthesised, the order is said out loud
 r:(2*3)+4
 
+=== QP005 profile: uqf | in a statement that ends in a semicolon, in a one-line lambda and in brackets (#511)
+f:{[a;b;c]
+  r:a*b+c;
+  r}
+g:{[a;b;c] a*b+c}
+h:2*3+4;
+k:(2*3+4)
+m:f[2*3+4;1;2]
+
+=== clean profile: uqf | each bracket is an expression of its own, so (a*b)+c mixes nothing
+f:{[a;b;c] r:(a*b)+c; r}
+g:f[(2*3)+4;1;2]
+
 === clean profile: uqf | a single operator family is unambiguous
 r:2*3*4
 
