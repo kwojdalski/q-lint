@@ -36,6 +36,8 @@
 //! from open buffers, closes, and workspace/didChangeWatchedFiles. A name
 //! another file defines is not undefined here, a name two files assign is not
 //! tracked by value, and another file's function is coloured as one.
+//! The server registers the watchers itself (`watchers`), for a client that
+//! takes dynamic registration, so no editor has to know which files matter.
 //!
 //! FORMATTING IS THE SAFE AUTOFIXES, NOT A LAYOUT ENGINE
 //!
@@ -72,7 +74,7 @@
 //! stops offering its own word-based fallback. Formatting does not share the
 //! problem: its answer comes from rules that read text, and when there is
 //! nothing to fix, an empty answer is the true one.
-use crate::config::{Layer, Policy, selector};
+use crate::config::{FILES, Layer, Policy, selector};
 use crate::jsonrpc::{INVALID_REQUEST, receive, send};
 use q_lint_rs::{
     FileIndex, Finding, TokenKind, Workspace, balanced, fix_all, fix_for, semantic_tokens_in,
@@ -484,6 +486,14 @@ pub fn serve(
     // id of the next request the server sends it.
     let mut token_refresh = false;
     let mut next_request: u64 = 0;
+    // Whether the client takes file watchers the server registers, and ones
+    // rooted outside the workspace; the watchers registered, once the client
+    // is ready for them.
+    let mut watch_registration = false;
+    let mut relative_patterns = false;
+    let mut ready = false;
+    let mut watching: Vec<Value> = vec![];
+    let mut watch_id: Option<String> = None;
     let mut shutdown_requested = false;
     loop {
         let message = match receive(reader)? {
@@ -562,6 +572,16 @@ pub fn serve(
                     .pointer("/capabilities/workspace/semanticTokens/refreshSupport")
                     .and_then(Value::as_bool)
                     .unwrap_or(false);
+                let watched = |key: &str| {
+                    params
+                        .pointer(&format!(
+                            "/capabilities/workspace/didChangeWatchedFiles/{key}"
+                        ))
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false)
+                };
+                watch_registration = watched("dynamicRegistration");
+                relative_patterns = watched("relativePatternSupport");
                 send(
                     writer,
                     json!({"id": id, "result": capabilities(&opts, code_action_literals)}),
@@ -593,6 +613,7 @@ pub fn serve(
                 idx.enabled = opts.index;
                 idx.exclude = opts.index_exclude.clone();
                 idx.rebuild(policy, &docs);
+                ready = true;
             }
             // A request after shutdown is the one protocol error worth
             // answering rather than ignoring: the client is confused and
@@ -767,6 +788,35 @@ pub fn serve(
         // pushed again; its colours a client fetches only when it changes,
         // or when asked to (LSP 3.17, workspace/semanticTokens/refresh). The
         // client's reply is a response, and dropped as one.
+        // What the settings were read from changes as documents open and
+        // configurations change, so the watchers follow it (LSP 3.17,
+        // client/registerCapability). A changed set replaces the old one.
+        if ready && watch_registration && !shutdown_requested {
+            let want = watchers(&idx.roots, policy, relative_patterns);
+            if want != watching {
+                next_request += 1;
+                let id = format!("qlinter-watch-{next_request}");
+                send(
+                    writer,
+                    json!({"id": format!("qlinter-{next_request}"),
+                           "method": "client/registerCapability",
+                           "params": {"registrations": [{"id": id,
+                                      "method": "workspace/didChangeWatchedFiles",
+                                      "registerOptions": {"watchers": want}}]}}),
+                )?;
+                if let Some(old) = watch_id.replace(id) {
+                    next_request += 1;
+                    send(
+                        writer,
+                        json!({"id": format!("qlinter-{next_request}"),
+                               "method": "client/unregisterCapability",
+                               "params": {"unregisterations": [{"id": old,
+                                          "method": "workspace/didChangeWatchedFiles"}]}}),
+                    )?;
+                }
+                watching = want;
+            }
+        }
         if idx.generation != generation
             && token_refresh
             && opts.semantic_tokens
@@ -897,9 +947,60 @@ fn uri_of(text_document: &Value) -> String {
 /// code-action request can otherwise apply an old fix after another edit.
 /// A file whose change can change what any document reports.
 fn is_config_path(path: &str) -> bool {
-    std::path::Path::new(path).file_name().is_some_and(|n| {
-        ["qlinter.toml", ".qlinter.toml", "pyproject.toml"].contains(&&*n.to_string_lossy())
-    })
+    std::path::Path::new(path)
+        .file_name()
+        .is_some_and(|n| FILES.contains(&&*n.to_string_lossy()))
+}
+
+/// What the server asks a client to watch for it: the workspace's `.q`
+/// files, and every `.toml` in it, since a base is `extend`ed by any name.
+/// And, for a client that takes a pattern rooted elsewhere, the files and
+/// directories outside the workspace that the settings came from or were
+/// searched for in - a configuration above the folder, an `extend`ed base
+/// beside it, the user-level file - which no workspace pattern reaches and
+/// whose change the server otherwise never heard of (#554).
+fn watchers(roots: &[String], policy: &Policy, relative: bool) -> Vec<Value> {
+    let mut out = vec![
+        json!({"globPattern": "**/*.q"}),
+        json!({"globPattern": "**/*.toml"}),
+    ];
+    if !relative {
+        return out;
+    }
+    let roots: Vec<std::path::PathBuf> = roots.iter().map(|r| file_key(r).into()).collect();
+    let outside = |p: &std::path::Path| !roots.iter().any(|r| p.starts_with(r));
+    let (files, dirs) = policy.watched();
+    let names = format!("{{{}}}", FILES.join(","));
+    for dir in dirs.iter().filter(|d| outside(d)) {
+        out.push(json!({"globPattern": {"baseUri": path_uri(dir), "pattern": names}}));
+    }
+    // `--config` names a file by any name, which `**/*.toml` may not match.
+    let toml = |p: &std::path::Path| p.extension().is_some_and(|e| e == "toml");
+    for file in files.iter().filter(|f| outside(f) || !toml(f)) {
+        if let (Some(dir), Some(name)) = (file.parent(), file.file_name()) {
+            out.push(json!({"globPattern":
+                {"baseUri": path_uri(dir), "pattern": name.to_string_lossy()}}));
+        }
+    }
+    out
+}
+
+/// A filesystem path as a `file:` URI, `path_of` undone.
+fn path_uri(path: &std::path::Path) -> String {
+    let text = path.to_string_lossy().replace('\\', "/");
+    let mut uri = String::from(if text.starts_with('/') {
+        "file://"
+    } else {
+        "file:///"
+    });
+    for b in text.bytes() {
+        if b.is_ascii_alphanumeric() || b"/-._~:".contains(&b) {
+            uri.push(b as char);
+        } else {
+            uri.push_str(&format!("%{b:02X}"));
+        }
+    }
+    uri
 }
 
 fn code_actions(

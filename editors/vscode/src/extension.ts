@@ -9,8 +9,6 @@
 // file is knowledge those editors would have to reimplement.
 import {
   commands,
-  RelativePattern,
-  Uri,
   workspace,
   window,
   type ExtensionContext,
@@ -19,7 +17,7 @@ import {
 import { launch, needsRestart } from "./settings";
 import { Serial } from "./serial";
 import { chmodSync, existsSync, statSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { join } from "node:path";
 import {
   LanguageClient,
   type LanguageClientOptions,
@@ -128,28 +126,10 @@ async function start(context: ExtensionContext): Promise<void> {
     // The output channel the server's own trace goes to, so a user debugging
     // the integration has one place to look.
     outputChannel: channel,
-    // The server indexes every `.q` file in the workspace, so a name one file
-    // defines is not undefined in another. It hears about the files the
-    // editor has open; this tells it about the rest changing on disk - a
-    // pull, a checkout, another tool writing.
-    // A configuration file changing is the other thing it has to hear about:
-    // the rules a file reports come from the nearest `qlinter.toml`.
-    synchronize: {
-      fileEvents: [
-        workspace.createFileSystemWatcher("**/*.q"),
-        // Every `.toml`: a file `extend`s a base by any name, and the server
-        // re-reads only the ones its settings were made from.
-        workspace.createFileSystemWatcher("**/*.toml"),
-        // `q-lint.configFile` can be called anything and live anywhere.
-        ...(settings.configFile
-          ? [
-              workspace.createFileSystemWatcher(
-                new RelativePattern(Uri.file(dirname(settings.configFile)), basename(settings.configFile)),
-              ),
-            ]
-          : []),
-      ],
-    },
+    // No `synchronize`: the server asks for the files it has to hear about
+    // itself - the workspace's `.q` and `.toml` files, and the configuration
+    // it read from outside the workspace, which no pattern here could name
+    // in advance - so every editor gets them, not only this one (#554).
   };
 
   let started: unknown;

@@ -25,9 +25,6 @@ export interface Launch {
   /// `q-lint.serverPath`, trimmed; empty means "find one".
   serverPath: string;
   args: string[];
-  /// `q-lint.configFile` as the server is given it, or undefined: a file
-  /// the client has to watch, since its name need not be `qlinter.toml`.
-  configFile: string | undefined;
   initializationOptions: InitializationOptions;
 }
 
@@ -91,7 +88,6 @@ export function launch(settings: Settings, folder: string | undefined): Launch {
     enabled: settings.get<boolean>("enable", true),
     serverPath: settings.get<string>("serverPath", "").trim(),
     args,
-    configFile,
     initializationOptions: {
       lint: {
         select: strings(settings, "lint.select"),

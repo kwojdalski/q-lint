@@ -1238,6 +1238,51 @@ fn editing_a_base_the_configuration_extends_relints_the_open_documents() {
 }
 
 #[test]
+fn the_server_asks_to_watch_the_configuration_outside_the_workspace() {
+    // A base the folder's configuration extends from above it, and the
+    // user-level file, are outside every workspace pattern; the server asks
+    // for them itself, so their edits reach it in any editor (#554).
+    let top = tempfile::tempdir().unwrap();
+    let top_path = top.path().canonicalize().unwrap();
+    let ws = top_path.join("ws");
+    std::fs::create_dir(&ws).unwrap();
+    std::fs::write(top_path.join("base.toml"), "profile = \"style\"\n").unwrap();
+    std::fs::write(ws.join(".qlinter.toml"), "extend = \"../base.toml\"\n").unwrap();
+    // Started above the folder, so the user-level file the tests point at
+    // is outside it too.
+    let mut server = Server::spawn(&top_path, &["--lsp"]);
+    let mut capabilities = client_capabilities();
+    capabilities["workspace"] = json!({"didChangeWatchedFiles":
+        {"dynamicRegistration": true, "relativePatternSupport": true}});
+    server.send(
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+        "capabilities":capabilities,"workspaceFolders":[{"uri":file_uri(&ws),"name":"ws"}]}}),
+    );
+    server.receive();
+    server.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+    let uri = file_uri(&ws.join("a.q"));
+    server.open(&uri, "a:1\n");
+    let wants = |m: &Value, base: &std::path::Path, pattern: &str| {
+        m["method"] == "client/registerCapability"
+            && m["params"]["registrations"][0]["registerOptions"]["watchers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|w| w["globPattern"] == json!({"baseUri": file_uri(base), "pattern": pattern}))
+    };
+    let registration = server.until(|m| wants(m, &top_path, "base.toml"));
+    let user = top_path.join("no-such-config-home/qlinter");
+    assert!(
+        wants(&registration, &user, "qlinter.toml"),
+        "{registration}"
+    );
+    let watchers = &registration["params"]["registrations"][0]["registerOptions"]["watchers"];
+    assert_eq!(watchers[0], json!({"globPattern": "**/*.q"}));
+    server.diagnostics_for(&uri);
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
 fn a_localhost_file_uri_finds_the_project_configuration() {
     // RFC 8089: file://localhost/p is file:///p. The authority was read as
     // the first directory, so no configuration was found (#425).

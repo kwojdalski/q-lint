@@ -49,7 +49,7 @@ use std::{
     rc::Rc,
 };
 
-const FILES: [&str; 3] = [".qlinter.toml", "qlinter.toml", "pyproject.toml"];
+pub const FILES: [&str; 3] = [".qlinter.toml", "qlinter.toml", "pyproject.toml"];
 /// What `exclude` is until a configuration sets it, as Ruff's default list
 /// is: tool and build directories a walk does not enter, by their own name
 /// at any depth. A configuration's own `exclude` replaces it, and
@@ -167,6 +167,32 @@ impl Policy {
                 .borrow()
                 .values()
                 .any(|settings| settings.sources.contains(&path))
+    }
+
+    /// What a change to could change the settings read so far: the files
+    /// they were made from, and the directories searched for one - a
+    /// configuration created there would now be found first - with the
+    /// user-level file the search falls back to. Under `--config` and
+    /// `--isolated` nothing is searched for.
+    pub fn watched(&self) -> (Vec<PathBuf>, Vec<PathBuf>) {
+        let cache = self.cache.borrow();
+        let mut files: Vec<PathBuf> = cache
+            .values()
+            .flat_map(|settings| settings.sources.iter().cloned())
+            .collect();
+        let mut dirs = vec![];
+        match &self.overrides.config {
+            Some(explicit) => files.push(absolute(explicit)),
+            None if !self.overrides.isolated => {
+                dirs = cache.keys().cloned().collect();
+                files.extend(user_config_path());
+            }
+            None => {}
+        }
+        files.sort();
+        files.dedup();
+        dirs.sort();
+        (files, dirs)
     }
 
     /// The settings for `path`, a file or a directory: the configuration
@@ -461,17 +487,22 @@ fn in_directory(dir: &Path) -> Result<Option<Settings>, String> {
 /// configuration's `exclude` and per-file-ignores against the directory it
 /// runs in.
 fn user_config() -> Result<Option<Settings>, String> {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")));
-    match base.map(|b| b.join("qlinter").join("qlinter.toml")) {
+    match user_config_path() {
         Some(path) if path.is_file() => {
             let cwd = absolute(&std::env::current_dir().map_err(|e| e.to_string())?);
             load(&path, &[], Some(&cwd))
         }
         _ => Ok(None),
     }
+}
+
+/// Where the user-level configuration is, whether or not it exists.
+fn user_config_path() -> Option<PathBuf> {
+    std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
+        .map(|base| base.join("qlinter").join("qlinter.toml"))
 }
 
 /// Read one configuration file, and what it extends. `None` for a
