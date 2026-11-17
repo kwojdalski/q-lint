@@ -1834,7 +1834,7 @@ pub fn check(
         // The right operand is everything to the right of the operator, so it
         // has to end here for its length to be the one counted: `4 5,6` is
         // three items, not two. Same test as QB018's.
-        if negative || exponent || !boundary(code, whole.start()) || !operand_ends(code, whole.end())
+        if negative || exponent || !boundary(code, whole.start()) || !operand_ends(code, comments, whole.end())
         {
             continue;
         }
@@ -3589,7 +3589,11 @@ fn named_values(
         let negative = op.as_str() == "-"
             && code[..op.start()].ends_with(char::is_whitespace)
             && re!(r"^\.?\d").is_match(&code[op.end()..]);
-        if !named || negative || !boundary(code, l.start()) || !operand_ends(code, r.end()) {
+        if !named
+            || negative
+            || !boundary(code, l.start())
+            || !operand_ends(code, comments, r.end())
+        {
             continue;
         }
         if let (Some(a), Some(b)) = (length(l.as_str(), l.start()), length(r.as_str(), r.start()))
@@ -3620,12 +3624,13 @@ fn named_values(
     let operand = r#""(?:\\.|[^"\\])*"|[01]+b|0x[0-9a-fA-F]+|-?(?:\d+(?:\.\d*)?|\.\d+)e\b|-?\d+[hij]?(?:[ \t]+-?\d+[hij]?)*|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*"#;
     // The statement's blanks around the operator: `inc:x+` and then a
     // column-0 `"done"` are two statements (#741).
-    let infix = regex::Regex::new(&format!(concat!(
-        r"(?P<l>{operand})",
-        blank!(),
-        r"*(?P<op>[-+*])",
-        blank!(),
-        r"*(?P<r>{operand})"
+    let infix = regex::Regex::new(&format!(
+        concat!(
+            r"(?P<l>{operand})",
+            blank!(),
+            r"*(?P<op>[-+*])",
+            blank!(),
+            r"*(?P<r>{operand})"
         ),
         operand = operand
     ))
@@ -3668,7 +3673,7 @@ fn named_values(
             || negative
             || temporal
             || !boundary(comments, l.start())
-            || !operand_ends(code, r.end())
+            || !operand_ends(code, comments, r.end())
         {
             continue;
         }
@@ -3741,7 +3746,7 @@ fn named_values(
         let table = m.get(2).unwrap();
         // The name has to be the whole from clause: `from t lj k`, `from t,'u`
         // and `from t uj u` bring in columns `t` does not have (#348).
-        if !operand_ends(code, table.end()) {
+        if !operand_ends(code, comments, table.end()) {
             continue;
         }
         let Some(Held::Table(columns, _)) = visible(table.as_str(), table.start()) else {
@@ -3881,7 +3886,7 @@ fn named_values(
     // missing one is the error whatever the file defines.
     for m in re!(r"((?:`[A-Za-z][A-Za-z0-9_]*)+)\s+(?:xkey|xasc|xdesc|xcols)\s+(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)").captures_iter(code) {
         let table = m.get(2).unwrap();
-        if !operand_ends(code, table.end()) {
+        if !operand_ends(code, comments, table.end()) {
             continue;
         }
         let Some(Held::Table(columns, _)) = visible(table.as_str(), table.start()) else {
@@ -3901,17 +3906,22 @@ fn named_values(
     // ljf and ijf too, and the bracket form `lj[t;s]` (q 5: 'type).
     // Applied infix, the right table is in the same statement: `join:t lj`
     // and then a column-0 `([]z:1 2)` are two (#742).
-    for m in re!(concat!(r"\b(ljf|ijf|lj|ij|pj)(?:", blank!(), r"+|\s*\[[^;\[\]]*;\s*)(\(\s*\[|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)"))
-        .captures_iter(code)
+    for m in re!(concat!(
+        r"\b(ljf|ijf|lj|ij|pj)(?:",
+        blank!(),
+        r"+|\s*\[[^;\[\]]*;\s*)(\(\s*\[|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)"
+    ))
+    .captures_iter(code)
     {
         let right = m.get(2).unwrap();
         let unkeyed = if right.as_str().starts_with('(') {
             let open = right.start();
             matching(code, open, b'(', b')').is_some_and(|close| {
-                operand_ends(code, close) && code[open + 1..].trim_start().starts_with("[]")
+                operand_ends(code, comments, close)
+                    && code[open + 1..].trim_start().starts_with("[]")
             })
         } else {
-            operand_ends(code, right.end())
+            operand_ends(code, comments, right.end())
                 && matches!(
                     visible(right.as_str(), right.start()),
                     Some(Held::Table(_, false))
@@ -4040,7 +4050,7 @@ fn named_values(
         let ends = if m.name("op3").is_some() {
             code[end..].trim_start().starts_with(']')
         } else {
-            operand_ends(code, end)
+            operand_ends(code, comments, end)
         };
         if !ends {
             continue;

@@ -1964,12 +1964,20 @@ pub(crate) fn past_blanks(text: &str, at: usize) -> usize {
         .map_or(0, |m| m.end())
 }
 
-pub(crate) fn operand_ends(code: &str, at: usize) -> bool {
+pub(crate) fn operand_ends(code: &str, comments: &str, at: usize) -> bool {
     // A line break ends the operand unless the next line with code on it is
     // indented, which continues the statement: `where 2` + `  #1b` is
     // `where 2#1b` (#193), and so it is with blank or comment lines between
-    // them (#675).
-    let rest = &code[past_blanks(code, at)..];
+    // them (#675). Indentation is read in `comments` too: in `code` a string
+    // starting a line is blanks and looks indented, but q 5 runs a column-0
+    // `"x",1` under `r:1 2 3+1 2` as a statement of its own (#718).
+    let next = past_blanks(code, at);
+    if code[at..next].contains('\n')
+        && comments[past_blanks(comments, at)..].starts_with(['\n', '\r'])
+    {
+        return true;
+    }
+    let rest = &code[next..];
     rest.is_empty()
         || rest.starts_with([';', ')', ']', '}', '\n', '\r'])
         || (rest.starts_with(',') && in_qsql_phrase(code, at))
@@ -4061,11 +4069,11 @@ pub fn lint_selecting(
     // symbol fills a symbol list (`none^s).
     // The null symbol, a lone backtick, is one too: q 5 `` ` + 1 `` is 'type.
     let arithmetic = re!(concat!(
-            r"(?:`(?:[A-Za-z][A-Za-z0-9_.]*)?)+(?:",
-            blank!(),
-            r"*[+\-*%&|]|",
-            blank!(),
-            r"+(?:mod|div|xexp|xlog|and|or)[ \t])|(?:[+\-*%&|][ \t]*(?:(?:\r?\n[ \t]*)*\r?\n[ \t]+)?|[ \t](?:mod|div|xexp|xlog|and|or)(?:[ \t]*(?:\r?\n[ \t]*)*\r?\n[ \t]+|[ \t]+))(?:`(?:[A-Za-z][A-Za-z0-9_.]*)?)+"
+        r"(?:`(?:[A-Za-z][A-Za-z0-9_.]*)?)+(?:",
+        blank!(),
+        r"*[+\-*%&|]|",
+        blank!(),
+        r"+(?:mod|div|xexp|xlog|and|or)[ \t])|(?:[+\-*%&|][ \t]*(?:(?:\r?\n[ \t]*)*\r?\n[ \t]+)?|[ \t](?:mod|div|xexp|xlog|and|or)(?:[ \t]*(?:\r?\n[ \t]*)*\r?\n[ \t]+|[ \t]+))(?:`(?:[A-Za-z][A-Za-z0-9_.]*)?)+"
     ));
     // Searched one match at a time: a symbol rejected as the right operand
     // may still be the left one of the operator after it - `` 1+`a+1 `` is
@@ -4098,7 +4106,7 @@ pub fn lint_selecting(
         // with it: `` 2*`a`b?`b `` multiplies by a long, and `` 1+`a`b!1 2 ``
         // adds to a dictionary. On the left it is the operand whatever
         // follows, since everything to the right is evaluated first.
-        if !m.as_str().starts_with('`') && !operand_ends(code, m.end()) {
+        if !m.as_str().starts_with('`') && !operand_ends(code, &v.comments, m.end()) {
             from = m.start() + m.as_str().find('`').unwrap();
             continue;
         }
@@ -4108,7 +4116,10 @@ pub fn lint_selecting(
         if m.as_str().starts_with('`') {
             let end = phrase_end(code, m.end());
             let end = code[m.end()..end].find('\n').map_or(end, |n| m.end() + n);
-            if code[m.end()..end].trim_end().ends_with(['+', '-', '*', '%', '&', '|']) {
+            if code[m.end()..end]
+                .trim_end()
+                .ends_with(['+', '-', '*', '%', '&', '|'])
+            {
                 continue;
             }
         }
@@ -4141,8 +4152,16 @@ pub fn lint_selecting(
         // column-0 `1 2 3` are two statements (#743).
         let gap = concat!(blank!(), "*");
         for (pattern, view, quoted) in [
-            (format!(r"({sym}){gap}{op}{gap}({num})"), code.as_str(), None),
-            (format!(r"({num}){gap}{op}{gap}({sym})"), code.as_str(), None),
+            (
+                format!(r"({sym}){gap}{op}{gap}({num})"),
+                code.as_str(),
+                None,
+            ),
+            (
+                format!(r"({num}){gap}{op}{gap}({sym})"),
+                code.as_str(),
+                None,
+            ),
             (
                 format!(r"({string}){gap}{op}{gap}({sym})"),
                 v.comments.as_str(),
@@ -4171,7 +4190,7 @@ pub fn lint_selecting(
                 // `` 1=`a`b?`b `` compares two longs. A symbol before `$` names
                 // a cast, and `` `time in 0!t `` unkeys a table. So the
                 // comparison has to end here, or it was never this one.
-                if !operand_ends(view, end) {
+                if !operand_ends(view, &v.comments, end) {
                     continue;
                 }
                 add(
@@ -4216,7 +4235,10 @@ pub fn lint_selecting(
         add(
             name.start(),
             "QF019",
-            format!("`{}` is read-only: q refuses any assignment to it with 'domain", name.as_str()),
+            format!(
+                "`{}` is read-only: q refuses any assignment to it with 'domain",
+                name.as_str()
+            ),
         );
     }
     // like's pattern is a string, and a symbol literal is the obvious wrong
@@ -4259,7 +4281,9 @@ pub fn lint_selecting(
         };
         let parts = slots(&code[open + 1..close - 1]);
         if parts.len() == 2
-            && !v.comments[open + 1..open + 1 + parts[0].len()].trim().is_empty()
+            && !v.comments[open + 1..open + 1 + parts[0].len()]
+                .trim()
+                .is_empty()
             && re!(r"^\s*(?:`[A-Za-z0-9_.:]*)+\s*$").is_match(parts[1])
         {
             add(
@@ -4474,9 +4498,11 @@ pub fn lint_selecting(
     // else: a column-0 `[1;2;3]` under `r:f` is a statement of its own
     // (#729), and in `code` a string is blanks too - `f "x" [1]` indexes the
     // string - so the gap is read in `comments`, where a string still shows.
-    let gap = |m: &regex::Captures| v.comments[m.get(1).unwrap().end()..m.get(0).unwrap().end() - 1]
-        .trim()
-        .is_empty();
+    let gap = |m: &regex::Captures| {
+        v.comments[m.get(1).unwrap().end()..m.get(0).unwrap().end() - 1]
+            .trim()
+            .is_empty()
+    };
     for m in re!(concat!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)", blank!(), r"*\[")).captures_iter(code) {
         let (whole, name) = (m.get(0).unwrap(), m.get(1).unwrap().as_str());
         let key = qualified(whole.start(), name);
@@ -4703,7 +4729,7 @@ pub fn lint_selecting(
         };
         let quoted = past_blanks(&v.comments, dot + 1);
         if let Some(len) = char_atom(&v.comments[quoted..])
-            && operand_ends(code, quoted + len)
+            && operand_ends(code, &v.comments, quoted + len)
         {
             add(
                 dot,
@@ -4726,7 +4752,7 @@ pub fn lint_selecting(
                 .unwrap_or(rest.len())
         };
         let arg = &rest[..end];
-        if !operand_ends(code, after + end) {
+        if !operand_ends(code, &v.comments, after + end) {
             continue;
         }
         if scalar_literal(arg.trim_end_matches([' ', '\t'])) {
@@ -5086,7 +5112,7 @@ pub fn lint_selecting(
         // The symbol on the right has to be the whole operand:
         // `` type[1]=`a`b?`a `` compares a short with a long.
         // So does a parenthesised one: q 5 `(type 1)=`long` is 'type.
-        if !m.as_str().starts_with('`') && !operand_ends(code, m.end()) {
+        if !m.as_str().starts_with('`') && !operand_ends(code, &v.comments, m.end()) {
             continue;
         }
         add(
@@ -5720,12 +5746,13 @@ pub fn lint_selecting(
         // any glyph continues an expression - `0<0^x` fills before comparing
         // and `0<1_x` drops before it, and both look like `0<0` and `0<1` to a
         // pattern. So: the comparison ends here, or it was never one.
-        if !boundary(code, whole.start()) || !operand_ends(code, whole.end()) {
+        if !boundary(code, whole.start()) || !operand_ends(code, &v.comments, whole.end()) {
             continue;
         }
         // Two vectors are QT006's: of different lengths they are an error,
         // not a constant. One side has to be an atom.
-        let vector = |side: &str| side.trim().contains([' ', '\t']) || side.matches('`').count() > 1;
+        let vector =
+            |side: &str| side.trim().contains([' ', '\t']) || side.matches('`').count() > 1;
         // With a vector on one side, a symbol against a number is QT015's
         // 'type alone; two atoms keep both findings, as they always have.
         let symbol = |side: &str| side.trim_start().starts_with('`');
@@ -5736,7 +5763,10 @@ pub fn lint_selecting(
         add(
             whole.start(),
             "QB018",
-            format!("`{}` compares two literals; the answer is the same every run", whole.as_str().trim()),
+            format!(
+                "`{}` compares two literals; the answer is the same every run",
+                whole.as_str().trim()
+            ),
         );
     }
     // The same with a char atom on a side, which `code` blanks: q 5
@@ -5758,7 +5788,7 @@ pub fn lint_selecting(
             || !opens(m.get(1).unwrap())
             || !opens(m.get(3).unwrap())
             || !boundary(&v.comments, whole.start())
-            || !operand_ends(&v.comments, whole.end())
+            || !operand_ends(&v.comments, &v.comments, whole.end())
         {
             continue;
         }
@@ -6175,7 +6205,7 @@ pub fn lint_selecting(
         // Reported at the `.` itself, which is where the fix edits.
         for m in re!(r"\.\s*\(\s*\)").find_iter(line) {
             if re!(r"\(\s*\)$").is_match(&literals[m.range()])
-                && operand_ends(code, offset + m.end())
+                && operand_ends(code, &v.comments, offset + m.end())
             {
                 add(offset + m.start(), "QA004", "`. ()`".into());
             }
@@ -6322,7 +6352,11 @@ pub fn lint_selecting(
                 // The string has to be the whole right operand: q 5
                 // `n="abcd"?"b"` compares n with 1, and `n="abcd"[1]` with
                 // "b" (#435).
-                if in_code(op) && n != 1 && !order && operand_ends(query, m.get(0).unwrap().end()) {
+                if in_code(op)
+                    && n != 1
+                    && !order
+                    && operand_ends(query, query_literals, m.get(0).unwrap().end())
+                {
                     return Some((op, n));
                 }
                 at = op + 1;

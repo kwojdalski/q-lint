@@ -44,7 +44,7 @@ fn attributes(path: &str, source: &str, code: &str, comments: &str, out: &mut Ve
         let whole = m.get(0).unwrap();
         if code.as_bytes()[whole.start()] != b'`'
             || !boundary(code, whole.start())
-            || !operand_ends(code, whole.end())
+            || !operand_ends(code, comments, whole.end())
         {
             continue;
         }
@@ -765,15 +765,19 @@ fn hopen_literal(path: &str, source: &str, code: &str, comments: &str, out: &mut
         // 'type too (q 5); the string is read from `comments`.
         // Applied by juxtaposition, the argument is in the same statement:
         // `open:hopen` and then a column-0 `1.5` are two (#741).
-        re!(concat!(r"\bhopen", blank!(), r#"*(?:\[\s*)?(-\d+|\d*\.\d+e?|\d+\.\d*e?|\d+e|`(?:[A-Za-z0-9_.][A-Za-z0-9_.:]*)?|"")"#))
-            .captures_iter(comments)
+        re!(concat!(
+            r"\bhopen",
+            blank!(),
+            r#"*(?:\[\s*)?(-\d+|\d*\.\d+e?|\d+\.\d*e?|\d+e|`(?:[A-Za-z0-9_.][A-Za-z0-9_.:]*)?|"")"#
+        ))
+        .captures_iter(comments)
     {
         let whole = m.get(0).unwrap();
         let value = m.get(1).unwrap();
         if !boundary(code, whole.start()) || !code[whole.start()..].starts_with("hopen") {
             continue;
         }
-        if !crate::operand_ends(code, value.end()) {
+        if !crate::operand_ends(code, comments, value.end()) {
             continue;
         }
         let (what, error) = if value.as_str() == "`" {
@@ -823,7 +827,7 @@ fn cast_character(path: &str, source: &str, code: &str, comments: &str, out: &mu
             && let Some(lit) =
                 re!(r"^(?:-?\d[A-Za-z0-9.:]*(?:[ \t]+-?\d[A-Za-z0-9.:]*)*|(?:`[A-Za-z0-9_.:]*)+)")
                     .find(operand)
-            && crate::operand_ends(code, start + lit.end())
+            && crate::operand_ends(code, comments, start + lit.end())
             && (c != "C" || !atom_literal(lit.as_str()))
         {
             out.push(Finding::at(

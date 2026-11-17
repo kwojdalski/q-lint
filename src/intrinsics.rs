@@ -219,7 +219,7 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
         // on a join. Anything that continues the expression disqualifies it.
         // A `/` straight after it is not a comment - those are blank in
         // `code` - but an iterator: `asc 3/x` sorts `3/x` (#194).
-        if !crate::operand_ends(code, whole.end()) {
+        if !crate::operand_ends(code, comments, whole.end()) {
             continue;
         }
         // After `from` a `where` opens the query's where phrase, which takes
@@ -254,7 +254,7 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
             if !boundary(code, whole.start()) || code.get(name.range()) != Some(name.as_str()) {
                 continue;
             }
-            if !crate::operand_ends(code, whole.end()) {
+            if !crate::operand_ends(code, comments, whole.end()) {
                 continue;
             }
             let arg = call.get(arg_group).unwrap();
