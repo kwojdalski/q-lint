@@ -122,8 +122,11 @@ struct Index {
     enabled: bool,
 }
 
-/// A bound on the scan, so a workspace opened at `/` cannot stall the server.
+/// Bounds on the scan, so a workspace opened at `/` cannot stall the server:
+/// the `.q` files read, and every directory entry visited on the way, since
+/// a tree of anything else costs as much to walk (#793).
 const MAX_FILES: usize = 20_000;
+const MAX_ENTRIES: usize = 500_000;
 const MAX_BYTES: u64 = 4 << 20;
 
 impl Index {
@@ -210,31 +213,42 @@ impl Index {
     /// Every `.q` file under the workspace folders, less those `exclude`
     /// names; a directory it names is not entered at all.
     fn scan(&mut self, policy: &Policy) {
+        self.scan_within(policy, MAX_FILES, MAX_ENTRIES)
+    }
+
+    fn scan_within(&mut self, policy: &Policy, max_files: usize, max_entries: usize) {
         let mut stack: Vec<(std::path::PathBuf, std::path::PathBuf)> =
             self.roots.iter().map(|r| (r.into(), r.into())).collect();
-        let mut seen = 0;
+        let (mut seen, mut visited) = (0, 0);
         while let Some((root, dir)) = stack.pop() {
             let Ok(entries) = std::fs::read_dir(&dir) else {
                 continue;
             };
             for entry in entries.flatten() {
-                let path = entry.path();
-                let name = entry.file_name().to_string_lossy().into_owned();
+                visited += 1;
+                if visited > max_entries {
+                    return;
+                }
                 let Ok(kind) = entry.file_type() else {
                     continue;
                 };
+                // Anything but a directory or a `.q` file is passed by before
+                // the settings are asked about it: finding them costs a
+                // canonicalize, and a tree of other files paid it per entry.
+                let is_q = kind.is_file() && is_q_path(&entry.file_name().to_string_lossy());
+                if !kind.is_dir() && !is_q {
+                    continue;
+                }
+                let path = entry.path();
                 if self.excluded(&root, &path) || skipped(policy, &path) {
                     continue;
                 }
                 if kind.is_dir() {
                     stack.push((root.clone(), path));
-                } else if kind.is_file()
-                    && is_q_path(&name)
-                    && entry.metadata().is_ok_and(|m| m.len() <= MAX_BYTES)
-                {
+                } else if entry.metadata().is_ok_and(|m| m.len() <= MAX_BYTES) {
                     self.read(&path.to_string_lossy());
                     seen += 1;
-                    if seen >= MAX_FILES {
+                    if seen >= max_files {
                         return;
                     }
                 }
@@ -1394,6 +1408,42 @@ mod tests {
             guarded(|| -> i32 { panic!("static") }),
             Err("static".into())
         );
+    }
+
+    #[test]
+    fn the_scan_stops_after_its_bound_on_entries_of_any_kind() {
+        // The root holds 50 other files and a directory whose `.q` file the
+        // scan reaches only after them; bounded at 10 entries, it never
+        // does. Counted in `.q` files alone, a tree of anything else was
+        // walked to the end (#793).
+        let dir = tempfile::tempdir().unwrap();
+        for i in 0..50 {
+            std::fs::write(dir.path().join(format!("{i}.txt")), "").unwrap();
+        }
+        std::fs::create_dir(dir.path().join("sub")).unwrap();
+        std::fs::write(dir.path().join("sub/a.q"), "cfg:1\n").unwrap();
+        let policy = Policy::new(
+            crate::config::Overrides {
+                profile: None,
+                default_profile: "style",
+                layer: Layer::default(),
+                exclude: vec![],
+                config: None,
+                isolated: true,
+            },
+            true,
+        );
+        let scanned = |max_entries| {
+            let mut idx = Index {
+                roots: vec![dir.path().to_string_lossy().into_owned()],
+                enabled: true,
+                ..Index::default()
+            };
+            idx.scan_within(&policy, MAX_FILES, max_entries);
+            idx.files.len()
+        };
+        assert_eq!(scanned(10), 0);
+        assert_eq!(scanned(MAX_ENTRIES), 1);
     }
 
     #[test]
