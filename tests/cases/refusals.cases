@@ -690,6 +690,28 @@ q:2000.01.01z 1
 === QE010 profile: general | a time's suffix before a float (#446; q 5: '12:00x)
 w:12:00x 1.5
 
+=== clean profile: general | a byte or boolean after a vector is applied to it, not one more item (#486; q 5 parses each: (2i;0x01), (0W 1h;`byte$()), (-1 12:00v;0x01), (1 2;101b), (2i;(0x01;3)))
+a:2i 0x01
+b:0W 1h 0x
+c:-1 12:00v 0x01
+d:1 2 101b
+e:2i 0x01 3
+
+=== QE010 profile: general | the vector before the byte is still read on its own (#486; q 5: parse "3i 4j 0x01" is '3i)
+a:3i 4j 0x01
+
+=== clean profile: general | a timespan among nulls, timespan or timestamp suffixes and fine times, and datetimes among dates (#486; q 5 parses each)
+a:0D 0N
+b:0D 1n
+c:0D00:00:00.000000001 2000.01.01D 0Wn
+d:0D 12:00:00.123456789
+e:1999.12.31 2000.01.01z 2000.01.01T12:00:00.000
+f:2000.01.01T12:00 1n 0b
+
+=== QE010 profile: general | but not among an infinity or a millisecond time (#486; q 5: parse "0D 0W" and "0D 12:00:00.1234" are '0D)
+a:0D 0W
+b:0D 12:00:00.1234
+
 === QE010 profile: general | a suffix after an exponent, before another item (#454; q 5: '1e3e)
 s:1e3e 1
 

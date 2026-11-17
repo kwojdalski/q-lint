@@ -1499,14 +1499,15 @@ fn float_vector(run: &[regex::Match]) -> bool {
 }
 
 /// The temporal shape of a vector item, with a one-letter suffix put aside:
-/// a time (`12:00`, `12:00:00`, `12:00:00.123`) or a date (`2000.01.01`).
+/// a time (`12:00`, `12:00:00`, `12:00:00.123`) or a date (`2000.01.01`),
+/// which a datetime (`2000.01.01T12:00`) shares: q 5 reads a vector of both.
 fn temporal_shape(item: &str) -> Option<&'static str> {
     let bare = item
         .strip_suffix(|c: char| c.is_ascii_alphabetic())
         .unwrap_or(item);
     if re!(r"^\d\d:\d\d(?::\d\d(?:\.\d*)?)?$").is_match(bare) {
         Some("time")
-    } else if re!(r"^\d{4}\.\d\d\.\d\d$").is_match(bare) {
+    } else if re!(r"^\d{4}\.\d\d\.\d\d(?:T[\d:.]*)?$").is_match(bare) {
         Some("date")
     } else {
         None
@@ -1596,8 +1597,15 @@ fn numbers(
         // `` `:f 0:x ``, or `0:x` over `"\t" 0:x`, is two statements. A minus
         // that starts the next item continues the run: q 5 reads `1 -2` as a
         // vector and refuses `3i -1` as it does `3i 4` (#491).
+        //
+        // A byte or a boolean is a run of its own: q 5 parses `2i 0x01` as
+        // `2i` applied to `0x01`, and `1 2 1b` and `2i 0x01 3` the same way
+        // (#486), so the item before it is the vector's last.
+        let lone = |t: &regex::Match| re!(r"^(?:0x[0-9a-fA-F]*|[01]+b)$").is_match(t.as_str());
         let mut j = i;
         while j + 1 < tokens.len()
+            && !lone(&tokens[j])
+            && !lone(&tokens[j + 1])
             && re!(concat!("^", blank!(), "+-?$"))
                 .is_match(&comments[tokens[j].end()..tokens[j + 1].start()])
         {
@@ -1781,9 +1789,13 @@ fn numbers(
                 && !text.ends_with('b')
                 && !text.starts_with("0x")
                 && !(text.ends_with(['D', 'T'])
-                    && run
-                        .iter()
-                        .all(|t| t.as_str().contains(&text[text.len() - 1..])))
+                    && run.iter().all(|t| {
+                        let t = t.as_str();
+                        t.contains(&text[text.len() - 1..])
+                            || (text.ends_with('D')
+                                && re!(r"^(?:0[Nn]|0[NW][np]|\d+[np]|\d\d:\d\d:\d\d\.\d{5,})$")
+                                    .is_match(t))
+                    }))
                 && !(temporal_shape(text).is_some()
                     && run
                         .iter()
@@ -1794,9 +1806,13 @@ fn numbers(
                 // 2026.02m`. Not `1b 0`, which parses as an application, nor a
                 // byte - and not the `D` that ends a timespan or timestamp
                 // among others like it: `0D 0D01` and `1D 2D` parse, `0D 1` is
-                // '0D. Nor a time or date among others of its shape, which q
-                // reads by that shape: `12:00u 12:30`, `12:00:00x 12:30:00`
-                // and `2000.01.01z 2000.01.02` parse, `12:00u 1` is '12:00u.
+                // '0D. A null, a timespan or timestamp suffix and a time finer
+                // than milliseconds are like it: `0D 0N`, `0D 1n`, `0D 0Wn`
+                // and `0D 12:00:00.12345` parse, `0D 0W` and `0D 12:00:00.1234`
+                // are '0D. Nor a time or date among others of its shape, which
+                // q reads by that shape: `12:00u 12:30`, `12:00:00x 12:30:00`,
+                // `2000.01.01z 2000.01.02` and `2000.01.01z 2000.01.01T12:00`
+                // parse, `12:00u 1` is '12:00u.
                 Some(format!(
                     "`{text}`: a vector literal takes one type suffix, after its last item"
                 ))
