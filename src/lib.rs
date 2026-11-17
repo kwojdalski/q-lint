@@ -6020,17 +6020,42 @@ pub fn lint_selecting(
         // to say so. The uppercase-char cast `"J"$` parses text. `char` and
         // `byte` are legitimate on a string. `symbol` and `guid` convert
         // nothing: q 5 refuses them with 'type, which is QT032's, in general.
-        if let Some(m) = re!(
-            r#"`(long|int|short|float|real|boolean|date|time|timestamp|timespan|month|minute|second|datetime|symbol|guid)\s*\$\s*""#
-        )
-        .captures(literals)
-        {
+        // The backtick has to be code: in `"use `symbol$"` the string's own
+        // closing quote once read as the cast's operand (#596). Searched one
+        // start at a time, so a rejected match does not hide a later one.
+        let cast = |mut at: usize| {
+            while let Some(m) = re!(
+                r#"`(long|int|short|float|real|boolean|date|time|timestamp|timespan|month|minute|second|datetime|symbol|guid)\s*\$\s*""#
+            )
+            .captures_at(literals, at)
+            {
+                let start = m.get(0).unwrap().start();
+                if line.as_bytes()[start] == b'`' {
+                    return Some(m);
+                }
+                at = start + 1;
+            }
+            None
+        };
+        if let Some(m) = cast(0) {
             let name = &m[1];
             let ch = match name {
-                "long" => "J", "int" => "I", "short" => "H", "float" => "F", "real" => "E",
-                "boolean" => "B", "date" => "D", "time" => "T", "timestamp" => "P",
-                "timespan" => "N", "month" => "M", "minute" => "U", "second" => "V",
-                "datetime" => "Z", "guid" => "G", _ => "",
+                "long" => "J",
+                "int" => "I",
+                "short" => "H",
+                "float" => "F",
+                "real" => "E",
+                "boolean" => "B",
+                "date" => "D",
+                "time" => "T",
+                "timestamp" => "P",
+                "timespan" => "N",
+                "month" => "M",
+                "minute" => "U",
+                "second" => "V",
+                "datetime" => "Z",
+                "guid" => "G",
+                _ => "",
             };
             // `symbol` and `guid` are the exceptions: q 5 refuses them with
             // 'type rather than converting codes, so they are another rule

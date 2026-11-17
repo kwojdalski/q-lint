@@ -119,6 +119,14 @@ g:`guid$"abc"
 === clean profile: general | the casts that convert char codes run, so they are style (q 5: `long$"12" is 49 50)
 n:`long$"12"
 
+=== clean | a cast written inside a string is text, not a cast (#596)
+s:"`long$"
+-1 "use `symbol$";
+h:"cast with `guid$"
+
+=== QT032 profile: general | a string mentioning a cast does not hide a real one after it (q 5: 'type)
+s:("`long$";`symbol$"abc")
+
 === clean | the uppercase-char cast parses text
 n:"J"$"123"
 
