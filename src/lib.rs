@@ -311,9 +311,12 @@ pub(crate) fn query_clause(code: &str, at: usize) -> Option<&'static str> {
 
 /// Where a prefix argument inside a qSQL phrase ends: `argument_end`'s
 /// answer, cut at the first comma at its depth - which separates columns,
-/// or `where` constraints - or at `by`, `from` or `where`, which close the
-/// list. Parse trees checked in q 5: `select s:g v,m:avg v by k from t` is
-/// `select s:g[v],m:avg v by k from t`. `None` where the argument holds a
+/// or `where` constraints - or at `by` or `from`, which close the list.
+/// Parse trees checked in q 5: `select s:g v,m:avg v by k from t` is
+/// `select s:g[v],m:avg v by k from t`. A `where` closes nothing here: before
+/// `from` it is the function, `select v:f c where e from t` is
+/// `f[c where e]`, and inside the where phrase it is the function too (#771).
+/// `None` where the argument holds a
 /// query of its own, which this scan does not delimit.
 fn query_argument_end(
     code: &str,
@@ -331,7 +334,8 @@ fn query_argument_end(
             b')' | b']' | b'}' => depth = depth.saturating_sub(1),
             b',' if depth == 0 => break,
             _ if depth == 0 => match query_word(code, at) {
-                Some("by" | "from" | "where") => break,
+                Some("by" | "from") => break,
+                Some("where") => {}
                 Some(_) => return None,
                 None => {}
             },

@@ -114,8 +114,10 @@ fn brackets_replace_a_juxtaposed_call_and_nothing_around_it() {
 
 /// Inside a qSQL phrase the argument ends where the phrase's own grammar
 /// ends it: a top-level comma separates columns (or `where` constraints),
-/// and `by`, `from` and `where` close the list. Parse trees checked in q 5:
-/// `select s:g v,m:avg v by k from t` is `select s:g[v],m:avg v by k from t`.
+/// and `by` and `from` close the list. Parse trees checked in q 5:
+/// `select s:g v,m:avg v by k from t` is `select s:g[v],m:avg v by k from t`,
+/// and `select v:g c where e from t` is `g[c where e]`: before `from`, `where`
+/// is the function (#771).
 /// Before #111 the multi-line form became `.ns.f[v,m:avg v\n by k from t]`,
 /// which does not load. After `from` the table is one whole expression -
 /// `select from g v,w` reads `g[v,w]` - so a call there is left alone.
@@ -133,6 +135,7 @@ fn a_call_in_a_query_is_bracketed_up_to_the_column_it_belongs_to() {
         "    a}\n",
         "h:{[t] select from t where 0<.ns.f v,w>0}\n",
         "j:{[t] select from 0#.ns.f t,t}\n",
+        "k:{[t] select v:.ns.f c where e from t}\n",
         "\\d .\n",
     );
     fs::write(&path, original).unwrap();
@@ -160,6 +163,7 @@ fn a_call_in_a_query_is_bracketed_up_to_the_column_it_belongs_to() {
             "    a}\n",
             "h:{[t] select from t where 0<.ns.f[v],w>0}\n",
             "j:{[t] select from 0#.ns.f t,t}\n",
+            "k:{[t] select v:.ns.f[c where e] from t}\n",
             "\\d .\n",
         )
     );
