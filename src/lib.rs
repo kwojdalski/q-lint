@@ -606,7 +606,8 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         // dictionary with tied values - q 5 orders the tied keys
         // differently - so only in the editor.
         "QR001" => {
-            let m = re!(concat!(r"^reverse", blank!(), r"+(asc|desc)\b")).captures(source.get(start..)?)?;
+            let m = re!(concat!(r"^reverse", blank!(), r"+(asc|desc)\b"))
+                .captures(source.get(start..)?)?;
             let other = if &m[1] == "asc" { "desc" } else { "asc" };
             (
                 m.get(0)?.as_str(),
@@ -652,7 +653,14 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         // Sorting adds no duplicates, and q 5 agrees on the value and the
         // sorted attribute both.
         "QR003" => {
-            let m = re!(concat!(r"^distinct", blank!(), "+asc", blank!(), r"+distinct\b")).find(source.get(start..)?)?;
+            let m = re!(concat!(
+                r"^distinct",
+                blank!(),
+                "+asc",
+                blank!(),
+                r"+distinct\b"
+            ))
+            .find(source.get(start..)?)?;
             (
                 m.as_str(),
                 "asc distinct".into(),
@@ -1218,6 +1226,48 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                     "x"
                 };
                 header.push_str(&format!("{{[{name};{params}] "));
+            }
+            // Passed in, the local is read where the lambda is written, so it
+            // has to hold a value there: a parameter of the lambda around it,
+            // or assigned in an earlier statement. Otherwise q 5 refuses the
+            // rewrite with 'a - `{a:{[a;x] a+1}[a];a}`, and a read before a
+            // later `a:2` alike (#769).
+            let parent = enclosing_brace(&v.code, brace)?;
+            let outer = signature(&v.code, source, parent);
+            if !(outer.named
+                && outer
+                    .slots
+                    .iter()
+                    .any(|p| pattern_names(p).contains(&name.as_str())))
+            {
+                let before = top_level(&v.code[outer.body..brace]);
+                let mut depth = 0i32;
+                let statement = before
+                    .bytes()
+                    .enumerate()
+                    .filter(|&(_, b)| {
+                        match b {
+                            b'(' | b'[' | b'{' => depth += 1,
+                            b')' | b']' | b'}' => depth -= 1,
+                            _ => {}
+                        }
+                        b == b';' && depth == 0
+                    })
+                    .last()
+                    .map_or(0, |(i, _)| i);
+                let earlier = &before[..statement];
+                let assigned = earlier.match_indices(name.as_str()).any(|(i, _)| {
+                    let after = &earlier[i + name.len()..];
+                    let op = after.trim_start_matches([' ', '\t']);
+                    boundary(earlier, i)
+                        && !after
+                            .starts_with(|c: char| c.is_ascii_alphanumeric() || "_.".contains(c))
+                        && op.starts_with(':')
+                        && !op.starts_with("::")
+                });
+                if !assigned {
+                    return None;
+                }
             }
             let rest = &source[sig.body..close];
             begin = brace;

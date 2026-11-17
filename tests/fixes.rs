@@ -525,6 +525,12 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
             "f:{[a] g:{[a;x] a}[a]; g 1}",
             false,
         ),
+        (
+            "QF005",
+            "f:{a:2; {a+x} each 1 2}",
+            "f:{a:2; {[a;x] a+x}[a] each 1 2}",
+            false,
+        ),
         ("QA007", "f:{[c] $[c;1;2;]}", "f:{[c] $[c;1;2]}", false),
         ("QA006", "f:{[c] $[c=1;1]}", "f:{[c] if[c=1;1]}", false),
         (
@@ -631,6 +637,9 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
             "QF005",
             "f:{[k] g:{[a;b;c;d;e;f;g;h] k+h}; g[1;2;3;4;5;6;7;8]}",
         ), // a ninth parameter is 'params
+        // A local passed in before it holds a value is 'a (#769)
+        ("QF005", "h:{a:{a+1};a}"),
+        ("QF005", "k:{[b] r:{a+x} each b; a:2; r}"),
         // A bracket argument would become a key-column header (#406)
         ("QR004", "a:1 2 3;r:{x*2}'[a]"),
         ("QR004", "a:1 2 3;r:{x*2} each[a]"),

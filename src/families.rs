@@ -258,7 +258,15 @@ fn simplifications(path: &str, source: &str, code: &str, out: &mut Vec<Finding>)
         );
     }
     // QR003: sorting the distinct items keeps them distinct.
-    for m in re!(concat!(r"\bdistinct", blank!(), "+asc", blank!(), r"+distinct\b")).find_iter(code) {
+    for m in re!(concat!(
+        r"\bdistinct",
+        blank!(),
+        "+asc",
+        blank!(),
+        r"+distinct\b"
+    ))
+    .find_iter(code)
+    {
         if boundary(code, m.start()) && !iterated(code, m.end()) {
             add(
                 m.start(),
