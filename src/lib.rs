@@ -5089,26 +5089,30 @@ pub fn lint_selecting(
     // offsets - a pair of quotes with nothing between them.
     // Only a space or tab may come between: q refuses any other blank with
     // 'char, and a multi-byte one would leave the name's slice mid-character.
-    for m in re!(r"\b(ss|ssr)[ \t]*\[").find_iter(code) {
-        let open = m.end() - 1;
+    // The function may be parenthesised, `(ss)["abc";""]`, and so may the
+    // pattern, `("")` (q 5: both 'length, #619).
+    for m in re!(r"(?:\b(ss|ssr)|\((ss|ssr)\))[ \t]*\[").captures_iter(code) {
+        let whole = m.get(0).unwrap();
+        let name = m.get(1).or(m.get(2)).unwrap().as_str();
+        let open = whole.end() - 1;
         let Some(close) = matching(code, open, b'[', b']') else {
             continue;
         };
         let parts = slots(&code[open + 1..close - 1]);
-        if !complete_call(&v.comments, open, &parts, m.as_str().starts_with("ssr")) {
+        if !complete_call(&v.comments, open, &parts, name == "ssr") {
             continue;
         }
         // The second slot's span in the source.
         let second_start = open + 1 + parts[0].len() + 1;
-        let second = source[second_start..second_start + parts[1].len()].trim();
+        let mut second = source[second_start..second_start + parts[1].len()].trim();
+        while let Some(inner) = second.strip_prefix('(').and_then(|s| s.strip_suffix(')')) {
+            second = inner.trim();
+        }
         if second == "\"\"" {
             add(
-                m.start(),
+                whole.start(),
                 "QT021",
-                format!(
-                    "`{}` with an empty pattern is a 'length error",
-                    code[m.start()..m.end() - 1].trim()
-                ),
+                format!("`{name}` with an empty pattern is a 'length error"),
             );
         }
     }

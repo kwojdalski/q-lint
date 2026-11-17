@@ -700,6 +700,12 @@ r:"abc" ss "b"
 x:"abc" ss "","b"
 y:"abc" ss "",enlist "c"
 
+=== QT021 | an empty pattern with no space, in parentheses, or to a parenthesised ss (q 5: each 'length; #619)
+a:"abc" ss""
+b:ss["abc";("")]
+c:"abc" ss ("")
+d:(ss)["abc";""]
+
 === clean | QT022: a null integer is a handle not yet opened, written to by juxtaposition
 log_handle:0N
 f:{[msg] log_handle enlist msg}
