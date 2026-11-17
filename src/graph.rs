@@ -67,13 +67,30 @@ pub fn build(files: &[(PathBuf, String)], symbols: bool, cwd: &Path) -> BTreeMap
                 .unwrap_or(position[p])
         })
         .collect();
-    let target = |i: usize, load: &str| {
-        load_targets(&files[i].0, load, cwd).iter().find_map(|p| {
-            position
-                .get(p)
-                .or_else(|| position.get(&std::fs::canonicalize(p).ok()?))
-                .copied()
-        })
+    // A directory loaded, `\l db`, runs the scripts directly in it (q 5's
+    // `.Q.lo`), so it leads to each of them (#533).
+    let mut scripts_in: HashMap<&Path, Vec<usize>> = HashMap::new();
+    for (i, (p, _)) in files.iter().enumerate() {
+        if let Some(dir) = p.parent() {
+            scripts_in.entry(dir).or_default().push(i);
+        }
+    }
+    let targets = |i: usize, load: &str| -> Vec<usize> {
+        let candidates = load_targets(&files[i].0, load, cwd);
+        candidates
+            .iter()
+            .find_map(|p| {
+                position
+                    .get(p)
+                    .or_else(|| position.get(&std::fs::canonicalize(p).ok()?))
+                    .map(|&d| vec![d])
+            })
+            .or_else(|| {
+                candidates
+                    .iter()
+                    .find_map(|p| scripts_in.get(p.as_path()).cloned())
+            })
+            .unwrap_or_default()
     };
     // A script loaded under `\d .a` runs in `.a`, so what it writes at its
     // root is `.a.name` too: q 5, after `\d .a` and `\l b.q` with b.q's
@@ -89,11 +106,10 @@ pub fn build(files: &[(PathBuf, String)], symbols: bool, cwd: &Path) -> BTreeMap
     let mut pending: Vec<(usize, &str)> = vec![];
     for (i, read) in reads.iter().enumerate() {
         for (load, namespace) in &read.loads {
-            if let Some(d) = target(i, load)
-                && !namespace.is_empty()
-                && namespace != "."
-            {
-                pending.push((d, namespace));
+            if !namespace.is_empty() && namespace != "." {
+                for d in targets(i, load) {
+                    pending.push((d, namespace));
+                }
             }
         }
     }
@@ -108,10 +124,10 @@ pub fn build(files: &[(PathBuf, String)], symbols: bool, cwd: &Path) -> BTreeMap
             }
         }
         for (load, inner) in &reads[d].loads {
-            if inner.is_empty()
-                && let Some(next) = target(d, load)
-            {
-                pending.push((next, namespace));
+            if inner.is_empty() {
+                for next in targets(d, load) {
+                    pending.push((next, namespace));
+                }
             }
         }
     }
@@ -170,10 +186,10 @@ pub fn build(files: &[(PathBuf, String)], symbols: bool, cwd: &Path) -> BTreeMap
             }
         }
         for (load, _) in &reads[i].loads {
-            if let Some(d) = target(i, load)
-                && identity[d] != identity[i]
-            {
-                node.dependencies.insert(files[d].0.clone());
+            for d in targets(i, load) {
+                if identity[d] != identity[i] {
+                    node.dependencies.insert(files[d].0.clone());
+                }
             }
         }
         graph.insert(path.clone(), node);

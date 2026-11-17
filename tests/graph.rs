@@ -764,3 +764,18 @@ fn a_loaded_scripts_own_root_is_not_the_loaders_context() {
     );
     assert_eq!(deps(&g, "c.q"), ["b.q"]);
 }
+
+#[test]
+fn a_loaded_directory_leads_to_the_scripts_in_it() {
+    // q 5: `\l db` runs db/init.q, and `fromdir` is 42 after it (#533) -
+    // only the scripts directly in it.
+    let g = graph(
+        &[
+            ("db/init.q", "fromdir:42\n"),
+            ("db/sub/deep.q", "deep:1\n"),
+            ("main.q", "\\l db\n"),
+        ],
+        false,
+    );
+    assert_eq!(deps(&g, "main.q"), ["init.q"]);
+}
