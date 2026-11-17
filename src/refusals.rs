@@ -1023,10 +1023,25 @@ fn opens_expression(code: &str, raw: &str, comments: &str, i: usize, line_start:
                     && (!matches!(m.as_str(), "by" | "where")
                         || crate::in_qsql_phrase(comments, m.end()))
             });
+    // After an infix keyword q expects its right argument, so a glyph or
+    // a derived function there is applied by juxtaposition: q 5 refuses
+    // `v vs f/2`, `v in ,2`, `f each -v` and `v cross ,1` (#566). Not a
+    // name that only ends in one, `.q.in`, `` `in `` or `vin`.
+    // The tail of `before` from its last byte outside `keep`: ASCII only,
+    // so the cut falls on a character boundary.
+    let tail = |s: &'_ str, keep: &dyn Fn(u8) -> bool| {
+        s.len() - s.bytes().rev().take_while(|&b| keep(b)).count()
+    };
+    let word = &before[tail(before, &|b| b.is_ascii_alphanumeric() || b == b'_')..];
+    let infix = !glued
+        && crate::semantics::INFIX.contains(&word)
+        && !before[..before.len() - word.len()].ends_with(['.', '`'])
+        && boundary(comments, before.len() - word.len());
     i == line_start
         || before.is_empty()
         || iterator
         || qsql
+        || infix
         || before.ends_with([':', '(', '[', '{', ';'])
         || after_signature(code, raw, before.len())
         || (before
