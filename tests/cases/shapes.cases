@@ -75,6 +75,10 @@ s:`a`b -.5
 r:`a-1
 s:`a - 1
 
+=== QE008 profile: general | a glyph with nothing on its left is refused at parse, not 'type (q 5: -`a and 1+ -`a are '-; #613)
+x:-`a
+y:1+ -`a
+
 === QT003 | a symbol on the left is the operand whatever follows
 r:`a+`b?`c
 

@@ -1010,7 +1010,13 @@ fn continued(rest: &str) -> &str {
 /// Whether the token at `i` starts an expression, so that whatever it applies
 /// to is applied by juxtaposition: the start of a line or statement, after
 /// `:`, an opening bracket, a signature or a qSQL word, or after another glyph.
-fn opens_expression(code: &str, raw: &str, comments: &str, i: usize, line_start: usize) -> bool {
+pub(crate) fn opens_expression(
+    code: &str,
+    raw: &str,
+    comments: &str,
+    i: usize,
+    line_start: usize,
+) -> bool {
     // Pairs QE004 already reports, or that are one operator.
     const PAIRS: &[&str] = &[
         "<>", "<=", ">=", "==", "!=", "&&", "||", "+=", "-=", "*=", "->", "=>", "**", "=<", "<<",

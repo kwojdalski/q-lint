@@ -4004,6 +4004,15 @@ pub fn lint_selecting(
         {
             continue;
         }
+        // A glyph with nothing on its left is monadic, and q 5 refuses
+        // `` -`a `` at parse with '-, not 'type: QE008 reports that (#613).
+        if m.as_str().starts_with(['+', '-', '*', '%', '&', '|']) {
+            let line_start = code[..at].rfind('\n').map_or(0, |n| n + 1);
+            let expression = line_start + timed_prefix(&source[line_start..]);
+            if refusals::opens_expression(code, source, &v.comments, at, expression) {
+                continue;
+            }
+        }
         // A symbol on the right is only the operand when the expression ends
         // with it: `` 2*`a`b?`b `` multiplies by a long, and `` 1+`a`b!1 2 ``
         // adds to a dictionary. On the left it is the operand whatever
