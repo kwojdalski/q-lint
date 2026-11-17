@@ -749,6 +749,28 @@ fn a_symlink_is_governed_excluded_and_reported_where_it_is() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn one_file_under_two_names_is_fixed_once_with_both_names_fixes() {
+    // Each name was fixed from the text read before the loop, so the second
+    // write clobbered the first and the run reported a tree it had left
+    // dirty (#761).
+    let repo = Repo::new();
+    repo.write("d1/a.q", "f:{x!=y}\ng:{x+1}\nh:{g x}\n")
+        .write("d1/.qlinter.toml", "profile=\"uqf\"\nignore=[\"QP006\"]\n")
+        .write("d2/.qlinter.toml", "profile=\"uqf\"\nignore=[\"QE004\"]\n");
+    std::os::unix::fs::symlink("../d1/a.q", repo.path("d2/l.q")).unwrap();
+    assert_eq!(
+        repo.codes(".", &["--fix", "d1/a.q", "d2/l.q"]),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        fs::read_to_string(repo.path("d1/a.q")).unwrap(),
+        "f:{x<>y}\ng:{x+1}\nh:{g[x]}\n"
+    );
+    assert_eq!(repo.codes(".", &["d1/a.q", "d2/l.q"]), Vec::<String>::new());
+}
+
 #[test]
 fn a_path_that_does_not_exist_is_reported_and_the_rest_are_still_linted() {
     // One stale path in a pre-commit or CI file list used to end the run
