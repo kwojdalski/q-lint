@@ -277,7 +277,10 @@ fn simplifications(path: &str, source: &str, code: &str, out: &mut Vec<Finding>)
     // QR001: `reverse asc x` is `desc x`, and `reverse desc x` is `asc x`.
     for m in re!(concat!(r"\breverse", blank!(), r"+(asc|desc)\b")).captures_iter(code) {
         let whole = m.get(0).unwrap();
-        if boundary(code, whole.start()) && !iterated(code, whole.end()) {
+        if boundary(code, whole.start())
+            && !iterated(code, whole.end())
+            && applied_to_rest(source, code, whole.end())
+        {
             let other = if &m[1] == "asc" { "desc" } else { "asc" };
             add(
                 whole.start(),
