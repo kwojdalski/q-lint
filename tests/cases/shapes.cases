@@ -3,6 +3,10 @@ d:`a`b!`c
 e:1 2!`x
 f:`a`b!`
 
+=== clean profile: general | a parenthesised symbol atom is spread too (#591; q 5: `a`b!(`c) is `a`b!`c`c)
+d:`a`b!(`c)
+e:1 2!( `x )
+
 === QT001 profile: general | a numeric atom value is not (#451; q 5: 'length)
 g:`a`b!1
 

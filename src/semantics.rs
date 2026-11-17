@@ -1814,7 +1814,8 @@ pub fn check(
         let value = &code[start.end()..end];
         // A symbol atom is spread over every key, as no other atom is: q 5
         // builds `` `a`b!`c `` and `` 1 2!` ``, and `1 2!3` is 'length.
-        if re!(r"^\s*`[A-Za-z0-9_.:/]*\s*$").is_match(value) {
+        // Parentheses only group it: `` `a`b!(`c) `` is `` `a`b!`c`c `` (#591).
+        if re!(r"^\s*(?:\(\s*)*`[A-Za-z0-9_.:/]*\s*(?:\)\s*)*$").is_match(value) {
             continue;
         }
         let values = shape(value).or_else(|| {
