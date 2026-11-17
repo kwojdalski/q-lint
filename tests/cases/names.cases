@@ -43,7 +43,7 @@ k:{[`a`b!(a;b)] -a}
 === clean profile: general | a name with an underscore in it is a parameter (q 5: {[a_] a_}[1] is 1)
 f:{[a_] a_}
 
-=== QF004 | a definition inside a namespace that shadows a builtin
+=== QF004 | a builtin assigned inside a namespace, which q refuses (q 5: 'assign)
 \d .util
 count:{[t] 42}
 \d .

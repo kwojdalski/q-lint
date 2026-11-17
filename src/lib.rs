@@ -1656,6 +1656,7 @@ impl Finding {
                     | "QB007"
                     | "QB008"
                     | "QF012"
+                    | "QF004"
                     | "QE004"
                     | "QF014"
                     | "QF015"
@@ -5954,7 +5955,16 @@ pub fn lint_selecting(
                 && reserved(&m[1], offset + at)
                 && !matches!(&m[1], "from" | "by")
             {
-                add(offset + at, "QF004", format!("Namespace-level `{}`", &m[1]));
+                // Nothing is shadowed: q 5 refuses the assignment with
+                // 'assign and the file stops loading there (#677).
+                add(
+                    offset + at,
+                    "QF004",
+                    format!(
+                        "Namespace-level assignment to `{}`: q refuses it ('assign)",
+                        &m[1]
+                    ),
+                );
             }
             // The root is where q is inconsistent about reserved names:
             // `count:1` and `where:1` it refuses ('assign), `select:1` it
