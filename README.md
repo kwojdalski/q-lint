@@ -478,8 +478,10 @@ unresolved and account for projections, seeded scans and variadic `enlist`.
 
 `examples/showcase.q` marks each expected diagnostic with `expect-next`.
 `tests/showcase.rs` checks exact code/line pairs under every profile, including
-silence in the clean section. Together with the two companion examples it
-covers all 118 rules available in this build; QF006 and QLS001 are excluded.
+silence in the clean section. Together with the three companion examples -
+`syntax-error.q`, `byte-order-mark.q` and `query-injection.q`, each holding
+a rule that would hide or stop the others - it covers all 118 rules available
+in this build; QF006 and QLS001 are excluded.
 
 Multiline fixtures cover nested lambdas, split argument lists, comments,
 scalar-only tables, dictionary lengths and assignment from control statements.
