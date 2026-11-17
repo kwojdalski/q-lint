@@ -10,6 +10,23 @@ s:"TODO later"
 === QL002 profile: styleq | a lambda definition kept as a comment
 / f:{x+1}
 
+=== QL002 profile: styleq | one that runs over lines, or ends in a semicolon, is still one
+/ g:{[x]
+/   x+1}
+/ h:{x*2};
+
+=== clean profile: styleq | prose quoting a lambda, and a documented shape with an ellipsis for its body (#517)
+g:{
+  / A lambda has an explicit argument list only when the first
+  / character after "{" is "[". The old search misread indexing such as
+  / f:{x[0]+1} as a one-argument declaration.
+  x}
+//   .qt.qetl.io.batch:{[] ...}
+
+=== QL002 profile: styleq | while code after the closing brace is still code kept as a comment
+/ r: {flip(0|;LIM&)@'flip merge x where 2=count each x}each I  / ranges by line
+// .gw.formatresponse:{[status;sync;result]$[not[status]and sync;'result;result]}};
+
 === clean profile: styleq | a trailing comment after code is not a commented-out line
 f:{x+1} / g:{x} was slower
 
