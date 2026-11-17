@@ -2997,7 +2997,26 @@ fn typed_at(s: &str) -> Option<usize> {
 /// for a pattern every name in it but the keys and columns it matches on -
 /// `(a;b)` binds a and b, `([k:p])` binds p, and `1` binds nothing.
 pub(crate) fn pattern_names(slot: &str) -> Vec<&str> {
+    names_within(slot, 0)
+}
+/// `pattern_names` at a nesting `depth`; past `MAX_NESTING` it binds nothing.
+fn names_within(slot: &str, depth: usize) -> Vec<&str> {
+    if depth > MAX_NESTING {
+        return vec![];
+    }
     let slot = typed_at(slot).map_or(slot, |at| &slot[..at]);
+    // A list pattern's items each take their own filter: `(a:neg;b)` binds
+    // a and b, and not neg (q 5 `{[(a:neg;b)] (a;b)} 1 2` is -1 2, #668).
+    let trimmed = slot.trim();
+    if trimmed.starts_with('(')
+        && !trimmed.starts_with("([")
+        && matching(trimmed, 0, b'(', b')') == Some(trimmed.len())
+    {
+        return slots(&trimmed[1..trimmed.len() - 1])
+            .into_iter()
+            .flat_map(|item| names_within(item, depth + 1))
+            .collect();
+    }
     re!(r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*")
         .find_iter(slot)
         .filter(|m| {

@@ -119,8 +119,10 @@ fn pattern_assignments(text: &str) -> impl Iterator<Item = (usize, &str, bool)> 
         .filter_map(move |c| {
             let m = c.get(0).unwrap();
             let double = c[1].len() == 2;
-            // Back to the `(` that opens the target, over nothing a pattern
-            // could not hold, so a string or a call is never walked into.
+            // Back to the `(` that opens the target. A filter can hold any
+            // function - `(a:neg;b):p`, `(a:{x*2};b):p` and `(a:`$;b):p`
+            // bind a and b (q 5, #668) - so what is between is left to
+            // `is_pattern`.
             let mut depth = 0usize;
             let mut at = m.start();
             loop {
@@ -132,8 +134,7 @@ fn pattern_assignments(text: &str) -> impl Iterator<Item = (usize, &str, bool)> 
                             break;
                         }
                     }
-                    b if b.is_ascii_alphanumeric() || b" \t\r\n;_.`[]".contains(&b) => {}
-                    _ => return None,
+                    _ => {}
                 }
                 at = at.checked_sub(1)?;
             }
