@@ -583,7 +583,9 @@ fn shape(s: &str) -> Option<usize> {
     }
     // Numbers, a null or an infinity among them: `0N 0N` is two items and
     // `0W 1` two, as q 5's 'length on `` `a`b`c!0N 0N `` and `0W 1+1 2 3` shows.
-    if re!(r"^(?:-?(?:(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?[bhijef]?|0[nNwW][a-z]?)(?:\s+|$))+$")
+    // A type suffix ends the run: q 5 parses `1 2h` as one vector, but `1h 2`
+    // does not parse and `1 0b` is the atom `1` applied to `0b` (#496).
+    if re!(r"^(?:-?(?:(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?|0[nNwW])\s+)*-?(?:(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?[hijef]?|0[nNwW][a-z]?)$")
         .is_match(s)
     {
         return Some(s.split_whitespace().count());
@@ -1975,9 +1977,13 @@ pub fn check(
                 // `x` alone: `{x+1}[`a]` is 'type, `{y+1}[`a]` a projection.
                 && if scope.named { scope.params.contains(&m[1]) } else { &m[1] == "x" } {numeric.insert(name.clone());}
     }
-    for call in re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*\[\s*`\.?[A-Za-z][A-Za-z0-9_.:]*\s*\]").captures_iter(code) {
+    // Called in brackets, with `@`, or by juxtaposition - `f[`a]`, `f@`a` and
+    // `f `a` are all 'type in q 5 (#495). The last two only when the symbol
+    // is the whole argument: `f `a!1` adds to a dictionary's values.
+    for call in re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)(?:\s*\[\s*`\.?[A-Za-z][A-Za-z0-9_.:]*\s*\]|(\s*@\s*|[ \t]+)`\.?[A-Za-z][A-Za-z0-9_.:]*)").captures_iter(code) {
         if dynamic {break;}
         let at=call.get(0).unwrap().start();let name=&call[1];if !boundary(code,at){continue;}
+        if call.get(2).is_some() && !operand_ends(code, call.get(0).unwrap().end()) {continue;}
         if scope_at(&scopes,at).is_some_and(|s|scopes[s].locals.contains(name)){continue;}
         // A lambda runs once every file is loaded, and meets whichever `f`
         // another file assigned last: q 5 runs b.q's `g:{f[`a]}` to `a after
@@ -3528,8 +3534,9 @@ fn named_values(
         }
         // An integer is applied as a file handle. Given a string it may well
         // write - `out:1; out["hi\n"]` prints - but given a number or nothing
-        // it cannot: 'type on an open handle, 'domain on one that is not.
-        // Verified in q 5. A name or anything else might be a string.
+        // it cannot: 'type on an open handle, and on one that is not q 5
+        // tries the write and fails - `a:5; a[0]` is 'Cannot write to handle
+        // 5. OS reports: Bad file descriptor (#507). A name or anything else might be a string.
         if handles.contains(key(name.as_str(), name.start()).as_str()) {
             // `a@0` and `a . enlist 0` apply it the same way (q 5).
             let after = &raw[crate::past_blanks(code, name.end())..];
@@ -3549,7 +3556,8 @@ fn named_values(
                     "QT022",
                     format!(
                         "`{}` holds an integer, which q applies as a file handle; a handle \
-                         takes a string, so this is 'type - or 'domain if the handle is not open",
+                         takes a string, so this is 'type - or, if the handle is not open, \
+                         'Cannot write to handle",
                         name.as_str()
                     ),
                 ));
@@ -3748,9 +3756,18 @@ fn named_values(
         if exponent(&l) || exponent(&r) {
             continue;
         }
+        // Digits that end a name are no time: `r21:1*"a"` and `x2:2+"a"`
+        // assign, and are 'type (#497), while `2024.01.01D12:00+"a"` is not.
+        let named = |end: usize| {
+            let start = comments[..end]
+                .trim_end_matches(|c: char| c.is_ascii_alphanumeric() || "_.".contains(c))
+                .len();
+            comments[start..].starts_with(|c: char| c.is_alphabetic() || c == '.')
+        };
         let temporal = l.as_str().starts_with(|c: char| c.is_ascii_digit())
             && comments[..l.start()].ends_with(':')
-            && comments[..l.start() - 1].ends_with(|c: char| c.is_ascii_digit());
+            && comments[..l.start() - 1].ends_with(|c: char| c.is_ascii_digit())
+            && !named(l.start() - 1);
         if code.get(op.range()) != Some(op.as_str())
             || negative
             || temporal
@@ -3859,7 +3876,15 @@ fn named_values(
         if depth != 0 {
             continue;
         }
-        let mut cuts = vec![phrase.start()];
+        // A row limit, `select[2]` or `select[2;>a]`, is not an item.
+        let limit = phrase.as_str().trim_start().starts_with('[')
+            .then(|| {
+                let open = phrase.start() + phrase.as_str().len() - phrase.as_str().trim_start().len();
+                matching(code, open, b'[', b']')
+            })
+            .flatten()
+            .unwrap_or(phrase.start());
+        let mut cuts = vec![limit];
         for sep in re!(r",|\bby\b").find_iter(phrase.as_str()) {
             if !top[sep.start()] {
                 continue;
@@ -3879,9 +3904,35 @@ fn named_values(
                 ),
                 _ => (item, 0),
             };
-            if is_free(bare, phrase.start(), columns) {
-                let at = offset + lead + skip + item[skip..].find(bare).unwrap_or(0);
-                column(at, bare, table.as_str(), columns);
+            // Every name in the item, not only a bare one: q 5 raises 'c on
+            // `select max c from t` and `select c+1 from t` alike (#493). A
+            // lambda's names are its own, and a symbol names nothing.
+            let base = offset + lead + skip;
+            let mut flat = bare.as_bytes().to_vec();
+            let mut lambda = 0i32;
+            for (i, &c) in bare.as_bytes().iter().enumerate() {
+                if c == b'{' {
+                    lambda += 1;
+                }
+                if lambda > 0 {
+                    flat[i] = b' ';
+                }
+                if c == b'}' {
+                    lambda -= 1;
+                }
+            }
+            for sym in re!(r"`[A-Za-z0-9_./:]*").find_iter(bare) {
+                flat[sym.range()].fill(b' ');
+            }
+            let flat = String::from_utf8_lossy(&flat).into_owned();
+            for name in re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(&flat) {
+                let at = base + name.start();
+                if boundary(code, at)
+                    && !flat[name.end()..].starts_with('.')
+                    && is_free(name.as_str(), phrase.start(), columns)
+                {
+                    column(at, name.as_str(), table.as_str(), columns);
+                }
             }
         }
     }
@@ -3889,9 +3940,10 @@ fn named_values(
     // when t has no c and nothing defines one. Names inside a lambda in the
     // phrase are that lambda's own and are left alone, and so are a nested
     // query's, which are its table's (#259). The phrase ends at a bracket it
-    // did not open: `(select from t where a>1),select ...` (#260).
+    // did not open: `(select from t where a>1),select ...` (#260), or a `;`
+    // outside every bracket.
     let mut from = 0;
-    while let Some(m) = re!(r"(?:select|exec|update|delete)\b[^\n;]*?\bfrom\s+(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s+where\b([^\n;]*)")
+    while let Some(m) = re!(r"(?:select|exec|update|delete)\b[^\n;]*?\bfrom\s+(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s+where\b([^\n]*)")
         .captures_at(code, from)
     {
         if !boundary(code, m.get(0).unwrap().start()) {
@@ -3910,7 +3962,9 @@ fn named_values(
                     lambda -= 1;
                     flat[i] = b' ';
                 }
-                b')' | b']' if depth == 0 => {
+                // A `;` ends the statement only outside brackets: `where a
+                // within (1;c)` reads `c` too (#494).
+                b')' | b']' | b';' if depth == 0 && lambda == 0 => {
                     end = i;
                     break;
                 }

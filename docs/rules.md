@@ -121,7 +121,7 @@ that wants fewer findings narrows in its own configuration.
 | `QT019` | literal-within-bounds | within bounds are not a two-item list | every profile |
 | `QT020` | table-column-length | Table literal columns of different lengths | every profile |
 | `QT021` | empty-search-pattern | ss or ssr with an empty pattern is a length error | every profile |
-| `QT022` | index-into-atom | A name bound to an atom is indexed; an atom has no items, and q raises 'type | every profile |
+| `QT022` | index-into-atom | A name bound to an atom is indexed; an atom has no items, and q raises 'type, or for an integer tries to write to it as a handle | every profile |
 | `QT023` | char-integer-arithmetic | Integer arithmetic on a char, which q 5 refuses with 'type | every profile |
 | `QT024` | attribute-literal-fail | An s#, u# or p# attribute applied to a literal it does not describe | every profile |
 | `QT025` | signal-non-string | A number or a char atom signalled, which q refuses with 'stype | every profile |
@@ -144,7 +144,7 @@ that wants fewer findings narrows in its own configuration.
 | `QB005` | match-in-where | Match in a qSQL filter compares whole vectors, not rows | `style` and above |
 | `QB006` | comparison-with-logic | Unparenthesised comparison mixed with and/or reads right-to-left | `style` and above |
 | `QB007` | like-symbol-pattern | like with a symbol pattern is a type error or, with a glob, a projection instead of a boolean | every profile |
-| `QB008` | vector-equality-filter | Column equality against a vector literal in a filter | `style` and above |
+| `QB008` | vector-equality-filter | Column compared with a vector literal in a filter, row by row rather than for membership | `style` and above |
 | `QB010` | apply-not-subtract | An atom, a space and a negative literal applies the atom rather than subtracting, which q refuses | every profile |
 | `QB011` | control-as-value | if, while or do assigned as a value is always null | `style` and above |
 | `QB012` | trailing-semicolon-body | Lambda ends in ; so its last expression is discarded | `style` and above |
