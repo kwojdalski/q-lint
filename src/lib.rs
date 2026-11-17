@@ -2045,6 +2045,33 @@ pub(crate) fn in_qsql_phrase(code: &str, at: usize) -> bool {
 /// `in_qsql_phrase`, where `joins` says whether the from phrase is refused:
 /// a `,` there joins tables, but a keyword after it still ends the operand.
 fn qsql_phrase(code: &str, at: usize, joins: bool) -> bool {
+    // Each `,` of a where phrase asks this again, and every walk back to the
+    // keyword passed all the conditions before it (#707). So the answer from
+    // each top-level `,` passed is kept, for the length of the lint, for the
+    // next walk to stop at - only in the text `MatchScope` holds unchanged.
+    let cached = in_match_table(code);
+    let base = code.as_ptr() as usize;
+    let mut passed = vec![];
+    let found = qsql_walk(code, at, joins, |i, seen_where| {
+        let key = (base, base + i, joins, seen_where);
+        let hit = PHRASES.with(|p| p.borrow().get(&key).copied());
+        if hit.is_none() && cached {
+            passed.push(key);
+        }
+        hit.filter(|_| cached)
+    });
+    if !passed.is_empty() {
+        PHRASES.with(|p| p.borrow_mut().extend(passed.into_iter().map(|k| (k, found))));
+    }
+    found
+}
+
+fn qsql_walk(
+    code: &str,
+    at: usize,
+    joins: bool,
+    mut known: impl FnMut(usize, bool) -> Option<bool>,
+) -> bool {
     let b = code.as_bytes();
     let mut depth = 0i32;
     let mut seen_where = false;
@@ -2061,6 +2088,11 @@ fn qsql_phrase(code: &str, at: usize, joins: bool) -> bool {
             }
             b';' if depth == 0 => return false,
             b'\n' if depth == 0 && !code[i + 1..].starts_with([' ', '\t']) => return false,
+            b',' if depth == 0 => {
+                if let Some(found) = known(i, seen_where) {
+                    return found;
+                }
+            }
             _ => {}
         }
         if depth != 0 || !b[i].is_ascii_lowercase() || !boundary(code, i) {
@@ -2698,6 +2730,22 @@ const NOT_OPEN: u32 = u32::MAX - 1;
 thread_local! {
     static MATCHES: std::cell::RefCell<Option<std::rc::Rc<MatchTable>>> =
         const { std::cell::RefCell::new(None) };
+    /// `qsql_phrase`'s answers from each top-level `,` it walked back past,
+    /// by the address of the text walked and of the `,`, whether it refused
+    /// joins and whether it had passed a `where`. Emptied with the table.
+    static PHRASES: std::cell::RefCell<
+        std::collections::HashMap<(usize, usize, bool, bool), bool>,
+    > = std::cell::RefCell::new(Default::default());
+}
+
+/// Whether `s` is the text of the installed `MatchTable` or a slice of it.
+fn in_match_table(s: &str) -> bool {
+    MATCHES.with(|m| {
+        m.borrow().as_ref().is_some_and(|t| {
+            let at = s.as_ptr() as usize;
+            at >= t.start && at + s.len() <= t.start + t.len
+        })
+    })
 }
 
 /// Keeps a `MatchTable` installed for as long as it lives, restoring
@@ -2755,6 +2803,7 @@ impl MatchScope {
             ends,
             braces,
         });
+        PHRASES.with(|p| p.borrow_mut().clear());
         MatchScope(MATCHES.with(|m| m.replace(Some(table))))
     }
 }
@@ -2762,6 +2811,7 @@ impl MatchScope {
 impl Drop for MatchScope {
     fn drop(&mut self) {
         let previous = self.0.take();
+        PHRASES.with(|p| p.borrow_mut().clear());
         MATCHES.with(|m| *m.borrow_mut() = previous);
     }
 }

@@ -759,6 +759,21 @@ fn many_functions_lint_in_bounded_time() {
         "2000 functions took {small:?} and 16000 took {large:?}"
     );
 }
+/// Each `,` of a where phrase asked whether it is in one by walking back to
+/// the keyword past every condition before it, so a long where phrase took
+/// time quadratic in its conditions (#707).
+#[test]
+fn a_long_where_phrase_lints_in_bounded_time() {
+    let conditions: Vec<String> = (0..16000).map(|i| format!("c{i}=x{i}")).collect();
+    let source = format!("r:select from t where {}\n", conditions.join(","));
+    let started = std::time::Instant::now();
+    lint(&source, "t.q", Profile::Style);
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < std::time::Duration::from_secs(10),
+        "16000 conditions took {elapsed:?}"
+    );
+}
 /// Tens of thousands of nested parentheses - beyond q's own limit, which
 /// refuses a hundred-odd levels with '( - once overflowed the stack, which
 /// aborts the whole run and cannot be caught like a panic (#703).
