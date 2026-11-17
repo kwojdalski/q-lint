@@ -483,11 +483,15 @@ fn a_trailing_double_colon_composes_and_defines_nothing() {
             ("b.q", "n:count 1 2 3\nr:lim\n"),
             ("c.q", "a::\n"),
             ("d.q", "r:a\n"),
+            // A string or a query after the `::` is its value.
+            ("e.q", "f:{s::\"\"; t::update a:1 from t}\n"),
+            ("g.q", "r:(s;t)\n"),
         ],
         false,
     );
     assert!(deps(&g, "b.q").is_empty());
     assert_eq!(deps(&g, "d.q"), ["c.q"]);
+    assert_eq!(deps(&g, "g.q"), ["e.q"]);
 }
 
 #[test]

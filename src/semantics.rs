@@ -966,12 +966,18 @@ fn global_writes(
         // A `::` with nothing after it composes, `f[1] count::`, and assigns
         // nothing - unless it is the whole line: q 5 defines `a` for a line
         // `a::`, and reads it for `x:1;a::`, `{a::}` and `d:a::` (#764).
-        let value = code[m.end()..].trim_start_matches([' ', '\t', '\r']);
+        // Read in `raw`: `code` here has strings and qSQL blanked, and
+        // `LAST::""` and `t::update a:1 from t` assign.
+        let after = &raw[m.end()..];
+        let mut value = after.trim_start_matches([' ', '\t', '\r']);
+        if value.starts_with('/') && value.len() < after.len() {
+            value = value.find('\n').map_or("", |i| &value[i..]);
+        }
         let continued = value.starts_with('\n') && value[1..].starts_with([' ', '\t']);
         if a.get(2).is_some()
             && (value.is_empty() || value.starts_with([';', '\n', ')', ']', '}']))
             && !continued
-            && !((m.start() == 0 || code[..m.start()].ends_with('\n'))
+            && !((m.start() == 0 || raw[..m.start()].ends_with('\n'))
                 && (value.is_empty() || value.starts_with('\n')))
         {
             continue;
