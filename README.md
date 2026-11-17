@@ -161,7 +161,7 @@ A file depends on another when:
   the source does not name, so it is tried against the current directory,
   then the loading file's directory and each directory above it. A
   directory loaded, `\l db`, leads to each script directly in it, which q
-  runs. A script loaded under `\d .a`
+  runs - tried against the current directory only. A script loaded under `\d .a`
   runs in `.a`, so what it defines at its root is `.a.name` as well as
   `name`, and so is what the scripts it loads at its root define; a name it
   reads there is looked up in `.a` as well.

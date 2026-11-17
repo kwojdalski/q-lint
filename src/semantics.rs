@@ -1402,7 +1402,12 @@ fn loads(
     }
     for m in re!(r#"\bsystem\s*"l\s+([^"\s]+)\s*""#).captures_iter(raw) {
         let at = m.get(0).unwrap().start();
-        if view[at..].starts_with("system") {
+        // Not the head of a path joined at run time, `system "l dir/",x`,
+        // which is a dynamic load, not one of `dir/`.
+        let joined = raw[m.get(0).unwrap().end()..]
+            .trim_start_matches([' ', '\t'])
+            .starts_with(',');
+        if view[at..].starts_with("system") && !joined {
             loads.push((m[1].to_string(), namespace_at(at)));
         }
     }

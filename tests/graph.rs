@@ -800,6 +800,18 @@ fn a_loaded_directory_leads_to_the_scripts_in_it() {
         false,
     );
     assert_eq!(deps(&g, "main.q"), ["init.q"]);
+    // Not the head of a path joined at run time; and `\l .` is the current
+    // directory, not the one beside the file that says it.
+    let g = graph(
+        &[
+            ("db/init.q", "fromdir:42\n"),
+            ("db/reload.q", "f:{system \"l .\"}\n"),
+            ("main.q", "L:{system \"l db/\",x}\n"),
+        ],
+        false,
+    );
+    assert!(deps(&g, "main.q").is_empty());
+    assert_eq!(deps(&g, "db/reload.q"), ["main.q"]);
 }
 
 #[test]

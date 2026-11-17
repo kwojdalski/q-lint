@@ -188,11 +188,10 @@ impl<'a> Tree<'a> {
                     .or_else(|| self.position.get(&std::fs::canonicalize(p).ok()?))
                     .map(|&d| vec![d])
             })
-            .or_else(|| {
-                candidates
-                    .iter()
-                    .find_map(|p| self.scripts_in.get(p.as_path()).cloned())
-            })
+            // A directory only where q looks, the current one: `\l .`, a
+            // database reloading itself, is no load of the scripts beside
+            // the file that says it.
+            .or_else(|| self.scripts_in.get(candidates.first()?.as_path()).cloned())
             .unwrap_or_default()
     }
 }
