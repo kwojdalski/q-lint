@@ -1165,3 +1165,11 @@ h:{[x] .q.bar:{x+1}; {[x;bar] x+bar}[x;1]}
 .q.baz:{x+1}; baz:3
 .q.qux:{x+1}
   ; k:{[qux] qux}
+
+=== clean profile: general | QF015: a script loaded or a string evaluated may define the name (#750; q 5: \l of true:0b, then $[true;`yes;`no] is `no)
+\l lib.q
+r:$[true;`yes;`no]
+
+=== clean profile: general | QF015: and so may value of a string (#750; q 5: 1)
+value "true:1b"
+r:$[true;1;0]

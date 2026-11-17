@@ -873,3 +873,156 @@ r:a -b
 === clean | while minus before a digit is a negative literal, so a -1 indexes (#476; q 5: 0N)
 a:1 2 3
 r:a -1
+
+=== clean profile: general | QT022: a string evaluated from a name or a file is evaluation too (#749; q 5: each a 0 is 1)
+a:1
+s:"a:1 2 3"
+value s
+r:a 0
+b:1
+get s
+u:b 0
+c:1
+value each read0 `:defs.q
+w:c 0
+
+=== clean profile: general | QT022: a system command not written as a literal may load a script (#749; q 5: a 0 is 1)
+a:1
+f:"/tmp/zz_l1.q"
+system ("l ",f)
+r:a 0
+
+=== clean profile: general | QT022: a load by system's bracket form, @ or a trap is still a load (#755; q 5: n 0 is 1)
+n:5
+@[system;"l b.q";{-1 x}]
+system["l b.q"]
+system@"l b.q"
+r:n 0
+
+=== QT022 profile: general | while a literal command that neither loads nor changes context defines nothing (#755)
+a:1
+system "cd /tmp"
+r:a 0
+
+=== clean profile: general | QT022, QA012 and QF020: a set into a computed name may write any global (#748; q 5: (1;3;+(,`d)!,3 4))
+n:`a
+a:1
+n set 1 2 3
+r:a 0
+f:{x}
+m:`f
+m set {x+y}
+s:f[1;2]
+t:([]c:1 2)
+{x set y}[`t;([]c:1 2;d:3 4)]
+u:select d from t
+
+=== clean profile: general | QF015 and QF010: and may define a name the file never spells out (#748; q 5: 1, and f 1 is 6)
+(`$"true") set 1b
+r:$[true;1;0]
+n:`x
+n set 5
+f:{[b] b+x}
+
+=== QT022 profile: general | while a set into a literal name, a file path or a parenthesised symbol leaves the others known (#748)
+a:1
+`b set 2
+(`c) set 3
+`:db/t/ set ([]c:1 2)
+(hsym `$"db/u/") set ([]c:1 2)
+.Q.dd[`:db;`v] set ([]c:1 2)
+r:a 0
+
+=== clean profile: general | QT022, QA012 and QF020: a k) line assigns q's globals (#751; q 5: (1;3;+(,`d)!,3 4))
+a:1
+f:{x}
+t:([]c:1 2)
+k)a:1 2 3
+k)f:{x+y}
+k)t:+`c`d!(1 2;3 4)
+r:(a 0;f[1;2];select d from t)
+
+=== clean profile: general | QF015: and may define a name the file's q never assigns (#751; q 5: 1)
+k)true:1b
+r:$[true;1;0]
+
+=== clean profile: general | QT022, QA012 and QF020: a namespace written as a whole writes its members (#746; q 5: (1;3;+(,`d)!,3 4))
+.cfg.a:1
+.cfg.f:{x}
+.cfg.t:([]c:1 2)
+`.cfg set (``a`f`t)!(::;1 2 3;{x+y};([]c:1 2;d:3 4))
+r:.cfg.a 0
+s:.cfg.f[1;2]
+u:select d from .cfg.t
+
+=== clean profile: general | QT022 and QA012: assigned, appended or upserted as a whole too (#746; q 5: 1, 1, 3)
+.cfg.n:5
+.cfg:`n`m!(1 2 3;4)
+r:.cfg.n 0
+.ns.a:1
+.ns,:enlist[`a]!enlist 1 2 3
+s:.ns.a 0
+.up.f:{x}
+`.up upsert enlist[`f]!enlist {x+y}
+u:.up.f[1;2]
+
+=== clean profile: general | QT022 and QF005: and an upsert into the root context writes any global (#746; q 5: 1)
+a:1
+`. upsert enlist[`a]!enlist 1 2 3
+r:a 0
+f:{b:1;{b}[]}
+
+=== clean profile: general | QT022, QA012, QF020 and QT026: a namespace member assigned by index (#747; q 5: (1;3;+(,`d)!,3 4), and the join runs)
+.cfg.a:1
+.cfg.f:{x}
+.cfg.t:([]c:1 2)
+.cfg[`a]:1 2 3
+.cfg[`f]:{x+y}
+.cfg[`t]:([]c:1 2;d:3 4)
+r:.cfg.a 0
+s:.cfg.f[1;2]
+u:select d from .cfg.t
+.n.s:([]k:`a`b;w:3 4)
+.n[`s]:1!.n.s
+t:([]k:`a`b;v:1 2)
+v:t lj .n.s
+
+=== QT022 profile: general | while a member written beside it leaves it known (#746)
+.cfg.a:1
+.cfg.b:2 3
+.cfg[`b]:4 5
+r:.cfg.a 0
+
+=== clean profile: general | QA012 and QT022: set' writes each name, from a general list or in brackets too (#753; q 5: 3 1 5)
+a:1
+b:1
+f:{x}
+`f`g set' ({x+y};1)
+(`a;`c) set' (1 2 3;4)
+set'[`b`d;(5 6 7;8)]
+r:(f[1;2];a 0;b 0)
+
+=== QT022 profile: general | while set without each writes neither name (#753)
+a:1
+`a`b set 1 2
+r:a 0
+
+=== clean profile: general | QT027: a list of dictionaries given to insert or upsert is a table (#752; q 5: count t is 8)
+t:([]a:`long$();b:`symbol$();c:`float$())
+`t insert (`a`b`c!(1;`x;1f);`a`b`c!(2;`y;2f))
+`t upsert (`a`b`c!(3;`z;3f);`a`b`c!(4;`w;4f))
+insert[`t;(`a`b`c!(5;`v;5f);`a`b`c!(6;`u;6f))]
+d1:`a`b`c!(7;`t;7f)
+d2:`a`b`c!(8;`s;8f)
+`t insert (d1;d2)
+
+=== clean profile: general | QT022: a multiple global assignment in a lambda, or of dotted names, is a write (#759; q 5: 1 and 1)
+n:5
+f:{n 0}
+init:{(n;m)::(1 2 3;4)}
+init[]
+r:f[]
+.ns.k:5
+g:{.ns.k 0}
+(.ns.k;.ns.j):(1 2 3;4)
+s:g[]
