@@ -3764,7 +3764,15 @@ fn named_values(
         if depth != 0 {
             continue;
         }
-        let mut cuts = vec![phrase.start()];
+        // A row limit, `select[2]` or `select[2;>a]`, is not an item.
+        let limit = phrase.as_str().trim_start().starts_with('[')
+            .then(|| {
+                let open = phrase.start() + phrase.as_str().len() - phrase.as_str().trim_start().len();
+                matching(code, open, b'[', b']')
+            })
+            .flatten()
+            .unwrap_or(phrase.start());
+        let mut cuts = vec![limit];
         for sep in re!(r",|\bby\b").find_iter(phrase.as_str()) {
             if !top[sep.start()] {
                 continue;

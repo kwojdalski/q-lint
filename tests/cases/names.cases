@@ -1227,3 +1227,7 @@ r1:select from t where a>1;c:2
 
 === clean profile: general | .z.m and a callback in one (#506)
 (.z.m;.z.pg):({x};{x})
+
+=== QF020 profile: general | a row-limited select's items are read past its limit (q 5: 'c) (#493)
+t:([]a:1 2)
+r:select[1] m:max c from t
