@@ -228,6 +228,21 @@ r3:select from t where horizon=0D00:02:00
 === clean | a name ending in where is not the keyword
 registry.util.delete.where:{[a] a}
 
+=== clean profile: general | a projection ending one line and a column-0 literal opening the next are two statements (q 5 runs the file) (#741)
+x:1 2
+inc:x+
+"done"
+open:hopen
+1.5
+show (inc 1;open)
+
+=== QT023 QT029 profile: general | while an indented line continues the statement (q 5: 'type each) (#741)
+x:1
+inc:x+
+  "done"
+open:hopen
+  1.5
+
 === QT029 | hopen on a float
 h:hopen 1.5
 

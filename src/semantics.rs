@@ -3601,8 +3601,16 @@ fn named_values(
     // 291, on a version it did not record.
     // Booleans and bytes before plain integers, or `1b` matches as `1`.
     let operand = r#""(?:\\.|[^"\\])*"|[01]+b|0x[0-9a-fA-F]+|-?(?:\d+(?:\.\d*)?|\.\d+)e\b|-?\d+[hij]?(?:[ \t]+-?\d+[hij]?)*|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*"#;
-    let infix = regex::Regex::new(&format!(
-        r"(?P<l>{operand})\s*(?P<op>[-+*])\s*(?P<r>{operand})"
+    // The statement's blanks around the operator: `inc:x+` and then a
+    // column-0 `"done"` are two statements (#741).
+    let infix = regex::Regex::new(&format!(concat!(
+        r"(?P<l>{operand})",
+        blank!(),
+        r"*(?P<op>[-+*])",
+        blank!(),
+        r"*(?P<r>{operand})"
+        ),
+        operand = operand
     ))
     .unwrap();
     let kind_of = |text: &str, at: usize| -> Option<Arithmetic> {
