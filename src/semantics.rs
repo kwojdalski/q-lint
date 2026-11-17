@@ -3979,9 +3979,11 @@ fn named_values(
     // table is 'type - checked for all three; uj takes any and is not here.
     // ljf and ijf too, and the bracket form `lj[t;s]` (q 5: 'type). The
     // keyword or the right table may be parenthesised, `(lj)[t;s]` and
-    // `t lj (s)` (q 5: 'type, #618).
+    // `t lj (s)` (q 5: 'type, #618). Not the last segment of a dotted
+    // name: `.t.lj[k;a;b]` is a function of the file's own (#666).
     for m in re!(r"(?:\b(ljf|ijf|lj|ij|pj)|\((ljf|ijf|lj|ij|pj)\))(?:\s+|\s*\[[^;\[\]]*;\s*)(\(\s*\[|\(\s*(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*\)|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)")
         .captures_iter(code)
+        .filter(|m| !code[..m.get(0).unwrap().start()].ends_with('.'))
     {
         let keyword = m.get(1).or(m.get(2)).unwrap();
         let whole = m.get(3).unwrap();

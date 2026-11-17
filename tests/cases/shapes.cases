@@ -703,6 +703,12 @@ r1:t ljf s
 r2:lj[t;s]
 r3:ij[t;s]
 
+=== clean profile: general | a dotted name ending in lj or ij is the file's own function, not the keyword (#666; q 5 runs both and returns the joined table)
+.t.lj:{[k;a;b] a lj k xkey b}
+r:.t.lj[`y;([] y:`a`b; v:1 2);([] y:`a`c; w:3 4)]
+s:.u.lj[1;([] y:`a`b; v:1 2);([] y:`a`c; w:3 4)]
+x.ij[1;([] y:`a`b; v:1 2);([] y:`a`c; w:3 4)]
+
 === clean | a keyed right table
 t:([]a:1 2)
 s:([]a:1 2;b:3 4)
