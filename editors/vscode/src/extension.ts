@@ -17,6 +17,7 @@ import {
   type OutputChannel,
 } from "vscode";
 import { launch, needsRestart } from "./settings";
+import { Serial } from "./serial";
 import { chmodSync, existsSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import {
@@ -26,6 +27,8 @@ import {
 } from "vscode-languageclient/node";
 
 let client: LanguageClient | undefined;
+/// Every start, restart and stop of `client`, one at a time.
+const serial = new Serial();
 /// One channel for the life of the extension. Each client would otherwise
 /// make its own, and every restart would leave another "q-lint" in the
 /// Output panel's list.
@@ -71,14 +74,23 @@ export async function activate(context: ExtensionContext): Promise<void> {
       }
     }),
   );
-  context.subscriptions.push({ dispose: () => void client?.stop() });
-  await start(context);
+  context.subscriptions.push({ dispose: () => void stop() });
+  await serial.run(() => start(context));
 }
 
-async function restart(context: ExtensionContext): Promise<void> {
-  await client?.stop().catch(() => {});
-  client = undefined;
-  await start(context);
+function restart(context: ExtensionContext): Promise<void> {
+  return serial.run(async () => {
+    await client?.stop().catch(() => {});
+    client = undefined;
+    await start(context);
+  });
+}
+
+function stop(): Promise<void> {
+  return serial.run(async () => {
+    await client?.stop().catch(() => {});
+    client = undefined;
+  });
 }
 
 async function start(context: ExtensionContext): Promise<void> {
@@ -187,6 +199,6 @@ async function start(context: ExtensionContext): Promise<void> {
   }
 }
 
-export function deactivate(): Thenable<void> | undefined {
-  return client?.stop();
+export function deactivate(): Thenable<void> {
+  return stop();
 }
