@@ -181,6 +181,10 @@ struct GraphArgs {
     /// file does, which is honoured too.
     #[arg(long)]
     exclude: Vec<String>,
+    /// Apply `exclude` to paths named on the command line too, as linting's
+    /// `--force-exclude` does: without it a file named outright is a node.
+    #[arg(long)]
+    force_exclude: bool,
 }
 
 /// The command line's share of the settings, which wins over any file.
@@ -695,7 +699,7 @@ fn analyze_graph(args: GraphArgs) -> Result<u8, String> {
         args.paths
     };
     let mut sources = vec![];
-    let (files, mut failed) = discover(paths, &policy, false)?;
+    let (files, mut failed) = discover(paths, &policy, args.force_exclude)?;
     for path in files {
         // As when linting: a file that is not UTF-8 is still q, and is read
         // with each invalid byte as one replacement character.

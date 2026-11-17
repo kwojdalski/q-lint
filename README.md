@@ -188,7 +188,8 @@ that wants to be safe can treat such a file as depending on everything.
 `--symbols` also counts a qualified symbol literal, `` `.ns.f ``, as a read
 of that name, the way a callback is registered; it is off by default because
 a symbol is often only data. `exclude` from a configuration file applies, and
-`--exclude` adds to it. The subcommand is recognised only as the first
+`--exclude` adds to it; a file named outright is left out by them only with
+`--force-exclude`, as when linting. The subcommand is recognised only as the first
 argument: `qlinter path.q`, `--explain` and `--lsp` are unchanged, and a
 directory named `analyze` is linted as `./analyze`.
 

@@ -611,6 +611,28 @@ fn exclude_leaves_files_out_of_the_graph() {
 }
 
 #[test]
+fn force_exclude_leaves_out_a_file_named_outright() {
+    // A file list from a hook names every file; without the flag a named
+    // file is a node whatever `--exclude` says, as when linting (#539).
+    let dir = tree();
+    let named = ["src/app.q", "src/lib/c.q"];
+    let found = |extra: &[&str]| -> serde_json::Value {
+        let args = [
+            &["analyze", "graph", "--exclude", "src/lib"][..],
+            extra,
+            &named,
+        ]
+        .concat();
+        serde_json::from_str(&stdout(&qlinter(dir.path(), &args))).unwrap()
+    };
+    assert!(found(&[]).get("src/lib/c.q").is_some());
+    assert_eq!(
+        found(&["--force-exclude"]),
+        serde_json::json!({"src/app.q": []})
+    );
+}
+
+#[test]
 fn linting_paths_explain_and_lsp_are_unchanged_by_the_subcommand() {
     let dir = tree();
     // A path is still linted, flags before or after it.
