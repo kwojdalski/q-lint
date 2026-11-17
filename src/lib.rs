@@ -6191,8 +6191,11 @@ pub fn lint_selecting(
             }
             if let Some(w) = re!(r"\bwhere\b").find(line) {
                 // To the end of the query's statement: after a `;` is another
-                // statement, not more of the filter (#344).
-                let phrase = flat_filter(&line[w.end()..phrase_end(line, w.end())]);
+                // statement, not more of the filter (#344). Read in `query`,
+                // which runs on to where the statement's brackets close: in a
+                // lambda each line is a group of its own, and a filter after
+                // a `where` that ends one is on the next (#679).
+                let phrase = flat_filter(&query[w.end()..phrase_end(query, w.end())]);
                 // `~` matches whole operands, so a filter gets one boolean for
                 // the entire table where it wanted one per row: a 'type error
                 // against a column, or worse, a single-row result against a
@@ -6238,8 +6241,8 @@ pub fn lint_selecting(
                 }) {
                     // Quote the reader's own clause where it is short enough
                     // to read: `a=1 and b=3` reads as `a=(1 and b=3)`.
-                    let raw_phrase = &raw[w.end()..];
-                    let groups = grouped(&line[w.end()..w.end() + phrase.len()]);
+                    let raw_phrase = &source[start + w.end()..];
+                    let groups = grouped(&query[w.end()..w.end() + phrase.len()]);
                     let example = swallowed_comparisons(&groups).first().and_then(|&(a, b)| {
                         let operand = &raw_phrase[a..b];
                         let op = re!(r"<>|<=|>=|[<>=]").find_iter(operand).last()?;

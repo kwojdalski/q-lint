@@ -490,6 +490,12 @@ p:"/" sv string
 t:select from t where
   a=1 and b=0
 
+=== QB006 QB005 | and so it does in a lambda, where the line ends at where (#679)
+f:{select from t where
+  a=1 and b=0}
+g:{select from t where
+  a~1}
+
 === clean | at column 0 the second line is a separate statement
 p:"/" sv string
 dir:1
