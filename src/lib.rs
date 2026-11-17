@@ -4647,9 +4647,11 @@ pub fn lint_selecting(
         // `:` in the literal for a temporal one: `-0D00:01`, `-00:00:01`.
         // A lambda's closing brace ends it too: q 5 `{.z.p -1}[]` is 'type
         // (#678).
-        re!(
-            r"(?m)(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]+(-\d[A-Za-z0-9.:]*)[ \t\r]*(?:[;\])}]|$)"
-        )
+        re!(concat!(
+            r"(?m)(\.?[A-Za-z][A-Za-z0-9_.]*)",
+            blank!(),
+            r"+(-\d[A-Za-z0-9.:]*)[ \t\r]*(?:[;\])}]|$)"
+        ))
         .captures_iter(code)
     {
         let whole = m.get(0).unwrap();

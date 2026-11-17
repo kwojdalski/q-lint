@@ -3388,10 +3388,14 @@ fn named_values(
     // indexing (q 5: `a:2.5;a@0` is 'type). Juxtaposed
     // only before something that is an argument - a literal, a bracket, a
     // name that is not an infix builtin (`f mod 2` is not indexing `f`) -
-    // and not before a negative literal, which is QB010's.
-    let indexed = re!(
-        r#"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)(?:\[|[ \t]*@[ \t]*[0-9"`(A-Za-z]|[ \t]+\.[ \t]+[0-9"`(A-Za-z]|[ \t]+([0-9"`(]|\.?[A-Za-z][A-Za-z0-9_]*))"#
-    );
+    // and not before a negative literal, which is QB010's. The argument may
+    // start the indented line that continues the statement, past blank and
+    // comment lines (`blank!`): q 5 `s:b` over `  0` is 'type (#687).
+    let indexed = re!(concat!(
+        r#"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)(?:\[|[ \t]*@[ \t]*[0-9"`(A-Za-z]|[ \t]+\.[ \t]+[0-9"`(A-Za-z]|"#,
+        blank!(),
+        r#"+([0-9"`(]|\.?[A-Za-z][A-Za-z0-9_]*))"#
+    ));
     // From each name on, not match after match: in `show a 0` the match
     // `show a` would hide `a 0` (q 5: 'type) (#471).
     // Over `comments`, where a string keeps its quotes: `k "hi"` and
@@ -3422,7 +3426,7 @@ fn named_values(
         // Verified in q 5. A name or anything else might be a string.
         if handles.contains(key(name.as_str(), name.start()).as_str()) {
             // `a@0` and `a . enlist 0` apply it the same way (q 5).
-            let after = raw[name.end()..].trim_start_matches([' ', '\t']);
+            let after = &raw[crate::past_blanks(code, name.end())..];
             let after = after
                 .strip_prefix(['@', '.'])
                 .map_or(after, |a| a.trim_start_matches([' ', '\t']));
@@ -3463,8 +3467,14 @@ fn named_values(
     // may hold a list is left alone: `a:1 2 3; a -1` indexes, and is 0N.
     // The literal has to end the statement or bracket, as in `lib.rs`, or
     // the lambda: q 5 `a:2.5; f:{a -1}; f[]` is 'type (#473).
-    for m in re!(r"(?m)(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)[ \t]+(-\d[A-Za-z0-9.:]*)[ \t\r]*(?:[;\])}]|$)")
-        .captures_iter(code)
+    // The literal may start the indented line that continues the statement:
+    // q 5 `r:a` over `  -1` is 'domain too (#687).
+    for m in re!(concat!(
+        r"(?m)(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)",
+        blank!(),
+        r"+(-\d[A-Za-z0-9.:]*)[ \t\r]*(?:[;\])}]|$)"
+    ))
+    .captures_iter(code)
     {
         let name = m.get(1).unwrap();
         if !boundary(code, name.start())
@@ -3484,8 +3494,12 @@ fn named_values(
     // `{[] m:1.5; m -1}[]` and `{[] s:.z.p; s -0D00:00:01}[]` are 'type
     // like their top-level forms. A lambda's closing brace ends the literal too.
     // `local_atom` says when the text is sure.
-    for m in re!(r"(?m)(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)[ \t]+(-\d[A-Za-z0-9.:]*)[ \t\r]*(?:[;\])}]|$)")
-        .captures_iter(code)
+    for m in re!(concat!(
+        r"(?m)(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)",
+        blank!(),
+        r"+(-\d[A-Za-z0-9.:]*)[ \t\r]*(?:[;\])}]|$)"
+    ))
+    .captures_iter(code)
     {
         let name = m.get(1).unwrap();
         if !boundary(code, name.start())

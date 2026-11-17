@@ -239,6 +239,14 @@ select .my.agg px by sym from t
 a:3
 r:a -1
 
+=== QB010 profile: general | and so it does with the literal on the indented next line (q 5: 'domain and 'type, #687)
+a:3
+r:a
+  -1
+w:.z.p
+
+  -0D00:01
+
 === QB010 | in a condition too
 n:1.5
 if[n -1;2]

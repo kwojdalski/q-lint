@@ -491,6 +491,11 @@ r:`a in `a`b
 a:1
 r:a[0]
 
+=== QT022 profile: general | juxtaposed with a literal on the indented next line (q 5: 'type, #687)
+b:2.5
+s:b
+  0
+
 === QT022 | with nothing in the brackets too
 a:1.5
 r:a[]
