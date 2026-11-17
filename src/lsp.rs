@@ -518,6 +518,19 @@ pub fn serve(
                 continue;
             }
         };
+        // JSON-RPC 2.0 §4: an id is a string, a number or null. Any other is
+        // not a Request, and the reply cannot carry it back (#548).
+        if id
+            .as_ref()
+            .is_some_and(|id| !(id.is_string() || id.is_number() || id.is_null()))
+        {
+            send(
+                writer,
+                json!({"id": Value::Null, "error": {"code": INVALID_REQUEST,
+                       "message": "a request's id must be a string, a number or null"}}),
+            )?;
+            continue;
+        }
         let params = message.get("params").cloned().unwrap_or(Value::Null);
 
         let generation = idx.generation;

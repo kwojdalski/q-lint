@@ -686,6 +686,20 @@ fn a_second_initialize_is_an_invalid_request_and_changes_nothing() {
 }
 
 #[test]
+fn a_request_whose_id_is_an_object_or_array_is_an_invalid_request() {
+    // JSON-RPC 2.0 §4; the shutdown it names is not performed (#548).
+    let mut server = Server::start();
+    server.initialize();
+    for id in [json!({"a": 1}), json!([1])] {
+        server.send(json!({"jsonrpc":"2.0","id":id,"method":"shutdown"}));
+        let reply = server.receive();
+        assert_eq!(reply["id"], Value::Null, "{reply}");
+        assert_eq!(reply["error"]["code"], -32600, "{reply}");
+    }
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
 fn a_second_shutdown_is_an_invalid_request() {
     // LSP 3.17, Shutdown Request: requests after it error with
     // InvalidRequest, and `shutdown` is a request like any other.
