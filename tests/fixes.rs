@@ -699,6 +699,7 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
         // A local passed in before it holds a value is 'a (#769)
         ("QF005", "h:{a:{a+1};a}"),
         ("QF005", "k:{[b] r:{a+x} each b; a:2; r}"),
+        ("QF005", "f:{[a] {[c:a] c}}"), // a pattern, not a body to pass it into (#637)
         // A bracket argument would become a key-column header (#406)
         ("QR004", "a:1 2 3;r:{x*2}'[a]"),
         ("QR004", "a:1 2 3;r:{x*2} each[a]"),

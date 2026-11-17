@@ -82,6 +82,15 @@ helper:{[x] x}
 === QF005 | a nested lambda cannot see the enclosing local
 f:{[a] g:{[b] a+b}; g[1]}
 
+=== QF005 profile: general | nor can a transformation pattern in its signature (q 5: f[1] 2 is 'a) (#637)
+f:{[a] {[c:a] c}}
+
+=== clean profile: general | while a global, a type or a parameter of its own is fine there (q 5: h[1] 2 is 20) (#637)
+g:{x*10}
+h:{[a] {[c:g] c}}
+m:{[a] {[c:`j] c}}
+n:{[a] {[a:neg] a}}
+
 === QF005 profile: general | and a lambda on a \t line has the same scopes (q 5: 'b, #312)
 \t r:{[a] b:a; {b}[]} 1
 

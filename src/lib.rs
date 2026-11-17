@@ -1242,6 +1242,11 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             let brace = enclosing_brace(&v.code, start)?;
             let close = matching(&v.code, brace, b'{', b'}')?;
             let sig = signature(&v.code, source, brace);
+            // A transformation pattern is no body to pass the local into
+            // (#637).
+            if start < sig.body {
+                return None;
+            }
             // q takes at most 8 parameters: a ninth is 'params at load (#337).
             if sig.named && sig.slots.len() >= 8 {
                 return None;
