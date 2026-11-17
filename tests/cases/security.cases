@@ -45,7 +45,14 @@ f:{get "select from t where a=",x}
 === QX001 | and a handle hands it to the remote .z.pg
 g:{[h;x] h "select from t where a=",x}
 
+=== QX001 | so does a handle held in a namespace, the caller's .z.w, or the async neg form (#652)
+f:{[h;s] neg[h] "select from t where s=",s}
+g:{.conn.h "delete from t where s=",x}
+k:{[h;x] (neg h) "update a:1 from t where s=",x}
+l:{.z.w "select from t where s=",x}
+
 === clean | a constant query over a handle, and a joined string only shown
+n:{[h] neg[h] "select from t"}
 g:{[h] h "select from t"}
 k:{show "select from t where a=",x}
 

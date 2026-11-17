@@ -59,24 +59,26 @@ fn query_injection(path: &str, source: &str, code: &str, comments: &str, out: &m
         ))
         .is_ok_and(|r| r.is_match(code))
     };
-    let handles: Vec<usize> =
-        re!(r#"\b([A-Za-z][A-Za-z0-9_.]*)[ \t]+"(?:select|exec|update|delete)\b"#)
-            .captures_iter(comments)
-            .filter(|c| {
-                let name = c.get(1).unwrap();
-                code[name.start()..].starts_with(name.as_str())
-                    && !crate::RESERVED.iter().any(|n| n == name.as_str())
-                    && !lambda(name.as_str())
-            })
-            .map(|c| c.get(1).unwrap().start())
-            .collect();
+    // The handle may be a dotted name, `.conn.h` or the caller's `.z.w`, or
+    // the async `neg[h]` and `(neg h)` (#652).
+    let handles: Vec<(usize, usize)> = re!(
+        r#"(?:(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]+|(neg[ \t]*\[[^\[\]"]*\]|\(neg[ \t]+[^()"]*\))[ \t]*)"(?:select|exec|update|delete)\b"#
+    )
+    .captures_iter(comments)
+    .filter_map(|c| {
+        let handle = c.get(1).or(c.get(2)).unwrap();
+        let name = c.get(1).is_some();
+        (code[handle.start()..].starts_with(handle.as_str())
+            && !(name
+                && (crate::RESERVED.iter().any(|n| n == handle.as_str())
+                    || lambda(handle.as_str()))))
+        .then_some((handle.start(), handle.end()))
+    })
+    .collect();
     let calls = re!(r"\b(?:value|eval|get)\b")
         .find_iter(code)
         .map(|m| (m.start(), m.end()))
-        .chain(handles.iter().map(|&at| {
-            let end = at + code[at..].find([' ', '\t']).unwrap();
-            (at, end)
-        }));
+        .chain(handles);
     for (m_start, m_end) in calls {
         let m = Span {
             start: m_start,
@@ -146,6 +148,9 @@ fn query_injection(path: &str, source: &str, code: &str, comments: &str, out: &m
                      the value as data",
                     match &code[m.start()..m.end()] {
                         f @ ("value" | "eval" | "get") => f.to_string(),
+                        h if re!(r"^\(?neg\b").is_match(h) => {
+                            format!("{h}` over a handle and evaluated by the remote `.z.ps")
+                        }
                         h => format!("{h}` over a handle and evaluated by the remote `.z.pg"),
                     }
                 ),
