@@ -139,6 +139,14 @@ r1:select from t
 r2:update a:1 from t
 .my.select:1
 
+=== QT025 profile: general | signalling a number strand or an enlisted atom, which are lists (q 5: each 'stype; #612)
+f:{'1 2}
+g:{'enlist 1}
+h:{'enlist `a}
+
+=== clean profile: general | an enlisted one-char string is a string (q 5: 'enlist "a" signals 'a)
+f:{'enlist "a"}
+
 === QT025 | signalling a number
 f:{'1}
 

@@ -530,8 +530,10 @@ fn signals(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<F
     // A list cannot be signalled either: q 5 `'(1;2)`, `'()`, `'(1)` and
     // `` '`a`b `` are each 'stype.
     // A number runs on over `:` and an exponent's sign: `'12:00`,
-    // `'2026.01.01D12:00` and `'1e-3` are each 'stype.
-    for m in re!(r#"(')(-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*|"(?:\\[0-7]{3}|\\.|[^"\\])+"|\(\s*\)|\(\s*-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*\s*\)|\([^()"]*;[^()]*\)|(?:`[A-Za-z0-9_.]*){2,})"#).captures_iter(comments) {
+    // `'2026.01.01D12:00` and `'1e-3` are each 'stype. So are a number
+    // strand and an enlisted number or symbol, `'1 2` and `'enlist 1`, which
+    // are lists (#612); `'enlist "a"` is the string "a" and signals 'a.
+    for m in re!(r#"(')(enlist[ \t]+(?:-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*|`[A-Za-z0-9_.:]*)|-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:[ \t]+-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)*|"(?:\\[0-7]{3}|\\.|[^"\\])+"|\(\s*\)|\(\s*-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*\s*\)|\([^()"]*;[^()]*\)|(?:`[A-Za-z0-9_.]*){2,})"#).captures_iter(comments) {
         let quote = m.get(1).unwrap();
         let value = m.get(2).unwrap();
         if code.as_bytes()[quote.start()] != b'\'' {
@@ -580,7 +582,11 @@ fn signals(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<F
         }
         let what = if value.as_str().starts_with('"') {
             "a one-character string, which is a char atom"
-        } else if value.as_str().starts_with('`') || value.as_str().contains(';') || value.as_str().trim_matches(['(', ')', ' ']).is_empty() {
+        } else if value.as_str().starts_with(['`', 'e'])
+            || value.as_str().contains(';')
+            || (!value.as_str().starts_with('(') && value.as_str().contains([' ', '\t']))
+            || value.as_str().trim_matches(['(', ')', ' ']).is_empty()
+        {
             "a list"
         } else {
             "a number"
