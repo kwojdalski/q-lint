@@ -507,6 +507,11 @@ r:where 1 2i
 === QT009 | a short one does not (q 5: where 1 2h is 'type)
 r:where 1 2h
 
+=== QT009 profile: general | nor a date, time or timespan vector (q 5: each is 'type) (#736)
+r1:where 2000.01.01 2000.01.02
+r2:where 12:00 13:00
+r3:where 0D01 0D02
+
 === QT009 | nor does an atom (q 5: where 2 is 'type)
 r:where 2
 
@@ -629,6 +634,12 @@ a:`+n%
 b:{x}[`%n%]
 c:`a*n*
 
+=== QT003 profile: general | a symbol between two operators, as the left operand of the second (q 5: 1+`a+1 is 'type) (#721)
+r:1+`a+1
+
+=== QT003 profile: general | the same with a name on the far left (q 5: a+`b*2 is 'type) (#721)
+s:a+`b*2
+
 === QT003 profile: general | the null symbol on the right of an operator (#455; q 5: 1 + ` is 'type)
 e:1 + `
 
@@ -698,6 +709,12 @@ r:ssr[1;2;3;4]
 s:til 1.5
 .q.sum:{[a;b] a*b}
 t:sum[2;3]
+
+=== clean profile: general | so does one it redefines with set or amend (q 5: til 1.5 is 2.5, asc 1 is 1) (#720)
+@[`.q;`til;:;{x+1}]
+`.q.asc set {x}
+r1:til 1.5
+r2:asc 1
 
 === QA010 profile: general | but not before the file redefines it (#440)
 r:sum[2;3]

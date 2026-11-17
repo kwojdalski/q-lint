@@ -46,7 +46,8 @@ def test_exclusions_config_discovery_and_deduplication(tmp_path):
     nested.mkdir()
     bad = tmp_path / "torq/nested/bad.q"
     bad.parent.mkdir(parents=True)
-    bad.write_bytes(b"\xff")
+    # Not UTF-8, in a comment: a bare 0xff in code is QE012 (q 5: 'char).
+    bad.write_bytes(b"/ \xff\n")
     good = nested / "good.q"
     good.write_text("a:1;")
     assert run("..", cwd=nested).returncode == 0

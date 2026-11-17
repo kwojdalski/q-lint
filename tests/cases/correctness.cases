@@ -168,6 +168,16 @@ select from t where a=1 and b=0
 === clean | parenthesised, the comparison is said out loud
 select from t where (a=1) and b=0
 
+=== QB006 | a word comparison left of and reads the same (q 5: where a in 1 3 and b=0 is a in (1 3 and b=0), 'length) (#735)
+select from t where a in 1 3 and b=0
+
+=== QB006 | in a condition too (q 5: `rdb in key d and 7h~tp is 1b whatever tp is) (#735)
+f:{if[`rdb in key d and 7h~tp; :1]; 0}
+
+=== clean | but like applied with brackets is no infix comparison, and & and | are min and max as often as not (#735)
+f:{if[not like[a;"ms://*"]|all like[a]each("*?";"h*"); :1]; 0}
+g:{where n>=4|.00002*count x}
+
 === clean | a comparison to the right of and is its operand
 select from t where flag and b=0
 
@@ -182,6 +192,15 @@ r:"abc" like `abc
 
 === QB007 | and a glob after the symbol parses as an operator, a silent projection
 r:"abc" like `a*
+
+=== QB007 profile: general | the bracket form is the same call (q 5: like[`abc;`a] is 'type) (#723)
+r:like[`abc;`a]
+
+=== QB007 profile: general | with a string first and a symbol list second (q 5: 'type) (#723)
+r:like["abc";`a`b]
+
+=== clean profile: general | but an empty first slot is a projection, and nothing has run (#723)
+p:like[;`abc]
 
 === clean | like with a string pattern
 select from t where sym like "a*"
@@ -470,6 +489,21 @@ r:+/1 2 3
 === clean | over on a function, in brackets
 r:+/[1 2 3]
 
+=== QE009 profile: general | an iterator with nothing on its left before an operand (q 5: '/ for each, and ' for a:1;/ TODO, #656)
+r:(1;/x)
+s:f[/x]
+t:{[x]/x}
+u:(1;/:x)
+a:1;/ TODO
+
+=== clean profile: general | with no operand after it, applied with brackets, or a signal (q 5 parses each, #656)
+r:(/)
+s:(/;1)
+t:{/}
+u:(/[x])
+v:(1;'x)
+a:1;/
+
 === QB015 | a string literal in a filter
 select from t where sym="EUR"
 
@@ -658,6 +692,13 @@ f:{'`e;x}
 === clean | '[f;g] is a composition, not a signal (q 5: f[] is 2)
 f:{'[neg;abs]; 2}
 g:{' [neg;abs] 3; 2}
+
+=== clean | an iterator on : or ' derives a function: no return, no signal (#719)
+f1:{:/[1;2]; 4}
+f2:{'/[1;2]; 4}
+f3:{:'[1 2;3 4]; 4}
+f4:{'' [neg]; 4}
+f5:{:\[1;2]; 4}
 
 === clean | a bare ' or : is a value, not a signal or return, and what follows runs (q 5: each is 2) (#624)
 f:{[a] '; a+1}

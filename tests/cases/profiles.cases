@@ -316,6 +316,11 @@ b:.z.D
 === clean profile: uqf | a dotted name that ends in .z.P is a variable, not the clock
 r:x.z.P
 
+=== clean profile: uqf | a file handle names a file, whatever it spells (#651)
+f:`:.z.P
+g:`:log/.z.Z
+h:hopen `:.z.T
+
 === QP002 profile: uqf | .z.z is UTC, but still a datetime
 c:.z.z
 

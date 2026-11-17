@@ -186,3 +186,17 @@ g:{[x]
  x}
 \
 h:{x}
+
+=== QT006 QT008 QT031 QT011 QT029 QT023 profile: general | a column-0 string opens a statement of its own, so each line before it ends (q 5: 'length, then 'type x5) (#718)
+r:1 2 3+1 2
+"x",1
+b:til 2.5
+"x",1
+c:"J"$1
+"x",1
+d:asc 1
+"x",1
+e:hopen 1.5
+"x",1
+g:"a"-1
+"x",1
