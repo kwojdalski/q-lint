@@ -1298,3 +1298,23 @@ c:hopen -1e3
 
 === clean profile: general | a plain handle number (#504)
 a:hopen 5000
+
+=== clean profile: general | digits and an `m` are a yymm or yyyymm month (#578; q 5: 2000.01 2000.01 1999.12 2020.01 2000.01 2000.01 2000.01 2000.02m)
+a:200001m
+b:20001m
+c:199912m
+d:2001m
+e:20000101m
+f:200001 200002m
+
+=== QE010 profile: general | a digit month q refuses (#578; q 5: '2000)
+a:2000m
+
+=== QE010 profile: general | month 13 (#578; q 5: '200013)
+a:200013m
+
+=== QE010 profile: general | year 0000 (#578; q 5: '00001)
+a:00001m
+
+=== QE010 profile: general | three digits (#578; q 5: '123)
+a:123m

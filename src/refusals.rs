@@ -1681,7 +1681,20 @@ fn numbers(
                 // `1d` and `2000010d` are no date at all. A `z` reads the
                 // same eight digits as that date's datetime (#713).
                 Some(format!("`{text}` is no date (yyyymmdd)"))
+            } else if re!(r"^\d+m$").is_match(text) && {
+                let month = |m: &str| matches!(m.parse::<u32>(), Ok(1..=12));
+                let n = text.len() - 1;
+                !(n == 4 && month(&text[2..4])
+                    || n >= 5 && &text[..4] != "0000" && month(&text[n - 2..n]))
+            } {
+                // Digits and an `m` are a month: q 5 reads four as yymm
+                // (`2001m` is 2020.01m) and five or more as a year from the
+                // first four and a month from the last two (`200001m`,
+                // `20001m` and `20000101m` are 2000.01m), and refuses
+                // `2000m`, `200013m`, `00001m` and `123m` (#578).
+                Some(format!("`{text}` is no month (yymm or yyyymm)"))
             } else if (re!(r"^\d+[adgklmoqrwyz]$").is_match(text)
+                && !re!(r"^\d+m$").is_match(text)
                 // Nine digits or more and a `z` are a datetime too: q 5
                 // reads `202401011z` as 1976.05.31T14:30:11.000 (#713).
                 && !re!(r"^\d{8}d$|^\d{8,}z$").is_match(text))
