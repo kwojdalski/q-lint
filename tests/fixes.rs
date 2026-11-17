@@ -425,6 +425,8 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         // The clock named is the clock fixed, on the line it is on (#206).
         ("QP003", "a:(.z.D;.z.P)", "a:(.z.d;.z.P)", false),
         ("QP003", "f:{x}\n  .z.P", "f:{x}\n  .z.p", false),
+        // Not `.z.z`, the datetime QP002 reports in the same profile (#519).
+        ("QP003", "a:.z.Z", "a:.z.p", false),
         (
             "QB006",
             "t:([]a:1 2;b:3 4);r:select from t where a=1 and b=3",

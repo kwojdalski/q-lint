@@ -997,7 +997,7 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         // The finding sits on the clock it names.
         "QP003" => {
             let m = re!(r"^\.z\.[PTNZD]\b").find(v.code.get(start..)?)?;
-            let clock = m.as_str().to_ascii_lowercase();
+            let clock = utc_clock(m.as_str());
             (
                 &source[start..start + m.end()],
                 clock.clone().into(),
@@ -1774,6 +1774,17 @@ pub(crate) fn apply_not_subtract(name: &str, literal: &str) -> String {
 fn scalar_literal(s: &str) -> bool {
     re!(r"^(?:-?\d[A-Za-z0-9.]*|`[A-Za-z0-9_.]*)$").is_match(s)
         && !re!(r"^[01]{2,}b$|^0x[0-9a-fA-F]{3,}$").is_match(s)
+}
+
+/// The UTC clock QP003 asks for in place of a local one: the same clock in
+/// lower case, but a timestamp for the local datetime `.z.Z`, since `.z.z`
+/// is the legacy datetime QP002 reports in the same profile (#519).
+fn utc_clock(local: &str) -> String {
+    if local == ".z.Z" {
+        ".z.p".into()
+    } else {
+        local.to_ascii_lowercase()
+    }
 }
 
 fn boundary(s: &str, at: usize) -> bool {
@@ -6565,14 +6576,7 @@ pub fn lint_selecting(
                 })
                 .filter(|m| line[m.range()] == *m.as_str())
             {
-                let utc: String = m
-                    .as_str()
-                    .chars()
-                    .map(|c| match c {
-                        'P' | 'T' | 'N' | 'Z' | 'D' => c.to_ascii_lowercase(),
-                        _ => c,
-                    })
-                    .collect();
+                let utc = utc_clock(m.as_str());
                 add(
                     offset + m.start(),
                     "QP003",
