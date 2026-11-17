@@ -255,3 +255,21 @@ q)count:42
 === clean profile: general | a q)\t line still times its expression (#585)
 q)a:1 2
 q)\t r:sum a
+
+=== clean profile: general | with no operand after it any pair is a composition, past iterators and :: too (q 5 parses each, f 2 is =[2]=[2], #646)
+f:2==
+g:(1&&)
+h:{2!=}
+k:2**/
+l:x+=;
+m:2->::
+n:f[2||\:]
+r:=/
+s:='
+t:=::
+
+=== QE004 profile: general | while an operand after the iterator, or on the indented next line, is refused (q 5: ' for each, #646)
+k:2==/ 1
+m:2==:: 1
+f:2==
+  3

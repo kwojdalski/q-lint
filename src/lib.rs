@@ -5220,7 +5220,7 @@ pub fn lint_selecting(
     // The longer spellings q 5 also refuses, each verified with parse:
     // `x**2`, `x=>y`, `x=<y`, `x<<2`, `x|>f`, `x->y`, `x:=1`, `x%%y`,
     // `x<=>y`, `x+++y`. Only before an operand - `a++` and `a**` with nothing
-    // after them parse, as projections, and `x>>2` parses too.
+    // after them parse, as compositions, and `x>>2` parses too.
     for m in re!(r"<=>|\*\*|=>|=<|<<|\|>|->|:=|%%|\+\+|==|!=|&&|\|\||[+\-*]=").find_iter(code) {
         // An `=` applied with brackets is its own token: `c:=[`a;`b]` assigns
         // an equality, and q 5 parses `x+=[1;1]`, `x==[1;1]` and `x:= [1;1]`
@@ -5243,13 +5243,14 @@ pub fn lint_selecting(
         if system_command(&source[code[..m.start()].rfind('\n').map_or(0, |p| p + 1)..]) {
             continue;
         }
-        let long = !matches!(m.as_str(), "==" | "!=" | "&&" | "||" | "+=" | "-=" | "*=");
-        if long
-            && code[m.end()..]
-                .trim_start_matches([' ', '\t'])
-                .starts_with(|c: char| ";)]}\r\n".contains(c))
-            || long && code[m.end()..].trim().is_empty()
-        {
+        // With no operand after it - past any iterators and a `::` - every
+        // pair parses, as a composition: q 5 reads `f:2==` as `(=[2])'(=)`,
+        // and `(1&&)`, `k:2**/`, `m:2->::` and `r:=/` likewise (#646).
+        let derived = re!(r"^(?:[/\\']:?)*(?:::)?")
+            .find(&code[m.end()..])
+            .map_or(0, |d| d.end());
+        let rest = &code[past_blanks(code, m.end() + derived)..];
+        if rest.is_empty() || rest.starts_with([';', ')', ']', '}', '\r', '\n']) {
             continue;
         }
         let (op, meant) = match m.as_str() {
