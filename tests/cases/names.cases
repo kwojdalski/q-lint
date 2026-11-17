@@ -1173,3 +1173,20 @@ r:$[true;`yes;`no]
 === clean profile: general | QF015: and so may value of a string (#750; q 5: 1)
 value "true:1b"
 r:$[true;1;0]
+
+=== clean profile: general | QF007: a comment line inside a typed signature (q 5: f[1;`x] is `x, #560)
+f:{[a;
+  / the symbol
+  b:`s] b}
+f[1;`x]
+
+=== clean profile: general | and inside a pattern signature (q 5: f[1;(2;3)] is 2, #560)
+f:{[a;
+  / c
+  (p;q)] p}
+f[1;(2;3)]
+
+=== clean profile: general | and a comment trailing a slot (#560)
+f:{[a; / c
+  b:`s] b}
+f[1;`x]

@@ -3148,11 +3148,24 @@ pub(crate) fn signature<'a>(code: &'a str, raw: &str, brace: usize) -> Signature
     // "Empty" has to be judged on `raw`, or a masked literal passes for one.
     // A string is blank in `code`; as a pattern it is a literal like any
     // other, so it is read as one: `{["ab"!(a;b)] a}` has keys (#431).
+    // A comment is blank in `code` too, and is no literal: from a ` /` that
+    // `code` blanks to the end of its line, it stays blank (#560).
     let literal = |a: usize, b: usize| -> String {
-        code.as_bytes()[a..b]
-            .iter()
-            .zip(&raw.as_bytes()[a..b])
-            .map(|(&c, &r)| if c == r { c as char } else { '0' })
+        let (c, r) = (code.as_bytes(), raw.as_bytes());
+        let mut comment = false;
+        (a..b)
+            .map(|i| {
+                if r[i] == b'\n' {
+                    comment = false;
+                } else if c[i] != r[i]
+                    && r[i] == b'/'
+                    && (i == 0 || r[i - 1].is_ascii_whitespace())
+                    && code[i..].split('\n').next().is_some_and(|l| l.trim().is_empty())
+                {
+                    comment = true;
+                }
+                if c[i] == r[i] || comment { c[i] as char } else { '0' }
+            })
             .collect()
     };
     // `_` binds no name but is still a slot: q 5 defines `{[a;_] a}` with two
