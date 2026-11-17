@@ -888,6 +888,17 @@ u:2.5
 rload[`:u]
 v:u 0
 
+=== QT022 | a dotted load is not q's load, so the name it reads stays an atom (#699; q 5: a 0 is 'type)
+.my.load:{x}
+a:2.5
+x:.my.load `:a
+r:a 0
+
+=== QT022 | nor is .Q.load (#699)
+a:2.5
+x:.Q.load `:a
+r:a 0
+
 === QT022 | an atom indexed after a word that is applied to it (#471; q 5: show a 0 and string a 0 are 'type)
 a:2.5
 show a 0

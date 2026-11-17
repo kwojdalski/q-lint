@@ -720,6 +720,12 @@ r2:asc 1
 r:sum[2;3]
 .q.sum:{[a;b] a*b}
 
+=== QA010 profile: general | nor in the lambda that redefines it, which q parsed before it ran (q 5: f "a" is 'rank; #698)
+f:{[s] .q.ssr:{[a;b;c;d] a}; ssr[s;"b";"c";"d"]}
+
+=== QA010 profile: general | nor on the line that redefines it (q 5: 'rank; #698)
+.q.ssr:{[a;b;c;d] a}; r:ssr["a";"b";"c";"d"]
+
 === QT014 QT017 profile: general | a temporal count or window (q 5: each 'type; #605)
 a:12:00 rotate 1 2 3
 b:12:00 mavg 1 2 3

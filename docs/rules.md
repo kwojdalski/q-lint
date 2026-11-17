@@ -42,7 +42,7 @@ that wants fewer findings narrows in its own configuration.
 
 | code | name | summary | on in |
 |---|---|---|---|
-| `QE001` | syntax-delimiter | Unbalanced delimiter or unterminated string | every profile |
+| `QE001` | syntax-delimiter | Unbalanced delimiter, more than 100 nested, or unterminated string | every profile |
 | `QE002` | invalid-string-escape | Invalid q string escape | every profile |
 | `QE003` | unterminated-block-comment | Block comment opened but never closed | `style` and above |
 | `QE004` | foreign-operator | Operator from another language; q has no ==, !=, &&, \|\|, **, =>, -> or := | every profile |

@@ -159,7 +159,9 @@ fn number(token: &str) -> Option<Key> {
 /// as q: `\l /data/2024.02.30/t` names a path (#198). Not `\t` or `\ts`,
 /// whose argument is an expression q runs.
 fn command_argument(source: &str, at: usize) -> bool {
-    let line = source[..at].rfind('\n').map_or(0, |p| p + 1);
+    // From the line table: searching back for the line's start was linear
+    // in a long line for each number on it (#711).
+    let (_, line) = crate::line_at(source, at);
     crate::system_command(&source[line..])
 }
 
@@ -487,11 +489,45 @@ fn missing_from(
     unsym: &str,
     out: &mut Vec<Finding>,
 ) {
+    let bytes = unsym.as_bytes();
     // No `\b` before the keyword: `1_select` is a drop of a select (#351).
-    for m in re!(r"(select|exec|update|delete)\b").find_iter(unsym) {
-        if !boundary(code, m.start()) {
-            continue;
+    let keywords: Vec<regex::Match> = re!(r"(select|exec|update|delete)\b")
+        .find_iter(unsym)
+        .filter(|m| boundary(code, m.start()))
+        .collect();
+    // The statement runs to a `;` at this depth, the bracket that closes
+    // around it, or an unindented next line - skipping a blank line, as q
+    // does: `r:select a`, an empty line, `  from t` is one query (#559). Each
+    // keyword's, read from the last keyword back: a scan that meets a later
+    // keyword at its own level ends where that one's does, and a chain of
+    // them was quadratic (#709).
+    let mut ends: std::collections::HashMap<usize, usize> = Default::default();
+    for m in keywords.iter().rev() {
+        let (mut at, mut depth) = (m.end(), 0i32);
+        while at < bytes.len() {
+            if depth == 0
+                && let Some(&end) = ends.get(&at)
+            {
+                at = end;
+                break;
+            }
+            match bytes[at] {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => {
+                    if depth == 0 {
+                        break;
+                    }
+                    depth -= 1;
+                }
+                b';' if depth == 0 => break,
+                b'\n' if depth == 0 && !continues_after(comments, source, at) => break,
+                _ => {}
+            }
+            at += 1;
         }
+        ends.insert(m.start(), at);
+    }
+    for m in keywords {
         // A bracket after select is its row limit or sort, `select[2]`, and
         // the query still wants its `from`: q 5 `parse "select[2] a"` is
         // 'from (#489). Nothing lets the word be a value: q 5 refuses
@@ -512,51 +548,50 @@ fn missing_from(
         }) {
             continue;
         }
-        // The statement runs to a `;` at this depth, the bracket that closes
-        // around it, or an unindented next line - skipping a blank line, as
-        // q does: `r:select a`, an empty line, `  from t` is one query (#559).
-        let bytes = unsym.as_bytes();
-        let (mut at, mut depth) = (m.end(), 0i32);
-        while at < bytes.len() {
-            match bytes[at] {
-                b'(' | b'[' | b'{' => depth += 1,
-                b')' | b']' | b'}' => {
-                    if depth == 0 {
-                        break;
-                    }
-                    depth -= 1;
-                }
-                b';' if depth == 0 => break,
-                b'\n' if depth == 0 && !continues_after(comments, source, at) => break,
-                _ => {}
-            }
-            at += 1;
-        }
+        let at = ends[&m.start()];
         // This phrase's own `from` and `where` only: not one inside a
         // bracket, nor one that belongs to a query nested after this one's
         // `from` - `... where b in exec c from u where` leaves the outer
-        // where its operand (#200).
-        let mut flat = unsym.as_bytes()[m.end()..at].to_vec();
-        let mut depth = 0i32;
-        for b in &mut flat {
-            let c = *b;
-            if c == b')' || c == b']' || c == b'}' {
-                depth -= 1;
+        // where its operand (#200). Built a window at a time, and only as
+        // far as that next query: the whole statement for each keyword was
+        // quadratic too (#709). A match counts once a byte follows it, so
+        // that its `\b` is read against the text.
+        let whole = &bytes[m.end()..at];
+        let (mut flat, mut depth) = (Vec::new(), 0i32);
+        let own = loop {
+            let target = whole.len().min((flat.len() * 2).max(256));
+            for &c in &whole[flat.len()..target] {
+                if c == b')' || c == b']' || c == b'}' {
+                    depth -= 1;
+                }
+                flat.push(if depth > 0 { b' ' } else { c });
+                if c == b'(' || c == b'[' || c == b'{' {
+                    depth += 1;
+                }
             }
-            if depth > 0 {
-                *b = b' ';
+            let text = std::str::from_utf8(&flat).unwrap_or_default();
+            let complete = flat.len() == whole.len();
+            let read = |end: usize| complete || end < text.len();
+            match re!(r"\bfrom\b").find(text).filter(|f| read(f.end())) {
+                None if complete => break text.len(),
+                None => continue,
+                Some(first) => {
+                    if let Some(n) = re!(r"\b(?:select|exec|update|delete)\b")
+                        .find_iter(&text[first.end()..])
+                        .find(|n| {
+                            read(first.end() + n.end())
+                                && boundary(code, m.end() + first.end() + n.start())
+                        })
+                    {
+                        break first.end() + n.start();
+                    }
+                    if complete {
+                        break text.len();
+                    }
+                }
             }
-            if c == b'(' || c == b'[' || c == b'{' {
-                depth += 1;
-            }
-        }
+        };
         let flat = String::from_utf8(flat).unwrap_or_default();
-        let own = re!(r"\bfrom\b").find(&flat).map_or(flat.len(), |first| {
-            re!(r"\b(?:select|exec|update|delete)\b")
-                .find_iter(&flat[first.end()..])
-                .find(|n| boundary(code, m.end() + first.end() + n.start()))
-                .map_or(flat.len(), |n| first.end() + n.start())
-        });
         let statement = &flat[..own];
         let from = re!(r"\bfrom\b").find_iter(statement).last();
         let detail = match from {
@@ -1583,10 +1618,11 @@ fn narrow(text: &str, last: &str) -> Option<(&'static str, u128)> {
 /// `9223372036854775808 0N` and `1E5 2000.01.01` - a date is no fraction.
 fn float_vector(run: &[regex::Match]) -> bool {
     let last = run[run.len() - 1].as_str();
-    (re!(r"^\d.*[ef]$").is_match(last) && !last.starts_with("0x"))
+    (re!(r"^\.?\d.*[ef]$").is_match(last) && !last.starts_with("0x"))
         || (!re!(r"[hij]$").is_match(last)
             && run.iter().any(|t| {
-                re!(r"^(?:\d+\.\d*(?:e[+-]?\d+)?|\d+e[+-]?\d+|0[nw])$").is_match(t.as_str())
+                re!(r"^(?:(?:\d+\.\d*|\.\d+)(?:e[+-]?\d+)?|\d+e[+-]?\d+|0[nw])$")
+                    .is_match(t.as_str())
             }))
 }
 
@@ -1600,6 +1636,38 @@ fn temporal_shape(item: &str) -> Option<&'static str> {
         Some("time")
     } else if re!(r"^\d{4}\.\d\d\.\d\d$").is_match(bare) {
         Some("date")
+    } else {
+        None
+    }
+}
+
+/// A temporal or exponent token with one lowercase suffix: its shape, and
+/// every suffix q 5 parses after some spelling of that shape. Measured with
+/// `parse` over every letter and many spellings of each (`12:00`, `1:00`,
+/// `12:00:00.5`, `0D`, `0D12:00:00.123456789`, ...): `2000.01.01j`,
+/// `12:00:00f`, `0D12h`, `2000.01.01D12t`, `2000.01.01T12u` and `1e5p` are
+/// refused with the token (#716). A letter q parses but runs as a name,
+/// `12:00s`, is left alone.
+fn temporal_suffixes(text: &str) -> Option<(&'static str, &'static str)> {
+    let bare = text.strip_suffix(|c: char| c.is_ascii_lowercase())?;
+    // The clock a timespan, timestamp or datetime may carry after its letter.
+    macro_rules! clock {
+        () => {
+            r"(?:\d+(?::\d+(?::\d+(?:\.\d*)?)?)?)?$"
+        };
+    }
+    if re!(r"^\d+:\d+(?::\d+(?:\.\d*)?)?$").is_match(bare) {
+        Some(("time", "acklnopqrstuvwxy"))
+    } else if re!(r"^\d{4}\.\d\d\.\d\d$").is_match(bare) {
+        Some(("date", "cdmnpsz"))
+    } else if re!(concat!(r"^\d+D", clock!())).is_match(bare) {
+        Some(("timespan", "acklnopqrswxy"))
+    } else if re!(concat!(r"^\d{4}\.\d\d\.\d\dD", clock!())).is_match(bare) {
+        Some(("timestamp", "acdklmnopqrswxyz"))
+    } else if re!(concat!(r"^\d{4}\.\d\d\.\d\dT", clock!())).is_match(bare) {
+        Some(("datetime", "acdklmnopqrswxyz"))
+    } else if re!(r"^\d+\.?\d*e[+-]?\d+$").is_match(bare) {
+        Some(("float with an exponent", "cefs"))
     } else {
         None
     }
@@ -1745,10 +1813,12 @@ fn numbers(
     // An exponent's sign is part of its number: `1.5e-3` is one float.
     // A token that starts inside a name - the `1` of `x1:1.5j` - is passed
     // over one character at a time, so the literal after it is still read.
+    // So does a fraction's leading point, where no name or symbol is
+    // against it: `.5j`, but not `x.5j` (#715).
     // A colon joins only a digit: before a name it is the I/O verb, and q 5
     // parses `x 0:y 1` as `(0:;`x;(`y;1))` (#665).
     let tokens: Vec<regex::Match> =
-        crate::boundary_captures(re!(r"\d(?:[eE][+-]\d|:\d|[0-9A-Za-z.])*"), unsym, code)
+        crate::boundary_captures(re!(r"\.?\d(?:[eE][+-]\d|:\d|[0-9A-Za-z.])*"), unsym, code)
             .into_iter()
             .map(|c| c.get(0).unwrap())
             .filter(|m| !command_argument(source, m.start()))
@@ -1783,7 +1853,12 @@ fn numbers(
         let string = last.ends_with('c') && !last.starts_with("0x");
         let mut reported = false;
         for (k, t) in run.iter().enumerate() {
-            let text = t.as_str();
+            // A fraction that starts at its point is judged as the same
+            // fraction with a 0 before it: q 5 reads `.5j` as `0.5j` and
+            // refuses it with '.5, as it does `.5 2j` (#715).
+            let point = t.as_str().starts_with('.');
+            let fraction = format!("0{}", t.as_str());
+            let text = if point { fraction.as_str() } else { t.as_str() };
             let in_string = string && k + 1 < run.len();
             // `0Ns` and `0Ws` are names to q, not literals: it parses them
             // as `0N` and `0W` and signals '0N or '0W when they are read.
@@ -1928,6 +2003,14 @@ fn numbers(
                 && !re!(r"^\d{4}\.\d{2}\.\d{2}$").is_match(text)
             {
                 Some(format!("`{text}` is not a number or a date (yyyy.mm.dd)"))
+            } else if k + 1 == run.len()
+                && let Some((shape, takes)) = temporal_suffixes(text)
+                && !takes.contains(&text[text.len() - 1..])
+            {
+                Some(format!(
+                    "`{text}`: a {shape} takes no `{}` suffix",
+                    &text[text.len() - 1..]
+                ))
             } else if re!(r"^\d{19,}j?$").is_match(text)
                 && !float_vector(run)
                 && text
@@ -2048,6 +2131,11 @@ fn numbers(
             if let Some(detail) = detail
                 && !reported
             {
+                let detail = if point {
+                    detail.replacen(&format!("`{text}"), &format!("`{}", t.as_str()), 1)
+                } else {
+                    detail
+                };
                 report(t.start(), format!("{detail}; q refuses to parse it"));
                 reported = true;
             }
