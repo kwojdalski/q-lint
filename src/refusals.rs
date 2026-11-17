@@ -1120,7 +1120,9 @@ fn juxtaposed_derived(
 ) {
     // Symbols filled with digits: a path such as `:hdb/2024 is not a name
     // and an iterator, and `` ` sv'x `` still has an operand on the left.
-    let view = re!(r"`[A-Za-z0-9_.:/]*")
+    // A symbol takes a `/` only from its first `:` on: q 5 parses `` `a:b/x ``
+    // as one symbol and refuses `` `a/x `` and `` `a`b/x `` with '/ (#733).
+    let view = re!(r"`[A-Za-z0-9_.]*(?::[A-Za-z0-9_.:/]*)?")
         .replace_all(comments, |m: &regex::Captures| "0".repeat(m[0].len()));
     let b = view.as_bytes();
     let c = code.as_bytes();

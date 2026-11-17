@@ -430,6 +430,16 @@ k:{a:count'x}
 m:{{x+y}/x}
 n:{sum/:x}
 
+=== QE009 profile: general | a symbol before the iterator, which takes no / unless it holds a : (q 5: each is '/) (#733)
+t:`a/x
+u:`a`b/x
+w:`a.b/x
+
+=== clean profile: general | a symbol from its first : on takes the / as part of itself (q 5: one symbol each) (#733)
+z:`:a/x
+y:`a:b/x
+q:`a`:b/x
+
 === QE009 profile: general | a bracket, parenthesis, literal or another iterator before it too (q 5: parse each is '/ or ', #430)
 r:g[x]'y
 r:(g x)'y
