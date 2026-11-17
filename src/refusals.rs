@@ -21,6 +21,7 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
     juxtaposed_derived(path, source, code, comments, &mut out);
     keyword_each(path, source, &unsym, &mut out);
     numbers(path, source, code, comments, &unsym, &mut out);
+    non_ascii(path, source, code, &mut out);
     out
 }
 
@@ -1617,6 +1618,37 @@ fn null_literal(text: &str, not_last: bool, negative: bool) -> Option<String> {
         ));
     }
     None
+}
+
+/// QE012. A character past ASCII where q reads code. q 5 refuses the line
+/// with 'char: a no-break space or a curly quote pasted from a document, a
+/// minus sign, a zero-width space, `` `é `` and `é:1`, and a byte-order mark
+/// anywhere but the start of the file, which is QE005's. In a string or a
+/// comment it is text, and loads. One finding a line, at the first.
+fn non_ascii(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
+    let mut line = usize::MAX;
+    for (at, ch) in code.char_indices() {
+        if ch.is_ascii() || at == 0 && ch == '\u{feff}' {
+            continue;
+        }
+        let start = code[..at].rfind('\n').map_or(0, |p| p + 1);
+        if start == line || crate::system_command(&source[start..]) {
+            continue;
+        }
+        line = start;
+        let mut finding = Finding::at(
+            path,
+            source,
+            at,
+            "QE012",
+            format!(
+                "U+{:04X} is no q outside a string or comment: q 5 refuses the line with 'char",
+                u32::from(ch)
+            ),
+        );
+        finding.end_column = finding.column.map(|col| col + ch.len_utf16());
+        out.push(finding);
+    }
 }
 
 /// QE010. A number q 5 will not parse. Each shape was refused by `parse`,

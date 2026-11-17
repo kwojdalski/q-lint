@@ -200,6 +200,18 @@ s:1=>"b"
 t:="a"
 u:2== "a"
 
+=== QE012 profile: general | a character past ASCII outside a string or comment (q 5: 'char for each, #657)
+r:1 2 +3
+s:“hi”
+a:`é
+r:−1
+r:2
+﻿r:3
+
+=== clean profile: general | in a string or a comment it is text (q 5 loads both)
+s:"été"
+r:1 / café
+
 === clean | operators inside a string are text
 s:"a==b"
 
