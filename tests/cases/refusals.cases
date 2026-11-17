@@ -1006,3 +1006,11 @@ f:{[]
 r:select a
 
 from t
+
+=== clean profile: general | QE009: each of a bracket-applied derived function, infix (q 5: 1 2 g/[0]'3 4 is 4 6, #562)
+g:{x+y+z}
+d:1 2 g/[0]'3 4
+
+=== QE009 profile: general | but juxtaposed it is refused (q 5: g/[0]'3 4 is ', #562)
+g:{x+y+z}
+e:g/[0]'3 4

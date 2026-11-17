@@ -1155,7 +1155,19 @@ fn derived_operand(
         match ch {
             // A signature is not an operand: `{[x]'e}` signals.
             b']' => match opener.get(&(q - 1)) {
-                Some(&o) if o == 0 || b[o - 1] != b'{' => q = o,
+                Some(&o) if o == 0 || b[o - 1] != b'{' => {
+                    q = o;
+                    // A derived function indexed with brackets is one operand
+                    // with its own: `g/[0]'y` is each of `g/[0]` (#562).
+                    let iterated = view[..q].trim_end_matches(['/', '\\', '\'', ':']).len();
+                    if iterated < q && iterated > 0 && !b[iterated - 1].is_ascii_whitespace() {
+                        q = iterated;
+                        if GLYPHS.contains(&b[q - 1]) {
+                            q -= 1;
+                            break;
+                        }
+                    }
+                }
                 _ => return None,
             },
             // A glyph indexed with brackets is a noun too: `@[;1;-1+]/`.
