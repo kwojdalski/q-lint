@@ -1102,3 +1102,18 @@ g:.[f;v]
 h:f . v
 i:.Q.s v
 j:.5
+
+=== QE010 profile: general | a number glued to a word of two letters or more (q 5: '2mod, '2in, '2eac, '1xbar, '2000.01.01in, '1.5like; #572)
+a:2mod 3
+b:1 2in 3
+c:til 2each
+d:1xbar 3
+e:2000.01.01in 3
+f:1.5like 3
+
+=== clean profile: general | nulls, hex, a month, the operator 0: and a lone exponent (#572)
+g:0Nd
+h:0xab
+i:2000.01m
+j:1e
+k:0:`:f.csv

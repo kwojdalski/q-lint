@@ -1641,6 +1641,17 @@ fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Find
                         "date"
                     }
                 ))
+            } else if re!(r"^\d(?:[0-9.:]*[0-9.])?(?:e[+-]?\d+)?[A-Za-z]{2,}$").is_match(text)
+                && !text.starts_with("0x")
+            {
+                // A word written against a number joins it, and no number
+                // ends in two letters (`0:str` is the operator `0:`): q 5 refuses `2mod 3`, `1 2in 3`,
+                // `til 2each`, `1.5like` and `2000.01.01in` with the token
+                // (#572).
+                Some(format!(
+                    "`{text}`: letters written against a number are part of it; put a blank \
+                     between the number and the word"
+                ))
             } else {
                 None
             };
