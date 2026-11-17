@@ -1191,3 +1191,12 @@ b:a ljf 2
 c:a ijf 2
 d:a ij 2
 e:a ujf 2
+
+=== QT005 QT020 profile: general | a parenthesised column value is the value it groups (q 5: 'rank, 'length, 'length; #620)
+a:([]a:(1);b:2)
+b:([]a:(1 2);b:1 2 3)
+c:([]a:1 2;b:(1;2;3))
+
+=== clean profile: general | parenthesised columns of agreeing lengths
+a:([]a:(1 2);b:3 4)
+b:([]a:(1;2);b:(x))

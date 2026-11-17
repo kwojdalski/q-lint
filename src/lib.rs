@@ -4973,7 +4973,23 @@ pub fn lint_selecting(
             Vector(Option<usize>),
         }
         let shape = |v: &str| -> Option<Shape> {
-            let v = v.trim();
+            let mut v = v.trim();
+            // Parentheses only group, and a top-level `;` makes a general
+            // list of that many items: `([]a:(1);b:2)` is 'rank and
+            // `([]a:(1 2);b:1 2 3)` 'length, as without them (q 5, #620).
+            for depth in 0.. {
+                if depth == MAX_NESTING
+                    || !(v.starts_with('(') && matching(v, 0, b'(', b')') == Some(v.len()))
+                    || v[1..v.len() - 1].trim().is_empty()
+                {
+                    break;
+                }
+                let items = slots(&v[1..v.len() - 1]);
+                if items.len() > 1 {
+                    return Some(Shape::Vector(Some(items.len())));
+                }
+                v = v[1..v.len() - 1].trim();
+            }
             // Vectors first. The general numeric-atom pattern would otherwise
             // take `10b` and `0x0102` as atoms, and q says they are not.
             // A tab after `enlist` as much as a space (q 5).
