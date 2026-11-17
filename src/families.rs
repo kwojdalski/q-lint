@@ -14,7 +14,7 @@ pub fn check(
     let mut out = vec![];
     query_injection(path, source, code, comments, &mut out);
     credentials(path, source, code, comments, &mut out);
-    simplifications(path, source, code, &mut out);
+    simplifications(path, source, code, comments, &mut out);
     leftovers(path, source, comments, foreign, &mut out);
     duplicate_columns(path, source, code, &mut out);
     select_by_duplicate(path, source, code, &mut out);
@@ -249,17 +249,18 @@ fn iterated(code: &str, at: usize) -> bool {
 /// it, and an application in brackets is not continued by an infix - q 5
 /// reads `asc[3 1 2],0` as `(asc[3 1 2]),0`, and a bare `asc` as the
 /// function itself (#648, #649, #650).
-fn applied_to_rest(source: &str, code: &str, at: usize) -> bool {
+fn applied_to_rest(source: &str, code: &str, comments: &str, at: usize) -> bool {
     // A string is blank in `code`, and an operand all the same.
     if source[crate::past_blanks(source, at)..].starts_with('"') {
         return true;
     }
     let next = crate::past_blanks(code, at);
-    if crate::operand_ends(code, at) || code[next..].starts_with("::") {
+    if crate::operand_ends(code, comments, at) || code[next..].starts_with("::") {
         return false;
     }
     !code[next..].starts_with('[')
-        || matching(code, next, b'[', b']').is_some_and(|end| crate::operand_ends(code, end))
+        || matching(code, next, b'[', b']')
+            .is_some_and(|end| crate::operand_ends(code, comments, end))
 }
 
 /// Whether `at` names a column of a table literal: the bracket around it,
@@ -289,7 +290,7 @@ fn in_table_literal(code: &str, at: usize) -> bool {
 /// were dropped because they do not: `first asc x` is not `min x` once there
 /// is a null (asc puts it first, min skips it), and `{x+y}/` is not `sum`,
 /// which skips nulls too.
-fn simplifications(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
+fn simplifications(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<Finding>) {
     let mut add = |at: usize, code_: &str, detail: String| {
         out.push(Finding::at(path, source, at, code_, detail));
     };
@@ -298,7 +299,7 @@ fn simplifications(path: &str, source: &str, code: &str, out: &mut Vec<Finding>)
         let whole = m.get(0).unwrap();
         if boundary(code, whole.start())
             && !iterated(code, whole.end())
-            && applied_to_rest(source, code, whole.end())
+            && applied_to_rest(source, code, comments, whole.end())
         {
             let other = if &m[1] == "asc" { "desc" } else { "asc" };
             add(
@@ -336,7 +337,7 @@ fn simplifications(path: &str, source: &str, code: &str, out: &mut Vec<Finding>)
     {
         if boundary(code, m.start())
             && !iterated(code, m.end())
-            && applied_to_rest(source, code, m.end())
+            && applied_to_rest(source, code, comments, m.end())
         {
             add(
                 m.start(),
