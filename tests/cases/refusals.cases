@@ -1153,3 +1153,11 @@ h:0xab
 i:2000.01m
 j:1e
 k:0:`:f.csv
+
+=== QE007 profile: general | a row-limited select with no from (q 5: parse "select[2] a" is 'from) (#489)
+t:([]a:1 2)
+r:select[2] a
+
+=== clean profile: general | a row-limited select with its from (#489)
+t:([]a:1 2)
+r:select[2;>a] a from t

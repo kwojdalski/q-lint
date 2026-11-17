@@ -441,9 +441,12 @@ fn missing_from(
             continue;
         }
         // The name assigned or passed rather than run: `select:1`, `.q.select`.
+        // But `select[n]` is q's own row limit, and still wants its `from`:
+        // q 5 `parse "select[2] a"` is 'from (#489).
         let after = unsym[m.end()..].trim_start_matches([' ', '\t']);
         if after.starts_with(':')
-            || after.starts_with(['[', ';', ')', ']', '}'])
+            || (after.starts_with('[') && m.as_str() != "select")
+            || after.starts_with([';', ')', ']', '}'])
             || after.is_empty()
         {
             continue;
