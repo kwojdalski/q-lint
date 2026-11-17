@@ -56,6 +56,17 @@ pub fn build(files: &[(PathBuf, String)], symbols: bool, cwd: &Path) -> BTreeMap
             position.entry(real).or_insert(i);
         }
     }
+    // One file under two names is one file: neither name depends on the
+    // other, nor makes a name the file defines ambiguous (#527).
+    let identity: Vec<usize> = files
+        .iter()
+        .map(|(p, _)| {
+            std::fs::canonicalize(p)
+                .ok()
+                .and_then(|real| position.get(&real).copied())
+                .unwrap_or(position[p])
+        })
+        .collect();
     let target = |i: usize, load: &str| {
         load_targets(&files[i].0, load, cwd).iter().find_map(|p| {
             position
@@ -120,14 +131,17 @@ pub fn build(files: &[(PathBuf, String)], symbols: bool, cwd: &Path) -> BTreeMap
             }) else {
                 continue;
             };
-            let others: Vec<_> = defs.iter().filter(|&&d| d != i).collect();
+            let others: Vec<_> = defs
+                .iter()
+                .filter(|&&d| identity[d] != identity[i])
+                .collect();
             if others.is_empty() {
                 continue;
             }
             for &&d in &others {
                 node.dependencies.insert(files[d].0.clone());
             }
-            if defs.len() > 1 {
+            if defs.iter().any(|&d| identity[d] != identity[defs[0]]) {
                 node.ambiguous.insert(
                     name.to_string(),
                     defs.iter().map(|&d| files[d].0.clone()).collect(),
@@ -136,7 +150,7 @@ pub fn build(files: &[(PathBuf, String)], symbols: bool, cwd: &Path) -> BTreeMap
         }
         for (load, _) in &reads[i].loads {
             if let Some(d) = target(i, load)
-                && d != i
+                && identity[d] != identity[i]
             {
                 node.dependencies.insert(files[d].0.clone());
             }

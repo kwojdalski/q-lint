@@ -489,9 +489,15 @@ fn run(args: Args) -> Result<u8, String> {
     }
     // The files linted together are each other's workspace: a name one
     // defines is not undefined in another. Indexing reads them; nothing runs.
+    // One file under two names - a symlink beside its target - is one file's
+    // definitions, not two files each defining what the other does, which
+    // would leave each name's own `a` "defined elsewhere" (#527).
     let mut workspace = Workspace::default();
-    for (_, source) in &sources {
-        workspace.add(&index(source));
+    let mut indexed = std::collections::HashSet::new();
+    for (name, source) in &sources {
+        if indexed.insert(fs::canonicalize(name).unwrap_or_else(|_| name.into())) {
+            workspace.add(&index(source));
+        }
     }
     if args.fix || args.diff {
         let mut fixed = 0;
