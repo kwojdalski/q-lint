@@ -394,6 +394,24 @@ fn a_set_in_a_namespaced_lambda_defines_the_root_name_too() {
 }
 
 #[test]
+fn a_later_system_d_on_the_line_switches_from_where_it_ends() {
+    use q_lint_rs::{Workspace, index, lint_in};
+    // q 5: `system "d .ns";system "d .";lim:1` leaves the root `lim`, and
+    // `lim:1;system "d .ns";k:2` the root `lim` and `.ns.k` (#767).
+    let a = "system \"d .ns\";system \"d .\";lim:1\nm:1;system \"d .ns\";k:2\n";
+    let b = "r:lim\ns:m\nt:k\n";
+    let mut ws = Workspace::default();
+    ws.add(&index(a));
+    ws.add(&index(b));
+    let found: Vec<_> = lint_in(b, "b.q", Profile::Style, &ws)
+        .into_iter()
+        .filter(|f| f.code == "QF018")
+        .map(|f| f.line)
+        .collect();
+    assert_eq!(found, [3]);
+}
+
+#[test]
 fn a_foreign_keyword_another_workspace_file_defines_is_a_name() {
     use q_lint_rs::{Workspace, index, lint, lint_in};
     // q 5, with lib.q's definitions loaded: `(f 1b;f 0b)` is 10b (#372).

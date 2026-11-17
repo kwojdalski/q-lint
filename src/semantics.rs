@@ -671,6 +671,25 @@ fn scopes(code: &str, raw: &str) -> (Vec<Scope>, Vec<(usize, String)>) {
             namespace = ns;
         }
         namespaces.push((offset, namespace.clone()));
+        // A later statement on the line switches too, from where it ends:
+        // q 5 ends `system "d .ns";system "d .";lim:1` at the root, `lim`
+        // and all (#767).
+        if stack.is_empty() {
+            let raw_line = &raw[offset..offset + line.len()];
+            for m in re!(r#";[ \t]*system[ \t]*"d[ \t]+(\.[\w.]*)[ \t]*""#).captures_iter(raw_line)
+            {
+                let at = m.get(0).unwrap().start();
+                let depth = line[..at].bytes().fold(0i32, |d, b| match b {
+                    b'(' | b'[' | b'{' => d + 1,
+                    b')' | b']' | b'}' => d - 1,
+                    _ => d,
+                });
+                if depth == 0 && line[at..].starts_with(';') {
+                    namespace = m[1].trim_end_matches('.').into();
+                    namespaces.push((offset + m.get(0).unwrap().end(), namespace.clone()));
+                }
+            }
+        }
         // `\t` and `\ts` run their argument as q, lambdas and all (#312).
         if crate::system_command(&raw[offset..]) {
             offset += line.len();
