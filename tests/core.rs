@@ -721,6 +721,18 @@ fn a_vector_comparison_names_the_row_count_that_runs() {
     assert!(messages[1].contains("`=` against a 3-item vector literal"));
 }
 #[test]
+fn an_indexed_integer_names_the_error_of_a_closed_handle() {
+    // #507: q 5 `a:5; a[0]` is 'Cannot write to handle 5, not 'domain.
+    let details: Vec<_> = lint("a:5\nr:a[0]\n", "t.q", Profile::General)
+        .into_iter()
+        .filter(|f| f.code == "QT022")
+        .map(|f| f.detail)
+        .collect();
+    assert_eq!(details.len(), 1);
+    assert!(details[0].contains("'Cannot write to handle"));
+    assert!(!details[0].contains("'domain"));
+}
+#[test]
 fn deeply_nested_lambdas_lint_in_bounded_time() {
     // #185: every rule that matched braces from each `{` was quadratic in
     // nesting depth. Generated or hostile input can nest thousands deep, and

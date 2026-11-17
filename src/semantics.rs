@@ -3450,8 +3450,9 @@ fn named_values(
         }
         // An integer is applied as a file handle. Given a string it may well
         // write - `out:1; out["hi\n"]` prints - but given a number or nothing
-        // it cannot: 'type on an open handle, 'domain on one that is not.
-        // Verified in q 5. A name or anything else might be a string.
+        // it cannot: 'type on an open handle, and on one that is not q 5
+        // tries the write and fails - `a:5; a[0]` is 'Cannot write to handle
+        // 5. OS reports: Bad file descriptor (#507). A name or anything else might be a string.
         if handles.contains(key(name.as_str(), name.start()).as_str()) {
             // `a@0` and `a . enlist 0` apply it the same way (q 5).
             let after = &raw[crate::past_blanks(code, name.end())..];
@@ -3471,7 +3472,8 @@ fn named_values(
                     "QT022",
                     format!(
                         "`{}` holds an integer, which q applies as a file handle; a handle \
-                         takes a string, so this is 'type - or 'domain if the handle is not open",
+                         takes a string, so this is 'type - or, if the handle is not open, \
+                         'Cannot write to handle",
                         name.as_str()
                     ),
                 ));

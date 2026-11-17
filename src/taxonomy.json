@@ -703,7 +703,7 @@
     "code": "QT022",
     "name": "index-into-atom",
     "category": "types-and-shapes",
-    "summary": "A name bound to an atom is indexed; an atom has no items, and q raises 'type",
+    "summary": "A name bound to an atom is indexed; an atom has no items, and q raises 'type, or for an integer tries to write to it as a handle",
     "scope": "builtin"
   },
   {

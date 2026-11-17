@@ -121,7 +121,7 @@ that wants fewer findings narrows in its own configuration.
 | `QT019` | literal-within-bounds | within bounds are not a two-item list | every profile |
 | `QT020` | table-column-length | Table literal columns of different lengths | every profile |
 | `QT021` | empty-search-pattern | ss or ssr with an empty pattern is a length error | every profile |
-| `QT022` | index-into-atom | A name bound to an atom is indexed; an atom has no items, and q raises 'type | every profile |
+| `QT022` | index-into-atom | A name bound to an atom is indexed; an atom has no items, and q raises 'type, or for an integer tries to write to it as a handle | every profile |
 | `QT023` | char-integer-arithmetic | Integer arithmetic on a char, which q 5 refuses with 'type | every profile |
 | `QT024` | attribute-literal-fail | An s#, u# or p# attribute applied to a literal it does not describe | every profile |
 | `QT025` | signal-non-string | A number or a char atom signalled, which q refuses with 'stype | every profile |
