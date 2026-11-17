@@ -121,6 +121,38 @@ a:1
 f:{x+1}
 r:f 2
 
+=== QP006 profile: uqf | a call straight after select (#780; q 5: select g s from t is g[s])
+g:{x+1}
+t:([]s:1 2;k:`a`b)
+r:select g s from t
+
+=== QP006 profile: uqf | and after exec (#780; q 5: exec g s from t is 2 3)
+g:{x+1}
+t:([]s:1 2;k:`a`b)
+r:exec g s from t
+
+=== QP006 profile: uqf | and as the right operand of an infix keyword (#780; q 5: where s in g 1 filters on g[1])
+g:{x+1}
+t:([]s:1 2;k:`a`b)
+r:select from t where s in g 1
+
+=== QP006 profile: uqf | and as the table after from, which keeps its finding with no fix (#780; q 5: select from g t applies g)
+g:{x}
+t:([]s:1 2)
+r:select from g t
+
+=== clean profile: uqf | a column named like the function, before from, by or where, is not a call (#780)
+g:{x+1}
+t:([]s:1 2;g:3 4)
+a:select g from t
+b:select s by g from t
+c:select from t where g in 1
+
+=== clean profile: uqf | outside a query `where` is a unary, whose argument this rule leaves alone as it does `sum f x` (#780)
+g:{x>1}
+b:1 2 3
+r:b where g b
+
 === QP006 profile: uqf | an hsym path argument whose `/` is part of the symbol, not over (#388; q 5: f `:db/t is f[`:db/t])
 f:{count x}
 n:f `:db/t

@@ -32,7 +32,11 @@ def test_stdin_and_taxonomy():
     result = run("-", "--format", "json", source="f:{[desc] desc}")
     assert result.returncode == 1
     assert json.loads(result.stdout)[0]["code"] == "QF001"
-    assert run("--explain", "QF001").returncode == 0
+    explained = run("--explain", "QF001")
+    assert explained.returncode == 0
+    # The profile the rule runs under, not the taxonomy's `builtin` (#791).
+    assert explained.stdout.rstrip().endswith("(every profile)")
+    assert run("--explain", "QS001").stdout.rstrip().endswith("(styleq and above)")
     assert run("--explain", "UNKNOWN").returncode == 2
 
 
