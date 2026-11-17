@@ -5314,9 +5314,10 @@ pub fn lint_selecting(
     // type, which is QF013's business, not this rule's. `type` has to be the
     // whole word: `typeTerminal=`count` is a name (#296). Applied by
     // juxtaposition, `type x=`long` is `type (x=`long)`, right to left: only
-    // `type[x]=` and `(type x)=` compare the short (q 5: -1h, #429).
+    // `type[x]=` and `(type x)=` compare the short (q 5: -1h, #429). `in`
+    // compares it the same way: q 5 `(type 1) in `long`int` is 'type (#645).
     for m in re!(
-        r"\btype\s*\[[^\]]*\]\s*(?:=|<>)\s*`[a-z][A-Za-z0-9_.]*(?:`[A-Za-z0-9_.]*)*|\(\s*type\b[^()]*\)\s*(?:=|<>)\s*`[a-z][A-Za-z0-9_.]*(?:`[A-Za-z0-9_.]*)*|`[a-z]+\s*(?:=|<>)\s*type\b"
+        r"\btype\s*\[[^\]]*\]\s*(?:=|<>|in\b)\s*`[a-z][A-Za-z0-9_.]*(?:`[A-Za-z0-9_.]*)*|\(\s*type\b[^()]*\)\s*(?:=|<>|in\b)\s*`[a-z][A-Za-z0-9_.]*(?:`[A-Za-z0-9_.]*)*|`[a-z]+\s*(?:=|<>)\s*type\b"
     )
     .find_iter(code)
     {

@@ -398,6 +398,15 @@ f:{[x] -1 "done";}
 === QB013 | type compared to a symbol
 if[type[x]=`long;1]
 
+=== QB013 profile: general | and tested for membership in symbols (q 5: (type 1) in `long`int and type[1] in `long are 'type) (#645)
+x:1
+a:(type x) in `long`int
+b:type[x] in `long
+
+=== clean profile: general | while membership in shorts is the test meant (#645)
+x:1
+a:(type x) in 7 6h
+
 === QB013 | symbol on the left
 if[`long=type x;1]
 
