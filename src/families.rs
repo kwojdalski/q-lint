@@ -259,7 +259,9 @@ fn simplifications(path: &str, source: &str, code: &str, out: &mut Vec<Finding>)
         }
     }
     // QR002: an identity lambda under each gives back what it was given.
-    for m in re!(r"\{\s*x\s*\}\s*(?:each\b|'(?:[^:]|$))").find_iter(code) {
+    // The `each` has to be in the same statement: `id:{x}` and then a
+    // column-0 `'[neg;abs]` is no each at all (#727).
+    for m in re!(concat!(r"\{\s*x\s*\}", blank!(), r"*(?:each\b|'(?:[^:]|$))")).find_iter(code) {
         add(
             m.start(),
             "QR002",
@@ -291,7 +293,11 @@ fn simplifications(path: &str, source: &str, code: &str, out: &mut Vec<Finding>)
     // digit is a negative literal, so that is x indexed at -1, and q 5 gives
     // `0N 0N` for `{x -1} each (1 2;3 4)` where `(1 2;3 4)-1` is `(0 1;2 3)`.
     for m in re!(
-        r"\{\s*(?:x\s*[-+*%]\s*-?\d[A-Za-z0-9.]*|-?\d[A-Za-z0-9.]*\s*[-+*%]\s*x)\s*\}\s*(?:each\b|'(?:[^:]|$))"
+        concat!(
+            r"\{\s*(?:x\s*[-+*%]\s*-?\d[A-Za-z0-9.]*|-?\d[A-Za-z0-9.]*\s*[-+*%]\s*x)\s*\}",
+            blank!(),
+            r"*(?:each\b|'(?:[^:]|$))"
+        )
     )
     .find_iter(code)
     {
