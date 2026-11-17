@@ -1620,6 +1620,9 @@ fn neither_a_watched_change_nor_a_close_indexes_what_the_settings_leave_out() {
     for options in [
         json!({"workspaceIndex": {"enable": false}}),
         json!({"workspaceIndex": {"exclude": ["vendor/**"]}}),
+        // A pattern naming the directory itself, which the scan never
+        // enters; a watched change read its file back in (#795).
+        json!({"workspaceIndex": {"exclude": ["vendor"]}}),
     ] {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("vendor")).unwrap();

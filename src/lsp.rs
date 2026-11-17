@@ -185,12 +185,13 @@ impl Index {
             && is_q_path(&path.to_string_lossy())
             && self.roots.iter().any(|root| {
                 let root = std::path::Path::new(root);
+                // The file and each directory above it within the folder,
+                // as the scan asks about each before entering it (#795).
                 path.starts_with(root)
                     && !path
                         .ancestors()
                         .take_while(|p| *p != root)
-                        .any(|p| skipped(policy, p))
-                    && !self.excluded(root, path)
+                        .any(|p| skipped(policy, p) || self.excluded(root, p))
             })
     }
 
