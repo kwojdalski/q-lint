@@ -21,6 +21,7 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
     juxtaposed_derived(path, source, code, comments, &mut out);
     keyword_each(path, source, &unsym, &mut out);
     numbers(path, source, code, comments, &unsym, &mut out);
+    number_colon(path, source, code, &unsym, &mut out);
     non_ascii(path, source, code, &mut out);
     out
 }
@@ -1321,8 +1322,7 @@ fn juxtaposed_derived(
             if operand
                 && m.start() > line_start
                 && !crate::system_command(&source[line_start..])
-                && (b"([{;".contains(&c[m.start() - 1])
-                    || after_signature(code, source, m.start()))
+                && (b"([{;".contains(&c[m.start() - 1]) || after_signature(code, source, m.start()))
                 && !(m.as_str().starts_with('\'') && !m.as_str().starts_with("':"))
             {
                 let iter = &view[iterator..m.end()];
@@ -1618,6 +1618,52 @@ fn null_literal(text: &str, not_last: bool, negative: bool) -> Option<String> {
         ));
     }
     None
+}
+
+/// QE010 too. A number followed straight by `:` that is no time: q 5 reads
+/// `1.5:0` as one token and refuses it, whatever is on its left -
+/// `$[c;1.5:0]`, `h 1.5:0`, `2000.01.01:x`, `1j:2`, `0N:x` and `-1:x` are
+/// each refused, naming the token (#660). A bare integer is left to QE006
+/// and to `0:`, `1:` and `2:`, the file verbs; so is a time, negative ones
+/// included (`-12:34`), and `1e:2`, which q 5 parses.
+fn number_colon(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Finding>) {
+    let b = source.as_bytes();
+    let starts = |c: &regex::Captures| {
+        let at = c.get(0).unwrap().start();
+        // A `-` is a sign only where no operand ends before it: `x-1:y` is
+        // `x-(1:y)`, and `x -1:y` the refused `-1:`.
+        boundary(code, at)
+            && (c[1].is_empty()
+                || at == 0
+                || !(b[at - 1].is_ascii_alphanumeric() || b")]}\"`._".contains(&b[at - 1])))
+    };
+    for c in crate::captures_where(re!(r"(-?)(\.?\d[0-9A-Za-z.]*):"), unsym, starts) {
+        let whole = c.get(0).unwrap();
+        let number = &c[2];
+        let before = &source[..whole.start()];
+        if command_argument(source, whole.start())
+            || (number.bytes().all(|d| d.is_ascii_digit())
+                && (c[1].is_empty()
+                    || unsym[whole.end()..].starts_with(|d: char| d.is_ascii_digit())))
+            || number.ends_with(['e', 'E'])
+            || re!(r"[DT]\d+$").is_match(number)
+            || (before.ends_with(':')
+                && before[..before.len() - 1].ends_with(|d: char| d.is_ascii_digit()))
+        {
+            continue;
+        }
+        let text = &whole.as_str()[..whole.len() - 1];
+        out.push(Finding::at(
+            path,
+            source,
+            whole.start(),
+            "QE010",
+            format!(
+                "`{text}` followed by `:` is no number: q 5 reads `{text}:` as one token and \
+                 refuses it"
+            ),
+        ));
+    }
 }
 
 /// QE012. A character past ASCII where q reads code. q 5 refuses the line

@@ -544,6 +544,23 @@ f:2026.09.17D10:00:01.500 0Np
 g:12:00 1u
 h:0D00:01 5n
 
+=== QA006 QE010 profile: general | a number that is no integer, followed by : - a typo for $[c;a;b] (q 5: '1.5:0, '2000.01.01:x, '1j:2, '0N:x and '-1:x, #660)
+r:$[1b;1.5:0]
+s:2000.01.01:x
+1j:2
+t:h 0N:x
+u:-1:x
+v:x -1:y
+
+=== clean profile: general | a time, the file verbs, minus before a verb, and 1e:2 (q 5 parses each, #660)
+r:-12:34
+s:-00:00:01
+t:h 2:x
+u:1.5 2:x
+v:x-1:y
+w:1e:2
+d:0D10:30
+
 === QE010 profile: general | an integer type with a fraction (q 5: parse "1.5j" is '1.5)
 a:1.5j
 
