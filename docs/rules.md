@@ -127,7 +127,7 @@ that wants fewer findings narrows in its own configuration.
 | `QT025` | signal-non-string | A number or a char atom signalled, which q refuses with 'stype | every profile |
 | `QT026` | join-unkeyed-right | lj, ij or pj with a right table that has no key, which q refuses with 'type | every profile |
 | `QT027` | insert-value-count | insert or upsert given a different number of values than the table has columns | every profile |
-| `QT028` | where-assignment | An assignment in a where phrase, where a comparison was meant; q raises 'type | every profile |
+| `QT028` | where-assignment | An assignment of a non-boolean literal in a where phrase, where a comparison was meant; q raises 'type | every profile |
 | `QT029` | hopen-literal | hopen given a float, a negative number, or a symbol without its leading colon | every profile |
 | `QT030` | cast-unknown-type | A cast to a type character q does not have | every profile |
 | `QT031` | uppercase-cast-literal | An uppercase cast parses a string; given a number or a symbol it is 'type, and "C"$ refuses only a vector | every profile |

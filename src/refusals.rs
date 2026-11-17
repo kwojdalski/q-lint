@@ -14,7 +14,7 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
     temporals(path, source, comments, &unsym, &mut out);
     missing_from(path, source, code, comments, &unsym, &mut out);
     signals(path, source, code, comments, &mut out);
-    where_assignment(path, source, code, &mut out);
+    where_assignment(path, source, code, comments, &mut out);
     hopen_literal(path, source, code, comments, &mut out);
     cast_character(path, source, code, comments, &mut out);
     monadic_glyph(path, source, code, comments, &mut out);
@@ -597,8 +597,10 @@ fn signals(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<F
 
 /// QT028. An assignment in a where phrase: `select from t where a:1` is
 /// 'type. The phrase wants booleans and the `:` was meant to be `=`. Only at
-/// the phrase's top level - a lambda or a bracket inside it is its own.
-fn where_assignment(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
+/// the phrase's top level - a lambda or a bracket inside it is its own -
+/// and only of a value that is not boolean: q filters on the value, so
+/// `where a:a>1` runs (#595).
+fn where_assignment(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<Finding>) {
     for w in re!(r"\bwhere\b").find_iter(code) {
         // The keyword, not a name ending in it: `registry.delete.where:{...}`.
         if !boundary(code, w.start()) {
@@ -680,6 +682,7 @@ fn where_assignment(path: &str, source: &str, code: &str, out: &mut Vec<Finding>
                         || !code[name_start..].starts_with(|c: char| c.is_ascii_alphabetic())
                         || code[..name_start].ends_with(['.', '`'])
                         || !whole_sub_phrase(code, sub, name_start, at)
+                        || !refused_where_value(code, comments, at + 1)
                     {
                         at += 1;
                         continue;
@@ -699,6 +702,28 @@ fn where_assignment(path: &str, source: &str, code: &str, out: &mut Vec<Finding>
             at += 1;
         }
     }
+}
+
+/// Whether the value assigned from `at` is a literal q refuses as a where
+/// sub-phrase. q 5 evaluates the assignment and filters on its value, so
+/// `where a:a>1`, `where a:1b` and `where a:b` (a boolean column) run; only
+/// a value that is visibly not boolean is 'type: `where a:1`, `` a:`x ``,
+/// `a:"x"`, `a:1 0`, `a:2000.01.01`. Anything else is left alone.
+fn refused_where_value(code: &str, comments: &str, at: usize) -> bool {
+    let Some(m) = re!(
+        r#"^[ \t]*(?:(?:`[A-Za-z0-9_.:]*)+|"(?:[^"\\\n]|\\.)*"|(-?\d[A-Za-z0-9.:]*(?:[ \t]+-?\d[A-Za-z0-9.:]*)*))"#
+    )
+    .captures(&comments[at..]) else {
+        return false;
+    };
+    if m.get(1).is_some_and(|n| n.as_str().ends_with('b')) {
+        return false;
+    }
+    let mut end = at + m.get(0).unwrap().end();
+    while code[end..].starts_with([' ', '\t', ')']) {
+        end += 1;
+    }
+    operand_ends(code, end)
 }
 
 /// Whether the assignment to the name at `name`, its `:` at `colon`, is the

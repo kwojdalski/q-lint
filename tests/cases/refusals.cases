@@ -948,6 +948,20 @@ r:select from t where a in b:1 2
 s:select from t where a in (b:1 2)
 u:select from t where (b:1)>0
 
+=== clean profile: general | an assignment of a boolean value runs: q filters on the value (q 5: one row, two rows, one row; #595)
+t:([]a:1 2;b:01b)
+r:select from t where a:a>1
+s:select from t where a:1b
+u:select from t where a:b
+
+=== QT028 profile: general | an assignment of a literal that is not boolean (q 5: each is 'type)
+t:([]a:1 2;s:`x`y)
+r:select from t where s:`x
+s:select from t where a:"x"
+u:select from t where a:1 0
+v:select from t where a:2000.01.01
+w:select from t where a:-1
+
 === clean profile: general | a where before from is the function, in a column
 r:exec where m:a>0 from t
 
