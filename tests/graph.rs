@@ -779,3 +779,13 @@ fn a_loaded_directory_leads_to_the_scripts_in_it() {
     );
     assert_eq!(deps(&g, "main.q"), ["init.q"]);
 }
+
+#[test]
+fn loading_a_table_by_its_path_defines_it() {
+    // q 5: `\l data/trades` sets `trades`, which use.q reads (#534).
+    let g = graph(
+        &[("init.q", "\\l data/trades\n"), ("use.q", "r:trades\n")],
+        false,
+    );
+    assert_eq!(deps(&g, "use.q"), ["init.q"]);
+}

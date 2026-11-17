@@ -942,6 +942,22 @@ fn global_writes(
             .or_default()
             .push(whole.end());
     }
+    // So does `\l` of a table's directory or file: q 5's `.Q.lo` sets the
+    // last part of the path, and `\l data/trades` defines `trades` (#534).
+    // Not a script, `\l x.q`, whose name defines nothing.
+    let mut offset = 0;
+    for line in code.split_inclusive('\n') {
+        if let Some(m) =
+            re!(r"^\\l[ \t]+(?:\S*/)?([A-Za-z][A-Za-z0-9_]*)/?[ \t\r]*\n?$").captures(line)
+        {
+            let end = offset + m.get(1).unwrap().end();
+            globals
+                .entry(qualify(&m[1], ns_at(offset)))
+                .or_default()
+                .push(end);
+        }
+        offset += line.len();
+    }
     // Each of a symbol list, `` `p`q set'1 2 ``, parenthesised too (#464).
     for (whole, names) in each_set_targets(code) {
         for name in names {

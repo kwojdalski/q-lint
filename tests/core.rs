@@ -521,6 +521,15 @@ fn an_enclosing_local_is_not_excused_by_another_files_global() {
 }
 
 #[test]
+fn loading_a_table_by_its_path_defines_it() {
+    // q 5: `\l data/trades` of a splayed table sets `trades` (#534). A
+    // script's name defines nothing.
+    let index = q_lint_rs::index("\\l data/trades\n\\l lib/util.q\n\\d .a\n\\l px\n");
+    assert!(index.defined.contains("trades") && index.defined.contains(".a.px"));
+    assert!(!index.defined.contains("util") && !index.defined.contains("q"));
+}
+
+#[test]
 fn table_columns_and_qsql_assignments_define_no_global() {
     let index =
         q_lint_rs::index("t:([k:`a`b]handle:1 2)\nu:update c:1 from t\nclust.kmeans.update:{x}\n");
