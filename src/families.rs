@@ -850,9 +850,13 @@ fn unreachable(path: &str, source: &str, code: &str, comments: &str, out: &mut V
         }
         statements.push((start, body.len()));
         // `'[f;g]` - or `' [f;g]` - is a composition, not a signal: q 5
-        // `{'[neg;abs]; 2}[]` is 2.
+        // `{'[neg;abs]; 2}[]` is 2. An iterator glued on makes a derived
+        // function too: `{:/[1;2]; 4}[]` and `{'' [neg]; 4}[]` are 4 (#719).
         let exits = |text: &str| {
             let t = text.trim_start();
+            if t.starts_with([':', '\'']) && t[1..].starts_with(['/', '\\', '\'']) {
+                return false;
+            }
             (t.starts_with(':') && !t.starts_with("::"))
                 || (t.starts_with('\'')
                     && !t.starts_with("':")

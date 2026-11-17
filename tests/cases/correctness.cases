@@ -594,6 +594,13 @@ f:{'`e;x}
 f:{'[neg;abs]; 2}
 g:{' [neg;abs] 3; 2}
 
+=== clean | an iterator on : or ' derives a function: no return, no signal (#719)
+f1:{:/[1;2]; 4}
+f2:{'/[1;2]; 4}
+f3:{:'[1 2;3 4]; 4}
+f4:{'' [neg]; 4}
+f5:{:\[1;2]; 4}
+
 === QB020 | a signal of a bracketed name is still one (q 5: 'e)
 e:`e
 f:{'(e); 2}
