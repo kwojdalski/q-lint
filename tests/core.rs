@@ -310,6 +310,15 @@ fn a_name_in_a_query_phrase_is_not_coloured() {
 }
 
 #[test]
+fn a_system_commands_argument_is_not_coloured() {
+    // `\l f/a.q` loads a file under the directory `f` (#553); `\t` and
+    // `\ts` run theirs as q.
+    assert!(functions("f:{x}\n\\l f/a.q\n").is_empty());
+    assert!(functions("f:{x}\nq)\\l f/a.q\n").is_empty());
+    assert_eq!(functions("f:{x}\n\\t f 1\n"), ["f"]);
+}
+
+#[test]
 fn a_projection_is_coloured_as_a_function() {
     // q 5: `p:{[a;b] a+b}[1;]` is type 104h, and `p 2` is 3 (#367).
     assert_eq!(functions("p:{[a;b] a+b}[1;]\nr:p 2\n"), ["p"]);

@@ -808,6 +808,12 @@ pub fn tokens(code: &str, raw: &str, ws: &crate::Workspace) -> Vec<(usize, usize
         if !boundary(code, m.start()) || outside_queries.as_bytes()[m.start()] == b' ' {
             continue;
         }
+        // A system command's argument is no q: `\l f/a.q` names a file,
+        // whatever lambda `f` is (#553).
+        let line = code[..m.start()].rfind('\n').map_or(0, |p| p + 1);
+        if crate::system_command(&raw[line..]) {
+            continue;
+        }
         // The assignment itself is the grammar's to colour, as a definition.
         if code[m.end()..]
             .trim_start_matches([' ', '\t'])
