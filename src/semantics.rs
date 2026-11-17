@@ -1783,10 +1783,10 @@ pub fn check(
     // `1 2 3+'4 5` are 'length. A `-` with space before and none after is a negative literal rather than
     // the operator (`1 2 3 -1 2` is one five-vector), and is skipped.
     // An operand is a symbol vector, a numeric vector, a byte vector with at
-    // least two items, or a parenthesised list. `shape` decides the length of
+    // least two items, or a parenthesised list or vector. `shape` decides the length of
     // each; this pattern only has to find them.
     for m in re!(
-        r#"(?P<l>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*;[^()]*\)|"(?:[^"\\\n]|\\.)*")\s*(?P<op>(?:<>|<=|>=|[+*%&|=<>^-]|\b(?:and|or|mod|div|xexp|xlog)\b)'?|,')\s*(?P<r>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*;[^()]*\)|"(?:[^"\\\n]|\\.)*")"#
+        r#"(?P<l>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*\)|"(?:[^"\\\n]|\\.)*")\s*(?P<op>(?:<>|<=|>=|[+*%&|=<>^-]|\b(?:and|or|mod|div|xexp|xlog)\b)'?|,')\s*(?P<r>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*\)|"(?:[^"\\\n]|\\.)*")"#
     )
     .captures_iter(comments)
     {
@@ -1807,7 +1807,10 @@ pub fn check(
                 }
                 string_items(g.as_str()).filter(|&n| n != 1)
             } else if code.as_bytes()[at] == comments.as_bytes()[at] {
-                shape(&code[g.range()])
+                // At least two items: a parenthesised operand may group an
+                // atom, `(1)`, which pairs with anything (q 5: `(1 2 3)+(4 5)`
+                // is 'length, `(1)+4 5` runs; #603).
+                shape(&code[g.range()]).filter(|&n| n >= 2)
             } else {
                 None
             }
