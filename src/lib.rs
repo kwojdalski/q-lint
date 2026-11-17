@@ -6644,6 +6644,9 @@ pub fn lint_selecting(
                 // Each offending constraint at its own start, where the fix
                 // is anchored: the first at `where`, a later one after its
                 // comma (#215).
+                // Read from the phrase with each bracket kept as `_`: q 5 runs
+                // `a=1 2 3[0]`, since the index makes it the atom 1 (#627).
+                let groups = grouped(&line[w.end()..phrase_end(line, w.end())]);
                 let mut reported = vec![];
                 for m in re!(r"(?:=|<>)\s*(?:-?\d[A-Za-z0-9.]*(?:\s+-?\d[A-Za-z0-9.]*)+|`[A-Za-z][A-Za-z0-9_.]*(?:`[A-Za-z0-9_.]*)+)")
                     .find_iter(&phrase)
@@ -6651,7 +6654,7 @@ pub fn lint_selecting(
                     // the indices of a boolean vector, and q 5 runs it (#343).
                     .filter(|_| qsql)
                 {
-                    let rest = phrase[m.end()..].trim_start();
+                    let rest = groups[m.end()..].trim_start();
                     if !(rest.is_empty() || rest.starts_with([',', ';'])) {
                         continue;
                     }

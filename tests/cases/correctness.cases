@@ -203,10 +203,12 @@ select from t where sym=`a`b
 === QB008 | and one ending a clause before the next
 r:select from t where a=1 2, b>0
 
-=== clean | a vector literal indexed or searched is not the operand (q 5: each runs)
+=== clean | a vector literal indexed or searched is not the operand (q 5: each runs; 1 2 3[0] is the atom 1, #627)
 r:select from t where a=1 2 3?b
 s:select from t where a=0 1 2 b
 u:select from t where a=`x`y`z?s
+v:select from t where a=1 2 3[0]
+w:select from t where s=`x`y`z[1], a>0
 
 === clean | the where function over a comparison is no filter (q 5: where 3 2 1=1 2 3 is ,1, #343)
 b:3 2 1
