@@ -452,6 +452,28 @@ fn system_applied_with_brackets_with_at_or_trapped_loads() {
 }
 
 #[test]
+fn a_relative_load_after_a_change_of_directory_is_dynamic() {
+    // q 5: `\cd lib` then `\l x.q` loads lib/x.q, not the x.q beside the
+    // script (#763). A load before the change, or of an absolute path, is
+    // still an edge.
+    let g = graph(
+        &[
+            ("x.q", "who:`top\n"),
+            ("lib/x.q", "who:`lib\n"),
+            ("a.q", "\\cd lib\n\\l x.q\n"),
+            ("b.q", "system \"cd lib\"\n\\l x.q\n"),
+            ("c.q", "\\l x.q\n\\cd lib\n"),
+        ],
+        false,
+    );
+    assert!(deps(&g, "a.q").is_empty());
+    assert_eq!(kinds(&g, "a.q"), [(2, "load")]);
+    assert!(deps(&g, "b.q").is_empty());
+    assert_eq!(kinds(&g, "b.q"), [(2, "load")]);
+    assert_eq!(deps(&g, "c.q"), ["x.q"]);
+}
+
+#[test]
 fn a_script_loaded_under_a_context_defines_in_it() {
     // q 5: after `\d .a`, `\l b.q`, `\d .` with b.q's `ff:{1}`, `.a.ff[]`
     // is 1 and `ff` is 'ff. b.q's own `\d .b` does not leak back out: a.q's

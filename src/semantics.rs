@@ -1303,21 +1303,28 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
         .collect();
     defines.sort();
     defines.dedup();
+    let mut moved = vec![];
     crate::References {
         names,
         relative,
         defines,
         implicit_defines,
-        loads: loads(code, raw, &view, |at| {
-            if scope_at(&scopes, at).is_some() || at < first_switch {
-                String::new()
-            } else if ns_at(at).is_empty() {
-                ".".into()
-            } else {
-                ns_at(at).to_string()
-            }
-        }),
-        dynamic: dynamic(raw, &view, &call_time_access),
+        loads: loads(
+            code,
+            raw,
+            &view,
+            |at| {
+                if scope_at(&scopes, at).is_some() || at < first_switch {
+                    String::new()
+                } else if ns_at(at).is_empty() {
+                    ".".into()
+                } else {
+                    ns_at(at).to_string()
+                }
+            },
+            &mut moved,
+        ),
+        dynamic: dynamic(raw, &view, &call_time_access, &moved),
     }
 }
 
@@ -1432,16 +1439,47 @@ fn value_of_symbols<'n>(
 /// runs there: after `\d .a`, `\l b.q` with b.q's `ff:{1}`, q 5 has `.a.ff`
 /// and no `ff`. Inside a lambda the load runs wherever the lambda is called,
 /// taken to be the root.
+///
+/// A relative path loaded after the script changes directory, `\cd lib` or
+/// `system "cd lib"`, is read from a directory the text does not settle: q 5
+/// loads lib/x.q for `\cd lib` then `\l x.q` (#763). Its offset goes in
+/// `moved` instead, for `dynamic` to list.
 fn loads(
     code: &str,
     raw: &str,
     view: &str,
     namespace_at: impl Fn(usize) -> String,
+    moved: &mut Vec<usize>,
 ) -> Vec<(String, String)> {
+    let cd = raw
+        .split_inclusive('\n')
+        .scan(0, |offset, line| {
+            let at = *offset;
+            *offset += line.len();
+            Some((at, line))
+        })
+        .find(|(_, line)| re!(r"^\\cd[ \t]+\S").is_match(line))
+        .map(|(at, _)| at)
+        .into_iter()
+        .chain(
+            re!(r#"\bsystem\s*(?:\[\s*|@\s*)?"cd\s+\S"#)
+                .find_iter(raw)
+                .map(|m| m.start())
+                .filter(|&at| view[at..].starts_with("system")),
+        )
+        .min()
+        .unwrap_or(usize::MAX);
     let mut loads = vec![];
+    let mut push = |path: &str, at: usize| {
+        if at > cd && !path.starts_with('/') {
+            moved.push(at);
+        } else {
+            loads.push((path.to_string(), namespace_at(at)));
+        }
+    };
     for (at, rest) in load_lines(code, raw) {
         if let Some(m) = re!(r"^\s+(\S+)").captures(rest) {
-            loads.push((m[1].to_string(), namespace_at(at)));
+            push(&m[1], at);
         }
     }
     // Applied with brackets or `@`, or trapped, it loads as well: q 5 loads
@@ -1457,7 +1495,7 @@ fn loads(
             .trim_start_matches([' ', '\t'])
             .starts_with(',');
         if view[at..].starts_with(&raw[at..at + 2]) && !joined {
-            loads.push((m[1].to_string(), namespace_at(at)));
+            push(&m[1], at);
         }
     }
     // The symbol runs on over `:` and `/`, so `.q` must end it: `` `:x.qd ``
@@ -1478,7 +1516,12 @@ fn loads(
 /// holds the literal symbols `call_time` says are resolved where the lambda
 /// is called, and the `value`s of a symbol `value_of_symbols` finds, both
 /// found by the caller.
-fn dynamic(raw: &str, view: &str, call_time: &[(usize, &'static str)]) -> Vec<crate::Dynamic> {
+fn dynamic(
+    raw: &str,
+    view: &str,
+    call_time: &[(usize, &'static str)],
+    moved: &[usize],
+) -> Vec<crate::Dynamic> {
     let mut found = vec![];
     let mut push = |at: usize, kind: &'static str| {
         let line = raw.as_bytes()[..at].iter().filter(|&&b| b == b'\n').count() + 1;
@@ -1486,6 +1529,9 @@ fn dynamic(raw: &str, view: &str, call_time: &[(usize, &'static str)]) -> Vec<cr
     };
     for &(at, kind) in call_time {
         push(at, kind);
+    }
+    for &at in moved {
+        push(at, "load");
     }
     let next = |at: usize| view[at..].trim_start_matches([' ', '\t']);
     // Bracketed or parenthesised too: q 5 `value("e5")` is e5 (#538).
