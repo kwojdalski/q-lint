@@ -372,6 +372,31 @@ impl Options {
         let init = &params["initializationOptions"];
         let mut options = Options::default();
         let mut problems = vec![];
+        // A pointer through a string, a flag or a list finds nothing, which
+        // reads as unset: `"lint": "QS001"` was silently every rule (#805).
+        match init {
+            Value::Null => {}
+            Value::Object(sections) => {
+                for (key, value) in sections {
+                    if [
+                        "lint",
+                        "fixes",
+                        "format",
+                        "semanticTokens",
+                        "workspaceIndex",
+                    ]
+                    .contains(&key.as_str())
+                        && !value.is_object()
+                        && !value.is_null()
+                    {
+                        problems.push(format!("/{key} must be an object, not {value}"));
+                    }
+                }
+            }
+            other => problems.push(format!(
+                "initializationOptions must be an object, not {other}"
+            )),
+        }
         let mut flag = |pointer: &str, default: bool| match init.pointer(pointer) {
             None | Some(Value::Null) => default,
             Some(Value::Bool(b)) => *b,

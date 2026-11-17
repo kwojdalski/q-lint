@@ -1908,3 +1908,33 @@ fn a_document_method_without_a_uri_is_refused_or_dropped() {
     }
     assert_eq!(server.shutdown_and_exit(), 0);
 }
+
+#[test]
+fn a_section_or_options_that_are_not_an_object_are_reported() {
+    // `"lint": "QS001"` read as no setting at all, with no message, and so
+    // did options that were a list (#805).
+    for (options, wanted) in [
+        (json!({"lint": "QS001"}), "/lint must be an object"),
+        (
+            json!({"workspaceIndex": false}),
+            "/workspaceIndex must be an object",
+        ),
+        (json!([1]), "initializationOptions must be an object"),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut server, _) = start_with_options(
+            dir.path(),
+            &["--lsp", "--profile", "uqf"],
+            options.clone(),
+            None,
+        );
+        let message = server.receive();
+        assert_eq!(
+            message["method"], "window/showMessage",
+            "{options}: {message}"
+        );
+        let text = message["params"]["message"].as_str().unwrap();
+        assert!(text.contains(wanted), "{options}: {text}");
+        assert_eq!(server.shutdown_and_exit(), 0);
+    }
+}
