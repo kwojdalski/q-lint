@@ -832,6 +832,15 @@ r:select zz
 f:{select yy
   from t}
 
+=== QF020 profile: general | after a select's limit or sort too (q 5: select[2] zz from t and select[>a] zz from t are 'zz) (#744)
+t:([]a:1 1 2;b:3 4 5)
+r:select[2] zz from t
+s:select[>a] yy from t
+
+=== clean profile: general | and a real column after the limit is fine (#744)
+t:([]a:1 1 2;b:3 4 5)
+r:select[2] a,b from t
+
 === QF020 | in the by list as well
 t:([]a:1 2)
 r:select a by b from t

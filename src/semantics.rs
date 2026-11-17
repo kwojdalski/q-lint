@@ -3747,9 +3747,21 @@ fn named_values(
         if depth != 0 {
             continue;
         }
-        let mut cuts = vec![phrase.start()];
+        // A select's limit or sort is no column: `select[2] zz from t` names
+        // `zz` after it, and q 5 refuses it with 'zz (#744).
+        let first = if m.get(0).unwrap().as_str().starts_with("select")
+            && phrase.as_str().starts_with('[')
+        {
+            match crate::matching(code, phrase.start(), b'[', b']') {
+                Some(close) => close,
+                None => continue,
+            }
+        } else {
+            phrase.start()
+        };
+        let mut cuts = vec![first];
         for sep in re!(r",|\bby\b").find_iter(phrase.as_str()) {
-            if !top[sep.start()] {
+            if !top[sep.start()] || phrase.start() + sep.start() < first {
                 continue;
             }
             cuts.push(phrase.start() + sep.start());
