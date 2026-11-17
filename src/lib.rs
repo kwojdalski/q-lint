@@ -5551,7 +5551,9 @@ pub fn lint_selecting(
             // (#432). `sum_:1` is the name `sum_`.
             for a in re!(r"([a-z][a-z0-9_]*)\s*(?:[-+*%,#_^&|!?@$~=<>]|:)?:").captures_iter(&view) {
                 let m = a.get(0).unwrap();
-                if m.as_str().len() > a[1].len() + 1 && !assigns_operand(&view[m.end()..]) {
+                // Read in the source, where a string or symbol is still
+                // there to assign: q 5 `{sum::"a"}` is 'assign (#592).
+                if m.as_str().len() > a[1].len() + 1 && !assigns_operand(&source[at + m.end()..]) {
                     continue;
                 }
                 // q 5 takes from and by as locals: {from:1;from+1}[] is 2.
@@ -6220,7 +6222,7 @@ pub fn lint_selecting(
                 let end = m.get(0).unwrap().end();
                 !head[end..].starts_with(':')
                     && (m[0].trim_end_matches(':').trim_end().len() == m[1].len()
-                        || assigns_operand(&head[end..]))
+                        || assigns_operand(&source[offset + at + end..]))
             };
             if namespace
                 && let Some(m) =

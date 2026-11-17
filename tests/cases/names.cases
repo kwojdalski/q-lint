@@ -1300,3 +1300,14 @@ foo:{x+1}
 \d .
 g:{[foo] foo}
 h:{foo:1; foo}
+
+=== QF003 profile: general | a string or symbol assigned to a builtin with :: or a compound is 'assign (#592; q 5: both refused where defined)
+f:{sum::"a"}
+g:{count,:`a}
+
+=== QF004 profile: general | and in a namespace (#592; q 5: 'assign)
+\d .x
+count,:"a"
+
+=== QF012 | and at the root (#592; q 5: 'assign)
+max,:"a"
