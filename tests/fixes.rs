@@ -500,7 +500,9 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ),
         ("QT008", "r:til 5.0", "r:til 5", true),
         ("QT008", "r:til 3f", "r:til 3", true),
-        ("QT025", "f:{'5}", "f:{'\"5\"}", true),
+        // One digit in quotes is a char atom, which is 'stype too (#565).
+        ("QT025", "f:{'5}", "f:{'enlist\"5\"}", true),
+        ("QT025", "f:{'12}", "f:{'\"12\"}", true),
         ("QT025", "f:{'12:00}", "f:{'\"12:00\"}", true),
         ("QT025", "f:{'1e-3}", "f:{'\"1e-3\"}", true),
         (

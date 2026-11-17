@@ -1219,9 +1219,11 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         "QT025" => {
             let m = re!(r"^'(\s*)(-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)")
                 .captures(source.get(start..)?)?;
+            // One digit in quotes is a char atom, still 'stype (#565).
+            let list = if m[2].len() == 1 { "enlist" } else { "" };
             (
                 m.get(0)?.as_str(),
-                format!("'{}\"{}\"", &m[1], &m[2]).into(),
+                format!("'{}{list}\"{}\"", &m[1], &m[2]).into(),
                 format!("Signal the string \"{}\"", &m[2]).into(),
                 true,
             )
