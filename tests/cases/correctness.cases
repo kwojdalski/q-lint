@@ -605,6 +605,11 @@ f:{'`e;x}
 f:{'[neg;abs]; 2}
 g:{' [neg;abs] 3; 2}
 
+=== clean | a bare ' or : is a value, not a signal or return, and what follows runs (q 5: each is 2) (#624)
+f:{[a] '; a+1}
+g:{[a] :; a+1}
+h:{[a] '/; a+1}
+
 === QB020 | a signal of a bracketed name is still one (q 5: 'e)
 e:`e
 f:{'(e); 2}

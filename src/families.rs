@@ -873,20 +873,27 @@ fn unreachable(path: &str, source: &str, code: &str, comments: &str, out: &mut V
             }
         }
         statements.push((start, body.len()));
-        // `'[f;g]` - or `' [f;g]` - is a composition, not a signal: q 5
-        // `{'[neg;abs]; 2}[]` is 2. And `:[a;b]` is the assign verb, not a
-        // return: `{a:0; :[a;5]; a}[]` is 5, and with a space 7 (#515).
-        let exits = |text: &str| {
-            let t = text.trim_start();
-            (t.starts_with(':') && !t.starts_with("::") && !t[1..].trim_start().starts_with('['))
-                || (t.starts_with('\'')
-                    && !t.starts_with("':")
-                    && !t[1..].trim_start().starts_with('['))
-        };
         // Emptiness read from `comments`, where a string is still there:
         // `{[a] :a; "x"}` has a statement after the return (#216).
         let kept = &comments[body_start..end - 1];
-        if let Some(i) = statements.iter().position(|&(a, b)| exits(&body[a..b]))
+        // `'[f;g]` - or `' [f;g]` - is a composition, not a signal: q 5
+        // `{'[neg;abs]; 2}[]` is 2. And `:[a;b]` is the assign verb, not a
+        // return: `{a:0; :[a;5]; a}[]` is 5, and with a space 7 (#515). Nor
+        // is a glyph with nothing to return or signal, alone or under an
+        // iterator: q 5 `{[a] '; a+1} 1`, `{[a] :; a+1} 1` and
+        // `{[a] '/; a+1} 1` are each 2 (#624).
+        let exits = |(a, b): (usize, usize)| {
+            let t = body[a..b].trim_start();
+            if !t.starts_with([':', '\'']) {
+                return false;
+            }
+            let operand = kept[b + 1 - t.len()..b].trim_start();
+            !operand.is_empty()
+                && !operand.starts_with(['/', '\\', '\'', '['])
+                && ((t.starts_with(':') && !t.starts_with("::"))
+                    || (t.starts_with('\'') && !t.starts_with("':")))
+        };
+        if let Some(i) = statements.iter().position(|&s| exits(s))
             && let Some(&(a, _)) = statements[i + 1..]
                 .iter()
                 .find(|&&(a, b)| !kept[a..b].trim().is_empty())
