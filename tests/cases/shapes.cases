@@ -275,6 +275,16 @@ r:$[101b;1;2]
 === QA011 | nor a numeric vector
 r:$[1 2 3;1;2]
 
+=== QA011 profile: general | nor a general list, or enlist of one item (q 5: each is 'type) (#633)
+a:$[(1;2);1;2]
+b:$[enlist 1b;1;2]
+c:$[enlist[1b];1;2]
+d:$[("a";"b");1;2]
+
+=== clean profile: general | while one item of either is an atom (q 5: $[(1b);1;2] and $[enlist[1b]0;1;2] are 1) (#633)
+a:$[(1b);1;2]
+b:$[enlist[1b]0;1;2]
+
 === QA011 | nor a symbol
 r:$[`a;1;2]
 

@@ -1868,11 +1868,17 @@ fn refused_atom_condition(raw: &str) -> bool {
 
 /// Whether a `$[...]` test is a literal q 5 refuses with 'type: an atom
 /// `refused_atom_condition` names, `()`, a boolean vector, a spaced numeric
-/// vector, or a comparison of vectors. `raw` is the test with strings still
-/// in it, `cond` the same text from the masked view.
+/// vector, a comparison of vectors, a general list or `enlist` of an item.
+/// `raw` is the test with strings still in it, `cond` the same text from
+/// the masked view. q 5: `$[(1;2);1;2]` and `$[enlist 1b;1;2]` are 'type
+/// (#633).
 fn refused_test(raw: &str, cond: &str) -> bool {
     refused_atom_condition(raw)
         || re!(r"^\(\s*\)$").is_match(cond)
+        || (cond.starts_with('(')
+            && matching(cond, 0, b'(', b')') == Some(cond.len())
+            && slots(&cond[1..cond.len() - 1]).len() > 1)
+        || re!(r"^enlist(?:\s+[^\s\[]|\s*\[[^;\[\]]*\]$)").is_match(cond)
         || re!(r"^`[A-Za-z][A-Za-z0-9_.]*$").is_match(cond)
         || re!(r"^[01]{2,}b$").is_match(cond)
         || (re!(r"^-?\d[A-Za-z0-9.]*(?:\s+-?\d[A-Za-z0-9.]*)+$").is_match(cond)
