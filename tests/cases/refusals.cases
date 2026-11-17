@@ -1,6 +1,10 @@
 === QT024 | sorted attribute on a literal out of order
 r:`s#3 1 2
 
+=== QT024 profile: general | and so on a literal continued on an indented line (q 5: 's-fail, #689)
+w:`s#1
+  1e-3
+
 === QT024 | symbols sort by byte, so a lowercase before an uppercase is out of order
 r:`s#`a`B
 
@@ -49,6 +53,16 @@ d:12:00:1 12:00u
 
 === QE006 profile: general | a minute suffix on an earlier item makes no minute vector (#449; q 5: '23:59:60u)
 e:23:59:60u 12:00
+
+=== clean profile: general | the suffix types a vector continued on an indented line (q 5: each ~ its one-line form, #682)
+c:12:00:60
+  12:00u
+l:100:00:00.1234
+  100:00t
+
+=== QE006 profile: general | and on an earlier line it still makes no minute vector (q 5: '23:59:60u, #682)
+e:23:59:60u
+  12:00
 
 === QE006 profile: general | a minute past 59 with the minute suffix (#449; q 5: '12:60:00)
 f:12:60:00u
@@ -521,6 +535,28 @@ d:1.5E-3
 e:1Ef
 f:1 2E5
 
+=== clean profile: general | a vector continued on an indented line is one literal, past a blank line too (q 5: each ~ its one-line form, #681)
+c:1E5
+  2.5
+b:9223372036854775808
+  1.5
+a:1.5j
+  2c
+d:-2000.01.01
+
+  0Wn
+
+=== clean profile: general | but a symbol or a string at column 0 starts a statement of its own (q 5: each line runs)
+a:10 20 30
+y:1i
+`a 2
+x:1i
+"ab" 1
+
+=== QE010 profile: general | and its suffix rule holds across the break (q 5: x:1i then   2 is '1i, #681)
+x:1i
+  2
+
 === clean profile: general | an uppercase exponent where the number is float anyway, and lowercase (#383; q 5: each parses)
 a:1.5E3
 b:1E5f
@@ -702,6 +738,27 @@ f:20000101 20000102d
 a:20240101z
 b:202401011z
 c:20000101 20000102z
+
+=== clean profile: general | a fraction nine characters long and a z is a datetime (#811; q 5: 1970.08.23T06:15:01.500, 1970.01.15T06:56:07.500)
+a:20240101.5z
+b:1234567.5z
+c:12345678.z
+
+=== QE010 profile: general | a shorter one is refused (#811; q 5: '123456.5)
+a:123456.5z
+
+=== QE010 profile: general | a vector's leading item that is no date (#812; q 5: '1)
+a:1 20000101d
+
+=== QE010 profile: general | nor a datetime (#812; q 5: '1 and '123456.5)
+a:1 20000101z
+b:123456.5 20000101z
+
+=== clean profile: general | items q reads under the suffix (#812; q 5 parses each)
+c:0N 20000101d
+d:2000.01.01 20000101d
+g:202401011 20000101z
+h:1234567.5 20000101z
 
 === QE010 profile: general | eight digits and a z that make no date (#713; q 5: '20001301)
 e:20001301z
@@ -1039,3 +1096,106 @@ e:`s#0x0102
 f:`s#"\001\002"
 g:`s#(1 2 3)
 h:`u#10b
+
+=== clean profile: general | QE007: a blank line inside a query does not end it (q 5 runs it, #559)
+t:([]a:1 2)
+f:{[]
+  r:select a
+
+    from t;
+  r}
+
+=== QE007 profile: general | but an unindented line after the blank one does (#559)
+r:select a
+
+from t
+
+=== clean profile: general | QE009: each of a bracket-applied derived function, infix (q 5: 1 2 g/[0]'3 4 is 4 6, #562)
+g:{x+y+z}
+d:1 2 g/[0]'3 4
+
+=== QE009 profile: general | but juxtaposed it is refused (q 5: g/[0]'3 4 is ', #562)
+g:{x+y+z}
+e:g/[0]'3 4
+
+=== QE008 QE009 profile: general | a glyph or derived function right after an infix keyword (q 5: '/, ',, '-, ',; #566)
+v:1 2;f1:{x}
+a:v vs f1/2
+b:v in ,2
+c:f1 each -v
+d:v cross ,1
+
+=== clean profile: general | but not after a name that only ends in one, nor a literal after it (#566)
+v:1 2;bin_dt:3;f:{x}
+a:v in -1 2
+b:.q.in -1
+c:v mod 2
+
+=== QE008 QE009 profile: general | a glyph or derived function after the operators . and _ (q 5: ',, '-, '/, '/; #567)
+v:1 2;f2:{x+y}
+a:f2 . ,v
+b:v _ -v
+c:1_f2/v
+d:f2 . +/v
+
+=== clean profile: general | but not after a name that ends in _ or a number that ends in . (#567)
+v:1 2;a_:3;f:{x}
+b:a_-v
+c:1.-v
+
+=== QE008 QE009 profile: general | an operand that is a glyph applied with brackets (q 5: '*, '/, ' , '/, ''; #568)
+v:1 2;f1:{x};t:([]a:1 2)
+a:*$[1b;v;v]
+b:+/@[v;0;neg]
+c:- @[v;0;neg]
+d:f1/$[1b;v;v]
+e:count'?[t;();()]
+
+=== clean profile: general | infix before one is fine (#568)
+v:1 2
+a:v,@[v;0;neg]
+b:0+/@[v;0;neg]
+
+=== QE009 profile: general | a lambda operand (q 5: '/ and ''; #569)
+v:1 2
+a:+/{x}
+b:count'{x}
+
+=== clean profile: general | applied infix it is fine (#569)
+v:1 2
+a:v,'{x}
+
+=== QE009 profile: general | a dotted-name operand (q 5: '/ and ''; #570)
+.foo.v:1 2
+a:+/.foo.v
+b:count'.z.x
+
+=== QE008 profile: general | monadic . (q 5: '., ' , '.: and '.; #571)
+v:1 2
+a:.(v)
+b:. v
+c:.:v
+d:.{x}
+
+=== clean profile: general | but not . as a noun, applied with brackets, dyadic, in a name or a number (#571)
+v:1 2;f:{x}
+e:(.)v
+g:.[f;v]
+h:f . v
+i:.Q.s v
+j:.5
+
+=== QE010 profile: general | a number glued to a word of two letters or more (q 5: '2mod, '2in, '2eac, '1xbar, '2000.01.01in, '1.5like; #572)
+a:2mod 3
+b:1 2in 3
+c:til 2each
+d:1xbar 3
+e:2000.01.01in 3
+f:1.5like 3
+
+=== clean profile: general | nulls, hex, a month, the operator 0: and a lone exponent (#572)
+g:0Nd
+h:0xab
+i:2000.01m
+j:1e
+k:0:`:f.csv

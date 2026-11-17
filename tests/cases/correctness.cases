@@ -239,6 +239,14 @@ select .my.agg px by sym from t
 a:3
 r:a -1
 
+=== QB010 profile: general | and so it does with the literal on the indented next line (q 5: 'domain and 'type, #687)
+a:3
+r:a
+  -1
+w:.z.p
+
+  -0D00:01
+
 === QB010 | in a condition too
 n:1.5
 if[n -1;2]
@@ -248,6 +256,10 @@ window_to:.z.p;r:window_to -0D00:01
 
 === QB010 | .z.p is a value, so applying it is never meant
 r:0D00:01 xbar .z.p -0D00:01
+
+=== QB010 | and so it is where the literal ends a lambda (q 5: each 'type, #678)
+f:{0D00:01 xbar .z.p -0D00:01}
+k:{[x] .z.p -1}
 
 === QB010 | inside a conditional
 window_to:.z.p
@@ -486,6 +498,12 @@ p:"/" sv string
 t:select from t where
   a=1 and b=0
 
+=== QB006 QB005 | and so it does in a lambda, where the line ends at where (#679)
+f:{select from t where
+  a=1 and b=0}
+g:{select from t where
+  a~1}
+
 === clean | at column 0 the second line is a separate statement
 p:"/" sv string
 dir:1
@@ -543,6 +561,12 @@ step:{if[hasvowel -1_x;x[-1+count x]:"i"];x}
 
 === clean | a column against an item of itself is not a self-comparison
 r:select from t where c=c i
+
+=== clean | nor with the item on the indented next line, in a lambda too (q 5: the same query, #695)
+r:select from t where c=c
+  i
+f:{select from t where c=c
+  i}
 
 === clean | a match inside a lambda applied to each row is per row
 r:select from t where {x[`b]~2} each d
@@ -636,6 +660,14 @@ out["hello"]
 === clean | an int is a handle too (#477; q 5: h:2i; h "hi\n" writes to stderr)
 h:2i
 h["hi\n"]
+
+=== clean | and so in grouping parentheses (#693; q 5: out:(1); out["hello\n"] writes, as do h:(2i) and l:(0N) once opened)
+out:(1)
+out["hello"]
+h:(2i)
+h["hi\n"]
+l:(0N)
+l["x"]
 
 === QT022 | but a short is no handle (#477; q 5: h:1h; h["hi"] and h:0Nh; h "hi" are 'type)
 h:1h
@@ -770,6 +802,10 @@ x:"abc" ss `char$98
 y:"abc" ss `char$"b"
 z:ss["abc";`char$98]
 
+=== QT007 profile: general | and on the indented next line (q 5: 'type, #692)
+y:"abc" ss
+  `a
+
 === QB013 | type of a literal in parentheses (q 5: (type 1)=`long is 'type)
 a:(type 1)=`long
 b:(type "a")<>`char
@@ -835,6 +871,18 @@ t:([]a:1 2;b:3 4)
 r:![t;();0b;enlist`a]
 s:![t;enlist(=;`b;3);0b;`symbol$()]
 
+=== clean profile: general | an empty where list spelled other than () (q 5 deletes column c from each, #561)
+t:([]a:1 2;c:3 4)
+r:![t;( );0b;enlist`c]
+s:![t;0#();0b;enlist`c]
+u:![t;`symbol$();0b;enlist`c]
+w:![t;( / none
+  );0b;enlist`c]
+
+=== QB016 profile: general | a where list of two constraints (#561)
+t:([]a:1 2;c:3 4)
+r:![t;((>;`a;1);(<;`a;3));0b;enlist`c]
+
 === QB019 | a column named twice in a select (q 5: select a,a from t has a and a1)
 t:([]a:1 2;b:3 4)
 r:select a,a from t
@@ -874,3 +922,19 @@ r:$[x=0 and y=0;`yes;`no]
 x:0;y:1
 if[(x=0) and y=0;-1 "a"]
 r:$[x and y=0;1;2]
+
+=== QB021 profile: general | a select with a limit or a sort (q 5: 'dup names for cols/groups a; #573)
+t:([]a:1 2)
+r:select[1] a by a from t
+s:select[2;>a] a by a from t
+
+=== clean profile: general | and with a column the groups do not name (#573)
+t:([]a:1 2)
+r:select[1] m:max a by a from t
+
+=== QB016 QA011 profile: general | the bracket of ! or if written on the next line (q 5: 'nyi and 'type, as on one line; #574)
+t:([]a:1 2;c:3 4)
+k:{!
+  [t;enlist(>;`a;1);0b;enlist`c]}
+g:{if
+  [`a;:1]; 2}

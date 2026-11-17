@@ -146,7 +146,7 @@ def sync(args: argparse.Namespace) -> int:
         git("fetch", "-q", "--depth", "1", "origin", ref, cwd=where)
         git("checkout", "-q", "--detach", "FETCH_HEAD", cwd=where)
         commit = git("rev-parse", "HEAD", cwd=where)
-        count = sum(1 for _ in where.rglob("*.q"))
+        count = sum(1 for p in where.rglob("*.q") if p.is_file())
         note = "" if commit == r["commit"] else f"  (pinned {r['commit'][:8]})"
         print(f"{r['repo']}: {count} .q files at {commit[:8]}{note}")
     return 0

@@ -200,10 +200,19 @@ fn credentials(path: &str, source: &str, code: &str, comments: &str, out: &mut V
 /// the outer `distinct` then removes. `@'` and `.'` are each over apply
 /// (#402): q 5 gives `(3 1 2;5 4)` for `distinct asc distinct@'x` and three
 /// items for `asc distinct@'x`.
+/// The iterator may start the indented line that continues the statement:
+/// `reverse asc` over `  .'p` is `reverse asc .'p` (#685).
 fn iterated(code: &str, at: usize) -> bool {
     let rest = &code[at..];
     rest.starts_with(['\'', '/', '\\'])
-        || re!(r"^[ \t]*(?:each|peach)\b|^[ \t]*[@.]['/\\]").is_match(rest)
+        || re!(concat!(
+            "^",
+            blank!(),
+            r"*(?:each|peach)\b|^",
+            blank!(),
+            r"*[@.]['/\\]"
+        ))
+        .is_match(rest)
 }
 
 /// Whether `at` names a column of a table literal: the bracket around it,
@@ -756,7 +765,15 @@ fn select_by_duplicate(path: &str, source: &str, code: &str, out: &mut Vec<Findi
         if !crate::boundary(code, q.start()) || in_string(code, q.start()) {
             continue;
         }
-        let rest = &code[q.end()..];
+        // A limit or sort is no column: `select[1] a by a from t` and
+        // `select[2;>a] ...` name their columns after it (#573).
+        let mut rest = &code[q.end()..];
+        if q.as_str() == "select" && rest.starts_with('[') {
+            let Some(close) = crate::matching(code, q.end(), b'[', b']') else {
+                continue;
+            };
+            rest = &code[close..];
+        }
         let Some(by) = top_level_word(rest, re!(r"\b(?:by|from)\b")) else {
             continue;
         };

@@ -581,9 +581,16 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             if text.is_empty() || depth != 0 || source[pattern + len..].starts_with('`') {
                 return None;
             }
+            // One character in quotes is a char atom, which `like` refuses
+            // with 'type as it does the symbol (q 5, #564).
+            let string = if text.len() == 1 {
+                format!("enlist\"{text}\"")
+            } else {
+                format!("\"{text}\"")
+            };
             (
                 &source[start..pattern + len],
-                format!("{}\"{text}\"", &lead.as_str()[..lead.len() - 1]).into(),
+                format!("{}{string}", &lead.as_str()[..lead.len() - 1]).into(),
                 format!("Write the pattern as the string \"{text}\"").into(),
                 true,
             )
@@ -710,7 +717,9 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             let numeric = token.starts_with(|c: char| c == '-' || c.is_ascii_digit());
             let before = &source[..start];
             let prev = before.trim_end().chars().next_back();
-            let next = source[start + whole.end()..].trim_start_matches([' ', '\t']);
+            // Past a line break too, where an indented line goes on: `(2)`
+            // over `  -1` is `(2) -1`, and `2` there would be `2 -1` (#773).
+            let next = refusals::continued(&source[start + whole.end()..]);
             let adjacent = source[start + whole.end()..].chars().next();
             if before.ends_with('-')
                 || (token.starts_with('-') && !prev.is_none_or(|c| "([{;:".contains(c)))
@@ -760,7 +769,9 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                     let next = rest[m.end()..].chars().next();
                     // Nothing after it but a comment is nothing after it:
                     // `:/ c` would be over, which q 5 refuses to load (#404).
-                    if !opens || next.is_none_or(|c| ";}]\r\n/".contains(c)) {
+                    // Nor an argument in brackets or an iterator: `:[x]` and
+                    // `:'[x]` apply `:`, and return its projection (#770).
+                    if !opens || next.is_none_or(|c| ";}]\r\n/['".contains(c)) {
                         return None;
                     }
                     (m.as_str(), ":")
@@ -1212,16 +1223,18 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         "QT025" => {
             let m = re!(r"^'(\s*)(-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)")
                 .captures(source.get(start..)?)?;
+            // One digit in quotes is a char atom, still 'stype (#565).
+            let list = if m[2].len() == 1 { "enlist" } else { "" };
             (
                 m.get(0)?.as_str(),
-                format!("'{}\"{}\"", &m[1], &m[2]).into(),
+                format!("'{}{list}\"{}\"", &m[1], &m[2]).into(),
                 format!("Signal the string \"{}\"", &m[2]).into(),
                 true,
             )
         }
         // A nested lambda cannot see its parent's locals; the repair q
         // programmers write is to pass the local in: `{a+x} each l` inside
-        // `{[a] ...}` becomes `{[a;x] a+x}[a] each l`. Verified in q 5. Not
+        // `{[a] ...}` becomes `{[x;a] a+x}[;a] each l`. Verified in q 5. Not
         // unattended: where a global of that name exists the old code reads
         // it, and the new one reads the local.
         "QF005" => {
@@ -1229,40 +1242,31 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             let brace = enclosing_brace(&v.code, start)?;
             let close = matching(&v.code, brace, b'{', b'}')?;
             let sig = signature(&v.code, source, brace);
-            let body_text = &v.code[sig.body..close - 1];
             // q takes at most 8 parameters: a ninth is 'params at load (#337).
             if sig.named && sig.slots.len() >= 8 {
                 return None;
             }
-            let mut header = String::new();
-            if sig.named {
+            // The local goes last and the projection fills only its slot:
+            // first, it would push `x` to a position QS008 then reports (#772).
+            let (header, slots) = if sig.named {
                 // `{ [b] ...}` is a signature too: q allows space before
                 // the `[` (#323).
                 let bracket = v.code[brace + 1..].find('[')? + brace + 1;
-                header.push_str(&format!("{{[{name};"));
-                header.push_str(&source[bracket + 1..sig.body]);
+                let inner = &source[bracket + 1..sig.body - 1];
+                (format!("{{[{inner};{name}]"), sig.slots.len())
             } else {
-                // Implicit arguments become explicit ones, up to the highest
-                // the body reads - and at least `x`, or the projection would
-                // fill every slot and run on the spot.
-                let used = |p: &str| {
-                    re!(r"[A-Za-z0-9_.`]?\b[xyz]\b")
-                        .find_iter(&top_level(body_text))
-                        .any(|m| m.as_str().ends_with(p) && m.as_str().len() == 1)
-                };
-                let params = if used("z") {
-                    "x;y;z"
-                } else if used("y") {
-                    "x;y"
-                } else {
-                    "x"
-                };
-                header.push_str(&format!("{{[{name};{params}] "));
-            }
+                // Implicit arguments become explicit ones, as many as q
+                // gives the lambda - and at least `x`, or the projection
+                // would fill every slot and run on the spot. A column in a
+                // query is no argument: `{exec sum y from t}` takes one (#777).
+                let rank = lambda_rank(&v.code, source, brace, close - 1);
+                let params = ["x", "x;y", "x;y;z"][rank - 1];
+                (format!("{{[{params};{name}] "), rank)
+            };
             // Passed in, the local is read where the lambda is written, so it
             // has to hold a value there: a parameter of the lambda around it,
             // or assigned in an earlier statement. Otherwise q 5 refuses the
-            // rewrite with 'a - `{a:{[a;x] a+1}[a];a}`, and a read before a
+            // rewrite with 'a - `{a:{[x;a] a+1}[;a];a}`, and a read before a
             // later `a:2` alike (#769).
             let parent = enclosing_brace(&v.code, brace)?;
             let outer = signature(&v.code, source, parent);
@@ -1305,7 +1309,7 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             begin = brace;
             (
                 &source[brace..close],
-                format!("{header}{rest}[{name}]").into(),
+                format!("{header}{rest}[{}{name}]", ";".repeat(slots)).into(),
                 format!("Pass `{name}` in as a parameter").into(),
                 false,
             )
@@ -1591,7 +1595,7 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
     let next: String = replacement
         .chars()
         .chain(source[begin + old.len()..].chars())
-        .take(2)
+        .take(3)
         .collect();
     // Nor may an edit leave two numeric literals with only blanks between:
     // `10 20 30 {x} each 0 2` would become `10 20 30 0 2`, one vector where
@@ -1609,8 +1613,14 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
     {
         return None;
     }
+    // Nor may it leave a negative literal against an operand, where its
+    // `-` would read as minus: `{[x]r:-1;x}` would become `{[x]-1;x}`,
+    // which q 5 refuses with '- (#563). A blank keeps it a literal.
+    let negative = next.starts_with('-') && numeric(&next[1..]);
     let replacement =
-        if source[..begin].ends_with('-') && !numeric(&source[begin..]) && numeric(&next) {
+        if source[..begin].ends_with('-') && !numeric(&source[begin..]) && numeric(&next)
+            || ends_in_token(&source[..begin]) && negative && !source[begin..].starts_with('-')
+        {
             format!(" {replacement}").into()
         } else {
             replacement
@@ -1656,6 +1666,7 @@ impl Finding {
                     | "QB007"
                     | "QB008"
                     | "QF012"
+                    | "QF004"
                     | "QE004"
                     | "QF014"
                     | "QF015"
@@ -1960,18 +1971,21 @@ fn empty_pattern(source: &str, code: &str, at: usize) -> bool {
     operand_ends(code, i)
 }
 
+/// Where the next token after `at` starts, past the blanks of its statement
+/// (`blank!`): across a line break only into the indented line that continues
+/// it. Where the statement ends at a line break, the offset of a line break.
+pub(crate) fn past_blanks(text: &str, at: usize) -> usize {
+    at + re!(concat!("^", blank!(), "*"))
+        .find(&text[at..])
+        .map_or(0, |m| m.end())
+}
+
 pub(crate) fn operand_ends(code: &str, at: usize) -> bool {
-    let rest = code[at..].trim_start_matches([' ', '\t']);
-    // A line break ends the operand unless the next line is indented and not
-    // blank, which continues the statement: `where 2` + `  #1b` is
-    // `where 2#1b` (#193).
-    if let Some(next) = rest
-        .strip_prefix("\r\n")
-        .or_else(|| rest.strip_prefix('\n'))
-    {
-        let line = next.split('\n').next().unwrap_or("");
-        return !(next.starts_with([' ', '\t']) && !line.trim().is_empty());
-    }
+    // A line break ends the operand unless the next line with code on it is
+    // indented, which continues the statement: `where 2` + `  #1b` is
+    // `where 2#1b` (#193), and so it is with blank or comment lines between
+    // them (#675).
+    let rest = &code[past_blanks(code, at)..];
     rest.is_empty()
         || rest.starts_with([';', ')', ']', '}', '\n', '\r'])
         || (rest.starts_with(',') && in_qsql_phrase(code, at))
@@ -2022,6 +2036,39 @@ fn qsql_phrase(code: &str, at: usize, joins: bool) -> bool {
         } else if joins && word("from") && !seen_where {
             return false;
         } else if ["select", "exec", "update", "delete"].into_iter().any(word) {
+            return true;
+        }
+    }
+    false
+}
+/// Whether `at` is inside a select, exec, update or delete: walking back
+/// through its statement, across the indented lines that continue it and out
+/// of any parenthesis or bracket around it, meets the keyword. A `;` ends the
+/// statement unless a bracket it sits in is crossed later, and a lambda's
+/// `{` ends it, since a name in a lambda is the lambda's: `r:select from t`
+/// with `  where return>0.15` reads the column, and `r:select from t;` then
+/// `f:{[x] return x}` does not (#680).
+fn in_query(code: &str, at: usize) -> bool {
+    let b = code.as_bytes();
+    let (mut depth, mut ended) = (0i32, false);
+    let mut i = at;
+    while i > 0 {
+        i -= 1;
+        match b[i] {
+            b')' | b']' | b'}' => depth += 1,
+            b'{' if depth == 0 => return false,
+            b'(' | b'[' if depth == 0 => ended = false,
+            b'(' | b'[' | b'{' => depth -= 1,
+            b';' if depth == 0 => ended = true,
+            b'\n' if !code[i + 1..].starts_with([' ', '\t', '\r', '\n']) => return false,
+            _ => {}
+        }
+        if depth == 0
+            && !ended
+            && b[i].is_ascii_lowercase()
+            && boundary(code, i)
+            && re!(r"^(?:select|exec|update|delete)\b").is_match(&code[i..])
+        {
             return true;
         }
     }
@@ -2150,14 +2197,25 @@ fn grouped(phrase: &str) -> String {
 }
 /// Whether `before` ends in a character that would fuse with a token
 /// written straight after it: `a` and `b` are `ab`, `1` and `b` are `1b`.
+/// A symbol ending in `:` or `/` is one: `` `:db/ `` and `t` are `` `:db/t ``,
+/// and `` `a: `` and `k` are `` `a:k `` (#776).
 fn ends_in_token(before: &str) -> bool {
+    let line = &before[before.rfind('\n').map_or(0, |p| p + 1)..];
     before.ends_with(|c: char| c.is_ascii_alphanumeric() || "_.`\")]}".contains(c))
+        || re!(r"`(?::[A-Za-z0-9_.:/]*|[A-Za-z0-9_.][A-Za-z0-9_.:]*)$").is_match(line)
 }
 /// Whether `before`, less trailing blanks, ends in a numeric literal: a
 /// token of letters, digits, `.` and `:` that begins with a digit or `.5`,
 /// so `10 20 30` and `12:00` do, and the name `x1` does not.
 fn ends_in_number(before: &str) -> bool {
     let t = before.trim_end_matches([' ', '\t']);
+    // A line break into an indented line is a blank too: q joins the two,
+    // so `10 20 30` over `  0 2` is one vector (#774).
+    let t = if t.len() < before.len() && t.ends_with('\n') {
+        t.trim_end()
+    } else {
+        t
+    };
     let start = t
         .char_indices()
         .rfind(|&(_, c)| !(c.is_ascii_alphanumeric() || "._:".contains(c)))
@@ -2169,7 +2227,7 @@ fn ends_in_number(before: &str) -> bool {
 /// included where a blank comes first (`blank` says one ends the text
 /// before), since `1 -1` is a vector and `1-1` a subtraction.
 fn starts_number(after: &str, blank: bool) -> bool {
-    let t = after.trim_start_matches([' ', '\t']);
+    let t = refusals::continued(after);
     let blank = blank || t.len() < after.len();
     let t = match t.strip_prefix('-') {
         Some(rest) if blank => rest,
@@ -3174,11 +3232,31 @@ pub(crate) fn signature<'a>(code: &'a str, raw: &str, brace: usize) -> Signature
     // "Empty" has to be judged on `raw`, or a masked literal passes for one.
     // A string is blank in `code`; as a pattern it is a literal like any
     // other, so it is read as one: `{["ab"!(a;b)] a}` has keys (#431).
+    // A comment is blank in `code` too, and is no literal: from a ` /` that
+    // `code` blanks to the end of its line, it stays blank (#560).
     let literal = |a: usize, b: usize| -> String {
-        code.as_bytes()[a..b]
-            .iter()
-            .zip(&raw.as_bytes()[a..b])
-            .map(|(&c, &r)| if c == r { c as char } else { '0' })
+        let (c, r) = (code.as_bytes(), raw.as_bytes());
+        let mut comment = false;
+        (a..b)
+            .map(|i| {
+                if r[i] == b'\n' {
+                    comment = false;
+                } else if c[i] != r[i]
+                    && r[i] == b'/'
+                    && (i == 0 || r[i - 1].is_ascii_whitespace())
+                    && code[i..]
+                        .split('\n')
+                        .next()
+                        .is_some_and(|l| l.trim().is_empty())
+                {
+                    comment = true;
+                }
+                if c[i] == r[i] || comment {
+                    c[i] as char
+                } else {
+                    '0'
+                }
+            })
             .collect()
     };
     // `_` binds no name but is still a slot: q 5 defines `{[a;_] a}` with two
@@ -3756,9 +3834,9 @@ pub fn lint_selecting(
             }
             // An operand juxtaposed after it is one more argument: q 5
             // `@[{[a;b] a+b} 1;2;{x}]` is 3 and `@[{[f;a] f a}neg;1;{x}]` -1,
-            // each a complete call (#433).
-            if source[after..]
-                .trim_start_matches([' ', '\t'])
+            // each a complete call (#433). On the next line too: inside the
+            // brackets a line break is a blank (#686).
+            if source[past_blanks(code, after)..]
                 .starts_with(|c: char| c.is_ascii_alphanumeric() || "`(\"{.".contains(c))
             {
                 supplied += 1;
@@ -3935,7 +4013,9 @@ pub fn lint_selecting(
     // `while["ab";1]`, `if[101b;1]`, `if[1 2;1]`, `do[1.5;1]`, `do[`a;1]`
     // and `do[1 2;1]` are each 'type, while `if[0N;1]`, `do["a";1]`,
     // `do[1b;1]`, `do[2h;1]` and `do[2024.01.01;1]` run.
-    for m in re!(r"\b(if|while|do)\[").captures_iter(code) {
+    // The bracket may follow a blank, or an indented next line: q 5 reads
+    // `if` over `  [`a;:1]` as `if[`a;:1]` (#574).
+    for m in re!(r"\b(if|while|do)[ \t]*(?:(?:\r?\n[ \t]*)*\r?\n[ \t]+)?\[").captures_iter(code) {
         let at = m.get(0).unwrap().start();
         let open = m.get(0).unwrap().end() - 1;
         if !boundary(code, at) {
@@ -3970,11 +4050,11 @@ pub fn lint_selecting(
     // 'type errors. Chars are another matter, version by version - see
     // QT023 - so this rule is a symbol literal next to an infix + - * % and
     // nothing more.
-    // Spaces and tabs only between the symbol and the operator: a symbol
-    // ending one line and a `-1"..."` print opening the next are two
-    // statements, not a subtraction - the commonest shape in public q. After
-    // the operator, an indented line continues it, past blank and comment
-    // lines (#224).
+    // Between the symbol and the operator, the statement's blanks: a symbol
+    // ending one line and a `-1"..."` print opening the next at column 0 are
+    // two statements, not a subtraction - the commonest shape in public q -
+    // but an indented line continues it, on either side of the operator and
+    // past blank and comment lines (#224, #688).
     for m in
         // `&` and `|` are min and max, and 'type on a symbol too, as are the
         // word operators (q 5: `a&`b, `a mod 2, 2 xexp `a). Not `^`: a
@@ -3982,8 +4062,14 @@ pub fn lint_selecting(
         // The null symbol, a lone backtick, is one too: q 5 `` ` + 1 `` is 'type.
         // So is a name that starts with `.` or holds a `:` past its first
         // character: `` `.a+1 `` and `` `a:b+1 `` (q 5: 'type, #600).
-        re!(r"(?:`(?:\.?[A-Za-z][A-Za-z0-9_.:]*)?)+(?:[ \t]*[+\-*%&|]|[ \t]+(?:mod|div|xexp|xlog|and|or)[ \t])|(?:[+\-*%&|][ \t]*(?:(?:\r?\n[ \t]*)*\r?\n[ \t]+)?|[ \t](?:mod|div|xexp|xlog|and|or)(?:[ \t]*(?:\r?\n[ \t]*)*\r?\n[ \t]+|[ \t]+))(?:`(?:\.?[A-Za-z][A-Za-z0-9_.:]*)?)+")
-            .find_iter(code)
+        re!(concat!(
+            r"(?:`(?:\.?[A-Za-z][A-Za-z0-9_.:]*)?)+(?:",
+            blank!(),
+            r"*[+\-*%&|]|",
+            blank!(),
+            r"+(?:mod|div|xexp|xlog|and|or)[ \t])|(?:[+\-*%&|][ \t]*(?:(?:\r?\n[ \t]*)*\r?\n[ \t]+)?|[ \t](?:mod|div|xexp|xlog|and|or)(?:[ \t]*(?:\r?\n[ \t]*)*\r?\n[ \t]+|[ \t]+))(?:`(?:\.?[A-Za-z][A-Za-z0-9_.:]*)?)+"
+        ))
+        .find_iter(code)
     {
         let at = m.start();
         // `like `a*` is a glob, not a product; QB007 owns that one.
@@ -4569,15 +4655,15 @@ pub fn lint_selecting(
     // The blanks around the dot are optional after a lambda and before a
     // parenthesis: q 5 parses `{x}.(1;2)`, `{x}. 1` and `f .(1;2)` as the
     // same dot apply (#441). A digit straight after it is a float: `f .1`.
-    for m in re!(r"(?:\}[ \t]*|[ \t])\.(?:[ \t]+|\()").find_iter(code) {
+    // The argument may start the indented line that continues the
+    // statement: q 5 `g:f .` over `  (1;2;3)` is 'rank (#691).
+    for m in re!(concat!(r"(?:\}[ \t]*|[ \t])\.(?:", blank!(), r"+|\()")).find_iter(code) {
         let dot = m.start() + m.as_str().find('.').unwrap();
         let left = code[..dot].trim_end_matches([' ', '\t']);
         let Some((rank, id)) = applied(dot, left, left.len()) else {
             continue;
         };
-        let after = dot
-            + 1
-            + (code[dot + 1..].len() - code[dot + 1..].trim_start_matches([' ', '\t']).len());
+        let after = past_blanks(code, dot + 1);
         let rest = &code[after..];
         let end = if rest.starts_with('(') {
             match matching(rest, 0, b'(', b')') {
@@ -4652,8 +4738,14 @@ pub fn lint_selecting(
         // silently lost. Every file git checks out on Windows is CRLF.
         // No `_` in the literal: no q number has one, and `-1_x` is drop.
         // `:` in the literal for a temporal one: `-0D00:01`, `-00:00:01`.
-        re!(r"(?m)(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]+(-\d[A-Za-z0-9.:]*)[ \t\r]*(?:[;\])]|$)")
-                .captures_iter(code)
+        // A lambda's closing brace ends it too: q 5 `{.z.p -1}[]` is 'type
+        // (#678).
+        re!(concat!(
+            r"(?m)(\.?[A-Za-z][A-Za-z0-9_.]*)",
+            blank!(),
+            r"+(-\d[A-Za-z0-9.:]*)[ \t\r]*(?:[;\])}]|$)"
+        ))
+        .captures_iter(code)
     {
         let whole = m.get(0).unwrap();
         let (name, literal) = (&m[1], &m[2]);
@@ -4726,10 +4818,17 @@ pub fn lint_selecting(
             );
         }
     }
-    for m in re!(r"(?:`[A-Za-z0-9_.]*)+\s+ssr?\b|\bss[ \t]+`[A-Za-z0-9_.]*").find_iter(code) {
-        // `"abc" ss `a` puts the symbol in the pattern slot (q 5: 'type).
-        // Only when the symbol is the whole pattern: `` `char$98 `` is the
-        // char "b", and `"abc" ss `char$98` runs (#598).
+    for m in re!(concat!(
+        r"(?:`[A-Za-z0-9_.]*)+\s+ssr?\b|\bss",
+        blank!(),
+        r"+`[A-Za-z0-9_.]*"
+    ))
+    .find_iter(code)
+    {
+        // `"abc" ss `a` puts the symbol in the pattern slot (q 5: 'type), on
+        // the indented next line too (#692). Only when the symbol is the
+        // whole pattern: `` `char$98 `` is the char "b", and
+        // `"abc" ss `char$98` runs (#598).
         if m.as_str().starts_with('s')
             && (!boundary(code, m.start()) || !operand_ends(code, m.end()))
         {
@@ -4843,8 +4942,7 @@ pub fn lint_selecting(
         let whole = m.get(0).unwrap();
         let name = &m[1];
         let after = code[whole.end()..].trim_start();
-        let line = &code[code[..whole.start()].rfind('\n').map_or(0, |i| i + 1)..whole.start()];
-        let in_query = re!(r"\b(?:select|exec|update|delete)\b").is_match(line);
+        let in_query = in_query(code, whole.start());
         if opaque
             || !boundary(code, whole.start())
             || after.starts_with('.')
@@ -5337,8 +5435,10 @@ pub fn lint_selecting(
     // tag per parameter is a different and much larger opinion.
     // Read from the source: `v.comments` blanks comments and keeps strings,
     // so the text of a comment exists only here. A match is a comment rather
-    // than code because `code` has it blanked at the same offsets.
-    for m in re!(r"(?m)^\s*/+\s*@param\s+([A-Za-z][A-Za-z0-9_]*)").captures_iter(source) {
+    // than code because `code` has it blanked at the same offsets. `[ \t]`,
+    // not `\s`: a match that starts on a blank line above the block reads
+    // its run of `@param` lines as empty (#674).
+    for m in re!(r"(?m)^[ \t]*/+[ \t]*@param[ \t]+([A-Za-z][A-Za-z0-9_]*)").captures_iter(source) {
         let name = m.get(1).unwrap();
         if !code[name.start()..name.end()].trim().is_empty() {
             continue;
@@ -5615,18 +5715,23 @@ pub fn lint_selecting(
     }
     // QB016 in functional form: `![t;c;0b;cols]` with both a where list
     // and columns is 'nyi (q 5), as the delete phrase is.
-    for (bang, _) in code.match_indices("![") {
-        let Some(close) = matching(code, bang + 1, b'[', b']') else {
+    // On the next line too, where q joins it: `!` over `  [t;...]` (#574).
+    for m in re!(r"![ \t]*(?:(?:\r?\n[ \t]*)*\r?\n[ \t]+)?\[").find_iter(code) {
+        let (bang, open) = (m.start(), m.end() - 1);
+        let Some(close) = matching(code, open, b'[', b']') else {
             continue;
         };
-        let parts = slots(&code[bang + 2..close - 1]);
+        let parts = slots(&code[open + 1..close - 1]);
         if parts.len() != 4 || parts[2].trim() != "0b" {
             continue;
         }
+        // Only a where list that plainly holds something: `0#()`, `( )` and
+        // `` `symbol$() `` are empty too, and q 5 runs each (#561).
         let filter = parts[1].trim();
         let columns = parts[3].trim();
-        if !filter.is_empty()
-            && filter != "()"
+        let listed = filter.strip_prefix('(').and_then(|f| f.strip_suffix(')'));
+        if (re!(r"^(?:enlist\b|,)").is_match(filter)
+            || listed.is_some_and(|f| !f.trim().is_empty()))
             && re!(r"^(?:enlist\s*`[A-Za-z_][\w.]*|,`[A-Za-z_][\w.]*|(?:`[A-Za-z_][\w.]*){2,})$")
                 .is_match(columns)
         {
@@ -5891,10 +5996,13 @@ pub fn lint_selecting(
         // Assignment targets only: a name being read might be someone else's,
         // and there is nothing for the reader of this file to act on. At the
         // start of each line of the statement: an indented line continues
-        // it, and `f:{x}` + `  l:1` still assigns `l` (#214).
+        // it, and `f:{x}` + `  l:1` still assigns `l` (#214) - unless the
+        // line continues a qSQL phrase, where `name:` names a column:
+        // `r:select` + `  total_qty:sum qty from t` assigns nothing (#694).
         for m in re!(r"(?m)^[ \t]*(\.?[A-Za-z][A-Za-z0-9_.]*)\s*::?(?:[^:=]|$)").captures_iter(line)
         {
-            if in_parens[offset + m.get(1).unwrap().start()] {
+            let at = offset + m.get(1).unwrap().start();
+            if in_parens[at] || in_qsql_phrase(code, at) {
                 continue;
             }
             let target = m.get(1).unwrap();
@@ -5963,7 +6071,16 @@ pub fn lint_selecting(
                 && reserved(&m[1], offset + at)
                 && !matches!(&m[1], "from" | "by")
             {
-                add(offset + at, "QF004", format!("Namespace-level `{}`", &m[1]));
+                // Nothing is shadowed: q 5 refuses the assignment with
+                // 'assign and the file stops loading there (#677).
+                add(
+                    offset + at,
+                    "QF004",
+                    format!(
+                        "Namespace-level assignment to `{}`: q refuses it ('assign)",
+                        &m[1]
+                    ),
+                );
             }
             // The root is where q is inconsistent about reserved names:
             // `count:1` and `where:1` it refuses ('assign), `select:1` it
@@ -6219,8 +6336,10 @@ pub fn lint_selecting(
                 // The right name has to be the whole operand: `c=c i` compares
                 // a column with an item of itself. In a filter a `,` ends one
                 // condition as well as the statement's own terminators do.
+                // An indented next line continues the operand, in a lambda
+                // too, where `query` runs on past this line (#695).
                 let whole = m.get(3).unwrap().end();
-                let rest = line[whole..].trim_start_matches([' ', '\t']);
+                let rest = &query[past_blanks(query, whole)..];
                 let ends =
                     rest.is_empty() || rest.starts_with([',', ';', ')', ']', '}', '\n', '\r']);
                 // And the comparison is in the query's own statement, not
@@ -6241,8 +6360,11 @@ pub fn lint_selecting(
             }
             if let Some(w) = re!(r"\bwhere\b").find(line) {
                 // To the end of the query's statement: after a `;` is another
-                // statement, not more of the filter (#344).
-                let phrase = flat_filter(&line[w.end()..phrase_end(line, w.end())]);
+                // statement, not more of the filter (#344). Read in `query`,
+                // which runs on to where the statement's brackets close: in a
+                // lambda each line is a group of its own, and a filter after
+                // a `where` that ends one is on the next (#679).
+                let phrase = flat_filter(&query[w.end()..phrase_end(query, w.end())]);
                 // `~` matches whole operands, so a filter gets one boolean for
                 // the entire table where it wanted one per row: a 'type error
                 // against a column, or worse, a single-row result against a
@@ -6288,8 +6410,8 @@ pub fn lint_selecting(
                 }) {
                     // Quote the reader's own clause where it is short enough
                     // to read: `a=1 and b=3` reads as `a=(1 and b=3)`.
-                    let raw_phrase = &raw[w.end()..];
-                    let groups = grouped(&line[w.end()..w.end() + phrase.len()]);
+                    let raw_phrase = &source[start + w.end()..];
+                    let groups = grouped(&query[w.end()..w.end() + phrase.len()]);
                     let example = swallowed_comparisons(&groups).first().and_then(|&(a, b)| {
                         let operand = &raw_phrase[a..b];
                         let op = re!(r"<>|<=|>=|[<>=]").find_iter(operand).last()?;

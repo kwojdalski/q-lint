@@ -1,7 +1,7 @@
 //! Literals q refuses, read without running anything. Each rule here was
 //! settled against q 5 shape by shape, including the near-misses it accepts,
 //! and each reports in the default profile because q raises on the line.
-use crate::{Finding, boundary, operand_ends};
+use crate::{Finding, boundary, continues_after, operand_ends};
 
 pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Finding> {
     let mut out = vec![];
@@ -20,7 +20,7 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
     monadic_glyph(path, source, code, comments, &mut out);
     juxtaposed_derived(path, source, code, comments, &mut out);
     keyword_each(path, source, &unsym, &mut out);
-    numbers(path, source, code, &unsym, &mut out);
+    numbers(path, source, code, comments, &unsym, &mut out);
     out
 }
 
@@ -32,9 +32,13 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
 /// 's-fail and `u#"aa"` 'u-fail. It is read from `comments`, where the
 /// string is still text.
 fn attributes(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<Finding>) {
-    for m in re!(
-        r#"`([spu])#[ \t]*((?:`[A-Za-z0-9_.]*){2,}|\(\s*-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:[ \t]+-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)+\s*\)|-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:[ \t]+-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)+|[01]{2,}b|0x[0-9a-fA-F]{4,}|"(?:[^"\\]|\\.)+")"#
-    )
+    // A vector's items may run on across the indented line that continues
+    // it: q 5 `w:`s#1` over `  1e-3` is 's-fail (#689).
+    for m in re!(concat!(
+        r#"`([spu])#[ \t]*((?:`[A-Za-z0-9_.]*){2,}|\(\s*-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:[ \t]+-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)+\s*\)|-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:"#,
+        blank!(),
+        r#"+-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)+|[01]{2,}b|0x[0-9a-fA-F]{4,}|"(?:[^"\\]|\\.)+")"#
+    ))
     .captures_iter(comments)
     {
         let whole = m.get(0).unwrap();
@@ -177,7 +181,7 @@ fn days_in(year: u32, month: u32) -> u32 {
 /// The letter after the last item of the vector literal whose token runs
 /// through `end`, if it ends in one: `u` for `23:59:60u` and for
 /// `12:00:60 12:00u` alike, since that suffix types every item.
-fn vector_suffix(unsym: &str, end: usize) -> Option<char> {
+fn vector_suffix(comments: &str, unsym: &str, end: usize) -> Option<char> {
     let token_end = |from: usize| {
         from + unsym[from..]
             .find(|c: char| !(c.is_ascii_alphanumeric() || ".:".contains(c)))
@@ -186,7 +190,11 @@ fn vector_suffix(unsym: &str, end: usize) -> Option<char> {
     let mut at = token_end(end);
     loop {
         let rest = &unsym[at..];
-        let gap = rest.len() - rest.trim_start_matches([' ', '\t']).len();
+        // Blanks, or a line break into the indented line that continues
+        // the vector: `12:00:60` / `  12:00u` is one literal (#682). Read in
+        // `comments`, where a symbol starting the next line is still there
+        // to say that line is not indented.
+        let gap = crate::past_blanks(comments, at) - at;
         if gap == 0 || !rest[gap..].starts_with(|c: char| c.is_ascii_digit()) {
             break;
         }
@@ -209,7 +217,7 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
     // `12:12`, and the time is the `12:60` after it.
     // A `c` after the vector makes every item chars, whatever its fields
     // hold: q 5 reads `12:60c`, `2000.13.01c` and `12:5c` as " " (#714).
-    let chars = |end: usize| vector_suffix(unsym, end) == Some('c');
+    let chars = |end: usize| vector_suffix(comments, unsym, end) == Some('c');
     let whole_token = |m: &regex::Captures| {
         let head = &unsym[..m.get(0).unwrap().start()];
         let word = head.trim_end_matches(|c: char| c.is_ascii_alphanumeric() || "._".contains(c));
@@ -229,7 +237,7 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
         // A minute's seconds are never read: q 5 takes `23:59:60u` as 23:59,
         // and `12:00:60 12:00u` too, while `23:59:60u 12:00` is a vector of
         // seconds and '23:59:60u.
-        let minute = vector_suffix(unsym, whole.end()) == Some('u');
+        let minute = vector_suffix(comments, unsym, whole.end()) == Some('u');
         if field(2) > 59 || (field(3) > 59 && !minute) {
             out.push(Finding::at(
                 path,
@@ -253,7 +261,7 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
         if command_argument(source, whole.start())
             || unsym[..whole.start()].ends_with(['D', 'T'])
             || matches!(
-                vector_suffix(unsym, whole.end()),
+                vector_suffix(comments, unsym, whole.end()),
                 Some('c' | 't' | 'u' | 'v')
             )
         {
@@ -376,7 +384,7 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
             if !chars(whole.end())
                 && (m[4].len() == 1
                     || (m.get(5).is_some_and(|s| s.as_str().len() == 1)
-                        && vector_suffix(unsym, whole.end()) != Some('u')))
+                        && vector_suffix(comments, unsym, whole.end()) != Some('u')))
             {
                 refuse(
                     whole.start(),
@@ -476,7 +484,8 @@ fn missing_from(
             continue;
         }
         // The statement runs to a `;` at this depth, the bracket that closes
-        // around it, or an unindented next line.
+        // around it, or an unindented next line - skipping a blank line, as
+        // q does: `r:select a`, an empty line, `  from t` is one query (#559).
         let bytes = unsym.as_bytes();
         let (mut at, mut depth) = (m.end(), 0i32);
         while at < bytes.len() {
@@ -489,7 +498,7 @@ fn missing_from(
                     depth -= 1;
                 }
                 b';' if depth == 0 => break,
-                b'\n' if depth == 0 && !unsym[at + 1..].starts_with([' ', '\t']) => break,
+                b'\n' if depth == 0 && !continues_after(comments, source, at) => break,
                 _ => {}
             }
             at += 1;
@@ -959,7 +968,13 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
         // Not in a string or a comment, nor on a system command.
         // `_` too: `_x`, `_1.5` and `1+_x` are '_ in q 5, while `x _1`,
         // `1 _x` and the `_` inside `x_y` follow an operand.
-        if !(GLYPHS.contains(&g) || g == b'_')
+        // `.` too, where it starts no name or number: q 5 refuses `.(v)`,
+        // `. v` and `.:v` with '. - the monadic form is `value` (#571).
+        let dot = g == b'.'
+            && !b
+                .get(i + 1)
+                .is_some_and(|&n| n.is_ascii_alphanumeric() || n == b'_' || n == b'.');
+        if !(GLYPHS.contains(&g) || g == b'_' || dot)
             || code.as_bytes()[i] != g
             || crate::system_command(&source[line_start..])
         {
@@ -980,8 +995,16 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
         // A lambda is a noun, and so is a negative literal: q 5 refuses
         // `#{x}`, `,-1` and `--1` with the first glyph (#438). `- -1` is
         // refused too, but with ' .
+        // A glyph applied with brackets is a noun: q 5 refuses `*$[c;a;b]`
+        // with '* (#568). Not the second half of one operator, `<=[1;2]`.
+        let pair = !spaced
+            && matches!(
+                (g, next.as_bytes().first()),
+                (b'<', Some(b'=' | b'>')) | (b'>', Some(b'='))
+            );
         let operand = colon
             || next.starts_with(|c: char| c.is_ascii_alphabetic() || "`(\"{".contains(c))
+            || (bracket_form(next) && !pair)
             || (re!(r"^-\.?\d").is_match(next) && !(g == b'-' && spaced))
             || re!(r"^\.[A-Za-z]").is_match(next)
             || (next.starts_with(|c: char| c.is_ascii_digit() || c == '.')
@@ -1043,11 +1066,18 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
 
 const GLYPHS: &[u8] = b"+-*%!#$&|^=<>~,@?";
 
+/// Whether `next` opens a glyph applied with brackets, `$[c;a;b]`,
+/// `@[v;0;neg]`, `.[f;x]` or `?[t;();()]`: a value, so an operand (#568).
+fn bracket_form(next: &str) -> bool {
+    let b = next.as_bytes();
+    b.len() > 1 && (GLYPHS.contains(&b[0]) || b[0] == b'.' || b[0] == b'_') && b[1] == b'['
+}
+
 /// What follows a glyph, past the blanks before it - and past a line break
 /// into an indented line, which q reads as the same statement: `a:-` with
 /// `  x` below it is `a:- x`. Blank and comment lines between them do not
 /// end the statement (#224).
-fn continued(rest: &str) -> &str {
+pub(crate) fn continued(rest: &str) -> &str {
     let m = re!(r"^[ \t]*(?:(?:\r?\n[ \t]*)*\r?\n[ \t]+)?")
         .find(rest)
         .map_or(0, |m| m.end());
@@ -1100,10 +1130,36 @@ pub(crate) fn opens_expression(
                     && (!matches!(m.as_str(), "by" | "where")
                         || crate::in_qsql_phrase(comments, m.end()))
             });
+    // After an infix keyword q expects its right argument, so a glyph or
+    // a derived function there is applied by juxtaposition: q 5 refuses
+    // `v vs f/2`, `v in ,2`, `f each -v` and `v cross ,1` (#566). Not a
+    // name that only ends in one, `.q.in`, `` `in `` or `vin`.
+    // The tail of `before` from its last byte outside `keep`: ASCII only,
+    // so the cut falls on a character boundary.
+    let tail = |s: &'_ str, keep: &dyn Fn(u8) -> bool| {
+        s.len() - s.bytes().rev().take_while(|&b| keep(b)).count()
+    };
+    let word = &before[tail(before, &|b| b.is_ascii_alphanumeric() || b == b'_')..];
+    let infix = !glued
+        && crate::semantics::INFIX.contains(&word)
+        && !before[..before.len() - word.len()].ends_with(['.', '`'])
+        && boundary(comments, before.len() - word.len());
+    // `.` and `_` are operators too where they stand apart, and `_` after a
+    // number is drop: q 5 refuses `f . ,v`, `v _ -v` and `1_f/v` (#567).
+    let operator = before.strip_suffix(['.', '_']).is_some_and(|rest| {
+        rest.ends_with([' ', '\t'])
+            || before.ends_with('_')
+                && rest[tail(rest, &|b| {
+                    b.is_ascii_alphanumeric() || b == b'.' || b == b'_'
+                })..]
+                    .starts_with(|c: char| c.is_ascii_digit())
+    });
     i == line_start
         || before.is_empty()
         || iterator
         || qsql
+        || infix
+        || operator
         || before.ends_with([':', '(', '[', '{', ';'])
         || after_signature(code, raw, before.len())
         || (before
@@ -1181,10 +1237,14 @@ fn juxtaposed_derived(
         // A `-` before an operand is one too: `+/-x` holds the same derived
         // function as `+/-1`, and q 5 refuses both with '/.
         let next = continued(&view[m.end()..]);
+        // A lambda is a noun too: q 5 refuses `+/{x}` with '/ (#569).
         let operand = next
-            .starts_with(|ch: char| ch.is_ascii_alphanumeric() || "`(\"".contains(ch))
+            .starts_with(|ch: char| ch.is_ascii_alphanumeric() || "`(\"{".contains(ch))
+            || bracket_form(next)
             || ((next.starts_with('-') || next.starts_with('.'))
                 && next[1..].starts_with(|ch: char| ch.is_ascii_digit()))
+            // A dotted name, as QE008 reads it: q 5 refuses `+/.foo.v` (#570).
+            || re!(r"^\.[A-Za-z]").is_match(next)
             || (next.starts_with('-')
                 && next[1..]
                     .starts_with(|ch: char| ch.is_ascii_alphabetic() || "`(\"".contains(ch)));
@@ -1232,7 +1292,19 @@ fn derived_operand(
         match ch {
             // A signature is not an operand: `{[x]'e}` signals.
             b']' => match opener.get(&(q - 1)) {
-                Some(&o) if o == 0 || b[o - 1] != b'{' => q = o,
+                Some(&o) if o == 0 || b[o - 1] != b'{' => {
+                    q = o;
+                    // A derived function indexed with brackets is one operand
+                    // with its own: `g/[0]'y` is each of `g/[0]` (#562).
+                    let iterated = view[..q].trim_end_matches(['/', '\\', '\'', ':']).len();
+                    if iterated < q && iterated > 0 && !b[iterated - 1].is_ascii_whitespace() {
+                        q = iterated;
+                        if GLYPHS.contains(&b[q - 1]) {
+                            q -= 1;
+                            break;
+                        }
+                    }
+                }
                 _ => return None,
             },
             // A glyph indexed with brackets is a noun too: `@[;1;-1+]/`.
@@ -1416,7 +1488,14 @@ fn null_literal(text: &str, not_last: bool, negative: bool) -> Option<String> {
 /// vector of atoms is not a vector at all - `1b 0b` parses, as two atoms -
 /// and `0N 1`, `3 4i`, `1e5` and `2023.01.01` are fine - though `1E5`,
 /// with its exponent in upper case, is not.
-fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Finding>) {
+fn numbers(
+    path: &str,
+    source: &str,
+    code: &str,
+    comments: &str,
+    unsym: &str,
+    out: &mut Vec<Finding>,
+) {
     // An exponent's sign is part of its number: `1.5e-3` is one float.
     // A token that starts inside a name - the `1` of `x1:1.5j` - is passed
     // over one character at a time, so the literal after it is still read.
@@ -1431,13 +1510,15 @@ fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Find
     };
     let mut i = 0;
     while i < tokens.len() {
-        // A run of items separated by spaces only is one vector literal.
+        // A run of items separated by blanks only is one vector literal - a
+        // line break too, into the indented line that continues it: q 5
+        // reads `c:1E5`, `  2.5` as `1E5 2.5` (#681). Read in `comments`,
+        // where a symbol or a string at column 0 is not blanks: `1:-1` over
+        // `` `:f 0:x ``, or `0:x` over `"\t" 0:x`, is two statements.
         let mut j = i;
         while j + 1 < tokens.len()
-            && unsym[tokens[j].end()..tokens[j + 1].start()]
-                .bytes()
-                .all(|b| b == b' ' || b == b'\t')
-            && tokens[j].end() < tokens[j + 1].start()
+            && re!(concat!("^", blank!(), "+$"))
+                .is_match(&comments[tokens[j].end()..tokens[j + 1].start()])
         {
             j += 1;
         }
@@ -1560,6 +1641,10 @@ fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Find
                 Some(format!("`{text}` is no month"))
             } else if re!(r"^\d+\.\d*[A-Za-z]$").is_match(text)
                 && !re!(r"[cefnpt]$|^\d{4}\.\d*m$|^\d{5,}\.\d\dm$").is_match(text)
+                // A fraction nine characters long or more and a `z` are a
+                // datetime, seconds from 1970: q 5 reads `1234567.5z` as
+                // 1970.01.15T06:56:07.500 and refuses `123456.5z` (#811).
+                && !(text.len() >= 10 && text.ends_with('z'))
             {
                 // After a fraction only a float, real, char or temporal
                 // suffix reads: q 5 refuses `1.5d`, `1.5m`, `1.5u`, `1.5v`
@@ -1623,6 +1708,44 @@ fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Find
                 Some(format!(
                     "`{text}`: the vector's `{}` suffix makes every item an integer",
                     &last[last.len() - 1..]
+                ))
+            } else if k + 1 < run.len() && re!(r"^(?:\d[\d.]*|0[nNwW])[dz]$").is_match(last) && {
+                let z = last.ends_with('z');
+                let day = |t: &str| {
+                    let field = |r: std::ops::Range<usize>| t[r].parse::<u32>().unwrap();
+                    (1..=days_in(field(0..4), field(4..6))).contains(&field(6..8))
+                };
+                match text.len() {
+                    _ if text.contains('.') => {
+                        z && re!(r"^\d+\.\d*$").is_match(text) && text.len() < 9
+                    }
+                    _ if !re!(r"^\d+$").is_match(text) => false,
+                    8 => !day(text),
+                    n => n < 8 || !z,
+                }
+            } {
+                // The suffix types every item, and an item that is no date
+                // is refused with it: q 5 `parse "1 20000101d"` is '1, as
+                // are `1 20000101z` and `20001301 20000101d` (#812).
+                Some(format!(
+                    "`{text}`: the vector's `{}` suffix makes every item a {}, and this is none",
+                    &last[last.len() - 1..],
+                    if last.ends_with('z') {
+                        "datetime"
+                    } else {
+                        "date"
+                    }
+                ))
+            } else if re!(r"^\d(?:[0-9.:]*[0-9.])?(?:e[+-]?\d+)?[A-Za-z]{2,}$").is_match(text)
+                && !text.starts_with("0x")
+            {
+                // A word written against a number joins it, and no number
+                // ends in two letters (`0:str` is the operator `0:`): q 5 refuses `2mod 3`, `1 2in 3`,
+                // `til 2each`, `1.5like` and `2000.01.01in` with the token
+                // (#572).
+                Some(format!(
+                    "`{text}`: letters written against a number are part of it; put a blank \
+                     between the number and the word"
                 ))
             } else {
                 None

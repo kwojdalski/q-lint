@@ -992,3 +992,16 @@ fn a_multiple_global_assignment_in_another_file_defines_its_names() {
         );
     }
 }
+#[test]
+fn a_builtin_assigned_in_a_namespace_is_refused_not_shadowed() {
+    // q 5 refuses `count:42` under `\d .ns` with 'assign: nothing is
+    // shadowed, and the file stops loading there (#677).
+    let f = lint("\\d .ns\ncount:42\n\\d .\n", "t.q", Profile::General);
+    assert_eq!(f.len(), 1);
+    assert_eq!(
+        (f[0].code.as_str(), f[0].severity.as_str()),
+        ("QF004", "error")
+    );
+    assert!(f[0].detail.contains("'assign"), "{}", f[0].detail);
+    assert!(!f[0].why.contains("shadow"), "{}", f[0].why);
+}

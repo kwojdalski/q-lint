@@ -66,3 +66,8 @@ u:([token:enlist "k"] a:enlist 1)
 === clean | QX002: an indented next line continues the value, which is then computed (#204)
 password:"abc"
   ,x
+
+=== clean | QX002: and so it does past a blank line (#675)
+password:"abc"
+
+  ,x

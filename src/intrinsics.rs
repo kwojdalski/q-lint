@@ -35,10 +35,11 @@ fn literal(s: &str) -> Option<Literal> {
         }
         s = s[1..s.len() - 1].trim();
     }
-    // Any blank parts `enlist` from its argument; q 5 reads a tab as a space.
+    // Any blank parts `enlist` from its argument; q 5 reads a tab as a space,
+    // and a line break inside the brackets an argument sits in too (#690).
     if let Some(rest) = s
         .strip_prefix("enlist")
-        .filter(|r| r.starts_with([' ', '\t']))
+        .filter(|r| r.starts_with([' ', '\t', '\r', '\n']))
     {
         let mut value = literal(rest)?;
         if value.vector {
@@ -228,8 +229,13 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
     // `til "3"` would never be seen there. A comment is blank in both, and
     // `code` still has to hold the builtin's own name at that offset, which
     // proves the match is not the inside of a string.
+    //
+    // Between the name and its argument, and between vector items, the gap
+    // is the statement's blanks: a line break into an indented line
+    // continues it, past any blank or comment lines (#193, #676).
+    const GAP: &str = blank!();
     for call in re!(&format!(
-        r#"\b({BUILTINS})(?:[ \t]*\r?\n[ \t]+|[ \t]+)((?:-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:[ \t]+-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)*)|(?:`[A-Za-z0-9_.:]*)+|"(?:\\.|[^"\\])*"|\((?:[^()"\n]|"(?:\\.|[^"\\])*")*\)|enlist[ \t]+(?:-?\.?\d[A-Za-z0-9.:]*(?:[ \t]+-?\.?\d[A-Za-z0-9.:]*)*|(?:`[A-Za-z0-9_.:]*)+|"(?:\\.|[^"\\])*"))"#
+        r#"\b({BUILTINS}){GAP}+((?:-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:{GAP}+-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)*)|(?:`[A-Za-z0-9_.:]*)+|"(?:\\.|[^"\\])*"|\((?:[^()"\n]|"(?:\\.|[^"\\])*")*\)|enlist{GAP}+(?:-?\.?\d[A-Za-z0-9.:]*(?:[ \t]+-?\.?\d[A-Za-z0-9.:]*)*|(?:`[A-Za-z0-9_.:]*)+|"(?:\\.|[^"\\])*"))"#
     ))
     .captures_iter(comments)
     {
@@ -321,8 +327,7 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
         {
             continue;
         }
-        let rest = &comments[m.end()..];
-        let from = m.end() + (rest.len() - rest.trim_start_matches([' ', '\t']).len());
+        let from = crate::past_blanks(comments, m.end());
         if from == m.end() || comments[from..].starts_with(['[', ';', '\n', '\r', ')', ']', '}']) {
             continue;
         }
@@ -332,12 +337,16 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
         // The leftmost match that reaches the name is not always the
         // operand: in `r2:3.5 rotate x` it starts at the `2` of `r2`, since
         // a time literal lets `:` inside one. So the search moves right past
-        // any candidate that does not start on a token boundary.
+        // any candidate that does not start on a token boundary. A vector's
+        // items run on across the indented line that continues it: `r:1`
+        // over `  2 cor 1 2` is `1 2 cor 1 2` (#683).
         let mut left = "";
         let mut from_at = 0;
-        while let Some(l) = re!(
-            r#"(?:-?\.?\d[A-Za-z0-9.:]*(?:[ \t]+-?\.?\d[A-Za-z0-9.:]*)*|(?:`[A-Za-z0-9_.:]*)+|"(?:\\.|[^"\\])*"|\([^()]*\))$"#
-        )
+        while let Some(l) = re!(concat!(
+            r#"(?:-?\.?\d[A-Za-z0-9.:]*(?:"#,
+            blank!(),
+            r#"+-?\.?\d[A-Za-z0-9.:]*)*|(?:`[A-Za-z0-9_.:]*)+|"(?:\\.|[^"\\])*"|\([^()]*\))$"#
+        ))
         .find_at(before, from_at)
         {
             if boundary(code, l.start()) {

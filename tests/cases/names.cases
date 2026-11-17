@@ -43,7 +43,7 @@ k:{[`a`b!(a;b)] -a}
 === clean profile: general | a name with an underscore in it is a parameter (q 5: {[a_] a_}[1] is 1)
 f:{[a_] a_}
 
-=== QF004 | a definition inside a namespace that shadows a builtin
+=== QF004 | a builtin assigned inside a namespace, which q refuses (q 5: 'assign)
 \d .util
 count:{[t] 42}
 \d .
@@ -408,6 +408,17 @@ f:{[t] select from t where return>0.15}
 === QF015 | a query on another line does not cover this one
 r:select from t
 f:{[x] return x}
+
+=== clean profile: general | a where phrase continued on an indented line is still the query's (q 5 with t:([]return:0.1 0.2): the row 0.2, #680)
+r:select from t
+  where return>0.15
+f:{[t] select from t where
+  return>0.15}
+g:{[t] select from t where h[a;return]}
+
+=== QF015 profile: general | nor does one ended by `;`, or a lambda inside the query (q 5: f 1 is 'return, #680)
+r:select from t;f:{[x] return x}
+s:select from t where {return x} each a
 
 === clean profile: general | and so does a multiple assignment (q 5: show true prints 1b) (#371)
 (true;false):10b
@@ -1173,3 +1184,20 @@ r:$[true;`yes;`no]
 === clean profile: general | QF015: and so may value of a string (#750; q 5: 1)
 value "true:1b"
 r:$[true;1;0]
+
+=== clean profile: general | QF007: a comment line inside a typed signature (q 5: f[1;`x] is `x, #560)
+f:{[a;
+  / the symbol
+  b:`s] b}
+f[1;`x]
+
+=== clean profile: general | and inside a pattern signature (q 5: f[1;(2;3)] is 2, #560)
+f:{[a;
+  / c
+  (p;q)] p}
+f[1;(2;3)]
+
+=== clean profile: general | and a comment trailing a slot (#560)
+f:{[a; / c
+  b:`s] b}
+f[1;`x]

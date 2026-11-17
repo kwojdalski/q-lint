@@ -61,7 +61,7 @@ that wants fewer findings narrows in its own configuration.
 | `QF001` | reserved-parameter | Builtin name used as a parameter | every profile |
 | `QF002` | underscore-parameter | `_` is the drop operator, not a parameter name: q 5 refuses every call with 'match | every profile |
 | `QF003` | reserved-local | Assignment to a builtin in a lambda | every profile |
-| `QF004` | reserved-definition | Namespace definition shadows a builtin | every profile |
+| `QF004` | reserved-definition | Namespace-level assignment to a builtin, which q refuses | every profile |
 | `QF005` | nested-local-reference | Nested lambda expects an outer local | every profile |
 | `QF006` | reserved-name-in-embedded-q | Builtin column name in embedded q | a Python hook |
 | `QF007` | not-a-parameter-list | Brackets after { that are not a parameter list: refused where defined, or run as body text | every profile |

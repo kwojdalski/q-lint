@@ -131,6 +131,13 @@ r3:{x}.(1;2)
 r4:f .(1;2)
 r5:{x}. 1
 
+=== QA012 QA009 profile: general | and with the argument on the indented next line (q 5: 'rank, 'type) (#691)
+f:{[p;q] p}
+g:f .
+  (1;2;3)
+h:{x}.
+  1
+
 === clean profile: general | a digit straight after the dot is a float, applied by juxtaposition (q 5: {x} .1 is 0.1) (#441)
 r:{x} .1
 s:{x}.1
@@ -201,6 +208,10 @@ r:@[{[(a;b);c] a+b+c};(1;2);{x}]
 r:@[{[a;b] a+b} 1;2;{x}]
 s:@[{[f;a] f a}neg;1;{`err}]
 t:@[{[a;b;c] a+b+c}[1] 2;3;{x}]
+
+=== clean | and so is one on the next line, where the line break is a blank (q 5: 3) (#686)
+r:@[{[a;b] a+b}
+  1;2;{x}]
 
 === QA003 | but one argument held of three still leaves two (q 5: @[{[a;b;c] a+b+c} 1;2;{x}] is a projection) (#433)
 r:@[{[a;b;c] a+b+c} 1;2;{x}]

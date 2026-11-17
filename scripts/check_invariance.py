@@ -71,7 +71,7 @@ def commented(text):
 
 def main() -> int:
     binary, corpus = sys.argv[1], Path(sys.argv[2]).expanduser()
-    sources = sorted(corpus.rglob("*.q"))
+    sources = sorted(p for p in corpus.rglob("*.q") if p.is_file())
     with tempfile.TemporaryDirectory() as tmp:
         dirs = {k: Path(tmp, k) for k in ("lf", "crlf", "shift", "comment")}
         for d in dirs.values():
