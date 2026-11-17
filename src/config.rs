@@ -274,11 +274,32 @@ impl Policy {
             return Ok(true);
         }
         let settings = self.settings(path)?;
+        let root = project_root(&settings)?;
+        let full = absolute(path);
+        // A name pattern names a directory at any depth, and the walk asks
+        // about each directory before entering it - so `gen` skips
+        // `../other/gen/f.q` in a walk of `../other`. `matches` sees a
+        // file's directories only below a pattern's root; past it, as Ruff
+        // does, each directory above the file is asked here (#802).
+        if full
+            .ancestors()
+            .skip(1)
+            .take_while(|dir| *dir != root)
+            .any(|dir| {
+                settings
+                    .exclude
+                    .iter()
+                    .flatten()
+                    .chain(&settings.extend_exclude)
+                    .chain(&self.overrides.exclude)
+                    .any(|glob| glob.anywhere && matches(dir, glob))
+            })
+        {
+            return Ok(true);
+        }
         if settings.exclude.is_some() {
             return Ok(false);
         }
-        let root = project_root(&settings)?;
-        let full = absolute(path);
         Ok(full.strip_prefix(&root).is_ok_and(|relative| {
             relative
                 .parent()

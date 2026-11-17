@@ -1086,3 +1086,21 @@ fn force_exclude_reads_default_directories_from_the_project_root_not_the_cwd() {
         ["QF016"]
     );
 }
+
+#[test]
+fn force_exclude_applies_a_name_pattern_to_a_file_outside_its_root() {
+    // `--exclude gen` is rooted at the cwd, here/; a walk of ../other skips
+    // other/gen, so naming the file with --force-exclude skips it too. Only
+    // the file's own name was asked, and it was linted (#802).
+    let repo = Repo::new();
+    repo.write("other/gen/f.q", SOURCE).write("here/.keep", "");
+    let args = ["--isolated", "--profile", "style", "--exclude", "gen"];
+    assert_eq!(
+        repo.codes("here", &[&args[..], &["../other"]].concat()),
+        Vec::<String>::new()
+    );
+    let forced = [&args[..], &["--force-exclude", "../other/gen/f.q"]].concat();
+    assert_eq!(repo.codes("here", &forced), Vec::<String>::new());
+    let unforced = [&args[..], &["../other/gen/f.q"]].concat();
+    assert_eq!(repo.codes("here", &unforced), ["QF016"]);
+}
