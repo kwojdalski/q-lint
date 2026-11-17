@@ -8,12 +8,59 @@ use serde_json::{Value, json};
 use std::{
     io::{BufRead, BufReader, Read, Write},
     process::{Child, ChildStdin, ChildStdout, Command, Stdio},
+    sync::mpsc::{Receiver, RecvTimeoutError, channel},
+    time::Duration,
 };
 
 struct Server {
     child: Child,
     stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
+    /// The server's messages, read off its stdout by a thread of their own,
+    /// so a wait for one can give up: a reply that never comes fails the
+    /// test instead of hanging it, and CI with it.
+    messages: Receiver<Value>,
+}
+
+/// How long a test waits for the server's next message.
+const WAIT: Duration = Duration::from_secs(30);
+
+/// Every framed message on `stdout`, until it closes.
+fn read_messages(stdout: ChildStdout) -> Receiver<Value> {
+    let (sender, messages) = channel();
+    std::thread::spawn(move || {
+        let mut stdout = BufReader::new(stdout);
+        loop {
+            let mut length = 0;
+            loop {
+                let mut line = String::new();
+                if stdout.read_line(&mut line).unwrap_or(0) == 0 {
+                    return;
+                }
+                if line == "\r\n" {
+                    break;
+                }
+                if let Some(v) = line.strip_prefix("Content-Length: ") {
+                    length = v.trim().parse().unwrap();
+                }
+            }
+            let mut body = vec![0; length];
+            if stdout.read_exact(&mut body).is_err()
+                || sender.send(serde_json::from_slice(&body).unwrap()).is_err()
+            {
+                return;
+            }
+        }
+    });
+    messages
+}
+
+impl Drop for Server {
+    /// A test that failed while the server still ran leaves no process
+    /// behind.
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
 }
 
 impl Server {
@@ -42,11 +89,11 @@ impl Server {
             .spawn()
             .expect("spawn qlinter --lsp");
         let stdin = child.stdin.take().unwrap();
-        let stdout = BufReader::new(child.stdout.take().unwrap());
+        let messages = read_messages(child.stdout.take().unwrap());
         Self {
             child,
             stdin,
-            stdout,
+            messages,
         }
     }
 
@@ -65,23 +112,15 @@ impl Server {
     }
 
     fn receive(&mut self) -> Value {
-        let mut length = 0;
-        loop {
-            let mut line = String::new();
-            assert!(
-                self.stdout.read_line(&mut line).unwrap() > 0,
-                "server closed stdout while a reply was expected"
-            );
-            if line == "\r\n" {
-                break;
+        match self.messages.recv_timeout(WAIT) {
+            Ok(message) => message,
+            Err(RecvTimeoutError::Timeout) => {
+                panic!("no message from the server in {} s", WAIT.as_secs())
             }
-            if let Some(v) = line.strip_prefix("Content-Length: ") {
-                length = v.trim().parse().unwrap();
+            Err(RecvTimeoutError::Disconnected) => {
+                panic!("server closed stdout while a reply was expected")
             }
         }
-        let mut body = vec![0; length];
-        self.stdout.read_exact(&mut body).unwrap();
-        serde_json::from_slice(&body).unwrap()
     }
 
     /// Read until a message `wanted` accepts arrives, past whatever the
@@ -1243,7 +1282,16 @@ fn the_server_asks_to_watch_the_configuration_outside_the_workspace() {
     // user-level file, are outside every workspace pattern; the server asks
     // for them itself, so their edits reach it in any editor (#554).
     let top = tempfile::tempdir().unwrap();
+    // The real path, which is what the server reports: /private/var for
+    // /var on macOS, and the long name for `RUNNER~1` on Windows - less
+    // Windows' verbatim `\\?\`, which no editor's URI carries.
     let top_path = top.path().canonicalize().unwrap();
+    let top_path = std::path::PathBuf::from(
+        top_path
+            .to_string_lossy()
+            .strip_prefix(r"\\?\")
+            .map_or_else(|| top_path.to_string_lossy().into_owned(), str::to_string),
+    );
     let ws = top_path.join("ws");
     std::fs::create_dir(&ws).unwrap();
     std::fs::write(top_path.join("base.toml"), "profile = \"style\"\n").unwrap();

@@ -1082,7 +1082,12 @@ fn watchers(roots: &[String], policy: &Policy, relative: bool) -> Vec<Value> {
         return out;
     }
     let roots: Vec<std::path::PathBuf> = roots.iter().map(|r| file_key(r).into()).collect();
-    let outside = |p: &std::path::Path| !roots.iter().any(|r| p.starts_with(r));
+    // Both sides as keys: a real path is verbatim on Windows, and
+    // `C:\a` does not start with `\\?\C:\a` (#554).
+    let outside = |p: &std::path::Path| {
+        let p = std::path::PathBuf::from(file_key(&p.to_string_lossy()));
+        !roots.iter().any(|r| p.starts_with(r))
+    };
     let (files, dirs) = policy.watched();
     let names = format!("{{{}}}", FILES.join(","));
     for dir in dirs.iter().filter(|d| outside(d)) {
@@ -1100,9 +1105,20 @@ fn watchers(roots: &[String], policy: &Policy, relative: bool) -> Vec<Value> {
 }
 
 /// A filesystem path as a `file:` URI, `path_of` undone.
+///
+/// A real path on Windows is verbatim - `\\?\C:\a`, `\\?\UNC\host\share` -
+/// and an editor knows that file as `file:///C:/a` and `file://host/share`:
+/// spelled through, it named no folder a client could watch.
 fn path_uri(path: &std::path::Path) -> String {
-    let text = path.to_string_lossy().replace('\\', "/");
-    let mut uri = String::from(if text.starts_with('/') {
+    let text = path.to_string_lossy();
+    let text = match text.strip_prefix(r"\\?\UNC\") {
+        Some(unc) => format!(r"\\{unc}"),
+        None => text.strip_prefix(r"\\?\").unwrap_or(&text).to_string(),
+    };
+    let text = text.replace('\\', "/");
+    let mut uri = String::from(if text.starts_with("//") {
+        "file:"
+    } else if text.starts_with('/') {
         "file://"
     } else {
         "file:///"
@@ -1547,16 +1563,20 @@ fn re_drive(path: &str) -> bool {
 /// symlinked folder (`/tmp` and `/private/tmp`), or in another case on a
 /// case-insensitive disk, and two keys for one file would count its own
 /// definitions as another file's (#528). The real path where the file
-/// exists, or its folder's real path where it does not - a deleted file is
-/// still forgotten under the key it was read under.
+/// exists, or the real path of the nearest folder above it that does - a
+/// deleted file, or one in a deleted folder, is still forgotten under the
+/// key it was read under. A key is itself a path that gives itself back:
+/// on Windows it is `\\?\C:\...`, which a fallback that only looked one
+/// folder up turned into `//?/C:/...` once the folder was gone (#543).
 fn file_key(path: &str) -> String {
-    let real = std::path::Path::new(path);
-    if let Ok(real) = std::fs::canonicalize(real).or_else(|e| match real.file_name() {
-        Some(name) => real
-            .parent()
-            .map_or(Err(e), std::fs::canonicalize)
-            .map(|p| p.join(name)),
-        None => Err(e),
+    let given = std::path::Path::new(path);
+    if let Some(real) = given.ancestors().find_map(|dir| {
+        let real = std::fs::canonicalize(dir).ok()?;
+        // `join("")` would add a trailing separator.
+        Some(match given.strip_prefix(dir).ok()? {
+            rest if rest.as_os_str().is_empty() => real,
+            rest => real.join(rest),
+        })
     }) {
         return real.to_string_lossy().into_owned();
     }
@@ -1587,6 +1607,11 @@ mod tests {
         assert_eq!(path_of("file://localhost/tmp/plain.q"), "/tmp/plain.q");
         assert_eq!(path_of("file://LOCALHOST/c%3A/a.q"), "c:/a.q");
         assert_eq!(path_of("untitled:Untitled-1"), "untitled:Untitled-1");
+        // A real path on Windows is verbatim; its URI is the editor's.
+        let p = std::path::Path::new;
+        assert_eq!(path_uri(p(r"\\?\C:\a b\c")), "file:///C:/a%20b/c");
+        assert_eq!(path_uri(p(r"\\?\UNC\host\share\c")), "file://host/share/c");
+        assert_eq!(path_uri(p("/tmp/a b")), "file:///tmp/a%20b");
         // No authority, and the scheme in any case, are the same file (#546).
         assert_eq!(path_of("file:/tmp/plain.q"), "/tmp/plain.q");
         assert_eq!(path_of("FILE:///tmp/plain.q"), "/tmp/plain.q");
