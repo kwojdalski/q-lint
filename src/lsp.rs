@@ -80,7 +80,7 @@ use q_lint_rs::{
 };
 use serde_json::{Value, json};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     io::{BufRead, Write},
     path::Path,
 };
@@ -98,6 +98,10 @@ const SERVER_NOT_INITIALIZED: i64 = -32002;
 /// Open documents, by URI. The editor is the authority on their contents from
 /// didOpen until didClose, so nothing here reads from disk.
 type Documents = HashMap<String, String>;
+
+/// Open documents edited since they were last linted, which with
+/// `lint.run: "onSave"` is since they were last saved.
+type Unsaved = HashSet<String>;
 
 /// What every `.q` file in the workspace defines, so a name another file
 /// defines is not undefined in this one and another file's function is
@@ -469,6 +473,7 @@ pub fn serve(
     policy: &Policy,
 ) -> Result<u8, String> {
     let mut docs: Documents = HashMap::new();
+    let mut unsaved = Unsaved::new();
     let mut idx = Index::default();
     let mut opts = Options::default();
     let mut problems: Vec<String> = vec![];
@@ -600,15 +605,18 @@ pub fn serve(
             ("shutdown", Some(id)) => {
                 shutdown_requested = true;
                 docs.clear();
+                unsaved.clear();
                 send(writer, json!({"id": id, "result": Value::Null}))?;
             }
 
             ("textDocument/didOpen", None) => {
                 let uri = uri_of(&params["textDocument"]);
                 let text = params["textDocument"]["text"].as_str().unwrap_or("");
+                unsaved.remove(&uri);
                 publish(
                     writer,
                     &mut docs,
+                    &unsaved,
                     &mut idx,
                     uri,
                     text.to_string(),
@@ -629,11 +637,13 @@ pub fn serve(
                     if opts.on_save {
                         // Kept, so a Quick Fix or a format reads what is on
                         // screen; linted, and indexed, when it is saved.
-                        docs.insert(uri, text.to_string());
+                        docs.insert(uri.clone(), text.to_string());
+                        unsaved.insert(uri);
                     } else {
                         publish(
                             writer,
                             &mut docs,
+                            &unsaved,
                             &mut idx,
                             uri,
                             text.to_string(),
@@ -653,16 +663,20 @@ pub fn serve(
                     .map(str::to_string)
                     .or_else(|| docs.get(&uri).cloned());
                 if let Some(text) = text {
-                    publish(writer, &mut docs, &mut idx, uri, text, policy, &opts)?;
+                    unsaved.remove(&uri);
+                    publish(
+                        writer, &mut docs, &unsaved, &mut idx, uri, text, policy, &opts,
+                    )?;
                 }
             }
             ("textDocument/didClose", None) => {
                 let uri = uri_of(&params["textDocument"]);
                 docs.remove(&uri);
+                unsaved.remove(&uri);
                 // The buffer is gone, so the disk is the authority again - and
                 // unsaved definitions it held no longer define anything.
                 if idx.reload(&path_of(&uri), policy) {
-                    relint(writer, &docs, &idx, None, policy, &opts)?;
+                    relint(writer, &docs, &unsaved, &idx, None, policy, &opts)?;
                 }
                 // An empty list, not silence: diagnostics are owned by the
                 // server until it says otherwise, so a closed file would keep
@@ -736,7 +750,7 @@ pub fn serve(
                     idx.rebuild(policy, &docs);
                 }
                 if changed || config_changed {
-                    relint(writer, &docs, &idx, None, policy, &opts)?;
+                    relint(writer, &docs, &unsaved, &idx, None, policy, &opts)?;
                 }
             }
             // Every other REQUEST gets an error, because a client waiting on a
@@ -988,9 +1002,11 @@ fn format(params: &Value, docs: &Documents, ws: &Workspace, policy: &Policy) -> 
 /// Take a document's new text: index it, lint it, push its diagnostics - and
 /// when what it defines changed, lint the other open documents again, since a
 /// name it now defines (or no longer does) can change their findings.
+#[allow(clippy::too_many_arguments)]
 fn publish(
     writer: &mut impl Write,
     docs: &mut Documents,
+    unsaved: &Unsaved,
     idx: &mut Index,
     uri: String,
     text: String,
@@ -1002,22 +1018,25 @@ fn publish(
     docs.insert(uri.clone(), text);
     diagnose(writer, &uri, &docs[&uri], &idx.ws, policy, opts)?;
     if changed {
-        relint(writer, docs, idx, Some(&uri), policy, opts)?;
+        relint(writer, docs, unsaved, idx, Some(&uri), policy, opts)?;
     }
     Ok(())
 }
 
-/// Lint every open document but `except` again.
+/// Lint every open document but `except` again - and but those `unsaved`:
+/// with `lint.run: "onSave"` a buffer is linted only when saved, and another
+/// file's change does not lint its unsaved text either (#550).
 fn relint(
     writer: &mut impl Write,
     docs: &Documents,
+    unsaved: &Unsaved,
     idx: &Index,
     except: Option<&str>,
     policy: &Policy,
     opts: &Options,
 ) -> Result<(), String> {
     for (uri, text) in docs {
-        if Some(uri.as_str()) != except {
+        if Some(uri.as_str()) != except && !unsaved.contains(uri) {
             diagnose(writer, uri, text, &idx.ws, policy, opts)?;
         }
     }

@@ -1654,6 +1654,38 @@ fn with_run_on_save_a_change_is_linted_only_when_saved() {
 }
 
 #[test]
+fn with_run_on_save_another_files_save_does_not_lint_an_unsaved_buffer() {
+    // Saving b.q changes what the workspace defines, so the other open
+    // documents are linted again - but not a.q's unsaved text (#550).
+    let dir = tempfile::tempdir().unwrap();
+    let (mut server, _) = start_with_options(
+        dir.path(),
+        &["--lsp"],
+        json!({"lint": {"run": "onSave"}}),
+        None,
+    );
+    let a = "file:///tmp/on-save-a.q";
+    let b = "file:///tmp/on-save-b.q";
+    server.open(a, "a:1\n");
+    assert!(server.diagnostics_for(a).is_empty());
+    server.change(a, 2, RESERVED_PARAM);
+    server.open(b, "x:1\n");
+    assert!(server.diagnostics_for(b).is_empty());
+    server.change(b, 2, "y:1\n");
+    server.send(json!({"jsonrpc":"2.0","method":"textDocument/didSave",
+        "params":{"textDocument":{"uri":b}}}));
+    assert!(server.diagnostics_for(b).is_empty());
+    // Nothing for a.q: the next message is the reply to this request.
+    server.send(
+        json!({"jsonrpc":"2.0","id":41,"method":"textDocument/semanticTokens/full",
+        "params":{"textDocument":{"uri":a}}}),
+    );
+    let next = server.receive();
+    assert_eq!(next["id"], 41, "{next}");
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
 fn a_severity_setting_overrides_by_the_longest_prefix() {
     let dir = tempfile::tempdir().unwrap();
     let (mut server, _) = start_with_options(
