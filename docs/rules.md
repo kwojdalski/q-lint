@@ -62,14 +62,14 @@ that wants fewer findings narrows in its own configuration.
 | `QF001` | reserved-parameter | Builtin name used as a parameter | every profile |
 | `QF002` | underscore-parameter | `_` is the drop operator, not a parameter name: q 5 refuses every call with 'match, or a name starting with it where the lambda is defined | every profile |
 | `QF003` | reserved-local | Assignment to a builtin in a lambda | every profile |
-| `QF004` | reserved-definition | Namespace-level assignment to a builtin, which q refuses | every profile |
+| `QF004` | reserved-definition | Assignment to a builtin outside a lambda, which q refuses | every profile |
 | `QF005` | nested-local-reference | Nested lambda expects an outer local | every profile |
 | `QF006` | reserved-name-in-embedded-q | Builtin column name in embedded q | a Python hook |
 | `QF007` | not-a-parameter-list | Brackets after { that are not a parameter list: refused where defined, or run as body text | every profile |
 | `QF008` | duplicate-parameter | Parameter declared more than once | `style` and above |
 | `QF009` | empty-parameter-slot | Empty slot in a parameter list is still a parameter | `style` and above |
 | `QF010` | implicit-argument-with-signature | x, y or z used where parameters are declared | every profile |
-| `QF012` | reserved-root-assignment | Root-level assignment to a reserved name | `style` and above |
+| `QF012` | reserved-root-assignment | Root-level assignment to `from` or `by`, which q accepts though both are query keywords | `style` and above |
 | `QF013` | reserved-table-column | Builtin name as a table-literal column | every profile |
 | `QF014` | local-read-before-assign | Name read before the assignment that makes it local | every profile |
 | `QF015` | foreign-keyword | Keyword from another language resolves as an undefined global | every profile |
@@ -109,7 +109,7 @@ that wants fewer findings narrows in its own configuration.
 | `QT006` | vector-length-mismatch | Infix on two vectors of known, different lengths | every profile |
 | `QT007` | string-function-on-symbol | ss or ssr given a symbol literal is a runtime type error | every profile |
 | `QT008` | literal-til-type | til called with something other than an integer atom | every profile |
-| `QT009` | literal-where-type | where called with counts other than booleans or longs | every profile |
+| `QT009` | literal-where-type | where called with counts other than booleans, ints or longs | every profile |
 | `QT010` | symbol-numeric-aggregate | Numeric aggregate or scan applied to a symbol, or to a string where q refuses one | every profile |
 | `QT011` | sort-literal-atom | Sorting applied to a literal atom instead of a list | every profile |
 | `QT012` | distinct-literal-atom | distinct applied to a literal atom instead of a list | every profile |

@@ -105,6 +105,18 @@ fn the_readme_rule_counts_match_the_taxonomy() {
         count("covers all", "rules available in this build"),
         RULES.len() - NOT_SHOWN.len()
     );
+    // And how many companion examples there are, which it once gave as two
+    // beside three (#785).
+    let companions = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/examples"))
+        .unwrap()
+        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+        .filter(|name| name.ends_with(".q") && name != "showcase.q")
+        .count();
+    let word = ["no", "one", "two", "three", "four", "five", "six"][companions];
+    assert!(
+        readme.contains(&format!("the {word} companion examples")),
+        "README should say `the {word} companion examples`"
+    );
     let excluded = NOT_SHOWN.join(" and ");
     assert!(
         readme.contains(&format!("{excluded} are excluded")),

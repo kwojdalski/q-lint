@@ -6,22 +6,26 @@
 / Deliberately not loadable: some of these q itself refuses. That is the
 / point of a linter that never runs what it reads.
 
-/ The invalid string escape is the last marked line, since it coexists
-/ with the other findings. The unclosed delimiter lives in syntax-error.q
-/ instead: it stops the file being analysed at all and would hide the rest.
+/ The invalid string escape (QE002) coexists with the other findings, so it
+/ is marked here like any other. The unclosed delimiter lives in
+/ syntax-error.q instead: it stops the file being analysed at all and would
+/ hide the rest. The last marked line is the unclosed block comment (QE003),
+/ which swallows everything after it.
 
-/ Coverage: of the 88 rules in the taxonomy, 86 can fire on q source and
-/ every one is marked below or in syntax-error.q. The two that cannot are
-/ QF006 (python-hook, no raiser in this build) and QLS001 (external qls
-/ server, demonstrated in its own section near the end).
+/ Coverage: every rule in the taxonomy but two can fire on q source, and
+/ each of those is marked below or in one of the three companion files:
+/ syntax-error.q (QE001), byte-order-mark.q (QE005) and query-injection.q
+/ (QX001). The two that cannot are QF006 (python-hook, no raiser in this
+/ build) and QLS001 (external qls server, demonstrated in its own section
+/ near the end).
 / Comment spacers here are slash-plus-text on purpose: a line that is only
 / a slash opens a q block comment and would swallow the rest of the file,
 / which is exactly what QP001 (uqf profile) is about.
 
-/ QF012: a root-level assignment to a reserved name. q refuses some of
-/ these ('assign for `count`, a parse error for `select`) and silently
-/ accepts others (`from`, `by`) - the linter treats them alike. This line
-/ sits above the \d because inside a namespace the same text is QF004.
+/ QF012: a root-level assignment to `from` or `by`, the two reserved names
+/ q silently accepts there. Every other one it refuses ('assign for `count`,
+/ a parse error for `select`), and that is QF004, at the root as in a
+/ namespace. This line sits above the \d to show it at the root.
 / expect-next: QF012
 from:1
 
@@ -164,13 +168,14 @@ echoed:{[a] b:1; b:b; b}
 / expect-next: QB018
 fixed:1=2
 
-/ ------------------------------------------------------- styleq profile only
+/ ------------------------------------------------ styleq and uqf profiles
 / .
-/ QS001, QS002 and QS003 fire only with q-lint.profile set to styleq. They
-/ come from the FINOS q coding guidelines rather than from q's behaviour: all
+/ QS001, QS002 and QS003 fire with q-lint.profile set to styleq or uqf -
+/ uqf is the CLI's default, the extension's is style, where they stay quiet.
+/ They come from the FINOS q coding guidelines rather than from q's behaviour: all
 / three names below are perfectly good q, and the guidance is about how they
 / read. The underscore one is widely ignored in practice, which is the reason
-/ the profile is opt-in.
+/ the editor's default leaves them out.
 / .
 / QS010 fires on the same line for a different reason: every other name this
 / file chooses is camelCase or a single word, so `some_name` is the one a
@@ -738,10 +743,11 @@ multinull:{[]
  r
  }
 
-/ ----------------------------------------------------- uqf profile only
+/ ------------------------------------------------------ uqf profile only
 
-/ QP001 and QP002 fire only with q-lint.profile set to uqf. With the
-/ default general profile the two marked lines below stay quiet.
+/ The QP rules fire only with q-lint.profile set to uqf, which is the CLI's
+/ default; under the extension's default, style, the marked lines below stay
+/ quiet.
 
 / QP002: the datetime literal is q legacy 15h precision.
 / expect-next: QP002
@@ -765,9 +771,7 @@ widen:{x*2}
 widened: widen 3+4
 
 / clean: a builtin beside its argument is how q is meant to read, and
-/ brackets around this one would be noise rather than clarity. `count` is
-/ not the builtin to show it with here - this file redefines it above, and
-/ the rule is right to say so.
+/ brackets around this one would be noise rather than clarity.
 sized: first 1 2 3
 
 / clean: the same call as above, spelled the way the convention asks.
