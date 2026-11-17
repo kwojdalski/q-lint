@@ -3918,15 +3918,22 @@ fn named_values(
                         let n = crate::slots(&slot[1..slot.len() - 1]).len();
                         return (n > 1).then_some(n);
                     }
-                    re!(r"^(?:-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+|(?:`[A-Za-z0-9_.]*){2,})$")
-                        .is_match(slot)
-                        .then(|| {
-                            if slot.starts_with('`') {
-                                slot.matches('`').count()
-                            } else {
-                                slot.split_whitespace().count()
-                            }
-                        })
+                    // A vector's items may run on across a line break into
+                    // an indented line: `(1` over `  2;3;4)` is `(1 2;3;4)`
+                    // (#684).
+                    re!(concat!(
+                        r"^(?:-?\d[A-Za-z0-9.]*(?:",
+                        blank!(),
+                        r"+-?\d[A-Za-z0-9.]*)+|(?:`[A-Za-z0-9_.]*){2,})$"
+                    ))
+                    .is_match(slot)
+                    .then(|| {
+                        if slot.starts_with('`') {
+                            slot.matches('`').count()
+                        } else {
+                            slot.split_whitespace().count()
+                        }
+                    })
                 };
                 let read: Vec<_> = slots.iter().map(|s| row(s)).collect();
                 if read.iter().any(Option::is_some) {
