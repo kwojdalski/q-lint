@@ -4731,8 +4731,15 @@ pub fn lint_selecting(
             );
         }
     }
-    for m in re!(r"(?:`[A-Za-z0-9_.]*)+\s+ssr?\b|\bss[ \t]+`[A-Za-z0-9_.]*").find_iter(code) {
-        // `"abc" ss `a` puts the symbol in the pattern slot (q 5: 'type).
+    for m in re!(concat!(
+        r"(?:`[A-Za-z0-9_.]*)+\s+ssr?\b|\bss",
+        blank!(),
+        r"+`[A-Za-z0-9_.]*"
+    ))
+    .find_iter(code)
+    {
+        // `"abc" ss `a` puts the symbol in the pattern slot (q 5: 'type), on
+        // the indented next line too (#692).
         if m.as_str().starts_with('s') && !boundary(code, m.start()) {
             continue;
         }
