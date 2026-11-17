@@ -1318,3 +1318,7 @@ a:00001m
 
 === QE010 profile: general | three digits (#578; q 5: '123)
 a:123m
+
+=== clean profile: general | a `u` past a negative item still types the whole vector as minutes (#580; q 5: 12:00 -12:00)
+r:12:00:60 -12:00u
+s:12:00:60 -12:00:60u

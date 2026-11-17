@@ -182,6 +182,15 @@ fn days_in(year: u32, month: u32) -> u32 {
 /// through `end`, if it ends in one: `u` for `23:59:60u` and for
 /// `12:00:60 12:00u` alike, since that suffix types every item.
 fn vector_suffix(comments: &str, unsym: &str, end: usize) -> Option<char> {
+    unsym[..vector_end(comments, unsym, end)]
+        .chars()
+        .last()
+        .filter(char::is_ascii_alphabetic)
+}
+
+/// Where the vector literal whose token runs through `end` stops: past its
+/// last item, a negative one included (`12:00:60 -12:00u`, #580).
+fn vector_end(comments: &str, unsym: &str, end: usize) -> usize {
     let token_end = |from: usize| {
         from + unsym[from..]
             .find(|c: char| !(c.is_ascii_alphanumeric() || ".:".contains(c)))
@@ -195,12 +204,13 @@ fn vector_suffix(comments: &str, unsym: &str, end: usize) -> Option<char> {
         // `comments`, where a symbol starting the next line is still there
         // to say that line is not indented.
         let gap = crate::past_blanks(comments, at) - at;
-        if gap == 0 || !rest[gap..].starts_with(|c: char| c.is_ascii_digit()) {
+        let item = rest[gap..].strip_prefix('-').unwrap_or(&rest[gap..]);
+        if gap == 0 || !item.starts_with(|c: char| c.is_ascii_digit()) {
             break;
         }
-        at = token_end(at + gap);
+        at = token_end(at + gap + (rest.len() - gap - item.len()));
     }
-    unsym[..at].chars().last().filter(char::is_ascii_alphabetic)
+    at
 }
 
 /// QE006. A date, month or time q refuses at parse. A date or month that does not exist:
