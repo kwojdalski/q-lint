@@ -3013,9 +3013,7 @@ pub fn check(
                 });
             let head = match before.chars().next_back() {
                 None => true,
-                Some(c) => {
-                    ";([{:,+-*%&|<>=~!^#$?@".contains(c) || at == line_start || keyword
-                }
+                Some(c) => ";([{:,+-*%&|<>=~!^#$?@".contains(c) || at == line_start || keyword,
             };
             if !head {
                 continue;

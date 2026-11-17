@@ -6797,7 +6797,10 @@ pub fn lint_selecting(
                     add(
                         offset + at,
                         "QF004",
-                        format!("Root-level assignment to `{}`: q refuses it ('assign)", &m[1]),
+                        format!(
+                            "Root-level assignment to `{}`: q refuses it ('assign)",
+                            &m[1]
+                        ),
                     );
                 }
             }
