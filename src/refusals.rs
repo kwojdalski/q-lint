@@ -775,6 +775,11 @@ fn hopen_literal(path: &str, source: &str, code: &str, comments: &str, out: &mut
         if !crate::operand_ends(code, value.end()) {
             continue;
         }
+        // `-0` is the integer 0, and q 5 tries to connect: 'hop, not
+        // 'domain (#614).
+        if re!(r"^-0+$").is_match(value.as_str()) {
+            continue;
+        }
         let (what, error) = if value.as_str() == "`" {
             ("the empty symbol", "'type")
         } else if value.as_str() == "\"\"" {

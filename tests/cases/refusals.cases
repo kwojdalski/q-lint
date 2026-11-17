@@ -202,6 +202,10 @@ r3:select from t where horizon=0D00:02:00
 === clean | a name ending in where is not the keyword
 registry.util.delete.where:{[a] a}
 
+=== clean profile: general | minus zero is the integer 0, which q tries to connect to (q 5: hopen -0 is 'hop; #614)
+h:hopen -0
+g:hopen -00
+
 === QT029 | hopen on a float
 h:hopen 1.5
 
