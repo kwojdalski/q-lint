@@ -246,3 +246,12 @@ d:x<-1
 show 0
 q)\\
 x:1==2
+
+=== QT022 QF012 profile: style | a q)-prefixed line starts a statement, as a line at column 0 does (#585; q 5: 'type at line 2)
+q)a:2.5
+q)r:string a 0
+q)count:42
+
+=== clean profile: general | a q)\t line still times its expression (#585)
+q)a:1 2
+q)\t r:sum a

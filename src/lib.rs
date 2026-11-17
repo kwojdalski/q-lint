@@ -2409,6 +2409,24 @@ pub(crate) fn timed_prefix(line: &str) -> usize {
 pub(crate) fn system_command(line: &str) -> bool {
     line.strip_prefix("q)").unwrap_or(line).starts_with('\\') && timed_prefix(line) == 0
 }
+/// A `q)` prompt is blank in the views, so its line would read as the
+/// indented continuation of the one before. It starts a statement, so the
+/// rules see a `;` in its place: q 5 runs `q)a:2.5` and then refuses
+/// `q)r:string a 0` with 'type (#585). A `q)\` command is read as a command
+/// already, and keeps its blank.
+fn prompts_start_statements(source: &str, v: &mut Views) {
+    let mut at = 0;
+    for line in source.split_inclusive('\n') {
+        if line.starts_with("q)")
+            && !line.starts_with("q)\\")
+            && v.code.as_bytes().get(at) == Some(&b' ')
+        {
+            v.code.replace_range(at..at + 1, ";");
+            v.comments.replace_range(at..at + 1, ";");
+        }
+        at += line.len();
+    }
+}
 fn views(source: &str) -> Views {
     // A BOM is QE005's to report; the rest of the file is read as q would
     // read it without one, so `<BOM>/ note` is still a comment line (#221).
@@ -3479,7 +3497,7 @@ pub fn lint_selecting(
     structure_selected: bool,
 ) -> Vec<Finding> {
     let uqf = profile == Profile::Uqf;
-    let v = views(source);
+    let mut v = views(source);
     if structure_selected {
         let mut out = structure(path, source, &v);
         suppress(&mut out, source, &v.comments);
@@ -3488,6 +3506,7 @@ pub fn lint_selecting(
             return out;
         }
     }
+    prompts_start_statements(source, &mut v);
     let code = &v.code;
     let _matches = MatchScope::install(code);
     // A name the file adds to `.q` is reserved from there on, as a builtin
@@ -6117,7 +6136,8 @@ pub fn lint_selecting(
         // it, and `f:{x}` + `  l:1` still assigns `l` (#214) - unless the
         // line continues a qSQL phrase, where `name:` names a column:
         // `r:select` + `  total_qty:sum qty from t` assigns nothing (#694).
-        for m in re!(r"(?m)^[ \t]*(\.?[A-Za-z][A-Za-z0-9_.]*)\s*::?(?:[^:=]|$)").captures_iter(line)
+        for m in re!(r"(?m)^[ \t]*;?[ \t]*(\.?[A-Za-z][A-Za-z0-9_.]*)\s*::?(?:[^:=]|$)")
+            .captures_iter(line)
         {
             let at = offset + m.get(1).unwrap().start();
             if in_parens[at] || in_qsql_phrase(code, at) {
