@@ -49,8 +49,9 @@ fn literal(s: &str) -> Option<Literal> {
         value.len = 1;
         return Some(value);
     }
-    // The null symbol too, a lone backtick: q 5 `asc `` ` `` is 'rank.
-    if re!(r"^(?:`(?:[A-Za-z][A-Za-z0-9_.]*)?)+$").is_match(s) {
+    // The null symbol too, a lone backtick: q 5 `asc `` ` `` is 'rank. And a
+    // name starting with `.` or holding `:`, `` `.a `` and `` `a:b `` (#600).
+    if re!(r"^(?:`(?:\.?[A-Za-z][A-Za-z0-9_.:]*)?)+$").is_match(s) {
         return Some(Literal {
             kind: Kind::Symbol,
             vector: s.bytes().filter(|&b| b == b'`').count() > 1,
@@ -90,6 +91,22 @@ fn literal(s: &str) -> Option<Literal> {
             len: s.len() - 1,
             negative: false,
             short_integer: false,
+        });
+    }
+    // A null or an infinity atom: the integer ones are integers and the
+    // float ones floats (q 5: `asc 0N` and `iasc 0w` are 'rank, `til 0n`
+    // 'type, #616).
+    if let Some(m) = re!(r"^(-)?0(?:[NW][hij]?|([nw])[ef]?)$").captures(s) {
+        return Some(Literal {
+            kind: if m.get(2).is_some() {
+                Kind::Float
+            } else {
+                Kind::Integer
+            },
+            vector: false,
+            len: 1,
+            negative: m.get(1).is_some(),
+            short_integer: s.ends_with('h'),
         });
     }
     if re!(r"^-?\d+(?:\s+-?\d+)*[hij]?$").is_match(s) {
@@ -170,30 +187,43 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
         let Some(end) = matching(code, open, b'[', b']') else {
             continue;
         };
-        let mut arg_start = open + 1;
-        let args: Vec<_> = slots(&code[open + 1..end - 1])
-            .into_iter()
-            .map(|slot| {
-                let raw = &comments[arg_start..arg_start + slot.len()];
-                arg_start += slot.len() + 1;
-                raw
-            })
-            .collect();
+        let read = |open: usize, end: usize| -> Vec<&'a str> {
+            let mut arg_start = open + 1;
+            slots(&code[open + 1..end - 1])
+                .into_iter()
+                .map(|slot| {
+                    let raw = &comments[arg_start..arg_start + slot.len()];
+                    arg_start += slot.len() + 1;
+                    raw
+                })
+                .collect()
+        };
+        let mut args = read(open, end);
+        // A dyadic builtin projected on its first argument and applied to
+        // the second straight after: `rotate[2.5][1 2 3]` is the call
+        // `rotate[2.5;1 2 3]` (q 5: 'type, #617).
+        let name = call.get(1).unwrap().as_str();
+        if args.len() == 1
+            && re!(r"^(?:rotate|mavg|msum|mcount|mdev|mmin|mmax|cor|cov|wavg|wsum|within)$")
+                .is_match(name)
+            && code[end..].starts_with('[')
+            && let Some(next) = matching(code, end, b'[', b']')
+        {
+            args.extend(read(end, next));
+        }
         // Omitted slots are projections rather than complete applications.
         if args.iter().any(|arg| arg.trim().is_empty()) {
             continue;
         }
-        out.push(Call {
-            at,
-            name: call.get(1).unwrap().as_str(),
-            args,
-        });
+        out.push(Call { at, name, args });
     }
     // Juxtaposed form: `name arg`, one argument, running to the end of the
     // expression. Only a literal argument is worth collecting - the rules can
     // say nothing about a name - so the argument is taken as far as the
     // literal extends: digits, dots, a type suffix, backtick symbols, spaces
-    // between vector items, or one quoted string.
+    // between vector items, or one quoted string - or one of those in
+    // parentheses or after `enlist`, which `literal` reads: `til (2.5)` and
+    // `flip enlist 1` are 'type and 'rank as their bracket forms are (#602).
     //
     // Matched in `comments`, not `code`: a string is blanks in `code`, so
     // `til "3"` would never be seen there. A comment is blank in both, and
@@ -205,7 +235,7 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
     // continues it, past any blank or comment lines (#193, #676).
     const GAP: &str = blank!();
     for call in re!(&format!(
-        r#"\b({BUILTINS}){GAP}+((?:-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:{GAP}+-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)*)|(?:`[A-Za-z0-9_.]*)+|"(?:\\.|[^"\\])*")"#
+        r#"\b({BUILTINS}){GAP}+((?:-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:{GAP}+-?\.?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)*)|(?:`[A-Za-z0-9_.:]*)+|"(?:\\.|[^"\\])*"|\((?:[^()"\n]|"(?:\\.|[^"\\])*")*\)|enlist{GAP}+(?:-?\.?\d[A-Za-z0-9.:]*(?:[ \t]+-?\.?\d[A-Za-z0-9.:]*)*|(?:`[A-Za-z0-9_.:]*)+|"(?:\\.|[^"\\])*"))"#
     ))
     .captures_iter(comments)
     {
@@ -239,11 +269,23 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
     // and 'type alike (q 5). Two slots only - `@[til;2.5;{x}]` is a protected
     // call whose handler catches the error. A dyadic builtin under `@` is a
     // projection, which the argument count in `check` already passes over.
-    const LITERAL: &str = r#"(?:-?\d[A-Za-z0-9.:]*(?:[ \t]+-?\d[A-Za-z0-9.:]*)*)|(?:`[A-Za-z0-9_.]*)+|"(?:\\.|[^"\\])*""#;
+    const LITERAL: &str = r#"(?:-?\.?\d[A-Za-z0-9.:]*(?:[ \t]+-?\.?\d[A-Za-z0-9.:]*)*)|(?:`[A-Za-z0-9_.:]*)+|"(?:\\.|[^"\\])*""#;
+    // So is `.` given a one-item list: `til . enlist 2.5` and
+    // `.[til;enlist 2.5]` (q 5: 'type, #617).
     for (pattern, name_group, arg_group) in [
         (format!(r"\b({BUILTINS})[ \t]*@[ \t]*({LITERAL})"), 1, 2),
         (
             format!(r"@\[[ \t]*({BUILTINS})[ \t]*;[ \t]*({LITERAL})[ \t]*\]"),
+            1,
+            2,
+        ),
+        (
+            format!(r"\b({BUILTINS})[ \t]+\.[ \t]+enlist[ \t]+({LITERAL})"),
+            1,
+            2,
+        ),
+        (
+            format!(r"\.\[[ \t]*({BUILTINS})[ \t]*;[ \t]*enlist[ \t]+({LITERAL})[ \t]*\]"),
             1,
             2,
         ),
@@ -301,9 +343,9 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
         let mut left = "";
         let mut from_at = 0;
         while let Some(l) = re!(concat!(
-            r#"(?:-?\d[A-Za-z0-9.:]*(?:"#,
+            r#"(?:-?\.?\d[A-Za-z0-9.:]*(?:"#,
             blank!(),
-            r#"+-?\d[A-Za-z0-9.:]*)*|(?:`[A-Za-z0-9_.]*)+|"(?:\\.|[^"\\])*"|\([^()]*\))$"#
+            r#"+-?\.?\d[A-Za-z0-9.:]*)*|(?:`[A-Za-z0-9_.:]*)+|"(?:\\.|[^"\\])*"|\([^()]*\))$"#
         ))
         .find_at(before, from_at)
         {
@@ -446,6 +488,8 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
         let Some(value) = literal(args[0]) else {
             continue;
         };
+        // A temporal atom is no count or window either: q 5 `12:00 rotate x`
+        // and `2000.01.01 msum x` are 'type (#605).
         let rule = match name {
             "sqrt" | "log" | "exp" | "abs" | "neg" | "sin" | "cos" | "tan" | "acos" | "asin"
             | "atan" | "reciprocal" | "ceiling" | "signum"
@@ -455,7 +499,10 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
             }
             "mavg" | "msum" | "mcount" | "mdev" | "mmin" | "mmax"
                 if value.vector
-                    || matches!(value.kind, Kind::Float | Kind::Symbol | Kind::Char) =>
+                    || matches!(
+                        value.kind,
+                        Kind::Float | Kind::Symbol | Kind::Char | Kind::Temporal
+                    ) =>
             {
                 Some(("QT017", "Moving-window size must be an integer atom"))
             }
@@ -500,18 +547,18 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
             // `sdev`, `svar`, `all` and `any` of a symbol, atom or vector,
             // too (q 5: 'type), though each takes a string.
             "sum" | "prd" | "avg" | "med" | "dev" | "var" | "sdev" | "svar" | "all" | "any"
-            | "sums" | "prds" | "deltas" | "ratios"
+            | "sums" | "prds" | "deltas" | "ratios" | "avgs"
                 if (value.kind == Kind::Symbol
                     && (value.vector
                         || matches!(
                             name,
-                            "avg" | "med" | "dev" | "var" | "sdev" | "svar" | "all" | "any"
+                            "avg" | "med" | "dev" | "var" | "sdev" | "svar" | "all" | "any" | "avgs"
                         )))
                     // A string is numeric to `sum`, `avg` and `ratios`, and
-                    // not to these four.
+                    // not to these five (q 5: `avgs "ab"` is 'type, #606).
                     || (value.kind == Kind::Char
                         && value.vector
-                        && matches!(name, "prd" | "sums" | "prds" | "deltas")) =>
+                        && matches!(name, "prd" | "sums" | "prds" | "deltas" | "avgs")) =>
             {
                 Some((
                     "QT010",
@@ -530,7 +577,10 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
             "flip" => Some(("QT013", "flip cannot transpose an atom or a flat vector")),
             "rotate"
                 if value.vector
-                    || matches!(value.kind, Kind::Float | Kind::Symbol | Kind::Char) =>
+                    || matches!(
+                        value.kind,
+                        Kind::Float | Kind::Symbol | Kind::Char | Kind::Temporal
+                    ) =>
             {
                 Some(("QT014", "rotate requires an integer atom for its count"))
             }

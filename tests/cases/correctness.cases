@@ -728,6 +728,16 @@ r:"abc" ss ""
 === clean | QT021: a non-empty pattern infix
 r:"abc" ss "b"
 
+=== clean profile: general | QT021: a pattern that only starts with the empty string (q 5: ,1 and ,2; #597)
+x:"abc" ss "","b"
+y:"abc" ss "",enlist "c"
+
+=== QT021 | an empty pattern with no space, in parentheses, or to a parenthesised ss (q 5: each 'length; #619)
+a:"abc" ss""
+b:ss["abc";("")]
+c:"abc" ss ("")
+d:(ss)["abc";""]
+
 === clean | QT022: a null integer is a handle not yet opened, written to by juxtaposition
 log_handle:0N
 f:{[msg] log_handle enlist msg}
@@ -786,6 +796,11 @@ f:"a"="b",x
 
 === QT007 profile: general | a symbol pattern in infix ss (q 5: "abc" ss `a is 'type)
 a:"abc" ss `a
+
+=== clean profile: general | a symbol cast to char is a char pattern (q 5: each ,1; #598)
+x:"abc" ss `char$98
+y:"abc" ss `char$"b"
+z:ss["abc";`char$98]
 
 === QT007 profile: general | and on the indented next line (q 5: 'type, #692)
 y:"abc" ss

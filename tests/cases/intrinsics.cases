@@ -691,3 +691,39 @@ t:sum[2;3]
 === QA010 profile: general | but not before the file redefines it (#440)
 r:sum[2;3]
 .q.sum:{[a;b] a*b}
+
+=== QT014 QT017 profile: general | a temporal count or window (q 5: each 'type; #605)
+a:12:00 rotate 1 2 3
+b:12:00 mavg 1 2 3
+c:2000.01.01 msum 1 2 3
+d:rotate[0D01;1 2 3]
+
+=== QT010 profile: general | avgs of a symbol or a string (q 5: avgs `a, avgs `a`b and avgs "ab" are 'type; #606)
+a:avgs `a`b
+b:avgs "ab"
+c:avgs `a
+
+=== clean profile: general | avgs of one char is a number (q 5: 97f)
+a:avgs "a"
+
+=== QT008 QT009 QT011 QT012 QT014 profile: general | a null or infinity atom is an atom of its type (q 5: 'rank, 'type each; #616)
+a:asc 0N
+b:distinct 0W
+c:til 0n
+d:iasc 0w
+e:where 0N
+f:0w rotate 1 2
+
+=== clean profile: general | a short infinity is a window q takes (q 5: 0Wh mavg 1 2 3 is 1 1.5 2)
+a:0Wh mavg 1 2 3
+
+=== QT008 QT014 QT017 profile: general | dot apply of a checked builtin, and a projection applied straight after (q 5: each 'type; #617)
+a:.[til;enlist 2.5]
+b:til . enlist 2.5
+c:rotate[2.5][1 2 3]
+d:mavg[2.5][1 2 3]
+
+=== clean profile: general | the same spellings where q runs them, and a monadic call indexed after
+a:.[til;enlist 3]
+b:rotate[1][1 2 3]
+c:til[3][0]

@@ -153,6 +153,14 @@ r1:select from t
 r2:update a:1 from t
 .my.select:1
 
+=== QT025 profile: general | signalling a number strand or an enlisted atom, which are lists (q 5: each 'stype; #612)
+f:{'1 2}
+g:{'enlist 1}
+h:{'enlist `a}
+
+=== clean profile: general | an enlisted one-char string is a string (q 5: 'enlist "a" signals 'a)
+f:{'enlist "a"}
+
 === QT025 | signalling a number
 f:{'1}
 
@@ -215,6 +223,10 @@ r3:select from t where horizon=0D00:02:00
 
 === clean | a name ending in where is not the keyword
 registry.util.delete.where:{[a] a}
+
+=== clean profile: general | minus zero is the integer 0, which q tries to connect to (q 5: hopen -0 is 'hop; #614)
+h:hopen -0
+g:hopen -00
 
 === QT029 | hopen on a float
 h:hopen 1.5
@@ -1005,6 +1017,20 @@ r:select from t where a in b:1 2
 s:select from t where a in (b:1 2)
 u:select from t where (b:1)>0
 
+=== clean profile: general | an assignment of a boolean value runs: q filters on the value (q 5: one row, two rows, one row; #595)
+t:([]a:1 2;b:01b)
+r:select from t where a:a>1
+s:select from t where a:1b
+u:select from t where a:b
+
+=== QT028 profile: general | an assignment of a literal that is not boolean (q 5: each is 'type)
+t:([]a:1 2;s:`x`y)
+r:select from t where s:`x
+s:select from t where a:"x"
+u:select from t where a:1 0
+v:select from t where a:2000.01.01
+w:select from t where a:-1
+
 === clean profile: general | a where before from is the function, in a column
 r:exec where m:a>0 from t
 
@@ -1050,6 +1076,26 @@ c:0Ni5
 e:0W
 f:0Wi
 g:0W.5 1c
+
+=== QT024 profile: general | infinities, temporals, boolean and byte vectors, escaped strings and a parenthesised vector (q 5: each 's-fail or 'u-fail; #611)
+a:`s#0w 1
+b:`s#2001.01.02 2001.01.01
+c:`s#12:00 11:00
+d:`s#10b
+e:`s#0x0201
+f:`s#"\002\001"
+g:`s#(3 1 2)
+h:`u#11b
+
+=== clean profile: general | the same shapes in order
+a:`s#-0w 1 0w
+b:`s#2001.01.01 2001.01.02
+c:`s#11:00 12:00
+d:`s#01b
+e:`s#0x0102
+f:`s#"\001\002"
+g:`s#(1 2 3)
+h:`u#10b
 
 === clean profile: general | QE007: a blank line inside a query does not end it (q 5 runs it, #559)
 t:([]a:1 2)
