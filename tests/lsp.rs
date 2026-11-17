@@ -1044,6 +1044,23 @@ fn excluding_a_folder_in_the_configuration_drops_it_from_the_index() {
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 
+#[cfg(unix)]
+#[test]
+fn a_symlinked_q_file_is_indexed_as_the_cli_walk_lints_it() {
+    // `qlinter .` follows a symlink to a file; the index skipped it, and
+    // reported a name it defines as undefined (#542).
+    let dir = tempfile::tempdir().unwrap();
+    let shared = tempfile::tempdir().unwrap();
+    std::fs::write(shared.path().join("def.q"), "helper:{x+1}\n").unwrap();
+    std::os::unix::fs::symlink(shared.path().join("def.q"), dir.path().join("def.q")).unwrap();
+    let mut server = start_with_workspace(dir.path());
+    let app = file_uri(&dir.path().join("app.q"));
+    server.open(&app, "f:{y:helper; y}\n");
+    let found = codes_of(&server.diagnostics_for(&app));
+    assert!(!found.contains(&"QF018".to_string()), "{found:?}");
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
 #[test]
 fn a_document_takes_the_profile_of_the_qlinter_toml_above_it() {
     // An editor starts the server with no --profile when the user has not set

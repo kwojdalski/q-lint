@@ -240,11 +240,12 @@ impl Index {
                 if self.excluded(&root, &path) || skipped(policy, &path) {
                     continue;
                 }
+                // A symlink to a file is read, as the CLI's walk lints it
+                // (#542); one to a directory is not entered, as there.
                 if kind.is_dir() {
                     stack.push((root.clone(), path));
-                } else if kind.is_file()
-                    && is_q_path(&name)
-                    && entry.metadata().is_ok_and(|m| m.len() <= MAX_BYTES)
+                } else if is_q_path(&name)
+                    && std::fs::metadata(&path).is_ok_and(|m| m.is_file() && m.len() <= MAX_BYTES)
                 {
                     self.read(&path.to_string_lossy());
                     seen += 1;
