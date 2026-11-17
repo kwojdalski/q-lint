@@ -381,7 +381,7 @@
     "code": "QB008",
     "name": "vector-equality-filter",
     "category": "correctness",
-    "summary": "Column equality against a vector literal in a filter",
+    "summary": "Column compared with a vector literal in a filter, row by row rather than for membership",
     "scope": "style"
   },
   {

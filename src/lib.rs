@@ -6391,12 +6391,27 @@ pub fn lint_selecting(
                         continue;
                     }
                     reported.push(at);
+                    // Row by row, so q 5 runs it when the table has as many
+                    // rows as the vector has items (#499).
+                    let literal = m.as_str().trim_start_matches(['=', '<', '>']).trim();
+                    let n = if literal.starts_with('`') {
+                        literal.matches('`').count()
+                    } else {
+                        literal.split_whitespace().count()
+                    };
+                    let (op, meant) = if m.as_str().starts_with("<>") {
+                        ("<>", "`not` with `in` tests")
+                    } else {
+                        ("=", "`in` tests")
+                    };
                     add(
                         at,
                         "QB008",
-                        "Equality against a vector literal in a filter is a 'length error at \
-                         runtime; `in` is the operator for membership"
-                            .into(),
+                        format!(
+                            "`{op}` against a {n}-item vector literal in a filter compares row \
+                             by row: q raises 'length unless the table has exactly {n} rows; \
+                             {meant} membership"
+                        ),
                     );
                 }
             }
