@@ -5571,10 +5571,13 @@ pub fn lint_selecting(
         if parts.len() != 4 || parts[2].trim() != "0b" {
             continue;
         }
+        // Only a where list that plainly holds something: `0#()`, `( )` and
+        // `` `symbol$() `` are empty too, and q 5 runs each (#561).
         let filter = parts[1].trim();
         let columns = parts[3].trim();
-        if !filter.is_empty()
-            && filter != "()"
+        let listed = filter.strip_prefix('(').and_then(|f| f.strip_suffix(')'));
+        if (re!(r"^(?:enlist\b|,)").is_match(filter)
+            || listed.is_some_and(|f| !f.trim().is_empty()))
             && re!(r"^(?:enlist\s*`[A-Za-z_][\w.]*|,`[A-Za-z_][\w.]*|(?:`[A-Za-z_][\w.]*){2,})$")
                 .is_match(columns)
         {

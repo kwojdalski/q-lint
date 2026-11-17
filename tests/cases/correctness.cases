@@ -820,6 +820,18 @@ t:([]a:1 2;b:3 4)
 r:![t;();0b;enlist`a]
 s:![t;enlist(=;`b;3);0b;`symbol$()]
 
+=== clean profile: general | an empty where list spelled other than () (q 5 deletes column c from each, #561)
+t:([]a:1 2;c:3 4)
+r:![t;( );0b;enlist`c]
+s:![t;0#();0b;enlist`c]
+u:![t;`symbol$();0b;enlist`c]
+w:![t;( / none
+  );0b;enlist`c]
+
+=== QB016 profile: general | a where list of two constraints (#561)
+t:([]a:1 2;c:3 4)
+r:![t;((>;`a;1);(<;`a;3));0b;enlist`c]
+
 === QB019 | a column named twice in a select (q 5: select a,a from t has a and a1)
 t:([]a:1 2;b:3 4)
 r:select a,a from t
