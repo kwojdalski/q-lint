@@ -193,6 +193,11 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
             continue;
         }
         let open = call.get(0).unwrap().end() - 1;
+        // A string is blanks in `code`, so `where "abcd"[1]` looks like
+        // `where[1]` there: the gap has to be blank in `comments` too (#824).
+        if !comments[call.get(1).unwrap().end()..open].trim().is_empty() {
+            continue;
+        }
         let Some(end) = matching(code, open, b'[', b']') else {
             continue;
         };

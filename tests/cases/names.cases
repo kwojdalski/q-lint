@@ -114,11 +114,16 @@ f:{[1] x+1}
 === QF010 | a symbol literal likewise
 f:{[`s] x+1}
 
-=== QF007 | two names without a separator is one bracket expression
-f:{[a b] a}
+=== clean profile: general | a name applied in the slot is one parameter binding no name (#484; q 5: value value {[f x] 1} has the one parameter `0)
+f:{[f x] 1}
+g:{[a[0]] 1}
+h:{[(a b)] 1}
+k:{[a;b c] a}
 
-=== QF007 | an index in the parameter slot
-f:{[a[0]] a}
+=== QF007 profile: general | a literal, an iterator or a builtin at the head of the slot (#484; q 5: 'nyi for each)
+f:{[1 a] 1}
+g:{[a'] 1}
+h:{[neg y] y}
 
 === clean profile: general | a q 5 typed slot takes any function or type after the colon (q 5: k["xy";2] is (`xy;2), and each lambda takes two) (#437)
 k:{[a:`$;b] (a;b)}
@@ -641,6 +646,18 @@ bb:1
 \d .example
 f:{[] aa:bb; aa}
 \d .
+
+=== clean | a member of a namespace written whole as a dictionary, read under its \d (#766; q 5: .cfg.r is 5010)
+.cfg:(``port)!(::;5010)
+\d .cfg
+r:port
+\d .
+
+=== QF018 | but not read before the dictionary is written (#766; q 5: 'port)
+\d .cfg
+r:port
+\d .
+.cfg:(``port)!(::;5010)
 
 === QF018 | a dotted root name is not the bare name (q 5: .cfg:1; b:cfg is 'cfg)
 .cfg:1

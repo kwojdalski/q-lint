@@ -109,7 +109,8 @@ fn language_prefixes_preserve_following_q_diagnostics() {
 /// would guess - `.q.z` is a legal parameter name, `{[a;b;] ...}` takes three
 /// arguments - and reads the brackets as body text rather than a signature
 /// whenever a slot is neither a name nor, in q 5, a pattern, which is the
-/// trap QF007 exists for.
+/// trap QF007 exists for. q 5 has no such reading: what is no name or
+/// pattern there it refuses where the lambda is defined.
 #[test]
 fn parameter_lists_agree_with_q() {
     // q reports the declared names: these are signatures.
@@ -137,6 +138,11 @@ fn parameter_lists_agree_with_q() {
         "f:{[a:1] a}",
         "f:{[a:neg;b] a}",
         "f:{[a:{x+1};b] a}",
+        // A name applied is one parameter binding no name (q 5, #484).
+        "f:{[a b] a}",
+        "f:{[f x] 1}",
+        "f:{[a[0]] a}",
+        "f:{[(a b)] 1}",
     ] {
         let found = lint(source, "t.q", Profile::Style);
         assert!(
@@ -144,16 +150,14 @@ fn parameter_lists_agree_with_q() {
             "{source:?} is a parameter list to q: {found:?}"
         );
     }
-    // q refuses the source, refuses every call, or runs the brackets as
-    // body text - and the message says which, as q 5 does.
+    // q 5 refuses the source - and the message says how.
     for (source, claim) in [
         ("f:{[tables[]] x+1}", "'nyi"),
         ("f:{[a+b] 1}", "'nyi"),
         ("f:{[a-b] x}", "'nyi"),
         ("f:{[count x] 1}", "'nyi"),
-        ("f:{[a b] a}", "start of the body"),
-        ("f:{[a[0]] a}", "start of the body"),
-        ("f:{[(a b)] 1}", "start of the body"),
+        ("f:{[1 a] 1}", "'nyi"),
+        ("f:{[a'] 1}", "'nyi"),
     ] {
         let found = lint(source, "t.q", Profile::Style);
         assert!(
@@ -374,6 +378,37 @@ fn a_workspace_keys_root_and_dotted_names_apart() {
         .map(|f| f.line)
         .collect();
     assert_eq!(found, [2, 4]);
+}
+
+#[test]
+fn a_set_in_a_namespaced_lambda_defines_the_root_name_too() {
+    use q_lint_rs::{Workspace, index, lint_in};
+    // q 5: after a.q, `.ns.init[]` sets the root `lim` - a symbol resolves in
+    // the `\d` of the call - and b.q's `r:lim` is 100 (#765).
+    let a = "\\d .ns\ninit:{`lim set 100}\n\\d .\n";
+    let b = "r:lim\n";
+    let mut ws = Workspace::default();
+    ws.add(&index(a));
+    ws.add(&index(b));
+    assert!(!codes(&lint_in(b, "b.q", Profile::Style, &ws)).contains(&"QF018"));
+}
+
+#[test]
+fn a_later_system_d_on_the_line_switches_from_where_it_ends() {
+    use q_lint_rs::{Workspace, index, lint_in};
+    // q 5: `system "d .ns";system "d .";lim:1` leaves the root `lim`, and
+    // `lim:1;system "d .ns";k:2` the root `lim` and `.ns.k` (#767).
+    let a = "system \"d .ns\";system \"d .\";lim:1\nm:1;system \"d .ns\";k:2\n";
+    let b = "r:lim\ns:m\nt:k\n";
+    let mut ws = Workspace::default();
+    ws.add(&index(a));
+    ws.add(&index(b));
+    let found: Vec<_> = lint_in(b, "b.q", Profile::Style, &ws)
+        .into_iter()
+        .filter(|f| f.code == "QF018")
+        .map(|f| f.line)
+        .collect();
+    assert_eq!(found, [3]);
 }
 
 #[test]
@@ -1064,7 +1099,7 @@ fn a_typed_parameter_binds_its_name() {
         let found = lint(source, "t.q", Profile::General);
         assert!(found.is_empty(), "{source}: {found:?}");
     }
-    let found = lint("f:{[a b] a}\n", "t.q", Profile::General);
+    let found = lint("f:{[a+b] a}\n", "t.q", Profile::General);
     assert!(found.iter().any(|f| f.code == "QF007"), "{found:?}");
 }
 

@@ -65,7 +65,7 @@ that wants fewer findings narrows in its own configuration.
 | `QF004` | reserved-definition | Assignment to a builtin outside a lambda, which q refuses | every profile |
 | `QF005` | nested-local-reference | Nested lambda expects an outer local | every profile |
 | `QF006` | reserved-name-in-embedded-q | Builtin column name in embedded q | a Python hook |
-| `QF007` | not-a-parameter-list | Brackets after { that are not a parameter list: refused where defined, or run as body text | every profile |
+| `QF007` | not-a-parameter-list | Brackets after { that are no parameter list or pattern: q 5 refuses the lambda where it is defined | every profile |
 | `QF008` | duplicate-parameter | Parameter declared more than once | `style` and above |
 | `QF009` | empty-parameter-slot | Empty slot in a parameter list is still a parameter | `style` and above |
 | `QF010` | implicit-argument-with-signature | x, y or z used where parameters are declared | every profile |

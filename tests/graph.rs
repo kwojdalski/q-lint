@@ -430,6 +430,71 @@ fn a_literal_load_is_an_edge() {
 }
 
 #[test]
+fn system_applied_with_brackets_with_at_or_trapped_loads() {
+    // q 5 loads lib.q for each (#762); a path joined at run time is dynamic.
+    let g = graph(
+        &[
+            ("lib.q", "lim:1\n"),
+            ("a.q", "@[system;\"l lib.q\";{-1 x}]\n"),
+            ("b.q", "system[\"l lib.q\"]\n"),
+            ("c.q", "system@\"l lib.q\"\n"),
+            ("d.q", "f:{system[\"l \",x]}\n"),
+            ("e.q", "f:{@[system;\"l \",x;{-1 x}]}\n"),
+        ],
+        false,
+    );
+    for file in ["a.q", "b.q", "c.q"] {
+        assert_eq!(deps(&g, file), ["lib.q"], "{file}");
+    }
+    for file in ["d.q", "e.q"] {
+        assert_eq!(kinds(&g, file), [(1, "load")], "{file}");
+    }
+}
+
+#[test]
+fn a_relative_load_after_a_change_of_directory_is_dynamic() {
+    // q 5: `\cd lib` then `\l x.q` loads lib/x.q, not the x.q beside the
+    // script (#763). A load before the change, or of an absolute path, is
+    // still an edge.
+    let g = graph(
+        &[
+            ("x.q", "who:`top\n"),
+            ("lib/x.q", "who:`lib\n"),
+            ("a.q", "\\cd lib\n\\l x.q\n"),
+            ("b.q", "system \"cd lib\"\n\\l x.q\n"),
+            ("c.q", "\\l x.q\n\\cd lib\n"),
+        ],
+        false,
+    );
+    assert!(deps(&g, "a.q").is_empty());
+    assert_eq!(kinds(&g, "a.q"), [(2, "load")]);
+    assert!(deps(&g, "b.q").is_empty());
+    assert_eq!(kinds(&g, "b.q"), [(2, "load")]);
+    assert_eq!(deps(&g, "c.q"), ["x.q"]);
+}
+
+#[test]
+fn a_trailing_double_colon_composes_and_defines_nothing() {
+    // q 5: `g:f[1] count::` composes, and `count` stays q's; `h:f lim::`
+    // leaves no `lim`. A line that is only `a::` does define `a` (#764).
+    let g = graph(
+        &[
+            ("a.q", "f:{x+y}\ng:f[1] count::\nh:f lim::\n"),
+            ("b.q", "n:count 1 2 3\nr:lim\n"),
+            ("c.q", "a::\n"),
+            ("d.q", "r:a\n"),
+            // A string or a query after the `::` is its value.
+            ("e.q", "f:{s::\"\"; t::update a:1 from t}\n"),
+            ("g.q", "r:(s;t)\n"),
+        ],
+        false,
+    );
+    assert!(deps(&g, "b.q").is_empty());
+    assert_eq!(deps(&g, "d.q"), ["c.q"]);
+    assert_eq!(deps(&g, "g.q"), ["e.q"]);
+}
+
+#[test]
 fn a_script_loaded_under_a_context_defines_in_it() {
     // q 5: after `\d .a`, `\l b.q`, `\d .` with b.q's `ff:{1}`, `.a.ff[]`
     // is 1 and `ff` is 'ff. b.q's own `\d .b` does not leak back out: a.q's

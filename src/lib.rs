@@ -3316,8 +3316,26 @@ fn pattern_within(s: &str, nested: bool, depth: usize) -> bool {
             && is_pattern(&s[..at], false)
             && is_pattern(&s[at + 1..], true)
     } else {
-        false
+        application(s)
     }
+}
+/// A name applied in a slot: q 5 defines `{[f x] 1}`, `{[a[0]] a}` and
+/// `{[a (b;c)] b}`, each with one parameter that binds no name - their names
+/// stay globals, read when the lambda is called - and a call may match
+/// (`a:`x`y`z; b:1; {[a b] 7}[`y]` is 7). A builtin applied, an operator, an
+/// iterator, or a literal at the head is 'nyi where the lambda is defined:
+/// `{[count x] 1}`, `{[a+b] 1}`, `{[a'] 1}`, `{[1 a] 1}` (#484).
+fn application(s: &str) -> bool {
+    let s = s.trim();
+    re!(r"^\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*")
+        .find(s)
+        .is_some_and(|head| s[head.end()..].starts_with([' ', '\t', '\n', '\r', '[', '(', '{']))
+        && !re!(r"[-+*%,#$@&|^=<>~!?'/\\]").is_match(s)
+        && !re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(s).any(|w| {
+            boundary(s, w.start())
+                && !s[..w.start()].ends_with(['`', '.'])
+                && RESERVED.iter().any(|n| n == w.as_str())
+        })
 }
 /// The patterns `like` at `at` is given, in the order q 5 tries them: a
 /// string straight after it, after an iterator on it (`like\\:`, `like/:`,
@@ -3512,6 +3530,9 @@ fn names_within(slot: &str, depth: usize) -> Vec<&str> {
             .flat_map(|item| names_within(item, depth + 1))
             .collect();
     }
+    if application(trimmed) {
+        return vec![];
+    }
     re!(r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*")
         .find_iter(slot)
         .filter(|m| {
@@ -3572,10 +3593,10 @@ fn field(s: &str) -> bool {
 /// What q makes of the `[...]` following a `{`.
 ///
 /// q reads those brackets as a parameter list only when every slot is a name
-/// or, in q 5, a pattern (see `is_pattern`). `{[a+b] ...}`, `{[a b] ...}` and
-/// `{[_] ...}` are lambdas whose *body* opens with a bracket expression
-/// instead, and they take the implicit x, y and z - a different rank, from
-/// source that looks like a signature. The rules here
+/// or, in q 5, a pattern (see `is_pattern`). Anything else - `{[a+b] ...}`,
+/// `{[count x] ...}` - q 5 refuses where the lambda is defined; the rules
+/// treat it as taking the implicit x, y and z, which is the rank it would
+/// have without the brackets. The rules here
 /// and the scope tracking in `semantics` both have to agree with q about
 /// which of the two a given `{` is, so they share this.
 pub(crate) struct Signature<'a> {
@@ -4168,27 +4189,12 @@ pub fn lint_selecting(
                 } else {
                     "A literal is not a parameter name".into()
                 };
-                // What q 5 does with it depends on what the slots hold. An
-                // operator in one, or a builtin applied - `{[a+b] x}`,
-                // `{[count x] 1}`, `{[tables[]] 1}` - is 'nyi where the
-                // lambda is defined. A literal or a typed slot (`{[a:1] a}`)
-                // is a pattern and never gets here (`is_pattern`). Anything
-                // else - `{[a b] a}` - runs the brackets as the start of the
-                // body.
-                let applies_builtin = |s: &str| {
-                    re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(s).any(|w| {
-                        RESERVED.iter().any(|n| n == w.as_str())
-                            && boundary(s, w.start())
-                            && !s[w.end()..].trim().is_empty()
-                    })
-                };
+                // q 5 refuses each where the lambda is defined: an operator,
+                // a builtin applied, an iterator or a literal head is 'nyi -
+                // `{[a+b] x}`, `{[count x] 1}`, `{[a'] 1}`, `{[1 a] 1}`. A
+                // literal, a typed slot or a name applied (`{[f x] 1}`) is a
+                // pattern and never gets here (`is_pattern`, #484).
                 let consequence = if rest
-                    .iter()
-                    .any(|s| re!(r"[-+*%,#$@&|^=<>~!?]").is_match(s) || applies_builtin(s))
-                    || rest.iter().any(|s| iterated_type(s))
-                {
-                    "q 5 refuses the lambda where it is defined: 'nyi"
-                } else if rest
                     .iter()
                     .any(|s| re!(r"^[-0-9.\s]*\.[-0-9.\s]*$").is_match(s))
                 {
@@ -4196,8 +4202,7 @@ pub fn lint_selecting(
                     // with '. and `{[1 .] 1}` with 'nyi (#594).
                     "q 5 refuses the lambda where it is defined"
                 } else {
-                    "q reads these brackets as the start of the body and the lambda takes \
-                     x, y and z instead"
+                    "q 5 refuses the lambda where it is defined: 'nyi"
                 };
                 if !subject.is_empty() {
                     add(at, "QF007", format!("{subject}, so {consequence}"));
@@ -6827,6 +6832,8 @@ pub fn lint_selecting(
             .collect()
     };
     let statements = statement_groups(code, source);
+    // QB015's exception: a char column compared with a string as long (#754).
+    let char_columns = semantics::char_column_comparisons(code, &v.comments);
     // Where each group's top-level statement ends. Inside a bracket every
     // line is a group of its own, but a query there may go on over the next
     // lines - a newline in a lambda is whitespace - so the query rules read
@@ -7387,6 +7394,7 @@ pub fn lint_selecting(
         if let Some(w) = filter
             && let Some((op, n)) = comparison(w.end()).into_iter().chain(left(w.end())).min()
             && op < phrase_end(query, w.end())
+            && !char_columns.contains(&(offset + op))
         {
             let rows = match n {
                 0 => "the table is empty".to_string(),

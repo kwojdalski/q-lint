@@ -531,6 +531,22 @@ u:select from t where "ab"<>s
 t:([]c:"ab")
 r:select from t where "a"=c
 
+=== clean profile: general | a char column of a table literal compared with a string as long, either side (#754; q 5 keeps the matching rows)
+t:([]c:"ab";v:1 2)
+r:select from t where c="ab"
+u:([]c:"xyz";v:1 2 3)
+s:select from u where c="xbz"
+w:select from u where "xbz"=c
+
+=== QB015 profile: general | but not a string of another length, a symbol column, or a table given rows by symbol (#754; q 5: 'length, 'type, 'length)
+t:([]c:"ab";v:1 2)
+x:select from t where c="abc"
+k:([]s:`a`b;v:1 2)
+y:select from k where s="ab"
+m:([]c:"ab")
+`m insert enlist "c"
+z:select from m where c="ab"
+
 === QB015 | the empty string is no better
 select from t where sym=""
 

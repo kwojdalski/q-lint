@@ -82,9 +82,9 @@ needs no grammar to be right about.
 **The rules that do need structure take it locally.** `matching` walks
 delimiters from a position, respecting strings, to find the group that closes
 one. `slots` splits a bracket group on top-level `;`. `signature` decides
-whether `{[...]` is a parameter list at all - q reads those brackets as a
-signature only when every slot is a name, and as the start of the body
-otherwise, which changes the lambda's rank without changing how it looks.
+whether `{[...]` is a parameter list at all - q 5 reads those brackets as a
+signature only when every slot is a name or a pattern, and refuses the lambda
+otherwise, which a slot that looks like a name does not show.
 `flat_filter` blanks parenthesised subexpressions so a rule can ask what is
 left at the top level of a `where` phrase. `semantics` tracks scopes.
 

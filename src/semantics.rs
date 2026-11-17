@@ -698,6 +698,25 @@ fn scopes(code: &str, raw: &str) -> (Vec<Scope>, Vec<(usize, String)>) {
             namespace = ns;
         }
         namespaces.push((offset, namespace.clone()));
+        // A later statement on the line switches too, from where it ends:
+        // q 5 ends `system "d .ns";system "d .";lim:1` at the root, `lim`
+        // and all (#767).
+        if stack.is_empty() {
+            let raw_line = &raw[offset..offset + line.len()];
+            for m in re!(r#";[ \t]*system[ \t]*"d[ \t]+(\.[\w.]*)[ \t]*""#).captures_iter(raw_line)
+            {
+                let at = m.get(0).unwrap().start();
+                let depth = line[..at].bytes().fold(0i32, |d, b| match b {
+                    b'(' | b'[' | b'{' => d + 1,
+                    b')' | b']' | b'}' => d - 1,
+                    _ => d,
+                });
+                if depth == 0 && line[at..].starts_with(';') {
+                    namespace = m[1].trim_end_matches('.').into();
+                    namespaces.push((offset + m.get(0).unwrap().end(), namespace.clone()));
+                }
+            }
+        }
         // `\t` and `\ts` run their argument as q, lambdas and all (#312).
         if crate::system_command(&raw[offset..]) {
             offset += line.len();
@@ -891,9 +910,11 @@ fn call_time(scopes: &[Scope], at: usize, name: &str) -> bool {
 type Writes = HashMap<String, Vec<usize>>;
 /// Every name this file assigns at global scope, qualified by the namespace
 /// in force, with where each assignment's value starts. `call_time_sets`
-/// credits a `` `n set `` inside a `\d` lambda to the namespace it is written
-/// in - generous, and right for the checks, which only ask whether a name
-/// has a definition; the graph says it cannot know instead.
+/// credits a `` `n set `` inside a `\d` lambda both to the namespace it is
+/// written in and to the root, where a call most likely lands it (q 5:
+/// `\d .ns`, `init:{`lim set 100}`, `\d .`, then `.ns.init[]` sets the root
+/// `lim`, #765) - generous, and right for the checks, which only ask whether
+/// a name has a definition; the graph says it cannot know instead.
 fn global_writes(
     code: &str,
     raw: &str,
@@ -909,6 +930,18 @@ fn global_writes(
             .saturating_sub(1)]
         .1
         .as_str()
+    };
+    // Where a symbol written at `at` is set: the namespace in force, and for
+    // one resolved at call time the root too - or nowhere, without
+    // `call_time_sets`.
+    let set_targets = |name: &str, at: usize| -> Vec<String> {
+        if !call_time(scopes, at, name) {
+            vec![qualify(name, ns_at(at))]
+        } else if call_time_sets {
+            vec![qualify(name, ns_at(at)), qualify(name, "")]
+        } else {
+            vec![]
+        }
     };
     // Column names are written the way assignments are, and assign nothing:
     // `([k:()] handle:())` and `select a:x from t` define no global `handle`
@@ -966,6 +999,25 @@ fn global_writes(
         // `g:{[b] b::7; b}; g 1` is 7 and leaves no global `b`.
         let local =
             || scope_at(scopes, m.start()).is_some_and(|s| scopes[s].locals.contains(&a[1]));
+        // A `::` with nothing after it composes, `f[1] count::`, and assigns
+        // nothing - unless it is the whole line: q 5 defines `a` for a line
+        // `a::`, and reads it for `x:1;a::`, `{a::}` and `d:a::` (#764).
+        // Read in `raw`: `code` here has strings and qSQL blanked, and
+        // `LAST::""` and `t::update a:1 from t` assign.
+        let after = &raw[m.end()..];
+        let mut value = after.trim_start_matches([' ', '\t', '\r']);
+        if value.starts_with('/') && value.len() < after.len() {
+            value = value.find('\n').map_or("", |i| &value[i..]);
+        }
+        let continued = value.starts_with('\n') && value[1..].starts_with([' ', '\t']);
+        if a.get(2).is_some()
+            && (value.is_empty() || value.starts_with([';', '\n', ')', ']', '}']))
+            && !continued
+            && !((m.start() == 0 || raw[..m.start()].ends_with('\n'))
+                && (value.is_empty() || value.starts_with('\n')))
+        {
+            continue;
+        }
         if scope_at(scopes, m.start()).is_none()
             || (a.get(2).is_some() && !local())
             || a[1].contains('.')
@@ -1005,13 +1057,9 @@ fn global_writes(
     {
         let whole = m.get(0).unwrap();
         let name = m.get(1).or(m.get(2)).unwrap().as_str();
-        if !call_time_sets && call_time(scopes, whole.start(), name) {
-            continue;
+        for target in set_targets(name, whole.start()) {
+            globals.entry(target).or_default().push(whole.end());
         }
-        globals
-            .entry(qualify(name, ns_at(whole.start())))
-            .or_default()
-            .push(whole.end());
     }
     // `` load `:k `` defines the global its path ends in (#470).
     for m in re!(LOAD).captures_iter(code) {
@@ -1019,13 +1067,9 @@ fn global_writes(
         if !boundary(code, whole.start()) {
             continue;
         }
-        if !call_time_sets && call_time(scopes, whole.start(), &m[1]) {
-            continue;
+        for target in set_targets(&m[1], whole.start()) {
+            globals.entry(target).or_default().push(whole.end());
         }
-        globals
-            .entry(qualify(&m[1], ns_at(whole.start())))
-            .or_default()
-            .push(whole.end());
     }
     // So does `\l` of a table's directory or file: q 5's `.Q.lo` sets the
     // last part of the path, and `\l data/trades` defines `trades` (#534).
@@ -1043,13 +1087,9 @@ fn global_writes(
     // Each of a symbol list, `` `p`q set'1 2 ``, parenthesised too (#464).
     for (whole, names) in each_set_targets(code) {
         for name in names {
-            if !call_time_sets && call_time(scopes, whole.start, name) {
-                continue;
+            for target in set_targets(name, whole.start) {
+                globals.entry(target).or_default().push(whole.end);
             }
-            globals
-                .entry(qualify(name, ns_at(whole.start)))
-                .or_default()
-                .push(whole.end);
         }
     }
     // A functional amend that creates the global it names: `@[`.;`n;:;v]`
@@ -1080,13 +1120,9 @@ fn global_writes(
         {
             continue;
         }
-        if !call_time_sets && call_time(scopes, whole.start(), &m[1]) {
-            continue;
+        for target in set_targets(&m[1], whole.start()) {
+            globals.entry(target).or_default().push(whole.end());
         }
-        globals
-            .entry(qualify(&m[1], ns_at(whole.start())))
-            .or_default()
-            .push(whole.end());
     }
     // A member of a namespace assigned by a literal index: q 5
     // `.cfg[`a]:1 2 3` defines `.cfg.a`.
@@ -1342,21 +1378,28 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
         .collect();
     defines.sort();
     defines.dedup();
+    let mut moved = vec![];
     crate::References {
         names,
         relative,
         defines,
         implicit_defines,
-        loads: loads(code, raw, &view, |at| {
-            if scope_at(&scopes, at).is_some() || at < first_switch {
-                String::new()
-            } else if ns_at(at).is_empty() {
-                ".".into()
-            } else {
-                ns_at(at).to_string()
-            }
-        }),
-        dynamic: dynamic(raw, &view, &call_time_access),
+        loads: loads(
+            code,
+            raw,
+            &view,
+            |at| {
+                if scope_at(&scopes, at).is_some() || at < first_switch {
+                    String::new()
+                } else if ns_at(at).is_empty() {
+                    ".".into()
+                } else {
+                    ns_at(at).to_string()
+                }
+            },
+            &mut moved,
+        ),
+        dynamic: dynamic(raw, &view, &call_time_access, &moved),
     }
 }
 
@@ -1471,27 +1514,63 @@ fn value_of_symbols<'n>(
 /// runs there: after `\d .a`, `\l b.q` with b.q's `ff:{1}`, q 5 has `.a.ff`
 /// and no `ff`. Inside a lambda the load runs wherever the lambda is called,
 /// taken to be the root.
+///
+/// A relative path loaded after the script changes directory, `\cd lib` or
+/// `system "cd lib"`, is read from a directory the text does not settle: q 5
+/// loads lib/x.q for `\cd lib` then `\l x.q` (#763). Its offset goes in
+/// `moved` instead, for `dynamic` to list.
 fn loads(
     code: &str,
     raw: &str,
     view: &str,
     namespace_at: impl Fn(usize) -> String,
+    moved: &mut Vec<usize>,
 ) -> Vec<(String, String)> {
+    let cd = raw
+        .split_inclusive('\n')
+        .scan(0, |offset, line| {
+            let at = *offset;
+            *offset += line.len();
+            Some((at, line))
+        })
+        .find(|(_, line)| re!(r"^\\cd[ \t]+\S").is_match(line))
+        .map(|(at, _)| at)
+        .into_iter()
+        .chain(
+            re!(r#"\bsystem\s*(?:\[\s*|@\s*)?"cd\s+\S"#)
+                .find_iter(raw)
+                .map(|m| m.start())
+                .filter(|&at| view[at..].starts_with("system")),
+        )
+        .min()
+        .unwrap_or(usize::MAX);
     let mut loads = vec![];
+    let mut push = |path: &str, at: usize| {
+        if at > cd && !path.starts_with('/') {
+            moved.push(at);
+        } else {
+            loads.push((path.to_string(), namespace_at(at)));
+        }
+    };
     for (at, rest) in load_lines(code, raw) {
         if let Some(m) = re!(r"^\s+(\S+)").captures(rest) {
-            loads.push((m[1].to_string(), namespace_at(at)));
+            push(&m[1], at);
         }
     }
-    for m in re!(r#"\bsystem\s*"l\s+([^"\s]+)\s*""#).captures_iter(raw) {
+    // Applied with brackets or `@`, or trapped, it loads as well: q 5 loads
+    // lib.q for `system["l lib.q"]`, `system@"l lib.q"` and
+    // `@[system;"l lib.q";{-1 x}]` (#762).
+    for m in re!(r#"(?:\bsystem\s*(?:\[\s*|@\s*)?|@\[\s*system\s*;\s*)"l\s+([^"\s]+)\s*""#)
+        .captures_iter(raw)
+    {
         let at = m.get(0).unwrap().start();
         // Not the head of a path joined at run time, `system "l dir/",x`,
         // which is a dynamic load, not one of `dir/`.
         let joined = raw[m.get(0).unwrap().end()..]
             .trim_start_matches([' ', '\t'])
             .starts_with(',');
-        if view[at..].starts_with("system") && !joined {
-            loads.push((m[1].to_string(), namespace_at(at)));
+        if view[at..].starts_with(&raw[at..at + 2]) && !joined {
+            push(&m[1], at);
         }
     }
     // The symbol runs on over `:` and `/`, so `.q` must end it: `` `:x.qd ``
@@ -1512,7 +1591,12 @@ fn loads(
 /// holds the literal symbols `call_time` says are resolved where the lambda
 /// is called, and the `value`s of a symbol `value_of_symbols` finds, both
 /// found by the caller.
-fn dynamic(raw: &str, view: &str, call_time: &[(usize, &'static str)]) -> Vec<crate::Dynamic> {
+fn dynamic(
+    raw: &str,
+    view: &str,
+    call_time: &[(usize, &'static str)],
+    moved: &[usize],
+) -> Vec<crate::Dynamic> {
     let mut found = vec![];
     let mut push = |at: usize, kind: &'static str| {
         let line = raw.as_bytes()[..at].iter().filter(|&&b| b == b'\n').count() + 1;
@@ -1520,6 +1604,9 @@ fn dynamic(raw: &str, view: &str, call_time: &[(usize, &'static str)]) -> Vec<cr
     };
     for &(at, kind) in call_time {
         push(at, kind);
+    }
+    for &at in moved {
+        push(at, "load");
     }
     let next = |at: usize| view[at..].trim_start_matches([' ', '\t']);
     // Bracketed or parenthesised too: q 5 `value("e5")` is e5 (#538).
@@ -1587,8 +1674,10 @@ fn dynamic(raw: &str, view: &str, call_time: &[(usize, &'static str)]) -> Vec<cr
             push(m.start(), "set");
         }
     }
-    for m in re!(r#"\bsystem\s*"l\s[^"]*"\s*,"#).find_iter(raw) {
-        if view[m.start()..].starts_with("system") {
+    for m in
+        re!(r#"(?:\bsystem\s*(?:\[\s*|@\s*)?|@\[\s*system\s*;\s*)"l\s[^"]*"\s*,"#).find_iter(raw)
+    {
+        if view[m.start()..].starts_with(&raw[m.start()..m.start() + 2]) {
             push(m.start(), "load");
         }
     }
@@ -2867,6 +2956,17 @@ pub fn check(
                                 rest.trim_start().starts_with(':')
                             })
                     })
+                    // Or a namespace holding it, written as a whole before:
+                    // q 5 reads `port` as 5010 under `\d .cfg` after
+                    // `.cfg:(``port)!(::;5010)` (#766), as `elsewhere` does
+                    // for another file's.
+                    || {
+                        let full = resolved(name, namespace);
+                        full.match_indices('.')
+                            .filter(|&(i, _)| i > 0)
+                            .filter_map(|(i, _)| exact.get(&full[..i]))
+                            .any(|at| scope.is_some() || at.iter().any(|&at| at < start + value.start()))
+                    }
                     // q searches `.q` from every context: after `.q.k:1`,
                     // q 5 reads a bare `k` as 1, inside `\d .ns` too (#357).
                     || exact.contains_key(&format!(".q.{name}"))
@@ -4035,10 +4135,11 @@ fn named_values(
         );
         at = l.end();
         // The operator has to be code - not inside a string or a comment -
-        // and the right operand the whole of one.
+        // and the right operand the whole of one. Only a digit makes `-`
+        // part of a literal: q 5 parses `c -n` as `(-;`c;`n)` (#485).
         let negative = op.as_str() == "-"
             && comments[..op.start()].ends_with(char::is_whitespace)
-            && !comments[op.end()..].starts_with(char::is_whitespace);
+            && re!(r"^\.?\d").is_match(&comments[op.end()..]);
         // Nor the digits after a temporal literal's `:` - the `00` of
         // `12:00` - which q 5 adds to a char: `12:00+"a"` is 13:37 (#468).
         // A real's `e` before a signed digit is a float's exponent: `1e+5`
@@ -4610,6 +4711,90 @@ fn qsql_phrases(code: &str) -> Vec<Phrase> {
         phrases.push(own);
     }
     phrases.into_iter().rev().flatten().collect()
+}
+
+/// Where a where phrase compares a char column of a table literal with a
+/// string exactly as long: the offset of each such operator. q 5 compares
+/// row by row and runs it - `t:([]c:"ab";v:1 2); select from t where c="ab"`
+/// keeps both rows (#754). Only a table this file assigns once, at column 0,
+/// with no `\d` in the file and no symbol naming it: `` `t upsert ``, `` `t
+/// insert `` and the rest change its rows.
+pub(crate) fn char_column_comparisons(code: &str, comments: &str) -> Vec<usize> {
+    let mut out = vec![];
+    if re!(r#"(?m)^\\d\b|system\s*"d\b"#).is_match(comments) {
+        return out;
+    }
+    for (start, end, table) in qsql_phrases(code) {
+        let Some((t, e)) = table else {
+            continue;
+        };
+        if !code[start..].starts_with("where") {
+            continue;
+        }
+        let name = &code[t..e];
+        let whole = |m: &regex::Match| {
+            !code[..m.start()].ends_with(|c: char| c.is_alphanumeric() || "_.".contains(c))
+                && !code[m.end()..].starts_with(|c: char| c.is_alphanumeric() || "_.".contains(c))
+        };
+        let uses: Vec<regex::Match> = regex::Regex::new(&regex::escape(name))
+            .unwrap()
+            .find_iter(code)
+            .filter(whole)
+            .collect();
+        let writes: Vec<&regex::Match> = uses
+            .iter()
+            .filter(|m| {
+                code[..m.start()].ends_with('`')
+                    || re!(r"^\s*(?:[,\[]|:(?:[^:]|$))").is_match(&code[m.end()..])
+            })
+            .collect();
+        let [only] = writes[..] else {
+            continue;
+        };
+        if only.start() != 0 && !code[..only.start()].ends_with('\n') {
+            continue;
+        }
+        let value = crate::past_blanks(code, only.end() + 1);
+        let Some(inner) = re!(r"^\(\s*\[\s*\]").find(&code[value..]) else {
+            continue;
+        };
+        let Some(close) = matching(code, value, b'(', b')') else {
+            continue;
+        };
+        let body = value + inner.end();
+        let mut columns = vec![];
+        let mut at = body;
+        for part in crate::slots(&code[body..close - 1]) {
+            if let Some(colon) = part.find(':') {
+                let column = part[..colon].trim();
+                let text = comments[at + colon + 1..at + part.len()].trim();
+                if let Some(chars) = re!(r#"^"((?:\\[0-7]{3}|\\.|[^"\\])*)"$"#).captures(text) {
+                    columns.push((column, crate::q_bytes(&chars[1]).len()));
+                }
+            }
+            at += part.len() + 1;
+        }
+        let end = end.min(code.len());
+        for (column, n) in columns {
+            let column = regex::escape(column);
+            let string = r#""((?:\\[0-7]{3}|\\.|[^"\\])*)""#;
+            for (pattern, op, chars) in [
+                (format!(r"\b{column}[ \t]*(=|<>)[ \t]*{string}"), 1, 2),
+                (format!(r"{string}[ \t]*(=|<>)[ \t]*{column}\b"), 2, 1),
+            ] {
+                for m in regex::Regex::new(&pattern)
+                    .unwrap()
+                    .captures_iter(&comments[start..end])
+                {
+                    let (op, chars) = (m.get(op).unwrap(), m.get(chars).unwrap());
+                    if crate::q_bytes(chars.as_str()).len() == n {
+                        out.push(start + op.start());
+                    }
+                }
+            }
+        }
+    }
+    out
 }
 
 /// What an operand is, for the char-arithmetic rule. `Float` stands for

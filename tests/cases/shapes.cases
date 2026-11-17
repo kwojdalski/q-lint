@@ -109,6 +109,11 @@ b:a*2
 === QT023 | a char left of minus too
 r:"a"-1
 
+=== QT023 profile: general | a minus before a name subtracts, it is no negative literal (#485; q 5: c:"a"; n:1; c -n is 'type)
+c:"a"
+n:1
+r:c -n
+
 === QT023 | and through a name assigned a string
 a:"abc"
 b:a*2
