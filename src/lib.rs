@@ -6459,11 +6459,15 @@ pub fn lint_selecting(
         // it, and `f:{x}` + `  l:1` still assigns `l` (#214) - unless the
         // line continues a qSQL phrase, where `name:` names a column:
         // `r:select` + `  total_qty:sum qty from t` assigns nothing (#694).
-        for m in re!(r"(?m)^[ \t]*;?[ \t]*(\.?[A-Za-z][A-Za-z0-9_.]*)\s*::?(?:[^:=]|$)")
-            .captures_iter(line)
-        {
+        // And at the start of each statement after a `;` or a lambda's `{`:
+        // `x:1;my_var:2` and `f:{l:1;l}` assign as the same lines broken
+        // after the `;` do (#662).
+        for m in re!(r"(?m)(?:^|[;{])[ \t]*(\.?[A-Za-z][A-Za-z0-9_.]*)\s*::?").captures_iter(line) {
             let at = offset + m.get(1).unwrap().start();
-            if in_parens[at] || in_qsql_phrase(code, at) {
+            if line[m.get(0).unwrap().end()..].starts_with([':', '='])
+                || in_parens[at]
+                || in_qsql_phrase(code, at)
+            {
                 continue;
             }
             let target = m.get(1).unwrap();
