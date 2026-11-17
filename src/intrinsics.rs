@@ -333,7 +333,8 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
     // QA010 for the keywords that are not in BUILTINS: arity from calling
     // each with one more argument than it takes, which q 5 refuses with
     // 'rank - `xasc[`a;t;1]`, `ssr[a;b;c;d]`, `wj[a;b;c;d;e]`.
-    for m in re!(r"\b(xasc|xdesc|bin|binr|except|ss|vs|sv|upsert|xbar|cross|cut|inter|union|in|like|xkey|xcols|xexp|xlog|xgroup|mod|div|insert|lj|uj|set|dsave|fby|md5|ssr|aj|aj0|ajf|ajf0|ej|wj|wj1)\s*\[")
+    // A column-0 `[1;2;3]` under `keyjoin:lj` is a statement of its own (#742).
+    for m in re!(concat!(r"\b(xasc|xdesc|bin|binr|except|ss|vs|sv|upsert|xbar|cross|cut|inter|union|in|like|xkey|xcols|xexp|xlog|xgroup|mod|div|insert|lj|uj|set|dsave|fby|md5|ssr|aj|aj0|ajf|ajf0|ej|wj|wj1)", blank!(), r"*\["))
         .captures_iter(code)
     {
         let whole = m.get(0).unwrap();

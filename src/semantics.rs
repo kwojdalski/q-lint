@@ -1785,9 +1785,13 @@ pub fn check(
     // An operand is a symbol vector, a numeric vector, a byte vector with at
     // least two items, or a parenthesised list. `shape` decides the length of
     // each; this pattern only has to find them.
-    for m in re!(
-        r#"(?P<l>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*;[^()]*\)|"(?:[^"\\\n]|\\.)*")\s*(?P<op>(?:<>|<=|>=|[+*%&|=<>^-]|\b(?:and|or|mod|div|xexp|xlog)\b)'?|,')\s*(?P<r>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*;[^()]*\)|"(?:[^"\\\n]|\\.)*")"#
-    )
+    for m in re!(concat!(
+        r#"(?P<l>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*;[^()]*\)|"(?:[^"\\\n]|\\.)*")"#,
+        blank!(),
+        r"*(?P<op>(?:<>|<=|>=|[+*%&|=<>^-]|\b(?:and|or|mod|div|xexp|xlog)\b)'?|,')",
+        blank!(),
+        r#"*(?P<r>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*;[^()]*\)|"(?:[^"\\\n]|\\.)*")"#
+    ))
     .captures_iter(comments)
     {
         let whole = m.get(0).unwrap();
@@ -3541,8 +3545,18 @@ fn named_values(
     // items - QT006 for a name rather than a literal. `,` and `~` take any
     // lengths and are not in the set.
     let vector = r"-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*)+|(?:`[A-Za-z0-9_.]*){2,}|\([^()]*;[^()]*\)";
+    // The statement's blanks around the operator: `bump:v+` and then a
+    // column-0 `1 2` are two statements (#742).
     let pair = regex::Regex::new(&format!(
-        r"(?P<l>{name_re}|{vector})\s*(?P<op><>|<=|>=|[+*%&|=<>^-]|\b(?:and|or|mod|div|xexp|xlog)\b)\s*(?P<r>{name_re}|{vector})"
+        concat!(
+            r"(?P<l>{name_re}|{vector})",
+            blank!(),
+            r"*(?P<op><>|<=|>=|[+*%&|=<>^-]|\b(?:and|or|mod|div|xexp|xlog)\b)",
+            blank!(),
+            r"*(?P<r>{name_re}|{vector})"
+        ),
+        name_re = name_re,
+        vector = vector
     ))
     .unwrap();
     let length = |text: &str, at: usize| -> Option<usize> {
@@ -3882,7 +3896,9 @@ fn named_values(
     // QT026. lj, ij and pj join on the right table's key, so an unkeyed right
     // table is 'type - checked for all three; uj takes any and is not here.
     // ljf and ijf too, and the bracket form `lj[t;s]` (q 5: 'type).
-    for m in re!(r"\b(ljf|ijf|lj|ij|pj)(?:\s+|\s*\[[^;\[\]]*;\s*)(\(\s*\[|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)")
+    // Applied infix, the right table is in the same statement: `join:t lj`
+    // and then a column-0 `([]z:1 2)` are two (#742).
+    for m in re!(concat!(r"\b(ljf|ijf|lj|ij|pj)(?:", blank!(), r"+|\s*\[[^;\[\]]*;\s*)(\(\s*\[|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)"))
         .captures_iter(code)
     {
         let right = m.get(2).unwrap();

@@ -189,6 +189,29 @@ f2:{'`a}
 === QE009 | while x'1 is each applied by juxtaposition (q 5: parse "{x'1}" is ')
 f3:{x'1}
 
+=== clean profile: general | a projection ending one line and a column-0 value opening the next are two statements (q 5 runs the file) (#742)
+t:([]c:1 2)
+v:1 2 3
+join:t lj
+([]z:1 2)
+bump:v+
+1 2
+lit:1 2 3+
+4 5
+keyjoin:lj
+[1;2;3]
+show (bump 1;type join)
+
+=== QT026 QT006 QA010 profile: general | while an indented line continues the statement (q 5: 'type, 'length, 'rank) (#742)
+t:([]c:1 2)
+v:1 2 3
+join:t lj
+  ([]z:1 2)
+bump:v+
+  1 2
+keyjoin:lj
+  [1;2;3]
+
 === QT026 | lj with an unkeyed table on the right
 t:([]a:1 2;b:3 4)
 r:t lj ([]a:1 2;c:3 4)
