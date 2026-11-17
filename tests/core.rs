@@ -803,6 +803,23 @@ fn chained_queries_lint_in_bounded_time() {
         "8000 chained queries took {elapsed:?}"
     );
 }
+/// Nested `$[`, `@[` and `.[`: each split its whole contents into slots, the
+/// brackets nested in it included, so a deep nest was quadratic (#710). Past
+/// q's limit of 100, so read as with QE001 deselected.
+#[test]
+fn nested_conditionals_lint_in_bounded_time() {
+    let depth = 16000;
+    for (open, close) in [("$[x;", ";0]"), ("@[f;", ";0]"), (".[f;", ";0]")] {
+        let source = format!("a:{}1{}\n", open.repeat(depth), close.repeat(depth));
+        let started = std::time::Instant::now();
+        lint_selecting(&source, "t.q", Profile::Style, &Workspace::default(), false);
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < std::time::Duration::from_secs(10),
+            "{depth} nested {open} took {elapsed:?}"
+        );
+    }
+}
 /// Tens of thousands of nested parentheses - beyond q's own limit, which
 /// refuses a hundred-odd levels with '( - once overflowed the stack, which
 /// aborts the whole run and cannot be caught like a panic (#703).

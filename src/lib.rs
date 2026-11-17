@@ -2727,6 +2727,12 @@ struct MatchTable {
     /// inside, `NO_MATCH` at the top level: the lambdas around a position
     /// are found by climbing from the last one before it (#705).
     braces: Vec<(u32, u32)>,
+    /// The bracket depth after each bracket, counting every kind as one, as
+    /// `slots` does, and each `;` by the depth it sits at: a slice's slots
+    /// are then the `;`s at its own depth, found by binary search rather
+    /// than by reading through every bracket nested in it (#710).
+    depths: Vec<(u32, i32)>,
+    semicolons: std::collections::HashMap<i32, Vec<u32>>,
 }
 
 const NO_MATCH: u32 = u32::MAX;
@@ -2765,10 +2771,24 @@ impl MatchScope {
         let b = text.as_bytes();
         let mut ends = vec![NOT_OPEN; b.len()];
         let mut braces = vec![];
+        let (mut depths, mut semicolons) = (vec![], std::collections::HashMap::new());
         // Applicable only below u32 offsets; a larger text keeps scanning.
         if b.len() < NOT_OPEN as usize {
             let mut stacks: [Vec<usize>; 3] = [vec![], vec![], vec![]];
             let mut open_braces: Vec<u32> = vec![];
+            let mut depth = 0i32;
+            for (i, &c) in b.iter().enumerate() {
+                match c {
+                    b'(' | b'[' | b'{' => depth += 1,
+                    b')' | b']' | b'}' => depth -= 1,
+                    b';' => {
+                        semicolons.entry(depth).or_insert_with(Vec::new).push(i as u32);
+                        continue;
+                    }
+                    _ => continue,
+                }
+                depths.push((i as u32, depth));
+            }
             let mut i = 0;
             // The same walk `matching` makes, so a position it reads as
             // outside a string is one this reads as outside a string too: from
@@ -2807,6 +2827,8 @@ impl MatchScope {
             len: text.len(),
             ends,
             braces,
+            depths,
+            semicolons,
         });
         PHRASES.with(|p| p.borrow_mut().clear());
         MatchScope(MATCHES.with(|m| m.replace(Some(table))))
@@ -2858,6 +2880,34 @@ fn brace_chain(s: &str, at: usize, keep: impl Fn(Option<usize>) -> bool) -> Opti
             next = parent;
         }
         Some(out)
+    })
+}
+
+/// Where `slots` cuts `s`, from the installed table when `s` is a slice of
+/// its text: each `;` in it at the depth it starts at.
+fn slot_cuts(s: &str) -> Option<Vec<usize>> {
+    MATCHES.with(|m| {
+        let m = m.borrow();
+        let t = m.as_ref()?;
+        let at = s.as_ptr() as usize;
+        if at < t.start || at + s.len() > t.start + t.len || t.len >= NOT_OPEN as usize {
+            return None;
+        }
+        let (from, to) = (at - t.start, at - t.start + s.len());
+        let i = t.depths.partition_point(|&(p, _)| (p as usize) < from);
+        let depth = if i == 0 { 0 } else { t.depths[i - 1].1 };
+        let Some(list) = t.semicolons.get(&depth) else {
+            return Some(vec![]);
+        };
+        let first = list.partition_point(|&p| (p as usize) < from);
+        Some(
+            list[first..]
+                .iter()
+                .map(|&p| p as usize)
+                .take_while(|&p| p < to)
+                .map(|p| p - from)
+                .collect(),
+        )
     })
 }
 
@@ -2924,6 +2974,16 @@ fn boolean_test(s: &str) -> bool {
 }
 
 pub(crate) fn slots(s: &str) -> Vec<&str> {
+    if let Some(cuts) = slot_cuts(s) {
+        let mut out = vec![];
+        let mut start = 0;
+        for cut in cuts {
+            out.push(&s[start..cut]);
+            start = cut + 1;
+        }
+        out.push(&s[start..]);
+        return out;
+    }
     let (mut start, mut depth) = (0, 0i32);
     let mut out = vec![];
     for (i, b) in s.bytes().enumerate() {
