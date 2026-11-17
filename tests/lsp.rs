@@ -1023,6 +1023,28 @@ fn a_file_changed_outside_the_editor_is_read_again() {
 }
 
 #[test]
+fn excluding_a_folder_in_the_configuration_drops_it_from_the_index() {
+    // The index was read once, under the old `exclude`; a fresh server and
+    // the CLI read the new one, and so must this server (#541).
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("vendor")).unwrap();
+    std::fs::write(dir.path().join("vendor/def.q"), "helper:{x+1}\n").unwrap();
+    let mut server = start_with_workspace(dir.path());
+    let app = file_uri(&dir.path().join("app.q"));
+    server.open(&app, "f:{y:helper; y}\n");
+    assert!(!codes_of(&server.diagnostics_for(&app)).contains(&"QF018".to_string()));
+    let config = dir.path().join("qlinter.toml");
+    std::fs::write(&config, "extend-exclude = [\"vendor\"]\n").unwrap();
+    server.send(
+        json!({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles",
+        "params":{"changes":[{"uri":file_uri(&config),"type":1}]}}),
+    );
+    let found = codes_of(&server.diagnostics_for(&app));
+    assert!(found.contains(&"QF018".to_string()), "{found:?}");
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
 fn a_document_takes_the_profile_of_the_qlinter_toml_above_it() {
     // An editor starts the server with no --profile when the user has not set
     // one, so the repository's configuration decides; and the server finds

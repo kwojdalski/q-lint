@@ -207,6 +207,20 @@ impl Index {
             .any(|p| p.matches_with(&relative, options))
     }
 
+    /// Forget everything and read it all again: the workspace from disk,
+    /// then the open documents over it, whose buffers win.
+    fn rebuild(&mut self, policy: &Policy, docs: &Documents) {
+        self.files.clear();
+        self.ws = Workspace::default();
+        self.generation += 1;
+        if self.enabled {
+            self.scan(policy);
+        }
+        for (uri, text) in docs {
+            self.set(&path_of(uri), index(text));
+        }
+    }
+
     /// Every `.q` file under the workspace folders, less those `exclude`
     /// names; a directory it names is not entered at all.
     fn scan(&mut self, policy: &Policy) {
@@ -534,12 +548,7 @@ pub fn serve(
                 }
                 idx.enabled = opts.index;
                 idx.exclude = opts.index_exclude.clone();
-                if idx.enabled {
-                    idx.scan(policy);
-                }
-                for (uri, text) in &docs {
-                    idx.set(&path_of(uri), index(text));
-                }
+                idx.rebuild(policy, &docs);
             }
             // A request after shutdown is the one protocol error worth
             // answering rather than ignoring: the client is confused and
@@ -662,6 +671,7 @@ pub fn serve(
             // pull, a checkout, another tool. An open file's buffer still wins.
             ("workspace/didChangeWatchedFiles", None) => {
                 let mut changed = false;
+                let mut config_changed = false;
                 for change in params["changes"].as_array().into_iter().flatten() {
                     let uri = uri_of(change);
                     // A configuration file changed: every file it governs may
@@ -669,7 +679,7 @@ pub fn serve(
                     let path = path_of(&uri);
                     if is_config_path(&path) || policy.read_from(Path::new(&path)) {
                         policy.reset();
-                        changed = true;
+                        config_changed = true;
                         continue;
                     }
                     if docs.contains_key(&uri) {
@@ -681,7 +691,12 @@ pub fn serve(
                         idx.reload(&path, policy)
                     };
                 }
-                if changed {
+                // And its `exclude` decides which files the index reads, so
+                // the index is read again as a fresh server would (#541).
+                if config_changed {
+                    idx.rebuild(policy, &docs);
+                }
+                if changed || config_changed {
                     relint(writer, &docs, &idx, None, policy, &opts)?;
                 }
             }
