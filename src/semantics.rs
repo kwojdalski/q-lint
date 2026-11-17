@@ -1815,6 +1815,10 @@ pub fn check(
         if dynamic {break;}
         let at=call.get(0).unwrap().start();let name=&call[1];if !boundary(code,at){continue;}
         if scope_at(&scopes,at).is_some_and(|s|scopes[s].locals.contains(name)){continue;}
+        // A lambda runs once every file is loaded, and meets whichever `f`
+        // another file assigned last: q 5 runs b.q's `g:{f[`a]}` to `a after
+        // a.q's `f:{x}` (#522).
+        if scope_at(&scopes,at).is_some()&&elsewhere(&resolved(name,ns_at(at))){continue;}
         if numeric.contains(&qualify(name,ns_at(at))) {out.push(Finding::at(path, raw, at,"QT002",format!("Symbol literal passed to numeric function {name}")));}
     }
     // An assignment anywhere in a lambda body makes the name local for the

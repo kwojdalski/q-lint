@@ -433,6 +433,24 @@ fn a_lambda_another_file_redefines_has_no_known_rank_in_a_lambda() {
 }
 
 #[test]
+fn a_numeric_lambda_another_file_redefines_is_not_known_in_a_lambda() {
+    use q_lint_rs::{Workspace, index, lint, lint_in};
+    // q 5, b.q then a.q loaded: `g[]` is `a, since a.q's `f:{x}` ran last.
+    // A top-level call straight after b.q's own `f` is 'type (#522).
+    let src = "f:{x+1}\ng:{f[`a]}\n";
+    assert!(codes(&lint(src, "b.q", Profile::General)).contains(&"QT002"));
+    let mut ws = Workspace::default();
+    ws.add(&index("f:{x}\n"));
+    ws.add(&index(src));
+    assert!(!codes(&lint_in(src, "b.q", Profile::General, &ws)).contains(&"QT002"));
+    let top = "f:{x+1}\nr:f[`a]\n";
+    let mut ws = Workspace::default();
+    ws.add(&index("f:{x}\n"));
+    ws.add(&index(top));
+    assert!(codes(&lint_in(top, "b.q", Profile::General, &ws)).contains(&"QT002"));
+}
+
+#[test]
 fn a_name_another_file_also_assigns_is_not_tracked_in_a_lambda() {
     use q_lint_rs::{Workspace, index, lint, lint_in};
     // Alone, a is the atom 1 and indexing it is 'type. With another file
