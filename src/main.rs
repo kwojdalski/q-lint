@@ -130,7 +130,11 @@ struct Args {
     #[arg(long, default_value = "30")]
     qls_timeout: f64,
     /// Run as a language server on stdin/stdout instead of linting paths.
-    #[arg(long, conflicts_with_all = ["paths", "rules", "explain", "fix", "diff", "show_settings"])]
+    // The server lints with the builtin backend alone and reads documents
+    // from the editor, so the qls and stdin flags are refused rather than
+    // accepted and ignored (#544).
+    #[arg(long, conflicts_with_all = ["paths", "rules", "explain", "fix", "diff", "show_settings",
+        "backend", "qls_executable", "qls_timeout", "stdin_filename"])]
     lsp: bool,
     /// Colour the text output: `auto` (a terminal, and NO_COLOR unset or empty),
     /// `always`, or `never`.

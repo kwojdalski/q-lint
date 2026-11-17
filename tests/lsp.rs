@@ -761,6 +761,29 @@ fn the_flags_an_lsp_client_adds_are_accepted() {
 /// The version has to be askable from a shell. It is in `serverInfo`, which
 /// is no help to anyone holding a binary and wondering which one it is.
 #[test]
+fn flags_the_server_would_ignore_are_refused() {
+    // The server never runs qls and never reads stdin as a document, so
+    // `--backend all` in an editor's server arguments would show no qls
+    // diagnostics and say nothing (#544).
+    for flag in [
+        "--backend=qls",
+        "--backend=all",
+        "--qls-executable=qls",
+        "--qls-timeout=5",
+        "--stdin-filename=a.q",
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .args(["--lsp", flag])
+            .stdin(Stdio::null())
+            .output()
+            .expect("run");
+        assert_eq!(output.status.code(), Some(2), "{flag}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("cannot be used with"), "{flag}: {stderr}");
+    }
+}
+
+#[test]
 fn the_binary_reports_its_version() {
     // All three spellings. clap's default short form is `-V`, and `-v` is the
     // one people type first.
