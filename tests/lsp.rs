@@ -1104,6 +1104,36 @@ fn a_name_another_workspace_file_defines_is_not_undefined() {
 }
 
 #[test]
+fn a_script_loaded_under_a_context_defines_there_and_not_at_the_root() {
+    // q 5 runs main.q's `\d .a` / `\l b.q`: b.q's `ff:42` is `.a.ff`, which
+    // c.q's `\d .a` lambda reads, and there is no root `ff`, so d.q's
+    // `h:{ff}` throws 'ff. The editor answers as `qlinter .` does (#525).
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("main.q"), "\\d .a\n\\l b.q\n\\d .\n").unwrap();
+    std::fs::write(dir.path().join("b.q"), "ff:42\n").unwrap();
+    let mut server = start_with_workspace(dir.path());
+    let c = file_uri(&dir.path().join("c.q"));
+    server.open(&c, "\\d .a\ng:{ff}\n\\d .\n");
+    let found = codes_of(&server.diagnostics_for(&c));
+    assert!(!found.contains(&"QF018".to_string()), "{found:?}");
+    let d = file_uri(&dir.path().join("d.q"));
+    server.open(&d, "h:{ff}\n");
+    let found = codes_of(&server.diagnostics_for(&d));
+    assert!(found.contains(&"QF018".to_string()), "{found:?}");
+    // Load b.q at the root instead, in the open main.q buffer: `ff` is the
+    // root's again, and d.q is linted again without being touched.
+    let main = file_uri(&dir.path().join("main.q"));
+    server.open(&main, "\\l b.q\n");
+    server.diagnostics_for(&main);
+    let found = codes_of(&server.diagnostics_for(&d));
+    assert!(!found.contains(&"QF018".to_string()), "{found:?}");
+    // c.q, linted again too, may arrive after d.q.
+    server.send(json!({"jsonrpc":"2.0","id":99,"method":"shutdown"}));
+    server.until(|m| m["id"] == 99);
+    server.send(json!({"jsonrpc":"2.0","method":"exit"}));
+}
+
+#[test]
 fn editing_one_files_definitions_relints_the_others() {
     let dir = tempfile::tempdir().unwrap();
     let mut server = start_with_workspace(dir.path());
