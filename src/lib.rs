@@ -1554,8 +1554,16 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 false,
             )
         }
+        // With the blanks after it: q 5 skips an indented first line, so
+        // `<BOM> r:1` would load leaving `r` undefined (#663).
         "QE005" if start == 0 && source.starts_with('\u{feff}') => {
-            ("\u{feff}", "".into(), "Remove byte-order mark".into(), true)
+            let blanks = source[3..].len() - source[3..].trim_start_matches([' ', '\t']).len();
+            (
+                &source[..3 + blanks],
+                "".into(),
+                "Remove byte-order mark".into(),
+                true,
+            )
         }
         // `f x` becomes `f[x]`. The name is what the finding points at;
         // the argument is everything the application swallows, which the
@@ -2504,9 +2512,12 @@ struct Views {
 /// A question about the source, not about `code`: `views` blanks the `q)`
 /// that q 5 reads `q)\t 1+1` and `q)\l f.q` past (#316), and in `code`
 /// such a line looks like an indented one.
+///
+/// Only a space makes one: q 5 reads `\t<TAB>x` as setting the timer from
+/// a non-number ('domain) and `\ts<TAB>x` as the shell command `ts` (#664).
 pub(crate) fn timed_prefix(line: &str) -> usize {
     let prompt = if line.starts_with("q)") { 2 } else { 0 };
-    re!(r"^\\ts?(?::\d+)?[ \t]")
+    re!(r"^\\ts?(?::\d+)? ")
         .find(&line[prompt..])
         .map_or(0, |m| prompt + m.end())
 }
@@ -5347,7 +5358,7 @@ pub fn lint_selecting(
     // The longer spellings q 5 also refuses, each verified with parse:
     // `x**2`, `x=>y`, `x=<y`, `x<<2`, `x|>f`, `x->y`, `x:=1`, `x%%y`,
     // `x<=>y`, `x+++y`. Only before an operand - `a++` and `a**` with nothing
-    // after them parse, as projections, and `x>>2` parses too.
+    // after them parse, as compositions, and `x>>2` parses too.
     for m in re!(r"<=>|\*\*|=>|=<|<<|\|>|->|:=|%%|\+\+|==|!=|&&|\|\||[+\-*]=").find_iter(code) {
         // An `=` applied with brackets is its own token: `c:=[`a;`b]` assigns
         // an equality, and q 5 parses `x+=[1;1]`, `x==[1;1]` and `x:= [1;1]`
@@ -5370,13 +5381,17 @@ pub fn lint_selecting(
         if system_command(&source[code[..m.start()].rfind('\n').map_or(0, |p| p + 1)..]) {
             continue;
         }
-        let long = !matches!(m.as_str(), "==" | "!=" | "&&" | "||" | "+=" | "-=" | "*=");
-        if long
-            && code[m.end()..]
-                .trim_start_matches([' ', '\t'])
-                .starts_with(|c: char| ";)]}\r\n".contains(c))
-            || long && code[m.end()..].trim().is_empty()
-        {
+        // With no operand after it - past any iterators and a `::` - every
+        // pair parses, as a composition: q 5 reads `f:2==` as `(=[2])'(=)`,
+        // and `(1&&)`, `k:2**/`, `m:2->::` and `r:=/` likewise (#646).
+        let derived = re!(r"^(?:[/\\']:?)*(?:::)?")
+            .find(&code[m.end()..])
+            .map_or(0, |d| d.end());
+        let rest = &code[past_blanks(code, m.end() + derived)..];
+        // A string is blank in `code`, and an operand all the same: q 5
+        // refuses `2**"a"` with '* and `t:="a"` with '= (#658).
+        let string = source[past_blanks(source, m.end() + derived)..].starts_with('"');
+        if !string && (rest.is_empty() || rest.starts_with([';', ')', ']', '}', '\r', '\n'])) {
             continue;
         }
         let (op, meant) = match m.as_str() {
@@ -6608,11 +6623,15 @@ pub fn lint_selecting(
         // it, and `f:{x}` + `  l:1` still assigns `l` (#214) - unless the
         // line continues a qSQL phrase, where `name:` names a column:
         // `r:select` + `  total_qty:sum qty from t` assigns nothing (#694).
-        for m in re!(r"(?m)^[ \t]*;?[ \t]*(\.?[A-Za-z][A-Za-z0-9_.]*)\s*::?(?:[^:=]|$)")
-            .captures_iter(line)
-        {
+        // And at the start of each statement after a `;` or a lambda's `{`:
+        // `x:1;my_var:2` and `f:{l:1;l}` assign as the same lines broken
+        // after the `;` do (#662).
+        for m in re!(r"(?m)(?:^|[;{])[ \t]*(\.?[A-Za-z][A-Za-z0-9_.]*)\s*::?").captures_iter(line) {
             let at = offset + m.get(1).unwrap().start();
-            if in_parens[at] || in_qsql_phrase(code, at) {
+            if line[m.get(0).unwrap().end()..].starts_with([':', '='])
+                || in_parens[at]
+                || in_qsql_phrase(code, at)
+            {
                 continue;
             }
             let target = m.get(1).unwrap();
@@ -7174,8 +7193,16 @@ pub fn lint_selecting(
             // is -11h in q 5 (#409). Only the literal's own spelling: a
             // symbol naming the clock, `` `.z.z ``, is there to be looked up.
             let symbols = unsymbolled(line);
+            // A file handle names a file whatever it spells: `` `:.z.P `` and
+            // `` `:log/.z.Z `` read no clock (#651).
+            let paths: Vec<_> = re!(r"`:[A-Za-z0-9_.:/]*")
+                .find_iter(line)
+                .map(|p| p.range())
+                .collect();
+            let in_path = |at: usize| paths.iter().any(|p| p.contains(&at));
             let in_code = |m: &regex::Match| {
                 in_code(m)
+                    && !in_path(m.start())
                     && (!m.as_str().starts_with(|c: char| c.is_ascii_digit())
                         || symbols.as_bytes()[m.start()] == line.as_bytes()[m.start()])
             };
@@ -7226,7 +7253,7 @@ pub fn lint_selecting(
                     !line[..m.start()]
                         .ends_with(|c: char| c.is_ascii_alphanumeric() || "_.".contains(c))
                 })
-                .filter(|m| line[m.range()] == *m.as_str())
+                .filter(|m| line[m.range()] == *m.as_str() && !in_path(m.start()))
             {
                 let utc = utc_clock(m.as_str());
                 add(
