@@ -3,6 +3,10 @@ d:`a`b!`c
 e:1 2!`x
 f:`a`b!`
 
+=== clean profile: general | a parenthesised symbol atom is spread too (#591; q 5: `a`b!(`c) is `a`b!`c`c)
+d:`a`b!(`c)
+e:1 2!( `x )
+
 === QT001 profile: general | a numeric atom value is not (#451; q 5: 'length)
 g:`a`b!1
 
@@ -274,6 +278,16 @@ r:$[101b;1;2]
 
 === QA011 | nor a numeric vector
 r:$[1 2 3;1;2]
+
+=== QA011 profile: general | nor a general list, or enlist of one item (q 5: each is 'type) (#633)
+a:$[(1;2);1;2]
+b:$[enlist 1b;1;2]
+c:$[enlist[1b];1;2]
+d:$[("a";"b");1;2]
+
+=== clean profile: general | while one item of either is an atom (q 5: $[(1b);1;2] and $[enlist[1b]0;1;2] are 1) (#633)
+a:$[(1b);1;2]
+b:$[enlist[1b]0;1;2]
 
 === QA011 | nor a symbol
 r:$[`a;1;2]
@@ -703,6 +717,16 @@ r1:t ljf s
 r2:lj[t;s]
 r3:ij[t;s]
 
+=== clean profile: general | a dotted name ending in lj or ij is the file's own function, not the keyword (#666; q 5 runs both and returns the joined table)
+.t.lj:{[k;a;b] a lj k xkey b}
+r:.t.lj[`y;([] y:`a`b; v:1 2);([] y:`a`c; w:3 4)]
+s:.u.lj[1;([] y:`a`b; v:1 2);([] y:`a`c; w:3 4)]
+x.ij[1;([] y:`a`b; v:1 2);([] y:`a`c; w:3 4)]
+
+=== clean profile: general | a table literal as dictionary keys has as many items as rows, not columns (#667; q 5 builds both as a keyed table)
+d:([]a:1 2 3;b:4 5 6)!(1;2;3)
+e:![([]a:1 2 3;b:4 5 6);1 2 3]
+
 === clean | a keyed right table
 t:([]a:1 2)
 s:([]a:1 2;b:3 4)
@@ -1054,6 +1078,26 @@ f:{x}
 set'[`b`d;(5 6 7;8)]
 r:(f[1;2];a 0;b 0)
 
+=== clean profile: general | QA012: a multiple assignment or a functional amend gives the name another rank (#623; q 5: each call is 6)
+f:{[a;b] a+b}
+(f;g):({[a;b;c] a+b+c};1)
+r:f[1;2;3]
+h:{[a;b] a+b}
+.[`h;();:;{[a;b;c] a+b+c}]
+r:h[1;2;3]
+k:{[a;b] a+b}
+@[`.;`k;:;{[a;b;c] a+b+c}]
+r:k[1;2;3]
+p:{[a;b] a+b}
+init:{(p;q)::({[a;b;c] a+b+c};1)}
+init[]
+r:p[1;2;3]
+
+=== QA012 profile: general | while an amend of another name leaves the rank known (#623)
+f:{[a;b] a+b}
+@[`.;`g;:;{[a;b;c] a+b+c}]
+r:f[1;2;3]
+
 === QT022 profile: general | while set without each writes neither name (#753)
 a:1
 `a`b set 1 2
@@ -1087,6 +1131,70 @@ m:get[".ns.",string`f]
 w:get"\\w"
 p:(get'') " -> " vs/:("1,2 -> 3,4";"5,6 -> 7,8")
 r:a 0
+
+=== clean profile: uqf | a projection ending one line and a column-0 value opening the next are two statements (q 5 runs the file) (#743)
+t:([]c:1 2)
+add:`t insert
+(1;2;3)
+mk:`a`b`c!
+"ab"
+is:type[t]=
+`a
+same:`a=
+`a
+match:`x=
+1 2 3
+show (add 3;mk 1 2 3;is 98h;same `a;match `x)
+
+=== QT027 QT001 QB013 QT015 QB018 profile: uqf | while an indented line continues the statement (q 5: 'length, 'length, 'type, 'type; and 1b every run) (#743)
+t:([]c:1 2)
+add:`t insert
+  (1;2;3)
+mk:`a`b`c!
+  "ab"
+is:type[t]=
+  `a
+same:`a=
+  `a
+match:`x=
+  1 2 3
+
+=== clean | a b suffix does not continue a numeric run: `1 0b` is 1 applied to 0b (#496)
+r1:1 2 3+1 0b
+r2:1 2 3=1 0b
+
+=== clean | the same application makes a one-row table column (#496)
+r3:([]a:enlist 1;b:1 0b)
+
+=== QT006 | a suffix on the last item still ends a vector (#496)
+r4:1 2 3+1 2h
+
+=== QT002 | a symbol passed by juxtaposition (q 5: f:{x+1}; f `a is 'type) (#495)
+f:{x+1}
+r1:f `a
+
+=== QT002 | and with @ (q 5: f@`a is 'type) (#495)
+f:{x+1}
+r2:f@`a
+
+=== clean | a symbol that is not the whole argument (#495)
+f:{x+1}
+r1:f `a!1
+
+=== QT023 profile: general | char arithmetic assigned to a name ending in a digit (q 5: 'type) (#497)
+r21:1*"a"
+x2:2+"a"
+
+=== QT032 profile: general | the symbol and guid casts by type char and number (q 5: each is 'type) (#505)
+r1:"s"$"ab"
+r2:"g"$"ab"
+r3:11h$"ab"
+r4:2h$"ab"
+
+=== clean profile: general | the negative type numbers parse, and a cast spelled in a string is data (#505)
+r1:-11h$"ab"
+r2:-2h$"ab"
+r3:"\"s\"$\"ab\""
 
 === QT002 QT003 QT010 QT011 QT012 QT015 QT016 profile: general | a symbol starting with a dot or holding a colon is a symbol (q 5: 'type, 'rank; #600)
 a:`.a+1
@@ -1237,3 +1345,51 @@ t:([]a:1 2)
 s:([a:1 2]b:3 4)
 r1:t lj (s)
 r2:(lj)[t;s]
+
+=== QT032 profile: general | the char spelling with its string in parentheses (q 5: 'type) (#505, #615)
+r1:"s"$("ab")
+
+=== clean profile: general | a second `name:` inside a table-literal column assigns the global (#575; q 5: `m:5; u:([]a:m:1 2); m 0` is 1)
+m:5
+u:([]a:m:1 2)
+k:([c:m:1 2]v:3 4)
+r:m 0
+
+=== QT022 QT006 profile: general | in a qSQL phrase over a table literal without that column, the name is the global (#576; q 5: 'type and 'length)
+px:2.5
+w:1 2 3
+t:([]a:1 2)
+r1:select p0:px 0 from t
+r2:update v:w*10 20 from t where a>0
+
+=== clean profile: general | but a column of that name, `i`, or a table changed by symbol still masks it (#465, #576)
+px:2.5
+t:([]px:(1 2;3 4))
+r1:select p0:px 0 from t
+i:2.5
+u:([]a:1 2)
+r2:select i 0 from u
+v:([]a:1 2)
+update px:a from `v
+r3:select p0:px 0 from v
+
+=== QT023 profile: general | a real vector, a leading-dot real and a real with an exponent meet a char too (#587; q 5: each is 'type)
+r:"a"*1 2e
+s:"a"+.5e
+u:"a"+1e3e
+v:.5e*"a"
+
+=== clean profile: general | while a float exponent or a char on the right of `-` is fine (#587; q 5: 1097f, -96e)
+w:"a"+1e3
+y:1e -"a"
+
+=== QT022 profile: general | a dictionary literal's symbol values write no global (#588; q 5: 'type)
+a:2.5
+d:1 2!`a`b
+r:a 0
+
+=== QT026 profile: general | nor does unkeying with 0! key the table (#588; q 5: 'type)
+k:([]a:1 2;c:5 6)
+0!`k
+t:([]a:1 2;b:3 4)
+s:t lj k

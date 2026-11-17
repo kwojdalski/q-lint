@@ -77,6 +77,13 @@
     "scope": "builtin"
   },
   {
+    "code": "QE012",
+    "name": "non-ascii-character",
+    "category": "syntax",
+    "summary": "A character past ASCII outside a string or comment - a no-break space, a curly quote, a byte-order mark mid-file - which q refuses with 'char",
+    "scope": "builtin"
+  },
+  {
     "code": "QF001",
     "name": "reserved-parameter",
     "category": "names",
@@ -87,7 +94,7 @@
     "code": "QF002",
     "name": "underscore-parameter",
     "category": "names",
-    "summary": "`_` is the drop operator, not a parameter name: q 5 refuses every call with 'match",
+    "summary": "`_` is the drop operator, not a parameter name: q 5 refuses every call with 'match, or a name starting with it where the lambda is defined",
     "scope": "builtin"
   },
   {
@@ -381,7 +388,7 @@
     "code": "QB008",
     "name": "vector-equality-filter",
     "category": "correctness",
-    "summary": "Column equality against a vector literal in a filter",
+    "summary": "Column compared with a vector literal in a filter, row by row rather than for membership",
     "scope": "style"
   },
   {
@@ -451,7 +458,7 @@
     "code": "QB019",
     "name": "duplicate-column",
     "category": "correctness",
-    "summary": "A table literal names a column twice; q renames the second instead of refusing",
+    "summary": "A table literal names a column twice; q renames the second, or keeps a key and a value column of one name, instead of refusing",
     "scope": "style"
   },
   {
@@ -703,7 +710,7 @@
     "code": "QT022",
     "name": "index-into-atom",
     "category": "types-and-shapes",
-    "summary": "A name bound to an atom is indexed; an atom has no items, and q raises 'type",
+    "summary": "A name bound to an atom is indexed; an atom has no items, and q raises 'type, or for an integer tries to write to it as a handle",
     "scope": "builtin"
   },
   {

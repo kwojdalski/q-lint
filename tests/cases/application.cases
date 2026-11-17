@@ -33,6 +33,17 @@ f:{[a] 1};f . enlist 1
 === QA005 | each supplies one argument, so a rank-2 lambda projects
 {[a;b]a+b} each 1 2 3
 
+=== QA005 | and so do each in brackets and each with @ (q 5: each[{[a;b] a+b};1 2] and {[a;b] a+b}@'1 2 are projections) (#632)
+a:each[{[a;b] a+b};1 2]
+b:{[a;b] a+b}@'1 2
+c:each[{x+y};1 2]
+d:{x+y}@'1 2
+
+=== clean | while a rank-1 lambda under them, or @ without each, is a call (#632)
+a:each[{x};1 2]
+b:{[a] a}@'1 2
+c:{[a;b] a+b}@1 2
+
 === clean | each on a unary lambda applies per element
 {[a]a+1} each 1 2 3
 
@@ -48,6 +59,38 @@ s:cor[x] each y
 t:x cor/: y
 u:`cor each `a`b
 v:.q.cor each x
+
+=== clean profile: general | with an operand on the keyword's left and nothing applied after each, the pair is a projection (q 5 parses each, #647)
+a:1 2;b:(1 2;3 4)
+r:a in each[b]
+g:a mod each
+h:(a mod each;1)
+k:{x cor each}
+l:a mod each' / note
+m:"ab" in peach
+n:a in each [b]
+
+=== QE009 QE011 profile: general | while nothing on its left, an operand after each, or a signature on its left is refused (q 5: ' for each, #647)
+r:cor each
+s:a cor each' x
+t:a cor each "b"
+u:{[x] cor each}
+v:a cor each
+  b
+
+=== QE011 profile: general | an iterator keyword before each or peach is refused the same way (q 5: ' for each, #659)
+f:{x+y}
+r:f over each (1 2;3 4)
+s:(+) scan peach (1 2;3 4)
+t:x prior each y
+u:each each a
+v:count each each x
+
+=== clean profile: general | and parses the same way with nothing applied after it (q 5 parses each, #659)
+f:{x+y}
+r:f over each
+s:(f scan peach;1)
+t:(count each) each x
 
 === clean | a unary builtin under each is the idiom
 count each (1 2;3 4 5)
@@ -108,6 +151,14 @@ r:$[a;1;2]
 f:{[a;b] a+b}
 r:f(1;2)
 
+=== QA008 | and a lambda written out, with or without a parameter list (q 5: {[a;b] a+b}(1;2) is {[a;b] a+b}[1 2]) (#643)
+r:{[a;b] a+b}(1;2)
+s:{x+y} (1;2)
+
+=== clean | while a rank-1 lambda takes the list as its argument, and a list with an empty item is a projection applied on purpose (#643)
+r:{x}(1;2)
+s:{x y}(`a;;)
+
 === QA008 | implicit y makes the rank
 g:{x+y}
 r:g(1;2)
@@ -119,6 +170,18 @@ r:f[1;2]
 === clean | a rank-1 lambda takes the list as its argument
 h:{x}
 r:h(1;2)
+
+=== clean | a column-0 parenthesised line is a statement of its own, not the call (q 5 runs all four) (#724)
+f:{[a;b] a+b}
+r:f
+(1;2)
+s:f "x"
+(3;4)
+
+=== QA008 | but an indented one continues the statement
+f:{[a;b] a+b}
+r:f
+  (1;2)
 
 === clean | a name the file does not define is not judged
 r:k(1;2)
@@ -148,15 +211,55 @@ r:.[{x+y};1]
 === QA009 | the trap form is no different
 r:.[f;`a;{x}]
 
+=== QA009 profile: general | a char atom or a time-of-day literal is a scalar too (q 5: each is 'type) (#738)
+k:{[a] a}
+r1:.[k;"a"]
+r2:.[k;12:00]
+r3:k . "a"
+r4:k . 12:00:01
+r5:.[k;0D01:00]
+r6:.[k;2000.01.01D12:00]
+
+=== clean profile: general | while a string of two chars is a list (#738)
+k:{[a;b] a}
+r1:.[k;"ab"]
+r2:k . "ab"
+
 === clean | a list of arguments
 r:.[{x+y};1 2]
 
 === clean | enlist makes the list
 r:.[{x};enlist 1]
 
+=== clean profile: general | a column-0 bracket block is a statement of its own, not the arguments (q 5: r is f) (#729)
+f:{[a] a}
+r:f
+[1;2;3]
+
 === QA012 | more arguments than the named lambda takes
 f:{[a] a+1}
 r:f[1;2]
+
+=== QA012 QA002 profile: general | a later bracket applies to the projection the first left (q 5: each is 'rank) (#628)
+f:{[a;b] a+b}
+g:{[a;b;c] a+b+c}
+r:f[1][2;3]
+s:{[a;b] a+b}[;1][2;3]
+u:g[1;;3][2;4]
+
+=== clean profile: general | while one that fits it, or elides a slot, runs or projects (q 5: 3, 6, 6 and a projection) (#628)
+f:{[a;b] a+b}
+g:{[a;b;c] a+b+c}
+r:{[a;b] a+b}[1] [2]
+s:g[1][2][3]
+u:g[1;;3][2]
+v:f[1][;2]
+w:f[1;2][0]
+
+=== QA012 QA002 profile: general | a function in parentheses of its own is still applied (q 5: both are 'rank) (#629)
+f:{[a;b] a+b}
+r:(f)[1;2;3]
+s:({[a;b] a+b})[1;2;3]
 
 === QA012 profile: general | a comment line between does not join the call to the definition (q 5: 'rank)
 f:{[a] a+1}
@@ -219,11 +322,19 @@ r:@[{[a;b;c] a+b+c} 1;2;{x}]
 === QA003 QA005 | each after the lambda is no argument: it applies it to each item with one (#712; q 5: a list of projections, handler idle)
 r:@[{[a;b] a+b} each;1 2;{x}]
 
-=== QA003 | nor is peach (#712; q 5: 0N 3, handler idle)
+=== QA003 QA005 | nor is peach (#712; q 5: 0N 3, handler idle)
 r:@[{[a;b] a+b} peach;1 2;{x}]
 
 === clean | but over folds with both arguments (q 5: 3)
 r:@[{[a;b] a+b} over;1 2;{x}]
+
+=== clean | over or scan on a binary lambda reduces its one argument (#514; q 5: @[{[a;b] a+b}/;1 2;{x}] is 3, with \ 1 3)
+g:@[{[a;b] a+b}\;1 2;{x}]
+h:@[{[a;b] a+b}/;1 2;{x}]
+
+=== QA003 | while each-right projects, and over on a rank-3 lambda too (q 5: type 104h for both)
+g:@[{[a;b] a+b}/:;1 2;{x}]
+h:@[{[a;b;c] a+b+c}/;1 2;{x}]
 
 === QA010 | a complete builtin call given more
 r:sum[1;2]
@@ -413,6 +524,15 @@ d:@[f;1;{x}]
 === QA003 | and under dot, against the items of the list (q 5: .[{[a;b;c]a};1 2;{x}] is a projection)
 e:.[{[a;b;c]a+b+c};1 2;{x}]
 
+=== QA003 | an enlist under dot is one argument (q 5: .[f;enlist 1;{x}] is {[a;b;c] a+b+c}[1]) (#734)
+f:{[a;b;c] a+b+c}
+r3:.[f;enlist 1;{x}]
+r4:.[{[a;b] a+b};enlist 1;{x}]
+
+=== QA003 | and a symbol vector one per item (q 5: .[f;`a`b;{x}] is a projection) (#734)
+f:{[a;b;c] a+b+c}
+r:.[f;`a`b;{x}]
+
 === clean | enough arguments, an amend, or a parameter of that name
 f:{[a;b]a+b}
 c:.[f;(1;2);{x}]
@@ -433,6 +553,22 @@ b:.[f;0x0102]
 f:{x+y}
 a:f . 1b
 b:.[f;0x01]
+
+=== QA012 QA002 profile: general | a symbol, boolean or char vector holds one argument per item (q 5: each is 'rank) (#630)
+f:{[a;b] a+b}
+r:f . `a`b`c
+s:{[a;b] a+b} . 101b
+u:f . "abc"
+w:.[f;`a`b`c]
+
+=== clean profile: general | and one that fits is a call (q 5: f . `a`b is `a`b, f . "ab" is "ab") (#630)
+f:{[a;b] (a;b)}
+r:f . `a`b
+s:f . 10b
+u:f . "ab"
+
+=== QA003 profile: uqf | enlist of one item is one argument, so a rank-2 lambda is projected and the handler never runs (q 5: {[a;b] a+b}[1]) (#630)
+r:.[{[a;b] a+b};enlist 1;{x}]
 
 === QA012 | too many arguments through dot apply, to a named lambda (q 5: 'rank)
 g:{x}
@@ -525,3 +661,23 @@ r:f[1;2]
 \l b.q
 f:{x}
 r:f[1;2]
+
+=== QA005 | a rank-2 lambda reached by name under each (q 5: g each 1 2 is {x+y}'[1 2]) (#503)
+g:{x+y}
+h:{[a;b] a*b}
+r1:g each 1 2
+r2:h each 1 2
+
+=== QA005 | a rank-2 lambda under peach is each-prior (q 5: {[a;b] a*b} peach 1 2 is 0N 2) (#503)
+r3:{[a;b] a*b} peach 1 2
+r4:{x+y} peach 1 2
+
+=== clean | a rank-1 lambda by name, and a rank-2 one projected first (#503)
+f:{x+1}
+g:{x+y}
+r1:f each 1 2
+r2:g[1] each 1 2
+
+=== clean profile: uqf | a negative literal juxtaposed after the lambda is an argument too (#590; q 5: 1, type -7h)
+r:@[{[a;b] a+b} -1;2;{x}]
+s:@[{[a;b] a+b} -.5;2;{x}]

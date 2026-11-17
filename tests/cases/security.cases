@@ -13,6 +13,10 @@ q:{[s] value s}
 === clean | a conditional choosing between constant queries splices no data
 h:value $[a;"{select from x}";"{x}"],"y",b
 
+=== QX001 | while a branch that is a value splices it (#653)
+f:{[x;y] value "select from t where s=",$[x;y;"`a"]}
+g:{[x;y] value "select from t where s=",$[x;"`a";y]}
+
 === clean | a string that is not a query
 r:value "1+",string 2
 
@@ -35,6 +39,11 @@ token:""
 f:{[x] token:"," vs x; token}
 g:{[x] token:"Bearer ",x; token}
 
+=== clean | a lexer's tokens are syntax: punctuation, or a q word (#655)
+sepToken:","
+token:"if"
+endToken:" ; "
+
 === QX002 | the whole value, before a comment or inside a lambda
 apiKey:"abc123" / rotate yearly
 f:{secret:"s3cr3t"; secret}
@@ -45,7 +54,14 @@ f:{get "select from t where a=",x}
 === QX001 | and a handle hands it to the remote .z.pg
 g:{[h;x] h "select from t where a=",x}
 
+=== QX001 | so does a handle held in a namespace, the caller's .z.w, or the async neg form (#652)
+f:{[h;s] neg[h] "select from t where s=",s}
+g:{.conn.h "delete from t where s=",x}
+k:{[h;x] (neg h) "update a:1 from t where s=",x}
+l:{.z.w "select from t where s=",x}
+
 === clean | a constant query over a handle, and a joined string only shown
+n:{[h] neg[h] "select from t"}
 g:{[h] h "select from t"}
 k:{show "select from t where a=",x}
 
@@ -53,6 +69,10 @@ k:{show "select from t where a=",x}
 lg:{-1 x;}
 n:5
 lg "update finished for ",string n
+
+=== clean | and so is one defined with :: (#654)
+lg::{-1 x}
+f:{lg "update finished for ",x}
 
 === clean | QX002: a column in an update or select phrase is not a variable - this one redacts it (#204)
 r:update password:"***" from users
@@ -71,3 +91,9 @@ password:"abc"
 password:"abc"
 
   ,x
+
+=== QX001 | the joined query in parentheses is the same query (#502)
+f:{value ("select from t where s=`",x)}
+
+=== clean | a parenthesised constant query (#502)
+f:{value ("select from t")}

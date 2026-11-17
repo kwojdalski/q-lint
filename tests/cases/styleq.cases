@@ -18,6 +18,15 @@ export:([check])
 === QS003 profile: styleq | `l` reads as `1`
 l:1
 
+=== QS001 QS002 QS003 profile: styleq | an assignment that is not first on its line, or opens a lambda (#662)
+x:1;my_var:2
+f:{l:1;l}
+g:{y:1;my.var:2;y}
+
+=== clean profile: styleq | while a name read after a `;`, an equality and a table column are no assignment (#662)
+f:{[l;a] 1;l;a=1}
+t:([]my_col:1 2)
+
 === clean profile: styleq | a name long enough to read
 len:1
 

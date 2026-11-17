@@ -703,6 +703,36 @@ fn a_later_vector_equality_is_reported_at_its_own_constraint() {
     assert_eq!(columns, vec![Some(27)]);
 }
 #[test]
+fn a_vector_comparison_names_the_row_count_that_runs() {
+    // #499: q 5 runs `a<>1 2` on a two-row table, so the message cannot say
+    // 'length outright, and it names the operator it found.
+    let messages: Vec<_> = lint(
+        "t:([]a:1 2)\nr:select from t where a<>1 2\ns:select from t where a=1 2 3\n",
+        "t.q",
+        Profile::Style,
+    )
+    .into_iter()
+    .filter(|f| f.code == "QB008")
+    .map(|f| f.detail)
+    .collect();
+    assert_eq!(messages.len(), 2);
+    assert!(messages[0].contains("`<>` against a 2-item vector literal"));
+    assert!(messages[0].contains("unless the table has exactly 2 rows"));
+    assert!(messages[1].contains("`=` against a 3-item vector literal"));
+}
+#[test]
+fn an_indexed_integer_names_the_error_of_a_closed_handle() {
+    // #507: q 5 `a:5; a[0]` is 'Cannot write to handle 5, not 'domain.
+    let details: Vec<_> = lint("a:5\nr:a[0]\n", "t.q", Profile::General)
+        .into_iter()
+        .filter(|f| f.code == "QT022")
+        .map(|f| f.detail)
+        .collect();
+    assert_eq!(details.len(), 1);
+    assert!(details[0].contains("'Cannot write to handle"));
+    assert!(!details[0].contains("'domain"));
+}
+#[test]
 fn deeply_nested_lambdas_lint_in_bounded_time() {
     // #185: every rule that matched braces from each `{` was quadratic in
     // nesting depth. Generated or hostile input can nest thousands deep, and
@@ -1162,4 +1192,29 @@ fn a_builtin_assigned_in_a_namespace_is_refused_not_shadowed() {
     );
     assert!(f[0].detail.contains("'assign"), "{}", f[0].detail);
     assert!(!f[0].why.contains("shadow"), "{}", f[0].why);
+}
+#[test]
+fn a_finding_is_an_error_exactly_when_q_refuses_the_code() {
+    // The scope says whether q refuses the construct, so it decides the
+    // severity: a hand-kept list of codes drifted from it (#512, #513).
+    use q_lint_rs::{Finding, RULES};
+    for rule in RULES.iter().filter(|r| r.scope != "qls") {
+        let f = Finding::new("t.q", 1, &rule.code, String::new());
+        let expected = if rule.scope == "builtin" {
+            "error"
+        } else {
+            "warning"
+        };
+        assert_eq!(f.severity, expected, "{} ({})", rule.code, rule.scope);
+    }
+    let f = lint("a:\"abc\" like \"a*b*\"", "t.q", Profile::General);
+    assert_eq!(
+        (f[0].code.as_str(), f[0].severity.as_str()),
+        ("QB002", "error")
+    );
+    let f = lint("a:`int$\"12\"", "t.q", Profile::Style);
+    assert_eq!(
+        (f[0].code.as_str(), f[0].severity.as_str()),
+        ("QT004", "warning")
+    );
 }

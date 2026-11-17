@@ -1,6 +1,6 @@
 # Rules
 
-All 120 rules, generated from `src/taxonomy.json` - the same data
+All 121 rules, generated from `src/taxonomy.json` - the same data
 `qlinter --rules` and `qlinter --explain <CODE>` print from. Regenerate with
 `python3 scripts/rules_doc.py > docs/rules.md`; a test fails when this is stale.
 
@@ -53,13 +53,14 @@ that wants fewer findings narrows in its own configuration.
 | `QE009` | juxtaposed-derived-function | A derived function applied by juxtaposition: q 5 refuses +/x, count'x and x/y; write (+/)x, +/[x] or sum x | every profile |
 | `QE010` | malformed-number | A number q 5 cannot parse: 1.5j, 2b, 3i 4j, 1y, 1.2.3, or an integer that overflows its type (2147483648i, 32768h) | every profile |
 | `QE011` | infix-keyword-each | An infix keyword before each or peach: q 5 refuses cor each x and x within each y; write (cor) each, cor' or cor[x] each | every profile |
+| `QE012` | non-ascii-character | A character past ASCII outside a string or comment - a no-break space, a curly quote, a byte-order mark mid-file - which q refuses with 'char | every profile |
 
 ## Names - parameters, locals, globals and what they shadow
 
 | code | name | summary | on in |
 |---|---|---|---|
 | `QF001` | reserved-parameter | Builtin name used as a parameter | every profile |
-| `QF002` | underscore-parameter | `_` is the drop operator, not a parameter name: q 5 refuses every call with 'match | every profile |
+| `QF002` | underscore-parameter | `_` is the drop operator, not a parameter name: q 5 refuses every call with 'match, or a name starting with it where the lambda is defined | every profile |
 | `QF003` | reserved-local | Assignment to a builtin in a lambda | every profile |
 | `QF004` | reserved-definition | Namespace-level assignment to a builtin, which q refuses | every profile |
 | `QF005` | nested-local-reference | Nested lambda expects an outer local | every profile |
@@ -121,7 +122,7 @@ that wants fewer findings narrows in its own configuration.
 | `QT019` | literal-within-bounds | within bounds are not a two-item list | every profile |
 | `QT020` | table-column-length | Table literal columns of different lengths | every profile |
 | `QT021` | empty-search-pattern | ss or ssr with an empty pattern is a length error | every profile |
-| `QT022` | index-into-atom | A name bound to an atom is indexed; an atom has no items, and q raises 'type | every profile |
+| `QT022` | index-into-atom | A name bound to an atom is indexed; an atom has no items, and q raises 'type, or for an integer tries to write to it as a handle | every profile |
 | `QT023` | char-integer-arithmetic | Integer arithmetic on a char, which q 5 refuses with 'type | every profile |
 | `QT024` | attribute-literal-fail | An s#, u# or p# attribute applied to a literal it does not describe | every profile |
 | `QT025` | signal-non-string | A number or a char atom signalled, which q refuses with 'stype | every profile |
@@ -144,7 +145,7 @@ that wants fewer findings narrows in its own configuration.
 | `QB005` | match-in-where | Match in a qSQL filter compares whole vectors, not rows | `style` and above |
 | `QB006` | comparison-with-logic | Unparenthesised comparison mixed with and/or reads right-to-left | `style` and above |
 | `QB007` | like-symbol-pattern | like with a symbol pattern is a type error or, with a glob, a projection instead of a boolean | every profile |
-| `QB008` | vector-equality-filter | Column equality against a vector literal in a filter | `style` and above |
+| `QB008` | vector-equality-filter | Column compared with a vector literal in a filter, row by row rather than for membership | `style` and above |
 | `QB010` | apply-not-subtract | An atom, a space and a negative literal applies the atom rather than subtracting, which q refuses | every profile |
 | `QB011` | control-as-value | if, while or do assigned as a value is always null | `style` and above |
 | `QB012` | trailing-semicolon-body | Lambda ends in ; so its last expression is discarded | `style` and above |
@@ -154,7 +155,7 @@ that wants fewer findings narrows in its own configuration.
 | `QB016` | delete-columns-and-rows | delete cannot take both columns and a where phrase | every profile |
 | `QB017` | self-assignment | A name assigned to itself | `style` and above |
 | `QB018` | constant-comparison | Two literals compared, so the answer never varies | `style` and above |
-| `QB019` | duplicate-column | A table literal names a column twice; q renames the second instead of refusing | `style` and above |
+| `QB019` | duplicate-column | A table literal names a column twice; q renames the second, or keeps a key and a value column of one name, instead of refusing | `style` and above |
 | `QB020` | unreachable-statement | A statement after a top-level return or signal in a lambda never runs | `style` and above |
 | `QB021` | select-by-duplicate-name | A select or exec names a result column the same as a by group, which q refuses with 'dup names for cols/groups | every profile |
 
