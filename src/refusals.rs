@@ -1062,6 +1062,46 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
         finding.end_column = finding.column.map(|c| c + if colon { 2 } else { 1 });
         out.push(finding);
     }
+    // The I/O verbs `0:`, `1:` and `2:` have no monadic form either: q 5
+    // refuses `0: x`, `a:0:x`, `1:`a`, `{2: x}` and even `0:00` at parse,
+    // while `0:[x;y]`, `(0:)x` and `x 0: y` are fine (#672).
+    let c = code.as_bytes();
+    let mut line_start = 0;
+    for (i, &d) in c.iter().enumerate() {
+        if i > 0 && c[i - 1] == b'\n' {
+            line_start = i;
+        }
+        if !matches!(d, b'0'..=b'2')
+            || c.get(i + 1) != Some(&b':')
+            || comments.as_bytes()[i] != d
+            || i.checked_sub(1).is_some_and(|p| {
+                c[p].is_ascii_alphanumeric() || b"._`-:".contains(&c[p])
+            })
+            || crate::system_command(&source[line_start..])
+        {
+            continue;
+        }
+        let next = continued(&comments[i + 2..]);
+        if !(next.starts_with(|c: char| c.is_ascii_alphanumeric() || "`(\"{.".contains(c))
+            || re!(r"^-\.?\d").is_match(next))
+        {
+            continue;
+        }
+        let expression = line_start + crate::timed_prefix(&source[line_start..]);
+        if !opens_expression(code, source, comments, i, expression) {
+            continue;
+        }
+        let verb = &code[i..i + 2];
+        let mut finding = Finding::at(
+            path,
+            source,
+            i,
+            "QE008",
+            format!("`{verb}` has no monadic form in q 5: q refuses this line"),
+        );
+        finding.end_column = finding.column.map(|c| c + 2);
+        out.push(finding);
+    }
 }
 
 const GLYPHS: &[u8] = b"+-*%!#$&|^=<>~,@?";
