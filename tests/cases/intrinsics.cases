@@ -596,6 +596,12 @@ b:mavg[enlist	1;1 2 3]
 c:within[1;enlist	1]
 t:([]a:enlist	1;b:2 3)
 
+=== QT017 QT019 profile: general | and so is a line break inside the brackets (q 5: 'domain, 'length, #690)
+u:within[1;enlist
+  1]
+v:mavg[enlist
+  1;1 2 3]
+
 === QT003 profile: general | arithmetic on the null symbol (#455; q 5: ` + 1 is 'type)
 a:` + 1
 

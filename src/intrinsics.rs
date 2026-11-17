@@ -35,10 +35,11 @@ fn literal(s: &str) -> Option<Literal> {
         }
         s = s[1..s.len() - 1].trim();
     }
-    // Any blank parts `enlist` from its argument; q 5 reads a tab as a space.
+    // Any blank parts `enlist` from its argument; q 5 reads a tab as a space,
+    // and a line break inside the brackets an argument sits in too (#690).
     if let Some(rest) = s
         .strip_prefix("enlist")
-        .filter(|r| r.starts_with([' ', '\t']))
+        .filter(|r| r.starts_with([' ', '\t', '\r', '\n']))
     {
         let mut value = literal(rest)?;
         if value.vector {
