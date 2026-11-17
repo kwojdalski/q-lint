@@ -3007,6 +3007,44 @@ fn names_within(slot: &str, depth: usize) -> Vec<&str> {
         .map(|m| m.as_str())
         .collect()
 }
+/// Where a parameter slot would bind a name holding `_`: `Some(true)` for a
+/// bare `_` - q 5 defines `{[_] 1}` and `{[(a;_)] a}` and refuses every
+/// call with 'match - and `Some(false)` for a name starting with one, which
+/// q 5 refuses where the lambda is defined (`{[_a] 1}` and `{[(a;_b)] a}`
+/// are '_, #636). What follows a `:` in a slot or list item is the function
+/// the argument goes through, not a name: q 5 `{[a:2_] a} 1 2 3` is ,3 (#622).
+fn underscore_binding(s: &str, depth: usize) -> Option<bool> {
+    let s = s.trim();
+    let whole = |s: &str| s.starts_with('(') && matching(s, 0, b'(', b')') == Some(s.len());
+    let worst = |parts: &[&str], f: &dyn Fn(&str) -> Option<bool>| {
+        parts.iter().filter_map(|p| f(p)).reduce(|a, b| a || b)
+    };
+    let inner = |c: &str| underscore_binding(c, depth + 1);
+    // Table and keyed-table fields: in `k:p` the name is `p`'s to bind.
+    let fields = |c: &str| worst(&c.split(':').collect::<Vec<_>>(), &inner);
+    if depth > MAX_NESTING {
+        None
+    } else if s == "_" {
+        Some(true)
+    } else if re!(r"^_[A-Za-z0-9_]*$").is_match(s) {
+        Some(false)
+    } else if s.starts_with("([")
+        && whole(s)
+        && let Some(close) = matching(s, 1, b'[', b']')
+    {
+        let mut parts = slots(&s[2..close - 1]);
+        parts.extend(slots(&s[close..s.len() - 1]));
+        worst(&parts, &fields)
+    } else if whole(s) {
+        worst(&slots(&s[1..s.len() - 1]), &inner)
+    } else if let Some(at) = typed_at(s) {
+        inner(&s[..at])
+    } else if let Some(at) = first_outside(s, b'!') {
+        worst(&[&s[..at], &s[at + 1..]], &inner)
+    } else {
+        None
+    }
+}
 /// A key or column of a dictionary or table pattern: `k`, or `k:p`.
 fn field(s: &str) -> bool {
     match s.split_once(':') {
@@ -3543,13 +3581,24 @@ pub fn lint_selecting(
         // one-argument pattern and `{[(a;_)] a}[(1;2)]` is 'match (#338).
         // Either way the brackets are a signature (#443), unless another
         // slot is not.
-        let underscore_in =
-            |s: &str| s == "_" || (s.contains('_') && is_pattern(&s.replace('_', "u"), false));
-        if offenders.iter().any(|s| underscore_in(s)) {
+        let underscore = |s: &str| {
+            Some(s)
+                .filter(|s| s.contains('_') && is_pattern(&s.replace('_', "u"), false))
+                .and_then(|s| underscore_binding(s, 0))
+        };
+        let underscore_in = |s: &str| underscore(s).is_some();
+        let kinds: Vec<bool> = offenders.iter().filter_map(|s| underscore(s)).collect();
+        if !kinds.is_empty() {
             add(
                 at,
                 "QF002",
-                "`_` as a lambda parameter: q 5 refuses every call with 'match".into(),
+                if kinds.contains(&true) {
+                    "`_` as a lambda parameter: q 5 refuses every call with 'match"
+                } else {
+                    "A parameter name starting with `_`: q 5 refuses the lambda where it is \
+                     defined with '_"
+                }
+                .into(),
             );
         }
         if !sig.named {

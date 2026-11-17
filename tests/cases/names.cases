@@ -172,6 +172,14 @@ f:{[_] 1}
 f:{[(a;_)] a}
 g:{[(a;_);b] b}
 
+=== clean profile: general | a drop on the right of a slot's colon is the function the argument goes through, not a name (q 5: {[a:2_] a} 1 2 3 4 is 3 4, {[a:_] a} 5 is _[5], {[(a;b:_)] a}[(1;2)] is 1) (#622)
+f:{[a:2_] a}
+g:{[a:_] a}
+h:{[(a;b:_)] a}
+
+=== QF002 QE008 profile: general | a name starting with _ is refused where the lambda is defined, not at each call (q 5: f:{[_a] 1} is '_) (#636)
+f:{[_a] 1}
+
 === clean | a dotted name is a legal parameter, surprising as that is
 f:{[.q.z] 1}
 

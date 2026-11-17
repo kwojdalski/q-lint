@@ -59,7 +59,7 @@ that wants fewer findings narrows in its own configuration.
 | code | name | summary | on in |
 |---|---|---|---|
 | `QF001` | reserved-parameter | Builtin name used as a parameter | every profile |
-| `QF002` | underscore-parameter | `_` is the drop operator, not a parameter name: q 5 refuses every call with 'match | every profile |
+| `QF002` | underscore-parameter | `_` is the drop operator, not a parameter name: q 5 refuses every call with 'match, or a name starting with it where the lambda is defined | every profile |
 | `QF003` | reserved-local | Assignment to a builtin in a lambda | every profile |
 | `QF004` | reserved-definition | Namespace-level assignment to a builtin, which q refuses | every profile |
 | `QF005` | nested-local-reference | Nested lambda expects an outer local | every profile |
