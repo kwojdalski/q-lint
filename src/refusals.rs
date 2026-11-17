@@ -21,6 +21,8 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
     juxtaposed_derived(path, source, code, comments, &mut out);
     keyword_each(path, source, &unsym, &mut out);
     numbers(path, source, code, comments, &unsym, &mut out);
+    number_colon(path, source, code, &unsym, &mut out);
+    non_ascii(path, source, code, &mut out);
     out
 }
 
@@ -44,7 +46,7 @@ fn attributes(path: &str, source: &str, code: &str, comments: &str, out: &mut Ve
         let whole = m.get(0).unwrap();
         if code.as_bytes()[whole.start()] != b'`'
             || !boundary(code, whole.start())
-            || !operand_ends(code, whole.end())
+            || !operand_ends(code, comments, whole.end())
         {
             continue;
         }
@@ -490,15 +492,24 @@ fn missing_from(
         if !boundary(code, m.start()) {
             continue;
         }
-        // The name assigned or passed rather than run: `select:1`, `.q.select`.
-        // But `select[n]` is q's own row limit, and still wants its `from`:
-        // q 5 `parse "select[2] a"` is 'from (#489).
+        // A bracket after select is its row limit or sort, `select[2]`, and
+        // the query still wants its `from`: q 5 `parse "select[2] a"` is
+        // 'from (#489). Nothing lets the word be a value: q 5 refuses
+        // `select:1`, `{[t] select}`, `{x}[select]` and `(exec;delete)`
+        // alike - only the symbol `` `select `` or a dotted `.q.select`
+        // names it (#728).
         let after = unsym[m.end()..].trim_start_matches([' ', '\t']);
-        if after.starts_with(':')
-            || (after.starts_with('[') && m.as_str() != "select")
-            || after.starts_with([';', ')', ']', '}'])
-            || after.is_empty()
-        {
+        if after.starts_with('[') && m.as_str() != "select" {
+            continue;
+        }
+        // In a lambda the word as a parameter is QF001's, and assigned as a
+        // local QF003's: one finding for one mistake.
+        let lambda = crate::enclosing_brace(code, m.start());
+        if lambda.is_some_and(|b| {
+            let sig = crate::signature(code, source, b);
+            (sig.named && m.start() < sig.body)
+                || (after.starts_with(':') && !after.starts_with("::"))
+        }) {
             continue;
         }
         // The statement runs to a `;` at this depth, the bracket that closes
@@ -549,6 +560,11 @@ fn missing_from(
         let statement = &flat[..own];
         let from = re!(r"\bfrom\b").find_iter(statement).last();
         let detail = match from {
+            // The bare word straight before a `;`: q 5 `parse "r:select;1"`
+            // and `parse "(exec;delete)"` are ',.
+            None if statement.trim().is_empty() && bytes.get(at) == Some(&b';') => {
+                "has no `from` before its statement ends: q raises ',"
+            }
             None => "has no `from` before its statement ends: q raises 'from",
             // Read from `comments`, where `` from `t `` still has its table
             // and `from "t"` its string (#199).
@@ -791,7 +807,7 @@ fn refused_where_value(code: &str, comments: &str, at: usize) -> bool {
     while code[end..].starts_with([' ', '\t', ')']) {
         end += 1;
     }
-    operand_ends(code, end)
+    operand_ends(code, comments, end)
 }
 
 /// Whether the assignment to the name at `name`, its `:` at `colon`, is the
@@ -833,9 +849,15 @@ fn hopen_literal(path: &str, source: &str, code: &str, comments: &str, out: &mut
         // A real (`1.5e`, `2e`), the empty symbol and the empty string are
         // 'type too (q 5); the string is read from `comments`. A number is
         // read whole, sign and exponent with it: `-1.5`, `1e3` and `-1e3`
-        // are floats, and 'type (#504).
-        re!(r#"\bhopen\s*(?:\[\s*)?(-?(?:\d+\.\d*|\.\d+|\d+)(?:e[+-]?\d*)?|`(?:[A-Za-z0-9_.][A-Za-z0-9_.:]*)?|"")"#)
-            .captures_iter(comments)
+        // are floats, and 'type (#504). Applied by juxtaposition, the
+        // argument is in the same statement: `open:hopen` and then a
+        // column-0 `1.5` are two (#741).
+        re!(concat!(
+            r"\bhopen",
+            blank!(),
+            r#"*(?:\[\s*)?(-?(?:\d+\.\d*|\.\d+|\d+)(?:e[+-]?\d*)?|`(?:[A-Za-z0-9_.][A-Za-z0-9_.:]*)?|"")"#
+        ))
+        .captures_iter(comments)
     {
         let whole = m.get(0).unwrap();
         let value = m.get(1).unwrap();
@@ -843,7 +865,7 @@ fn hopen_literal(path: &str, source: &str, code: &str, comments: &str, out: &mut
             continue;
         }
         // A plain handle number is what hopen takes.
-        if !crate::operand_ends(code, value.end()) || re!(r"^\d+$").is_match(value.as_str()) {
+        if !crate::operand_ends(code, comments, value.end()) || re!(r"^\d+$").is_match(value.as_str()) {
             continue;
         }
         // `-0` is the integer 0, and q 5 tries to connect: 'hop, not
@@ -899,7 +921,7 @@ fn cast_character(path: &str, source: &str, code: &str, comments: &str, out: &mu
                 r"^(?:-?\.?\d[A-Za-z0-9.:]*(?:[ \t]+-?\.?\d[A-Za-z0-9.:]*)*|(?:`[A-Za-z0-9_.:]*)+)"
             )
             .find(operand)
-            && crate::operand_ends(code, start + lit.end())
+            && crate::operand_ends(code, comments, start + lit.end())
             && (c != "C" || !atom_literal(lit.as_str()))
         {
             out.push(Finding::at(
@@ -1008,7 +1030,12 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
         // written straight after it.
         let colon = rest.starts_with(':')
             && rest[1..].starts_with(|c: char| c.is_ascii_alphanumeric() || "`(\".{".contains(c))
-            || rest.starts_with(":-") && rest[2..].starts_with(|c: char| c.is_ascii_digit());
+            || rest.starts_with(":-") && rest[2..].starts_with(|c: char| c.is_ascii_digit())
+            // And with `::`, before any operand, past a blank too: q 5
+            // refuses `-::a` with '-::, `,::"a"` with ',::, and `-:: a` (#661).
+            || rest.starts_with("::")
+                && continued(&rest[2..])
+                    .starts_with(|c: char| c.is_ascii_alphanumeric() || "`(\".{-".contains(c));
         let next = continued(rest);
         let spaced = next.len() < rest.len();
         // Straight after a signature's `]` a `-` is the glyph, not a sign:
@@ -1257,7 +1284,9 @@ fn juxtaposed_derived(
 ) {
     // Symbols filled with digits: a path such as `:hdb/2024 is not a name
     // and an iterator, and `` ` sv'x `` still has an operand on the left.
-    let view = re!(r"`[A-Za-z0-9_.:/]*")
+    // A symbol takes a `/` only from its first `:` on: q 5 parses `` `a:b/x ``
+    // as one symbol and refuses `` `a/x `` and `` `a`b/x `` with '/ (#733).
+    let view = re!(r"`[A-Za-z0-9_.]*(?::[A-Za-z0-9_.:/]*)?")
         .replace_all(comments, |m: &regex::Captures| "0".repeat(m[0].len()));
     let b = view.as_bytes();
     let c = code.as_bytes();
@@ -1299,16 +1328,6 @@ fn juxtaposed_derived(
         if c[m.start()] != b[m.start()] {
             continue;
         }
-        let Some(start) = derived_operand(&view, c, &opener, m.start()) else {
-            continue;
-        };
-        // Not on a system command, but in a `\t` line's expression (#583)
-        // and after a `q)` prompt (#582).
-        let line_start = view[..start].rfind('\n').map_or(0, |p| p + 1);
-        if crate::system_command(&source[line_start..]) {
-            continue;
-        }
-        let line_start = line_start + expression_start(&source[line_start..]);
         // Applied to an operand right after the iterator: a name, a symbol,
         // a bracketed or quoted value, or a number.
         // A `-` before an operand is one too: `+/-x` holds the same derived
@@ -1325,6 +1344,41 @@ fn juxtaposed_derived(
             || (next.starts_with('-')
                 && next[1..]
                     .starts_with(|ch: char| ch.is_ascii_alphabetic() || "`(\"".contains(ch)));
+        let Some(start) = derived_operand(&view, c, &opener, m.start()) else {
+            // Nothing on its left at all - right after `(`, `[`, `{`, `;` or
+            // a signature - an iterator derives no function, and q 5 refuses
+            // `(1;/x)`, `f[/x]` and `{[x]/x}` with '/ (#656). A blank before
+            // it makes it a comment, and a lone `'` is a signal.
+            let line_start = view[..m.start()].rfind('\n').map_or(0, |p| p + 1);
+            if operand
+                && m.start() > line_start
+                && !crate::system_command(&source[line_start..])
+                && (b"([{;".contains(&c[m.start() - 1]) || after_signature(code, source, m.start()))
+                && !(m.as_str().starts_with('\'') && !m.as_str().starts_with("':"))
+            {
+                let iter = &view[iterator..m.end()];
+                let mut finding = Finding::at(
+                    path,
+                    source,
+                    m.start(),
+                    "QE009",
+                    format!(
+                        "q 5 refuses an iterator with nothing on its left ('{iter}): it derives \
+                         no function to apply"
+                    ),
+                );
+                finding.end_column = finding.column.map(|col| col + m.len());
+                out.push(finding);
+            }
+            continue;
+        };
+        // Not on a system command, but in a `\t` line's expression (#583)
+        // and after a `q)` prompt (#582).
+        let line_start = view[..start].rfind('\n').map_or(0, |p| p + 1);
+        if crate::system_command(&source[line_start..]) {
+            continue;
+        }
+        let line_start = line_start + expression_start(&source[line_start..]);
         if !operand || !opens_expression(code, source, &view, start, line_start) {
             continue;
         }
@@ -1429,17 +1483,18 @@ fn derived_operand(
 }
 
 /// QE011. An infix keyword or glyph before an iterator keyword - `each`,
-/// `peach`, `over`, `scan` or `prior`. q 5 refuses the line at parse whatever
-/// stands on its left: `cor each x`, `x mavg each y`, `x in over y` and
-/// `x + each y` are each an error, while `(cor) each x`, `cor'[x;y]`,
-/// `cor[x] each y` and `(+) each y` parse (#492). The list is every reserved
-/// word q 5 refuses there, checked one by one (the iterator keywords are
-/// iterators themselves, and the qSQL words have their own rule). Of the
+/// `peach`, `over`, `scan` or `prior`. q 5 refuses the line at parse when
+/// nothing is on its left or an operand follows: `cor each x`,
+/// `x mavg each y`, `x in over y` and `x + each y` are each an error, while
+/// `(cor) each x`, `cor'[x;y]`, `cor[x] each y` and `(+) each y` parse (#492).
+/// The list is every reserved word q 5 refuses there, checked one by one, the
+/// iterator keywords among them: q 5 refuses `f over each x` and
+/// `each each x` too (#659). The qSQL words have their own rule. Of the
 /// glyphs, `:` is left to assignment and `.` and `_` to names; `/`, `\` and
 /// `'` are iterators.
 fn keyword_each(path: &str, source: &str, unsym: &str, out: &mut Vec<Finding>) {
     for m in re!(
-        r"(?:\b(and|asof|bin|binr|cor|cov|cross|cut|div|dsave|ema|except|fby|ij|ijf|in|insert|inter|like|lj|ljf|lsq|mavg|mcount|mdev|mmax|mmin|mmu|mod|msum|or|pj|rotate|scov|set|setenv|ss|sublist|sv|uj|ujf|union|upsert|vs|wavg|within|wsum|xasc|xbar|xcol|xcols|xdesc|xexp|xgroup|xkey|xlog|xprev|xrank)[ \t]+|([-+*%!&|<>=~,^#$?@])[ \t]*)(each|peach|over|scan|prior)\b"
+        r"(?:\b(and|asof|bin|binr|cor|cov|cross|cut|div|dsave|each|ema|except|fby|ij|ijf|in|insert|inter|like|lj|ljf|lsq|mavg|mcount|mdev|mmax|mmin|mmu|mod|msum|or|over|peach|pj|prior|rotate|scan|scov|set|setenv|ss|sublist|sv|uj|ujf|union|upsert|vs|wavg|within|wsum|xasc|xbar|xcol|xcols|xdesc|xexp|xgroup|xkey|xlog|xprev|xrank)[ \t]+|([-+*%!&|<>=~,^#$?@])[ \t]*)(each|peach|over|scan|prior)\b"
     )
     .captures_iter(unsym)
     {
@@ -1452,17 +1507,54 @@ fn keyword_each(path: &str, source: &str, unsym: &str, out: &mut Vec<Finding>) {
         {
             continue;
         }
+        // With an operand on its left and nothing applied after `each`, the
+        // pair is a projection: q 5 parses `a mod each`, `(a mod each;1)`,
+        // `a in each[b]` and `a mod each'`, and refuses `a mod each' x` (#647).
+        let line = &source[line_start..];
+        let prompt = if line.starts_with("q)") { 2 } else { 0 };
+        let left = source[line_start + crate::timed_prefix(line).max(prompt)..word.start()]
+            .trim_end_matches([' ', '\t']);
+        // A signature is no operand: q 5 refuses `{[x] cor each}`.
+        let signature = left.ends_with(']')
+            && left
+                .bytes()
+                .rev()
+                .scan(0i32, |depth, c| {
+                    *depth += i32::from(c == b']') - i32::from(c == b'[');
+                    Some(*depth)
+                })
+                .position(|depth| depth == 0)
+                .is_some_and(|p| left[..left.len() - 1 - p].ends_with('{'));
+        let infix = !signature
+            && left.ends_with(|c: char| c.is_ascii_alphanumeric() || "_.)]}\"`".contains(c));
+        let it = m.get(3).unwrap().end();
+        let derived = it + re!(r"^(?:[/\\']:?)*").find(&source[it..]).map_or(0, |d| d.end());
+        // A `/` after a blank opens a comment.
+        let rest = &source[crate::past_blanks(source, derived)..];
+        if infix && (rest.is_empty() || rest.starts_with([';', ')', ']', '}', '\r', '\n', '[', '/']))
+        {
+            continue;
+        }
         let mut finding = Finding::at(
             path,
             source,
             word.start(),
             "QE011",
-            format!(
-                "`{w}` is infix, so q 5 refuses `{w} {it}` at parse: write `({w}) {it}`, \
-                 `{w}'` or `{w}[x] {it}`",
-                w = word.as_str(),
-                it = &m[3]
-            ),
+            if matches!(word.as_str(), "each" | "peach" | "over" | "scan" | "prior") {
+                format!(
+                    "`{w}` is infix, so q 5 refuses `{w} {it}` at parse: write the derived \
+                     function in parentheses, `(f {w}) {it}`",
+                    w = word.as_str(),
+                    it = &m[3]
+                )
+            } else {
+                format!(
+                    "`{w}` is infix, so q 5 refuses `{w} {it}` at parse: write `({w}) {it}`, \
+                     `{w}'` or `{w}[x] {it}`",
+                    w = word.as_str(),
+                    it = &m[3]
+                )
+            },
         );
         finding.end_column = finding.column.map(|c| c + word.len());
         out.push(finding);
@@ -1558,6 +1650,83 @@ fn null_literal(text: &str, not_last: bool, negative: bool) -> Option<String> {
         ));
     }
     None
+}
+
+/// QE010 too. A number followed straight by `:` that is no time: q 5 reads
+/// `1.5:0` as one token and refuses it, whatever is on its left -
+/// `$[c;1.5:0]`, `h 1.5:0`, `2000.01.01:x`, `1j:2`, `0N:x` and `-1:x` are
+/// each refused, naming the token (#660). A bare integer is left to QE006
+/// and to `0:`, `1:` and `2:`, the file verbs; so is a time, negative ones
+/// included (`-12:34`), and `1e:2`, which q 5 parses.
+fn number_colon(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Finding>) {
+    let b = source.as_bytes();
+    let starts = |c: &regex::Captures| {
+        let at = c.get(0).unwrap().start();
+        // A `-` is a sign only where no operand ends before it: `x-1:y` is
+        // `x-(1:y)`, and `x -1:y` the refused `-1:`.
+        boundary(code, at)
+            && (c[1].is_empty()
+                || at == 0
+                || !(b[at - 1].is_ascii_alphanumeric() || b")]}\"`._".contains(&b[at - 1])))
+    };
+    for c in crate::captures_where(re!(r"(-?)(\.?\d[0-9A-Za-z.]*):"), unsym, starts) {
+        let whole = c.get(0).unwrap();
+        let number = &c[2];
+        let before = &source[..whole.start()];
+        if command_argument(source, whole.start())
+            || (number.bytes().all(|d| d.is_ascii_digit())
+                && (c[1].is_empty()
+                    || unsym[whole.end()..].starts_with(|d: char| d.is_ascii_digit())))
+            || number.ends_with(['e', 'E'])
+            || re!(r"[DT]\d+$").is_match(number)
+            || (before.ends_with(':')
+                && before[..before.len() - 1].ends_with(|d: char| d.is_ascii_digit()))
+        {
+            continue;
+        }
+        let text = &whole.as_str()[..whole.len() - 1];
+        out.push(Finding::at(
+            path,
+            source,
+            whole.start(),
+            "QE010",
+            format!(
+                "`{text}` followed by `:` is no number: q 5 reads `{text}:` as one token and \
+                 refuses it"
+            ),
+        ));
+    }
+}
+
+/// QE012. A character past ASCII where q reads code. q 5 refuses the line
+/// with 'char: a no-break space or a curly quote pasted from a document, a
+/// minus sign, a zero-width space, `` `é `` and `é:1`, and a byte-order mark
+/// anywhere but the start of the file, which is QE005's. In a string or a
+/// comment it is text, and loads. One finding a line, at the first.
+fn non_ascii(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
+    let mut line = usize::MAX;
+    for (at, ch) in code.char_indices() {
+        if ch.is_ascii() || at == 0 && ch == '\u{feff}' {
+            continue;
+        }
+        let start = code[..at].rfind('\n').map_or(0, |p| p + 1);
+        if start == line || crate::system_command(&source[start..]) {
+            continue;
+        }
+        line = start;
+        let mut finding = Finding::at(
+            path,
+            source,
+            at,
+            "QE012",
+            format!(
+                "U+{:04X} is no q outside a string or comment: q 5 refuses the line with 'char",
+                u32::from(ch)
+            ),
+        );
+        finding.end_column = finding.column.map(|col| col + ch.len_utf16());
+        out.push(finding);
+    }
 }
 
 /// QE010. A number q 5 will not parse. Each shape was refused by `parse`,

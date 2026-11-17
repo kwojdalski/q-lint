@@ -1021,3 +1021,161 @@ fn a_stdin_filename_that_is_not_q_is_refused_as_the_file_would_be() {
         assert!(stderr.contains("not a .q file"), "{stderr}");
     }
 }
+
+#[test]
+fn the_tests_exemption_from_qp002_counts_only_directories_below_the_root() {
+    // A `tests` directory below the project root exempts its files, wherever
+    // qlinter runs and however the path is spelled (#416); one above the
+    // root - a checkout under `~/tests` - exempts nothing, and a code the
+    // command line selects reports regardless (#800).
+    let repo = Repo::new();
+    repo.write("tests/proj/.qlinter.toml", "profile = \"uqf\"\n")
+        .write("tests/proj/src/a.q", "x:.z.z\n")
+        .write("tests/proj/src/tests.q", "x:.z.z\n")
+        .write("tests/proj/tests/a.q", "x:.z.z\n")
+        .write("tests/proj/tests/q/a.q", "x:.z.z\n");
+    let qp002 = |cwd: &str, args: &[&str]| repo.codes(cwd, args).contains(&"QP002".to_string());
+    assert!(qp002("tests/proj", &["src/a.q"]));
+    assert!(qp002("tests/proj/src", &["a.q"]));
+    assert!(qp002("tests/proj", &["src/tests.q"]));
+    assert!(!qp002("tests/proj", &["tests/a.q"]));
+    assert!(!qp002("tests/proj/src", &["../tests/q/a.q"]));
+    let absolute = repo.path("tests/proj/tests/a.q");
+    assert!(!qp002(".", &[absolute.to_str().unwrap()]));
+    assert!(qp002("tests/proj", &["--select", "QP002", "tests/a.q"]));
+    // With no configuration the root is the current directory.
+    repo.write("bare/tests/a.q", "x:.z.z\n");
+    assert!(!qp002(
+        "bare",
+        &["--isolated", "--profile", "uqf", "tests/a.q"]
+    ));
+    assert!(qp002(
+        "bare/tests",
+        &["--isolated", "--profile", "uqf", "a.q"]
+    ));
+}
+
+#[test]
+fn force_exclude_reads_default_directories_from_the_project_root_not_the_cwd() {
+    // Run from inside build/, or beside it, the file is still in build/
+    // below the configuration's root: the walk of the project skips it, so
+    // --force-exclude does too. Measured from the cwd, it was linted (#801).
+    let repo = Repo::new();
+    repo.write("qlinter.toml", "profile = \"style\"\n")
+        .write("build/x.q", SOURCE)
+        .write("src/a.q", SOURCE);
+    assert_eq!(
+        repo.codes(".", &["--force-exclude", "build/x.q"]),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        repo.codes("build", &["--force-exclude", "x.q"]),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        repo.codes("src", &["--force-exclude", "../build/x.q"]),
+        Vec::<String>::new()
+    );
+    // A `build` above the root is not one the walk would skip.
+    let outer = Repo::new();
+    outer
+        .write("build/proj/qlinter.toml", "profile = \"style\"\n")
+        .write("build/proj/a.q", SOURCE);
+    assert_eq!(
+        outer.codes(".", &["--force-exclude", "build/proj/a.q"]),
+        ["QF016"]
+    );
+}
+
+#[test]
+fn force_exclude_applies_a_name_pattern_to_a_file_outside_its_root() {
+    // `--exclude gen` is rooted at the cwd, here/; a walk of ../other skips
+    // other/gen, so naming the file with --force-exclude skips it too. Only
+    // the file's own name was asked, and it was linted (#802).
+    let repo = Repo::new();
+    repo.write("other/gen/f.q", SOURCE).write("here/.keep", "");
+    let args = ["--isolated", "--profile", "style", "--exclude", "gen"];
+    assert_eq!(
+        repo.codes("here", &[&args[..], &["../other"]].concat()),
+        Vec::<String>::new()
+    );
+    let forced = [&args[..], &["--force-exclude", "../other/gen/f.q"]].concat();
+    assert_eq!(repo.codes("here", &forced), Vec::<String>::new());
+    let unforced = [&args[..], &["../other/gen/f.q"]].concat();
+    assert_eq!(repo.codes("here", &unforced), ["QF016"]);
+}
+
+#[test]
+fn an_exclude_naming_the_whole_tree_is_refused_like_an_empty_one() {
+    // `--exclude "$UNSET/"` is `/`, and `./` names the root: both linted
+    // nothing and exited 0, while `.` excluded nothing at all (#803).
+    let repo = Repo::new();
+    repo.write("src/a.q", SOURCE).write("sub/.keep", "");
+    for (cwd, pattern) in [
+        (".", "/"),
+        (".", "./"),
+        (".", "."),
+        ("sub", ".."),
+        (".", " ./ "),
+    ] {
+        for args in [
+            &["--isolated", "--exclude", pattern, "."][..],
+            &["analyze", "graph", "--exclude", pattern, "."][..],
+        ] {
+            let out = run(&repo.path(cwd), args);
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            assert_eq!(out.status.code(), Some(2), "{args:?}: {stderr}");
+            assert!(stderr.contains("whole tree"), "{args:?}: {stderr}");
+        }
+    }
+    repo.write("qlinter.toml", "exclude = [\"./\"]\n");
+    let out = run(&repo.path("."), &["."]);
+    assert_eq!(out.status.code(), Some(2));
+    // A per-file-ignore for the whole tree is meaningful, and `.` now
+    // means what `./` does there.
+    repo.write(
+        "qlinter.toml",
+        "profile = \"style\"\n[lint]\nper-file-ignores = {\".\" = [\"QF016\"]}\n",
+    );
+    assert_eq!(repo.codes(".", &["src/a.q"]), Vec::<String>::new());
+    // A directory in the tree is still a pattern like any other.
+    assert_eq!(
+        repo.codes(
+            ".",
+            &["--isolated", "--profile", "style", "--exclude", "src", "."]
+        ),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
+fn show_settings_describes_the_stdin_filename_and_refuses_fix() {
+    // It described the cwd instead of the buffer's path, and a --fix beside
+    // it exited 0 having fixed nothing (#806).
+    let repo = Repo::new();
+    repo.write(
+        ".qlinter.toml",
+        "profile = \"style\"\n[lint]\nper-file-ignores = {\"tests/*\" = [\"QE\"]}\n",
+    )
+    .write("a.q", "g:{c==d}\n");
+    let out = run(
+        &repo.path("."),
+        &["--show-settings", "--stdin-filename", "tests/x.q"],
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    // Windows prints the path with its own separator.
+    assert!(text.replace('\\', "/").contains("tests/x.q"), "{text}");
+    assert!(!text.contains("QE004"), "{text}");
+    for flag in ["--fix", "--diff"] {
+        let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .current_dir(repo.path("."))
+            .args(["--show-settings", flag, "a.q"])
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(2), "{flag}: {stderr}");
+        assert!(stderr.contains("--show-settings"), "{flag}: {stderr}");
+    }
+    assert_eq!(fs::read_to_string(repo.path("a.q")).unwrap(), "g:{c==d}\n");
+}

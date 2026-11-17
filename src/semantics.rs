@@ -1885,10 +1885,13 @@ pub fn check(
                 depth += 1;
             } else if b == b';' && depth == 0 {
                 break;
-            } else if b == b'\n' && depth == 0 && !code[end + 1..].starts_with([' ', '\t', '\n']) {
+            } else if b == b'\n' && depth == 0 && !comments[end + 1..].starts_with([' ', '\t', '\n'])
+            {
                 // An unindented next line starts a new top-level expression.
                 // Indented continuations (including masked comments) still
                 // belong to this literal, even when they start after `!`.
+                // Read in `comments`: in `code` a column-0 string is blanks,
+                // and looks indented (#743).
                 break;
             }
             end += 1;
@@ -1935,9 +1938,13 @@ pub fn check(
     // An operand is a symbol vector, a numeric vector, a byte vector with at
     // least two items, or a parenthesised list or vector. `shape` decides the length of
     // each; this pattern only has to find them.
-    for m in re!(
-        r#"(?P<l>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*\)|"(?:[^"\\\n]|\\.)*")\s*(?P<op>(?:<>|<=|>=|[+*%&|=<>^-]|\b(?:and|or|mod|div|xexp|xlog)\b)'?|,')\s*(?P<r>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*\)|"(?:[^"\\\n]|\\.)*")"#
-    )
+    for m in re!(concat!(
+        r#"(?P<l>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*\)|"(?:[^"\\\n]|\\.)*")"#,
+        blank!(),
+        r"*(?P<op>(?:<>|<=|>=|[+*%&|=<>^-]|\b(?:and|or|mod|div|xexp|xlog)\b)'?|,')",
+        blank!(),
+        r#"*(?P<r>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*\)|"(?:[^"\\\n]|\\.)*")"#
+    ))
     .captures_iter(comments)
     {
         let whole = m.get(0).unwrap();
@@ -1980,7 +1987,7 @@ pub fn check(
         // The right operand is everything to the right of the operator, so it
         // has to end here for its length to be the one counted: `4 5,6` is
         // three items, not two. Same test as QB018's.
-        if negative || exponent || !boundary(code, whole.start()) || !operand_ends(code, whole.end())
+        if negative || exponent || !boundary(code, whole.start()) || !operand_ends(code, comments, whole.end())
         {
             continue;
         }
@@ -2073,7 +2080,7 @@ pub fn check(
     for call in re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)(?:\s*\[\s*`\.?[A-Za-z][A-Za-z0-9_.:]*\s*\]|(\s*@\s*|[ \t]+)`\.?[A-Za-z][A-Za-z0-9_.:]*)").captures_iter(code) {
         if dynamic {break;}
         let at=call.get(0).unwrap().start();let name=&call[1];if !boundary(code,at){continue;}
-        if call.get(2).is_some() && !operand_ends(code, call.get(0).unwrap().end()) {continue;}
+        if call.get(2).is_some() && !operand_ends(code, comments, call.get(0).unwrap().end()) {continue;}
         if scope_at(&scopes,at).is_some_and(|s|scopes[s].locals.contains(name)){continue;}
         // A lambda runs once every file is loaded, and meets whichever `f`
         // another file assigned last: q 5 runs b.q's `g:{f[`a]}` to `a after
@@ -3858,8 +3865,18 @@ fn named_values(
     // items - QT006 for a name rather than a literal. `,` and `~` take any
     // lengths and are not in the set.
     let vector = r"-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*[eE][+-])?[A-Za-z0-9.]*)+|(?:`[A-Za-z0-9_.]*){2,}|\([^()]*;[^()]*\)";
+    // The statement's blanks around the operator: `bump:v+` and then a
+    // column-0 `1 2` are two statements (#742).
     let pair = regex::Regex::new(&format!(
-        r"(?P<l>{name_re}|{vector})\s*(?P<op><>|<=|>=|[+*%&|=<>^-]|\b(?:and|or|mod|div|xexp|xlog)\b)\s*(?P<r>{name_re}|{vector})"
+        concat!(
+            r"(?P<l>{name_re}|{vector})",
+            blank!(),
+            r"*(?P<op><>|<=|>=|[+*%&|=<>^-]|\b(?:and|or|mod|div|xexp|xlog)\b)",
+            blank!(),
+            r"*(?P<r>{name_re}|{vector})"
+        ),
+        name_re = name_re,
+        vector = vector
     ))
     .unwrap();
     let length = |text: &str, at: usize| -> Option<usize> {
@@ -3889,7 +3906,11 @@ fn named_values(
         let negative = op.as_str() == "-"
             && code[..op.start()].ends_with(char::is_whitespace)
             && re!(r"^\.?\d").is_match(&code[op.end()..]);
-        if !named || negative || !boundary(code, l.start()) || !operand_ends(code, r.end()) {
+        if !named
+            || negative
+            || !boundary(code, l.start())
+            || !operand_ends(code, comments, r.end())
+        {
             continue;
         }
         if let (Some(a), Some(b)) = (length(l.as_str(), l.start()), length(r.as_str(), r.start()))
@@ -3918,8 +3939,17 @@ fn named_values(
     // 291, on a version it did not record.
     // Booleans and bytes before plain integers, or `1b` matches as `1`.
     let operand = r#""(?:\\.|[^"\\])*"|[01]+b|0x[0-9a-fA-F]+|(?:-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?[ \t]+)*-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?e\b|-?0[NW][hij]?\b|-?\d+[hij]?(?:[ \t]+-?\d+[hij]?)*|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*"#;
+    // The statement's blanks around the operator: `inc:x+` and then a
+    // column-0 `"done"` are two statements (#741).
     let infix = regex::Regex::new(&format!(
-        r"(?P<l>{operand})\s*(?P<op>[-+*])\s*(?P<r>{operand})"
+        concat!(
+            r"(?P<l>{operand})",
+            blank!(),
+            r"*(?P<op>[-+*])",
+            blank!(),
+            r"*(?P<r>{operand})"
+        ),
+        operand = operand
     ))
     .unwrap();
     let kind_of = |text: &str, at: usize| -> Option<Arithmetic> {
@@ -3971,7 +4001,7 @@ fn named_values(
             || negative
             || temporal
             || !boundary(comments, l.start())
-            || !operand_ends(code, r.end())
+            || !operand_ends(code, comments, r.end())
         {
             continue;
         }
@@ -4044,7 +4074,7 @@ fn named_values(
         let table = m.get(2).unwrap();
         // The name has to be the whole from clause: `from t lj k`, `from t,'u`
         // and `from t uj u` bring in columns `t` does not have (#348).
-        if !operand_ends(code, table.end()) {
+        if !operand_ends(code, comments, table.end()) {
             continue;
         }
         let Some(Held::Table(columns, _)) = visible(table.as_str(), table.start()) else {
@@ -4209,7 +4239,7 @@ fn named_values(
     // missing one is the error whatever the file defines.
     for m in re!(r"((?:`[A-Za-z][A-Za-z0-9_]*)+)\s+(?:xkey|xasc|xdesc|xcols)\s+(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)").captures_iter(code) {
         let table = m.get(2).unwrap();
-        if !operand_ends(code, table.end()) {
+        if !operand_ends(code, comments, table.end()) {
             continue;
         }
         let Some(Held::Table(columns, _)) = visible(table.as_str(), table.start()) else {
@@ -4230,14 +4260,20 @@ fn named_values(
     // keyword or the right table may be parenthesised, `(lj)[t;s]` and
     // `t lj (s)` (q 5: 'type, #618). Not the last segment of a dotted
     // name: `.t.lj[k;a;b]` is a function of the file's own (#666).
-    for m in re!(r"(?:\b(ljf|ijf|lj|ij|pj)|\((ljf|ijf|lj|ij|pj)\))(?:\s+|\s*\[[^;\[\]]*;\s*)(\(\s*\[|\(\s*(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*\)|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)")
-        .captures_iter(code)
-        .filter(|m| !code[..m.get(0).unwrap().start()].ends_with('.'))
+    // Applied infix, the right table is in the same statement: `join:t lj`
+    // and then a column-0 `([]z:1 2)` are two (#742).
+    for m in re!(concat!(
+        r"(?:\b(ljf|ijf|lj|ij|pj)|\((ljf|ijf|lj|ij|pj)\))(?:",
+        blank!(),
+        r"+|\s*\[[^;\[\]]*;\s*)(\(\s*\[|\(\s*(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*\)|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)"
+    ))
+    .captures_iter(code)
+    .filter(|m| !code[..m.get(0).unwrap().start()].ends_with('.'))
     {
         let keyword = m.get(1).or(m.get(2)).unwrap();
         let whole = m.get(3).unwrap();
         let unkeyed = if let Some(right) = m.get(4) {
-            operand_ends(code, whole.end())
+            operand_ends(code, comments, whole.end())
                 && matches!(
                     visible(right.as_str(), right.start()),
                     Some(Held::Table(_, false))
@@ -4246,11 +4282,12 @@ fn named_values(
             let right = whole;
             let open = right.start();
             matching(code, open, b'(', b')').is_some_and(|close| {
-                operand_ends(code, close) && code[open + 1..].trim_start().starts_with("[]")
+                operand_ends(code, comments, close)
+                    && code[open + 1..].trim_start().starts_with("[]")
             })
         } else {
             let right = whole;
-            operand_ends(code, right.end())
+            operand_ends(code, comments, right.end())
                 && matches!(
                     visible(right.as_str(), right.start()),
                     Some(Held::Table(_, false))
@@ -4276,8 +4313,22 @@ fn named_values(
     // `` `t insert 1 2 3 ``, whose items are the values.
     let name = r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*";
     let row = r"\(|-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+";
+    // Infix, the row is in the same statement: `add:`t insert` and then a
+    // column-0 `(1;2;3)` are two statements (#743).
     let forms = regex::Regex::new(&format!(
-        r"`(?P<a>{name})\s+(?P<op1>insert|upsert)\s*(?P<r1>{row})|(?:^|[^A-Za-z0-9_.`])(?P<b>{name})\s+(?P<op2>upsert)\s*(?P<r2>{row})|\b(?P<op3>insert|upsert)\s*\[\s*`(?P<c>{name})\s*;\s*(?P<r3>{row})"
+        concat!(
+            r"`(?P<a>{name})",
+            blank!(),
+            r"+(?P<op1>insert|upsert)",
+            blank!(),
+            r"*(?P<r1>{row})|(?:^|[^A-Za-z0-9_.`])(?P<b>{name})",
+            blank!(),
+            r"+(?P<op2>upsert)",
+            blank!(),
+            r"*(?P<r2>{row})|\b(?P<op3>insert|upsert)\s*\[\s*`(?P<c>{name})\s*;\s*(?P<r3>{row})"
+        ),
+        name = name,
+        row = row
     ))
     .unwrap();
     let dictionary = re!(r"^\(?\s*(?:`[A-Za-z][A-Za-z0-9_.]*)+\s*\)?\s*!");
@@ -4365,7 +4416,7 @@ fn named_values(
         let ends = if m.name("op3").is_some() {
             code[end..].trim_start().starts_with(']')
         } else {
-            operand_ends(code, end)
+            operand_ends(code, comments, end)
         };
         if !ends {
             continue;

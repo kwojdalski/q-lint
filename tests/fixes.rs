@@ -634,6 +634,9 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
             "f:{[countArg] countArg+{count x}[countArg]}",
             false,
         ),
+        // The blanks go with it, or q 5 skips the first line (#663).
+        ("QE005", "\u{feff} r:1\n", "r:1\n", true),
+        ("QE005", "\u{feff}r:1\n", "r:1\n", true),
         (
             "QF020",
             "t:([]price:1 2);r:select prce from t",

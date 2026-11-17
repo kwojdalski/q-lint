@@ -885,6 +885,15 @@ f:{.z.p+:1}
 === clean | reading one is what it is for
 t:.z.p
 
+=== clean profile: general | a column-0 :: under a read is a statement of its own (q 5: prints 1b) (#726)
+start:.z.p
+::
+show start<.z.p
+
+=== QF019 | but an indented one continues the statement
+.z.p
+  ::1
+
 === QF020 | a column the table literal does not have, and nothing defines
 t:([]a:1 2)
 r:select b from t
@@ -895,6 +904,15 @@ r:select zz
   from t
 f:{select yy
   from t}
+
+=== QF020 profile: general | after a select's limit or sort too (q 5: select[2] zz from t and select[>a] zz from t are 'zz) (#744)
+t:([]a:1 1 2;b:3 4 5)
+r:select[2] zz from t
+s:select[>a] yy from t
+
+=== clean profile: general | and a real column after the limit is fine (#744)
+t:([]a:1 1 2;b:3 4 5)
+r:select[2] a,b from t
 
 === QF020 | in the by list as well
 t:([]a:1 2)

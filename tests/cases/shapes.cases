@@ -1126,6 +1126,33 @@ w:get"\\w"
 p:(get'') " -> " vs/:("1,2 -> 3,4";"5,6 -> 7,8")
 r:a 0
 
+=== clean profile: uqf | a projection ending one line and a column-0 value opening the next are two statements (q 5 runs the file) (#743)
+t:([]c:1 2)
+add:`t insert
+(1;2;3)
+mk:`a`b`c!
+"ab"
+is:type[t]=
+`a
+same:`a=
+`a
+match:`x=
+1 2 3
+show (add 3;mk 1 2 3;is 98h;same `a;match `x)
+
+=== QT027 QT001 QB013 QT015 QB018 profile: uqf | while an indented line continues the statement (q 5: 'length, 'length, 'type, 'type; and 1b every run) (#743)
+t:([]c:1 2)
+add:`t insert
+  (1;2;3)
+mk:`a`b`c!
+  "ab"
+is:type[t]=
+  `a
+same:`a=
+  `a
+match:`x=
+  1 2 3
+
 === clean | a b suffix does not continue a numeric run: `1 0b` is 1 applied to 0b (#496)
 r1:1 2 3+1 0b
 r2:1 2 3=1 0b

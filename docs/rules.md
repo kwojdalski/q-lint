@@ -1,6 +1,6 @@
 # Rules
 
-All 120 rules, generated from `src/taxonomy.json` - the same data
+All 121 rules, generated from `src/taxonomy.json` - the same data
 `qlinter --rules` and `qlinter --explain <CODE>` print from. Regenerate with
 `python3 scripts/rules_doc.py > docs/rules.md`; a test fails when this is stale.
 
@@ -53,6 +53,7 @@ that wants fewer findings narrows in its own configuration.
 | `QE009` | juxtaposed-derived-function | A derived function applied by juxtaposition: q 5 refuses +/x, count'x and x/y; write (+/)x, +/[x] or sum x | every profile |
 | `QE010` | malformed-number | A number q 5 cannot parse: 1.5j, 2b, 3i 4j, 1y, 1.2.3, or an integer that overflows its type (2147483648i, 32768h) | every profile |
 | `QE011` | infix-keyword-each | An infix keyword before each or peach: q 5 refuses cor each x and x within each y; write (cor) each, cor' or cor[x] each | every profile |
+| `QE012` | non-ascii-character | A character past ASCII outside a string or comment - a no-break space, a curly quote, a byte-order mark mid-file - which q refuses with 'char | every profile |
 
 ## Names - parameters, locals, globals and what they shadow
 

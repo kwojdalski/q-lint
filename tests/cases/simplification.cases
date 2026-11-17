@@ -12,6 +12,20 @@ asc 3 1 2
 s:reverse
   asc 3 1 2
 
+=== QR001 | applied with brackets, or to a string
+r:reverse asc[3 1 2]
+s:reverse desc "abc"
+
+=== clean | unless an infix continues after the brackets (q 5: reverse asc[3 1 2],0 is 0 3 2 1, desc[3 1 2],0 is 3 2 1 0, #649)
+r:reverse asc[3 1 2],0
+s:reverse desc[1 3 2],0
+
+=== clean | unapplied, reverse asc is a value: reverse of the function atom is asc itself (q 5: f:reverse asc; f 3 1 2 is `s#1 2 3, #650)
+f:reverse asc
+g:(reverse asc) 3 1 2
+h:reverse desc::
+k:(reverse asc;1)
+
 === clean | under an iterator the sort is per item, and reverse reorders the items (q 5: reverse asc each (2 1;4 3) is (3 4;1 2), desc each is (2 1;4 3))
 r1:{[p] reverse asc each p}
 r2:{[p] reverse asc'[p]}
@@ -45,6 +59,12 @@ r:{[p] {x}':[p]}
 === QR003 | distinct after sorting distinct items
 r:{[p] distinct asc distinct p}
 
+=== QR003 | the inner distinct applied with brackets is still the whole operand
+r:{[p] distinct asc distinct[p]}
+
+=== clean | unless an infix continues after the brackets (q 5: distinct asc distinct[2 1 1],2 1 is `s#1 2, asc distinct[2 1 1],2 1 is `s#1 1 2 2, #648)
+r:distinct asc distinct[2 1 1],2 1
+
 === clean | distinct at a line's end is the function, and the next line a statement of its own (q 5, #730)
 d:distinct
 asc distinct 1 1 2
@@ -57,6 +77,11 @@ r3:{[p] distinct asc distinct peach p}
 === clean | and so does each over apply (#402; q 5: distinct asc distinct@'(3 1 2;5 4;3 1 2) has two items, asc distinct@' three)
 r1:{[p] distinct asc distinct@'p}
 r2:{[p] distinct asc distinct .'p}
+
+=== clean | a column-0 composition under the lambda is a statement of its own (q 5 prints -abs and 5) (#727)
+id:{x}
+'[neg;abs]
+show id 5
 
 === QR004 | one arithmetic operation with a number, which is atomic
 r:{[p] {x+1} each p}

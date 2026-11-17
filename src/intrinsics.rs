@@ -266,7 +266,7 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
         // on a join. Anything that continues the expression disqualifies it.
         // A `/` straight after it is not a comment - those are blank in
         // `code` - but an iterator: `asc 3/x` sorts `3/x` (#194).
-        if !crate::operand_ends(code, whole.end()) {
+        if !crate::operand_ends(code, comments, whole.end()) {
             continue;
         }
         // After `from` a `where` opens the query's where phrase, which takes
@@ -314,7 +314,7 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
             if !boundary(code, whole.start()) || code.get(name.range()) != Some(name.as_str()) {
                 continue;
             }
-            if !crate::operand_ends(code, whole.end()) {
+            if !crate::operand_ends(code, comments, whole.end()) {
                 continue;
             }
             let arg = call.get(arg_group).unwrap();
@@ -395,7 +395,8 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
     // QA010 for the keywords that are not in BUILTINS: arity from calling
     // each with one more argument than it takes, which q 5 refuses with
     // 'rank - `xasc[`a;t;1]`, `ssr[a;b;c;d]`, `wj[a;b;c;d;e]`.
-    for m in re!(r"\b(xasc|xdesc|bin|binr|except|ss|vs|sv|upsert|xbar|cross|cut|inter|union|in|like|xkey|xcols|xexp|xlog|xgroup|mod|div|insert|lj|uj|set|dsave|fby|md5|ssr|aj|aj0|ajf|ajf0|ej|wj|wj1)\s*\[")
+    // A column-0 `[1;2;3]` under `keyjoin:lj` is a statement of its own (#742).
+    for m in re!(concat!(r"\b(xasc|xdesc|bin|binr|except|ss|vs|sv|upsert|xbar|cross|cut|inter|union|in|like|xkey|xcols|xexp|xlog|xgroup|mod|div|insert|lj|uj|set|dsave|fby|md5|ssr|aj|aj0|ajf|ajf0|ej|wj|wj1)", blank!(), r"*\["))
         .captures_iter(code)
     {
         let whole = m.get(0).unwrap();
@@ -558,8 +559,10 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
             // and `where 0x01` is 'type).
             // q 5 wants a list: `where 2` and `where 1b` are 'type, and so is
             // a short vector, while an int one counts (`where 1 2i` is 0 1 1).
+            // A date, month, time or timespan is no count: q 5 `where 12:00
+            // 13:00` and `where 0D01 0D02` are 'type (#736).
             "where"
-                if matches!(value.kind, Kind::Float | Kind::Symbol)
+                if matches!(value.kind, Kind::Float | Kind::Symbol | Kind::Temporal)
                     || (matches!(value.kind, Kind::Char | Kind::Byte) && value.len > 0)
                     || (matches!(value.kind, Kind::Integer | Kind::Bool) && !value.vector)
                     || value.short_integer =>
