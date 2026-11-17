@@ -93,6 +93,7 @@ const SYNC_FULL: i64 = 1;
 
 const METHOD_NOT_FOUND: i64 = -32601;
 const INTERNAL_ERROR: i64 = -32603;
+const INVALID_PARAMS: i64 = -32602;
 const SERVER_NOT_INITIALIZED: i64 = -32002;
 
 /// Open documents, by URI. The editor is the authority on their contents from
@@ -629,6 +630,29 @@ pub fn serve(
                 send(writer, json!({"id": id, "result": Value::Null}))?;
             }
 
+            // A document method with no document to act on (#799): a request
+            // answered with JSON-RPC 2.0's Invalid params, not an empty
+            // result that says there is nothing to fix; a notification
+            // dropped, rather than diagnostics published for `uri: ""`.
+            (
+                "textDocument/didOpen"
+                | "textDocument/didChange"
+                | "textDocument/didSave"
+                | "textDocument/didClose"
+                | "textDocument/semanticTokens/full"
+                | "textDocument/codeAction"
+                | "textDocument/formatting",
+                id,
+            ) if !params["textDocument"]["uri"].is_string() => {
+                let message = format!("{method}: params.textDocument.uri must be a string");
+                match id {
+                    Some(id) => send(
+                        writer,
+                        json!({"id": id, "error": {"code": INVALID_PARAMS, "message": message}}),
+                    )?,
+                    None => eprintln!("qlinter: {message}"),
+                }
+            }
             ("textDocument/didOpen", None) => {
                 let uri = uri_of(&params["textDocument"]);
                 let text = params["textDocument"]["text"].as_str().unwrap_or("");

@@ -1885,3 +1885,26 @@ fn a_flag_the_server_never_reads_is_refused() {
         assert!(stderr.contains("--lsp"), "{flag:?}: {stderr}");
     }
 }
+
+#[test]
+fn a_document_method_without_a_uri_is_refused_or_dropped() {
+    // Read as `uri: ""`, a didOpen published diagnostics for an invalid
+    // DocumentUri and a request was answered as a success (#799).
+    let mut server = Server::start();
+    server.initialize();
+    server.send(json!({"jsonrpc":"2.0","method":"textDocument/didOpen",
+        "params":{"textDocument":{"languageId":"q","version":1,"text":"a==b\n"}}}));
+    server.send(json!({"jsonrpc":"2.0","method":"textDocument/didOpen","params":[1]}));
+    for (id, method, params) in [
+        (2, "textDocument/formatting", Value::Null),
+        (3, "textDocument/codeAction", json!(5)),
+        (4, "textDocument/semanticTokens/full", json!({})),
+    ] {
+        server.send(json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}));
+        // The first message back is this reply: neither didOpen published.
+        let reply = server.receive();
+        assert_eq!(reply["id"], id, "{reply}");
+        assert_eq!(reply["error"]["code"], -32602, "{reply}");
+    }
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
