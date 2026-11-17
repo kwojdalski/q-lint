@@ -2963,6 +2963,13 @@ pub fn check(
             (whole.start(), whole.end(), m.get(1).unwrap().as_str())
         })
         .collect();
+        // The query around `at`, by binary search: the matches are in order
+        // and do not overlap, and asking each of them for every candidate was
+        // quadratic in a chain of queries (#709).
+        let query_at = |at: usize| {
+            let i = queries.partition_point(|&(lo, _, _)| lo <= at);
+            queries[..i].last().filter(|&&(_, hi, _)| at < hi)
+        };
         // The columns of the table literal `table` holds where it is read at
         // `at`, by the same assignment-in-force rule as `holds_lambda`.
         let columns_of = |table: &str, at: usize, in_lambda: bool| -> Option<Vec<String>> {
@@ -3020,6 +3027,40 @@ pub fn check(
         // Symbols blanked, for the iterator test: the `/` of `` f `:db/t ``
         // is part of the path, not over.
         let unsymbolled = crate::unsymbolled(code);
+        // The line each candidate is on, read on from the last one rather
+        // than searched back for from each: a long line of them was
+        // quadratic (#709).
+        let (mut seen, mut line_start) = (0, 0);
+        let stops = crate::argument_stops(code, comments, raw);
+        // And the first iterator at each position's own depth, nested groups
+        // skipped, for the same reason: the test below read every argument
+        // through to its end.
+        let iterators = {
+            let b = unsymbolled.as_bytes();
+            let mut close = vec![usize::MAX; b.len()];
+            let mut open = vec![];
+            for (i, &c) in b.iter().enumerate() {
+                match c {
+                    b'(' | b'[' | b'{' => open.push(i),
+                    b')' | b']' | b'}' => {
+                        if let Some(o) = open.pop() {
+                            close[o] = i + 1;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let mut first = vec![usize::MAX; b.len() + 1];
+            for i in (0..b.len()).rev() {
+                first[i] = match b[i] {
+                    b'(' | b'[' | b'{' if close[i] == usize::MAX => usize::MAX,
+                    b'(' | b'[' | b'{' => first[close[i]],
+                    b'/' | b'\\' | b'\'' => i,
+                    _ => first[i + 1],
+                };
+            }
+            first
+        };
         for (at, bare) in candidates {
             if !boundary(code, at) {
                 continue;
@@ -3032,7 +3073,13 @@ pub fn check(
             }
             // A system command is a directive, not an expression: the name
             // after `\d` is not an argument and `\l` was ruled out above.
-            let line_start = code[..at].rfind('\n').map_or(0, |i| i + 1);
+            if at < seen {
+                (seen, line_start) = (0, 0);
+            }
+            if let Some(i) = code[seen..at].rfind('\n') {
+                line_start = seen + i + 1;
+            }
+            seen = at;
             if code[line_start..].trim_start().starts_with('\\') {
                 continue;
             }
@@ -3044,15 +3091,24 @@ pub fn check(
             // operand is an expression of its own: q 5 reads `select g s
             // from t` and `s in g 1` as calls of `g` (#780).
             let before = code[..at].trim_end();
+            // Only the word that ends it and the byte before that: the
+            // pattern is anchored at the end, and run over all of `before`
+            // it read the file up to each candidate.
+            let word = before
+                .trim_end_matches(|c: char| c.is_ascii_alphanumeric() || "_.`".contains(c))
+                .len();
+            let tail = before[..word]
+                .char_indices()
+                .next_back()
+                .map_or(0, |(i, _)| i);
             let keyword = re!(r"(?:^|[^A-Za-z0-9_.`])([a-z][a-z0-9]*)$")
-                .captures(before)
+                .captures(&before[tail..])
                 .is_some_and(|m| {
                     let word = &m[1];
                     // `by`, `from` and `where` only inside a query: outside
                     // one `where` is a unary, and `sum f x` is not reported.
                     matches!(word, "select" | "exec" | "update")
-                        || matches!(word, "by" | "from" | "where")
-                            && queries.iter().any(|&(lo, hi, _)| (lo..hi).contains(&at))
+                        || matches!(word, "by" | "from" | "where") && query_at(at).is_some()
                         || INFIX.contains(&word)
                 });
             let head = match before.chars().next_back() {
@@ -3072,17 +3128,9 @@ pub fn check(
             // does not even parse. And a right side that is itself a function
             // - ending in an operator, an iterator or `::` - composes:
             // `enorm2 (-)::` and `sse X@\:` are new functions, not calls.
-            if let Some(end) = crate::argument_end(code, comments, raw, argument) {
+            if let Some(end) = crate::argument_end_from(&stops, comments, raw, argument) {
                 let text = &code[argument..end];
-                let mut depth = 0i32;
-                let iterated = unsymbolled[argument..end].bytes().any(|b| {
-                    match b {
-                        b'(' | b'[' | b'{' => depth += 1,
-                        b')' | b']' | b'}' => depth -= 1,
-                        _ => {}
-                    }
-                    depth == 0 && matches!(b, b'/' | b'\\' | b'\'')
-                });
+                let iterated = iterators[argument] < end;
                 let composed = text
                     .trim_end()
                     .ends_with(|c: char| "+-*%&|^=<>~,#_!?@.$:'/\\".contains(c));
@@ -3121,10 +3169,9 @@ pub fn check(
             }
             // In a query the table's columns come first: with a column `f`,
             // `update g:f 0 from t` indexes the column (q 5).
-            if queries.iter().any(|&(lo, hi, table)| {
-                (lo..hi).contains(&at)
-                    && columns_of(&qualify(table, namespace), at, scope.is_some())
-                        .is_some_and(|columns| columns.iter().any(|c| c == bare))
+            if query_at(at).is_some_and(|&(_, _, table)| {
+                columns_of(&qualify(table, namespace), at, scope.is_some())
+                    .is_some_and(|columns| columns.iter().any(|c| c == bare))
             }) {
                 continue;
             }
@@ -3639,6 +3686,32 @@ fn named_values(
         foreign_calls.get(i).is_some_and(|&c| c < to)
     };
     let phrases = qsql_phrases(code);
+    // The first phrase, in `qsql_phrases`' order, around each offset: asking
+    // the list for every name read was quadratic in a file of queries
+    // (#709). Each phrase claims the offsets no earlier one has, skipping
+    // claimed runs through `next`.
+    let owner: Vec<u32> = {
+        let n = code.len();
+        let mut owner = vec![u32::MAX; n];
+        let mut next: Vec<usize> = (0..=n).collect();
+        fn find(next: &mut [usize], mut i: usize) -> usize {
+            while next[i] != i {
+                next[i] = next[next[i]];
+                i = next[i];
+            }
+            i
+        }
+        for (index, &(a, b, _)) in phrases.iter().enumerate() {
+            let b = b.min(n);
+            let mut i = find(&mut next, a.min(n));
+            while i < b {
+                owner[i] = index as u32;
+                next[i] = i + 1;
+                i = find(&mut next, i + 1);
+            }
+        }
+        owner
+    };
     let global = |name: &str, at: usize| -> Option<&Held> {
         let (assigned, value) = known.get(key(name, at).as_str())?;
         match scope_at(scopes, at) {
@@ -3660,7 +3733,11 @@ fn named_values(
         .map(|c| c.get(1).unwrap().as_str())
         .collect();
     let visible = |name: &str, at: usize| -> Option<&Held> {
-        if let Some(&(a, b, table)) = phrases.iter().find(|&&(a, b, _)| a <= at && at < b) {
+        if let Some(&(a, b, table)) = owner
+            .get(at)
+            .filter(|&&i| i != u32::MAX)
+            .map(|&i| &phrases[i as usize])
+        {
             let columns = table
                 .filter(|&(t, e)| !symbols.contains(&code[t..e]))
                 .and_then(|(t, e)| match global(&code[t..e], t) {

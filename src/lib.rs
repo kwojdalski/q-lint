@@ -272,6 +272,72 @@ pub(crate) fn argument_end(code: &str, comments: &str, raw: &str, from: usize) -
     (end > from).then_some(end)
 }
 
+/// `argument_end`'s stop for every position of `code` at once, before the
+/// trim: a caller asking from many positions on one long statement read it
+/// to its end from each (#709). Read from the right, a position stops where
+/// its byte ends the expression, or where the one after it - or after the
+/// group it opens - stops. The same single depth over every bracket kind.
+pub(crate) fn argument_stops(code: &str, comments: &str, raw: &str) -> Vec<usize> {
+    let bytes = code.as_bytes();
+    let n = bytes.len();
+    let mut close = vec![usize::MAX; n];
+    let mut open = vec![];
+    for (i, &b) in bytes.iter().enumerate() {
+        match b {
+            b'(' | b'[' | b'{' => open.push(i),
+            b')' | b']' | b'}' => {
+                if let Some(o) = open.pop() {
+                    close[o] = i + 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    // Whether each newline's statement goes on, as `continues_after` reads
+    // it: the next line with code on it is indented.
+    let mut continues = std::collections::HashMap::new();
+    let mut next_indented = false;
+    let mut end = n;
+    for (at, _) in code
+        .match_indices('\n')
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+    {
+        if !comments[at + 1..end].trim().is_empty() {
+            next_indented = raw[at + 1..].starts_with([' ', '\t']);
+        }
+        continues.insert(at, next_indented);
+        end = at + 1;
+    }
+    let mut stop = vec![n; n + 1];
+    for i in (0..n).rev() {
+        stop[i] = match bytes[i] {
+            b'(' | b'[' | b'{' if close[i] == usize::MAX => n,
+            b'(' | b'[' | b'{' => stop[close[i]],
+            b')' | b']' | b'}' | b';' => i,
+            b'\n' if !continues[&i] => i,
+            _ => stop[i + 1],
+        };
+    }
+    stop
+}
+
+/// `argument_end` from `argument_stops`.
+pub(crate) fn argument_end_from(
+    stops: &[usize],
+    comments: &str,
+    raw: &str,
+    from: usize,
+) -> Option<usize> {
+    let (raw, comments) = (raw.as_bytes(), comments.as_bytes());
+    let mut end = stops[from];
+    while end > from && (raw[end - 1].is_ascii_whitespace() || comments[end - 1] == b' ') {
+        end -= 1;
+    }
+    (end > from).then_some(end)
+}
+
 /// Whether the statement running through the newline at `at` goes on: the
 /// next line with code on it is indented. Indentation is read on the raw
 /// source - `code` blanks a string's opening quote, so a line that starts
