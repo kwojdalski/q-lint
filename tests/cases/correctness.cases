@@ -949,3 +949,20 @@ k:{!
   [t;enlist(>;`a;1);0b;enlist`c]}
 g:{if
   [`a;:1]; 2}
+
+=== clean | a dotted global compared with the column of its last name (#498)
+t:([]a:1 2;b:3 4)
+.cfg.a:1
+r:select from t where .cfg.a=a
+
+=== QB010 profile: general | a literal atom before a negative literal (q 5: each is 'type) (#500)
+r1:"a" -1
+r2:1b -1
+r3:0x01 -1
+r4:(1) -1
+
+=== clean profile: general | a literal list before one indexes it (q 5: " ", 0b, 0N) (#500)
+r1:"ab" -1
+r2:10b -1
+r3:(1 2) -1
+r5:s:"x \"a\" -1"

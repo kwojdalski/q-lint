@@ -309,3 +309,19 @@ r:prs .z.x
 install:{[ifFunc;implFunc] set[ifFunc;implFunc]}
 f:{x+1}
 r:f 1
+
+=== QP002 profile: uqf | a date with a bare T is a datetime (q 5: type 2023.01.01T is -15h) (#501)
+a:2023.01.01T
+
+=== QP002 profile: uqf | and a date with a z (q 5: -15h) (#501)
+b:2023.01.01z
+
+=== QP002 profile: uqf | the uppercase parse (q 5: type "Z"$"2023.01.01T12:00:00" is -15h) (#501)
+c:"Z"$"2023.01.01T12:00:00"
+
+=== QP002 profile: uqf | a cast of several types, one a datetime (#501)
+d:"zj"$(1.5;2)
+
+=== clean profile: uqf | a timestamp, and a string merely holding a z (#501)
+a:2023.01.01D
+b:"buzz"

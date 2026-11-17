@@ -1087,6 +1087,43 @@ w:get"\\w"
 p:(get'') " -> " vs/:("1,2 -> 3,4";"5,6 -> 7,8")
 r:a 0
 
+=== clean | a b suffix does not continue a numeric run: `1 0b` is 1 applied to 0b (#496)
+r1:1 2 3+1 0b
+r2:1 2 3=1 0b
+
+=== clean | the same application makes a one-row table column (#496)
+r3:([]a:enlist 1;b:1 0b)
+
+=== QT006 | a suffix on the last item still ends a vector (#496)
+r4:1 2 3+1 2h
+
+=== QT002 | a symbol passed by juxtaposition (q 5: f:{x+1}; f `a is 'type) (#495)
+f:{x+1}
+r1:f `a
+
+=== QT002 | and with @ (q 5: f@`a is 'type) (#495)
+f:{x+1}
+r2:f@`a
+
+=== clean | a symbol that is not the whole argument (#495)
+f:{x+1}
+r1:f `a!1
+
+=== QT023 profile: general | char arithmetic assigned to a name ending in a digit (q 5: 'type) (#497)
+r21:1*"a"
+x2:2+"a"
+
+=== QT032 profile: general | the symbol and guid casts by type char and number (q 5: each is 'type) (#505)
+r1:"s"$"ab"
+r2:"g"$"ab"
+r3:11h$"ab"
+r4:2h$"ab"
+
+=== clean profile: general | the negative type numbers parse, and a cast spelled in a string is data (#505)
+r1:-11h$"ab"
+r2:-2h$"ab"
+r3:"\"s\"$\"ab\""
+
 === QT002 QT003 QT010 QT011 QT012 QT015 QT016 profile: general | a symbol starting with a dot or holding a colon is a symbol (q 5: 'type, 'rank; #600)
 a:`.a+1
 b:`.a=1
@@ -1236,3 +1273,6 @@ t:([]a:1 2)
 s:([a:1 2]b:3 4)
 r1:t lj (s)
 r2:(lj)[t;s]
+
+=== QT032 profile: general | the char spelling with its string in parentheses (q 5: 'type) (#505, #615)
+r1:"s"$("ab")

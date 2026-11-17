@@ -1235,3 +1235,66 @@ h:0xab
 i:2000.01m
 j:1e
 k:0:`:f.csv
+
+=== QE007 profile: general | a row-limited select with no from (q 5: parse "select[2] a" is 'from) (#489)
+t:([]a:1 2)
+r:select[2] a
+
+=== clean profile: general | a row-limited select with its from (#489)
+t:([]a:1 2)
+r:select[2;>a] a from t
+
+=== QE010 profile: general | a C-style binary literal (q 5: parse "0b101" is '0b101) (#490)
+a:0b101
+
+=== QE010 profile: general | one digit after the b is refused too (q 5: '0b1) (#490)
+b:0b1
+
+=== QE010 profile: general | a trailing dot after a fraction (q 5: parse "1.5." is '1.5.) (#490)
+c:1.5.
+
+=== clean profile: general | false alone, and a float with a trailing dot (#490)
+a:0b
+b:1.
+
+=== QE010 profile: general | a suffix before a negative item (q 5: parse "3i -1" is '3i) (#491)
+a:3i -1
+b:1h -2
+c:1e -2
+d:1.5e -2
+
+=== QE010 profile: general | a date as a negative item (q 5: parse "1 -2000.01.01" is '-2000.01.01) (#491)
+a:1 -2000.01.01
+
+=== clean profile: general | a negative item after a plain one, and a minus between operands (#491)
+a:1 -2i
+b:1 -2 3i
+c:3i - 1
+
+=== QE011 profile: general | an infix keyword before over, scan or prior (q 5: parse "x in over y" is ' ) (#492)
+x:1 2 3;y:2 3 4
+a:x in over y
+b:x mod scan y
+c:x cor prior y
+d:and over y
+
+=== QE011 profile: general | a glyph before an iterator keyword (q 5: parse "x + each y" is ' ) (#492)
+x:1 2 3;y:2 3 4
+a:x + each y
+b:x , peach y
+c:x+over y
+
+=== clean profile: general | a glyph in parentheses, a lambda, and a string are fine (#492)
+x:1 2 3;y:2 3 4
+a:(+) each y
+b:{x+y} over y
+c:"x + each y"
+d:max over y
+
+=== QT029 profile: general | a negative or exponent float, read whole (q 5: each is 'type) (#504)
+a:hopen -1.5
+b:hopen 1e3
+c:hopen -1e3
+
+=== clean profile: general | a plain handle number (#504)
+a:hopen 5000
