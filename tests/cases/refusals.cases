@@ -1019,3 +1019,23 @@ c:0Ni5
 e:0W
 f:0Wi
 g:0W.5 1c
+
+=== QT024 profile: general | infinities, temporals, boolean and byte vectors, escaped strings and a parenthesised vector (q 5: each 's-fail or 'u-fail; #611)
+a:`s#0w 1
+b:`s#2001.01.02 2001.01.01
+c:`s#12:00 11:00
+d:`s#10b
+e:`s#0x0201
+f:`s#"\002\001"
+g:`s#(3 1 2)
+h:`u#11b
+
+=== clean profile: general | the same shapes in order
+a:`s#-0w 1 0w
+b:`s#2001.01.01 2001.01.02
+c:`s#11:00 12:00
+d:`s#01b
+e:`s#0x0102
+f:`s#"\001\002"
+g:`s#(1 2 3)
+h:`u#10b

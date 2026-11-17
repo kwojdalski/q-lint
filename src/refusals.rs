@@ -33,7 +33,7 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
 /// string is still text.
 fn attributes(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<Finding>) {
     for m in re!(
-        r#"`([spu])#[ \t]*((?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[eE][+-]\d|[A-Za-z0-9.])*(?:[ \t]+-?\d(?:[eE][+-]\d|[A-Za-z0-9.])*)+|"[^"\\]+")"#
+        r#"`([spu])#[ \t]*((?:`[A-Za-z0-9_.]*){2,}|\(\s*-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:[ \t]+-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)+\s*\)|-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*(?:[ \t]+-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)+|[01]{2,}b|0x[0-9a-fA-F]{4,}|"(?:[^"\\]|\\.)+")"#
     )
     .captures_iter(comments)
     {
@@ -49,9 +49,35 @@ fn attributes(path: &str, source: &str, code: &str, comments: &str, out: &mut Ve
         // bytes: `"aé"` is 0x61 0xC3 0xA9 (#228). Numbers compare as numbers,
         // with q's nulls first; anything that will not parse leaves the rule
         // silent.
-        let keys: Option<Vec<Key>> = if let Some(chars) = items.strip_prefix('"') {
+        // A boolean or byte vector is one token, an item per digit or pair
+        // (q 5: `s#10b and `s#0x0201 are 's-fail); a vector in parentheses
+        // is the vector; and temporal items of one width compare as text
+        // (q 5: `s#2001.01.02 2001.01.01 and `s#12:00 11:00 are 's-fail).
+        let items = items
+            .strip_prefix('(')
+            .and_then(|i| i.strip_suffix(')'))
+            .map_or(items, str::trim);
+        let temporal = re!(r"^\d{4}\.\d\d|^\d+:|^\d+D");
+        let words: Vec<&str> = items.split_whitespace().collect();
+        let keys: Option<Vec<Key>> = if let Some(bits) =
+            items.strip_suffix('b').filter(|_| re!(r"^[01]+b$").is_match(items))
+        {
+            Some(bits.bytes().map(|b| Key::Number(f64::from(b - b'0'))).collect())
+        } else if let Some(hex) = items.strip_prefix("0x") {
+            (hex.len() % 2 == 0).then(|| {
+                (0..hex.len())
+                    .step_by(2)
+                    .map(|i| Key::Number(f64::from(u8::from_str_radix(&hex[i..i + 2], 16).unwrap_or(0))))
+                    .collect()
+            })
+        } else if words.iter().any(|w| temporal.is_match(w)) {
+            words
+                .iter()
+                .all(|w| temporal.is_match(w) && w.len() == words[0].len())
+                .then(|| words.iter().map(|w| Key::Text(w.to_string())).collect())
+        } else if let Some(chars) = items.strip_prefix('"') {
             Some(
-                crate::q_bytes(chars.trim_end_matches('"'))
+                crate::q_bytes(chars.strip_suffix('"').unwrap_or(chars))
                     .into_iter()
                     .map(|b| Key::Number(f64::from(b)))
                     .collect(),
@@ -106,6 +132,15 @@ enum Key {
 fn number(token: &str) -> Option<Key> {
     if re!(r"^0[Nn][hijef]?$").is_match(token) {
         return Some(Key::Null);
+    }
+    // An infinity is the largest or the smallest of its type (q 5: `s#0w 1
+    // is 's-fail, #611).
+    if let Some(m) = re!(r"^(-)?0[Ww][hijef]?$").captures(token) {
+        return Some(Key::Number(if m.get(1).is_some() {
+            f64::NEG_INFINITY
+        } else {
+            f64::INFINITY
+        }));
     }
     token
         .trim_end_matches(['h', 'i', 'j', 'e', 'f'])
