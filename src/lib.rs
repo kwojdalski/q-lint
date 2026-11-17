@@ -5883,10 +5883,13 @@ pub fn lint_selecting(
         // Assignment targets only: a name being read might be someone else's,
         // and there is nothing for the reader of this file to act on. At the
         // start of each line of the statement: an indented line continues
-        // it, and `f:{x}` + `  l:1` still assigns `l` (#214).
+        // it, and `f:{x}` + `  l:1` still assigns `l` (#214) - unless the
+        // line continues a qSQL phrase, where `name:` names a column:
+        // `r:select` + `  total_qty:sum qty from t` assigns nothing (#694).
         for m in re!(r"(?m)^[ \t]*(\.?[A-Za-z][A-Za-z0-9_.]*)\s*::?(?:[^:=]|$)").captures_iter(line)
         {
-            if in_parens[offset + m.get(1).unwrap().start()] {
+            let at = offset + m.get(1).unwrap().start();
+            if in_parens[at] || in_qsql_phrase(code, at) {
                 continue;
             }
             let target = m.get(1).unwrap();

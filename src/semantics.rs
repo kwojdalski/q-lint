@@ -2446,17 +2446,30 @@ pub fn check(
         .iter()
         .map(|scope| (scope.body, statement_view(&scope.direct), false))
         .collect();
-    // The root, one line at a time: `statement_view` blanks a qSQL phrase to
-    // the next `;`, and at root a statement ends at the newline instead.
+    // The root, one statement at a time: `statement_view` blanks a qSQL
+    // phrase to the next `;`, and at root a statement ends at a newline the
+    // next line does not continue. An indented line continues it, so a
+    // column on one is the query's: `r:select` + `  total_qty:sum qty by sym
+    // from t` (#694). Indentation is read from the source, where a comment
+    // line is not blank.
     let mut root = code.as_bytes().to_vec();
     for scope in scopes.iter().filter(|s| s.parent.is_none()) {
         blank(&mut root[scope.start..=scope.end.min(code.len() - 1)]);
     }
     let root = crate::flat_filter(std::str::from_utf8(&root).unwrap_or_default());
+    let mut statements: Vec<(usize, usize)> = vec![];
     let mut offset = 0;
-    for line in root.split_inclusive('\n') {
-        views.push((offset, statement_view(line), true));
+    for (line, source_line) in root.split_inclusive('\n').zip(raw.split_inclusive('\n')) {
+        match statements.last_mut() {
+            Some(last) if line.trim().is_empty() || source_line.starts_with([' ', '\t']) => {
+                last.1 += line.len()
+            }
+            _ => statements.push((offset, offset + line.len())),
+        }
         offset += line.len();
+    }
+    for (start, end) in statements {
+        views.push((start, statement_view(&root[start..end]), true));
     }
     for (start, statements, at_root) in &views {
         for a in assignment.captures_iter(statements) {

@@ -203,6 +203,18 @@ tradeCount:2
 tradeCount:0
 r:select total_qty:sum qty by sym from trades
 
+=== clean profile: styleq | and so it is on the indented line that continues the query, in a lambda too (q 5: the columns are `sym`total_qty, #694)
+tradeCount:0
+r:select
+  total_qty:sum qty by sym from trades
+f:{[t] select
+  avg_px:avg px by sym from t}
+
+=== QS001 QS010 profile: styleq | while an indented line that continues no query still assigns (#214, #694)
+tradeCount:0
+f:{x}
+  total_qty:1
+
 === clean profile: styleq | a table literal's columns likewise
 tradeCount:0
 t:([] some_col:1 2; b:3 4)
