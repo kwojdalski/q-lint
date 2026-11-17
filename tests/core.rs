@@ -722,6 +722,21 @@ fn deeply_nested_lambdas_lint_in_bounded_time() {
         "{depth} nested lambdas took {elapsed:?}"
     );
 }
+/// Every finding is placed by its line, which was counted from the file's
+/// start for each: a file of block comments, each a QP001 finding built and
+/// dropped later, took time quadratic in their number (#706). About 1 s in a
+/// debug build after the fix.
+#[test]
+fn many_findings_lint_in_bounded_time() {
+    let source = "/\nsome text here {[ ( \"\n\\\n".repeat(20000);
+    let started = std::time::Instant::now();
+    lint(&source, "t.q", Profile::Uqf);
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < std::time::Duration::from_secs(10),
+        "20000 block comments took {elapsed:?}"
+    );
+}
 /// Tens of thousands of nested parentheses - beyond q's own limit, which
 /// refuses a hundred-odd levels with '( - once overflowed the stack, which
 /// aborts the whole run and cannot be caught like a panic (#703).

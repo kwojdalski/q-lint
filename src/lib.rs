@@ -1729,14 +1729,55 @@ impl Finding {
     /// indentation before it.
     pub fn at(path: &str, source: &str, at: usize, code: &str, detail: String) -> Self {
         let at = at + source[at..].len() - source[at..].trim_start_matches([' ', '\t']).len();
-        let start = source[..at].rfind('\n').map_or(0, |p| p + 1);
-        let mut f = Self::new(path, line_at(source, at), code, detail);
+        let (line, start) = line_at(source, at);
+        let mut f = Self::new(path, line, code, detail);
         f.column = Some(source[start..at].encode_utf16().count() + 1);
         f
     }
 }
-fn line_at(s: &str, at: usize) -> usize {
-    s.as_bytes()[..at].iter().filter(|&&b| b == b'\n').count() + 1
+/// The line `at` is on, from 1, and the offset that line starts at: from the
+/// installed `LineScope` when `s` is its text, by counting otherwise.
+fn line_at(s: &str, at: usize) -> (usize, usize) {
+    LINES.with(|l| {
+        let l = l.borrow();
+        let t = l.as_ref().filter(|t| t.0 == s.as_ptr() as usize && t.1 == s.len())?;
+        let line = t.2.partition_point(|&start| start <= at);
+        Some((line, t.2[line - 1]))
+    })
+    .unwrap_or_else(|| {
+        let line = s.as_bytes()[..at].iter().filter(|&&b| b == b'\n').count() + 1;
+        (line, s[..at].rfind('\n').map_or(0, |p| p + 1))
+    })
+}
+
+thread_local! {
+    /// The text `LineScope` was installed for, by address and length, and
+    /// the offset each of its lines starts at.
+    static LINES: std::cell::RefCell<Option<std::rc::Rc<(usize, usize, Vec<usize>)>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Keeps a table of a text's line starts installed for as long as it lives,
+/// as `MatchScope` does its brackets: every finding is placed by its line,
+/// and counting from the file's start for each was quadratic (#706). The
+/// caller keeps the text alive and unchanged while the scope lives.
+pub(crate) struct LineScope(Option<std::rc::Rc<(usize, usize, Vec<usize>)>>);
+
+impl LineScope {
+    pub(crate) fn install(text: &str) -> LineScope {
+        let starts = std::iter::once(0)
+            .chain(text.match_indices('\n').map(|(i, _)| i + 1))
+            .collect();
+        let table = std::rc::Rc::new((text.as_ptr() as usize, text.len(), starts));
+        LineScope(LINES.with(|l| l.replace(Some(table))))
+    }
+}
+
+impl Drop for LineScope {
+    fn drop(&mut self) {
+        let previous = self.0.take();
+        LINES.with(|l| *l.borrow_mut() = previous);
+    }
 }
 /// q's `.z` names that hold a value rather than a function or a callback:
 /// applying one to a negative literal is never meant. `.z.p -0D00:01` is the
@@ -3476,6 +3517,7 @@ pub fn lint_selecting(
     structure_selected: bool,
 ) -> Vec<Finding> {
     let uqf = profile == Profile::Uqf;
+    let _lines = LineScope::install(source);
     let v = views(source);
     if structure_selected {
         let mut out = structure(path, source, &v);
