@@ -40,13 +40,23 @@ fn a_blanked_column_0_line_is_named_as_the_one_that_starts_a_statement() {
 #[test]
 fn a_multi_byte_blank_before_an_assigned_name_does_not_panic() {
     // A no-break space pasted from a web page: q 5 refuses it with 'char,
-    // and QT028 once sliced into the middle of it (#321).
+    // and QT028 once sliced into the middle of it (#321), QT021 between
+    // `ss` and its bracket (#731).
     for source in [
         "select from t where\u{a0}f:1",
         "select from t where a=1,\u{a0}b:2",
+        "r:ss\u{a0}[\"abc\";\"b\"]",
+        "r:ss\u{3000}[\"abc\";\"b\"]",
+        "r:ss\u{2028}[\"abc\";\"b\"]",
     ] {
         lint(source, "t.q", Profile::General);
     }
+}
+#[test]
+fn a_typed_slot_that_swallows_the_closing_brace_does_not_panic() {
+    // A brace auto-closed after `{[a:` is typed: q 5 refuses it with '} (#732).
+    let f = lint("f:{[a:}]", "t.q", Profile::General);
+    assert!(f.iter().any(|f| f.code == "QE001"), "{f:?}");
 }
 #[test]
 fn arbitrary_text_does_not_panic() {
@@ -581,6 +591,25 @@ fn deeply_nested_lambdas_lint_in_bounded_time() {
         "{depth} nested lambdas took {elapsed:?}"
     );
 }
+/// Tens of thousands of nested parentheses - beyond q's own limit, which
+/// refuses a hundred-odd levels with '( - once overflowed the stack, which
+/// aborts the whole run and cannot be caught like a panic (#703).
+#[test]
+fn deeply_nested_parentheses_do_not_overflow_the_stack() {
+    let depth = 10000;
+    let (open, close) = ("(".repeat(depth), ")".repeat(depth));
+    for source in [
+        format!("a:{open}1{close}\n"),
+        format!("r:til[{open}1{close}]\n"),
+        format!("f:{{[{open}a{close}] a}}\n"),
+        format!("d:`a`b!{open}1 2{close}\n"),
+        format!("f:{{[{open}a{}] a}}\n", ";b)".repeat(depth)),
+    ] {
+        for profile in [Profile::General, Profile::Uqf] {
+            lint(&source, "t.q", profile);
+        }
+    }
+}
 #[test]
 fn a_nested_lambda_after_a_sibling_is_scanned_once() {
     // #252: the second nested lambda was taken for a new outer body.
@@ -726,4 +755,111 @@ fn the_tests_exemption_from_qp002_reads_the_directories_not_the_spelling() {
     assert!(!qp002("/work/proj/tests/q/a.q"));
     assert!(qp002("/work/proj/src/a.q"));
     assert!(qp002("/work/proj/src/tests.q"));
+}
+
+#[test]
+fn a_k_line_in_another_file_defines_its_name() {
+    use q_lint_rs::{Workspace, index, lint_in};
+    // q 5: with x.q's `k)lim:100` loaded, `r:lim` is 100 (#751).
+    let reader = "r:lim\n";
+    let mut ws = Workspace::default();
+    ws.add(&index(reader));
+    assert!(codes(&lint_in(reader, "y.q", Profile::Style, &ws)).contains(&"QF018"));
+    ws.add(&index("k)lim:100\n"));
+    assert!(!codes(&lint_in(reader, "y.q", Profile::Style, &ws)).contains(&"QF018"));
+}
+
+#[test]
+fn a_namespace_another_file_writes_whole_writes_its_members() {
+    use q_lint_rs::{Workspace, index, lint_in};
+    // q 5: a.q then b.q's `.cfg,:(enlist`n)!enlist 1 2 3`, and `f[]` is 1
+    // (#746).
+    let a = ".cfg.n:5\nf:{.cfg.n 0}\n";
+    let mut ws = Workspace::default();
+    ws.add(&index(a));
+    assert!(codes(&lint_in(a, "a.q", Profile::General, &ws)).contains(&"QT022"));
+    ws.add(&index(".cfg,:(enlist`n)!enlist 1 2 3\n"));
+    assert!(!codes(&lint_in(a, "a.q", Profile::General, &ws)).contains(&"QT022"));
+}
+
+#[test]
+fn a_table_another_file_changes_in_place_is_not_tracked_in_a_lambda() {
+    use q_lint_rs::{Workspace, index, lint_in};
+    // q 5: a.q, then b.q changing t in place, and `f[]` selects c and
+    // `g[]` inserts the row (#756).
+    let a = "t:([]a:1 2)\nf:{select c from t}\ng:{`t insert (3;4)}\n";
+    let mut ws = Workspace::default();
+    ws.add(&index(a));
+    let alone = lint_in(a, "a.q", Profile::General, &ws);
+    let alone = codes(&alone);
+    assert!(
+        alone.contains(&"QF020") && alone.contains(&"QT027"),
+        "{alone:?}"
+    );
+    for b in [
+        "update c:0 from `t\n",
+        "@[`t;`c;:;0]\n",
+        "![`t;();0b;(enlist`c)!enlist 0]\n",
+    ] {
+        let mut ws = Workspace::default();
+        ws.add(&index(a));
+        ws.add(&index(b));
+        let found = lint_in(a, "a.q", Profile::General, &ws);
+        let found = codes(&found);
+        assert!(
+            !found.contains(&"QF020") && !found.contains(&"QT027"),
+            "{b}: {found:?}"
+        );
+    }
+}
+
+#[test]
+fn a_table_another_file_keys_in_place_is_not_tracked_in_a_lambda() {
+    use q_lint_rs::{Workspace, index, lint_in};
+    // q 5: a.q, then b.q's `` `a xkey `k ``, and `f[([]a:1 2)]` joins (#757).
+    let a = "k:([]a:1 2;b:3 4)\nf:{x lj k}\n";
+    let mut ws = Workspace::default();
+    ws.add(&index(a));
+    assert!(codes(&lint_in(a, "a.q", Profile::General, &ws)).contains(&"QT026"));
+    ws.add(&index("`a xkey `k\n"));
+    assert!(!codes(&lint_in(a, "a.q", Profile::General, &ws)).contains(&"QT026"));
+}
+
+#[test]
+fn a_global_another_file_amends_through_its_context_is_not_tracked_in_a_lambda() {
+    use q_lint_rs::{Workspace, index, lint_in};
+    // q 5: a.q, then b.q's amend, and `f[]` is 2 4 6 8 (#758).
+    let a = "v:1 2 3\nf:{v+1 2 3 4}\n";
+    let mut ws = Workspace::default();
+    ws.add(&index(a));
+    assert!(codes(&lint_in(a, "a.q", Profile::General, &ws)).contains(&"QT006"));
+    for b in ["@[`.;`v;,;4]\n", ".[`.;enlist`v;,;4]\n"] {
+        let mut ws = Workspace::default();
+        ws.add(&index(a));
+        ws.add(&index(b));
+        assert!(
+            !codes(&lint_in(a, "a.q", Profile::General, &ws)).contains(&"QT006"),
+            "{b}"
+        );
+    }
+}
+
+#[test]
+fn a_multiple_global_assignment_in_another_file_defines_its_names() {
+    use q_lint_rs::{Workspace, index, lint_in};
+    // q 5: after b.q's `init[]`, `lim` is 1; after c.q, `.ns.lim` is 1
+    // (#759).
+    for (reader, writer) in [
+        ("r:lim\n", "init:{(lim;b)::1 2}\n"),
+        ("\\d .ns\nr:lim\n", "(.ns.lim;.ns.b):1 2\n"),
+    ] {
+        let mut ws = Workspace::default();
+        ws.add(&index(reader));
+        assert!(codes(&lint_in(reader, "a.q", Profile::Style, &ws)).contains(&"QF018"));
+        ws.add(&index(writer));
+        assert!(
+            !codes(&lint_in(reader, "a.q", Profile::Style, &ws)).contains(&"QF018"),
+            "{writer}"
+        );
+    }
 }

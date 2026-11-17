@@ -175,6 +175,14 @@ r:"abc" like `a*
 === clean | like with a string pattern
 select from t where sym like "a*"
 
+=== clean profile: general | a symbol starting the next statement is not the pattern (q 5 runs both lines, #722)
+r:x like "a*"
+`t insert 1
+
+=== QB007 | but an indented line continues the statement
+r:"abc" like
+  `abc
+
 === QB008 | equality against a vector literal
 select from t where px=1 2
 

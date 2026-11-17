@@ -137,6 +137,12 @@ j:{[([k:p;v])] p+v}
 k:{[([]a;b:c)] a,c}
 r:(f[(1;2);3]; g[`k`v!1 2]; h[1;2])
 
+=== clean profile: general | a keyed-table pattern binds its keys and its value columns (q 5: f is (1 2;3 4), h[...;10] is 13 14, #740)
+f:{[([k]v)] (k;v)}
+g:{[([k;j]v:u;w)] (k;j;u;w)}
+h:{[([k]v);c] v+c}
+r:h[([k:1 2]v:3 4);10]
+
 === clean profile: general | a dictionary pattern with its keys in front binds too (q 5: f[`a`b!1 2;3] is 6, g[`a`b!1 2;3] is 1, h[`x`y!1 2] is `x`y) (#431)
 f:{[`a`b!(a;b);c] a+b+c}
 r:f[`a`b!1 2;3]
@@ -890,6 +896,13 @@ r2:select a,c from t,'flip enlist[`c]!enlist 5 6
 u:([]c:5 6)
 r3:exec c from t uj u
 
+=== QF020 profile: general | a where phrase after the from clause still ends it, as does a nested query's (q 5: each is 'b) (#696)
+t:([]a:1 2)
+u:([]c:1 2)
+r1:select b from t where a>0
+r2:exec b from t where a in 1
+r3:select b from t where a in exec c from u
+
 === clean | a nested query's columns in a where phrase are its own table's (q 5 runs f)
 t:([]a:1 2 3)
 f:{[u] select from t where a in exec b from u}
@@ -1145,3 +1158,18 @@ foo:2
 foo:0
 .q.foo:{x+1}
 foo:1
+
+=== clean profile: general | but not in the statement that adds it, which q parsed before it ran (q 5: g[] and h 5 are 6, and the same-line baz:3 runs) (#697)
+g:{.q.foo:{x+1}; foo:2; foo*3}
+h:{[x] .q.bar:{x+1}; {[x;bar] x+bar}[x;1]}
+.q.baz:{x+1}; baz:3
+.q.qux:{x+1}
+  ; k:{[qux] qux}
+
+=== clean profile: general | QF015: a script loaded or a string evaluated may define the name (#750; q 5: \l of true:0b, then $[true;`yes;`no] is `no)
+\l lib.q
+r:$[true;`yes;`no]
+
+=== clean profile: general | QF015: and so may value of a string (#750; q 5: 1)
+value "true:1b"
+r:$[true;1;0]

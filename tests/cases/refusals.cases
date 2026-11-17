@@ -56,6 +56,22 @@ f:12:60:00u
 === QE006 profile: general | a second's seconds are read (#449; q 5: '12:00:60)
 g:12:00:60v
 
+=== clean profile: general | a c after the vector makes chars of every item, whatever its fields (#714; q 5: type each is -10h or 10h)
+a:12:60c
+b:2000.13.01c
+c:12:59:60c
+d:2000.02.30c
+e:0D00:00:60c
+f:100:00:00.1234c
+g:12:5c
+h:12:00 12:60c
+i:2000.13.01 1c
+j:2023.01.01D1:30c
+k:0000.01.01c
+
+=== QE006 profile: general | but a one-digit hour with nothing on its left is refused before the suffix (#714; q 5: '1:)
+q:1:30c
+
 === QE006 profile: general | year 0 has no date (#460; q 5: '0000.01.01)
 d:0000.01.01
 
@@ -198,6 +214,13 @@ h2:hopen `:localhost:5000
 
 === QT030 | a cast to a character that is no type
 r:"Q"$"1"
+
+=== clean profile: general | a one-letter string ending a line, and a conditional starting the next (q 5 prints 1 and 3, #725)
+a:1b
+mode:"w"
+$[a;show 1;show 2]
+fmt:"J"
+$[a;show 3;show 4]
 
 === clean | a lowercase type is refused only for some arguments, so it is left alone
 c:([]sym:"s"$())
@@ -663,6 +686,17 @@ d:20000101d
 e:20000229d
 f:20000101 20000102d
 
+=== clean profile: general | eight digits or more and a z are a datetime (#713; q 5: 2024.01.01T00:00:00.000, 1976.05.31T14:30:11.000)
+a:20240101z
+b:202401011z
+c:20000101 20000102z
+
+=== QE010 profile: general | eight digits and a z that make no date (#713; q 5: '20001301)
+e:20001301z
+
+=== QE010 profile: general | a z on fewer than eight digits (#713; q 5: '1234567)
+f:1234567z
+
 === QE010 profile: general | dots that make no date (q 5: '2023.1.1 and '1.2.3)
 g:2023.1.1
 
@@ -856,6 +890,16 @@ c:{'`a`b}
 
 === clean profile: general | a symbol or a string in parentheses can
 a:{'(`a)}
+
+=== clean profile: general | a pair headed by a symbol signals the symbol (q 5: '(`err;"detail") is 'err, '(`a;1) is 'a, #739)
+f:{'(`err;"detail")}
+g:{'(`a;1)}
+h:{'(`a ; 1 2)}
+
+=== QT025 profile: general | but not a pair of symbols, three items, or a symbol second (q 5: each is 'stype)
+a:{'(`a;`b)}
+b:{'(`a;2;3)}
+c:{'(1;`a)}
 
 === QT031 profile: general | an uppercase cast parses a string (q 5: "J"$1 and "S"$`a are 'type)
 a:"J"$1

@@ -114,8 +114,10 @@ fn brackets_replace_a_juxtaposed_call_and_nothing_around_it() {
 
 /// Inside a qSQL phrase the argument ends where the phrase's own grammar
 /// ends it: a top-level comma separates columns (or `where` constraints),
-/// and `by`, `from` and `where` close the list. Parse trees checked in q 5:
-/// `select s:g v,m:avg v by k from t` is `select s:g[v],m:avg v by k from t`.
+/// and `by` and `from` close the list. Parse trees checked in q 5:
+/// `select s:g v,m:avg v by k from t` is `select s:g[v],m:avg v by k from t`,
+/// and `select v:g c where e from t` is `g[c where e]`: before `from`, `where`
+/// is the function (#771).
 /// Before #111 the multi-line form became `.ns.f[v,m:avg v\n by k from t]`,
 /// which does not load. After `from` the table is one whole expression -
 /// `select from g v,w` reads `g[v,w]` - so a call there is left alone.
@@ -133,6 +135,7 @@ fn a_call_in_a_query_is_bracketed_up_to_the_column_it_belongs_to() {
         "    a}\n",
         "h:{[t] select from t where 0<.ns.f v,w>0}\n",
         "j:{[t] select from 0#.ns.f t,t}\n",
+        "k:{[t] select v:.ns.f c where e from t}\n",
         "\\d .\n",
     );
     fs::write(&path, original).unwrap();
@@ -160,6 +163,7 @@ fn a_call_in_a_query_is_bracketed_up_to_the_column_it_belongs_to() {
             "    a}\n",
             "h:{[t] select from t where 0<.ns.f[v],w>0}\n",
             "j:{[t] select from 0#.ns.f t,t}\n",
+            "k:{[t] select v:.ns.f[c where e] from t}\n",
             "\\d .\n",
         )
     );
@@ -299,6 +303,8 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
             "r:\"abc\" like \"abc\"",
             true,
         ),
+        // A path symbol takes its `/`: cut there, `/c` is refused (#768).
+        ("QB007", "a like `:b/c", "a like \":b/c\"", true),
         ("QT007", "r:ss[`abc;\"b\"]", "r:ss[\"abc\";\"b\"]", false),
         ("QB012", "f:{[x] x+1;}", "f:{[x] x+1}", false),
         ("QB010", "a:1;b:a -1", "a:1;b:a - 1", false),
@@ -523,6 +529,12 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
             "f:{[a] g:{[a;x] a}[a]; g 1}",
             false,
         ),
+        (
+            "QF005",
+            "f:{a:2; {a+x} each 1 2}",
+            "f:{a:2; {[a;x] a+x}[a] each 1 2}",
+            false,
+        ),
         ("QA007", "f:{[c] $[c;1;2;]}", "f:{[c] $[c;1;2]}", false),
         ("QA006", "f:{[c] $[c=1;1]}", "f:{[c] if[c=1;1]}", false),
         (
@@ -629,6 +641,9 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
             "QF005",
             "f:{[k] g:{[a;b;c;d;e;f;g;h] k+h}; g[1;2;3;4;5;6;7;8]}",
         ), // a ninth parameter is 'params
+        // A local passed in before it holds a value is 'a (#769)
+        ("QF005", "h:{a:{a+1};a}"),
+        ("QF005", "k:{[b] r:{a+x} each b; a:2; r}"),
         // A bracket argument would become a key-column header (#406)
         ("QR004", "a:1 2 3;r:{x*2}'[a]"),
         ("QR004", "a:1 2 3;r:{x*2} each[a]"),

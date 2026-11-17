@@ -276,3 +276,12 @@ c:.z.z
 === clean profile: uqf | .z.d and .z.p are UTC and not datetimes
 d:.z.d
 e:.z.p
+
+=== QP006 profile: uqf | value of a name built from strings, not bound to one, evaluates nothing the file cannot see (BuaBook cargs.q)
+prs:{[a] a:" " sv/: a; :(key a)!value a}
+r:prs .z.x
+
+=== QP006 profile: uqf | and a set into a computed name in a lambda leaves the file's own lambdas as they read (BuaBook if.q)
+install:{[ifFunc;implFunc] set[ifFunc;implFunc]}
+f:{x+1}
+r:f 1

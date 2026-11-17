@@ -238,7 +238,7 @@ fn simplifications(path: &str, source: &str, code: &str, out: &mut Vec<Finding>)
         out.push(Finding::at(path, source, at, code_, detail));
     };
     // QR001: `reverse asc x` is `desc x`, and `reverse desc x` is `asc x`.
-    for m in re!(r"\breverse\s+(asc|desc)\b").captures_iter(code) {
+    for m in re!(concat!(r"\breverse", blank!(), r"+(asc|desc)\b")).captures_iter(code) {
         let whole = m.get(0).unwrap();
         if boundary(code, whole.start()) && !iterated(code, whole.end()) {
             let other = if &m[1] == "asc" { "desc" } else { "asc" };
@@ -258,7 +258,15 @@ fn simplifications(path: &str, source: &str, code: &str, out: &mut Vec<Finding>)
         );
     }
     // QR003: sorting the distinct items keeps them distinct.
-    for m in re!(r"\bdistinct\s+asc\s+distinct\b").find_iter(code) {
+    for m in re!(concat!(
+        r"\bdistinct",
+        blank!(),
+        "+asc",
+        blank!(),
+        r"+distinct\b"
+    ))
+    .find_iter(code)
+    {
         if boundary(code, m.start()) && !iterated(code, m.end()) {
             add(
                 m.start(),

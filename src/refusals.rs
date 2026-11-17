@@ -172,6 +172,9 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
     // of `0D00:00:60` and the `T` of a datetime start no name. Such a match
     // is looked past, not skipped whole: in `t12:12:60` the first is
     // `12:12`, and the time is the `12:60` after it.
+    // A `c` after the vector makes every item chars, whatever its fields
+    // hold: q 5 reads `12:60c`, `2000.13.01c` and `12:5c` as " " (#714).
+    let chars = |end: usize| vector_suffix(unsym, end) == Some('c');
     let whole_token = |m: &regex::Captures| {
         let head = &unsym[..m.get(0).unwrap().start()];
         let word = head.trim_end_matches(|c: char| c.is_ascii_alphanumeric() || "._".contains(c));
@@ -181,7 +184,7 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
     };
     for m in crate::captures_where(re!(r"(\d{2,}):(\d{2})(?::(\d{2}))?"), unsym, whole_token) {
         let whole = m.get(0).unwrap();
-        if command_argument(source, whole.start()) {
+        if command_argument(source, whole.start()) || chars(whole.end()) {
             continue;
         }
         let field = |i| {
@@ -214,7 +217,10 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
         let whole = m.get(0).unwrap();
         if command_argument(source, whole.start())
             || unsym[..whole.start()].ends_with(['D', 'T'])
-            || matches!(vector_suffix(unsym, whole.end()), Some('t' | 'u' | 'v'))
+            || matches!(
+                vector_suffix(unsym, whole.end()),
+                Some('c' | 't' | 'u' | 'v')
+            )
         {
             continue;
         }
@@ -305,6 +311,9 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
                 .trim_start_matches(|c: char| c.is_ascii_digit() || c == ':')
                 .len();
         if m.get(1).is_some() {
+            if chars(whole.end()) {
+                continue;
+            }
             // `2023.01.01D1:30` matches from the date's last field.
             let start = before
                 .trim_end_matches(|c: char| c.is_ascii_digit() || c == '.')
@@ -326,10 +335,13 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
             continue;
         }
         let text = &unsym[whole.start()..whole.end() + tail];
+        // Only a one-digit hour with nothing on its left is still refused
+        // with a `c`: that is q 5's '1: at parse, before any suffix.
         if m[3].len() >= 2 {
-            if m[4].len() == 1
-                || (m.get(5).is_some_and(|s| s.as_str().len() == 1)
-                    && vector_suffix(unsym, whole.end()) != Some('u'))
+            if !chars(whole.end())
+                && (m[4].len() == 1
+                    || (m.get(5).is_some_and(|s| s.as_str().len() == 1)
+                        && vector_suffix(unsym, whole.end()) != Some('u')))
             {
                 refuse(
                     whole.start(),
@@ -387,7 +399,7 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
         let day: Option<u32> = m.get(3).map(|d| d.as_str().parse().unwrap());
         let days = days_in(year, month);
         let impossible = days == 0 || day.is_some_and(|d| d == 0 || d > days);
-        if impossible {
+        if impossible && !chars(whole.end()) {
             out.push(Finding::at(
                 path,
                 source,
@@ -539,6 +551,22 @@ fn signals(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<F
         // `"é"` is a two-byte string and `"\012"` one char (#229).
         if value.as_str().starts_with('"')
             && crate::q_bytes(&value.as_str()[1..value.len() - 1]).len() != 1
+        {
+            continue;
+        }
+        // Two items headed by a symbol signal that symbol: q 5 `'(`err;"detail")`
+        // is 'err and `'(`a;1)` is 'a. Only a second symbol makes the pair a
+        // symbol vector, `'(`a;`b)`, and so 'stype again (#739).
+        let items: Vec<&str> = code[value.range()]
+            .trim_matches(['(', ')'])
+            .split(';')
+            .map(str::trim)
+            .collect();
+        let symbol = |s: &str| re!(r"^`[A-Za-z0-9_.:]*$").is_match(s);
+        if value.as_str().starts_with('(')
+            && items.len() == 2
+            && symbol(items[0])
+            && !symbol(items[1])
         {
             continue;
         }
@@ -749,7 +777,7 @@ fn hopen_literal(path: &str, source: &str, code: &str, comments: &str, out: &mut
 /// refused for some arguments - `"s"$()` is an empty symbol list, while
 /// `"s"$"abc"` is 'type - and depend on what is cast, so are not here.
 fn cast_character(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<Finding>) {
-    for m in re!(r#""([A-Za-z])"\s*\$"#).captures_iter(comments) {
+    for m in re!(concat!(r#""([A-Za-z])""#, blank!(), r"*\$")).captures_iter(comments) {
         let whole = m.get(0).unwrap();
         // A string in the source - blank in `code` - and not inside a longer one.
         if code.as_bytes()[whole.start()] != b' ' || comments[..whole.start()].ends_with('\\') {
@@ -1424,7 +1452,7 @@ fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Find
                 Some(format!(
                     "`{text}`: a byte literal is written with hex digits only"
                 ))
-            } else if let Some(d) = re!(r"^(\d{4})(\d\d)(\d\d)d$").captures(text)
+            } else if let Some(d) = re!(r"^(\d{4})(\d\d)(\d\d)[dz]$").captures(text)
                 && {
                     let field = |i: usize| d[i].parse::<u32>().unwrap();
                     field(3) == 0 || field(3) > days_in(field(1), field(2))
@@ -1432,10 +1460,13 @@ fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Find
             {
                 // Eight digits and a `d` are a date, yyyymmdd: q 5 reads
                 // `20000101d` as 2000.01.01 and refuses `20001301d`, while
-                // `1d` and `2000010d` are no date at all.
+                // `1d` and `2000010d` are no date at all. A `z` reads the
+                // same eight digits as that date's datetime (#713).
                 Some(format!("`{text}` is no date (yyyymmdd)"))
             } else if (re!(r"^\d+[adgklmoqrwyz]$").is_match(text)
-                && !re!(r"^\d{8}d$").is_match(text))
+                // Nine digits or more and a `z` are a datetime too: q 5
+                // reads `202401011z` as 1976.05.31T14:30:11.000 (#713).
+                && !re!(r"^\d{8}d$|^\d{8,}z$").is_match(text))
                 || (re!(r"^\d+x$").is_match(text) && text != "0x")
             {
                 Some(format!(

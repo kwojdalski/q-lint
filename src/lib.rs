@@ -10,6 +10,15 @@ macro_rules! re {
         &*RE
     }};
 }
+/// Blanks inside one statement, for a pattern to span: spaces and tabs, and a
+/// line break only into an indented line, which q continues the statement
+/// with. `\s` would run on into the next statement - `r:x like "a*"`, then
+/// `` `t insert 1 `` at column 0, is no `like` of a symbol (#722, #725, #730).
+macro_rules! blank {
+    () => {
+        r"(?:[ \t\r]|\n[\r\n]*[ \t])"
+    };
+}
 mod families;
 mod intrinsics;
 mod refusals;
@@ -71,7 +80,15 @@ impl Workspace {
         name: &str,
         own: &std::collections::HashSet<String>,
     ) -> bool {
-        self.defined.get(name).copied().unwrap_or(0) > usize::from(own.contains(name))
+        // Or a namespace holding it, written as a whole: `.cfg:d` elsewhere
+        // may give `.cfg.n` any value.
+        std::iter::once(name)
+            .chain(
+                name.match_indices('.')
+                    .filter(|&(i, _)| i > 0)
+                    .map(|(i, _)| &name[..i]),
+            )
+            .any(|n| self.defined.get(n).copied().unwrap_or(0) > usize::from(own.contains(n)))
     }
 
     pub(crate) fn is_lambda(&self, name: &str) -> bool {
@@ -273,7 +290,7 @@ fn query_word(code: &str, at: usize) -> Option<&'static str> {
 /// `;` at its depth, or a newline the line after does not continue - the
 /// same boundaries `argument_end` stops at, read backwards. A query may
 /// span lines, so the line `at` is on does not settle this (#111).
-fn query_clause(code: &str, at: usize) -> Option<&'static str> {
+pub(crate) fn query_clause(code: &str, at: usize) -> Option<&'static str> {
     let bytes = code.as_bytes();
     let mut depth = 0usize;
     let mut start = at;
@@ -302,9 +319,12 @@ fn query_clause(code: &str, at: usize) -> Option<&'static str> {
 
 /// Where a prefix argument inside a qSQL phrase ends: `argument_end`'s
 /// answer, cut at the first comma at its depth - which separates columns,
-/// or `where` constraints - or at `by`, `from` or `where`, which close the
-/// list. Parse trees checked in q 5: `select s:g v,m:avg v by k from t` is
-/// `select s:g[v],m:avg v by k from t`. `None` where the argument holds a
+/// or `where` constraints - or at `by` or `from`, which close the list.
+/// Parse trees checked in q 5: `select s:g v,m:avg v by k from t` is
+/// `select s:g[v],m:avg v by k from t`. A `where` closes nothing here: before
+/// `from` it is the function, `select v:f c where e from t` is
+/// `f[c where e]`, and inside the where phrase it is the function too (#771).
+/// `None` where the argument holds a
 /// query of its own, which this scan does not delimit.
 fn query_argument_end(
     code: &str,
@@ -322,7 +342,8 @@ fn query_argument_end(
             b')' | b']' | b'}' => depth = depth.saturating_sub(1),
             b',' if depth == 0 => break,
             _ if depth == 0 => match query_word(code, at) {
-                Some("by" | "from" | "where") => break,
+                Some("by" | "from") => break,
+                Some("where") => {}
                 Some(_) => return None,
                 None => {}
             },
@@ -511,9 +532,13 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         // spelling is 'type or a projection, never a boolean, so no
         // working program changes.
         "QB007" => {
-            let lead = re!(r"^like\s*`").find(source.get(start..)?)?;
+            let lead = re!(concat!(r"^like", blank!(), "*`")).find(source.get(start..)?)?;
             let pattern = start + lead.end();
             let mut depth = 0;
+            // After a `:` the symbol is a path and takes a `/` too: q 5 parses
+            // `` `:b/c `` as one symbol, and cutting it there leaves `/c`, which
+            // q refuses to load (#768).
+            let mut path = false;
             let len = source[pattern..]
                 .char_indices()
                 .find(|&(_, c)| match c {
@@ -525,7 +550,11 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                         depth -= 1;
                         false
                     }
-                    c => !(c.is_ascii_alphanumeric() || "_.:*?^-".contains(c)),
+                    '/' => !path,
+                    c => {
+                        path |= c == ':';
+                        !(c.is_ascii_alphanumeric() || "_.:*?^-".contains(c))
+                    }
                 })
                 .map_or(source.len() - pattern, |(at, _)| at);
             let text = &source[pattern..pattern + len];
@@ -589,7 +618,8 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         // dictionary with tied values - q 5 orders the tied keys
         // differently - so only in the editor.
         "QR001" => {
-            let m = re!(r"^reverse\s+(asc|desc)\b").captures(source.get(start..)?)?;
+            let m = re!(concat!(r"^reverse", blank!(), r"+(asc|desc)\b"))
+                .captures(source.get(start..)?)?;
             let other = if &m[1] == "asc" { "desc" } else { "asc" };
             (
                 m.get(0)?.as_str(),
@@ -635,7 +665,14 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         // Sorting adds no duplicates, and q 5 agrees on the value and the
         // sorted attribute both.
         "QR003" => {
-            let m = re!(r"^distinct\s+asc\s+distinct\b").find(source.get(start..)?)?;
+            let m = re!(concat!(
+                r"^distinct",
+                blank!(),
+                "+asc",
+                blank!(),
+                r"+distinct\b"
+            ))
+            .find(source.get(start..)?)?;
             (
                 m.as_str(),
                 "asc distinct".into(),
@@ -1201,6 +1238,48 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                     "x"
                 };
                 header.push_str(&format!("{{[{name};{params}] "));
+            }
+            // Passed in, the local is read where the lambda is written, so it
+            // has to hold a value there: a parameter of the lambda around it,
+            // or assigned in an earlier statement. Otherwise q 5 refuses the
+            // rewrite with 'a - `{a:{[a;x] a+1}[a];a}`, and a read before a
+            // later `a:2` alike (#769).
+            let parent = enclosing_brace(&v.code, brace)?;
+            let outer = signature(&v.code, source, parent);
+            if !(outer.named
+                && outer
+                    .slots
+                    .iter()
+                    .any(|p| pattern_names(p).contains(&name.as_str())))
+            {
+                let before = top_level(&v.code[outer.body..brace]);
+                let mut depth = 0i32;
+                let statement = before
+                    .bytes()
+                    .enumerate()
+                    .filter(|&(_, b)| {
+                        match b {
+                            b'(' | b'[' | b'{' => depth += 1,
+                            b')' | b']' | b'}' => depth -= 1,
+                            _ => {}
+                        }
+                        b == b';' && depth == 0
+                    })
+                    .last()
+                    .map_or(0, |(i, _)| i);
+                let earlier = &before[..statement];
+                let assigned = earlier.match_indices(name.as_str()).any(|(i, _)| {
+                    let after = &earlier[i + name.len()..];
+                    let op = after.trim_start_matches([' ', '\t']);
+                    boundary(earlier, i)
+                        && !after
+                            .starts_with(|c: char| c.is_ascii_alphanumeric() || "_.".contains(c))
+                        && op.starts_with(':')
+                        && !op.starts_with("::")
+                });
+                if !assigned {
+                    return None;
+                }
             }
             let rest = &source[sig.body..close];
             begin = brace;
@@ -1849,15 +1928,22 @@ pub(crate) fn operand_ends(code: &str, at: usize) -> bool {
     }
     rest.is_empty()
         || rest.starts_with([';', ')', ']', '}', '\n', '\r'])
-        || ((rest.starts_with(',')
-            || re!(r"^(?:from|by|where)(?:[^A-Za-z0-9_.]|$)").is_match(rest))
-            && in_qsql_phrase(code, at))
+        || (rest.starts_with(',') && in_qsql_phrase(code, at))
+        // A keyword ends the from phrase too: `from t where a>0` (#696).
+        || (re!(r"^(?:from|by|where)(?:[^A-Za-z0-9_.]|$)").is_match(rest)
+            && qsql_phrase(code, at, false))
 }
 
 /// Whether `at` sits at the top level of a select, exec, update or delete
 /// phrase: walking back through its statement - to a `;`, an opening
 /// bracket or an unindented line - meets the keyword at the same depth.
 pub(crate) fn in_qsql_phrase(code: &str, at: usize) -> bool {
+    qsql_phrase(code, at, true)
+}
+
+/// `in_qsql_phrase`, where `joins` says whether the from phrase is refused:
+/// a `,` there joins tables, but a keyword after it still ends the operand.
+fn qsql_phrase(code: &str, at: usize, joins: bool) -> bool {
     let b = code.as_bytes();
     let mut depth = 0i32;
     let mut seen_where = false;
@@ -1887,7 +1973,7 @@ pub(crate) fn in_qsql_phrase(code: &str, at: usize) -> bool {
         // phrase it joins - `select from t,u` - so that phrase is not one.
         if word("where") {
             seen_where = true;
-        } else if word("from") && !seen_where {
+        } else if joins && word("from") && !seen_where {
             return false;
         } else if ["select", "exec", "update", "delete"].into_iter().any(word) {
             return true;
@@ -2621,6 +2707,18 @@ fn is_param_name(s: &str) -> bool {
 /// is 3, `{[1;b] b}[1;2]` is 2 and `{[1] 5} 2` is 'match (#298). `_` is
 /// none: `{[(a;_)] a}[(1;2)]` is 'match, as `{[_] 1}[1]` is.
 pub(crate) fn is_pattern(s: &str, nested: bool) -> bool {
+    pattern_within(s, nested, 0)
+}
+/// More levels of brackets than q parses: q 5 refuses a hundred-odd levels of
+/// parentheses with '(. Code that walks into nesting gives up past it, which
+/// keeps tens of thousands of levels from overflowing the stack (#703).
+pub(crate) const MAX_NESTING: usize = 256;
+/// `is_pattern` at a nesting `depth`; past `MAX_NESTING` it is no pattern.
+fn pattern_within(s: &str, nested: bool, depth: usize) -> bool {
+    if depth > MAX_NESTING {
+        return false;
+    }
+    let is_pattern = |s: &str, nested: bool| pattern_within(s, nested, depth + 1);
     let s = s.trim();
     let items = |inner: &str, item: &dyn Fn(&str) -> bool| {
         inner.trim().is_empty() || slots(inner).into_iter().all(item)
@@ -2639,12 +2737,13 @@ pub(crate) fn is_pattern(s: &str, nested: bool) -> bool {
         true
     } else if let Some(inner) = s.strip_prefix("([]").filter(|_| whole(s)) {
         items(&inner[..inner.len() - 1], &|c| field(c))
-    } else if let Some(inner) = s
-        .strip_prefix("([")
-        .filter(|_| s.ends_with("])") && whole(s))
+    } else if s.starts_with("([")
+        && whole(s)
+        && let Some(close) = matching(s, 1, b'[', b']')
     {
-        matching(s, 1, b'[', b']') == Some(s.len() - 1)
-            && items(&inner[..inner.len() - 2], &|c| field(c))
+        // A keyed table: its keys, then any value columns - q 5
+        // `{[([k]v)] v} ([k:1 2]v:3 4)` is 3 4 (#740).
+        items(&s[2..close - 1], &|c| field(c)) && items(&s[close..s.len() - 1], &|c| field(c))
     } else if whole(s) {
         items(&s[1..s.len() - 1], &|c| is_pattern(c, true))
     } else if let Some(at) = typed_at(s) {
@@ -2728,14 +2827,35 @@ fn like_patterns<'a>(code: &str, literals: &'a str, at: usize) -> Vec<&'a str> {
     operand(code, literals, i, iterated, &mut out);
     out
 }
-/// Each name the source assigns under `.q` (`.q.foo:{x+1}`), with where.
-/// q 5 then resolves `foo` from every namespace and refuses it as a
-/// parameter, a local or a global, as it does `count`.
+/// Each name the source assigns under `.q` (`.q.foo:{x+1}`), with the end
+/// of the top-level statement that assigns it. q 5 then resolves `foo` from
+/// every namespace and refuses it as a parameter, a local or a global, as it
+/// does `count` - but only in what it parses afterwards: the statement
+/// holding the assignment, lambda and indented lines included, was parsed
+/// before it ran, so `g:{.q.foo:{x+1}; foo:2; foo}` still runs (#697).
 pub(crate) fn dotq_definitions(code: &str) -> Vec<(String, usize)> {
+    let b = code.as_bytes();
+    let statement_end = |from: usize| {
+        let mut depth = 0i32;
+        for i in from..b.len() {
+            match b[i] {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => depth -= 1,
+                b'\n'
+                    if depth <= 0
+                        && !matches!(b.get(i + 1), Some(b' ' | b'\t' | b'\r' | b'\n')) =>
+                {
+                    return i;
+                }
+                _ => {}
+            }
+        }
+        b.len()
+    };
     re!(r"\.q\.([A-Za-z][A-Za-z0-9_]*)\s*:")
         .captures_iter(code)
         .filter(|c| boundary(code, c.get(0).unwrap().start()))
-        .map(|c| (c[1].to_string(), c.get(0).unwrap().start()))
+        .map(|c| (c[1].to_string(), statement_end(c.get(0).unwrap().start())))
         .collect()
 }
 /// Whether a compound or `::` assignment has a value to assign: q 5 refuses
@@ -3960,7 +4080,7 @@ pub fn lint_selecting(
     // `"abc" like `a*` is `like["abc"]*[`a]`, a projection, returned
     // silently where a boolean was wanted - except in a where phrase, which
     // wants booleans and raises 'type on it.
-    for m in re!(r"\blike\s*`[A-Za-z0-9_.:]*").find_iter(code) {
+    for m in re!(concat!(r"\blike", blank!(), r"*`[A-Za-z0-9_.:]*")).find_iter(code) {
         // A backtick before it makes this the symbol `` `like ``, an element of
         // a list rather than the operator - `` `abs`cor`like`mins `` is data.
         if !boundary(code, m.start()) {
@@ -4022,6 +4142,8 @@ pub fn lint_selecting(
         m[1].contains('.') || lambda_depth[m.get(0).unwrap().start()] == 0
     };
     let mut ranks: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    // Where each was last defined.
+    let mut defined_at: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     for m in re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)\s*:\s*\{").captures_iter(code) {
         if !global_definition(&m) {
             continue;
@@ -4056,7 +4178,9 @@ pub fn lint_selecting(
         {
             continue;
         }
-        ranks.insert(qualified(m.get(0).unwrap().start(), &m[1]), rank);
+        let key = qualified(m.get(0).unwrap().start(), &m[1]);
+        defined_at.insert(key.clone(), m.get(0).unwrap().start());
+        ranks.insert(key, rank);
     }
     // The same arity check as QA002, for a lambda reached by name. `ranks`
     // already knows what each `name:{...}` takes, so a call with more slots
@@ -4115,6 +4239,34 @@ pub fn lint_selecting(
                 .entry(qualified(name.start(), name.as_str()))
                 .or_default() += 1;
         }
+        // Each name of a `set'`: q 5 `` f:{x}; `f`g set' ({x+y};1); f[1;2] ``
+        // is 3 (#753).
+        for (whole, names) in semantics::each_set_targets(code) {
+            for name in names {
+                *assigned.entry(qualified(whole.start, name)).or_default() += 1;
+            }
+        }
+        // A namespace or dictionary written as a whole, by any of those or
+        // indexed, `.cfg[`f]:v`, or appended, `` `.cfg upsert d ``, may
+        // replace each member: q 5 `.ns.f:{x}; .ns:(``f)!(::;{x+y});
+        // .ns.f[1;2]` is 3 (#746, #747).
+        let mut written: std::collections::HashSet<String> = assigned.keys().cloned().collect();
+        for m in re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)\s*\[[^\]]*\]\s*[-+*%&|^=<>,#~!?@$]?:|`(\.?[A-Za-z][A-Za-z0-9_.]*)(?:\s+|\s*\)\s*)upsert\b|\bupsert\s*\[\s*`(\.?[A-Za-z][A-Za-z0-9_.]*)")
+            .captures_iter(code)
+        {
+            let name = m.get(1).or(m.get(2)).or(m.get(3)).unwrap();
+            written.insert(qualified(name.start(), name.as_str()));
+        }
+        redefined.extend(
+            ranks
+                .keys()
+                .filter(|key| {
+                    key.match_indices('.')
+                        .filter(|&(i, _)| i > 0)
+                        .any(|(i, _)| written.contains(&key[..i]))
+                })
+                .cloned(),
+        );
         redefined.extend(
             assigned
                 .into_iter()
@@ -4122,10 +4274,30 @@ pub fn lint_selecting(
                 .map(|(name, _)| name),
         );
     }
+    // A write the file does not name may give the name another rank, once
+    // it runs after the definition - later in the file, or from a lambda
+    // called at any time: q 5 `f:{x}; value "f:{x+y}"; f[1;2]` is 3 (#745).
+    // One that only changes `\d` defines nothing.
+    let unnamed: Vec<usize> = semantics::unnamed_writes(code, &v.comments, source)
+        .into_iter()
+        .filter(|&(_, kind)| kind != semantics::Unnamed::Context)
+        .map(|(at, _)| at)
+        .collect();
+    let in_lambda = |at: usize| {
+        code.as_bytes()[..at].iter().fold(0i32, |d, &c| match c {
+            b'{' => d + 1,
+            b'}' => d - 1,
+            _ => d,
+        }) > 0
+    };
+    let overwritten = |key: &str| {
+        let defined = defined_at.get(key).copied().unwrap_or(0);
+        unnamed.iter().any(|&at| at > defined || in_lambda(at))
+    };
     for m in re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)\s*\[").captures_iter(code) {
         let (whole, name) = (m.get(0).unwrap(), m.get(1).unwrap().as_str());
         let key = qualified(whole.start(), name);
-        if !boundary(code, whole.start()) || redefined.contains(&key) {
+        if !boundary(code, whole.start()) || redefined.contains(&key) || overwritten(&key) {
             continue;
         }
         let Some(&rank) = ranks.get(&key) else {
@@ -4564,7 +4736,11 @@ pub fn lint_selecting(
     }
     // And a multiple assignment's names: q 5 `(true;false):10b` then
     // `show true` prints 1b (#371).
-    declared.extend(semantics::multi_assignments(code).map(|(_, n)| n));
+    declared.extend(
+        semantics::multi_assignments(code)
+            .chain(semantics::global_multi_assignments(code))
+            .map(|(_, n)| n),
+    );
     // A column: named as a symbol somewhere (`` `sym`return!... ``), or read
     // inside a query, where a bare name is the column before any global.
     for m in re!(r"`([A-Za-z][A-Za-z0-9_]*)").captures_iter(code) {
@@ -4573,7 +4749,12 @@ pub fn lint_selecting(
     // Another file of the workspace may define it too: with lib.q's
     // `true:1b` loaded, q 5 runs `{[a] $[a;true;false]}` (#372).
     let elsewhere = |key: &str| ws.defined_elsewhere(key, &Default::default());
+    // Nor can a file that writes globals it does not name say the name is
+    // undefined: q 5 runs `\l lib.q` (`true:0b`) then `$[true;`yes;`no]` to
+    // `no, which the fix to 1b would turn to `yes (#750).
+    let opaque = semantics::opaque(code, &v.comments, source);
     let bare = unsymbolled(code);
+
     for m in
         re!(r"\b(return|else|elif|elseif|true|false|None|break|continue)\b").captures_iter(&bare)
     {
@@ -4582,7 +4763,8 @@ pub fn lint_selecting(
         let after = code[whole.end()..].trim_start();
         let line = &code[code[..whole.start()].rfind('\n').map_or(0, |i| i + 1)..whole.start()];
         let in_query = re!(r"\b(?:select|exec|update|delete)\b").is_match(line);
-        if !boundary(code, whole.start())
+        if opaque
+            || !boundary(code, whole.start())
             || after.starts_with('.')
             || declared.contains(name)
             || in_query
@@ -4840,13 +5022,15 @@ pub fn lint_selecting(
     // `ss["abc";""]` and `ssr["abc";"";"b"]` checked. The pattern is a string,
     // which is blank in this view, so the check reads the source at the same
     // offsets - a pair of quotes with nothing between them.
-    for m in re!(r"\b(ss|ssr)\s*\[").find_iter(code) {
+    // Only a space or tab may come between: q refuses any other blank with
+    // 'char, and a multi-byte one would leave the name's slice mid-character.
+    for m in re!(r"\b(ss|ssr)[ \t]*\[").find_iter(code) {
         let open = m.end() - 1;
         let Some(close) = matching(code, open, b'[', b']') else {
             continue;
         };
         let parts = slots(&code[open + 1..close - 1]);
-        if !complete_call(&v.comments, open, &parts, &m.as_str()[..3] == "ssr") {
+        if !complete_call(&v.comments, open, &parts, m.as_str().starts_with("ssr")) {
             continue;
         }
         // The second slot's span in the source.

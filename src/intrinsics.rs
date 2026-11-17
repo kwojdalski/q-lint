@@ -23,9 +23,17 @@ struct Literal {
     short_integer: bool,
 }
 fn literal(s: &str) -> Option<Literal> {
-    let s = s.trim();
-    if s.starts_with('(') && matching(s, 0, b'(', b')') == Some(s.len()) {
-        return literal(&s[1..s.len() - 1]);
+    let mut s = s.trim();
+    // Stripped in a loop, as deep as q parses: one call per level overflows
+    // the stack (#703).
+    for depth in 0.. {
+        if !(s.starts_with('(') && matching(s, 0, b'(', b')') == Some(s.len())) {
+            break;
+        }
+        if depth == crate::MAX_NESTING {
+            return None;
+        }
+        s = s[1..s.len() - 1].trim();
     }
     // Any blank parts `enlist` from its argument; q 5 reads a tab as a space.
     if let Some(rest) = s
@@ -206,6 +214,12 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
         // A `/` straight after it is not a comment - those are blank in
         // `code` - but an iterator: `asc 3/x` sorts `3/x` (#194).
         if !crate::operand_ends(code, whole.end()) {
+            continue;
+        }
+        // After `from` a `where` opens the query's where phrase, which takes
+        // a boolean atom: q 5 runs `select from t where 0b` (#737). Before
+        // `from` it is still the function - `select c where e from t`.
+        if name.as_str() == "where" && crate::query_clause(code, name.start()) == Some("from") {
             continue;
         }
         let arg = call.get(2).unwrap();
