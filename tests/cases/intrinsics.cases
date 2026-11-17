@@ -688,6 +688,12 @@ s:til 1.5
 .q.sum:{[a;b] a*b}
 t:sum[2;3]
 
+=== clean profile: general | so does one it redefines with set or amend (q 5: til 1.5 is 2.5, asc 1 is 1) (#720)
+@[`.q;`til;:;{x+1}]
+`.q.asc set {x}
+r1:til 1.5
+r2:asc 1
+
 === QA010 profile: general | but not before the file redefines it (#440)
 r:sum[2;3]
 .q.sum:{[a;b] a*b}

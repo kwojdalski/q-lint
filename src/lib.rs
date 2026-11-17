@@ -2930,11 +2930,18 @@ pub(crate) fn dotq_definitions(code: &str) -> Vec<(String, usize)> {
         }
         b.len()
     };
-    re!(r"\.q\.([A-Za-z][A-Za-z0-9_]*)\s*:")
-        .captures_iter(code)
-        .filter(|c| boundary(code, c.get(0).unwrap().start()))
-        .map(|c| (c[1].to_string(), statement_end(c.get(0).unwrap().start())))
-        .collect()
+    // `` `.q.foo set f `` and `` @[`.q;`foo;:;f] `` define it just the same:
+    // q 5 then runs `til 1.5` against the new `til` (#720).
+    [
+        re!(r"\.q\.([A-Za-z][A-Za-z0-9_]*)\s*:"),
+        re!(r"`\.q\.([A-Za-z][A-Za-z0-9_]*)\s*set\b"),
+        re!(r"@\[\s*`\.q\s*;\s*`([A-Za-z][A-Za-z0-9_]*)\s*;\s*:\s*;"),
+    ]
+    .into_iter()
+    .flat_map(|pattern| pattern.captures_iter(code))
+    .filter(|c| boundary(code, c.get(0).unwrap().start()))
+    .map(|c| (c[1].to_string(), statement_end(c.get(0).unwrap().start())))
+    .collect()
 }
 /// Whether a compound or `::` assignment has a value to assign: q 5 refuses
 /// `{sum::x}` and `{count,:x}` with 'assign, but `{a:sum::}`, `(sum::)x`,
