@@ -1294,9 +1294,10 @@ fn juxtaposed_derived(
         let Some(start) = derived_operand(&view, c, &opener, m.start()) else {
             continue;
         };
-        // After a `q)` prompt too (#582).
+        // Not on a system command, but in a `\t` line's expression (#583)
+        // and after a `q)` prompt (#582).
         let line_start = view[..start].rfind('\n').map_or(0, |p| p + 1);
-        if b[line_start] == b'\\' {
+        if crate::system_command(&source[line_start..]) {
             continue;
         }
         let line_start = line_start + expression_start(&source[line_start..]);

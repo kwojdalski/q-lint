@@ -1333,3 +1333,8 @@ q)#a
 === QE009 profile: general | a derived function at the start of a q)-prefixed line (#582; q 5: '/)
 a:1 2
 q)+/a
+
+=== QE009 profile: general | in the expression a \t line times (#583; q 5: '/)
+\t r:+/1 2
+v:1 2
+\t:10 +/v
