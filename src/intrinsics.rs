@@ -370,7 +370,7 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
     // A keyword the file redefines in `.q` calls the new definition from
     // there on: after q 5 `.q.ssr:{[a;b;c;d] a}`, `ssr[1;2;3;4]` is 1, and
     // after `.q.til:{x+1}`, `til 1.5` is 2.5 (#440).
-    let dotq = crate::dotq_definitions(code);
+    let dotq = crate::dotq_definitions(code, source);
     let redefined = |name: &str, at: usize| dotq.iter().any(|(n, from)| n == name && at > *from);
     // QA010 for the keywords that are not in BUILTINS: arity from calling
     // each with one more argument than it takes, which q 5 refuses with

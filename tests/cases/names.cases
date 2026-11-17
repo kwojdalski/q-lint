@@ -1286,3 +1286,17 @@ r2:{[1.] 1}
 r3:{[.5] 1}
 r4:{[-.5] 1}
 r5:{[1 2] 1}
+
+=== QF001 QF003 profile: general | a definition under \d .q reserves the name as .q.foo: does (#589; q 5: g 1 is 'nyi, h is 'assign)
+\d .q
+foo:{x+1}
+\d .
+g:{[foo] foo}
+h:{foo:1; foo}
+
+=== clean profile: general | while a definition under another context reserves nothing (#589)
+\d .r
+foo:{x+1}
+\d .
+g:{[foo] foo}
+h:{foo:1; foo}

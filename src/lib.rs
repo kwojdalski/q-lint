@@ -2942,7 +2942,10 @@ fn like_patterns<'a>(code: &str, literals: &'a str, at: usize) -> Vec<&'a str> {
 /// does `count` - but only in what it parses afterwards: the statement
 /// holding the assignment, lambda and indented lines included, was parsed
 /// before it ran, so `g:{.q.foo:{x+1}; foo:2; foo}` still runs (#697).
-pub(crate) fn dotq_definitions(code: &str) -> Vec<(String, usize)> {
+/// Under `\d .q` a plain `foo:` at the start of a line is the same
+/// assignment: q 5 refuses `{[foo] foo}` after `\d .q` / `foo:{x+1}` /
+/// `\d .` with 'nyi (#589).
+pub(crate) fn dotq_definitions(code: &str, raw: &str) -> Vec<(String, usize)> {
     let b = code.as_bytes();
     let statement_end = |from: usize| {
         let mut depth = 0i32;
@@ -2961,11 +2964,26 @@ pub(crate) fn dotq_definitions(code: &str) -> Vec<(String, usize)> {
         }
         b.len()
     };
-    re!(r"\.q\.([A-Za-z][A-Za-z0-9_]*)\s*:")
+    let mut out: Vec<(String, usize)> = re!(r"\.q\.([A-Za-z][A-Za-z0-9_]*)\s*:")
         .captures_iter(code)
         .filter(|c| boundary(code, c.get(0).unwrap().start()))
         .map(|c| (c[1].to_string(), statement_end(c.get(0).unwrap().start())))
-        .collect()
+        .collect();
+    let (mut namespace, mut offset) = (String::new(), 0);
+    for line in code.split_inclusive('\n') {
+        if let Some(ns) = semantics::opens(line, &raw[offset..offset + line.len()]) {
+            namespace = ns;
+        } else if namespace == ".q"
+            && let Some(c) = re!(r"^[;\s]*([A-Za-z][A-Za-z0-9_]*)\s*:").captures(line)
+            && line.starts_with(|c: char| c.is_ascii_alphabetic() || c == ';')
+        {
+            let at = offset + c.get(1).unwrap().start();
+            out.push((c[1].to_string(), statement_end(at)));
+        }
+        offset += line.len();
+    }
+    out.sort_by_key(|d| d.1);
+    out
 }
 /// Whether a compound or `::` assignment has a value to assign: q 5 refuses
 /// `{sum::x}` and `{count,:x}` with 'assign, but `{a:sum::}`, `(sum::)x`,
@@ -3512,7 +3530,7 @@ pub fn lint_selecting(
     // A name the file adds to `.q` is reserved from there on, as a builtin
     // is: after q 5 `.q.foo:{x+1}`, `{[x;foo] x}[5;6]` is 'nyi and
     // `{foo:1;0}` and `foo:1` are 'assign (#434).
-    let dotq = dotq_definitions(code);
+    let dotq = dotq_definitions(code, source);
     let reserved = |name: &str, at: usize| {
         RESERVED.iter().any(|n| n == name) || dotq.iter().any(|(n, from)| n == name && at > *from)
     };
