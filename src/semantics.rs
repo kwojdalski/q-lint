@@ -1388,6 +1388,59 @@ pub(crate) fn unnamed_writes(code: &str, comments: &str) -> Vec<(usize, bool)> {
             found.push((m.start(), context));
         }
     }
+    // A `set` into a name computed at run time - a name holding a symbol, a
+    // lambda's parameter, a cast: q 5 `n:`a; a:1; n set 1 2 3; a 0` is 1.
+    // Not into a literal symbol, which names what it writes, nor into a file
+    // path, which writes no global.
+    for m in re!(r"\bset\b'?").find_iter(code) {
+        if !boundary(code, m.start()) {
+            continue;
+        }
+        let after = code[m.end()..].trim_start();
+        let target = if let Some(args) = after.strip_prefix('[') {
+            let open = code.len() - args.len() - 1;
+            let close = matching(code, open, b'[', b']').map_or(code.len(), |c| c - 1);
+            let inner = &code[open + 1..close];
+            crate::slots(inner).first().map_or("", |s| s.trim())
+        } else {
+            let before = code[..m.start()].trim_end();
+            match before.as_bytes().last() {
+                Some(&close @ (b')' | b']')) => {
+                    let open = if close == b')' { b'(' } else { b'[' };
+                    let mut depth = 0i32;
+                    let mut at = before.len();
+                    while at > 0 {
+                        at -= 1;
+                        match before.as_bytes()[at] {
+                            c if c == close => depth += 1,
+                            c if c == open => {
+                                depth -= 1;
+                                if depth == 0 {
+                                    break;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    // An indexed name, `.Q.dd[d;`t]`, is one noun with its brackets.
+                    let name = before[..at]
+                        .trim_end_matches(|c: char| c.is_ascii_alphanumeric() || "_.".contains(c));
+                    &before[if close == b']' { name.len() } else { at }..]
+                }
+                _ => {
+                    let word = before.trim_end_matches(|c: char| {
+                        c.is_ascii_alphanumeric() || "_.`:/".contains(c)
+                    });
+                    &before[word.len()..]
+                }
+            }
+        };
+        let literal = re!(r"^\(?\s*(?:`[A-Za-z0-9_.:/]*\s*;?\s*)+\)?$").is_match(target);
+        let file = target.contains("`:") || target.contains("hsym") || target.starts_with(".Q.");
+        if !literal && !file {
+            found.push((m.start(), false));
+        }
+    }
     found
 }
 

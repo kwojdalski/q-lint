@@ -903,3 +903,32 @@ r:n 0
 a:1
 system "cd /tmp"
 r:a 0
+
+=== clean profile: general | QT022, QA012 and QF020: a set into a computed name may write any global (#748; q 5: (1;3;+(,`d)!,3 4))
+n:`a
+a:1
+n set 1 2 3
+r:a 0
+f:{x}
+m:`f
+m set {x+y}
+s:f[1;2]
+t:([]c:1 2)
+{x set y}[`t;([]c:1 2;d:3 4)]
+u:select d from t
+
+=== clean profile: general | QF015 and QF010: and may define a name the file never spells out (#748; q 5: 1, and f 1 is 6)
+(`$"true") set 1b
+r:$[true;1;0]
+n:`x
+n set 5
+f:{[b] b+x}
+
+=== QT022 profile: general | while a set into a literal name, a file path or a parenthesised symbol leaves the others known (#748)
+a:1
+`b set 2
+(`c) set 3
+`:db/t/ set ([]c:1 2)
+(hsym `$"db/u/") set ([]c:1 2)
+.Q.dd[`:db;`v] set ([]c:1 2)
+r:a 0
