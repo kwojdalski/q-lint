@@ -679,3 +679,19 @@ fn a_k_line_defines_the_global_it_assigns() {
     let g = graph(&[("x.q", "k)lim:100\n"), ("y.q", "r:lim\n")], false);
     assert_eq!(deps(&g, "y.q"), ["x.q"]);
 }
+
+#[test]
+fn a_relative_load_is_tried_against_the_process_directory_first() {
+    // q 5, run from the root: sub/a.q's `\l b.q` loads the root's b.q, not
+    // sub/b.q beside it (#529).
+    let g = graph(
+        &[
+            ("b.q", "who:`root\n"),
+            ("sub/b.q", "who:`sub\n"),
+            ("sub/a.q", "\\l b.q\n"),
+        ],
+        false,
+    );
+    let deps: Vec<_> = g["sub/a.q"].dependencies.iter().collect();
+    assert_eq!(deps, [Path::new("/no-such-root/b.q")]);
+}

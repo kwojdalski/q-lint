@@ -28,9 +28,10 @@ pub struct Node {
 
 /// The graph of `files`, each an absolute path and its source. `symbols`
 /// counts a qualified symbol literal as a read of the name it spells. `cwd`
-/// is one more directory a relative `\l` path is tried against, after the
+/// is the first directory a relative `\l` path is tried against, before the
 /// loading file's own directory and its ancestors: q resolves it against
-/// the process's directory, which the source does not say.
+/// the process's directory and nowhere else, and the source does not say
+/// which directory that is.
 pub fn build(files: &[(PathBuf, String)], symbols: bool, cwd: &Path) -> BTreeMap<PathBuf, Node> {
     let mut definers: HashMap<String, Vec<usize>> = HashMap::new();
     let mut reads = Vec::with_capacity(files.len());
@@ -151,16 +152,17 @@ fn resolve<'a>(
     }
 }
 
-/// Where `\l load` in the file at `from` might lead, in the order tried: the
-/// file's own directory, each directory above it, then `cwd`.
+/// Where `\l load` in the file at `from` might lead, in the order tried:
+/// `cwd`, then the file's own directory and each directory above it. q 5
+/// run from a directory holding `b.q` and `sub/b.q` loads the first for
+/// `sub/a.q`'s `\l b.q` (#529).
 fn load_targets(from: &Path, load: &str, cwd: &Path) -> Vec<PathBuf> {
     let load = Path::new(load);
     if load.is_absolute() {
         return vec![normal(load)];
     }
-    from.ancestors()
-        .skip(1)
-        .chain(std::iter::once(cwd))
+    std::iter::once(cwd)
+        .chain(from.ancestors().skip(1))
         .map(|dir| normal(&dir.join(load)))
         .collect()
 }
