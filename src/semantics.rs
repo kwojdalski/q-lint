@@ -3008,7 +3008,11 @@ pub fn check(
                 .captures(before)
                 .is_some_and(|m| {
                     let word = &m[1];
-                    matches!(word, "select" | "exec" | "update" | "by" | "from" | "where")
+                    // `by`, `from` and `where` only inside a query: outside
+                    // one `where` is a unary, and `sum f x` is not reported.
+                    matches!(word, "select" | "exec" | "update")
+                        || matches!(word, "by" | "from" | "where")
+                            && queries.iter().any(|&(lo, hi, _)| (lo..hi).contains(&at))
                         || INFIX.contains(&word)
                 });
             let head = match before.chars().next_back() {

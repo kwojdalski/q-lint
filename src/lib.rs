@@ -6070,7 +6070,7 @@ pub fn lint_selecting(
                 add(
                     at,
                     "QF004",
-                    format!("Root-level assignment to `{name}`: q refuses it ('assign)"),
+                    format!("Root-level assignment to `{name}`: q refuses it"),
                 );
             }
         }
@@ -6797,10 +6797,7 @@ pub fn lint_selecting(
                     add(
                         offset + at,
                         "QF004",
-                        format!(
-                            "Root-level assignment to `{}`: q refuses it ('assign)",
-                            &m[1]
-                        ),
+                        format!("Root-level assignment to `{}`: q refuses it", &m[1]),
                     );
                 }
             }

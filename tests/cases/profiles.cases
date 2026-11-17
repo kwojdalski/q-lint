@@ -148,6 +148,11 @@ a:select g from t
 b:select s by g from t
 c:select from t where g in 1
 
+=== clean profile: uqf | outside a query `where` is a unary, whose argument this rule leaves alone as it does `sum f x` (#780)
+g:{x>1}
+b:1 2 3
+r:b where g b
+
 === QP006 profile: uqf | an hsym path argument whose `/` is part of the symbol, not over (#388; q 5: f `:db/t is f[`:db/t])
 f:{count x}
 n:f `:db/t
