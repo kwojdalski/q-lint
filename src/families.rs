@@ -116,16 +116,24 @@ fn query_injection(path: &str, source: &str, code: &str, comments: &str, out: &m
             }
             b == b',' && depth == 0
         });
-        // A name outside any `$[...]`: a conditional that only chooses
-        // between string constants - KX's tick clog.q builds handler source
-        // that way - splices in no data, whatever its condition reads.
+        // A name outside any `$[...]`, or in one of its branches: a
+        // conditional that only chooses between string constants - KX's tick
+        // clog.q builds handler source that way - splices in no data,
+        // whatever its condition reads, but `$[x;y;"a"]` splices `y` (#653).
         let mut unconditional = masked.as_bytes().to_vec();
+        let mut chosen = false;
         for (at, _) in masked.match_indices("$[") {
             if let Some(close) = matching(masked, at + 1, b'[', b']') {
                 unconditional[at..close].fill(b' ');
+                let parts = slots(&masked[at + 2..close - 1]);
+                let last = parts.len() - 1;
+                chosen |= parts.iter().enumerate().any(|(i, part)| {
+                    (i % 2 == 1 || i == last && last > 0)
+                        && part.bytes().any(|b| b.is_ascii_alphabetic())
+                });
             }
         }
-        let spliced = unconditional.iter().any(u8::is_ascii_alphabetic);
+        let spliced = chosen || unconditional.iter().any(u8::is_ascii_alphabetic);
         // The query text itself has to be one of the joined pieces, not a
         // branch of a conditional: there it is one of several constants.
         let mut top = text.as_bytes().to_vec();

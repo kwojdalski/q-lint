@@ -13,6 +13,10 @@ q:{[s] value s}
 === clean | a conditional choosing between constant queries splices no data
 h:value $[a;"{select from x}";"{x}"],"y",b
 
+=== QX001 | while a branch that is a value splices it (#653)
+f:{[x;y] value "select from t where s=",$[x;y;"`a"]}
+g:{[x;y] value "select from t where s=",$[x;"`a";y]}
+
 === clean | a string that is not a query
 r:value "1+",string 2
 
