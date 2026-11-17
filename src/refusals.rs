@@ -1145,8 +1145,9 @@ fn juxtaposed_derived(
         // A `-` before an operand is one too: `+/-x` holds the same derived
         // function as `+/-1`, and q 5 refuses both with '/.
         let next = continued(&view[m.end()..]);
+        // A lambda is a noun too: q 5 refuses `+/{x}` with '/ (#569).
         let operand = next
-            .starts_with(|ch: char| ch.is_ascii_alphanumeric() || "`(\"".contains(ch))
+            .starts_with(|ch: char| ch.is_ascii_alphanumeric() || "`(\"{".contains(ch))
             || bracket_form(next)
             || ((next.starts_with('-') || next.starts_with('.'))
                 && next[1..].starts_with(|ch: char| ch.is_ascii_digit()))

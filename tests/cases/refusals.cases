@@ -1073,3 +1073,12 @@ e:count'?[t;();()]
 v:1 2
 a:v,@[v;0;neg]
 b:0+/@[v;0;neg]
+
+=== QE009 profile: general | a lambda operand (q 5: '/ and ''; #569)
+v:1 2
+a:+/{x}
+b:count'{x}
+
+=== clean profile: general | applied infix it is fine (#569)
+v:1 2
+a:v,'{x}
