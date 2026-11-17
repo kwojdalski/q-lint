@@ -1322,6 +1322,59 @@ fn dynamic(raw: &str, view: &str, call_time: &[(usize, &'static str)]) -> Vec<cr
     found
 }
 
+/// Whether the file writes globals its text does not name, so that nothing
+/// it assigns by name can be taken as known: a `\l`, `eval`, a `system`
+/// command that loads a script or changes `\d`, and `value` or `get` of a
+/// string. `code` has strings and comments blank, `comments` only comments.
+///
+/// Not every `value` is evaluation - `value d` reads a dictionary and
+/// `value f` decomposes a lambda - so `value` counts only with a string in
+/// its statement, read from a file (`value each read0 f`), or held in a name
+/// the file binds to a string (q 5: `s:"a:1 2 3"; value s; a 0` is 1). A
+/// `system` command counts unless it is a literal that neither loads nor
+/// changes context, however it is applied: `system ("l ",f)`, `system c`,
+/// `system["l f"]`, `system@"l f"` and `@[system;"l f";h]` all load.
+pub(crate) fn opaque(code: &str, comments: &str) -> bool {
+    if re!(r"(?m)^\\l\b").is_match(code) {
+        return true;
+    }
+    let strings: HashSet<&str> = re!(r#"(\.?[A-Za-z][A-Za-z0-9_.]*)\s*::?\s*""#)
+        .captures_iter(comments)
+        .filter(|m| boundary(comments, m.get(0).unwrap().start()))
+        .map(|m| m.get(1).unwrap().as_str())
+        .collect();
+    re!(r"\b(?:eval|value|get|system)\b")
+        .find_iter(code)
+        .filter(|m| boundary(code, m.start()))
+        .any(|m| {
+            // Strings kept, comments blanked: a quote in a comment after
+            // `value d` is not a string to evaluate (#258).
+            let rest = &comments[m.end()..];
+            // The argument, past what only hands it on: brackets, `@`, the
+            // slots of a trap, and `each`, `enlist` and `raze`.
+            let skip = re!(r"^(?:[\s\[\]()@;']|\b(?:each|peach|enlist|raze)\b)*");
+            let arg = |text: &'_ str| text[skip.find(text).map_or(0, |p| p.end())..].to_string();
+            let statement = &rest[..rest.find([';', '\n']).unwrap_or(rest.len())];
+            let name = |a: &str| {
+                re!(r"^\.?[A-Za-z][A-Za-z0-9_.]*")
+                    .find(a)
+                    .is_some_and(|n| n.as_str() == "read0" || strings.contains(n.as_str()))
+            };
+            match m.as_str() {
+                "eval" => true,
+                "system" => {
+                    let a = arg(rest);
+                    !a.starts_with('"') || re!(r#"^"[ld]\b"#).is_match(&a)
+                }
+                "value" => statement.contains('"') || name(&arg(statement)),
+                _ => {
+                    let a = arg(statement);
+                    a.starts_with('"') || name(&a)
+                }
+            }
+        })
+}
+
 pub fn check(
     path: &str,
     code: &str,
@@ -1471,43 +1524,15 @@ pub fn check(
     }
     glyph_brackets(path, raw, code, &mut out);
     // Dynamic evaluation is where the global-name checks stop being
-    // reliable: `\l`, `eval`, `system "l ..."` and `value` on a string can
-    // all define globals this file never spells out, and QF005, QF010 and
-    // QT002 would report a name as undefined that is not. That limit is
-    // worth a finding of its own, so a reader knows the silence after it is
-    // a skipped analysis, not a clean one. It is only those checks that are
-    // skipped: the local-scope rule QF014 does not depend on what globals
-    // exist, and runs regardless. Nor is every `value` dynamic - `value d`
-    // reads a dictionary and `value f` decomposes a lambda; only a string
-    // in the statement makes it evaluation. And `` `name set v `` defines
-    // a name the file does spell out: it counts as an assignment below
-    // rather than as a reason to stop.
-    let mut dynamic = re!(r"(?m)^\\l\b")
-        .find(code)
-        .map(|m| (m.start(), "\\l".to_string()));
-    if dynamic.is_none() {
-        dynamic = re!(r"\b(?:eval|value|system)\b")
-            .find_iter(code)
-            .filter(|m| boundary(code, m.start()))
-            .find(|m| {
-                // Strings kept, comments blanked: a quote in a comment after
-                // `value d` is not a string to evaluate (#258).
-                let rest = &comments[m.end()..];
-                let statement = &rest[..rest.find([';', '\n']).unwrap_or(rest.len())];
-                match m.as_str() {
-                    "eval" => true,
-                    "value" => statement.contains('"'),
-                    _ => re!(r#"^\s*"[ld]\b"#).is_match(statement),
-                }
-            })
-            .map(|m| (m.start(), m.as_str().to_string()));
-    }
-    // The file using `value` or `eval` still turns the undefined-global checks
-    // off - it just is not a finding. Nothing is wrong with the line, and a
-    // warning on every file that builds a query dynamically buries the ones
-    // that mean something. What the linter did not check belongs in a report
-    // about the run, not in the margin next to working code.
-    let dynamic = dynamic.is_some();
+    // reliable: a file that writes globals it never spells out may define
+    // any name, and QF005, QF010 and QT002 would report one as undefined
+    // that is not. It is only those checks that are skipped: the local-scope
+    // rule QF014 does not depend on what globals exist, and runs regardless.
+    // Nor is it a finding: nothing is wrong with the line, and a warning on
+    // every file that builds a query dynamically buries the ones that mean
+    // something. `` `name set v `` defines a name the file does spell out:
+    // it counts as an assignment below rather than as a reason to stop.
+    let dynamic = opaque(code, comments);
     let assignment = re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*:(:)?");
     let (scopes, namespaces) = scopes(code, raw);
     let ns_at = |at| {

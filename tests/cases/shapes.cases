@@ -873,3 +873,33 @@ r:a -b
 === clean | while minus before a digit is a negative literal, so a -1 indexes (#476; q 5: 0N)
 a:1 2 3
 r:a -1
+
+=== clean profile: general | QT022: a string evaluated from a name or a file is evaluation too (#749; q 5: each a 0 is 1)
+a:1
+s:"a:1 2 3"
+value s
+r:a 0
+b:1
+get s
+u:b 0
+c:1
+value each read0 `:defs.q
+w:c 0
+
+=== clean profile: general | QT022: a system command not written as a literal may load a script (#749; q 5: a 0 is 1)
+a:1
+f:"/tmp/zz_l1.q"
+system ("l ",f)
+r:a 0
+
+=== clean profile: general | QT022: a load by system's bracket form, @ or a trap is still a load (#755; q 5: n 0 is 1)
+n:5
+@[system;"l b.q";{-1 x}]
+system["l b.q"]
+system@"l b.q"
+r:n 0
+
+=== QT022 profile: general | while a literal command that neither loads nor changes context defines nothing (#755)
+a:1
+system "cd /tmp"
+r:a 0
