@@ -208,6 +208,16 @@ r1:select from t where a>1; v:a=1 2 3
 r2:select from t where a>1; ok:a~3 2 1
 r3:select from t where a>1; w:(a=3) and 101b
 
+=== QB008 | a filter after a where function on the same line is still read (#702; q 5: 'length)
+t:([]a:1 2 3;c:1 2 3)
+b:3 2 1
+s:where b=1 2 3; u:select from t where c=1 2
+
+=== QB005 | and so is a match in it (#702)
+t:([]a:1 2 3)
+b:3 2 1
+n:where b~a; r:select from t where a~b
+
 === clean | in is the membership operator
 select from t where px in 1 2
 

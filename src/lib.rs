@@ -6358,13 +6358,21 @@ pub fn lint_selecting(
                     search = m.get(3).unwrap().start();
                 }
             }
-            if let Some(w) = re!(r"\bwhere\b").find(line) {
+            // Every `where` on the line, but not one inside a phrase already
+            // read: `s:where b=1 2 3; u:select from t where c=1 2` has its
+            // filter in the second (#702).
+            let mut read_to = 0;
+            for w in re!(r"\bwhere\b").find_iter(line) {
+                if w.start() < read_to {
+                    continue;
+                }
                 // To the end of the query's statement: after a `;` is another
                 // statement, not more of the filter (#344). Read in `query`,
                 // which runs on to where the statement's brackets close: in a
                 // lambda each line is a group of its own, and a filter after
                 // a `where` that ends one is on the next (#679).
-                let phrase = flat_filter(&query[w.end()..phrase_end(query, w.end())]);
+                read_to = phrase_end(query, w.end());
+                let phrase = flat_filter(&query[w.end()..read_to]);
                 // `~` matches whole operands, so a filter gets one boolean for
                 // the entire table where it wanted one per row: a 'type error
                 // against a column, or worse, a single-row result against a
