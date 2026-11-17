@@ -4036,20 +4036,23 @@ pub fn lint_selecting(
     // two statements, not a subtraction - the commonest shape in public q -
     // but an indented line continues it, on either side of the operator and
     // past blank and comment lines (#224, #688).
-    for m in
-        // `&` and `|` are min and max, and 'type on a symbol too, as are the
-        // word operators (q 5: `a&`b, `a mod 2, 2 xexp `a). Not `^`: a
-        // symbol fills a symbol list (`none^s).
-        // The null symbol, a lone backtick, is one too: q 5 `` ` + 1 `` is 'type.
-        re!(concat!(
+    // `&` and `|` are min and max, and 'type on a symbol too, as are the
+    // word operators (q 5: `a&`b, `a mod 2, 2 xexp `a). Not `^`: a
+    // symbol fills a symbol list (`none^s).
+    // The null symbol, a lone backtick, is one too: q 5 `` ` + 1 `` is 'type.
+    let arithmetic = re!(concat!(
             r"(?:`(?:[A-Za-z][A-Za-z0-9_.]*)?)+(?:",
             blank!(),
             r"*[+\-*%&|]|",
             blank!(),
             r"+(?:mod|div|xexp|xlog|and|or)[ \t])|(?:[+\-*%&|][ \t]*(?:(?:\r?\n[ \t]*)*\r?\n[ \t]+)?|[ \t](?:mod|div|xexp|xlog|and|or)(?:[ \t]*(?:\r?\n[ \t]*)*\r?\n[ \t]+|[ \t]+))(?:`(?:[A-Za-z][A-Za-z0-9_.]*)?)+"
-        ))
-        .find_iter(code)
-    {
+    ));
+    // Searched one match at a time: a symbol rejected as the right operand
+    // may still be the left one of the operator after it - `` 1+`a+1 `` is
+    // `` 1+(`a+1) `` - so the search resumes at that symbol (#721).
+    let mut from = 0;
+    while let Some(m) = arithmetic.find_at(code, from) {
+        from = m.end();
         let at = m.start();
         // `like `a*` is a glob, not a product; QB007 owns that one.
         if code[..at].trim_end().ends_with("like") {
@@ -4076,6 +4079,7 @@ pub fn lint_selecting(
         // adds to a dictionary. On the left it is the operand whatever
         // follows, since everything to the right is evaluated first.
         if !m.as_str().starts_with('`') && !operand_ends(code, m.end()) {
+            from = m.start() + m.as_str().find('`').unwrap();
             continue;
         }
         // Unless what is on its right ends in an operator: that is a
