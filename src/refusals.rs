@@ -1499,8 +1499,10 @@ fn numbers(
     // An exponent's sign is part of its number: `1.5e-3` is one float.
     // A token that starts inside a name - the `1` of `x1:1.5j` - is passed
     // over one character at a time, so the literal after it is still read.
+    // A colon joins only a digit: before a name it is the I/O verb, and q 5
+    // parses `x 0:y 1` as `(0:;`x;(`y;1))` (#665).
     let tokens: Vec<regex::Match> =
-        crate::boundary_captures(re!(r"\d(?:[eE][+-]\d|[0-9A-Za-z.:])*"), unsym, code)
+        crate::boundary_captures(re!(r"\d(?:[eE][+-]\d|:\d|[0-9A-Za-z.])*"), unsym, code)
             .into_iter()
             .map(|c| c.get(0).unwrap())
             .filter(|m| !command_argument(source, m.start()))
