@@ -509,6 +509,28 @@ d:1.5E-3
 e:1Ef
 f:1 2E5
 
+=== clean profile: general | a vector continued on an indented line is one literal, past a blank line too (q 5: each ~ its one-line form, #681)
+c:1E5
+  2.5
+b:9223372036854775808
+  1.5
+a:1.5j
+  2c
+d:-2000.01.01
+
+  0Wn
+
+=== clean profile: general | but a symbol or a string at column 0 starts a statement of its own (q 5: each line runs)
+a:10 20 30
+y:1i
+`a 2
+x:1i
+"ab" 1
+
+=== QE010 profile: general | and its suffix rule holds across the break (q 5: x:1i then   2 is '1i, #681)
+x:1i
+  2
+
 === clean profile: general | an uppercase exponent where the number is float anyway, and lowercase (#383; q 5: each parses)
 a:1.5E3
 b:1E5f

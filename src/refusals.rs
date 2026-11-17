@@ -20,7 +20,7 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
     monadic_glyph(path, source, code, comments, &mut out);
     juxtaposed_derived(path, source, code, comments, &mut out);
     keyword_each(path, source, &unsym, &mut out);
-    numbers(path, source, code, &unsym, &mut out);
+    numbers(path, source, code, comments, &unsym, &mut out);
     out
 }
 
@@ -1338,7 +1338,14 @@ fn null_literal(text: &str, not_last: bool, negative: bool) -> Option<String> {
 /// vector of atoms is not a vector at all - `1b 0b` parses, as two atoms -
 /// and `0N 1`, `3 4i`, `1e5` and `2023.01.01` are fine - though `1E5`,
 /// with its exponent in upper case, is not.
-fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Finding>) {
+fn numbers(
+    path: &str,
+    source: &str,
+    code: &str,
+    comments: &str,
+    unsym: &str,
+    out: &mut Vec<Finding>,
+) {
     // An exponent's sign is part of its number: `1.5e-3` is one float.
     // A token that starts inside a name - the `1` of `x1:1.5j` - is passed
     // over one character at a time, so the literal after it is still read.
@@ -1353,13 +1360,15 @@ fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Find
     };
     let mut i = 0;
     while i < tokens.len() {
-        // A run of items separated by spaces only is one vector literal.
+        // A run of items separated by blanks only is one vector literal - a
+        // line break too, into the indented line that continues it: q 5
+        // reads `c:1E5`, `  2.5` as `1E5 2.5` (#681). Read in `comments`,
+        // where a symbol or a string at column 0 is not blanks: `1:-1` over
+        // `` `:f 0:x ``, or `0:x` over `"\t" 0:x`, is two statements.
         let mut j = i;
         while j + 1 < tokens.len()
-            && unsym[tokens[j].end()..tokens[j + 1].start()]
-                .bytes()
-                .all(|b| b == b' ' || b == b'\t')
-            && tokens[j].end() < tokens[j + 1].start()
+            && re!(concat!("^", blank!(), "+$"))
+                .is_match(&comments[tokens[j].end()..tokens[j + 1].start()])
         {
             j += 1;
         }
