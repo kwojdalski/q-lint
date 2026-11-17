@@ -909,8 +909,16 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
         // A lambda is a noun, and so is a negative literal: q 5 refuses
         // `#{x}`, `,-1` and `--1` with the first glyph (#438). `- -1` is
         // refused too, but with ' .
+        // A glyph applied with brackets is a noun: q 5 refuses `*$[c;a;b]`
+        // with '* (#568). Not the second half of one operator, `<=[1;2]`.
+        let pair = !spaced
+            && matches!(
+                (g, next.as_bytes().first()),
+                (b'<', Some(b'=' | b'>')) | (b'>', Some(b'='))
+            );
         let operand = colon
             || next.starts_with(|c: char| c.is_ascii_alphabetic() || "`(\"{".contains(c))
+            || (bracket_form(next) && !pair)
             || (re!(r"^-\.?\d").is_match(next) && !(g == b'-' && spaced))
             || re!(r"^\.[A-Za-z]").is_match(next)
             || (next.starts_with(|c: char| c.is_ascii_digit() || c == '.')
@@ -971,6 +979,13 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
 }
 
 const GLYPHS: &[u8] = b"+-*%!#$&|^=<>~,@?";
+
+/// Whether `next` opens a glyph applied with brackets, `$[c;a;b]`,
+/// `@[v;0;neg]`, `.[f;x]` or `?[t;();()]`: a value, so an operand (#568).
+fn bracket_form(next: &str) -> bool {
+    let b = next.as_bytes();
+    b.len() > 1 && (GLYPHS.contains(&b[0]) || b[0] == b'.' || b[0] == b'_') && b[1] == b'['
+}
 
 /// What follows a glyph, past the blanks before it - and past a line break
 /// into an indented line, which q reads as the same statement: `a:-` with
@@ -1132,6 +1147,7 @@ fn juxtaposed_derived(
         let next = continued(&view[m.end()..]);
         let operand = next
             .starts_with(|ch: char| ch.is_ascii_alphanumeric() || "`(\"".contains(ch))
+            || bracket_form(next)
             || ((next.starts_with('-') || next.starts_with('.'))
                 && next[1..].starts_with(|ch: char| ch.is_ascii_digit()))
             || (next.starts_with('-')

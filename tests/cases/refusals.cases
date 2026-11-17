@@ -1060,3 +1060,16 @@ d:f2 . +/v
 v:1 2;a_:3;f:{x}
 b:a_-v
 c:1.-v
+
+=== QE008 QE009 profile: general | an operand that is a glyph applied with brackets (q 5: '*, '/, ' , '/, ''; #568)
+v:1 2;f1:{x};t:([]a:1 2)
+a:*$[1b;v;v]
+b:+/@[v;0;neg]
+c:- @[v;0;neg]
+d:f1/$[1b;v;v]
+e:count'?[t;();()]
+
+=== clean profile: general | infix before one is fine (#568)
+v:1 2
+a:v,@[v;0;neg]
+b:0+/@[v;0;neg]
