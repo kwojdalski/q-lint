@@ -92,6 +92,22 @@ fn literal(s: &str) -> Option<Literal> {
             short_integer: false,
         });
     }
+    // A null or an infinity atom: the integer ones are integers and the
+    // float ones floats (q 5: `asc 0N` and `iasc 0w` are 'rank, `til 0n`
+    // 'type, #616).
+    if let Some(m) = re!(r"^(-)?0(?:[NW][hij]?|([nw])[ef]?)$").captures(s) {
+        return Some(Literal {
+            kind: if m.get(2).is_some() {
+                Kind::Float
+            } else {
+                Kind::Integer
+            },
+            vector: false,
+            len: 1,
+            negative: m.get(1).is_some(),
+            short_integer: s.ends_with('h'),
+        });
+    }
     if re!(r"^-?\d+(?:\s+-?\d+)*[hij]?$").is_match(s) {
         // Values outside the host integer range stay unknown, not truncated.
         let numbers = s

@@ -668,3 +668,14 @@ c:avgs `a
 
 === clean profile: general | avgs of one char is a number (q 5: 97f)
 a:avgs "a"
+
+=== QT008 QT009 QT011 QT012 QT014 profile: general | a null or infinity atom is an atom of its type (q 5: 'rank, 'type each; #616)
+a:asc 0N
+b:distinct 0W
+c:til 0n
+d:iasc 0w
+e:where 0N
+f:0w rotate 1 2
+
+=== clean profile: general | a short infinity is a window q takes (q 5: 0Wh mavg 1 2 3 is 1 1.5 2)
+a:0Wh mavg 1 2 3
