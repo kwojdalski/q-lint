@@ -382,6 +382,23 @@ fn leftovers(path: &str, source: &str, comments: &str, foreign: &[usize], out: &
     }
 }
 
+/// The column names in a table literal's keys or values: `name:`, or a name
+/// standing alone - q 5 `([]a;a)` has columns a and a1 (#641).
+fn literal_columns(list: &str) -> Vec<&str> {
+    slots(list)
+        .into_iter()
+        .map(|part| part.split_once(':').map_or(part, |(name, _)| name).trim())
+        .filter(|name| re!(r"^[A-Za-z][A-Za-z0-9_]*$").is_match(name))
+        .collect()
+}
+/// The first name in `list` that an earlier one already gave.
+fn named_twice<'a>(list: &[&'a str]) -> Option<&'a str> {
+    list.iter()
+        .enumerate()
+        .find(|&(i, name)| list[..i].contains(name))
+        .map(|(_, &name)| name)
+}
+
 /// QB019. A table literal naming one column twice. q 5 does not refuse it: it
 /// renames the second, so `([]a:1 2;a:3 4)` has columns `a` and `a1`, and
 /// code reading `a` gets the first without a word.
@@ -404,29 +421,29 @@ fn duplicate_columns(path: &str, source: &str, code: &str, out: &mut Vec<Finding
         if inner[key_close..].trim().is_empty() {
             continue;
         }
-        let mut seen: Vec<&str> = vec![];
-        for part in slots(&inner[bracket + 1..key_close - 1])
-            .into_iter()
-            .chain(slots(&inner[key_close..]))
-        {
-            let Some((name, _)) = part.split_once(':') else {
-                continue;
-            };
-            let name = name.trim();
-            if !re!(r"^[A-Za-z][A-Za-z0-9_]*$").is_match(name) {
-                continue;
-            }
-            if seen.contains(&name) {
-                out.push(Finding::at(
-                    path,
-                    source,
-                    open,
-                    "QB019",
-                    format!("Column `{name}` is named twice: q keeps both and renames the second, so `{name}` reads the first"),
-                ));
-                break;
-            }
-            seen.push(name);
+        let (keys, values) = (
+            literal_columns(&inner[bracket + 1..key_close - 1]),
+            literal_columns(&inner[key_close..]),
+        );
+        // Among the keys or among the values q renames the second; a key and
+        // a value column of one name it keeps as they are, both named so:
+        // q 5 `cols ([a:1 2]a:3 4)` is `a`a (#640).
+        if let Some(name) = named_twice(&keys).or_else(|| named_twice(&values)) {
+            out.push(Finding::at(
+                path,
+                source,
+                open,
+                "QB019",
+                format!("Column `{name}` is named twice: q keeps both and renames the second, so `{name}` reads the first"),
+            ));
+        } else if let Some(name) = keys.iter().find(|name| values.contains(name)) {
+            out.push(Finding::at(
+                path,
+                source,
+                open,
+                "QB019",
+                format!("Column `{name}` is both a key and a value column: q keeps both under the one name, so `{name}` reads the key"),
+            ));
         }
     }
     // The same in a select or update list, where q 5 renames as well:

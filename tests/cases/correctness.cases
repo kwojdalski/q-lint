@@ -610,6 +610,18 @@ r2:where (-1_r=0),0b
 === QB019 | a column named twice, which q 5 renames rather than refuses
 t:([]a:1 2;a:3 4)
 
+=== QB019 | a name standing alone names its column too (q 5: cols ([]a;a) and cols ([]a;a:3 4) are `a`a1) (#641)
+a:1 2
+t:([]a;a)
+u:([]a;a:3 4)
+
+=== QB019 | and a key and a value column of one name are both kept, unrenamed (q 5: cols ([a:1 2]a:3 4) is `a`a) (#640)
+k:([a:1 2]a:3 4)
+
+=== clean | a bare name beside a column of another name (q 5: cols ([]a;b:a) is `a`b)
+a:1 2
+t:([]a;b:a)
+
 === clean | a dictionary literal may repeat a key
 d:([a:1;a:2])
 

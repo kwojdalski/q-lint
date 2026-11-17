@@ -451,7 +451,7 @@
     "code": "QB019",
     "name": "duplicate-column",
     "category": "correctness",
-    "summary": "A table literal names a column twice; q renames the second instead of refusing",
+    "summary": "A table literal names a column twice; q renames the second, or keeps a key and a value column of one name, instead of refusing",
     "scope": "style"
   },
   {
