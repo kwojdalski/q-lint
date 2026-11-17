@@ -4,6 +4,17 @@ sum[1;2]
 === clean | valid counterpart for QA010
 sum[1]
 
+=== QA010 profile: general | an elided slot is still one too many for a builtin q defines as a lambda (q 5: til[3;], til[;3] and mavg[2;;] are 'rank) (#631)
+a:til[3;]
+b:til[;3]
+c:mavg[2;;]
+
+=== clean profile: general | while a projection within the rank, or of a primitive, is not refused where it is made (q 5: rotate[1;], sum[1;] and sum[;1] are projections) (#631)
+a:rotate[1;]
+b:within[;1 2]
+c:sum[1;]
+d:sum[;1]
+
 === QT008 | runtime type
 til[1.5]
 

@@ -82,6 +82,15 @@ helper:{[x] x}
 === QF005 | a nested lambda cannot see the enclosing local
 f:{[a] g:{[b] a+b}; g[1]}
 
+=== QF005 profile: general | nor can a transformation pattern in its signature (q 5: f[1] 2 is 'a) (#637)
+f:{[a] {[c:a] c}}
+
+=== clean profile: general | while a global, a type or a parameter of its own is fine there (q 5: h[1] 2 is 20) (#637)
+g:{x*10}
+h:{[a] {[c:g] c}}
+m:{[a] {[c:`j] c}}
+n:{[a] {[a:neg] a}}
+
 === QF005 profile: general | and a lambda on a \t line has the same scopes (q 5: 'b, #312)
 \t r:{[a] b:a; {b}[]} 1
 
@@ -172,6 +181,14 @@ f:{[_] 1}
 f:{[(a;_)] a}
 g:{[(a;_);b] b}
 
+=== clean profile: general | a drop on the right of a slot's colon is the function the argument goes through, not a name (q 5: {[a:2_] a} 1 2 3 4 is 3 4, {[a:_] a} 5 is _[5], {[(a;b:_)] a}[(1;2)] is 1) (#622)
+f:{[a:2_] a}
+g:{[a:_] a}
+h:{[(a;b:_)] a}
+
+=== QF002 QE008 profile: general | a name starting with _ is refused where the lambda is defined, not at each call (q 5: f:{[_a] 1} is '_) (#636)
+f:{[_a] 1}
+
 === clean | a dotted name is a legal parameter, surprising as that is
 f:{[.q.z] 1}
 
@@ -198,6 +215,15 @@ f:{[a;a] a}
 
 === QF008 QF016 | and not only adjacently, and `b` is left unread
 f:{[a;b;a] a}
+
+=== QF008 | or bound twice by a pattern, which q 5 defines (q 5: {[(a;a)] a}[(1;2)] is 2) (#635)
+f:{[(a;a)] a}
+
+=== QF008 QF016 | or by a slot and a pattern beside it (q 5: g[1;(2;3)] is 2) (#635)
+g:{[a;(a;b)] a}
+
+=== clean | a key a table pattern matches on is no binding (q 5: {[([k:a]);k] a+k}[([k:1 2]);3] is 4 5) (#635)
+f:{[([k:a]);k] a+k}
 
 === QF009 QF016 | a trailing separator is a third parameter, named `2` by q
 f:{[a;b;] a}
@@ -271,6 +297,22 @@ count:42
 
 === QF012 | a reserved name assigned in a later statement on the line (q 5: y:1;sum:2 is 'assign)
 y:1;sum:2
+
+=== QF012 | a builtin as the target of a multiple or an indexed assignment at the root (q 5: (til;b):1 2 and til[0]:1 are 'nyi, (sum;c):1 2 'match) (#634)
+(til;b):1 2
+til[0]:1
+(sum;c):1 2
+
+=== QF003 profile: general | and in a lambda (q 5: g is 'nyi where it is defined, f and h 'match when they run) (#634)
+f:{[a] ([til;b]):`til`b!1 2; a}
+g:{[a] count[0]:1; a}
+h:{[a] (sum;e)::1 2; a}
+
+=== clean | while from in a pattern, a dictionary indexed, and colons with nothing to assign are taken (q 5: (from;b):1 2 is accepted, 1f-(cor):: is a function) (#634)
+(from;c):1 2
+d:`a`b!1 2
+d[`a]:3
+e:1f-(cor)::
 
 === QF004 profile: general | and inside a namespace (q 5: x:1;count:2 under \d .foo is 'assign)
 \d .foo

@@ -87,7 +87,7 @@
     "code": "QF002",
     "name": "underscore-parameter",
     "category": "names",
-    "summary": "`_` is the drop operator, not a parameter name: q 5 refuses every call with 'match",
+    "summary": "`_` is the drop operator, not a parameter name: q 5 refuses every call with 'match, or a name starting with it where the lambda is defined",
     "scope": "builtin"
   },
   {
@@ -451,7 +451,7 @@
     "code": "QB019",
     "name": "duplicate-column",
     "category": "correctness",
-    "summary": "A table literal names a column twice; q renames the second instead of refusing",
+    "summary": "A table literal names a column twice; q renames the second, or keeps a key and a value column of one name, instead of refusing",
     "scope": "style"
   },
   {

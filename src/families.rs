@@ -392,6 +392,23 @@ fn leftovers(path: &str, source: &str, comments: &str, foreign: &[usize], out: &
     }
 }
 
+/// The column names in a table literal's keys or values: `name:`, or a name
+/// standing alone - q 5 `([]a;a)` has columns a and a1 (#641).
+fn literal_columns(list: &str) -> Vec<&str> {
+    slots(list)
+        .into_iter()
+        .map(|part| part.split_once(':').map_or(part, |(name, _)| name).trim())
+        .filter(|name| re!(r"^[A-Za-z][A-Za-z0-9_]*$").is_match(name))
+        .collect()
+}
+/// The first name in `list` that an earlier one already gave.
+fn named_twice<'a>(list: &[&'a str]) -> Option<&'a str> {
+    list.iter()
+        .enumerate()
+        .find(|&(i, name)| list[..i].contains(name))
+        .map(|(_, &name)| name)
+}
+
 /// QB019. A table literal naming one column twice. q 5 does not refuse it: it
 /// renames the second, so `([]a:1 2;a:3 4)` has columns `a` and `a1`, and
 /// code reading `a` gets the first without a word.
@@ -414,29 +431,29 @@ fn duplicate_columns(path: &str, source: &str, code: &str, out: &mut Vec<Finding
         if inner[key_close..].trim().is_empty() {
             continue;
         }
-        let mut seen: Vec<&str> = vec![];
-        for part in slots(&inner[bracket + 1..key_close - 1])
-            .into_iter()
-            .chain(slots(&inner[key_close..]))
-        {
-            let Some((name, _)) = part.split_once(':') else {
-                continue;
-            };
-            let name = name.trim();
-            if !re!(r"^[A-Za-z][A-Za-z0-9_]*$").is_match(name) {
-                continue;
-            }
-            if seen.contains(&name) {
-                out.push(Finding::at(
-                    path,
-                    source,
-                    open,
-                    "QB019",
-                    format!("Column `{name}` is named twice: q keeps both and renames the second, so `{name}` reads the first"),
-                ));
-                break;
-            }
-            seen.push(name);
+        let (keys, values) = (
+            literal_columns(&inner[bracket + 1..key_close - 1]),
+            literal_columns(&inner[key_close..]),
+        );
+        // Among the keys or among the values q renames the second; a key and
+        // a value column of one name it keeps as they are, both named so:
+        // q 5 `cols ([a:1 2]a:3 4)` is `a`a (#640).
+        if let Some(name) = named_twice(&keys).or_else(|| named_twice(&values)) {
+            out.push(Finding::at(
+                path,
+                source,
+                open,
+                "QB019",
+                format!("Column `{name}` is named twice: q keeps both and renames the second, so `{name}` reads the first"),
+            ));
+        } else if let Some(name) = keys.iter().find(|name| values.contains(name)) {
+            out.push(Finding::at(
+                path,
+                source,
+                open,
+                "QB019",
+                format!("Column `{name}` is both a key and a value column: q keeps both under the one name, so `{name}` reads the key"),
+            ));
         }
     }
     // The same in a select or update list, where q 5 renames as well:
@@ -883,25 +900,27 @@ fn unreachable(path: &str, source: &str, code: &str, comments: &str, out: &mut V
             }
         }
         statements.push((start, body.len()));
-        // `'[f;g]` - or `' [f;g]` - is a composition, not a signal: q 5
-        // `{'[neg;abs]; 2}[]` is 2. And `:[a;b]` is the assign verb, not a
-        // return: `{a:0; :[a;5]; a}[]` is 5, and with a space 7 (#515). An
-        // iterator glued on makes a derived function too: `{:/[1;2]; 4}[]`
-        // and `{'' [neg]; 4}[]` are 4 (#719).
-        let exits = |text: &str| {
-            let t = text.trim_start();
-            if t.starts_with([':', '\'']) && t[1..].starts_with(['/', '\\', '\'']) {
-                return false;
-            }
-            (t.starts_with(':') && !t.starts_with("::") && !t[1..].trim_start().starts_with('['))
-                || (t.starts_with('\'')
-                    && !t.starts_with("':")
-                    && !t[1..].trim_start().starts_with('['))
-        };
         // Emptiness read from `comments`, where a string is still there:
         // `{[a] :a; "x"}` has a statement after the return (#216).
         let kept = &comments[body_start..end - 1];
-        if let Some(i) = statements.iter().position(|&(a, b)| exits(&body[a..b]))
+        // `'[f;g]` - or `' [f;g]` - is a composition, not a signal: q 5
+        // `{'[neg;abs]; 2}[]` is 2. And `:[a;b]` is the assign verb, not a
+        // return: `{a:0; :[a;5]; a}[]` is 5, and with a space 7 (#515). Nor
+        // is a glyph with nothing to return or signal, alone or under an
+        // iterator: q 5 `{[a] '; a+1} 1`, `{[a] :; a+1} 1` and
+        // `{[a] '/; a+1} 1` are each 2 (#624).
+        let exits = |(a, b): (usize, usize)| {
+            let t = body[a..b].trim_start();
+            if !t.starts_with([':', '\'']) {
+                return false;
+            }
+            let operand = kept[b + 1 - t.len()..b].trim_start();
+            !operand.is_empty()
+                && !operand.starts_with(['/', '\\', '\'', '['])
+                && ((t.starts_with(':') && !t.starts_with("::"))
+                    || (t.starts_with('\'') && !t.starts_with("':")))
+        };
+        if let Some(i) = statements.iter().position(|&s| exits(s))
             && let Some(&(a, _)) = statements[i + 1..]
                 .iter()
                 .find(|&&(a, b)| !kept[a..b].trim().is_empty())
