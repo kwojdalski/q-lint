@@ -1188,3 +1188,23 @@ a:1 -2000.01.01
 a:1 -2i
 b:1 -2 3i
 c:3i - 1
+
+=== QE011 profile: general | an infix keyword before over, scan or prior (q 5: parse "x in over y" is ' ) (#492)
+x:1 2 3;y:2 3 4
+a:x in over y
+b:x mod scan y
+c:x cor prior y
+d:and over y
+
+=== QE011 profile: general | a glyph before an iterator keyword (q 5: parse "x + each y" is ' ) (#492)
+x:1 2 3;y:2 3 4
+a:x + each y
+b:x , peach y
+c:x+over y
+
+=== clean profile: general | a glyph in parentheses, a lambda, and a string are fine (#492)
+x:1 2 3;y:2 3 4
+a:(+) each y
+b:{x+y} over y
+c:"x + each y"
+d:max over y
