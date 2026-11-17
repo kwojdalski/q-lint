@@ -64,7 +64,7 @@ fn convention(name: &str) -> Option<Convention> {
 // of an operator rather than calling it, and `f each x` applies the
 // adverb to `f` instead of applying `f`. Brackets around what follows
 // would change the line, not respell it.
-const INFIX: &[&str] = &[
+pub(crate) const INFIX: &[&str] = &[
     "aj", "aj0", "and", "asof", "bin", "binr", "cor", "cov", "cross", "cut", "div", "each",
     "except", "ej", "find", "ij", "in", "insert", "inter", "like", "lj", "lsq", "mmu", "mod", "or",
     "over", "peach", "pj", "prior", "rotate", "scan", "set", "ss", "sublist", "sv", "uj", "union",

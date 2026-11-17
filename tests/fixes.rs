@@ -287,6 +287,36 @@ fn a_file_that_is_not_utf8_is_linted_but_never_rewritten() {
 /// ones were checked in q 5 to leave the program's value alone, or to replace
 /// code that could only fail; the others change behaviour or guess at
 /// intent, so the editor offers them and a person accepts or not.
+/// A file whose brackets or strings do not close is never rewritten, even
+/// with QE001 deselected: after the open `"` q reads `t:f 2` as string, and
+/// bracketing it would write into that string (#775, the CLI side of #422).
+#[test]
+fn a_file_whose_structure_does_not_close_is_not_fixed() {
+    let directory = tempfile::tempdir().unwrap();
+    for (name, original) in [
+        ("string.q", "f:{x+1}\nr:f \"a\nt:f 2\n"),
+        ("paren.q", "f:{x+1}\ns:(1;2\nt:f 2\n"),
+    ] {
+        let path = directory.path().join(name);
+        fs::write(&path, original).unwrap();
+        for flag in ["--diff", "--fix"] {
+            let run = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+                .args(["--isolated", "--select", "QP006", flag])
+                .arg(&path)
+                .output()
+                .unwrap();
+            if flag == "--diff" {
+                assert!(run.stdout.is_empty(), "{name}: {run:?}");
+            }
+            assert_eq!(
+                fs::read_to_string(&path).unwrap(),
+                original,
+                "{name} {flag}"
+            );
+        }
+    }
+}
+
 #[test]
 fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
     use q_lint_rs::{Profile, fix_for, lint};
@@ -305,6 +335,8 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ),
         // A path symbol takes its `/`: cut there, `/c` is refused (#768).
         ("QB007", "a like `:b/c", "a like \":b/c\"", true),
+        // One character in quotes is a char atom, still 'type (#564).
+        ("QB007", "r:s like `a", "r:s like enlist\"a\"", true),
         ("QT007", "r:ss[`abc;\"b\"]", "r:ss[\"abc\";\"b\"]", false),
         ("QB012", "f:{[x] x+1;}", "f:{[x] x+1}", false),
         ("QB010", "a:1;b:a -1", "a:1;b:a - 1", false),
@@ -328,6 +360,10 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ("QS004", "a:1;r:(a)b", "a:1;r:a b", true),
         ("QS004", "a:1;r:a (b)", "a:1;r:a b", true),
         ("QS004", "a:1;r:\"ab\"(1)", "a:1;r:\"ab\" 1", true),
+        // A symbol ending in `:` or `/` would take the name in (#776).
+        ("QS004", "`:db/(t)", "`:db/ t", true),
+        ("QS004", "`:(k)", "`: k", true),
+        ("QS004", "`a:(k)", "`a: k", true),
         ("QE002", "p:\"C:\\data\"", "p:\"C:\\\\data\"", true),
         (
             "QF015",
@@ -383,6 +419,8 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ("QB020", "f:{[x] :x; x+1}", "f:{[x] :x}", false),
         ("QF017", "f:{[x] a:x+1; x}", "f:{[x] x+1; x}", false),
         ("QF017", "f:{[a] r:a -m:1; r}", "f:{[a] r:a - 1; r}", false),
+        // A negative literal left against a signature stays one (#563).
+        ("QF017", "f:{[x]r:-1;x}", "f:{[x] -1;x}", false),
         ("QP003", "r:.z.P", "r:.z.p", false),
         // The clock named is the clock fixed, on the line it is on (#206).
         ("QP003", "a:(.z.D;.z.P)", "a:(.z.d;.z.P)", false),
@@ -496,43 +534,52 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ),
         ("QT008", "r:til 5.0", "r:til 5", true),
         ("QT008", "r:til 3f", "r:til 3", true),
-        ("QT025", "f:{'5}", "f:{'\"5\"}", true),
+        // One digit in quotes is a char atom, which is 'stype too (#565).
+        ("QT025", "f:{'5}", "f:{'enlist\"5\"}", true),
+        ("QT025", "f:{'12}", "f:{'\"12\"}", true),
         ("QT025", "f:{'12:00}", "f:{'\"12:00\"}", true),
         ("QT025", "f:{'1e-3}", "f:{'\"1e-3\"}", true),
         (
             "QF005",
             "f:{[a] {a+x} each 1 2}",
-            "f:{[a] {[a;x] a+x}[a] each 1 2}",
+            "f:{[a] {[x;a] a+x}[;a] each 1 2}",
             false,
         ),
         (
             "QF005",
             "f:{[a] {[x;y] a+y}'[1 2;3 4]}",
-            "f:{[a] {[a;x;y] a+y}[a]'[1 2;3 4]}",
+            "f:{[a] {[x;y;a] a+y}[;;a]'[1 2;3 4]}",
             false,
         ),
         (
             "QF005",
             "f:{[a] {a+y}'[1 2;3 4]}",
-            "f:{[a] {[a;x;y] a+y}[a]'[1 2;3 4]}",
+            "f:{[a] {[x;y;a] a+y}[;;a]'[1 2;3 4]}",
             false,
         ),
         (
             "QF005",
             "f:{[a] g:{ [b] a+b}; g 1}",
-            "f:{[a] g:{[a;b] a+b}[a]; g 1}",
+            "f:{[a] g:{[b;a] a+b}[;a]; g 1}",
             false,
         ),
         (
             "QF005",
             "f:{[a] g:{a}; g 1}",
-            "f:{[a] g:{[a;x] a}[a]; g 1}",
+            "f:{[a] g:{[x;a] a}[;a]; g 1}",
             false,
         ),
         (
             "QF005",
             "f:{a:2; {a+x} each 1 2}",
-            "f:{a:2; {[a;x] a+x}[a] each 1 2}",
+            "f:{a:2; {[x;a] a+x}[;a] each 1 2}",
+            false,
+        ),
+        // A column in a query is no argument: q 5 gives the lambda one (#777).
+        (
+            "QF005",
+            "f:{[a] {a+x+exec sum y from t} each 1 2}",
+            "f:{[a] {[x;a] a+x+exec sum y from t}[;a] each 1 2}",
             false,
         ),
         ("QA007", "f:{[c] $[c;1;2;]}", "f:{[c] $[c;1;2]}", false),
@@ -614,6 +661,8 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
         ("QS004", "r:2 (3)"),                // would become the vector 2 3
         ("QS004", "r:(2)3"),                 // would become the number 23
         ("QS004", "a:1;r:a -(1)"),           // would become a applied to -1
+        ("QS004", "r:(2)\n  -1"),            // the vector 2 -1 across the line (#773)
+        ("QS004", "l:1 2;r:l (1)\n  2"),     // and l 1 2 (#773)
         ("QR002", "g:{x} each"),             // a function, with nothing to return
         ("QR002", "r:count {x}' b"),         // `{x}'` infix, `count` its left argument
         ("QT007", "r:ss[`a`b;\"b\"]"),       // a symbol vector is not one string
@@ -653,6 +702,9 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
         ("QB020", "f:{[x] :x; x / keep this comment }\n  }"),
         // `return` before a comment returns nothing: `:/` is over (#404)
         ("QF015", "f:{[x] a:1;\n  return / done\n  }"),
+        // `:[x]` and `:'[x]` return a projection of `:`, not x (#770).
+        ("QF015", "f:{return[x]}"),
+        ("QF015", "f:{return'[x]}"),
     ] {
         for finding in lint(source, "probe.q", Profile::Uqf)
             .iter()
@@ -676,6 +728,8 @@ fn no_fix_that_fuses_two_numeric_literals() {
         ("QR002", "r:0 1 2{x} each 1"),
         ("QR002", "r:0 1 2 {x} each -1"),
         ("QF017", "f:{r:10 20 30 a:0 2; r}"),
+        // An indented line goes on with the one before it (#774).
+        ("QF017", "g:{r:10 20 30\n  m:0 2; r}"),
         ("QR004", "g:10 20 30 {x+1} each 0 1"),
     ] {
         let found: Vec<_> = lint(source, "probe.q", Profile::Uqf)
@@ -863,14 +917,40 @@ fn fixes_repeat_until_nothing_applies() {
     };
     let diff = run(&["--diff"]);
     assert!(
-        diff.contains("+f10:{p:1;q:2;{[q;p;x] p+q+x}[q][p][3]}"),
+        diff.contains("+f10:{p:1;q:2;{[x;p;q] p+q+x}[;;q][;p][3]}"),
         "{diff}"
     );
     run(&["--fix"]);
     assert_eq!(
         fs::read_to_string(&path).unwrap(),
-        "f10:{p:1;q:2;{[q;p;x] p+q+x}[q][p][3]}\n"
+        "f10:{p:1;q:2;{[x;p;q] p+q+x}[;;q][;p][3]}\n"
     );
+}
+
+/// QF005's rewrite puts the local after `x`, `y` and `z`, so it is not a
+/// new QS008 finding in the profiles that carry that rule (#772).
+#[test]
+fn qf005_fix_raises_no_qs008() {
+    use q_lint_rs::{Profile, fix_for, lint};
+    let source = "f:{[a] {a+x} each 1 2}";
+    for profile in [Profile::StyleQ, Profile::Uqf] {
+        let finding = lint(source, "probe.q", profile)
+            .into_iter()
+            .find(|f| f.code == "QF005")
+            .expect("QF005");
+        let fix = fix_for(&finding, source).expect("a fix");
+        let fixed = format!(
+            "{}{}{}",
+            &source[..fix.start],
+            fix.replacement,
+            &source[fix.end..]
+        );
+        let after: Vec<_> = lint(&fixed, "probe.q", profile)
+            .into_iter()
+            .filter(|f| f.code == "QS008")
+            .collect();
+        assert!(after.is_empty(), "{fixed}: {after:?}");
+    }
 }
 
 /// Two fixes that touch are applied in one pass, each against the source

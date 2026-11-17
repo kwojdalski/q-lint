@@ -581,9 +581,16 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             if text.is_empty() || depth != 0 || source[pattern + len..].starts_with('`') {
                 return None;
             }
+            // One character in quotes is a char atom, which `like` refuses
+            // with 'type as it does the symbol (q 5, #564).
+            let string = if text.len() == 1 {
+                format!("enlist\"{text}\"")
+            } else {
+                format!("\"{text}\"")
+            };
             (
                 &source[start..pattern + len],
-                format!("{}\"{text}\"", &lead.as_str()[..lead.len() - 1]).into(),
+                format!("{}{string}", &lead.as_str()[..lead.len() - 1]).into(),
                 format!("Write the pattern as the string \"{text}\"").into(),
                 true,
             )
@@ -710,7 +717,9 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             let numeric = token.starts_with(|c: char| c == '-' || c.is_ascii_digit());
             let before = &source[..start];
             let prev = before.trim_end().chars().next_back();
-            let next = source[start + whole.end()..].trim_start_matches([' ', '\t']);
+            // Past a line break too, where an indented line goes on: `(2)`
+            // over `  -1` is `(2) -1`, and `2` there would be `2 -1` (#773).
+            let next = refusals::continued(&source[start + whole.end()..]);
             let adjacent = source[start + whole.end()..].chars().next();
             if before.ends_with('-')
                 || (token.starts_with('-') && !prev.is_none_or(|c| "([{;:".contains(c)))
@@ -760,7 +769,9 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                     let next = rest[m.end()..].chars().next();
                     // Nothing after it but a comment is nothing after it:
                     // `:/ c` would be over, which q 5 refuses to load (#404).
-                    if !opens || next.is_none_or(|c| ";}]\r\n/".contains(c)) {
+                    // Nor an argument in brackets or an iterator: `:[x]` and
+                    // `:'[x]` apply `:`, and return its projection (#770).
+                    if !opens || next.is_none_or(|c| ";}]\r\n/['".contains(c)) {
                         return None;
                     }
                     (m.as_str(), ":")
@@ -1212,16 +1223,18 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         "QT025" => {
             let m = re!(r"^'(\s*)(-?\d(?:[eE][+-]\d|[A-Za-z0-9.:])*)")
                 .captures(source.get(start..)?)?;
+            // One digit in quotes is a char atom, still 'stype (#565).
+            let list = if m[2].len() == 1 { "enlist" } else { "" };
             (
                 m.get(0)?.as_str(),
-                format!("'{}\"{}\"", &m[1], &m[2]).into(),
+                format!("'{}{list}\"{}\"", &m[1], &m[2]).into(),
                 format!("Signal the string \"{}\"", &m[2]).into(),
                 true,
             )
         }
         // A nested lambda cannot see its parent's locals; the repair q
         // programmers write is to pass the local in: `{a+x} each l` inside
-        // `{[a] ...}` becomes `{[a;x] a+x}[a] each l`. Verified in q 5. Not
+        // `{[a] ...}` becomes `{[x;a] a+x}[;a] each l`. Verified in q 5. Not
         // unattended: where a global of that name exists the old code reads
         // it, and the new one reads the local.
         "QF005" => {
@@ -1229,40 +1242,31 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             let brace = enclosing_brace(&v.code, start)?;
             let close = matching(&v.code, brace, b'{', b'}')?;
             let sig = signature(&v.code, source, brace);
-            let body_text = &v.code[sig.body..close - 1];
             // q takes at most 8 parameters: a ninth is 'params at load (#337).
             if sig.named && sig.slots.len() >= 8 {
                 return None;
             }
-            let mut header = String::new();
-            if sig.named {
+            // The local goes last and the projection fills only its slot:
+            // first, it would push `x` to a position QS008 then reports (#772).
+            let (header, slots) = if sig.named {
                 // `{ [b] ...}` is a signature too: q allows space before
                 // the `[` (#323).
                 let bracket = v.code[brace + 1..].find('[')? + brace + 1;
-                header.push_str(&format!("{{[{name};"));
-                header.push_str(&source[bracket + 1..sig.body]);
+                let inner = &source[bracket + 1..sig.body - 1];
+                (format!("{{[{inner};{name}]"), sig.slots.len())
             } else {
-                // Implicit arguments become explicit ones, up to the highest
-                // the body reads - and at least `x`, or the projection would
-                // fill every slot and run on the spot.
-                let used = |p: &str| {
-                    re!(r"[A-Za-z0-9_.`]?\b[xyz]\b")
-                        .find_iter(&top_level(body_text))
-                        .any(|m| m.as_str().ends_with(p) && m.as_str().len() == 1)
-                };
-                let params = if used("z") {
-                    "x;y;z"
-                } else if used("y") {
-                    "x;y"
-                } else {
-                    "x"
-                };
-                header.push_str(&format!("{{[{name};{params}] "));
-            }
+                // Implicit arguments become explicit ones, as many as q
+                // gives the lambda - and at least `x`, or the projection
+                // would fill every slot and run on the spot. A column in a
+                // query is no argument: `{exec sum y from t}` takes one (#777).
+                let rank = lambda_rank(&v.code, source, brace, close - 1);
+                let params = ["x", "x;y", "x;y;z"][rank - 1];
+                (format!("{{[{params};{name}] "), rank)
+            };
             // Passed in, the local is read where the lambda is written, so it
             // has to hold a value there: a parameter of the lambda around it,
             // or assigned in an earlier statement. Otherwise q 5 refuses the
-            // rewrite with 'a - `{a:{[a;x] a+1}[a];a}`, and a read before a
+            // rewrite with 'a - `{a:{[x;a] a+1}[;a];a}`, and a read before a
             // later `a:2` alike (#769).
             let parent = enclosing_brace(&v.code, brace)?;
             let outer = signature(&v.code, source, parent);
@@ -1305,7 +1309,7 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             begin = brace;
             (
                 &source[brace..close],
-                format!("{header}{rest}[{name}]").into(),
+                format!("{header}{rest}[{}{name}]", ";".repeat(slots)).into(),
                 format!("Pass `{name}` in as a parameter").into(),
                 false,
             )
@@ -1591,7 +1595,7 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
     let next: String = replacement
         .chars()
         .chain(source[begin + old.len()..].chars())
-        .take(2)
+        .take(3)
         .collect();
     // Nor may an edit leave two numeric literals with only blanks between:
     // `10 20 30 {x} each 0 2` would become `10 20 30 0 2`, one vector where
@@ -1609,8 +1613,14 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
     {
         return None;
     }
+    // Nor may it leave a negative literal against an operand, where its
+    // `-` would read as minus: `{[x]r:-1;x}` would become `{[x]-1;x}`,
+    // which q 5 refuses with '- (#563). A blank keeps it a literal.
+    let negative = next.starts_with('-') && numeric(&next[1..]);
     let replacement =
-        if source[..begin].ends_with('-') && !numeric(&source[begin..]) && numeric(&next) {
+        if source[..begin].ends_with('-') && !numeric(&source[begin..]) && numeric(&next)
+            || ends_in_token(&source[..begin]) && negative && !source[begin..].starts_with('-')
+        {
             format!(" {replacement}").into()
         } else {
             replacement
@@ -2161,14 +2171,25 @@ fn grouped(phrase: &str) -> String {
 }
 /// Whether `before` ends in a character that would fuse with a token
 /// written straight after it: `a` and `b` are `ab`, `1` and `b` are `1b`.
+/// A symbol ending in `:` or `/` is one: `` `:db/ `` and `t` are `` `:db/t ``,
+/// and `` `a: `` and `k` are `` `a:k `` (#776).
 fn ends_in_token(before: &str) -> bool {
+    let line = &before[before.rfind('\n').map_or(0, |p| p + 1)..];
     before.ends_with(|c: char| c.is_ascii_alphanumeric() || "_.`\")]}".contains(c))
+        || re!(r"`(?::[A-Za-z0-9_.:/]*|[A-Za-z0-9_.][A-Za-z0-9_.:]*)$").is_match(line)
 }
 /// Whether `before`, less trailing blanks, ends in a numeric literal: a
 /// token of letters, digits, `.` and `:` that begins with a digit or `.5`,
 /// so `10 20 30` and `12:00` do, and the name `x1` does not.
 fn ends_in_number(before: &str) -> bool {
     let t = before.trim_end_matches([' ', '\t']);
+    // A line break into an indented line is a blank too: q joins the two,
+    // so `10 20 30` over `  0 2` is one vector (#774).
+    let t = if t.len() < before.len() && t.ends_with('\n') {
+        t.trim_end()
+    } else {
+        t
+    };
     let start = t
         .char_indices()
         .rfind(|&(_, c)| !(c.is_ascii_alphanumeric() || "._:".contains(c)))
@@ -2180,7 +2201,7 @@ fn ends_in_number(before: &str) -> bool {
 /// included where a blank comes first (`blank` says one ends the text
 /// before), since `1 -1` is a vector and `1-1` a subtraction.
 fn starts_number(after: &str, blank: bool) -> bool {
-    let t = after.trim_start_matches([' ', '\t']);
+    let t = refusals::continued(after);
     let blank = blank || t.len() < after.len();
     let t = match t.strip_prefix('-') {
         Some(rest) if blank => rest,
@@ -3185,11 +3206,31 @@ pub(crate) fn signature<'a>(code: &'a str, raw: &str, brace: usize) -> Signature
     // "Empty" has to be judged on `raw`, or a masked literal passes for one.
     // A string is blank in `code`; as a pattern it is a literal like any
     // other, so it is read as one: `{["ab"!(a;b)] a}` has keys (#431).
+    // A comment is blank in `code` too, and is no literal: from a ` /` that
+    // `code` blanks to the end of its line, it stays blank (#560).
     let literal = |a: usize, b: usize| -> String {
-        code.as_bytes()[a..b]
-            .iter()
-            .zip(&raw.as_bytes()[a..b])
-            .map(|(&c, &r)| if c == r { c as char } else { '0' })
+        let (c, r) = (code.as_bytes(), raw.as_bytes());
+        let mut comment = false;
+        (a..b)
+            .map(|i| {
+                if r[i] == b'\n' {
+                    comment = false;
+                } else if c[i] != r[i]
+                    && r[i] == b'/'
+                    && (i == 0 || r[i - 1].is_ascii_whitespace())
+                    && code[i..]
+                        .split('\n')
+                        .next()
+                        .is_some_and(|l| l.trim().is_empty())
+                {
+                    comment = true;
+                }
+                if c[i] == r[i] || comment {
+                    c[i] as char
+                } else {
+                    '0'
+                }
+            })
             .collect()
     };
     // `_` binds no name but is still a slot: q 5 defines `{[a;_] a}` with two
@@ -3946,7 +3987,9 @@ pub fn lint_selecting(
     // `while["ab";1]`, `if[101b;1]`, `if[1 2;1]`, `do[1.5;1]`, `do[`a;1]`
     // and `do[1 2;1]` are each 'type, while `if[0N;1]`, `do["a";1]`,
     // `do[1b;1]`, `do[2h;1]` and `do[2024.01.01;1]` run.
-    for m in re!(r"\b(if|while|do)\[").captures_iter(code) {
+    // The bracket may follow a blank, or an indented next line: q 5 reads
+    // `if` over `  [`a;:1]` as `if[`a;:1]` (#574).
+    for m in re!(r"\b(if|while|do)[ \t]*(?:(?:\r?\n[ \t]*)*\r?\n[ \t]+)?\[").captures_iter(code) {
         let at = m.get(0).unwrap().start();
         let open = m.get(0).unwrap().end() - 1;
         if !boundary(code, at) {
@@ -5607,18 +5650,23 @@ pub fn lint_selecting(
     }
     // QB016 in functional form: `![t;c;0b;cols]` with both a where list
     // and columns is 'nyi (q 5), as the delete phrase is.
-    for (bang, _) in code.match_indices("![") {
-        let Some(close) = matching(code, bang + 1, b'[', b']') else {
+    // On the next line too, where q joins it: `!` over `  [t;...]` (#574).
+    for m in re!(r"![ \t]*(?:(?:\r?\n[ \t]*)*\r?\n[ \t]+)?\[").find_iter(code) {
+        let (bang, open) = (m.start(), m.end() - 1);
+        let Some(close) = matching(code, open, b'[', b']') else {
             continue;
         };
-        let parts = slots(&code[bang + 2..close - 1]);
+        let parts = slots(&code[open + 1..close - 1]);
         if parts.len() != 4 || parts[2].trim() != "0b" {
             continue;
         }
+        // Only a where list that plainly holds something: `0#()`, `( )` and
+        // `` `symbol$() `` are empty too, and q 5 runs each (#561).
         let filter = parts[1].trim();
         let columns = parts[3].trim();
-        if !filter.is_empty()
-            && filter != "()"
+        let listed = filter.strip_prefix('(').and_then(|f| f.strip_suffix(')'));
+        if (re!(r"^(?:enlist\b|,)").is_match(filter)
+            || listed.is_some_and(|f| !f.trim().is_empty()))
             && re!(r"^(?:enlist\s*`[A-Za-z_][\w.]*|,`[A-Za-z_][\w.]*|(?:`[A-Za-z_][\w.]*){2,})$")
                 .is_match(columns)
         {

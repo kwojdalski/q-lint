@@ -856,6 +856,18 @@ t:([]a:1 2;b:3 4)
 r:![t;();0b;enlist`a]
 s:![t;enlist(=;`b;3);0b;`symbol$()]
 
+=== clean profile: general | an empty where list spelled other than () (q 5 deletes column c from each, #561)
+t:([]a:1 2;c:3 4)
+r:![t;( );0b;enlist`c]
+s:![t;0#();0b;enlist`c]
+u:![t;`symbol$();0b;enlist`c]
+w:![t;( / none
+  );0b;enlist`c]
+
+=== QB016 profile: general | a where list of two constraints (#561)
+t:([]a:1 2;c:3 4)
+r:![t;((>;`a;1);(<;`a;3));0b;enlist`c]
+
 === QB019 | a column named twice in a select (q 5: select a,a from t has a and a1)
 t:([]a:1 2;b:3 4)
 r:select a,a from t
@@ -895,3 +907,19 @@ r:$[x=0 and y=0;`yes;`no]
 x:0;y:1
 if[(x=0) and y=0;-1 "a"]
 r:$[x and y=0;1;2]
+
+=== QB021 profile: general | a select with a limit or a sort (q 5: 'dup names for cols/groups a; #573)
+t:([]a:1 2)
+r:select[1] a by a from t
+s:select[2;>a] a by a from t
+
+=== clean profile: general | and with a column the groups do not name (#573)
+t:([]a:1 2)
+r:select[1] m:max a by a from t
+
+=== QB016 QA011 profile: general | the bracket of ! or if written on the next line (q 5: 'nyi and 'type, as on one line; #574)
+t:([]a:1 2;c:3 4)
+k:{!
+  [t;enlist(>;`a;1);0b;enlist`c]}
+g:{if
+  [`a;:1]; 2}

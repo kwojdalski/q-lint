@@ -112,7 +112,7 @@ removing an unused local's name while keeping its expression,
 round each comparison an `and`/`or` swallows in a where phrase, `~` → `=` in
 a filter, `x` → the one declared parameter, deleting a commented-out
 definition, passing an outer local into a nested lambda that reads it
-(`{a+x}` → `{[a;x] a+x}[a]`), dropping the trailing `;` of `$[c;a;b;]`,
+(`{a+x}` → `{[x;a] a+x}[;a]`), dropping the trailing `;` of `$[c;a;b;]`,
 `$[c;a]` → `if[c;a]`, `10/2` → `10%2`, removing `a:a`, renaming a parameter
 that shadows a builtin, a column one typo from the table's, and (uqf)
 `.z.P` → `.z.p` and datetime → timestamp. Add
