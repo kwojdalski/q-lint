@@ -1338,3 +1338,13 @@ q)+/a
 \t r:+/1 2
 v:1 2
 \t:10 +/v
+
+=== QE008 profile: general | a minus glued to a signature's `]` is the glyph, before a number too (#586; q 5: '-)
+f:{[a]-1}
+g:{[a:`j]-1.5}
+h:{[]-.5}
+
+=== clean profile: general | while a blank makes it a negative literal, and an indexed name's `]` is no signature (#586; q 5 parses each)
+k:{[a] -1}
+n:{x[0]-1}
+p:{[a]a[0]-1}

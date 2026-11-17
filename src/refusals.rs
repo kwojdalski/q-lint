@@ -1011,6 +1011,10 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
             || rest.starts_with(":-") && rest[2..].starts_with(|c: char| c.is_ascii_digit());
         let next = continued(rest);
         let spaced = next.len() < rest.len();
+        // Straight after a signature's `]` a `-` is the glyph, not a sign:
+        // q 5 refuses `{[a]-1}` and `{[]-.5}` with '-, and takes `{[a] -1}`
+        // (#586).
+        let glued_to_signature = after_signature(code, source, i);
         // A `.` before a letter starts a name, not a number: q 5 refuses
         // `-.foo.x` and `-.z.p` with '-, as it does `#.foo.x` (#241).
         // A lambda is a noun, and so is a negative literal: q 5 refuses
@@ -1029,7 +1033,7 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
             || (re!(r"^-\.?\d").is_match(next) && !(g == b'-' && spaced))
             || re!(r"^\.[A-Za-z]").is_match(next)
             || (next.starts_with(|c: char| c.is_ascii_digit() || c == '.')
-                && (g != b'-' || spaced));
+                && (g != b'-' || spaced || glued_to_signature));
         if !operand {
             continue;
         }
