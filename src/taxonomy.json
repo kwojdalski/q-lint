@@ -122,7 +122,7 @@
     "code": "QF007",
     "name": "not-a-parameter-list",
     "category": "names",
-    "summary": "Brackets after { that are not a parameter list: refused where defined, or run as body text",
+    "summary": "Brackets after { that are no parameter list or pattern: q 5 refuses the lambda where it is defined",
     "scope": "builtin"
   },
   {

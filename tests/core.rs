@@ -109,7 +109,8 @@ fn language_prefixes_preserve_following_q_diagnostics() {
 /// would guess - `.q.z` is a legal parameter name, `{[a;b;] ...}` takes three
 /// arguments - and reads the brackets as body text rather than a signature
 /// whenever a slot is neither a name nor, in q 5, a pattern, which is the
-/// trap QF007 exists for.
+/// trap QF007 exists for. q 5 has no such reading: what is no name or
+/// pattern there it refuses where the lambda is defined.
 #[test]
 fn parameter_lists_agree_with_q() {
     // q reports the declared names: these are signatures.
@@ -137,6 +138,11 @@ fn parameter_lists_agree_with_q() {
         "f:{[a:1] a}",
         "f:{[a:neg;b] a}",
         "f:{[a:{x+1};b] a}",
+        // A name applied is one parameter binding no name (q 5, #484).
+        "f:{[a b] a}",
+        "f:{[f x] 1}",
+        "f:{[a[0]] a}",
+        "f:{[(a b)] 1}",
     ] {
         let found = lint(source, "t.q", Profile::Style);
         assert!(
@@ -144,16 +150,14 @@ fn parameter_lists_agree_with_q() {
             "{source:?} is a parameter list to q: {found:?}"
         );
     }
-    // q refuses the source, refuses every call, or runs the brackets as
-    // body text - and the message says which, as q 5 does.
+    // q 5 refuses the source - and the message says how.
     for (source, claim) in [
         ("f:{[tables[]] x+1}", "'nyi"),
         ("f:{[a+b] 1}", "'nyi"),
         ("f:{[a-b] x}", "'nyi"),
         ("f:{[count x] 1}", "'nyi"),
-        ("f:{[a b] a}", "start of the body"),
-        ("f:{[a[0]] a}", "start of the body"),
-        ("f:{[(a b)] 1}", "start of the body"),
+        ("f:{[1 a] 1}", "'nyi"),
+        ("f:{[a'] 1}", "'nyi"),
     ] {
         let found = lint(source, "t.q", Profile::Style);
         assert!(
@@ -896,7 +900,7 @@ fn a_typed_parameter_binds_its_name() {
         let found = lint(source, "t.q", Profile::General);
         assert!(found.is_empty(), "{source}: {found:?}");
     }
-    let found = lint("f:{[a b] a}\n", "t.q", Profile::General);
+    let found = lint("f:{[a+b] a}\n", "t.q", Profile::General);
     assert!(found.iter().any(|f| f.code == "QF007"), "{found:?}");
 }
 

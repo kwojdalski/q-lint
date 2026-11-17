@@ -27,9 +27,8 @@ pytestmark = pytest.mark.skipif(
 )
 
 # Lambdas whose brackets q reads as a parameter list, and lambdas where it does
-# not. The second group is what QF007 reports - QF002 for the `_` case: q
-# either refuses the source ('nyi) or quietly binds x, y and z instead, giving
-# the lambda a rank the source does not show.
+# not. The second group is what QF007 reports - QF002 for the `_` case: q 5
+# refuses the source ('nyi), or binds no parameter the source names.
 SIGNATURES = [
     "{[a] a+1}",
     "{[a;b] a+b}",
@@ -46,8 +45,7 @@ NOT_SIGNATURES = [
     "{[tables[]] x+1}",
     "{[a+b] 1}",
     "{[_] x+1}",
-    "{[a b] a}",
-    "{[a[0]] a}",
+    "{[1 a] 1}",
 ]
 # q 5 parameter patterns: q binds one positional parameter per slot (`0, `1,
 # ...) and destructures the argument into the names inside, so the lambda has
@@ -77,6 +75,11 @@ PATTERNS = {
     # :: matches the generic null (#450).
     "{[(a;b;::)] a+b}": 1,
     "{[a;::] a}": 2,
+    # A name applied: one parameter, its names globals (#484).
+    "{[f x] 1}": 1,
+    "{[a b] a}": 1,
+    "{[a[0]] a}": 1,
+    "{[(a;b c)] a}": 1,
 }
 
 
