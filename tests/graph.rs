@@ -796,3 +796,14 @@ fn a_load_after_a_q_prompt_is_an_edge() {
     let g = graph(&[("b.q", "zz:1\n"), ("a.q", "q)\\l b.q\n")], false);
     assert_eq!(deps(&g, "a.q"), ["b.q"]);
 }
+
+#[test]
+fn a_bracketed_symbol_handed_to_get_or_value_is_a_read() {
+    // q 5: after `cfg:5`, `(get[`cfg];value[`cfg];get (`cfg))` is 5 5 5
+    // (#537). Not a dynamic place either.
+    for read in ["a:get[`cfg]", "a:value[`cfg]", "a:get (`cfg)"] {
+        let g = graph(&[("defs.q", "cfg:5\n"), ("use.q", read)], false);
+        assert_eq!(deps(&g, "use.q"), ["defs.q"], "{read}");
+        assert!(kinds(&g, "use.q").is_empty(), "{read}");
+    }
+}

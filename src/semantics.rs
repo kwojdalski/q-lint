@@ -1188,23 +1188,36 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
     // time, in a `\d` the source does not say; then, and for a `set` into
     // one, the place is listed as dynamic.
     let mut call_time_access = vec![];
-    for m in re!(r"\b(get|value)\s*`(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)")
-        .captures_iter(&view)
+    // Bracketed or parenthesised too: q 5 `(get[`cfg];value[`cfg];get (`cfg))`
+    // is 5 5 5 after `cfg:5` (#537).
+    for m in re!(
+        r"\b(get|value)\s*(?:([\[(])\s*)?`(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)"
+    )
+    .captures_iter(&view)
     {
         let whole = m.get(0).unwrap();
         if !boundary(&view, whole.start()) {
             continue;
         }
+        let mut rest = view[whole.end()..].trim_start_matches([' ', '\t']);
+        match m.get(2).map(|o| o.as_str()) {
+            // `get[`a]` is the whole call, whatever follows it.
+            Some("[") if rest.starts_with(']') => rest = "",
+            Some("(") if rest.starts_with(')') => {
+                rest = rest[1..].trim_start_matches([' ', '\t']);
+            }
+            Some(_) => continue,
+            None => {}
+        }
         // `value `c _ x` is value of what the drop returns, not of `c`.
-        let rest = view[whole.end()..].trim_start_matches([' ', '\t']);
         if !(rest.is_empty() || rest.starts_with([';', ']', ')', '}', '\n', '\r'])) {
             continue;
         }
-        if call_time(&scopes, whole.start(), &m[2]) {
+        if call_time(&scopes, whole.start(), &m[3]) {
             let kind = if &m[1] == "get" { "get" } else { "value" };
             call_time_access.push((whole.start(), kind));
         } else {
-            read(&m[2], whole.start());
+            read(&m[3], whole.start());
         }
     }
     call_time_access.extend(value_of_symbols(&view, &scopes, &ns_at));
@@ -1430,10 +1443,14 @@ fn dynamic(raw: &str, view: &str, call_time: &[(usize, &'static str)]) -> Vec<cr
             push(m.start(), "value");
         }
     }
-    // A symbol literal after `get` is a read the names already hold, and
-    // `` `:path `` or `hsym` reads a file, not a global.
+    // A symbol literal after `get`, bracketed or not, is a read the names
+    // already hold (#537), and `` `:path `` or `hsym` reads a file, not a
+    // global.
     for m in re!(r"\bget\b").find_iter(view) {
         let after = next(m.end());
+        let after = after
+            .strip_prefix(['[', '('])
+            .map_or(after, |a| a.trim_start_matches([' ', '\t']));
         if boundary(view, m.start())
             && !after.starts_with(['`', ':'])
             && !re!(r"^hsym\b").is_match(after)
