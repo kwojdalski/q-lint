@@ -591,6 +591,25 @@ fn deeply_nested_lambdas_lint_in_bounded_time() {
         "{depth} nested lambdas took {elapsed:?}"
     );
 }
+/// Tens of thousands of nested parentheses - beyond q's own limit, which
+/// refuses a hundred-odd levels with '( - once overflowed the stack, which
+/// aborts the whole run and cannot be caught like a panic (#703).
+#[test]
+fn deeply_nested_parentheses_do_not_overflow_the_stack() {
+    let depth = 10000;
+    let (open, close) = ("(".repeat(depth), ")".repeat(depth));
+    for source in [
+        format!("a:{open}1{close}\n"),
+        format!("r:til[{open}1{close}]\n"),
+        format!("f:{{[{open}a{close}] a}}\n"),
+        format!("d:`a`b!{open}1 2{close}\n"),
+        format!("f:{{[{open}a{}] a}}\n", ";b)".repeat(depth)),
+    ] {
+        for profile in [Profile::General, Profile::Uqf] {
+            lint(&source, "t.q", profile);
+        }
+    }
+}
 #[test]
 fn a_nested_lambda_after_a_sibling_is_scanned_once() {
     // #252: the second nested lambda was taken for a new outer body.

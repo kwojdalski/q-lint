@@ -1920,15 +1920,22 @@ pub(crate) fn operand_ends(code: &str, at: usize) -> bool {
     }
     rest.is_empty()
         || rest.starts_with([';', ')', ']', '}', '\n', '\r'])
-        || ((rest.starts_with(',')
-            || re!(r"^(?:from|by|where)(?:[^A-Za-z0-9_.]|$)").is_match(rest))
-            && in_qsql_phrase(code, at))
+        || (rest.starts_with(',') && in_qsql_phrase(code, at))
+        // A keyword ends the from phrase too: `from t where a>0` (#696).
+        || (re!(r"^(?:from|by|where)(?:[^A-Za-z0-9_.]|$)").is_match(rest)
+            && qsql_phrase(code, at, false))
 }
 
 /// Whether `at` sits at the top level of a select, exec, update or delete
 /// phrase: walking back through its statement - to a `;`, an opening
 /// bracket or an unindented line - meets the keyword at the same depth.
 pub(crate) fn in_qsql_phrase(code: &str, at: usize) -> bool {
+    qsql_phrase(code, at, true)
+}
+
+/// `in_qsql_phrase`, where `joins` says whether the from phrase is refused:
+/// a `,` there joins tables, but a keyword after it still ends the operand.
+fn qsql_phrase(code: &str, at: usize, joins: bool) -> bool {
     let b = code.as_bytes();
     let mut depth = 0i32;
     let mut seen_where = false;
@@ -1958,7 +1965,7 @@ pub(crate) fn in_qsql_phrase(code: &str, at: usize) -> bool {
         // phrase it joins - `select from t,u` - so that phrase is not one.
         if word("where") {
             seen_where = true;
-        } else if word("from") && !seen_where {
+        } else if joins && word("from") && !seen_where {
             return false;
         } else if ["select", "exec", "update", "delete"].into_iter().any(word) {
             return true;
@@ -2692,6 +2699,18 @@ fn is_param_name(s: &str) -> bool {
 /// is 3, `{[1;b] b}[1;2]` is 2 and `{[1] 5} 2` is 'match (#298). `_` is
 /// none: `{[(a;_)] a}[(1;2)]` is 'match, as `{[_] 1}[1]` is.
 pub(crate) fn is_pattern(s: &str, nested: bool) -> bool {
+    pattern_within(s, nested, 0)
+}
+/// More levels of brackets than q parses: q 5 refuses a hundred-odd levels of
+/// parentheses with '(. Code that walks into nesting gives up past it, which
+/// keeps tens of thousands of levels from overflowing the stack (#703).
+pub(crate) const MAX_NESTING: usize = 256;
+/// `is_pattern` at a nesting `depth`; past `MAX_NESTING` it is no pattern.
+fn pattern_within(s: &str, nested: bool, depth: usize) -> bool {
+    if depth > MAX_NESTING {
+        return false;
+    }
+    let is_pattern = |s: &str, nested: bool| pattern_within(s, nested, depth + 1);
     let s = s.trim();
     let items = |inner: &str, item: &dyn Fn(&str) -> bool| {
         inner.trim().is_empty() || slots(inner).into_iter().all(item)
@@ -2800,14 +2819,35 @@ fn like_patterns<'a>(code: &str, literals: &'a str, at: usize) -> Vec<&'a str> {
     operand(code, literals, i, iterated, &mut out);
     out
 }
-/// Each name the source assigns under `.q` (`.q.foo:{x+1}`), with where.
-/// q 5 then resolves `foo` from every namespace and refuses it as a
-/// parameter, a local or a global, as it does `count`.
+/// Each name the source assigns under `.q` (`.q.foo:{x+1}`), with the end
+/// of the top-level statement that assigns it. q 5 then resolves `foo` from
+/// every namespace and refuses it as a parameter, a local or a global, as it
+/// does `count` - but only in what it parses afterwards: the statement
+/// holding the assignment, lambda and indented lines included, was parsed
+/// before it ran, so `g:{.q.foo:{x+1}; foo:2; foo}` still runs (#697).
 pub(crate) fn dotq_definitions(code: &str) -> Vec<(String, usize)> {
+    let b = code.as_bytes();
+    let statement_end = |from: usize| {
+        let mut depth = 0i32;
+        for i in from..b.len() {
+            match b[i] {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => depth -= 1,
+                b'\n'
+                    if depth <= 0
+                        && !matches!(b.get(i + 1), Some(b' ' | b'\t' | b'\r' | b'\n')) =>
+                {
+                    return i;
+                }
+                _ => {}
+            }
+        }
+        b.len()
+    };
     re!(r"\.q\.([A-Za-z][A-Za-z0-9_]*)\s*:")
         .captures_iter(code)
         .filter(|c| boundary(code, c.get(0).unwrap().start()))
-        .map(|c| (c[1].to_string(), c.get(0).unwrap().start()))
+        .map(|c| (c[1].to_string(), statement_end(c.get(0).unwrap().start())))
         .collect()
 }
 /// Whether a compound or `::` assignment has a value to assign: q 5 refuses
