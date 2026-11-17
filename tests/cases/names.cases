@@ -289,6 +289,22 @@ count:42
 === QF012 | a reserved name assigned in a later statement on the line (q 5: y:1;sum:2 is 'assign)
 y:1;sum:2
 
+=== QF012 | a builtin as the target of a multiple or an indexed assignment at the root (q 5: (til;b):1 2 and til[0]:1 are 'nyi, (sum;c):1 2 'match) (#634)
+(til;b):1 2
+til[0]:1
+(sum;c):1 2
+
+=== QF003 profile: general | and in a lambda (q 5: g is 'nyi where it is defined, f and h 'match when they run) (#634)
+f:{[a] ([til;b]):`til`b!1 2; a}
+g:{[a] count[0]:1; a}
+h:{[a] (sum;e)::1 2; a}
+
+=== clean | while from in a pattern, a dictionary indexed, and colons with nothing to assign are taken (q 5: (from;b):1 2 is accepted, 1f-(cor):: is a function) (#634)
+(from;c):1 2
+d:`a`b!1 2
+d[`a]:3
+e:1f-(cor)::
+
 === QF004 profile: general | and inside a namespace (q 5: x:1;count:2 under \d .foo is 'assign)
 \d .foo
 x:1;count:2

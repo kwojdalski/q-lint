@@ -5702,6 +5702,59 @@ pub fn lint_selecting(
             }
         }
     }
+    // A builtin as the target of a multiple assignment, `(til;b):1 2` or
+    // `([til;b]):d`, or of an indexed one, `til[0]:1`, is refused as `til:1`
+    // is: q 5 'nyi or 'match, at the root or when the lambda runs, and an
+    // indexed one in a lambda where it is defined. `from` and `by` are
+    // accepted, as they are alone (#634).
+    {
+        let mut namespaces: Vec<(usize, bool)> = vec![(0, false)];
+        let mut offset = 0;
+        for line in code.split_inclusive('\n') {
+            if let Some(ns) = semantics::opens(line, &source[offset..offset + line.len()]) {
+                namespaces.push((offset, !ns.is_empty()));
+            }
+            offset += line.len();
+        }
+        let indexed = re!(r"\b([a-z][A-Za-z0-9_]*)\s*\[[^\[\]]*\]\s*[-+*%,#_^&|!?@$~=<>]?:")
+            .captures_iter(code)
+            .filter(|c| {
+                let m = c.get(0).unwrap();
+                boundary(code, m.start())
+                    && !code[m.end()..].starts_with(':')
+                    && assigns_operand(&code[m.end()..])
+            })
+            .map(|c| (c.get(0).unwrap().start(), c.get(1).unwrap().as_str()));
+        // With nothing to assign the colons apply the function, as they do
+        // after a name: q 5 `d:1f-(cor)::` is a function.
+        let assigned = |&(at, _): &(usize, &str)| {
+            matching(code, at, b'(', b')').is_some_and(|close| {
+                let rest = code[close..].trim_start();
+                assigns_operand(rest.trim_start_matches(':'))
+            })
+        };
+        let mut targets: Vec<(usize, &str)> = semantics::multi_assignments(code)
+            .chain(semantics::global_multi_assignments(code))
+            .filter(assigned)
+            .chain(indexed)
+            .filter(|&(at, name)| reserved(name, at) && !matches!(name, "from" | "by"))
+            .collect();
+        targets.sort();
+        targets.dedup();
+        for (at, name) in targets {
+            if enclosing_brace(code, at).is_some() {
+                add(at, "QF003", format!("Local assignment to `{name}`"));
+            } else if namespaces.iter().rev().find(|(o, _)| *o <= at).unwrap().1 {
+                add(at, "QF004", format!("Namespace-level `{name}`"));
+            } else {
+                add(
+                    at,
+                    "QF012",
+                    format!("Root-level assignment to `{name}`: q refuses it"),
+                );
+            }
+        }
+    }
     // Documentation that names a parameter the lambda does not have.
     //
     // The FINOS qdoc convention spells this `@param name description`, and
