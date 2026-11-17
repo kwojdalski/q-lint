@@ -363,9 +363,14 @@ Then either press <kbd>F5</kbd> in that directory to open an Extension
 Development Host, or package and install it:
 
 ```sh
+mkdir -p server && install -m 755 ../../target/release/qlinter server/qlinter
 npx vsce package --out q-lint.vsix         # a name no release bump makes stale
 code --install-extension q-lint.vsix
 ```
+
+`server/` is not committed: a package carries the binary built from the
+tree it is packaged from, never an older one under the same version.
+`python3 scripts/dist.py build` does all of this for this machine.
 
 Its settings - the server binary and arguments, the profile, a configuration
 file, rule selection that can only narrow the repository's, when to lint,

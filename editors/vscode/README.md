@@ -136,8 +136,11 @@ your shell's `PATH`, so give `q-lint.serverPath` an absolute path.
 
 ## Development
 
-`server/qlinter` is a checked-in darwin-arm64 build, so a clone packages
-without a release build; releases bundle their own per platform. Refresh it
-with `cargo build --release && install -m 755 target/release/qlinter
-editors/vscode/server/qlinter`. The grammar is generated:
+`server/` is not committed, so a package never carries a server older than
+the tree under the same version (#558). Packaging puts one there:
+`python3 scripts/dist.py build` builds the release binary and copies it in
+before `vsce package`, and the release workflow unpacks each platform's.
+By hand: `cargo build --release && mkdir -p editors/vscode/server && install
+-m 755 target/release/qlinter editors/vscode/server/qlinter`. Without one, the
+extension falls back to `qlinter` on `PATH`. The grammar is generated:
 `python3 scripts/q_grammar.py > editors/vscode/syntaxes/q.tmLanguage.json`.
