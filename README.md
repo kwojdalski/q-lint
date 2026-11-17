@@ -303,7 +303,11 @@ qlinter --lsp --profile uqf
 It implements `initialize`/`initialized`, `didOpen`/`didChange`/`didSave`/
 `didClose`, `shutdown`/`exit`, and pushes `textDocument/publishDiagnostics`.
 It also offers Quick Fixes through `textDocument/codeAction` for `==` → `=`,
-`!=` → `<>`, `+=`/`-=`/`*=` → `+:`/`-:`/`*:`, and a leading UTF-8 BOM.
+`!=` → `<>`, `+=`/`-=`/`*=` → `+:`/`-:`/`*:`, and a leading UTF-8 BOM -
+the BOM only where the editor sends one: VS Code decodes a UTF-8 file's BOM
+away before the server sees the text and writes it back on save, so there
+QE005 is never shown and Format Document leaves the BOM, which
+`qlinter --fix` removes.
 It also fixes `&&` → `&` and `||` → `|` when selected in the editor, and
 `f x` → `f[x]` for QP006 under the uqf profile - where the edit covers the
 whole application, not just the underlined name - along with every other
