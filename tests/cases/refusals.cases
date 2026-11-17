@@ -699,6 +699,19 @@ c:12345678.z
 === QE010 profile: general | a shorter one is refused (#811; q 5: '123456.5)
 a:123456.5z
 
+=== QE010 profile: general | a vector's leading item that is no date (#812; q 5: '1)
+a:1 20000101d
+
+=== QE010 profile: general | nor a datetime (#812; q 5: '1 and '123456.5)
+a:1 20000101z
+b:123456.5 20000101z
+
+=== clean profile: general | items q reads under the suffix (#812; q 5 parses each)
+c:0N 20000101d
+d:2000.01.01 20000101d
+g:202401011 20000101z
+h:1234567.5 20000101z
+
 === QE010 profile: general | eight digits and a z that make no date (#713; q 5: '20001301)
 e:20001301z
 

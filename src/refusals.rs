@@ -1563,6 +1563,33 @@ fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Find
                     "`{text}`: the vector's `{}` suffix makes every item an integer",
                     &last[last.len() - 1..]
                 ))
+            } else if k + 1 < run.len() && re!(r"^(?:\d[\d.]*|0[nNwW])[dz]$").is_match(last) && {
+                let z = last.ends_with('z');
+                let day = |t: &str| {
+                    let field = |r: std::ops::Range<usize>| t[r].parse::<u32>().unwrap();
+                    (1..=days_in(field(0..4), field(4..6))).contains(&field(6..8))
+                };
+                match text.len() {
+                    _ if text.contains('.') => {
+                        z && re!(r"^\d+\.\d*$").is_match(text) && text.len() < 9
+                    }
+                    _ if !re!(r"^\d+$").is_match(text) => false,
+                    8 => !day(text),
+                    n => n < 8 || !z,
+                }
+            } {
+                // The suffix types every item, and an item that is no date
+                // is refused with it: q 5 `parse "1 20000101d"` is '1, as
+                // are `1 20000101z` and `20001301 20000101d` (#812).
+                Some(format!(
+                    "`{text}`: the vector's `{}` suffix makes every item a {}, and this is none",
+                    &last[last.len() - 1..],
+                    if last.ends_with('z') {
+                        "datetime"
+                    } else {
+                        "date"
+                    }
+                ))
             } else {
                 None
             };
