@@ -10,6 +10,15 @@ macro_rules! re {
         &*RE
     }};
 }
+/// Blanks inside one statement, for a pattern to span: spaces and tabs, and a
+/// line break only into an indented line, which q continues the statement
+/// with. `\s` would run on into the next statement - `r:x like "a*"`, then
+/// `` `t insert 1 `` at column 0, is no `like` of a symbol (#722, #725, #730).
+macro_rules! blank {
+    () => {
+        r"(?:[ \t\r]|\n[\r\n]*[ \t])"
+    };
+}
 mod families;
 mod intrinsics;
 mod refusals;
@@ -273,7 +282,7 @@ fn query_word(code: &str, at: usize) -> Option<&'static str> {
 /// `;` at its depth, or a newline the line after does not continue - the
 /// same boundaries `argument_end` stops at, read backwards. A query may
 /// span lines, so the line `at` is on does not settle this (#111).
-fn query_clause(code: &str, at: usize) -> Option<&'static str> {
+pub(crate) fn query_clause(code: &str, at: usize) -> Option<&'static str> {
     let bytes = code.as_bytes();
     let mut depth = 0usize;
     let mut start = at;
@@ -302,9 +311,12 @@ fn query_clause(code: &str, at: usize) -> Option<&'static str> {
 
 /// Where a prefix argument inside a qSQL phrase ends: `argument_end`'s
 /// answer, cut at the first comma at its depth - which separates columns,
-/// or `where` constraints - or at `by`, `from` or `where`, which close the
-/// list. Parse trees checked in q 5: `select s:g v,m:avg v by k from t` is
-/// `select s:g[v],m:avg v by k from t`. `None` where the argument holds a
+/// or `where` constraints - or at `by` or `from`, which close the list.
+/// Parse trees checked in q 5: `select s:g v,m:avg v by k from t` is
+/// `select s:g[v],m:avg v by k from t`. A `where` closes nothing here: before
+/// `from` it is the function, `select v:f c where e from t` is
+/// `f[c where e]`, and inside the where phrase it is the function too (#771).
+/// `None` where the argument holds a
 /// query of its own, which this scan does not delimit.
 fn query_argument_end(
     code: &str,
@@ -322,7 +334,8 @@ fn query_argument_end(
             b')' | b']' | b'}' => depth = depth.saturating_sub(1),
             b',' if depth == 0 => break,
             _ if depth == 0 => match query_word(code, at) {
-                Some("by" | "from" | "where") => break,
+                Some("by" | "from") => break,
+                Some("where") => {}
                 Some(_) => return None,
                 None => {}
             },
@@ -511,9 +524,13 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         // spelling is 'type or a projection, never a boolean, so no
         // working program changes.
         "QB007" => {
-            let lead = re!(r"^like\s*`").find(source.get(start..)?)?;
+            let lead = re!(concat!(r"^like", blank!(), "*`")).find(source.get(start..)?)?;
             let pattern = start + lead.end();
             let mut depth = 0;
+            // After a `:` the symbol is a path and takes a `/` too: q 5 parses
+            // `` `:b/c `` as one symbol, and cutting it there leaves `/c`, which
+            // q refuses to load (#768).
+            let mut path = false;
             let len = source[pattern..]
                 .char_indices()
                 .find(|&(_, c)| match c {
@@ -525,7 +542,11 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                         depth -= 1;
                         false
                     }
-                    c => !(c.is_ascii_alphanumeric() || "_.:*?^-".contains(c)),
+                    '/' => !path,
+                    c => {
+                        path |= c == ':';
+                        !(c.is_ascii_alphanumeric() || "_.:*?^-".contains(c))
+                    }
                 })
                 .map_or(source.len() - pattern, |(at, _)| at);
             let text = &source[pattern..pattern + len];
@@ -589,7 +610,8 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         // dictionary with tied values - q 5 orders the tied keys
         // differently - so only in the editor.
         "QR001" => {
-            let m = re!(r"^reverse\s+(asc|desc)\b").captures(source.get(start..)?)?;
+            let m = re!(concat!(r"^reverse", blank!(), r"+(asc|desc)\b"))
+                .captures(source.get(start..)?)?;
             let other = if &m[1] == "asc" { "desc" } else { "asc" };
             (
                 m.get(0)?.as_str(),
@@ -635,7 +657,14 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         // Sorting adds no duplicates, and q 5 agrees on the value and the
         // sorted attribute both.
         "QR003" => {
-            let m = re!(r"^distinct\s+asc\s+distinct\b").find(source.get(start..)?)?;
+            let m = re!(concat!(
+                r"^distinct",
+                blank!(),
+                "+asc",
+                blank!(),
+                r"+distinct\b"
+            ))
+            .find(source.get(start..)?)?;
             (
                 m.as_str(),
                 "asc distinct".into(),
@@ -1201,6 +1230,48 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                     "x"
                 };
                 header.push_str(&format!("{{[{name};{params}] "));
+            }
+            // Passed in, the local is read where the lambda is written, so it
+            // has to hold a value there: a parameter of the lambda around it,
+            // or assigned in an earlier statement. Otherwise q 5 refuses the
+            // rewrite with 'a - `{a:{[a;x] a+1}[a];a}`, and a read before a
+            // later `a:2` alike (#769).
+            let parent = enclosing_brace(&v.code, brace)?;
+            let outer = signature(&v.code, source, parent);
+            if !(outer.named
+                && outer
+                    .slots
+                    .iter()
+                    .any(|p| pattern_names(p).contains(&name.as_str())))
+            {
+                let before = top_level(&v.code[outer.body..brace]);
+                let mut depth = 0i32;
+                let statement = before
+                    .bytes()
+                    .enumerate()
+                    .filter(|&(_, b)| {
+                        match b {
+                            b'(' | b'[' | b'{' => depth += 1,
+                            b')' | b']' | b'}' => depth -= 1,
+                            _ => {}
+                        }
+                        b == b';' && depth == 0
+                    })
+                    .last()
+                    .map_or(0, |(i, _)| i);
+                let earlier = &before[..statement];
+                let assigned = earlier.match_indices(name.as_str()).any(|(i, _)| {
+                    let after = &earlier[i + name.len()..];
+                    let op = after.trim_start_matches([' ', '\t']);
+                    boundary(earlier, i)
+                        && !after
+                            .starts_with(|c: char| c.is_ascii_alphanumeric() || "_.".contains(c))
+                        && op.starts_with(':')
+                        && !op.starts_with("::")
+                });
+                if !assigned {
+                    return None;
+                }
             }
             let rest = &source[sig.body..close];
             begin = brace;
@@ -2639,12 +2710,13 @@ pub(crate) fn is_pattern(s: &str, nested: bool) -> bool {
         true
     } else if let Some(inner) = s.strip_prefix("([]").filter(|_| whole(s)) {
         items(&inner[..inner.len() - 1], &|c| field(c))
-    } else if let Some(inner) = s
-        .strip_prefix("([")
-        .filter(|_| s.ends_with("])") && whole(s))
+    } else if s.starts_with("([")
+        && whole(s)
+        && let Some(close) = matching(s, 1, b'[', b']')
     {
-        matching(s, 1, b'[', b']') == Some(s.len() - 1)
-            && items(&inner[..inner.len() - 2], &|c| field(c))
+        // A keyed table: its keys, then any value columns - q 5
+        // `{[([k]v)] v} ([k:1 2]v:3 4)` is 3 4 (#740).
+        items(&s[2..close - 1], &|c| field(c)) && items(&s[close..s.len() - 1], &|c| field(c))
     } else if whole(s) {
         items(&s[1..s.len() - 1], &|c| is_pattern(c, true))
     } else if let Some(at) = typed_at(s) {
@@ -3960,7 +4032,7 @@ pub fn lint_selecting(
     // `"abc" like `a*` is `like["abc"]*[`a]`, a projection, returned
     // silently where a boolean was wanted - except in a where phrase, which
     // wants booleans and raises 'type on it.
-    for m in re!(r"\blike\s*`[A-Za-z0-9_.:]*").find_iter(code) {
+    for m in re!(concat!(r"\blike", blank!(), r"*`[A-Za-z0-9_.:]*")).find_iter(code) {
         // A backtick before it makes this the symbol `` `like ``, an element of
         // a list rather than the operator - `` `abs`cor`like`mins `` is data.
         if !boundary(code, m.start()) {
@@ -4840,13 +4912,15 @@ pub fn lint_selecting(
     // `ss["abc";""]` and `ssr["abc";"";"b"]` checked. The pattern is a string,
     // which is blank in this view, so the check reads the source at the same
     // offsets - a pair of quotes with nothing between them.
-    for m in re!(r"\b(ss|ssr)\s*\[").find_iter(code) {
+    // Only a space or tab may come between: q refuses any other blank with
+    // 'char, and a multi-byte one would leave the name's slice mid-character.
+    for m in re!(r"\b(ss|ssr)[ \t]*\[").find_iter(code) {
         let open = m.end() - 1;
         let Some(close) = matching(code, open, b'[', b']') else {
             continue;
         };
         let parts = slots(&code[open + 1..close - 1]);
-        if !complete_call(&v.comments, open, &parts, &m.as_str()[..3] == "ssr") {
+        if !complete_call(&v.comments, open, &parts, m.as_str().starts_with("ssr")) {
             continue;
         }
         // The second slot's span in the source.

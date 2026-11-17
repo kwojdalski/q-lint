@@ -499,7 +499,17 @@ fn run(args: Args) -> Result<u8, String> {
         // Fixes a lossily read file wants but cannot be given: under --diff
         // they still mean the run is not clean.
         let mut withheld = 0;
+        // One file under two names - a symlink, `d/../a.q` - is linted under
+        // each, with each name's configuration (#11), but fixed as the one
+        // file it is: each name starts from what the one before it left, or
+        // the second write would clobber the first and the second patch
+        // would not apply after it (#761).
+        let mut current: std::collections::HashMap<PathBuf, String> = Default::default();
+        let canonical = |path: &str| fs::canonicalize(path).unwrap_or_else(|_| path.into());
         for (path, source) in &mut sources {
+            if let Some(text) = current.get(&canonical(path)) {
+                source.clone_from(text);
+            }
             if lossy.contains(path.as_str()) {
                 withheld += fixes_for(&policy.lint(source, path, &workspace)?, source)
                     .into_iter()
@@ -534,8 +544,9 @@ fn run(args: Args) -> Result<u8, String> {
                 failed = true;
                 continue;
             } else {
-                *source = updated;
+                source.clone_from(&updated);
             }
+            current.insert(canonical(path), updated);
             fixed += count;
             changed_files += 1;
         }
@@ -553,6 +564,13 @@ fn run(args: Args) -> Result<u8, String> {
             });
         }
         eprintln!("qlinter: fixed {fixed} finding(s) in {changed_files} file(s)");
+        // A name fixed early is linted as the file ended up, after the
+        // names that came later wrote to it.
+        for (path, source) in &mut sources {
+            if let Some(text) = current.get(&canonical(path)) {
+                source.clone_from(text);
+            }
+        }
     }
     let mut findings = vec![];
     if args.backend != "qls" {

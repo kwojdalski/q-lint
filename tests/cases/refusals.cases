@@ -199,6 +199,13 @@ h2:hopen `:localhost:5000
 === QT030 | a cast to a character that is no type
 r:"Q"$"1"
 
+=== clean profile: general | a one-letter string ending a line, and a conditional starting the next (q 5 prints 1 and 3, #725)
+a:1b
+mode:"w"
+$[a;show 1;show 2]
+fmt:"J"
+$[a;show 3;show 4]
+
 === clean | a lowercase type is refused only for some arguments, so it is left alone
 c:([]sym:"s"$())
 
@@ -856,6 +863,16 @@ c:{'`a`b}
 
 === clean profile: general | a symbol or a string in parentheses can
 a:{'(`a)}
+
+=== clean profile: general | a pair headed by a symbol signals the symbol (q 5: '(`err;"detail") is 'err, '(`a;1) is 'a, #739)
+f:{'(`err;"detail")}
+g:{'(`a;1)}
+h:{'(`a ; 1 2)}
+
+=== QT025 profile: general | but not a pair of symbols, three items, or a symbol second (q 5: each is 'stype)
+a:{'(`a;`b)}
+b:{'(`a;2;3)}
+c:{'(1;`a)}
 
 === QT031 profile: general | an uppercase cast parses a string (q 5: "J"$1 and "S"$`a are 'type)
 a:"J"$1

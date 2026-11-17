@@ -208,6 +208,12 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
         if !crate::operand_ends(code, whole.end()) {
             continue;
         }
+        // After `from` a `where` opens the query's where phrase, which takes
+        // a boolean atom: q 5 runs `select from t where 0b` (#737). Before
+        // `from` it is still the function - `select c where e from t`.
+        if name.as_str() == "where" && crate::query_clause(code, name.start()) == Some("from") {
+            continue;
+        }
         let arg = call.get(2).unwrap();
         out.push(Call {
             at: whole.start(),

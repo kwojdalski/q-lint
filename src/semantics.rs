@@ -623,6 +623,12 @@ fn scopes(code: &str, raw: &str) -> (Vec<Scope>, Vec<(usize, String)>) {
         }
         offset += line.len();
     }
+    // A typed slot left open swallows the closing brace, `{[a:}]`, and the
+    // body is then found past the lambda's end (#732). q refuses it and
+    // QE001 reports it; the scope is only kept from slicing backwards.
+    for scope in &mut scopes {
+        scope.body = scope.body.min(scope.end);
+    }
     // Children by parent, in one pass. Asking every scope about every scope is
     // quadratic in the number of lambdas, which a file of a few thousand
     // reaches on every keystroke.
