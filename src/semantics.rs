@@ -1444,14 +1444,19 @@ fn loads(
             loads.push((m[1].to_string(), namespace_at(at)));
         }
     }
-    for m in re!(r#"\bsystem\s*"l\s+([^"\s]+)\s*""#).captures_iter(raw) {
+    // Applied with brackets or `@`, or trapped, it loads as well: q 5 loads
+    // lib.q for `system["l lib.q"]`, `system@"l lib.q"` and
+    // `@[system;"l lib.q";{-1 x}]` (#762).
+    for m in re!(r#"(?:\bsystem\s*(?:\[\s*|@\s*)?|@\[\s*system\s*;\s*)"l\s+([^"\s]+)\s*""#)
+        .captures_iter(raw)
+    {
         let at = m.get(0).unwrap().start();
         // Not the head of a path joined at run time, `system "l dir/",x`,
         // which is a dynamic load, not one of `dir/`.
         let joined = raw[m.get(0).unwrap().end()..]
             .trim_start_matches([' ', '\t'])
             .starts_with(',');
-        if view[at..].starts_with("system") && !joined {
+        if view[at..].starts_with(&raw[at..at + 2]) && !joined {
             loads.push((m[1].to_string(), namespace_at(at)));
         }
     }
@@ -1548,8 +1553,10 @@ fn dynamic(raw: &str, view: &str, call_time: &[(usize, &'static str)]) -> Vec<cr
             push(m.start(), "set");
         }
     }
-    for m in re!(r#"\bsystem\s*"l\s[^"]*"\s*,"#).find_iter(raw) {
-        if view[m.start()..].starts_with("system") {
+    for m in
+        re!(r#"(?:\bsystem\s*(?:\[\s*|@\s*)?|@\[\s*system\s*;\s*)"l\s[^"]*"\s*,"#).find_iter(raw)
+    {
+        if view[m.start()..].starts_with(&raw[m.start()..m.start() + 2]) {
             push(m.start(), "load");
         }
     }

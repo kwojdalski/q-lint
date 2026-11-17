@@ -430,6 +430,28 @@ fn a_literal_load_is_an_edge() {
 }
 
 #[test]
+fn system_applied_with_brackets_with_at_or_trapped_loads() {
+    // q 5 loads lib.q for each (#762); a path joined at run time is dynamic.
+    let g = graph(
+        &[
+            ("lib.q", "lim:1\n"),
+            ("a.q", "@[system;\"l lib.q\";{-1 x}]\n"),
+            ("b.q", "system[\"l lib.q\"]\n"),
+            ("c.q", "system@\"l lib.q\"\n"),
+            ("d.q", "f:{system[\"l \",x]}\n"),
+            ("e.q", "f:{@[system;\"l \",x;{-1 x}]}\n"),
+        ],
+        false,
+    );
+    for file in ["a.q", "b.q", "c.q"] {
+        assert_eq!(deps(&g, file), ["lib.q"], "{file}");
+    }
+    for file in ["d.q", "e.q"] {
+        assert_eq!(kinds(&g, file), [(1, "load")], "{file}");
+    }
+}
+
+#[test]
 fn a_script_loaded_under_a_context_defines_in_it() {
     // q 5: after `\d .a`, `\l b.q`, `\d .` with b.q's `ff:{1}`, `.a.ff[]`
     // is 1 and `ff` is 'ff. b.q's own `\d .b` does not leak back out: a.q's
