@@ -1266,7 +1266,7 @@ fn formatting_leaves_an_unbalanced_document_alone_with_qe001_deselected() {
 #[test]
 fn formatting_never_applies_an_unsafe_fix() {
     let dir = tempfile::tempdir().unwrap();
-    let mut server = Server::start_in(dir.path(), &["--unsafe-fixes"]);
+    let mut server = Server::start_in(dir.path(), &[]);
     server.initialize();
     let uri = "file:///tmp/unsafe-format.q";
     server.open(uri, "a:1b; b:0b; r:a&&b; s:a||b\n");
@@ -1858,4 +1858,30 @@ fn a_workspace_folder_added_later_is_indexed_and_a_removed_one_forgotten() {
     );
     assert!(codes_of(&server.diagnostics_for(&app)).contains(&"QF018".to_string()));
     assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn a_flag_the_server_never_reads_is_refused() {
+    // Each was accepted and silently ignored: `--stdin-filename` with stdin
+    // the protocol stream, `--force-exclude` and `--unsafe-fixes` with no
+    // effect on what the editor shows (#798).
+    for flag in [
+        &["--stdin-filename", "x.q"][..],
+        &["--format", "json"],
+        &["--color", "always"],
+        &["--force-exclude"],
+        &["--unsafe-fixes"],
+        &["--qls-executable", "foo"],
+        &["--qls-timeout", "5"],
+    ] {
+        let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .arg("--lsp")
+            .args(flag)
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(2), "{flag:?}: {stderr}");
+        assert!(stderr.contains("--lsp"), "{flag:?}: {stderr}");
+    }
 }

@@ -130,7 +130,12 @@ struct Args {
     #[arg(long, default_value = "30")]
     qls_timeout: f64,
     /// Run as a language server on stdin/stdout instead of linting paths.
-    #[arg(long, conflicts_with_all = ["paths", "rules", "explain", "fix", "diff", "show_settings"])]
+    /// The flags that shape a CLI run are refused rather than ignored: the
+    /// server reads none of them, and one put in an editor's server
+    /// arguments would otherwise do nothing and say nothing (#798).
+    #[arg(long, conflicts_with_all = ["paths", "rules", "explain", "fix", "diff", "show_settings",
+        "stdin_filename", "format", "color", "force_exclude", "unsafe_fixes",
+        "qls_executable", "qls_timeout"])]
     lsp: bool,
     /// Colour the text output: `auto` (a terminal, and NO_COLOR unset or empty),
     /// `always`, or `never`.
