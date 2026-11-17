@@ -643,6 +643,18 @@ bb:1
 f:{[] aa:bb; aa}
 \d .
 
+=== clean | a member of a namespace written whole as a dictionary, read under its \d (#766; q 5: .cfg.r is 5010)
+.cfg:(``port)!(::;5010)
+\d .cfg
+r:port
+\d .
+
+=== QF018 | but not read before the dictionary is written (#766; q 5: 'port)
+\d .cfg
+r:port
+\d .
+.cfg:(``port)!(::;5010)
+
 === QF018 | a dotted root name is not the bare name (q 5: .cfg:1; b:cfg is 'cfg)
 .cfg:1
 b:cfg

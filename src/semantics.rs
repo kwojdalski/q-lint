@@ -2884,6 +2884,17 @@ pub fn check(
                                 rest.trim_start().starts_with(':')
                             })
                     })
+                    // Or a namespace holding it, written as a whole before:
+                    // q 5 reads `port` as 5010 under `\d .cfg` after
+                    // `.cfg:(``port)!(::;5010)` (#766), as `elsewhere` does
+                    // for another file's.
+                    || {
+                        let full = resolved(name, namespace);
+                        full.match_indices('.')
+                            .filter(|&(i, _)| i > 0)
+                            .filter_map(|(i, _)| exact.get(&full[..i]))
+                            .any(|at| scope.is_some() || at.iter().any(|&at| at < start + value.start()))
+                    }
                     // q searches `.q` from every context: after `.q.k:1`,
                     // q 5 reads a bare `k` as 1, inside `\d .ns` too (#357).
                     || exact.contains_key(&format!(".q.{name}"))
