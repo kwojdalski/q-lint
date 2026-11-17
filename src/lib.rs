@@ -717,7 +717,9 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             let numeric = token.starts_with(|c: char| c == '-' || c.is_ascii_digit());
             let before = &source[..start];
             let prev = before.trim_end().chars().next_back();
-            let next = source[start + whole.end()..].trim_start_matches([' ', '\t']);
+            // Past a line break too, where an indented line goes on: `(2)`
+            // over `  -1` is `(2) -1`, and `2` there would be `2 -1` (#773).
+            let next = refusals::continued(&source[start + whole.end()..]);
             let adjacent = source[start + whole.end()..].chars().next();
             if before.ends_with('-')
                 || (token.starts_with('-') && !prev.is_none_or(|c| "([{;:".contains(c)))
