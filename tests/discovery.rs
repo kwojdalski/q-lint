@@ -810,6 +810,30 @@ fn a_script_loaded_under_a_context_defines_in_it_for_the_others() {
 }
 
 #[test]
+fn a_script_loaded_only_under_a_context_defines_nothing_at_the_root() {
+    // q 5: after main.q's `\d .a` / `\l b.q`, the root has no `ff`, and
+    // d.q's `h:{ff}` throws 'ff (#525).
+    let repo = Repo::new();
+    repo.write("main.q", "\\d .a\n\\l b.q\n\\d .\n\\l d.q\n")
+        .write("b.q", "ff:42\n")
+        .write("d.q", "h:{ff}\n");
+    let style = ["--isolated", "--profile", "style", "--select", "QF018"];
+    assert_eq!(repo.codes(".", &[&style[..], &["."]].concat()), ["QF018"]);
+    // Linted without main.q, nothing loads b.q, so it is run at the root.
+    assert_eq!(
+        repo.codes(".", &[&style[..], &["d.q", "b.q"]].concat()),
+        Vec::<String>::new()
+    );
+    // Loaded at the root as well, from a file run at the root, it defines
+    // in both.
+    repo.write("e.q", "\\l b.q\n");
+    assert_eq!(
+        repo.codes(".", &[&style[..], &["."]].concat()),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
 fn a_path_that_does_not_exist_is_reported_and_the_rest_are_still_linted() {
     // One stale path in a pre-commit or CI file list used to end the run
     // before anything was linted (#265).

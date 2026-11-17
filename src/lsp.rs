@@ -76,6 +76,7 @@
 //! nothing to fix, an empty answer is the true one.
 use crate::config::{FILES, Layer, Policy, selector};
 use crate::jsonrpc::{INVALID_REQUEST, receive, send};
+use q_lint_rs::graph::Placement;
 use q_lint_rs::{
     FileIndex, Finding, TokenKind, Workspace, balanced, fix_all, fix_for, semantic_tokens_in,
     whole_edit,
@@ -114,10 +115,19 @@ type Unsaved = HashSet<String>;
 /// The editor's buffer wins over the disk for an open file; a closed one is
 /// read back from disk, and a file changed outside the editor arrives as a
 /// `workspace/didChangeWatchedFiles` notification.
+///
+/// A script loaded under `\d .a` defines in `.a`, and not at the root, as
+/// the CLI has it (#525): each file's definitions go into `ws` where the
+/// others' loads put them. Where that is changes only with a file's loads or
+/// the set of files, so an edit that touches neither costs no more than
+/// before.
 #[derive(Default)]
 struct Index {
-    files: HashMap<String, FileIndex>,
+    files: HashMap<String, Indexed>,
     ws: Workspace,
+    /// A file's loads, or the set of files, changed since the placements
+    /// were last worked out.
+    stale: bool,
     /// Bumped whenever what the workspace defines changes, which is what
     /// makes the open documents' semantic tokens stale.
     generation: u64,
@@ -137,32 +147,119 @@ struct Index {
 const MAX_FILES: usize = 20_000;
 const MAX_ENTRIES: usize = 500_000;
 
+/// One file in the index: what it defines read alone, what decides where
+/// its loaders put that, and the result, which is what `ws` holds.
+#[derive(Default)]
+struct Indexed {
+    own: FileIndex,
+    loads: Vec<(String, String)>,
+    implicit: Vec<String>,
+    placement: Placement,
+    placed: FileIndex,
+}
+
 impl Index {
     /// Record what `path` defines. Whether it changed is what tells the
     /// caller other open files need linting again.
-    fn set(&mut self, path: &str, file: FileIndex) -> bool {
-        let path = &file_key(path);
-        if self.files.get(path) == Some(&file) {
-            return false;
-        }
-        if let Some(old) = self.files.remove(path) {
-            self.ws.remove(&old);
-        }
-        self.ws.add(&file);
-        self.files.insert(path.to_string(), file);
-        self.generation += 1;
-        true
+    fn set(&mut self, path: &str, text: &str) -> bool {
+        self.put(path, text) | self.settle()
     }
 
-    fn remove(&mut self, path: &str) -> bool {
+    /// `set`, leaving the placements to the caller's `settle`, so a batch
+    /// of files works them out once.
+    fn put(&mut self, path: &str, text: &str) -> bool {
+        let path = file_key(path);
+        let own = index(text);
+        let read = guarded(|| q_lint_rs::references(text, false)).unwrap_or_default();
+        let (loads, implicit) = (read.loads, read.implicit_defines);
+        let old = self.files.remove(&path);
+        self.stale |= old.as_ref().is_none_or(|old| old.loads != loads);
+        let placement = old
+            .as_ref()
+            .map(|old| old.placement.clone())
+            .unwrap_or_default();
+        let mut placed = own.clone();
+        placement.apply(&mut placed, &implicit);
+        let changed = old.as_ref().is_none_or(|old| old.placed != placed);
+        if changed {
+            if let Some(old) = &old {
+                self.ws.remove(&old.placed);
+            }
+            self.ws.add(&placed);
+            self.generation += 1;
+        }
+        let file = Indexed {
+            own,
+            loads,
+            implicit,
+            placement,
+            placed,
+        };
+        self.files.insert(path, file);
+        changed
+    }
+
+    /// Forget `path`, leaving the placements to the caller's `settle`.
+    fn forget(&mut self, path: &str) -> bool {
         match self.files.remove(&file_key(path)) {
             Some(old) => {
-                self.ws.remove(&old);
+                self.ws.remove(&old.placed);
                 self.generation += 1;
+                self.stale = true;
                 true
             }
             None => false,
         }
+    }
+
+    /// Work out again where each file's definitions go, when a file's loads
+    /// or the set of files changed, and move those that moved. Only a load
+    /// under some `\d .a` can put a file anywhere but the root, so without
+    /// one there is no graph to build.
+    fn settle(&mut self) -> bool {
+        if !std::mem::take(&mut self.stale) {
+            return false;
+        }
+        let keys: Vec<String> = self.files.keys().cloned().collect();
+        let contexts = self
+            .files
+            .values()
+            .any(|f| f.loads.iter().any(|(_, ns)| !ns.is_empty() && ns != "."));
+        let placements = if contexts {
+            let paths: Vec<std::path::PathBuf> = keys.iter().map(Into::into).collect();
+            let loads: Vec<_> = keys
+                .iter()
+                .map(|k| self.files[k].loads.as_slice())
+                .collect();
+            let cwd = self
+                .roots
+                .first()
+                .map_or_else(|| std::env::current_dir().unwrap_or_default(), Into::into);
+            guarded(|| q_lint_rs::graph::placements(&paths, &loads, &cwd))
+                .unwrap_or_else(|_| vec![Placement::default(); keys.len()])
+        } else {
+            vec![Placement::default(); keys.len()]
+        };
+        let mut changed = false;
+        for (key, placement) in keys.iter().zip(placements) {
+            let file = self.files.get_mut(key).expect("a key just read");
+            if file.placement == placement {
+                continue;
+            }
+            let mut placed = file.own.clone();
+            placement.apply(&mut placed, &file.implicit);
+            file.placement = placement;
+            if placed != file.placed {
+                self.ws.remove(&file.placed);
+                self.ws.add(&placed);
+                file.placed = placed;
+                changed = true;
+            }
+        }
+        if changed {
+            self.generation += 1;
+        }
+        changed
     }
 
     /// Forget `path` and, when it was a directory, every file under it but
@@ -180,9 +277,9 @@ impl Index {
             .collect();
         let mut changed = false;
         for key in under {
-            changed |= self.remove(&key);
+            changed |= self.forget(&key);
         }
-        changed
+        changed | self.settle()
     }
 
     /// Read `path` from disk when the index covers it, and forget it when it
@@ -190,17 +287,18 @@ impl Index {
     /// changed on disk both come here, so neither can put back what the
     /// settings left out of the scan.
     fn reload(&mut self, path: &str, policy: &Policy) -> bool {
-        if self.covers(path, policy) {
+        let changed = if self.covers(path, policy) {
             self.read(path)
         } else {
-            self.remove(path)
-        }
+            self.forget(path)
+        };
+        changed | self.settle()
     }
 
     fn read(&mut self, path: &str) -> bool {
         match std::fs::read(path) {
-            Ok(bytes) if is_q_path(path) => self.set(path, index(&String::from_utf8_lossy(&bytes))),
-            _ => self.remove(path),
+            Ok(bytes) if is_q_path(path) => self.put(path, &String::from_utf8_lossy(&bytes)),
+            _ => self.forget(path),
         }
     }
 
@@ -248,8 +346,9 @@ impl Index {
             self.scan(policy);
         }
         for (uri, text) in docs.iter().filter(|(uri, _)| is_q_uri(uri)) {
-            self.set(&path_of(uri), index(text));
+            self.put(&path_of(uri), text);
         }
+        self.settle();
     }
 
     /// Every `.q` file under the workspace folders, less those `exclude`
@@ -268,7 +367,7 @@ impl Index {
                 .cloned()
                 .collect();
             for key in stale {
-                self.remove(&key);
+                self.forget(&key);
             }
         }
         let added: Vec<String> = added
@@ -281,6 +380,7 @@ impl Index {
             self.roots = all;
         }
         self.roots.extend(added);
+        self.settle();
     }
 
     fn scan(&mut self, policy: &Policy) {
@@ -879,8 +979,9 @@ pub fn serve(
                 idx.change_roots(folders("added"), folders("removed"), policy);
                 // An open buffer still wins over what a folder held.
                 for (uri, text) in docs.iter().filter(|(uri, _)| is_q_uri(uri)) {
-                    idx.set(&path_of(uri), index(text));
+                    idx.put(&path_of(uri), text);
                 }
+                idx.settle();
                 if idx.generation != generation {
                     relint(writer, &docs, &unsaved, &idx, None, policy, &opts)?;
                 }
@@ -1245,7 +1346,7 @@ fn publish(
     opts: &Options,
 ) -> Result<(), String> {
     let path = path_of(&uri);
-    let changed = is_q_uri(&uri) && idx.set(&path, index(&text));
+    let changed = is_q_uri(&uri) && idx.set(&path, &text);
     docs.insert(uri.clone(), text);
     diagnose(writer, &uri, &docs[&uri], &idx.ws, policy, opts)?;
     if changed {
