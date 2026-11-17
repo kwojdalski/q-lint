@@ -175,9 +175,9 @@ pub(crate) fn each_set_targets(code: &str) -> Vec<(std::ops::Range<usize>, Vec<&
 /// the nearest bracket enclosing both is a control bracket or the body
 /// itself. `f[c-1; c:count x]` and `g[c] h[c:1]` both assign before they
 /// read; `if[c; c:1]` and `r:c; c:1` do not.
-fn runs_before(text: &str, read: usize, assign: usize) -> bool {
-    let (read_seq, read_path) = eval_path(text, read);
-    let (assign_seq, assign_path) = eval_path(text, assign);
+fn runs_before(text: &str, stops: &[usize], read: usize, assign: usize) -> bool {
+    let (read_seq, read_path) = eval_path(text, stops, read);
+    let (assign_seq, assign_path) = eval_path(text, stops, assign);
     if read_seq != assign_seq {
         return read_seq < assign_seq;
     }
@@ -199,9 +199,9 @@ fn runs_before(text: &str, read: usize, assign: usize) -> bool {
 /// slots left to right (`$[a:1;a;0]`). A read at the assignment's own level,
 /// to its right, is in its value, which is `in_value`'s case. Verified in
 /// q 5: the first four are refused at definition with 'a, `$[a:1;a;0]` is not.
-fn runs_first_after(text: &str, read: usize, assign: usize) -> bool {
-    let (read_seq, read_path) = eval_path(text, read);
-    let (assign_seq, assign_path) = eval_path(text, assign);
+fn runs_first_after(text: &str, stops: &[usize], read: usize, assign: usize) -> bool {
+    let (read_seq, read_path) = eval_path(text, stops, read);
+    let (assign_seq, assign_path) = eval_path(text, stops, assign);
     if read <= assign || read_seq != assign_seq {
         return false;
     }
@@ -215,12 +215,32 @@ fn runs_first_after(text: &str, read: usize, assign: usize) -> bool {
     }
     assign_path.len() > read_path.len()
 }
+/// The offset of each `;` that ends a statement of a lambda body, with no
+/// bracket open around it: `eval_path` starts from the last one before the
+/// position it is asked about, not from the body's start, which made a
+/// long body quadratic in its reads (#708).
+fn statement_stops(text: &str) -> Vec<usize> {
+    let mut depth = 0usize;
+    let mut stops = vec![];
+    for (i, &c) in text.as_bytes().iter().enumerate() {
+        match c {
+            b'[' | b'(' | b'{' => depth += 1,
+            b']' | b')' | b'}' => depth = depth.saturating_sub(1),
+            b';' if depth == 0 => stops.push(i),
+            _ => {}
+        }
+    }
+    stops
+}
 /// Where `pos` sits in the order a lambda body runs in: the statement it is
 /// in, and each bracket open around it, as the bracket's offset, the slot
-/// within it, and whether it is a control bracket.
-fn eval_path(text: &str, pos: usize) -> (usize, Vec<(usize, usize, bool)>) {
-    let (mut seq, mut stack): (usize, Vec<(usize, usize, bool)>) = (0, vec![]);
-    for (i, &c) in text.as_bytes()[..pos].iter().enumerate() {
+/// within it, and whether it is a control bracket. `stops` is the body's
+/// `statement_stops`.
+fn eval_path(text: &str, stops: &[usize], pos: usize) -> (usize, Vec<(usize, usize, bool)>) {
+    let mut seq = stops.partition_point(|&stop| stop < pos);
+    let from = if seq == 0 { 0 } else { stops[seq - 1] + 1 };
+    let mut stack: Vec<(usize, usize, bool)> = vec![];
+    for (i, &c) in text.as_bytes()[..pos].iter().enumerate().skip(from) {
         match c {
             b'[' | b'(' | b'{' => {
                 // A bracket that follows nothing it could index is a block,
@@ -229,11 +249,13 @@ fn eval_path(text: &str, pos: usize) -> (usize, Vec<(usize, usize, bool)>) {
                 // while `{g [a:1;a]}` and `{x:[a:1;a]}` are 'a. So does
                 // one that opens the body: `{[p] [a:1;a+p]}[5]` is 6.
                 let before = text[..i].trim_end();
+                let keyword = ["if", "while", "do"].iter().any(|k| {
+                    before.strip_suffix(k).is_some_and(|rest| {
+                        !rest.ends_with(|c: char| c.is_ascii_alphanumeric() || "_.".contains(c))
+                    })
+                });
                 let control = c == b'['
-                    && (re!(r"(?:^|[^A-Za-z0-9_.])(?:if|while|do)\s*$|\$\s*$")
-                        .is_match(&text[..i])
-                        || before.is_empty()
-                        || before.ends_with([';', '[', '(']));
+                    && (keyword || before.is_empty() || before.ends_with(['$', ';', '[', '(']));
                 stack.push((i, 0, control));
             }
             b']' | b')' | b'}' => {
@@ -661,6 +683,11 @@ fn scopes(code: &str, raw: &str) -> (Vec<Scope>, Vec<(usize, String)>) {
     let assignment = re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*:(:)?");
     let mut scopes: Vec<Scope> = vec![];
     let mut stack: Vec<usize> = vec![];
+    // Braces past q's own limit open no scope of their own: q refuses the
+    // file (#717), and each scope keeps a copy of its body, so a nest of n
+    // lambdas cost n^2 bytes - 4 GB for a 128 KB file (#704). Their text
+    // stays in the deepest scope's body.
+    let mut beyond = 0usize;
     let mut namespace = String::new();
     let mut namespaces = vec![];
     let mut offset = 0;
@@ -678,7 +705,11 @@ fn scopes(code: &str, raw: &str) -> (Vec<Scope>, Vec<(usize, String)>) {
         }
         for (i, b) in line.bytes().enumerate() {
             let at = offset + i;
-            if b == b'{' {
+            if b == b'{' && stack.len() >= crate::DEPTH {
+                beyond += 1;
+            } else if b == b'}' && beyond > 0 {
+                beyond -= 1;
+            } else if b == b'{' {
                 let sig = signature(code, raw, at);
                 // When the brackets are not a parameter list q binds the
                 // implicit arguments instead, and so must the scope here.
@@ -894,10 +925,14 @@ fn global_writes(
             blank(&mut view[open + 1..close - 1]);
         }
     }
+    // A keyword inside a range already blanked ends no later than it, so it
+    // is passed over: `select from select from t` scanned to the statement's
+    // end once per keyword (#709).
+    let mut blanked = 0;
     for m in re!(r"\b(?:select|exec|update|delete)\b").find_iter(code) {
         // The keyword, not the end of a dotted name: `clust.kmeans.update:{...}`
         // defines a function KX ml calls, and `\b` alone would blank it.
-        if !boundary(code, m.start()) {
+        if m.start() < blanked || !boundary(code, m.start()) {
             continue;
         }
         let (mut at, mut depth) = (m.start(), 0i32);
@@ -918,6 +953,7 @@ fn global_writes(
             at += 1;
         }
         blank(&mut view[m.start()..at]);
+        blanked = at;
     }
     let code = std::str::from_utf8(&view).unwrap_or(code);
     let mut globals: HashMap<String, Vec<usize>> = HashMap::new();
@@ -980,6 +1016,9 @@ fn global_writes(
     // `` load `:k `` defines the global its path ends in (#470).
     for m in re!(LOAD).captures_iter(code) {
         let whole = m.get(0).unwrap();
+        if !boundary(code, whole.start()) {
+            continue;
+        }
         if !call_time_sets && call_time(scopes, whole.start(), &m[1]) {
             continue;
         }
@@ -2024,6 +2063,7 @@ pub fn check(
             continue;
         }
         let direct = with_from_clauses(&scope.direct, true);
+        let stops = statement_stops(&direct);
         let mut first: HashMap<&str, usize> = HashMap::new();
         let mut every: HashMap<&str, Vec<usize>> = HashMap::new();
         for a in assignment.captures_iter(&direct) {
@@ -2086,7 +2126,7 @@ pub fn check(
                         floor = floor.min(depth);
                         if b == b';'
                             && depth <= floor
-                            && !eval_path(&direct, assigned + i)
+                            && !eval_path(&direct, &stops, assigned + i)
                                 .1
                                 .last()
                                 .is_some_and(|&(_, _, control)| !control)
@@ -2109,9 +2149,9 @@ pub fn check(
                 && !in_value
                 && every[name].iter().all(|&p| {
                     if p < m.start() {
-                        runs_first_after(&direct, m.start(), p)
+                        runs_first_after(&direct, &stops, m.start(), p)
                     } else {
-                        runs_before(&direct, m.start(), p)
+                        runs_before(&direct, &stops, m.start(), p)
                     }
                 });
             if (m.start() >= assigned && !in_value && !later)
@@ -2120,7 +2160,7 @@ pub fn check(
                 || after.starts_with(':')
                 // A dotted name, not dot-apply: `g . p` reads `g` (#251).
                 || direct[m.end()..].starts_with('.')
-                || (!in_value && !later && !runs_before(&direct, m.start(), assigned))
+                || (!in_value && !later && !runs_before(&direct, &stops, m.start(), assigned))
                 || !seen.insert(name)
             {
                 continue;
@@ -2923,6 +2963,13 @@ pub fn check(
             (whole.start(), whole.end(), m.get(1).unwrap().as_str())
         })
         .collect();
+        // The query around `at`, by binary search: the matches are in order
+        // and do not overlap, and asking each of them for every candidate was
+        // quadratic in a chain of queries (#709).
+        let query_at = |at: usize| {
+            let i = queries.partition_point(|&(lo, _, _)| lo <= at);
+            queries[..i].last().filter(|&&(_, hi, _)| at < hi)
+        };
         // The columns of the table literal `table` holds where it is read at
         // `at`, by the same assignment-in-force rule as `holds_lambda`.
         let columns_of = |table: &str, at: usize, in_lambda: bool| -> Option<Vec<String>> {
@@ -2980,6 +3027,40 @@ pub fn check(
         // Symbols blanked, for the iterator test: the `/` of `` f `:db/t ``
         // is part of the path, not over.
         let unsymbolled = crate::unsymbolled(code);
+        // The line each candidate is on, read on from the last one rather
+        // than searched back for from each: a long line of them was
+        // quadratic (#709).
+        let (mut seen, mut line_start) = (0, 0);
+        let stops = crate::argument_stops(code, comments, raw);
+        // And the first iterator at each position's own depth, nested groups
+        // skipped, for the same reason: the test below read every argument
+        // through to its end.
+        let iterators = {
+            let b = unsymbolled.as_bytes();
+            let mut close = vec![usize::MAX; b.len()];
+            let mut open = vec![];
+            for (i, &c) in b.iter().enumerate() {
+                match c {
+                    b'(' | b'[' | b'{' => open.push(i),
+                    b')' | b']' | b'}' => {
+                        if let Some(o) = open.pop() {
+                            close[o] = i + 1;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let mut first = vec![usize::MAX; b.len() + 1];
+            for i in (0..b.len()).rev() {
+                first[i] = match b[i] {
+                    b'(' | b'[' | b'{' if close[i] == usize::MAX => usize::MAX,
+                    b'(' | b'[' | b'{' => first[close[i]],
+                    b'/' | b'\\' | b'\'' => i,
+                    _ => first[i + 1],
+                };
+            }
+            first
+        };
         for (at, bare) in candidates {
             if !boundary(code, at) {
                 continue;
@@ -2992,7 +3073,13 @@ pub fn check(
             }
             // A system command is a directive, not an expression: the name
             // after `\d` is not an argument and `\l` was ruled out above.
-            let line_start = code[..at].rfind('\n').map_or(0, |i| i + 1);
+            if at < seen {
+                (seen, line_start) = (0, 0);
+            }
+            if let Some(i) = code[seen..at].rfind('\n') {
+                line_start = seen + i + 1;
+            }
+            seen = at;
             if code[line_start..].trim_start().starts_with('\\') {
                 continue;
             }
@@ -3004,15 +3091,24 @@ pub fn check(
             // operand is an expression of its own: q 5 reads `select g s
             // from t` and `s in g 1` as calls of `g` (#780).
             let before = code[..at].trim_end();
+            // Only the word that ends it and the byte before that: the
+            // pattern is anchored at the end, and run over all of `before`
+            // it read the file up to each candidate.
+            let word = before
+                .trim_end_matches(|c: char| c.is_ascii_alphanumeric() || "_.`".contains(c))
+                .len();
+            let tail = before[..word]
+                .char_indices()
+                .next_back()
+                .map_or(0, |(i, _)| i);
             let keyword = re!(r"(?:^|[^A-Za-z0-9_.`])([a-z][a-z0-9]*)$")
-                .captures(before)
+                .captures(&before[tail..])
                 .is_some_and(|m| {
                     let word = &m[1];
                     // `by`, `from` and `where` only inside a query: outside
                     // one `where` is a unary, and `sum f x` is not reported.
                     matches!(word, "select" | "exec" | "update")
-                        || matches!(word, "by" | "from" | "where")
-                            && queries.iter().any(|&(lo, hi, _)| (lo..hi).contains(&at))
+                        || matches!(word, "by" | "from" | "where") && query_at(at).is_some()
                         || INFIX.contains(&word)
                 });
             let head = match before.chars().next_back() {
@@ -3032,17 +3128,9 @@ pub fn check(
             // does not even parse. And a right side that is itself a function
             // - ending in an operator, an iterator or `::` - composes:
             // `enorm2 (-)::` and `sse X@\:` are new functions, not calls.
-            if let Some(end) = crate::argument_end(code, comments, raw, argument) {
+            if let Some(end) = crate::argument_end_from(&stops, comments, raw, argument) {
                 let text = &code[argument..end];
-                let mut depth = 0i32;
-                let iterated = unsymbolled[argument..end].bytes().any(|b| {
-                    match b {
-                        b'(' | b'[' | b'{' => depth += 1,
-                        b')' | b']' | b'}' => depth -= 1,
-                        _ => {}
-                    }
-                    depth == 0 && matches!(b, b'/' | b'\\' | b'\'')
-                });
+                let iterated = iterators[argument] < end;
                 let composed = text
                     .trim_end()
                     .ends_with(|c: char| "+-*%&|^=<>~,#_!?@.$:'/\\".contains(c));
@@ -3081,10 +3169,9 @@ pub fn check(
             }
             // In a query the table's columns come first: with a column `f`,
             // `update g:f 0 from t` indexes the column (q 5).
-            if queries.iter().any(|&(lo, hi, table)| {
-                (lo..hi).contains(&at)
-                    && columns_of(&qualify(table, namespace), at, scope.is_some())
-                        .is_some_and(|columns| columns.iter().any(|c| c == bare))
+            if query_at(at).is_some_and(|&(_, _, table)| {
+                columns_of(&qualify(table, namespace), at, scope.is_some())
+                    .is_some_and(|columns| columns.iter().any(|c| c == bare))
             }) {
                 continue;
             }
@@ -3117,6 +3204,8 @@ pub fn check(
 }
 
 /// `` load `:path/name `` or `rload`, infix or bracketed: the name it defines.
+/// Its users check `boundary`, as `\b` matches after a dot: `.my.load` and
+/// `.Q.load` are not q's `load` (#699).
 const LOAD: &str = r"\br?load\s*\[?\s*`:?(?:[^\s;\]\[()`]*/)?([A-Za-z][A-Za-z0-9_]*)\b";
 
 /// A table changed in place by name: `update c:1 from `t`, `![`t;...]`,
@@ -3354,16 +3443,27 @@ fn named_values(
             ))
         })
         .collect();
+    // The bracket depth before each offset, so a name's depth inside a
+    // literal is a difference rather than a count over the literal up to it,
+    // which made a wide literal quadratic (#711).
+    let depth: Vec<i32> = if literals.is_empty() {
+        vec![]
+    } else {
+        std::iter::once(0)
+            .chain(code.bytes().scan(0i32, |d, c| {
+                match c {
+                    b'(' | b'[' | b'{' => *d += 1,
+                    b')' | b']' | b'}' => *d -= 1,
+                    _ => {}
+                }
+                Some(*d)
+            }))
+            .collect()
+    };
     let in_literal = |at: usize| {
         literals.iter().any(|&(open, header, close)| {
             open < at && at < close && {
-                let depth = code.as_bytes()[open + 1..at]
-                    .iter()
-                    .fold(0i32, |d, &c| match c {
-                        b'(' | b'[' | b'{' => d + 1,
-                        b')' | b']' | b'}' => d - 1,
-                        _ => d,
-                    });
+                let depth = depth[at] - depth[open + 1];
                 (depth == 0 || (depth == 1 && at < header))
                     && matches!(
                         code[..at].trim_end().as_bytes().last(),
@@ -3415,6 +3515,9 @@ fn named_values(
     // `` load `:k `` and `rload` restore the global named by the path's last
     // part: q 5 `` k:([]a:`long$()); load `:k `` redefines `k` (#470).
     for m in re!(LOAD).captures_iter(code) {
+        if !boundary(code, m.get(0).unwrap().start()) {
+            continue;
+        }
         let name = m.get(1).unwrap().as_str();
         writes.entry(name).or_default().extend([0, 0]);
         exact
@@ -3583,6 +3686,32 @@ fn named_values(
         foreign_calls.get(i).is_some_and(|&c| c < to)
     };
     let phrases = qsql_phrases(code);
+    // The first phrase, in `qsql_phrases`' order, around each offset: asking
+    // the list for every name read was quadratic in a file of queries
+    // (#709). Each phrase claims the offsets no earlier one has, skipping
+    // claimed runs through `next`.
+    let owner: Vec<u32> = {
+        let n = code.len();
+        let mut owner = vec![u32::MAX; n];
+        let mut next: Vec<usize> = (0..=n).collect();
+        fn find(next: &mut [usize], mut i: usize) -> usize {
+            while next[i] != i {
+                next[i] = next[next[i]];
+                i = next[i];
+            }
+            i
+        }
+        for (index, &(a, b, _)) in phrases.iter().enumerate() {
+            let b = b.min(n);
+            let mut i = find(&mut next, a.min(n));
+            while i < b {
+                owner[i] = index as u32;
+                next[i] = i + 1;
+                i = find(&mut next, i + 1);
+            }
+        }
+        owner
+    };
     let global = |name: &str, at: usize| -> Option<&Held> {
         let (assigned, value) = known.get(key(name, at).as_str())?;
         match scope_at(scopes, at) {
@@ -3597,24 +3726,34 @@ fn named_values(
     // without that column, and nothing renames into it by symbol (`` `t ``
     // in an `update ... from `t` may add one): q 5 `px:2.5; t:([]a:1 2);
     // select p0:px 0 from t` is 'type (#576).
+    // Every name a symbol spells, gathered once: searching the file for each
+    // read in a phrase made a long where phrase quadratic (#707).
+    let symbols: HashSet<&str> = re!(r"`(\.?[A-Za-z][A-Za-z0-9_.]*)")
+        .captures_iter(code)
+        .map(|c| c.get(1).unwrap().as_str())
+        .collect();
     let visible = |name: &str, at: usize| -> Option<&Held> {
-        if let Some(&(a, b, table)) = phrases.iter().find(|&&(a, b, _)| a <= at && at < b) {
+        if let Some(&(a, b, table)) = owner
+            .get(at)
+            .filter(|&&i| i != u32::MAX)
+            .map(|&i| &phrases[i as usize])
+        {
             let columns = table
-                .filter(|&(t, e)| {
-                    !re!(r"`(\.?[A-Za-z][A-Za-z0-9_.]*)")
-                        .captures_iter(code)
-                        .any(|c| c[1] == code[t..e])
-                })
+                .filter(|&(t, e)| !symbols.contains(&code[t..e]))
                 .and_then(|(t, e)| match global(&code[t..e], t) {
                     Some(Held::Table(columns, _)) => Some(columns),
                     _ => None,
                 });
-            let assigned_here = re!(r"([A-Za-z][A-Za-z0-9_]*)\s*:")
-                .captures_iter(&code[a..b.min(code.len())])
-                .any(|c| &c[1] == name);
+            // Only once the table is known: read for every name in a phrase,
+            // a long where phrase was quadratic (#707).
+            let assigned_here = || {
+                re!(r"([A-Za-z][A-Za-z0-9_]*)\s*:")
+                    .captures_iter(&code[a..b.min(code.len())])
+                    .any(|c| &c[1] == name)
+            };
             match columns {
                 Some(columns)
-                    if name != "i" && !assigned_here && !columns.iter().any(|c| c == name) => {}
+                    if name != "i" && !columns.iter().any(|c| c == name) && !assigned_here() => {}
                 _ => return None,
             }
         }
@@ -4388,14 +4527,36 @@ type Phrase = (usize, usize, Option<(usize, usize)>);
 /// indexes the column `px`, not the atom. Each span carries where the name
 /// after `from` spans, when the table is written as a plain name.
 fn qsql_phrases(code: &str) -> Vec<Phrase> {
-    let mut out = vec![];
     let bytes = code.as_bytes();
-    for m in re!(r"\b(?:select|exec|update|delete)\b").find_iter(code) {
-        if !boundary(code, m.start()) {
-            continue;
-        }
+    let keywords: Vec<regex::Match> = re!(r"\b(?:select|exec|update|delete)\b")
+        .find_iter(code)
+        .filter(|m| boundary(code, m.start()))
+        .collect();
+    // Each keyword's statement end and every `where` at its level, read from
+    // the last keyword back. A scan past its `from` that meets a later
+    // keyword at its own level ends where that one's does and finds the same
+    // `where`s, so it takes them rather than scanning on: `select from select
+    // from ... t` was quadratic (#709).
+    let mut read: HashMap<usize, (usize, Vec<usize>)> = HashMap::new();
+    let mut phrases: Vec<Vec<Phrase>> = vec![];
+    for m in keywords.iter().rev() {
         let (mut i, mut depth, mut from) = (m.end(), 0i32, None);
+        let mut wheres = vec![];
+        let mut own: Vec<Phrase> = vec![];
         while i < bytes.len() {
+            if depth == 0
+                && from.is_some()
+                && let Some((end, later)) = read.get(&i)
+            {
+                for &w in later {
+                    wheres.push(w);
+                    let table = own.last().and_then(|p| p.2);
+                    own.push((w, usize::MAX, table));
+                    from = Some(w);
+                }
+                i = *end;
+                break;
+            }
             match bytes[i] {
                 b'(' | b'[' | b'{' => depth += 1,
                 b')' | b']' | b'}' => {
@@ -4413,6 +4574,9 @@ fn qsql_phrases(code: &str) -> Vec<Phrase> {
                             && !rest[w.len()..]
                                 .starts_with(|c: char| c.is_alphanumeric() || c == '_')
                     };
+                    if word("where") {
+                        wheres.push(i);
+                    }
                     if from.is_none() && word("from") {
                         let table = crate::past_blanks(code, i + 4);
                         let table = re!(r"^\.?[A-Za-z][A-Za-z0-9_.]*")
@@ -4424,26 +4588,28 @@ fn qsql_phrases(code: &str) -> Vec<Phrase> {
                                     || rest.starts_with("where")
                             })
                             .map(|t| (table, table + t.end()));
-                        out.push((m.start(), i, table));
+                        own.push((m.start(), i, table));
                         from = Some(i);
                     } else if from.is_some() && word("where") {
                         from = Some(i);
-                        let table = out.last().and_then(|p| p.2);
-                        out.push((i, usize::MAX, table));
+                        let table = own.last().and_then(|p| p.2);
+                        own.push((i, usize::MAX, table));
                     }
                 }
                 _ => {}
             }
             i += 1;
         }
-        match (from, out.last_mut()) {
+        match (from, own.last_mut()) {
             // No `from`: not a statement this can read, so all of it.
-            (None, _) => out.push((m.start(), i, None)),
+            (None, _) => own.push((m.start(), i, None)),
             (Some(_), Some(last)) if last.1 == usize::MAX => last.1 = i,
             _ => {}
         }
+        read.insert(m.start(), (i, wheres));
+        phrases.push(own);
     }
-    out
+    phrases.into_iter().rev().flatten().collect()
 }
 
 /// What an operand is, for the char-arithmetic rule. `Float` stands for

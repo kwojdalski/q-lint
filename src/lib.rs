@@ -272,6 +272,72 @@ pub(crate) fn argument_end(code: &str, comments: &str, raw: &str, from: usize) -
     (end > from).then_some(end)
 }
 
+/// `argument_end`'s stop for every position of `code` at once, before the
+/// trim: a caller asking from many positions on one long statement read it
+/// to its end from each (#709). Read from the right, a position stops where
+/// its byte ends the expression, or where the one after it - or after the
+/// group it opens - stops. The same single depth over every bracket kind.
+pub(crate) fn argument_stops(code: &str, comments: &str, raw: &str) -> Vec<usize> {
+    let bytes = code.as_bytes();
+    let n = bytes.len();
+    let mut close = vec![usize::MAX; n];
+    let mut open = vec![];
+    for (i, &b) in bytes.iter().enumerate() {
+        match b {
+            b'(' | b'[' | b'{' => open.push(i),
+            b')' | b']' | b'}' => {
+                if let Some(o) = open.pop() {
+                    close[o] = i + 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    // Whether each newline's statement goes on, as `continues_after` reads
+    // it: the next line with code on it is indented.
+    let mut continues = std::collections::HashMap::new();
+    let mut next_indented = false;
+    let mut end = n;
+    for (at, _) in code
+        .match_indices('\n')
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+    {
+        if !comments[at + 1..end].trim().is_empty() {
+            next_indented = raw[at + 1..].starts_with([' ', '\t']);
+        }
+        continues.insert(at, next_indented);
+        end = at + 1;
+    }
+    let mut stop = vec![n; n + 1];
+    for i in (0..n).rev() {
+        stop[i] = match bytes[i] {
+            b'(' | b'[' | b'{' if close[i] == usize::MAX => n,
+            b'(' | b'[' | b'{' => stop[close[i]],
+            b')' | b']' | b'}' | b';' => i,
+            b'\n' if !continues[&i] => i,
+            _ => stop[i + 1],
+        };
+    }
+    stop
+}
+
+/// `argument_end` from `argument_stops`.
+pub(crate) fn argument_end_from(
+    stops: &[usize],
+    comments: &str,
+    raw: &str,
+    from: usize,
+) -> Option<usize> {
+    let (raw, comments) = (raw.as_bytes(), comments.as_bytes());
+    let mut end = stops[from];
+    while end > from && (raw[end - 1].is_ascii_whitespace() || comments[end - 1] == b' ') {
+        end -= 1;
+    }
+    (end > from).then_some(end)
+}
+
 /// Whether the statement running through the newline at `at` goes on: the
 /// next line with code on it is indented. Indentation is read on the raw
 /// source - `code` blanks a string's opening quote, so a line that starts
@@ -1689,14 +1755,61 @@ impl Finding {
     /// indentation before it.
     pub fn at(path: &str, source: &str, at: usize, code: &str, detail: String) -> Self {
         let at = at + source[at..].len() - source[at..].trim_start_matches([' ', '\t']).len();
-        let start = source[..at].rfind('\n').map_or(0, |p| p + 1);
-        let mut f = Self::new(path, line_at(source, at), code, detail);
+        let (line, start) = line_at(source, at);
+        let mut f = Self::new(path, line, code, detail);
         f.column = Some(source[start..at].encode_utf16().count() + 1);
         f
     }
 }
-fn line_at(s: &str, at: usize) -> usize {
-    s.as_bytes()[..at].iter().filter(|&&b| b == b'\n').count() + 1
+/// The line `at` is on, from 1, and the offset that line starts at: from the
+/// installed `LineScope` when `s` is its text, by counting otherwise.
+pub(crate) fn line_at(s: &str, at: usize) -> (usize, usize) {
+    LINES
+        .with(|l| {
+            let l = l.borrow();
+            let t = l
+                .as_ref()
+                .filter(|t| t.0 == s.as_ptr() as usize && t.1 == s.len())?;
+            let line = t.2.partition_point(|&start| start <= at);
+            Some((line, t.2[line - 1]))
+        })
+        .unwrap_or_else(|| {
+            let line = s.as_bytes()[..at].iter().filter(|&&b| b == b'\n').count() + 1;
+            (line, s[..at].rfind('\n').map_or(0, |p| p + 1))
+        })
+}
+
+/// A text's address and length, and the offset each of its lines starts at.
+type LineTable = (usize, usize, Vec<usize>);
+
+thread_local! {
+    /// The text `LineScope` was installed for, by address and length, and
+    /// the offset each of its lines starts at.
+    static LINES: std::cell::RefCell<Option<std::rc::Rc<LineTable>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Keeps a table of a text's line starts installed for as long as it lives,
+/// as `MatchScope` does its brackets: every finding is placed by its line,
+/// and counting from the file's start for each was quadratic (#706). The
+/// caller keeps the text alive and unchanged while the scope lives.
+pub(crate) struct LineScope(Option<std::rc::Rc<LineTable>>);
+
+impl LineScope {
+    pub(crate) fn install(text: &str) -> LineScope {
+        let starts = std::iter::once(0)
+            .chain(text.match_indices('\n').map(|(i, _)| i + 1))
+            .collect();
+        let table = std::rc::Rc::new((text.as_ptr() as usize, text.len(), starts));
+        LineScope(LINES.with(|l| l.replace(Some(table))))
+    }
+}
+
+impl Drop for LineScope {
+    fn drop(&mut self) {
+        let previous = self.0.take();
+        LINES.with(|l| *l.borrow_mut() = previous);
+    }
 }
 /// q's `.z` names that hold a value rather than a function or a callback:
 /// applying one to a negative literal is never meant. `.z.p -0D00:01` is the
@@ -2060,6 +2173,36 @@ pub(crate) fn in_qsql_phrase(code: &str, at: usize) -> bool {
 /// `in_qsql_phrase`, where `joins` says whether the from phrase is refused:
 /// a `,` there joins tables, but a keyword after it still ends the operand.
 fn qsql_phrase(code: &str, at: usize, joins: bool) -> bool {
+    // Each `,` of a where phrase asks this again, and every walk back to the
+    // keyword passed all the conditions before it (#707). So the answer from
+    // each top-level `,` passed is kept, for the length of the lint, for the
+    // next walk to stop at - only in the text `MatchScope` holds unchanged.
+    let cached = in_match_table(code);
+    let base = code.as_ptr() as usize;
+    let mut passed = vec![];
+    let found = qsql_walk(code, at, joins, |i, seen_where| {
+        let key = (base, base + i, joins, seen_where);
+        let hit = PHRASES.with(|p| p.borrow().get(&key).copied());
+        if hit.is_none() && cached {
+            passed.push(key);
+        }
+        hit.filter(|_| cached)
+    });
+    if !passed.is_empty() {
+        PHRASES.with(|p| {
+            p.borrow_mut()
+                .extend(passed.into_iter().map(|k| (k, found)))
+        });
+    }
+    found
+}
+
+fn qsql_walk(
+    code: &str,
+    at: usize,
+    joins: bool,
+    mut known: impl FnMut(usize, bool) -> Option<bool>,
+) -> bool {
     let b = code.as_bytes();
     let mut depth = 0i32;
     let mut seen_where = false;
@@ -2076,6 +2219,11 @@ fn qsql_phrase(code: &str, at: usize, joins: bool) -> bool {
             }
             b';' if depth == 0 => return false,
             b'\n' if depth == 0 && !code[i + 1..].starts_with([' ', '\t']) => return false,
+            b',' if depth == 0 => {
+                if let Some(found) = known(i, seen_where) {
+                    return found;
+                }
+            }
             _ => {}
         }
         if depth != 0 || !b[i].is_ascii_lowercase() || !boundary(code, i) {
@@ -2190,6 +2338,11 @@ fn value_discarded(code: &str, at: usize) -> bool {
 }
 /// The `{` of the innermost lambda around `at`, in masked code.
 pub(crate) fn enclosing_brace(code: &str, at: usize) -> Option<usize> {
+    // From the installed table where there is one: walking back to the brace
+    // made each call linear in the body, and a long body quadratic (#708).
+    if let Some(found) = brace_chain(code, at, |end| end.is_none_or(|end| end > at)) {
+        return found.first().copied();
+    }
     let mut depth = 0i32;
     for (i, b) in code.as_bytes()[..at].iter().enumerate().rev() {
         match b {
@@ -2817,6 +2970,16 @@ struct MatchTable {
     /// it never closes, or `NOT_OPEN` if the position opens no group as
     /// `matching` would read it from there.
     ends: Vec<u32>,
+    /// Each `{` in order, with the index in this list of the `{` it opened
+    /// inside, `NO_MATCH` at the top level: the lambdas around a position
+    /// are found by climbing from the last one before it (#705).
+    braces: Vec<(u32, u32)>,
+    /// The bracket depth after each bracket, counting every kind as one, as
+    /// `slots` does, and each `;` by the depth it sits at: a slice's slots
+    /// are then the `;`s at its own depth, found by binary search rather
+    /// than by reading through every bracket nested in it (#710).
+    depths: Vec<(u32, i32)>,
+    semicolons: std::collections::HashMap<i32, Vec<u32>>,
 }
 
 const NO_MATCH: u32 = u32::MAX;
@@ -2825,6 +2988,22 @@ const NOT_OPEN: u32 = u32::MAX - 1;
 thread_local! {
     static MATCHES: std::cell::RefCell<Option<std::rc::Rc<MatchTable>>> =
         const { std::cell::RefCell::new(None) };
+    /// `qsql_phrase`'s answers from each top-level `,` it walked back past,
+    /// by the address of the text walked and of the `,`, whether it refused
+    /// joins and whether it had passed a `where`. Emptied with the table.
+    static PHRASES: std::cell::RefCell<
+        std::collections::HashMap<(usize, usize, bool, bool), bool>,
+    > = std::cell::RefCell::new(Default::default());
+}
+
+/// Whether `s` is the text of the installed `MatchTable` or a slice of it.
+fn in_match_table(s: &str) -> bool {
+    MATCHES.with(|m| {
+        m.borrow().as_ref().is_some_and(|t| {
+            let at = s.as_ptr() as usize;
+            at >= t.start && at + s.len() <= t.start + t.len
+        })
+    })
 }
 
 /// Keeps a `MatchTable` installed for as long as it lives, restoring
@@ -2838,9 +3017,28 @@ impl MatchScope {
     pub(crate) fn install(text: &str) -> MatchScope {
         let b = text.as_bytes();
         let mut ends = vec![NOT_OPEN; b.len()];
+        let mut braces = vec![];
+        let (mut depths, mut semicolons) = (vec![], std::collections::HashMap::new());
         // Applicable only below u32 offsets; a larger text keeps scanning.
         if b.len() < NOT_OPEN as usize {
             let mut stacks: [Vec<usize>; 3] = [vec![], vec![], vec![]];
+            let mut open_braces: Vec<u32> = vec![];
+            let mut depth = 0i32;
+            for (i, &c) in b.iter().enumerate() {
+                match c {
+                    b'(' | b'[' | b'{' => depth += 1,
+                    b')' | b']' | b'}' => depth -= 1,
+                    b';' => {
+                        semicolons
+                            .entry(depth)
+                            .or_insert_with(Vec::new)
+                            .push(i as u32);
+                        continue;
+                    }
+                    _ => continue,
+                }
+                depths.push((i as u32, depth));
+            }
             let mut i = 0;
             // The same walk `matching` makes, so a position it reads as
             // outside a string is one this reads as outside a string too: from
@@ -2856,10 +3054,17 @@ impl MatchScope {
                     c @ (b'{' | b'[' | b'(') => {
                         ends[i] = NO_MATCH;
                         stacks[bracket_kind(c)].push(i);
+                        if c == b'{' {
+                            braces.push((i as u32, *open_braces.last().unwrap_or(&NO_MATCH)));
+                            open_braces.push(braces.len() as u32 - 1);
+                        }
                     }
                     c @ (b'}' | b']' | b')') => {
                         if let Some(o) = stacks[bracket_kind(c)].pop() {
                             ends[o] = (i + 1) as u32;
+                        }
+                        if c == b'}' {
+                            open_braces.pop();
                         }
                     }
                     _ => {}
@@ -2871,7 +3076,11 @@ impl MatchScope {
             start: text.as_ptr() as usize,
             len: text.len(),
             ends,
+            braces,
+            depths,
+            semicolons,
         });
+        PHRASES.with(|p| p.borrow_mut().clear());
         MatchScope(MATCHES.with(|m| m.replace(Some(table))))
     }
 }
@@ -2879,6 +3088,7 @@ impl MatchScope {
 impl Drop for MatchScope {
     fn drop(&mut self) {
         let previous = self.0.take();
+        PHRASES.with(|p| p.borrow_mut().clear());
         MATCHES.with(|m| *m.borrow_mut() = previous);
     }
 }
@@ -2889,6 +3099,66 @@ fn bracket_kind(c: u8) -> usize {
         b'[' | b']' => 1,
         _ => 2,
     }
+}
+
+/// Every `{` before `at` in `s` whose lambda closes after `at`, innermost
+/// first, from the installed table when `s` is its text. `None` means "not
+/// answerable here".
+fn enclosing_braces(s: &str, at: usize) -> Option<Vec<usize>> {
+    brace_chain(s, at, |end| end.is_some_and(|end| end > at))
+}
+
+/// Each `{` before `at` that `keep` accepts by where it closes, innermost
+/// first: the braces still open at `at`, and closed ones on the way out to
+/// them. From the installed table when `s` is its text, `None` otherwise.
+fn brace_chain(s: &str, at: usize, keep: impl Fn(Option<usize>) -> bool) -> Option<Vec<usize>> {
+    MATCHES.with(|m| {
+        let m = m.borrow();
+        let t = m.as_ref()?;
+        if s.as_ptr() as usize != t.start || s.len() != t.len {
+            return None;
+        }
+        let mut out = vec![];
+        let i = t.braces.partition_point(|&(open, _)| (open as usize) < at);
+        let mut next = if i == 0 { NO_MATCH } else { i as u32 - 1 };
+        while next != NO_MATCH {
+            let (open, parent) = t.braces[next as usize];
+            let end = t.ends[open as usize];
+            if keep((end != NO_MATCH).then_some(end as usize)) {
+                out.push(open as usize);
+            }
+            next = parent;
+        }
+        Some(out)
+    })
+}
+
+/// Where `slots` cuts `s`, from the installed table when `s` is a slice of
+/// its text: each `;` in it at the depth it starts at.
+fn slot_cuts(s: &str) -> Option<Vec<usize>> {
+    MATCHES.with(|m| {
+        let m = m.borrow();
+        let t = m.as_ref()?;
+        let at = s.as_ptr() as usize;
+        if at < t.start || at + s.len() > t.start + t.len || t.len >= NOT_OPEN as usize {
+            return None;
+        }
+        let (from, to) = (at - t.start, at - t.start + s.len());
+        let i = t.depths.partition_point(|&(p, _)| (p as usize) < from);
+        let depth = if i == 0 { 0 } else { t.depths[i - 1].1 };
+        let Some(list) = t.semicolons.get(&depth) else {
+            return Some(vec![]);
+        };
+        let first = list.partition_point(|&p| (p as usize) < from);
+        Some(
+            list[first..]
+                .iter()
+                .map(|&p| p as usize)
+                .take_while(|&p| p < to)
+                .map(|p| p - from)
+                .collect(),
+        )
+    })
 }
 
 /// `matching` from the installed table, when `s` is a slice of its text and
@@ -2954,6 +3224,16 @@ fn boolean_test(s: &str) -> bool {
 }
 
 pub(crate) fn slots(s: &str) -> Vec<&str> {
+    if let Some(cuts) = slot_cuts(s) {
+        let mut out = vec![];
+        let mut start = 0;
+        for cut in cuts {
+            out.push(&s[start..cut]);
+            start = cut + 1;
+        }
+        out.push(&s[start..]);
+        return out;
+    }
     let (mut start, mut depth) = (0, 0i32);
     let mut out = vec![];
     for (i, b) in s.bytes().enumerate() {
@@ -3320,15 +3600,25 @@ pub(crate) fn lambda_rank(code: &str, raw: &str, brace: usize, end: usize) -> us
             sig.slots.len()
         };
     }
-    let mut body = code.as_bytes()[sig.body..end].to_vec();
-    let mut depth = 0i32;
-    for c in &mut body {
-        match *c {
-            b'{' => depth += 1,
-            b'}' => depth -= 1,
-            _ if depth > 0 => *c = b' ',
-            _ => {}
+    // A nested lambda reads its own arguments, so it is left out - as one
+    // blank, jumped over from its brace's match: blanking it in a copy of
+    // the whole body made a nest of lambdas quadratic (#704).
+    let b = code.as_bytes();
+    let mut body = vec![];
+    let mut i = sig.body;
+    while i < end {
+        if b[i] == b'{' {
+            match matching(code, i, b'{', b'}') {
+                Some(close) if close <= end => {
+                    body.push(b' ');
+                    i = close;
+                    continue;
+                }
+                _ => break,
+            }
         }
+        body.push(b[i]);
+        i += 1;
     }
     // A symbol is not a read: `{x,`y}` takes one argument (#189).
     let body = re!(r"`[A-Za-z0-9_./:]*")
@@ -3425,7 +3715,11 @@ pub(crate) fn shadowed(code: &str, raw: &str, at: usize, name: &str) -> bool {
     if name.contains('.') {
         return false;
     }
-    for (brace, _) in code[..at].match_indices('{') {
+    // Only the lambdas around `at`: walking every `{` before it made each
+    // call linear in the file, and a file of functions quadratic (#705).
+    let braces = enclosing_braces(code, at)
+        .unwrap_or_else(|| code[..at].match_indices('{').map(|(i, _)| i).collect());
+    for brace in braces {
         let Some(end) = matching(code, brace, b'{', b'}').filter(|&end| end > at) else {
             continue;
         };
@@ -3556,6 +3850,9 @@ pub fn balanced(source: &str) -> bool {
     structure("", source, &views(source)).is_empty()
 }
 
+/// The most brackets, braces and parentheses q 5 holds open at once.
+pub(crate) const DEPTH: usize = 100;
+
 /// Every structural problem in the file, in source order. Each is reported
 /// and then recovered from - a statement at column 0 starts with no bracket
 /// open, a stray closer is skipped, a mismatched one closes what it meets -
@@ -3598,6 +3895,19 @@ fn structure(path: &str, source: &str, v: &Views) -> Vec<Finding> {
             for (i, c) in line.bytes().enumerate() {
                 if let Some(p) = b"([{ ".iter().position(|&a| a == c).filter(|&p| p < 3) {
                     stack.push((b")]}"[p], offset + i));
+                    // q 5 refuses a hundred and one open at once, of any
+                    // kinds, with the innermost: `(` 101 deep is '(, and
+                    // `({` 51 deep is '{ (#717).
+                    if stack.len() == DEPTH + 1 {
+                        found.push(make(
+                            offset + i,
+                            format!(
+                                "More than {DEPTH} brackets, braces and parentheses open at \
+                                 once; q 5 refuses this one with '{}",
+                                c as char
+                            ),
+                        ));
+                    }
                 } else if b")]}".contains(&c) {
                     match stack.pop() {
                         None => {
@@ -3732,6 +4042,7 @@ pub fn lint_selecting(
     structure_selected: bool,
 ) -> Vec<Finding> {
     let uqf = profile == Profile::Uqf;
+    let _lines = LineScope::install(source);
     let mut v = views(source);
     if structure_selected {
         let mut out = structure(path, source, &v);
@@ -4143,8 +4454,12 @@ pub fn lint_selecting(
             // each a complete call (#433). On the next line too: inside the
             // brackets a line break is a blank (#686). A negative literal
             // past a blank is one too: `@[{[a;b] a+b} -1;2;{x}]` is 1 (#590).
+            // Not `each` or `peach`, which apply it to each item with one
+            // argument: q 5 `@[{[a;b] a+b} each;1 2;{x}]` is a list of
+            // projections (#712).
             let next = &source[past_blanks(code, after)..];
-            if next.starts_with(|c: char| c.is_ascii_alphanumeric() || "`(\"{.".contains(c))
+            if (next.starts_with(|c: char| c.is_ascii_alphanumeric() || "`(\"{.".contains(c))
+                && !re!(r"^p?each\b").is_match(next))
                 || (past_blanks(code, after) > after && re!(r"^-\.?\d").is_match(next))
             {
                 supplied += 1;
@@ -6516,6 +6831,9 @@ pub fn lint_selecting(
     // line is a group of its own, but a query there may go on over the next
     // lines - a newline in a lambda is whitespace - so the query rules read
     // on to here, keeping only what starts in the group (#334).
+    // Only as far as the statement the group's last one goes on into: a
+    // group inside a lambda read on to the lambda's end, so a long body was
+    // quadratic in its lines (#708).
     let statement_end: Vec<usize> = {
         let (mut open, mut ends) = (0i32, vec![0; statements.len()]);
         let mut first = 0;
@@ -6530,8 +6848,28 @@ pub fn lint_selecting(
                     _ => {}
                 }
             }
-            for e in &mut ends[first..=n] {
-                *e = end;
+            if open <= 0 || n + 1 == statements.len() {
+                ends[first..=n].fill(end);
+            }
+        }
+        for (n, &(start, end)) in statements.iter().enumerate() {
+            let mut depth = code[start..end].bytes().fold(0i32, |d, b| match b {
+                b'(' | b'[' | b'{' => d + 1,
+                b')' | b']' | b'}' => d - 1,
+                _ => d,
+            });
+            depth = depth.max(0);
+            let rest = &code.as_bytes()[end..ends[n]];
+            for (i, &b) in rest.iter().enumerate() {
+                match b {
+                    b'(' | b'[' | b'{' => depth += 1,
+                    b')' | b']' | b'}' | b';' if depth == 0 => {
+                        ends[n] = end + i + 1;
+                        break;
+                    }
+                    b')' | b']' | b'}' => depth -= 1,
+                    _ => {}
+                }
             }
         }
         ends
@@ -7066,6 +7404,11 @@ pub fn lint_selecting(
         }
         if re!(r"\b(?:where|select|exec|update|delete)\b").is_match(line) {
             let mut search = 0;
+            // The statement each comparison is in, and whether a qSQL keyword
+            // starts before it there, read on from the last comparison: from
+            // the line's start for each, a long where phrase was quadratic
+            // (#707).
+            let (mut semi, mut scanned, mut keyword) = (0, 0, false);
             // Any comparison is constant against itself: `a<>a` and `a<a`
             // keep no row, `a<=a` every one (#638).
             while let Some(m) =
@@ -7084,8 +7427,17 @@ pub fn lint_selecting(
                 // And the comparison is in the query's own statement, not
                 // another one on its line: `n:a=a; r:select from t`.
                 let start = m.get(0).unwrap().start();
-                let head = &line[line[..start].rfind(';').map_or(0, |p| p + 1)..start];
-                let query = re!(r"\b(?:where|select|exec|update|delete)\b").is_match(head);
+                if let Some(p) = line[scanned.min(start)..start].rfind(';') {
+                    (semi, keyword) = (scanned.min(start) + p + 1, false);
+                    scanned = semi;
+                }
+                if !keyword {
+                    keyword = re!(r"\b(?:where|select|exec|update|delete)\b")
+                        .find_at(&line[..start], scanned.saturating_sub(8).max(semi))
+                        .is_some();
+                }
+                scanned = start;
+                let query = keyword;
                 // The left name whole too: `.cfg.a=a` compares a global with
                 // the column (#498).
                 if m[1] == m[3] && ends && query && boundary(line, start) {
@@ -7099,13 +7451,21 @@ pub fn lint_selecting(
                     search = m.get(3).unwrap().start();
                 }
             }
-            if let Some(w) = re!(r"\bwhere\b").find(line) {
+            // Every `where` on the line, but not one inside a phrase already
+            // read: `s:where b=1 2 3; u:select from t where c=1 2` has its
+            // filter in the second (#702).
+            let mut read_to = 0;
+            for w in re!(r"\bwhere\b").find_iter(line) {
+                if w.start() < read_to {
+                    continue;
+                }
                 // To the end of the query's statement: after a `;` is another
                 // statement, not more of the filter (#344). Read in `query`,
                 // which runs on to where the statement's brackets close: in a
                 // lambda each line is a group of its own, and a filter after
                 // a `where` that ends one is on the next (#679).
-                let phrase = flat_filter(&query[w.end()..phrase_end(query, w.end())]);
+                read_to = phrase_end(query, w.end());
+                let phrase = flat_filter(&query[w.end()..read_to]);
                 // `~` matches whole operands, so a filter gets one boolean for
                 // the entire table where it wanted one per row: a 'type error
                 // against a column, or worse, a single-row result against a
@@ -7122,8 +7482,10 @@ pub fn lint_selecting(
                 // vector into indices - `first where v~x` is not a filter and
                 // has no rows to compare. Only a qSQL statement brings the
                 // column semantics this rule is about, so one has to be named
-                // to its left before the phrase counts as a filter at all.
-                let qsql = re!(r"\b(?:select|exec|update|delete)\b").is_match(&line[..w.start()]);
+                // to its left before the phrase counts as a filter at all -
+                // in the `where`'s own statement: `r:select from t; where
+                // b=1 2 3` is the function again (#701).
+                let qsql = qsql_phrase(query, w.start(), false);
                 for m in re!(r"~[^/\\']").find_iter(&phrase).filter(|_| qsql) {
                     add(
                         offset + w.end() + m.start(),

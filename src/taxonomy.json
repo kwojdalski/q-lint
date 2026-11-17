@@ -3,7 +3,7 @@
     "code": "QE001",
     "name": "syntax-delimiter",
     "category": "syntax",
-    "summary": "Unbalanced delimiter or unterminated string",
+    "summary": "Unbalanced delimiter, more than 100 nested, or unterminated string",
     "scope": "builtin"
   },
   {
