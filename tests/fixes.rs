@@ -966,7 +966,13 @@ fn qf005_fix_raises_no_qs008() {
 fn touching_fixes_keep_their_tokens_apart() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("adjacent.q");
-    fs::write(&path, "x:10 20 30;y:2\nr:(x)(y)\nf:{(-1)(x)}\n").unwrap();
+    // And two numbers stay two tokens: q 5 `(1.5)(2)` is 'type, and `1.5 2`
+    // would be a vector (#516).
+    fs::write(
+        &path,
+        "x:10 20 30;y:2\nr:(x)(y)\nf:{(-1)(x)}\na:(1.5)(2)\nb:(2) (3)\n",
+    )
+    .unwrap();
     Command::new(env!("CARGO_BIN_EXE_qlinter"))
         .args(["--profile", "styleq", "--fix"])
         .arg(&path)
@@ -974,7 +980,7 @@ fn touching_fixes_keep_their_tokens_apart() {
         .unwrap();
     assert_eq!(
         fs::read_to_string(&path).unwrap(),
-        "x:10 20 30;y:2\nr:x y\nf:{-1 x}\n"
+        "x:10 20 30;y:2\nr:x y\nf:{-1 x}\na:1.5(2)\nb:2 (3)\n"
     );
 }
 

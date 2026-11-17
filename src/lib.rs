@@ -5947,11 +5947,15 @@ pub fn lint_selecting(
             // Next to another literal the parentheses are what keep two
             // tokens apart: `1 2 (3)` indexes `1 2` at 3 (q 5: 0N), and
             // `3 (-1)` applies 3, where `1 2 3` and `3 -1` are vectors.
+            // So is one held in parentheses of its own: `(1.5)(2)` is 'type,
+            // and with both pairs gone it would be the vector `1.5 2`. The
+            // first pair alone can go - `1.5(2)` is the same application -
+            // so only the second is left (#516).
             let numeric = m[1]
                 .trim()
                 .starts_with(|c: char| c == '-' || c.is_ascii_digit());
             if numeric
-                && (re!(r"(?:^|[^A-Za-z0-9_.])-?\d[A-Za-z0-9.:]*$")
+                && (re!(r"(?:^|[^A-Za-z0-9_.])-?\d[A-Za-z0-9.:]*$|\(\s*-?\d[A-Za-z0-9.:]*\s*\)$")
                     .is_match(line[..whole.start()].trim_end())
                     || line[whole.end()..]
                         .trim_start_matches([' ', '\t'])
