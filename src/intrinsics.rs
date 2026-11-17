@@ -186,24 +186,35 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
         let Some(end) = matching(code, open, b'[', b']') else {
             continue;
         };
-        let mut arg_start = open + 1;
-        let args: Vec<_> = slots(&code[open + 1..end - 1])
-            .into_iter()
-            .map(|slot| {
-                let raw = &comments[arg_start..arg_start + slot.len()];
-                arg_start += slot.len() + 1;
-                raw
-            })
-            .collect();
+        let read = |open: usize, end: usize| -> Vec<&'a str> {
+            let mut arg_start = open + 1;
+            slots(&code[open + 1..end - 1])
+                .into_iter()
+                .map(|slot| {
+                    let raw = &comments[arg_start..arg_start + slot.len()];
+                    arg_start += slot.len() + 1;
+                    raw
+                })
+                .collect()
+        };
+        let mut args = read(open, end);
+        // A dyadic builtin projected on its first argument and applied to
+        // the second straight after: `rotate[2.5][1 2 3]` is the call
+        // `rotate[2.5;1 2 3]` (q 5: 'type, #617).
+        let name = call.get(1).unwrap().as_str();
+        if args.len() == 1
+            && re!(r"^(?:rotate|mavg|msum|mcount|mdev|mmin|mmax|cor|cov|wavg|wsum|within)$")
+                .is_match(name)
+            && code[end..].starts_with('[')
+            && let Some(next) = matching(code, end, b'[', b']')
+        {
+            args.extend(read(end, next));
+        }
         // Omitted slots are projections rather than complete applications.
         if args.iter().any(|arg| arg.trim().is_empty()) {
             continue;
         }
-        out.push(Call {
-            at,
-            name: call.get(1).unwrap().as_str(),
-            args,
-        });
+        out.push(Call { at, name, args });
     }
     // Juxtaposed form: `name arg`, one argument, running to the end of the
     // expression. Only a literal argument is worth collecting - the rules can
@@ -253,10 +264,22 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
     // call whose handler catches the error. A dyadic builtin under `@` is a
     // projection, which the argument count in `check` already passes over.
     const LITERAL: &str = r#"(?:-?\.?\d[A-Za-z0-9.:]*(?:[ \t]+-?\.?\d[A-Za-z0-9.:]*)*)|(?:`[A-Za-z0-9_.:]*)+|"(?:\\.|[^"\\])*""#;
+    // So is `.` given a one-item list: `til . enlist 2.5` and
+    // `.[til;enlist 2.5]` (q 5: 'type, #617).
     for (pattern, name_group, arg_group) in [
         (format!(r"\b({BUILTINS})[ \t]*@[ \t]*({LITERAL})"), 1, 2),
         (
             format!(r"@\[[ \t]*({BUILTINS})[ \t]*;[ \t]*({LITERAL})[ \t]*\]"),
+            1,
+            2,
+        ),
+        (
+            format!(r"\b({BUILTINS})[ \t]+\.[ \t]+enlist[ \t]+({LITERAL})"),
+            1,
+            2,
+        ),
+        (
+            format!(r"\.\[[ \t]*({BUILTINS})[ \t]*;[ \t]*enlist[ \t]+({LITERAL})[ \t]*\]"),
             1,
             2,
         ),

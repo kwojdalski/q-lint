@@ -679,3 +679,14 @@ f:0w rotate 1 2
 
 === clean profile: general | a short infinity is a window q takes (q 5: 0Wh mavg 1 2 3 is 1 1.5 2)
 a:0Wh mavg 1 2 3
+
+=== QT008 QT014 QT017 profile: general | dot apply of a checked builtin, and a projection applied straight after (q 5: each 'type; #617)
+a:.[til;enlist 2.5]
+b:til . enlist 2.5
+c:rotate[2.5][1 2 3]
+d:mavg[2.5][1 2 3]
+
+=== clean profile: general | the same spellings where q runs them, and a monadic call indexed after
+a:.[til;enlist 3]
+b:rotate[1][1 2 3]
+c:til[3][0]
