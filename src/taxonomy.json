@@ -521,7 +521,7 @@
     "code": "QT009",
     "name": "literal-where-type",
     "category": "types-and-shapes",
-    "summary": "where called with counts other than booleans or longs",
+    "summary": "where called with counts other than booleans, ints or longs",
     "scope": "builtin"
   },
   {

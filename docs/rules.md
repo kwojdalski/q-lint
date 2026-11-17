@@ -108,7 +108,7 @@ that wants fewer findings narrows in its own configuration.
 | `QT006` | vector-length-mismatch | Infix on two vectors of known, different lengths | every profile |
 | `QT007` | string-function-on-symbol | ss or ssr given a symbol literal is a runtime type error | every profile |
 | `QT008` | literal-til-type | til called with something other than an integer atom | every profile |
-| `QT009` | literal-where-type | where called with counts other than booleans or longs | every profile |
+| `QT009` | literal-where-type | where called with counts other than booleans, ints or longs | every profile |
 | `QT010` | symbol-numeric-aggregate | Numeric aggregate or scan applied to a symbol, or to a string where q refuses one | every profile |
 | `QT011` | sort-literal-atom | Sorting applied to a literal atom instead of a list | every profile |
 | `QT012` | distinct-literal-atom | distinct applied to a literal atom instead of a list | every profile |
