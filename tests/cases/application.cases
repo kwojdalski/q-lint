@@ -160,6 +160,20 @@ r:.[{x+y};1]
 === QA009 | the trap form is no different
 r:.[f;`a;{x}]
 
+=== QA009 profile: general | a char atom or a time-of-day literal is a scalar too (q 5: each is 'type) (#738)
+k:{[a] a}
+r1:.[k;"a"]
+r2:.[k;12:00]
+r3:k . "a"
+r4:k . 12:00:01
+r5:.[k;0D01:00]
+r6:.[k;2000.01.01D12:00]
+
+=== clean profile: general | while a string of two chars is a list (#738)
+k:{[a;b] a}
+r1:.[k;"ab"]
+r2:k . "ab"
+
 === clean | a list of arguments
 r:.[{x+y};1 2]
 

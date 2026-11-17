@@ -1772,8 +1772,18 @@ pub(crate) fn apply_not_subtract(name: &str, literal: &str) -> String {
 /// boolean, and each pair of a byte literal past the first, is another item
 /// (q 5: `f . 10b` is 1i, `.[f;0x0102]` 3i, and `f . 1b` and `f . 0x01` 'type).
 fn scalar_literal(s: &str) -> bool {
-    re!(r"^(?:-?\d[A-Za-z0-9.]*|`[A-Za-z0-9_.]*)$").is_match(s)
+    // A clock part is part of the literal: `12:00`, `0D01:00` and
+    // `2000.01.01D12:00` are atoms (#738).
+    re!(r"^(?:-?\d[A-Za-z0-9.]*(?::\d[A-Za-z0-9.]*)*|`[A-Za-z0-9_.]*)$").is_match(s)
         && !re!(r"^[01]{2,}b$|^0x[0-9a-fA-F]{3,}$").is_match(s)
+}
+
+/// The length in `comments` of the char atom `s` starts with - a string of
+/// one byte as q counts them, `"a"` or `"\n"` - if it starts with one. In
+/// `code` a string is blanks, so `scalar_literal` never sees it (#738).
+fn char_atom(s: &str) -> Option<usize> {
+    let m = re!(r#"^"((?:\\[0-7]{3}|\\.|[^"\\])*)""#).captures(s)?;
+    (q_bytes(&m[1]).len() == 1).then(|| m.get(0).unwrap().end())
 }
 
 fn boundary(s: &str, at: usize) -> bool {
@@ -4678,6 +4688,19 @@ pub fn lint_selecting(
         let Some((rank, id)) = applied(dot, left, left.len()) else {
             continue;
         };
+        let quoted = past_blanks(&v.comments, dot + 1);
+        if let Some(len) = char_atom(&v.comments[quoted..])
+            && operand_ends(code, quoted + len)
+        {
+            add(
+                dot,
+                "QA009",
+                "Dot apply takes a list of arguments; a scalar here is a 'type error at runtime \
+                 (`enlist` it, or use `@`)"
+                    .into(),
+            );
+            continue;
+        }
         let after = past_blanks(code, dot + 1);
         let rest = &code[after..];
         let end = if rest.starts_with('(') {
@@ -4796,7 +4819,14 @@ pub fn lint_selecting(
             from += part.len() + 1;
             empty
         });
-        if elided || parts.len() < 2 || !scalar_literal(parts[1].trim()) {
+        let quoted = parts.get(1).map_or("", |part| {
+            let second = at + 3 + parts[0].len();
+            v.comments[second..second + part.len()].trim()
+        });
+        if elided
+            || parts.len() < 2
+            || !(scalar_literal(parts[1].trim()) || char_atom(quoted) == Some(quoted.len()))
+        {
             continue;
         }
         add(
