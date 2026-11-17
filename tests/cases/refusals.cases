@@ -1208,3 +1208,11 @@ a:(+) each y
 b:{x+y} over y
 c:"x + each y"
 d:max over y
+
+=== QT029 profile: general | a negative or exponent float, read whole (q 5: each is 'type) (#504)
+a:hopen -1.5
+b:hopen 1e3
+c:hopen -1e3
+
+=== clean profile: general | a plain handle number (#504)
+a:hopen 5000

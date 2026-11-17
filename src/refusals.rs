@@ -750,8 +750,10 @@ fn hopen_literal(path: &str, source: &str, code: &str, comments: &str, out: &mut
         // A symbol may hold `:` after its first character - `` `localhost:5000 ``
         // is one symbol - so the colon a handle needs is only the leading one.
         // A real (`1.5e`, `2e`), the empty symbol and the empty string are
-        // 'type too (q 5); the string is read from `comments`.
-        re!(r#"\bhopen\s*(?:\[\s*)?(-\d+|\d*\.\d+e?|\d+\.\d*e?|\d+e|`(?:[A-Za-z0-9_.][A-Za-z0-9_.:]*)?|"")"#)
+        // 'type too (q 5); the string is read from `comments`. A number is
+        // read whole, sign and exponent with it: `-1.5`, `1e3` and `-1e3`
+        // are floats, and 'type (#504).
+        re!(r#"\bhopen\s*(?:\[\s*)?(-?(?:\d+\.\d*|\.\d+|\d+)(?:e[+-]?\d*)?|`(?:[A-Za-z0-9_.][A-Za-z0-9_.:]*)?|"")"#)
             .captures_iter(comments)
     {
         let whole = m.get(0).unwrap();
@@ -759,7 +761,8 @@ fn hopen_literal(path: &str, source: &str, code: &str, comments: &str, out: &mut
         if !boundary(code, whole.start()) || !code[whole.start()..].starts_with("hopen") {
             continue;
         }
-        if !crate::operand_ends(code, value.end()) {
+        // A plain handle number is what hopen takes.
+        if !crate::operand_ends(code, value.end()) || re!(r"^\d+$").is_match(value.as_str()) {
             continue;
         }
         let (what, error) = if value.as_str() == "`" {
