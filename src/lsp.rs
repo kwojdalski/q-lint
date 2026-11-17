@@ -236,7 +236,7 @@ impl Index {
         if self.enabled {
             self.scan(policy);
         }
-        for (uri, text) in docs {
+        for (uri, text) in docs.iter().filter(|(uri, _)| is_q_uri(uri)) {
             self.set(&path_of(uri), index(text));
         }
     }
@@ -294,15 +294,12 @@ fn workspace_roots(params: &Value) -> Vec<String> {
         .into_iter()
         .flatten()
         .filter_map(|f| f["uri"].as_str())
-        .filter(|u| u.starts_with("file://"))
-        .map(path_of)
+        .filter_map(file_path)
         .collect();
     if roots.is_empty()
-        && let Some(root) = params["rootUri"]
-            .as_str()
-            .filter(|u| u.starts_with("file://"))
+        && let Some(root) = params["rootUri"].as_str().and_then(file_path)
     {
-        roots.push(path_of(root));
+        roots.push(root);
     }
     roots
 }
@@ -659,7 +656,7 @@ pub fn serve(
                 let uri = uri_of(&params["textDocument"]);
                 let data = guarded(|| {
                     docs.get(&uri)
-                        .filter(|_| opts.semantic_tokens && is_q_path(&path_of(&uri)))
+                        .filter(|_| opts.semantic_tokens && is_q_uri(&uri))
                         .map_or_else(Vec::new, |text| encode_tokens(text, &idx.ws))
                 });
                 match data {
@@ -889,13 +886,10 @@ fn code_actions(
     let Some(source) = docs.get(&uri) else {
         return vec![];
     };
-    let path = path_of(&uri);
-    if !std::path::Path::new(&path)
-        .extension()
-        .is_some_and(|e| e.eq_ignore_ascii_case("q"))
-    {
+    if !is_q_uri(&uri) {
         return vec![];
     }
+    let path = path_of(&uri);
     let Some(context) = params["context"]["diagnostics"].as_array() else {
         return vec![];
     };
@@ -951,7 +945,7 @@ fn format(params: &Value, docs: &Documents, ws: &Workspace, policy: &Policy) -> 
     // with QE001 deselected: the fixes would read its structure wrong (#422).
     let Some(source) = docs
         .get(&uri)
-        .filter(|source| is_q_path(&path) && balanced(source))
+        .filter(|source| is_q_uri(&uri) && balanced(source))
     else {
         return vec![];
     };
@@ -983,7 +977,7 @@ fn publish(
     opts: &Options,
 ) -> Result<(), String> {
     let path = path_of(&uri);
-    let changed = is_q_path(&path) && idx.set(&path, index(&text));
+    let changed = is_q_uri(&uri) && idx.set(&path, index(&text));
     docs.insert(uri.clone(), text);
     diagnose(writer, &uri, &docs[&uri], &idx.ws, policy, opts)?;
     if changed {
@@ -1023,9 +1017,9 @@ fn diagnose(
     // buffer, an untitled scratch, a `.txt` - and hand it to whichever server
     // claims the language. The rules here describe q and say nothing true
     // about k or about a REPL transcript, so a document that is not a `.q`
-    // file gets an empty diagnostic list: that clears anything stale without
+    // file on disk gets an empty diagnostic list: that clears anything stale without
     // asserting something about a file this linter cannot read.
-    let findings = if is_q_path(&path) {
+    let findings = if is_q_uri(uri) {
         // Lenient, so this cannot fail: a configuration it cannot read is
         // reported once on stderr and the defaults govern its files.
         guarded(|| policy.lint(text, &path, ws).unwrap_or_default())
@@ -1217,18 +1211,28 @@ fn utf16_len(text: &str) -> usize {
     text.chars().map(char::len_utf16).sum()
 }
 
-/// A `file:` URI as a filesystem path.
+/// A URI as a filesystem path: `file_path`'s, or the URI unchanged when it
+/// is not `file:` - a key for an untitled buffer, never a file to read.
+fn path_of(uri: &str) -> String {
+    file_path(uri).unwrap_or_else(|| uri.to_string())
+}
+
+/// Whether `uri` is a `.q` file on disk, the only document linted, indexed
+/// or coloured. An untitled buffer, or an old revision another scheme names
+/// (`fugitive:`, `git:`), is not one whatever its name ends in (#545).
+fn is_q_uri(uri: &str) -> bool {
+    file_path(uri).is_some_and(|path| is_q_path(&path))
+}
+
+/// A `file:` URI as a filesystem path, and `None` for any other scheme.
 ///
 /// Hand-rolled rather than pulling in a URL crate: the only scheme an editor
 /// sends for a document on disk is `file:`, and the only transformation that
 /// matters is percent-decoding - without it every path containing a space
 /// arrives as `%20` and the filename-based rules see a file that does not
-/// exist. A URI that is not `file:` (an untitled buffer, say) is handed
-/// through unchanged; it names no `.q` file, so `diagnose` does not lint it.
-fn path_of(uri: &str) -> String {
-    let Some(rest) = uri.strip_prefix("file://") else {
-        return uri.to_string();
-    };
+/// exist.
+fn file_path(uri: &str) -> Option<String> {
+    let rest = uri.strip_prefix("file://")?;
     // Strip the empty authority: file:///a/b has a host of "", so the path
     // begins at the third slash. RFC 8089 makes `localhost` the same host,
     // and file://localhost/a/b the same file (#425).
@@ -1263,11 +1267,11 @@ fn path_of(uri: &str) -> String {
     let decoded = String::from_utf8_lossy(&bytes).into_owned();
     // A Windows path is a drive letter, not a root: VS Code sends
     // `file:///c%3A/Users/...`, and `/c:/Users/...` is no path at all.
-    if re_drive(&decoded) {
+    Some(if re_drive(&decoded) {
         decoded
     } else {
         format!("/{decoded}")
-    }
+    })
 }
 
 fn re_drive(path: &str) -> bool {

@@ -857,13 +857,15 @@ fn colour_appears_only_when_asked_for_and_never_in_a_pipe() {
 #[test]
 fn only_q_files_are_linted() {
     for (uri, want) in [
-        ("file:///tmp/a.k", 0),          // k, not q
-        ("output:q-console", 0),         // a REPL transcript
-        ("untitled:Untitled-1", 0),      // an unsaved scratch
-        ("file:///tmp/a.txt", 0),        // not q at all
-        ("file:///tmp/a.q", 1),          // q
-        ("file:///tmp/A.Q", 1),          // q, shouted
-        ("file:///tmp/my%20dir/b.q", 1), // q, with an escaped space
+        ("file:///tmp/a.k", 0),           // k, not q
+        ("output:q-console", 0),          // a REPL transcript
+        ("untitled:Untitled-1", 0),       // an unsaved scratch
+        ("untitled:/tmp/new.q", 0),       // an unsaved scratch with a q name (#545)
+        ("fugitive:///r/.git//0/a.q", 0), // an old revision, not a file on disk
+        ("file:///tmp/a.txt", 0),         // not q at all
+        ("file:///tmp/a.q", 1),           // q
+        ("file:///tmp/A.Q", 1),           // q, shouted
+        ("file:///tmp/my%20dir/b.q", 1),  // q, with an escaped space
     ] {
         let mut server = Server::start();
         server.initialize();
@@ -880,6 +882,23 @@ fn only_q_files_are_linted() {
 /// A Quick Fix for QP006 has to replace the whole application. The
 /// diagnostic underlines only the name, so an edit taking its range would
 /// leave `f[x] x` behind - which is why the range comes from the fix.
+#[test]
+fn a_buffer_that_is_not_a_file_defines_nothing_for_the_others() {
+    // An old revision open in another scheme is not the workspace (#545).
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = start_with_workspace(dir.path());
+    let old = "fugitive:///r/.git//0/def.q";
+    server.open(old, "helper:{x+1}\n");
+    server.diagnostics_for(old);
+    let app = file_uri(&dir.path().join("app.q"));
+    server.open(&app, "f:{y:helper; y}\n");
+    let found = codes_of(&server.diagnostics_for(&app));
+    assert!(found.contains(&"QF018".to_string()), "{found:?}");
+    // app.q's `f` is new to the index, so the other buffer is linted again.
+    server.diagnostics_for(old);
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
 #[test]
 fn the_bracket_quick_fix_covers_the_whole_application() {
     let mut server = Server::start();
