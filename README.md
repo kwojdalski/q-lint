@@ -417,10 +417,13 @@ default used.
 
 ### What the server does not read
 
-`--exclude`, and the `exclude` and `extend-exclude` of any configuration, are
-not consulted in server mode. Everything else a configuration says is: the
-server finds `qlinter.toml` or `pyproject.toml` above each document as the
-command line does, and `--config FILE` replaces that search with the one file,
+`--exclude`, and the `exclude` and `extend-exclude` of any configuration, do
+not hide diagnostics on a document the editor opens. They do decide which
+closed files the workspace index reads, as they decide which files
+`qlinter .` visits, so a name only an excluded file defines is undefined in
+the editor as it is in the terminal. Everything else a configuration says is
+read too: the server finds `qlinter.toml` or `pyproject.toml` above each
+document as the command line does, and `--config FILE` replaces that search with the one file,
 whose per-file-ignores are then read relative to the directory the server was
 started in. `--isolated`, `--profile`, `--select`, `--extend-select` and
 `--ignore` apply as they do on the command line. An editor asking

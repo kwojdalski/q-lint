@@ -99,7 +99,8 @@ environment file, the process explorer, the discovery server, output
 formatting, `kuki` - drive a connection to a running q process. q-lint never
 runs q, so none of them has anything to configure. Its
 `sourceFiles.includeGlob` is not mirrored either: the index reads every `.q`
-file, and `q-lint.workspaceIndex.exclude` narrows it.
+file `qlinter .` would - less what the configuration's `exclude` skips - and
+`q-lint.workspaceIndex.exclude` narrows it.
 
 ## Formatting
 
