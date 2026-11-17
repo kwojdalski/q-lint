@@ -2833,13 +2833,16 @@ fn pattern_within(s: &str, nested: bool, depth: usize) -> bool {
     } else if whole(s) {
         items(&s[1..s.len() - 1], &|c| is_pattern(c, true))
     } else if let Some(at) = typed_at(s) {
-        is_pattern(&s[..at], nested)
+        !iterated_type(s) && is_pattern(&s[..at], nested)
     } else if let Some(at) = first_outside(s, b'!') {
         // A dictionary pattern: keys, then the pattern its values match.
         // q 5 `{[`a`b!(a;b);c] a+b+c}[`a`b!1 2;3]` is 6, and
         // `{[k!(a;b)] k}[`x`y!1 2]` binds the keys to k (#431). No keys is
         // '!, while no values (`{[a!] 1}`) is defined.
-        at > 0 && is_pattern(&s[..at], false) && is_pattern(&s[at + 1..], true)
+        at > 0
+            && !iterated_type(s)
+            && is_pattern(&s[..at], false)
+            && is_pattern(&s[at + 1..], true)
     } else {
         false
     }
@@ -2974,6 +2977,19 @@ fn first_outside(s: &str, byte: u8) -> Option<usize> {
 /// colon outside brackets.
 fn typed_at(s: &str) -> Option<usize> {
     first_outside(s, b':').filter(|&at| at > 0)
+}
+/// Whether a slot's type, or a dictionary pattern's values, is one q refuses
+/// with 'nyi: a type may be any expression but one that starts with an
+/// iterator or a colon. q 5 refuses `{[a:'] a}`, `{[a:/] a}`, `{[a::] a}`,
+/// `{[a:'b] a}`, `{[a!:] a}` (whose `!:` is a glyph) and `{[a!::] a}`, and
+/// takes `{[a:+] a}`, `{[a:b'] a}` and `{[a:] a}` (#577, #594).
+fn iterated_type(s: &str) -> bool {
+    typed_at(s).is_some_and(|at| {
+        s[..at].ends_with('!') || s[at + 1..].trim_start().starts_with([':', '\'', '/', '\\'])
+    }) || first_outside(s, b'!').is_some_and(|at| {
+        let values = s[at + 1..].trim();
+        values == "::" || values.starts_with(['\'', '/', '\\'])
+    })
 }
 /// The names a parameter slot binds: the slot itself when it is a name, and
 /// for a pattern every name in it but the keys and columns it matches on -
@@ -3591,6 +3607,7 @@ pub fn lint_selecting(
                 let consequence = if rest
                     .iter()
                     .any(|s| re!(r"[-+*%,#$@&|^=<>~!?]").is_match(s) || applies_builtin(s))
+                    || rest.iter().any(|s| iterated_type(s))
                 {
                     "q 5 refuses the lambda where it is defined: 'nyi"
                 } else {
