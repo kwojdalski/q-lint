@@ -18,10 +18,10 @@
 / a slash opens a q block comment and would swallow the rest of the file,
 / which is exactly what QP001 (uqf profile) is about.
 
-/ QF012: a root-level assignment to a reserved name. q refuses some of
-/ these ('assign for `count`, a parse error for `select`) and silently
-/ accepts others (`from`, `by`) - the linter treats them alike. This line
-/ sits above the \d because inside a namespace the same text is QF004.
+/ QF012: a root-level assignment to `from` or `by`, the two reserved names
+/ q silently accepts there. Every other one it refuses ('assign for `count`,
+/ a parse error for `select`), and that is QF004, at the root as in a
+/ namespace. This line sits above the \d to show it at the root.
 / expect-next: QF012
 from:1
 

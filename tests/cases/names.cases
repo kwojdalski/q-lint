@@ -53,7 +53,7 @@ count:{[t] 42}
 count:{x}
 \d .
 
-=== QF012 | and \d with two spaces before the dot returns to the root (q 5: g:1 lands in `., #313)
+=== QF004 profile: general | and \d with two spaces before the dot returns to the root (q 5: g:1 lands in `., #313)
 \d .foo
 \d  .
 count:1
@@ -62,7 +62,7 @@ count:1
 system "d .ns"
 count:1
 
-=== QF012 | and system "d ." returns to the root
+=== QF004 profile: general | and system "d ." returns to the root
 system "d .ns"
 system "d ."
 count:1
@@ -292,13 +292,13 @@ f:{[count;til] count til}
 === clean | a name q does not reserve, however builtin it sounds
 f:{[median] median}
 
-=== QF012 | a reserved name assigned at the root
+=== QF004 profile: general | a reserved name assigned at the root, which q refuses as it does in a namespace (q 5: count:42 is 'assign) (#778)
 count:42
 
-=== QF012 | a reserved name assigned in a later statement on the line (q 5: y:1;sum:2 is 'assign)
+=== QF004 profile: general | a reserved name assigned in a later statement on the line (q 5: y:1;sum:2 is 'assign)
 y:1;sum:2
 
-=== QF012 | a builtin as the target of a multiple or an indexed assignment at the root (q 5: (til;b):1 2 and til[0]:1 are 'nyi, (sum;c):1 2 'match) (#634)
+=== QF004 profile: general | a builtin as the target of a multiple or an indexed assignment at the root (q 5: (til;b):1 2 and til[0]:1 are 'nyi, (sum;c):1 2 'match) (#634)
 (til;b):1 2
 til[0]:1
 (sum;c):1 2
@@ -330,7 +330,7 @@ f:{from+:1;by,:1;sum_:1;0}
 === clean profile: general | with nothing to assign, :: and op: apply the function (q 5: {a:raze::}, {(sum::)x}, {count,:;1} are defined) (#432)
 f:{a:raze::;b:(sum::)x;c:value::;count,:;sum::'x}
 
-=== QF012 | a compound assignment at the root (q 5: sum+:1 is 'assign) (#432)
+=== QF004 profile: general | a compound assignment at the root (q 5: sum+:1 is 'assign) (#432)
 sum+:1
 
 === clean | while :: at the root assigns (q 5: sum::1 is accepted) (#432)
@@ -342,11 +342,15 @@ count+:1
 count::1
 \d .
 
-=== QF003 | a later statement inside a lambda is a local, QF003's and not QF012's
+=== QF003 | a later statement inside a lambda is a local, QF003's and not QF004's
 h:{[a] b:a;sum:b;sum}
 
-=== QF012 | one q silently accepts, and the linter still flags
+=== QF012 profile: style | one q silently accepts, and the linter still flags in style
 from:1
+
+=== clean profile: general | which general leaves alone, since q runs it (q 5: from:1 and by:2 are accepted) (#778)
+from:1
+by:2
 
 === QF013 QT005 | a table-literal column is not a local assignment, so QF013 alone reports it (#192)
 m:{([] count:1)}
@@ -1235,7 +1239,7 @@ h:{foo:1;0}
 foo:2
 \d .
 
-=== QF012 | and at the root, but not before it was defined (q 5: foo:0 then .q.foo:{x+1} then foo:1 is 'assign) (#434)
+=== QF004 profile: general | and at the root, but not before it was defined (q 5: foo:0 then .q.foo:{x+1} then foo:1 is 'assign) (#434)
 foo:0
 .q.foo:{x+1}
 foo:1
@@ -1351,5 +1355,5 @@ g:{count,:`a}
 \d .x
 count,:"a"
 
-=== QF012 | and at the root (#592; q 5: 'assign)
+=== QF004 profile: general | and at the root (#592; q 5: 'assign)
 max,:"a"

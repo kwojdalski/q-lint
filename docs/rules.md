@@ -61,14 +61,14 @@ that wants fewer findings narrows in its own configuration.
 | `QF001` | reserved-parameter | Builtin name used as a parameter | every profile |
 | `QF002` | underscore-parameter | `_` is the drop operator, not a parameter name: q 5 refuses every call with 'match, or a name starting with it where the lambda is defined | every profile |
 | `QF003` | reserved-local | Assignment to a builtin in a lambda | every profile |
-| `QF004` | reserved-definition | Namespace-level assignment to a builtin, which q refuses | every profile |
+| `QF004` | reserved-definition | Assignment to a builtin outside a lambda, which q refuses | every profile |
 | `QF005` | nested-local-reference | Nested lambda expects an outer local | every profile |
 | `QF006` | reserved-name-in-embedded-q | Builtin column name in embedded q | a Python hook |
 | `QF007` | not-a-parameter-list | Brackets after { that are not a parameter list: refused where defined, or run as body text | every profile |
 | `QF008` | duplicate-parameter | Parameter declared more than once | `style` and above |
 | `QF009` | empty-parameter-slot | Empty slot in a parameter list is still a parameter | `style` and above |
 | `QF010` | implicit-argument-with-signature | x, y or z used where parameters are declared | every profile |
-| `QF012` | reserved-root-assignment | Root-level assignment to a reserved name | `style` and above |
+| `QF012` | reserved-root-assignment | Root-level assignment to `from` or `by`, which q accepts though both are query keywords | `style` and above |
 | `QF013` | reserved-table-column | Builtin name as a table-literal column | every profile |
 | `QF014` | local-read-before-assign | Name read before the assignment that makes it local | every profile |
 | `QF015` | foreign-keyword | Keyword from another language resolves as an undefined global | every profile |

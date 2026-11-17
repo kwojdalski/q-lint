@@ -5854,10 +5854,12 @@ pub fn lint_selecting(
             } else if namespaces.iter().rev().find(|(o, _)| *o <= at).unwrap().1 {
                 add(at, "QF004", format!("Namespace-level `{name}`"));
             } else {
+                // Refused at the root as in a namespace, so QF004's, which
+                // `general` holds (#778).
                 add(
                     at,
-                    "QF012",
-                    format!("Root-level assignment to `{name}`: q refuses it"),
+                    "QF004",
+                    format!("Root-level assignment to `{name}`: q refuses it ('assign)"),
                 );
             }
         }
@@ -6551,21 +6553,26 @@ pub fn lint_selecting(
                 && compound(&m)
                 && reserved(&m[1], offset + at)
             {
-                add(
-                    offset + at,
-                    "QF012",
-                    // Checked one by one on q 5: every reserved name but these
-                    // two is refused at the root.
-                    if matches!(&m[1], "from" | "by") {
+                // Checked one by one on q 5: every reserved name but these
+                // two is refused at the root, which makes it QF004's and
+                // `general`'s; the two q accepts are a habit (#778).
+                if matches!(&m[1], "from" | "by") {
+                    add(
+                        offset + at,
+                        "QF012",
                         format!(
                             "Root-level assignment to `{}`: q accepts it, but the name is a query \
                              keyword everywhere else",
                             &m[1]
-                        )
-                    } else {
-                        format!("Root-level assignment to `{}`: q refuses it", &m[1])
-                    },
-                );
+                        ),
+                    );
+                } else {
+                    add(
+                        offset + at,
+                        "QF004",
+                        format!("Root-level assignment to `{}`: q refuses it ('assign)", &m[1]),
+                    );
+                }
             }
         }
         // The parentheses have to be empty in the source - a string between
