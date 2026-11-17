@@ -2155,10 +2155,25 @@ pub fn check(
                     && boundary(&tables, m.start())
             }) || multi_assignments(&tables).any(|(p, n)| p < at && n == name)
         };
-        for m in re!(r"([A-Za-z][A-Za-z0-9_]*)\.[A-Za-z][A-Za-z0-9_.]*").find_iter(&direct) {
+        let dotted = re!(r"([A-Za-z][A-Za-z0-9_]*)\.[A-Za-z][A-Za-z0-9_.]*");
+        // A name the lambda already reads as a namespace, through a dotted
+        // global the file defines: its other dotted reads are that
+        // namespace's too, which the file may fill at run time. KX's
+        // ax/graphics.q reads `scale.colour.gradient`, defined, beside
+        // `scale.ty.default.with.i_type`, which a helper `set`s (#670).
+        let namespaces: HashSet<&str> = dotted
+            .find_iter(&direct)
+            .filter(|m| {
+                boundary(&direct, m.start())
+                    && exact.contains_key(&resolved(m.as_str(), &scope.namespace))
+            })
+            .map(|m| &m.as_str()[..m.as_str().find('.').unwrap()])
+            .collect();
+        for m in dotted.find_iter(&direct) {
             let whole = m.as_str();
             let name = &whole[..whole.find('.').unwrap()];
             if !boundary(&direct, m.start())
+                || namespaces.contains(name)
                 || !(scope.params.contains(name)
                     || (scope.locals.contains(name) && set_before(name, m.start())))
                 // A global of that name, as q resolves it in the lambda's

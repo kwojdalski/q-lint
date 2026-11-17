@@ -1009,6 +1009,20 @@ t.c:5
 f:{[t] t.c}
 \d .
 
+=== clean profile: general | a name the lambda reads as a namespace the file defines, beside a member set at run time (#670; q 5: .gg.f 1 is 2)
+\d .gg
+scale.colour.g:{x}
+mk:{[n] (` sv `.gg.scale.ty,n) set {x+1}}
+mk`w
+f:{[scale] scale.colour.g scale.ty.w scale}
+\d .
+
+=== QF021 profile: general | while a parameter whose dotted reads the file never defines is still reported
+\d .gg
+scale.colour.g:{x}
+f:{[scale] scale.ty.w scale}
+\d .
+
 === clean profile: general | indexing with a symbol, and q's own namespaces
 m:{[t] t`c}
 n:{.z.p}
