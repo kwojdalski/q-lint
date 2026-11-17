@@ -1082,3 +1082,8 @@ b:count'{x}
 === clean profile: general | applied infix it is fine (#569)
 v:1 2
 a:v,'{x}
+
+=== QE009 profile: general | a dotted-name operand (q 5: '/ and ''; #570)
+.foo.v:1 2
+a:+/.foo.v
+b:count'.z.x

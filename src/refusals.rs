@@ -1151,6 +1151,8 @@ fn juxtaposed_derived(
             || bracket_form(next)
             || ((next.starts_with('-') || next.starts_with('.'))
                 && next[1..].starts_with(|ch: char| ch.is_ascii_digit()))
+            // A dotted name, as QE008 reads it: q 5 refuses `+/.foo.v` (#570).
+            || re!(r"^\.[A-Za-z]").is_match(next)
             || (next.starts_with('-')
                 && next[1..]
                     .starts_with(|ch: char| ch.is_ascii_alphabetic() || "`(\"".contains(ch)));
