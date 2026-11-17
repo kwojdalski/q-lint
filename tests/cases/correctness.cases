@@ -695,6 +695,16 @@ g:{[t] (select from t where b; s="ab")}
 === QB003 | a string joined inside sv string is split into characters
 m:"claimed by ",", " sv string clash," - two workers share it"
 
+=== QB003 | in parentheses of its own, or with sv in brackets (q 5: both are "x/y/a/b") (#642)
+a:`x`y
+r:"/" sv string a,("ab")
+s:sv["/";string a,"ab"]
+
+=== clean | while one char, or a list of strings, is an item each (#642)
+a:`x`y
+r:sv["/";string a,"b"]
+s:"/" sv string a,("ab";"cd")
+
 === QB003 | after another joined name too
 p:"/" sv string a,b,"xy"
 

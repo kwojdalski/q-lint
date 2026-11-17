@@ -7011,11 +7011,32 @@ pub fn lint_selecting(
         // is "dir/x", as meant), an empty one adds nothing, and two symbols
         // joined - `"/" sv string a,b` - is the path join it looks like, which
         // is why this rule was once withdrawn whole.
-        for m in re!(r"\bsv\s+string\s+").find_iter(line) {
+        // In brackets too, `sv["/";string a,"ab"]`, and a literal in
+        // parentheses of its own is the same literal: q 5 `"/" sv string
+        // a,("ab")` is "x/y/a/b" (#642).
+        let mut starts: Vec<(usize, usize)> = re!(r"\bsv\s+string\s+")
+            .find_iter(line)
+            .filter(|m| boundary(line, m.start()))
+            .map(|m| (m.start(), m.end()))
+            .collect();
+        for m in re!(r"\bsv\s*\[").find_iter(line) {
+            let open = m.end() - 1;
             if !boundary(line, m.start()) {
                 continue;
             }
-            let (mut depth, mut at) = (0i32, m.end());
+            let Some(close) = matching(line, open, b'[', b']') else {
+                continue;
+            };
+            let parts = slots(&line[open + 1..close - 1]);
+            if parts.len() == 2 {
+                let second = parts[1].as_ptr() as usize - line.as_ptr() as usize;
+                if let Some(s) = re!(r"^\s*string\s+").find(parts[1]) {
+                    starts.push((m.start(), second + s.end()));
+                }
+            }
+        }
+        for (report, start) in starts {
+            let (mut depth, mut at) = (0i32, start);
             let bytes = line.as_bytes();
             let mut joined = None;
             while at < bytes.len() {
@@ -7026,12 +7047,21 @@ pub fn lint_selecting(
                     b';' if depth == 0 => break,
                     b',' if depth == 0 => {
                         let rest = &literals[at + 1..];
-                        let quote = at + 1 + (rest.len() - rest.trim_start().len());
+                        let mut quote = at + 1 + (rest.len() - rest.trim_start().len());
+                        let paren = literals[quote..].starts_with('(');
+                        if paren {
+                            let rest = &literals[quote + 1..];
+                            quote += 1 + (rest.len() - rest.trim_start().len());
+                        }
                         if literals.as_bytes().get(quote) == Some(&b'"')
                             && line.as_bytes().get(quote) != Some(&b'"')
                             && let Some(lit) =
                                 re!(r#"^"((?:[^"\\]|\\.)*)""#).captures(&literals[quote..])
                             && re!(r"\\.|[^\\]").find_iter(&lit[1]).count() > 1
+                            && (!paren
+                                || literals[quote + lit.get(0).unwrap().len()..]
+                                    .trim_start()
+                                    .starts_with(')'))
                         {
                             joined = Some(lit.get(0).unwrap().as_str().to_string());
                             break;
@@ -7043,7 +7073,7 @@ pub fn lint_selecting(
             }
             if let Some(text) = joined {
                 add(
-                    offset + m.start(),
+                    offset + report,
                     "QB003",
                     format!(
                         "`,{text}` is joined onto the list before `string` and `sv` run, so its \
