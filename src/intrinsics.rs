@@ -130,7 +130,13 @@ fn literal(s: &str) -> Option<Literal> {
     let temporal = re!(
         r"^(?:\d{4}\.\d\d(?:\.\d\d(?:[DT](?:\d\d(?::\d\d(?::\d\d(?:\.\d*)?)?)?)?)?|m)|\d\d:\d\d(?::\d\d(?:\.\d*)?)?|\d+D(?:\d\d(?::\d\d(?::\d\d(?:\.\d*)?)?)?)?)$"
     );
-    let items: Vec<&str> = s.split_whitespace().collect();
+    // A time vector may end in the letter of its type: `12:00u`,
+    // `12:00:00v`, `12:00 13:00t` (#593).
+    let unsuffixed = s
+        .strip_suffix(['u', 'v', 't'])
+        .filter(|t| re!(r"\d\d:\d\d(?::\d\d(?:\.\d*)?)?$").is_match(t))
+        .unwrap_or(s);
+    let items: Vec<&str> = unsuffixed.split_whitespace().collect();
     if !items.is_empty() && items.iter().all(|item| temporal.is_match(item)) {
         return Some(Literal {
             kind: Kind::Temporal,
