@@ -389,6 +389,23 @@ fn a_foreign_keyword_another_workspace_file_defines_is_a_name() {
 }
 
 #[test]
+fn a_foreign_keyword_is_looked_up_in_the_namespace_it_is_read_in() {
+    use q_lint_rs::{Workspace, index, lint_in};
+    // q 5: under `\d .ns`, `true` is `.ns.true`. lib.q defining it there
+    // makes `.ns.f 1` return `yes; a root `true:1b` does not, and the call
+    // is 'true (#520).
+    let main = "\\d .ns\nf:{$[x;true;false]}\n\\d .\n";
+    let found = |lib: &str| {
+        let mut ws = Workspace::default();
+        ws.add(&index(lib));
+        ws.add(&index(main));
+        codes(&lint_in(main, "use.q", Profile::General, &ws)).contains(&"QF015")
+    };
+    assert!(!found("\\d .ns\ntrue:`yes\nfalse:`no\n\\d .\n"));
+    assert!(found("true:1b\nfalse:0b\n"));
+}
+
+#[test]
 fn a_name_another_file_also_assigns_is_not_tracked_in_a_lambda() {
     use q_lint_rs::{Workspace, index, lint, lint_in};
     // Alone, a is the atom 1 and indexing it is 'type. With another file

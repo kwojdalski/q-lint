@@ -4747,7 +4747,9 @@ pub fn lint_selecting(
         declared.insert(m.get(1).unwrap().as_str());
     }
     // Another file of the workspace may define it too: with lib.q's
-    // `true:1b` loaded, q 5 runs `{[a] $[a;true;false]}` (#372).
+    // `true:1b` loaded, q 5 runs `{[a] $[a;true;false]}` (#372). Under
+    // `\d .ns` the name is `.ns.true`, which a root `true` does not define
+    // and lib.q's own `\d .ns` does (q 5, #520).
     let elsewhere = |key: &str| ws.defined_elsewhere(key, &Default::default());
     // Nor can a file that writes globals it does not name say the name is
     // undefined: q 5 runs `\l lib.q` (`true:0b`) then `$[true;`yes;`no]` to
@@ -4768,7 +4770,7 @@ pub fn lint_selecting(
             || after.starts_with('.')
             || declared.contains(name)
             || in_query
-            || elsewhere(name)
+            || elsewhere(&qualified(whole.start(), name))
             || elsewhere(&format!(".q.{name}"))
         {
             continue;
