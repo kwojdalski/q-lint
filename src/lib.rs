@@ -523,6 +523,10 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             let lead = re!(concat!(r"^like", blank!(), "*`")).find(source.get(start..)?)?;
             let pattern = start + lead.end();
             let mut depth = 0;
+            // After a `:` the symbol is a path and takes a `/` too: q 5 parses
+            // `` `:b/c `` as one symbol, and cutting it there leaves `/c`, which
+            // q refuses to load (#768).
+            let mut path = false;
             let len = source[pattern..]
                 .char_indices()
                 .find(|&(_, c)| match c {
@@ -534,7 +538,11 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                         depth -= 1;
                         false
                     }
-                    c => !(c.is_ascii_alphanumeric() || "_.:*?^-".contains(c)),
+                    '/' => !path,
+                    c => {
+                        path |= c == ':';
+                        !(c.is_ascii_alphanumeric() || "_.:*?^-".contains(c))
+                    }
                 })
                 .map_or(source.len() - pattern, |(at, _)| at);
             let text = &source[pattern..pattern + len];

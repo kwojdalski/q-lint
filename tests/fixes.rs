@@ -299,6 +299,8 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
             "r:\"abc\" like \"abc\"",
             true,
         ),
+        // A path symbol takes its `/`: cut there, `/c` is refused (#768).
+        ("QB007", "a like `:b/c", "a like \":b/c\"", true),
         ("QT007", "r:ss[`abc;\"b\"]", "r:ss[\"abc\";\"b\"]", false),
         ("QB012", "f:{[x] x+1;}", "f:{[x] x+1}", false),
         ("QB010", "a:1;b:a -1", "a:1;b:a - 1", false),
