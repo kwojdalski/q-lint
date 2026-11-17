@@ -1414,10 +1414,10 @@ fn narrow(text: &str, last: &str) -> Option<(&'static str, u128)> {
 /// `9223372036854775808 0N` and `1E5 2000.01.01` - a date is no fraction.
 fn float_vector(run: &[regex::Match]) -> bool {
     let last = run[run.len() - 1].as_str();
-    (re!(r"^\d.*[ef]$").is_match(last) && !last.starts_with("0x"))
+    (re!(r"^\.?\d.*[ef]$").is_match(last) && !last.starts_with("0x"))
         || (!re!(r"[hij]$").is_match(last)
             && run.iter().any(|t| {
-                re!(r"^(?:\d+\.\d*(?:e[+-]?\d+)?|\d+e[+-]?\d+|0[nw])$").is_match(t.as_str())
+                re!(r"^(?:(?:\d+\.\d*|\.\d+)(?:e[+-]?\d+)?|\d+e[+-]?\d+|0[nw])$").is_match(t.as_str())
             }))
 }
 
@@ -1499,8 +1499,10 @@ fn numbers(
     // An exponent's sign is part of its number: `1.5e-3` is one float.
     // A token that starts inside a name - the `1` of `x1:1.5j` - is passed
     // over one character at a time, so the literal after it is still read.
+    // So does a fraction's leading point, where no name or symbol is
+    // against it: `.5j`, but not `x.5j` (#715).
     let tokens: Vec<regex::Match> =
-        crate::boundary_captures(re!(r"\d(?:[eE][+-]\d|[0-9A-Za-z.:])*"), unsym, code)
+        crate::boundary_captures(re!(r"\.?\d(?:[eE][+-]\d|[0-9A-Za-z.:])*"), unsym, code)
             .into_iter()
             .map(|c| c.get(0).unwrap())
             .filter(|m| !command_argument(source, m.start()))
@@ -1533,7 +1535,12 @@ fn numbers(
         let string = last.ends_with('c') && !last.starts_with("0x");
         let mut reported = false;
         for (k, t) in run.iter().enumerate() {
-            let text = t.as_str();
+            // A fraction that starts at its point is judged as the same
+            // fraction with a 0 before it: q 5 reads `.5j` as `0.5j` and
+            // refuses it with '.5, as it does `.5 2j` (#715).
+            let point = t.as_str().starts_with('.');
+            let fraction = format!("0{}", t.as_str());
+            let text = if point { fraction.as_str() } else { t.as_str() };
             let in_string = string && k + 1 < run.len();
             // `0Ns` and `0Ws` are names to q, not literals: it parses them
             // as `0N` and `0W` and signals '0N or '0W when they are read.
@@ -1760,6 +1767,11 @@ fn numbers(
             if let Some(detail) = detail
                 && !reported
             {
+                let detail = if point {
+                    detail.replacen(&format!("`{text}"), &format!("`{}", t.as_str()), 1)
+                } else {
+                    detail
+                };
                 report(t.start(), format!("{detail}; q refuses to parse it"));
                 reported = true;
             }
