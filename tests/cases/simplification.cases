@@ -45,6 +45,12 @@ r:{[p] {x}':[p]}
 === QR003 | distinct after sorting distinct items
 r:{[p] distinct asc distinct p}
 
+=== QR003 | the inner distinct applied with brackets is still the whole operand
+r:{[p] distinct asc distinct[p]}
+
+=== clean | unless an infix continues after the brackets (q 5: distinct asc distinct[2 1 1],2 1 is `s#1 2, asc distinct[2 1 1],2 1 is `s#1 1 2 2, #648)
+r:distinct asc distinct[2 1 1],2 1
+
 === clean | distinct at a line's end is the function, and the next line a statement of its own (q 5, #730)
 d:distinct
 asc distinct 1 1 2

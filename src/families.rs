@@ -225,6 +225,24 @@ fn iterated(code: &str, at: usize) -> bool {
         .is_match(rest)
 }
 
+/// Whether the word that ends at `at` is applied to the rest of its
+/// statement, so a rewrite of the word keeps its operand: something follows
+/// it, and an application in brackets is not continued by an infix - q 5
+/// reads `asc[3 1 2],0` as `(asc[3 1 2]),0`, and a bare `asc` as the
+/// function itself (#648, #649, #650).
+fn applied_to_rest(source: &str, code: &str, at: usize) -> bool {
+    // A string is blank in `code`, and an operand all the same.
+    if source[crate::past_blanks(source, at)..].starts_with('"') {
+        return true;
+    }
+    let next = crate::past_blanks(code, at);
+    if crate::operand_ends(code, at) || code[next..].starts_with("::") {
+        return false;
+    }
+    !code[next..].starts_with('[')
+        || matching(code, next, b'[', b']').is_some_and(|end| crate::operand_ends(code, end))
+}
+
 /// Whether `at` names a column of a table literal: the bracket around it,
 /// past any `;` between columns, is the `(` of `([...] ...)` or the `[` of
 /// its key columns.
@@ -286,7 +304,10 @@ fn simplifications(path: &str, source: &str, code: &str, out: &mut Vec<Finding>)
     ))
     .find_iter(code)
     {
-        if boundary(code, m.start()) && !iterated(code, m.end()) {
+        if boundary(code, m.start())
+            && !iterated(code, m.end())
+            && applied_to_rest(source, code, m.end())
+        {
             add(
                 m.start(),
                 "QR003",
