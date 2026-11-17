@@ -216,6 +216,15 @@ r:@[{[a;b] a+b}
 === QA003 | but one argument held of three still leaves two (q 5: @[{[a;b;c] a+b+c} 1;2;{x}] is a projection) (#433)
 r:@[{[a;b;c] a+b+c} 1;2;{x}]
 
+=== QA003 QA005 | each after the lambda is no argument: it applies it to each item with one (#712; q 5: a list of projections, handler idle)
+r:@[{[a;b] a+b} each;1 2;{x}]
+
+=== QA003 | nor is peach (#712; q 5: 0N 3, handler idle)
+r:@[{[a;b] a+b} peach;1 2;{x}]
+
+=== clean | but over folds with both arguments (q 5: 3)
+r:@[{[a;b] a+b} over;1 2;{x}]
+
 === QA010 | a complete builtin call given more
 r:sum[1;2]
 
