@@ -62,7 +62,7 @@ q-pro column names the setting of [q-pro](https://marketplace.visualstudio.com/i
 | `q-lint.fixes.unsafe` | `true` | Offer the editor-only Quick Fixes (`--unsafe-fixes`) as well as those `--fix` applies. | - |
 | `q-lint.format.enable` | `true` | Register **Format Document** (the safe fixes). | - |
 | `q-lint.semanticTokens.enable` | `true` | Colour calls and parameter reads on top of the grammar. | - |
-| `q-lint.workspaceIndex.enable` | `true` | Read every workspace `.q` file at startup for the names it defines. Off: only open files. | - |
+| `q-lint.workspaceIndex.enable` | `true` | Read every workspace `.q` file at startup for the names it defines, up to 20,000 files or 500,000 directory entries. Off: only open files. | - |
 | `q-lint.workspaceIndex.exclude` | `[]` | Globs, relative to the workspace folder, the index does not read: `["vendor/**"]`. | `q-lang-server.sourceFiles.ignoreGlob` |
 | `q-lint.trace.server` | `off` | Log client-server traffic: `off`, `messages`, `verbose`. | `q-lang-server.trace.server` |
 

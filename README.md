@@ -408,6 +408,10 @@ when the configuration selects it and they do too. `lint.run` is `onType` or
 only the fixes `--fix` applies; `format.enable` and `semanticTokens.enable`
 set to `false` leave the capability unannounced. `workspaceIndex.exclude`
 holds globs relative to each workspace folder that the index does not read.
+The index stops after 20,000 `.q` files or 500,000 directory entries of any
+kind, whichever comes first, so a folder opened at `/` cannot stall the
+server; past that, a name defined only in a file it did not reach is
+reported as undefined in the editor where `qlinter .` would not.
 A value the server cannot read is reported with `window/showMessage` and its
 default used.
 

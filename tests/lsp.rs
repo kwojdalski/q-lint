@@ -1803,3 +1803,20 @@ fn a_client_that_waits_for_registration_is_asked_to_watch_files() {
     server.send(json!({"jsonrpc":"2.0","id":request["id"],"result":null}));
     assert_eq!(server.shutdown_and_exit(), 0);
 }
+
+#[test]
+fn the_workspace_index_reads_a_file_however_large() {
+    // The CLI indexes a 5 MB file like any other; the server skipped one over
+    // 4 MiB, so a name only it defines was undefined in the editor alone (#794).
+    let dir = tempfile::tempdir().unwrap();
+    let mut big = String::from("helper:{[a] a+1}\n");
+    big.push_str(&"/ padding padding padding padding padding padding\n".repeat(100_000));
+    assert!(big.len() > 4 << 20);
+    std::fs::write(dir.path().join("big.q"), big).unwrap();
+    let mut server = start_with_workspace(dir.path());
+    let app = file_uri(&dir.path().join("app.q"));
+    server.open(&app, "f:{[a] r:helper; r}\n");
+    let found = codes_of(&server.diagnostics_for(&app));
+    assert!(!found.contains(&"QF018".to_string()), "{found:?}");
+    assert_eq!(server.shutdown_and_exit(), 0);
+}

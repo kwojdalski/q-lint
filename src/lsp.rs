@@ -124,10 +124,11 @@ struct Index {
 
 /// Bounds on the scan, so a workspace opened at `/` cannot stall the server:
 /// the `.q` files read, and every directory entry visited on the way, since
-/// a tree of anything else costs as much to walk (#793).
+/// a tree of anything else costs as much to walk (#793). There is no bound on
+/// a file's size: the CLI reads a large file too, and an index that skipped
+/// it reported names only it defines as undefined in the editor alone (#794).
 const MAX_FILES: usize = 20_000;
 const MAX_ENTRIES: usize = 500_000;
-const MAX_BYTES: u64 = 4 << 20;
 
 impl Index {
     /// Record what `path` defines. Whether it changed is what tells the
@@ -177,12 +178,11 @@ impl Index {
     }
 
     /// Whether the scan would have read `path`: index on, under a workspace
-    /// folder, in no directory the scan skips, not excluded, and not too big.
+    /// folder, in no directory the scan skips, and not excluded.
     fn covers(&self, path: &str, policy: &Policy) -> bool {
         let path = std::path::Path::new(path);
         self.enabled
             && is_q_path(&path.to_string_lossy())
-            && std::fs::metadata(path).is_ok_and(|m| m.len() <= MAX_BYTES)
             && self.roots.iter().any(|root| {
                 let root = std::path::Path::new(root);
                 path.starts_with(root)
@@ -245,7 +245,7 @@ impl Index {
                 }
                 if kind.is_dir() {
                     stack.push((root.clone(), path));
-                } else if entry.metadata().is_ok_and(|m| m.len() <= MAX_BYTES) {
+                } else {
                     self.read(&path.to_string_lossy());
                     seen += 1;
                     if seen >= max_files {
