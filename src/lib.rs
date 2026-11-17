@@ -1934,18 +1934,21 @@ fn complete_call(comments: &str, open: usize, parts: &[&str], ssr: bool) -> bool
         })
 }
 
+/// Where the next token after `at` starts, past the blanks of its statement
+/// (`blank!`): across a line break only into the indented line that continues
+/// it. Where the statement ends at a line break, the offset of a line break.
+pub(crate) fn past_blanks(text: &str, at: usize) -> usize {
+    at + re!(concat!("^", blank!(), "*"))
+        .find(&text[at..])
+        .map_or(0, |m| m.end())
+}
+
 pub(crate) fn operand_ends(code: &str, at: usize) -> bool {
-    let rest = code[at..].trim_start_matches([' ', '\t']);
-    // A line break ends the operand unless the next line is indented and not
-    // blank, which continues the statement: `where 2` + `  #1b` is
-    // `where 2#1b` (#193).
-    if let Some(next) = rest
-        .strip_prefix("\r\n")
-        .or_else(|| rest.strip_prefix('\n'))
-    {
-        let line = next.split('\n').next().unwrap_or("");
-        return !(next.starts_with([' ', '\t']) && !line.trim().is_empty());
-    }
+    // A line break ends the operand unless the next line with code on it is
+    // indented, which continues the statement: `where 2` + `  #1b` is
+    // `where 2#1b` (#193), and so it is with blank or comment lines between
+    // them (#675).
+    let rest = &code[past_blanks(code, at)..];
     rest.is_empty()
         || rest.starts_with([';', ')', ']', '}', '\n', '\r'])
         || (rest.starts_with(',') && in_qsql_phrase(code, at))

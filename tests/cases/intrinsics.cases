@@ -553,10 +553,25 @@ c:til@2.5
 a:where 2 / c
   #1b
 
-=== QT008 | but a blank line between ends the statement (#193)
+=== clean | and so does one after a blank or comment line, which ends nothing: til 2.5>x runs (q 5, x:1: ,0) (#675)
+a:where 2
+
+  #1b
+b:asc 3
+
+  #x
+c:1 2 3=1 2
+
+  3
 d:til 2.5
 
-  +x
+  >x
+e:where 2
+/ c
+  #1b
+f:where 2
+  / c
+  #1b
 
 === clean | a slash straight after the literal is an iterator, so the literal is not the argument (#194)
 a:asc 3/x
