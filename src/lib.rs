@@ -4840,13 +4840,15 @@ pub fn lint_selecting(
     // `ss["abc";""]` and `ssr["abc";"";"b"]` checked. The pattern is a string,
     // which is blank in this view, so the check reads the source at the same
     // offsets - a pair of quotes with nothing between them.
-    for m in re!(r"\b(ss|ssr)\s*\[").find_iter(code) {
+    // Only a space or tab may come between: q refuses any other blank with
+    // 'char, and a multi-byte one would leave the name's slice mid-character.
+    for m in re!(r"\b(ss|ssr)[ \t]*\[").find_iter(code) {
         let open = m.end() - 1;
         let Some(close) = matching(code, open, b'[', b']') else {
             continue;
         };
         let parts = slots(&code[open + 1..close - 1]);
-        if !complete_call(&v.comments, open, &parts, &m.as_str()[..3] == "ssr") {
+        if !complete_call(&v.comments, open, &parts, m.as_str().starts_with("ssr")) {
             continue;
         }
         // The second slot's span in the source.
