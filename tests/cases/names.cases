@@ -890,6 +890,13 @@ r2:select a,c from t,'flip enlist[`c]!enlist 5 6
 u:([]c:5 6)
 r3:exec c from t uj u
 
+=== QF020 profile: general | a where phrase after the from clause still ends it, as does a nested query's (q 5: each is 'b) (#696)
+t:([]a:1 2)
+u:([]c:1 2)
+r1:select b from t where a>0
+r2:exec b from t where a in 1
+r3:select b from t where a in exec c from u
+
 === clean | a nested query's columns in a where phrase are its own table's (q 5 runs f)
 t:([]a:1 2 3)
 f:{[u] select from t where a in exec b from u}

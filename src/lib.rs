@@ -1849,15 +1849,22 @@ pub(crate) fn operand_ends(code: &str, at: usize) -> bool {
     }
     rest.is_empty()
         || rest.starts_with([';', ')', ']', '}', '\n', '\r'])
-        || ((rest.starts_with(',')
-            || re!(r"^(?:from|by|where)(?:[^A-Za-z0-9_.]|$)").is_match(rest))
-            && in_qsql_phrase(code, at))
+        || (rest.starts_with(',') && in_qsql_phrase(code, at))
+        // A keyword ends the from phrase too: `from t where a>0` (#696).
+        || (re!(r"^(?:from|by|where)(?:[^A-Za-z0-9_.]|$)").is_match(rest)
+            && qsql_phrase(code, at, false))
 }
 
 /// Whether `at` sits at the top level of a select, exec, update or delete
 /// phrase: walking back through its statement - to a `;`, an opening
 /// bracket or an unindented line - meets the keyword at the same depth.
 pub(crate) fn in_qsql_phrase(code: &str, at: usize) -> bool {
+    qsql_phrase(code, at, true)
+}
+
+/// `in_qsql_phrase`, where `joins` says whether the from phrase is refused:
+/// a `,` there joins tables, but a keyword after it still ends the operand.
+fn qsql_phrase(code: &str, at: usize, joins: bool) -> bool {
     let b = code.as_bytes();
     let mut depth = 0i32;
     let mut seen_where = false;
@@ -1887,7 +1894,7 @@ pub(crate) fn in_qsql_phrase(code: &str, at: usize) -> bool {
         // phrase it joins - `select from t,u` - so that phrase is not one.
         if word("where") {
             seen_where = true;
-        } else if word("from") && !seen_where {
+        } else if joins && word("from") && !seen_where {
             return false;
         } else if ["select", "exec", "update", "delete"].into_iter().any(word) {
             return true;
