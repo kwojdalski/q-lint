@@ -3820,7 +3820,11 @@ pub fn lint_selecting(
             {
                 supplied += 1;
             }
-            if arity.saturating_sub(supplied) >= 2 {
+            // Over or scan on a binary function, given one argument, reduces
+            // it: q 5 `@[{[a;b] a+b}/;1 2;{x}]` is 3 and with `\` it is 1 3
+            // (#514). Each, each-left and each-right still project.
+            let iterated = re!(r"^\s*[/\\](?:[^:]|$)").is_match(&code[after..]);
+            if arity.saturating_sub(supplied) >= 2 && !(iterated && arity - supplied == 2) {
                 add(
                     at,
                     "QA003",
