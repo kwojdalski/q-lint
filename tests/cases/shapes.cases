@@ -1286,3 +1286,21 @@ m:5
 u:([]a:m:1 2)
 k:([c:m:1 2]v:3 4)
 r:m 0
+
+=== QT022 QT006 profile: general | in a qSQL phrase over a table literal without that column, the name is the global (#576; q 5: 'type and 'length)
+px:2.5
+w:1 2 3
+t:([]a:1 2)
+r1:select p0:px 0 from t
+r2:update v:w*10 20 from t where a>0
+
+=== clean profile: general | but a column of that name, `i`, or a table changed by symbol still masks it (#465, #576)
+px:2.5
+t:([]px:(1 2;3 4))
+r1:select p0:px 0 from t
+i:2.5
+u:([]a:1 2)
+r2:select i 0 from u
+v:([]a:1 2)
+update px:a from `v
+r3:select p0:px 0 from v

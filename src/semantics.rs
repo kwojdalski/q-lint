@@ -3518,10 +3518,7 @@ fn named_values(
         foreign_calls.get(i).is_some_and(|&c| c < to)
     };
     let phrases = qsql_phrases(code);
-    let visible = |name: &str, at: usize| -> Option<&Held> {
-        if phrases.iter().any(|&(a, b)| a <= at && at < b) {
-            return None;
-        }
+    let global = |name: &str, at: usize| -> Option<&Held> {
         let (assigned, value) = known.get(key(name, at).as_str())?;
         match scope_at(scopes, at) {
             Some(s) if scopes[s].locals.contains(name) => None,
@@ -3530,6 +3527,33 @@ fn named_values(
             None if elsewhere(&key(name, at)) && called_between(*assigned, at) => None,
             _ => Some(value),
         }
+    };
+    // In a phrase, a name is a column unless the table is a known literal
+    // without that column, and nothing renames into it by symbol (`` `t ``
+    // in an `update ... from `t` may add one): q 5 `px:2.5; t:([]a:1 2);
+    // select p0:px 0 from t` is 'type (#576).
+    let visible = |name: &str, at: usize| -> Option<&Held> {
+        if let Some(&(a, b, table)) = phrases.iter().find(|&&(a, b, _)| a <= at && at < b) {
+            let columns = table
+                .filter(|&(t, e)| {
+                    !re!(r"`(\.?[A-Za-z][A-Za-z0-9_.]*)")
+                        .captures_iter(code)
+                        .any(|c| c[1] == code[t..e])
+                })
+                .and_then(|(t, e)| match global(&code[t..e], t) {
+                    Some(Held::Table(columns, _)) => Some(columns),
+                    _ => None,
+                });
+            let assigned_here = re!(r"([A-Za-z][A-Za-z0-9_]*)\s*:")
+                .captures_iter(&code[a..b.min(code.len())])
+                .any(|c| &c[1] == name);
+            match columns {
+                Some(columns)
+                    if name != "i" && !assigned_here && !columns.iter().any(|c| c == name) => {}
+                _ => return None,
+            }
+        }
+        global(name, at)
     };
     // Indexing an atom. Verified: 1, 1b, 1.5, "x" and 2020.01.01 bound to a
     // name and then indexed - `a[0]`, `a[]`, `a[0]:5` - are all 'type.
@@ -4244,12 +4268,16 @@ fn named_values(
     out
 }
 
+/// A qSQL phrase's span, and the span of the table named after its `from`.
+type Phrase = (usize, usize, Option<(usize, usize)>);
+
 /// The spans of `code` where a qSQL statement reads its table's columns:
 /// from `select`, `exec`, `update` or `delete` to its `from`, and from its
 /// `where` to the end of the statement. The table after `from` is an
 /// ordinary expression, and is left out. q 5 `px:2.5; select p0:px 0 from t`
-/// indexes the column `px`, not the atom.
-fn qsql_phrases(code: &str) -> Vec<(usize, usize)> {
+/// indexes the column `px`, not the atom. Each span carries where the name
+/// after `from` spans, when the table is written as a plain name.
+fn qsql_phrases(code: &str) -> Vec<Phrase> {
     let mut out = vec![];
     let bytes = code.as_bytes();
     for m in re!(r"\b(?:select|exec|update|delete)\b").find_iter(code) {
@@ -4276,11 +4304,22 @@ fn qsql_phrases(code: &str) -> Vec<(usize, usize)> {
                                 .starts_with(|c: char| c.is_alphanumeric() || c == '_')
                     };
                     if from.is_none() && word("from") {
-                        out.push((m.start(), i));
+                        let table = crate::past_blanks(code, i + 4);
+                        let table = re!(r"^\.?[A-Za-z][A-Za-z0-9_.]*")
+                            .find(&code[table..])
+                            .filter(|t| {
+                                let rest = code[table + t.end()..].trim_start_matches([' ', '\t']);
+                                rest.is_empty()
+                                    || rest.starts_with([';', ')', ']', '}', '\n', '\r'])
+                                    || rest.starts_with("where")
+                            })
+                            .map(|t| (table, table + t.end()));
+                        out.push((m.start(), i, table));
                         from = Some(i);
                     } else if from.is_some() && word("where") {
                         from = Some(i);
-                        out.push((i, usize::MAX));
+                        let table = out.last().and_then(|p| p.2);
+                        out.push((i, usize::MAX, table));
                     }
                 }
                 _ => {}
@@ -4289,7 +4328,7 @@ fn qsql_phrases(code: &str) -> Vec<(usize, usize)> {
         }
         match (from, out.last_mut()) {
             // No `from`: not a statement this can read, so all of it.
-            (None, _) => out.push((m.start(), i)),
+            (None, _) => out.push((m.start(), i, None)),
             (Some(_), Some(last)) if last.1 == usize::MAX => last.1 = i,
             _ => {}
         }
