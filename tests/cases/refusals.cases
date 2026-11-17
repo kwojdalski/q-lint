@@ -993,3 +993,16 @@ c:0Ni5
 e:0W
 f:0Wi
 g:0W.5 1c
+
+=== clean profile: general | QE007: a blank line inside a query does not end it (q 5 runs it, #559)
+t:([]a:1 2)
+f:{[]
+  r:select a
+
+    from t;
+  r}
+
+=== QE007 profile: general | but an unindented line after the blank one does (#559)
+r:select a
+
+from t

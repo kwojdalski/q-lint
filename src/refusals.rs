@@ -1,7 +1,7 @@
 //! Literals q refuses, read without running anything. Each rule here was
 //! settled against q 5 shape by shape, including the near-misses it accepts,
 //! and each reports in the default profile because q raises on the line.
-use crate::{Finding, boundary, operand_ends};
+use crate::{Finding, boundary, continues_after, operand_ends};
 
 pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Finding> {
     let mut out = vec![];
@@ -441,7 +441,8 @@ fn missing_from(
             continue;
         }
         // The statement runs to a `;` at this depth, the bracket that closes
-        // around it, or an unindented next line.
+        // around it, or an unindented next line - skipping a blank line, as
+        // q does: `r:select a`, an empty line, `  from t` is one query (#559).
         let bytes = unsym.as_bytes();
         let (mut at, mut depth) = (m.end(), 0i32);
         while at < bytes.len() {
@@ -454,7 +455,7 @@ fn missing_from(
                     depth -= 1;
                 }
                 b';' if depth == 0 => break,
-                b'\n' if depth == 0 && !unsym[at + 1..].starts_with([' ', '\t']) => break,
+                b'\n' if depth == 0 && !continues_after(comments, source, at) => break,
                 _ => {}
             }
             at += 1;
