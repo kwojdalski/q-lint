@@ -766,9 +766,7 @@ widen:{x*2}
 widened: widen 3+4
 
 / clean: a builtin beside its argument is how q is meant to read, and
-/ brackets around this one would be noise rather than clarity. `count` is
-/ not the builtin to show it with here - this file redefines it above, and
-/ the rule is right to say so.
+/ brackets around this one would be noise rather than clarity.
 sized: first 1 2 3
 
 / clean: the same call as above, spelled the way the convention asks.
