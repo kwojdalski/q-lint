@@ -581,6 +581,12 @@
     "text": "(row`expDate-valDate)%365f;"
    },
    {
+    "code": "QF004",
+    "detail": "Root-level assignment to `ss`: q refuses it",
+    "path": "apps/run_commodity_demo.q",
+    "text": "ss:.commodity.electricity.sparkSpread[45f;3.5;7f];"
+   },
+   {
     "code": "QE001",
     "detail": "Unclosed delimiter; expected ']' before line 40, which starts at column 0 and so begins a new statement",
     "path": "tests/core/test_european_call.q",
@@ -685,6 +691,12 @@
    },
    {
     "code": "QE009",
+    "detail": "q 5 refuses an iterator with nothing on its left ('/): it derives no function to apply",
+    "path": "test/fixtures/lexing.q",
+    "text": "a:1;/b"
+   },
+   {
+    "code": "QE009",
     "detail": "q 5 refuses a derived function applied by juxtaposition ('':): write it in parentheses, with brackets, or as the keyword",
     "path": "test/fixtures/lexing.q",
     "text": "x':y"
@@ -714,16 +726,16 @@
     "text": "`a-1"
    },
    {
+    "code": "QT023",
+    "detail": "`\"a\"-1` is 'type: q 5 does no integer arithmetic on a char",
+    "path": "test/fixtures/lexing.q",
+    "text": "\"a\"-1"
+   },
+   {
     "code": "QF001",
     "detail": "Builtin parameter name(s): [\"til\", \"count\"]; q refuses every call to this lambda ('match or 'nyi)",
     "path": "test/fixtures/scoping.q",
     "text": "{[til;count] 0}"
-   },
-   {
-    "code": "QF007",
-    "detail": "[\"a b\"] is not a parameter name, so q reads these brackets as the start of the body and the lambda takes x, y and z instead",
-    "path": "test/fixtures/scoping.q",
-    "text": "{[a b] a}"
    },
    {
     "code": "QF021",
@@ -801,9 +813,51 @@
   "kimtang/btick2": [
    {
     "code": "QE008",
+    "detail": "`.` has no monadic form in q 5: q refuses this line with '.",
+    "path": "qlib/repository/template/cpp/qlib/__name__/__name__.q",
+    "text": ".%name%.lib.def:update fname:`${\".\" sv string x}'[flip(repo;nsp;name)] from update repo:`${\".\",1_first \"_\" vs x}@'name,nsp:`${first 1_\"_\" vs x}@'name,name:`${\"_\" sv  2_\"_\" vs x}@'name,orig:`$name from {select from x where not null num} flip`name`num!(\"*j\";\";\") 0: read0 .%name%.lib.defPath"
+   },
+   {
+    "code": "QE008",
     "detail": "`%` has no monadic form in q 5: q refuses this line with '%",
     "path": "qlib/repository/template/cpp/qlib/__name__/__name__.q",
     "text": ".%name%.lib.def:update fname:`${\".\" sv string x}'[flip(repo;nsp;name)] from update repo:`${\".\",1_first \"_\" vs x}@'name,nsp:`${first 1_\"_\" vs x}@'name,name:`${\"_\" sv  2_\"_\" vs x}@'name,orig:`$name from {select from x where not null num} flip`name`num!(\"*j\";\";\") 0: read0 .%name%.lib.defPath"
+   },
+   {
+    "code": "QE008",
+    "detail": "`.` has no monadic form in q 5: q refuses this line with '.",
+    "path": "qlib/repository/template/cpp/qlib/__name__/__name__.q",
+    "text": ".%name%.lib.defPath:`$.bt.print[\":%name0%/qlib/%name%/cpp/%name%.def\"] .import.repository.con;"
+   },
+   {
+    "code": "QE008",
+    "detail": "`.` has no monadic form in q 5: q refuses this line with '.",
+    "path": "qlib/repository/template/cpp/qlib/__name__/__name__.q",
+    "text": ".%name%.lib.dll:`$.bt.print[\":%name0%/qlib/%name%/cpp/bin/%os0%/%type0%/%name%\"] .import.repository.con,.%name%.lib,.bt.md[`os] .z.o"
+   },
+   {
+    "code": "QE008",
+    "detail": "`.` has no monadic form in q 5: q refuses this line with '.",
+    "path": "qlib/repository/template/cpp/qlib/__name__/__name__.q",
+    "text": ".%name%.lib.dll:`$.bt.print[\":%name0%/qlib/%name%/cpp/bin/%os0%/%type0%/%name%\"] .import.repository.con,.%name%.lib,.bt.md[`os] .z.o"
+   },
+   {
+    "code": "QE008",
+    "detail": "`.` has no monadic form in q 5: q refuses this line with '.",
+    "path": "qlib/repository/template/cpp/qlib/__name__/__name__.q",
+    "text": ".%name%.summary:{}"
+   },
+   {
+    "code": "QE008",
+    "detail": "`.` has no monadic form in q 5: q refuses this line with '.",
+    "path": "qlib/repository/template/cpp/qlib/__name__/__name__.q",
+    "text": "if[not`.%name%.lib.type~key`.%name%.lib.type;.%name%.lib.type:`Release];  / default is release"
+   },
+   {
+    "code": "QE008",
+    "detail": "`.` has no monadic form in q 5: q refuses this line with '.",
+    "path": "qlib/repository/template/cpp/qlib/__name__/__name__.q",
+    "text": "{.[x`repo;x`nsp`name;:;].%name%.lib.dll 2: x`orig`num }@'.%name%.lib.def;"
    },
    {
     "code": "QE008",
@@ -813,7 +867,7 @@
    },
    {
     "code": "QE008",
-    "detail": "`%` has no monadic form in q 5: q refuses this line with '%",
+    "detail": "`.` has no monadic form in q 5: q refuses this line with '.",
     "path": "qlib/repository/template/cpp/qlib/__name__/test/99.q",
     "text": ".qtx.shouldTrue[`0;\"get length\";{[d] count[d] ~ .%name%.api.xn d}]"
    },
@@ -821,6 +875,24 @@
     "code": "QE008",
     "detail": "`%` has no monadic form in q 5: q refuses this line with '%",
     "path": "qlib/repository/template/cpp/qlib/__name__/test/99.q",
+    "text": ".qtx.shouldTrue[`0;\"get length\";{[d] count[d] ~ .%name%.api.xn d}]"
+   },
+   {
+    "code": "QE008",
+    "detail": "`.` has no monadic form in q 5: q refuses this line with '.",
+    "path": "qlib/repository/template/cpp/qlib/__name__/test/99.q",
+    "text": ".qtx.shouldTrue[`0;\"same pointe4d\";{[a] .%name%.api.xp[a]  ~ .%name%.api.xp a}]"
+   },
+   {
+    "code": "QE008",
+    "detail": "`%` has no monadic form in q 5: q refuses this line with '%",
+    "path": "qlib/repository/template/cpp/qlib/__name__/test/99.q",
+    "text": ".qtx.shouldTrue[`0;\"same pointe4d\";{[a] .%name%.api.xp[a]  ~ .%name%.api.xp a}]"
+   },
+   {
+    "code": "QE008",
+    "detail": "`.` has no monadic form in q 5: q refuses this line with '.",
+    "path": "qlib/repository/template/cpp/qlib/__name__/test/99.q",
     "text": ".qtx.shouldTrue[`0;\"same pointe4d\";{[a] .%name%.api.xp[a]  ~ .%name%.api.xp a}]"
    },
    {
@@ -832,6 +904,12 @@
    {
     "code": "QE008",
     "detail": "`%` has no monadic form in q 5: q refuses this line with '%",
+    "path": "qlib/repository/template/cpp/qlib/__name__/test/99.q",
+    "text": ".qtx.shouldTrue[`1;\"different pointer\";{[a;b] not .%name%.api.xp[b]  ~ .%name%.api.xp a }]"
+   },
+   {
+    "code": "QE008",
+    "detail": "`.` has no monadic form in q 5: q refuses this line with '.",
     "path": "qlib/repository/template/cpp/qlib/__name__/test/99.q",
     "text": ".qtx.shouldTrue[`1;\"different pointer\";{[a;b] not .%name%.api.xp[b]  ~ .%name%.api.xp a }]"
    },
@@ -862,8 +940,38 @@
    {
     "code": "QT003",
     "detail": "Arithmetic on a symbol literal is a 'type error at runtime",
+    "path": "qlib/repository/template/cpp/qlib/__name__/test/99.q",
+    "text": ".qtx.testSuiter[`%name%1;`repo`lib`file!`%name%`%name%`001;\"test %name%\"]"
+   },
+   {
+    "code": "QE008",
+    "detail": "`.` has no monadic form in q 5: q refuses this line with '.",
+    "path": "qlib/repository/template/lib/__name__.q",
+    "text": ".%name%.summary:{}"
+   },
+   {
+    "code": "QE008",
+    "detail": "`.` has no monadic form in q 5: q refuses this line with '.",
+    "path": "qlib/repository/template/lib/test/001.q",
+    "text": ".qtx.testSuite[`test.%repo%.%name%;\"test %name%\"]"
+   },
+   {
+    "code": "QT003",
+    "detail": "Arithmetic on a symbol literal is a 'type error at runtime",
     "path": "qlib/repository/template/lib/test/001.q",
     "text": ".qtx.testCase[`test.%name%.1;\"test %name%\"]["
+   },
+   {
+    "code": "QE008",
+    "detail": "`.` has no monadic form in q 5: q refuses this line with '.",
+    "path": "qlib/repository/template/repository/qlib/__name__/__name__.q",
+    "text": ".%name%.summary:{}"
+   },
+   {
+    "code": "QE008",
+    "detail": "`.` has no monadic form in q 5: q refuses this line with '.",
+    "path": "qlib/repository/template/repository/qlib/__name__/test/001.q",
+    "text": ".qtx.testSuite[`test.%repo%.%name%;\"test %name%\"]"
    },
    {
     "code": "QT003",
