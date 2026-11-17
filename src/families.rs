@@ -857,20 +857,15 @@ fn unreachable(path: &str, source: &str, code: &str, comments: &str, out: &mut V
         let sig = crate::signature(code, source, brace);
         let body_start = sig.body;
         let body = &code[body_start..end - 1];
-        let (mut depth, mut start) = (0i32, 0usize);
-        let mut statements = vec![];
-        for (i, b) in body.bytes().enumerate() {
-            match b {
-                b'(' | b'[' | b'{' => depth += 1,
-                b')' | b']' | b'}' => depth -= 1,
-                b';' if depth == 0 => {
-                    statements.push((start, i));
-                    start = i + 1;
-                }
-                _ => {}
-            }
-        }
-        statements.push((start, body.len()));
+        // From `slots`, which jumps over nested lambdas rather than reading
+        // through them: a nest of lambdas was quadratic (#704).
+        let statements: Vec<(usize, usize)> = crate::slots(body)
+            .into_iter()
+            .map(|s| {
+                let a = s.as_ptr() as usize - body.as_ptr() as usize;
+                (a, a + s.len())
+            })
+            .collect();
         // `'[f;g]` - or `' [f;g]` - is a composition, not a signal: q 5
         // `{'[neg;abs]; 2}[]` is 2.
         let exits = |text: &str| {

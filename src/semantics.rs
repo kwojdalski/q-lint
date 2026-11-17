@@ -675,6 +675,11 @@ fn scopes(code: &str, raw: &str) -> (Vec<Scope>, Vec<(usize, String)>) {
     let assignment = re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*:(:)?");
     let mut scopes: Vec<Scope> = vec![];
     let mut stack: Vec<usize> = vec![];
+    // Braces past q's own limit open no scope of their own: q refuses the
+    // file (#717), and each scope keeps a copy of its body, so a nest of n
+    // lambdas cost n^2 bytes - 4 GB for a 128 KB file (#704). Their text
+    // stays in the deepest scope's body.
+    let mut beyond = 0usize;
     let mut namespace = String::new();
     let mut namespaces = vec![];
     let mut offset = 0;
@@ -692,7 +697,11 @@ fn scopes(code: &str, raw: &str) -> (Vec<Scope>, Vec<(usize, String)>) {
         }
         for (i, b) in line.bytes().enumerate() {
             let at = offset + i;
-            if b == b'{' {
+            if b == b'{' && stack.len() >= crate::DEPTH {
+                beyond += 1;
+            } else if b == b'}' && beyond > 0 {
+                beyond -= 1;
+            } else if b == b'{' {
                 let sig = signature(code, raw, at);
                 // When the brackets are not a parameter list q binds the
                 // implicit arguments instead, and so must the scope here.

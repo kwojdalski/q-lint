@@ -836,6 +836,22 @@ fn a_wide_table_literal_lints_in_bounded_time() {
         "32000 columns took {elapsed:?}"
     );
 }
+/// Lambdas nested in each other's bodies: each scope copied its whole body,
+/// and each implicit lambda's rank and each body's statements were read over
+/// the lambdas nested in it, so time and memory were quadratic in the depth -
+/// 4 GB for 32000 (#704). Past q's limit, so read as with QE001 deselected.
+#[test]
+fn nested_lambda_bodies_lint_in_bounded_time() {
+    let depth = 16000;
+    let source = format!("a:{}1{}\n", "{x+".repeat(depth), "}".repeat(depth));
+    let started = std::time::Instant::now();
+    lint_selecting(&source, "t.q", Profile::Style, &Workspace::default(), false);
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < std::time::Duration::from_secs(10),
+        "{depth} nested lambda bodies took {elapsed:?}"
+    );
+}
 /// Tens of thousands of nested parentheses - beyond q's own limit, which
 /// refuses a hundred-odd levels with '( - once overflowed the stack, which
 /// aborts the whole run and cannot be caught like a panic (#703).

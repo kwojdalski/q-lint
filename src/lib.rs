@@ -3250,15 +3250,25 @@ pub(crate) fn lambda_rank(code: &str, raw: &str, brace: usize, end: usize) -> us
             sig.slots.len()
         };
     }
-    let mut body = code.as_bytes()[sig.body..end].to_vec();
-    let mut depth = 0i32;
-    for c in &mut body {
-        match *c {
-            b'{' => depth += 1,
-            b'}' => depth -= 1,
-            _ if depth > 0 => *c = b' ',
-            _ => {}
+    // A nested lambda reads its own arguments, so it is left out - as one
+    // blank, jumped over from its brace's match: blanking it in a copy of
+    // the whole body made a nest of lambdas quadratic (#704).
+    let b = code.as_bytes();
+    let mut body = vec![];
+    let mut i = sig.body;
+    while i < end {
+        if b[i] == b'{' {
+            match matching(code, i, b'{', b'}') {
+                Some(close) if close <= end => {
+                    body.push(b' ');
+                    i = close;
+                    continue;
+                }
+                _ => break,
+            }
         }
+        body.push(b[i]);
+        i += 1;
     }
     // A symbol is not a read: `{x,`y}` takes one argument (#189).
     let body = re!(r"`[A-Za-z0-9_./:]*")
@@ -3491,7 +3501,7 @@ pub fn balanced(source: &str) -> bool {
 }
 
 /// The most brackets, braces and parentheses q 5 holds open at once.
-const DEPTH: usize = 100;
+pub(crate) const DEPTH: usize = 100;
 
 /// Every structural problem in the file, in source order. Each is reported
 /// and then recovered from - a statement at column 0 starts with no bracket
