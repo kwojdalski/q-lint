@@ -454,6 +454,22 @@ f:{x+y}
 a:f . 1b
 b:.[f;0x01]
 
+=== QA012 QA002 profile: general | a symbol, boolean or char vector holds one argument per item (q 5: each is 'rank) (#630)
+f:{[a;b] a+b}
+r:f . `a`b`c
+s:{[a;b] a+b} . 101b
+u:f . "abc"
+w:.[f;`a`b`c]
+
+=== clean profile: general | and one that fits is a call (q 5: f . `a`b is `a`b, f . "ab" is "ab") (#630)
+f:{[a;b] (a;b)}
+r:f . `a`b
+s:f . 10b
+u:f . "ab"
+
+=== QA003 profile: uqf | enlist of one item is one argument, so a rank-2 lambda is projected and the handler never runs (q 5: {[a;b] a+b}[1]) (#630)
+r:.[{[a;b] a+b};enlist 1;{x}]
+
 === QA012 | too many arguments through dot apply, to a named lambda (q 5: 'rank)
 g:{x}
 c:g . (1;2)

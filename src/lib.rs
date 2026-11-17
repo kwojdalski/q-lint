@@ -2393,6 +2393,31 @@ fn statement_groups(code: &str, source: &str) -> Vec<(usize, usize)> {
     }
     out
 }
+/// How many items a vector literal written as an argument list holds: a
+/// spaced numeric vector, a symbol, boolean or char vector, or `enlist` of
+/// one item. `literal` is `arg` with its strings kept. q 5: `{[a;b] a+b} .
+/// `a`b`c`, `. 101b` and `. "abc"` are 'rank, and `.[{[a;b] a+b};enlist
+/// 1;{x}]` a projection (#630).
+fn vector_items(arg: &str, literal: &str) -> Option<usize> {
+    let (arg, literal) = (arg.trim(), literal.trim());
+    if re!(r"^-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+$").is_match(arg) {
+        Some(arg.split_whitespace().count())
+    } else if re!(r"^(?:`[A-Za-z0-9_.:]*){2,}$").is_match(arg) {
+        Some(arg.matches('`').count())
+    } else if re!(r"^[01]{2,}b$").is_match(arg) {
+        Some(arg.len() - 1)
+    } else if let Some(body) = literal
+        .strip_prefix('"')
+        .and_then(|l| l.strip_suffix('"'))
+        .filter(|b| !re!(r#"(?:^|[^\\])(?:\\\\)*""#).is_match(b))
+    {
+        Some(q_bytes(body).len()).filter(|&n| n >= 2)
+    } else if re!(r"^enlist\s+[^\s\[]").is_match(arg) {
+        Some(1)
+    } else {
+        None
+    }
+}
 /// The bytes q makes of a string literal's body, the text between its
 /// quotes. q strings are bytes, so `"é"` is two items, and an escape is the
 /// one byte it stands for: `\n`, `\"`, `\012` (#226).
@@ -4775,10 +4800,14 @@ pub fn lint_selecting(
             1
         } else {
             let arg = parts[1].trim();
+            let second = parts[1].as_ptr() as usize - code.as_ptr() as usize;
+            let literal = &v.comments[second..second + parts[1].len()];
             if arg.starts_with('(') && matching(arg, 0, b'(', b')') == Some(arg.len()) {
                 slots(&arg[1..arg.len() - 1]).len()
             } else if re!(r"^-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)*$").is_match(arg) {
                 arg.split_whitespace().count()
+            } else if let Some(n) = vector_items(arg, literal) {
+                n
             } else {
                 continue;
             }
@@ -4823,15 +4852,17 @@ pub fn lint_selecting(
             ranks.get(&key).map(|&r| (r, "QA012"))
         }
     };
+    // `arg` is read in `code`, and its strings in `comments`, where they are
+    // still text.
     let items = |arg: &str| -> Option<usize> {
+        let at = arg.as_ptr() as usize - code.as_ptr() as usize;
+        let literal = &v.comments[at..at + arg.len()];
         let arg = arg.trim();
         if arg.starts_with('(') && matching(arg, 0, b'(', b')') == Some(arg.len()) {
             let n = slots(&arg[1..arg.len() - 1]).len();
             (n > 1).then_some(n)
-        } else if re!(r"^-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+$").is_match(arg) {
-            Some(arg.split_whitespace().count())
         } else {
-            None
+            vector_items(arg, literal)
         }
     };
     let too_many = |rank: usize, n: usize| {
@@ -4852,7 +4883,8 @@ pub fn lint_selecting(
         let Some((rank, id)) = applied(dot, left, left.len()) else {
             continue;
         };
-        let after = past_blanks(code, dot + 1);
+        // Blanks skipped in `comments`: in `code` a string is blank too.
+        let after = past_blanks(&v.comments, dot + 1);
         let rest = &code[after..];
         let end = if rest.starts_with('(') {
             match matching(rest, 0, b'(', b')') {
