@@ -464,6 +464,15 @@ r:x within 1 2 3
 === QT018 | cor of two literal vectors of different lengths
 r:1 2 cor 1 2 3
 
+=== clean profile: general | a left operand continued from the line above is the whole vector (q 5: 1f, #683)
+r:1
+  2 cor 1 2
+
+=== QT018 profile: general | and a right operand on the indented next line is read (q 5: 'length, #683)
+s:1 cor
+
+  1 2
+
 === QT014 | a name before the literal does not change which operand it is
 r:f 1.5 rotate 1 2
 
