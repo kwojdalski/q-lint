@@ -5311,8 +5311,10 @@ pub fn lint_selecting(
     // tag per parameter is a different and much larger opinion.
     // Read from the source: `v.comments` blanks comments and keeps strings,
     // so the text of a comment exists only here. A match is a comment rather
-    // than code because `code` has it blanked at the same offsets.
-    for m in re!(r"(?m)^\s*/+\s*@param\s+([A-Za-z][A-Za-z0-9_]*)").captures_iter(source) {
+    // than code because `code` has it blanked at the same offsets. `[ \t]`,
+    // not `\s`: a match that starts on a blank line above the block reads
+    // its run of `@param` lines as empty (#674).
+    for m in re!(r"(?m)^[ \t]*/+[ \t]*@param[ \t]+([A-Za-z][A-Za-z0-9_]*)").captures_iter(source) {
         let name = m.get(1).unwrap();
         if !code[name.start()..name.end()].trim().is_empty() {
             continue;
