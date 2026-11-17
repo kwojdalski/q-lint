@@ -530,6 +530,19 @@ fn loading_a_table_by_its_path_defines_it() {
 }
 
 #[test]
+fn system_d_switches_context_without_hiding_the_files_names() {
+    // q 5 runs `system "d .a"`, `f:{x+1}`, `g:{f[`a]}`, and `.a.g[]` is
+    // 'type, as with `\d .a`; `r:{zz}` there is 'zz (#535).
+    for open in ["system \"d .a\"", "\\d .a"] {
+        let src = format!("{open}\nf:{{x+1}}\ng:{{f[`a]}}\nr:{{zz}}\n");
+        let general = lint(&src, "a.q", Profile::General);
+        assert!(codes(&general).contains(&"QT002"), "{open}");
+        let style = lint(&src, "a.q", Profile::Style);
+        assert!(codes(&style).contains(&"QF018"), "{open}");
+    }
+}
+
+#[test]
 fn table_columns_and_qsql_assignments_define_no_global() {
     let index =
         q_lint_rs::index("t:([k:`a`b]handle:1 2)\nu:update c:1 from t\nclust.kmeans.update:{x}\n");

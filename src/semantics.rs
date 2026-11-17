@@ -1479,7 +1479,8 @@ fn dynamic(raw: &str, view: &str, call_time: &[(usize, &'static str)]) -> Vec<cr
 
 /// Whether the file writes globals its text does not name, so that nothing
 /// it assigns by name can be taken as known: a `\l`, `eval`, a `system`
-/// command that loads a script or changes `\d`, `value` or `get` of a
+/// command that loads a script or changes `\d` - but a literal
+/// `system "d .a"` starting its line, which is read as `\d .a` is - `value` or `get` of a
 /// string, a `set` into a computed name and an assignment on a `k)` line.
 /// `code` has strings and comments blank, `comments` only comments, and
 /// `raw` is the source.
@@ -1565,7 +1566,19 @@ pub(crate) fn unnamed_writes(code: &str, comments: &str, raw: &str) -> Vec<(usiz
             // cmd;h]` - so only a command that visibly starts with `l` or `d`
             // counts: written so, or held in a name bound to such a literal.
             "system" => literal(&arg(rest)).and_then(|command| {
-                if re!(r"^d\b").is_match(&command) {
+                // A literal `system "d .a"` starting its line switches as
+                // `\d .a` does, and `opens` reads it so: q 5 runs it, then
+                // `f:{x+1}`, `g:{f[`a]}`, and `.a.g[]` is 'type (#535).
+                let start = code[..m.start()].rfind('\n').map_or(0, |i| i + 1);
+                let end = code[m.start()..]
+                    .find('\n')
+                    .map_or(code.len(), |i| m.start() + i);
+                if re!(r"^d\b").is_match(&command)
+                    && start == m.start()
+                    && opens(&code[start..end], &raw[start..end]).is_some()
+                {
+                    None
+                } else if re!(r"^d\b").is_match(&command) {
                     Some(Unnamed::Context)
                 } else {
                     re!(r"^l\b")
