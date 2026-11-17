@@ -148,6 +148,18 @@ r:1_select a by b t
 === QE007 | inside a lambda too
 f:{select x}
 
+=== QE007 profile: general | the bare keyword is never a value (q 5: each line is 'from or ',) (#728)
+f:{[t] select}
+g:{x}[select]
+h:(exec;delete)
+k:(1;update)
+select:1
+
+=== clean profile: general | but a symbol, a dotted name and a row limit are not the keyword (#728)
+x:`select
+a.select:1
+r:select[2] from t
+
 === clean | a from anywhere before the statement ends, or the name assigned
 r1:select from t
 r2:update a:1 from t
@@ -184,6 +196,29 @@ f2:{'`a}
 
 === QE009 | while x'1 is each applied by juxtaposition (q 5: parse "{x'1}" is ')
 f3:{x'1}
+
+=== clean profile: general | a projection ending one line and a column-0 value opening the next are two statements (q 5 runs the file) (#742)
+t:([]c:1 2)
+v:1 2 3
+join:t lj
+([]z:1 2)
+bump:v+
+1 2
+lit:1 2 3+
+4 5
+keyjoin:lj
+[1;2;3]
+show (bump 1;type join)
+
+=== QT026 QT006 QA010 profile: general | while an indented line continues the statement (q 5: 'type, 'length, 'rank) (#742)
+t:([]c:1 2)
+v:1 2 3
+join:t lj
+  ([]z:1 2)
+bump:v+
+  1 2
+keyjoin:lj
+  [1;2;3]
 
 === QT026 | lj with an unkeyed table on the right
 t:([]a:1 2;b:3 4)
@@ -223,6 +258,21 @@ r3:select from t where horizon=0D00:02:00
 
 === clean | a name ending in where is not the keyword
 registry.util.delete.where:{[a] a}
+
+=== clean profile: general | a projection ending one line and a column-0 literal opening the next are two statements (q 5 runs the file) (#741)
+x:1 2
+inc:x+
+"done"
+open:hopen
+1.5
+show (inc 1;open)
+
+=== QT023 QT029 profile: general | while an indented line continues the statement (q 5: 'type each) (#741)
+x:1
+inc:x+
+  "done"
+open:hopen
+  1.5
 
 === clean profile: general | minus zero is the integer 0, which q tries to connect to (q 5: hopen -0 is 'hop; #614)
 h:hopen -0
@@ -457,6 +507,16 @@ h:{x/y}
 k:{a:count'x}
 m:{{x+y}/x}
 n:{sum/:x}
+
+=== QE009 profile: general | a symbol before the iterator, which takes no / unless it holds a : (q 5: each is '/) (#733)
+t:`a/x
+u:`a`b/x
+w:`a.b/x
+
+=== clean profile: general | a symbol from its first : on takes the / as part of itself (q 5: one symbol each) (#733)
+z:`:a/x
+y:`a:b/x
+q:`a`:b/x
 
 === QE009 profile: general | a bracket, parenthesis, literal or another iterator before it too (q 5: parse each is '/ or ', #430)
 r:g[x]'y

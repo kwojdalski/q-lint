@@ -660,6 +660,30 @@
   ],
   "dflynch/kdb-q-ext-vscode": [
    {
+    "code": "QB010",
+    "detail": "`\"a\" -1` applies the atom `\"a\"` to the negative literal `-1`, which q refuses: with a space before `-` and none after, the `-` belongs to the literal. `\"a\" - 1` or `\"a\"-1` is subtraction",
+    "path": "test/fixtures/lexing.q",
+    "text": "\"a\" -1"
+   },
+   {
+    "code": "QB010",
+    "detail": "`(1) -1` applies the atom `(1)` to the negative literal `-1`, which q refuses: with a space before `-` and none after, the `-` belongs to the literal. `(1) - 1` or `(1)-1` is subtraction",
+    "path": "test/fixtures/lexing.q",
+    "text": "(1) -1"
+   },
+   {
+    "code": "QE008",
+    "detail": "`0:` has no monadic form in q 5: q refuses this line",
+    "path": "test/fixtures/lexing.q",
+    "text": "0:hsym x"
+   },
+   {
+    "code": "QE008",
+    "detail": "`1:` has no monadic form in q 5: q refuses this line",
+    "path": "test/fixtures/lexing.q",
+    "text": "1:-1"
+   },
+   {
     "code": "QE009",
     "detail": "q 5 refuses a derived function applied by juxtaposition ('':): write it in parentheses, with brackets, or as the keyword",
     "path": "test/fixtures/lexing.q",
@@ -694,18 +718,6 @@
     "detail": "Builtin parameter name(s): [\"til\", \"count\"]; q refuses every call to this lambda ('match or 'nyi)",
     "path": "test/fixtures/scoping.q",
     "text": "{[til;count] 0}"
-   },
-   {
-    "code": "QF005",
-    "detail": "Nested lambda references enclosing local 'a' without a parameter",
-    "path": "test/fixtures/scoping.q",
-    "text": "{a:1; {a}; a}"
-   },
-   {
-    "code": "QF005",
-    "detail": "Nested lambda references enclosing local 'a' without a parameter",
-    "path": "test/fixtures/scoping.q",
-    "text": "{a:1; {b:2; a+b}}"
    },
    {
     "code": "QF007",
@@ -747,12 +759,6 @@
     "text": "{[hh;q] .hnd.h[] \"count trade\""
    },
    {
-    "code": "QF005",
-    "detail": "Nested lambda references enclosing local 'cb' without a parameter",
-    "path": "libraries/qsl/callback.q",
-    "text": ".pe.at[{[x] .cb.p.back[x]:value x;.log.warn[`cb] \"overwriting existing variable \",(string cb),\" to create a callback collection\"};cb;{[x;y].cb.p.back[x]:{}}[cb]];"
-   },
-   {
     "code": "QT001",
     "detail": "Literal dictionary has 5 keys and 4 values",
     "path": "libraries/qsl/parseq.q",
@@ -760,12 +766,6 @@
    }
   ],
   "finos/kdb": [
-   {
-    "code": "QF010",
-    "detail": "'x' is not an argument here: the lambda declares its parameters, so q resolves 'x' as a global",
-    "path": "q/conn/conn.q",
-    "text": "`.finos.conn.priv.clientList upsert `fd`protocol`user`host`connID!(x;`ws;.z.u;.Q.host[.z.a];.finos.conn.priv.lastClientConnID+:1);"
-   },
    {
     "code": "QF005",
     "detail": "Nested lambda references enclosing local 'newChildPid' without a parameter",
@@ -783,12 +783,6 @@
     "detail": "`break` is not a q keyword; it resolves as a global and throws 'break",
     "path": "q/unzip/unzip.q",
     "text": "break;"
-   },
-   {
-    "code": "QF010",
-    "detail": "'x' is not an argument here: the lambda declares its parameters, so q resolves 'x' as a global",
-    "path": "qdoc/src/qdoc_example/dba.q",
-    "text": "x;"
    }
   ],
   "hanssmail/quantQ": [],
@@ -805,6 +799,54 @@
   "jonathonmcmurray/reQ": [],
   "jsogarro/qstats": [],
   "kimtang/btick2": [
+   {
+    "code": "QE008",
+    "detail": "`%` has no monadic form in q 5: q refuses this line with '%",
+    "path": "qlib/repository/template/cpp/qlib/__name__/__name__.q",
+    "text": ".%name%.lib.def:update fname:`${\".\" sv string x}'[flip(repo;nsp;name)] from update repo:`${\".\",1_first \"_\" vs x}@'name,nsp:`${first 1_\"_\" vs x}@'name,name:`${\"_\" sv  2_\"_\" vs x}@'name,orig:`$name from {select from x where not null num} flip`name`num!(\"*j\";\";\") 0: read0 .%name%.lib.defPath"
+   },
+   {
+    "code": "QE008",
+    "detail": "`%` has no monadic form in q 5: q refuses this line with '%",
+    "path": "qlib/repository/template/cpp/qlib/__name__/__name__.q",
+    "text": "{@[x`repo;x`nsp;:;](1#`)!(1#{})}@'key select by repo,nsp from .%name%.lib.def;"
+   },
+   {
+    "code": "QE008",
+    "detail": "`%` has no monadic form in q 5: q refuses this line with '%",
+    "path": "qlib/repository/template/cpp/qlib/__name__/test/99.q",
+    "text": ".qtx.shouldTrue[`0;\"get length\";{[d] count[d] ~ .%name%.api.xn d}]"
+   },
+   {
+    "code": "QE008",
+    "detail": "`%` has no monadic form in q 5: q refuses this line with '%",
+    "path": "qlib/repository/template/cpp/qlib/__name__/test/99.q",
+    "text": ".qtx.shouldTrue[`0;\"same pointe4d\";{[a] .%name%.api.xp[a]  ~ .%name%.api.xp a}]"
+   },
+   {
+    "code": "QE008",
+    "detail": "`%` has no monadic form in q 5: q refuses this line with '%",
+    "path": "qlib/repository/template/cpp/qlib/__name__/test/99.q",
+    "text": ".qtx.shouldTrue[`0;\"same pointe4d\";{[a] .%name%.api.xp[a]  ~ .%name%.api.xp a}]"
+   },
+   {
+    "code": "QE008",
+    "detail": "`%` has no monadic form in q 5: q refuses this line with '%",
+    "path": "qlib/repository/template/cpp/qlib/__name__/test/99.q",
+    "text": ".qtx.shouldTrue[`1;\"different pointer\";{[a;b] not .%name%.api.xp[b]  ~ .%name%.api.xp a }]"
+   },
+   {
+    "code": "QE008",
+    "detail": "`%` has no monadic form in q 5: q refuses this line with '%",
+    "path": "qlib/repository/template/cpp/qlib/__name__/test/99.q",
+    "text": ".qtx.shouldTrue[`1;\"different pointer\";{[a;b] not .%name%.api.xp[b]  ~ .%name%.api.xp a }]"
+   },
+   {
+    "code": "QE008",
+    "detail": "`%` has no monadic form in q 5: q refuses this line with '%",
+    "path": "qlib/repository/template/cpp/qlib/__name__/test/99.q",
+    "text": "min {x~key x}@'exec fname from .%name%.lib.def"
+   },
    {
     "code": "QT003",
     "detail": "Arithmetic on a symbol literal is a 'type error at runtime",
@@ -831,6 +873,12 @@
    }
   ],
   "kwojdalski/uqf": [
+   {
+    "code": "QE008",
+    "detail": "`2:` has no monadic form in q 5: q refuses this line",
+    "path": "lib/kdb-fix-adaptor/src/config/fix.q",
+    "text": ".fix:(`:./@BINARY_NAME@ 2:(`LoadLibrary;1))`"
+   },
    {
     "code": "QE001",
     "detail": "Unclosed delimiter; expected '}' before line 31, which starts at column 0 and so begins a new statement",
