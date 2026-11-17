@@ -113,7 +113,7 @@ round each comparison an `and`/`or` swallows in a where phrase, `~` → `=` in
 a filter, `x` → the one declared parameter, deleting a commented-out
 definition, passing an outer local into a nested lambda that reads it
 (`{a+x}` → `{[x;a] a+x}[;a]`), dropping the trailing `;` of `$[c;a;b;]`,
-`$[c;a]` → `if[c;a]`, `10/2` → `10%2`, removing `a:a`, renaming a parameter
+`$[c;a]` → `if[c;a]` where nothing takes its value, `10/2` → `10%2`, removing `a:a`, renaming a parameter
 that shadows a builtin, a column one typo from the table's, and (uqf)
 `.z.P` → `.z.p` and datetime → timestamp. Add
 `--unsafe-fixes` - Ruff's flag of the same name - to have `--diff` and `--fix`
