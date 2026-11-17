@@ -131,6 +131,13 @@ r3:{x}.(1;2)
 r4:f .(1;2)
 r5:{x}. 1
 
+=== QA012 QA009 profile: general | and with the argument on the indented next line (q 5: 'rank, 'type) (#691)
+f:{[p;q] p}
+g:f .
+  (1;2;3)
+h:{x}.
+  1
+
 === clean profile: general | a digit straight after the dot is a float, applied by juxtaposition (q 5: {x} .1 is 0.1) (#441)
 r:{x} .1
 s:{x}.1
