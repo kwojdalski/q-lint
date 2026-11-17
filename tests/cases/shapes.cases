@@ -1112,3 +1112,18 @@ d:(`a`b`c)=`a`b
 a:(1)+4 5
 b:1 2 3+(1)
 c:(x)+4 5
+
+=== QT003 QT006 QT015 QT023 profile: general | a parenthesised glyph, an iterated glyph or a word operator applied with brackets is the infix (q 5: 'length or 'type each; #604)
+a:(+)[1 2 3;4 5]
+b:and[1 2 3;4 5]
+c:mod[1 2 3;4 5]
+d:(+)[`a;1]
+e:mod[`a;2]
+f:(=)[`a;1]
+g:+["a";1]
+h:+'[1 2 3;4 5]
+
+=== clean profile: general | where the bracket call runs (q 5: -96, 2.5 and a char right of minus)
+a:-[1;"a"]
+b:+[1.5;"a"]
+c:mod[7;2]

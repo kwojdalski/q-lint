@@ -451,26 +451,57 @@ fn top_level_statements<'a>(code: &'a str, raw: &str) -> Vec<(usize, &'a str)> {
 /// A glyph applied with brackets to two whole slots, `+[l;r]`, is the infix
 /// `l+r`, and fails the same way: q 5 `+[1;`a]` and `=[1;`a]` are 'type,
 /// `+[1 2 3;4 5]` and `![`a`b;1 2 3]` 'length. Only literal slots are read,
-/// so this is QT003, QT015, QT006 and QT001 for the bracket spelling - the
-/// length first, since q 5 checks it first (`+[`a`b;1 2 3]` is 'length).
+/// so this is QT003, QT015, QT006, QT023 and QT001 for the bracket spelling -
+/// the length first, since q 5 checks it first (`+[`a`b;1 2 3]` is 'length).
+/// The same call spelled `(+)[l;r]`, `+'[l;r]` or with a word operator,
+/// `mod[l;r]`, fails alike (q 5, #604).
 fn glyph_brackets(path: &str, raw: &str, code: &str, out: &mut Vec<Finding>) {
-    let symbol = |s: &str| re!(r"^(?:`[A-Za-z][A-Za-z0-9_.]*)+$").is_match(s);
-    let number = |s: &str| re!(r"^-?\d[A-Za-z0-9.:]*(?:[ \t]+-?\d[A-Za-z0-9.:]*)*$").is_match(s);
-    for m in re!(r"(<=|>=|<>|[+\-*%&|=<>^!])\[").captures_iter(code) {
-        let glyph = m.get(1).unwrap();
-        let open = m.get(0).unwrap().end() - 1;
+    let symbol = |s: &str| re!(r"^(?:`\.?[A-Za-z][A-Za-z0-9_.:]*)+$").is_match(s);
+    let number =
+        |s: &str| re!(r"^-?\.?\d[A-Za-z0-9.:]*(?:[ \t]+-?\.?\d[A-Za-z0-9.:]*)*$").is_match(s);
+    for m in re!(
+        r"\((?P<p><=|>=|<>|[+\-*%&|=<>^!])\)\[|(?P<g><=|>=|<>|[+\-*%&|=<>^!])(?P<e>')?\[|\b(?P<w>and|or|mod|div|xexp|xlog)(?P<we>')?\["
+    )
+    .captures_iter(code)
+    {
+        let glyph = m.name("p").or(m.name("g")).or(m.name("w")).unwrap();
+        let whole = m.get(0).unwrap();
+        if m.name("w").is_some() && (!boundary(code, whole.start()) || code[..whole.start()].ends_with('`')) {
+            continue;
+        }
+        let open = whole.end() - 1;
         let Some(close) = matching(code, open, b'[', b']') else {
             continue;
         };
-        let [l, r] = crate::slots(&code[open + 1..close - 1])[..] else {
+        let parts = crate::slots(&code[open + 1..close - 1]);
+        let [l, r] = parts[..] else {
             continue;
         };
+        // Strings are blank in `code`: whether a slot is empty, and a
+        // string's kind, are read from the source at the same offsets.
+        let (raw_l, raw_r) = (
+            raw[open + 1..open + 1 + l.len()].trim(),
+            raw[open + 2 + l.len()..close - 1].trim(),
+        );
         let (l, r) = (l.trim(), r.trim());
-        if l.is_empty() || r.is_empty() || re!(r"\n\S").is_match(&code[open..close]) {
+        if raw_l.is_empty() || raw_r.is_empty() || re!(r"\n\S").is_match(&code[open..close]) {
             continue;
         }
         let g = glyph.as_str();
-        let text = &raw[glyph.start()..close];
+        let text = &raw[whole.start()..close];
+        let arithmetic = ["+", "-", "*", "%", "&", "|", "and", "or", "mod", "div", "xexp", "xlog"];
+        let char_refused = matches!(g, "+" | "-" | "*")
+            && match (arithmetic_kind(raw_l), arithmetic_kind(raw_r)) {
+                (Some(a), Some(b)) => {
+                    let refused = if g == "-" {
+                        a == Arithmetic::Char
+                    } else {
+                        a == Arithmetic::Char || b == Arithmetic::Char
+                    };
+                    refused && a != Arithmetic::Float && b != Arithmetic::Float
+                }
+                _ => false,
+            };
         let (code, detail) = match (shape(l), shape(r)) {
             (Some(k), Some(v)) if g == "!" && k >= 2 && k != v => (
                 "QT001",
@@ -480,7 +511,7 @@ fn glyph_brackets(path: &str, raw: &str, code: &str, out: &mut Vec<Finding>) {
                 "QT006",
                 format!("`{g}` pairs a {a}-vector with a {b}-vector; that is a 'length error"),
             ),
-            _ if "+-*%&|".contains(g) && (symbol(l) || symbol(r)) => (
+            _ if arithmetic.contains(&g) && (symbol(l) || symbol(r)) => (
                 "QT003",
                 "Arithmetic on a symbol literal is a 'type error at runtime".into(),
             ),
@@ -494,9 +525,13 @@ fn glyph_brackets(path: &str, raw: &str, code: &str, out: &mut Vec<Finding>) {
                     ),
                 )
             }
+            _ if char_refused => (
+                "QT023",
+                format!("`{text}` is 'type: q 5 does no integer arithmetic on a char"),
+            ),
             _ => continue,
         };
-        out.push(Finding::at(path, raw, glyph.start(), code, detail));
+        out.push(Finding::at(path, raw, whole.start(), code, detail));
     }
 }
 
