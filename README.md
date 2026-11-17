@@ -152,16 +152,19 @@ A file depends on another when:
   local or parameter of the same name is not a read, and neither is a name
   in a string or comment. A name no file defines is tried without its last
   segment, so `.cfg.opts.port` reaches the file defining `.cfg.opts`. A
-  symbol handed straight to `get` or `value`, `` get`.ns.x ``, is a read
-  too;
+  symbol handed straight to `get` or `value`, `` get`.ns.x `` or
+  `` get[`.ns.x] ``, is a read too;
 - it loads the other by a literal path, `\l path` or `system "l path"`, or
   names it as a file symbol ending in `.q`, `` `:lib/x.q ``, whatever that is
   handed to - a project's own loader is invisible to reading otherwise. q
-  resolves that path against the process's directory, which the source does
-  not name, so it is tried against the loading file's directory, each
-  directory above it, then the current one. A script loaded under `\d .a`
+  resolves that path against the process's directory and nowhere else, which
+  the source does not name, so it is tried against the current directory,
+  then the loading file's directory and each directory above it. A
+  directory loaded, `\l db`, leads to each script directly in it, which q
+  runs - tried against the current directory only. A script loaded under `\d .a`
   runs in `.a`, so what it defines at its root is `.a.name` as well as
-  `name`, and so is what the scripts it loads at its root define.
+  `name`, and so is what the scripts it loads at its root define; a name it
+  reads there is looked up in `.a` as well.
 
 A name several files define gives an edge to each of them - which one wins is
 load order, and load order is not in the source. With `--detail` each file's
@@ -169,7 +172,8 @@ entry is `{"dependencies" (or "dependents"): [...], "ambiguous": {name:
 [every file defining it]}, "dynamic": [{"line", "kind"}]}`. `dynamic` lists
 each line where a name is reached by a value computed at run time, which no
 amount of reading resolves: `value` of a string, `get` of anything but a
-literal, a name built with `` ` sv ``, `set` into a computed name, and a
+literal, `eval` or `reval` of a parse tree, a name built with `` ` sv ``,
+`set` into a computed name, and a
 concatenated `system "l ",path`. `value` is the same function as `get` (q 5:
 `get~value` is 1b), but it is listed only where the source shows its argument
 is a symbol - `` value `$x ``, `value .Q.dd[...]`, or `value nm` where the
@@ -184,7 +188,8 @@ that wants to be safe can treat such a file as depending on everything.
 `--symbols` also counts a qualified symbol literal, `` `.ns.f ``, as a read
 of that name, the way a callback is registered; it is off by default because
 a symbol is often only data. `exclude` from a configuration file applies, and
-`--exclude` adds to it. The subcommand is recognised only as the first
+`--exclude` adds to it; a file named outright is left out by them only with
+`--force-exclude`, as when linting. The subcommand is recognised only as the first
 argument: `qlinter path.q`, `--explain` and `--lsp` are unchanged, and a
 directory named `analyze` is linted as `./analyze`.
 

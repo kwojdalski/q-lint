@@ -750,10 +750,11 @@ pub fn tokens(code: &str, raw: &str, ws: &crate::Workspace) -> Vec<(usize, usize
     // q 5's `p:{[a;b] a+b}[1;]` is type 104h and `p 2` is 3 (#367). The
     // writes are `global_writes`', which a table column or a qSQL alias is
     // not: after `t:([] f:1 2)`, q 5's `f` is still the lambda (#365).
-    let lambda: HashMap<String, bool> = global_writes(code, &scopes, &namespaces, qualify, true)
-        .into_iter()
-        .map(|(key, at)| (key, at.iter().all(|&at| assigns_lambda(code, at))))
-        .collect();
+    let lambda: HashMap<String, bool> =
+        global_writes(code, raw, &scopes, &namespaces, qualify, true)
+            .into_iter()
+            .map(|(key, at)| (key, at.iter().all(|&at| assigns_lambda(code, at))))
+            .collect();
     let mut out = vec![];
     for m in name.find_iter(code) {
         if !boundary(code, m.start()) {
@@ -820,6 +821,7 @@ type Writes = HashMap<String, Vec<usize>>;
 /// has a definition; the graph says it cannot know instead.
 fn global_writes(
     code: &str,
+    raw: &str,
     scopes: &[Scope],
     namespaces: &[(usize, String)],
     qualify: fn(&str, &str) -> String,
@@ -942,6 +944,19 @@ fn global_writes(
             .or_default()
             .push(whole.end());
     }
+    // So does `\l` of a table's directory or file: q 5's `.Q.lo` sets the
+    // last part of the path, and `\l data/trades` defines `trades` (#534).
+    // Not a script, `\l x.q`, whose name defines nothing.
+    for (at, rest) in load_lines(code, raw) {
+        if let Some(m) =
+            re!(r"^[ \t]+(?:\S*/)?([A-Za-z][A-Za-z0-9_]*)/?[ \t\r]*\n?$").captures(rest)
+        {
+            globals
+                .entry(qualify(&m[1], ns_at(at)))
+                .or_default()
+                .push(at + rest.len());
+        }
+    }
     // Each of a symbol list, `` `p`q set'1 2 ``, parenthesised too (#464).
     for (whole, names) in each_set_targets(code) {
         for name in names {
@@ -1024,6 +1039,19 @@ fn global_writes(
 /// What one file defines for the files around it: its global names, and
 /// which of them it assigns a lambda. Read, never run - the same passes the
 /// checks use, stopped before any rule.
+/// Each `\l` line, with where it starts and what follows the `\l` in the
+/// code view. `q)\l b.q` loads as `\l b.q` does (q 5), though `views` has
+/// blanked the prompt (#536).
+fn load_lines<'a>(code: &'a str, raw: &'a str) -> impl Iterator<Item = (usize, &'a str)> {
+    let mut offset = 0;
+    code.split_inclusive('\n').filter_map(move |line| {
+        let at = offset;
+        offset += line.len();
+        let prompt = if raw[at..].starts_with("q)") { 2 } else { 0 };
+        line[prompt..].strip_prefix("\\l").map(|rest| (at, rest))
+    })
+}
+
 /// The global each `k)` line assigns at its start, `k)lim:100`, under the
 /// `\d` in force: k assigns q's globals, though both views blank the line.
 fn k_writes(raw: &str, namespaces: &[(usize, String)]) -> Vec<String> {
@@ -1042,7 +1070,7 @@ fn k_writes(raw: &str, namespaces: &[(usize, String)]) -> Vec<String> {
 
 pub fn index(code: &str, raw: &str) -> crate::FileIndex {
     let (scopes, namespaces) = scopes(code, raw);
-    let mut globals = global_writes(code, &scopes, &namespaces, resolved, true);
+    let mut globals = global_writes(code, raw, &scopes, &namespaces, resolved, true);
     for name in k_writes(raw, &namespaces) {
         globals.entry(name).or_default();
     }
@@ -1081,6 +1109,18 @@ pub fn index(code: &str, raw: &str) -> crate::FileIndex {
 /// files.
 pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
     let (scopes, namespaces) = scopes(code, raw);
+    // Where the file first switches context. Before it the file runs in the
+    // context it is loaded in, which the file does not say.
+    let first_switch = {
+        let mut offset = 0;
+        code.split_inclusive('\n')
+            .find_map(|line| {
+                let at = offset;
+                offset += line.len();
+                opens(line, &raw[at..at + line.len()]).map(|_| at)
+            })
+            .unwrap_or(code.len())
+    };
     let ns_at = |at: usize| {
         namespaces[namespaces
             .partition_point(|(p, _)| *p <= at)
@@ -1112,6 +1152,18 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
     }
     let unsymbolled = String::from_utf8(unsymbolled).unwrap_or_default();
     let mut names: HashSet<String> = HashSet::new();
+    let mut relative: HashSet<crate::Relative> = HashSet::new();
+    let mut read = |name: &str, at: usize| {
+        let key = resolved(name, ns_at(at));
+        if !name.starts_with('.') {
+            relative.insert(crate::Relative {
+                name: name.into(),
+                resolved: key.clone(),
+                implicit: at < first_switch,
+            });
+        }
+        names.insert(key);
+    };
     let name = re!(r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*");
     for m in name.find_iter(&unsymbolled) {
         if !boundary(&unsymbolled, m.start()) {
@@ -1129,30 +1181,43 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
         {
             continue;
         }
-        names.insert(resolved(m.as_str(), ns_at(m.start())));
+        read(m.as_str(), m.start());
     }
     // A symbol handed straight to `get` or `value` names the global it reads
     // as plainly as writing the name would - unless it is resolved at call
     // time, in a `\d` the source does not say; then, and for a `set` into
     // one, the place is listed as dynamic.
     let mut call_time_access = vec![];
-    for m in re!(r"\b(get|value)\s*`(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)")
-        .captures_iter(&view)
+    // Bracketed or parenthesised too: q 5 `(get[`cfg];value[`cfg];get (`cfg))`
+    // is 5 5 5 after `cfg:5` (#537).
+    for m in re!(
+        r"\b(get|value)\s*(?:([\[(])\s*)?`(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)"
+    )
+    .captures_iter(&view)
     {
         let whole = m.get(0).unwrap();
         if !boundary(&view, whole.start()) {
             continue;
         }
+        let mut rest = view[whole.end()..].trim_start_matches([' ', '\t']);
+        match m.get(2).map(|o| o.as_str()) {
+            // `get[`a]` is the whole call, whatever follows it.
+            Some("[") if rest.starts_with(']') => rest = "",
+            Some("(") if rest.starts_with(')') => {
+                rest = rest[1..].trim_start_matches([' ', '\t']);
+            }
+            Some(_) => continue,
+            None => {}
+        }
         // `value `c _ x` is value of what the drop returns, not of `c`.
-        let rest = view[whole.end()..].trim_start_matches([' ', '\t']);
         if !(rest.is_empty() || rest.starts_with([';', ']', ')', '}', '\n', '\r'])) {
             continue;
         }
-        if call_time(&scopes, whole.start(), &m[2]) {
+        if call_time(&scopes, whole.start(), &m[3]) {
             let kind = if &m[1] == "get" { "get" } else { "value" };
             call_time_access.push((whole.start(), kind));
         } else {
-            names.insert(resolved(&m[2], ns_at(whole.start())));
+            read(&m[3], whole.start());
         }
     }
     call_time_access.extend(value_of_symbols(&view, &scopes, &ns_at));
@@ -1179,7 +1244,16 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
     }
     let mut names: Vec<_> = names.into_iter().collect();
     names.sort();
-    let mut defines: Vec<_> = global_writes(code, &scopes, &namespaces, resolved, false)
+    let mut relative: Vec<_> = relative.into_iter().collect();
+    relative.sort();
+    let writes = global_writes(code, raw, &scopes, &namespaces, resolved, false);
+    let mut implicit_defines: Vec<_> = writes
+        .iter()
+        .filter(|(name, at)| !name.starts_with('.') && at.iter().any(|&a| a < first_switch))
+        .map(|(name, _)| name.clone())
+        .collect();
+    implicit_defines.sort();
+    let mut defines: Vec<_> = writes
         .into_keys()
         .chain(k_writes(raw, &namespaces))
         .collect();
@@ -1187,10 +1261,14 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
     defines.dedup();
     crate::References {
         names,
+        relative,
         defines,
+        implicit_defines,
         loads: loads(code, raw, &view, |at| {
-            if scope_at(&scopes, at).is_some() {
+            if scope_at(&scopes, at).is_some() || at < first_switch {
                 String::new()
+            } else if ns_at(at).is_empty() {
+                ".".into()
             } else {
                 ns_at(at).to_string()
             }
@@ -1317,16 +1395,19 @@ fn loads(
     namespace_at: impl Fn(usize) -> String,
 ) -> Vec<(String, String)> {
     let mut loads = vec![];
-    let mut offset = 0;
-    for line in code.split_inclusive('\n') {
-        if let Some(m) = re!(r"^\\l\s+(\S+)").captures(line) {
-            loads.push((m[1].to_string(), namespace_at(offset)));
+    for (at, rest) in load_lines(code, raw) {
+        if let Some(m) = re!(r"^\s+(\S+)").captures(rest) {
+            loads.push((m[1].to_string(), namespace_at(at)));
         }
-        offset += line.len();
     }
     for m in re!(r#"\bsystem\s*"l\s+([^"\s]+)\s*""#).captures_iter(raw) {
         let at = m.get(0).unwrap().start();
-        if view[at..].starts_with("system") {
+        // Not the head of a path joined at run time, `system "l dir/",x`,
+        // which is a dynamic load, not one of `dir/`.
+        let joined = raw[m.get(0).unwrap().end()..]
+            .trim_start_matches([' ', '\t'])
+            .starts_with(',');
+        if view[at..].starts_with("system") && !joined {
             loads.push((m[1].to_string(), namespace_at(at)));
         }
     }
@@ -1358,19 +1439,28 @@ fn dynamic(raw: &str, view: &str, call_time: &[(usize, &'static str)]) -> Vec<cr
         push(at, kind);
     }
     let next = |at: usize| view[at..].trim_start_matches([' ', '\t']);
+    // Bracketed or parenthesised too: q 5 `value("e5")` is e5 (#538).
     for m in re!(r"\bvalue\b").find_iter(view) {
-        if boundary(view, m.start())
-            && raw[m.end()..]
-                .trim_start_matches([' ', '\t'])
-                .starts_with('"')
+        if boundary(view, m.start()) && re!(r#"^[ \t]*(?:[\[(][ \t]*)?""#).is_match(&raw[m.end()..])
         {
             push(m.start(), "value");
         }
     }
-    // A symbol literal after `get` is a read the names already hold, and
-    // `` `:path `` or `hsym` reads a file, not a global.
+    // `eval` and `reval` run a parse tree, whose names reading cannot see:
+    // q 5 `eval parse "e5+1"` reads e5 (#538).
+    for m in re!(r"\br?eval\b").find_iter(view) {
+        if boundary(view, m.start()) {
+            push(m.start(), "eval");
+        }
+    }
+    // A symbol literal after `get`, bracketed or not, is a read the names
+    // already hold (#537), and `` `:path `` or `hsym` reads a file, not a
+    // global.
     for m in re!(r"\bget\b").find_iter(view) {
         let after = next(m.end());
+        let after = after
+            .strip_prefix(['[', '('])
+            .map_or(after, |a| a.trim_start_matches([' ', '\t']));
         if boundary(view, m.start())
             && !after.starts_with(['`', ':'])
             && !re!(r"^hsym\b").is_match(after)
@@ -1426,7 +1516,8 @@ fn dynamic(raw: &str, view: &str, call_time: &[(usize, &'static str)]) -> Vec<cr
 
 /// Whether the file writes globals its text does not name, so that nothing
 /// it assigns by name can be taken as known: a `\l`, `eval`, a `system`
-/// command that loads a script or changes `\d`, `value` or `get` of a
+/// command that loads a script or changes `\d` - but a literal
+/// `system "d .a"` starting its line, which is read as `\d .a` is - `value` or `get` of a
 /// string, a `set` into a computed name and an assignment on a `k)` line.
 /// `code` has strings and comments blank, `comments` only comments, and
 /// `raw` is the source.
@@ -1458,9 +1549,9 @@ pub(crate) enum Unnamed {
 
 /// Where `opaque` finds each write it cannot name, and of what kind.
 pub(crate) fn unnamed_writes(code: &str, comments: &str, raw: &str) -> Vec<(usize, Unnamed)> {
-    let mut found: Vec<(usize, Unnamed)> = re!(r"(?m)^\\l\b")
-        .find_iter(code)
-        .map(|m| (m.start(), Unnamed::Evaluation))
+    let mut found: Vec<(usize, Unnamed)> = load_lines(code, raw)
+        .filter(|(_, rest)| !rest.starts_with(|c: char| c.is_alphanumeric() || c == '_'))
+        .map(|(at, _)| (at, Unnamed::Evaluation))
         .collect();
     // A `k)` line is blank in both views, as another language's, but k
     // assigns q's globals: q 5 `a:1`, `k)a:1 2 3`, then `a 0` is 1.
@@ -1512,7 +1603,19 @@ pub(crate) fn unnamed_writes(code: &str, comments: &str, raw: &str) -> Vec<(usiz
             // cmd;h]` - so only a command that visibly starts with `l` or `d`
             // counts: written so, or held in a name bound to such a literal.
             "system" => literal(&arg(rest)).and_then(|command| {
-                if re!(r"^d\b").is_match(&command) {
+                // A literal `system "d .a"` starting its line switches as
+                // `\d .a` does, and `opens` reads it so: q 5 runs it, then
+                // `f:{x+1}`, `g:{f[`a]}`, and `.a.g[]` is 'type (#535).
+                let start = code[..m.start()].rfind('\n').map_or(0, |i| i + 1);
+                let end = code[m.start()..]
+                    .find('\n')
+                    .map_or(code.len(), |i| m.start() + i);
+                if re!(r"^d\b").is_match(&command)
+                    && start == m.start()
+                    && opens(&code[start..end], &raw[start..end]).is_some()
+                {
+                    None
+                } else if re!(r"^d\b").is_match(&command) {
                     Some(Unnamed::Context)
                 } else {
                     re!(r"^l\b")
@@ -1778,12 +1881,12 @@ pub fn check(
         .1
         .as_str()
     };
-    let globals = global_writes(code, &scopes, &namespaces, qualify, true);
+    let globals = global_writes(code, raw, &scopes, &namespaces, qualify, true);
     // The same writes keyed as q resolves them, root `x` apart from `.x`:
     // a name read in a `\d .ns` lambda is `.ns.x` and nothing else - q 5
     // has no root fallback. After `x:1`, `\d .ns`, `f:{[a] a+x}`, calling
     // `.ns.f 1` is 'x.
-    let exact = global_writes(code, &scopes, &namespaces, resolved, true);
+    let exact = global_writes(code, raw, &scopes, &namespaces, resolved, true);
     // What this file defines itself; the workspace answers for the rest,
     // keyed the same way (#359).
     let own: HashSet<String> = exact.keys().cloned().collect();
@@ -1815,6 +1918,10 @@ pub fn check(
         if dynamic {break;}
         let at=call.get(0).unwrap().start();let name=&call[1];if !boundary(code,at){continue;}
         if scope_at(&scopes,at).is_some_and(|s|scopes[s].locals.contains(name)){continue;}
+        // A lambda runs once every file is loaded, and meets whichever `f`
+        // another file assigned last: q 5 runs b.q's `g:{f[`a]}` to `a after
+        // a.q's `f:{x}` (#522).
+        if scope_at(&scopes,at).is_some()&&elsewhere(&resolved(name,ns_at(at))){continue;}
         if numeric.contains(&qualify(name,ns_at(at))) {out.push(Finding::at(path, raw, at,"QT002",format!("Symbol literal passed to numeric function {name}")));}
     }
     // An assignment anywhere in a lambda body makes the name local for the
@@ -2823,7 +2930,9 @@ pub fn check(
         comments,
         (&scopes, &namespaces, &exact),
         dynamic,
-        &|name: &str| elsewhere(name),
+        (&|name: &str| elsewhere(name), &|name: &str| {
+            elsewhere(name) && ws.is_lambda(name)
+        }),
     ));
     out
 }
@@ -3010,6 +3119,8 @@ fn local_atom(scopes: &[Scope], code: &str, comments: &str, name: &str, at: usiz
 /// The rules that need to know what a name holds: indexing an atom, two
 /// vectors of different lengths paired by an operator, and a select of a
 /// column the table does not have. Each one only for a name `held` knows.
+/// A question asked of a name.
+type Test<'a> = &'a dyn Fn(&str) -> bool;
 fn named_values(
     path: &str,
     code: &str,
@@ -3019,7 +3130,9 @@ fn named_values(
     // file's global definitions keyed as q resolves them.
     (scopes, namespaces, globals): (&[Scope], &[(usize, String)], &Writes),
     dynamic: bool,
-    elsewhere: &dyn Fn(&str) -> bool,
+    // Whether another file assigns the name, and whether it assigns it a
+    // lambda.
+    (elsewhere, foreign_lambda): (Test, Test),
 ) -> Vec<Finding> {
     let mut out = vec![];
     // A name as q resolves it at `at`, under the `\d` in force there: after
@@ -3241,9 +3354,20 @@ fn named_values(
     // assignment, which load order decides and the text cannot say; but a
     // top-level read after this file's own assignment meets that one,
     // whatever was loaded before (q 5: `g:{x}` loaded, then `g:2.5` + `g 0`,
-    // is 'type).
+    // is 'type) - unless the file calls, in between, a lambda another file
+    // defines, which may assign the name: q 5 runs `b:1 2`, `init[]`, `a+b`
+    // to 2 4 6 once lib.q's `init:{b::1 2 3}` is loaded (#523).
     // Inside a qSQL phrase a column of the table wins over the global of the
     // same name, and the text cannot say which columns the table has (#465).
+    let foreign_calls: Vec<usize> = re!(r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*")
+        .find_iter(code)
+        .filter(|m| boundary(code, m.start()) && foreign_lambda(&key(m.as_str(), m.start())))
+        .map(|m| m.start())
+        .collect();
+    let called_between = |from: usize, to: usize| {
+        let i = foreign_calls.partition_point(|&c| c < from);
+        foreign_calls.get(i).is_some_and(|&c| c < to)
+    };
     let phrases = qsql_phrases(code);
     let visible = |name: &str, at: usize| -> Option<&Held> {
         if phrases.iter().any(|&(a, b)| a <= at && at < b) {
@@ -3254,6 +3378,7 @@ fn named_values(
             Some(s) if scopes[s].locals.contains(name) => None,
             Some(_) if elsewhere(&key(name, at)) => None,
             None if at < *assigned => None,
+            None if elsewhere(&key(name, at)) && called_between(*assigned, at) => None,
             _ => Some(value),
         }
     };
@@ -3524,6 +3649,10 @@ fn named_values(
             && !columns.iter().any(|c| c == name)
             && !globals.contains_key(&key(name, at))
             && !elsewhere(&key(name, at))
+            // Nor one defined in `.q`, which every context reads: q 5 runs
+            // `.q.bb:10 20` then `select bb from ([]a:1 2)` (#524).
+            && !globals.contains_key(&format!(".q.{name}"))
+            && !elsewhere(&format!(".q.{name}"))
             && !crate::RESERVED.iter().any(|n| n == name)
             && !scope_at(scopes, at).is_some_and(|s| scopes[s].locals.contains(name))
     };

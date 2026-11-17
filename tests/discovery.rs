@@ -768,6 +768,47 @@ fn one_file_under_two_names_is_fixed_once_with_both_names_fixes() {
     assert_eq!(repo.codes(".", &["d1/a.q", "d2/l.q"]), Vec::<String>::new());
 }
 
+#[cfg(unix)]
+#[test]
+fn one_file_under_two_names_does_not_define_its_names_for_itself() {
+    // Indexed once per name, each name found the file's own `a` defined
+    // "elsewhere", and q 5's 'type on `f[]` went unreported (#527).
+    let repo = Repo::new();
+    repo.write("real.q", "a:1\nf:{a 0}\n");
+    std::os::unix::fs::symlink("real.q", repo.path("twin.q")).unwrap();
+    let general = ["--isolated", "--profile", "general"];
+    assert_eq!(
+        repo.codes(".", &[&general[..], &["."]].concat()),
+        ["QT022", "QT022"]
+    );
+    let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .current_dir(repo.path("."))
+        .args(["analyze", "graph", "."])
+        .output()
+        .unwrap();
+    let found: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(found, serde_json::json!({"real.q": [], "twin.q": []}));
+}
+
+#[test]
+fn a_script_loaded_under_a_context_defines_in_it_for_the_others() {
+    // q 5 runs main.q to 42: b.q, loaded under `\d .a`, defines `.a.ff`,
+    // which c.q's `\d .a` lambda reads (#525).
+    let repo = Repo::new();
+    repo.write("main.q", "\\d .a\n\\l b.q\n\\d .\n\\l c.q\n")
+        .write("b.q", "ff:42\n")
+        .write("c.q", "\\d .a\ng:{ff}\n\\d .\n");
+    let style = ["--isolated", "--profile", "style", "--select", "QF018"];
+    assert_eq!(
+        repo.codes(".", &[&style[..], &["c.q", "b.q"]].concat()),
+        ["QF018"]
+    );
+    assert_eq!(
+        repo.codes(".", &[&style[..], &["."]].concat()),
+        Vec::<String>::new()
+    );
+}
+
 #[test]
 fn a_path_that_does_not_exist_is_reported_and_the_rest_are_still_linted() {
     // One stale path in a pre-commit or CI file list used to end the run

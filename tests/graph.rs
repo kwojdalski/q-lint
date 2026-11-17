@@ -611,6 +611,28 @@ fn exclude_leaves_files_out_of_the_graph() {
 }
 
 #[test]
+fn force_exclude_leaves_out_a_file_named_outright() {
+    // A file list from a hook names every file; without the flag a named
+    // file is a node whatever `--exclude` says, as when linting (#539).
+    let dir = tree();
+    let named = ["src/app.q", "src/lib/c.q"];
+    let found = |extra: &[&str]| -> serde_json::Value {
+        let args = [
+            &["analyze", "graph", "--exclude", "src/lib"][..],
+            extra,
+            &named,
+        ]
+        .concat();
+        serde_json::from_str(&stdout(&qlinter(dir.path(), &args))).unwrap()
+    };
+    assert!(found(&[]).get("src/lib/c.q").is_some());
+    assert_eq!(
+        found(&["--force-exclude"]),
+        serde_json::json!({"src/app.q": []})
+    );
+}
+
+#[test]
 fn linting_paths_explain_and_lsp_are_unchanged_by_the_subcommand() {
     let dir = tree();
     // A path is still linted, flags before or after it.
@@ -678,4 +700,161 @@ fn a_k_line_defines_the_global_it_assigns() {
     // q 5: with x.q's `k)lim:100` loaded, y.q's `r:lim` is 100 (#751).
     let g = graph(&[("x.q", "k)lim:100\n"), ("y.q", "r:lim\n")], false);
     assert_eq!(deps(&g, "y.q"), ["x.q"]);
+}
+
+#[test]
+fn a_relative_load_is_tried_against_the_process_directory_first() {
+    // q 5, run from the root: sub/a.q's `\l b.q` loads the root's b.q, not
+    // sub/b.q beside it (#529).
+    let g = graph(
+        &[
+            ("b.q", "who:`root\n"),
+            ("sub/b.q", "who:`sub\n"),
+            ("sub/a.q", "\\l b.q\n"),
+        ],
+        false,
+    );
+    let deps: Vec<_> = g["sub/a.q"].dependencies.iter().collect();
+    assert_eq!(deps, [Path::new("/no-such-root/b.q")]);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_load_of_a_symlink_is_an_edge_to_the_link() {
+    // The link is a file of the graph under its own name, and `\l` of that
+    // name loads it (q 5); the target was looked up instead (#526).
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("shared")).unwrap();
+    fs::create_dir_all(dir.path().join("p/lib")).unwrap();
+    fs::write(dir.path().join("shared/real.q"), "f:{x+1}\n").unwrap();
+    std::os::unix::fs::symlink("../../shared/real.q", dir.path().join("p/lib/link.q")).unwrap();
+    fs::write(dir.path().join("p/main.q"), "\\l lib/link.q\n").unwrap();
+    let out = stdout(&qlinter(&dir.path().join("p"), &["analyze", "graph", "."]));
+    let found: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(
+        found,
+        serde_json::json!({"lib/link.q": [], "main.q": ["lib/link.q"]})
+    );
+}
+
+#[test]
+fn a_bare_name_inside_a_context_reaches_a_definition_in_dot_q() {
+    // q 5: `.q.answer:{42}` loaded, then `\d .a`, `g:{answer[]}`: `.a.g[]`
+    // is 42. A qualified `.a.answer` is not looked for in `.q` (#530).
+    let g = graph(
+        &[
+            ("lib.q", ".q.answer:{42}\n"),
+            ("use.q", "\\d .a\ng:{answer[]}\n\\d .\n"),
+            ("dotted.q", "h:{.a.answer[]}\n"),
+        ],
+        false,
+    );
+    assert_eq!(deps(&g, "use.q"), ["lib.q"]);
+    assert!(deps(&g, "dotted.q").is_empty());
+}
+
+#[test]
+fn a_script_loaded_under_a_context_reads_in_it() {
+    // q 5: main.q loads d.q, then b.q under `\d .a`; b.q's `g:{helper[]}`
+    // reads `.a.helper`, which d.q defines, and `.a.g[]` is 7 (#531). After
+    // b.q's own `\d .` a read is the root's again.
+    let g = graph(
+        &[
+            ("d.q", "\\d .a\nhelper:{7}\n\\d .\n"),
+            ("b.q", "g:{helper[]}\n"),
+            ("c.q", "\\d .\ng:{helper[]}\n"),
+            ("main.q", "\\l d.q\n\\d .a\n\\l b.q\n\\l c.q\n\\d .\n"),
+        ],
+        false,
+    );
+    assert_eq!(deps(&g, "b.q"), ["d.q"]);
+    assert!(deps(&g, "c.q").is_empty());
+}
+
+#[test]
+fn a_loaded_scripts_own_root_is_not_the_loaders_context() {
+    // q 5, a.q loading b.q under `\d .a`: b.q's `xx` is `.a.xx`, but after
+    // b.q's own `\d .` its `yy` and what it loads stay at the root (#532).
+    let g = graph(
+        &[
+            ("b.q", "xx:1\n\\d .\nyy:2\n\\l e.q\n"),
+            ("e.q", "zz:3\n"),
+            ("a.q", "\\d .a\n\\l b.q\n\\d .\n"),
+            ("c.q", "r:{.a.yy}\ns:{.a.zz}\nt:{.a.xx}\n"),
+        ],
+        false,
+    );
+    assert_eq!(deps(&g, "c.q"), ["b.q"]);
+}
+
+#[test]
+fn a_loaded_directory_leads_to_the_scripts_in_it() {
+    // q 5: `\l db` runs db/init.q, and `fromdir` is 42 after it (#533) -
+    // only the scripts directly in it.
+    let g = graph(
+        &[
+            ("db/init.q", "fromdir:42\n"),
+            ("db/sub/deep.q", "deep:1\n"),
+            ("main.q", "\\l db\n"),
+        ],
+        false,
+    );
+    assert_eq!(deps(&g, "main.q"), ["init.q"]);
+    // Not the head of a path joined at run time; and `\l .` is the current
+    // directory, not the one beside the file that says it.
+    let g = graph(
+        &[
+            ("db/init.q", "fromdir:42\n"),
+            ("db/reload.q", "f:{system \"l .\"}\n"),
+            ("main.q", "L:{system \"l db/\",x}\n"),
+        ],
+        false,
+    );
+    assert!(deps(&g, "main.q").is_empty());
+    assert_eq!(deps(&g, "db/reload.q"), ["main.q"]);
+}
+
+#[test]
+fn loading_a_table_by_its_path_defines_it() {
+    // q 5: `\l data/trades` sets `trades`, which use.q reads (#534).
+    let g = graph(
+        &[("init.q", "\\l data/trades\n"), ("use.q", "r:trades\n")],
+        false,
+    );
+    assert_eq!(deps(&g, "use.q"), ["init.q"]);
+}
+
+#[test]
+fn a_load_after_a_q_prompt_is_an_edge() {
+    // q 5 reads `q)\l b.q` as `\l b.q` (#536).
+    let g = graph(&[("b.q", "zz:1\n"), ("a.q", "q)\\l b.q\n")], false);
+    assert_eq!(deps(&g, "a.q"), ["b.q"]);
+}
+
+#[test]
+fn a_bracketed_symbol_handed_to_get_or_value_is_a_read() {
+    // q 5: after `cfg:5`, `(get[`cfg];value[`cfg];get (`cfg))` is 5 5 5
+    // (#537). Not a dynamic place either.
+    for read in ["a:get[`cfg]", "a:value[`cfg]", "a:get (`cfg)"] {
+        let g = graph(&[("defs.q", "cfg:5\n"), ("use.q", read)], false);
+        assert_eq!(deps(&g, "use.q"), ["defs.q"], "{read}");
+        assert!(kinds(&g, "use.q").is_empty(), "{read}");
+    }
+}
+
+#[test]
+fn eval_and_a_bracketed_value_of_a_string_are_dynamic() {
+    // q 5, after `e5:7`: `eval parse "e5+1"` is 8 and `value("e5")` 7, each
+    // reading a name inside a string (#538).
+    let g = graph(
+        &[(
+            "dyn.q",
+            "a:eval parse \"e5+1\"\nb:value(\"e5\")\nc:value[\"e5\"]\nd:reval parse \"e5\"\n",
+        )],
+        false,
+    );
+    assert_eq!(
+        kinds(&g, "dyn.q"),
+        [(1, "eval"), (2, "value"), (3, "value"), (4, "eval")]
+    );
 }

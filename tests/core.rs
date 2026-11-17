@@ -389,6 +389,68 @@ fn a_foreign_keyword_another_workspace_file_defines_is_a_name() {
 }
 
 #[test]
+fn a_foreign_keyword_is_looked_up_in_the_namespace_it_is_read_in() {
+    use q_lint_rs::{Workspace, index, lint_in};
+    // q 5: under `\d .ns`, `true` is `.ns.true`. lib.q defining it there
+    // makes `.ns.f 1` return `yes; a root `true:1b` does not, and the call
+    // is 'true (#520).
+    let main = "\\d .ns\nf:{$[x;true;false]}\n\\d .\n";
+    let found = |lib: &str| {
+        let mut ws = Workspace::default();
+        ws.add(&index(lib));
+        ws.add(&index(main));
+        codes(&lint_in(main, "use.q", Profile::General, &ws)).contains(&"QF015")
+    };
+    assert!(!found("\\d .ns\ntrue:`yes\nfalse:`no\n\\d .\n"));
+    assert!(found("true:1b\nfalse:0b\n"));
+}
+
+#[test]
+fn a_lambda_another_file_redefines_has_no_known_rank_in_a_lambda() {
+    use q_lint_rs::{Workspace, index, lint, lint_in};
+    // q 5, b.q then a.q loaded: `g[]` is 3, as a.q's `f:{x+y}` replaced
+    // b.q's `f:{x}` before g ran. A top-level call straight after b.q's own
+    // definition meets that one, and is 'rank (#521).
+    let in_lambda = "f:{x}\ng:{f[1;2]}\nh:{f(1;2)}\n";
+    let found = |src: &str, ws: &Workspace| {
+        codes(&lint_in(src, "b.q", Profile::General, ws))
+            .into_iter()
+            .filter(|c| ["QA012", "QA008"].contains(c))
+            .count()
+    };
+    assert_eq!(found(in_lambda, &Workspace::default()), 1);
+    let mut ws = Workspace::default();
+    ws.add(&index("f:{x+y}\n"));
+    ws.add(&index(in_lambda));
+    assert_eq!(found(in_lambda, &ws), 0);
+
+    let top = "f:{x}\nf[1;2]\n";
+    assert!(codes(&lint(top, "b.q", Profile::General)).contains(&"QA012"));
+    let mut ws = Workspace::default();
+    ws.add(&index("f:{x+y}\n"));
+    ws.add(&index(top));
+    assert!(codes(&lint_in(top, "b.q", Profile::General, &ws)).contains(&"QA012"));
+}
+
+#[test]
+fn a_numeric_lambda_another_file_redefines_is_not_known_in_a_lambda() {
+    use q_lint_rs::{Workspace, index, lint, lint_in};
+    // q 5, b.q then a.q loaded: `g[]` is `a, since a.q's `f:{x}` ran last.
+    // A top-level call straight after b.q's own `f` is 'type (#522).
+    let src = "f:{x+1}\ng:{f[`a]}\n";
+    assert!(codes(&lint(src, "b.q", Profile::General)).contains(&"QT002"));
+    let mut ws = Workspace::default();
+    ws.add(&index("f:{x}\n"));
+    ws.add(&index(src));
+    assert!(!codes(&lint_in(src, "b.q", Profile::General, &ws)).contains(&"QT002"));
+    let top = "f:{x+1}\nr:f[`a]\n";
+    let mut ws = Workspace::default();
+    ws.add(&index("f:{x}\n"));
+    ws.add(&index(top));
+    assert!(codes(&lint_in(top, "b.q", Profile::General, &ws)).contains(&"QT002"));
+}
+
+#[test]
 fn a_name_another_file_also_assigns_is_not_tracked_in_a_lambda() {
     use q_lint_rs::{Workspace, index, lint, lint_in};
     // Alone, a is the atom 1 and indexing it is 'type. With another file
@@ -410,6 +472,42 @@ fn a_name_another_file_also_assigns_is_not_tracked_in_a_lambda() {
 }
 
 #[test]
+fn a_call_to_another_files_lambda_may_reassign_a_top_level_name() {
+    use q_lint_rs::{Workspace, index, lint, lint_in};
+    // q 5, lib.q then use.q loaded: `r` is 2 4 6 and the insert appends,
+    // since lib.q's `init` replaced `b` and `t` first (#523). Without the
+    // call between, the read meets use.q's own `b`, and q 5 is 'length.
+    let lib = "init:{b::1 2 3; t::([]a:1 2;b:3 4;c:5 6)}\n";
+    let found = |src: &str| {
+        let mut ws = Workspace::default();
+        ws.add(&index(lib));
+        ws.add(&index(src));
+        codes(&lint_in(src, "use.q", Profile::General, &ws))
+            .into_iter()
+            .filter(|c| ["QT006", "QT027", "QT022"].contains(c))
+            .count()
+    };
+    let calls = "a:1 2 3\nb:1 2\nt:([]a:1 2;b:3 4)\ninit[]\nr:a+b\n`t insert (7;8;9)\n";
+    assert_eq!(codes(&lint(calls, "use.q", Profile::General)).len(), 2);
+    assert_eq!(found(calls), 0);
+    assert_eq!(found("a:1 2 3\nb:1 2\nr:a+b\ninit[]\n"), 1);
+}
+
+#[test]
+fn a_name_defined_in_dot_q_is_not_an_unknown_column() {
+    use q_lint_rs::{Workspace, index, lint, lint_in};
+    // q 5: after `.q.bb:10 20`, `select bb from t` returns bb (#524).
+    let query = "t:([]a:1 2)\nr:select bb from t\n";
+    assert!(codes(&lint(query, "use.q", Profile::General)).contains(&"QF020"));
+    let one = format!(".q.bb:10 20\n{query}");
+    assert!(!codes(&lint(&one, "one.q", Profile::General)).contains(&"QF020"));
+    let mut ws = Workspace::default();
+    ws.add(&index(".q.bb:10 20\n"));
+    ws.add(&index(query));
+    assert!(!codes(&lint_in(query, "use.q", Profile::General, &ws)).contains(&"QF020"));
+}
+
+#[test]
 fn an_enclosing_local_is_not_excused_by_another_files_global() {
     use q_lint_rs::{Workspace, index, lint_in};
     // The inner lambda reads its enclosing lambda's parameter, which q does
@@ -420,6 +518,37 @@ fn an_enclosing_local_is_not_excused_by_another_files_global() {
     ws.add(&index(source));
     ws.add(&index("tab:([]a:1 2)\n"));
     assert!(codes(&lint_in(source, "f.q", Profile::General, &ws)).contains(&"QF005"));
+}
+
+#[test]
+fn loading_a_table_by_its_path_defines_it() {
+    // q 5: `\l data/trades` of a splayed table sets `trades` (#534). A
+    // script's name defines nothing.
+    let index = q_lint_rs::index("\\l data/trades\n\\l lib/util.q\n\\d .a\n\\l px\n");
+    assert!(index.defined.contains("trades") && index.defined.contains(".a.px"));
+    assert!(!index.defined.contains("util") && !index.defined.contains("q"));
+}
+
+#[test]
+fn system_d_switches_context_without_hiding_the_files_names() {
+    // q 5 runs `system "d .a"`, `f:{x+1}`, `g:{f[`a]}`, and `.a.g[]` is
+    // 'type, as with `\d .a`; `r:{zz}` there is 'zz (#535).
+    for open in ["system \"d .a\"", "\\d .a"] {
+        let src = format!("{open}\nf:{{x+1}}\ng:{{f[`a]}}\nr:{{zz}}\n");
+        let general = lint(&src, "a.q", Profile::General);
+        assert!(codes(&general).contains(&"QT002"), "{open}");
+        let style = lint(&src, "a.q", Profile::Style);
+        assert!(codes(&style).contains(&"QF018"), "{open}");
+    }
+}
+
+#[test]
+fn a_load_after_a_q_prompt_may_define_anything() {
+    // q 5 loads `q)\l b.q`, and b.q's `zz:1` is then defined (#536).
+    for load in ["\\l b.q", "q)\\l b.q"] {
+        let style = lint(&format!("{load}\nr:zz\n"), "e.q", Profile::Style);
+        assert!(!codes(&style).contains(&"QF018"), "{load}");
+    }
 }
 
 #[test]

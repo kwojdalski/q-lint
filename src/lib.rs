@@ -111,20 +111,40 @@ pub struct References {
     /// context in force: `.a.f` inside `\d .a`, and `f` - not `.f` - at the
     /// root.
     pub names: Vec<String>,
+    /// The reads written without a leading dot, which q resolves in a
+    /// context and, failing that, in `.q`.
+    pub relative: Vec<Relative>,
     /// Each global this file assigns, named the same way, as `FileIndex`
     /// does.
     pub defines: Vec<String>,
+    /// Those of `defines` assigned before the file's first `\d`, by a name
+    /// without a leading dot: a load under `\d .a` puts them in `.a`.
+    pub implicit_defines: Vec<String>,
     /// The paths of `\l path`, `system "l path"` and `` `:path.q ``, as
-    /// written, each with the `\d` in force where it is loaded - `""` at the
-    /// root - since the loaded script runs in it.
+    /// written, each with the `\d` in force where it is loaded, since the
+    /// loaded script runs in it: `""` before the file's first `\d`, where
+    /// that is whichever context the file is loaded in, and `"."` at the
+    /// root after it.
     pub loads: Vec<(String, String)>,
     /// Where a name is reached by a value computed at run time.
     pub dynamic: Vec<Dynamic>,
 }
 
+/// A global read by a name without a leading dot: `name` as written, and
+/// `resolved` as it appears in `References::names`. `implicit` when it is
+/// read before the file's first `\d`, where the context is whichever one
+/// the file is loaded in.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct Relative {
+    pub name: String,
+    pub resolved: String,
+    pub implicit: bool,
+}
+
 /// A place reading cannot see through: `kind` is `value` (of a string),
-/// `get` (of anything but a literal), `sv` (a name built from parts), `set`
-/// (into a computed name) or `load` (a concatenated `system "l ..."`). A
+/// `get` (of anything but a literal), `eval` (or `reval`, of a parse tree),
+/// `sv` (a name built from parts), `set` (into a computed name) or `load` (a
+/// concatenated `system "l ..."`). A
 /// `get`, `value` or `set` of an unqualified symbol inside a lambda written
 /// under `\d` is one too: q looks the symbol up in the `\d` current when the
 /// lambda is called, which the source does not say.
@@ -4294,10 +4314,21 @@ pub fn lint_selecting(
         let defined = defined_at.get(key).copied().unwrap_or(0);
         unnamed.iter().any(|&at| at > defined || in_lambda(at))
     };
+    // Nor is the rank known to a call in a lambda when another file assigns
+    // the name: the lambda runs once both are loaded, and meets whichever
+    // ran last - q 5 runs b.q's `g:{f[1;2]}` to 3 after a.q's `f:{x+y}`
+    // replaced b.q's `f:{x}` (#521). A top-level call after this file's
+    // own definition meets that one.
+    let own = semantics::index(code, source).defined;
+    let foreign = |at: usize, key: &str| ws.defined_elsewhere(key, &own) && in_lambda(at);
     for m in re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)\s*\[").captures_iter(code) {
         let (whole, name) = (m.get(0).unwrap(), m.get(1).unwrap().as_str());
         let key = qualified(whole.start(), name);
-        if !boundary(code, whole.start()) || redefined.contains(&key) || overwritten(&key) {
+        if !boundary(code, whole.start())
+            || redefined.contains(&key)
+            || overwritten(&key)
+            || foreign(whole.start(), &key)
+        {
             continue;
         }
         let Some(&rank) = ranks.get(&key) else {
@@ -4336,6 +4367,7 @@ pub fn lint_selecting(
         // A name defined twice has whichever rank ran last, as QA012 knows.
         if !boundary(code, whole.start())
             || redefined.contains(&qualified(whole.start(), name))
+            || foreign(whole.start(), &qualified(whole.start(), name))
             || ranks
                 .get(&qualified(whole.start(), name))
                 .is_none_or(|&r| r < 2)
@@ -4410,7 +4442,7 @@ pub fn lint_selecting(
             }
         } else if re!(r"^\.?[A-Za-z][A-Za-z0-9_.]*$").is_match(f) {
             let key = qualified(f_at, f);
-            if redefined.contains(&key) || shadowed(code, source, f_at, f) {
+            if redefined.contains(&key) || foreign(f_at, &key) || shadowed(code, source, f_at, f) {
                 continue;
             }
             match ranks.get(&key) {
@@ -4465,6 +4497,7 @@ pub fn lint_selecting(
             let key = qualified(at, name);
             if !boundary(code, start)
                 || redefined.contains(&key)
+                || foreign(at, &key)
                 || shadowed(code, source, at, name)
             {
                 return None;
@@ -4747,7 +4780,9 @@ pub fn lint_selecting(
         declared.insert(m.get(1).unwrap().as_str());
     }
     // Another file of the workspace may define it too: with lib.q's
-    // `true:1b` loaded, q 5 runs `{[a] $[a;true;false]}` (#372).
+    // `true:1b` loaded, q 5 runs `{[a] $[a;true;false]}` (#372). Under
+    // `\d .ns` the name is `.ns.true`, which a root `true` does not define
+    // and lib.q's own `\d .ns` does (q 5, #520).
     let elsewhere = |key: &str| ws.defined_elsewhere(key, &Default::default());
     // Nor can a file that writes globals it does not name say the name is
     // undefined: q 5 runs `\l lib.q` (`true:0b`) then `$[true;`yes;`no]` to
@@ -4768,7 +4803,7 @@ pub fn lint_selecting(
             || after.starts_with('.')
             || declared.contains(name)
             || in_query
-            || elsewhere(name)
+            || elsewhere(&qualified(whole.start(), name))
             || elsewhere(&format!(".q.{name}"))
         {
             continue;
