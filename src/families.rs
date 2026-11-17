@@ -14,7 +14,7 @@ pub fn check(
     let mut out = vec![];
     query_injection(path, source, code, comments, &mut out);
     credentials(path, source, code, comments, &mut out);
-    simplifications(path, source, code, &mut out);
+    simplifications(path, source, code, comments, &mut out);
     leftovers(path, source, comments, foreign, &mut out);
     duplicate_columns(path, source, code, &mut out);
     select_by_duplicate(path, source, code, &mut out);
@@ -50,32 +50,35 @@ fn query_injection(path: &str, source: &str, code: &str, comments: &str, out: &m
     // over a handle - `h "select ...",x` - is evaluated by the remote
     // process's `.z.pg`, which is `value` by default. A name applied to a
     // query string is taken for a handle unless it is one of q's own, or a
-    // lambda this file defines: `lg "update finished"` logs a line (#345).
+    // lambda this file defines, with `:` or `::`: `lg "update finished"` logs
+    // a line (#345, #654).
     let lambda = |name: &str| {
         regex::Regex::new(&format!(
-            r"(?:^|[^A-Za-z0-9_.`]){}[ \t]*:[ \t]*\{{",
+            r"(?:^|[^A-Za-z0-9_.`]){}[ \t]*::?[ \t]*\{{",
             regex::escape(name)
         ))
         .is_ok_and(|r| r.is_match(code))
     };
-    let handles: Vec<usize> =
-        re!(r#"\b([A-Za-z][A-Za-z0-9_.]*)[ \t]+"(?:select|exec|update|delete)\b"#)
-            .captures_iter(comments)
-            .filter(|c| {
-                let name = c.get(1).unwrap();
-                code[name.start()..].starts_with(name.as_str())
-                    && !crate::RESERVED.iter().any(|n| n == name.as_str())
-                    && !lambda(name.as_str())
-            })
-            .map(|c| c.get(1).unwrap().start())
-            .collect();
+    // The handle may be a dotted name, `.conn.h` or the caller's `.z.w`, or
+    // the async `neg[h]` and `(neg h)` (#652).
+    let handles: Vec<(usize, usize)> = re!(
+        r#"(?:(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]+|(neg[ \t]*\[[^\[\]"]*\]|\(neg[ \t]+[^()"]*\))[ \t]*)"(?:select|exec|update|delete)\b"#
+    )
+    .captures_iter(comments)
+    .filter_map(|c| {
+        let handle = c.get(1).or(c.get(2)).unwrap();
+        let name = c.get(1).is_some();
+        (code[handle.start()..].starts_with(handle.as_str())
+            && !(name
+                && (crate::RESERVED.iter().any(|n| n == handle.as_str())
+                    || lambda(handle.as_str()))))
+        .then_some((handle.start(), handle.end()))
+    })
+    .collect();
     let calls = re!(r"\b(?:value|eval|get)\b")
         .find_iter(code)
         .map(|m| (m.start(), m.end()))
-        .chain(handles.iter().map(|&at| {
-            let end = at + code[at..].find([' ', '\t']).unwrap();
-            (at, end)
-        }));
+        .chain(handles);
     for (m_start, m_end) in calls {
         let m = Span {
             start: m_start,
@@ -113,16 +116,24 @@ fn query_injection(path: &str, source: &str, code: &str, comments: &str, out: &m
             }
             b == b',' && depth == 0
         });
-        // A name outside any `$[...]`: a conditional that only chooses
-        // between string constants - KX's tick clog.q builds handler source
-        // that way - splices in no data, whatever its condition reads.
+        // A name outside any `$[...]`, or in one of its branches: a
+        // conditional that only chooses between string constants - KX's tick
+        // clog.q builds handler source that way - splices in no data,
+        // whatever its condition reads, but `$[x;y;"a"]` splices `y` (#653).
         let mut unconditional = masked.as_bytes().to_vec();
+        let mut chosen = false;
         for (at, _) in masked.match_indices("$[") {
             if let Some(close) = matching(masked, at + 1, b'[', b']') {
                 unconditional[at..close].fill(b' ');
+                let parts = slots(&masked[at + 2..close - 1]);
+                let last = parts.len() - 1;
+                chosen |= parts.iter().enumerate().any(|(i, part)| {
+                    (i % 2 == 1 || i == last && last > 0)
+                        && part.bytes().any(|b| b.is_ascii_alphabetic())
+                });
             }
         }
-        let spliced = unconditional.iter().any(u8::is_ascii_alphabetic);
+        let spliced = chosen || unconditional.iter().any(u8::is_ascii_alphabetic);
         // The query text itself has to be one of the joined pieces, not a
         // branch of a conditional: there it is one of several constants.
         let mut top = text.as_bytes().to_vec();
@@ -145,6 +156,9 @@ fn query_injection(path: &str, source: &str, code: &str, comments: &str, out: &m
                      the value as data",
                     match &code[m.start()..m.end()] {
                         f @ ("value" | "eval" | "get") => f.to_string(),
+                        h if re!(r"^\(?neg\b").is_match(h) => {
+                            format!("{h}` over a handle and evaluated by the remote `.z.ps")
+                        }
                         h => format!("{h}` over a handle and evaluated by the remote `.z.pg"),
                     }
                 ),
@@ -187,7 +201,12 @@ fn credentials(path: &str, source: &str, code: &str, comments: &str, out: &mut V
             crate::operand_ends(comments, comments, quote + c.get(0).unwrap().end())
         });
         let value = value.map(|c| c.get(1).unwrap().as_str());
-        if whole && value.is_some_and(|v| !v.trim().is_empty()) {
+        // A secret has letters or digits in it, and is no q word: a lexer's
+        // `sepToken:","` and `token:"if"` are syntax (#655).
+        let opaque = |v: &str| {
+            v.bytes().any(|b| b.is_ascii_alphanumeric()) && !crate::RESERVED.iter().any(|n| n == v)
+        };
+        if whole && value.is_some_and(opaque) {
             out.push(Finding::at(
                 path,
                 source,
@@ -225,6 +244,25 @@ fn iterated(code: &str, at: usize) -> bool {
         .is_match(rest)
 }
 
+/// Whether the word that ends at `at` is applied to the rest of its
+/// statement, so a rewrite of the word keeps its operand: something follows
+/// it, and an application in brackets is not continued by an infix - q 5
+/// reads `asc[3 1 2],0` as `(asc[3 1 2]),0`, and a bare `asc` as the
+/// function itself (#648, #649, #650).
+fn applied_to_rest(source: &str, code: &str, comments: &str, at: usize) -> bool {
+    // A string is blank in `code`, and an operand all the same.
+    if source[crate::past_blanks(source, at)..].starts_with('"') {
+        return true;
+    }
+    let next = crate::past_blanks(code, at);
+    if crate::operand_ends(code, comments, at) || code[next..].starts_with("::") {
+        return false;
+    }
+    !code[next..].starts_with('[')
+        || matching(code, next, b'[', b']')
+            .is_some_and(|end| crate::operand_ends(code, comments, end))
+}
+
 /// Whether `at` names a column of a table literal: the bracket around it,
 /// past any `;` between columns, is the `(` of `([...] ...)` or the `[` of
 /// its key columns.
@@ -252,14 +290,17 @@ fn in_table_literal(code: &str, at: usize) -> bool {
 /// were dropped because they do not: `first asc x` is not `min x` once there
 /// is a null (asc puts it first, min skips it), and `{x+y}/` is not `sum`,
 /// which skips nulls too.
-fn simplifications(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
+fn simplifications(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<Finding>) {
     let mut add = |at: usize, code_: &str, detail: String| {
         out.push(Finding::at(path, source, at, code_, detail));
     };
     // QR001: `reverse asc x` is `desc x`, and `reverse desc x` is `asc x`.
     for m in re!(concat!(r"\breverse", blank!(), r"+(asc|desc)\b")).captures_iter(code) {
         let whole = m.get(0).unwrap();
-        if boundary(code, whole.start()) && !iterated(code, whole.end()) {
+        if boundary(code, whole.start())
+            && !iterated(code, whole.end())
+            && applied_to_rest(source, code, comments, whole.end())
+        {
             let other = if &m[1] == "asc" { "desc" } else { "asc" };
             add(
                 whole.start(),
@@ -294,7 +335,10 @@ fn simplifications(path: &str, source: &str, code: &str, out: &mut Vec<Finding>)
     ))
     .find_iter(code)
     {
-        if boundary(code, m.start()) && !iterated(code, m.end()) {
+        if boundary(code, m.start())
+            && !iterated(code, m.end())
+            && applied_to_rest(source, code, comments, m.end())
+        {
             add(
                 m.start(),
                 "QR003",

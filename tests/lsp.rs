@@ -1262,6 +1262,9 @@ fn the_server_asks_to_watch_the_configuration_outside_the_workspace() {
     server.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
     let uri = file_uri(&ws.join("a.q"));
     server.open(&uri, "a:1\n");
+    // The base is read for the document, after a first registration made
+    // without it; the diagnostics come between the two.
+    server.diagnostics_for(&uri);
     let wants = |m: &Value, base: &std::path::Path, pattern: &str| {
         m["method"] == "client/registerCapability"
             && m["params"]["registrations"][0]["registerOptions"]["watchers"]
@@ -1278,7 +1281,12 @@ fn the_server_asks_to_watch_the_configuration_outside_the_workspace() {
     );
     let watchers = &registration["params"]["registrations"][0]["registerOptions"]["watchers"];
     assert_eq!(watchers[0], json!({"globPattern": "**/*.q"}));
-    server.diagnostics_for(&uri);
+    // And the registration it replaces is withdrawn.
+    let withdrawn = server.until(|m| m["method"] == "client/unregisterCapability");
+    assert_eq!(
+        withdrawn["params"]["unregisterations"][0]["method"],
+        "workspace/didChangeWatchedFiles"
+    );
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 
@@ -1454,7 +1462,7 @@ fn formatting_leaves_an_unbalanced_document_alone_with_qe001_deselected() {
 #[test]
 fn formatting_never_applies_an_unsafe_fix() {
     let dir = tempfile::tempdir().unwrap();
-    let mut server = Server::start_in(dir.path(), &["--unsafe-fixes"]);
+    let mut server = Server::start_in(dir.path(), &[]);
     server.initialize();
     let uri = "file:///tmp/unsafe-format.q";
     server.open(uri, "a:1b; b:0b; r:a&&b; s:a||b\n");
@@ -1840,6 +1848,9 @@ fn neither_a_watched_change_nor_a_close_indexes_what_the_settings_leave_out() {
     for options in [
         json!({"workspaceIndex": {"enable": false}}),
         json!({"workspaceIndex": {"exclude": ["vendor/**"]}}),
+        // A pattern naming the directory itself, which the scan never
+        // enters; a watched change read its file back in (#795).
+        json!({"workspaceIndex": {"exclude": ["vendor"]}}),
     ] {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("vendor")).unwrap();
@@ -1991,4 +2002,168 @@ fn a_document_opened_by_another_spelling_of_its_path_is_one_file() {
     let found = codes_of(&server.diagnostics_for(&uri));
     assert!(found.contains(&"QT022".to_string()), "{found:?}");
     assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn a_client_that_waits_for_registration_is_asked_to_watch_files() {
+    // Neovim and Helix send didChangeWatchedFiles only for watchers a server
+    // registers; with none registered, an edited qlinter.toml was never
+    // heard until a restart (#792).
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start_in(dir.path(), &[]);
+    let mut capabilities = client_capabilities();
+    capabilities["workspace"] = json!({"didChangeWatchedFiles": {"dynamicRegistration": true}});
+    server.send(
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+        "capabilities": capabilities,
+        "workspaceFolders":[{"uri":file_uri(dir.path()),"name":"ws"}]}}),
+    );
+    server.receive();
+    server.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+    let request = server.until(|m| m["method"] == "client/registerCapability");
+    let registration = &request["params"]["registrations"][0];
+    assert_eq!(registration["method"], "workspace/didChangeWatchedFiles");
+    let globs: Vec<&str> = registration["registerOptions"]["watchers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| w["globPattern"].as_str().unwrap())
+        .collect();
+    assert!(globs.contains(&"**/*.q"), "{globs:?}");
+    // Every configuration by any name, `extend`ed bases included (#554).
+    assert!(globs.contains(&"**/*.toml"), "{globs:?}");
+    server.send(json!({"jsonrpc":"2.0","id":request["id"],"result":null}));
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn the_workspace_index_reads_a_file_however_large() {
+    // The CLI indexes a 5 MB file like any other; the server skipped one over
+    // 4 MiB, so a name only it defines was undefined in the editor alone (#794).
+    let dir = tempfile::tempdir().unwrap();
+    let mut big = String::from("helper:{[a] a+1}\n");
+    big.push_str(&"/ padding padding padding padding padding padding\n".repeat(100_000));
+    assert!(big.len() > 4 << 20);
+    std::fs::write(dir.path().join("big.q"), big).unwrap();
+    let mut server = start_with_workspace(dir.path());
+    let app = file_uri(&dir.path().join("app.q"));
+    server.open(&app, "f:{[a] r:helper; r}\n");
+    let found = codes_of(&server.diagnostics_for(&app));
+    assert!(!found.contains(&"QF018".to_string()), "{found:?}");
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn a_workspace_folder_added_later_is_indexed_and_a_removed_one_forgotten() {
+    // B is added to the workspace after start, as a multi-root workspace
+    // does; what it defines must count, as it does for `qlinter A B` (#797).
+    let dir = tempfile::tempdir().unwrap();
+    let (a, b) = (dir.path().join("A"), dir.path().join("B"));
+    std::fs::create_dir_all(&a).unwrap();
+    std::fs::create_dir_all(&b).unwrap();
+    std::fs::write(b.join("lib.q"), "helper:{[a] a+1}\n").unwrap();
+    let (mut server, reply) = start_with_options(
+        dir.path(),
+        &["--lsp", "--profile", "uqf"],
+        json!({}),
+        Some(&a),
+    );
+    assert_eq!(
+        reply["result"]["capabilities"]["workspace"]["workspaceFolders"]["changeNotifications"],
+        true
+    );
+    let app = file_uri(&a.join("b.q"));
+    server.open(&app, "f:{[a] r:helper; r}\n");
+    assert!(codes_of(&server.diagnostics_for(&app)).contains(&"QF018".to_string()));
+    let folder = json!([{"uri": file_uri(&b), "name": "B"}]);
+    server.send(
+        json!({"jsonrpc":"2.0","method":"workspace/didChangeWorkspaceFolders",
+        "params":{"event":{"added":folder,"removed":[]}}}),
+    );
+    assert!(!codes_of(&server.diagnostics_for(&app)).contains(&"QF018".to_string()));
+    server.send(
+        json!({"jsonrpc":"2.0","method":"workspace/didChangeWorkspaceFolders",
+        "params":{"event":{"added":[],"removed":folder}}}),
+    );
+    assert!(codes_of(&server.diagnostics_for(&app)).contains(&"QF018".to_string()));
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn a_flag_the_server_never_reads_is_refused() {
+    // Each was accepted and silently ignored: `--stdin-filename` with stdin
+    // the protocol stream, `--force-exclude` and `--unsafe-fixes` with no
+    // effect on what the editor shows (#798).
+    for flag in [
+        &["--stdin-filename", "x.q"][..],
+        &["--format", "json"],
+        &["--color", "always"],
+        &["--force-exclude"],
+        &["--unsafe-fixes"],
+        &["--qls-executable", "foo"],
+        &["--qls-timeout", "5"],
+    ] {
+        let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .arg("--lsp")
+            .args(flag)
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(2), "{flag:?}: {stderr}");
+        assert!(stderr.contains("--lsp"), "{flag:?}: {stderr}");
+    }
+}
+
+#[test]
+fn a_document_method_without_a_uri_is_refused_or_dropped() {
+    // Read as `uri: ""`, a didOpen published diagnostics for an invalid
+    // DocumentUri and a request was answered as a success (#799).
+    let mut server = Server::start();
+    server.initialize();
+    server.send(json!({"jsonrpc":"2.0","method":"textDocument/didOpen",
+        "params":{"textDocument":{"languageId":"q","version":1,"text":"a==b\n"}}}));
+    server.send(json!({"jsonrpc":"2.0","method":"textDocument/didOpen","params":[1]}));
+    for (id, method, params) in [
+        (2, "textDocument/formatting", Value::Null),
+        (3, "textDocument/codeAction", json!(5)),
+        (4, "textDocument/semanticTokens/full", json!({})),
+    ] {
+        server.send(json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}));
+        // The first message back is this reply: neither didOpen published.
+        let reply = server.receive();
+        assert_eq!(reply["id"], id, "{reply}");
+        assert_eq!(reply["error"]["code"], -32602, "{reply}");
+    }
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn a_section_or_options_that_are_not_an_object_are_reported() {
+    // `"lint": "QS001"` read as no setting at all, with no message, and so
+    // did options that were a list (#805).
+    for (options, wanted) in [
+        (json!({"lint": "QS001"}), "/lint must be an object"),
+        (
+            json!({"workspaceIndex": false}),
+            "/workspaceIndex must be an object",
+        ),
+        (json!([1]), "initializationOptions must be an object"),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut server, _) = start_with_options(
+            dir.path(),
+            &["--lsp", "--profile", "uqf"],
+            options.clone(),
+            None,
+        );
+        let message = server.receive();
+        assert_eq!(
+            message["method"], "window/showMessage",
+            "{options}: {message}"
+        );
+        let text = message["params"]["message"].as_str().unwrap();
+        assert!(text.contains(wanted), "{options}: {text}");
+        assert_eq!(server.shutdown_and_exit(), 0);
+    }
 }

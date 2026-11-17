@@ -60,6 +60,38 @@ t:x cor/: y
 u:`cor each `a`b
 v:.q.cor each x
 
+=== clean profile: general | with an operand on the keyword's left and nothing applied after each, the pair is a projection (q 5 parses each, #647)
+a:1 2;b:(1 2;3 4)
+r:a in each[b]
+g:a mod each
+h:(a mod each;1)
+k:{x cor each}
+l:a mod each' / note
+m:"ab" in peach
+n:a in each [b]
+
+=== QE009 QE011 profile: general | while nothing on its left, an operand after each, or a signature on its left is refused (q 5: ' for each, #647)
+r:cor each
+s:a cor each' x
+t:a cor each "b"
+u:{[x] cor each}
+v:a cor each
+  b
+
+=== QE011 profile: general | an iterator keyword before each or peach is refused the same way (q 5: ' for each, #659)
+f:{x+y}
+r:f over each (1 2;3 4)
+s:(+) scan peach (1 2;3 4)
+t:x prior each y
+u:each each a
+v:count each each x
+
+=== clean profile: general | and parses the same way with nothing applied after it (q 5 parses each, #659)
+f:{x+y}
+r:f over each
+s:(f scan peach;1)
+t:(count each) each x
+
 === clean | a unary builtin under each is the idiom
 count each (1 2;3 4 5)
 

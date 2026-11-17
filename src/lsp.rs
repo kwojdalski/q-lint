@@ -95,6 +95,7 @@ const SYNC_FULL: i64 = 1;
 
 const METHOD_NOT_FOUND: i64 = -32601;
 const INTERNAL_ERROR: i64 = -32603;
+const INVALID_PARAMS: i64 = -32602;
 const SERVER_NOT_INITIALIZED: i64 = -32002;
 
 /// Open documents, by URI. The editor is the authority on their contents from
@@ -128,9 +129,13 @@ struct Index {
     enabled: bool,
 }
 
-/// A bound on the scan, so a workspace opened at `/` cannot stall the server.
+/// Bounds on the scan, so a workspace opened at `/` cannot stall the server:
+/// the `.q` files read, and every directory entry visited on the way, since
+/// a tree of anything else costs as much to walk (#793). There is no bound on
+/// a file's size: the CLI reads a large file too, and an index that skipped
+/// it reported names only it defines as undefined in the editor alone (#794).
 const MAX_FILES: usize = 20_000;
-const MAX_BYTES: u64 = 4 << 20;
+const MAX_ENTRIES: usize = 500_000;
 
 impl Index {
     /// Record what `path` defines. Whether it changed is what tells the
@@ -200,20 +205,20 @@ impl Index {
     }
 
     /// Whether the scan would have read `path`: index on, under a workspace
-    /// folder, in no directory the scan skips, not excluded, and not too big.
+    /// folder, in no directory the scan skips, and not excluded.
     fn covers(&self, path: &str, policy: &Policy) -> bool {
         let path = std::path::Path::new(path);
         self.enabled
             && is_q_path(&path.to_string_lossy())
-            && std::fs::metadata(path).is_ok_and(|m| m.len() <= MAX_BYTES)
             && self.roots.iter().any(|root| {
                 let root = std::path::Path::new(root);
+                // The file and each directory above it within the folder,
+                // as the scan asks about each before entering it (#795).
                 path.starts_with(root)
                     && !path
                         .ancestors()
                         .take_while(|p| *p != root)
-                        .any(|p| skipped(policy, p))
-                    && !self.excluded(root, path)
+                        .any(|p| skipped(policy, p) || self.excluded(root, p))
             })
     }
 
@@ -249,33 +254,77 @@ impl Index {
 
     /// Every `.q` file under the workspace folders, less those `exclude`
     /// names; a directory it names is not entered at all.
+    /// Workspace folders the client added and removed after `initialize`:
+    /// the added ones scanned, and what only the removed ones held forgotten.
+    fn change_roots(&mut self, added: Vec<String>, removed: Vec<String>, policy: &Policy) {
+        self.roots.retain(|r| !removed.contains(r));
+        let kept: Vec<String> = self.roots.iter().map(|r| file_key(r)).collect();
+        for gone in removed.iter().map(|r| file_key(r)) {
+            let under = |key: &str, root: &str| std::path::Path::new(key).starts_with(root);
+            let stale: Vec<String> = self
+                .files
+                .keys()
+                .filter(|key| under(key, &gone) && !kept.iter().any(|k| under(key, k)))
+                .cloned()
+                .collect();
+            for key in stale {
+                self.remove(&key);
+            }
+        }
+        let added: Vec<String> = added
+            .into_iter()
+            .filter(|r| !self.roots.contains(r))
+            .collect();
+        if self.enabled && !added.is_empty() {
+            let all = std::mem::replace(&mut self.roots, added.clone());
+            self.scan(policy);
+            self.roots = all;
+        }
+        self.roots.extend(added);
+    }
+
     fn scan(&mut self, policy: &Policy) {
+        self.scan_within(policy, MAX_FILES, MAX_ENTRIES)
+    }
+
+    fn scan_within(&mut self, policy: &Policy, max_files: usize, max_entries: usize) {
         let mut stack: Vec<(std::path::PathBuf, std::path::PathBuf)> =
             self.roots.iter().map(|r| (r.into(), r.into())).collect();
-        let mut seen = 0;
+        let (mut seen, mut visited) = (0, 0);
         while let Some((root, dir)) = stack.pop() {
             let Ok(entries) = std::fs::read_dir(&dir) else {
                 continue;
             };
             for entry in entries.flatten() {
-                let path = entry.path();
-                let name = entry.file_name().to_string_lossy().into_owned();
+                visited += 1;
+                if visited > max_entries {
+                    return;
+                }
                 let Ok(kind) = entry.file_type() else {
                     continue;
                 };
+                // Anything but a directory or a `.q` file is passed by before
+                // the settings are asked about it: finding them costs a
+                // canonicalize, and a tree of other files paid it per entry.
+                // A symlink to a file is read, as the CLI's walk lints it
+                // (#542); one to a directory is not entered, as there.
+                let is_q = is_q_path(&entry.file_name().to_string_lossy())
+                    && (kind.is_file()
+                        || kind.is_symlink()
+                            && std::fs::metadata(entry.path()).is_ok_and(|m| m.is_file()));
+                if !kind.is_dir() && !is_q {
+                    continue;
+                }
+                let path = entry.path();
                 if self.excluded(&root, &path) || skipped(policy, &path) {
                     continue;
                 }
-                // A symlink to a file is read, as the CLI's walk lints it
-                // (#542); one to a directory is not entered, as there.
                 if kind.is_dir() {
                     stack.push((root.clone(), path));
-                } else if is_q_path(&name)
-                    && std::fs::metadata(&path).is_ok_and(|m| m.is_file() && m.len() <= MAX_BYTES)
-                {
+                } else {
                     self.read(&path.to_string_lossy());
                     seen += 1;
-                    if seen >= MAX_FILES {
+                    if seen >= max_files {
                         return;
                     }
                 }
@@ -365,6 +414,31 @@ impl Options {
         let init = &params["initializationOptions"];
         let mut options = Options::default();
         let mut problems = vec![];
+        // A pointer through a string, a flag or a list finds nothing, which
+        // reads as unset: `"lint": "QS001"` was silently every rule (#805).
+        match init {
+            Value::Null => {}
+            Value::Object(sections) => {
+                for (key, value) in sections {
+                    if [
+                        "lint",
+                        "fixes",
+                        "format",
+                        "semanticTokens",
+                        "workspaceIndex",
+                    ]
+                    .contains(&key.as_str())
+                        && !value.is_object()
+                        && !value.is_null()
+                    {
+                        problems.push(format!("/{key} must be an object, not {value}"));
+                    }
+                }
+            }
+            other => problems.push(format!(
+                "initializationOptions must be an object, not {other}"
+            )),
+        }
         let mut flag = |pointer: &str, default: bool| match init.pointer(pointer) {
             None | Some(Value::Null) => default,
             Some(Value::Bool(b)) => *b,
@@ -486,7 +560,8 @@ pub fn serve(
     // id of the next request the server sends it.
     let mut token_refresh = false;
     let mut next_request: u64 = 0;
-    // Whether the client takes file watchers the server registers, and ones
+    // Whether the client takes file watchers the server registers - Neovim
+    // and Helix send didChangeWatchedFiles only for those (#792) - and ones
     // rooted outside the workspace; the watchers registered, once the client
     // is ready for them.
     let mut watch_registration = false;
@@ -630,6 +705,29 @@ pub fn serve(
                 send(writer, json!({"id": id, "result": Value::Null}))?;
             }
 
+            // A document method with no document to act on (#799): a request
+            // answered with JSON-RPC 2.0's Invalid params, not an empty
+            // result that says there is nothing to fix; a notification
+            // dropped, rather than diagnostics published for `uri: ""`.
+            (
+                "textDocument/didOpen"
+                | "textDocument/didChange"
+                | "textDocument/didSave"
+                | "textDocument/didClose"
+                | "textDocument/semanticTokens/full"
+                | "textDocument/codeAction"
+                | "textDocument/formatting",
+                id,
+            ) if !params["textDocument"]["uri"].is_string() => {
+                let message = format!("{method}: params.textDocument.uri must be a string");
+                match id {
+                    Some(id) => send(
+                        writer,
+                        json!({"id": id, "error": {"code": INVALID_PARAMS, "message": message}}),
+                    )?,
+                    None => eprintln!("qlinter: {message}"),
+                }
+            }
             ("textDocument/didOpen", None) => {
                 let uri = uri_of(&params["textDocument"]);
                 let text = params["textDocument"]["text"].as_str().unwrap_or("");
@@ -774,6 +872,19 @@ pub fn serve(
                     relint(writer, &docs, &unsaved, &idx, None, policy, &opts)?;
                 }
             }
+            // A folder added to or removed from a multi-root workspace (#797).
+            ("workspace/didChangeWorkspaceFolders", None) => {
+                let folders =
+                    |key: &str| workspace_roots(&json!({"workspaceFolders": params["event"][key]}));
+                idx.change_roots(folders("added"), folders("removed"), policy);
+                // An open buffer still wins over what a folder held.
+                for (uri, text) in docs.iter().filter(|(uri, _)| is_q_uri(uri)) {
+                    idx.set(&path_of(uri), index(text));
+                }
+                if idx.generation != generation {
+                    relint(writer, &docs, &unsaved, &idx, None, policy, &opts)?;
+                }
+            }
             // Every other REQUEST gets an error, because a client waiting on a
             // reply that never arrives looks like a hung server.
             (_, Some(id)) => send(
@@ -853,6 +964,9 @@ fn capabilities(opts: &Options, code_action_literals: bool) -> Value {
     if code_action_literals {
         capabilities["codeActionProvider"] = json!(true);
     }
+    capabilities["workspace"] = json!({
+        "workspaceFolders": {"supported": true, "changeNotifications": true},
+    });
     if opts.format {
         capabilities["documentFormattingProvider"] = json!(true);
     }
@@ -1593,6 +1707,42 @@ mod tests {
             guarded(|| -> i32 { panic!("static") }),
             Err("static".into())
         );
+    }
+
+    #[test]
+    fn the_scan_stops_after_its_bound_on_entries_of_any_kind() {
+        // The root holds 50 other files and a directory whose `.q` file the
+        // scan reaches only after them; bounded at 10 entries, it never
+        // does. Counted in `.q` files alone, a tree of anything else was
+        // walked to the end (#793).
+        let dir = tempfile::tempdir().unwrap();
+        for i in 0..50 {
+            std::fs::write(dir.path().join(format!("{i}.txt")), "").unwrap();
+        }
+        std::fs::create_dir(dir.path().join("sub")).unwrap();
+        std::fs::write(dir.path().join("sub/a.q"), "cfg:1\n").unwrap();
+        let policy = Policy::new(
+            crate::config::Overrides {
+                profile: None,
+                default_profile: "style",
+                layer: Layer::default(),
+                exclude: vec![],
+                config: None,
+                isolated: true,
+            },
+            true,
+        );
+        let scanned = |max_entries| {
+            let mut idx = Index {
+                roots: vec![dir.path().to_string_lossy().into_owned()],
+                enabled: true,
+                ..Index::default()
+            };
+            idx.scan_within(&policy, MAX_FILES, max_entries);
+            idx.files.len()
+        };
+        assert_eq!(scanned(10), 0);
+        assert_eq!(scanned(MAX_ENTRIES), 1);
     }
 
     #[test]

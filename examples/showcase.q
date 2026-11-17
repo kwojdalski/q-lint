@@ -274,6 +274,11 @@ pairsum:{[a;b]a+b} each 1 2 3
 / expect-next: QE011
 corrs: cor each 1 2 3
 
+/ QE012: a no-break space pasted from a document looks like a blank and is
+/ not one: q 5 refuses the line with 'char.
+/ expect-next: QE012
+spaced:1 2 +3
+
 / QA006: one slot projects, three or more are conditionals - exactly two is
 / the arity $ has no meaning for, and q says 'type only at runtime.
 / expect-next: QA006

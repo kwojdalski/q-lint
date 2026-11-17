@@ -86,9 +86,9 @@ struct Args {
     /// Ignore every configuration file; use the defaults and the flags.
     #[arg(long)]
     isolated: bool,
-    /// Print which configuration governs each path and the rules it turns
-    /// on, then exit.
-    #[arg(long)]
+    /// Print which configuration governs each path (or `--stdin-filename`)
+    /// and the rules it turns on, then exit.
+    #[arg(long, conflicts_with_all = ["fix", "diff"])]
     show_settings: bool,
     /// Only these rules: codes or prefixes, comma-separated or repeated.
     /// Replaces the profile's set and the configuration's `select`.
@@ -130,11 +130,13 @@ struct Args {
     #[arg(long, default_value = "30")]
     qls_timeout: f64,
     /// Run as a language server on stdin/stdout instead of linting paths.
-    // The server lints with the builtin backend alone and reads documents
-    // from the editor, so the qls and stdin flags are refused rather than
-    // accepted and ignored (#544).
+    /// The flags that shape a CLI run are refused rather than ignored: the
+    /// server reads none of them, and one put in an editor's server
+    /// arguments would otherwise do nothing and say nothing (#798). It lints
+    /// with the builtin backend alone, so `--backend` is one too (#544).
     #[arg(long, conflicts_with_all = ["paths", "rules", "explain", "fix", "diff", "show_settings",
-        "backend", "qls_executable", "qls_timeout", "stdin_filename"])]
+        "stdin_filename", "format", "color", "force_exclude", "unsafe_fixes",
+        "backend", "qls_executable", "qls_timeout"])]
     lsp: bool,
     /// Colour the text output: `auto` (a terminal, and NO_COLOR unset or empty),
     /// `always`, or `never`.
@@ -212,7 +214,7 @@ fn overrides(args: &Args) -> Result<Overrides, String> {
         exclude: args
             .exclude
             .iter()
-            .map(|p| config::rooted(&config::absolute(&cwd), p))
+            .map(|p| config::excluding(&config::absolute(&cwd), p))
             .collect::<Result<_, _>>()
             .map_err(|e| format!("--exclude: {e}"))?,
         config: args.config.clone(),
@@ -379,7 +381,10 @@ fn run(args: Args) -> Result<u8, String> {
     }
     let policy = Policy::new(overrides(&args)?, false);
     if args.show_settings {
-        let paths = if args.paths.is_empty() {
+        // The buffer an editor pipes is the file it asks about (#806).
+        let paths = if let (true, Some(name)) = (args.paths.is_empty(), &args.stdin_filename) {
+            vec![name.clone()]
+        } else if args.paths.is_empty() {
             vec![".".to_string()]
         } else {
             args.paths.clone()
@@ -719,7 +724,7 @@ fn analyze_graph(args: GraphArgs) -> Result<u8, String> {
         exclude: args
             .exclude
             .iter()
-            .map(|p| config::rooted(&cwd, p))
+            .map(|p| config::excluding(&cwd, p))
             .collect::<Result<_, _>>()
             .map_err(|e| format!("--exclude: {e}"))?,
         config: None,
