@@ -662,6 +662,30 @@ fn before_initialize_requests_are_refused_and_notifications_dropped() {
 }
 
 #[test]
+fn a_second_initialize_is_an_invalid_request_and_changes_nothing() {
+    // The first ignores QE; a second that sent no options
+    // was answered and left that narrowing under its own defaults (#547).
+    let mut server = Server::start();
+    server.send(
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+        "capabilities":client_capabilities(),
+        "initializationOptions":{"lint":{"ignore":["QE"]},"format":{"enable":false}}}}),
+    );
+    server.receive();
+    server.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+    server.send(json!({"jsonrpc":"2.0","id":2,"method":"initialize",
+        "params":{"capabilities":client_capabilities()}}));
+    let reply = server.receive();
+    assert_eq!(reply["id"], 2);
+    assert_eq!(reply["error"]["code"], -32600, "{reply}");
+    // The first initialize's options still hold.
+    let uri = "file:///tmp/second.q";
+    server.open(uri, "a:1==1\n");
+    assert_eq!(server.diagnostics_for(uri), Vec::<Value>::new());
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
 fn a_second_shutdown_is_an_invalid_request() {
     // LSP 3.17, Shutdown Request: requests after it error with
     // InvalidRequest, and `shutdown` is a request like any other.

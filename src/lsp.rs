@@ -522,6 +522,14 @@ pub fn serve(
 
         let generation = idx.generation;
         match (method.as_str(), id) {
+            // LSP 3.17: "The initialize request may only be sent once." A
+            // second is refused and changes nothing - answered, its options
+            // were installed over a narrowing it could not undo (#547).
+            ("initialize", Some(id)) if initialized => send(
+                writer,
+                json!({"id": id, "error": {"code": INVALID_REQUEST,
+                       "message": "initialize may only be sent once"}}),
+            )?,
             ("initialize", Some(id)) => {
                 idx.roots = workspace_roots(&params);
                 let layer;
