@@ -6070,11 +6070,12 @@ pub fn lint_selecting(
         // `byte` are legitimate on a string. `symbol` and `guid` convert
         // nothing: q 5 refuses them with 'type, which is QT032's, in general.
         // The backtick has to be code: in `"use `symbol$"` the string's own
-        // closing quote once read as the cast's operand (#596). Searched one
+        // closing quote once read as the cast's operand (#596). A string in
+        // parentheses is the same operand: `` `symbol$("ab") `` (#615). Searched one
         // start at a time, so a rejected match does not hide a later one.
         let cast = |mut at: usize| {
             while let Some(m) = re!(
-                r#"`(long|int|short|float|real|boolean|date|time|timestamp|timespan|month|minute|second|datetime|symbol|guid)\s*\$\s*""#
+                r#"`(long|int|short|float|real|boolean|date|time|timestamp|timespan|month|minute|second|datetime|symbol|guid)\s*\$\s*(?:"|\(\s*"(?:[^"\\\n]|\\.)*"\s*\))"#
             )
             .captures_at(literals, at)
             {

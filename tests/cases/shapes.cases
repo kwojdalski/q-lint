@@ -139,6 +139,13 @@ h:"cast with `guid$"
 === QT032 profile: general | a string mentioning a cast does not hide a real one after it (q 5: 'type)
 s:("`long$";`symbol$"abc")
 
+=== QT032 profile: general | a string in parentheses is the same operand (q 5: `symbol$("ab") and `guid$("ab") are 'type; #615)
+a:`symbol$("ab")
+b:`guid$("ab")
+
+=== QT004 | and casts its codes alike (q 5: `long$("12") is 49 50)
+c:`long$("12")
+
 === clean | the uppercase-char cast parses text
 n:"J"$"123"
 
