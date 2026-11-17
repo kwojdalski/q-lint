@@ -168,6 +168,9 @@ struct Call<'a> {
     at: usize,
     name: &'a str,
     args: Vec<&'a str>,
+    /// A bracket call with an elided slot: nothing ran, and only the slot
+    /// count is worth reading.
+    projection: bool,
 }
 
 const BUILTINS: &str = r"til|where|sum|prd|avg|med|dev|var|sums|prds|deltas|ratios|asc|desc|iasc|idesc|distinct|flip|rotate|count|first|last|enlist|reverse|abs|neg|sqrt|log|exp|sin|cos|tan|acos|asin|atan|reciprocal|mavg|msum|mcount|mdev|mmin|mmax|cor|cov|wavg|wsum|within|string|key|value|type|not|null|min|max|floor|ceiling|signum|group|cols|keys|meta|fills|next|upper|lower|trim|ltrim|rtrim|show|hcount|hclose|hopen|get|inv|attr|parse|eval|system|any|all|sdev|svar|avgs|maxs|mins";
@@ -218,10 +221,13 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
             args.extend(read(end, next));
         }
         // Omitted slots are projections rather than complete applications.
-        if args.iter().any(|arg| arg.trim().is_empty()) {
-            continue;
-        }
-        out.push(Call { at, name, args });
+        let projection = args.iter().any(|arg| arg.trim().is_empty());
+        out.push(Call {
+            at,
+            name,
+            args,
+            projection,
+        });
     }
     // Juxtaposed form: `name arg`, one argument, running to the end of the
     // expression. Only a literal argument is worth collecting - the rules can
@@ -269,6 +275,7 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
             at: whole.start(),
             name: call.get(1).unwrap().as_str(),
             args: vec![&comments[arg.start()..arg.end()]],
+            projection: false,
         });
     }
     // Applied with `@`: `til@2.5` and `@[til;2.5]` are the call `til 2.5`,
@@ -310,6 +317,7 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
                 at: whole.start(),
                 name: name.as_str(),
                 args: vec![&comments[arg.start()..arg.end()]],
+                projection: false,
             });
         }
     }
@@ -366,6 +374,7 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
             at: if left.is_empty() { m.start() } else { start },
             name: m.as_str(),
             args: vec![left, &comments[from..end]],
+            projection: false,
         });
     }
     out
@@ -410,7 +419,13 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
             ));
         }
     }
-    for Call { at, name, args } in calls(code, comments, source) {
+    for Call {
+        at,
+        name,
+        args,
+        projection,
+    } in calls(code, comments, source)
+    {
         if redefined(name, at) {
             continue;
         }
@@ -428,18 +443,26 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
             "sums" | "prds" | "deltas" | "ratios" | "maxs" | "mins" | "fills" => 2,
             _ => arity,
         };
-        if args.len() > max_arity {
+        // A projection is refused only by a builtin q defines as a lambda,
+        // which checks its slots where it is projected: q 5 `til[3;]`,
+        // `til[;3]` and `mavg[1;;]` are 'rank, while `sum[1;]` and
+        // `count[1;]` are not refused until they run, if then (#631).
+        let lambda = re!(
+            r"^(?:til|med|asc|desc|iasc|idesc|signum|cols|keys|meta|next|upper|lower|trim|ltrim|rtrim|show|parse|sdev|svar|avgs|rotate|mavg|msum|mcount|mdev|mmin|mmax)$"
+        );
+        if args.len() > max_arity && (!projection || lambda.is_match(name)) {
             report(
                 &mut out,
                 "QA010",
                 format!(
-                    "{name} accepts at most {max_arity} argument(s), but this complete call supplies {}",
+                    "{name} accepts at most {max_arity} argument(s), but this {} supplies {}",
+                    if projection { "call" } else { "complete call" },
                     args.len()
                 ),
             );
             continue;
         }
-        if args.len() != arity {
+        if projection || args.len() != arity {
             continue;
         }
         if name == "within" {

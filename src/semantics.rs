@@ -2518,6 +2518,42 @@ pub fn check(
                 format!("Nested lambda references enclosing local '{name}' without a parameter"),
             ));
         }
+        // A transformation pattern runs in the nested lambda too, so a name
+        // it applies is read there: q 5 `{[a] {[c:a] c}}[1] 2` is 'a (#637).
+        // Every name in a slot but those it binds, a symbol, and a table
+        // pattern's keys.
+        let sig = signature(code, raw, scope.start);
+        if !sig.named {
+            continue;
+        }
+        for slot in sig.slots {
+            let bound = crate::pattern_names(slot);
+            let at = slot.as_ptr() as usize - code.as_ptr() as usize;
+            for m in re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(slot) {
+                let name = m.as_str();
+                if !boundary(slot, m.start())
+                    || slot[..m.start()].ends_with('`')
+                    || slot[m.end()..].starts_with('.')
+                    || slot[m.end()..].trim_start().starts_with(':')
+                    || bound.contains(&name)
+                    || !outer(name)
+                    || !seen.insert(name)
+                    || exact.contains_key(&resolved(name, &scope.namespace))
+                {
+                    continue;
+                }
+                out.push(Finding::at(
+                    path,
+                    raw,
+                    at + m.start(),
+                    "QF005",
+                    format!(
+                        "Nested lambda's parameter pattern applies enclosing local '{name}', \
+                         which it cannot see"
+                    ),
+                ));
+            }
+        }
     }
     // One file, one naming convention. The FINOS guidelines ask for functions
     // "in lower case or camelCase", and the qbists essays for names chosen

@@ -33,6 +33,17 @@ f:{[a] 1};f . enlist 1
 === QA005 | each supplies one argument, so a rank-2 lambda projects
 {[a;b]a+b} each 1 2 3
 
+=== QA005 | and so do each in brackets and each with @ (q 5: each[{[a;b] a+b};1 2] and {[a;b] a+b}@'1 2 are projections) (#632)
+a:each[{[a;b] a+b};1 2]
+b:{[a;b] a+b}@'1 2
+c:each[{x+y};1 2]
+d:{x+y}@'1 2
+
+=== clean | while a rank-1 lambda under them, or @ without each, is a call (#632)
+a:each[{x};1 2]
+b:{[a] a}@'1 2
+c:{[a;b] a+b}@1 2
+
 === clean | each on a unary lambda applies per element
 {[a]a+1} each 1 2 3
 
@@ -108,6 +119,14 @@ r:$[a;1;2]
 f:{[a;b] a+b}
 r:f(1;2)
 
+=== QA008 | and a lambda written out, with or without a parameter list (q 5: {[a;b] a+b}(1;2) is {[a;b] a+b}[1 2]) (#643)
+r:{[a;b] a+b}(1;2)
+s:{x+y} (1;2)
+
+=== clean | while a rank-1 lambda takes the list as its argument, and a list with an empty item is a projection applied on purpose (#643)
+r:{x}(1;2)
+s:{x y}(`a;;)
+
 === QA008 | implicit y makes the rank
 g:{x+y}
 r:g(1;2)
@@ -157,6 +176,27 @@ r:.[{x};enlist 1]
 === QA012 | more arguments than the named lambda takes
 f:{[a] a+1}
 r:f[1;2]
+
+=== QA012 QA002 profile: general | a later bracket applies to the projection the first left (q 5: each is 'rank) (#628)
+f:{[a;b] a+b}
+g:{[a;b;c] a+b+c}
+r:f[1][2;3]
+s:{[a;b] a+b}[;1][2;3]
+u:g[1;;3][2;4]
+
+=== clean profile: general | while one that fits it, or elides a slot, runs or projects (q 5: 3, 6, 6 and a projection) (#628)
+f:{[a;b] a+b}
+g:{[a;b;c] a+b+c}
+r:{[a;b] a+b}[1] [2]
+s:g[1][2][3]
+u:g[1;;3][2]
+v:f[1][;2]
+w:f[1;2][0]
+
+=== QA012 QA002 profile: general | a function in parentheses of its own is still applied (q 5: both are 'rank) (#629)
+f:{[a;b] a+b}
+r:(f)[1;2;3]
+s:({[a;b] a+b})[1;2;3]
 
 === QA012 profile: general | a comment line between does not join the call to the definition (q 5: 'rank)
 f:{[a] a+1}
@@ -432,6 +472,22 @@ b:.[f;0x0102]
 f:{x+y}
 a:f . 1b
 b:.[f;0x01]
+
+=== QA012 QA002 profile: general | a symbol, boolean or char vector holds one argument per item (q 5: each is 'rank) (#630)
+f:{[a;b] a+b}
+r:f . `a`b`c
+s:{[a;b] a+b} . 101b
+u:f . "abc"
+w:.[f;`a`b`c]
+
+=== clean profile: general | and one that fits is a call (q 5: f . `a`b is `a`b, f . "ab" is "ab") (#630)
+f:{[a;b] (a;b)}
+r:f . `a`b
+s:f . 10b
+u:f . "ab"
+
+=== QA003 profile: uqf | enlist of one item is one argument, so a rank-2 lambda is projected and the handler never runs (q 5: {[a;b] a+b}[1]) (#630)
+r:.[{[a;b] a+b};enlist 1;{x}]
 
 === QA012 | too many arguments through dot apply, to a named lambda (q 5: 'rank)
 g:{x}

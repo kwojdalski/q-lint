@@ -675,23 +675,24 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
         ("QF015", "f:{[x] a:return x}"),     // `return` mid-expression
         ("QF015", "f:{[x] if[x;break]; x}"), // no q spelling for break
         ("QB015", "t:([]s:`ab);r:select from t where s=\"a*\""), // a pattern
-        ("QB020", "f:{[x] :x;\n  x+1}"),     // across lines
-        ("QP005", "r:select mid:0.5*bid+ask from q"), // qSQL columns
-        ("QP005", "tanh:1f-2f%1f+exp 2f*"),  // a composition
-        ("QR004", "r:count {x+1}' b"),       // `{x+1}'` infix
-        ("QA006", "r:`int$[a=1;b]"),         // `if` would fuse onto `int
-        ("QA006", "r:x$[a=1;b]"),            // and onto a name
-        ("QF010", "f:{[a;b] x+a}"),          // which parameter?
-        ("QF010", "f:{[`s] x+1}"),           // a literal pattern binds no name (#379)
-        ("QF010", "f:{[1] x}"),              // nor does a number (#379)
-        ("QF010", "f:{[(a;b)] x}"),          // and a list pattern is no one name (#379)
-        ("QT008", "r:til 2.5"),              // no long it spells
-        ("QT008", "r:til 2e-1"),             // `til 2-1` (#389)
-        ("QT008", "r:til 2e+1"),             // nor `til 2+1` (#389)
+        ("QB015", "t:([]s:`ab);r:select from t where \"ab\"=s"), // like reads its pattern on the right (#639)
+        ("QB020", "f:{[x] :x;\n  x+1}"),                         // across lines
+        ("QP005", "r:select mid:0.5*bid+ask from q"),            // qSQL columns
+        ("QP005", "tanh:1f-2f%1f+exp 2f*"),                      // a composition
+        ("QR004", "r:count {x+1}' b"),                           // `{x+1}'` infix
+        ("QA006", "r:`int$[a=1;b]"),                             // `if` would fuse onto `int
+        ("QA006", "r:x$[a=1;b]"),                                // and onto a name
+        ("QF010", "f:{[a;b] x+a}"),                              // which parameter?
+        ("QF010", "f:{[`s] x+1}"), // a literal pattern binds no name (#379)
+        ("QF010", "f:{[1] x}"),    // nor does a number (#379)
+        ("QF010", "f:{[(a;b)] x}"), // and a list pattern is no one name (#379)
+        ("QT008", "r:til 2.5"),    // no long it spells
+        ("QT008", "r:til 2e-1"),   // `til 2-1` (#389)
+        ("QT008", "r:til 2e+1"),   // nor `til 2+1` (#389)
         ("QF020", "t:([]ab:1 2;ac:3 4);r:select a from t"), // two equally close
-        ("QA007", "f:{[c] $[c;1;2;3]}"),     // no empty slot
-        ("QP002", "t:.z.z / old: 15h$x"),    // the cast is in a comment
-        ("QP002", "t:.z.Z;s:\"0Nz\""),       // and the null in a string
+        ("QA007", "f:{[c] $[c;1;2;3]}"), // no empty slot
+        ("QP002", "t:.z.z / old: 15h$x"), // the cast is in a comment
+        ("QP002", "t:.z.Z;s:\"0Nz\""), // and the null in a string
         (
             "QF005",
             "f:{[k] g:{[a;b;c;d;e;f;g;h] k+h}; g[1;2;3;4;5;6;7;8]}",
@@ -699,6 +700,7 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
         // A local passed in before it holds a value is 'a (#769)
         ("QF005", "h:{a:{a+1};a}"),
         ("QF005", "k:{[b] r:{a+x} each b; a:2; r}"),
+        ("QF005", "f:{[a] {[c:a] c}}"), // a pattern, not a body to pass it into (#637)
         // A bracket argument would become a key-column header (#406)
         ("QR004", "a:1 2 3;r:{x*2}'[a]"),
         ("QR004", "a:1 2 3;r:{x*2} each[a]"),
