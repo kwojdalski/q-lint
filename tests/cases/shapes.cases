@@ -1304,3 +1304,13 @@ r2:select i 0 from u
 v:([]a:1 2)
 update px:a from `v
 r3:select p0:px 0 from v
+
+=== QT023 profile: general | a real vector, a leading-dot real and a real with an exponent meet a char too (#587; q 5: each is 'type)
+r:"a"*1 2e
+s:"a"+.5e
+u:"a"+1e3e
+v:.5e*"a"
+
+=== clean profile: general | while a float exponent or a char on the right of `-` is fine (#587; q 5: 1097f, -96e)
+w:"a"+1e3
+y:1e -"a"

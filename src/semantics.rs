@@ -3785,13 +3785,14 @@ fn named_values(
     // those operand kinds. An older note in this repository had `"a"*3` as
     // 291, on a version it did not record.
     // Booleans and bytes before plain integers, or `1b` matches as `1`.
-    let operand = r#""(?:\\.|[^"\\])*"|[01]+b|0x[0-9a-fA-F]+|-?(?:\d+(?:\.\d*)?|\.\d+)e\b|-?0[NW][hij]?\b|-?\d+[hij]?(?:[ \t]+-?\d+[hij]?)*|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*"#;
+    let operand = r#""(?:\\.|[^"\\])*"|[01]+b|0x[0-9a-fA-F]+|(?:-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?[ \t]+)*-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?e\b|-?0[NW][hij]?\b|-?\d+[hij]?(?:[ \t]+-?\d+[hij]?)*|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*"#;
     let infix = regex::Regex::new(&format!(
         r"(?P<l>{operand})\s*(?P<op>[-+*])\s*(?P<r>{operand})"
     ))
     .unwrap();
     let kind_of = |text: &str, at: usize| -> Option<Arithmetic> {
-        if text.starts_with(|c: char| c.is_alphabetic() || c == '.') {
+        // `.5e` is a number, `.ns.a` a name (#587).
+        if text.starts_with(char::is_alphabetic) || re!(r"^\.[A-Za-z]").is_match(text) {
             visible(text, at)?;
             kinds.get(key(text, at).as_str()).copied()
         } else {
@@ -4355,9 +4356,10 @@ fn arithmetic_kind(text: &str) -> Option<Arithmetic> {
         // A long null or infinity is a long: q 5 `"a"+0N` and `"a"*0W` are
         // 'type, where `"a"+0n` is 0n (#609).
         Some(Arithmetic::Integral)
-    } else if re!(r"^(?:-?(?:\d+(?:\.\d*)?|\.\d+)\s+)*-?(?:\d+(?:\.\d*)?|\.\d+)e$").is_match(text) {
+    } else if re!(r"^(?:-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?\s+)*-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?e$").is_match(text) {
         // A real refuses a char as an integer does, under all three: q 5
-        // `"a"+1e`, `1e*"a"` and `"a"-1.5e` are 'type, `1e -"a"` is -96e (#474).
+        // `"a"+1e`, `1e*"a"` and `"a"-1.5e` are 'type, `1e -"a"` is -96e (#474),
+        // and so are a vector and an exponent: `"a"*1 2e`, `"a"+1e3e` (#587).
         Some(Arithmetic::Integral)
     } else if re!(r"^-?(?:\d+\.\d*|\.\d+|\d+[ef]|\d+(?:\.\d*)?e[+-]?\d+)(?:\s+-?(?:\d+\.?\d*(?:e[+-]?\d+)?[ef]?))*$|^\d{4}\.\d{2}")
         .is_match(text)
