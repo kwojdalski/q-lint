@@ -1742,6 +1742,25 @@ fn numbers(
                 Some(format!(
                     "`{text}`: a vector literal takes one type suffix, after its last item"
                 ))
+            } else if text.contains(':')
+                && !re!(r"[uvtpnzdmD]$").is_match(last)
+                && run[k + 1..].iter().any(|t| {
+                    let t = t.as_str();
+                    !t.contains([':', 'D'])
+                        && !t.starts_with("0x")
+                        && !t.ends_with('b')
+                        && !re!(r"^0[nN]$").is_match(t)
+                })
+            {
+                // A time, timespan or timestamp takes only items of a time's
+                // shape, or a null, after it: q 5 refuses `12:00 1`,
+                // `12:00 1.5`, `12:00 0W`, `12:00 0Ni`, `1 12:00 2` and
+                // `0D12:00 1`, and parses `12:00 0N`, `1 12:00`,
+                // `12:00 12:00:00` and `0D00:01 0D` - and `12:00 1u` and
+                // `0D00:01 5n`, where a temporal suffix types them all (#673).
+                Some(format!(
+                    "`{text}`: a time in a vector literal takes only times or nulls after it"
+                ))
             } else if k + 1 < run.len()
                 && (text.contains('.') || re!(r"^\d+[eE][+-]?\d+$").is_match(text))
                 && !text.contains(':')

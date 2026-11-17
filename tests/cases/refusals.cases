@@ -527,6 +527,23 @@ f:{x 0:y 1}
 g:{x 1:y 0}
 h:{`:lib 2:x 1}
 
+=== QE010 profile: general | a time followed by a plain number (#673; q 5: parse "12:00 1" is '12:00, "01:00 30" '01:00)
+a:12:00 1
+b:01:00 30
+c:1 12:00 2
+d:0D12:00 1
+e:12:00 0Ni
+
+=== clean profile: general | a time after a number, before a null or another time, or under a temporal suffix (q 5 parses each)
+a:12:00 0N
+b:1 12:00
+c:12:00 12:30
+d:12:00 12:00:00
+e:-0D00:00:00.250 0D 0D00:00:00.500
+f:2026.09.17D10:00:01.500 0Np
+g:12:00 1u
+h:0D00:01 5n
+
 === QE010 profile: general | an integer type with a fraction (q 5: parse "1.5j" is '1.5)
 a:1.5j
 
