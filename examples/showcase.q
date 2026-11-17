@@ -26,7 +26,7 @@
 from:1
 
 / Everything from here is inside .demo, which is what makes the QF004
-/ case below a namespace-level shadow rather than a root-level one. A file
+/ case below a namespace-level assignment rather than a root-level one. A file
 / may end inside a namespace: q restores the caller's context when the
 / load finishes, which is why KX's own u.q opens `\d .u` and never closes it.
 \d .demo
@@ -51,8 +51,8 @@ drop:{[_] 1}
 / expect-next: QF003
 tally:{[x] count:x+1; count}
 
-/ QF004: inside \d .demo this defines .demo.count, shadowing the builtin
-/ for everything that follows in the namespace.
+/ QF004: inside \d .demo q refuses to assign `count` ('assign); only the
+/ full name, .demo.count, would define it.
 / expect-next: QF004
 count:{[t] 42}
 

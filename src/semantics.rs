@@ -2446,17 +2446,30 @@ pub fn check(
         .iter()
         .map(|scope| (scope.body, statement_view(&scope.direct), false))
         .collect();
-    // The root, one line at a time: `statement_view` blanks a qSQL phrase to
-    // the next `;`, and at root a statement ends at the newline instead.
+    // The root, one statement at a time: `statement_view` blanks a qSQL
+    // phrase to the next `;`, and at root a statement ends at a newline the
+    // next line does not continue. An indented line continues it, so a
+    // column on one is the query's: `r:select` + `  total_qty:sum qty by sym
+    // from t` (#694). Indentation is read from the source, where a comment
+    // line is not blank.
     let mut root = code.as_bytes().to_vec();
     for scope in scopes.iter().filter(|s| s.parent.is_none()) {
         blank(&mut root[scope.start..=scope.end.min(code.len() - 1)]);
     }
     let root = crate::flat_filter(std::str::from_utf8(&root).unwrap_or_default());
+    let mut statements: Vec<(usize, usize)> = vec![];
     let mut offset = 0;
-    for line in root.split_inclusive('\n') {
-        views.push((offset, statement_view(line), true));
+    for (line, source_line) in root.split_inclusive('\n').zip(raw.split_inclusive('\n')) {
+        match statements.last_mut() {
+            Some(last) if line.trim().is_empty() || source_line.starts_with([' ', '\t']) => {
+                last.1 += line.len()
+            }
+            _ => statements.push((offset, offset + line.len())),
+        }
         offset += line.len();
+    }
+    for (start, end) in statements {
+        views.push((start, statement_view(&root[start..end]), true));
     }
     for (start, statements, at_root) in &views {
         for a in assignment.captures_iter(statements) {
@@ -2958,13 +2971,13 @@ enum Held {
     Table(Vec<String>, bool),
 }
 
-/// The value text of a top-level `name:...`, judged as a literal.
-fn held(code: &str, raw: &str) -> Option<Held> {
+/// A value's text, in two views at the same offsets, without the
+/// parentheses that only group it. `(5)` is the atom 5 and `(1 2 3)` the
+/// vector: without a top-level `;`, parentheses only group (q 5: `n:(5);
+/// n+1 2` is `6 7`). Unwrapped in a loop, not by recursion, which tens of
+/// thousands of levels would overflow, and only as deep as q parses (#703).
+fn ungrouped<'a>(code: &'a str, raw: &'a str) -> Option<(&'a str, &'a str)> {
     let (mut code, mut raw) = (code.trim(), raw.trim());
-    // `(5)` is the atom 5 and `(1 2 3)` the vector: without a top-level
-    // `;`, parentheses only group (q 5: `n:(5); n+1 2` is `6 7`). Unwrapped
-    // in a loop, not by recursion, which tens of thousands of levels would
-    // overflow, and only as deep as q parses (#703).
     let mut depth = 0;
     while code.starts_with('(')
         && !code[1..].trim_start().starts_with('[')
@@ -2977,6 +2990,12 @@ fn held(code: &str, raw: &str) -> Option<Held> {
         }
         (code, raw) = (code[1..code.len() - 1].trim(), raw[1..raw.len() - 1].trim());
     }
+    Some((code, raw))
+}
+
+/// The value text of a top-level `name:...`, judged as a literal.
+fn held(code: &str, raw: &str) -> Option<Held> {
+    let (code, raw) = ungrouped(code, raw)?;
     if code.starts_with('(') && matching(code, 0, b'(', b')') == Some(code.len()) {
         let inner = code[1..code.len() - 1].trim_start();
         if inner.starts_with('[') {
@@ -3334,14 +3353,17 @@ fn named_values(
             end += 1;
         }
         if let Some(value) = held(&code[start..end], &comments[start..end]) {
+            // Read as `held` reads it, inside any grouping parentheses:
+            // `out:(1)` is a handle and `a:("abc")` a string (#693).
+            let text = ungrouped(&code[start..end], &comments[start..end]).map_or("", |v| v.1);
             // `0N` and `0W` are integers too: uqf's tick.q starts a log
             // handle as `0N` and sets it with hopen later. Not a short: q 5
             // `h:1h; h "hi"` is 'type, where `2i "hi"` writes (#477).
-            if re!(r"^\s*-?(?:\d+|0[NW])[ij]?\s*$").is_match(&comments[start..end]) {
+            if re!(r"^\s*-?(?:\d+|0[NW])[ij]?\s*$").is_match(text) {
                 handles.insert(name);
             }
             known.insert(name, (end, value));
-            if let Some(kind) = arithmetic_kind(&comments[start..end]) {
+            if let Some(kind) = arithmetic_kind(text) {
                 kinds.insert(name, kind);
             }
         }
@@ -3388,10 +3410,14 @@ fn named_values(
     // indexing (q 5: `a:2.5;a@0` is 'type). Juxtaposed
     // only before something that is an argument - a literal, a bracket, a
     // name that is not an infix builtin (`f mod 2` is not indexing `f`) -
-    // and not before a negative literal, which is QB010's.
-    let indexed = re!(
-        r#"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)(?:\[|[ \t]*@[ \t]*[0-9"`(A-Za-z]|[ \t]+\.[ \t]+[0-9"`(A-Za-z]|[ \t]+([0-9"`(]|\.?[A-Za-z][A-Za-z0-9_]*))"#
-    );
+    // and not before a negative literal, which is QB010's. The argument may
+    // start the indented line that continues the statement, past blank and
+    // comment lines (`blank!`): q 5 `s:b` over `  0` is 'type (#687).
+    let indexed = re!(concat!(
+        r#"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)(?:\[|[ \t]*@[ \t]*[0-9"`(A-Za-z]|[ \t]+\.[ \t]+[0-9"`(A-Za-z]|"#,
+        blank!(),
+        r#"+([0-9"`(]|\.?[A-Za-z][A-Za-z0-9_]*))"#
+    ));
     // From each name on, not match after match: in `show a 0` the match
     // `show a` would hide `a 0` (q 5: 'type) (#471).
     // Over `comments`, where a string keeps its quotes: `k "hi"` and
@@ -3422,7 +3448,7 @@ fn named_values(
         // Verified in q 5. A name or anything else might be a string.
         if handles.contains(key(name.as_str(), name.start()).as_str()) {
             // `a@0` and `a . enlist 0` apply it the same way (q 5).
-            let after = raw[name.end()..].trim_start_matches([' ', '\t']);
+            let after = &raw[crate::past_blanks(code, name.end())..];
             let after = after
                 .strip_prefix(['@', '.'])
                 .map_or(after, |a| a.trim_start_matches([' ', '\t']));
@@ -3463,8 +3489,14 @@ fn named_values(
     // may hold a list is left alone: `a:1 2 3; a -1` indexes, and is 0N.
     // The literal has to end the statement or bracket, as in `lib.rs`, or
     // the lambda: q 5 `a:2.5; f:{a -1}; f[]` is 'type (#473).
-    for m in re!(r"(?m)(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)[ \t]+(-\d[A-Za-z0-9.:]*)[ \t\r]*(?:[;\])}]|$)")
-        .captures_iter(code)
+    // The literal may start the indented line that continues the statement:
+    // q 5 `r:a` over `  -1` is 'domain too (#687).
+    for m in re!(concat!(
+        r"(?m)(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)",
+        blank!(),
+        r"+(-\d[A-Za-z0-9.:]*)[ \t\r]*(?:[;\])}]|$)"
+    ))
+    .captures_iter(code)
     {
         let name = m.get(1).unwrap();
         if !boundary(code, name.start())
@@ -3484,8 +3516,12 @@ fn named_values(
     // `{[] m:1.5; m -1}[]` and `{[] s:.z.p; s -0D00:00:01}[]` are 'type
     // like their top-level forms. A lambda's closing brace ends the literal too.
     // `local_atom` says when the text is sure.
-    for m in re!(r"(?m)(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)[ \t]+(-\d[A-Za-z0-9.:]*)[ \t\r]*(?:[;\])}]|$)")
-        .captures_iter(code)
+    for m in re!(concat!(
+        r"(?m)(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)",
+        blank!(),
+        r"+(-\d[A-Za-z0-9.:]*)[ \t\r]*(?:[;\])}]|$)"
+    ))
+    .captures_iter(code)
     {
         let name = m.get(1).unwrap();
         if !boundary(code, name.start())
@@ -3918,15 +3954,22 @@ fn named_values(
                         let n = crate::slots(&slot[1..slot.len() - 1]).len();
                         return (n > 1).then_some(n);
                     }
-                    re!(r"^(?:-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+|(?:`[A-Za-z0-9_.]*){2,})$")
-                        .is_match(slot)
-                        .then(|| {
-                            if slot.starts_with('`') {
-                                slot.matches('`').count()
-                            } else {
-                                slot.split_whitespace().count()
-                            }
-                        })
+                    // A vector's items may run on across a line break into
+                    // an indented line: `(1` over `  2;3;4)` is `(1 2;3;4)`
+                    // (#684).
+                    re!(concat!(
+                        r"^(?:-?\d[A-Za-z0-9.]*(?:",
+                        blank!(),
+                        r"+-?\d[A-Za-z0-9.]*)+|(?:`[A-Za-z0-9_.]*){2,})$"
+                    ))
+                    .is_match(slot)
+                    .then(|| {
+                        if slot.starts_with('`') {
+                            slot.matches('`').count()
+                        } else {
+                            slot.split_whitespace().count()
+                        }
+                    })
                 };
                 let read: Vec<_> = slots.iter().map(|s| row(s)).collect();
                 if read.iter().any(Option::is_some) {

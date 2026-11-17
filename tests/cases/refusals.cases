@@ -1,6 +1,10 @@
 === QT024 | sorted attribute on a literal out of order
 r:`s#3 1 2
 
+=== QT024 profile: general | and so on a literal continued on an indented line (q 5: 's-fail, #689)
+w:`s#1
+  1e-3
+
 === QT024 | symbols sort by byte, so a lowercase before an uppercase is out of order
 r:`s#`a`B
 
@@ -49,6 +53,16 @@ d:12:00:1 12:00u
 
 === QE006 profile: general | a minute suffix on an earlier item makes no minute vector (#449; q 5: '23:59:60u)
 e:23:59:60u 12:00
+
+=== clean profile: general | the suffix types a vector continued on an indented line (q 5: each ~ its one-line form, #682)
+c:12:00:60
+  12:00u
+l:100:00:00.1234
+  100:00t
+
+=== QE006 profile: general | and on an earlier line it still makes no minute vector (q 5: '23:59:60u, #682)
+e:23:59:60u
+  12:00
 
 === QE006 profile: general | a minute past 59 with the minute suffix (#449; q 5: '12:60:00)
 f:12:60:00u
@@ -508,6 +522,28 @@ c:2E
 d:1.5E-3
 e:1Ef
 f:1 2E5
+
+=== clean profile: general | a vector continued on an indented line is one literal, past a blank line too (q 5: each ~ its one-line form, #681)
+c:1E5
+  2.5
+b:9223372036854775808
+  1.5
+a:1.5j
+  2c
+d:-2000.01.01
+
+  0Wn
+
+=== clean profile: general | but a symbol or a string at column 0 starts a statement of its own (q 5: each line runs)
+a:10 20 30
+y:1i
+`a 2
+x:1i
+"ab" 1
+
+=== QE010 profile: general | and its suffix rule holds across the break (q 5: x:1i then   2 is '1i, #681)
+x:1i
+  2
 
 === clean profile: general | an uppercase exponent where the number is float anyway, and lowercase (#383; q 5: each parses)
 a:1.5E3

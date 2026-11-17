@@ -101,7 +101,7 @@
     "code": "QF004",
     "name": "reserved-definition",
     "category": "names",
-    "summary": "Namespace definition shadows a builtin",
+    "summary": "Namespace-level assignment to a builtin, which q refuses",
     "scope": "builtin"
   },
   {

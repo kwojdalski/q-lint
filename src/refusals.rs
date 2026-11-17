@@ -20,7 +20,7 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
     monadic_glyph(path, source, code, comments, &mut out);
     juxtaposed_derived(path, source, code, comments, &mut out);
     keyword_each(path, source, &unsym, &mut out);
-    numbers(path, source, code, &unsym, &mut out);
+    numbers(path, source, code, comments, &unsym, &mut out);
     out
 }
 
@@ -32,9 +32,13 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
 /// 's-fail and `u#"aa"` 'u-fail. It is read from `comments`, where the
 /// string is still text.
 fn attributes(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<Finding>) {
-    for m in re!(
-        r#"`([spu])#[ \t]*((?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[eE][+-]\d|[A-Za-z0-9.])*(?:[ \t]+-?\d(?:[eE][+-]\d|[A-Za-z0-9.])*)+|"[^"\\]+")"#
-    )
+    // A vector's items may run on across the indented line that continues
+    // it: q 5 `w:`s#1` over `  1e-3` is 's-fail (#689).
+    for m in re!(concat!(
+        r#"`([spu])#[ \t]*((?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[eE][+-]\d|[A-Za-z0-9.])*(?:"#,
+        blank!(),
+        r#"+-?\d(?:[eE][+-]\d|[A-Za-z0-9.])*)+|"[^"\\]+")"#
+    ))
     .captures_iter(comments)
     {
         let whole = m.get(0).unwrap();
@@ -142,7 +146,7 @@ fn days_in(year: u32, month: u32) -> u32 {
 /// The letter after the last item of the vector literal whose token runs
 /// through `end`, if it ends in one: `u` for `23:59:60u` and for
 /// `12:00:60 12:00u` alike, since that suffix types every item.
-fn vector_suffix(unsym: &str, end: usize) -> Option<char> {
+fn vector_suffix(comments: &str, unsym: &str, end: usize) -> Option<char> {
     let token_end = |from: usize| {
         from + unsym[from..]
             .find(|c: char| !(c.is_ascii_alphanumeric() || ".:".contains(c)))
@@ -151,7 +155,11 @@ fn vector_suffix(unsym: &str, end: usize) -> Option<char> {
     let mut at = token_end(end);
     loop {
         let rest = &unsym[at..];
-        let gap = rest.len() - rest.trim_start_matches([' ', '\t']).len();
+        // Blanks, or a line break into the indented line that continues
+        // the vector: `12:00:60` / `  12:00u` is one literal (#682). Read in
+        // `comments`, where a symbol starting the next line is still there
+        // to say that line is not indented.
+        let gap = crate::past_blanks(comments, at) - at;
         if gap == 0 || !rest[gap..].starts_with(|c: char| c.is_ascii_digit()) {
             break;
         }
@@ -174,7 +182,7 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
     // `12:12`, and the time is the `12:60` after it.
     // A `c` after the vector makes every item chars, whatever its fields
     // hold: q 5 reads `12:60c`, `2000.13.01c` and `12:5c` as " " (#714).
-    let chars = |end: usize| vector_suffix(unsym, end) == Some('c');
+    let chars = |end: usize| vector_suffix(comments, unsym, end) == Some('c');
     let whole_token = |m: &regex::Captures| {
         let head = &unsym[..m.get(0).unwrap().start()];
         let word = head.trim_end_matches(|c: char| c.is_ascii_alphanumeric() || "._".contains(c));
@@ -194,7 +202,7 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
         // A minute's seconds are never read: q 5 takes `23:59:60u` as 23:59,
         // and `12:00:60 12:00u` too, while `23:59:60u 12:00` is a vector of
         // seconds and '23:59:60u.
-        let minute = vector_suffix(unsym, whole.end()) == Some('u');
+        let minute = vector_suffix(comments, unsym, whole.end()) == Some('u');
         if field(2) > 59 || (field(3) > 59 && !minute) {
             out.push(Finding::at(
                 path,
@@ -218,7 +226,7 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
         if command_argument(source, whole.start())
             || unsym[..whole.start()].ends_with(['D', 'T'])
             || matches!(
-                vector_suffix(unsym, whole.end()),
+                vector_suffix(comments, unsym, whole.end()),
                 Some('c' | 't' | 'u' | 'v')
             )
         {
@@ -341,7 +349,7 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
             if !chars(whole.end())
                 && (m[4].len() == 1
                     || (m.get(5).is_some_and(|s| s.as_str().len() == 1)
-                        && vector_suffix(unsym, whole.end()) != Some('u')))
+                        && vector_suffix(comments, unsym, whole.end()) != Some('u')))
             {
                 refuse(
                     whole.start(),
@@ -1338,7 +1346,14 @@ fn null_literal(text: &str, not_last: bool, negative: bool) -> Option<String> {
 /// vector of atoms is not a vector at all - `1b 0b` parses, as two atoms -
 /// and `0N 1`, `3 4i`, `1e5` and `2023.01.01` are fine - though `1E5`,
 /// with its exponent in upper case, is not.
-fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Finding>) {
+fn numbers(
+    path: &str,
+    source: &str,
+    code: &str,
+    comments: &str,
+    unsym: &str,
+    out: &mut Vec<Finding>,
+) {
     // An exponent's sign is part of its number: `1.5e-3` is one float.
     // A token that starts inside a name - the `1` of `x1:1.5j` - is passed
     // over one character at a time, so the literal after it is still read.
@@ -1353,13 +1368,15 @@ fn numbers(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec<Find
     };
     let mut i = 0;
     while i < tokens.len() {
-        // A run of items separated by spaces only is one vector literal.
+        // A run of items separated by blanks only is one vector literal - a
+        // line break too, into the indented line that continues it: q 5
+        // reads `c:1E5`, `  2.5` as `1E5 2.5` (#681). Read in `comments`,
+        // where a symbol or a string at column 0 is not blanks: `1:-1` over
+        // `` `:f 0:x ``, or `0:x` over `"\t" 0:x`, is two statements.
         let mut j = i;
         while j + 1 < tokens.len()
-            && unsym[tokens[j].end()..tokens[j + 1].start()]
-                .bytes()
-                .all(|b| b == b' ' || b == b'\t')
-            && tokens[j].end() < tokens[j + 1].start()
+            && re!(concat!("^", blank!(), "+$"))
+                .is_match(&comments[tokens[j].end()..tokens[j + 1].start()])
         {
             j += 1;
         }

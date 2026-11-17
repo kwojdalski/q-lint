@@ -464,6 +464,15 @@ r:x within 1 2 3
 === QT018 | cor of two literal vectors of different lengths
 r:1 2 cor 1 2 3
 
+=== clean profile: general | a left operand continued from the line above is the whole vector (q 5: 1f, #683)
+r:1
+  2 cor 1 2
+
+=== QT018 profile: general | and a right operand on the indented next line is read (q 5: 'length, #683)
+s:1 cor
+
+  1 2
+
 === QT014 | a name before the literal does not change which operand it is
 r:f 1.5 rotate 1 2
 
@@ -553,10 +562,25 @@ c:til@2.5
 a:where 2 / c
   #1b
 
-=== QT008 | but a blank line between ends the statement (#193)
+=== clean | and so does one after a blank or comment line, which ends nothing: til 2.5>x runs (q 5, x:1: ,0) (#675)
+a:where 2
+
+  #1b
+b:asc 3
+
+  #x
+c:1 2 3=1 2
+
+  3
 d:til 2.5
 
-  +x
+  >x
+e:where 2
+/ c
+  #1b
+f:where 2
+  / c
+  #1b
 
 === clean | a slash straight after the literal is an iterator, so the literal is not the argument (#194)
 a:asc 3/x
@@ -572,8 +596,21 @@ b:mavg[enlist	1;1 2 3]
 c:within[1;enlist	1]
 t:([]a:enlist	1;b:2 3)
 
+=== QT017 QT019 profile: general | and so is a line break inside the brackets (q 5: 'domain, 'length, #690)
+u:within[1;enlist
+  1]
+v:mavg[enlist
+  1;1 2 3]
+
 === QT003 profile: general | arithmetic on the null symbol (#455; q 5: ` + 1 is 'type)
 a:` + 1
+
+=== QT003 profile: general | with the operator starting the indented next line, past a blank line too (q 5: each 'type, #688)
+z:`
+  + 1
+a:`a
+
+  * 2
 
 === clean profile: general | a symbol composing with a projection on its right (q 5: `+n% is +[`]%[n], `a*n* is *[`a]*[n]; btick2 templates write `%name%])
 n:1

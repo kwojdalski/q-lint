@@ -239,6 +239,14 @@ select .my.agg px by sym from t
 a:3
 r:a -1
 
+=== QB010 profile: general | and so it does with the literal on the indented next line (q 5: 'domain and 'type, #687)
+a:3
+r:a
+  -1
+w:.z.p
+
+  -0D00:01
+
 === QB010 | in a condition too
 n:1.5
 if[n -1;2]
@@ -248,6 +256,10 @@ window_to:.z.p;r:window_to -0D00:01
 
 === QB010 | .z.p is a value, so applying it is never meant
 r:0D00:01 xbar .z.p -0D00:01
+
+=== QB010 | and so it is where the literal ends a lambda (q 5: each 'type, #678)
+f:{0D00:01 xbar .z.p -0D00:01}
+k:{[x] .z.p -1}
 
 === QB010 | inside a conditional
 window_to:.z.p
@@ -486,6 +498,12 @@ p:"/" sv string
 t:select from t where
   a=1 and b=0
 
+=== QB006 QB005 | and so it does in a lambda, where the line ends at where (#679)
+f:{select from t where
+  a=1 and b=0}
+g:{select from t where
+  a~1}
+
 === clean | at column 0 the second line is a separate statement
 p:"/" sv string
 dir:1
@@ -543,6 +561,12 @@ step:{if[hasvowel -1_x;x[-1+count x]:"i"];x}
 
 === clean | a column against an item of itself is not a self-comparison
 r:select from t where c=c i
+
+=== clean | nor with the item on the indented next line, in a lambda too (q 5: the same query, #695)
+r:select from t where c=c
+  i
+f:{select from t where c=c
+  i}
 
 === clean | a match inside a lambda applied to each row is per row
 r:select from t where {x[`b]~2} each d
@@ -636,6 +660,14 @@ out["hello"]
 === clean | an int is a handle too (#477; q 5: h:2i; h "hi\n" writes to stderr)
 h:2i
 h["hi\n"]
+
+=== clean | and so in grouping parentheses (#693; q 5: out:(1); out["hello\n"] writes, as do h:(2i) and l:(0N) once opened)
+out:(1)
+out["hello"]
+h:(2i)
+h["hi\n"]
+l:(0N)
+l["x"]
 
 === QT022 | but a short is no handle (#477; q 5: h:1h; h["hi"] and h:0Nh; h "hi" are 'type)
 h:1h
@@ -754,6 +786,10 @@ f:"a"="b",x
 
 === QT007 profile: general | a symbol pattern in infix ss (q 5: "abc" ss `a is 'type)
 a:"abc" ss `a
+
+=== QT007 profile: general | and on the indented next line (q 5: 'type, #692)
+y:"abc" ss
+  `a
 
 === QB013 | type of a literal in parentheses (q 5: (type 1)=`long is 'type)
 a:(type 1)=`long
