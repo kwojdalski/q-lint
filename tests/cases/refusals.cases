@@ -1048,3 +1048,15 @@ v:1 2;bin_dt:3;f:{x}
 a:v in -1 2
 b:.q.in -1
 c:v mod 2
+
+=== QE008 QE009 profile: general | a glyph or derived function after the operators . and _ (q 5: ',, '-, '/, '/; #567)
+v:1 2;f2:{x+y}
+a:f2 . ,v
+b:v _ -v
+c:1_f2/v
+d:f2 . +/v
+
+=== clean profile: general | but not after a name that ends in _ or a number that ends in . (#567)
+v:1 2;a_:3;f:{x}
+b:a_-v
+c:1.-v

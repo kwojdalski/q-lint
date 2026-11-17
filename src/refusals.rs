@@ -1037,11 +1037,22 @@ fn opens_expression(code: &str, raw: &str, comments: &str, i: usize, line_start:
         && crate::semantics::INFIX.contains(&word)
         && !before[..before.len() - word.len()].ends_with(['.', '`'])
         && boundary(comments, before.len() - word.len());
+    // `.` and `_` are operators too where they stand apart, and `_` after a
+    // number is drop: q 5 refuses `f . ,v`, `v _ -v` and `1_f/v` (#567).
+    let operator = before.strip_suffix(['.', '_']).is_some_and(|rest| {
+        rest.ends_with([' ', '\t'])
+            || before.ends_with('_')
+                && rest[tail(rest, &|b| {
+                    b.is_ascii_alphanumeric() || b == b'.' || b == b'_'
+                })..]
+                    .starts_with(|c: char| c.is_ascii_digit())
+    });
     i == line_start
         || before.is_empty()
         || iterator
         || qsql
         || infix
+        || operator
         || before.ends_with([':', '(', '[', '{', ';'])
         || after_signature(code, raw, before.len())
         || (before
