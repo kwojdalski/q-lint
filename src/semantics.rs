@@ -860,9 +860,11 @@ fn call_time(scopes: &[Scope], at: usize, name: &str) -> bool {
 type Writes = HashMap<String, Vec<usize>>;
 /// Every name this file assigns at global scope, qualified by the namespace
 /// in force, with where each assignment's value starts. `call_time_sets`
-/// credits a `` `n set `` inside a `\d` lambda to the namespace it is written
-/// in - generous, and right for the checks, which only ask whether a name
-/// has a definition; the graph says it cannot know instead.
+/// credits a `` `n set `` inside a `\d` lambda both to the namespace it is
+/// written in and to the root, where a call most likely lands it (q 5:
+/// `\d .ns`, `init:{`lim set 100}`, `\d .`, then `.ns.init[]` sets the root
+/// `lim`, #765) - generous, and right for the checks, which only ask whether
+/// a name has a definition; the graph says it cannot know instead.
 fn global_writes(
     code: &str,
     raw: &str,
@@ -878,6 +880,18 @@ fn global_writes(
             .saturating_sub(1)]
         .1
         .as_str()
+    };
+    // Where a symbol written at `at` is set: the namespace in force, and for
+    // one resolved at call time the root too - or nowhere, without
+    // `call_time_sets`.
+    let set_targets = |name: &str, at: usize| -> Vec<String> {
+        if !call_time(scopes, at, name) {
+            vec![qualify(name, ns_at(at))]
+        } else if call_time_sets {
+            vec![qualify(name, ns_at(at)), qualify(name, "")]
+        } else {
+            vec![]
+        }
     };
     // Column names are written the way assignments are, and assign nothing:
     // `([k:()] handle:())` and `select a:x from t` define no global `handle`
@@ -982,24 +996,16 @@ fn global_writes(
     {
         let whole = m.get(0).unwrap();
         let name = m.get(1).or(m.get(2)).unwrap().as_str();
-        if !call_time_sets && call_time(scopes, whole.start(), name) {
-            continue;
+        for target in set_targets(name, whole.start()) {
+            globals.entry(target).or_default().push(whole.end());
         }
-        globals
-            .entry(qualify(name, ns_at(whole.start())))
-            .or_default()
-            .push(whole.end());
     }
     // `` load `:k `` defines the global its path ends in (#470).
     for m in re!(LOAD).captures_iter(code) {
         let whole = m.get(0).unwrap();
-        if !call_time_sets && call_time(scopes, whole.start(), &m[1]) {
-            continue;
+        for target in set_targets(&m[1], whole.start()) {
+            globals.entry(target).or_default().push(whole.end());
         }
-        globals
-            .entry(qualify(&m[1], ns_at(whole.start())))
-            .or_default()
-            .push(whole.end());
     }
     // So does `\l` of a table's directory or file: q 5's `.Q.lo` sets the
     // last part of the path, and `\l data/trades` defines `trades` (#534).
@@ -1017,13 +1023,9 @@ fn global_writes(
     // Each of a symbol list, `` `p`q set'1 2 ``, parenthesised too (#464).
     for (whole, names) in each_set_targets(code) {
         for name in names {
-            if !call_time_sets && call_time(scopes, whole.start, name) {
-                continue;
+            for target in set_targets(name, whole.start) {
+                globals.entry(target).or_default().push(whole.end);
             }
-            globals
-                .entry(qualify(name, ns_at(whole.start)))
-                .or_default()
-                .push(whole.end);
         }
     }
     // A functional amend that creates the global it names: `@[`.;`n;:;v]`
@@ -1054,13 +1056,9 @@ fn global_writes(
         {
             continue;
         }
-        if !call_time_sets && call_time(scopes, whole.start(), &m[1]) {
-            continue;
+        for target in set_targets(&m[1], whole.start()) {
+            globals.entry(target).or_default().push(whole.end());
         }
-        globals
-            .entry(qualify(&m[1], ns_at(whole.start())))
-            .or_default()
-            .push(whole.end());
     }
     // A member of a namespace assigned by a literal index: q 5
     // `.cfg[`a]:1 2 3` defines `.cfg.a`.

@@ -381,6 +381,19 @@ fn a_workspace_keys_root_and_dotted_names_apart() {
 }
 
 #[test]
+fn a_set_in_a_namespaced_lambda_defines_the_root_name_too() {
+    use q_lint_rs::{Workspace, index, lint_in};
+    // q 5: after a.q, `.ns.init[]` sets the root `lim` - a symbol resolves in
+    // the `\d` of the call - and b.q's `r:lim` is 100 (#765).
+    let a = "\\d .ns\ninit:{`lim set 100}\n\\d .\n";
+    let b = "r:lim\n";
+    let mut ws = Workspace::default();
+    ws.add(&index(a));
+    ws.add(&index(b));
+    assert!(!codes(&lint_in(b, "b.q", Profile::Style, &ws)).contains(&"QF018"));
+}
+
+#[test]
 fn a_foreign_keyword_another_workspace_file_defines_is_a_name() {
     use q_lint_rs::{Workspace, index, lint, lint_in};
     // q 5, with lib.q's definitions loaded: `(f 1b;f 0b)` is 10b (#372).
