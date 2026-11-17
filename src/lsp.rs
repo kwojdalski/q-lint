@@ -1232,13 +1232,21 @@ fn is_q_uri(uri: &str) -> bool {
 /// arrives as `%20` and the filename-based rules see a file that does not
 /// exist.
 fn file_path(uri: &str) -> Option<String> {
-    let rest = uri.strip_prefix("file://")?;
-    // Strip the empty authority: file:///a/b has a host of "", so the path
-    // begins at the third slash. RFC 8089 makes `localhost` the same host,
-    // and file://localhost/a/b the same file (#425).
-    let rest = match rest.get(..10) {
-        Some(host) if host.eq_ignore_ascii_case("localhost/") => &rest[10..],
-        _ => rest.strip_prefix('/').unwrap_or(rest),
+    // A scheme is case-insensitive (RFC 3986 3.1): `FILE:` is `file:`.
+    let rest = &uri[uri
+        .get(..5)
+        .filter(|s| s.eq_ignore_ascii_case("file:"))?
+        .len()..];
+    let rest = match rest.strip_prefix("//") {
+        // Strip the empty authority: file:///a/b has a host of "", so the
+        // path begins at the third slash. RFC 8089 makes `localhost` the
+        // same host, and file://localhost/a/b the same file (#425).
+        Some(rest) => match rest.get(..10) {
+            Some(host) if host.eq_ignore_ascii_case("localhost/") => &rest[10..],
+            _ => rest.strip_prefix('/').unwrap_or(rest),
+        },
+        // RFC 8089's form with no authority at all: file:/a/b (#546).
+        None => rest.strip_prefix('/')?,
     };
     // Percent-escapes decode to bytes, and the bytes are UTF-8: `%C3%A9` is
     // one `é`. Pushing each byte as a char read it as two Latin-1 ones, and
@@ -1324,6 +1332,11 @@ mod tests {
         assert_eq!(path_of("file://localhost/tmp/plain.q"), "/tmp/plain.q");
         assert_eq!(path_of("file://LOCALHOST/c%3A/a.q"), "c:/a.q");
         assert_eq!(path_of("untitled:Untitled-1"), "untitled:Untitled-1");
+        // No authority, and the scheme in any case, are the same file (#546).
+        assert_eq!(path_of("file:/tmp/plain.q"), "/tmp/plain.q");
+        assert_eq!(path_of("FILE:///tmp/plain.q"), "/tmp/plain.q");
+        assert_eq!(path_of("File:/c%3A/a.q"), "c:/a.q");
+        assert_eq!(file_path("file:tmp/a.q"), None);
         // Escapes are UTF-8 bytes, not one character each.
         assert_eq!(path_of("file:///Users/Jos%C3%A9/a.q"), "/Users/José/a.q");
         // A Windows drive is not under a root.

@@ -1212,9 +1212,12 @@ fn a_localhost_file_uri_finds_the_project_configuration() {
     let plain = file_uri(&dir.path().join("a.q"));
     let local = plain.replacen("file://", "file://localhost", 1);
     assert!(local.starts_with("file://localhost/"), "{local}");
+    // RFC 8089's form with no authority, and a scheme in capitals (#546).
+    let bare = plain.replacen("file://", "file:", 1);
+    let shouted = plain.replacen("file:", "FILE:", 1);
     let mut server = Server::spawn(dir.path(), &["--lsp"]);
     server.initialize();
-    for uri in [&plain, &local] {
+    for uri in [&plain, &local, &bare, &shouted] {
         server.open(uri, "a:1==2\n");
         assert_eq!(
             codes_of(&server.diagnostics_for(uri)),
