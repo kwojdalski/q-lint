@@ -6,9 +6,11 @@
 / Deliberately not loadable: some of these q itself refuses. That is the
 / point of a linter that never runs what it reads.
 
-/ The invalid string escape is the last marked line, since it coexists
-/ with the other findings. The unclosed delimiter lives in syntax-error.q
-/ instead: it stops the file being analysed at all and would hide the rest.
+/ The invalid string escape (QE002) coexists with the other findings, so it
+/ is marked here like any other. The unclosed delimiter lives in
+/ syntax-error.q instead: it stops the file being analysed at all and would
+/ hide the rest. The last marked line is the unclosed block comment (QE003),
+/ which swallows everything after it.
 
 / Coverage: every rule in the taxonomy but two can fire on q source, and
 / each of those is marked below or in one of the three companion files:
