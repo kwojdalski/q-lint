@@ -752,3 +752,46 @@ fn a_namespace_another_file_writes_whole_writes_its_members() {
     ws.add(&index(".cfg,:(enlist`n)!enlist 1 2 3\n"));
     assert!(!codes(&lint_in(a, "a.q", Profile::General, &ws)).contains(&"QT022"));
 }
+
+#[test]
+fn a_table_another_file_changes_in_place_is_not_tracked_in_a_lambda() {
+    use q_lint_rs::{Workspace, index, lint_in};
+    // q 5: a.q, then b.q changing t in place, and `f[]` selects c and
+    // `g[]` inserts the row (#756).
+    let a = "t:([]a:1 2)\nf:{select c from t}\ng:{`t insert (3;4)}\n";
+    let mut ws = Workspace::default();
+    ws.add(&index(a));
+    let alone = lint_in(a, "a.q", Profile::General, &ws);
+    let alone = codes(&alone);
+    assert!(
+        alone.contains(&"QF020") && alone.contains(&"QT027"),
+        "{alone:?}"
+    );
+    for b in [
+        "update c:0 from `t\n",
+        "@[`t;`c;:;0]\n",
+        "![`t;();0b;(enlist`c)!enlist 0]\n",
+    ] {
+        let mut ws = Workspace::default();
+        ws.add(&index(a));
+        ws.add(&index(b));
+        let found = lint_in(a, "a.q", Profile::General, &ws);
+        let found = codes(&found);
+        assert!(
+            !found.contains(&"QF020") && !found.contains(&"QT027"),
+            "{b}: {found:?}"
+        );
+    }
+}
+
+#[test]
+fn a_table_another_file_keys_in_place_is_not_tracked_in_a_lambda() {
+    use q_lint_rs::{Workspace, index, lint_in};
+    // q 5: a.q, then b.q's `` `a xkey `k ``, and `f[([]a:1 2)]` joins (#757).
+    let a = "k:([]a:1 2;b:3 4)\nf:{x lj k}\n";
+    let mut ws = Workspace::default();
+    ws.add(&index(a));
+    assert!(codes(&lint_in(a, "a.q", Profile::General, &ws)).contains(&"QT026"));
+    ws.add(&index("`a xkey `k\n"));
+    assert!(!codes(&lint_in(a, "a.q", Profile::General, &ws)).contains(&"QT026"));
+}

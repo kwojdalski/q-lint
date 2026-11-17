@@ -1010,6 +1010,18 @@ pub fn index(code: &str, raw: &str) -> crate::FileIndex {
     for name in k_writes(raw, &namespaces) {
         globals.entry(name).or_default();
     }
+    // A table changed in place is written too, as the file's own checks
+    // take it: with b.q's `update c:0 from `t` loaded, a.q's
+    // `f:{select c from t}` runs (q 5, #756), and after `` `a xkey `k ``
+    // there, `x lj k` joins (#757).
+    for m in re!(IN_PLACE).captures_iter(code) {
+        let at = m.get(0).unwrap().start();
+        let ns = &namespaces[namespaces
+            .partition_point(|(p, _)| *p <= at)
+            .saturating_sub(1)]
+        .1;
+        globals.entry(resolved(&m[1], ns)).or_default();
+    }
     let lambdas = globals
         .iter()
         .filter(|(_, at)| at.iter().any(|&a| assigns_lambda(code, a)))
@@ -2735,6 +2747,11 @@ pub fn check(
 /// `` load `:path/name `` or `rload`, infix or bracketed: the name it defines.
 const LOAD: &str = r"\br?load\s*\[?\s*`:?(?:[^\s;\]\[()`]*/)?([A-Za-z][A-Za-z0-9_]*)\b";
 
+/// A table changed in place by name: `update c:1 from `t`, `![`t;...]`,
+/// `.[`t;...]`, `@[`t;...]`, `` `a xkey `t `` and its neighbours, in the
+/// bracket form too, and `` 1!`t ``. The name is the capture.
+const IN_PLACE: &str = r"(?:\bfrom\s*|[!.@]\s*\[\s*|\b(?:xkey|xasc|xdesc|xcols|xcol)\s*(?:\[[^;\[\]]*;\s*)?|\b\d+\s*!\s*)`(\.?[A-Za-z][A-Za-z0-9_.]*)";
+
 /// What a global holds, when the file assigns it once, at the top level, to
 /// a literal. Anything else - assigned twice, amended, `set`, assigned to an
 /// expression - is unknown, and the rules below say nothing about it.
@@ -3026,7 +3043,7 @@ fn named_values(
     // after `` `a xkey `k `` joins), and its neighbours (#353), in the
     // bracket form too, and `` 1!`k `` (q 5: `xkey[`a;`k]` and `` 1!`k ``
     // return `` `k `` and key it) (#466).
-    for m in re!(r"(?:\bfrom\s*|[!.@]\s*\[\s*|\b(?:xkey|xasc|xdesc|xcols|xcol)\s*(?:\[[^;\[\]]*;\s*)?|\b\d+\s*!\s*)`(\.?[A-Za-z][A-Za-z0-9_.]*)").captures_iter(code) {
+    for m in re!(IN_PLACE).captures_iter(code) {
         let name = m.get(1).unwrap().as_str();
         writes.entry(name).or_default().extend([0, 0]);
         exact
