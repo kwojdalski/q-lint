@@ -496,11 +496,34 @@ fn run(args: Args) -> Result<u8, String> {
     // One file under two names - a symlink beside its target - is one file's
     // definitions, not two files each defining what the other does, which
     // would leave each name's own `a` "defined elsewhere" (#527).
+    // A script loaded under `\d .a` defines in `.a` too, as the graph has
+    // it: with main.q's `\d .a` / `\l b.q`, b.q's `ff:42` is `.a.ff`, which
+    // c.q's `\d .a` / `g:{ff}` reads (q 5, #525). Only a file that both
+    // switches context and loads can put another in a context.
+    let loaded = if sources.iter().any(|(_, s)| {
+        (s.contains("\\d") || s.contains("\"d ")) && (s.contains("\\l") || s.contains("\"l "))
+    }) {
+        let cwd = config::absolute(&std::env::current_dir().map_err(|e| e.to_string())?);
+        let files: Vec<_> = sources
+            .iter()
+            .map(|(name, source)| (PathBuf::from(name), source.clone()))
+            .collect();
+        q_lint_rs::graph::loaded_definitions(&files, &cwd)
+    } else {
+        vec![vec![]; sources.len()]
+    };
     let mut workspace = Workspace::default();
     let mut indexed = std::collections::HashSet::new();
-    for (name, source) in &sources {
+    for ((name, source), loaded) in sources.iter().zip(loaded) {
         if indexed.insert(fs::canonicalize(name).unwrap_or_else(|_| name.into())) {
-            workspace.add(&index(source));
+            let mut file = index(source);
+            for (bare, qualified) in loaded {
+                if file.lambdas.contains(&bare) {
+                    file.lambdas.insert(qualified.clone());
+                }
+                file.defined.insert(qualified);
+            }
+            workspace.add(&file);
         }
     }
     if args.fix || args.diff {

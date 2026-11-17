@@ -42,95 +42,20 @@ pub fn build(files: &[(PathBuf, String)], symbols: bool, cwd: &Path) -> BTreeMap
         }
         reads.push(read);
     }
-    // A file is keyed by the path it was found at, a symlink by its own
-    // name: `\l lib/link.q` is an edge to `lib/link.q`, which q 5 loads
-    // (#526). A load reaching it through another name - a symlinked
-    // directory, the link's target - finds it by the real path.
-    let mut position: HashMap<PathBuf, usize> = files
-        .iter()
-        .enumerate()
-        .map(|(i, (p, _))| (p.clone(), i))
-        .collect();
-    for (i, (p, _)) in files.iter().enumerate() {
-        if let Ok(real) = std::fs::canonicalize(p) {
-            position.entry(real).or_insert(i);
-        }
-    }
-    // One file under two names is one file: neither name depends on the
-    // other, nor makes a name the file defines ambiguous (#527).
-    let identity: Vec<usize> = files
-        .iter()
-        .map(|(p, _)| {
-            std::fs::canonicalize(p)
-                .ok()
-                .and_then(|real| position.get(&real).copied())
-                .unwrap_or(position[p])
-        })
-        .collect();
-    // A directory loaded, `\l db`, runs the scripts directly in it (q 5's
-    // `.Q.lo`), so it leads to each of them (#533).
-    let mut scripts_in: HashMap<&Path, Vec<usize>> = HashMap::new();
-    for (i, (p, _)) in files.iter().enumerate() {
-        if let Some(dir) = p.parent() {
-            scripts_in.entry(dir).or_default().push(i);
-        }
-    }
-    let targets = |i: usize, load: &str| -> Vec<usize> {
-        let candidates = load_targets(&files[i].0, load, cwd);
-        candidates
-            .iter()
-            .find_map(|p| {
-                position
-                    .get(p)
-                    .or_else(|| position.get(&std::fs::canonicalize(p).ok()?))
-                    .map(|&d| vec![d])
-            })
-            .or_else(|| {
-                candidates
-                    .iter()
-                    .find_map(|p| scripts_in.get(p.as_path()).cloned())
-            })
-            .unwrap_or_default()
-    };
-    // A script loaded under `\d .a` runs in `.a`, so what it writes at its
-    // root is `.a.name` too: q 5, after `\d .a` and `\l b.q` with b.q's
-    // `ff:{1}`, has `.a.ff` and no `ff`. Its own `\d` does not leak back
-    // out. The root names are kept, since the same script may be loaded or
-    // run at the root elsewhere, and one loaded from several contexts
-    // defines in each. A load at a loaded script's root runs in the context
-    // that script runs in: `\l c.q` at b.q's root, with b.q loaded under
-    // `\d .a`, puts c.q's `gg` at `.a.gg` (q 5). Only before the script's
-    // own first `\d`: after its `\d .`, `yy:2` is the root's `yy` and no
-    // `.a.yy` (q 5, #532).
-    let mut contexts: Vec<BTreeSet<&str>> = vec![BTreeSet::new(); files.len()];
-    let mut pending: Vec<(usize, &str)> = vec![];
-    for (i, read) in reads.iter().enumerate() {
-        for (load, namespace) in &read.loads {
-            if !namespace.is_empty() && namespace != "." {
-                for d in targets(i, load) {
-                    pending.push((d, namespace));
+    let tree = Tree::new(files, cwd);
+    let contexts = contexts(&reads, &tree);
+    for (d, namespaces) in contexts.iter().enumerate() {
+        for namespace in namespaces {
+            for name in &reads[d].implicit_defines {
+                let defs = definers.entry(format!("{namespace}.{name}")).or_default();
+                if !defs.contains(&d) {
+                    defs.push(d);
                 }
             }
         }
     }
-    while let Some((d, namespace)) = pending.pop() {
-        if !contexts[d].insert(namespace) {
-            continue;
-        }
-        for name in &reads[d].implicit_defines {
-            let defs = definers.entry(format!("{namespace}.{name}")).or_default();
-            if !defs.contains(&d) {
-                defs.push(d);
-            }
-        }
-        for (load, inner) in &reads[d].loads {
-            if inner.is_empty() {
-                for next in targets(d, load) {
-                    pending.push((next, namespace));
-                }
-            }
-        }
-    }
+    let identity = &tree.identity;
+    let targets = |i: usize, load: &str| tree.targets(i, load);
     let mut graph = BTreeMap::new();
     for (i, (path, _)) in files.iter().enumerate() {
         let mut node = Node {
@@ -195,6 +120,142 @@ pub fn build(files: &[(PathBuf, String)], symbols: bool, cwd: &Path) -> BTreeMap
         graph.insert(path.clone(), node);
     }
     graph
+}
+
+/// The files of a graph, found by any name a load reaches them by.
+struct Tree<'a> {
+    files: &'a [(PathBuf, String)],
+    cwd: &'a Path,
+    position: HashMap<PathBuf, usize>,
+    /// The scripts directly in each directory.
+    scripts_in: HashMap<&'a Path, Vec<usize>>,
+    /// Each file as the first of `files` that is the same file.
+    identity: Vec<usize>,
+}
+
+impl<'a> Tree<'a> {
+    fn new(files: &'a [(PathBuf, String)], cwd: &'a Path) -> Self {
+        // A file is keyed by the path it was found at, a symlink by its own
+        // name: `\l lib/link.q` is an edge to `lib/link.q`, which q 5 loads
+        // (#526). A load reaching it through another name - a symlinked
+        // directory, the link's target - finds it by the real path.
+        let mut position: HashMap<PathBuf, usize> = files
+            .iter()
+            .enumerate()
+            .map(|(i, (p, _))| (p.clone(), i))
+            .collect();
+        for (i, (p, _)) in files.iter().enumerate() {
+            if let Ok(real) = std::fs::canonicalize(p) {
+                position.entry(real).or_insert(i);
+            }
+        }
+        // One file under two names is one file: neither name depends on the
+        // other, nor makes a name the file defines ambiguous (#527).
+        let identity = files
+            .iter()
+            .map(|(p, _)| {
+                std::fs::canonicalize(p)
+                    .ok()
+                    .and_then(|real| position.get(&real).copied())
+                    .unwrap_or(position[p])
+            })
+            .collect();
+        // A directory loaded, `\l db`, runs the scripts directly in it (q 5's
+        // `.Q.lo`), so it leads to each of them (#533).
+        let mut scripts_in: HashMap<&Path, Vec<usize>> = HashMap::new();
+        for (i, (p, _)) in files.iter().enumerate() {
+            if let Some(dir) = p.parent() {
+                scripts_in.entry(dir).or_default().push(i);
+            }
+        }
+        Tree {
+            files,
+            cwd,
+            position,
+            scripts_in,
+            identity,
+        }
+    }
+
+    /// The files `\l load` in file `i` leads to.
+    fn targets(&self, i: usize, load: &str) -> Vec<usize> {
+        let candidates = load_targets(&self.files[i].0, load, self.cwd);
+        candidates
+            .iter()
+            .find_map(|p| {
+                self.position
+                    .get(p)
+                    .or_else(|| self.position.get(&std::fs::canonicalize(p).ok()?))
+                    .map(|&d| vec![d])
+            })
+            .or_else(|| {
+                candidates
+                    .iter()
+                    .find_map(|p| self.scripts_in.get(p.as_path()).cloned())
+            })
+            .unwrap_or_default()
+    }
+}
+
+/// The contexts each file is loaded in by another, `.a` for a `\l` under
+/// `\d .a`. A script loaded under `\d .a` runs in `.a`, so what it writes at
+/// its root is `.a.name` too: q 5, after `\d .a` and `\l b.q` with b.q's
+/// `ff:{1}`, has `.a.ff` and no `ff`. Its own `\d` does not leak back out.
+/// A load at a loaded script's root runs in the context that script runs
+/// in: `\l c.q` at b.q's root, with b.q loaded under `\d .a`, puts c.q's
+/// `gg` at `.a.gg` (q 5). Only before the script's own first `\d`: after
+/// its `\d .`, `yy:2` is the root's `yy` and no `.a.yy` (q 5, #532).
+fn contexts<'r>(reads: &'r [crate::References], tree: &Tree) -> Vec<BTreeSet<&'r str>> {
+    let mut contexts: Vec<BTreeSet<&str>> = vec![BTreeSet::new(); reads.len()];
+    let mut pending: Vec<(usize, &str)> = vec![];
+    for (i, read) in reads.iter().enumerate() {
+        for (load, namespace) in &read.loads {
+            if !namespace.is_empty() && namespace != "." {
+                for d in tree.targets(i, load) {
+                    pending.push((d, namespace));
+                }
+            }
+        }
+    }
+    while let Some((d, namespace)) = pending.pop() {
+        if !contexts[d].insert(namespace) {
+            continue;
+        }
+        for (load, inner) in &reads[d].loads {
+            if inner.is_empty() {
+                for next in tree.targets(d, load) {
+                    pending.push((next, namespace));
+                }
+            }
+        }
+    }
+    contexts
+}
+
+/// What each of `files` defines in the contexts the others load it in:
+/// `(name, .a.name)` for b.q's `name` when b.q is loaded under `\d .a`. The
+/// root names are kept, since the same script may be loaded or run at the
+/// root elsewhere, and one loaded from several contexts defines in each.
+pub fn loaded_definitions(files: &[(PathBuf, String)], cwd: &Path) -> Vec<Vec<(String, String)>> {
+    let reads: Vec<_> = files
+        .iter()
+        .map(|(_, source)| references(source, false))
+        .collect();
+    let tree = Tree::new(files, cwd);
+    contexts(&reads, &tree)
+        .iter()
+        .zip(&reads)
+        .map(|(namespaces, read)| {
+            namespaces
+                .iter()
+                .flat_map(|ns| {
+                    read.implicit_defines
+                        .iter()
+                        .map(move |name| (name.clone(), format!("{ns}.{name}")))
+                })
+                .collect()
+        })
+        .collect()
 }
 
 /// The definers of `name`. A name no file defines is tried without its last
