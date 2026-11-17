@@ -301,6 +301,15 @@ fn a_column_named_like_a_function_does_not_uncolour_it() {
 }
 
 #[test]
+fn a_name_in_a_query_phrase_is_not_coloured() {
+    // q 5: after `t:([] f:1 2)`, `select f from t` and `exec f from t` read
+    // the column, not the lambda `f` (#552). The table is still read.
+    assert!(functions("f:{x}\nt:([] f:1 2)\nselect f from t\n").is_empty());
+    assert!(functions("f:{x}\nt:([] f:1 2)\nr:exec f from t where f>1\n").is_empty());
+    assert_eq!(functions("f:{x}\nr:select from f 1\n"), ["f"]);
+}
+
+#[test]
 fn a_projection_is_coloured_as_a_function() {
     // q 5: `p:{[a;b] a+b}[1;]` is type 104h, and `p 2` is 3 (#367).
     assert_eq!(functions("p:{[a;b] a+b}[1;]\nr:p 2\n"), ["p"]);

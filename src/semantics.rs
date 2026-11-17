@@ -799,9 +799,13 @@ pub fn tokens(code: &str, raw: &str, ws: &crate::Workspace) -> Vec<(usize, usize
             .into_iter()
             .map(|(key, at)| (key, at.iter().all(|&at| assigns_lambda(code, raw, at))))
             .collect();
+    // In a qSQL phrase a name is a column whenever the table has one by
+    // that name - q 5's `select f from t` is the column even where `f` is a
+    // lambda - and only the table says which, so none is coloured (#552).
+    let outside_queries = crate::outside_query_phrases(code);
     let mut out = vec![];
     for m in name.find_iter(code) {
-        if !boundary(code, m.start()) {
+        if !boundary(code, m.start()) || outside_queries.as_bytes()[m.start()] == b' ' {
             continue;
         }
         // The assignment itself is the grammar's to colour, as a definition.
