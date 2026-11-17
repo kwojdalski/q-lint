@@ -774,6 +774,22 @@ fn a_long_where_phrase_lints_in_bounded_time() {
         "16000 conditions took {elapsed:?}"
     );
 }
+/// A long lambda body: each read was placed in the body's order by walking
+/// from its start, each assignment found its lambda by walking back to it,
+/// and each line read on to the lambda's end - each quadratic in the body's
+/// length (#708).
+#[test]
+fn a_long_lambda_body_lints_in_bounded_time() {
+    let body: String = (0..16000).map(|i| format!("  a{i}:x+y*{i};\n")).collect();
+    let source = format!("f:{{[x;y]\n{body}  a0}}\n");
+    let started = std::time::Instant::now();
+    lint(&source, "t.q", Profile::Style);
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < std::time::Duration::from_secs(10),
+        "a 16000-line lambda took {elapsed:?}"
+    );
+}
 /// Tens of thousands of nested parentheses - beyond q's own limit, which
 /// refuses a hundred-odd levels with '( - once overflowed the stack, which
 /// aborts the whole run and cannot be caught like a panic (#703).

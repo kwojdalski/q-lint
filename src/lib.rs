@@ -2158,6 +2158,11 @@ fn blank(b: &mut [u8]) {
 /// filter rules ask - which operators sit beside which - are about the
 /// The `{` of the innermost lambda around `at`, in masked code.
 fn enclosing_brace(code: &str, at: usize) -> Option<usize> {
+    // From the installed table where there is one: walking back to the brace
+    // made each call linear in the body, and a long body quadratic (#708).
+    if let Some(found) = brace_chain(code, at, |end| end.is_none_or(|end| end > at)) {
+        return found.first().copied();
+    }
     let mut depth = 0i32;
     for (i, b) in code.as_bytes()[..at].iter().enumerate().rev() {
         match b {
@@ -2828,6 +2833,13 @@ fn bracket_kind(c: u8) -> usize {
 /// first, from the installed table when `s` is its text. `None` means "not
 /// answerable here".
 fn enclosing_braces(s: &str, at: usize) -> Option<Vec<usize>> {
+    brace_chain(s, at, |end| end.is_some_and(|end| end > at))
+}
+
+/// Each `{` before `at` that `keep` accepts by where it closes, innermost
+/// first: the braces still open at `at`, and closed ones on the way out to
+/// them. From the installed table when `s` is its text, `None` otherwise.
+fn brace_chain(s: &str, at: usize, keep: impl Fn(Option<usize>) -> bool) -> Option<Vec<usize>> {
     MATCHES.with(|m| {
         let m = m.borrow();
         let t = m.as_ref()?;
@@ -2835,13 +2847,12 @@ fn enclosing_braces(s: &str, at: usize) -> Option<Vec<usize>> {
             return None;
         }
         let mut out = vec![];
-        let mut i = t.braces.partition_point(|&(open, _)| (open as usize) < at);
+        let i = t.braces.partition_point(|&(open, _)| (open as usize) < at);
         let mut next = if i == 0 { NO_MATCH } else { i as u32 - 1 };
         while next != NO_MATCH {
-            i = next as usize;
-            let (open, parent) = t.braces[i];
+            let (open, parent) = t.braces[next as usize];
             let end = t.ends[open as usize];
-            if end != NO_MATCH && end as usize > at {
+            if keep((end != NO_MATCH).then_some(end as usize)) {
                 out.push(open as usize);
             }
             next = parent;
@@ -5994,6 +6005,9 @@ pub fn lint_selecting(
     // line is a group of its own, but a query there may go on over the next
     // lines - a newline in a lambda is whitespace - so the query rules read
     // on to here, keeping only what starts in the group (#334).
+    // Only as far as the statement the group's last one goes on into: a
+    // group inside a lambda read on to the lambda's end, so a long body was
+    // quadratic in its lines (#708).
     let statement_end: Vec<usize> = {
         let (mut open, mut ends) = (0i32, vec![0; statements.len()]);
         let mut first = 0;
@@ -6008,8 +6022,28 @@ pub fn lint_selecting(
                     _ => {}
                 }
             }
-            for e in &mut ends[first..=n] {
-                *e = end;
+            if open <= 0 || n + 1 == statements.len() {
+                ends[first..=n].fill(end);
+            }
+        }
+        for (n, &(start, end)) in statements.iter().enumerate() {
+            let mut depth = code[start..end].bytes().fold(0i32, |d, b| match b {
+                b'(' | b'[' | b'{' => d + 1,
+                b')' | b']' | b'}' => d - 1,
+                _ => d,
+            });
+            depth = depth.max(0);
+            let rest = &code.as_bytes()[end..ends[n]];
+            for (i, &b) in rest.iter().enumerate() {
+                match b {
+                    b'(' | b'[' | b'{' => depth += 1,
+                    b')' | b']' | b'}' | b';' if depth == 0 => {
+                        ends[n] = end + i + 1;
+                        break;
+                    }
+                    b')' | b']' | b'}' => depth -= 1,
+                    _ => {}
+                }
             }
         }
         ends

@@ -174,9 +174,9 @@ pub(crate) fn each_set_targets(code: &str) -> Vec<(std::ops::Range<usize>, Vec<&
 /// the nearest bracket enclosing both is a control bracket or the body
 /// itself. `f[c-1; c:count x]` and `g[c] h[c:1]` both assign before they
 /// read; `if[c; c:1]` and `r:c; c:1` do not.
-fn runs_before(text: &str, read: usize, assign: usize) -> bool {
-    let (read_seq, read_path) = eval_path(text, read);
-    let (assign_seq, assign_path) = eval_path(text, assign);
+fn runs_before(text: &str, stops: &[usize], read: usize, assign: usize) -> bool {
+    let (read_seq, read_path) = eval_path(text, stops, read);
+    let (assign_seq, assign_path) = eval_path(text, stops, assign);
     if read_seq != assign_seq {
         return read_seq < assign_seq;
     }
@@ -198,9 +198,9 @@ fn runs_before(text: &str, read: usize, assign: usize) -> bool {
 /// slots left to right (`$[a:1;a;0]`). A read at the assignment's own level,
 /// to its right, is in its value, which is `in_value`'s case. Verified in
 /// q 5: the first four are refused at definition with 'a, `$[a:1;a;0]` is not.
-fn runs_first_after(text: &str, read: usize, assign: usize) -> bool {
-    let (read_seq, read_path) = eval_path(text, read);
-    let (assign_seq, assign_path) = eval_path(text, assign);
+fn runs_first_after(text: &str, stops: &[usize], read: usize, assign: usize) -> bool {
+    let (read_seq, read_path) = eval_path(text, stops, read);
+    let (assign_seq, assign_path) = eval_path(text, stops, assign);
     if read <= assign || read_seq != assign_seq {
         return false;
     }
@@ -214,12 +214,32 @@ fn runs_first_after(text: &str, read: usize, assign: usize) -> bool {
     }
     assign_path.len() > read_path.len()
 }
+/// The offset of each `;` that ends a statement of a lambda body, with no
+/// bracket open around it: `eval_path` starts from the last one before the
+/// position it is asked about, not from the body's start, which made a
+/// long body quadratic in its reads (#708).
+fn statement_stops(text: &str) -> Vec<usize> {
+    let mut depth = 0usize;
+    let mut stops = vec![];
+    for (i, &c) in text.as_bytes().iter().enumerate() {
+        match c {
+            b'[' | b'(' | b'{' => depth += 1,
+            b']' | b')' | b'}' => depth = depth.saturating_sub(1),
+            b';' if depth == 0 => stops.push(i),
+            _ => {}
+        }
+    }
+    stops
+}
 /// Where `pos` sits in the order a lambda body runs in: the statement it is
 /// in, and each bracket open around it, as the bracket's offset, the slot
-/// within it, and whether it is a control bracket.
-fn eval_path(text: &str, pos: usize) -> (usize, Vec<(usize, usize, bool)>) {
-    let (mut seq, mut stack): (usize, Vec<(usize, usize, bool)>) = (0, vec![]);
-    for (i, &c) in text.as_bytes()[..pos].iter().enumerate() {
+/// within it, and whether it is a control bracket. `stops` is the body's
+/// `statement_stops`.
+fn eval_path(text: &str, stops: &[usize], pos: usize) -> (usize, Vec<(usize, usize, bool)>) {
+    let mut seq = stops.partition_point(|&stop| stop < pos);
+    let from = if seq == 0 { 0 } else { stops[seq - 1] + 1 };
+    let mut stack: Vec<(usize, usize, bool)> = vec![];
+    for (i, &c) in text.as_bytes()[..pos].iter().enumerate().skip(from) {
         match c {
             b'[' | b'(' | b'{' => {
                 // A bracket that follows nothing it could index is a block,
@@ -228,11 +248,13 @@ fn eval_path(text: &str, pos: usize) -> (usize, Vec<(usize, usize, bool)>) {
                 // while `{g [a:1;a]}` and `{x:[a:1;a]}` are 'a. So does
                 // one that opens the body: `{[p] [a:1;a+p]}[5]` is 6.
                 let before = text[..i].trim_end();
+                let keyword = ["if", "while", "do"].iter().any(|k| {
+                    before.strip_suffix(k).is_some_and(|rest| {
+                        !rest.ends_with(|c: char| c.is_ascii_alphanumeric() || "_.".contains(c))
+                    })
+                });
                 let control = c == b'['
-                    && (re!(r"(?:^|[^A-Za-z0-9_.])(?:if|while|do)\s*$|\$\s*$")
-                        .is_match(&text[..i])
-                        || before.is_empty()
-                        || before.ends_with([';', '[', '(']));
+                    && (keyword || before.is_empty() || before.ends_with(['$', ';', '[', '(']));
                 stack.push((i, 0, control));
             }
             b']' | b')' | b'}' => {
@@ -2007,6 +2029,7 @@ pub fn check(
             continue;
         }
         let direct = with_from_clauses(&scope.direct, true);
+        let stops = statement_stops(&direct);
         let mut first: HashMap<&str, usize> = HashMap::new();
         let mut every: HashMap<&str, Vec<usize>> = HashMap::new();
         for a in assignment.captures_iter(&direct) {
@@ -2082,9 +2105,9 @@ pub fn check(
                 && !in_value
                 && every[name].iter().all(|&p| {
                     if p < m.start() {
-                        runs_first_after(&direct, m.start(), p)
+                        runs_first_after(&direct, &stops, m.start(), p)
                     } else {
-                        runs_before(&direct, m.start(), p)
+                        runs_before(&direct, &stops, m.start(), p)
                     }
                 });
             if (m.start() >= assigned && !in_value && !later)
@@ -2093,7 +2116,7 @@ pub fn check(
                 || after.starts_with(':')
                 // A dotted name, not dot-apply: `g . p` reads `g` (#251).
                 || direct[m.end()..].starts_with('.')
-                || (!in_value && !later && !runs_before(&direct, m.start(), assigned))
+                || (!in_value && !later && !runs_before(&direct, &stops, m.start(), assigned))
                 || !seen.insert(name)
             {
                 continue;
