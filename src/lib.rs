@@ -4022,6 +4022,8 @@ pub fn lint_selecting(
         m[1].contains('.') || lambda_depth[m.get(0).unwrap().start()] == 0
     };
     let mut ranks: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    // Where each was last defined.
+    let mut defined_at: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     for m in re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)\s*:\s*\{").captures_iter(code) {
         if !global_definition(&m) {
             continue;
@@ -4056,7 +4058,9 @@ pub fn lint_selecting(
         {
             continue;
         }
-        ranks.insert(qualified(m.get(0).unwrap().start(), &m[1]), rank);
+        let key = qualified(m.get(0).unwrap().start(), &m[1]);
+        defined_at.insert(key.clone(), m.get(0).unwrap().start());
+        ranks.insert(key, rank);
     }
     // The same arity check as QA002, for a lambda reached by name. `ranks`
     // already knows what each `name:{...}` takes, so a call with more slots
@@ -4122,10 +4126,30 @@ pub fn lint_selecting(
                 .map(|(name, _)| name),
         );
     }
+    // A write the file does not name may give the name another rank, once
+    // it runs after the definition - later in the file, or from a lambda
+    // called at any time: q 5 `f:{x}; value "f:{x+y}"; f[1;2]` is 3 (#745).
+    // One that only changes `\d` defines nothing.
+    let unnamed: Vec<usize> = semantics::unnamed_writes(code, &v.comments)
+        .into_iter()
+        .filter(|&(_, context)| !context)
+        .map(|(at, _)| at)
+        .collect();
+    let in_lambda = |at: usize| {
+        code.as_bytes()[..at].iter().fold(0i32, |d, &c| match c {
+            b'{' => d + 1,
+            b'}' => d - 1,
+            _ => d,
+        }) > 0
+    };
+    let overwritten = |key: &str| {
+        let defined = defined_at.get(key).copied().unwrap_or(0);
+        unnamed.iter().any(|&at| at > defined || in_lambda(at))
+    };
     for m in re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)\s*\[").captures_iter(code) {
         let (whole, name) = (m.get(0).unwrap(), m.get(1).unwrap().as_str());
         let key = qualified(whole.start(), name);
-        if !boundary(code, whole.start()) || redefined.contains(&key) {
+        if !boundary(code, whole.start()) || redefined.contains(&key) || overwritten(&key) {
             continue;
         }
         let Some(&rank) = ranks.get(&key) else {
@@ -4573,7 +4597,12 @@ pub fn lint_selecting(
     // Another file of the workspace may define it too: with lib.q's
     // `true:1b` loaded, q 5 runs `{[a] $[a;true;false]}` (#372).
     let elsewhere = |key: &str| ws.defined_elsewhere(key, &Default::default());
+    // Nor can a file that writes globals it does not name say the name is
+    // undefined: q 5 runs `\l lib.q` (`true:0b`) then `$[true;`yes;`no]` to
+    // `no, which the fix to 1b would turn to `yes (#750).
+    let opaque = semantics::opaque(code, &v.comments);
     let bare = unsymbolled(code);
+
     for m in
         re!(r"\b(return|else|elif|elseif|true|false|None|break|continue)\b").captures_iter(&bare)
     {
@@ -4582,7 +4611,8 @@ pub fn lint_selecting(
         let after = code[whole.end()..].trim_start();
         let line = &code[code[..whole.start()].rfind('\n').map_or(0, |i| i + 1)..whole.start()];
         let in_query = re!(r"\b(?:select|exec|update|delete)\b").is_match(line);
-        if !boundary(code, whole.start())
+        if opaque
+            || !boundary(code, whole.start())
             || after.starts_with('.')
             || declared.contains(name)
             || in_query

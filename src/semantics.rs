@@ -1335,44 +1335,60 @@ fn dynamic(raw: &str, view: &str, call_time: &[(usize, &'static str)]) -> Vec<cr
 /// changes context, however it is applied: `system ("l ",f)`, `system c`,
 /// `system["l f"]`, `system@"l f"` and `@[system;"l f";h]` all load.
 pub(crate) fn opaque(code: &str, comments: &str) -> bool {
-    if re!(r"(?m)^\\l\b").is_match(code) {
-        return true;
-    }
+    !unnamed_writes(code, comments).is_empty()
+}
+
+/// Where `opaque` finds each write it cannot name, and whether it only
+/// changes `\d` - `system "d ..."`, which moves later definitions to a
+/// context rather than defining anything itself.
+pub(crate) fn unnamed_writes(code: &str, comments: &str) -> Vec<(usize, bool)> {
+    let mut found: Vec<(usize, bool)> = re!(r"(?m)^\\l\b")
+        .find_iter(code)
+        .map(|m| (m.start(), false))
+        .collect();
     let strings: HashSet<&str> = re!(r#"(\.?[A-Za-z][A-Za-z0-9_.]*)\s*::?\s*""#)
         .captures_iter(comments)
         .filter(|m| boundary(comments, m.get(0).unwrap().start()))
         .map(|m| m.get(1).unwrap().as_str())
         .collect();
-    re!(r"\b(?:eval|value|get|system)\b")
-        .find_iter(code)
-        .filter(|m| boundary(code, m.start()))
-        .any(|m| {
-            // Strings kept, comments blanked: a quote in a comment after
-            // `value d` is not a string to evaluate (#258).
-            let rest = &comments[m.end()..];
-            // The argument, past what only hands it on: brackets, `@`, the
-            // slots of a trap, and `each`, `enlist` and `raze`.
-            let skip = re!(r"^(?:[\s\[\]()@;']|\b(?:each|peach|enlist|raze)\b)*");
-            let arg = |text: &'_ str| text[skip.find(text).map_or(0, |p| p.end())..].to_string();
-            let statement = &rest[..rest.find([';', '\n']).unwrap_or(rest.len())];
-            let name = |a: &str| {
-                re!(r"^\.?[A-Za-z][A-Za-z0-9_.]*")
-                    .find(a)
-                    .is_some_and(|n| n.as_str() == "read0" || strings.contains(n.as_str()))
-            };
-            match m.as_str() {
-                "eval" => true,
-                "system" => {
-                    let a = arg(rest);
-                    !a.starts_with('"') || re!(r#"^"[ld]\b"#).is_match(&a)
-                }
-                "value" => statement.contains('"') || name(&arg(statement)),
-                _ => {
-                    let a = arg(statement);
-                    a.starts_with('"') || name(&a)
+    for m in re!(r"\b(?:eval|value|get|system)\b").find_iter(code) {
+        if !boundary(code, m.start()) {
+            continue;
+        }
+        // Strings kept, comments blanked: a quote in a comment after
+        // `value d` is not a string to evaluate (#258).
+        let rest = &comments[m.end()..];
+        // The argument, past what only hands it on: brackets, `@`, the
+        // slots of a trap, and `each`, `enlist` and `raze`.
+        let skip = re!(r"^(?:[\s\[\]()@;']|\b(?:each|peach|enlist|raze)\b)*");
+        let arg = |text: &'_ str| text[skip.find(text).map_or(0, |p| p.end())..].to_string();
+        let statement = &rest[..rest.find([';', '\n']).unwrap_or(rest.len())];
+        let name = |a: &str| {
+            re!(r"^\.?[A-Za-z][A-Za-z0-9_.]*")
+                .find(a)
+                .is_some_and(|n| n.as_str() == "read0" || strings.contains(n.as_str()))
+        };
+        let write = match m.as_str() {
+            "eval" => Some(false),
+            "system" => {
+                let a = arg(rest);
+                if re!(r#"^"d\b"#).is_match(&a) {
+                    Some(true)
+                } else {
+                    (!a.starts_with('"') || re!(r#"^"l\b"#).is_match(&a)).then_some(false)
                 }
             }
-        })
+            "value" => (statement.contains('"') || name(&arg(statement))).then_some(false),
+            _ => {
+                let a = arg(statement);
+                (a.starts_with('"') || name(&a)).then_some(false)
+            }
+        };
+        if let Some(context) = write {
+            found.push((m.start(), context));
+        }
+    }
+    found
 }
 
 pub fn check(

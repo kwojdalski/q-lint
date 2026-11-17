@@ -487,3 +487,21 @@ b:$[0x01;1;2]
 c:$[1i;1;2]
 d:$[12:00;1;2]
 e:$[0N;1;2]
+
+=== clean profile: general | QA012: a string evaluated or a script loaded may redefine the lambda (#745; q 5: f[1;2] is 3 each time)
+f:{x}
+value "f:{x+y}"
+r:f[1;2]
+g:{x}
+eval parse "g:{x+y}"
+s:g[1;2]
+
+=== clean profile: general | QA012: and so may a script loaded after the definition (#745; q 5 with b.q defining f:{x+y}: 3)
+f:{x}
+\l b.q
+r:f[1;2]
+
+=== QA012 profile: general | while a definition after the load is the one that runs (#745)
+\l b.q
+f:{x}
+r:f[1;2]

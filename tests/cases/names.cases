@@ -1145,3 +1145,11 @@ foo:2
 foo:0
 .q.foo:{x+1}
 foo:1
+
+=== clean profile: general | QF015: a script loaded or a string evaluated may define the name (#750; q 5: \l of true:0b, then $[true;`yes;`no] is `no)
+\l lib.q
+r:$[true;`yes;`no]
+
+=== clean profile: general | QF015: and so may value of a string (#750; q 5: 1)
+value "true:1b"
+r:$[true;1;0]
