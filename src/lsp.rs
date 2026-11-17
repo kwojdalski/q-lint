@@ -154,6 +154,26 @@ impl Index {
         }
     }
 
+    /// Forget `path` and, when it was a directory, every file under it but
+    /// the open documents, whose buffers still hold their text. A watcher
+    /// reports a deleted folder as one event for the folder, not one per
+    /// file inside it (#543).
+    fn remove_tree(&mut self, path: &str, docs: &Documents) -> bool {
+        let gone = std::path::PathBuf::from(file_key(path));
+        let open: Vec<String> = docs.keys().map(|uri| file_key(&path_of(uri))).collect();
+        let under: Vec<String> = self
+            .files
+            .keys()
+            .filter(|k| std::path::Path::new(k).starts_with(&gone) && !open.contains(k))
+            .cloned()
+            .collect();
+        let mut changed = false;
+        for key in under {
+            changed |= self.remove(&key);
+        }
+        changed
+    }
+
     /// Read `path` from disk when the index covers it, and forget it when it
     /// does not, is gone, or is unreadable. A closed document and a file
     /// changed on disk both come here, so neither can put back what the
@@ -687,7 +707,7 @@ pub fn serve(
                         continue;
                     }
                     changed |= if change["type"].as_i64() == Some(3) {
-                        idx.remove(&path)
+                        idx.remove_tree(&path, &docs)
                     } else {
                         idx.reload(&path, policy)
                     };

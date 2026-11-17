@@ -1062,6 +1062,27 @@ fn a_symlinked_q_file_is_indexed_as_the_cli_walk_lints_it() {
 }
 
 #[test]
+fn deleting_a_folder_forgets_every_definition_under_it() {
+    // A watcher reports a deleted folder as one event for the folder (#543).
+    let dir = tempfile::tempdir().unwrap();
+    let sub = dir.path().join("sub");
+    std::fs::create_dir(&sub).unwrap();
+    std::fs::write(sub.join("def.q"), "helper:{x+1}\n").unwrap();
+    let mut server = start_with_workspace(dir.path());
+    let app = file_uri(&dir.path().join("app.q"));
+    server.open(&app, "f:{y:helper; y}\n");
+    assert!(!codes_of(&server.diagnostics_for(&app)).contains(&"QF018".to_string()));
+    std::fs::remove_dir_all(&sub).unwrap();
+    server.send(
+        json!({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles",
+        "params":{"changes":[{"uri":file_uri(&sub),"type":3}]}}),
+    );
+    let found = codes_of(&server.diagnostics_for(&app));
+    assert!(found.contains(&"QF018".to_string()), "{found:?}");
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
 fn a_document_takes_the_profile_of_the_qlinter_toml_above_it() {
     // An editor starts the server with no --profile when the user has not set
     // one, so the repository's configuration decides; and the server finds
