@@ -168,13 +168,14 @@ echoed:{[a] b:1; b:b; b}
 / expect-next: QB018
 fixed:1=2
 
-/ ------------------------------------------------------- styleq profile only
+/ ------------------------------------------------ styleq and uqf profiles
 / .
-/ QS001, QS002 and QS003 fire only with q-lint.profile set to styleq. They
-/ come from the FINOS q coding guidelines rather than from q's behaviour: all
+/ QS001, QS002 and QS003 fire with q-lint.profile set to styleq or uqf -
+/ uqf is the CLI's default, the extension's is style, where they stay quiet.
+/ They come from the FINOS q coding guidelines rather than from q's behaviour: all
 / three names below are perfectly good q, and the guidance is about how they
 / read. The underscore one is widely ignored in practice, which is the reason
-/ the profile is opt-in.
+/ the editor's default leaves them out.
 / .
 / QS010 fires on the same line for a different reason: every other name this
 / file chooses is camelCase or a single word, so `some_name` is the one a
@@ -737,10 +738,11 @@ multinull:{[]
  r
  }
 
-/ ----------------------------------------------------- uqf profile only
+/ ------------------------------------------------------ uqf profile only
 
-/ QP001 and QP002 fire only with q-lint.profile set to uqf. With the
-/ default general profile the two marked lines below stay quiet.
+/ The QP rules fire only with q-lint.profile set to uqf, which is the CLI's
+/ default; under the extension's default, style, the marked lines below stay
+/ quiet.
 
 / QP002: the datetime literal is q legacy 15h precision.
 / expect-next: QP002
