@@ -1026,3 +1026,12 @@ r:f[]
 g:{.ns.k 0}
 (.ns.k;.ns.j):(1 2 3;4)
 s:g[]
+
+=== QT022 profile: general | while a shell command built at run time, a joined name read by get and get of a system command load nothing (q 5: a 0 is 'type)
+a:1
+del:{system$[WIN;"del ";"rm "],x}
+run:{[cmd] @[system;cmd;{x}]}
+m:get[".ns.",string`f]
+w:get"\\w"
+p:(get'') " -> " vs/:("1,2 -> 3,4";"5,6 -> 7,8")
+r:a 0
