@@ -1068,6 +1068,45 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
         finding.end_column = finding.column.map(|c| c + if colon { 2 } else { 1 });
         out.push(finding);
     }
+    // The I/O verbs `0:`, `1:` and `2:` have no monadic form either: q 5
+    // refuses `0: x`, `a:0:x`, `1:`a`, `{2: x}` and even `0:00` at parse,
+    // while `0:[x;y]`, `(0:)x` and `x 0: y` are fine (#672).
+    let c = code.as_bytes();
+    let mut line_start = 0;
+    for (i, &d) in c.iter().enumerate() {
+        if i > 0 && c[i - 1] == b'\n' {
+            line_start = i;
+        }
+        if !matches!(d, b'0'..=b'2')
+            || c.get(i + 1) != Some(&b':')
+            || comments.as_bytes()[i] != d
+            || i.checked_sub(1)
+                .is_some_and(|p| c[p].is_ascii_alphanumeric() || b"._`-:".contains(&c[p]))
+            || crate::system_command(&source[line_start..])
+        {
+            continue;
+        }
+        let next = continued(&comments[i + 2..]);
+        if !(next.starts_with(|c: char| c.is_ascii_alphanumeric() || "`(\"{.".contains(c))
+            || re!(r"^-\.?\d").is_match(next))
+        {
+            continue;
+        }
+        let expression = line_start + crate::timed_prefix(&source[line_start..]);
+        if !opens_expression(code, source, comments, i, expression) {
+            continue;
+        }
+        let verb = &code[i..i + 2];
+        let mut finding = Finding::at(
+            path,
+            source,
+            i,
+            "QE008",
+            format!("`{verb}` has no monadic form in q 5: q refuses this line"),
+        );
+        finding.end_column = finding.column.map(|c| c + 2);
+        out.push(finding);
+    }
 }
 
 const GLYPHS: &[u8] = b"+-*%!#$&|^=<>~,@?";
@@ -1509,8 +1548,10 @@ fn numbers(
     // An exponent's sign is part of its number: `1.5e-3` is one float.
     // A token that starts inside a name - the `1` of `x1:1.5j` - is passed
     // over one character at a time, so the literal after it is still read.
+    // A colon joins only a digit: before a name it is the I/O verb, and q 5
+    // parses `x 0:y 1` as `(0:;`x;(`y;1))` (#665).
     let tokens: Vec<regex::Match> =
-        crate::boundary_captures(re!(r"\d(?:[eE][+-]\d|[0-9A-Za-z.:])*"), unsym, code)
+        crate::boundary_captures(re!(r"\d(?:[eE][+-]\d|:\d|[0-9A-Za-z.])*"), unsym, code)
             .into_iter()
             .map(|c| c.get(0).unwrap())
             .filter(|m| !command_argument(source, m.start()))
@@ -1717,6 +1758,25 @@ fn numbers(
                 // and `2000.01.01z 2000.01.02` parse, `12:00u 1` is '12:00u.
                 Some(format!(
                     "`{text}`: a vector literal takes one type suffix, after its last item"
+                ))
+            } else if text.contains(':')
+                && !re!(r"[uvtpnzdmD]$").is_match(last)
+                && run[k + 1..].iter().any(|t| {
+                    let t = t.as_str();
+                    !t.contains([':', 'D'])
+                        && !t.starts_with("0x")
+                        && !t.ends_with('b')
+                        && !re!(r"^0[nN]$").is_match(t)
+                })
+            {
+                // A time, timespan or timestamp takes only items of a time's
+                // shape, or a null, after it: q 5 refuses `12:00 1`,
+                // `12:00 1.5`, `12:00 0W`, `12:00 0Ni`, `1 12:00 2` and
+                // `0D12:00 1`, and parses `12:00 0N`, `1 12:00`,
+                // `12:00 12:00:00` and `0D00:01 0D` - and `12:00 1u` and
+                // `0D00:01 5n`, where a temporal suffix types them all (#673).
+                Some(format!(
+                    "`{text}`: a time in a vector literal takes only times or nulls after it"
                 ))
             } else if k + 1 < run.len()
                 && (text.contains('.') || re!(r"^\d+[eE][+-]?\d+$").is_match(text))

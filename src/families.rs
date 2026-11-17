@@ -353,7 +353,21 @@ fn leftovers(path: &str, source: &str, comments: &str, foreign: &[usize], out: &
         re!(r"(?m)^[ \t]*/+[ \t]*(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]*:[ \t]*\{").captures_iter(source)
     {
         let name = m.get(1).unwrap();
-        if in_comment(name.start()) {
+        // A lambda that closes on the line with words after it - `f:{x[0]+1}
+        // as a one-argument declaration.` - is a sentence quoting code, and
+        // one whose body is an ellipsis, `{[] ...}`, a documented shape
+        // (#517). Code after the brace is still code: `r: {x}each I`.
+        let brace = m.get(0).unwrap().end() - 1;
+        let line = &source[brace
+            ..source[brace..]
+                .find('\n')
+                .map_or(source.len(), |n| brace + n)];
+        let prose = matching(line, 0, b'{', b'}').is_some_and(|c| {
+            line[..c].contains("...")
+                || re!(r"^[A-Za-z][A-Za-z'-]*(?: [A-Za-z][A-Za-z'-]*){2}")
+                    .is_match(line[c..].trim())
+        });
+        if in_comment(name.start()) && !prose {
             out.push(Finding::at(
                 path,
                 source,
@@ -860,10 +874,11 @@ fn unreachable(path: &str, source: &str, code: &str, comments: &str, out: &mut V
         }
         statements.push((start, body.len()));
         // `'[f;g]` - or `' [f;g]` - is a composition, not a signal: q 5
-        // `{'[neg;abs]; 2}[]` is 2.
+        // `{'[neg;abs]; 2}[]` is 2. And `:[a;b]` is the assign verb, not a
+        // return: `{a:0; :[a;5]; a}[]` is 5, and with a space 7 (#515).
         let exits = |text: &str| {
             let t = text.trim_start();
-            (t.starts_with(':') && !t.starts_with("::"))
+            (t.starts_with(':') && !t.starts_with("::") && !t[1..].trim_start().starts_with('['))
                 || (t.starts_with('\'')
                     && !t.starts_with("':")
                     && !t[1..].trim_start().starts_with('['))

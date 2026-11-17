@@ -423,6 +423,12 @@ r:(a+b)/2
 mem:{(3#system"w")%x (1024*)/ 1}
 p:(10000>pi::)(2*)/1000
 
+=== clean | so is a parenthesised name or lambda with a left operand (#509; q 5: 3 (g)/1 is 8, {x<100} ({x*2})/1 is 128)
+g:{x*2}
+a:3 (g)/1
+b:{x<100} ({x*2})/1
+c:3 (.ns.g)/1
+
 === QB014 QE009 | without the left operand q refuses it: (2*)/1 is '/
 r:(2*)/1
 
@@ -583,6 +589,11 @@ d:([a:1;a:2])
 
 === QB020 | a statement after a top-level return never runs
 f:{:1;2}
+
+=== clean | :[a;b] is the assign verb, not a return, and what follows runs (#515; q 5: {:[x;y]; 3}[1;2] is 3, {a:0; :[a;5]; a}[] is 5)
+f:{:[x;y]; 3}
+g:{a:0; :[a;5]; a}
+h:{a:0; : [a;5]; a}
 
 === QB020 | a string is a statement too, and never runs after the return (#216)
 f:{[a] :a; "x"}

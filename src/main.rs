@@ -921,8 +921,12 @@ fn print_diff(path: &str, before: &str, edits: &[q_lint_rs::Fix]) {
             }
             new.push_str(&before[cursor..end]);
             show(&mut body, ' ', &before[at..start]);
-            show(&mut body, '-', &before[start..end]);
-            show(&mut body, '+', &new);
+            // The lines the change leaves alone are context, not a line
+            // removed and written back: nested or multi-pass fixes make one
+            // change of a span with untouched lines inside it (#518, #671).
+            for (sign, line) in line_diff(&before[start..end], &new) {
+                show(&mut body, sign, line);
+            }
             new_n += lines(&before[at..start]) + lines(&new);
             at = end;
         }
@@ -941,6 +945,87 @@ fn print_diff(path: &str, before: &str, edits: &[q_lint_rs::Fix]) {
         shift += new_n as isize - old_n as isize;
     }
 }
+/// The lines of `old` and `new` as a diff: each with ' ' where both have
+/// it, '-' where only `old` does and '+' where only `new` does - a shortest
+/// edit script, as diff finds it (Myers). Past `LIMIT` differing lines the
+/// search stops and the whole of each side is the change.
+fn line_diff<'a>(old: &'a str, new: &'a str) -> Vec<(char, &'a str)> {
+    const LIMIT: isize = 2000;
+    let a: Vec<&str> = old.split_inclusive('\n').collect();
+    let b: Vec<&str> = new.split_inclusive('\n').collect();
+    let (n, m) = (a.len() as isize, b.len() as isize);
+    // For each edit count d, the furthest x reached on each diagonal
+    // k = x - y, at index k + d of that step's row.
+    let mut trace: Vec<Vec<isize>> = vec![];
+    let ends = 'search: {
+        for d in 0..=(n + m).min(LIMIT) {
+            let mut row = vec![0isize; 2 * d as usize + 1];
+            for k in (-d..=d).step_by(2) {
+                let prev = |k: isize| trace[d as usize - 1][(k + d - 1) as usize];
+                let mut x = if d == 0 {
+                    0
+                } else if k == -d || (k != d && prev(k - 1) < prev(k + 1)) {
+                    prev(k + 1)
+                } else {
+                    prev(k - 1) + 1
+                };
+                let mut y = x - k;
+                while x < n && y < m && a[x as usize] == b[y as usize] {
+                    x += 1;
+                    y += 1;
+                }
+                row[(k + d) as usize] = x;
+                if x >= n && y >= m {
+                    trace.push(row);
+                    break 'search true;
+                }
+            }
+            trace.push(row);
+        }
+        false
+    };
+    if !ends {
+        return a
+            .iter()
+            .map(|l| ('-', *l))
+            .chain(b.iter().map(|l| ('+', *l)))
+            .collect();
+    }
+    // Back from the end: each step's edit, and the common lines after it.
+    let mut out = vec![];
+    let (mut x, mut y) = (n, m);
+    for d in (1..trace.len() as isize).rev() {
+        let k = x - y;
+        let prev = |k: isize| trace[d as usize - 1][(k + d - 1) as usize];
+        let down = k == -d || (k != d && prev(k - 1) < prev(k + 1));
+        let (px, pk) = if down {
+            (prev(k + 1), k + 1)
+        } else {
+            (prev(k - 1), k - 1)
+        };
+        let mid = if down { px } else { px + 1 };
+        while x > mid {
+            x -= 1;
+            y -= 1;
+            out.push((' ', a[x as usize]));
+        }
+        if down {
+            y -= 1;
+            out.push(('+', b[y as usize]));
+        } else {
+            x -= 1;
+            out.push(('-', a[x as usize]));
+        }
+        debug_assert_eq!((x, y), (px, px - pk));
+    }
+    while x > 0 {
+        x -= 1;
+        out.push((' ', a[x as usize]));
+    }
+    out.reverse();
+    out
+}
+
 fn main() -> ExitCode {
     match run(Args::parse()) {
         Ok(code) => ExitCode::from(code),
@@ -1003,8 +1088,34 @@ impl Paint {
 
 #[cfg(test)]
 mod tests {
-    use super::auto_colour;
+    use super::{auto_colour, line_diff};
     use std::ffi::OsStr;
+
+    #[test]
+    fn a_line_diff_rebuilds_both_sides_and_keeps_what_they_share() {
+        for (old, new, kept) in [
+            ("a\nb\nc\n", "a\nB\nc\n", 2),
+            ("a\nb\nc\nd\n", "A\nb\nc\nD\n", 2),
+            ("a\nb\n", "a\nx\ny\nb\n", 2),
+            ("a\nb\nc\n", "a\nc\n", 2),
+            ("", "a\n", 0),
+            ("a\n", "", 0),
+            ("a\nb", "a\nb\n", 1),
+            ("x\n", "y\n", 0),
+        ] {
+            let ops = line_diff(old, new);
+            let side = |skip: char| -> String {
+                ops.iter()
+                    .filter(|(s, _)| *s != skip)
+                    .map(|(_, l)| *l)
+                    .collect()
+            };
+            assert_eq!(side('+'), old, "{old:?} -> {new:?}");
+            assert_eq!(side('-'), new, "{old:?} -> {new:?}");
+            let shared = ops.iter().filter(|(s, _)| *s == ' ').count();
+            assert_eq!(shared, kept, "{old:?} -> {new:?}: {ops:?}");
+        }
+    }
 
     #[test]
     fn an_empty_no_color_leaves_colour_on() {

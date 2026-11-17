@@ -997,7 +997,7 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         // The finding sits on the clock it names.
         "QP003" => {
             let m = re!(r"^\.z\.[PTNZD]\b").find(v.code.get(start..)?)?;
-            let clock = m.as_str().to_ascii_lowercase();
+            let clock = utc_clock(m.as_str());
             (
                 &source[start..start + m.end()],
                 clock.clone().into(),
@@ -1646,68 +1646,9 @@ impl Finding {
             detail,
             why: rule.summary.clone(),
             source: "q-lint".into(),
-            severity: if matches!(
-                code,
-                "QE001"
-                    | "QE003"
-                    | "QE008"
-                    | "QE009"
-                    | "QE010"
-                    | "QE011"
-                    | "QT031"
-                    | "QA001"
-                    | "QA002"
-                    | "QA005"
-                    | "QA006"
-                    | "QT001"
-                    | "QT002"
-                    | "QT003"
-                    | "QB005"
-                    | "QB007"
-                    | "QB008"
-                    | "QF012"
-                    | "QF004"
-                    | "QE004"
-                    | "QF014"
-                    | "QF015"
-                    | "QA009"
-                    | "QT004"
-                    | "QT005"
-                    | "QT006"
-                    | "QT007"
-                    | "QB013"
-                    | "QB014"
-                    | "QB015"
-                    | "QB016"
-                    | "QA010"
-                    | "QT008"
-                    | "QT009"
-                    | "QT010"
-                    | "QT011"
-                    | "QT012"
-                    | "QT013"
-                    | "QT014"
-                    | "QT016"
-                    | "QT017"
-                    | "QT018"
-                    | "QT019"
-                    | "QD001"
-                    | "QD002"
-                    | "QF019"
-                    | "QF020"
-                    | "QT022"
-                    | "QT023"
-                    | "QT024"
-                    | "QT025"
-                    | "QT026"
-                    | "QT027"
-                    | "QT028"
-                    | "QT029"
-                    | "QT030"
-                    | "QT032"
-                    | "QE006"
-                    | "QE007"
-            ) {
+            // An error is what q refuses, which is what the `builtin` scope
+            // means (#512); everything q accepts is a warning (#513).
+            severity: if rule.scope == "builtin" {
                 "error"
             } else {
                 "warning"
@@ -1793,6 +1734,17 @@ pub(crate) fn apply_not_subtract(name: &str, literal: &str) -> String {
 fn scalar_literal(s: &str) -> bool {
     re!(r"^(?:-?\d[A-Za-z0-9.]*|`[A-Za-z0-9_.]*)$").is_match(s)
         && !re!(r"^[01]{2,}b$|^0x[0-9a-fA-F]{3,}$").is_match(s)
+}
+
+/// The UTC clock QP003 asks for in place of a local one: the same clock in
+/// lower case, but a timestamp for the local datetime `.z.Z`, since `.z.z`
+/// is the legacy datetime QP002 reports in the same profile (#519).
+fn utc_clock(local: &str) -> String {
+    if local == ".z.Z" {
+        ".z.p".into()
+    } else {
+        local.to_ascii_lowercase()
+    }
 }
 
 fn boundary(s: &str, at: usize) -> bool {
@@ -2280,22 +2232,30 @@ fn phrase_end(code: &str, from: usize) -> usize {
 /// `-b`, while `a-b`, `a- b` and `a - b` are subtraction. Braces and `;`
 /// start fresh statements rather than nesting, so a lambda body on one line
 /// is still checked.
-/// The `*`/`%` and `+`/`-` operators at bracket depth 0 of `line`, as runs
-/// that a `;`, a brace or a depth-0 `,` separates - each operator with its
-/// offset and whether it multiplies. A `+`/`-` counts only after an operand,
-/// and not as the sign of a literal.
+/// The `*`/`%` and `+`/`-` operators of `line`, as runs of one expression
+/// each - each operator with its offset and whether it multiplies. A `;`, a
+/// brace or a `,` ends a run, and a bracket holds runs of its own: in
+/// `(a*b)+c` the `*` and the `+` are never in one run, while `(a*b+c)`,
+/// `f[a*b+c]` and `r:a*b+c;` each hold one that mixes (#511). A `+`/`-`
+/// counts only after an operand, and not as the sign of a literal.
 fn infix_runs(line: &str) -> Vec<Vec<(usize, bool)>> {
     let b = line.as_bytes();
-    let mut runs = vec![vec![]];
-    let (mut depth, mut prev) = (0i32, b'\0');
+    let mut runs = vec![];
+    // The run open at each bracket level, the outermost first.
+    let mut open: Vec<Vec<(usize, bool)>> = vec![vec![]];
+    let mut prev = b'\0';
     for (i, &c) in b.iter().enumerate() {
         match c {
-            b'(' | b'[' => depth += 1,
-            b')' | b']' => depth -= 1,
-            b'{' | b'}' | b';' => runs.push(vec![]),
-            b',' if depth == 0 => runs.push(vec![]),
-            b'*' | b'%' if depth == 0 => runs.last_mut().unwrap().push((i, true)),
-            b'+' | b'-' if depth == 0 => {
+            b'(' | b'[' => open.push(vec![]),
+            // A bracket opened on an earlier line closes the run it held.
+            b')' | b']' => runs.push(if open.len() > 1 {
+                open.pop().unwrap()
+            } else {
+                std::mem::take(&mut open[0])
+            }),
+            b'{' | b'}' | b';' | b',' => runs.push(std::mem::take(open.last_mut().unwrap())),
+            b'*' | b'%' => open.last_mut().unwrap().push((i, true)),
+            b'+' | b'-' => {
                 let operand = matches!(
                     prev,
                     b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b')' | b']' | b'.'
@@ -2320,7 +2280,7 @@ fn infix_runs(line: &str) -> Vec<Vec<(usize, bool)>> {
                         && !before.is_some_and(|c| c.is_ascii_alphanumeric() || *c == b'_')
                 };
                 if operand && !introduces && !exponent {
-                    runs.last_mut().unwrap().push((i, false));
+                    open.last_mut().unwrap().push((i, false));
                 }
             }
             _ => {}
@@ -2329,14 +2289,14 @@ fn infix_runs(line: &str) -> Vec<Vec<(usize, bool)>> {
             prev = c;
         }
     }
+    runs.extend(open);
     runs
 }
-/// The run QP005 judges: the line's last. Earlier runs on the line are not
-/// read, which is how the rule has always behaved on the corpus.
+/// The run QP005 judges: the line's last that mixes the two families.
 fn mixed_run(line: &str) -> Option<Vec<(usize, bool)>> {
     infix_runs(line)
-        .pop()
-        .filter(|run| run.iter().any(|o| o.1) && run.iter().any(|o| !o.1))
+        .into_iter()
+        .rfind(|run| run.iter().any(|o| o.1) && run.iter().any(|o| !o.1))
 }
 /// The top-level statements of a file as byte ranges: a line and the indented
 /// lines q continues it with. Shared by the rules that read a statement and
@@ -3016,7 +2976,26 @@ fn typed_at(s: &str) -> Option<usize> {
 /// for a pattern every name in it but the keys and columns it matches on -
 /// `(a;b)` binds a and b, `([k:p])` binds p, and `1` binds nothing.
 pub(crate) fn pattern_names(slot: &str) -> Vec<&str> {
+    names_within(slot, 0)
+}
+/// `pattern_names` at a nesting `depth`; past `MAX_NESTING` it binds nothing.
+fn names_within(slot: &str, depth: usize) -> Vec<&str> {
+    if depth > MAX_NESTING {
+        return vec![];
+    }
     let slot = typed_at(slot).map_or(slot, |at| &slot[..at]);
+    // A list pattern's items each take their own filter: `(a:neg;b)` binds
+    // a and b, and not neg (q 5 `{[(a:neg;b)] (a;b)} 1 2` is -1 2, #668).
+    let trimmed = slot.trim();
+    if trimmed.starts_with('(')
+        && !trimmed.starts_with("([")
+        && matching(trimmed, 0, b'(', b')') == Some(trimmed.len())
+    {
+        return slots(&trimmed[1..trimmed.len() - 1])
+            .into_iter()
+            .flat_map(|item| names_within(item, depth + 1))
+            .collect();
+    }
     re!(r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*")
         .find_iter(slot)
         .filter(|m| {
@@ -3864,7 +3843,11 @@ pub fn lint_selecting(
             {
                 supplied += 1;
             }
-            if arity.saturating_sub(supplied) >= 2 {
+            // Over or scan on a binary function, given one argument, reduces
+            // it: q 5 `@[{[a;b] a+b}/;1 2;{x}]` is 3 and with `\` it is 1 3
+            // (#514). Each, each-left and each-right still project.
+            let iterated = re!(r"^\s*[/\\](?:[^:]|$)").is_match(&code[after..]);
+            if arity.saturating_sub(supplied) >= 2 && !(iterated && arity - supplied == 2) {
                 add(
                     at,
                     "QA003",
@@ -6066,11 +6049,15 @@ pub fn lint_selecting(
             // Next to another literal the parentheses are what keep two
             // tokens apart: `1 2 (3)` indexes `1 2` at 3 (q 5: 0N), and
             // `3 (-1)` applies 3, where `1 2 3` and `3 -1` are vectors.
+            // So is one held in parentheses of its own: `(1.5)(2)` is 'type,
+            // and with both pairs gone it would be the vector `1.5 2`. The
+            // first pair alone can go - `1.5(2)` is the same application -
+            // so only the second is left (#516).
             let numeric = m[1]
                 .trim()
                 .starts_with(|c: char| c == '-' || c.is_ascii_digit());
             if numeric
-                && (re!(r"(?:^|[^A-Za-z0-9_.])-?\d[A-Za-z0-9.:]*$")
+                && (re!(r"(?:^|[^A-Za-z0-9_.])-?\d[A-Za-z0-9.:]*$|\(\s*-?\d[A-Za-z0-9.:]*\s*\)$")
                     .is_match(line[..whole.start()].trim_end())
                     || line[whole.end()..]
                         .trim_start_matches([' ', '\t'])
@@ -6257,9 +6244,12 @@ pub fn lint_selecting(
                 }
             }
             let Some(open) = open else { return false };
-            let projection = unsym[open + 1..m.start()]
-                .trim_end()
-                .ends_with(|c: char| "+-*%&|^=<>~,#_!?@.$:".contains(c));
+            // A function named or written in the parentheses too: q 5
+            // `3 (g)/1` is 8 and `{x<100} ({x*2})/1` is 128 (#509).
+            let inner = unsym[open + 1..m.start()].trim();
+            let projection = inner.ends_with(|c: char| "+-*%&|^=<>~,#_!?@.$:".contains(c))
+                || re!(r"^\.?[A-Za-z][A-Za-z0-9_.]*$").is_match(inner)
+                || (inner.starts_with('{') && inner.ends_with('}'));
             let operand = unsym[..open]
                 .trim_end()
                 .ends_with(|c: char| c.is_alphanumeric() || ")]}".contains(c));
@@ -6657,8 +6647,9 @@ pub fn lint_selecting(
                         re!(r"\b15h\s*\$"),
                         re!(r"(?:^|[^\w.])-?0[NW]z\b"),
                         re!(r"\b\d{4}\.\d{2}\.\d{2}(?:T|z\b)"),
-                        // `.z.z` and `.z.Z` are the clock as a datetime (-15h).
-                        re!(r"\.z\.[zZ]\b"),
+                        // `.z.z` and `.z.Z` are the clock as a datetime (-15h),
+                        // and `.my.z.z` is one dotted name of the file's (#510).
+                        re!(r"(?:^|[^\w.])\.z\.[zZ]\b"),
                     ]
                     .iter()
                     .filter_map(|regex| regex.find_iter(literals).find(in_code)),
@@ -6671,6 +6662,11 @@ pub fn lint_selecting(
                     // The `"z"` cast on its `$`: the string is not code, and
                     // a fix only starts in code.
                     _ if m.as_str().starts_with('"') => m.end() - 1,
+                    // The clock's pattern takes in the byte before it too;
+                    // a date's `z`, `2023.01.01z`, is no clock (#501).
+                    _ if m.as_str().ends_with(".z.z") || m.as_str().ends_with(".z.Z") => {
+                        m.end() - 4
+                    }
                     _ => m.start(),
                 })
                 .min()
@@ -6686,14 +6682,7 @@ pub fn lint_selecting(
                 })
                 .filter(|m| line[m.range()] == *m.as_str())
             {
-                let utc: String = m
-                    .as_str()
-                    .chars()
-                    .map(|c| match c {
-                        'P' | 'T' | 'N' | 'Z' | 'D' => c.to_ascii_lowercase(),
-                        _ => c,
-                    })
-                    .collect();
+                let utc = utc_clock(m.as_str());
                 add(
                     offset + m.start(),
                     "QP003",

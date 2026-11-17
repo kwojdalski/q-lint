@@ -355,6 +355,20 @@ f:{[x] r:cfg; cfg:1; r}
 f:{r:a
   +a:5; r}
 
+=== clean | a filtered destructuring binds every name it lists, and not its filter (#668; q 5: f 1 2 is 3, and k 1 2 is 1)
+f:{[p] (a:neg;b):p; b:b+1; b}
+g:{[p] (a:`s;b):p; b:b+1; b}
+h:{[p] (a:{x*2};b):p; b:b+1; b}
+k:{[(a:neg;b)] a+b}
+
+=== clean profile: general | a later slot of a call or a list runs first, and may assign the name the earlier one reads (#669; q 5: f[] is 3 and g[] is 2 1)
+h:{x+y}
+f:{h[d:d+1;d:1]}
+g:{(b:b+1;b:1)}
+
+=== QF014 profile: general | while a later slot of a control bracket runs after
+f:{$[1b;(a:a+1);a:2]}
+
 === QF014 | but a semicolon on the line before does end the statement
 f:{r:a;
   a:5; r}
@@ -993,6 +1007,20 @@ f:{[t] t.c}
 t.c:5
 \d .ns
 f:{[t] t.c}
+\d .
+
+=== clean profile: general | a name the lambda reads as a namespace the file defines, beside a member set at run time (#670; q 5: .gg.f 1 is 2)
+\d .gg
+scale.colour.g:{x}
+mk:{[n] (` sv `.gg.scale.ty,n) set {x+1}}
+mk`w
+f:{[scale] scale.colour.g scale.ty.w scale}
+\d .
+
+=== QF021 profile: general | while a parameter whose dotted reads the file never defines is still reported
+\d .gg
+scale.colour.g:{x}
+f:{[scale] scale.ty.w scale}
 \d .
 
 === clean profile: general | indexing with a symbol, and q's own namespaces

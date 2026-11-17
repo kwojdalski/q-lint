@@ -119,8 +119,10 @@ fn pattern_assignments(text: &str) -> impl Iterator<Item = (usize, &str, bool)> 
         .filter_map(move |c| {
             let m = c.get(0).unwrap();
             let double = c[1].len() == 2;
-            // Back to the `(` that opens the target, over nothing a pattern
-            // could not hold, so a string or a call is never walked into.
+            // Back to the `(` that opens the target. A filter can hold any
+            // function - `(a:neg;b):p`, `(a:{x*2};b):p` and `(a:`$;b):p`
+            // bind a and b (q 5, #668) - so what is between is left to
+            // `is_pattern`.
             let mut depth = 0usize;
             let mut at = m.start();
             loop {
@@ -132,8 +134,7 @@ fn pattern_assignments(text: &str) -> impl Iterator<Item = (usize, &str, bool)> 
                             break;
                         }
                     }
-                    b if b.is_ascii_alphanumeric() || b" \t\r\n;_.`[]".contains(&b) => {}
-                    _ => return None,
+                    _ => {}
                 }
                 at = at.checked_sub(1)?;
             }
@@ -554,6 +555,11 @@ fn shape(s: &str) -> Option<usize> {
             return None;
         }
         let inner = &s[1..s.len() - 1];
+        // A table literal's `;` separate columns, and its length is its
+        // rows: q 5 builds `([]a:1 2 3;b:4 5 6)!(1;2;3)` (#667).
+        if inner.trim_start().starts_with('[') {
+            return None;
+        }
         let items = crate::slots(inner);
         if items.len() > 1 {
             return Some(items.len());
@@ -2055,22 +2061,32 @@ pub fn check(
                     // `c:f$[0<count c:g x;c;0]` are fine. So is one right of
                     // the bracket that closes around the first: `(b:b&x)|b:x>0`
                     // runs `b:x>0` first (#302). The walk ends at a `;` of the
-                    // outermost level it has reached, since a later slot of a
-                    // control bracket, `$[c;(a:a+1);a:2]`, runs after.
+                    // outermost level it has reached that ends a statement or
+                    // a slot of a control bracket, since a later slot of one,
+                    // `$[c;(a:a+1);a:2]`, runs after. A later slot of a call
+                    // or a list runs first: q 5 `{h[d:d+1;d:1]}[]` is 3 and
+                    // `{(b:b+1;b:1)}[]` is 2 1 (#669).
                     let rest = &direct[assigned..];
                     let (mut depth, mut floor) = (0i32, 0i32);
-                    let end = rest
-                        .bytes()
-                        .position(|b| {
-                            match b {
-                                b'(' | b'[' | b'{' => depth += 1,
-                                b')' | b']' | b'}' => depth -= 1,
-                                _ => {}
-                            }
-                            floor = floor.min(depth);
-                            b == b';' && depth <= floor
-                        })
-                        .unwrap_or(rest.len());
+                    let mut end = rest.len();
+                    for (i, b) in rest.bytes().enumerate() {
+                        match b {
+                            b'(' | b'[' | b'{' => depth += 1,
+                            b')' | b']' | b'}' => depth -= 1,
+                            _ => {}
+                        }
+                        floor = floor.min(depth);
+                        if b == b';'
+                            && depth <= floor
+                            && !eval_path(&direct, assigned + i)
+                                .1
+                                .last()
+                                .is_some_and(|&(_, _, control)| !control)
+                        {
+                            end = i;
+                            break;
+                        }
+                    }
                     !assignment.captures_iter(&rest[..end]).any(|a| {
                         let at = a.get(0).unwrap().start();
                         at > 0 && &a[1] == name && a.get(2).is_none() && boundary(rest, at)
@@ -2145,10 +2161,25 @@ pub fn check(
                     && boundary(&tables, m.start())
             }) || multi_assignments(&tables).any(|(p, n)| p < at && n == name)
         };
-        for m in re!(r"([A-Za-z][A-Za-z0-9_]*)\.[A-Za-z][A-Za-z0-9_.]*").find_iter(&direct) {
+        let dotted = re!(r"([A-Za-z][A-Za-z0-9_]*)\.[A-Za-z][A-Za-z0-9_.]*");
+        // A name the lambda already reads as a namespace, through a dotted
+        // global the file defines: its other dotted reads are that
+        // namespace's too, which the file may fill at run time. KX's
+        // ax/graphics.q reads `scale.colour.gradient`, defined, beside
+        // `scale.ty.default.with.i_type`, which a helper `set`s (#670).
+        let namespaces: HashSet<&str> = dotted
+            .find_iter(&direct)
+            .filter(|m| {
+                boundary(&direct, m.start())
+                    && exact.contains_key(&resolved(m.as_str(), &scope.namespace))
+            })
+            .map(|m| &m.as_str()[..m.as_str().find('.').unwrap()])
+            .collect();
+        for m in dotted.find_iter(&direct) {
             let whole = m.as_str();
             let name = &whole[..whole.find('.').unwrap()];
             if !boundary(&direct, m.start())
+                || namespaces.contains(name)
                 || !(scope.params.contains(name)
                     || (scope.locals.contains(name) && set_before(name, m.start())))
                 // A global of that name, as q resolves it in the lambda's
@@ -2958,9 +2989,13 @@ pub fn check(
                     continue;
                 }
             }
+            // An infix keyword, or the I/O verb `0:`, `1:` or `2:`, makes the
+            // name its left operand: q 5 parses `fmt 0: x` as
+            // `(0:;`fmt;`x)`, and even `f 0:00` as `(0:;`f;0)` (#508).
             if re!(r"^[A-Za-z][A-Za-z0-9_]*")
                 .find(&code[argument..])
                 .is_some_and(|w| INFIX.contains(&w.as_str()))
+                || re!(r"^[012]:").is_match(&code[argument..])
             {
                 continue;
             }
@@ -4029,9 +4064,11 @@ fn named_values(
     // table is 'type - checked for all three; uj takes any and is not here.
     // ljf and ijf too, and the bracket form `lj[t;s]` (q 5: 'type). The
     // keyword or the right table may be parenthesised, `(lj)[t;s]` and
-    // `t lj (s)` (q 5: 'type, #618).
+    // `t lj (s)` (q 5: 'type, #618). Not the last segment of a dotted
+    // name: `.t.lj[k;a;b]` is a function of the file's own (#666).
     for m in re!(r"(?:\b(ljf|ijf|lj|ij|pj)|\((ljf|ijf|lj|ij|pj)\))(?:\s+|\s*\[[^;\[\]]*;\s*)(\(\s*\[|\(\s*(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*\)|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)")
         .captures_iter(code)
+        .filter(|m| !code[..m.get(0).unwrap().start()].ends_with('.'))
     {
         let keyword = m.get(1).or(m.get(2)).unwrap();
         let whole = m.get(3).unwrap();
