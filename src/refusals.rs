@@ -1429,13 +1429,14 @@ fn derived_operand(
 /// nothing is on its left or an operand follows: `cor each x`,
 /// `x mavg each y`, `x in over y` and `x + each y` are each an error, while
 /// `(cor) each x`, `cor'[x;y]`, `cor[x] each y` and `(+) each y` parse (#492).
-/// The list is every reserved word q 5 refuses there, checked one by one (the
-/// iterator keywords are iterators themselves, and the qSQL words have their
-/// own rule). Of the glyphs, `:` is left to assignment and `.` and `_` to
-/// names; `/`, `\` and `'` are iterators.
+/// The list is every reserved word q 5 refuses there, checked one by one, the
+/// iterator keywords among them: q 5 refuses `f over each x` and
+/// `each each x` too (#659). The qSQL words have their own rule. Of the
+/// glyphs, `:` is left to assignment and `.` and `_` to names; `/`, `\` and
+/// `'` are iterators.
 fn keyword_each(path: &str, source: &str, unsym: &str, out: &mut Vec<Finding>) {
     for m in re!(
-        r"(?:\b(and|asof|bin|binr|cor|cov|cross|cut|div|dsave|ema|except|fby|ij|ijf|in|insert|inter|like|lj|ljf|lsq|mavg|mcount|mdev|mmax|mmin|mmu|mod|msum|or|pj|rotate|scov|set|setenv|ss|sublist|sv|uj|ujf|union|upsert|vs|wavg|within|wsum|xasc|xbar|xcol|xcols|xdesc|xexp|xgroup|xkey|xlog|xprev|xrank)[ \t]+|([-+*%!&|<>=~,^#$?@])[ \t]*)(each|peach|over|scan|prior)\b"
+        r"(?:\b(and|asof|bin|binr|cor|cov|cross|cut|div|dsave|each|ema|except|fby|ij|ijf|in|insert|inter|like|lj|ljf|lsq|mavg|mcount|mdev|mmax|mmin|mmu|mod|msum|or|over|peach|pj|prior|rotate|scan|scov|set|setenv|ss|sublist|sv|uj|ujf|union|upsert|vs|wavg|within|wsum|xasc|xbar|xcol|xcols|xdesc|xexp|xgroup|xkey|xlog|xprev|xrank)[ \t]+|([-+*%!&|<>=~,^#$?@])[ \t]*)(each|peach|over|scan|prior)\b"
     )
     .captures_iter(unsym)
     {
@@ -1481,12 +1482,21 @@ fn keyword_each(path: &str, source: &str, unsym: &str, out: &mut Vec<Finding>) {
             source,
             word.start(),
             "QE011",
-            format!(
-                "`{w}` is infix, so q 5 refuses `{w} {it}` at parse: write `({w}) {it}`, \
-                 `{w}'` or `{w}[x] {it}`",
-                w = word.as_str(),
-                it = &m[3]
-            ),
+            if matches!(word.as_str(), "each" | "peach" | "over" | "scan" | "prior") {
+                format!(
+                    "`{w}` is infix, so q 5 refuses `{w} {it}` at parse: write the derived \
+                     function in parentheses, `(f {w}) {it}`",
+                    w = word.as_str(),
+                    it = &m[3]
+                )
+            } else {
+                format!(
+                    "`{w}` is infix, so q 5 refuses `{w} {it}` at parse: write `({w}) {it}`, \
+                     `{w}'` or `{w}[x] {it}`",
+                    w = word.as_str(),
+                    it = &m[3]
+                )
+            },
         );
         finding.end_column = finding.column.map(|c| c + word.len());
         out.push(finding);
