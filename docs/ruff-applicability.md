@@ -49,14 +49,14 @@ are `style` unless noted.
 the primitive is vectorised and the loop is not, which makes this family worth
 more here than in Python.
 
-| ruff | in q | checked |
+| ruff | in q | checked in q 5 |
 |---|---|---|
 | `PERF401` manual list building | `{x+1} each til 5` for `1+til 5` | same result |
-| `RUF015` single-element slice | `first asc x` for `min x` | same result |
-| `C413` unnecessary call around `sorted` | `reverse asc x` for `desc x` | same result |
+| `RUF015` single-element slice | `first asc x` for `min x` | differs where `x` holds a null (`0N` against `1` for `0N 3 1`) and on an empty list (`0N` against `0W`) |
+| `C413` unnecessary call around `sorted` | `reverse asc x` for `desc x` | differs on a dictionary with tied values, whose keys come out in a different order |
 | `C414` nested redundant call | `distinct asc distinct x` | same result |
-| `PIE807` useless lambda | `{x} each x` for `x` | same result |
-| `FURB118` lambda where an operator exists | `{x+y}/[x]` for `sum x` | same result |
+| `PIE807` useless lambda | `{x} each x` for `x` | differs on an empty typed list, where `each` returns a general `()`, and `each` drops a `` `s# `` or `` `g# `` attribute |
+| `FURB118` lambda where an operator exists | `{x+y}/[x]` for `sum x` | differs where `x` holds a null (`0N` against `4` for `0N 3 1`) and on an empty list (`()` against `0`) |
 | `RUF017` quadratic accumulation | `,` in a loop where `raze` does it once | |
 
 **Things left in code that should not ship.**
