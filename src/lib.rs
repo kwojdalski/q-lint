@@ -282,7 +282,7 @@ fn query_word(code: &str, at: usize) -> Option<&'static str> {
 /// `;` at its depth, or a newline the line after does not continue - the
 /// same boundaries `argument_end` stops at, read backwards. A query may
 /// span lines, so the line `at` is on does not settle this (#111).
-fn query_clause(code: &str, at: usize) -> Option<&'static str> {
+pub(crate) fn query_clause(code: &str, at: usize) -> Option<&'static str> {
     let bytes = code.as_bytes();
     let mut depth = 0usize;
     let mut start = at;

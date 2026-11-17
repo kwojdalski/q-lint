@@ -493,6 +493,16 @@ r:where 2
 === QT009 | a boolean atom either (q 5: where 1b is 'type)
 r:where 1b
 
+=== clean profile: general | the where phrase of a query takes a boolean atom (q 5 runs each, #737)
+t:([]a:1 2;b:3 4)
+empty:select from t where 0b
+all1:exec a from t where 1b
+f:{[t] delete from t where 0b}
+
+=== QT009 profile: general | before from, where is still the function (q 5: select v:where 1b from t is 'type)
+t:([]a:1 2)
+r:select v:where 1b from t
+
 === QT009 | a byte vector with something in it (q 5: where 0x01 and where 0x0102 are 'type)
 r:where 0x01
 s:where 0x0102
