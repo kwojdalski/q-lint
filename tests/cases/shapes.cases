@@ -992,3 +992,17 @@ v:t lj .n.s
 .cfg.b:2 3
 .cfg[`b]:4 5
 r:.cfg.a 0
+
+=== clean profile: general | QA012 and QT022: set' writes each name, from a general list or in brackets too (#753; q 5: 3 1 5)
+a:1
+b:1
+f:{x}
+`f`g set' ({x+y};1)
+(`a;`c) set' (1 2 3;4)
+set'[`b`d;(5 6 7;8)]
+r:(f[1;2];a 0;b 0)
+
+=== QT022 profile: general | while set without each writes neither name (#753)
+a:1
+`a`b set 1 2
+r:a 0

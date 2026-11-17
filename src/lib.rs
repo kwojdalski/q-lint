@@ -4127,6 +4127,13 @@ pub fn lint_selecting(
                 .entry(qualified(name.start(), name.as_str()))
                 .or_default() += 1;
         }
+        // Each name of a `set'`: q 5 `` f:{x}; `f`g set' ({x+y};1); f[1;2] ``
+        // is 3 (#753).
+        for (whole, names) in semantics::each_set_targets(code) {
+            for name in names {
+                *assigned.entry(qualified(whole.start, name)).or_default() += 1;
+            }
+        }
         // A namespace or dictionary written as a whole, by any of those or
         // indexed, `.cfg[`f]:v`, or appended, `` `.cfg upsert d ``, may
         // replace each member: q 5 `.ns.f:{x}; .ns:(``f)!(::;{x+y});

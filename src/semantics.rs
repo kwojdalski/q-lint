@@ -128,6 +128,26 @@ pub(crate) fn multi_assignments(text: &str) -> impl Iterator<Item = (usize, &str
         })
         .flatten()
 }
+/// The names each `set'` writes from a literal list of symbols, with where
+/// it starts: `` `a`b set' v ``, `` (`a`b) set' v ``, `` (`a;`b) set' v ``
+/// and `set'[`a`b;v]` (q 5: each sets a and b). Only with each: q 5
+/// `` `p`q set 1 2 `` defines neither name.
+pub(crate) fn each_set_targets(code: &str) -> Vec<(std::ops::Range<usize>, Vec<&str>)> {
+    let list = re!(
+        r"((?:`\.?[A-Za-z][A-Za-z0-9_.]*){2,})\s*(?:\)\s*)?set'|\(((?:\s*`\.?[A-Za-z][A-Za-z0-9_.]*\s*;)+\s*`\.?[A-Za-z][A-Za-z0-9_.]*\s*)\)\s*set'|\bset'\s*\[\s*((?:`\.?[A-Za-z][A-Za-z0-9_.]*)+|\((?:\s*`\.?[A-Za-z][A-Za-z0-9_.]*\s*;?)+\))\s*;"
+    );
+    list.captures_iter(code)
+        .map(|m| {
+            let names = m.get(1).or(m.get(2)).or(m.get(3)).unwrap().as_str();
+            let names = names
+                .split(['`', ';', '(', ')', ' ', '\t', '\n', '\r'])
+                .skip(1)
+                .filter(|n| !n.is_empty())
+                .collect();
+            (m.get(0).unwrap().range(), names)
+        })
+        .collect()
+}
 /// Whether q runs the expression at `read` before the one at `assign`, both
 /// offsets into one lambda body. Statements run top to bottom, and the slots
 /// of `if`, `while`, `do` and `$[...]` left to right; everything else -
@@ -891,19 +911,16 @@ fn global_writes(
             .or_default()
             .push(whole.end());
     }
-    // Each of a symbol list, `` `p`q set'1 2 `` - only with each: q 5
-    // `` `p`q set 1 2 `` defines neither name.
-    // Parenthesised too: `` (`a`b) set' (1 2;3 4) `` (#464).
-    for m in re!(r"((?:`\.?[A-Za-z][A-Za-z0-9_.]*){2,})\s*(?:\)\s*)?set'").captures_iter(code) {
-        let whole = m.get(0).unwrap();
-        for name in m[1].split('`').skip(1) {
-            if !call_time_sets && call_time(scopes, whole.start(), name) {
+    // Each of a symbol list, `` `p`q set'1 2 ``, parenthesised too (#464).
+    for (whole, names) in each_set_targets(code) {
+        for name in names {
+            if !call_time_sets && call_time(scopes, whole.start, name) {
                 continue;
             }
             globals
-                .entry(qualify(name, ns_at(whole.start())))
+                .entry(qualify(name, ns_at(whole.start)))
                 .or_default()
-                .push(whole.end());
+                .push(whole.end);
         }
     }
     // A functional amend that creates the global it names: `@[`.;`n;:;v]`
@@ -2990,11 +3007,11 @@ fn named_values(
     }
     // Each of a symbol list: q 5 `a:2.5; `a`b set' (1 2;3 4); a 0` is 1
     // (#360), parenthesised or not (#464).
-    for m in re!(r"((?:`\.?[A-Za-z][A-Za-z0-9_.]*){2,})\s*(?:\)\s*)?set'").captures_iter(code) {
-        for name in m.get(1).unwrap().as_str().split('`').skip(1) {
+    for (whole, names) in each_set_targets(code) {
+        for name in names {
             writes.entry(name).or_default().extend([0, 0]);
             exact
-                .entry(key(name, m.get(0).unwrap().start()))
+                .entry(key(name, whole.start))
                 .or_default()
                 .extend([0, 0]);
         }
