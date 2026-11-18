@@ -771,6 +771,12 @@
     "text": "{[hh;q] .hnd.h[] \"count trade\""
    },
    {
+    "code": "QF005",
+    "detail": "Nested lambda references enclosing local 'cb' without a parameter",
+    "path": "libraries/qsl/callback.q",
+    "text": ".pe.at[{[x] .cb.p.back[x]:value x;.log.warn[`cb] \"overwriting existing variable \",(string cb),\" to create a callback collection\"};cb;{[x;y].cb.p.back[x]:{}}[cb]];"
+   },
+   {
     "code": "QT001",
     "detail": "Literal dictionary has 5 keys and 4 values",
     "path": "libraries/qsl/parseq.q",
@@ -778,6 +784,12 @@
    }
   ],
   "finos/kdb": [
+   {
+    "code": "QF010",
+    "detail": "'x' is not an argument here: the lambda declares its parameters, so q resolves 'x' as a global",
+    "path": "q/conn/conn.q",
+    "text": "`.finos.conn.priv.clientList upsert `fd`protocol`user`host`connID!(x;`ws;.z.u;.Q.host[.z.a];.finos.conn.priv.lastClientConnID+:1);"
+   },
    {
     "code": "QF005",
     "detail": "Nested lambda references enclosing local 'newChildPid' without a parameter",
@@ -795,6 +807,12 @@
     "detail": "`break` is not a q keyword; it resolves as a global and throws 'break",
     "path": "q/unzip/unzip.q",
     "text": "break;"
+   },
+   {
+    "code": "QF010",
+    "detail": "'x' is not an argument here: the lambda declares its parameters, so q resolves 'x' as a global",
+    "path": "qdoc/src/qdoc_example/dba.q",
+    "text": "x;"
    }
   ],
   "hanssmail/quantQ": [],

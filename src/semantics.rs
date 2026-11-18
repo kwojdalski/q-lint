@@ -2087,6 +2087,27 @@ pub fn check(
     // installing one name it is handed, leaves the file's own definitions
     // as they read.
     let evaluates = unnamed.iter().any(|&(_, kind)| kind != Unnamed::Overwrite);
+    // QF010 and QF005 are claims about scope - the author meant an argument
+    // or an enclosing local, and q reads a global - so a `set` into a name the
+    // text does not say stands them down only for a name the file binds the
+    // target to: after `n:`x; n set 5`, `{[b] b+x}` reads the `x` it meant
+    // (q 5: 6). A target the file never binds, a parameter as in
+    // `{[cb;f] cb set f}`, is not taken to name a local's or an argument's
+    // name: q 5 `{[cb] {[a] string cb}[1]; cb set 2}` is still 'cb (#837).
+    let set_into: HashSet<&str> = if evaluates {
+        HashSet::new()
+    } else {
+        let bound: HashMap<&str, &str> =
+            re!(r"(?m)(?:^|[;\s(\[{])([A-Za-z][A-Za-z0-9_]*)\s*:\s*`([A-Za-z][A-Za-z0-9_]*)\b")
+                .captures_iter(code)
+                .map(|c| (c.get(1).unwrap().as_str(), c.get(2).unwrap().as_str()))
+                .collect();
+        re!(r"([A-Za-z][A-Za-z0-9_]*)\s+set\b")
+            .captures_iter(code)
+            .filter(|c| boundary(code, c.get(1).unwrap().start()))
+            .filter_map(|c| bound.get(c.get(1).unwrap().as_str()).copied())
+            .collect()
+    };
     let assignment = re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*:(:)?");
     let (scopes, namespaces) = scopes(code, raw);
     let ns_at = |at| {
@@ -2574,7 +2595,7 @@ pub fn check(
     // A query's own extent is left out, where `x` may be a column; the rest
     // of the lambda is not: q 5 `{[a] r:select from t; x}[1]` is 'x.
     for scope in &scopes {
-        if dynamic || !scope.named {
+        if evaluates || !scope.named {
             continue;
         }
         let direct = local_view(&scope.direct, false);
@@ -2590,6 +2611,7 @@ pub fn check(
                     .trim_start_matches([' ', '\t'])
                     .starts_with(':')
                 || scope.locals.contains(name)
+                || set_into.contains(name)
                 || !seen.insert(name)
             {
                 continue;
@@ -2615,7 +2637,7 @@ pub fn check(
         }
     }
     for scope in &scopes {
-        if dynamic || scope.parent.is_none() {
+        if evaluates || scope.parent.is_none() {
             continue;
         }
         // Walked per name rather than collected per scope: collecting copies
@@ -2644,6 +2666,7 @@ pub fn check(
                     .starts_with(':')
                 || scope.locals.contains(name)
                 || !outer(name)
+                || set_into.contains(name)
                 || !seen.insert(name)
             {
                 continue;
@@ -2683,6 +2706,7 @@ pub fn check(
                     || slot[m.end()..].trim_start().starts_with(':')
                     || bound.contains(&name)
                     || !outer(name)
+                    || set_into.contains(name)
                     || !seen.insert(name)
                     || exact.contains_key(&resolved(name, &scope.namespace))
                 {
