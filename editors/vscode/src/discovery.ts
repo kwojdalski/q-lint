@@ -111,8 +111,9 @@ export interface FetchOptions {
 }
 
 /// The processes `url` lists, and what was wrong with the entries it skipped.
-/// The answer must be a 2xx, `application/json`, at most `maxBytes` long and
-/// all in within `timeoutMs`; a list of processes or `{processes: [...]}`.
+/// The answer must be a 2xx, `application/json` (UTF-8, or the charset it
+/// names), at most `maxBytes` long and all in within `timeoutMs`; a list
+/// of processes or `{processes: [...]}`.
 /// Throws an Error saying, in a few words, what went wrong otherwise.
 export async function fetchProcesses(url: string, options: FetchOptions = {}): Promise<{ processes: Process[]; problems: string[] }> {
   const timeoutMs = options.timeoutMs ?? FETCH_TIMEOUT_MS;
@@ -167,7 +168,8 @@ export async function fetchProcesses(url: string, options: FetchOptions = {}): P
     if (!response.ok) {
       await refuse(`it answered ${response.status}${response.statusText ? ` ${response.statusText}` : ""}`);
     }
-    const type = (response.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+    const contentType = response.headers.get("content-type") ?? "";
+    const type = contentType.split(";")[0].trim().toLowerCase();
     if (type !== "application/json") {
       await refuse(`it answered ${type === "" ? "with no content type" : type}, not application/json`);
     }
@@ -190,13 +192,24 @@ export async function fetchProcesses(url: string, options: FetchOptions = {}): P
     }
     let json: unknown;
     try {
-      json = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      json = JSON.parse(decode(Buffer.concat(chunks), contentType));
     } catch (error) {
       throw new Error(`its answer is not JSON: ${error instanceof Error ? error.message : String(error)}`);
     }
     return parseProcesses(json);
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/// `bytes` as text in the charset `contentType` names, UTF-8 when it names
+/// none or one TextDecoder does not know; a byte order mark is dropped.
+function decode(bytes: Uint8Array, contentType: string): string {
+  const charset = /;\s*charset\s*=\s*"?([^";\s]+)/i.exec(contentType)?.[1];
+  try {
+    return new TextDecoder(charset ?? "utf-8").decode(bytes);
+  } catch {
+    return new TextDecoder("utf-8").decode(bytes);
   }
 }
 

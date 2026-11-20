@@ -290,6 +290,28 @@ test("a server that is not there is said to be unreachable", async () => {
   await assert.rejects(fetchProcesses(`http://127.0.0.1:${port}/`), /^Error: could not reach it: .*ECONNREFUSED/);
 });
 
+test("an answer with a byte order mark, or in the charset it names, is read", async () => {
+  const server = http.createServer((req, res) => {
+    if (req.url === "/bom") {
+      res.writeHead(200, { "content-type": json });
+      res.end("﻿" + JSON.stringify([{ label: "rdb", host: "h", port: 1 }]));
+    } else {
+      // "Zürich" in Latin-1: ü is the one byte 0xFC.
+      res.writeHead(200, { "content-type": "application/json; charset=ISO-8859-1" });
+      res.end(Buffer.from(JSON.stringify([{ label: "Zürich", host: "h", port: 1 }]), "latin1"));
+    }
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    assert.deepStrictEqual((await fetchProcesses(`${base}/bom`)).processes.map((p) => p.label), ["rdb"]);
+    assert.deepStrictEqual((await fetchProcesses(`${base}/latin1`)).processes.map((p) => p.label), ["Zürich"]);
+  } finally {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test("a redirect to another origin is not sent the auth header", async () => {
   const seen = [];
   const other = http.createServer((req, res) => {
