@@ -728,6 +728,12 @@
         "icon": "$(run-all)"
       },
       {
+        "command": "q-lint.toggleParameterCache",
+        "title": "Toggle Parameter Cache",
+        "category": "q-lint",
+        "icon": "$(debug-breakpoint-log)"
+      },
+      {
         "command": "q-lint.toggleUnlimitedQuery",
         "title": "Toggle Unlimited Query",
         "category": "q-lint",
@@ -1122,6 +1128,11 @@
           "command": "q-lint.queryEntireFile",
           "when": "editorLangId == q",
           "group": "q-lint@5"
+        },
+        {
+          "command": "q-lint.toggleParameterCache",
+          "when": "editorLangId == q",
+          "group": "q-lint@6"
         }
       ],
       "commandPalette": [
@@ -1200,6 +1211,11 @@
       {
         "command": "q-lint.queryEntireFile",
         "key": "ctrl+f10",
+        "when": "editorTextFocus && editorLangId == q"
+      },
+      {
+        "command": "q-lint.toggleParameterCache",
+        "key": "ctrl+shift+'",
         "when": "editorTextFocus && editorLangId == q"
       }
     ],

@@ -39,6 +39,7 @@ const { needsRestart } = require("../out/settings.js");
 const { AGENT } = require("../out/agent.js");
 const { CONTROL_COMMANDS, readControls } = require("../out/querycontrols.js");
 const { ONBOARDING } = require("../out/onboarding.js");
+const { PARAM_CACHE } = require("../out/paramcache.js");
 
 test("a statement is a line and the indented lines after it", () => {
   assert.deepStrictEqual(statements("a:1\nb:a+1\nb*10"), ["a:1", "b:a+1", "b*10"]);
@@ -226,6 +227,7 @@ test("package.json declares exactly the commands the extension registers", () =>
   const registered = [
     ...Object.values(COMMANDS),
     ...Object.values(CONTROL_COMMANDS),
+    ...Object.values(PARAM_CACHE),
     ...Object.values(DISCOVERY_COMMANDS),
     ...Object.values(EXPLORER).filter((id) => id !== EXPLORER.view),
     ...Object.values(relations.COMMANDS),
@@ -431,4 +433,18 @@ test("Execute Entire File is bound to a key no VS Code default takes, and is in 
   // Copy Query is on a history row, inline and in its menu.
   const rows = pkg.contributes.menus["view/item/context"].filter((m) => m.command === CONTROL_COMMANDS.copyQuery);
   assert.deepStrictEqual(rows.map((m) => m.group).sort(), ["1_history@2", "inline"]);
+});
+
+test("Toggle Parameter Cache is bound to a key no VS Code default takes (#892)", () => {
+  const binding = pkg.contributes.keybindings.find((k) => k.command === PARAM_CACHE.toggle);
+  // ctrl+shift+' is in none of VS Code 1.147's default keybindings on macOS,
+  // Windows or Linux, alone or as the first key of a chord. KX's extension
+  // uses ctrl+shift+y, the Debug Console on Windows and Linux, and a
+  // ctrl+alt key is AltGr on Windows.
+  assert.strictEqual(binding.key, "ctrl+shift+'");
+  assert.ok(!binding.mac && !binding.win && !binding.linux);
+  assert.match(binding.when, /editorLangId == q/);
+  const keys = pkg.contributes.keybindings.map((k) => k.key);
+  assert.strictEqual(new Set(keys).size, keys.length, "two commands share a key");
+  assert.ok(pkg.contributes.menus["editor/context"].some((m) => m.command === PARAM_CACHE.toggle));
 });
