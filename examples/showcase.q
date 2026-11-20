@@ -778,13 +778,16 @@ routine: 2+3*4
 / expect-next: QP008
 restated: 2*(3+4)
 
-/ QP006: `widen` is a function this file defines, applied by writing it
-/ beside its argument. q reads that as widen[3+4]; the brackets the uqf
-/ profile asks for say where the argument ends without the reader having
-/ to apply the right-to-left rule to find out.
-widen:{x*2}
+/ QP006: `widen` is a function of two arguments this file defines,
+/ applied by writing it beside its argument. Juxtaposition passes exactly
+/ one, so q reads that as widen[3 4]: a projection, not 6.
+widen:{x*y}
 / expect-next: QP006
-widened: widen 3+4
+widened: widen 3 4
+
+/ clean: a function of one argument beside it is the whole call either way.
+double:{x*2}
+doubled: double 3+4
 
 / clean: a builtin beside its argument is how q is meant to read, and
 / brackets around this one would be noise rather than clarity.

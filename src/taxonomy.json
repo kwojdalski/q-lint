@@ -787,7 +787,7 @@
     "code": "QP006",
     "name": "juxtaposed-application",
     "category": "policy",
-    "summary": "Function defined in this file applied without brackets",
+    "summary": "Function of two or more arguments defined in this file applied without brackets, which passes it one and returns a projection; the fix is left to a person after `from`",
     "scope": "uqf"
   },
   {

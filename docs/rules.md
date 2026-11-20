@@ -202,7 +202,7 @@ it, or `ALL`.
 | <a id="qp002"></a>`QP002` | datetime-type | Legacy datetime precision | `uqf` |
 | <a id="qp003"></a>`QP003` | wall-clock-temporal | Wall-clock timestamp where the convention is UTC | `uqf` |
 | <a id="qp005"></a>`QP005` | mixed-infix-precedence | Unparenthesised * or % with + or - to its right: q performs the + or - first, where school precedence multiplies first | `uqf` |
-| <a id="qp006"></a>`QP006` | juxtaposed-application | Function defined in this file applied without brackets | `uqf` |
+| <a id="qp006"></a>`QP006` | juxtaposed-application | Function of two or more arguments defined in this file applied without brackets, which passes it one and returns a projection; the fix is left to a person after `from` | `uqf` |
 | <a id="qp007"></a>`QP007` | mixed-infix-unparenthesised | Unparenthesised + or - with * or % to its right: q multiplies first and so does school precedence, so QP005 passes it | no profile |
 | <a id="qp008"></a>`QP008` | restated-precedence-parentheses | Parentheses round the right operand of + - * % that only restate q's right-to-left order, exactly where QP005's and QP007's fix puts them: the opposite convention, selected only by its own code and refused beside either | no profile |
 
