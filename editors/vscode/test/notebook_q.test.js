@@ -140,6 +140,13 @@ test("notebook cells against a real q process", { skip }, async (t) => {
     assert.strictEqual(dict.type, 99);
   });
 
+  await t.test("a dictionary keyed by a table, with a list for its value, comes back as text", async () => {
+    const answer = await data("([] a:1 2)!3 4");
+    assert.strictEqual(answer.ok, true, JSON.stringify(answer));
+    assert.strictEqual(answer.type, 99);
+    assert.deepStrictEqual(answer.text.map((l) => l.trimEnd()), ["a|", "-| -", "1| 3", "2| 4"]);
+  });
+
   await t.test("an error comes back with its message and trace", async () => {
     const answer = await data("g:{x+`a}\ng 1");
     assert.strictEqual(answer.ok, false);

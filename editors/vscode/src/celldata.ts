@@ -11,7 +11,8 @@
 // the value is a table, answers with the table itself rather than its
 // console text: each column as a list of strings, as `string` writes them
 // (so a timestamp keeps its nanoseconds), a nested column's items with
-// `-3!`. A keyed table is unkeyed and says how many key columns it had.
+// `-3!`. A keyed table is unkeyed and says how many key columns it had; a
+// dictionary keyed by a table whose value is not one is not a keyed table.
 // At most `rows` rows are sent, with the table's count, so a large table is
 // cut by the process: the first `rows`, or the last when `rows` is negative,
 // and every row when it is infinite (`sublist` with `0W`). The row limit and
@@ -37,7 +38,7 @@ export const DATA = [
   "   @[{(1b;last value each x)};s;{(0b;x;\"\")}]];",
   " if[not r 0;:`ok`error`trace!(0b;r 1;r 2)];",
   " v:r 1;",
-  " k:$[99h=type v;$[98h=type key v;count cols key v;0];0];",
+  " k:$[99h=type v;$[(98h=type key v)&98h=type value v;count cols key v;0];0];",
   " t:$[k>0;0!v;v];",
   " if[not 98h=type t;:`ok`table`type`text!(1b;0b;type v;.Q.S[\"j\"$size;0j] v)];",
   " c:value flip (\"j\"$rows) sublist t;",
