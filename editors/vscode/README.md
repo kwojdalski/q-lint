@@ -146,6 +146,33 @@ running the query, and the new connection is made once it is free.
 outcome; the button on a row runs it again on the active connection, and
 **Clear Query History** empties it.
 
+**Query modes.** **Switch Query Mode** (or the mode in the status bar) picks
+where a result goes; it sets `q-lint.query.mode`, and takes `console`,
+`grid` or `chart` as an argument for a keybinding.
+- **Console**, the default: every result in the **q-lint: query** output, as
+  above.
+- **Grid**: a table, a keyed table (unkeyed, its key columns shaded), a
+  dictionary (as `key` and `value` columns) or a list (as one `value`
+  column) opens in the **q-lint: result** panel. Click a header to sort,
+  type under it to filter (by the text shown, ignoring case), and **Copy as
+  CSV** copies the rows shown, in the order shown. Each cell is what q
+  prints in a table: a timestamp keeps its nanoseconds, a long above 2^53
+  every digit, a null is blank and an infinity is `0W` or `0w`. Sorting is
+  q's own order (`iasc` on the process), nulls first.
+- **Chart**: the same results as a line, bar, scatter or histogram chart of
+  the numeric columns against the first, chosen in the panel; the panel's
+  **Grid** and **Chart** buttons switch between the two for one result.
+
+The process sends at most `q-lint.query.gridLimit` rows, and the panel says
+when a result was cut and how many rows it had. Anything that is not
+tabular - an atom, a string, a function - and every error still goes to the
+output. As in console mode, nothing is defined on the process: the rows are
+shaped by the lambda sent with the query. The panel loads only the
+extension's own files, under a Content-Security-Policy that allows no
+inline script and no network. Its charts are drawn by
+[Chart.js](https://www.chartjs.org) 4.5.1 (MIT), shipped in
+`media/vendor/` with its licence.
+
 ## Requirements
 
 None on macOS (Apple Silicon and Intel), Linux x64 or Windows x64: the
@@ -221,13 +248,15 @@ nothing.
 | `q-lint.output.autoClear` | `false` | Clear the output before each result. | `q-output.cfg.autoClear` |
 | `q-lint.output.includeQuery` | `false` | Show the code above its result. | `q-output.cfg.includeQuery` |
 | `q-lint.output.ignoreNullReturn` | `false` | Show nothing when the value is `::`. | `q-output.cfg.ignoreNullReturn` |
+| `q-lint.query.mode` | `"console"` | Where a result goes: `console`, `grid` or `chart`. | `q-processes.cfg.queryMode` |
+| `q-lint.query.gridLimit` | `10000` | The most rows the process sends to the grid or chart. | - |
+| `q-lint.query.gridDecimals` | `-1` | Decimal places of a float or real in the grid and its CSV; `-1` as the process writes it (`\P`). | `q-processes.cfg.queryGridDecimals` (default 3) |
 
 ### Not here, and why
 
-q-pro's query mode and grid decimals, its q binary and environment file, its
-process explorer and its discovery server are not here yet: they come with
-the grid, the terminal and the process explorer (#852). `kuki` is not
-planned. Its
+q-pro's q binary and environment file, its process explorer and its
+discovery server are not here yet: they come with the terminal and the
+process explorer (#852). `kuki` is not planned. Its
 `sourceFiles.includeGlob` is not mirrored either: the index reads every `.q`
 file `qlinter .` would - less what the configuration's `exclude` skips - and
 `q-lint.workspaceIndex.exclude` narrows it.

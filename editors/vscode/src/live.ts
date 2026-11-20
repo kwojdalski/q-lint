@@ -36,6 +36,7 @@ import {
 import { COMMANDS, CONNECTED, VIEWS, readLive } from "./liveconfig";
 import { QConnection } from "./qclient";
 import { render } from "./query";
+import { QueryModes, type Rendered } from "./resultpanel";
 import { blockAt, statements } from "./statements";
 
 const PROCESSES_KEY = "q-lint.processes";
@@ -160,6 +161,7 @@ export class Live {
   private readonly output: OutputChannel;
   private readonly processesView: ProcessesView;
   private readonly historyView: HistoryView;
+  private readonly modes: QueryModes;
 
   constructor(private readonly context: ExtensionContext) {
     this.output = window.createOutputChannel("q-lint: query");
@@ -168,6 +170,7 @@ export class Live {
     this.status.command = COMMANDS.connect;
     this.processesView = new ProcessesView(this);
     this.historyView = new HistoryView(this);
+    this.modes = new QueryModes(context);
     const c = (name: string, run: (...args: never[]) => unknown) => commands.registerCommand(name, run);
     context.subscriptions.push(
       this.output,
@@ -198,11 +201,18 @@ export class Live {
 
   /// What the extension returns from `activate`: a read-only view for tests
   /// and for other extensions. Passwords are never in it.
-  api(): { processes: () => Process[]; activeLabel: () => string | undefined; history: () => HistoryEntry[] } {
+  api(): {
+    processes: () => Process[];
+    activeLabel: () => string | undefined;
+    history: () => HistoryEntry[];
+    /// What the result panel last drew.
+    result: () => Rendered | undefined;
+  } {
     return {
       processes: () => this.processes(),
       activeLabel: () => this.activeLabel(),
       history: () => this.history(),
+      result: () => this.modes.lastRendered(),
     };
   }
 
@@ -596,7 +606,12 @@ export class Live {
     this.showStatus();
     let entry: HistoryEntry;
     try {
-      const answer = await connection.query(statements(code), settings.consoleSize);
+      // Grid and chart modes ask for the rows too; a value that is not
+      // tabular comes back as console mode's text.
+      const answer =
+        settings.mode === "console"
+          ? await connection.query(statements(code), settings.consoleSize)
+          : await connection.queryGrid(statements(code), settings.consoleSize, settings.gridLimit);
       const millis = Date.now() - started;
       entry = {
         process: process.label,
@@ -606,7 +621,9 @@ export class Live {
         outcome: answer.ok ? "ok" : "error",
         ...(answer.ok ? {} : { error: answer.error }),
       };
-      this.show(render({ process: process.label, code, answer, millis }, settings), settings.autoClear);
+      if (!this.modes.show({ process: process.label, code, answer, millis }, settings)) {
+        this.show(render({ process: process.label, code, answer, millis }, settings), settings.autoClear);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const aborted = this.running === undefined || !connection.isOpen;

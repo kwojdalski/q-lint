@@ -14,6 +14,7 @@
 import * as net from "node:net";
 import * as tls from "node:tls";
 import { deserialize, serialize } from "node-q/lib/c.js";
+import { GRID, readGridAnswer, type GridAnswer } from "./grid";
 import { RUN, readAnswer, type Answer } from "./query";
 
 export interface Target {
@@ -101,6 +102,12 @@ export class QConnection {
   /// Run `statements` on the process and read the answer.
   query(statements: string[], size: [number, number]): Promise<Answer> {
     return this.call(RUN, statements, size).then(readAnswer);
+  }
+
+  /// Run `statements` as `query` does, and when the value is tabular have
+  /// the process send its first `limit` rows for the result panel too.
+  queryGrid(statements: string[], size: [number, number], limit: number): Promise<GridAnswer> {
+    return this.call(GRID, statements, size, limit).then(readGridAnswer);
   }
 
   /// Send `expression` applied to `args` as a sync message, and resolve with

@@ -1,0 +1,260 @@
+// Query modes (#855): how a grid answer becomes the cells, ranks and values
+// the result panel shows, CSV, and the panel script's own helpers. Run after
+// `tsc`; the payloads are what node-q's codec makes of `GRID`'s answer, as
+// qclient.test.js gets from a real q.
+const test = require("node:test");
+const assert = require("node:assert");
+const Long = require("long");
+const { GRID, readGridAnswer, toGrid, toCsv, csvField, cellText, typeName, rowCount } = require("../out/grid.js");
+const { RUN } = require("../out/query.js");
+const panel = require("../media/result.js");
+
+const NULL_GUID = "00000000-0000-0000-0000-000000000000";
+const big = Long.fromString("9007199254740993");
+
+/// A payload of one column of `type`, as GRID sends it.
+function column(type, cells, raw, rank) {
+  return {
+    count: cells.length,
+    keys: 0,
+    names: ["c"],
+    types: [type],
+    cells: [cells],
+    raw: [raw ?? []],
+    rank: [rank ?? cells.map((_, i) => i)],
+  };
+}
+
+const shown = (type, cells, raw, decimals = -1) => toGrid(column(type, cells, raw), decimals).cells[0];
+const values = (type, cells, raw) => toGrid(column(type, cells, raw), -1).values[0];
+
+test("the grid lambda keeps nothing on the process, and runs code as RUN does", () => {
+  assert.ok(!GRID.includes("::"), GRID);
+  assert.ok(!/\bset\b/.test(GRID), GRID);
+  assert.ok(GRID.startsWith("{[s;size;limit]") && GRID.endsWith("}"));
+  // The same trap, so an error and its trace read the same in both modes.
+  const trap = RUN.split("\n").slice(1, 4).join("\n");
+  assert.ok(GRID.includes(trap));
+  // Continuation lines are indented, as q reads a multi-line lambda.
+  for (const line of GRID.split("\n").slice(1)) {
+    assert.match(line, /^ /, line);
+  }
+});
+
+test("booleans, bytes, chars and symbols show q's text", () => {
+  assert.deepStrictEqual(shown(1, ["1", "0"]), ["1", "0"]);
+  assert.deepStrictEqual(shown(4, ["01", "ff"]), ["01", "ff"]);
+  assert.deepStrictEqual(shown(10, ["a", " "]), ["a", " "]);
+  assert.deepStrictEqual(shown(11, ["abc", ""]), ["abc", ""]);
+  assert.strictEqual(values(11, ["abc"]), null);
+});
+
+test("a guid shows q's text, and a null one as kdb+ writes it", () => {
+  const g = "8c680a01-5a49-5aab-5a65-d4bfddb6a661";
+  // PeachQ's `string` writes a null guid as "": the raw value mends it.
+  assert.deepStrictEqual(shown(2, [g, ""], [g, null]), [g, NULL_GUID]);
+});
+
+test("shorts, ints and longs: nulls are blank, infinities 0W and -0W", () => {
+  assert.deepStrictEqual(shown(5, ["1", "", "0W"], [1, null, Infinity]), ["1", "", "0W"]);
+  // PeachQ writes an infinite int as 2147483647.
+  assert.deepStrictEqual(shown(6, ["1", "2147483647", ""], [1, Infinity, null]), ["1", "0W", ""]);
+  assert.deepStrictEqual(shown(7, ["5", "-9223372036854775807"], [Long.fromNumber(5), -Infinity]), ["5", "-0W"]);
+});
+
+test("a long above 2^53 keeps every digit; its chart value is the nearest double", () => {
+  assert.deepStrictEqual(shown(7, ["9007199254740993"], [big]), ["9007199254740993"]);
+  assert.deepStrictEqual(values(7, ["9007199254740993"], [big]), [9007199254740992]);
+});
+
+test("reals and floats: q's text, or the decimals asked for; nulls blank, infinities 0w", () => {
+  const cells = ["3.141593", "", "-0w", "1e+10"];
+  const raw = [3.14159265358979, null, -Infinity, 1e10];
+  assert.deepStrictEqual(shown(9, cells, raw), cells);
+  assert.deepStrictEqual(shown(9, cells, raw, 2), ["3.14", "", "-0w", "10000000000.00"]);
+  assert.deepStrictEqual(shown(9, cells, raw, 0), ["3", "", "-0w", "10000000000"]);
+  // A real arrives widened; the decimals hide that.
+  assert.deepStrictEqual(shown(8, ["1.1", "0w"], [Math.fround(1.1), Infinity], 3), ["1.100", "0w"]);
+  assert.deepStrictEqual(values(9, cells, raw), [3.14159265358979, null, null, 1e10]);
+});
+
+test("decimals touch no other type", () => {
+  assert.deepStrictEqual(shown(7, ["5"], [Long.fromNumber(5)], 2), ["5"]);
+  assert.deepStrictEqual(shown(15, ["2026.11.20T10:11:12.123"], [9820.424445868055], 2), ["2026.11.20T10:11:12.123"]);
+});
+
+test("temporals show q's text, nanoseconds kept; nulls blank, infinities as kdb+ writes them", () => {
+  const cases = [
+    [12, "2026.11.20D10:11:12.123456789", Long.fromString("848484672123456789"), "0W"],
+    [13, "2026.11", 322, "0W"],
+    [14, "2026.11.20", 9820, "0W"],
+    [15, "2026.11.20T10:11:12.123", 9820.424445868055, "0w"],
+    [16, "-0D01:02:03.000000001", Long.fromString("-3723000000001"), "0W"],
+    [17, "10:11", 611, "0W"],
+    [18, "10:11:12", 36672, "0W"],
+    [19, "10:11:12.123", 36672123, "0W"],
+  ];
+  for (const [type, text, raw, inf] of cases) {
+    // PeachQ's `string` of an infinite temporal is a far date: replaced.
+    assert.deepStrictEqual(
+      shown(type, [text, "", "2292.04.10D23:47:16.854775807", "x"], [raw, null, Infinity, -Infinity]),
+      [text, "", inf, `-${inf}`],
+      `type ${type}`,
+    );
+    const v = values(type, [text, ""], [raw, null]);
+    assert.strictEqual(v[0], Number(raw), `type ${type}`);
+    assert.strictEqual(v[1], null);
+  }
+});
+
+test("a general column shows q's text and has no values", () => {
+  assert.deepStrictEqual(shown(0, ['"ab"', "1 2 3", "`a`b"]), ['"ab"', "1 2 3", "`a`b"]);
+  assert.strictEqual(values(0, ['"ab"']), null);
+});
+
+test("columns know their type, keys and whether they chart", () => {
+  const grid = toGrid(
+    {
+      count: 5,
+      keys: 1,
+      names: ["sym", "px", "time", "note"],
+      types: [11, 9, 12, 0],
+      cells: [["a", "b"], ["1.5", "2"], ["2026.11.20D00:00:00.000000000", ""], ["x", "y"]],
+      raw: [[], [1.5, 2], [Long.fromNumber(0), null], []],
+      rank: [[0, 1], [0, 1], [1, 0], []],
+    },
+    -1,
+  );
+  assert.deepStrictEqual(
+    grid.columns.map((c) => [c.name, c.typeName, c.key, c.numeric, c.temporal]),
+    [
+      ["sym", "symbol (s)", true, false, false],
+      ["px", "float (f)", false, true, false],
+      ["time", "timestamp (p)", false, false, true],
+      ["note", "list", false, false, false],
+    ],
+  );
+  assert.strictEqual(grid.total, 5);
+  assert.strictEqual(rowCount(grid), 2);
+  // A column q could not rank is sorted by its text.
+  assert.deepStrictEqual(grid.rank, [[0, 1], [0, 1], [1, 0], null]);
+  assert.strictEqual(typeName(20), "enum");
+  assert.strictEqual(typeName(77), "type 77");
+});
+
+test("cellText leaves a cell with no raw value as q wrote it", () => {
+  assert.strictEqual(cellText(11, "abc", undefined, 2), "abc");
+  assert.strictEqual(cellText(9, "1.5", 1.5, -1), "1.5");
+});
+
+test("a grid answer is read; a grid that is not one is dropped, and a shaping error kept", () => {
+  const payload = column(7, ["1"], [Long.fromNumber(1)]);
+  const ok = readGridAnswer({ ok: true, type: 98, text: ["c", "-", "1"], grid: payload });
+  assert.deepStrictEqual(ok.text, ["c", "-", "1"]);
+  assert.deepStrictEqual(ok.grid.cells, [["1"]]);
+  assert.strictEqual(ok.grid.count, 1);
+  // Not tabular: `grid` is ().
+  assert.strictEqual(readGridAnswer({ ok: true, type: -7, text: ["2"], grid: [] }).grid, undefined);
+  assert.strictEqual(readGridAnswer({ ok: true, type: -7, text: ["2"], grid: null }).grid, undefined);
+  assert.deepStrictEqual(readGridAnswer({ ok: true, type: 98, text: [], grid: "par" }).gridError, "par");
+  assert.strictEqual(readGridAnswer({ ok: true, type: 98, text: [], grid: { names: ["a"], cells: [] } }).grid, undefined);
+  // An error is read as RUN's is.
+  assert.deepStrictEqual(readGridAnswer({ ok: false, error: "type", trace: "" }), { ok: false, error: "type", trace: "" });
+  assert.throws(() => readGridAnswer(42), /something other than a query result/);
+  // A null symbol column name arrives as null.
+  assert.deepStrictEqual(readGridAnswer({ ok: true, type: 98, text: [], grid: { ...payload, names: [null] } }).grid.names, [""]);
+});
+
+test("CSV quotes a field holding a comma, a quote or a line break, and doubles its quotes", () => {
+  assert.strictEqual(csvField("abc"), "abc");
+  assert.strictEqual(csvField("a,b"), '"a,b"');
+  assert.strictEqual(csvField('say "hi"'), '"say ""hi"""');
+  assert.strictEqual(csvField("two\nlines"), '"two\nlines"');
+  assert.strictEqual(csvField("cr\r"), '"cr\r"');
+  assert.strictEqual(csvField(" padded "), " padded ");
+  assert.strictEqual(csvField(""), "");
+});
+
+test("CSV is the header and the rows given, as the cells show them", () => {
+  const grid = toGrid(
+    {
+      count: 3,
+      keys: 0,
+      names: ["s", "px", "str"],
+      types: [11, 9, 0],
+      cells: [["a", "b", "c"], ["1.5", "", "3.25"], ['"x,y"', '"q"', "1 2"]],
+      raw: [[], [1.5, null, 3.25], []],
+      rank: [[0, 1, 2], [1, 0, 2], [0, 1, 2]],
+    },
+    1,
+  );
+  assert.strictEqual(toCsv(grid), 's,px,str\na,1.5,"""x,y"""\nb,,"""q"""\nc,3.3,1 2\n');
+  assert.strictEqual(toCsv(grid, [2, 0]), 's,px,str\nc,3.3,1 2\na,1.5,"""x,y"""\n');
+  assert.strictEqual(toCsv(grid, []), "s,px,str\n");
+});
+
+// --- media/result.js
+
+const sample = () =>
+  toGrid(
+    {
+      count: 4,
+      keys: 0,
+      names: ["t", "px", "sym"],
+      types: [12, 9, 11],
+      cells: [["d1", "d2", "d3", "d4"], ["3", "1", "", "2"], ["IBM", "msft", "ibm", "AAPL"]],
+      raw: [[1, 2, 3, 4], [3, 1, null, 2], []],
+      // As q ranks them: the null float first.
+      rank: [[0, 1, 2, 3], [3, 1, 0, 2], [1, 3, 2, 0]],
+    },
+    -1,
+  );
+
+test("the panel sorts by q's ranks, either way, and filters on the text shown", () => {
+  const grid = sample();
+  assert.deepStrictEqual(panel.visibleRows(grid, [], null), [0, 1, 2, 3]);
+  assert.deepStrictEqual(panel.visibleRows(grid, [], { column: 1, descending: false }), [2, 1, 3, 0]);
+  assert.deepStrictEqual(panel.visibleRows(grid, [], { column: 1, descending: true }), [0, 3, 1, 2]);
+  // Filters ignore case and combine.
+  assert.deepStrictEqual(panel.visibleRows(grid, [undefined, "", "ibm"], null), [0, 2]);
+  assert.deepStrictEqual(panel.visibleRows(grid, ["d3", "", "ibm"], null), [2]);
+  assert.deepStrictEqual(panel.visibleRows(grid, ["", "", "ibm"], { column: 2, descending: false }), [0, 2]);
+  // Without ranks, by text.
+  grid.rank[2] = null;
+  assert.deepStrictEqual(panel.visibleRows(grid, [], { column: 2, descending: false }), [3, 0, 2, 1]);
+});
+
+test("a chart plots the numeric columns, against the first but for a histogram", () => {
+  const grid = sample();
+  assert.deepStrictEqual(panel.chartable(grid, "line"), [1]);
+  assert.deepStrictEqual(panel.chartable(grid, "histogram"), [1]);
+  const line = panel.chartData(grid, [0, 1, 2, 3], "line", [1], 10);
+  assert.deepStrictEqual(line, { type: "line", labels: ["d1", "d2", "d3", "d4"], datasets: [{ label: "px", column: 1, data: [3, 1, null, 2] }] });
+  assert.strictEqual(panel.chartData(grid, [0], "bar", [1], 10).type, "bar");
+  // Scatter: x from the first column's values; a null on either side drops the point.
+  const scatter = panel.chartData(grid, [0, 1, 2, 3], "scatter", [1], 10);
+  assert.deepStrictEqual(scatter.datasets[0].data.map((p) => [p.x, p.y]), [[1, 3], [2, 1], [4, 2]]);
+  assert.match(panel.chartData(grid, [0], "line", [], 10).note, /No numeric column/);
+});
+
+test("a histogram bins every series over one range", () => {
+  assert.deepStrictEqual(panel.histogram([[0, 1, 2, 3, 4, null, Infinity]], 2), { edges: [0, 2, 4], counts: [[2, 3]] });
+  assert.deepStrictEqual(panel.histogram([[1, 1, 1]], 10), { edges: [1, 1], counts: [[3]] });
+  assert.deepStrictEqual(panel.histogram([[0, 10], [5]], 2), { edges: [0, 5, 10], counts: [[1, 1], [0, 1]] });
+  assert.deepStrictEqual(panel.histogram([[null]], 4), { edges: [], counts: [[]] });
+  const h = panel.chartData(sample(), [0, 1, 2, 3], "histogram", [1], 2);
+  assert.deepStrictEqual(h.labels, ["1 - 2", "2 - 3"]);
+  assert.deepStrictEqual(h.datasets[0].data, [1, 2]);
+});
+
+test("a temporal axis is labelled in q's notation", () => {
+  assert.strictEqual(panel.temporalLabel(12, 848484672123456789), "2026.11.20D10:11:12");
+  assert.strictEqual(panel.temporalLabel(13, 322), "2026.11");
+  assert.strictEqual(panel.temporalLabel(13, -1), "1999.12");
+  assert.strictEqual(panel.temporalLabel(14, 9820), "2026.11.20");
+  assert.strictEqual(panel.temporalLabel(15, 9820.5), "2026.11.20T12:00:00");
+  assert.strictEqual(panel.temporalLabel(16, -3723000000001), "-0D01:02:03");
+  assert.strictEqual(panel.temporalLabel(17, 611), "10:11");
+  assert.strictEqual(panel.temporalLabel(18, 36672), "10:11:12");
+  assert.strictEqual(panel.temporalLabel(19, 36672123), "10:11:12");
+});
