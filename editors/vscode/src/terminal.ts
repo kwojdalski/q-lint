@@ -29,8 +29,9 @@ export function shellKind(path: string | undefined): Shell {
 /// The characters each shell reads as themselves, so a word made only of
 /// them is passed as it is. PowerShell reads `,` as an array and `@` as a
 /// splat, and on Windows a backslash is a path separator, not an escape.
+/// zsh reads a word that starts with `=` as `=name`, the path of a command.
 const PLAIN: Record<Shell, RegExp> = {
-  posix: /^[A-Za-z0-9_\/.,:@%+=-]+$/,
+  posix: /^[A-Za-z0-9_\/.,:@%+-][A-Za-z0-9_\/.,:@%+=-]*$/,
   powershell: /^[A-Za-z0-9_\\/.:+=-]+$/,
   cmd: /^[A-Za-z0-9_\\/.:+=-]+$/,
 };

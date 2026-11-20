@@ -4,6 +4,7 @@
 // an editor or a q.
 const test = require("node:test");
 const assert = require("node:assert");
+const { spawnSync } = require("node:child_process");
 const pkg = require("../package.json");
 const { commandLine, parseEnv, quote, replLine, replLines, shellKind } = require("../out/terminal.js");
 const { COMMANDS, readTerminal } = require("../out/liveconfig.js");
@@ -35,6 +36,19 @@ test("a POSIX shell gets single quotes, with a quote closed, escaped and reopene
   assert.strictEqual(quote("it's.q", "posix"), "'it'\\''s.q'");
   assert.strictEqual(quote('say "hi" $HOME `x`.q', "posix"), "'say \"hi\" $HOME `x`.q'");
   assert.strictEqual(quote("", "posix"), "''");
+});
+
+test("a POSIX word or value that starts with = is quoted, as zsh expands =name to a path", () => {
+  assert.strictEqual(quote("=x", "posix"), "'=x'");
+  assert.strictEqual(quote("a=b", "posix"), "a=b");
+  assert.strictEqual(commandLine("q", ["=x"], "posix", { QINIT: "=init.q" }), "QINIT='=init.q' q '=x'");
+  // What zsh itself makes of them, where there is one.
+  const zsh = spawnSync("zsh", ["-f", "-c", `printf '%s\\n' ${quote("=x", "posix")}; ${commandLine("printenv", ["QINIT"], "posix", { QINIT: "=init.q" })}`], {
+    encoding: "utf8",
+  });
+  if (zsh.error === undefined) {
+    assert.deepStrictEqual([zsh.stdout, zsh.stderr], ["=x\n=init.q\n", ""]);
+  }
 });
 
 test("PowerShell gets single quotes with a quote doubled, and & before a quoted command", () => {
