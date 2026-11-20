@@ -119,6 +119,27 @@ test("floats keep q's seven significant digits", () => {
   assert.strictEqual(floatText(1.5), "1.5");
   assert.strictEqual(floatText(2), "2");
   assert.strictEqual(floatText(1 / 3), "0.3333333");
+  // q writes a float as C's %.7g: an exponent from 1e7 up and below 1e-4,
+  // of at least two digits (#894). KDB-X's console, for each.
+  assert.strictEqual(floatText(123456789), "1.234568e+08");
+  assert.strictEqual(floatText(12345678), "1.234568e+07");
+  assert.strictEqual(floatText(1234567), "1234567");
+  assert.strictEqual(floatText(9999999.6), "1e+07");
+  assert.strictEqual(floatText(1e15), "1e+15");
+  assert.strictEqual(floatText(1e100), "1e+100");
+  assert.strictEqual(floatText(0.0001), "0.0001");
+  assert.strictEqual(floatText(0.00001), "1e-05");
+  assert.strictEqual(floatText(1.5e-7), "1.5e-07");
+  assert.strictEqual(floatText(-0.00012345678), "-0.0001234568");
+  assert.strictEqual(floatText(123.456789), "123.4568");
+  assert.strictEqual(floatText(0), "0");
+  assert.strictEqual(atomText(123456789, -9), "1.234568e+08");
+  assert.strictEqual(atomText(1234567, -9), "1234567f");
+  assert.strictEqual(vectorText([1e8, 2], 9), "1e+08 2");
+  // In a table an int and a float are both numbers: a whole one is written
+  // whole, as an int column needs.
+  assert.strictEqual(cellText(123456789), "123456789");
+  assert.strictEqual(cellText(0.00001), "1e-05");
 });
 
 test("a table is laid out as q's console lays it out, a keyed one with its bar", () => {

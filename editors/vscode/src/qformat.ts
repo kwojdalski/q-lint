@@ -69,12 +69,20 @@ function hms(d: Date): string {
   return `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}:${pad2(d.getUTCSeconds())}`;
 }
 
-/// A float as q writes it at its default `\P` of 7 significant digits.
+/// A float as q writes it at its default `\P` of 7 significant digits:
+/// C's `%.7g`, an exponent (of two digits at least) from 1e7 up and below
+/// 1e-4, trailing zeros dropped.
 export function floatText(x: number): string {
-  if (Number.isInteger(x) && Math.abs(x) < 1e15) {
+  if (x === 0 || !Number.isFinite(x)) {
     return String(x);
   }
-  return String(Number(x.toPrecision(7)));
+  const [mantissa, e] = x.toExponential(6).split("e");
+  const exponent = Number(e);
+  if (exponent < -4 || exponent >= 7) {
+    const digits = mantissa.replace(/\.?0+$/, "");
+    return `${digits}e${exponent < 0 ? "-" : "+"}${String(Math.abs(exponent)).padStart(2, "0")}`;
+  }
+  return String(Number(x.toFixed(6 - exponent)));
 }
 
 /// A time of day, or a span, from milliseconds or nanoseconds: `hh:mm`,
@@ -274,7 +282,8 @@ export function cellText(x: unknown): string {
     return x ? "1" : "0";
   }
   if (typeof x === "number") {
-    return floatText(x);
+    // An int is a number too, and is written whole.
+    return Number.isInteger(x) ? String(x) : floatText(x);
   }
   if (typeof x === "string") {
     return x;
