@@ -831,7 +831,13 @@ export class Live {
       }
       await this.context.secrets.store(passwordKey(process.label), password);
     }
-    return this.open(process);
+    const connected = await this.open(process);
+    // A discovered process cannot be edited, so a password that did not
+    // connect is forgotten: the next connect asks for it again.
+    if (!connected && !saved && process.user) {
+      await this.context.secrets.delete(passwordKey(process.label));
+    }
+    return connected;
   }
 
   /// Connect to `process`, closing the connection there was. Whether it
