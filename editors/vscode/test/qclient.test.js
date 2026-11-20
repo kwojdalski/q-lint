@@ -597,3 +597,25 @@ test("preview reads a name q cannot parse, by its symbol", { skip }, async (t) =
   const variable = await connection.query([previewCode({ kind: "variable", name: "a b" }, 2)], SIZE);
   assert.deepStrictEqual([variable.ok, variable.text], [true, ["42"]]);
 });
+
+// A table mapped from disk, as an HDB's splayed tables are. When the limit
+// is past its rows, `sublist` gives back the mapped table itself, and
+// `value flip` of that is its path, not its columns: the grid dropped the
+// result, so grid and chart mode showed nothing for `t`.
+test("the grid shows a splayed table on disk, by name and selected", { skip }, async (t) => {
+  const q = await startQ('sp:get (hsym `$(string .z.f),"_db/sp/") set ([] s:("ab";enlist "c";"de"); n:1 2 3)\n');
+  t.after(() => q.stop());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  t.after(() => connection.abort());
+  for (const [code, limit, count, cells] of [
+    ["sp", 100, 3, [['"ab"', ',"c"', '"de"'], ["1", "2", "3"]]],
+    ["sp", 2, 3, [['"ab"', ',"c"'], ["1", "2"]]],
+    ["select from sp where n>1", 100, 2, [[',"c"', '"de"'], ["2", "3"]]],
+  ]) {
+    const answer = await connection.queryGrid([code], SIZE, limit);
+    assert.ok(answer.grid !== undefined, `${code} ${limit}: ${JSON.stringify(answer)}`);
+    assert.deepStrictEqual(answer.grid.names, ["s", "n"]);
+    assert.deepStrictEqual(answer.grid.cells, cells, code);
+    assert.strictEqual(answer.grid.count, count);
+  }
+});
