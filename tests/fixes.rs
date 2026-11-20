@@ -68,8 +68,8 @@ fn brackets_replace_a_juxtaposed_call_and_nothing_around_it() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("calls.q");
     let original = concat!(
-        "f:{x+1}\n",
-        "lg:{-1 x;}\n",
+        "f:{x+y}\n",
+        "lg:{-1 x,y;}\n",
         "r1:f 3+4\n",
         "r2:$[1b;f 2;f 3]\n",
         "r3:f 2  / a trailing comment\n",
@@ -88,8 +88,8 @@ fn brackets_replace_a_juxtaposed_call_and_nothing_around_it() {
     assert_eq!(
         fs::read_to_string(&path).unwrap(),
         concat!(
-            "f:{x+1}\n",
-            "lg:{-1 x;}\n",
+            "f:{x+y}\n",
+            "lg:{-1 x,y;}\n",
             "r1:f[3+4]\n",
             "r2:$[1b;f[2];f[3]]\n",
             "r3:f[2]  / a trailing comment\n",
@@ -127,7 +127,7 @@ fn a_call_in_a_query_is_bracketed_up_to_the_column_it_belongs_to() {
     let path = directory.path().join("query.q");
     let original = concat!(
         "\\d .ns\n",
-        "f:{[x] sum x}\n",
+        "f:{[x;y] x+y}\n",
         "g:{[t]\n",
         "    a:select n:count i,\n",
         "        s:.ns.f v,m:avg v\n",
@@ -155,7 +155,7 @@ fn a_call_in_a_query_is_bracketed_up_to_the_column_it_belongs_to() {
         fs::read_to_string(&path).unwrap(),
         concat!(
             "\\d .ns\n",
-            "f:{[x] sum x}\n",
+            "f:{[x;y] x+y}\n",
             "g:{[t]\n",
             "    a:select n:count i,\n",
             "        s:.ns.f[v],m:avg v\n",
@@ -183,7 +183,7 @@ fn a_call_in_a_query_is_bracketed_up_to_the_column_it_belongs_to() {
 #[test]
 fn a_query_fix_after_a_multibyte_character_does_not_panic() {
     use q_lint_rs::{Profile, fixes_for, lint};
-    let source = "g:{x}\nt:([]a:1 2)\nr:select c:`\u{e9}, d:g a from t\n";
+    let source = "g:{x+y}\nt:([]a:1 2)\nr:select c:`\u{e9}, d:g a from t\n";
     let findings = lint(source, "probe.q", Profile::Uqf);
     let fixes = fixes_for(findings.iter().filter(|f| f.code == "QP006"), source);
     assert_eq!(fixes.len(), 1, "{findings:?}");
@@ -294,8 +294,8 @@ fn a_file_that_is_not_utf8_is_linted_but_never_rewritten() {
 fn a_file_whose_structure_does_not_close_is_not_fixed() {
     let directory = tempfile::tempdir().unwrap();
     for (name, original) in [
-        ("string.q", "f:{x+1}\nr:f \"a\nt:f 2\n"),
-        ("paren.q", "f:{x+1}\ns:(1;2\nt:f 2\n"),
+        ("string.q", "f:{x+y}\nr:f \"a\nt:f 2\n"),
+        ("paren.q", "f:{x+y}\ns:(1;2\nt:f 2\n"),
     ] {
         let path = directory.path().join(name);
         fs::write(&path, original).unwrap();
@@ -485,17 +485,22 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         // The argument ends at `from` after a drop too (#340).
         (
             "QP006",
-            "g:{x+1};r:1_select c:g a from t",
-            "g:{x+1};r:1_select c:g[a] from t",
+            "g:{x+y};r:1_select c:g a from t",
+            "g:{x+y};r:1_select c:g[a] from t",
             true,
         ),
         // A line at the left margin that starts with a string is a new
         // statement, even though `code` blanks its quote to a space (#399).
-        ("QP006", "f:{x}\nr:f 1\n\"s\"", "f:{x}\nr:f[1]\n\"s\"", true),
         (
             "QP006",
-            "f:{x}\nr:f 1\n/ c\n\"s\"",
-            "f:{x}\nr:f[1]\n/ c\n\"s\"",
+            "f:{x+y}\nr:f 1\n\"s\"",
+            "f:{x+y}\nr:f[1]\n\"s\"",
+            true,
+        ),
+        (
+            "QP006",
+            "f:{x+y}\nr:f 1\n/ c\n\"s\"",
+            "f:{x+y}\nr:f[1]\n/ c\n\"s\"",
             true,
         ),
         ("QP005", "r:a*b+c\n\"s\"", "r:a*(b+c)\n\"s\"", true),
@@ -1699,13 +1704,13 @@ fn diff_keeps_untouched_lines_inside_a_change_as_context() {
     for (name, source, expected) in [
         (
             "nested.q",
-            "f:{x}\nc:f f 1\nd:4\ne:5\nh:f 2\n",
-            "@@ -1,5 +1,5 @@\n f:{x}\n-c:f f 1\n+c:f[f[1]]\n d:4\n e:5\n-h:f 2\n+h:f[2]\n",
+            "f:{x,y}\nc:f f 1\nd:4\ne:5\nh:f 2\n",
+            "@@ -1,5 +1,5 @@\n f:{x,y}\n-c:f f 1\n+c:f[f[1]]\n d:4\n e:5\n-h:f 2\n+h:f[2]\n",
         ),
         (
             "passes.q",
-            "hs:{x}\nsq:{x}\nf:{(sq hs x)}\nmid:1\ng:{(sq hs x)}\n",
-            "@@ -1,5 +1,5 @@\n hs:{x}\n sq:{x}\n-f:{(sq hs x)}\n+f:{(sq[hs[x]])}\n mid:1\n\
+            "hs:{x,y}\nsq:{x,y}\nf:{(sq hs x)}\nmid:1\ng:{(sq hs x)}\n",
+            "@@ -1,5 +1,5 @@\n hs:{x,y}\n sq:{x,y}\n-f:{(sq hs x)}\n+f:{(sq[hs[x]])}\n mid:1\n\
              -g:{(sq hs x)}\n+g:{(sq[hs[x]])}\n",
         ),
     ] {

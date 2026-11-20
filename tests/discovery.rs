@@ -753,7 +753,7 @@ fn one_file_under_two_names_is_fixed_once_with_both_names_fixes() {
     // write clobbered the first and the run reported a tree it had left
     // dirty (#761).
     let repo = Repo::new();
-    repo.write("d1/a.q", "f:{x!=y}\ng:{x+1}\nh:{g x}\n")
+    repo.write("d1/a.q", "f:{x!=y}\ng:{x+y}\nh:{g x}\n")
         .write("d1/.qlinter.toml", "profile=\"uqf\"\nignore=[\"QP006\"]\n")
         .write("d2/.qlinter.toml", "profile=\"uqf\"\nignore=[\"QE004\"]\n");
     std::os::unix::fs::symlink("../d1/a.q", repo.path("d2/l.q")).unwrap();
@@ -763,7 +763,7 @@ fn one_file_under_two_names_is_fixed_once_with_both_names_fixes() {
     );
     assert_eq!(
         fs::read_to_string(repo.path("d1/a.q")).unwrap(),
-        "f:{x<>y}\ng:{x+1}\nh:{g[x]}\n"
+        "f:{x<>y}\ng:{x+y}\nh:{g[x]}\n"
     );
     assert_eq!(repo.codes(".", &["d1/a.q", "d2/l.q"]), Vec::<String>::new());
 }

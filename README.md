@@ -404,8 +404,30 @@ Around those:
 - `textDocument/foldingRange` folds the lambdas, parenthesised lists,
   bracketed blocks and block comments that span lines, found in the masked
   text so that a bracket in a string or a comment folds nothing. A statement
-  continued over indented lines with no bracket open is not a range, and a
-  buffer whose brackets do not close has none until they do.
+  continued over indented lines with no bracket open is not a range.
+- While a bracket or a string is open - every keystroke of a call or a
+  string being typed - a file reports only QE001, as the CLI does, placed at
+  the bracket that is not closed rather than the closer it runs into. The
+  rest of the file is not blanked meanwhile: the diagnostics and folds of the
+  last version whose brackets all closed are kept on every line that has not
+  changed since, moved up or down by the lines added or removed above them,
+  except within the statement that does not close. They are the last good
+  results, so a finding that an unchanged line owes to the statement being
+  typed goes only once that statement closes. A file that has not closed
+  since it was opened has only the QE001, and no folds.
+
+The server answers one message at a time, in the order they arrive, and
+reads ahead while it works. A change to a document that has another change
+to the same document queued behind it is taken but not linted, so a burst of
+keystrokes on a large file is linted once, at the last of them: twenty
+one-character edits to a 1,948-line file publish diagnostics twice and the
+final ones arrive about 0.1 s after the first edit, where each edit used to
+be linted in turn and the last diagnostics took about a second. A request
+still queued when its `$/cancelRequest` arrives is answered
+`RequestCancelled` (-32800) and is not run. A request already running is not
+interrupted. A request whose document changes behind it is still answered
+on the text it was asked about, since LSP 3.17 tells a server not to answer
+`ContentModified` for a change it has not yet handled.
 
 **The reason it is a server rather than an editor plugin shelling out to the
 CLI**: `didChange` carries the buffer, so what gets linted is what is on
@@ -420,6 +442,38 @@ running it: `textDocument/documentSymbol` (the outline; nested or flat, as
 the client declares), `workspace/symbol`, `textDocument/definition`,
 `textDocument/references`, `textDocument/documentHighlight` (a write told
 from a read), and `textDocument/prepareRename`/`textDocument/rename`.
+
+The nested outline puts each name under the namespace it is in, the whole of
+the name before its last dot: `.qetl.io.read` is `read` under `.qetl.io`,
+written with the dot or under `\d .qetl.io`. It is one level deep, a group per
+context the file writes into, rather than one level per dot, which would put a
+file that writes only into `.qetl.io` under a `.qetl` with a single child. A
+namespace the file also assigns whole (`.cfg:()!()` beside `.cfg.port:5010`)
+is that assignment, holding the names in it. A client that does not declare
+`hierarchicalDocumentSymbolSupport` gets the flat list.
+
+Go to Definition on a name several files assign lists the current file's own
+assignment first, then those in files it loads (directly or through another
+file), then those in files that load it, then the rest. When the current file
+assigns the name itself, the rest are left out: a script that neither loads
+nor is loaded by this one, by any chain of `\l`, is a separate program that
+happens to use the same name, and eight scripts that each start with
+`opts:.Q.opt .z.x` should not all be offered from one of them. A file
+connected by a load stays, because it may run in the same process and which
+assignment ran last is not something reading can tell.
+
+`workspace/symbol` ranks before it cuts to 512: the name itself, then a name
+whose last segment is the query (`.u.st` for `st`), then names starting with
+it, then names containing it, then names holding its letters in order. A query
+of several words (`bounded fail`) matches names containing every word. Case is
+ignored.
+
+On the path of a load - `\l src/init.q`, `system "l src/init.q"`, or a file
+symbol `` `:lib/x.q `` - Go to Definition opens the file and a hover names it.
+The path is followed as the dependency graph follows it: against the first
+workspace folder, then the loading file's own directory and each one above it;
+a directory loads the scripts directly in it. A load that reaches no file, or
+a relative one written after the script changes directory, goes nowhere.
 
 A global is named as q would resolve it where it is written: under the `\d`
 context in force, in each context a file is loaded in when it names none of
@@ -441,23 +495,32 @@ and a new name that is a q builtin or that the lambda already uses.
 
 Hover, signature help and completion answer from two places and never from a
 running q: the workspace's own source, and a catalogue of q's words that ships
-in the binary (`src/builtins.json` - the keywords, the control words, and the
-commonly used names under `.z`, `.Q`, `.h` and `.j`).
+in the binary (`src/builtins.json` - the keywords, the control words, the
+commonly used names under `.z`, `.Q`, `.h` and `.j`, and the operator and
+iterator glyphs).
 
 A hover on a name the workspace defines shows `name[a;b]` for a function - the
 signature it declares, or `x`, `y` and `z` as far as its body reads them, or
 the slots a projection leaves open - and the line that assigns anything else,
 then the comment directly above the definition (`/` lines, or a block comment
 ending there) and the file. A name several files define shows each, up to
-five. A word of q shows how it is written, a line on what it gives, and a link
-to its page on code.kx.com. A lambda's own parameter or local shows nothing:
-its definition is on screen.
+five, ranked and narrowed as Go to Definition is; signature help lists them in
+the same order. A word of q shows how it is written, a line on what it gives, and a link
+to its page on code.kx.com, and so does a glyph - `+`, `#`, `/:` - outside a
+name, a number, a string and a comment. A lambda's own parameter or local
+shows nothing: its definition is on screen.
 
 Signature help answers inside the brackets of a call written as a name -
-`.lib.add[1;` - with the parameters and the one being written. A lambda
-called in place, an operator's bracket form (`$[`, `@[`, `.[`, `?[`, `![`) and
-a call by juxtaposition have no signature shown. `if`, `do` and `while` take
-any number of expressions, so the last parameter stays marked.
+`.lib.add[1;`, or `.lib.add [1;`, which q reads the same - with the
+parameters and the one being written, inside a string still open there too.
+A name assigned another name (`al:add`) or a projection of one
+(`pr:add[;2;]`) is called as what it leads to: the alias with all of `add`'s
+parameters, the projection with the slots it leaves open. A lambda called in
+place, an operator's bracket form (`$[`, `@[`, `.[`, `?[`, `![`) and a call by
+juxtaposition have no signature shown. `if`, `do` and `while` take any number
+of expressions, so the last parameter stays marked; past the last parameter
+of anything else no parameter is marked, and the signature says the call has
+too many arguments.
 
 Completion is off unless `completion.enable` asks for it, because an editor
 told that a server completes stops offering the words already in the buffer,
@@ -522,6 +585,15 @@ tests is left to whatever runs them. Each request draws the graph again
 from what the index already holds - about a quarter of a second over 3,665
 files - so a client should ask when a view is shown or a file saved, not on
 every keystroke.
+
+Every answer names a file the way the client knows it: an open document by
+the URI it was opened with, and a file under a workspace folder by that
+folder's URI as the client sent it, followed by the path below it. A
+workspace opened as `/tmp/ws` on macOS, where `/tmp` links to
+`/private/tmp`, is answered as `/tmp/ws/lib.q`, so the editor does not open
+a second copy of a file it already has open. The server still keys each file
+by its real path, so the two spellings are one file to it. Only a file
+outside every folder is named by its real path.
 
 ### VS Code
 

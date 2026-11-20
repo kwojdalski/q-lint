@@ -27,7 +27,7 @@
 //! reached through a string or a symbol built at run time is in no list. As
 //! with every position here, the files are read when the request is made.
 use super::navigate::{FUNCTION, Sources, VARIABLE, range};
-use super::{Lines, file_key, is_q_uri, path_of, path_uri};
+use super::{Lines, file_key, is_q_uri, path_of};
 use q_lint_rs::graph::{self, Node, Placement};
 use q_lint_rs::{Mention, Name, References, mentions, name_at};
 use serde_json::{Value, json};
@@ -88,13 +88,9 @@ fn graph_of(sources: &Sources) -> BTreeMap<PathBuf, Node> {
     graph::build_from(&paths, &reads, &sources.idx.cwd())
 }
 
-/// The URI of an indexed file: the one the client opened it by, which a
-/// client compares as text, and the path's own for a file it has not opened.
+/// The URI of an indexed file, as every answer names one (`Sources::uri`).
 fn uri_of(sources: &Sources, file: &Path) -> String {
-    match sources.open.get(&*file.to_string_lossy()) {
-        Some(uri) => uri.to_string(),
-        None => path_uri(file),
-    }
+    sources.uri(&file.to_string_lossy())
 }
 
 /// The indexed file a URI names, as the graph has it.
@@ -145,8 +141,9 @@ fn file_graph(params: &Value, sources: &Sources) -> Value {
 /// that list. By place, since a change to a file most of a workspace reads
 /// reaches most of its tests, and each would otherwise repeat every URI.
 /// A changed test's `self` is its own place there and `null` otherwise:
-/// its `uri` is the server's spelling where the client has not opened it,
-/// so comparing the two as text would miss it on a drive letter or a link.
+/// where the client has not opened it, its `uri` is made from a workspace
+/// folder's (`Sources::uri`), and the client may have spelled the same file
+/// another way in `changed`, so comparing the two as text could miss it.
 /// `unindexed` is each `.q` file of the request the index does not hold -
 /// deleted, excluded, outside the workspace - whose dependents therefore
 /// cannot be followed: a client says so, where a list that looked complete

@@ -150,44 +150,72 @@ more
 a:1
   /
 
-=== QP006 profile: uqf | a function this file defines, applied without brackets
-f:{x+1}
-r:f 2
+=== QP006 profile: uqf | a function of two arguments this file defines, applied without brackets, is projected (q 5: type f 2 3 is 104h)
+f:{x+y}
+r:f 2 3
+
+=== QP006 profile: uqf | an explicit parameter list counts its names
+add:{[a;b] a+b}
+r:add 1 2
+
+=== QP006 profile: uqf | an implicit z makes three
+f:{x+z}
+r:f 1 2 3
+
+=== clean profile: uqf | a function of one argument is the whole call either way (q 5: nsq 3 is 9)
+nsq:{x*x}
+f:{[a] a+1}
+r:nsq 3
+s:f 2
 
 === QP006 profile: uqf | a call straight after select (#780; q 5: select g s from t is g[s])
-g:{x+1}
+g:{x+y}
 t:([]s:1 2;k:`a`b)
 r:select g s from t
 
 === QP006 profile: uqf | and after exec (#780; q 5: exec g s from t is 2 3)
-g:{x+1}
+g:{x+y}
 t:([]s:1 2;k:`a`b)
 r:exec g s from t
 
 === QP006 profile: uqf | and as the right operand of an infix keyword (#780; q 5: where s in g 1 filters on g[1])
-g:{x+1}
+g:{x+y}
 t:([]s:1 2;k:`a`b)
 r:select from t where s in g 1
 
 === QP006 profile: uqf | and as the table after from, which keeps its finding with no fix (#780; q 5: select from g t applies g)
-g:{x}
+g:{[a;b] a,b}
 t:([]s:1 2)
 r:select from g t
 
 === clean profile: uqf | a column named like the function, before from, by or where, is not a call (#780)
-g:{x+1}
+g:{x+y}
 t:([]s:1 2;g:3 4)
 a:select g from t
 b:select s by g from t
 c:select from t where g in 1
 
-=== clean profile: uqf | outside a query `where` is a unary, whose argument this rule leaves alone as it does `sum f x` (#780)
-g:{x>1}
+=== QP006 profile: uqf | outside a query `where` is a unary, whose argument opens an expression as an operator's does
+g:{x>y}
 b:1 2 3
 r:b where g b
 
+=== QP006 profile: uqf | and so does any unary keyword's: not g a b is not g[a b] (q 5)
+g:{x>y}
+r:not g 1 2
+
+=== QP006 profile: uqf | count and sum likewise
+g:{x+y}
+r:count g 1 2
+s:sum g 1 2
+
+=== QP006 profile: uqf | as an infix keyword's right operand does
+g:{x+y}
+b:1b
+r:b and g 1 2
+
 === QP006 profile: uqf | an hsym path argument whose `/` is part of the symbol, not over (#388; q 5: f `:db/t is f[`:db/t])
-f:{count x}
+f:{[p;n] count p,n}
 n:f `:db/t
 
 === clean profile: uqf | the name inside an hsym or a symbol with a colon is part of the symbol (#400; q 5: `:f 0: x is (0:;,`:f;`x))
@@ -196,18 +224,18 @@ f:{x}
 r:`a:f 1
 
 === clean profile: uqf | a name before the I/O verb 0:, 1: or 2: is its left operand, not applied (#508; q 5: parse "fmt 0: x" is (0:;`fmt;`x), and f[1:`a] does not parse)
-fmt:{x}
+fmt:{x,y}
 w:fmt 0: ("a";"b")
 v:fmt 1: 0x0102
 u:fmt 2:00
 
 === clean profile: uqf | the same call with the brackets the convention asks for
-f:{x+1}
-r:f[2]
+f:{x+y}
+r:f[2;3]
 
 === clean | juxtaposition is only a policy question under the uqf profile
-f:{x+1}
-r:f 2
+f:{x+y}
+r:f 2 3
 
 === clean profile: uqf | a builtin reads better without brackets, and is not this rule's business
 f:{x+1}
@@ -221,28 +249,28 @@ t:`a`b!1 2
 r:t `a
 
 === QP006 profile: uqf | a namespaced function, and the argument runs to the end of the expression
-.ns.scale:{x*2}
+.ns.scale:{x*y}
 r:.ns.scale 3+4
 
 === clean profile: uqf | an adverb applies to the function, it does not call it
-f:{x+1}
-r:f each 1 2 3
+f:{x+y}
+r:f over 1 2 3
 
 === clean profile: uqf | an infix builtin puts the function on the left of an operator
-f:{x+1}
+f:{x+y}
 r:f in `a`b
 
 === clean profile: uqf | a local of the same name says nothing about the global
-f:{x+1}
+f:{x+y}
 g:{[f] f 2}
 
 === clean profile: uqf | a system command's argument is not an argument
-d:{x+1}
+d:{x+y}
 \d .ns
 
 === QP006 profile: uqf | a call at the head of its own line
-step:{x+1}
-step 1
+step:{x+y}
+step 1 2
 
 === clean profile: uqf | .z.P spelled inside a string is text, not the clock
 doc:(`$".z.P";"local timestamp")
@@ -258,56 +286,60 @@ f:`2011.01.01T10.00.00.000.img.universe
 d:"z"$x
 
 === clean profile: uqf | a function after a function composes: enorm2 (-):: is a new function, not a call
-f:{x}
+f:{x+y}
 g:f (-)::
 
 === clean profile: uqf | an iterator makes the name its left operand: stop g[d]/x is the while form of over
-stop:{x}
+stop:{x>y}
 g:{y}
 r:stop g[1]/0
 
 === clean profile: uqf | an open each-left composes too
-f:{x}
+f:{x+y}
 h:{[X] f X@\:}
 
 === clean profile: uqf | a lambda applied on the spot assigns its result, not a function
 schemas:{x!x} `a`b
 r:schemas `a
 
-=== QP006 profile: uqf | while a projection is still a function
+=== QP006 profile: uqf | while a projection is still a function, of the arguments it has left
+turn:{[g;n;m] g+n+m}[;5]
+r:turn 1 2
+
+=== clean profile: uqf | and one with a single argument left is the whole call either way (q 5: turn 1 is 6)
 turn:{[g;n] g+n}[;5]
 r:turn 1
 
 === clean profile: uqf | a name reassigned to a dictionary is indexed after that, not called
-d2:{[x] x+1}
+d2:{[x;y] x+y}
 d2:`a`b!1 2
 r:d2 `a
 
 === QP006 profile: uqf | and called before it, while it still holds the lambda
-d2:{[x] x+1}
-r:d2 1
+d2:{[x;y] x+y}
+r:d2 1 2
 d2:`a`b!1 2
 
 === QP006 profile: uqf | inside a lambda the root assignment counts, not one a lambda might make
-.app.lg:{[x] -1 x}
+.app.lg:{[l;m] -1 l,m}
 f:{[x] n:x; .app.lg "start"; if[n; .app.lg:"oops"]}
 
 === clean profile: uqf | a stub a lambda installs is not a definition: the function lives in another file (#110)
-stub:{[t] .ns.f:{[job] '"stub"}}
+stub:{[t] .ns.f:{[job;d] '"stub"}}
 run:{[t] r:.ns.f `z; r}
 
 === QP006 profile: uqf | while a root definition beside the stub still is
-.ns.f:{[job] job}
-stub:{[t] .ns.f:{[job] '"stub"}}
+.ns.f:{[job;d] job,d}
+stub:{[t] .ns.f:{[job;d] '"stub"}}
 run:{[t] r:.ns.f `z; r}
 
 === clean profile: uqf | nor is a function only an init lambda would assign
-init:{[] .ns.g:{[x] x+1}}
-r:.ns.g 2
+init:{[] .ns.g:{[x;y] x+y}}
+r:.ns.g 2 3
 
 === QP006 profile: uqf | in a multi-line select the call is still reported
 \d .ns
-f:{[x] sum x}
+f:{[x;y] x+y}
 g:{[t]
     a:select n:count i,
         s:.ns.f v,m:avg v
@@ -316,29 +348,29 @@ g:{[t]
 \d .
 
 === QP006 profile: uqf | a composition naming the function is not an assignment to it
-enorm2:{x wsum x}
+enorm2:{x wsum y}
 enorm:sqrt enorm2::
 gini:{1f-enorm2 x}
 
 === clean profile: uqf | a root function is not visible from a \d namespace (q 5: .a.h[] is 'f)
-f:{x+1}
+f:{x+y}
 \d .a
 h:{f 1}
 \d .
 
 === QP006 profile: uqf | while the namespace's own function is
 \d .a
-f:{x+1}
+f:{x+y}
 h:{f 1}
 \d .
 
 === clean profile: uqf | in a query a column of the table comes first (q 5: f 0 indexes the column)
-f:{x+1}
+f:{x+y}
 t:([]f:1 2)
 u:update g:f 0 from t
 
 === QP006 profile: uqf | but a table without that column leaves the function
-f:{x+1}
+f:{x+y}
 t:([]a:1 2)
 u:update g:f a from t
 
@@ -372,12 +404,12 @@ d:.z.d
 e:.z.p
 
 === QP006 profile: uqf | value of a name built from strings, not bound to one, evaluates nothing the file cannot see (BuaBook cargs.q)
-prs:{[a] a:" " sv/: a; :(key a)!value a}
+prs:{[a;b] a:" " sv/: a; :(key a)!value b}
 r:prs .z.x
 
 === QP006 profile: uqf | and a set into a computed name in a lambda leaves the file's own lambdas as they read (BuaBook if.q)
 install:{[ifFunc;implFunc] set[ifFunc;implFunc]}
-f:{x+1}
+f:{x+y}
 r:f 1
 
 === QP002 profile: uqf | a date with a bare T is a datetime (q 5: type 2023.01.01T is -15h) (#501)

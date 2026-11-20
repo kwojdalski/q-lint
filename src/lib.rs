@@ -245,6 +245,18 @@ pub fn mentions(source: &str) -> Vec<Mention> {
     semantics::navigate::mentions(&v.code, source)
 }
 
+/// The path of the load at byte `offset` of `source` - `\l path`,
+/// `system "l path"` or a file symbol, as `References::loads` reads it - as
+/// its start and length, when the offset is in one. Its end counts: a cursor
+/// just past the last character is still on the path.
+pub fn load_at(source: &str, offset: usize) -> Option<(usize, usize)> {
+    let v = views(source);
+    semantics::load_paths(&v.code, source)
+        .into_iter()
+        .find(|path| path.contains(&offset) || path.end == offset)
+        .map(|path| (path.start, path.len()))
+}
+
 /// What the name at byte `offset` of `source` refers to, when there is one.
 pub fn name_at(source: &str, offset: usize) -> Option<Name> {
     let v = views(source);
@@ -273,6 +285,17 @@ pub struct Call {
     pub argument: usize,
 }
 
+/// What a definition that is no lambda may still be called as: the name at
+/// byte `at` for `len` bytes, itself (`al:add`) or projected (`pr:add[;2;]`).
+/// `given` is `None` for the name itself, and for a projection says of each
+/// slot written whether it holds an argument.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Applied {
+    pub at: usize,
+    pub len: usize,
+    pub given: Option<Vec<bool>>,
+}
+
 /// What is being typed at a cursor: the name so far starts at byte `start`,
 /// inside a lambda whose parameters and locals are `locals`, under the
 /// context `namespace` - `.ns` after `\d .ns`, and empty at the root.
@@ -295,6 +318,20 @@ pub fn comment_above(source: &str, at: usize) -> String {
 pub fn call_at(source: &str, offset: usize) -> Option<Call> {
     let v = views(source);
     semantics::help::call_at(&v.code, &v.comments, source, offset)
+}
+
+/// What the assignment of the name ending at byte `end` assigns, when that
+/// is another name or a projection of one and nothing more.
+pub fn applied(source: &str, end: usize) -> Option<Applied> {
+    let v = views(source);
+    semantics::help::applied(&v.code, source, end)
+}
+
+/// The operator or iterator glyph at byte `offset`, as its start and length:
+/// nothing in a string, a comment, a name, a number or a system command.
+pub fn glyph_at(source: &str, offset: usize) -> Option<(usize, usize)> {
+    let v = views(source);
+    semantics::help::glyph_at(&v.code, source, offset)
 }
 
 /// The name at byte `offset`, a keyword included, as its start and length.
@@ -366,17 +403,23 @@ pub enum BuiltinKind {
     Variable,
     /// A name q calls when the script assigns it, as `.z.pg`.
     Callback,
+    /// A glyph that takes an argument on each side, as `+` and `#`.
+    Operator,
+    /// A glyph that derives a function from the one before it, as `/`.
+    Iterator,
 }
 
-/// One name q defines: every reserved word, and the names in `.z`, `.Q` and
-/// `.j` a script is most likely to meet. `syntax` is how it is written,
+/// One name q defines: every reserved word, the names in `.z`, `.Q`, `.h`
+/// and `.j` a script is most likely to meet, and the operator and iterator
+/// glyphs. `syntax` is how it is written,
 /// `params` what it takes - their count is its rank - `summary` one or two
 /// sentences on what it gives back, and `page` where the reference
 /// describes it, under <https://code.kx.com/q/ref/>.
 ///
-/// The words are the ones `reserved.json` lists and the ranks the ones a
-/// running q reports (`tests/test_builtins_runtime.py`); the descriptions
-/// are this project's own.
+/// The words are the ones `reserved.json` lists, and the ranks and the
+/// qualified names the ones a running q reports and defines
+/// (`tests/test_builtins_runtime.py`); the descriptions are this project's
+/// own.
 #[derive(Debug, Deserialize)]
 pub struct Builtin {
     pub name: String,
@@ -2444,7 +2487,7 @@ pub(crate) fn unsymbolled(code: &str) -> String {
 /// dotted name may begin with `_`: `.a.b.__perf` and `.h._ranks` are one name
 /// each (q 5 `parse "a._ns"` is `` `a._ns ``), so `_` after `name.` still
 /// continues it - while `._ns` with nothing before the dot is no name at all.
-fn ends_in_name(s: &str) -> bool {
+pub(crate) fn ends_in_name(s: &str) -> bool {
     let token: Vec<char> = s
         .chars()
         .rev()
@@ -4405,7 +4448,30 @@ pub(crate) fn signature<'a>(code: &'a str, raw: &str, brace: usize) -> Signature
 /// Whether every bracket and string in `source` closes - what QE001 reports
 /// on, asked whether or not QE001 is selected.
 pub fn balanced(source: &str) -> bool {
-    structure("", source, &views(source)).is_empty()
+    problems(source, &views(source)).is_empty()
+}
+
+/// The statement the first structural problem in `source` is in, as the
+/// bytes it spans: from the line that starts it to the line that starts the
+/// next, or the end of the file. A string nothing closes is in it too, since
+/// a line at column 0 ends a string as it ends a statement. `None` for a
+/// source whose brackets and strings all close. What a language server
+/// leaves out when it keeps a file's last results around a statement being
+/// typed.
+pub fn broken_statement(source: &str) -> Option<std::ops::Range<usize>> {
+    let v = views(source);
+    let (at, _) = problems(source, &v).into_iter().next()?;
+    let (mut start, mut offset) = (0, 0);
+    for line in v.code.split_inclusive('\n') {
+        if begins(source, &v, offset, line) {
+            if offset > at {
+                return Some(start..offset);
+            }
+            start = offset;
+        }
+        offset += line.len();
+    }
+    Some(start..source.len())
 }
 
 /// The most brackets, braces and parentheses q 5 holds open at once.
@@ -4416,28 +4482,40 @@ pub(crate) const DEPTH: usize = 100;
 /// open, a stray closer is skipped, a mismatched one closes what it meets -
 /// so a `noqa` on the first does not hide the next (#413).
 fn structure(path: &str, source: &str, v: &Views) -> Vec<Finding> {
+    problems(source, v)
+        .into_iter()
+        .map(|(at, detail)| Finding::at(path, source, at, "QE001", detail))
+        .collect()
+}
+
+/// Whether the line at `offset`, `line` in the code view, starts a
+/// statement. A line at column 0 does, so a bracket still open there never
+/// closes: q 5 refuses `f:{[y]` + `  y+1` + `}` with '{ (#225). A comment
+/// line is blank here and does not count. Column 0 is read from the source:
+/// `views` blanks a line's opening quote, its `q)` prefix and a whole `k)`
+/// line, and each still starts a statement - q 5 refuses `f:{[a]` +
+/// `"abc",a}` with '{ (#307).
+fn begins(source: &str, v: &Views, offset: usize, line: &str) -> bool {
+    let raw = &source[offset..offset + line.len()];
+    let lead = if raw.starts_with("q)") { 2 } else { 0 };
+    raw.starts_with(|ch: char| !ch.is_ascii_whitespace())
+        && (!line.trim().is_empty()
+            || v.string_starts.binary_search(&(offset + lead)).is_ok()
+            || v.foreign_offsets.binary_search(&offset).is_ok())
+}
+
+/// `structure`'s problems as the byte each is at and what it says.
+fn problems(source: &str, v: &Views) -> Vec<(usize, String)> {
     let mut found = vec![];
-    let mut stack = vec![];
+    let mut stack: Vec<(u8, usize)> = vec![];
     let mut offset = 0;
-    let make = |at, detail| Finding::at(path, source, at, "QE001", detail);
     for line in v.code.split_inclusive('\n') {
-        // A line at column 0 starts a statement, so a bracket still open
-        // there never closes: q 5 refuses `f:{[y]` + `  y+1` + `}` with '{
-        // (#225). A comment line is blank here and does not count. Column 0
-        // is read from the source: `views` blanks a line's opening quote, its
-        // `q)` prefix and a whole `k)` line, and each still starts a
-        // statement - q 5 refuses `f:{[a]` + `"abc",a}` with '{ (#307).
         let raw = &source[offset..offset + line.len()];
-        let lead = if raw.starts_with("q)") { 2 } else { 0 };
-        let begins = raw.starts_with(|ch: char| !ch.is_ascii_whitespace())
-            && (!line.trim().is_empty()
-                || v.string_starts.binary_search(&(offset + lead)).is_ok()
-                || v.foreign_offsets.binary_search(&offset).is_ok());
         if let Some(&(c, at)) = stack.last()
-            && begins
+            && begins(source, v, offset, line)
         {
             let row = source[..offset].matches('\n').count() + 1;
-            found.push(make(
+            found.push((
                 at,
                 format!(
                     "Unclosed delimiter; expected '{}' before line {row}, which starts at \
@@ -4457,7 +4535,7 @@ fn structure(path: &str, source: &str, v: &Views) -> Vec<Finding> {
                     // kinds, with the innermost: `(` 101 deep is '(, and
                     // `({` 51 deep is '{ (#717).
                     if stack.len() == DEPTH + 1 {
-                        found.push(make(
+                        found.push((
                             offset + i,
                             format!(
                                 "More than {DEPTH} brackets, braces and parentheses open at \
@@ -4469,16 +4547,33 @@ fn structure(path: &str, source: &str, v: &Views) -> Vec<Finding> {
                 } else if b")]}".contains(&c) {
                     match stack.pop() {
                         None => {
-                            found.push(make(
-                                offset + i,
-                                format!("Unexpected closing '{}'", c as char),
-                            ));
+                            found.push((offset + i, format!("Unexpected closing '{}'", c as char)));
                         }
-                        Some((want, _)) if want != c => {
-                            found.push(make(
-                                offset + i,
-                                format!("Expected '{}', got '{}'", want as char, c as char),
-                            ));
+                        // A closer that some bracket further out wants
+                        // closes that one, and what it passes was never
+                        // closed: `{ f[1; }` is an unclosed `[`, reported
+                        // where it opens - the line being typed - and not at
+                        // the `}`, often lines below. A closer nothing open
+                        // wants, as in `(1;2]`, is the mistake itself.
+                        Some((want, at)) if want != c => {
+                            match stack.iter().rposition(|&(w, _)| w == c) {
+                                Some(outer) => {
+                                    let row = source[..offset].matches('\n').count() + 1;
+                                    found.push((
+                                        at,
+                                        format!(
+                                            "Unclosed delimiter; expected '{}' before the '{}' \
+                                             on line {row}",
+                                            want as char, c as char
+                                        ),
+                                    ));
+                                    stack.truncate(outer);
+                                }
+                                None => found.push((
+                                    offset + i,
+                                    format!("Expected '{}', got '{}'", want as char, c as char),
+                                )),
+                            }
                         }
                         _ => {}
                     }
@@ -4488,13 +4583,13 @@ fn structure(path: &str, source: &str, v: &Views) -> Vec<Finding> {
         offset += line.len();
     }
     if let Some(at) = v.unterminated {
-        found.push(make(at, "Unterminated string literal".into()));
+        found.push((at, "Unterminated string literal".into()));
     } else if let Some(&(c, at)) = stack.last() {
-        found.push(make(
-            at,
-            format!("Unclosed delimiter; expected '{}'", c as char),
-        ));
+        found.push((at, format!("Unclosed delimiter; expected '{}'", c as char)));
     }
+    // An unclosed bracket is found at its closer and reported where it
+    // opens, behind what was found on the way there.
+    found.sort_by_key(|&(at, _)| at);
     found
 }
 
@@ -4526,7 +4621,7 @@ pub struct Fold {
 /// statement that says what the lambda is for.
 pub fn folds(source: &str) -> Vec<Fold> {
     let v = views(source);
-    if !structure("", source, &v).is_empty() {
+    if !problems(source, &v).is_empty() {
         return vec![];
     }
     let mut found: Vec<Fold> = v
@@ -4709,7 +4804,7 @@ pub fn suppressions_for<'a>(
     source: &str,
 ) -> Vec<Option<Fix>> {
     let v = views(source);
-    let balanced = structure("", source, &v).is_empty();
+    let balanced = problems(source, &v).is_empty();
     findings
         .into_iter()
         .map(|finding| {
