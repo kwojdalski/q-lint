@@ -195,6 +195,37 @@ test("CSV is the header and the rows given, as the cells show them", () => {
   assert.strictEqual(toCsv(grid, []), "s,px,str\n");
 });
 
+test("CSV keeps text a spreadsheet would run as a formula as text", () => {
+  // A symbol, a string or a column name a spreadsheet opening the file
+  // would read as a formula (=, +, -, @, a tab or a carriage return first)
+  // is written with a leading quote; a number, a temporal and a numeric
+  // or temporal column's cells are written as they are.
+  const grid = toGrid(
+    {
+      count: 3,
+      keys: 0,
+      names: ["=s", "j", "str", "n"],
+      types: [11, 7, 0, 16],
+      cells: [
+        ["=HYPERLINK(\"http://x\")", "+1", "@SUM(A1)"],
+        ["-1", "2", "3"],
+        ["-2+3", "-1.5", "\tx"],
+        ["-0D01:00:00.000000000", "0D00:00:00.000000000", ""],
+      ],
+      raw: [[], [-1, 2, 3], [], [-3600e9, 0, null]],
+      rank: [[0, 1, 2], [0, 1, 2], [0, 1, 2], [0, 1, 2]],
+    },
+    -1,
+  );
+  assert.strictEqual(
+    toCsv(grid),
+    "'=s,j,str,n\n" +
+      "\"'=HYPERLINK(\"\"http://x\"\")\",-1,'-2+3,-0D01:00:00.000000000\n" +
+      "'+1,2,-1.5,0D00:00:00.000000000\n" +
+      "'@SUM(A1),3,'\tx,\n",
+  );
+});
+
 // --- media/result.js and media/chartspec.js
 
 const sample = () =>

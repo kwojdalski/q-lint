@@ -317,7 +317,10 @@ where a result goes; it sets `q-lint.query.mode`, and takes `console`,
   type under it to filter (by the text shown, ignoring case). **Copy as
   CSV** copies the rows shown, in the order shown, and **Export to CSV**
   saves them to a file you pick; the command **Export Results to CSV** does
-  the same, and takes the file's `Uri` as an argument to skip the dialog. Each cell is what q
+  the same, and takes the file's `Uri` as an argument to skip the dialog.
+  In the CSV, a name, symbol or string a spreadsheet would run as a
+  formula (`=`, `+`, `-` or `@` first, but not a number) starts with `'`.
+  Each cell is what q
   prints in a table: a timestamp keeps its nanoseconds, a long above 2^53
   every digit, a null is blank and an infinity is `0W` or `0w`. Sorting is
   q's own order (`iasc` on the process), nulls first.

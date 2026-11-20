@@ -254,13 +254,23 @@ export function csvField(text: string): string {
   return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
+/// Text a spreadsheet opening the CSV would run as a formula - one that
+/// starts with `=`, `+`, `-`, `@`, a tab or a carriage return, but is not a
+/// number - with a leading `'`, so it is shown as the text it is.
+export function csvText(text: string): string {
+  return /^[=+\-@\t\r]/.test(text) && !/^-?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(text) ? `'${text}` : text;
+}
+
 /// The grid as CSV: a header of the column names, then `rows` (indices, in
-/// the order shown) as their cells show them. Lines end in `\n`.
+/// the order shown) as their cells show them. Lines end in `\n`. Names
+/// and the cells of a column that is not numeric or temporal go through
+/// `csvText`: a symbol or a string can be anything.
 export function toCsv(grid: Grid, rows?: number[]): string {
   const order = rows ?? [...Array(rowCount(grid)).keys()];
-  const lines = [grid.columns.map((c) => csvField(c.name)).join(",")];
+  const text = grid.columns.map((c) => (c.numeric || c.temporal ? (t: string) => t : csvText));
+  const lines = [grid.columns.map((c) => csvField(csvText(c.name))).join(",")];
   for (const r of order) {
-    lines.push(grid.cells.map((column) => csvField(column[r] ?? "")).join(","));
+    lines.push(grid.cells.map((column, i) => csvField(text[i](column[r] ?? ""))).join(","));
   }
   return lines.join("\n") + "\n";
 }
