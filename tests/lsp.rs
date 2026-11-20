@@ -173,6 +173,20 @@ impl Server {
         reply["result"].as_array().cloned().unwrap()
     }
 
+    /// The code actions of the kinds in `only`, asked for as an editor asks
+    /// on save or from its Source Action menu: for the whole document, with
+    /// no diagnostics.
+    fn code_actions_only(&mut self, uri: &str, only: &[&str]) -> Vec<Value> {
+        self.send(
+            json!({"jsonrpc":"2.0","id":21,"method":"textDocument/codeAction",
+            "params":{"textDocument":{"uri":uri},
+                      "range":{"start":{"line":0,"character":0},"end":{"line":0,"character":0}},
+                      "context":{"diagnostics":[],"only":only}}}),
+        );
+        let reply = self.until(|m| m["id"] == 21);
+        reply["result"].as_array().cloned().unwrap()
+    }
+
     fn shutdown_and_exit(&mut self) -> i32 {
         self.send(json!({"jsonrpc":"2.0","id":99,"method":"shutdown"}));
         let reply = self.receive();
@@ -180,6 +194,12 @@ impl Server {
         self.send(json!({"jsonrpc":"2.0","method":"exit"}));
         self.child.wait().unwrap().code().unwrap_or(-1)
     }
+}
+
+/// What a server that offers quick fixes says it offers: the kinds, so an
+/// editor knows there is a `source.fixAll` to ask for on save.
+fn code_action_provider() -> Value {
+    json!({"codeActionKinds": ["quickfix", "source.fixAll.q-lint"]})
 }
 
 /// What VS Code declares, as far as this server reads it: Quick Fixes come
@@ -205,7 +225,10 @@ fn initialize_announces_full_document_sync() {
         reply["result"]["capabilities"]["textDocumentSync"],
         json!({"openClose": true, "change": 1, "save": {"includeText": false}})
     );
-    assert_eq!(reply["result"]["capabilities"]["codeActionProvider"], true);
+    assert_eq!(
+        reply["result"]["capabilities"]["codeActionProvider"],
+        code_action_provider()
+    );
     assert_eq!(reply["result"]["serverInfo"]["name"], "q-lint");
     assert_eq!(server.shutdown_and_exit(), 0);
 }
@@ -1749,7 +1772,7 @@ fn formatting_and_semantic_tokens_can_be_turned_off() {
         capabilities.get("semanticTokensProvider").is_none(),
         "{capabilities}"
     );
-    assert_eq!(capabilities["codeActionProvider"], true);
+    assert_eq!(capabilities["codeActionProvider"], code_action_provider());
     // A client that asks anyway gets nothing to apply.
     let uri = "file:///tmp/no-format.q";
     server.open(uri, "a:1==1\n");
@@ -2271,5 +2294,133 @@ fn a_diagnostic_links_its_code_to_the_rule_reference() {
             "{d}"
         );
     }
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+/// `source.fixAll.q-lint` is Format Document's edit as a code action, for an
+/// editor where something else formats q: it is what
+/// `editor.codeActionsOnSave` asks for, by that kind or one above it.
+#[test]
+fn fix_all_is_the_formatting_edit_for_a_client_that_asks_by_kind() {
+    let mut server = Server::start();
+    server.initialize();
+    let uri = "file:///tmp/fix-all.q";
+    // `&&` has a fix only a person should accept: not part of this.
+    let before = "/ \u{1F600}\na:1==1; b:1!=2\nc:a&&b\n";
+    server.open(uri, before);
+    let diagnostics = server.diagnostics_for(uri);
+    let edits = server.format(uri)["result"].clone();
+    assert_eq!(edits.as_array().unwrap().len(), 1, "{edits}");
+    for only in [
+        vec!["source"],
+        vec!["source.fixAll"],
+        vec!["source.fixAll.q-lint"],
+        vec!["refactor", "source.fixAll"],
+    ] {
+        let actions = server.code_actions_only(uri, &only);
+        assert_eq!(actions.len(), 1, "{only:?}: {actions:?}");
+        assert_eq!(actions[0]["kind"], "source.fixAll.q-lint");
+        assert_eq!(actions[0]["title"], "Apply every safe q-lint fix");
+        assert_eq!(actions[0]["edit"]["changes"][uri], edits, "{only:?}");
+        assert!(actions[0].get("isPreferred").is_none());
+    }
+    // A kind beside it, one below it, and one that only starts the same.
+    for only in [
+        vec![],
+        vec!["refactor"],
+        vec!["source.organizeImports"],
+        vec!["source.fixAll.eslint"],
+        vec!["source.fixAll.q-lint.more"],
+        vec!["source.fixAllOrNothing"],
+        vec!["sourcery"],
+    ] {
+        assert_eq!(
+            server.code_actions_only(uri, &only),
+            Vec::<Value>::new(),
+            "{only:?}"
+        );
+    }
+    // The lightbulb's request names no kind, and gets the quick fixes alone;
+    // one that names them gets them too, and still no fix-all.
+    let lightbulb = server.code_actions(uri, &diagnostics);
+    assert!(!lightbulb.is_empty());
+    assert!(
+        lightbulb.iter().all(|a| a["kind"] == "quickfix"),
+        "{lightbulb:?}"
+    );
+    server.send(
+        json!({"jsonrpc":"2.0","id":22,"method":"textDocument/codeAction",
+        "params":{"textDocument":{"uri":uri},"range":diagnostics[0]["range"],
+                  "context":{"diagnostics":diagnostics,"only":["quickfix"]}}}),
+    );
+    assert_eq!(server.until(|m| m["id"] == 22)["result"], json!(lightbulb));
+
+    // Applied, it leaves nothing for itself or for formatting to do.
+    let after = apply_edits(before, edits.as_array().unwrap());
+    assert_eq!(after, "/ \u{1F600}\na:1=1; b:1<>2\nc:a&&b\n");
+    server.change(uri, 2, &after);
+    server.diagnostics_for(uri);
+    assert_eq!(
+        server.code_actions_only(uri, &["source.fixAll"]),
+        Vec::<Value>::new()
+    );
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+/// No fix-all where there is no edit: a buffer whose structure is broken, one
+/// that is not q, and one the server was never given.
+#[test]
+fn fix_all_is_not_offered_for_a_broken_or_unknown_buffer() {
+    let mut server = Server::start();
+    server.initialize();
+    for (uri, text) in [
+        ("file:///tmp/fix-all-unclosed.q", "f:{[x] x==1\n"),
+        ("file:///tmp/fix-all-string.q", "a:1==1; s:\"abc\n"),
+        ("file:///tmp/fix-all-not-q.k", "a:1==1\n"),
+    ] {
+        server.open(uri, text);
+        server.diagnostics_for(uri);
+        assert_eq!(
+            server.code_actions_only(uri, &["source.fixAll"]),
+            Vec::<Value>::new(),
+            "{uri}"
+        );
+    }
+    assert_eq!(
+        server.code_actions_only("file:///tmp/fix-all-never-opened.q", &["source.fixAll"]),
+        Vec::<Value>::new()
+    );
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+/// `format.enable: false` says this server is not the formatter. Fix-all
+/// runs only where a person listed it, so it is still there to list.
+#[test]
+fn fix_all_does_not_depend_on_the_formatter_being_enabled() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut server, reply) = start_with_options(
+        dir.path(),
+        &["--lsp", "--profile", "uqf"],
+        json!({"format": {"enable": false}}),
+        None,
+    );
+    assert_eq!(
+        reply["result"]["capabilities"]["codeActionProvider"],
+        code_action_provider()
+    );
+    let uri = "file:///tmp/fix-all-no-format.q";
+    let before = "a:1==1\n";
+    server.open(uri, before);
+    server.diagnostics_for(uri);
+    assert_eq!(server.format(uri)["result"], json!([]));
+    let actions = server.code_actions_only(uri, &["source.fixAll.q-lint"]);
+    assert_eq!(actions.len(), 1, "{actions:?}");
+    assert_eq!(
+        apply_edits(
+            before,
+            actions[0]["edit"]["changes"][uri].as_array().unwrap()
+        ),
+        "a:1=1\n"
+    );
     assert_eq!(server.shutdown_and_exit(), 0);
 }

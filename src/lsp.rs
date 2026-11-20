@@ -1063,7 +1063,9 @@ fn capabilities(opts: &Options, code_action_literals: bool) -> Value {
         },
     });
     if code_action_literals {
-        capabilities["codeActionProvider"] = json!(true);
+        // The kinds, not a bare `true`: an editor asks for `source.fixAll`
+        // actions on save only of a server that says it has some.
+        capabilities["codeActionProvider"] = json!({"codeActionKinds": [QUICK_FIX, FIX_ALL]});
     }
     capabilities["workspace"] = json!({
         "workspaceFolders": {"supported": true, "changeNotifications": true},
@@ -1234,6 +1236,33 @@ fn path_uri(path: &std::path::Path) -> String {
     uri
 }
 
+/// The kind of a fix for one diagnostic, and of the one action that applies
+/// every safe fix to the document. The second is named for this server, as
+/// `source.fixAll.eslint` is for its: a person lists it under
+/// `editor.codeActionsOnSave` to have exactly these fixes run on save.
+const QUICK_FIX: &str = "quickfix";
+const FIX_ALL: &str = "source.fixAll.q-lint";
+
+/// Whether a kind the client asks for (`context.only`) takes in `kind`. Kinds
+/// are hierarchical, a dot at a time: `source` and `source.fixAll` each ask
+/// for `source.fixAll.q-lint`, and `source.fixAllOrNothing` does not.
+fn asks_for(only: &str, kind: &str) -> bool {
+    kind.strip_prefix(only)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
+}
+
+/// The code actions for a request: the quick fixes for the diagnostics it
+/// carries, and - only when asked for by kind - the fix-all action.
+///
+/// WITHOUT `context.only`, QUICK FIXES AND NOTHING ELSE. That request is the
+/// lightbulb's, made as the cursor moves, about the diagnostics at one range.
+/// A fix-all there is about neither: it would run every fix over the document
+/// on each of those requests, to offer what VS Code leaves out of that menu
+/// anyway (a `source` action is shown under Source Action, which asks by
+/// kind), and what a client that does show everything already has as Format
+/// Document - the same edit. So it is returned to a client that names it,
+/// `source.fixAll` or `source` in `only`, which is what
+/// `editor.codeActionsOnSave` and the Source Action menu both do.
 fn code_actions(
     params: &Value,
     docs: &Documents,
@@ -1241,14 +1270,34 @@ fn code_actions(
     policy: &Policy,
     unsafe_fixes: bool,
 ) -> Vec<Value> {
-    if let Some(only) = params["context"]["only"].as_array()
-        && !only.iter().any(|kind| {
-            kind.as_str()
-                .is_some_and(|kind| kind == "quickfix" || kind.starts_with("quickfix."))
-        })
-    {
-        return vec![];
+    let only: Option<Vec<&str>> = params["context"]["only"]
+        .as_array()
+        .map(|only| only.iter().filter_map(Value::as_str).collect());
+    let mut actions = vec![];
+    if only.as_ref().is_none_or(|only| {
+        only.iter()
+            .any(|kind| *kind == QUICK_FIX || kind.starts_with("quickfix."))
+    }) {
+        actions.extend(quick_fixes(params, docs, ws, policy, unsafe_fixes));
     }
+    if only
+        .as_ref()
+        .is_some_and(|only| only.iter().any(|kind| asks_for(kind, FIX_ALL)))
+    {
+        actions.extend(fix_all_action(params, docs, ws, policy));
+    }
+    actions
+}
+
+/// The fixes for the diagnostics a request carries: one quick fix for each
+/// finding that has one, for a person to see and accept or not.
+fn quick_fixes(
+    params: &Value,
+    docs: &Documents,
+    ws: &Workspace,
+    policy: &Policy,
+    unsafe_fixes: bool,
+) -> Vec<Value> {
     let uri = uri_of(&params["textDocument"]);
     let Some(source) = docs.get(&uri) else {
         return vec![];
@@ -1292,12 +1341,38 @@ fn code_actions(
         );
         actions.push(json!({
             "title": fix.title,
-            "kind": "quickfix",
+            "kind": QUICK_FIX,
             "diagnostics": [client_diagnostic],
             "edit": {"changes": changes},
         }));
     }
     actions
+}
+
+/// Every safe fix at once, as one action of kind `source.fixAll.q-lint`: the
+/// edit Format Document makes, for an editor where something else formats q
+/// or nothing does. `format` computes it, so the two cannot differ - and
+/// there is no action, as there are no edits, for a buffer with nothing to
+/// fix, one whose brackets or strings do not close, or one that is not open
+/// or not q. Not subject to `format.enable`: that setting says whether this
+/// server is a formatter, and this action runs only where a person named it.
+fn fix_all_action(
+    params: &Value,
+    docs: &Documents,
+    ws: &Workspace,
+    policy: &Policy,
+) -> Option<Value> {
+    let edits = format(params, docs, ws, policy);
+    if edits.is_empty() {
+        return None;
+    }
+    let mut changes = serde_json::Map::new();
+    changes.insert(uri_of(&params["textDocument"]), json!(edits));
+    Some(json!({
+        "title": "Apply every safe q-lint fix",
+        "kind": FIX_ALL,
+        "edit": {"changes": changes},
+    }))
 }
 
 /// The edits "Format document" makes: the safe fixes `--fix` applies, to the
