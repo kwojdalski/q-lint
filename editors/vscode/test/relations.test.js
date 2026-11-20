@@ -20,6 +20,7 @@ const {
   gitBinary,
   isQ,
   names,
+  onPath,
   picks,
   rows,
   summary,
@@ -156,6 +157,32 @@ test("an answer that is not a list of tests is none", () => {
     changed: [uri("a.q")],
   });
   assert.deepStrictEqual(answer.tests, [{ uri: uri("u.q"), reaches: [0] }]);
+  // Its own place among the changed files is kept where it is one.
+  const placed = asAffectedTests({
+    tests: [
+      { uri: uri("t.q"), reaches: [0], self: 0 },
+      { uri: uri("u.q"), reaches: [0], self: null },
+      { uri: uri("v.q"), reaches: [0], self: "0" },
+    ],
+    changed: [uri("t.q")],
+  });
+  assert.deepStrictEqual(placed.tests, [
+    { uri: uri("t.q"), reaches: [0], self: 0 },
+    { uri: uri("u.q"), reaches: [0] },
+    { uri: uri("v.q"), reaches: [0] },
+  ]);
+});
+
+test("a changed test is told by its place, however each side spells it", () => {
+  // The server names a test it read from disk by the path's own URI; the
+  // client sent the same file as its editor spells it. As text they differ.
+  const answer = asAffectedTests({
+    tests: [{ uri: "file:///C:/ws/tests/test_a.q", reaches: [0, 1], self: 1 }],
+    changed: ["file:///c%3A/ws/src/a.q", "file:///c%3A/ws/tests/test_a.q"],
+  });
+  const [pick] = picks(answer, (u) => u.replace(/^file:\/\/\/[cC](%3A|:)\/ws\//, ""));
+  assert.strictEqual(pick.label, "tests/test_a.q");
+  assert.strictEqual(pick.description, "changed; reaches src/a.q");
 });
 
 test("a test is listed with the changed files it reaches", () => {
@@ -260,6 +287,34 @@ test("the git that runs is VS Code's when one is set", () => {
   assert.strictEqual(gitBinary(" /opt/git/bin/git "), "/opt/git/bin/git");
   assert.strictEqual(gitBinary(["/first/git", "/second/git"]), "/first/git");
   assert.strictEqual(gitBinary([]), "git");
+});
+
+test("on Windows a bare git is found on PATH, never in the folder it runs in", () => {
+  const on = (...files) => (file) => files.includes(file);
+  const path = ".;;bin;C:\\Tools;C:\\Program Files\\Git\\cmd";
+  // The folder git is started in is not asked at all: only what PATH names
+  // by an absolute directory, in its order.
+  assert.strictEqual(
+    onPath("git", path, on("git.exe", "bin\\git.exe", "C:\\Program Files\\Git\\cmd\\git.exe"), "win32"),
+    "C:\\Program Files\\Git\\cmd\\git.exe",
+  );
+  assert.strictEqual(
+    onPath("git", path, on("C:\\Tools\\git.com", "C:\\Tools\\git.exe"), "win32"),
+    "C:\\Tools\\git.com",
+  );
+  // A name with its ending is looked for as it is.
+  assert.strictEqual(
+    onPath("git.exe", path, on("C:\\Tools\\git.exe"), "win32"),
+    "C:\\Tools\\git.exe",
+  );
+  assert.strictEqual(onPath("git", path, on("C:\\Tools\\git.cmd"), "win32"), undefined);
+  assert.strictEqual(onPath("git", undefined, on(), "win32"), undefined);
+  // A path names its file, and elsewhere a bare name is PATH's alone.
+  const never = () => assert.fail("nothing is looked for");
+  assert.strictEqual(onPath("C:\\git\\git.exe", path, never, "win32"), "C:\\git\\git.exe");
+  assert.strictEqual(onPath("tools/git", path, never, "win32"), "tools/git");
+  assert.strictEqual(onPath("git", "/usr/bin", never, "linux"), "git");
+  assert.strictEqual(onPath("git", "/usr/bin", never, "darwin"), "git");
 });
 
 test("only a q file is sent to the server", () => {

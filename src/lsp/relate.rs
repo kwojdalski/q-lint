@@ -33,7 +33,7 @@ use q_lint_rs::{Mention, Name, References, mentions, name_at};
 use serde_json::{Value, json};
 use std::{
     borrow::Cow,
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     path::{Path, PathBuf},
 };
 
@@ -144,6 +144,9 @@ fn file_graph(params: &Value, sources: &Sources) -> Value {
 /// recognise; a test's `reaches` names the ones it reaches by their place in
 /// that list. By place, since a change to a file most of a workspace reads
 /// reaches most of its tests, and each would otherwise repeat every URI.
+/// A changed test's `self` is its own place there and `null` otherwise:
+/// its `uri` is the server's spelling where the client has not opened it,
+/// so comparing the two as text would miss it on a drive letter or a link.
 /// `unindexed` is each `.q` file of the request the index does not hold -
 /// deleted, excluded, outside the workspace - whose dependents therefore
 /// cannot be followed: a client says so, where a list that looked complete
@@ -177,7 +180,13 @@ fn affected_tests(params: &Value, sources: &Sources) -> Value {
     let tests: Vec<Value> = graph::reaching(&graph, &changed)
         .iter()
         .filter(|(file, _)| graph::is_test(&in_workspace(&roots, file)))
-        .map(|(file, reaches)| json!({"uri": uri_of(sources, file), "reaches": reaches}))
+        .map(|(file, reaches)| {
+            json!({
+                "uri": uri_of(sources, file),
+                "reaches": reaches,
+                "self": changed.iter().position(|other| other == file),
+            })
+        })
         .collect();
     json!({"tests": tests, "changed": spelled, "unindexed": unindexed})
 }
@@ -201,6 +210,62 @@ struct Read<'a> {
     text: Cow<'a, str>,
     mentions: Vec<Mention>,
     placement: Placement,
+    holders: Vec<Holder>,
+}
+
+/// A top-level definition that carries its statement, for `Read::home`: the
+/// statement's span, where the name is, and its place in `Read::mentions`.
+/// `reach` is the furthest end of this and every holder sorted before it, so
+/// a search walking back from a reference can stop at the first holder none
+/// of which gets that far.
+struct Holder {
+    start: usize,
+    end: usize,
+    at: usize,
+    mention: usize,
+    reach: usize,
+}
+
+/// The holder of the reference at `at`: of those whose statement it is in,
+/// the nearest one named before it, and the last-named where none is.
+fn home(holders: &[Holder], at: usize) -> Option<usize> {
+    let upto = holders.partition_point(|h| h.start <= at);
+    holders[..upto]
+        .iter()
+        .rev()
+        .take_while(|h| h.reach > at)
+        .filter(|h| at < h.end)
+        .max_by_key(|h| (h.at <= at, h.at, h.mention))
+        .map(|h| h.mention)
+}
+
+/// The holders among `mentions`, by where their statements start.
+///
+/// Only a top-level write carries its statement; one inside a lambda
+/// (`g::v`) spans its name alone and holds nothing, so what a function
+/// assigned there mentions belongs to the definition around it.
+fn holders(mentions: &[Mention]) -> Vec<Holder> {
+    let mut out: Vec<Holder> = mentions
+        .iter()
+        .enumerate()
+        .filter_map(|(mention, m)| {
+            let d = m.definition.as_ref()?;
+            ((d.start, d.end) != (m.at, m.at + m.len)).then_some(Holder {
+                start: d.start,
+                end: d.end,
+                at: m.at,
+                mention,
+                reach: d.end,
+            })
+        })
+        .collect();
+    out.sort_by_key(|h| (h.start, h.mention));
+    let mut reach = 0;
+    for h in &mut out {
+        reach = reach.max(h.end);
+        h.reach = reach;
+    }
+    out
 }
 
 impl<'a> Read<'a> {
@@ -214,8 +279,10 @@ impl<'a> Read<'a> {
         if !wanted(&text) {
             return None;
         }
+        let mentions = mentions(&text);
         Some(Read {
-            mentions: mentions(&text),
+            holders: holders(&mentions),
+            mentions,
             placement: sources.placement(key),
             uri,
             text,
@@ -232,20 +299,14 @@ impl<'a> Read<'a> {
     /// of several written in one statement (`a:b:{f[]}`) the nearest before
     /// it. `None` for a reference in no definition, which is the file's own.
     ///
-    /// Only a top-level write carries its statement; one inside a lambda
-    /// (`g::v`) spans its name alone and holds nothing, so what a function
-    /// assigned there mentions belongs to the definition around it.
+    /// Asked once for every read of a file, so it does not scan the file's
+    /// mentions each time: over a generated script of tens of thousands of
+    /// one-line definitions that is the square of them, on a server that
+    /// answers one request at a time. Only the holders starting at or before
+    /// `at` can hold it, and of those only the ones walked before `reach`
+    /// falls to `at`.
     fn home(&self, at: usize) -> Option<usize> {
-        self.mentions
-            .iter()
-            .enumerate()
-            .filter(|(_, m)| {
-                m.definition.as_ref().is_some_and(|d| {
-                    (d.start, d.end) != (m.at, m.at + m.len) && d.start <= at && at < d.end
-                })
-            })
-            .max_by_key(|(_, m)| (m.at <= at, m.at))
-            .map(|(i, _)| i)
+        home(&self.holders, at)
     }
 
     /// Each read of a global, with the definition it belongs to.
@@ -254,6 +315,16 @@ impl<'a> Read<'a> {
             .iter()
             .filter(|m| m.definition.is_none())
             .map(|m| (m, self.home(m.at)))
+    }
+
+    /// The name an item shows for a definition: as written, unless where the
+    /// file is loaded makes it another.
+    fn shown(&self, sources: &Sources, m: &Mention) -> String {
+        let names = self.names(sources, m);
+        match names.first() {
+            Some(first) if !names.contains(&m.name) => first.clone(),
+            _ => m.name.clone(),
+        }
     }
 
     /// The `CallHierarchyItem` of the definition at `mentions[i]`: the
@@ -267,11 +338,7 @@ impl<'a> Read<'a> {
             Some(d) => (d.function, d.detail.as_str(), d.start, d.end),
             None => (false, "", m.at, m.at + m.len),
         };
-        let names = self.names(sources, m);
-        let name = match names.first() {
-            Some(first) if !names.contains(&m.name) => first,
-            _ => &m.name,
-        };
+        let name = self.shown(sources, m);
         // The selection has to lie within the range (LSP 3.17).
         let (start, end) = (start.min(m.at), end.max(m.at + m.len));
         json!({
@@ -287,12 +354,12 @@ impl<'a> Read<'a> {
     /// The item standing for the file itself: what is named outside every
     /// definition, and run when the script is loaded.
     fn file_item(&self, lines: &Lines) -> Value {
-        let name = self
-            .uri
-            .rsplit('/')
-            .next()
-            .filter(|name| !name.is_empty())
-            .unwrap_or(&self.uri);
+        // The file's name as it is on disk: a URI spells a space `%20`.
+        let path = path_of(&self.uri);
+        let name = Path::new(&path)
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| self.uri.clone());
         json!({
             "name": name,
             "kind": FILE,
@@ -307,7 +374,9 @@ impl<'a> Read<'a> {
 /// The file an item is in, and the definition it is of - `None` for the item
 /// of a file. An item is taken at its word for nothing but where it points:
 /// the file is read again and the definition found there, so one prepared
-/// before an edit that moved or removed it is no item, and answers `null`.
+/// before an edit that moved or removed it is no item, and answers `null` -
+/// as does one where another name is now defined: an item is of a
+/// definition, and the node an editor still shows is of the old one.
 fn of_item<'a>(sources: &Sources<'a>, item: &Value) -> Option<(Read<'a>, Option<usize>)> {
     let uri = item["uri"].as_str().filter(|uri| is_q_uri(uri))?;
     let read = Read::of(sources, &file_key(&path_of(uri)), |_| true)?;
@@ -323,6 +392,9 @@ fn of_item<'a>(sources: &Sources<'a>, item: &Value) -> Option<(Read<'a>, Option<
         .mentions
         .iter()
         .position(|m| m.at == offset && m.definition.is_some())?;
+    if item["name"].as_str() != Some(read.shown(sources, &read.mentions[i]).as_str()) {
+        return None;
+    }
     Some((read, Some(i)))
 }
 
@@ -406,8 +478,12 @@ fn incoming(params: &Value, sources: &Sources) -> Value {
             continue;
         };
         let lines = Lines::new(&file.text);
-        // In the order the file first names it from each.
+        // In the order the file first names it from each. `seen` is where
+        // each caller is in that order: a file of generated one-line
+        // functions has as many callers as lines, and looking each up along
+        // the list would be the square of that.
         let mut callers: Vec<(Option<usize>, Vec<Value>)> = vec![];
+        let mut seen: HashMap<Option<usize>, usize> = HashMap::new();
         for (m, home) in file.reads() {
             if !file
                 .names(sources, m)
@@ -417,7 +493,8 @@ fn incoming(params: &Value, sources: &Sources) -> Value {
                 continue;
             }
             let place = range(&lines, m.at, m.len);
-            match callers.iter_mut().find(|(caller, _)| *caller == home) {
+            let slot = *seen.entry(home).or_insert(callers.len());
+            match callers.get_mut(slot) {
                 Some((_, places)) => places.push(place),
                 None => callers.push((home, vec![place])),
             }
@@ -462,4 +539,104 @@ fn outgoing(params: &Value, sources: &Sources) -> Value {
         }
     });
     json!(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use q_lint_rs::Definition;
+
+    /// `home` as it reads: every mention asked whether it holds `at`.
+    fn scanned(mentions: &[Mention], at: usize) -> Option<usize> {
+        mentions
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| {
+                m.definition.as_ref().is_some_and(|d| {
+                    (d.start, d.end) != (m.at, m.at + m.len) && d.start <= at && at < d.end
+                })
+            })
+            .max_by_key(|(_, m)| (m.at <= at, m.at))
+            .map(|(i, _)| i)
+    }
+
+    fn mention(at: usize, len: usize, definition: Option<(usize, usize)>) -> Mention {
+        Mention {
+            name: "f".into(),
+            implicit: false,
+            at,
+            len,
+            definition: definition.map(|(start, end)| Definition {
+                function: true,
+                detail: String::new(),
+                start,
+                end,
+            }),
+        }
+    }
+
+    #[test]
+    fn the_holder_found_by_search_is_the_one_a_scan_of_every_mention_finds() {
+        // Statements as a file has them - one after another, some defining
+        // two names (`a:b:{..}`), some holding a write that spans its name
+        // alone (`g::v`) - and then shapes no file has: spans that overlap
+        // and nest, which the search must still answer as the scan does.
+        let mut seed = 0x2545_f491_4f6c_dd1d_u64;
+        let mut next = |below: usize| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % below as u64) as usize
+        };
+        for round in 0..200 {
+            let size = 40 + next(80);
+            let mut mentions = vec![];
+            for _ in 0..next(24) {
+                let start = next(size);
+                let end = start + 1 + next(if round % 2 == 0 { 12 } else { size });
+                let at = start + next(end - start);
+                mentions.push(mention(at, 1, Some((start, end))));
+                if next(4) == 0 {
+                    let twin = start + next(end - start);
+                    mentions.push(mention(twin, 1, Some((start, end))));
+                }
+                if next(4) == 0 {
+                    let inner = start + next(end - start);
+                    mentions.push(mention(inner, 1, Some((inner, inner + 1))));
+                }
+                if next(3) == 0 {
+                    mentions.push(mention(next(size), 1, None));
+                }
+            }
+            let holders = holders(&mentions);
+            for at in 0..size + 14 {
+                assert_eq!(
+                    home(&holders, at),
+                    scanned(&mentions, at),
+                    "at {at} of {mentions:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_reference_is_placed_without_asking_every_definition_before_it() {
+        // 50,000 one-line definitions: a reference in the last is held by
+        // it, and the walk back stops at the first statement that ends
+        // before the reference, having looked at one holder.
+        let mentions: Vec<Mention> = (0..50_000)
+            .map(|i| mention(i * 10, 1, Some((i * 10, i * 10 + 9))))
+            .collect();
+        let holders = holders(&mentions);
+        let at = 49_999 * 10 + 4;
+        let upto = holders.partition_point(|h| h.start <= at);
+        let walked = holders[..upto]
+            .iter()
+            .rev()
+            .take_while(|h| h.reach > at)
+            .count();
+        assert_eq!((home(&holders, at), walked), (Some(49_999), 1));
+        // Between two statements, and before the first, is the file's own.
+        assert_eq!(home(&holders, 9), None);
+    }
 }

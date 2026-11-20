@@ -28,6 +28,7 @@ import {
   type TreeView,
 } from "vscode";
 import { execFile } from "node:child_process";
+import { statSync } from "node:fs";
 import type { LanguageClient } from "vscode-languageclient/node";
 import {
   AFFECTED_TESTS,
@@ -41,6 +42,7 @@ import {
   changedFiles,
   gitBinary,
   isQ,
+  onPath,
   picks,
   rows,
   summary,
@@ -54,6 +56,19 @@ import {
 /// time, so a burst of saves or a run through several tabs asks once.
 const SETTLE_MS = 200;
 
+/// How long git has to answer. A git that has not listed what changed by
+/// now is waiting on something - a lock, a network drive, a prompt nobody
+/// sees - and is stopped, so the command ends by saying so instead of never.
+const GIT_TIMEOUT_MS = 30_000;
+
+function isFile(path: string): boolean {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
 /// A file as the view and the list name it: relative to its workspace folder.
 function name(uri: string): string {
   return workspace.asRelativePath(Uri.parse(uri));
@@ -66,7 +81,8 @@ function isQFile(document: TextDocument): boolean {
 }
 
 /// Runs `binary` as git. No shell: the arguments are passed as they are, so
-/// no file name can be read as a command. `GIT_OPTIONAL_LOCKS=0` keeps a
+/// no file name can be read as a command. `binary` is a path or, off
+/// Windows, a name for `PATH` (`onPath`). `GIT_OPTIONAL_LOCKS=0` keeps a
 /// read from taking the index lock a commit in a terminal may be waiting on.
 function git(binary: string): Git {
   return (args, cwd) =>
@@ -77,11 +93,14 @@ function git(binary: string): Git {
         {
           cwd,
           maxBuffer: 64 * 1024 * 1024,
+          timeout: GIT_TIMEOUT_MS,
           windowsHide: true,
           env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
         },
         (error, stdout, stderr) => {
-          if (error) {
+          if (error?.killed && typeof error.code !== "string") {
+            reject(new Error(`git ${args[0]} gave no answer in ${GIT_TIMEOUT_MS / 1000} s.`));
+          } else if (error) {
             reject(new Error(stderr.trim() || error.message));
           } else {
             resolve(stdout);
@@ -108,6 +127,9 @@ export class Relations implements TreeDataProvider<Row> {
   /// overtaken is dropped instead of drawn over the newer one.
   private asked = 0;
   private timer: ReturnType<typeof setTimeout> | undefined;
+  /// Set while the affected tests are being listed: the command asked for
+  /// again before it answers would start git again beside the first.
+  private listing = false;
   /// Set when the extension is deactivated. The server is stopped after
   /// that, and says so here; there is no view left to redraw by then.
   private disposed = false;
@@ -268,6 +290,19 @@ export class Relations implements TreeDataProvider<Row> {
   /// List the test files that reach a q file changed against git HEAD, and
   /// open the one chosen. It lists; running them is the user's tooling's.
   private async affectedTests(): Promise<void> {
+    if (this.listing) {
+      void window.showInformationMessage("q-lint: the affected tests are already being listed.");
+      return;
+    }
+    this.listing = true;
+    try {
+      await this.listAffectedTests();
+    } finally {
+      this.listing = false;
+    }
+  }
+
+  private async listAffectedTests(): Promise<void> {
     const client = this.client();
     if (client === undefined || !this.has(AFFECTED_TESTS)) {
       void window.showWarningMessage(
@@ -293,18 +328,31 @@ export class Relations implements TreeDataProvider<Row> {
       );
       return;
     }
-    const run = git(gitBinary(workspace.getConfiguration("git").get<unknown>("path")));
+    const named = gitBinary(workspace.getConfiguration("git").get<unknown>("path"));
+    const binary = onPath(named, process.env.PATH, isFile);
+    if (binary === undefined) {
+      void window.showWarningMessage(
+        `q-lint: could not ask git which files changed: ${named} is not on PATH.`,
+      );
+      return;
+    }
+    const run = git(binary);
     const paths = new Set<string>();
     const failed: string[] = [];
-    for (const folder of folders) {
-      try {
-        for (const path of await changedFiles(run, folder.uri.fsPath)) {
-          paths.add(path);
+    await window.withProgress(
+      { location: ProgressLocation.Window, title: "q-lint: asking git what changed" },
+      async () => {
+        for (const folder of folders) {
+          try {
+            for (const path of await changedFiles(run, folder.uri.fsPath)) {
+              paths.add(path);
+            }
+          } catch (error) {
+            failed.push(`${folder.name}: ${reason(error)}`);
+          }
         }
-      } catch (error) {
-        failed.push(`${folder.name}: ${reason(error)}`);
-      }
-    }
+      },
+    );
     if (failed.length === folders.length) {
       void window.showWarningMessage(
         `q-lint: could not ask git which files changed. ${failed.join(" ")}`,

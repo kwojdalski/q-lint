@@ -7,7 +7,7 @@
 // The server draws the graph and follows it. It does not know which files
 // changed, because it starts no process and so cannot ask git - that is done
 // here, on the client, and the answer is sent with the request.
-import { join } from "node:path";
+import { join, win32 } from "node:path";
 
 /// What `package.json` contributes for this, by the names `relate.ts`
 /// registers them under. A test holds the two together: a command declared
@@ -49,9 +49,9 @@ export interface Graph {
 
 /// What `q-lint/affectedTests` answers: each test with the changed files it
 /// reaches, by their place in `changed`, and the changed q files the index
-/// does not hold.
+/// does not hold. A test that changed has its own place there as `self`.
 export interface AffectedTests {
-  tests: { uri: string; reaches: number[] }[];
+  tests: { uri: string; reaches: number[]; self?: number }[];
   changed: string[];
   unindexed: string[];
 }
@@ -91,13 +91,19 @@ export function asAffectedTests(answer: unknown): AffectedTests | undefined {
   if (!a || typeof a !== "object" || !Array.isArray(a.tests) || !isStrings(a.changed)) {
     return undefined;
   }
-  const tests = a.tests.filter(
-    (t) =>
-      t &&
-      typeof t.uri === "string" &&
-      Array.isArray(t.reaches) &&
-      t.reaches.every((i) => Number.isInteger(i)),
-  );
+  const tests = a.tests
+    .filter(
+      (t) =>
+        t &&
+        typeof t.uri === "string" &&
+        Array.isArray(t.reaches) &&
+        t.reaches.every((i) => Number.isInteger(i)),
+    )
+    .map((t) => ({
+      uri: t.uri,
+      reaches: t.reaches,
+      ...(Number.isInteger(t.self) ? { self: t.self } : {}),
+    }));
   return { tests, changed: a.changed, unindexed: isStrings(a.unindexed) ? a.unindexed : [] };
 }
 
@@ -197,11 +203,18 @@ const NAMED = 3;
 
 export function picks(result: AffectedTests, name: (uri: string) => string): Pick[] {
   return result.tests.map((test) => {
+    // Which of the changed files is the test itself is the server's to say:
+    // a test's `uri` is the server's spelling where the editor has not
+    // opened the file, and `changed` is this client's, which differ as text
+    // on a drive letter or through a link. A server from before it said so
+    // is taken at the spelling.
+    const own = test.self ?? test.reaches.find((i) => result.changed[i] === test.uri);
     const reached = test.reaches
+      .filter((i) => i !== own)
       .map((i) => result.changed[i])
-      .filter((uri): uri is string => typeof uri === "string" && uri !== test.uri)
+      .filter((uri): uri is string => typeof uri === "string")
       .map(name);
-    const changed = test.reaches.some((i) => result.changed[i] === test.uri);
+    const changed = own !== undefined;
     const named = reached.slice(0, NAMED).join(", ");
     const more = reached.length > NAMED ? ` and ${reached.length - NAMED} more` : "";
     const reaches = reached.length > 0 ? `reaches ${named}${more}` : "";
@@ -260,6 +273,40 @@ export const CHANGED = [
 export async function changedFiles(git: Git, folder: string): Promise<string[]> {
   const listed = await Promise.all(CHANGED.map((args) => git(args, folder)));
   return [...new Set(listed.flatMap(names))].map((name) => join(folder, name));
+}
+
+/// The file `binary` is run as. Anything but a bare name on Windows is
+/// itself: a path names its file, and elsewhere a bare name is looked up on
+/// `PATH` and nowhere else. On Windows a bare name is looked for in the
+/// directory the program is started in before `PATH` - and that directory is
+/// the workspace folder, so a `git.exe` checked in there would be what ran.
+/// There the name is found here instead, in the absolute directories of
+/// `path` and with the two extensions a bare name is tried with; undefined
+/// where none of them holds it.
+export function onPath(
+  binary: string,
+  path: string | undefined,
+  exists: (file: string) => boolean,
+  platform: string = process.platform,
+): string | undefined {
+  if (platform !== "win32" || /[\\/]/.test(binary)) {
+    return binary;
+  }
+  const endings = win32.extname(binary) === "" ? [".com", ".exe"] : [""];
+  for (const dir of (path ?? "").split(";")) {
+    // An entry that is not absolute is read against the directory the
+    // program starts in, which is the one being kept out.
+    if (!win32.isAbsolute(dir)) {
+      continue;
+    }
+    for (const ending of endings) {
+      const file = win32.join(dir, binary + ending);
+      if (exists(file)) {
+        return file;
+      }
+    }
+  }
+  return undefined;
 }
 
 /// Whether a path is one the server reads: a `.q` file.

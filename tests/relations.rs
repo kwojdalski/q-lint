@@ -630,6 +630,26 @@ fn a_changed_file_is_named_back_by_the_uri_the_client_sent() {
     assert_eq!(result["tests"].as_array().unwrap().len(), 1, "{result}");
     assert_eq!(result["changed"], json!([sent]));
     assert_eq!(result["tests"][0]["reaches"], json!([0]));
+    assert_eq!(result["tests"][0]["self"], Value::Null);
+}
+
+#[test]
+fn a_changed_test_is_told_its_own_place_among_the_changed_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &WORKSPACE);
+    // The test is not open, so its `uri` is the server's spelling of the
+    // path and the client's is another: `self` says which changed file it
+    // is, where comparing the two as text would not.
+    let test = file_uri(&dir.path().join("tests/test_main.q")).replace("test_main", "%74est_main");
+    let lib = file_uri(&dir.path().join("lib.q"));
+    let result = server.result("q-lint/affectedTests", json!({"changed": [lib, test]}));
+    assert_eq!(result["changed"], json!([lib, test]));
+    let tests = result["tests"].as_array().unwrap();
+    assert_eq!(tests.len(), 1, "{result}");
+    assert_ne!(tests[0]["uri"], json!(test));
+    assert_eq!(server.name(&tests[0]["uri"]), "tests/test_main.q");
+    assert_eq!(tests[0]["reaches"], json!([0, 1]));
+    assert_eq!(tests[0]["self"], json!(1));
 }
 
 #[test]
@@ -898,6 +918,34 @@ fn an_item_prepared_before_an_edit_that_removed_it_answers_nothing() {
     assert_eq!(
         server.summaries("outgoingCalls", &moved),
         [call("root_fn", FUNCTION, "lib.q", &[(4, 10, 17)])]
+    );
+}
+
+#[test]
+fn an_item_whose_place_now_defines_another_name_answers_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &WORKSPACE);
+    let uri = server.open(dir.path(), "main.q", MAIN);
+    let calc = server.item(&uri, MAIN, "calc:", 0);
+    // Where `calc` was defined, `tidy` is now: the node an editor still
+    // shows is `calc`, and `tidy`'s calls are not what it asked for.
+    server.change(&uri, &MAIN.replace("calc:{[n] m:n", "tidy:{[n] m:n"));
+    for method in ["callHierarchy/incomingCalls", "callHierarchy/outgoingCalls"] {
+        assert_eq!(server.result(method, json!({"item": calc})), Value::Null);
+    }
+}
+
+#[test]
+fn a_file_that_calls_is_named_as_it_is_on_disk() {
+    let dir = tempfile::tempdir().unwrap();
+    let files = [("lib.q", LIB), ("my script.q", "\\l lib.q\nroot_fn 1\n")];
+    let mut server = Server::start(dir.path(), &files);
+    let uri = server.open(dir.path(), "lib.q", LIB);
+    let root_fn = server.item(&uri, LIB, "root_fn:", 0);
+    // The URI spells the space `%20`; the name an editor shows does not.
+    assert_eq!(
+        server.summaries("incomingCalls", &root_fn),
+        [call("my script.q", FILE, "my%20script.q", &[(1, 0, 7)])]
     );
 }
 

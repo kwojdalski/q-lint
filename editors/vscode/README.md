@@ -169,7 +169,9 @@ your shell's `PATH`, so give `q-lint.serverPath` an absolute path.
 **q-lint: List Affected Tests** runs `git` - VS Code's `git.path` when you
 set one, else the one on `PATH` - in each workspace folder, so it needs the
 folder to be in a repository with at least one commit, and a trusted
-workspace. With `q-lint.workspaceIndex.enable` off, the dependencies and the
+workspace. A git that has not answered in 30 seconds is stopped. What
+changed inside a submodule is not listed: git names the submodule, not the
+files in it. With `q-lint.workspaceIndex.enable` off, the dependencies and the
 tests are only those among the files you have open.
 
 `qlinter --rules` lists every rule; `qlinter --explain <CODE>` explains one.

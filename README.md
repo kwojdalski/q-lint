@@ -397,7 +397,8 @@ q-lint/graph          {"textDocument": {"uri": U}}
                        "ambiguous": {name: [uri]}, "dynamic": [{"line": 1-based, "kind": K}]}
                       or null for a document that is not an indexed .q file
 q-lint/affectedTests  {"changed": [uri]}
-                   -> {"tests": [{"uri": uri, "reaches": [index into "changed" below]}],
+                   -> {"tests": [{"uri": uri, "reaches": [index into "changed" below],
+                                  "self": its own index there, or null}],
                        "changed": [uri], "unindexed": [uri]}
 ```
 
