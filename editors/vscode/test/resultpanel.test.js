@@ -143,3 +143,23 @@ test("a cut result says the limit it was cut at, after the setting changes", () 
   assert.strictEqual(fake.pages[0].posted.length, 2);
   assert.strictEqual(fake.pages[0].posted.at(-1).limit, 100);
 });
+
+test("rows a page chose for an earlier result are not copied from the one now shown", async () => {
+  const fake = fakeVscode();
+  const modes = loadModes(fake);
+  modes.show(result([10, 20, 30]), live());
+  const page = fake.pages[0];
+  const first = page.posted.at(-1).id;
+  // The page reports and copies by the result it drew; a new one arrives
+  // before its message does.
+  modes.show(result([40, 50, 60]), live());
+  page.receive({ type: "copy", id: first, rows: [2] });
+  page.receive({ type: "rendered", id: first, rows: [2], rendered: { view: "grid", rows: 1, held: 3, total: 3, columns: ["c"], first: ["30"] } });
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(fake.clipboard.text, undefined);
+  assert.strictEqual(modes.lastRendered(), undefined);
+  // For the result on show, they apply.
+  page.receive({ type: "copy", id: page.posted.at(-1).id, rows: [2] });
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(fake.clipboard.text, "c\n60\n");
+});

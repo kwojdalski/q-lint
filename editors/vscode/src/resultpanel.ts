@@ -104,6 +104,8 @@ function resultHtml(webview: Webview, media: Uri): string {
 /// What a page says to the extension.
 interface PageMessage {
   type?: string;
+  /// The result the page drew: rows are rows of it.
+  id?: string;
   rows?: number[];
   rendered?: Omit<Rendered, "location">;
 }
@@ -261,9 +263,14 @@ export class QueryModes {
   }
 
   private receive(location: ResultsLocation, webview: Webview, message: PageMessage): void {
+    // What a page says of a result no longer on show - sent before the
+    // next one reached it - would apply its rows to the next one's.
+    const current = this.shown !== undefined && message.id === this.shown.id;
     if (message.type === "ready") {
       // Also after the page was hidden and shown again, which reloads it.
       this.post(webview);
+    } else if (!current) {
+      return;
     } else if (message.type === "rendered" && message.rendered !== undefined) {
       // Both may be open, after the location changed: the API reports the
       // one results now go to.
@@ -271,9 +278,9 @@ export class QueryModes {
         this.rendered = { location, ...message.rendered };
         this.order = Array.isArray(message.rows) ? message.rows : undefined;
       }
-    } else if (message.type === "copy" && this.shown !== undefined) {
+    } else if (message.type === "copy") {
       void this.copy(message.rows);
-    } else if (message.type === "export" && this.shown !== undefined) {
+    } else if (message.type === "export") {
       void this.exportCsv(undefined, message.rows);
     }
   }

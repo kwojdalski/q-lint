@@ -95,6 +95,7 @@
     const grid = result.grid;
     vscode.postMessage({
       type: "rendered",
+      id: result.id,
       // The rows shown, in order: what Export Results to CSV writes.
       rows: rows,
       rendered: Object.assign({
@@ -136,12 +137,12 @@
     const copy = el("button", "", "Copy as CSV");
     copy.title = "The rows shown, in the order shown, as the cells show them";
     copy.addEventListener("click", function () {
-      vscode.postMessage({ type: "copy", rows: rows });
+      vscode.postMessage({ type: "copy", id: result.id, rows: rows });
     });
     const exporter = el("button", "", "Export to CSV");
     exporter.title = "Save the rows shown, in the order shown, to a CSV file";
     exporter.addEventListener("click", function () {
-      vscode.postMessage({ type: "export", rows: rows });
+      vscode.postMessage({ type: "export", id: result.id, rows: rows });
     });
     bar.append(views, info, meta, copy, exporter);
   }
