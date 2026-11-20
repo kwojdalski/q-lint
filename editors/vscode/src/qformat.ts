@@ -14,6 +14,8 @@
 // - A long and a timespan are exact (the codec gives a Long). A timestamp
 //   arrives as a float of nanoseconds, exact only to 256 ns, so it is shown
 //   to the microsecond, its last three digits 0.
+// - The infinity of a date, month, datetime or time arrives as an invalid
+//   Date, its sign lost, so a negative one is written as a positive one.
 // - A function arrives as the word "func": its text is not sent.
 // - An empty table arrives with no columns, so they cannot be shown.
 import type { GridPayload } from "./grid";
@@ -91,6 +93,12 @@ function clock(total: number, unit: "minute" | "second" | "milli"): string {
   return unit === "milli" ? `${text}.${pad3(ms)}` : text;
 }
 
+/// Whether `x` is an infinity as the codec gives one: a number, or an
+/// invalid Date for a date, month, datetime or time, whose sign it loses.
+function infinite(x: unknown): boolean {
+  return x === Infinity || x === -Infinity || (x instanceof Date && Number.isNaN(x.getTime()));
+}
+
 /// Milliseconds since 2000.01.01 of a Date the codec made of a q time.
 const sinceEpoch = (d: Date): number => d.getTime() - EPOCH_MS;
 
@@ -125,9 +133,9 @@ function itemText(x: unknown, t: number): string | undefined {
   if (x === null || x === undefined) {
     return undefined;
   }
-  if (x === Infinity || x === -Infinity) {
+  if (infinite(x)) {
     const w = t === 8 || t === 9 || t === 15 ? "w" : "W";
-    return `${x < 0 ? "-" : ""}0${w}`;
+    return `${x === -Infinity ? "-" : ""}0${w}`;
   }
   switch (t) {
     case 1:
@@ -239,6 +247,10 @@ export function atomText(x: unknown, t: number): string {
   if (p === 9 && /^-?\d+$/.test(text)) {
     return `${text}f`;
   }
+  // A temporal infinity says its type, as a null does: `0Wp`, `0wz`.
+  if (p >= 12 && p <= 19 && p !== 13 && infinite(x)) {
+    return text + letter(p);
+  }
   return text + (SUFFIX[p] ?? "");
 }
 
@@ -254,8 +266,8 @@ export function cellText(x: unknown): string {
   if (x === null || x === undefined) {
     return "";
   }
-  if (x === Infinity || x === -Infinity) {
-    return `${x < 0 ? "-" : ""}0W`;
+  if (infinite(x)) {
+    return `${x === -Infinity ? "-" : ""}0W`;
   }
   if (typeof x === "boolean") {
     return x ? "1" : "0";
@@ -389,8 +401,8 @@ function rawNumber(x: unknown, t: number): number | null {
   if (x === null || x === undefined) {
     return null;
   }
-  if (x === Infinity || x === -Infinity) {
-    return x as number;
+  if (infinite(x)) {
+    return x === -Infinity ? -Infinity : Infinity;
   }
   if (isLong(x)) {
     return Number(x.toString());
@@ -477,7 +489,7 @@ export function gridOf(value: unknown, type: number | undefined, limit: number):
   const raw = shown.map((c, i) => (RAW_TYPES.has(types[i]) ? c.values.map((x) => rawNumber(x, types[i])) : []));
   const cells = shown.map((c, i) =>
     c.values.map((x) => {
-      if (c.type === undefined || x === null || x === Infinity || x === -Infinity) {
+      if (c.type === undefined || x === null || infinite(x)) {
         return cellText(x);
       }
       return types[i] === 11 ? String(x) : (itemText(x, types[i]) ?? "");

@@ -21,6 +21,7 @@ const {
 } = require("../out/querycontrols.js");
 const { QError } = require("../out/qclient.js");
 const { toGrid } = require("../out/grid.js");
+const { deserialize } = require("node-q/lib/c.js");
 
 const day = (y, m, d, ms = 0) => new Date(Date.UTC(y, m - 1, d) + ms);
 /// A q time as the codec makes it: 2000.01.01 plus the time.
@@ -71,6 +72,39 @@ test("simple lists are written as q writes them", () => {
   assert.strictEqual(vectorText([], 7), "`long$()");
   assert.strictEqual(vectorText([day(2026, 11, 20), null], 14), "2026.11.20 0N");
   assert.strictEqual(vectorText([day(2026, 11, 1), day(2026, 12, 1)], 13), "2026.11 2026.12m");
+});
+
+/// What the codec makes of a message q serialized (`-8!x`, as hex), and its
+/// q type, as an uncompressed answer gives them to `formatValue`.
+const decoded = (hex) => {
+  const b = Buffer.from(hex, "hex");
+  return { value: deserialize(b, false, true, false, false), type: b.readInt8(8) };
+};
+const shown = (hex) => {
+  const { value, type } = decoded(hex);
+  return formatValue(value, type);
+};
+
+test("temporal infinities are written as q writes them, not NaN (#894)", () => {
+  // The codec makes a temporal infinity an invalid Date, and keeps a
+  // timestamp's and a timespan's as Infinity.
+  assert.deepStrictEqual(shown("0100000011000000f4ffffffffffffff7f"), ["0Wp"]);
+  assert.deepStrictEqual(shown("0100000011000000f0ffffffffffffff7f"), ["0Wn"]);
+  assert.deepStrictEqual(shown("010000000d000000f2ffffff7f"), ["0Wd"]);
+  assert.deepStrictEqual(shown("0100000011000000f1000000000000f07f"), ["0wz"]);
+  assert.deepStrictEqual(shown("010000000d000000edffffff7f"), ["0Wt"]);
+  assert.deepStrictEqual(shown("010000000d000000f3ffffff7f"), ["0Wm"]);
+  assert.deepStrictEqual(shown("010000000d000000efffffff7f"), ["0Wu"]);
+  assert.deepStrictEqual(shown("010000000d000000eeffffff7f"), ["0Wv"]);
+  assert.deepStrictEqual(shown("01000000160000000e0002000000891c0000ffffff7f"), ["2020.01.01 0W"]);
+  const table = "010000003f0000006200630b000200000064007a000000020000000e0002000000891c0000ffffff7f0f00020000000000000000000000000000000000f07f";
+  // In a table the column's type is guessed: a datetime at midnight is a
+  // Date as a date is, and its infinity an invalid Date, so both read as dates.
+  assert.deepStrictEqual(shown(table), ["d          z", "---------------------", "2020.01.01 2000.01.01", "0W         0W"]);
+  const { value } = decoded(table);
+  const grid = gridOf(value, 98, 10);
+  assert.deepStrictEqual(grid.cells, [["2020.01.01", "0W"], ["2000.01.01", "0W"]]);
+  assert.deepStrictEqual(grid.raw[0], [7305, Infinity]);
 });
 
 test("floats keep q's seven significant digits", () => {
