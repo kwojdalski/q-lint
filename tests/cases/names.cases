@@ -737,6 +737,12 @@ bar
 (`e) set 5
 r:e
 
+=== QF018 | but a symbol that only ends a parenthesised target defines no root name (q 5: this upserts into .app.pending, and pending is 'pending) (#860)
+.app.pending:([] a:`long$())
+st:(enlist`pending)!enlist`.app.pending
+(st`pending) upsert ([] a:1 2)
+f:{[] r6:pending; r6}
+
 === QF018 | a top-level read runs as the file loads, before a later assignment (q 5: loading this is 'limit) (#369)
 r:limit
 limit:100
