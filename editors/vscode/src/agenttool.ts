@@ -110,12 +110,16 @@ class RunQueryTool implements LanguageModelTool<AgentInput> {
     const started = Date.now();
     // Why the query was stopped, if it was: q has no message that cancels a
     // query, so either way it is aborted as Abort Current Query aborts one.
+    // One stopped while it still waits for the connection - behind the
+    // Process Explorer's read of the process - is never sent.
     let stopped: "timeout" | "cancelled" | undefined;
     let running = false;
     const stop = (why: "timeout" | "cancelled"): void => {
-      if (running && stopped === undefined) {
+      if (stopped === undefined) {
         stopped = why;
-        void this.live.abort();
+        if (running) {
+          void this.live.abort();
+        }
       }
     };
     const timer = queryTimeout > 0 ? setTimeout(() => stop("timeout"), queryTimeout * 1000) : undefined;
@@ -125,6 +129,9 @@ class RunQueryTool implements LanguageModelTool<AgentInput> {
     let label = process.label;
     try {
       const ran = await this.live.runOnActive(code, (connection) => {
+        if (stopped !== undefined) {
+          throw new Error("not run");
+        }
         running = true;
         return runAgentQuery(connection, code, settings.consoleSize);
       });
@@ -138,12 +145,16 @@ class RunQueryTool implements LanguageModelTool<AgentInput> {
       outcome = stopped !== undefined ? "aborted" : "error";
       result = {
         error:
-          stopped === "timeout"
-            ? `The query ran longer than ${queryTimeout} s (q-lint.agent.queryTimeout) and was aborted, as Abort Current Query aborts one. ` +
-              `${label} may still be running it; q-lint reconnects once it is free.`
-            : stopped === "cancelled"
-              ? `The query was cancelled and aborted. ${label} may still be running it; q-lint reconnects once it is free.`
-              : message(error),
+          stopped !== undefined && !running
+            ? stopped === "timeout"
+              ? `The query waited longer than ${queryTimeout} s (q-lint.agent.queryTimeout) for ${label} to be free, and was not run.`
+              : "The query was cancelled before it ran."
+            : stopped === "timeout"
+              ? `The query ran longer than ${queryTimeout} s (q-lint.agent.queryTimeout) and was aborted, as Abort Current Query aborts one. ` +
+                `${label} may still be running it; q-lint reconnects once it is free.`
+              : stopped === "cancelled"
+                ? `The query was cancelled and aborted. ${label} may still be running it; q-lint reconnects once it is free.`
+                : message(error),
       };
     } finally {
       clearTimeout(timer);
