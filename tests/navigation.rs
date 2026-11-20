@@ -1,7 +1,7 @@
 //! Navigation: the outline, workspace symbols, go to definition, find
 //! references, highlights and renaming a local - first as the library reads
 //! one file, then as the language server answers an editor over a workspace.
-use q_lint_rs::{Name, mentions, name_at, rename, rename_target};
+use q_lint_rs::{Name, load_at, mentions, name_at, rename, rename_target};
 use serde_json::{Value, json};
 use std::{
     io::{BufRead, BufReader, Read, Write},
@@ -140,6 +140,24 @@ fn a_definition_carries_its_kind_its_signature_and_its_statement() {
             ("neg1", true, "", "neg1:{neg x}"),
         ]
     );
+}
+
+#[test]
+fn the_path_of_each_kind_of_load_is_found_under_the_cursor() {
+    let source =
+        "\\l lib/a.q\nsystem \"l lib/b.q\"\nf:`:lib/c.q\n/ \\l lib/d.q\n\\cd lib\n\\l e.q\n";
+    let path = |context: &str, skip: usize| {
+        load_at(source, at(source, context, skip)).map(|(at, len)| &source[at..at + len])
+    };
+    assert_eq!(path("lib/a.q", 0), Some("lib/a.q"));
+    // Its end counts, as the cursor after the last character.
+    assert_eq!(path("lib/a.q", 7), Some("lib/a.q"));
+    assert_eq!(path("lib/b.q", 4), Some("lib/b.q"));
+    assert_eq!(path("lib/c.q", 2), Some("lib/c.q"));
+    // Not a comment, not the command, and not a path read after `\cd`.
+    assert_eq!(path("lib/d.q", 2), None);
+    assert_eq!(path("\\l lib/a", 1), None);
+    assert_eq!(path("e.q", 1), None);
 }
 
 /// The local at `offset`: each place it is named, as text offsets, with the
@@ -543,6 +561,129 @@ fn a_definition_is_found_in_another_file_under_the_context_it_is_written_in() {
     );
 }
 
+/// Locations as `(file path under the workspace, line)`, in the order given.
+fn ordered(result: &Value, dir: &Path) -> Vec<(String, u64)> {
+    // An open document is named as the client named it, any other file by
+    // its real path.
+    let roots = [file_uri(&dir.canonicalize().unwrap()), file_uri(dir)];
+    result
+        .as_array()
+        .unwrap_or_else(|| panic!("a list of locations, not {result}"))
+        .iter()
+        .map(|l| {
+            let uri = l["uri"].as_str().unwrap();
+            let file = roots
+                .iter()
+                .find_map(|root| uri.strip_prefix(&format!("{root}/")))
+                .unwrap_or(uri);
+            (
+                file.to_string(),
+                l["range"]["start"]["line"].as_u64().unwrap(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_bare_name_four_scripts_define_goes_first_to_its_own_then_to_what_it_loads() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("lib")).unwrap();
+    let main = "\\l lib/common.q\nopts:.Q.opt .z.x\nport:opts`port\n";
+    let files = [
+        ("lib/common.q", "/ defaults\nopts:()!()\n"),
+        ("main.q", main),
+        // It loads main.q, so may run in the same process.
+        ("runner.q", "\\l main.q\nopts:`port`host!1 2\n"),
+        // Another program, with an `opts` of its own.
+        ("other.q", "opts:.Q.opt .z.x\n"),
+    ];
+    let mut server = Server::start(dir.path(), &files);
+    let uri = server.open(dir.path(), "main.q", main);
+    let reply = server.ask(
+        "textDocument/definition",
+        &uri,
+        main,
+        "opts`port",
+        0,
+        json!({}),
+    );
+    assert_eq!(
+        ordered(&reply["result"], dir.path()),
+        [
+            ("main.q".to_string(), 1),
+            ("lib/common.q".into(), 1),
+            ("runner.q".into(), 1)
+        ]
+    );
+    // A file defining it nowhere is given every one, what it loads first.
+    let user = "\\l lib/common.q\nport:opts`port\n";
+    let uri = server.open(dir.path(), "user.q", user);
+    let reply = server.ask(
+        "textDocument/definition",
+        &uri,
+        user,
+        "opts`port",
+        0,
+        json!({}),
+    );
+    assert_eq!(
+        ordered(&reply["result"], dir.path()),
+        [
+            ("lib/common.q".to_string(), 1),
+            ("main.q".into(), 1),
+            ("other.q".into(), 0),
+            ("runner.q".into(), 1)
+        ]
+    );
+}
+
+#[test]
+fn the_path_of_a_load_goes_to_the_file_it_loads() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("lib")).unwrap();
+    let text = "\\l lib/common.q\nsystem \"l lib/common.q\";\n\\l lib/missing.q\n\\l lib\n";
+    let files = [("lib/common.q", "c:1\n"), ("lib/more.q", "m:1\n")];
+    let mut server = Server::start(dir.path(), &files);
+    let uri = server.open(dir.path(), "main.q", text);
+    for (context, skip) in [("\\l lib/common", 4), ("\"l lib/common", 12)] {
+        let reply = server.ask(
+            "textDocument/definition",
+            &uri,
+            text,
+            context,
+            skip,
+            json!({}),
+        );
+        assert_eq!(
+            ordered(&reply["result"], dir.path()),
+            [("lib/common.q".to_string(), 0)],
+            "{context}"
+        );
+    }
+    let reply = server.ask(
+        "textDocument/definition",
+        &uri,
+        text,
+        "missing",
+        2,
+        json!({}),
+    );
+    assert_eq!(reply["result"], json!([]), "{reply}");
+    // A directory loads the scripts directly in it.
+    let reply = server.ask(
+        "textDocument/definition",
+        &uri,
+        text,
+        "\\l lib\n",
+        4,
+        json!({}),
+    );
+    assert_eq!(
+        ordered(&reply["result"], dir.path()),
+        [("lib/common.q".to_string(), 0), ("lib/more.q".into(), 0)]
+    );
+}
+
 #[test]
 fn a_local_goes_to_its_declaration_and_an_unknown_name_nowhere() {
     let dir = tempfile::tempdir().unwrap();
@@ -763,26 +904,50 @@ fn the_outline_lists_what_the_document_assigns() {
         json!({"textDocument": {"uri": uri}}),
     );
     let symbols = reply["result"].as_array().unwrap();
-    let outline: Vec<_> = symbols
-        .iter()
-        .map(|s| {
-            (
-                s["name"].as_str().unwrap(),
-                s["kind"].as_u64().unwrap(),
-                s["detail"].as_str().unwrap(),
-                span(&s["range"]),
-                span(&s["selectionRange"]),
-            )
-        })
-        .collect();
-    // LSP's SymbolKind: 12 is a function, 13 a variable.
+    let listed = |symbols: &[Value]| -> Vec<_> {
+        symbols
+            .iter()
+            .map(|s| {
+                (
+                    s["name"].as_str().unwrap().to_string(),
+                    s["kind"].as_u64().unwrap(),
+                    s["detail"].as_str().unwrap().to_string(),
+                    span(&s["range"]),
+                    span(&s["selectionRange"]),
+                )
+            })
+            .collect()
+    };
+    // LSP's SymbolKind: 3 is a namespace, 12 a function, 13 a variable.
+    // `.lib`'s names are under it, by the last part of their name.
+    assert_eq!(symbols.len(), 2);
+    let lib = &symbols[0];
+    assert_eq!((&lib["name"], &lib["kind"]), (&json!(".lib"), &json!(3)));
+    assert_eq!(lib["range"]["start"], json!({"line": 1, "character": 0}));
+    assert_eq!(lib["range"]["end"], json!({"line": 2, "character": 8}));
+    assert_eq!(span(&lib["selectionRange"]), (1, 0, 3));
     assert_eq!(
-        outline,
+        listed(lib["children"].as_array().unwrap()),
         [
-            (".lib.add", 12, "[a;b]", (1, 0, 15), (1, 0, 3)),
-            (".lib.limit", 13, "", (2, 0, 8), (2, 0, 5)),
-            ("root_fn", 12, "[v]", (4, 0, 17), (4, 0, 7)),
+            (
+                "add".to_string(),
+                12,
+                "[a;b]".to_string(),
+                (1, 0, 15),
+                (1, 0, 3)
+            ),
+            ("limit".into(), 13, "".into(), (2, 0, 8), (2, 0, 5)),
         ]
+    );
+    assert_eq!(
+        listed(&symbols[1..]),
+        [(
+            "root_fn".to_string(),
+            12,
+            "[v]".to_string(),
+            (4, 0, 17),
+            (4, 0, 7)
+        )]
     );
 
     // A name assigned again is one line, where it is first assigned - and
@@ -832,6 +997,54 @@ fn the_outline_lists_what_the_document_assigns() {
     assert_eq!(span(&flat[0]["location"]["range"]), (1, 0, 3));
 }
 
+/// An outline as `name(child, ...)`, one entry for each top-level symbol.
+fn tree(symbols: &Value) -> Vec<String> {
+    symbols
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| {
+            let name = s["name"].as_str().unwrap().to_string();
+            match s["children"].as_array() {
+                Some(_) => format!("{name}({})", tree(&s["children"]).join(", ")),
+                None => name,
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn the_outline_groups_names_by_the_namespace_they_are_in() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    // One level per namespace written into, `.qetl.io` beside `.qetl.cfg`
+    // and not under a `.qetl` of its own; a namespace assigned whole holds
+    // the names in it; `\d` names one as a dotted name does.
+    let text = "opts:.Q.opt .z.x\n.qetl.io.read:{x}\n.qetl.cfg:()!()\n\
+                .qetl.cfg.port:5010\n\\d .qetl.io\nwrite:{x}\n\\d .\n.z.ps:{x}\n\
+                .qetl.io.batch.size:10\n";
+    let uri = server.open(dir.path(), "a.q", text);
+    let reply = server.request(
+        "textDocument/documentSymbol",
+        json!({"textDocument": {"uri": uri}}),
+    );
+    assert_eq!(
+        tree(&reply["result"]),
+        [
+            "opts",
+            ".qetl.io(read, write)",
+            ".qetl.cfg(port)",
+            ".z(ps)",
+            ".qetl.io.batch(size)",
+        ]
+    );
+    // `.qetl.cfg` is its own assignment, a variable, spanning the names in it.
+    let cfg = &reply["result"][2];
+    assert_eq!(cfg["kind"], 13);
+    assert_eq!(span(&cfg["selectionRange"]), (2, 0, 9));
+    assert_eq!(cfg["range"]["end"], json!({"line": 3, "character": 19}));
+}
+
 #[test]
 fn workspace_symbols_match_a_query_whatever_its_case() {
     let dir = tempfile::tempdir().unwrap();
@@ -870,6 +1083,44 @@ fn workspace_symbols_match_a_query_whatever_its_case() {
     // An empty query is every symbol.
     let reply = server.request("workspace/symbol", json!({"query": ""}));
     assert_eq!(names(&reply).len(), 6);
+}
+
+#[test]
+fn workspace_symbols_rank_an_exact_name_before_the_cap() {
+    let dir = tempfile::tempdir().unwrap();
+    // 650 names holding `st`, in a file listed before the one defining `st`
+    // itself - which the cap of 512 used to drop.
+    let many: String = (0..650).map(|n| format!("first{n}:{n}\n")).collect();
+    let files = [
+        ("a.q", many.as_str()),
+        (
+            "z.q",
+            "st:1\n.u.st:2\nstate:3\n.qetl.bounded.fail_run:{x}\n.qetl.bounded.ok:1\n",
+        ),
+    ];
+    let mut server = Server::start(dir.path(), &files);
+    let names = |reply: &Value| -> Vec<String> {
+        reply["result"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["name"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let reply = server.request("workspace/symbol", json!({"query": "st"}));
+    let found = names(&reply);
+    assert_eq!(found.len(), 512);
+    // The name, then its last segment, then what starts with it.
+    assert_eq!(found[..3], ["st", ".u.st", "state"]);
+    assert_eq!(
+        places(&json!([reply["result"][0]["location"]])),
+        [place("z.q", 0, 0, 2)]
+    );
+    // Every word of a query of several, and the letters in order last.
+    let reply = server.request("workspace/symbol", json!({"query": "bounded FAIL"}));
+    assert_eq!(names(&reply), [".qetl.bounded.fail_run"]);
+    let reply = server.request("workspace/symbol", json!({"query": "qbok"}));
+    assert_eq!(names(&reply), [".qetl.bounded.ok"]);
 }
 
 #[test]

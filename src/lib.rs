@@ -245,6 +245,18 @@ pub fn mentions(source: &str) -> Vec<Mention> {
     semantics::navigate::mentions(&v.code, source)
 }
 
+/// The path of the load at byte `offset` of `source` - `\l path`,
+/// `system "l path"` or a file symbol, as `References::loads` reads it - as
+/// its start and length, when the offset is in one. Its end counts: a cursor
+/// just past the last character is still on the path.
+pub fn load_at(source: &str, offset: usize) -> Option<(usize, usize)> {
+    let v = views(source);
+    semantics::load_paths(&v.code, source)
+        .into_iter()
+        .find(|path| path.contains(&offset) || path.end == offset)
+        .map(|path| (path.start, path.len()))
+}
+
 /// What the name at byte `offset` of `source` refers to, when there is one.
 pub fn name_at(source: &str, offset: usize) -> Option<Name> {
     let v = views(source);

@@ -804,9 +804,9 @@ fn nothing_is_shown_for_a_local_a_string_a_comment_or_an_unknown_name() {
 }
 
 #[test]
-fn a_name_several_files_define_shows_each_definition() {
+fn a_name_several_files_define_shows_each_definition_its_own_first() {
     let dir = tempfile::tempdir().unwrap();
-    let text = "handler:{[msg] msg}\nr:handler 1\n";
+    let text = "\\l a.q\nhandler:{[msg] msg}\nr:handler 1\n";
     let (mut server, _) = Server::over(
         dir.path(),
         &[
@@ -827,11 +827,11 @@ fn a_name_several_files_define_shows_each_definition() {
     );
     assert_eq!(
         reply["result"]["contents"]["value"],
-        "handler[a;b]\n\nThe first.\n\na.q\n\nhandler[msg]\n\nmain.q"
+        "handler[msg]\n\nmain.q\n\nhandler[a;b]\n\nThe first.\n\na.q"
     );
     // And signature help lists both, on the first that takes the argument
     // being written.
-    let typed = "handler:{[msg] msg}\nr:handler[1;";
+    let typed = "\\l a.q\nhandler:{[msg] msg}\nr:handler[1;";
     let uri = server.open(dir.path(), "main.q", typed);
     let reply = server.ask(
         "textDocument/signatureHelp",
@@ -848,11 +848,73 @@ fn a_name_several_files_define_shows_each_definition() {
         .iter()
         .map(|s| s["label"].as_str().unwrap())
         .collect();
-    assert_eq!(labels, ["handler[a;b]", "handler[msg]"]);
+    assert_eq!(labels, ["handler[msg]", "handler[a;b]"]);
     assert_eq!(
         (&help["activeSignature"], &help["activeParameter"]),
-        (&json!(0), &json!(1))
+        (&json!(1), &json!(1))
     );
+}
+
+#[test]
+fn a_file_defining_a_name_itself_is_not_shown_an_unrelated_files_definition() {
+    let dir = tempfile::tempdir().unwrap();
+    let text = "handler:{[msg] msg}\nr:handler 1\n";
+    let other = "r:handler 2\n";
+    let (mut server, _) = Server::over(
+        dir.path(),
+        &[
+            ("a.q", "handler:{[a;b] a}\n"),
+            ("main.q", text),
+            ("other.q", other),
+        ],
+        plain(),
+        Value::Null,
+    );
+    let uri = server.open(dir.path(), "main.q", text);
+    let reply = server.ask(
+        "textDocument/hover",
+        &uri,
+        text,
+        "handler 1",
+        0,
+        Value::Null,
+    );
+    assert_eq!(
+        reply["result"]["contents"]["value"],
+        "handler[msg]\n\nmain.q"
+    );
+    // A file that defines it nowhere is shown every definition.
+    let uri = server.open(dir.path(), "other.q", other);
+    let reply = server.ask(
+        "textDocument/hover",
+        &uri,
+        other,
+        "handler 2",
+        0,
+        Value::Null,
+    );
+    assert_eq!(
+        reply["result"]["contents"]["value"],
+        "handler[a;b]\n\na.q\n\nhandler[msg]\n\nmain.q"
+    );
+}
+
+#[test]
+fn the_path_of_a_load_is_shown_as_the_file_it_loads() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("lib")).unwrap();
+    std::fs::write(dir.path().join("lib/util.q"), "u:1\n").unwrap();
+    let text = "\\l lib/util.q\nsystem \"l lib/util.q\"\n\\l lib/missing.q\n";
+    let (mut server, uri) = serving(dir.path(), text, plain(), Value::Null);
+    for (context, skip) in [("\\l lib", 4), ("\"l lib", 3)] {
+        let reply = server.ask("textDocument/hover", &uri, text, context, skip, Value::Null);
+        assert_eq!(
+            reply["result"]["contents"]["value"], "lib/util.q",
+            "{context}"
+        );
+    }
+    let reply = server.ask("textDocument/hover", &uri, text, "missing", 0, Value::Null);
+    assert_eq!(reply["result"], Value::Null, "{reply}");
 }
 
 #[test]

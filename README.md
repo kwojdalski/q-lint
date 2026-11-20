@@ -421,6 +421,38 @@ the client declares), `workspace/symbol`, `textDocument/definition`,
 `textDocument/references`, `textDocument/documentHighlight` (a write told
 from a read), and `textDocument/prepareRename`/`textDocument/rename`.
 
+The nested outline puts each name under the namespace it is in, the whole of
+the name before its last dot: `.qetl.io.read` is `read` under `.qetl.io`,
+written with the dot or under `\d .qetl.io`. It is one level deep, a group per
+context the file writes into, rather than one level per dot, which would put a
+file that writes only into `.qetl.io` under a `.qetl` with a single child. A
+namespace the file also assigns whole (`.cfg:()!()` beside `.cfg.port:5010`)
+is that assignment, holding the names in it. A client that does not declare
+`hierarchicalDocumentSymbolSupport` gets the flat list.
+
+Go to Definition on a name several files assign lists the current file's own
+assignment first, then those in files it loads (directly or through another
+file), then those in files that load it, then the rest. When the current file
+assigns the name itself, the rest are left out: a script that neither loads
+nor is loaded by this one, by any chain of `\l`, is a separate program that
+happens to use the same name, and eight scripts that each start with
+`opts:.Q.opt .z.x` should not all be offered from one of them. A file
+connected by a load stays, because it may run in the same process and which
+assignment ran last is not something reading can tell.
+
+`workspace/symbol` ranks before it cuts to 512: the name itself, then a name
+whose last segment is the query (`.u.st` for `st`), then names starting with
+it, then names containing it, then names holding its letters in order. A query
+of several words (`bounded fail`) matches names containing every word. Case is
+ignored.
+
+On the path of a load - `\l src/init.q`, `system "l src/init.q"`, or a file
+symbol `` `:lib/x.q `` - Go to Definition opens the file and a hover names it.
+The path is followed as the dependency graph follows it: against the first
+workspace folder, then the loading file's own directory and each one above it;
+a directory loads the scripts directly in it. A load that reaches no file, or
+a relative one written after the script changes directory, goes nowhere.
+
 A global is named as q would resolve it where it is written: under the `\d`
 context in force, in each context a file is loaded in when it names none of
 its own, in `.q` when nothing else defines the bare name, and at the
@@ -450,7 +482,8 @@ signature it declares, or `x`, `y` and `z` as far as its body reads them, or
 the slots a projection leaves open - and the line that assigns anything else,
 then the comment directly above the definition (`/` lines, or a block comment
 ending there) and the file. A name several files define shows each, up to
-five. A word of q shows how it is written, a line on what it gives, and a link
+five, ranked and narrowed as Go to Definition is; signature help lists them in
+the same order. A word of q shows how it is written, a line on what it gives, and a link
 to its page on code.kx.com, and so does a glyph - `+`, `#`, `/:` - outside a
 name, a number, a string and a comment. A lambda's own parameter or local
 shows nothing: its definition is on screen.
