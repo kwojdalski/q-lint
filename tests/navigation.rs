@@ -102,6 +102,27 @@ fn every_way_of_writing_a_global_is_a_definition_at_its_name() {
 }
 
 #[test]
+fn a_definition_just_after_a_character_of_more_than_one_byte_is_found() {
+    // #859: the start of a name was taken one byte past the character before
+    // it, which split a BOM or a no-break space and panicked.
+    for source in ["\u{feff}f:{x}\n", "x:1;\u{a0}f:{x}\n", "\u{feff}`f set 1\n"] {
+        let writes: Vec<_> = seen(source).into_iter().filter(|m| m.1 == "f").collect();
+        assert_eq!(writes, [("f", "f".to_string(), 'w')], "{source:?}");
+    }
+    // One in a string or a comment beside the name is no part of it.
+    let source = "s:\"\u{e9}\";f:1 / caf\u{e9}\nr:\"\u{1f600}\",string f\n";
+    assert_eq!(
+        seen(source),
+        [
+            ("s", "s".to_string(), 'w'),
+            ("f", "f".into(), 'w'),
+            ("r", "r".into(), 'w'),
+            ("f", "f".into(), 'r'),
+        ]
+    );
+}
+
+#[test]
 fn a_definition_carries_its_kind_its_signature_and_its_statement() {
     let source = "limit:10\nadd:{[a;b]\n  a+b}\nneg1:{neg x}\n";
     let all = mentions(source);
@@ -944,4 +965,102 @@ fn a_request_with_no_document_is_refused_and_one_for_an_unknown_document_empty()
         json!({"textDocument": {"uri": "untitled:Untitled-1"}}),
     );
     assert_eq!(reply["result"], json!([]), "{reply}");
+}
+
+#[test]
+fn a_file_that_starts_with_a_bom_is_navigated_like_any_other() {
+    // #859: the name right after the BOM was cut at its second byte, inside
+    // the BOM, and every request resolving it failed.
+    let dir = tempfile::tempdir().unwrap();
+    let lib = "\u{feff}zz_bom:{[a] a+1}\n";
+    let mut server = Server::start(dir.path(), &[("bom.q", lib)]);
+    let text = "r:zz_bom[1]\ng:{zz_bom x}\n";
+    let uri = server.open(dir.path(), "use.q", text);
+    // The BOM is one UTF-16 unit, so the name is at character 1.
+    let reply = server.ask(
+        "textDocument/definition",
+        &uri,
+        text,
+        "zz_bom[1]",
+        3,
+        json!({}),
+    );
+    assert_eq!(places(&reply["result"]), [place("bom.q", 0, 1, 7)]);
+    let reply = server.ask("textDocument/hover", &uri, text, "zz_bom[1]", 3, json!({}));
+    assert_eq!(
+        reply["result"]["contents"]["value"], "zz_bom[a]\n\nbom.q",
+        "{reply}"
+    );
+    let reply = server.ask(
+        "textDocument/references",
+        &uri,
+        text,
+        "zz_bom[1]",
+        3,
+        json!({"context": {"includeDeclaration": true}}),
+    );
+    assert_eq!(
+        places(&reply["result"]),
+        [
+            place("bom.q", 0, 1, 7),
+            place("use.q", 0, 2, 8),
+            place("use.q", 1, 3, 9)
+        ]
+    );
+    let reply = server.ask(
+        "textDocument/signatureHelp",
+        &uri,
+        text,
+        "zz_bom[1]",
+        7,
+        json!({}),
+    );
+    assert_eq!(
+        reply["result"]["signatures"][0]["label"], "zz_bom[a]",
+        "{reply}"
+    );
+    let reply = server.ask(
+        "textDocument/prepareCallHierarchy",
+        &uri,
+        text,
+        "zz_bom[1]",
+        3,
+        json!({}),
+    );
+    let item = &reply["result"][0];
+    assert_eq!(item["name"], "zz_bom", "{reply}");
+    let reply = server.request("callHierarchy/incomingCalls", json!({"item": item}));
+    let callers: Vec<&str> = reply["result"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a list of calls, not {reply}"))
+        .iter()
+        .map(|call| call["from"]["name"].as_str().unwrap())
+        .collect();
+    assert!(callers.contains(&"g"), "{reply}");
+    let reply = server.request("workspace/symbol", json!({"query": "zz_bom"}));
+    let symbol = &reply["result"][0];
+    assert_eq!(symbol["name"], "zz_bom", "{reply}");
+    assert_eq!(span(&symbol["location"]["range"]), (0, 1, 7));
+}
+
+#[test]
+fn a_computed_set_target_is_no_definition_of_the_name_it_ends_in() {
+    // #860: q 5 `ns:`.app; (` sv ns,`run) set {x+1}` defines `.app.run`,
+    // not a root `run` - nor does `(st`pending) upsert t` write `pending`.
+    let dir = tempfile::tempdir().unwrap();
+    let lib = "ns:`.app\n(` sv ns,`run) set {x+1}\n(st`pending) upsert t\n(`e) set 5\n";
+    let mut server = Server::start(dir.path(), &[("lib.q", lib)]);
+    for query in ["run", "pending"] {
+        let reply = server.request("workspace/symbol", json!({"query": query}));
+        assert_eq!(reply["result"], json!([]), "{reply}");
+    }
+    let text = "n:exec run from t\nr:pending\ns:e\n";
+    let uri = server.open(dir.path(), "use.q", text);
+    for context in ["run from", "pending"] {
+        let reply = server.ask("textDocument/definition", &uri, text, context, 1, json!({}));
+        assert_eq!(reply["result"], json!([]), "{context}: {reply}");
+    }
+    // A symbol alone in parentheses still names what it sets.
+    let reply = server.ask("textDocument/definition", &uri, text, "s:e", 2, json!({}));
+    assert_eq!(places(&reply["result"]), [place("lib.q", 3, 2, 3)]);
 }

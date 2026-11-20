@@ -5897,6 +5897,12 @@ fn lint_rules(
             .captures_iter(code)
         {
             let name = m.get(1).or(m.get(2)).or(m.get(3)).unwrap();
+            let end = m.get(0).unwrap().end();
+            if m.get(2).is_some()
+                && !semantics::literal_target(code, name.start() - 1, &code[name.end()..end])
+            {
+                continue;
+            }
             written.insert(qualified(name.start(), name.as_str()));
         }
         redefined.extend(

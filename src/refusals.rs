@@ -1485,8 +1485,9 @@ fn derived_operand(
             ch if ch.is_ascii_alphanumeric() || ch == b'.' || ch == b'_' => {
                 let token = |end: usize| {
                     let s = view[..end]
-                        .rfind(|ch: char| !(ch.is_ascii_alphanumeric() || "._".contains(ch)))
-                        .map_or(0, |p| p + 1);
+                        .char_indices()
+                        .rfind(|&(_, ch)| !(ch.is_ascii_alphanumeric() || "._".contains(ch)))
+                        .map_or(0, |(p, ch)| p + ch.len_utf8());
                     (s < end && boundary(view, s)).then_some(s)
                 };
                 q = token(q)?;

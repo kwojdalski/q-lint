@@ -38,9 +38,12 @@ fn written(code: &str, key: &str, value: usize) -> Option<(usize, usize)> {
         if before[stop..].starts_with(part) || before[..at].ends_with(part) {
             continue;
         }
+        // Past the character before the name, which may be more than a
+        // byte: a BOM, or a no-break space between statements (#859).
         let start = before[..at]
-            .rfind(|c: char| !part(c) && c != '.')
-            .map_or(0, |p| p + 1);
+            .char_indices()
+            .rfind(|&(_, c)| !part(c) && c != '.')
+            .map_or(0, |(p, c)| p + c.len_utf8());
         let spelt = &before[start..stop];
         let prefix = &key[..key.len().saturating_sub(spelt.len())];
         if spelt == key

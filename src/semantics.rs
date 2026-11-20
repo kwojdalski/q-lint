@@ -150,6 +150,16 @@ fn pattern_assignments(text: &str) -> impl Iterator<Item = (usize, &str, bool)> 
         })
         .flatten()
 }
+/// Whether a `set`, `insert` or `upsert` whose target is the symbol written
+/// at `tick`, with `rest` between it and the keyword, names what it writes:
+/// a bare symbol, `` `n set ``, or one alone in parentheses, `` (`e) set 5 ``
+/// (#363). A symbol that only ends a parenthesised expression writes what
+/// that evaluates to: `` (` sv ns,`run) set f `` defines `.app.run` and
+/// `` (st`pending) upsert p `` writes into `st`, never a root `run` or
+/// `pending` (#860).
+pub(crate) fn literal_target(code: &str, tick: usize, rest: &str) -> bool {
+    !rest.contains(')') || code[..tick].trim_end().ends_with('(')
+}
 /// The names each `set'` writes from a literal list of symbols, with where
 /// it starts: `` `a`b set' v ``, `` (`a`b) set' v ``, `` (`a;`b) set' v ``
 /// and `set'[`a`b;v]` (q 5: each sets a and b). Only with each: q 5
@@ -159,6 +169,15 @@ pub(crate) fn each_set_targets(code: &str) -> Vec<(std::ops::Range<usize>, Vec<&
         r"((?:`\.?[A-Za-z][A-Za-z0-9_.]*){2,})\s*(?:\)\s*)?set'|\(((?:\s*`\.?[A-Za-z][A-Za-z0-9_.]*\s*;)+\s*`\.?[A-Za-z][A-Za-z0-9_.]*\s*)\)\s*set'|\bset'\s*\[\s*((?:`\.?[A-Za-z][A-Za-z0-9_.]*)+|\((?:\s*`\.?[A-Za-z][A-Za-z0-9_.]*\s*;?)+\))\s*;"
     );
     list.captures_iter(code)
+        .filter(|m| {
+            m.get(1).is_none_or(|names| {
+                literal_target(
+                    code,
+                    names.start(),
+                    &code[names.end()..m.get(0).unwrap().end()],
+                )
+            })
+        })
         .map(|m| {
             let names = m.get(1).or(m.get(2)).or(m.get(3)).unwrap().as_str();
             let names = names
@@ -1064,13 +1083,17 @@ fn global_writes(
     }
     // `` `n set ``, and `` `t insert `` and `` `t upsert ``, which create the
     // table when there is none (q 5: `` `t insert ([]a:1 2) `` then `t`).
-    // The target may be parenthesised: q 5 `` (`e) set 5 `` defines `e` (#363).
+    // The target may be parenthesised: q 5 `` (`e) set 5 `` defines `e` (#363),
+    // but `` (` sv ns,`run) set f `` defines no `run` (#860).
     for m in re!(r"`(\.?[A-Za-z][A-Za-z0-9_.]*)(?:\s+|\s*\)\s*)(?:set|insert|upsert)\b|\b(?:set|insert|upsert)\s*\[\s*`(\.?[A-Za-z][A-Za-z0-9_.]*)")
         .captures_iter(code)
     {
         let whole = m.get(0).unwrap();
-        let name = m.get(1).or(m.get(2)).unwrap().as_str();
-        for target in set_targets(name, whole.start()) {
+        let name = m.get(1).or(m.get(2)).unwrap();
+        if !literal_target(code, name.start() - 1, &code[name.end()..whole.end()]) {
+            continue;
+        }
+        for target in set_targets(name.as_str(), whole.start()) {
             globals.entry(target).or_default().push(whole.end());
         }
     }
@@ -3716,7 +3739,12 @@ fn named_values(
         r"`(\.?[A-Za-z][A-Za-z0-9_.]*)(?:\s+|\s*\)\s*)upsert\b|\bupsert\s*\[\s*`(\.?[A-Za-z][A-Za-z0-9_.]*)"
     )
     .captures_iter(code)
-    .map(|m| key(m.get(1).or(m.get(2)).unwrap().as_str(), m.get(0).unwrap().start()))
+    .filter_map(|m| {
+        let name = m.get(1).or(m.get(2)).unwrap();
+        let whole = m.get(0).unwrap();
+        literal_target(code, name.start() - 1, &code[name.end()..whole.end()])
+            .then(|| key(name.as_str(), whole.start()))
+    })
     .collect();
     let mut known: HashMap<&str, (usize, Held)> = HashMap::new();
     let mut kinds: HashMap<&str, Arithmetic> = HashMap::new();
