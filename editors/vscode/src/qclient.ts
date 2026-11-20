@@ -36,6 +36,17 @@ export const CONNECT_TIMEOUT_MS = 10_000;
 const CAPABILITY = 3;
 const SYNC = 1;
 const RESPONSE = 2;
+/// The response to a sync request from the process: a q error.
+const SYNC_REFUSED = ((): Buffer => {
+  const text = Buffer.from("q-lint answers no sync request", "utf8");
+  const message = Buffer.alloc(10 + text.length);
+  message.writeUInt8(1, 0);
+  message.writeUInt8(RESPONSE, 1);
+  message.writeUInt32LE(message.length, 4);
+  message.writeInt8(-128, 8);
+  text.copy(message, 9);
+  return message;
+})();
 
 /// A list of statements as the codec must be given it. The codec sends a
 /// string that starts with a backtick as a symbol - "`a`b" arrives as the
@@ -48,12 +59,25 @@ export function statementsOut(arg: unknown): unknown {
     : arg;
 }
 
+/// The q type of a message: the first byte of its body. A compressed body
+/// starts, after its uncompressed length, with a flag byte and then that
+/// byte as a literal, since nothing before it can be copied.
+function typeOf(message: Buffer): number | undefined {
+  if (message.readUInt8(2) !== 1) {
+    return message.length > 8 ? message.readInt8(8) : undefined;
+  }
+  return message.length > 13 && (message.readUInt8(12) & 1) === 0 ? message.readInt8(13) : undefined;
+}
+
 export class QConnection {
-  private buffer: Buffer = Buffer.alloc(0);
+  /// What has arrived of the messages not yet read, in the chunks it came
+  /// in: joined only once a whole message is there, since joining each
+  /// chunk onto all before it is quadratic in a large answer.
+  private chunks: Buffer[] = [];
+  private size = 0;
   private pending: { resolve: (v: unknown) => void; reject: (e: Error) => void } | undefined;
   private closed = false;
-  /// The q type of the last answer, read from its first byte; undefined
-  /// when it came compressed, since only the codec reads past that.
+  /// The q type of the last answer, read from the first byte of its body.
   private answerType: number | undefined;
   private readonly onClose: (() => void)[] = [];
 
@@ -199,17 +223,35 @@ export class QConnection {
     }
   }
 
+  /// The chunks that have arrived, as one buffer.
+  private joined(): Buffer {
+    if (this.chunks.length !== 1) {
+      this.chunks = [Buffer.concat(this.chunks, this.size)];
+    }
+    return this.chunks[0];
+  }
+
   private received(chunk: Buffer): void {
-    this.buffer = this.buffer.length === 0 ? chunk : Buffer.concat([this.buffer, chunk]);
-    while (this.buffer.length >= 8) {
-      const length = this.buffer.readUInt32LE(4);
-      if (this.buffer.length < length) {
+    this.chunks.push(chunk);
+    this.size += chunk.length;
+    while (this.size >= 8) {
+      const length = (this.chunks[0].length >= 8 ? this.chunks[0] : this.joined()).readUInt32LE(4);
+      if (this.size < length) {
         return;
       }
-      const message = this.buffer.subarray(0, length);
-      this.buffer = this.buffer.subarray(length);
+      const all = this.joined();
+      const message = all.subarray(0, length);
+      const rest = all.subarray(length);
+      this.chunks = rest.length > 0 ? [rest] : [];
+      this.size = rest.length;
       // Only a response answers a query. Async messages the user's code
-      // sends back (`neg[.z.w] x`) are not results, and are dropped.
+      // sends back (`neg[.z.w] x`) are not results, and are dropped. A sync
+      // one (`.z.w x`) waits for an answer, and the process with it, so it
+      // gets an error: q-lint runs nothing a process sends it.
+      if (message.readUInt8(1) === SYNC) {
+        this.socket.write(SYNC_REFUSED);
+        continue;
+      }
       if (message.readUInt8(1) !== RESPONSE) {
         continue;
       }
@@ -218,8 +260,7 @@ export class QConnection {
       if (pending === undefined) {
         continue;
       }
-      const compressed = message.readUInt8(2) === 1;
-      this.answerType = compressed || message.length < 9 ? undefined : message.readInt8(8);
+      this.answerType = typeOf(message);
       try {
         pending.resolve(deserialize(message, false, true, false, false));
       } catch (error) {

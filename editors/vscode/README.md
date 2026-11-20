@@ -178,7 +178,9 @@ disk. The commands:
   periodic fetch leaves it alone until it is reloaded.
 
 A fetch waits 10 seconds at most, and takes only a 2xx `application/json`
-answer of 5 MB or less. Why one failed - no answer, a status, the wrong
+answer of 5 MB or less, read as UTF-8 or the charset it names. It follows
+up to 20 redirects, and sends the auth header only to the server's own
+origin. Why one failed - no answer, a status, the wrong
 content type, too large, not JSON - shows under the server's row, as do the
 entries it skipped and why; nothing pops up.
 
@@ -188,7 +190,8 @@ server lists. Its row shows its own label, but once connected it is
 Process**'s argument - so the two are never taken for each other. A bare
 label names a saved process first, then a discovered one if only one server
 lists it. A discovered process with a `user` asks for its password on the
-first connect, and keeps it in secret storage under `server/label`.
+first connect, and keeps it in secret storage under `server/label`; one
+that fails to connect is forgotten, and asked for again on the next.
 
 **Querying.** With a q file open:
 - **Query Current Line**, `ctrl+q`.
@@ -312,15 +315,19 @@ where a result goes; it sets `q-lint.query.mode`, and takes `console`,
 - **Console**, the default: every result in the **q-lint: query** output, as
   above.
 - **Grid**: a table, a keyed table (unkeyed, its key columns shaded), a
-  dictionary (as `key` and `value` columns) or a list (as one `value`
-  column) opens in the **q-lint: result** panel. Click a header to sort,
+  dictionary (as `key` and `value` columns; one keyed by a table as its
+  key columns and a `value` column) or a list (as one `value` column) opens in the **q-lint: result** panel. Click a header to sort,
   type under it to filter (by the text shown, ignoring case). **Copy as
   CSV** copies the rows shown, in the order shown, and **Export to CSV**
   saves them to a file you pick; the command **Export Results to CSV** does
-  the same, and takes the file's `Uri` as an argument to skip the dialog. Each cell is what q
+  the same, and takes the file's `Uri` as an argument to skip the dialog.
+  In the CSV, a name, symbol or string a spreadsheet would run as a
+  formula (`=`, `+`, `-` or `@` first, but not a number) starts with `'`.
+  Each cell is what q
   prints in a table: a timestamp keeps its nanoseconds, a long above 2^53
   every digit, a null is blank and an infinity is `0W` or `0w`. Sorting is
-  q's own order (`iasc` on the process), nulls first.
+  q's own order (`iasc` on the process), nulls first, and either way keeps
+  equal values in their order, as `xasc` and `xdesc` do.
 - **Chart**: the same results as a line, bar, scatter or histogram chart of
   the numeric columns against the first, chosen in the panel; the panel's
   **Grid** and **Chart** buttons switch between the two for one result.
@@ -372,7 +379,8 @@ namespaces, the root first, less those in
 their row counts and columns (key columns marked), its functions with their
 parameters, and its variables with their type and count. A partitioned table
 is not loaded to count it: its count is each partition's, from `.Q.cn`, and
-the row says so. It is read in one call that defines nothing on the process,
+the row says so; one it cannot count (a partition missing its directory) is
+shown not counted. It is read in one call that defines nothing on the process,
 on connect, on **Refresh Process Explorer**, and after each query when
 **Toggle Process Explorer Auto Refresh** has turned
 `q-lint.processExplorer.autoRefresh` on - never as you type. On a process
@@ -393,7 +401,7 @@ your browser.
 **Live completion.** While connected, completion in a q file adds the
 process's global names, as read by the explorer, to the language server's,
 and inside a qSQL statement - `select`, `exec`, `update` or `delete` ... `from
-t` - the columns of `t` first.
+t` - the columns of `t` first. It adds nothing inside a string or a comment.
 
 **Agents.** The **Run q Query** language-model tool (`q-lint_runQuery`,
 `#qQuery` in a chat prompt) lets Copilot and other agents run a q query and
@@ -506,8 +514,9 @@ refused with that said. `source` is the cell's lines. A code cell is q
 unless it has a `language`. Outputs are saved, so a notebook reopens with
 its results: an item is `text` when it is UTF-8 and `base64` otherwise.
 `execution` holds the run's number, outcome and start and end, in
-milliseconds since the epoch. Fields with nothing in them are left out, and
-saving a notebook that was opened unchanged writes the same file. A file
+milliseconds since the epoch. Fields with nothing in them are left out, a
+field q-lint does not know - on the file or on a cell - is kept and saved
+back, and saving a notebook that was opened unchanged writes the same file. A file
 that is not a notebook does not open: the editor says what is wrong with
 it, and the file is left as it was. An empty file is a new notebook.
 

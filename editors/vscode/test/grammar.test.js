@@ -51,16 +51,34 @@ const cases = [
   ["an amend assigns, as a plain assignment does", "n+:1", "+:", "keyword.operator.assignment.q"],
   ["a return opens an expression", "f:{if[x;:1];2}", ":", "keyword.control.flow.return.q", 1],
   ["a signal opens an expression", "f:{'`bad}", "'", "keyword.control.flow.signal.q"],
+  // A lambda's body opens after its parameter list, so a return or signal
+  // there is the first thing in it: KDB-X's {[x]:x+1} 2 is 3.
+  ["a return right after the parameter list", "f:{[x]:x+1}", ":", "keyword.control.flow.return.q", 1],
+  ["and after a space", "f:{[x] :x+1}", ":", "keyword.control.flow.return.q", 1],
+  ["a signal right after the parameter list", "f:{[x] 'x}", "'", "keyword.control.flow.signal.q"],
   ["after an operand the quote is each, even with a space", "r:{x} '[1 2]", "'", "keyword.operator.iterator.q"],
   ["and the colon of @[d;i;:;v] is the assignment function", "r:@[d;0;:;5]", ":", "keyword.operator.q", 1],
   ["a dotted name's namespace is a namespace", "r:.cfg.lim+1", ".cfg", "entity.name.namespace.q"],
   ["a builtin is a builtin", "r:sum 1 2", "sum", "support.function.builtin.q"],
   ["a .z name is the system's", "r:.z.p", ".z.p", "support.function.system.q"],
   ["a file handle is a handle", "h:`:data/x", "`:data/x", "constant.other.symbol.handle.q"],
+  // As KDB-X parses them: past a colon a symbol takes slashes, and a minus
+  // ends a handle (`:a-b is `:a minus b).
+  ["a slash after a symbol's colon is in the symbol", "s:`a:b/c", "`a:b/c", "constant.other.symbol.q"],
+  ["a minus ends a handle", "h:`:a-b", "`:a", "constant.other.symbol.handle.q"],
   ["an escape q defines is an escape", 's:"a\\tb"', "\\t", "constant.character.escape.q"],
   ["one it does not is illegal", 's:"a\\qb"', "\\q", "invalid.illegal.escape.q"],
   ["a temporal literal is temporal", "d:2024.01.02", "2024.01.02", "constant.numeric.temporal.q"],
   ["a typed null is a null", "x:0Nd", "0Nd", "constant.language.null.q"],
+  // Each as KDB-X reads it: a time's fraction is any length, a time with
+  // more than three places is a timespan, a date may carry p or z, and an
+  // exponent may be E.
+  ["a time with one decimal place is one time", "t:10:00:00.1", "10:00:00.1", "constant.numeric.temporal.q"],
+  ["a time with nine places is a timespan, still one literal", "t:12:00:00.123456789", "12:00:00.123456789", "constant.numeric.temporal.q"],
+  ["a second past 99 hours is one literal", "t:100:00:00", "100:00:00", "constant.numeric.temporal.q"],
+  ["a date made a timestamp with p is one literal", "d:2024.01.02p", "2024.01.02p", "constant.numeric.temporal.q"],
+  ["and made a datetime with z", "d:2024.01.02z", "2024.01.02z", "constant.numeric.temporal.q"],
+  ["an upper-case exponent is part of the number", "n:1.5E3", "1.5E3", "constant.numeric.q"],
 ];
 
 for (const [description, source, text, scope, which = -1] of cases) {

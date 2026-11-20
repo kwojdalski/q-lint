@@ -6,7 +6,7 @@
 // The codec keeps less than q knows, so this is q's console as nearly as is
 // practical, not exactly:
 // - The q type of the whole value is known when the caller passes it (the
-//   type byte of an uncompressed answer, or `type` sent beside the value),
+//   type byte of an answer, or `type` sent beside the value),
 //   and then an atom or a simple list is written as q writes it, suffix and
 //   all. Inside a table, a dictionary or a general list the codec gives
 //   plain JavaScript values, and the type is guessed from them: a symbol and
@@ -14,6 +14,8 @@
 // - A long and a timespan are exact (the codec gives a Long). A timestamp
 //   arrives as a float of nanoseconds, exact only to 256 ns, so it is shown
 //   to the microsecond, its last three digits 0.
+// - The infinity of a date, month, datetime or time arrives as an invalid
+//   Date, its sign lost, so a negative one is written as a positive one.
 // - A function arrives as the word "func": its text is not sent.
 // - An empty table arrives with no columns, so they cannot be shown.
 import type { GridPayload } from "./grid";
@@ -67,12 +69,20 @@ function hms(d: Date): string {
   return `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}:${pad2(d.getUTCSeconds())}`;
 }
 
-/// A float as q writes it at its default `\P` of 7 significant digits.
+/// A float as q writes it at its default `\P` of 7 significant digits:
+/// C's `%.7g`, an exponent (of two digits at least) from 1e7 up and below
+/// 1e-4, trailing zeros dropped.
 export function floatText(x: number): string {
-  if (Number.isInteger(x) && Math.abs(x) < 1e15) {
+  if (x === 0 || !Number.isFinite(x)) {
     return String(x);
   }
-  return String(Number(x.toPrecision(7)));
+  const [mantissa, e] = x.toExponential(6).split("e");
+  const exponent = Number(e);
+  if (exponent < -4 || exponent >= 7) {
+    const digits = mantissa.replace(/\.?0+$/, "");
+    return `${digits}e${exponent < 0 ? "-" : "+"}${String(Math.abs(exponent)).padStart(2, "0")}`;
+  }
+  return String(Number(x.toFixed(6 - exponent)));
 }
 
 /// A time of day, or a span, from milliseconds or nanoseconds: `hh:mm`,
@@ -89,6 +99,23 @@ function clock(total: number, unit: "minute" | "second" | "milli"): string {
   }
   const text = `${sign}${pad2(Math.floor(t / 3600))}:${pad2(Math.floor(t / 60) % 60)}:${pad2(t % 60)}`;
   return unit === "milli" ? `${text}.${pad3(ms)}` : text;
+}
+
+/// Whether `x` is an infinity as the codec gives one: a number, or an
+/// invalid Date for a date, month, datetime or time, whose sign it loses.
+function infinite(x: unknown): boolean {
+  return x === Infinity || x === -Infinity || (x instanceof Date && Number.isNaN(x.getTime()));
+}
+
+/// The months since 2000.01 of a Date the codec made of a q month. The
+/// codec makes a month before 2000 that is not a January a year early
+/// (1999.12m, -1, as 1998.12): it takes the year as `2000 + m/12` cut toward
+/// zero and the month as `m mod 12`, negative. A month after 2000 is never
+/// made a year before it, so a Date before 2000 that is not a January was
+/// made that way, and is moved a year on.
+function monthsOf(d: Date): number {
+  const months = (d.getUTCFullYear() - 2000) * 12 + d.getUTCMonth();
+  return months < 0 && d.getUTCMonth() !== 0 ? months + 12 : months;
 }
 
 /// Milliseconds since 2000.01.01 of a Date the codec made of a q time.
@@ -118,6 +145,41 @@ function timestampText(ns: number): string {
   return `${ymd(d)}D${hms(d)}.${String((micros - seconds * 1e6) * 1000).padStart(9, "0")}`;
 }
 
+/// A timestamp of `ns` nanoseconds since 2000.01.01, as q holds one.
+function exactTimestampText(ns: bigint): string {
+  const day = 86_400_000_000_000n;
+  const days = ns >= 0n ? ns / day : -((-ns + day - 1n) / day);
+  const d = new Date(EPOCH_MS + Number(days) * DAY_MS);
+  return `${ymd(d)}D${spanText(ns - days * day).slice(2)}`;
+}
+
+/// A temporal item of type `t` (13 to 19) given as the number q holds it
+/// as - months, days or float days since 2000, minutes, seconds or
+/// milliseconds - which an unlimited query sends; undefined for any other
+/// type.
+function temporalText(x: number | LongLike, t: number): string | undefined {
+  const n = Number(x.toString());
+  switch (t) {
+    case 13: {
+      const m = n + 24_000;
+      return `${Math.floor(m / 12)}.${pad2((m % 12) + 1)}`;
+    }
+    case 14:
+      return ymd(new Date(EPOCH_MS + n * DAY_MS));
+    case 15: {
+      const d = new Date(EPOCH_MS + Math.round(n * DAY_MS));
+      return `${ymd(d)}T${hms(d)}.${pad3(d.getUTCMilliseconds())}`;
+    }
+    case 17:
+      return clock(n, "minute");
+    case 18:
+      return clock(n, "second");
+    case 19:
+      return clock(n, "milli");
+  }
+  return undefined;
+}
+
 /// One item of a simple list, or an atom, of q type `t` (positive), without
 /// the suffix a list or an atom ends with. Undefined for a null, which the
 /// caller writes.
@@ -125,9 +187,9 @@ function itemText(x: unknown, t: number): string | undefined {
   if (x === null || x === undefined) {
     return undefined;
   }
-  if (x === Infinity || x === -Infinity) {
+  if (infinite(x)) {
     const w = t === 8 || t === 9 || t === 15 ? "w" : "W";
-    return `${x < 0 ? "-" : ""}0${w}`;
+    return `${x === -Infinity ? "-" : ""}0${w}`;
   }
   switch (t) {
     case 1:
@@ -148,16 +210,24 @@ function itemText(x: unknown, t: number): string | undefined {
     case 11:
       return String(x);
     case 12:
-      return timestampText(Number(x));
+      return isLong(x) ? exactTimestampText(BigInt(x.toString())) : timestampText(Number(x));
     case 16:
       return spanText(BigInt(String(x)));
+  }
+  if (typeof x === "number" || isLong(x)) {
+    const n = temporalText(x, t);
+    if (n !== undefined) {
+      return n;
+    }
   }
   if (!(x instanceof Date)) {
     return String(x);
   }
   switch (t) {
-    case 13:
-      return `${x.getUTCFullYear()}.${pad2(x.getUTCMonth() + 1)}`;
+    case 13: {
+      const m = monthsOf(x) + 24_000;
+      return `${Math.floor(m / 12)}.${pad2((m % 12) + 1)}`;
+    }
     case 14:
       return ymd(x);
     case 15:
@@ -172,9 +242,10 @@ function itemText(x: unknown, t: number): string | undefined {
   return String(x);
 }
 
-/// How q writes a null of type `t` in a list.
+/// How q writes a null of type `t` in a list: a float's is `0n`, a real's
+/// `0N` (the list's `e` follows it: `1 0Ne`).
 function nullText(t: number): string {
-  return t === 8 || t === 9 ? "0n" : t === 2 ? NULL_GUID : t === 11 ? "" : t === 10 ? " " : "0N";
+  return t === 9 ? "0n" : t === 2 ? NULL_GUID : t === 11 ? "" : t === 10 ? " " : "0N";
 }
 
 const SUFFIX: Record<number, string> = { 5: "h", 6: "i", 8: "e", 13: "m" };
@@ -239,6 +310,10 @@ export function atomText(x: unknown, t: number): string {
   if (p === 9 && /^-?\d+$/.test(text)) {
     return `${text}f`;
   }
+  // A temporal infinity says its type, as a null does: `0Wp`, `0wz`.
+  if (p >= 12 && p <= 19 && p !== 13 && infinite(x)) {
+    return text + letter(p);
+  }
   return text + (SUFFIX[p] ?? "");
 }
 
@@ -254,14 +329,15 @@ export function cellText(x: unknown): string {
   if (x === null || x === undefined) {
     return "";
   }
-  if (x === Infinity || x === -Infinity) {
-    return `${x < 0 ? "-" : ""}0W`;
+  if (infinite(x)) {
+    return `${x === -Infinity ? "-" : ""}0W`;
   }
   if (typeof x === "boolean") {
     return x ? "1" : "0";
   }
   if (typeof x === "number") {
-    return floatText(x);
+    // An int is a number too, and is written whole.
+    return Number.isInteger(x) ? String(x) : floatText(x);
   }
   if (typeof x === "string") {
     return x;
@@ -389,8 +465,8 @@ function rawNumber(x: unknown, t: number): number | null {
   if (x === null || x === undefined) {
     return null;
   }
-  if (x === Infinity || x === -Infinity) {
-    return x as number;
+  if (infinite(x)) {
+    return x === -Infinity ? -Infinity : Infinity;
   }
   if (isLong(x)) {
     return Number(x.toString());
@@ -399,7 +475,7 @@ function rawNumber(x: unknown, t: number): number | null {
     const ms = sinceEpoch(x);
     switch (t) {
       case 13:
-        return (x.getUTCFullYear() - 2000) * 12 + x.getUTCMonth();
+        return monthsOf(x);
       case 14:
         return Math.round(ms / DAY_MS);
       case 15:
@@ -477,7 +553,7 @@ export function gridOf(value: unknown, type: number | undefined, limit: number):
   const raw = shown.map((c, i) => (RAW_TYPES.has(types[i]) ? c.values.map((x) => rawNumber(x, types[i])) : []));
   const cells = shown.map((c, i) =>
     c.values.map((x) => {
-      if (c.type === undefined || x === null || x === Infinity || x === -Infinity) {
+      if (c.type === undefined || x === null || infinite(x)) {
         return cellText(x);
       }
       return types[i] === 11 ? String(x) : (itemText(x, types[i]) ?? "");

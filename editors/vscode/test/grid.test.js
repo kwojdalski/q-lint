@@ -195,6 +195,37 @@ test("CSV is the header and the rows given, as the cells show them", () => {
   assert.strictEqual(toCsv(grid, []), "s,px,str\n");
 });
 
+test("CSV keeps text a spreadsheet would run as a formula as text", () => {
+  // A symbol, a string or a column name a spreadsheet opening the file
+  // would read as a formula (=, +, -, @, a tab or a carriage return first)
+  // is written with a leading quote; a number, a temporal and a numeric
+  // or temporal column's cells are written as they are.
+  const grid = toGrid(
+    {
+      count: 3,
+      keys: 0,
+      names: ["=s", "j", "str", "n"],
+      types: [11, 7, 0, 16],
+      cells: [
+        ["=HYPERLINK(\"http://x\")", "+1", "@SUM(A1)"],
+        ["-1", "2", "3"],
+        ["-2+3", "-1.5", "\tx"],
+        ["-0D01:00:00.000000000", "0D00:00:00.000000000", ""],
+      ],
+      raw: [[], [-1, 2, 3], [], [-3600e9, 0, null]],
+      rank: [[0, 1, 2], [0, 1, 2], [0, 1, 2], [0, 1, 2]],
+    },
+    -1,
+  );
+  assert.strictEqual(
+    toCsv(grid),
+    "'=s,j,str,n\n" +
+      "\"'=HYPERLINK(\"\"http://x\"\")\",-1,'-2+3,-0D01:00:00.000000000\n" +
+      "'+1,2,-1.5,0D00:00:00.000000000\n" +
+      "'@SUM(A1),3,'\tx,\n",
+  );
+});
+
 // --- media/result.js and media/chartspec.js
 
 const sample = () =>
@@ -226,6 +257,21 @@ test("the panel sorts by q's ranks, either way, and filters on the text shown", 
   assert.deepStrictEqual(panel.visibleRows(grid, [], { column: 2, descending: false }), [3, 0, 2, 1]);
 });
 
+test("sorting either way keeps equal values in their order, as xasc and xdesc do", () => {
+  // `s xdesc ([] s:`a`a`b`a)` is rows 2 0 1 3. GRID ranks equal values the
+  // same: by their value's place among the column's distinct values.
+  const grid = toGrid(
+    { count: 4, keys: 0, names: ["s"], types: [11], cells: [["a", "a", "b", "a"]], raw: [[]], rank: [[0, 0, 1, 0]] },
+    -1,
+  );
+  assert.deepStrictEqual(panel.visibleRows(grid, [], { column: 0, descending: false }), [0, 1, 3, 2]);
+  assert.deepStrictEqual(panel.visibleRows(grid, [], { column: 0, descending: true }), [2, 0, 1, 3]);
+  // By text, where q could not rank the column, the same.
+  grid.rank[0] = null;
+  assert.deepStrictEqual(panel.visibleRows(grid, [], { column: 0, descending: false }), [0, 1, 3, 2]);
+  assert.deepStrictEqual(panel.visibleRows(grid, [], { column: 0, descending: true }), [2, 0, 1, 3]);
+});
+
 test("a chart plots the numeric columns, against the first but for a histogram", () => {
   const grid = sample();
   assert.deepStrictEqual(charts.chartable(grid, "line"), [1]);
@@ -237,6 +283,19 @@ test("a chart plots the numeric columns, against the first but for a histogram",
   const scatter = charts.chartData(grid, [0, 1, 2, 3], "scatter", [1], 10);
   assert.deepStrictEqual(scatter.datasets[0].data.map((p) => [p.x, p.y]), [[1, 3], [2, 1], [4, 2]]);
   assert.match(charts.chartData(grid, [0], "line", [], 10).note, /No numeric column/);
+});
+
+test("the panel's chart draws the columns ticked, told apart by place, not name", () => {
+  // Before any choice, every column it can.
+  assert.deepStrictEqual(panel.chartColumns([1, 2], null), { columns: [1, 2] });
+  // A keyed table whose key and value columns share a name: unticking one
+  // leaves the other.
+  assert.deepStrictEqual(panel.chartColumns([0, 1], [1]), { columns: [1] });
+  // None ticked: a note that says so, not that there is nothing to chart.
+  const none = panel.chartColumns([1, 2], []);
+  assert.deepStrictEqual(none.columns, []);
+  assert.match(none.note, /No column is ticked/);
+  assert.doesNotMatch(none.note, /No numeric column/);
 });
 
 test("a histogram bins every series over one range", () => {
@@ -262,6 +321,23 @@ test("a temporal axis is labelled in q's notation", () => {
 });
 
 const LOOK = { colours: ["#111111", "#222222"], foreground: "#eeeeee", border: "#333333", font: "Menlo" };
+
+test("a scatter's month, date, minute or second axis ticks whole units", () => {
+  // Chart.js puts ticks between whole values over a short range: months
+  // 322 to 324 had 322.2, 322.4, ... labelled "2026.11.199999999999989".
+  for (const type of [13, 14, 17, 18]) {
+    const grid = toGrid(
+      { count: 3, keys: 0, names: ["t", "y"], types: [type, 9], cells: [["a", "b", "c"], ["1", "2", "3"]], raw: [[322, 323, 324], [1, 2, 3]], rank: [[0, 1, 2], [0, 1, 2]] },
+      -1,
+    );
+    const rows = [0, 1, 2];
+    const config = charts.chartConfig(grid, rows, "scatter", charts.chartData(grid, rows, "scatter", [1], 10), LOOK);
+    assert.strictEqual(config.options.scales.x.ticks.precision, 0, String(type));
+  }
+  // A tick between months still names a month.
+  assert.strictEqual(charts.temporalLabel(13, 322.4), "2026.11");
+  assert.strictEqual(charts.temporalLabel(13, -0.5), "1999.12");
+});
 
 test("a chart's configuration takes the theme's colours and the grid's axes", () => {
   const grid = sample();

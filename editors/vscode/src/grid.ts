@@ -5,7 +5,8 @@
 // and answers the same `ok`type`text, so a result that is not tabular, or an
 // error, is shown in the output exactly as in console mode. When the value is
 // a table (keyed ones unkeyed with `0!`), a dictionary (as `key` and `value`
-// columns) or a list other than a string (as one `value` column), `grid`
+// columns; keyed by a table, as its key columns and a `value` column) or a
+// list other than a string (as one `value` column), `grid`
 // holds, for its first `limit` rows (its last when `limit` is negative, as
 // a notebook's `q-lint.notebook.rowLimitFrom` can ask; all of them when it
 // is infinite):
@@ -19,8 +20,9 @@
 //   raw    the column itself, made its underlying number - `"j"$` of a
 //          timestamp, `"i"$` of a date - for the numeric, temporal and guid
 //          types; `()` for the rest
-//   rank   each row's place in the column sorted by q (`iasc iasc`), or `()`
-//          where q cannot sort it
+//   rank   each row's value's place among the column's distinct values,
+//          sorted by q (`iasc`), so equal values share one; `()` where q
+//          cannot sort it
 //
 // Why this shape. The text is the process's own, so a timestamp keeps its
 // nanoseconds and a long above 2^53 its last digits - a JavaScript number
@@ -48,15 +50,17 @@ export const GRID = [
   "   `ok`type`text`grid!(1b;type r 1;.Q.S[\"j\"$size;0j] r 1;.[{[v;n]",
   "     k:$[99h<>type v;0;98h=type key v;count cols key v;1];",
   "     t:$[98h=type v;v;",
-  "       99h=type v;$[98h=type key v;0!v;flip`key`value!(key v;value v)];",
+  "       99h=type v;$[98h<>type key v;flip`key`value!(key v;value v);",
+  "         98h=type value v;0!v;",
+  "         flip(cols[key v],`value)!value[flip key v],enlist value v];",
   "       (10h=type v)|not type[v] within 0 97h;();",
   "       flip(enlist`value)!enlist v];",
   "     $[98h<>type t;t;",
-  "       [m:count t;t:n sublist t;c:value flip t;",
+  "       [m:count t;t:n sublist t;c:$[count[cols t]=count distinct cols t;t cols t;value flip t];",
   "        `count`keys`names`types`cells`raw`rank!(\"f\"$m;\"i\"$k;cols t;type each c;",
   "          {$[type[x] within 1 76h;string x;{$[200<count x;(197#x),\"...\";x]} each -3!'x]} each c;",
   "          {[c]u:type c;$[u in 12 16h;\"j\"$c;u in 13 14 17 18 19h;\"i\"$c;u=15h;\"f\"$c;u in 2 5 6 7 8 9h;c;()]} each c;",
-  "          {@[{\"i\"$iasc iasc x};x;{[e]()}]} each c)]]};",
+  "          {@[{i:iasc x;\"i\"$@[count[x]#0;i;:;-1+sums differ x i]};x;{[e]()}]} each c)]]};",
   "     (r 1;\"j\"$limit);{[e]e}]);",
   "   `ok`error`trace!(0b;r 1;r 2)]}",
 ].join("\n");
@@ -179,8 +183,10 @@ export interface Grid {
   columns: Column[];
   /// What each cell shows.
   cells: string[][];
-  /// Each row's place when its column is sorted ascending; null where q
-  /// could not sort the column, which the panel then sorts by text.
+  /// Each row's value's place among its column's distinct values sorted
+  /// ascending, so equal values share one and a sort either way can keep
+  /// them in their order; null where q could not sort the column, which the
+  /// panel then sorts by text.
   rank: (number[] | null)[];
   /// A numeric or temporal column's values as numbers (temporals in their
   /// own unit since 2000.01.01, as q holds them), null for a null or an
@@ -254,13 +260,23 @@ export function csvField(text: string): string {
   return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
+/// Text a spreadsheet opening the CSV would run as a formula - one that
+/// starts with `=`, `+`, `-`, `@`, a tab or a carriage return, but is not a
+/// number - with a leading `'`, so it is shown as the text it is.
+export function csvText(text: string): string {
+  return /^[=+\-@\t\r]/.test(text) && !/^-?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(text) ? `'${text}` : text;
+}
+
 /// The grid as CSV: a header of the column names, then `rows` (indices, in
-/// the order shown) as their cells show them. Lines end in `\n`.
+/// the order shown) as their cells show them. Lines end in `\n`. Names
+/// and the cells of a column that is not numeric or temporal go through
+/// `csvText`: a symbol or a string can be anything.
 export function toCsv(grid: Grid, rows?: number[]): string {
   const order = rows ?? [...Array(rowCount(grid)).keys()];
-  const lines = [grid.columns.map((c) => csvField(c.name)).join(",")];
+  const text = grid.columns.map((c) => (c.numeric || c.temporal ? (t: string) => t : csvText));
+  const lines = [grid.columns.map((c) => csvField(csvText(c.name))).join(",")];
   for (const r of order) {
-    lines.push(grid.cells.map((column) => csvField(column[r] ?? "")).join(","));
+    lines.push(grid.cells.map((column, i) => csvField(text[i](column[r] ?? ""))).join(","));
   }
   return lines.join("\n") + "\n";
 }

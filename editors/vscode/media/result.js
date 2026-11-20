@@ -16,8 +16,9 @@
 
   /// The rows to show, in order: those whose cells hold each column's filter
   /// text (ignoring case), sorted by `sort` ({column, descending}) when set.
-  /// A column the process ranked sorts by its rank, as q's `xasc` would;
-  /// one it could not sort, by its text.
+  /// A column the process ranked sorts by its rank, as q's `xasc` or
+  /// `xdesc` would, equal values kept in their order either way; one it
+  /// could not sort, by its text.
   function visibleRows(grid, filters, sort) {
     const active = [];
     (filters || []).forEach(function (f, c) {
@@ -36,15 +37,27 @@
       const cells = grid.cells[sort.column];
       const up = rank
         ? function (a, b) { return rank[a] - rank[b]; }
-        : function (a, b) { return cells[a] < cells[b] ? -1 : cells[a] > cells[b] ? 1 : a - b; };
-      rows.sort(sort.descending ? function (a, b) { return up(b, a); } : up);
+        : function (a, b) { return cells[a] < cells[b] ? -1 : cells[a] > cells[b] ? 1 : 0; };
+      rows.sort(function (a, b) { return (sort.descending ? up(b, a) : up(a, b)) || a - b; });
     }
     return rows;
+  }
+
+  /// The columns a chart draws, of those it `can`: the ones ticked
+  /// (`chosen`, their places, as the page saves them), or every one before
+  /// any is ticked. {columns, note?}: the note when none is ticked.
+  function chartColumns(can, chosen) {
+    if (!Array.isArray(chosen) || !chosen.every(Number.isInteger)) {
+      return { columns: can };
+    }
+    const columns = can.filter(function (c) { return chosen.indexOf(c) >= 0; });
+    return columns.length === 0 && can.length > 0 ? { columns: columns, note: "No column is ticked: tick one above to chart it." } : { columns: columns };
   }
 
   const helpers = {
     rowCount: rowCount,
     visibleRows: visibleRows,
+    chartColumns: chartColumns,
   };
   if (typeof module !== "undefined" && module.exports) {
     module.exports = helpers;
@@ -95,6 +108,7 @@
     const grid = result.grid;
     vscode.postMessage({
       type: "rendered",
+      id: result.id,
       // The rows shown, in order: what Export Results to CSV writes.
       rows: rows,
       rendered: Object.assign({
@@ -136,12 +150,12 @@
     const copy = el("button", "", "Copy as CSV");
     copy.title = "The rows shown, in the order shown, as the cells show them";
     copy.addEventListener("click", function () {
-      vscode.postMessage({ type: "copy", rows: rows });
+      vscode.postMessage({ type: "copy", id: result.id, rows: rows });
     });
     const exporter = el("button", "", "Export to CSV");
     exporter.title = "Save the rows shown, in the order shown, to a CSV file";
     exporter.addEventListener("click", function () {
-      vscode.postMessage({ type: "export", rows: rows });
+      vscode.postMessage({ type: "export", id: result.id, rows: rows });
     });
     bar.append(views, info, meta, copy, exporter);
   }
@@ -273,15 +287,16 @@
     });
     controls.append(kind);
     const can = C.chartable(grid, state.kind);
-    const picked = state.columns === null ? can : can.filter(function (c) { return state.columns.indexOf(grid.columns[c].name) >= 0; });
+    const chosen = chartColumns(can, state.columns);
+    const picked = chosen.columns;
     can.forEach(function (c) {
       const label = el("label");
       const box = el("input");
       box.type = "checkbox";
       box.checked = picked.indexOf(c) >= 0;
       box.addEventListener("change", function () {
-        const names = can.filter(function (x) { return x === c ? box.checked : picked.indexOf(x) >= 0; });
-        state.columns = names.map(function (x) { return grid.columns[x].name; });
+        // By place: a keyed table's key and value columns can share a name.
+        state.columns = can.filter(function (x) { return x === c ? box.checked : picked.indexOf(x) >= 0; });
         save();
         drawChart();
       });
@@ -304,7 +319,7 @@
       controls.append(label);
     }
     chartView.append(controls);
-    const data = C.chartData(grid, rows, state.kind, picked, state.bins);
+    const data = chosen.note ? { type: "bar", datasets: [], note: chosen.note } : C.chartData(grid, rows, state.kind, picked, state.bins);
     const summary = C.summary(state.kind, data);
     if (data.note || typeof Chart !== "function") {
       const note = data.note || "The chart library did not load.";
@@ -362,5 +377,12 @@
     draw();
   });
   window.addEventListener("resize", paint);
+  // The editor marks a new theme on the body's class, and the chart's
+  // colours are read from the theme when it is drawn: draw it again.
+  new MutationObserver(function () {
+    if (result && state.view === "chart") {
+      drawChart();
+    }
+  }).observe(document.body, { attributes: true, attributeFilter: ["class"] });
   vscode.postMessage({ type: "ready" });
 })(typeof self !== "undefined" ? self : this);

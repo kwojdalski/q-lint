@@ -9,6 +9,7 @@ const {
   columnsOf,
   explorerTree,
   fullName,
+  inCode,
   liveCompletions,
   previewCode,
   qsqlTable,
@@ -141,6 +142,17 @@ test("preview shows a table's first rows, reading a partitioned one by .Q.ind", 
   assert.strictEqual(previewCode({ kind: "column" }, 5), undefined);
 });
 
+test("preview names a table or variable q cannot parse as a name by its symbol", () => {
+  // `set` makes any symbol a name: unicode, a space, a quote.
+  assert.strictEqual(previewCode({ kind: "variable", name: "café" }, 5), 'get`$"café"');
+  assert.strictEqual(previewCode({ kind: "table", name: ".ns.été" }, 5), '5 sublist get`$".ns.été"');
+  assert.strictEqual(
+    previewCode({ kind: "table", name: 'a "b"\\c', partitioned: true }, 2),
+    '.Q.ind[get`$"a \\"b\\"\\\\c";til 2&count get`$"a \\"b\\"\\\\c"]',
+  );
+  assert.strictEqual(previewCode({ kind: "variable", name: ".ns.sub.v_1" }, 5), ".ns.sub.v_1");
+});
+
 test("the explorer settings are read, and a preview limit that is not one is 5", () => {
   const from = (values) => readExplorer((key, fallback) => (key in values ? values[key] : fallback));
   assert.deepStrictEqual(from({}), { excludedNamespaces: ["q", "Q", "h", "j", "o", "s"], previewLimit: 5, autoRefresh: false });
@@ -177,6 +189,35 @@ test("no table outside a qSQL statement", () => {
   // A name that only contains a keyword is not one.
   assert.strictEqual(at("selection:1; | from t"), undefined);
   assert.strictEqual(at(".my.select | from t"), undefined);
+});
+
+test("a keyword or a ; in a string, symbol or comment is not read as one", () => {
+  // A symbol or a string that spells a keyword is no statement of its own.
+  assert.strictEqual(at("select from t where action=`delete, |"), "t");
+  assert.strictEqual(at('select from t where s like "update*", |'), "t");
+  assert.strictEqual(at("select from t / delete the rest\n  where |"), "t");
+  // A `;` in a string does not end the statement.
+  assert.strictEqual(at('select from t where s like "a;b", |'), "t");
+  // A statement in a string is no statement.
+  assert.strictEqual(at('show "select a from t",|'), undefined);
+});
+
+test("the table is read from the cursor's own statement, not the next one", () => {
+  assert.strictEqual(at("x:select a|; y:select from u"), undefined);
+  assert.strictEqual(at("x:select a| from t; y:select from u"), "t");
+});
+
+test("the cursor is typing code outside strings and comments", () => {
+  const code = (text) => inCode(text.replace("|", ""), text.indexOf("|"));
+  assert.strictEqual(code("a:tr|"), true);
+  assert.strictEqual(code('a:"tr|"'), false);
+  assert.strictEqual(code('a:"tr"|'), true);
+  assert.strictEqual(code('a:"a\\"tr|"'), false);
+  assert.strictEqual(code("a:1 / tr|"), false);
+  assert.strictEqual(code("/ tr|"), false);
+  assert.strictEqual(code("a:1/tr|"), true);
+  // A symbol is code: it can name a table.
+  assert.strictEqual(code("`tr|"), true);
 });
 
 test("completion offers every name, and the table's columns in its statement", () => {

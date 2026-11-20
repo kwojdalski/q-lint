@@ -220,6 +220,15 @@ test("grid and chart mode: what the process sends for a result", { skip }, async
     assert.deepStrictEqual(g.rank[g.columns.findIndex((c) => c.name === "h")], [1, 0]);
   });
 
+  await t.test("equal values share a rank, so either sort keeps them in their order", async () => {
+    const { grid: g } = await grid("([] s:`a`a`b`a; f:1 0n 1 0n; l:(\"ab\";\"ab\";\"a\";\"b\"))");
+    assert.deepStrictEqual(g.rank, [
+      [0, 0, 1, 0],
+      [1, 0, 1, 0],
+      [2, 2, 0, 1],
+    ]);
+  });
+
   await t.test("floats to the decimals asked for", async () => {
     const answer = await connection.queryGrid(["([] f:1.23456 2 0n)"], SIZE, 100);
     assert.deepStrictEqual(toGrid(answer.grid, 2).cells, [["1.23", "2.00", ""]]);
@@ -239,6 +248,19 @@ test("grid and chart mode: what the process sends for a result", { skip }, async
     const list = (await grid("(1;`a;\"bc\")")).grid;
     assert.deepStrictEqual(list.columns.map((c) => c.name), ["value"]);
     assert.deepStrictEqual(list.cells, [["1", "`a", '"bc"']]);
+  });
+
+  await t.test("a dictionary keyed by a table whose value is a list is its key columns and a value column", async () => {
+    // q prints it as it prints a keyed table; `0!` refuses it.
+    const { answer, grid: g } = await grid("([] a:2 1)!`x`y");
+    assert.strictEqual(answer.gridError, undefined);
+    assert.deepStrictEqual(g.columns.map((c) => [c.name, c.key]), [["a", true], ["value", false]]);
+    assert.deepStrictEqual(g.cells, [["2", "1"], ["x", "y"]]);
+    assert.deepStrictEqual(g.rank, [[1, 0], [0, 1]]);
+    // A key column named value keeps its own values.
+    const same = (await grid("(flip enlist[`value]!enlist 2 1)!3 4")).grid;
+    assert.deepStrictEqual(same.columns.map((c) => [c.name, c.key]), [["value", true], ["value", false]]);
+    assert.deepStrictEqual(same.cells, [["2", "1"], ["3", "4"]]);
   });
 
   await t.test("a large result is cut at the limit, and says how many rows it had", async () => {
@@ -383,4 +405,217 @@ test("the explorer's call against a real q process", { skip }, async (t) => {
     const kt = await connection.query([previewCode({ kind: "table", name: "kt" }, 1)], SIZE);
     assert.ok(kt.ok && kt.text.some((l) => /^1\s*\|?\s*3/.test(l.replace(/^\|\s*/, ""))), kt.text.join("\n"));
   });
+});
+
+/// A process played by a socket server: it answers the handshake, then
+/// hands each message it gets, whole, to `answer` with the socket. No q
+/// needed, so these run everywhere.
+async function fakeProcess(answer) {
+  const server = net.createServer((socket) => {
+    socket.on("error", () => {});
+    let shook = false;
+    let buffer = Buffer.alloc(0);
+    socket.on("data", (chunk) => {
+      if (!shook) {
+        shook = true;
+        socket.write(Buffer.from([3]));
+        return;
+      }
+      buffer = Buffer.concat([buffer, chunk]);
+      while (buffer.length >= 8 && buffer.length >= buffer.readUInt32LE(4)) {
+        const length = buffer.readUInt32LE(4);
+        const message = buffer.subarray(0, length);
+        buffer = buffer.subarray(length);
+        answer(message, socket);
+      }
+    });
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  return { port: server.address().port, close: () => server.close() };
+}
+
+/// `1000#7j` as kdb+ compresses it (`-18!`), sent as a response.
+const COMPRESSED = "01000100db0000004e1f0000c00700e803000007000000ff000207ff0002000107ff0001000207ffff0002000107ff0001000207ff00020001ff07ff0001000207ff0002000107ff0001ff000207ff0002000107ff0001000207ffff0002000107ff0001000207ff00020001ff07ff0001000207ff0002000107ff0001ff000207ff0002000107ff0001000207ffff0002000107ff0001000207ff00020001ff07ff0001000207ff0002000107ff0001ff000207ff0002000107ff0001000207ffff0002000107ff0001000207ff000200010f07ff000100020746";
+
+test("a compressed answer keeps its q type (#894)", async (t) => {
+  const fake = await fakeProcess((_, socket) => {
+    const message = Buffer.from(COMPRESSED, "hex");
+    message.writeUInt8(2, 1);
+    socket.write(message);
+  });
+  t.after(() => fake.close());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: fake.port });
+  t.after(() => connection.abort());
+  const { value, type } = await connection.evaluate("1000#7");
+  assert.strictEqual(value.length, 1000);
+  assert.strictEqual(type, 7);
+  // So an unwrapped query writes it as q does, on one line.
+  const { runUnwrapped } = require("../out/querycontrols.js");
+  const answer = await runUnwrapped(connection, ["1000#7"], { size: [25, 80], limit: 10, unlimited: false, grid: false });
+  assert.deepStrictEqual(answer.text, [`${"7 ".repeat(39)}..`]);
+});
+
+/// `text` as a q message of `kind` (0 async, 1 sync, 2 response): a char
+/// vector.
+function charMessage(kind, text) {
+  const body = Buffer.from(text, "utf8");
+  const message = Buffer.alloc(14 + body.length);
+  message.writeUInt8(1, 0);
+  message.writeUInt8(kind, 1);
+  message.writeUInt32LE(message.length, 4);
+  message.writeInt8(10, 8);
+  message.writeUInt32LE(body.length, 10);
+  body.copy(message, 14);
+  return message;
+}
+
+test("a sync request from the process is answered with an error, so the process does not hang (#894)", async (t) => {
+  let replied;
+  const fake = await fakeProcess((message, socket) => {
+    if (message.readUInt8(1) === 1 && replied === undefined && message.readInt8(8) === 10) {
+      // The query: the user's code calls back on .z.w, synchronously.
+      replied = null;
+      socket.write(charMessage(1, "1+1"));
+    } else if (replied === null && message.readUInt8(1) === 2) {
+      replied = message;
+      socket.write(charMessage(2, "done"));
+    }
+  });
+  t.after(() => fake.close());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: fake.port });
+  t.after(() => connection.abort());
+  const timer = setTimeout(() => connection.abort(), 2000);
+  const { value } = await connection.evaluate(".z.w \"1+1\"");
+  clearTimeout(timer);
+  assert.strictEqual(value, "done");
+  // q reads it as an error: type -128 and a message.
+  assert.strictEqual(replied.readInt8(8), -128);
+  assert.match(replied.subarray(9, replied.length - 1).toString(), /q-lint/);
+});
+
+test("a sync request back to q-lint fails in the process instead of hanging it (#894)", { skip }, async (t) => {
+  const q = await startQ();
+  t.after(() => q.stop());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  t.after(() => connection.abort());
+  const timer = setTimeout(() => connection.abort(), 3000);
+  const answer = await connection.query(['.z.w "1+1"'], SIZE);
+  clearTimeout(timer);
+  assert.strictEqual(answer.ok, false);
+  assert.match(answer.error, /q-lint/);
+  assert.deepStrictEqual(await connection.query(["1+1"], SIZE), { ok: true, type: -7, text: ["2"] });
+});
+
+test("a large answer is read in time linear in its size (#894)", async (t) => {
+  // 100 MB, sent as the socket delivers it: in chunks of 64 KB or so.
+  const size = 100_000_000;
+  const fake = await fakeProcess((_, socket) => {
+    const message = Buffer.alloc(size, 97);
+    message.writeUInt8(1, 0);
+    message.writeUInt8(2, 1);
+    message.writeUInt32LE(size, 4);
+    message.writeInt8(10, 8);
+    message.writeInt8(0, 9);
+    message.writeUInt32LE(size - 14, 10);
+    socket.write(message);
+  });
+  t.after(() => fake.close());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: fake.port });
+  t.after(() => connection.abort());
+  const started = Date.now();
+  const value = await connection.call("x");
+  const took = Date.now() - started;
+  assert.strictEqual(value.length, size - 14);
+  // Joining each chunk onto all before it took 12 s here; once, well under 1.
+  assert.ok(took < 4000, `${took} ms`);
+});
+
+test("an answer split anywhere, or sent with others in one chunk, is read whole", async (t) => {
+  let n = 0;
+  const fake = await fakeProcess((_, socket) => {
+    const answer = charMessage(2, `answer ${++n}`);
+    if (n === 1) {
+      // Split inside the header, then inside the body.
+      socket.write(answer.subarray(0, 3));
+      setTimeout(() => socket.write(answer.subarray(3, 12)), 20);
+      setTimeout(() => socket.write(answer.subarray(12)), 40);
+    } else {
+      // An async message the user's code sent, and the answer, as one chunk.
+      socket.write(Buffer.concat([charMessage(0, "pushed"), answer]));
+    }
+  });
+  t.after(() => fake.close());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: fake.port });
+  t.after(() => connection.abort());
+  assert.strictEqual(await connection.call("x"), "answer 1");
+  assert.strictEqual(await connection.call("x"), "answer 2");
+});
+
+// A root name that is not a namespace: kdb+ lists `.cfg:42` in `key \``
+// (PeachQ does not), and the explorer read its "names" with `key 42`,
+// `til 42`, failing the whole call with 'type.
+test("the explorer's call skips a dotted root name that is not a namespace", { skip }, async (t) => {
+  const q = await startQ("x:1;\n.cfg:42;\n.tbl:([]a:1 2);\n.kt:([k:1 2]v:3 4);\n.ok.y:2;\n");
+  t.after(() => q.stop());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  t.after(() => connection.close());
+  const g = readGathered(await connection.call(GATHER, EXCLUDED, LIMITS));
+  assert.deepStrictEqual(g.spaces.map((s) => s.ns).sort(), [".", ".ok"]);
+  assert.deepStrictEqual(g.entries.map((e) => `${e.ns} ${e.name}`).sort(), [". x", ".ok y"]);
+});
+
+// A partition missing one table's directory (what `.Q.chk` repairs): the
+// table still serves the other dates, but `.Q.cn` fails on it, and that
+// failed the whole explorer call.
+const DAMAGED = (dir) => `
+{[d;dt] .Q.dd[d;dt,\`trade\`] set .Q.en[d] ([] sym:\`a\`b\`c; px:1.5 2.5 3.5)}[hsym \`$"${dir}/hdb"] each 2024.01.02;
+system "mkdir -p ${dir}/hdb/2024.01.01";
+system "l ${dir}/hdb";
+x:1;
+`;
+
+test("the explorer's call survives a partitioned table it cannot count", { skip }, async (t) => {
+  const q = await startQ(DAMAGED);
+  t.after(() => q.stop());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  t.after(() => connection.close());
+  const g = readGathered(await connection.call(GATHER, EXCLUDED, LIMITS));
+  const trade = g.entries.find((e) => e.name === "trade");
+  assert.deepStrictEqual([trade.kind, trade.count, trade.partitioned, trade.cols], ["table", null, true, ["date", "sym", "px"]]);
+  assert.ok(g.entries.some((e) => e.name === "x"));
+  const tables = explorerTree(g, []).find((n) => n.label === ".").children.find((c) => c.label === "Tables");
+  assert.strictEqual(tables.children.find((c) => c.label === "trade").description, "rows not counted · 3 columns");
+});
+
+test("preview reads a name q cannot parse, by its symbol", { skip }, async (t) => {
+  const q = await startQ('(`$"caf\u00e9") set ([] a:7 8 9);\n(`$"a b") set 42;\n');
+  t.after(() => q.stop());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  t.after(() => connection.close());
+  const table = await connection.query([previewCode({ kind: "table", name: "caf\u00e9" }, 2)], SIZE);
+  assert.ok(table.ok && table.text.some((l) => l.trim() === "8"), JSON.stringify(table));
+  const variable = await connection.query([previewCode({ kind: "variable", name: "a b" }, 2)], SIZE);
+  assert.deepStrictEqual([variable.ok, variable.text], [true, ["42"]]);
+});
+
+// A table mapped from disk, as an HDB's splayed tables are. When the limit
+// is past its rows, `sublist` gives back the mapped table itself, and
+// `value flip` of that is its path, not its columns: the grid dropped the
+// result, so grid and chart mode showed nothing for `t`.
+test("the grid shows a splayed table on disk, by name and selected", { skip }, async (t) => {
+  const q = await startQ('sp:get (hsym `$(string .z.f),"_db/sp/") set ([] s:("ab";enlist "c";"de"); n:1 2 3)\n');
+  t.after(() => q.stop());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  t.after(() => connection.abort());
+  for (const [code, limit, count, cells] of [
+    ["sp", 100, 3, [['"ab"', ',"c"', '"de"'], ["1", "2", "3"]]],
+    ["sp", 2, 3, [['"ab"', ',"c"'], ["1", "2"]]],
+    ["select from sp where n>1", 100, 2, [[',"c"', '"de"'], ["2", "3"]]],
+  ]) {
+    const answer = await connection.queryGrid([code], SIZE, limit);
+    assert.ok(answer.grid !== undefined, `${code} ${limit}: ${JSON.stringify(answer)}`);
+    assert.deepStrictEqual(answer.grid.names, ["s", "n"]);
+    assert.deepStrictEqual(answer.grid.cells, cells, code);
+    assert.strictEqual(answer.grid.count, count);
+  }
 });

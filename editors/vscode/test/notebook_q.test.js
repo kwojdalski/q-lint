@@ -12,7 +12,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { QConnection } = require("../out/qclient.js");
 const { statements } = require("../out/statements.js");
-const { CHART_MIME, DATA, cellOutputs, chartCellOutputs, GRID_ROWS, readCellData } = require("../out/celldata.js");
+const { CHART_MIME, DATA, cellOutputs, chartCellOutputs, GRID_ROWS, readCellData, tableText } = require("../out/celldata.js");
 const { cellDirective } = require("../out/celldirectives.js");
 const { rowsArgument } = require("../out/liveconfig.js");
 const { exportScript } = require("../out/qnb.js");
@@ -24,7 +24,9 @@ const SIZE = [25, 80];
 const SERVER = `
 t:([] sym:\`a\`b\`c; ts:2024.01.01D12:00:00.123456789+0 1 2; px:1.5 0n 3.5; note:(enlist "x";"<b>y</b>";enlist "z"); n:(1 2;\`a;"q"))
 kt:([k:1 2] v:\`x\`y)
+kt2:([k:1 2; j:\`a\`bb] v:\`xx\`y; w:3 4)
 big:([] i:til 2000)
+sp:get (hsym \`$(string .z.f),"_db/sp/") set ([] s:("ab";enlist "c";"de"); n:1 2 3)
 `;
 
 function freePort() {
@@ -100,6 +102,13 @@ test("notebook cells against a real q process", { skip }, async (t) => {
     assert.deepStrictEqual(answer.table, { columns: ["k", "v"], types: [7, 11], keys: 1, data: [["1", "2"], ["x", "y"]], total: 2 });
   });
 
+  await t.test("a table's text is the text q's console shows for it, a keyed table's rule included", async () => {
+    for (const name of ["kt", "kt2", "([] a:1 22; b:`x`yyy)"]) {
+      const console = await connection.query([name], SIZE);
+      assert.deepStrictEqual(tableText((await data(name)).table), console.text.map((l) => l.trimEnd()), name);
+    }
+  });
+
   await t.test("a large table is cut by the process, and its count kept", async () => {
     const answer = await data("big", 10);
     assert.strictEqual(answer.table.total, 2000);
@@ -138,6 +147,26 @@ test("notebook cells against a real q process", { skip }, async (t) => {
     assert.deepStrictEqual(await data("1+1"), { ok: true, type: -7, text: ["2"] });
     const dict = await data("`a`b!1 2");
     assert.strictEqual(dict.type, 99);
+  });
+
+  await t.test("a splayed table on disk comes back as a table, its string column as strings", async () => {
+    // A table mapped from disk, as an HDB's splayed tables are; its string
+    // column is a mapped list (77h on KDB-X, 87h on PeachQ).
+    for (const rows of [1000, 2]) {
+      const answer = await data("sp", rows);
+      assert.ok(answer.table !== undefined, JSON.stringify(answer));
+      assert.deepStrictEqual(answer.table.columns, ["s", "n"]);
+      assert.deepStrictEqual(answer.table.data, [["ab", "c", "de"].slice(0, rows), ["1", "2", "3"].slice(0, rows)]);
+      assert.strictEqual(answer.table.total, 3);
+    }
+    assert.deepStrictEqual((await data("select from sp where n>1")).table.data[0], ["c", "de"]);
+  });
+
+  await t.test("a dictionary keyed by a table, with a list for its value, comes back as text", async () => {
+    const answer = await data("([] a:1 2)!3 4");
+    assert.strictEqual(answer.ok, true, JSON.stringify(answer));
+    assert.strictEqual(answer.type, 99);
+    assert.deepStrictEqual(answer.text.map((l) => l.trimEnd()), ["a|", "-| -", "1| 3", "2| 4"]);
   });
 
   await t.test("an error comes back with its message and trace", async () => {

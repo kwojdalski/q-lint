@@ -37,6 +37,7 @@ import {
   parseTags,
   portProblem,
   processThemeColour,
+  readProcessFile,
   tlsChoices,
   type Process,
 } from "./processes";
@@ -368,6 +369,8 @@ export class Live {
   /// A connect in progress, so a second one waits for it instead of opening
   /// another.
   private connecting: Promise<boolean> | undefined;
+  /// The label of the process `connecting` connects to.
+  private connectingTo: string | undefined;
   private running: { code: string; started: number } | undefined;
   /// When the query that timed out started, so its entry says so.
   private timedOut: number | undefined;
@@ -763,14 +766,14 @@ export class Live {
     if (files === undefined || files.length === 0) {
       return;
     }
-    let json: unknown;
+    let read: { processes: Process[]; problems: string[] };
     try {
-      json = JSON.parse(Buffer.from(await workspace.fs.readFile(files[0])).toString("utf8"));
+      read = readProcessFile(Buffer.from(await workspace.fs.readFile(files[0])).toString("utf8"));
     } catch (error) {
       void window.showErrorMessage(`q-lint: could not read ${files[0].fsPath}: ${String(error)}`);
       return;
     }
-    const { processes, problems } = parseProcesses(json);
+    const { processes, problems } = read;
     await this.save(merge(this.processes(), processes));
     const note = problems.length ? ` Skipped ${problems.length}: ${problems.slice(0, 3).join(" ")}` : "";
     void window.showInformationMessage(`q-lint: imported ${processes.length} q process(es).${note}`);
@@ -829,15 +832,25 @@ export class Live {
       }
       await this.context.secrets.store(passwordKey(process.label), password);
     }
-    return this.open(process);
+    const connected = await this.open(process);
+    // A discovered process cannot be edited, so a password that did not
+    // connect is forgotten: the next connect asks for it again.
+    if (!connected && !saved && process.user) {
+      await this.context.secrets.delete(passwordKey(process.label));
+    }
+    return connected;
   }
 
   /// Connect to `process`, closing the connection there was. Whether it
   /// connected.
   private open(process: Process): Promise<boolean> {
     if (this.connecting !== undefined) {
-      return this.connecting;
+      // A connect to another process - a reconnect after an abort, waiting
+      // for that process to be free - is let finish and this one follows:
+      // its result says nothing of this process.
+      return this.connectingTo === process.label ? this.connecting : this.connecting.then(() => this.open(process));
     }
+    this.connectingTo = process.label;
     this.connecting = (async () => {
       if (this.connection !== undefined) {
         const old = this.connection;
@@ -926,6 +939,11 @@ export class Live {
   /// The active connection and its process, connecting first if there is
   /// none; undefined when none was connected or a query is still running.
   private async ready(): Promise<{ connection: QConnection; process: Process } | undefined> {
+    // A reconnect still under way (after an abort) is waited for, not
+    // replaced by asking which process to connect to.
+    if (this.connection === undefined && this.connecting !== undefined) {
+      await this.connecting;
+    }
     if (this.connection === undefined && !(await this.connectTo())) {
       return undefined;
     }
