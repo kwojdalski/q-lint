@@ -128,7 +128,8 @@ const notice = (text: string): NotebookCellOutput => new NotebookCellOutput([Not
 /// asked, each numbered and timed.
 class QnbKernel {
   private readonly controller: NotebookController;
-  private order = 0;
+  /// Each notebook's last run number: a notebook is numbered on its own.
+  private readonly orders = new WeakMap<NotebookDocument, number>();
   /// The cells asked for so far, run one after another.
   private queue: Promise<void> = Promise.resolve();
 
@@ -148,9 +149,11 @@ class QnbKernel {
     // Created now, so the cells show as waiting while those before them run.
     const executions = cells.map((cell) => this.controller.createNotebookCellExecution(cell));
     // Numbering goes on from what the notebook shows, as it was saved.
+    let order = this.orders.get(notebook) ?? 0;
     for (const cell of notebook.getCells()) {
-      this.order = Math.max(this.order, cell.executionSummary?.executionOrder ?? 0);
+      order = Math.max(order, cell.executionSummary?.executionOrder ?? 0);
     }
+    this.orders.set(notebook, order);
     const run = this.queue.then(async () => {
       let go = true;
       for (const execution of executions) {
@@ -170,7 +173,9 @@ class QnbKernel {
   /// Run one cell; whether the cells after it should run.
   private async runCell(execution: NotebookCellExecution): Promise<boolean> {
     const source = execution.cell.document.getText();
-    execution.executionOrder = ++this.order;
+    const order = (this.orders.get(execution.cell.notebook) ?? 0) + 1;
+    this.orders.set(execution.cell.notebook, order);
+    execution.executionOrder = order;
     execution.start(Date.now());
     await execution.clearOutput();
     const finish = async (success: boolean, outputs: NotebookCellOutput[]): Promise<boolean> => {
