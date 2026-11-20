@@ -404,8 +404,30 @@ Around those:
 - `textDocument/foldingRange` folds the lambdas, parenthesised lists,
   bracketed blocks and block comments that span lines, found in the masked
   text so that a bracket in a string or a comment folds nothing. A statement
-  continued over indented lines with no bracket open is not a range, and a
-  buffer whose brackets do not close has none until they do.
+  continued over indented lines with no bracket open is not a range.
+- While a bracket or a string is open - every keystroke of a call or a
+  string being typed - a file reports only QE001, as the CLI does, placed at
+  the bracket that is not closed rather than the closer it runs into. The
+  rest of the file is not blanked meanwhile: the diagnostics and folds of the
+  last version whose brackets all closed are kept on every line that has not
+  changed since, moved up or down by the lines added or removed above them,
+  except within the statement that does not close. They are the last good
+  results, so a finding that an unchanged line owes to the statement being
+  typed goes only once that statement closes. A file that has not closed
+  since it was opened has only the QE001, and no folds.
+
+The server answers one message at a time, in the order they arrive, and
+reads ahead while it works. A change to a document that has another change
+to the same document queued behind it is taken but not linted, so a burst of
+keystrokes on a large file is linted once, at the last of them: twenty
+one-character edits to a 1,948-line file publish diagnostics twice and the
+final ones arrive about 0.1 s after the first edit, where each edit used to
+be linted in turn and the last diagnostics took about a second. A request
+still queued when its `$/cancelRequest` arrives is answered
+`RequestCancelled` (-32800) and is not run. A request already running is not
+interrupted. A request whose document changes behind it is still answered
+on the text it was asked about, since LSP 3.17 tells a server not to answer
+`ContentModified` for a change it has not yet handled.
 
 **The reason it is a server rather than an editor plugin shelling out to the
 CLI**: `didChange` carries the buffer, so what gets linted is what is on
@@ -563,6 +585,15 @@ tests is left to whatever runs them. Each request draws the graph again
 from what the index already holds - about a quarter of a second over 3,665
 files - so a client should ask when a view is shown or a file saved, not on
 every keystroke.
+
+Every answer names a file the way the client knows it: an open document by
+the URI it was opened with, and a file under a workspace folder by that
+folder's URI as the client sent it, followed by the path below it. A
+workspace opened as `/tmp/ws` on macOS, where `/tmp` links to
+`/private/tmp`, is answered as `/tmp/ws/lib.q`, so the editor does not open
+a second copy of a file it already has open. The server still keys each file
+by its real path, so the two spellings are one file to it. Only a file
+outside every folder is named by its real path.
 
 ### VS Code
 

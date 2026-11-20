@@ -1,4 +1,4 @@
-use q_lint_rs::{Profile, Workspace, lint, lint_selecting};
+use q_lint_rs::{Profile, Workspace, broken_statement, lint, lint_selecting};
 #[test]
 fn mutation_classes_and_valid_boundaries() {
     for (source, code) in [
@@ -36,6 +36,50 @@ fn a_blanked_column_0_line_is_named_as_the_one_that_starts_a_statement() {
     let f = lint("f:{[a]\nk)1\n  a+1}", "t.q", Profile::General);
     assert_eq!(f.len(), 1);
     assert!(f[0].detail.contains("before line 2"), "{}", f[0].detail);
+}
+#[test]
+fn a_bracket_left_open_inside_another_is_reported_where_it_opens() {
+    // q 5 refuses both with the closer it meets ('} and ']), which names no
+    // line. A closer some bracket further out wants closes that one, so the
+    // bracket it passes was never closed, and is named where it opens - the
+    // call being typed, not the end of the lambda lines below (#866). A
+    // closer nothing open wants is the mistake itself, and is named there.
+    let f = lint("g:{[x]\n  a:f[1;\n  x}\n", "t.q", Profile::General);
+    assert_eq!(f.len(), 1, "{f:?}");
+    assert_eq!((f[0].line, f[0].column), (2, Some(6)));
+    assert_eq!(
+        f[0].detail,
+        "Unclosed delimiter; expected ']' before the '}' on line 3"
+    );
+    let f = lint("g:{[x]\n  a:(1;2];\n  x}\n", "t.q", Profile::General);
+    assert_eq!((f[0].line, f[0].column), (2, Some(9)));
+    assert_eq!(f[0].detail, "Expected ')', got ']'");
+    // The innermost of those passed, and the outer one closed: accepting
+    // the finding leaves nothing more of that statement to report.
+    let source = "g:{[x] (a; f[1; / noqa: QE001\n  }\nh:{[y] y}\n";
+    assert!(
+        !lint(source, "t.q", Profile::General)
+            .iter()
+            .any(|f| f.code == "QE001")
+    );
+    let f = lint("g:{[x] (a; f[1; }\n", "t.q", Profile::General);
+    assert_eq!(f[0].column, Some(13));
+}
+#[test]
+fn the_broken_statement_runs_from_the_line_that_starts_it_to_the_next() {
+    let source = "a:1\ng:{[x]\n  f[1;\n  x}\n/ a note\nh:2\n";
+    let span = broken_statement(source).unwrap();
+    assert_eq!(&source[span], "g:{[x]\n  f[1;\n  x}\n/ a note\n");
+    // A string nothing closes ends at the next line at column 0, and with
+    // none, at the end of the file.
+    let source = "a:1\ns:\"abc\n  def\nt:2\n";
+    assert_eq!(
+        &source[broken_statement(source).unwrap()],
+        "s:\"abc\n  def\n"
+    );
+    let source = "a:1\nf:{[x]\n  x";
+    assert_eq!(&source[broken_statement(source).unwrap()], "f:{[x]\n  x");
+    assert_eq!(broken_statement("a:1\nf:{x}\n"), None);
 }
 #[test]
 fn a_multi_byte_blank_before_an_assigned_name_does_not_panic() {

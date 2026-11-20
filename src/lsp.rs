@@ -22,6 +22,17 @@
 //! replies in order is the whole design, and it keeps this crate's dependency
 //! tree exactly as it was.
 //!
+//! One thread more than that: a reader, which only takes messages off stdin
+//! as they come (`read_ahead`). A large file is still tens of milliseconds a
+//! lint, and a person types faster than that, so while one change is linted
+//! the next ones wait - and with the reader, the loop can see them waiting.
+//! A change with a later change to the same document behind it is taken but
+//! not linted, so a burst of keystrokes is linted once, at its last; and a
+//! request with a `$/cancelRequest` for it behind it is answered
+//! RequestCancelled without being run (`superseded`, `cancelled`). What is
+//! running is never interrupted: no answer here takes long enough for that
+//! to be worth a second thread touching the documents.
+//!
 //! WHAT IT IMPLEMENTS, AND WHAT IT DELIBERATELY DOES NOT
 //!
 //! initialize/initialized, didOpen/didChange/didSave/didClose, shutdown/exit,
@@ -89,7 +100,10 @@
 //! stops folding by indentation, so this is a trade and not only a gain -
 //! exact ranges where the brackets are, for none where they are not - and
 //! one a person can decline (`editor.foldingStrategy: "indentation"`). A
-//! buffer whose brackets do not close has no ranges rather than wrong ones.
+//! buffer whose brackets do not close has no ranges of its own rather than
+//! wrong ones: it keeps those of the last version that closed on the lines
+//! that have not changed since, outside the statement that does not close
+//! (`Carry`), as its diagnostics do.
 //!
 //! EDITOR SETTINGS ARRIVE AS initializationOptions, AND ONLY NARROW
 //!
@@ -118,17 +132,18 @@
 //! limit is the same one: a call is a function's name in a body, so a name
 //! handed on as a value is listed and a call through a string is not.
 use crate::config::{FILES, Layer, Policy, selector};
-use crate::jsonrpc::{INVALID_REQUEST, receive, send};
+use crate::jsonrpc::{INVALID_REQUEST, Malformed, receive, send};
 use q_lint_rs::graph::Placement;
 use q_lint_rs::{
-    FileIndex, Finding, Fix, References, TokenKind, Workspace, balanced, fix_all, fix_for, folds,
-    rule_url, semantic_tokens_in, suppressions_for, whole_edit,
+    FileIndex, Finding, Fix, References, TokenKind, Workspace, balanced, broken_statement, fix_all,
+    fix_for, folds, rule_url, semantic_tokens_in, suppressions_for, whole_edit,
 };
 use serde_json::{Value, json};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     io::{BufRead, Write},
     path::Path,
+    sync::mpsc::{Receiver, channel},
 };
 
 /// Full document sync (`TextDocumentSyncKind.Full`): every change carries the
@@ -144,6 +159,9 @@ const SERVER_NOT_INITIALIZED: i64 = -32002;
 /// LSP 3.17's `RequestFailed`: a well-formed request the server will not
 /// carry out, with the reason as its message - a rename it refuses.
 const REQUEST_FAILED: i64 = -32803;
+/// LSP 3.17's `RequestCancelled`: the reply to a request the client
+/// cancelled before it was run.
+const REQUEST_CANCELLED: i64 = -32800;
 
 mod help;
 mod navigate;
@@ -156,6 +174,16 @@ type Documents = HashMap<String, String>;
 /// Open documents edited since they were last linted, which with
 /// `lint.run: "onSave"` is since they were last saved.
 type Unsaved = HashSet<String>;
+
+/// What each open document reported the last time its brackets and strings
+/// all closed, and the text it reported that on - carried over, where the
+/// lines are unchanged, while a statement in it is being typed (`Carry`).
+struct Good {
+    text: String,
+    diagnostics: Vec<Value>,
+}
+
+type Kept = HashMap<String, Good>;
 
 /// What every `.q` file in the workspace defines, so a name another file
 /// defines is not undefined in this one and another file's function is
@@ -187,6 +215,28 @@ struct Index {
     roots: Vec<String>,
     exclude: Vec<glob::Pattern>,
     enabled: bool,
+    /// Each workspace folder as the client named it, which is how an answer
+    /// names the files under it (`Sources::uri`).
+    folders: Vec<Folder>,
+}
+
+/// A workspace folder: the path it was given as, which is what a removal
+/// names, its key, which is what the files under it are keyed below, and the
+/// URI the client sent, which is what a file under it is named back by.
+struct Folder {
+    path: String,
+    key: std::path::PathBuf,
+    uri: String,
+}
+
+impl Folder {
+    fn of((path, uri): (String, String)) -> Self {
+        Folder {
+            key: file_key(&path).into(),
+            path,
+            uri,
+        }
+    }
 }
 
 /// Bounds on the scan, so a workspace opened at `/` cannot stall the server:
@@ -416,8 +466,23 @@ impl Index {
     /// names; a directory it names is not entered at all.
     /// Workspace folders the client added and removed after `initialize`:
     /// the added ones scanned, and what only the removed ones held forgotten.
-    fn change_roots(&mut self, added: Vec<String>, removed: Vec<String>, policy: &Policy) {
+    fn change_roots(
+        &mut self,
+        added: Vec<(String, String)>,
+        removed: Vec<String>,
+        policy: &Policy,
+    ) {
         self.roots.retain(|r| !removed.contains(r));
+        self.folders.retain(|f| !removed.contains(&f.path));
+        let added: Vec<String> = added
+            .into_iter()
+            .filter(|(path, _)| !self.roots.contains(path))
+            .map(|folder| {
+                let path = folder.0.clone();
+                self.folders.push(Folder::of(folder));
+                path
+            })
+            .collect();
         let kept: Vec<String> = self.roots.iter().map(|r| file_key(r)).collect();
         for gone in removed.iter().map(|r| file_key(r)) {
             let under = |key: &str, root: &str| std::path::Path::new(key).starts_with(root);
@@ -431,10 +496,6 @@ impl Index {
                 self.forget(&key);
             }
         }
-        let added: Vec<String> = added
-            .into_iter()
-            .filter(|r| !self.roots.contains(r))
-            .collect();
         if self.enabled && !added.is_empty() {
             let all = std::mem::replace(&mut self.roots, added.clone());
             self.scan(policy);
@@ -502,22 +563,24 @@ fn skipped(policy: &Policy, path: &std::path::Path) -> bool {
     policy.excluded(path).unwrap_or(false)
 }
 
-/// The folders an `initialize` request names, as filesystem paths: its
-/// `workspaceFolders`, or the older single `rootUri`.
-fn workspace_roots(params: &Value) -> Vec<String> {
-    let mut roots: Vec<String> = params["workspaceFolders"]
+/// The folders an `initialize` request names, each as a filesystem path and
+/// as the URI it was sent as: its `workspaceFolders`, or the older single
+/// `rootUri`.
+fn workspace_folders(params: &Value) -> Vec<(String, String)> {
+    let folder = |uri: &str| file_path(uri).map(|path| (path, uri.to_string()));
+    let mut folders: Vec<(String, String)> = params["workspaceFolders"]
         .as_array()
         .into_iter()
         .flatten()
         .filter_map(|f| f["uri"].as_str())
-        .filter_map(file_path)
+        .filter_map(folder)
         .collect();
-    if roots.is_empty()
-        && let Some(root) = params["rootUri"].as_str().and_then(file_path)
+    if folders.is_empty()
+        && let Some(root) = params["rootUri"].as_str().and_then(folder)
     {
-        roots.push(root);
+        folders.push(root);
     }
-    roots
+    folders
 }
 
 /// What a client asked for in `initializationOptions`. Every field defaults
@@ -738,13 +801,53 @@ impl Options {
     }
 }
 
+/// What `read_ahead` hands the loop: `receive`'s answer for each message.
+type Incoming = Result<Option<Result<Value, Malformed>>, String>;
+
+/// Every message on `reader`, read as it arrives by a thread of its own,
+/// up to the end of the stream or the first error that loses the framing,
+/// which is handed on and ends it.
+///
+/// Detached: the loop returns on `exit` while the client may still hold
+/// stdin open, and the process ends with the thread blocked in a read.
+fn read_ahead(mut reader: impl BufRead + Send + 'static) -> Receiver<Incoming> {
+    let (sender, messages) = channel();
+    std::thread::spawn(move || {
+        loop {
+            let next = receive(&mut reader);
+            let more = matches!(next, Ok(Some(_)));
+            if sender.send(next).is_err() || !more {
+                return;
+            }
+        }
+    });
+    messages
+}
+
+/// Whether a queued message is a `didChange` of the document `uri`.
+fn is_change_to(incoming: &Incoming, uri: &str) -> bool {
+    matches!(incoming, Ok(Some(Ok(m)))
+        if m["method"] == "textDocument/didChange" && m.get("id").is_none()
+            && m["params"]["textDocument"]["uri"] == uri)
+}
+
+/// Whether a queued message is a `$/cancelRequest` of the request `id`.
+fn cancels(incoming: &Incoming, id: &Value) -> bool {
+    matches!(incoming, Ok(Some(Ok(m)))
+        if m["method"] == "$/cancelRequest" && m.get("id").is_none() && m["params"]["id"] == *id)
+}
+
 pub fn serve(
-    reader: &mut impl BufRead,
+    reader: impl BufRead + Send + 'static,
     writer: &mut impl Write,
     policy: &Policy,
 ) -> Result<u8, String> {
+    let messages = read_ahead(reader);
+    // What has arrived and is not yet handled, oldest first.
+    let mut queue: VecDeque<Incoming> = VecDeque::new();
     let mut docs: Documents = HashMap::new();
     let mut unsaved = Unsaved::new();
+    let mut kept = Kept::new();
     let mut idx = Index::default();
     let mut opts = Options::default();
     let mut problems: Vec<String> = vec![];
@@ -770,7 +873,19 @@ pub fn serve(
     let mut watch_id: Option<String> = None;
     let mut shutdown_requested = false;
     loop {
-        let message = match receive(reader)? {
+        // Everything the client has sent so far, before the oldest of it is
+        // handled: what is behind a message can make it moot.
+        if queue.is_empty() {
+            match messages.recv() {
+                Ok(next) => queue.push_back(next),
+                // The reader handed on how the stream ended and stopped; the
+                // loop has already returned on it.
+                Err(_) => return Ok(if shutdown_requested { 0 } else { 1 }),
+            }
+        }
+        queue.extend(messages.try_iter());
+        let next = queue.pop_front().expect("a message, just queued");
+        let message = match next? {
             Some(Ok(message)) => message,
             // Answered, with the `id: null` JSON-RPC 2.0 §5 requires when the
             // id could not be read, and the server carries on: the framing
@@ -821,6 +936,38 @@ pub fn serve(
             continue;
         }
         let params = message.get("params").cloned().unwrap_or(Value::Null);
+        // LSP 3.17, Cancellation Support: a request cancelled is still
+        // answered, and RequestCancelled says it was not run. Only one still
+        // waiting can be; one already answered had its cancel come too late,
+        // and the notification is dropped like any other unknown one.
+        // `initialize` and `shutdown` are carried out whatever follows them:
+        // either, left undone, leaves the session in no state at all.
+        if let Some(id) = &id
+            && initialized
+            && method != "shutdown"
+            && queue.iter().any(|later| cancels(later, id))
+        {
+            send(
+                writer,
+                json!({"id": id, "error": {"code": REQUEST_CANCELLED,
+                       "message": "cancelled before it was run"}}),
+            )?;
+            continue;
+        }
+        // A change with another change to the same document already behind
+        // it: its text is taken, so whatever comes between is answered on
+        // it, and it is not linted, since its diagnostics would be replaced
+        // before a person could read them. The last change of a burst is.
+        // A request is not dropped in the same way when its document has
+        // changed behind it: LSP 3.17 says a server should NOT answer
+        // ContentModified for a change still in its queue, as an answer on
+        // the older text can still be of use, and it is the client's to
+        // cancel one that is not.
+        let superseded = method == "textDocument/didChange"
+            && id.is_none()
+            && queue.iter().any(|later| {
+                is_change_to(later, params["textDocument"]["uri"].as_str().unwrap_or(""))
+            });
 
         let generation = idx.generation;
         match (method.as_str(), id) {
@@ -833,7 +980,9 @@ pub fn serve(
                        "message": "initialize may only be sent once"}}),
             )?,
             ("initialize", Some(id)) => {
-                idx.roots = workspace_roots(&params);
+                let folders = workspace_folders(&params);
+                idx.roots = folders.iter().map(|(path, _)| path.clone()).collect();
+                idx.folders = folders.into_iter().map(Folder::of).collect();
                 let layer;
                 (opts, layer, problems) = Options::read(&params);
                 if layer.select.is_some() || !layer.ignore.is_empty() {
@@ -915,6 +1064,7 @@ pub fn serve(
                 shutdown_requested = true;
                 docs.clear();
                 unsaved.clear();
+                kept.clear();
                 send(writer, json!({"id": id, "result": Value::Null}))?;
             }
 
@@ -961,6 +1111,7 @@ pub fn serve(
                     writer,
                     &mut docs,
                     &unsaved,
+                    &mut kept,
                     &mut idx,
                     uri,
                     text.to_string(),
@@ -983,11 +1134,17 @@ pub fn serve(
                         // screen; linted, and indexed, when it is saved.
                         docs.insert(uri.clone(), text.to_string());
                         unsaved.insert(uri);
+                    } else if superseded {
+                        // Indexed with the change that is linted, which
+                        // compares what the document defines with what it
+                        // did before the burst.
+                        docs.insert(uri, text.to_string());
                     } else {
                         publish(
                             writer,
                             &mut docs,
                             &unsaved,
+                            &mut kept,
                             &mut idx,
                             uri,
                             text.to_string(),
@@ -1009,7 +1166,7 @@ pub fn serve(
                 if let Some(text) = text {
                     unsaved.remove(&uri);
                     publish(
-                        writer, &mut docs, &unsaved, &mut idx, uri, text, policy, &opts,
+                        writer, &mut docs, &unsaved, &mut kept, &mut idx, uri, text, policy, &opts,
                     )?;
                 }
             }
@@ -1017,10 +1174,13 @@ pub fn serve(
                 let uri = uri_of(&params["textDocument"]);
                 docs.remove(&uri);
                 unsaved.remove(&uri);
+                kept.remove(&uri);
                 // The buffer is gone, so the disk is the authority again - and
                 // unsaved definitions it held no longer define anything.
                 if idx.reload(&path_of(&uri), policy) {
-                    relint(writer, &docs, &unsaved, &idx, None, policy, &opts)?;
+                    relint(
+                        writer, &docs, &unsaved, &mut kept, &idx, None, policy, &opts,
+                    )?;
                 }
                 // An empty list, not silence: diagnostics are owned by the
                 // server until it says otherwise, so a closed file would keep
@@ -1090,7 +1250,7 @@ pub fn serve(
                 }
             }
             ("textDocument/foldingRange", Some(id)) => {
-                match guarded(|| folding_ranges(&params, &docs)) {
+                match guarded(|| folding_ranges(&params, &docs, &kept)) {
                     Ok(ranges) => send(writer, json!({"id": id, "result": ranges}))?,
                     Err(panic) => send(writer, internal_error(id, &panic))?,
                 }
@@ -1163,23 +1323,32 @@ pub fn serve(
                 // the index is read again as a fresh server would (#541).
                 if config_changed {
                     idx.rebuild(policy, &docs);
+                    // What a broken document carries over was reported under
+                    // the old settings.
+                    kept.clear();
                 }
                 if changed || config_changed {
-                    relint(writer, &docs, &unsaved, &idx, None, policy, &opts)?;
+                    relint(
+                        writer, &docs, &unsaved, &mut kept, &idx, None, policy, &opts,
+                    )?;
                 }
             }
             // A folder added to or removed from a multi-root workspace (#797).
             ("workspace/didChangeWorkspaceFolders", None) => {
-                let folders =
-                    |key: &str| workspace_roots(&json!({"workspaceFolders": params["event"][key]}));
-                idx.change_roots(folders("added"), folders("removed"), policy);
+                let folders = |key: &str| {
+                    workspace_folders(&json!({"workspaceFolders": params["event"][key]}))
+                };
+                let removed = folders("removed").into_iter().map(|(path, _)| path);
+                idx.change_roots(folders("added"), removed.collect(), policy);
                 // An open buffer still wins over what a folder held.
                 for (uri, text) in docs.iter().filter(|(uri, _)| is_q_uri(uri)) {
                     idx.put(&path_of(uri), text);
                 }
                 idx.settle();
                 if idx.generation != generation {
-                    relint(writer, &docs, &unsaved, &idx, None, policy, &opts)?;
+                    relint(
+                        writer, &docs, &unsaved, &mut kept, &idx, None, policy, &opts,
+                    )?;
                 }
             }
             // Every other REQUEST gets an error, because a client waiting on a
@@ -1423,6 +1592,12 @@ fn path_uri(path: &std::path::Path) -> String {
     } else {
         "file:///"
     });
+    escape(&mut uri, &text);
+    uri
+}
+
+/// `text` onto a URI, each byte a URI cannot hold as itself escaped.
+fn escape(uri: &mut String, text: &str) {
     for b in text.bytes() {
         if b.is_ascii_alphanumeric() || b"/-._~:".contains(&b) {
             uri.push(b as char);
@@ -1430,7 +1605,43 @@ fn path_uri(path: &std::path::Path) -> String {
             uri.push_str(&format!("%{b:02X}"));
         }
     }
-    uri
+}
+
+/// The URI an answer names an indexed file by - a location, a call, a file
+/// in the graph or among the tests a change reaches. Every one of them comes
+/// here, so a file is named one way whatever the request.
+///
+/// The file is keyed by its real path (`file_key`), and the client knows it
+/// by the spelling it used: a workspace opened as `/tmp/ws`, where `/tmp` is
+/// a link to `/private/tmp`, has its files keyed `/private/tmp/ws/...`, and a
+/// URI made from the key named a file the editor then opened a second time,
+/// and that it showed as an absolute path rather than one in its folder
+/// (#850). So: an open document by the URI it was opened with; a file under
+/// a workspace folder by that folder's URI as the client sent it and the
+/// path below it - the innermost folder, when one holds another; and only a
+/// file in no folder by its real path.
+impl navigate::Sources<'_> {
+    fn uri(&self, key: &str) -> String {
+        if let Some(uri) = self.open.get(key) {
+            return uri.to_string();
+        }
+        let path = Path::new(key);
+        let below = self
+            .idx
+            .folders
+            .iter()
+            .filter_map(|folder| Some((folder, path.strip_prefix(&folder.key).ok()?)))
+            .min_by_key(|(_, rest)| rest.components().count());
+        let Some((folder, rest)) = below else {
+            return path_uri(path);
+        };
+        let mut uri = folder.uri.trim_end_matches('/').to_string();
+        for part in rest.components() {
+            uri.push('/');
+            escape(&mut uri, &part.as_os_str().to_string_lossy());
+        }
+        uri
+    }
 }
 
 /// The kind of a fix for one diagnostic, and of the one action that applies
@@ -1610,13 +1821,40 @@ fn fix_all_action(
 /// counts: `folds`' pairs, less any that start and end on one line, and one
 /// to a line - the widest, since the rest on that line could only be folded
 /// with it, and VS Code drops all but the first it is given. A document that
-/// is not open or not q, and one whose brackets do not close, has none: an
-/// empty list, which is what an editor shows while a line is being typed.
-fn folding_ranges(params: &Value, docs: &Documents) -> Vec<Value> {
+/// is not open or not q has none: an empty list. One whose brackets do not
+/// close has the last good version's that `Carry` keeps, and none when it
+/// has never closed since it was opened.
+fn folding_ranges(params: &Value, docs: &Documents, kept: &Kept) -> Vec<Value> {
     let uri = uri_of(&params["textDocument"]);
     let Some(source) = docs.get(&uri).filter(|_| is_q_uri(&uri)) else {
         return vec![];
     };
+    if balanced(source) {
+        return folds_in(source);
+    }
+    // Brackets that do not close have no folds of their own; those of the
+    // last version that closed stand where their lines do (`Carry`).
+    let Some((good, carry)) = kept
+        .get(&uri)
+        .and_then(|good| Some((good, Carry::new(&good.text, source)?)))
+    else {
+        return vec![];
+    };
+    folds_in(&good.text)
+        .into_iter()
+        .filter_map(|mut range| {
+            let start = range["startLine"].as_u64()? as usize;
+            let end = range["endLine"].as_u64()? as usize;
+            let (start, end) = carry.lines(start, end)?;
+            range["startLine"] = json!(start);
+            range["endLine"] = json!(end);
+            Some(range)
+        })
+        .collect()
+}
+
+/// `source`'s folds as ranges of lines, one to a line.
+fn folds_in(source: &str) -> Vec<Value> {
     let lines = Lines::new(source);
     let mut ranges: Vec<Value> = vec![];
     let mut last_start = None;
@@ -1675,6 +1913,7 @@ fn publish(
     writer: &mut impl Write,
     docs: &mut Documents,
     unsaved: &Unsaved,
+    kept: &mut Kept,
     idx: &mut Index,
     uri: String,
     text: String,
@@ -1684,9 +1923,9 @@ fn publish(
     let path = path_of(&uri);
     let changed = is_q_uri(&uri) && idx.set(&path, &text);
     docs.insert(uri.clone(), text);
-    diagnose(writer, &uri, &docs[&uri], &idx.ws, policy, opts)?;
+    diagnose(writer, &uri, &docs[&uri], kept, &idx.ws, policy, opts)?;
     if changed {
-        relint(writer, docs, unsaved, idx, Some(&uri), policy, opts)?;
+        relint(writer, docs, unsaved, kept, idx, Some(&uri), policy, opts)?;
     }
     Ok(())
 }
@@ -1694,10 +1933,12 @@ fn publish(
 /// Lint every open document but `except` again - and but those `unsaved`:
 /// with `lint.run: "onSave"` a buffer is linted only when saved, and another
 /// file's change does not lint its unsaved text either (#550).
+#[allow(clippy::too_many_arguments)]
 fn relint(
     writer: &mut impl Write,
     docs: &Documents,
     unsaved: &Unsaved,
+    kept: &mut Kept,
     idx: &Index,
     except: Option<&str>,
     policy: &Policy,
@@ -1705,7 +1946,7 @@ fn relint(
 ) -> Result<(), String> {
     for (uri, text) in docs {
         if Some(uri.as_str()) != except && !unsaved.contains(uri) {
-            diagnose(writer, uri, text, &idx.ws, policy, opts)?;
+            diagnose(writer, uri, text, kept, &idx.ws, policy, opts)?;
         }
     }
     Ok(())
@@ -1716,6 +1957,7 @@ fn diagnose(
     writer: &mut impl Write,
     uri: &str,
     text: &str,
+    kept: &mut Kept,
     ws: &Workspace,
     policy: &Policy,
     opts: &Options,
@@ -1756,7 +1998,7 @@ fn diagnose(
         }
     };
     let lines = Lines::new(text);
-    let diagnostics: Vec<Value> = findings
+    let mut diagnostics: Vec<Value> = findings
         .iter()
         .map(|f| {
             let mut d = diagnostic(f, &lines);
@@ -1766,6 +2008,35 @@ fn diagnose(
             d
         })
         .collect();
+    // A file whose structure is broken reports that alone (`lint_selecting`),
+    // which while a call or a string is being typed is every keystroke: the
+    // rest of the Problems panel went blank and came back as the bracket
+    // closed. So the rest is carried over from the last version that did
+    // close, where it still stands (`Carry`) - and a version that closes is
+    // the next one to carry from.
+    if is_q_uri(uri) {
+        if matches!(findings.as_slice(), [only] if only.code == "QE001") {
+            if let Some(good) = kept.get(uri)
+                && let Some(carry) = Carry::new(&good.text, text)
+            {
+                diagnostics.extend(good.diagnostics.iter().filter_map(|d| {
+                    let (start, end) = (&d["range"]["start"]["line"], &d["range"]["end"]["line"]);
+                    let (start, end) =
+                        carry.lines(start.as_u64()? as usize, end.as_u64()? as usize)?;
+                    let mut d = d.clone();
+                    d["range"]["start"]["line"] = json!(start);
+                    d["range"]["end"]["line"] = json!(end);
+                    Some(d)
+                }));
+            }
+        } else if balanced(text) {
+            let good = Good {
+                text: text.to_string(),
+                diagnostics: diagnostics.clone(),
+            };
+            kept.insert(uri.to_string(), good);
+        }
+    }
     send(
         writer,
         json!({"method": "textDocument/publishDiagnostics",
@@ -1909,6 +2180,21 @@ impl<'a> Lines<'a> {
         start + text.len()
     }
 
+    /// Each line as a client counts them, with its line ending.
+    fn texts(&self) -> Vec<&'a str> {
+        let ends = self
+            .starts
+            .iter()
+            .skip(1)
+            .copied()
+            .chain([self.source.len()]);
+        self.starts
+            .iter()
+            .zip(ends)
+            .map(|(&start, end)| &self.source[start..end])
+            .collect()
+    }
+
     /// The text of a 0-based line as q counts lines, less its line ending.
     fn q_line(&self, line: usize) -> &'a str {
         let Some(&start) = self.q_starts.get(line) else {
@@ -1938,6 +2224,75 @@ impl<'a> Lines<'a> {
             units += c.len_utf16();
         }
         start + text.len()
+    }
+}
+
+/// Which lines of a document's last good text still stand in its text now,
+/// a statement of which does not close, and where they are.
+///
+/// WHY CARRY OVER, AND NOT LINT WHAT STILL PARSES
+///
+/// Linting the statements around the broken one would need that statement
+/// cut out, and every rule after it would then read a file in which what it
+/// defines is gone - a name it assigns undefined further down, a load it
+/// makes not made. Those are findings at true positions saying false things.
+/// The last good results said true things about lines that have not changed
+/// since, and are wrong only where an edit has reached, which the text says.
+///
+/// So a line is carried when it is unchanged - in the run of lines both
+/// texts start with or the run both end with, shifted by the lines added or
+/// removed between - and it is not in the statement that does not close
+/// (`broken_statement`), whose results nothing can vouch for. A diagnostic or
+/// a fold is carried only when every line it spans is, so none lands on a
+/// line other than its own. The trade is staleness: a finding an unchanged
+/// line owes to the statement being typed - a name it defined - waits for
+/// the statement to close before it goes.
+struct Carry {
+    /// The lines both texts start with.
+    head: usize,
+    /// Where the lines both texts end with begin, in the old text and now.
+    old_tail: usize,
+    new_tail: usize,
+    /// The lines of the statement that does not close, now.
+    broken: std::ops::Range<usize>,
+}
+
+impl Carry {
+    /// `None` when `new` has no broken statement, and nothing to carry
+    /// over for.
+    fn new(old: &str, new: &str) -> Option<Self> {
+        let broken = broken_statement(new)?;
+        let (before, after) = (Lines::new(old), Lines::new(new));
+        let (a, b) = (before.texts(), after.texts());
+        let head = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
+        let tail = a[head..]
+            .iter()
+            .rev()
+            .zip(b[head..].iter().rev())
+            .take_while(|(x, y)| x == y)
+            .count();
+        let first = after.position(broken.start).0;
+        let last = after.position(broken.end.max(broken.start + 1) - 1).0;
+        Some(Carry {
+            head,
+            old_tail: a.len() - tail,
+            new_tail: b.len() - tail,
+            broken: first..last + 1,
+        })
+    }
+
+    /// Where the old lines `first` to `last` are now, when every one of them
+    /// is unchanged and none is in the broken statement.
+    fn lines(&self, first: usize, last: usize) -> Option<(usize, usize)> {
+        let (first, last) = if last < self.head {
+            (first, last)
+        } else if first >= self.old_tail {
+            let shift = |line: usize| line - self.old_tail + self.new_tail;
+            (shift(first), shift(last))
+        } else {
+            return None;
+        };
+        (last < self.broken.start || first >= self.broken.end).then_some((first, last))
     }
 }
 

@@ -329,16 +329,17 @@ fn run(args: Args) -> Result<u8, String> {
         return analyze_graph(graph);
     }
     if args.lsp {
-        // Locked once for the life of the process: the server owns both
-        // streams, and re-locking per message would be pure overhead.
+        // stdout locked once for the life of the process: the server owns
+        // it, and re-locking per message would be pure overhead. stdin is
+        // read by a thread of the server's own, which a lock cannot be
+        // handed to.
         // The server reads the same `ignore` the command line does, so an
         // editor shows what `qlinter` prints. A configuration it cannot read
         // is reported and passed over rather than fatal: a server that exits
         // gives an editor no diagnostics and no reason why.
         let policy = Policy::new(overrides(&args)?, true);
-        let stdin = io::stdin();
         let stdout = io::stdout();
-        return lsp::serve(&mut stdin.lock(), &mut stdout.lock(), &policy);
+        return lsp::serve(io::BufReader::new(io::stdin()), &mut stdout.lock(), &policy);
     }
     if args.rules || args.explain.is_some() {
         if args.fix || args.diff {

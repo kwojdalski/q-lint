@@ -2863,3 +2863,210 @@ fn folding_a_broken_or_unknown_buffer_returns_no_ranges() {
     );
     assert_eq!(server.shutdown_and_exit(), 0);
 }
+
+/// Each diagnostic as `(code, line, character)`, in the order sent.
+fn places(diagnostics: &[Value]) -> Vec<(String, u64, u64)> {
+    diagnostics
+        .iter()
+        .map(|d| {
+            (
+                d["code"].as_str().unwrap_or("").to_string(),
+                d["range"]["start"]["line"].as_u64().unwrap(),
+                d["range"]["start"]["character"].as_u64().unwrap(),
+            )
+        })
+        .collect()
+}
+
+fn change(server: &mut Server, uri: &str, version: u64, text: &str) {
+    server.send(json!({"jsonrpc":"2.0","method":"textDocument/didChange",
+        "params":{"textDocument":{"uri":uri,"version":version},
+                  "contentChanges":[{"text":text}]}}));
+}
+
+/// Three lambdas, two with a finding and each a fold.
+const THREE: &str = "f:{[a]\n  a==1}\ng:{[b]\n  b+1}\nh:{[c]\n  c==2}\n";
+
+#[test]
+fn a_bracket_being_typed_keeps_the_rest_of_the_files_findings_and_folds() {
+    let mut server = Server::start();
+    server.initialize();
+    let uri = "file:///tmp/typing.q";
+    server.open(uri, THREE);
+    let qe004 = |line| ("QE004".to_string(), line, 3);
+    assert_eq!(places(&server.diagnostics_for(uri)), [qe004(1), qe004(5)]);
+    let folds = json!([{"startLine": 0, "endLine": 1}, {"startLine": 2, "endLine": 3},
+                       {"startLine": 4, "endLine": 5}]);
+    assert_eq!(server.folding_ranges(uri), folds);
+
+    // A call being typed on a new line in `g`: the QE001 is at its `[`,
+    // where the typing is, not at the `}` a line below; `f`'s finding stays
+    // where it was and `h`'s moves down the line that was added. `g` itself
+    // is the statement that does not close, and nothing is said of it.
+    let typing = "f:{[a]\n  a==1}\ng:{[b]\n  x:f[1;\n  b+1}\nh:{[c]\n  c==2}\n";
+    change(&mut server, uri, 2, typing);
+    let diagnostics = server.diagnostics_for(uri);
+    assert_eq!(
+        places(&diagnostics),
+        [("QE001".to_string(), 3, 5), qe004(1), qe004(6)]
+    );
+    assert_eq!(
+        diagnostics[0]["message"],
+        "Unclosed delimiter; expected ']' before the '}' on line 5"
+    );
+    assert_eq!(
+        server.folding_ranges(uri),
+        json!([{"startLine": 0, "endLine": 1}, {"startLine": 5, "endLine": 6}])
+    );
+
+    // Typed on: what is carried is the last version that closed, not the
+    // one before this.
+    let more = "f:{[a]\n  a==1}\ng:{[b]\n  x:f[1;2\n  b+1}\nh:{[c]\n  c==2}\n";
+    change(&mut server, uri, 3, more);
+    assert_eq!(
+        places(&server.diagnostics_for(uri)),
+        [("QE001".to_string(), 3, 5), qe004(1), qe004(6)]
+    );
+
+    // A string opened in the last statement: what is above it stands.
+    let string = format!("{THREE}s:\"abc\n");
+    change(&mut server, uri, 4, &string);
+    assert_eq!(
+        places(&server.diagnostics_for(uri)),
+        [("QE001".to_string(), 6, 2), qe004(1), qe004(5)]
+    );
+    assert_eq!(server.folding_ranges(uri), folds);
+
+    // Closed, the file is linted whole again, and it is what is carried
+    // next: `g`'s new line has a finding of its own.
+    let closed = "f:{[a]\n  a==1}\ng:{[b]\n  b==2;\n  b+1}\nh:{[c]\n  c==2}\n";
+    change(&mut server, uri, 5, closed);
+    assert_eq!(
+        places(&server.diagnostics_for(uri)),
+        [qe004(1), qe004(3), qe004(6)]
+    );
+    let broken = "f:{[a]\n  a==1}\ng:{[b]\n  b==2;\n  b+1}\nh:{[c]\n  c==(2}\n";
+    change(&mut server, uri, 6, broken);
+    assert_eq!(
+        places(&server.diagnostics_for(uri)),
+        [("QE001".to_string(), 6, 5), qe004(1), qe004(3)]
+    );
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn a_document_that_never_closed_has_nothing_to_carry() {
+    // Opened broken, there is no version whose results can be trusted, and
+    // closing one document forgets what it had.
+    let mut server = Server::start();
+    server.initialize();
+    let uri = "file:///tmp/never-closed.q";
+    server.open(uri, "f:{[a]\n  a==1}\ng:{[b]\n  f[1;\n  b}\n");
+    assert_eq!(
+        places(&server.diagnostics_for(uri)),
+        [("QE001".to_string(), 3, 3)]
+    );
+    assert_eq!(server.folding_ranges(uri), json!([]));
+    server.open(uri, THREE);
+    server.diagnostics_for(uri);
+    server.send(json!({"jsonrpc":"2.0","method":"textDocument/didClose",
+        "params":{"textDocument":{"uri":uri}}}));
+    server.diagnostics_for(uri);
+    server.open(
+        uri,
+        "f:{[a]\n  a==1}\ng:{[b]\n  f[1;\n  b}\nh:{[c]\n  c==2}\n",
+    );
+    assert_eq!(
+        places(&server.diagnostics_for(uri)),
+        [("QE001".to_string(), 3, 3)]
+    );
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+/// A file long enough that linting it takes longer than sending it: a
+/// thousand lambdas, each with one QE004.
+fn long_file() -> String {
+    (0..1000)
+        .map(|i| format!("f{i}:{{[a]\n  a==1}}\n"))
+        .collect()
+}
+
+#[test]
+fn a_burst_of_changes_is_linted_at_its_last() {
+    // Twenty edits sent faster than one can be linted. Each was linted in
+    // turn, and the last diagnostics came after nineteen nobody could read
+    // (#867); now a change with another behind it is not linted.
+    let mut server = Server::start();
+    server.initialize();
+    let uri = "file:///tmp/burst.q";
+    let text = long_file();
+    server.open(uri, &text);
+    assert_eq!(server.diagnostics_for(uri).len(), 1000);
+    // Change `i` adds `i` lines with a finding each, so a publish says
+    // which version it is of.
+    let mut version = text.clone();
+    for i in 1..=20 {
+        version.push_str(&format!("b{i}:1==2\n"));
+        change(&mut server, uri, i + 1, &version);
+        // A request between two changes is answered on the text before it,
+        // linted or not.
+        if i == 10 {
+            server.send(
+                json!({"jsonrpc":"2.0","id":51,"method":"textDocument/documentSymbol",
+                "params":{"textDocument":{"uri":uri}}}),
+            );
+        }
+    }
+    // Answered after every change before it was handled.
+    server.send(
+        json!({"jsonrpc":"2.0","id":50,"method":"textDocument/foldingRange",
+        "params":{"textDocument":{"uri":uri}}}),
+    );
+    let (mut published, mut symbols) = (vec![], None);
+    loop {
+        let message = server.receive();
+        if message["id"] == 50 {
+            break;
+        }
+        if message["id"] == 51 {
+            symbols = message["result"].as_array().map(Vec::len);
+        }
+        if message["method"] == "textDocument/publishDiagnostics" {
+            published.push(message["params"]["diagnostics"].as_array().unwrap().len());
+        }
+    }
+    assert_eq!(symbols, Some(1010));
+    assert_eq!(published.last(), Some(&1020), "{published:?}");
+    assert!(published.len() < 20, "{published:?}");
+    assert!(published.windows(2).all(|w| w[0] < w[1]), "{published:?}");
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn a_request_cancelled_while_it_waits_is_answered_cancelled() {
+    // LSP 3.17: a cancelled request is still answered, with
+    // RequestCancelled when it was not run. The server is kept busy linting
+    // a long file while the request and its cancellation arrive behind it.
+    let mut server = Server::start();
+    server.initialize();
+    let uri = "file:///tmp/cancel.q";
+    let text = long_file();
+    server.open(uri, &text);
+    change(&mut server, uri, 2, &format!("{text}a:1\n"));
+    change(&mut server, uri, 3, &format!("{text}a:2\n"));
+    let fold = |id: u64| {
+        json!({"jsonrpc":"2.0","id":id,"method":"textDocument/foldingRange",
+               "params":{"textDocument":{"uri":uri}}})
+    };
+    server.send(fold(60));
+    server.send(fold(61));
+    server.send(json!({"jsonrpc":"2.0","method":"$/cancelRequest","params":{"id":60}}));
+    let cancelled = server.until(|m| m["id"] == 60);
+    assert_eq!(cancelled["error"]["code"], -32800, "{cancelled}");
+    // The one not cancelled is run; a cancel for a request already answered
+    // is dropped, and answers nothing.
+    let answered = server.until(|m| m["id"] == 61);
+    assert_eq!(answered["result"].as_array().map(Vec::len), Some(1000));
+    server.send(json!({"jsonrpc":"2.0","method":"$/cancelRequest","params":{"id":61}}));
+    assert_eq!(server.shutdown_and_exit(), 0);
+}

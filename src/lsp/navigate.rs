@@ -22,7 +22,7 @@
 //! a string (`value "f[]"`), a symbol built at run time, or another process
 //! is in no list here, which is why only a lambda's own parameters and
 //! locals can be renamed: every place those are named is inside the lambda.
-use super::{Documents, Index, Lines, file_key, is_q_uri, path_of, path_uri};
+use super::{Documents, Index, Lines, file_key, is_q_uri, path_of};
 use q_lint_rs::graph::{self, Placement};
 use q_lint_rs::{Mention, Name, load_at, mentions, name_at};
 use serde_json::{Value, json};
@@ -109,7 +109,7 @@ impl<'a> Sources<'a> {
         }
         let bytes = std::fs::read(key).ok()?;
         Some((
-            path_uri(std::path::Path::new(key)),
+            self.uri(key),
             Cow::Owned(String::from_utf8_lossy(&bytes).into_owned()),
         ))
     }
@@ -260,14 +260,6 @@ impl<'a> Sources<'a> {
                 .collect()
         };
         graph::loaded(Path::new(from), load, &self.idx.cwd(), indexed, scripts_in)
-    }
-
-    /// The URI a location in the file `key` names it by: the open buffer's,
-    /// or the file's on disk.
-    pub(super) fn uri(&self, key: &str) -> String {
-        self.open
-            .get(key)
-            .map_or_else(|| path_uri(Path::new(key)), |uri| uri.to_string())
     }
 
     /// The path of the load under the cursor, as its start and length, with
