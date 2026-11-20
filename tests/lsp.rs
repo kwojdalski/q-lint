@@ -1602,10 +1602,18 @@ fn the_precedence_fix_is_a_quick_fix_for_the_trap_and_for_the_routine_mix() {
         (&diagnostics[1], (1, 12, 22), "(step*til n)"),
     ] {
         let actions = server.code_actions(uri, std::slice::from_ref(diagnostic));
-        assert_eq!(actions.len(), 1, "{actions:?}");
+        // The fix, then the `/ noqa` suppression every finding is offered.
+        assert_eq!(actions.len(), 2, "{actions:?}");
         assert_eq!(
             actions[0]["title"],
             "Parenthesise to show the order q evaluates in"
+        );
+        assert_eq!(
+            actions[1]["title"],
+            format!(
+                "Suppress {} on this line",
+                diagnostic["code"].as_str().unwrap()
+            )
         );
         let (line, start, end) = range;
         assert_eq!(
