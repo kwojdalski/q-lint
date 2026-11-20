@@ -289,3 +289,45 @@ test("a server that is not there is said to be unreachable", async () => {
   await new Promise((resolve) => server.close(resolve));
   await assert.rejects(fetchProcesses(`http://127.0.0.1:${port}/`), /^Error: could not reach it: .*ECONNREFUSED/);
 });
+
+test("a redirect to another origin is not sent the auth header", async () => {
+  const seen = [];
+  const other = http.createServer((req, res) => {
+    seen.push({ authorization: req.headers.authorization, key: req.headers["x-api-key"] });
+    res.writeHead(200, { "content-type": json });
+    res.end(JSON.stringify([{ label: "elsewhere", host: "h", port: 1 }]));
+  });
+  await new Promise((resolve) => other.listen(0, "127.0.0.1", resolve));
+  const elsewhere = `http://127.0.0.1:${other.address().port}/list`;
+  const first = http.createServer((req, res) => {
+    if (req.url === "/same") {
+      res.writeHead(302, { location: "/here" });
+      res.end();
+    } else if (req.url === "/here") {
+      res.writeHead(200, { "content-type": json });
+      res.end(JSON.stringify([{ label: req.headers["x-api-key"] ?? "none", host: "h", port: 1 }]));
+    } else if (req.url === "/loop") {
+      res.writeHead(302, { location: "/loop" });
+      res.end();
+    } else {
+      res.writeHead(307, { location: elsewhere });
+      res.end();
+    }
+  });
+  await new Promise((resolve) => first.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${first.address().port}`;
+  try {
+    for (const secret of ["X-Api-Key: k1", "Bearer t0k"]) {
+      assert.deepStrictEqual((await fetchProcesses(`${base}/away`, { secret })).processes.map((p) => p.label), ["elsewhere"]);
+    }
+    assert.deepStrictEqual(seen, [{ authorization: undefined, key: undefined }, { authorization: undefined, key: undefined }]);
+    // On the same origin the header follows.
+    assert.deepStrictEqual((await fetchProcesses(`${base}/same`, { secret: "X-Api-Key: k1" })).processes.map((p) => p.label), ["k1"]);
+    await assert.rejects(fetchProcesses(`${base}/loop`), /redirect/);
+  } finally {
+    for (const s of [first, other]) {
+      s.closeAllConnections();
+      await new Promise((resolve) => s.close(resolve));
+    }
+  }
+});

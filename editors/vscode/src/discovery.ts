@@ -32,6 +32,8 @@ export const EMPTY_STATE: ServerState = { processes: [], problems: [], loading: 
 /// The longest a fetch waits for the whole answer, and the most it reads.
 export const FETCH_TIMEOUT_MS = 10_000;
 export const MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
+/// The most redirects a fetch follows; the auth header only to its origin.
+const MAX_REDIRECTS = 20;
 
 /// Why `label` cannot name a discovery server, or undefined when it can.
 /// A `/` would make a qualified label (`server/process`) ambiguous.
@@ -120,18 +122,42 @@ export async function fetchProcesses(url: string, options: FetchOptions = {}): P
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const timedOut = (): Error => new Error(`no answer within ${timeoutMs / 1000} s`);
   try {
+    // Redirects are followed here rather than by fetch, which strips only
+    // `Authorization` on the way to another origin: a secret sent under its
+    // own name (`X-Api-Key: ...`) would go to wherever the server pointed.
     let response: Response;
-    try {
-      response = await fetch(url, {
-        headers: { Accept: "application/json", ...(header ? { [header[0]]: header[1] } : {}) },
-        signal: controller.signal,
-      });
-    } catch (error) {
-      if (controller.signal.aborted) {
-        throw timedOut();
+    let at = url;
+    let send = header;
+    for (let hops = 0; ; hops++) {
+      try {
+        response = await fetch(at, {
+          headers: { Accept: "application/json", ...(send ? { [send[0]]: send[1] } : {}) },
+          signal: controller.signal,
+          redirect: "manual",
+        });
+      } catch (error) {
+        if (controller.signal.aborted) {
+          throw timedOut();
+        }
+        const cause = error instanceof Error && error.cause instanceof Error ? error.cause.message : String(error);
+        throw new Error(`could not reach it: ${cause}`);
       }
-      const cause = error instanceof Error && error.cause instanceof Error ? error.cause.message : String(error);
-      throw new Error(`could not reach it: ${cause}`);
+      const location = response.headers.get("location");
+      if (![301, 302, 303, 307, 308].includes(response.status) || location === null) {
+        break;
+      }
+      await response.body?.cancel().catch(() => {});
+      if (hops === MAX_REDIRECTS) {
+        throw new Error(`it redirected more than ${MAX_REDIRECTS} times`);
+      }
+      const next = new URL(location, at);
+      if (next.protocol !== "http:" && next.protocol !== "https:") {
+        throw new Error(`it redirected to ${next.protocol} URL`);
+      }
+      if (next.origin !== new URL(at).origin) {
+        send = undefined;
+      }
+      at = next.href;
     }
     const refuse = async (why: string): Promise<never> => {
       controller.abort();
