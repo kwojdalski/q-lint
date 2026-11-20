@@ -570,6 +570,7 @@
         {
           "id": "q-lint.dependencies",
           "name": "q Dependencies",
+          "icon": "media/view-dependencies.svg",
           "contextualTitle": "q-lint",
           "when": "q-lint.hasGraph",
           "visibility": "collapsed"
@@ -579,16 +580,19 @@
         {
           "id": "q-lint.processes",
           "name": "Processes",
+          "icon": "media/view-processes.svg",
           "contextualTitle": "q-lint"
         },
         {
           "id": "q-lint.processExplorer",
           "name": "Process Explorer",
+          "icon": "media/view-explorer.svg",
           "contextualTitle": "q-lint"
         },
         {
           "id": "q-lint.queryHistory",
           "name": "Query History",
+          "icon": "media/view-history.svg",
           "contextualTitle": "q-lint"
         }
       ]
@@ -618,22 +622,22 @@
         {
           "command": "q-lint.importProcesses",
           "when": "view == q-lint.processes",
-          "group": "list@1"
+          "group": "1_processes@1"
         },
         {
           "command": "q-lint.exportProcesses",
           "when": "view == q-lint.processes",
-          "group": "list@2"
+          "group": "1_processes@2"
         },
         {
           "command": "q-lint.addDiscoveryServer",
           "when": "view == q-lint.processes",
-          "group": "list@3"
+          "group": "2_discovery@1"
         },
         {
           "command": "q-lint.reloadDiscoveryServer",
           "when": "view == q-lint.processes",
-          "group": "list@4"
+          "group": "2_discovery@2"
         },
         {
           "command": "q-lint.refreshProcessExplorer",
@@ -830,7 +834,16 @@
     "viewsWelcome": [
       {
         "view": "q-lint.processes",
-        "contents": "No q processes yet.\n[Add Process](command:q-lint.addProcess)\n[Import Processes](command:q-lint.importProcesses)\n[Add Discovery Server](command:q-lint.addDiscoveryServer)\nq-lint connects only to a process you add here, and runs only the code you send it."
+        "contents": "No q processes yet.\n[Add Process](command:q-lint.addProcess)\nOr [import a list](command:q-lint.importProcesses) of them, or [add a discovery server](command:q-lint.addDiscoveryServer) that lists them.\nq-lint connects only to a process you add here, and runs only the code you send it."
+      },
+      {
+        "view": "q-lint.processExplorer",
+        "when": "!q-lint.connected",
+        "contents": "Not connected to a q process. Connect to one to browse its namespaces, tables, functions and variables.\n[Connect to Process](command:q-lint.connectProcess)"
+      },
+      {
+        "view": "q-lint.queryHistory",
+        "contents": "No queries yet. In a q file, Ctrl+Q runs the current line, Ctrl+R the selection and Ctrl+E the block on the connected process. Each query is kept here, with its outcome and time, to rerun."
       }
     ],
     "keybindings": [
