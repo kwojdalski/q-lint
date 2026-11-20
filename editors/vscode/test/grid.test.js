@@ -322,6 +322,23 @@ test("a temporal axis is labelled in q's notation", () => {
 
 const LOOK = { colours: ["#111111", "#222222"], foreground: "#eeeeee", border: "#333333", font: "Menlo" };
 
+test("a scatter's month, date, minute or second axis ticks whole units", () => {
+  // Chart.js puts ticks between whole values over a short range: months
+  // 322 to 324 had 322.2, 322.4, ... labelled "2026.11.199999999999989".
+  for (const type of [13, 14, 17, 18]) {
+    const grid = toGrid(
+      { count: 3, keys: 0, names: ["t", "y"], types: [type, 9], cells: [["a", "b", "c"], ["1", "2", "3"]], raw: [[322, 323, 324], [1, 2, 3]], rank: [[0, 1, 2], [0, 1, 2]] },
+      -1,
+    );
+    const rows = [0, 1, 2];
+    const config = charts.chartConfig(grid, rows, "scatter", charts.chartData(grid, rows, "scatter", [1], 10), LOOK);
+    assert.strictEqual(config.options.scales.x.ticks.precision, 0, String(type));
+  }
+  // A tick between months still names a month.
+  assert.strictEqual(charts.temporalLabel(13, 322.4), "2026.11");
+  assert.strictEqual(charts.temporalLabel(13, -0.5), "1999.12");
+});
+
 test("a chart's configuration takes the theme's colours and the grid's axes", () => {
   const grid = sample();
   const line = charts.chartConfig(grid, [0, 1, 2, 3], "line", charts.chartData(grid, [0, 1, 2, 3], "line", [1], 10), LOOK);

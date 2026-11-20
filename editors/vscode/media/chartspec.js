@@ -62,6 +62,9 @@
 
   const pad = function (n, w) { return String(n).padStart(w || 2, "0"); };
 
+  /// The temporal types q holds as whole units: month, date, minute, second.
+  const WHOLE = [13, 14, 17, 18];
+
   /// How an axis writes a temporal column's value - its own unit since
   /// 2000.01.01, as grid.ts sends it - in q's notation, to the second.
   function temporalLabel(type, v) {
@@ -78,7 +81,7 @@
     };
     switch (type) {
       case 12: return stamp(v / 1e6, "D");
-      case 13: return (2000 + Math.floor(v / 12)) + "." + pad(((v % 12) + 12) % 12 + 1);
+      case 13: v = Math.floor(v); return (2000 + Math.floor(v / 12)) + "." + pad(((v % 12) + 12) % 12 + 1);
       case 14: return stamp(v * day);
       case 15: return stamp(v * day, "T");
       case 16: return (v < 0 ? "-" : "") + Math.floor(Math.abs(v) / 864e11) + "D" + clock((Math.abs(v) % 864e11) / 1e9);
@@ -190,8 +193,10 @@
           x: {
             title: { display: kind !== "histogram", text: kind === "scatter" && !grid.values[0] ? "row" : x.name },
             type: kind === "scatter" ? "linear" : "category",
+            // A month, date, minute or second is a whole number: a tick
+            // between two would repeat one's label, or name no month.
             ticks: kind === "scatter" && x.temporal
-              ? { callback: function (v) { return temporalLabel(x.type, v); } }
+              ? Object.assign({ callback: function (v) { return temporalLabel(x.type, v); } }, WHOLE.indexOf(x.type) >= 0 ? { precision: 0 } : {})
               : { autoSkip: true, maxRotation: 0 },
           },
           y: { title: { display: kind === "histogram", text: "count" } },
