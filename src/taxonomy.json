@@ -633,7 +633,7 @@
     "code": "QS006",
     "name": "lambda-length",
     "category": "style-guide",
-    "summary": "Lambda longer than twenty five lines",
+    "summary": "Lambda longer than twenty five lines of code, not counting blank lines and comments",
     "scope": "styleq"
   },
   {

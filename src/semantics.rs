@@ -2561,15 +2561,28 @@ pub fn check(
     // The second threshold, not the first: over ten is 11% of the lambdas in
     // real q and over twenty five is 2%, and a rule that fires on a tenth of
     // everything is one nobody leaves on.
+    //
+    // Lines of code only, read in `comments`, which blanks a comment and
+    // keeps a string: a blank line or a comment is not something to hold in
+    // mind, and a lambda of fourteen statements with a dozen lines of doc
+    // comment between them is not long. A line inside a multi-line string
+    // is code. A nested lambda's lines count toward the one around it: they
+    // are read as part of it, inline, and moving a nested lambda out to a
+    // name of its own is exactly the shortening this rule asks for.
     for scope in &scopes {
-        let lines = code[scope.start..scope.end].matches('\n').count() + 1;
+        let lines = comments[scope.start..(scope.end + 1).min(comments.len())]
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .count();
         if lines > 25 {
             out.push(Finding::at(
                 path,
                 raw,
                 scope.start,
                 "QS006",
-                format!("This lambda is {lines} lines; over twenty five is hard to hold in mind"),
+                format!(
+                    "This lambda is {lines} lines of code; over twenty five is hard to hold in mind"
+                ),
             ));
         }
     }
