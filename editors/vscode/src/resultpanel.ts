@@ -2,11 +2,12 @@
 // where `media/result.js` draws it as a grid or a chart.
 //
 // The panel is a webview that loads only the extension's own files, under a
-// Content-Security-Policy that allows no inline code and no network: its two
+// Content-Security-Policy that allows no inline code and no network: its
 // scripts carry a fresh nonce, and its stylesheet comes from `media/`. The
 // chart library is Chart.js 4.5.1 (MIT, chartjs.org), vendored whole as
-// `media/vendor/chart.umd.min.js` with its licence beside it. The grid is
-// this extension's. What the panel shows is computed here, by `grid.ts`, so
+// `media/vendor/chart.umd.min.js` with its licence beside it; what a chart
+// draws is `media/chartspec.js`'s, which a notebook's charts share. The grid
+// is this extension's. What the panel shows is computed here, by `grid.ts`, so
 // the script only lays it out, sorts it by the ranks the process sent and
 // filters it by the text each cell shows.
 import { randomBytes } from "node:crypto";
@@ -178,6 +179,7 @@ export class QueryModes {
       `<link rel="stylesheet" href="${file("result.css")}">`,
       "<title>q-lint: result</title></head><body>",
       `<script nonce="${nonce}" src="${file("vendor", "chart.umd.min.js")}"></script>`,
+      `<script nonce="${nonce}" src="${file("chartspec.js")}"></script>`,
       `<script nonce="${nonce}" src="${file("result.js")}"></script>`,
       "</body></html>",
     ].join("\n");

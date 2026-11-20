@@ -1,13 +1,17 @@
 // q notebooks (#857): the `.qnb` format, cell directives, the grid's HTML
-// and text, the outputs a cell shows, and Export Notebook. Run after `tsc`;
+// and text, the outputs a cell shows, a chart's output item (#870), and
+// Export Notebook. Run after `tsc`;
 // nothing here needs an editor or a q process (notebook_q.test.js drives a
 // real one).
 const test = require("node:test");
 const assert = require("node:assert");
 const pkg = require("../package.json");
 const { NOTEBOOK, QNB_VERSION, QnbError, decodeItem, encodeItem, exportScript, parseQnb, serializeQnb } = require("../out/qnb.js");
+const fs = require("node:fs");
+const path = require("node:path");
 const { CHART_KINDS, cellDirective } = require("../out/celldirectives.js");
-const { DATA, cellOutputs, escapeHtml, readCellData, tableHtml, tableText } = require("../out/celldata.js");
+const { CHART_MIME, DATA, cellOutputs, chartCellOutputs, escapeHtml, readCellData, tableHtml, tableText } = require("../out/celldata.js");
+const { toGrid } = require("../out/grid.js");
 const { statements } = require("../out/statements.js");
 
 const SAMPLE = {
@@ -95,6 +99,21 @@ test("a directive that is not one is a problem, not a silent default", () => {
   assert.match(cellDirective("/ @chart pie\nt").problem, /was given "pie"/);
   assert.match(cellDirective("/ @grd\nt").problem, /`\/ @grd` is not a cell directive/);
   assert.match(cellDirective("/ @grid wide\nt").problem, /takes nothing after it/);
+  assert.match(cellDirective("/ @title\n/ @chart bar\nt").problem, /takes the chart's title/);
+  assert.match(cellDirective("/ @chart bar\n/ @height 50\nt").problem, /100 to 2000, and was given "50"/);
+  assert.match(cellDirective("/ @chart bar\n/ @height tall\nt").problem, /was given "tall"/);
+  assert.match(cellDirective("/ @grid\n/ @title Prices\nt").problem, /`\/ @title` is for a chart, and this cell has no `\/ @chart`/);
+  assert.match(cellDirective("/ @height 400\nt").problem, /`\/ @height` is for a chart/);
+});
+
+test("a chart takes a title and a height, before or after its kind", () => {
+  assert.deepStrictEqual(cellDirective("/ @title Daily volume, by sym\n/ @chart bar\n/ @height 400\nt"), {
+    mode: "chart",
+    chart: "bar",
+    title: "Daily volume, by sym",
+    height: 400,
+  });
+  assert.deepStrictEqual(cellDirective("/ @chart line\n/ @height 2000\nt"), { mode: "chart", chart: "line", height: 2000 });
 });
 
 test("directives are comments: the cell's statements leave them out", () => {
@@ -165,10 +184,6 @@ test("a cell's outputs follow its mode", () => {
   const table = { ok: true, table: TABLE };
   const [grid] = cellOutputs({ mode: "grid" }, table);
   assert.deepStrictEqual(grid.items.map((i) => i.mime), ["text/html", "text/plain"]);
-  const [chart] = cellOutputs({ mode: "chart", chart: "line" }, table);
-  assert.deepStrictEqual(chart.items.map((i) => i.mime), ["text/plain"]);
-  assert.match(chart.items[0].text, /^line chart: a notebook does not draw charts yet/);
-  assert.match(chart.items[0].text, /sym\| px/);
   assert.deepStrictEqual(cellOutputs({ mode: "console" }, { ok: true, type: -7, text: ["2"] }), [
     { kind: "items", items: [{ mime: "text/plain", text: "2" }] },
   ]);
@@ -176,6 +191,72 @@ test("a cell's outputs follow its mode", () => {
   assert.match(notTable[0].items[0].text, /^1 2 3\n\(@grid shows a table; this is not one/);
   // q's generic null shows nothing, as q's console does.
   assert.deepStrictEqual(cellOutputs({ mode: "console" }, { ok: true, type: 101, text: ["::"] }), []);
+});
+
+/// A GRID answer for a table of a timestamp and a float column, as
+/// readGridAnswer gives it.
+const GRID_ANSWER = {
+  ok: true,
+  type: 98,
+  text: ["t px", "----"],
+  grid: {
+    count: 3,
+    keys: 0,
+    names: ["t", "px"],
+    types: [12, 9],
+    cells: [["2024.01.01D00:00:00.000000000", "2024.01.02D00:00:00.000000000"], ["1.5", ""]],
+    raw: [[757382400000000000, 757468800000000000], [1.5, null]],
+    rank: [[0, 1], [1, 0]],
+  },
+};
+
+test("a chart cell's output is the chart, and the table as text beside it", () => {
+  const [part] = chartCellOutputs({ mode: "chart", chart: "line", title: "Prices", height: 400 }, GRID_ANSWER);
+  assert.deepStrictEqual(part.items.map((i) => i.mime), [CHART_MIME, "text/plain"]);
+  assert.strictEqual(CHART_MIME, "application/vnd.q-lint.chart+json");
+  const spec = JSON.parse(part.items[0].text);
+  assert.strictEqual(spec.kind, "line");
+  assert.strictEqual(spec.title, "Prices");
+  assert.strictEqual(spec.height, 400);
+  assert.strictEqual(spec.note, "Showing the first 2 of 3 rows.");
+  // The panel's grid, less the ranks only its sorting uses.
+  const { rank, ...grid } = toGrid(GRID_ANSWER.grid, -1);
+  assert.deepStrictEqual(spec.grid, grid);
+  assert.deepStrictEqual(spec.grid.values[1], [1.5, null]);
+  assert.strictEqual(spec.grid.columns[0].temporal, true);
+  assert.deepStrictEqual(part.items[1].text.split("\n"), [
+    "t                             px",
+    "---------------------------------",
+    "2024.01.01D00:00:00.000000000 1.5",
+    "2024.01.02D00:00:00.000000000",
+    "Showing the first 2 of 3 rows.",
+  ]);
+  // No title or height asked for, none written.
+  const [plain] = chartCellOutputs({ mode: "chart", chart: "bar" }, GRID_ANSWER);
+  assert.deepStrictEqual(Object.keys(JSON.parse(plain.items[0].text)).sort(), ["grid", "kind", "note"]);
+});
+
+test("a chart cell whose value is no table shows it as text, and an error as an error", () => {
+  const atom = chartCellOutputs({ mode: "chart", chart: "line" }, { ok: true, type: -7, text: ["2"] });
+  assert.match(atom[0].items[0].text, /^2\n\(@chart shows a table; this is not one/);
+  const par = chartCellOutputs({ mode: "chart", chart: "line" }, { ok: true, type: 98, text: ["+`a!..."], gridError: "par" });
+  assert.match(par[0].items[0].text, /could not shape this as a table: 'par\./);
+  assert.deepStrictEqual(chartCellOutputs({ mode: "chart", chart: "line" }, { ok: false, error: "type", trace: "" }), [
+    { kind: "error", name: "q error", message: "'type", stack: "" },
+  ]);
+  assert.deepStrictEqual(chartCellOutputs({ mode: "chart", chart: "line" }, { ok: true, type: 101, text: ["::"] }), []);
+});
+
+test("a chart's output item survives a save and an open", () => {
+  const [part] = chartCellOutputs({ mode: "chart", chart: "scatter", title: "zażółć <b>" }, GRID_ANSWER);
+  // As the serializer does: each item's bytes in, each item's bytes out.
+  const outputs = [{ items: part.items.map((i) => encodeItem(i.mime, Buffer.from(i.text, "utf8"))) }];
+  assert.ok(outputs[0].items.every((i) => i.text !== undefined), "kept as text, not base64");
+  const text = serializeQnb({ cells: [{ kind: "code", source: "/ @chart scatter\nt", outputs }] });
+  const [cell] = parseQnb(text).cells;
+  const back = cell.outputs[0].items.map((i) => ({ mime: i.mime, text: Buffer.from(decodeItem(i)).toString("utf8") }));
+  assert.deepStrictEqual(back, part.items);
+  assert.strictEqual(serializeQnb(parseQnb(text)), text);
 });
 
 test("an error shows q's message, and its trace as the stack", () => {
@@ -232,4 +313,21 @@ test("package.json contributes the notebook type and its export command", () => 
   assert.deepStrictEqual(notebook.selector, [{ filenamePattern: "*.qnb" }]);
   assert.ok(pkg.activationEvents.includes(`onNotebook:${NOTEBOOK.type}`));
   assert.ok(pkg.contributes.commands.some((c) => c.command === NOTEBOOK.exportCommand));
+});
+
+test("package.json contributes the chart renderer, for the chart item's type, from the extension's own files", () => {
+  const [renderer] = pkg.contributes.notebookRenderer;
+  assert.strictEqual(renderer.id, NOTEBOOK.renderer);
+  assert.deepStrictEqual(renderer.mimeTypes, [CHART_MIME]);
+  assert.strictEqual(renderer.requiresMessaging, "optional");
+  const entry = path.join(__dirname, "..", renderer.entrypoint);
+  const source = fs.readFileSync(entry, "utf8");
+  // Every import is a file beside it, shipped with the extension: no network.
+  const imports = [...source.matchAll(/^import\s+(?:[^"']*from\s+)?["']([^"']+)["']/gm)].map((m) => m[1]);
+  assert.deepStrictEqual(imports, ["./vendor/chart.umd.min.js", "./chartspec.js"]);
+  for (const file of imports) {
+    assert.ok(fs.existsSync(path.join(path.dirname(entry), file)), file);
+  }
+  assert.doesNotMatch(source, /https?:\/\//);
+  assert.match(source, /^export function activate\(/m);
 });

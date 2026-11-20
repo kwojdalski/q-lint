@@ -53,6 +53,17 @@
         ]
       }
     ],
+    "notebookRenderer": [
+      {
+        "id": "q-lint.chart",
+        "displayName": "q-lint chart",
+        "entrypoint": "./media/chartrenderer.js",
+        "mimeTypes": [
+          "application/vnd.q-lint.chart+json"
+        ],
+        "requiresMessaging": "optional"
+      }
+    ],
     "snippets": [
       {
         "language": "q",
