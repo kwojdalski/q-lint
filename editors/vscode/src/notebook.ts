@@ -206,7 +206,11 @@ class QnbKernel {
       }
     });
     try {
-      const result = await this.live.runOnActive(source, async (connection): Promise<[boolean, OutputPart[]]> => {
+      const result = await this.live.runOnActive(source, async (connection): Promise<[boolean, OutputPart[]] | undefined> => {
+        if (execution.token.isCancellationRequested) {
+          // Interrupted while connecting, before anything was sent.
+          return undefined;
+        }
         running = true;
         if (directive.mode === "chart") {
           const answer = await connection.queryGrid(cut, consoleSize, rows);
@@ -219,6 +223,9 @@ class QnbKernel {
       });
       if (result === undefined) {
         return finish(false, [notice("Not run: no q process is connected, or a query is still running on it.")]);
+      }
+      if (result.value === undefined) {
+        return finish(false, [notice("Interrupted: the cell was not run.")]);
       }
       const [ok, parts] = result.value;
       return finish(ok, parts.map(toOutput));
