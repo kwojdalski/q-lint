@@ -2245,3 +2245,31 @@ fn a_section_or_options_that_are_not_an_object_are_reported() {
         assert_eq!(server.shutdown_and_exit(), 0);
     }
 }
+
+/// Where a rule's code leads when it is clicked in the Problems panel: that
+/// rule's row in the reference. Every diagnostic a rule makes carries it.
+#[test]
+fn a_diagnostic_links_its_code_to_the_rule_reference() {
+    let mut server = Server::start();
+    server.initialize();
+    let uri = "file:///tmp/href.q";
+    server.open(uri, "f:{[desc] 1==1}\n");
+    let diagnostics = server.diagnostics_for(uri);
+    assert_eq!(
+        codes_of(&diagnostics),
+        ["QE004", "QF001"],
+        "{diagnostics:?}"
+    );
+    for d in &diagnostics {
+        let code = d["code"].as_str().unwrap();
+        assert_eq!(
+            d["codeDescription"],
+            json!({"href": format!(
+                "https://github.com/kwojdalski/q-lint/blob/master/docs/rules.md#{}",
+                code.to_lowercase()
+            )}),
+            "{d}"
+        );
+    }
+    assert_eq!(server.shutdown_and_exit(), 0);
+}

@@ -186,6 +186,19 @@ pub struct Rule {
 }
 pub static RULES: LazyLock<Vec<Rule>> =
     LazyLock::new(|| serde_json::from_str(include_str!("taxonomy.json")).unwrap());
+
+/// Where a rule is documented: its row in `docs/rules.md`, which
+/// `scripts/rules_doc.py` gives an anchor of the code in lower case - the
+/// case GitHub folds an anchor's name to, so `#QE001` would name nothing.
+/// `None` for a code the taxonomy does not hold, which has no row to open.
+pub fn rule_url(code: &str) -> Option<String> {
+    RULES.iter().any(|rule| rule.code == code).then(|| {
+        format!(
+            "https://github.com/kwojdalski/q-lint/blob/master/docs/rules.md#{}",
+            code.to_ascii_lowercase()
+        )
+    })
+}
 pub(crate) static RESERVED: LazyLock<Vec<String>> =
     LazyLock::new(|| serde_json::from_str(include_str!("reserved.json")).unwrap());
 

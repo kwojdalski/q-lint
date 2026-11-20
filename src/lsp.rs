@@ -78,8 +78,8 @@ use crate::config::{FILES, Layer, Policy, selector};
 use crate::jsonrpc::{INVALID_REQUEST, receive, send};
 use q_lint_rs::graph::Placement;
 use q_lint_rs::{
-    FileIndex, Finding, TokenKind, Workspace, balanced, fix_all, fix_for, semantic_tokens_in,
-    whole_edit,
+    FileIndex, Finding, TokenKind, Workspace, balanced, fix_all, fix_for, rule_url,
+    semantic_tokens_in, whole_edit,
 };
 use serde_json::{Value, json};
 use std::{
@@ -1485,6 +1485,11 @@ fn diagnostic(f: &Finding, lines: &Lines) -> Value {
     // line-wide range it would fade the code around it too.
     if matches!(f.code.as_str(), "QF016" | "QF017") && f.end_column.is_some() {
         d["tags"] = json!([DIAGNOSTIC_TAG_UNNECESSARY]);
+    }
+    // What makes the code a link in a Problems panel: the rule's row in the
+    // generated rules document, which says what `--explain` would.
+    if let Some(href) = rule_url(&f.code) {
+        d["codeDescription"] = json!({"href": href});
     }
     d
 }
