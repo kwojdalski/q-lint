@@ -377,5 +377,12 @@
     draw();
   });
   window.addEventListener("resize", paint);
+  // The editor marks a new theme on the body's class, and the chart's
+  // colours are read from the theme when it is drawn: draw it again.
+  new MutationObserver(function () {
+    if (result && state.view === "chart") {
+      drawChart();
+    }
+  }).observe(document.body, { attributes: true, attributeFilter: ["class"] });
   vscode.postMessage({ type: "ready" });
 })(typeof self !== "undefined" ? self : this);
