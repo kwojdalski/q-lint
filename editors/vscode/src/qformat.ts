@@ -180,9 +180,10 @@ function itemText(x: unknown, t: number): string | undefined {
   return String(x);
 }
 
-/// How q writes a null of type `t` in a list.
+/// How q writes a null of type `t` in a list: a float's is `0n`, a real's
+/// `0N` (the list's `e` follows it: `1 0Ne`).
 function nullText(t: number): string {
-  return t === 8 || t === 9 ? "0n" : t === 2 ? NULL_GUID : t === 11 ? "" : t === 10 ? " " : "0N";
+  return t === 9 ? "0n" : t === 2 ? NULL_GUID : t === 11 ? "" : t === 10 ? " " : "0N";
 }
 
 const SUFFIX: Record<number, string> = { 5: "h", 6: "i", 8: "e", 13: "m" };

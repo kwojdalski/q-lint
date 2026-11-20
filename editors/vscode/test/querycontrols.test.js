@@ -107,6 +107,14 @@ test("temporal infinities are written as q writes them, not NaN (#894)", () => {
   assert.deepStrictEqual(grid.raw[0], [7305, Infinity]);
 });
 
+test("a null in a real list is 0N, as q writes it: 1 0Ne, not 1 0ne (#894)", () => {
+  assert.deepStrictEqual(shown("01000000160000000800020000000000803f0000c07f"), ["1 0Ne"]);
+  assert.strictEqual(vectorText([null, null], 8), "0N 0Ne");
+  // A float list's null stays 0n, and an infinity 0w in both.
+  assert.strictEqual(vectorText([2, null, Infinity], 9), "2 0n 0w");
+  assert.strictEqual(vectorText([1, Infinity], 8), "1 0we");
+});
+
 test("floats keep q's seven significant digits", () => {
   assert.strictEqual(floatText(1.5), "1.5");
   assert.strictEqual(floatText(2), "2");
