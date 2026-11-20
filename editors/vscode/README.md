@@ -514,8 +514,9 @@ refused with that said. `source` is the cell's lines. A code cell is q
 unless it has a `language`. Outputs are saved, so a notebook reopens with
 its results: an item is `text` when it is UTF-8 and `base64` otherwise.
 `execution` holds the run's number, outcome and start and end, in
-milliseconds since the epoch. Fields with nothing in them are left out, and
-saving a notebook that was opened unchanged writes the same file. A file
+milliseconds since the epoch. Fields with nothing in them are left out, a
+field q-lint does not know - on the file or on a cell - is kept and saved
+back, and saving a notebook that was opened unchanged writes the same file. A file
 that is not a notebook does not open: the editor says what is wrong with
 it, and the file is left as it was. An empty file is a new notebook.
 

@@ -36,7 +36,8 @@ export class ParameterCache {
 
   private refresh(): void {
     const document = window.activeTextEditor?.document;
-    this.count = document === undefined ? 0 : cachedLambdas(document.getText());
+    // Only q is read: a markdown file quoting an instrumented lambda caches nothing.
+    this.count = document === undefined || document.languageId !== "q" ? 0 : cachedLambdas(document.getText());
     const text = cachedText(this.count);
     if (text === undefined) {
       this.item.hide();

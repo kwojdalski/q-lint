@@ -11,7 +11,10 @@
 // the value is a table, answers with the table itself rather than its
 // console text: each column as a list of strings, as `string` writes them
 // (so a timestamp keeps its nanoseconds), a nested column's items with
-// `-3!`. A keyed table is unkeyed and says how many key columns it had.
+// `-3!`. The columns are read by name, as `value flip` does not read them
+// of a table mapped from disk, and a mapped nested column (77h and up) is
+// nested too. A keyed table is unkeyed and says how many key columns it had; a
+// dictionary keyed by a table whose value is not one is not a keyed table.
 // At most `rows` rows are sent, with the table's count, so a large table is
 // cut by the process: the first `rows`, or the last when `rows` is negative,
 // and every row when it is infinite (`sublist` with `0W`). The row limit and
@@ -37,11 +40,11 @@ export const DATA = [
   "   @[{(1b;last value each x)};s;{(0b;x;\"\")}]];",
   " if[not r 0;:`ok`error`trace!(0b;r 1;r 2)];",
   " v:r 1;",
-  " k:$[99h=type v;$[98h=type key v;count cols key v;0];0];",
+  " k:$[99h=type v;$[(98h=type key v)&98h=type value v;count cols key v;0];0];",
   " t:$[k>0;0!v;v];",
   " if[not 98h=type t;:`ok`table`type`text!(1b;0b;type v;.Q.S[\"j\"$size;0j] v)];",
-  " c:value flip (\"j\"$rows) sublist t;",
-  " str:{$[0h=type x;{$[10h=type x;x;-3!x]} each x;string x]};",
+  " c:{x cols x} (\"j\"$rows) sublist t;",
+  " str:{$[(0h=type x)|76h<type x;{$[10h=type x;x;-3!x]} each x;string x]};",
   " `ok`table`columns`types`keys`data`total!(1b;1b;cols t;type each c;k;str each c;count t)}",
 ].join("\n");
 
@@ -127,7 +130,15 @@ export function escapeHtml(text: string): string {
   return text.replace(/[&<>"']/g, (c) => ESCAPES[c]);
 }
 
-const clip = (value: string): string => (value.length > VALUE_LIMIT ? `${value.slice(0, VALUE_LIMIT - 1)}…` : value);
+/// `value` cut to `VALUE_LIMIT`, never between the two halves of a character
+/// outside the BMP, which would show as a replacement character.
+const clip = (value: string): string => {
+  if (value.length <= VALUE_LIMIT) {
+    return value;
+  }
+  const end = /[\uD800-\uDBFF]/.test(value[VALUE_LIMIT - 2]) ? VALUE_LIMIT - 2 : VALUE_LIMIT - 1;
+  return `${value.slice(0, end)}…`;
+};
 
 /// A number, right-aligned: q's byte to float (4 to 9).
 const numeric = (type: number): boolean => type >= 4 && type <= 9;
@@ -168,13 +179,18 @@ export function tableHtml(table: Table): string {
 /// the rows, a `|` after a keyed table's key columns.
 export function tableText(table: Table): string[] {
   const rows = rowCount(table);
-  const widths = table.columns.map((c, i) => Math.max(c.length, ...table.data[i].map((v) => clip(v).length)));
+  // A loop, not `Math.max(...)`: every row is more than a call takes arguments.
+  const widths = table.columns.map((c, i) => table.data[i].reduce((w, v) => Math.max(w, clip(v).length), c.length));
   const line = (cell: (i: number) => string): string =>
     table.columns
       .map((_, i) => cell(i).padEnd(widths[i]) + (i === table.keys - 1 && i < table.columns.length - 1 ? "|" : ""))
       .join(" ");
   const header = line((i) => table.columns[i]);
-  const lines = [header.trimEnd(), "-".repeat(header.length)];
+  // A keyed table's rule breaks at its `|`, as the console's does: `-| -`.
+  const keyed = table.keys > 0 && table.keys < table.columns.length;
+  const keyWidth = widths.slice(0, table.keys).reduce((sum, w) => sum + w, 0) + table.keys - 1;
+  const rule = keyed ? `${"-".repeat(keyWidth)}| ${"-".repeat(header.length - keyWidth - 2)}` : "-".repeat(header.length);
+  const lines = [header.trimEnd(), rule];
   for (let r = 0; r < rows; r++) {
     lines.push(line((i) => clip(table.data[i][r] ?? "")).trimEnd());
   }

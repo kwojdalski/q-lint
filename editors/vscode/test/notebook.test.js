@@ -41,6 +41,26 @@ test("a notebook survives a save and an open unchanged", () => {
   assert.strictEqual(serializeQnb(parseQnb(serializeQnb(read))), text);
 });
 
+test("fields this extension does not know are kept, so a save loses nothing", () => {
+  // Another tool's, or a later q-lint's: a save of what was opened writes them back.
+  const file = {
+    qnb: 1,
+    cells: [
+      { kind: "code", source: ["1"], tags: ["slow"], id: "c1" },
+      { kind: "markdown", source: ["# a"], id: "c2" },
+    ],
+    metadata: { author: "me" },
+    kernel: { name: "q" },
+  };
+  const text = JSON.stringify(file, null, 1) + "\n";
+  assert.strictEqual(serializeQnb(parseQnb(text)), text);
+  // A known field is never written twice.
+  assert.deepStrictEqual(JSON.parse(serializeQnb({ cells: [{ kind: "code", source: "2", extra: { source: ["1"], id: "x" } }], extra: { qnb: 9 } })), {
+    qnb: QNB_VERSION,
+    cells: [{ kind: "code", source: ["2"], id: "x" }],
+  });
+});
+
 test("source keeps every character, CRLF and trailing newlines included", () => {
   const cells = [{ kind: "code", source: "a:1\r\nb:2\n\n" }, { kind: "code", source: "" }];
   assert.deepStrictEqual(parseQnb(serializeQnb({ cells })).cells, cells);
@@ -52,6 +72,12 @@ test("empty fields are not written, and q is a code cell's default language", ()
     metadata: {},
   });
   assert.deepStrictEqual(JSON.parse(text), { qnb: QNB_VERSION, cells: [{ kind: "code", source: ["1"] }] });
+});
+
+test("a file that starts with a byte order mark opens", () => {
+  // As Notepad and Windows PowerShell's Set-Content -Encoding UTF8 write one.
+  const text = JSON.stringify(SAMPLE, null, 1) + "\n";
+  assert.deepStrictEqual(parseQnb("\uFEFF" + text), parseQnb(text));
 });
 
 test("an empty file is a new notebook", () => {
@@ -184,12 +210,32 @@ test("a table cut to its last rows says last, in a grid cell and a chart cell (#
 test("a table as text is laid out as q's console lays it out", () => {
   assert.deepStrictEqual(tableText(TABLE), [
     "sym| px    note",
-    "---------------------",
+    "---| ----------------",
     "a  | 1.5   <b>x</b>",
     "bb | 22.25 it's & \"q\"",
   ]);
   const plain = { columns: ["a", "bb"], types: [7, 7], keys: 0, data: [["1"], ["22"]], total: 1 };
   assert.deepStrictEqual(tableText(plain), ["a bb", "----", "1 22"]);
+});
+
+test("a table of every row is laid out as text, however many rows it has", () => {
+  // q-lint.notebook.rowLimit 0 sends every row: far more than a call takes arguments.
+  const rows = 300000;
+  const big = { columns: ["i"], types: [7], keys: 0, data: [Array.from({ length: rows }, (_, i) => String(i))], total: rows };
+  const text = tableText(big);
+  assert.strictEqual(text.length, rows + 2);
+  assert.deepStrictEqual(text.slice(0, 3), ["i", "------", "0"]);
+  assert.strictEqual(text.at(-1), String(rows - 1));
+});
+
+test("a long value is cut between characters, never inside one", () => {
+  // 498 letters then an emoji, two UTF-16 units: the cut at 499 falls between them.
+  const value = "a".repeat(498) + "\u{1F600}" + "b".repeat(10);
+  const table = { columns: ["s"], types: [0], keys: 0, data: [[value]], total: 1 };
+  const lone = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+  assert.doesNotMatch(tableText(table)[2], lone);
+  assert.doesNotMatch(tableHtml(table), lone);
+  assert.ok(tableText(table)[2].endsWith("a…"));
 });
 
 test("a cell's outputs follow its mode", () => {
