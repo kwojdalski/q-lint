@@ -269,6 +269,43 @@ outcome; the buttons on a row run it again on the active connection and
 Unlimited, unwrapped and the timeout apply to queries from the editor,
 the history and Preview; a notebook cell runs as before.
 
+**Parameter cache.** **Toggle Parameter Cache**, `ctrl+shift+'` (also in
+the editor's context menu), is for running a lambda's body a line at a
+time with real arguments. On the innermost lambda at the cursor it inserts
+one statement, first in the body:
+
+```q
+f:{[a;b] a+b}   /  becomes
+f:{[a;b].qlint.cache.p1a2b3c:(a;b);`a`b set'.qlint.cache.p1a2b3c; a+b}
+g:{x*2}         /  becomes
+g:{.qlint.cache.p4d5e6f:x;`x set .qlint.cache.p4d5e6f;x*2}
+```
+
+Run the definition (**Query Current Block**), call the function once, and
+each parameter is then a global holding that call's value, so **Query
+Current Line** or **Block** on a line of the body runs with them. The
+parameters are the `[a;b]` list, or else `x`, `y` and `z` up to the highest
+one the body reads. A lambda with none - `{[] ...}`, or a body that reads
+no `x`, `y` or `z` - is left alone, and the command says so. When the `{`
+line holds nothing after the parameters, the statement gets a line of its
+own, indented as the body's next line so q still reads it as part of the
+definition; otherwise it goes straight after the parameters. Toggling again
+on the lambda removes exactly what was inserted, leaving the file as it was,
+byte for byte. If the lambda names `.qlint.cache` in a form q-lint did not
+insert, or one edited since (a parameter renamed, say), the command refuses
+and leaves it for you to remove. While the active file holds a cached
+lambda, the status bar shows `params cached`.
+
+Inserting the statement changes only the file. Nothing happens on a process
+until the instrumented code runs there - the definition loaded and the
+function called - and only then does each call define globals on it: one
+named after each parameter (`a`, `b`, `x`...), set with `set`, so in the
+namespace current when the call runs, replacing any global of that name;
+and `.qlint.cache.<id>`, holding the call's arguments, in the `.qlint.cache`
+namespace. Toggling the statement off and loading the definition again stops
+that, but does not delete the globals already defined. Do not leave it in
+code that runs anywhere it matters.
+
 **Query modes.** **Switch Query Mode** (or the mode in the status bar) picks
 where a result goes; it sets `q-lint.query.mode`, and takes `console`,
 `grid` or `chart` as an argument for a keybinding.

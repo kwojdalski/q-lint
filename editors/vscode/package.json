@@ -3,7 +3,7 @@
   "displayName": "q-lint",
   "description": "q/kdb+ for VS Code: linting, Quick Fixes, navigation and help from the source, and connections to q processes to run code on.",
   "icon": "icon.png",
-  "version": "0.24.0",
+  "version": "0.25.0",
   "publisher": "wojdalski",
   "license": "MIT",
   "engines": {
@@ -728,6 +728,12 @@
         "icon": "$(run-all)"
       },
       {
+        "command": "q-lint.toggleParameterCache",
+        "title": "Toggle Parameter Cache",
+        "category": "q-lint",
+        "icon": "$(debug-breakpoint-log)"
+      },
+      {
         "command": "q-lint.toggleUnlimitedQuery",
         "title": "Toggle Unlimited Query",
         "category": "q-lint",
@@ -1122,6 +1128,11 @@
           "command": "q-lint.queryEntireFile",
           "when": "editorLangId == q",
           "group": "q-lint@5"
+        },
+        {
+          "command": "q-lint.toggleParameterCache",
+          "when": "editorLangId == q",
+          "group": "q-lint@6"
         }
       ],
       "commandPalette": [
@@ -1200,6 +1211,11 @@
       {
         "command": "q-lint.queryEntireFile",
         "key": "ctrl+f10",
+        "when": "editorTextFocus && editorLangId == q"
+      },
+      {
+        "command": "q-lint.toggleParameterCache",
+        "key": "ctrl+shift+'",
         "when": "editorTextFocus && editorLangId == q"
       }
     ],

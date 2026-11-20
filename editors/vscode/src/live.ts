@@ -47,6 +47,7 @@ import { QueryModes, type Rendered } from "./resultpanel";
 import { blockAt, statements } from "./statements";
 import { commandLine, parseEnv, replLines, shellKind } from "./terminal";
 import { QueryControls } from "./controls";
+import { ParameterCache } from "./paramcachecontrol";
 import { CONTROL_COMMANDS, UNLIMITED, armTimeout, limits, readUnlimited, runUnwrapped, timedOutError } from "./querycontrols";
 
 const PROCESSES_KEY = "q-lint.processes";
@@ -371,6 +372,7 @@ export class Live {
   /// When the query that timed out started, so its entry says so.
   private timedOut: number | undefined;
   private readonly controls: QueryControls;
+  private readonly parameterCache: ParameterCache;
   /// The process explorer's call on the connection, if one is out: a query
   /// waits for it (`borrow`).
   private borrowed: Promise<unknown> | undefined;
@@ -402,6 +404,7 @@ export class Live {
       activeLabel: () => this.activeLabel(),
       pick: async (title) => (await this.chosen(undefined, title, true))?.label,
     });
+    this.parameterCache = new ParameterCache(context);
     const c = (name: string, run: (...args: never[]) => unknown) => commands.registerCommand(name, run);
     context.subscriptions.push(
       this.output,
@@ -459,6 +462,8 @@ export class Live {
     /// unlimited queries are on.
     selectedProcess: () => string | undefined;
     unlimited: () => boolean;
+    /// How many lambdas in the active file cache their parameters (#892).
+    cachedLambdas: () => number;
   } {
     return {
       processes: () => this.processes(),
@@ -479,6 +484,7 @@ export class Live {
         return row?.kind === "process" ? row.process.label : row?.kind === "discovered" ? qualified(row.server, row.process.label) : undefined;
       },
       unlimited: () => this.controls.unlimited,
+      cachedLambdas: () => this.parameterCache.cached(),
     };
   }
 
