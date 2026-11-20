@@ -51,6 +51,11 @@ const cases = [
   ["an amend assigns, as a plain assignment does", "n+:1", "+:", "keyword.operator.assignment.q"],
   ["a return opens an expression", "f:{if[x;:1];2}", ":", "keyword.control.flow.return.q", 1],
   ["a signal opens an expression", "f:{'`bad}", "'", "keyword.control.flow.signal.q"],
+  // A lambda's body opens after its parameter list, so a return or signal
+  // there is the first thing in it: KDB-X's {[x]:x+1} 2 is 3.
+  ["a return right after the parameter list", "f:{[x]:x+1}", ":", "keyword.control.flow.return.q", 1],
+  ["and after a space", "f:{[x] :x+1}", ":", "keyword.control.flow.return.q", 1],
+  ["a signal right after the parameter list", "f:{[x] 'x}", "'", "keyword.control.flow.signal.q"],
   ["after an operand the quote is each, even with a space", "r:{x} '[1 2]", "'", "keyword.operator.iterator.q"],
   ["and the colon of @[d;i;:;v] is the assignment function", "r:@[d;0;:;5]", ":", "keyword.operator.q", 1],
   ["a dotted name's namespace is a namespace", "r:.cfg.lim+1", ".cfg", "entity.name.namespace.q"],

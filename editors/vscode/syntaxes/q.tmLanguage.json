@@ -423,8 +423,8 @@
       "comment": "Return and signal, q's return and raise. Both open an expression; after an operand the same characters are each (f') and assignment (a:).",
       "patterns": [
         {
-          "comment": "`:x` returns. `;:;` is the assignment function in @[d;i;:;v].",
-          "match": "(?:^|(?<=[\\[;{]))\\s*(:)(?![:/\\\\'])(?!\\s*[;\\]])",
+          "comment": "`:x` returns. `;:;` is the assignment function in @[d;i;:;v]. \\G is where a lambda's parameter list ends: {[x]:x} returns too.",
+          "match": "(?:^|\\G|(?<=[\\[;{]))\\s*(:)(?![:/\\\\'])(?!\\s*[;\\]])",
           "captures": {
             "1": {
               "name": "keyword.control.flow.return.q"
@@ -433,7 +433,7 @@
         },
         {
           "comment": "`'x` signals. A space does not decide it - `{x} '[1 2]` is each.",
-          "match": "(?:^|(?<=[\\[(;{:]))\\s*(')(?![:/\\\\])",
+          "match": "(?:^|\\G|(?<=[\\[(;{:]))\\s*(')(?![:/\\\\])",
           "captures": {
             "1": {
               "name": "keyword.control.flow.signal.q"

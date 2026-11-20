@@ -293,13 +293,14 @@ def grammar():
                 "after an operand the same characters are each (f') and assignment (a:).",
                 "patterns": [
                     {
-                        "comment": "`:x` returns. `;:;` is the assignment function in @[d;i;:;v].",
-                        "match": r"(?:^|(?<=[\[;{]))\s*(:)(?![:/\\'])(?!\s*[;\]])",
+                        "comment": "`:x` returns. `;:;` is the assignment function in @[d;i;:;v]. "
+                        "\\G is where a lambda's parameter list ends: {[x]:x} returns too.",
+                        "match": r"(?:^|\G|(?<=[\[;{]))\s*(:)(?![:/\\'])(?!\s*[;\]])",
                         "captures": {"1": {"name": "keyword.control.flow.return.q"}},
                     },
                     {
                         "comment": "`'x` signals. A space does not decide it - `{x} '[1 2]` is each.",
-                        "match": r"(?:^|(?<=[\[(;{:]))\s*(')(?![:/\\])",
+                        "match": r"(?:^|\G|(?<=[\[(;{:]))\s*(')(?![:/\\])",
                         "captures": {"1": {"name": "keyword.control.flow.signal.q"}},
                     },
                 ],
