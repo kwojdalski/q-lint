@@ -220,6 +220,15 @@ test("grid and chart mode: what the process sends for a result", { skip }, async
     assert.deepStrictEqual(g.rank[g.columns.findIndex((c) => c.name === "h")], [1, 0]);
   });
 
+  await t.test("equal values share a rank, so either sort keeps them in their order", async () => {
+    const { grid: g } = await grid("([] s:`a`a`b`a; f:1 0n 1 0n; l:(\"ab\";\"ab\";\"a\";\"b\"))");
+    assert.deepStrictEqual(g.rank, [
+      [0, 0, 1, 0],
+      [1, 0, 1, 0],
+      [2, 2, 0, 1],
+    ]);
+  });
+
   await t.test("floats to the decimals asked for", async () => {
     const answer = await connection.queryGrid(["([] f:1.23456 2 0n)"], SIZE, 100);
     assert.deepStrictEqual(toGrid(answer.grid, 2).cells, [["1.23", "2.00", ""]]);
@@ -239,6 +248,19 @@ test("grid and chart mode: what the process sends for a result", { skip }, async
     const list = (await grid("(1;`a;\"bc\")")).grid;
     assert.deepStrictEqual(list.columns.map((c) => c.name), ["value"]);
     assert.deepStrictEqual(list.cells, [["1", "`a", '"bc"']]);
+  });
+
+  await t.test("a dictionary keyed by a table whose value is a list is its key columns and a value column", async () => {
+    // q prints it as it prints a keyed table; `0!` refuses it.
+    const { answer, grid: g } = await grid("([] a:2 1)!`x`y");
+    assert.strictEqual(answer.gridError, undefined);
+    assert.deepStrictEqual(g.columns.map((c) => [c.name, c.key]), [["a", true], ["value", false]]);
+    assert.deepStrictEqual(g.cells, [["2", "1"], ["x", "y"]]);
+    assert.deepStrictEqual(g.rank, [[1, 0], [0, 1]]);
+    // A key column named value keeps its own values.
+    const same = (await grid("(flip enlist[`value]!enlist 2 1)!3 4")).grid;
+    assert.deepStrictEqual(same.columns.map((c) => [c.name, c.key]), [["value", true], ["value", false]]);
+    assert.deepStrictEqual(same.cells, [["2", "1"], ["3", "4"]]);
   });
 
   await t.test("a large result is cut at the limit, and says how many rows it had", async () => {

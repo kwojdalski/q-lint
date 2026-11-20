@@ -67,9 +67,14 @@ interface Shown {
   millis: number;
   payload: GridPayload;
   view: "grid" | "chart";
+  /// `q-lint.query.gridLimit` when it ran: what the panel says a cut
+  /// result was cut at, though the setting has changed since.
+  limit: number;
   /// Counts results, so the panel tells a new one from the same one sent
-  /// again and keeps the view, sort and filters chosen for it.
-  id: number;
+  /// again and keeps the view, sort and filters chosen for it. Prefixed by
+  /// the session: a view's page keeps its state across a window reload,
+  /// and must not take the next session's first result for its last.
+  id: string;
 }
 
 function settings(): LiveSettings {
@@ -99,6 +104,8 @@ function resultHtml(webview: Webview, media: Uri): string {
 /// What a page says to the extension.
 interface PageMessage {
   type?: string;
+  /// The result the page drew: rows are rows of it.
+  id?: string;
   rows?: number[];
   rendered?: Omit<Rendered, "location">;
 }
@@ -112,6 +119,8 @@ export class QueryModes {
   private order: number[] | undefined;
   private readonly status: StatusBarItem;
   private readonly media: Uri;
+  private readonly session = randomBytes(6).toString("hex");
+  private results = 0;
 
   constructor(private readonly context: ExtensionContext) {
     this.media = Uri.joinPath(context.extensionUri, "media");
@@ -161,7 +170,8 @@ export class QueryModes {
       millis: result.millis,
       payload: answer.grid,
       view: live.mode,
-      id: (this.shown?.id ?? 0) + 1,
+      limit: live.gridLimit,
+      id: `${this.session}.${++this.results}`,
     };
     this.order = undefined;
     if (live.resultsLocation === "panel") {
@@ -253,9 +263,14 @@ export class QueryModes {
   }
 
   private receive(location: ResultsLocation, webview: Webview, message: PageMessage): void {
+    // What a page says of a result no longer on show - sent before the
+    // next one reached it - would apply its rows to the next one's.
+    const current = this.shown !== undefined && message.id === this.shown.id;
     if (message.type === "ready") {
       // Also after the page was hidden and shown again, which reloads it.
       this.post(webview);
+    } else if (!current) {
+      return;
     } else if (message.type === "rendered" && message.rendered !== undefined) {
       // Both may be open, after the location changed: the API reports the
       // one results now go to.
@@ -263,9 +278,9 @@ export class QueryModes {
         this.rendered = { location, ...message.rendered };
         this.order = Array.isArray(message.rows) ? message.rows : undefined;
       }
-    } else if (message.type === "copy" && this.shown !== undefined) {
+    } else if (message.type === "copy") {
       void this.copy(message.rows);
-    } else if (message.type === "export" && this.shown !== undefined) {
+    } else if (message.type === "export") {
       void this.exportCsv(undefined, message.rows);
     }
   }
@@ -276,7 +291,7 @@ export class QueryModes {
     if (this.shown === undefined) {
       return;
     }
-    const { process, code, millis, payload, view, id } = this.shown;
+    const { process, code, millis, payload, view, limit, id } = this.shown;
     const live = settings();
     const message = {
       type: "result",
@@ -285,7 +300,7 @@ export class QueryModes {
       process,
       code,
       millis,
-      limit: live.gridLimit,
+      limit,
       grid: toGrid(payload, live.gridDecimals),
     };
     const pages = only !== undefined ? [only] : [this.panel?.webview, this.view?.webview];

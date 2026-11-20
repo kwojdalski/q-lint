@@ -315,15 +315,19 @@ where a result goes; it sets `q-lint.query.mode`, and takes `console`,
 - **Console**, the default: every result in the **q-lint: query** output, as
   above.
 - **Grid**: a table, a keyed table (unkeyed, its key columns shaded), a
-  dictionary (as `key` and `value` columns) or a list (as one `value`
-  column) opens in the **q-lint: result** panel. Click a header to sort,
+  dictionary (as `key` and `value` columns; one keyed by a table as its
+  key columns and a `value` column) or a list (as one `value` column) opens in the **q-lint: result** panel. Click a header to sort,
   type under it to filter (by the text shown, ignoring case). **Copy as
   CSV** copies the rows shown, in the order shown, and **Export to CSV**
   saves them to a file you pick; the command **Export Results to CSV** does
-  the same, and takes the file's `Uri` as an argument to skip the dialog. Each cell is what q
+  the same, and takes the file's `Uri` as an argument to skip the dialog.
+  In the CSV, a name, symbol or string a spreadsheet would run as a
+  formula (`=`, `+`, `-` or `@` first, but not a number) starts with `'`.
+  Each cell is what q
   prints in a table: a timestamp keeps its nanoseconds, a long above 2^53
   every digit, a null is blank and an infinity is `0W` or `0w`. Sorting is
-  q's own order (`iasc` on the process), nulls first.
+  q's own order (`iasc` on the process), nulls first, and either way keeps
+  equal values in their order, as `xasc` and `xdesc` do.
 - **Chart**: the same results as a line, bar, scatter or histogram chart of
   the numeric columns against the first, chosen in the panel; the panel's
   **Grid** and **Chart** buttons switch between the two for one result.
