@@ -1,7 +1,9 @@
 # q-lint for VS Code
 
-Linting, Quick Fixes and syntax colouring for q/kdb+, as you type, from the
-[q-lint](https://github.com/kwojdalski/q-lint) language server.
+Linting, Quick Fixes, navigation and syntax colouring for q/kdb+, as you
+type, from the [q-lint](https://github.com/kwojdalski/q-lint) language
+server - and connections to q processes, to run code on them from the
+editor.
 
 ![the q-lint icon](icon.png)
 
@@ -13,10 +15,12 @@ for other languages, such as [Ruff](https://docs.astral.sh/ruff/) for Python.
 development, and already catching the most common problems. A finding that
 looks wrong is worth an [issue](https://github.com/kwojdalski/q-lint/issues).
 
-**It never executes your code**, which is why it is safe on every keystroke.
-Navigation, hovers, signature help and completion are read from the source
-the same way, and from a catalogue of q's own words that ships with the
-server: none of them asks a running q anything.
+**The linter never executes your code**, which is why it is safe on every
+keystroke. Navigation, hovers, signature help and completion are read from
+the source the same way, and from a catalogue of q's own words that ships
+with the server: none of them asks a running q anything. The one thing that
+does is the [q processes](#q-processes-and-queries) panel: it connects only
+to a process you add and connect to, and sends only the code you run.
 
 ## Features
 
@@ -97,6 +101,51 @@ server: none of them asks a running q anything.
   `tests` directory. A changed file that was deleted or is excluded from
   the index cannot be followed, and the list says how many were.
 
+## q processes and queries
+
+The **q-lint** panel in the activity bar holds two views.
+
+**Processes** lists the q processes you add, grouped by tag. Tags `prod`
+(or `prd`), `uat` and `dev` are coloured red, blue and green. Click a
+process to connect; the status bar shows the connection, and clicking it
+switches. The commands:
+- **Add**, **Edit** and **Delete Process**, and **Tag Process**. A password
+  is kept in VS Code's secret storage, never in settings or in an export.
+- **Connect to Process**, which also takes a process's label as an
+  argument for a keybinding, and **Disconnect**.
+- **Import** and **Export Processes**: a JSON file holding
+  `{"processes": [{"label", "host", "port", "user"?, "tags"?, "tls"?}]}`.
+  An import replaces processes of the same label, adds the rest, and says
+  which entries it skipped.
+- **Insert Active Connection Label**, at the cursor.
+
+**Querying.** With a q file open:
+- **Query Current Line**, `ctrl+q`.
+- **Query Current Selection**, `ctrl+r`: the current line when nothing is
+  selected.
+- **Query Current Block**, `ctrl+e`: the statement the cursor is in, with
+  its indented continuation lines.
+
+The code is cut into statements by q's own script rules: a line starting
+with a space or tab continues the one above, `/` lines and block comments
+are skipped, and a `\` line is a system command. A closing `}` at column 0
+starts a new statement, which q refuses, here as when it loads the file.
+The statements run in order on the process, in its current `\d`, as its
+console would run them, and nothing is defined on the process but what
+your code defines. The result is formatted by the process at
+`q-lint.output.consoleSize` and shown in the **q-lint: query** output with
+the process and the time taken. An error shows q's message and, on kdb+ 3.5
+and later, its backtrace. With no connection, a query asks which process to
+connect to first.
+
+**Abort Current Query** stops waiting at once. q has no message that cancels
+a query, so the connection is closed and opened again; the process goes on
+running the query, and the new connection is made once it is free.
+
+**Query History** lists each query with its process, time, duration and
+outcome; the button on a row runs it again on the active connection, and
+**Clear Query History** empties it.
+
 ## Requirements
 
 None on macOS (Apple Silicon and Intel), Linux x64 or Windows x64: the
@@ -161,12 +210,24 @@ the editor shows fewer findings than CI. `q-lint.profile`, `q-lint.configFile` a
 looks, not whether it is reported. Neither the configuration's `exclude` nor
 `q-lint.workspaceIndex.exclude` hides diagnostics on a file you open.
 
+### Query settings
+
+None of these reaches the language server, and changing one restarts
+nothing.
+
+| Setting | Default | What it does | q-pro |
+| --- | --- | --- | --- |
+| `q-lint.output.consoleSize` | `"50 160"` | Height and width a result is formatted to, by the process. A larger result is cut there before it is sent. | `q-output.cfg.consoleSize` |
+| `q-lint.output.autoClear` | `false` | Clear the output before each result. | `q-output.cfg.autoClear` |
+| `q-lint.output.includeQuery` | `false` | Show the code above its result. | `q-output.cfg.includeQuery` |
+| `q-lint.output.ignoreNullReturn` | `false` | Show nothing when the value is `::`. | `q-output.cfg.ignoreNullReturn` |
+
 ### Not here, and why
 
-q-pro's other settings - query mode, grid decimals, the q binary and its
-environment file, the process explorer, the discovery server, output
-formatting, `kuki` - drive a connection to a running q process. q-lint never
-runs q, so none of them has anything to configure. Its
+q-pro's query mode and grid decimals, its q binary and environment file, its
+process explorer and its discovery server are not here yet: they come with
+the grid, the terminal and the process explorer (#852). `kuki` is not
+planned. Its
 `sourceFiles.includeGlob` is not mirrored either: the index reads every `.q`
 file `qlinter .` would - less what the configuration's `exclude` skips - and
 `q-lint.workspaceIndex.exclude` narrows it.

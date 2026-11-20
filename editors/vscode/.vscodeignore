@@ -22,3 +22,7 @@ node_modules/vscode-textmate/**
 node_modules/vscode-oniguruma/**
 test/**
 
+
+# node-q ships its own tests.
+node_modules/node-q/test/**
+node_modules/node-q/itest/**

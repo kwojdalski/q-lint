@@ -549,6 +549,12 @@ README](editors/vscode/README.md#settings). `qlinter --lsp` without
 The extension also contributes what needs no server: the grammar, and
 snippets for the forms q is mostly written in (`editors/vscode/snippets/q.json`).
 
+It also connects to q processes, which the server never does: a
+**Processes** view, queries of the current line, selection or block, their
+output and a query history. These live in the extension alone, and touch a
+process only once the user adds it, connects and runs code - see the
+[extension's README](editors/vscode/README.md#q-processes-and-queries).
+
 ### Other editors
 
 Neovim, with `nvim-lspconfig`:
