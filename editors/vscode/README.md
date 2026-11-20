@@ -13,13 +13,17 @@ for other languages, such as [Ruff](https://docs.astral.sh/ruff/) for Python.
 development, and already catching the most common problems. A finding that
 looks wrong is worth an [issue](https://github.com/kwojdalski/q-lint/issues).
 
-**It never executes your code**, which is why it is safe on every keystroke -
-and why there is no completion, hover or go-to-definition.
+**It never executes your code**, which is why it is safe on every keystroke.
+Navigation, hovers, signature help and completion are read from the source
+the same way, and from a catalogue of q's own words that ships with the
+server: none of them asks a running q anything.
 
 ## Features
 
 - **Diagnostics** for what q would refuse, plus likely mistakes and style
-  conventions, depending on the profile.
+  conventions, depending on the profile. A finding's code, in the Problems
+  panel and on hover, links to that rule in the
+  [rule reference](https://github.com/kwojdalski/q-lint/blob/master/docs/rules.md).
 - **Quick Fixes** for over forty rules, among them operators and keywords
   from other languages (`==`, `&&`, `+=`, `true`, `return`), invalid string
   escapes, symbols where q wants strings, `f(a;b)` calls, one-row tables,
@@ -27,13 +31,71 @@ and why there is no completion, hover or go-to-definition.
   a nested lambda reading its parent's local.
   Those that cannot change a working program also run in bulk with
   `qlinter --fix`; `--unsafe-fixes` adds the rest.
+- **Suppress CODE on this line**, a Quick Fix on every finding that writes
+  `/ noqa: CODE` after its line, or adds the code to the `noqa` already
+  there. It is missing where no such comment would be read as one - a line
+  that ends inside a string, a system command, a block comment, a file whose
+  brackets do not close - and it is never the preferred fix.
 - **Format Document** applies the fixes `qlinter --fix` makes - those that
   cannot change a working program - and nothing else: it is not a
   whitespace or layout formatter, and it never applies an editor-only fix.
+  The same edit is the code action `source.fixAll.q-lint`, to
+  [run on save](#formatting) beside another formatter.
+- **Folding** of lambdas, parenthesised lists, bracketed blocks and block
+  comments that span lines, read from the brackets and never from one inside
+  a string or a comment. See [Folding](#folding) for what that replaces.
+- **Snippets** for the forms q is mostly written in: qSQL (`select`,
+  `selectby`, `update`, `updateby`, `exec`, `execby`, `delete`,
+  `deletecols`, and the functional `fselect` and `fupdate`), protected
+  evaluation (`trap`, `trapn`), the iterators (`each`, `peach`, `eachboth`,
+  `eachleft`, `eachright`, `eachprior`), control flow (`cond`, `condn`,
+  `if`, `do`, `while`), a function under a qdoc header (`fn`) and a `\d`
+  block (`namespace`).
 - **Syntax colouring** from a TextMate grammar, plus semantic tokens: a
   function is coloured wherever it is called, even when another `.q` file in
   the workspace defines it, and a parameter wherever its body reads it.
   Unused parameters and locals are faded.
+- **Navigation**: the outline and breadcrumbs, **Go to Symbol in Workspace**,
+  **Go to Definition** and **Find All References** across the workspace's
+  `.q` files, and occurrence highlights that tell a write from a read. A
+  name is resolved as q resolves it under the `\d` context in force,
+  including in a file another loads under a context. What only running the
+  code would tell - a name built at run time, `value "..."`, another
+  process - is not found.
+- **Rename** for a lambda's parameters and locals. A global is refused with
+  the reason: it can be reached from a string, a symbol or another process,
+  and a rename that misses one of those breaks the program quietly.
+- **Hover** on a name the workspace defines shows its parameters, the
+  comment written above its definition and the file it is in; on a word of
+  q itself - `ssr`, `select`, `.z.p`, `.Q.s` - how it is written, what it
+  gives, and a link to its page in the KX reference.
+- **Signature help** inside `name[`: the parameters, with the one being
+  written marked, for a workspace function or a q function called with
+  brackets.
+- **Completion**, when turned on with `q-lint.completion.enable`: a lambda's
+  parameters and locals first, then the names the workspace defines, spelled
+  as the `\d` context in force reads them, then q's own words. It does not
+  know a table's columns or anything only a running process holds.
+- **Call hierarchy** (**Show Call Hierarchy**, **Peek Call Hierarchy**) on a
+  global function: the definitions and files that name it, and the workspace
+  functions its own definition names. It is read from the names, so a
+  function passed as a value (`f each x`) counts as called, and one called
+  through a string or from another process is not listed. A name at a
+  script's top level is listed under the file.
+- **q Dependencies**, a view in the Explorer: the files the active q file
+  depends on - it loads them or reads a name they define - and the files
+  depending on it, as `qlinter analyze graph` prints them. It also lists the
+  lines where the file reaches a name computed at run time, which the graph
+  cannot follow. Choosing a row opens the file. It follows the active editor
+  and is redrawn after a save; the button in its title redraws it now.
+  **q-lint: Show Dependencies** opens it.
+- **q-lint: List Affected Tests**: the test files that reach a q file changed
+  against git `HEAD` (uncommitted and untracked files, and buffers not yet
+  saved), each with the changes it reaches. Choosing one opens it. It lists
+  and never runs anything: running them is your test runner's job. A test
+  file is a `.q` file named `test_*` or `*_test`, or under a `test` or
+  `tests` directory. A changed file that was deleted or is excluded from
+  the index cannot be followed, and the list says how many were.
 
 ## Requirements
 
@@ -62,6 +124,11 @@ q-pro column names the setting of [q-pro](https://marketplace.visualstudio.com/i
 | `q-lint.fixes.unsafe` | `true` | Offer the editor-only Quick Fixes (`--unsafe-fixes`) as well as those `--fix` applies. | - |
 | `q-lint.format.enable` | `true` | Register **Format Document** (the safe fixes). | - |
 | `q-lint.semanticTokens.enable` | `true` | Colour calls and parameter reads on top of the grammar. | - |
+| `q-lint.navigation.enable` | `true` | Offer the outline, workspace symbols, definitions, references, highlights and local rename. Off when another q extension already navigates. | - |
+| `q-lint.help.enable` | `true` | Show hovers and signature help, from the source and the built-in catalogue of q's words. | - |
+| `q-lint.completion.enable` | `false` | Complete locals, workspace names and q's words. Off by default: an editor told a server completes stops offering the words already in the file. | - |
+| `q-lint.callHierarchy.enable` | `true` | Offer the call hierarchy of a global function. | - |
+| `q-lint.graph.enable` | `true` | Offer the **q Dependencies** view and **q-lint: List Affected Tests**. Off: the view is hidden and the server answers neither. | - |
 | `q-lint.workspaceIndex.enable` | `true` | Read every workspace `.q` file at startup for the names it defines, up to 20,000 files or 500,000 directory entries. Off: only open files. | - |
 | `q-lint.workspaceIndex.exclude` | `[]` | Globs, relative to the workspace folder, the index does not read: `["vendor/**"]`. | `q-lang-server.sourceFiles.ignoreGlob` |
 | `q-lint.trace.server` | `off` | Log client-server traffic: `off`, `messages`, `verbose`. | `q-lang-server.trace.server` |
@@ -117,6 +184,35 @@ Leave out `editor.formatOnSave` to format only when you ask (**Format
 Document**). A file with nothing to fix, or whose brackets or strings do not
 close, is left as it is.
 
+To apply the same fixes on save without making q-lint the formatter - where
+another extension formats q, or nothing should - ask for its fix-all code
+action instead:
+
+```json
+"[q]": {"editor.codeActionsOnSave": {"source.fixAll.q-lint": "explicit"}}
+```
+
+`"source.fixAll": "explicit"` runs it too, with every other extension's.
+`q-lint.format.enable` does not turn this off: it says whether q-lint is a
+formatter, and this runs only where you list it.
+
+## Folding
+
+A lambda, a parenthesised list, a bracketed block (`if[...]`, `$[...]`, an
+argument list) and a block comment each fold from the line they open on to
+the line they close on. A closing bracket with more code after it on its
+line keeps that line in view.
+
+VS Code folds by indentation until a language server says it folds, and by
+the server's ranges after. So a statement continued over indented lines with
+no bracket open - a long qSQL `select`, say - folded before and does not
+now, and while a bracket is unclosed nothing folds. To have the indentation
+folding back for q:
+
+```json
+"[q]": {"editor.foldingStrategy": "indentation"}
+```
+
 ## Repository settings
 
 A `qlinter.toml` at the repository root (or `[tool.qlinter]` in
@@ -131,6 +227,14 @@ Open **Output → q-lint**: the first line names the server version and binary,
 and the server's errors land there. After replacing the binary, run
 **q-lint: Restart Server**. On macOS, apps started from the Dock do not see
 your shell's `PATH`, so give `q-lint.serverPath` an absolute path.
+
+**q-lint: List Affected Tests** runs `git` - VS Code's `git.path` when you
+set one, else the one on `PATH` - in each workspace folder, so it needs the
+folder to be in a repository with at least one commit, and a trusted
+workspace. A git that has not answered in 30 seconds is stopped. What
+changed inside a submodule is not listed: git names the submodule, not the
+files in it. With `q-lint.workspaceIndex.enable` off, the dependencies and the
+tests are only those among the files you have open.
 
 `qlinter --rules` lists every rule; `qlinter --explain <CODE>` explains one.
 

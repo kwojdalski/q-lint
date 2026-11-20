@@ -369,6 +369,29 @@ is none. A document with nothing to fix, or whose brackets or strings do not
 close, gets no edits; formatting twice changes nothing the second time. Range
 formatting is not offered.
 
+Around those:
+
+- Each diagnostic links its code to that rule's row in
+  [docs/rules.md](docs/rules.md) (`codeDescription`), so the code is clickable
+  wherever an editor shows it.
+- Every finding has a Quick Fix, "Suppress CODE on this line", that writes
+  `/ noqa: CODE` after its line, or adds the code to the `noqa` already there.
+  It is offered only where the linter would read that comment and q would
+  still run the same line: not on a line that ends inside a string, a system
+  command, a `k)` or `p)` line, a block comment or the bare `/` that opens
+  one, nor in a file whose brackets or strings do not close. It is never the
+  preferred fix.
+- `textDocument/codeAction` answers the kind `source.fixAll.q-lint` - asked
+  for by that name, or as `source.fixAll` or `source` - with the edit Format
+  Document makes. That is how an editor applies the safe fixes on save where
+  q-lint is not its formatter; a request that names no kind gets the Quick
+  Fixes alone.
+- `textDocument/foldingRange` folds the lambdas, parenthesised lists,
+  bracketed blocks and block comments that span lines, found in the masked
+  text so that a bracket in a string or a comment folds nothing. A statement
+  continued over indented lines with no bracket open is not a range, and a
+  buffer whose brackets do not close has none until they do.
+
 **The reason it is a server rather than an editor plugin shelling out to the
 CLI**: `didChange` carries the buffer, so what gets linted is what is on
 screen, including edits that have not been saved yet. A CLI over paths cannot
@@ -377,17 +400,126 @@ a `.q` file is linted: an untitled scratch or a console buffer labelled q gets
 no diagnostics, because nothing says it holds q source rather than a REPL
 transcript.
 
-Deliberately not implemented: completion, hover, go-to-definition.
-Those need a resolver and a symbol table this crate does not have — it reads
-source without executing it, which is what makes it safe to run on every
-keystroke. Announcing a capability and answering emptily is worse than not
-announcing it, because an editor told that a server provides completion stops
-offering its own word-based fallback.
+**Navigation** is read from the same source the diagnostics are, without
+running it: `textDocument/documentSymbol` (the outline; nested or flat, as
+the client declares), `workspace/symbol`, `textDocument/definition`,
+`textDocument/references`, `textDocument/documentHighlight` (a write told
+from a read), and `textDocument/prepareRename`/`textDocument/rename`.
+
+A global is named as q would resolve it where it is written: under the `\d`
+context in force, in each context a file is loaded in when it names none of
+its own, in `.q` when nothing else defines the bare name, and at the
+assignment of the nearest namespace when `.cfg.n` exists only because `.cfg`
+was assigned whole. Every way of writing one that the linter already reads
+counts as a definition - `name:`, `name::` in a lambda, `` `name set ``,
+an amend of `` `. `` - and an open buffer is read as the editor has it. A
+definition inside a lambda is still that global's definition. What only
+running the code would tell is not found: a name built at run time, a
+`value "..."` string, a definition another process sends. A column in a qSQL
+phrase reads like a global of that name and is listed with it.
+
+Rename is for a lambda's parameters and locals only. A global is refused, with
+the reason in the error, because it can be reached by name from a string, a
+symbol or another process, and no reading of the source finds those. So are an
+implicit `x`, `y` or `z`, a local a qSQL phrase reads (it may be a column),
+and a new name that is a q builtin or that the lambda already uses.
+
+Hover, signature help and completion answer from two places and never from a
+running q: the workspace's own source, and a catalogue of q's words that ships
+in the binary (`src/builtins.json` - the keywords, the control words, and the
+commonly used names under `.z`, `.Q`, `.h` and `.j`).
+
+A hover on a name the workspace defines shows `name[a;b]` for a function - the
+signature it declares, or `x`, `y` and `z` as far as its body reads them, or
+the slots a projection leaves open - and the line that assigns anything else,
+then the comment directly above the definition (`/` lines, or a block comment
+ending there) and the file. A name several files define shows each, up to
+five. A word of q shows how it is written, a line on what it gives, and a link
+to its page on code.kx.com. A lambda's own parameter or local shows nothing:
+its definition is on screen.
+
+Signature help answers inside the brackets of a call written as a name -
+`.lib.add[1;` - with the parameters and the one being written. A lambda
+called in place, an operator's bracket form (`$[`, `@[`, `.[`, `?[`, `![`) and
+a call by juxtaposition have no signature shown. `if`, `do` and `while` take
+any number of expressions, so the last parameter stays marked.
+
+Completion is off unless `completion.enable` asks for it, because an editor
+told that a server completes stops offering the words already in the buffer,
+and this server's list is narrower than that fallback in one way that matters:
+it knows no table's columns, no key of a dictionary and nothing a running
+process defines. What it offers, in this order: the parameters and locals of
+the lambda being written; the names the workspace defines, spelled as the
+`\d` context in force reads them; q's words; and every name by its full
+path. Nothing is offered in a string, a comment, a symbol, a number or a
+system command.
+
+**How files and functions relate** is read the same way, and comes in three
+requests.
+
+`textDocument/prepareCallHierarchy`, `callHierarchy/incomingCalls` and
+`callHierarchy/outgoingCalls` are the references list, grouped. A hierarchy
+starts on a global function, wherever it is named, and has one item for each
+file that assigns the name a lambda. Its incoming calls are the top-level
+definitions whose statement names it, each with every place it does; a
+place outside every definition - a script's own `main[]` - is put under an
+item for the file itself (`SymbolKind` File, detail `top level`), which has
+calls and no callers. Its outgoing calls are the workspace functions its own
+statement names. This is what the source spells, which is more than calls and
+less than all of them: a function handed on as a value (`f each x`,
+`` `handler set f ``) is listed as called, and one reached through a string,
+a symbol built at run time or another process is in no list. Only a name
+assigned a lambda starts a hierarchy, so a projection or an alias (`g:f`)
+is a caller and never a callee, and what a function assigned inside another
+names is listed under the definition around it.
+
+`q-lint/graph` and `q-lint/affectedTests` are this server's own, announced
+under `capabilities.experimental` by those names, and answer from the graph
+[`qlinter analyze graph`](#the-dependency-graph-qlinter-analyze-graph)
+prints - the same edges by the same rules, over the indexed files with open
+buffers as the editor has them, and without `--symbols`:
+
+```
+q-lint/graph          {"textDocument": {"uri": U}}
+                   -> {"uri": U, "dependencies": [uri], "dependents": [uri],
+                       "ambiguous": {name: [uri]}, "dynamic": [{"line": 1-based, "kind": K}]}
+                      or null for a document that is not an indexed .q file
+q-lint/affectedTests  {"changed": [uri]}
+                   -> {"tests": [{"uri": uri, "reaches": [index into "changed" below],
+                                  "self": its own index there, or null}],
+                       "changed": [uri], "unindexed": [uri]}
+```
+
+`affectedTests` lists the test files that reach a changed file along the
+graph, a changed test among them. Which files changed is the client's to
+say: the server starts no process and so never asks git - the VS Code
+extension sends what differs from `HEAD` and what is untracked. `changed`
+in the answer is the sent files the index holds, each once; `unindexed` is
+the sent `.q` files it does not hold - deleted, excluded, outside the
+workspace - whose dependents cannot be followed, so a client can say the
+list is short. A test file is a `.q` file named `test_*` or `*_test`, or
+under a directory named `test` or `tests` below its workspace folder, which
+is wide on purpose: a helper listed with the tests costs a glance, a test
+left out costs a regression. The limits are the graph's: an edge through a
+name built at run time is not there (`dynamic` says where a file has one),
+and a name several files define is an edge to each. It lists; running the
+tests is left to whatever runs them. Each request draws the graph again
+from what the index already holds - about a quarter of a second over 3,665
+files - so a client should ask when a view is shown or a file saved, not on
+every keystroke.
 
 ### VS Code
 
 The extension in `editors/vscode` is small: it launches the
 server and lets the protocol do the rest.
+
+Two things in it are its own, because the protocol has no word for them: a
+**q Dependencies** view of the active file's `q-lint/graph`, and **q-lint:
+List Affected Tests**, which asks git for the files changed against `HEAD`
+(`git diff --name-only HEAD` and the untracked files, run without a shell
+and only in a trusted workspace), adds the q buffers not yet saved, and
+lists what `q-lint/affectedTests` answers. Choosing a row opens the file;
+nothing is run.
 
 ```sh
 cargo build --release                      # produces target/release/qlinter
@@ -413,6 +545,9 @@ severities, Quick Fixes, formatting, semantic colouring and the workspace
 index - are listed, with which wins over which, in the [extension's
 README](editors/vscode/README.md#settings). `qlinter --lsp` without
 `--profile` defaults to `style`.
+
+The extension also contributes what needs no server: the grammar, and
+snippets for the forms q is mostly written in (`editors/vscode/snippets/q.json`).
 
 ### Other editors
 
@@ -452,7 +587,9 @@ Every key is optional, and these are the defaults:
 ```json
 {"lint": {"select": [], "ignore": [], "run": "onType", "severity": {}},
  "fixes": {"unsafe": true}, "format": {"enable": true},
- "semanticTokens": {"enable": true},
+ "semanticTokens": {"enable": true}, "navigation": {"enable": true},
+ "help": {"enable": true}, "completion": {"enable": false},
+ "callHierarchy": {"enable": true}, "graph": {"enable": true},
  "workspaceIndex": {"enable": true, "exclude": []}}
 ```
 
@@ -461,8 +598,14 @@ configuration and the command line, and only turn rules off: a rule reports
 when the configuration selects it and they do too. `lint.run` is `onType` or
 `onSave`. `lint.severity` maps a code or prefix to `error`, `warning`,
 `information` or `hint`, the longest winning. `fixes.unsafe: false` offers
-only the fixes `--fix` applies; `format.enable` and `semanticTokens.enable`
-set to `false` leave the capability unannounced. `workspaceIndex.exclude`
+only the fixes `--fix` applies; `format.enable`, `semanticTokens.enable`,
+`navigation.enable` and `help.enable` (hover and signature help) set to
+`false` leave the capability unannounced - the last two for when another q
+language server already answers those requests. `completion.enable` is the
+one that starts off; `true` announces completion.
+`callHierarchy.enable` set to `false` leaves the call hierarchy unannounced,
+and `graph.enable` does that for `q-lint/graph` and `q-lint/affectedTests`,
+which then answer `null`. `workspaceIndex.exclude`
 holds globs relative to each workspace folder that the index does not read.
 The index stops after 20,000 `.q` files or 500,000 directory entries of any
 kind, whichever comes first, so a folder opened at `/` cannot stall the

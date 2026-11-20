@@ -29,11 +29,34 @@
 //! requested with textDocument/codeAction, document formatting with
 //! textDocument/formatting, and semantic tokens - the colour of a function at
 //! the places it is called, and of a parameter where its body reads it - with
-//! textDocument/semanticTokens/full.
+//! textDocument/semanticTokens/full. And navigation, in `navigate`: the
+//! outline (textDocument/documentSymbol), workspace/symbol, go to definition,
+//! find references, textDocument/documentHighlight, and a rename of a
+//! lambda's own parameters and locals - never of a global. And help, in
+//! `help`: textDocument/hover, textDocument/signatureHelp and - only when
+//! the client's options ask for it - textDocument/completion, from the
+//! source and the catalogue of q's own words.
+//! And how files and functions relate, in `relate`: the call hierarchy
+//! (textDocument/prepareCallHierarchy, callHierarchy/incomingCalls and
+//! outgoingCalls), and two requests of this server's own, announced under
+//! `experimental` - `q-lint/graph`, a document's dependencies and dependents
+//! as `qlinter analyze graph` has them, and `q-lint/affectedTests`, the test
+//! files reaching the files a client says changed. Which files changed is
+//! git's to say and the client's to ask: this server starts no process.
+//!
+//! Around those: each diagnostic links its code to that rule's row in the
+//! reference (`codeDescription`); beside its fix, or without one, a finding
+//! has a quick fix that accepts it with `/ noqa: CODE` on its line, offered
+//! only where the linter would read that comment (`suppression_for`);
+//! textDocument/codeAction also answers `source.fixAll.q-lint` with the
+//! formatting edit, for `editor.codeActionsOnSave` in an editor where this
+//! server is not the formatter; and textDocument/foldingRange folds the
+//! brackets and block comments that span lines.
 //!
 //! A workspace index: every `.q` file under the workspace folders is read at
-//! startup - never run - for the global names it defines, and kept current
-//! from open buffers, closes, and workspace/didChangeWatchedFiles. A name
+//! startup - never run - for the global names it defines and reads, and
+//! kept current from open buffers, closes, and
+//! workspace/didChangeWatchedFiles. A name
 //! another file defines is not undefined here, a name two files assign is not
 //! tracked by value, and another file's function is coloured as one.
 //! The server registers the watchers itself (`watchers`), for a client that
@@ -56,6 +79,18 @@
 //! another to make outside the range, and a selection's half of a pass is
 //! not something `--fix` ever produces.
 //!
+//! FOLDING IS THE BRACKETS THAT SPAN LINES, AND REPLACES THE EDITOR'S OWN
+//!
+//! A lambda, a parenthesised list, a bracketed block and a block comment
+//! fold, each from the line it opens on to the line it closes on, found in
+//! the masked text so that a bracket in a string or a comment folds nothing
+//! (`folds`). That is all of it: a statement continued over indented lines
+//! with no bracket open is not a range here. An editor told a server folds
+//! stops folding by indentation, so this is a trade and not only a gain -
+//! exact ranges where the brackets are, for none where they are not - and
+//! one a person can decline (`editor.foldingStrategy: "indentation"`). A
+//! buffer whose brackets do not close has no ranges rather than wrong ones.
+//!
 //! EDITOR SETTINGS ARRIVE AS initializationOptions, AND ONLY NARROW
 //!
 //! An editor's settings reach the server once, in `initialize` (see
@@ -66,20 +101,28 @@
 //! was started with - `--profile`, `--select` and the rest - are the
 //! command line's, and keep their meaning.
 //!
-//! Not here: completion, hover, go-to-definition. Those need a resolver and a
-//! symbol table this crate does not have - it reads source text without
-//! executing it, which is the property that makes it safe to run on every
-//! keystroke. Claiming those capabilities and answering emptily is worse than
-//! not claiming them: an editor that is told a server provides completion
-//! stops offering its own word-based fallback. Formatting does not share the
-//! problem: its answer comes from rules that read text, and when there is
-//! nothing to fix, an empty answer is the true one.
+//! Not here: what a name holds. This crate reads source text without
+//! executing it, the property that makes it safe to run on every keystroke.
+//! So a hover shows where a name is defined and what its definition says,
+//! never its value, and completion offers no table's columns. That is why
+//! completion is announced only when asked for: an editor that is told a
+//! server completes stops offering its own word-based fallback, which does
+//! know the column typed three lines up (see `help`).
+//! Formatting does not share the problem: its answer comes from rules that
+//! read text, and when there is nothing to fix, an empty answer is the true
+//! one. Nor does navigation: where a name is written and where it is read is
+//! in the text, under the same `\d` resolution the checks use, and what it
+//! cannot see - a name reached through a string or from another process - is
+//! why it renames nothing but a lambda's locals. The call hierarchy is the
+//! same reading, grouped by the definition a name is written in, and its
+//! limit is the same one: a call is a function's name in a body, so a name
+//! handed on as a value is listed and a call through a string is not.
 use crate::config::{FILES, Layer, Policy, selector};
 use crate::jsonrpc::{INVALID_REQUEST, receive, send};
 use q_lint_rs::graph::Placement;
 use q_lint_rs::{
-    FileIndex, Finding, TokenKind, Workspace, balanced, fix_all, fix_for, semantic_tokens_in,
-    whole_edit,
+    FileIndex, Finding, Fix, References, TokenKind, Workspace, balanced, fix_all, fix_for, folds,
+    rule_url, semantic_tokens_in, suppressions_for, whole_edit,
 };
 use serde_json::{Value, json};
 use std::{
@@ -98,6 +141,13 @@ const METHOD_NOT_FOUND: i64 = -32601;
 const INTERNAL_ERROR: i64 = -32603;
 const INVALID_PARAMS: i64 = -32602;
 const SERVER_NOT_INITIALIZED: i64 = -32002;
+/// LSP 3.17's `RequestFailed`: a well-formed request the server will not
+/// carry out, with the reason as its message - a rename it refuses.
+const REQUEST_FAILED: i64 = -32803;
+
+mod help;
+mod navigate;
+mod relate;
 
 /// Open documents, by URI. The editor is the authority on their contents from
 /// didOpen until didClose, so nothing here reads from disk.
@@ -156,6 +206,10 @@ struct Indexed {
     implicit: Vec<String>,
     placement: Placement,
     placed: FileIndex,
+    /// What the file reads, for the dependency graph `relate` draws when it
+    /// is asked for one. Names and no positions, like the rest - and never
+    /// compared, so a read added or dropped relints nothing.
+    read: References,
 }
 
 impl Index {
@@ -171,7 +225,7 @@ impl Index {
         let path = file_key(path);
         let own = index(text);
         let read = guarded(|| q_lint_rs::references(text, false)).unwrap_or_default();
-        let (loads, implicit) = (read.loads, read.implicit_defines);
+        let (loads, implicit) = (read.loads.clone(), read.implicit_defines.clone());
         let old = self.files.remove(&path);
         self.stale |= old.as_ref().is_none_or(|old| old.loads != loads);
         let placement = old
@@ -194,6 +248,7 @@ impl Index {
             implicit,
             placement,
             placed,
+            read,
         };
         self.files.insert(path, file);
         changed
@@ -231,10 +286,7 @@ impl Index {
                 .iter()
                 .map(|k| self.files[k].loads.as_slice())
                 .collect();
-            let cwd = self
-                .roots
-                .first()
-                .map_or_else(|| std::env::current_dir().unwrap_or_default(), Into::into);
+            let cwd = self.cwd();
             guarded(|| q_lint_rs::graph::placements(&paths, &loads, &cwd))
                 .unwrap_or_else(|_| vec![Placement::default(); keys.len()])
         } else {
@@ -260,6 +312,15 @@ impl Index {
             self.generation += 1;
         }
         changed
+    }
+
+    /// The directory a relative `\l` is tried against first: the first
+    /// workspace folder, which is where a q process over this tree is most
+    /// likely started, since the source does not say.
+    fn cwd(&self) -> std::path::PathBuf {
+        self.roots
+            .first()
+            .map_or_else(|| std::env::current_dir().unwrap_or_default(), Into::into)
     }
 
     /// Forget `path` and, when it was a directory, every file under it but
@@ -466,7 +527,9 @@ fn workspace_roots(params: &Value) -> Vec<String> {
 /// ```json
 /// {"lint": {"select": [], "ignore": [], "run": "onType", "severity": {}},
 ///  "fixes": {"unsafe": true}, "format": {"enable": true},
-///  "semanticTokens": {"enable": true},
+///  "semanticTokens": {"enable": true}, "navigation": {"enable": true},
+///  "help": {"enable": true}, "completion": {"enable": false},
+///  "callHierarchy": {"enable": true}, "graph": {"enable": true},
 ///  "workspaceIndex": {"enable": true, "exclude": []}}
 /// ```
 ///
@@ -486,6 +549,23 @@ struct Options {
     /// are indexed.
     index: bool,
     index_exclude: Vec<glob::Pattern>,
+    /// Answer the navigation requests. Off for someone whose other q
+    /// extension answers them already, and would otherwise list each
+    /// definition twice.
+    navigation: bool,
+    /// Answer hover and signature help.
+    help: bool,
+    /// Answer completion. Off unless asked for: an editor told a server
+    /// completes stops offering the words of the open buffers, and the
+    /// names offered here - the workspace's, a lambda's locals and q's own -
+    /// leave out the columns and keys those words include.
+    completion: bool,
+    /// Answer the call hierarchy requests. Its own switch, since an editor
+    /// asks every server that announces the capability and shows one answer.
+    call_hierarchy: bool,
+    /// Answer `q-lint/graph` and `q-lint/affectedTests`, the file-to-file
+    /// dependency graph `qlinter analyze graph` prints.
+    graph: bool,
     /// A diagnostic severity by code or prefix; the longest that names a
     /// code decides.
     severity: Vec<(String, i64)>,
@@ -500,6 +580,11 @@ impl Default for Options {
             semantic_tokens: true,
             index: true,
             index_exclude: vec![],
+            navigation: true,
+            help: true,
+            completion: false,
+            call_hierarchy: true,
+            graph: true,
             severity: vec![],
         }
     }
@@ -526,6 +611,11 @@ impl Options {
                         "format",
                         "semanticTokens",
                         "workspaceIndex",
+                        "navigation",
+                        "help",
+                        "completion",
+                        "callHierarchy",
+                        "graph",
                     ]
                     .contains(&key.as_str())
                         && !value.is_object()
@@ -551,6 +641,11 @@ impl Options {
         options.format = flag("/format/enable", true);
         options.semantic_tokens = flag("/semanticTokens/enable", true);
         options.index = flag("/workspaceIndex/enable", true);
+        options.navigation = flag("/navigation/enable", true);
+        options.help = flag("/help/enable", true);
+        options.completion = flag("/completion/enable", false);
+        options.call_hierarchy = flag("/callHierarchy/enable", true);
+        options.graph = flag("/graph/enable", true);
         match init.pointer("/lint/run") {
             None | Some(Value::Null) => {}
             Some(v) if v == "onType" => {}
@@ -659,6 +754,10 @@ pub fn serve(
     // Whether the client re-asks for semantic tokens when told to, and the
     // id of the next request the server sends it.
     let mut token_refresh = false;
+    // Whether the client takes the outline as `DocumentSymbol`s, and asks
+    // before a rename what would be renamed.
+    let mut nested_symbols = false;
+    let mut help_client = help::Client::default();
     let mut next_request: u64 = 0;
     // Whether the client takes file watchers the server registers - Neovim
     // and Helix send didChangeWatchedFiles only for those (#792) - and ones
@@ -757,10 +856,24 @@ pub fn serve(
                 };
                 watch_registration = watched("dynamicRegistration");
                 relative_patterns = watched("relativePatternSupport");
-                send(
-                    writer,
-                    json!({"id": id, "result": capabilities(&opts, code_action_literals)}),
-                )?;
+                let client = |pointer: &str| {
+                    params
+                        .pointer(&format!("/capabilities/textDocument/{pointer}"))
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false)
+                };
+                nested_symbols = client("documentSymbol/hierarchicalDocumentSymbolSupport");
+                let mut result = capabilities(&opts, code_action_literals);
+                if opts.navigation {
+                    navigate::announce(
+                        &mut result["capabilities"],
+                        client("rename/prepareSupport"),
+                    );
+                }
+                help_client = help::Client::read(&params);
+                help::announce(&mut result["capabilities"], opts.help, opts.completion);
+                relate::announce(&mut result["capabilities"], opts.call_hierarchy, opts.graph);
+                send(writer, json!({"id": id, "result": result}))?;
                 initialized = true;
             }
             ("exit", _) => return Ok(if shutdown_requested { 0 } else { 1 }),
@@ -816,7 +929,19 @@ pub fn serve(
                 | "textDocument/didClose"
                 | "textDocument/semanticTokens/full"
                 | "textDocument/codeAction"
-                | "textDocument/formatting",
+                | "textDocument/formatting"
+                | "textDocument/documentSymbol"
+                | "textDocument/definition"
+                | "textDocument/references"
+                | "textDocument/documentHighlight"
+                | "textDocument/prepareRename"
+                | "textDocument/rename"
+                | "textDocument/foldingRange"
+                | "textDocument/hover"
+                | "textDocument/signatureHelp"
+                | "textDocument/completion"
+                | "textDocument/prepareCallHierarchy"
+                | "q-lint/graph",
                 id,
             ) if !params["textDocument"]["uri"].is_string() => {
                 let message = format!("{method}: params.textDocument.uri must be a string");
@@ -935,6 +1060,77 @@ pub fn serve(
                 };
                 match edits {
                     Ok(edits) => send(writer, json!({"id": id, "result": edits}))?,
+                    Err(panic) => send(writer, internal_error(id, &panic))?,
+                }
+            }
+            (
+                "textDocument/documentSymbol"
+                | "textDocument/definition"
+                | "textDocument/references"
+                | "textDocument/documentHighlight"
+                | "textDocument/prepareRename"
+                | "textDocument/rename"
+                | "workspace/symbol",
+                Some(id),
+            ) => {
+                let answer = guarded(|| {
+                    if !opts.navigation {
+                        return Ok(Value::Null);
+                    }
+                    let sources = navigate::Sources::new(&docs, &idx);
+                    navigate::answer(&method, &params, &sources, nested_symbols)
+                });
+                match answer {
+                    Ok(Ok(result)) => send(writer, json!({"id": id, "result": result}))?,
+                    Ok(Err(refusal)) => send(
+                        writer,
+                        json!({"id": id, "error": {"code": REQUEST_FAILED, "message": refusal}}),
+                    )?,
+                    Err(panic) => send(writer, internal_error(id, &panic))?,
+                }
+            }
+            ("textDocument/foldingRange", Some(id)) => {
+                match guarded(|| folding_ranges(&params, &docs)) {
+                    Ok(ranges) => send(writer, json!({"id": id, "result": ranges}))?,
+                    Err(panic) => send(writer, internal_error(id, &panic))?,
+                }
+            }
+            (
+                "textDocument/hover" | "textDocument/signatureHelp" | "textDocument/completion",
+                Some(id),
+            ) => {
+                // Asked of a server that did not announce it, a request is
+                // answered with nothing rather than refused.
+                let on = match method.as_str() {
+                    "textDocument/completion" => opts.completion,
+                    _ => opts.help,
+                };
+                let answer = guarded(|| {
+                    if !on {
+                        return Value::Null;
+                    }
+                    let sources = navigate::Sources::new(&docs, &idx);
+                    help::answer(&method, &params, &sources, help_client)
+                });
+                match answer {
+                    Ok(result) => send(writer, json!({"id": id, "result": result}))?,
+                    Err(panic) => send(writer, internal_error(id, &panic))?,
+                }
+            }
+            (
+                "textDocument/prepareCallHierarchy"
+                | "callHierarchy/incomingCalls"
+                | "callHierarchy/outgoingCalls"
+                | "q-lint/graph"
+                | "q-lint/affectedTests",
+                Some(id),
+            ) => {
+                let answer = guarded(|| {
+                    let sources = navigate::Sources::new(&docs, &idx);
+                    relate::answer(&method, &params, &sources, opts.call_hierarchy, opts.graph)
+                });
+                match answer {
+                    Ok(result) => send(writer, json!({"id": id, "result": result}))?,
                     Err(panic) => send(writer, internal_error(id, &panic))?,
                 }
             }
@@ -1063,8 +1259,11 @@ fn capabilities(opts: &Options, code_action_literals: bool) -> Value {
         },
     });
     if code_action_literals {
-        capabilities["codeActionProvider"] = json!(true);
+        // The kinds, not a bare `true`: an editor asks for `source.fixAll`
+        // actions on save only of a server that says it has some.
+        capabilities["codeActionProvider"] = json!({"codeActionKinds": [QUICK_FIX, FIX_ALL]});
     }
+    capabilities["foldingRangeProvider"] = json!(true);
     capabilities["workspace"] = json!({
         "workspaceFolders": {"supported": true, "changeNotifications": true},
     });
@@ -1234,6 +1433,33 @@ fn path_uri(path: &std::path::Path) -> String {
     uri
 }
 
+/// The kind of a fix for one diagnostic, and of the one action that applies
+/// every safe fix to the document. The second is named for this server, as
+/// `source.fixAll.eslint` is for its: a person lists it under
+/// `editor.codeActionsOnSave` to have exactly these fixes run on save.
+const QUICK_FIX: &str = "quickfix";
+const FIX_ALL: &str = "source.fixAll.q-lint";
+
+/// Whether a kind the client asks for (`context.only`) takes in `kind`. Kinds
+/// are hierarchical, a dot at a time: `source` and `source.fixAll` each ask
+/// for `source.fixAll.q-lint`, and `source.fixAllOrNothing` does not.
+fn asks_for(only: &str, kind: &str) -> bool {
+    kind.strip_prefix(only)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
+}
+
+/// The code actions for a request: the quick fixes for the diagnostics it
+/// carries, and - only when asked for by kind - the fix-all action.
+///
+/// WITHOUT `context.only`, QUICK FIXES AND NOTHING ELSE. That request is the
+/// lightbulb's, made as the cursor moves, about the diagnostics at one range.
+/// A fix-all there is about neither: it would run every fix over the document
+/// on each of those requests, to offer what VS Code leaves out of that menu
+/// anyway (a `source` action is shown under Source Action, which asks by
+/// kind), and what a client that does show everything already has as Format
+/// Document - the same edit. So it is returned to a client that names it,
+/// `source.fixAll` or `source` in `only`, which is what
+/// `editor.codeActionsOnSave` and the Source Action menu both do.
 fn code_actions(
     params: &Value,
     docs: &Documents,
@@ -1241,14 +1467,41 @@ fn code_actions(
     policy: &Policy,
     unsafe_fixes: bool,
 ) -> Vec<Value> {
-    if let Some(only) = params["context"]["only"].as_array()
-        && !only.iter().any(|kind| {
-            kind.as_str()
-                .is_some_and(|kind| kind == "quickfix" || kind.starts_with("quickfix."))
-        })
-    {
-        return vec![];
+    let only: Option<Vec<&str>> = params["context"]["only"]
+        .as_array()
+        .map(|only| only.iter().filter_map(Value::as_str).collect());
+    let mut actions = vec![];
+    if only.as_ref().is_none_or(|only| {
+        only.iter()
+            .any(|kind| *kind == QUICK_FIX || kind.starts_with("quickfix."))
+    }) {
+        actions.extend(quick_fixes(params, docs, ws, policy, unsafe_fixes));
     }
+    if only
+        .as_ref()
+        .is_some_and(|only| only.iter().any(|kind| asks_for(kind, FIX_ALL)))
+    {
+        actions.extend(fix_all_action(params, docs, ws, policy));
+    }
+    actions
+}
+
+/// The fixes for the diagnostics a request carries, and after them, for each
+/// of those diagnostics, the edit that accepts it instead: `/ noqa: CODE` on
+/// its line. That one is offered wherever such a comment would be read as
+/// one (`suppression_for` refuses where it would not), fix or no fix, and
+/// never as the preferred action: the fix is what the finding asks for, and
+/// silencing it is a decision nobody should make with a keystroke meant for
+/// something else. Once for a line and a code, however many of the
+/// diagnostics are that code on that line: one comment accepts them all, and
+/// the action says so by listing them.
+fn quick_fixes(
+    params: &Value,
+    docs: &Documents,
+    ws: &Workspace,
+    policy: &Policy,
+    unsafe_fixes: bool,
+) -> Vec<Value> {
     let uri = uri_of(&params["textDocument"]);
     let Some(source) = docs.get(&uri) else {
         return vec![];
@@ -1261,43 +1514,126 @@ fn code_actions(
         return vec![];
     };
     let mut actions = vec![];
+    let mut suppressions: Vec<Value> = vec![];
     // Every finding that has a fix, the editor-only ones included unless the
     // client turned them off: here a person sees each edit and accepts it or
     // not.
     let lines = Lines::new(source);
-    for finding in policy.lint(source, &path, ws).unwrap_or_default() {
-        let current = diagnostic(&finding, &lines);
-        let Some(client_diagnostic) = context.iter().find(|d| {
-            d["code"] == current["code"]
-                && d["range"]["start"] == current["range"]["start"]
-                && d["message"] == current["message"]
-        }) else {
-            continue;
-        };
-        let Some(fix) = fix_for(&finding, source).filter(|f| f.batch_safe || unsafe_fixes) else {
-            continue;
-        };
+    let asked_about: Vec<(Finding, &Value)> = policy
+        .lint(source, &path, ws)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|finding| {
+            let current = diagnostic(&finding, &lines);
+            let client_diagnostic = context.iter().find(|d| {
+                d["code"] == current["code"]
+                    && d["range"]["start"] == current["range"]["start"]
+                    && d["message"] == current["message"]
+            })?;
+            Some((finding, client_diagnostic))
+        })
+        .collect();
+    // For them all at once: a selection of the whole of a long file asks
+    // about every finding in it, and each would mask the file again.
+    let accepted = suppressions_for(asked_about.iter().map(|(finding, _)| finding), source);
+    for ((finding, client_diagnostic), suppression) in asked_about.iter().zip(accepted) {
         // The edit's range comes from the fix, not from the diagnostic. The
         // two coincide for an operator swapped in place, but `f x` becomes
         // `f[x]` by replacing the whole application while the diagnostic
         // underlines only the name.
-        let range = json!({
-            "start": lines.json(fix.start),
-            "end": lines.json(fix.end),
-        });
-        let mut changes = serde_json::Map::new();
-        changes.insert(
-            uri.clone(),
-            json!([{"range": range, "newText": fix.replacement}]),
+        let action = |fix: Fix| {
+            let range = json!({
+                "start": lines.json(fix.start),
+                "end": lines.json(fix.end),
+            });
+            let mut changes = serde_json::Map::new();
+            changes.insert(
+                uri.clone(),
+                json!([{"range": range, "newText": fix.replacement}]),
+            );
+            json!({
+                "title": fix.title,
+                "kind": QUICK_FIX,
+                "diagnostics": [client_diagnostic],
+                "edit": {"changes": changes},
+            })
+        };
+        actions.extend(
+            fix_for(finding, source)
+                .filter(|f| f.batch_safe || unsafe_fixes)
+                .map(action),
         );
-        actions.push(json!({
-            "title": fix.title,
-            "kind": "quickfix",
-            "diagnostics": [client_diagnostic],
-            "edit": {"changes": changes},
-        }));
+        if let Some(suppression) = suppression.map(action) {
+            match suppressions
+                .iter_mut()
+                .find(|s| s["edit"] == suppression["edit"])
+            {
+                Some(same) => same["diagnostics"]
+                    .as_array_mut()
+                    .expect("made above")
+                    .push((*client_diagnostic).clone()),
+                None => suppressions.push(suppression),
+            }
+        }
     }
+    actions.extend(suppressions);
     actions
+}
+
+/// Every safe fix at once, as one action of kind `source.fixAll.q-lint`: the
+/// edit Format Document makes, for an editor where something else formats q
+/// or nothing does. `format` computes it, so the two cannot differ - and
+/// there is no action, as there are no edits, for a buffer with nothing to
+/// fix, one whose brackets or strings do not close, or one that is not open
+/// or not q. Not subject to `format.enable`: that setting says whether this
+/// server is a formatter, and this action runs only where a person named it.
+fn fix_all_action(
+    params: &Value,
+    docs: &Documents,
+    ws: &Workspace,
+    policy: &Policy,
+) -> Option<Value> {
+    let edits = format(params, docs, ws, policy);
+    if edits.is_empty() {
+        return None;
+    }
+    let mut changes = serde_json::Map::new();
+    changes.insert(uri_of(&params["textDocument"]), json!(edits));
+    Some(json!({
+        "title": "Apply every safe q-lint fix",
+        "kind": FIX_ALL,
+        "edit": {"changes": changes},
+    }))
+}
+
+/// What there is to fold in an open q document, as the lines a client
+/// counts: `folds`' pairs, less any that start and end on one line, and one
+/// to a line - the widest, since the rest on that line could only be folded
+/// with it, and VS Code drops all but the first it is given. A document that
+/// is not open or not q, and one whose brackets do not close, has none: an
+/// empty list, which is what an editor shows while a line is being typed.
+fn folding_ranges(params: &Value, docs: &Documents) -> Vec<Value> {
+    let uri = uri_of(&params["textDocument"]);
+    let Some(source) = docs.get(&uri).filter(|_| is_q_uri(&uri)) else {
+        return vec![];
+    };
+    let lines = Lines::new(source);
+    let mut ranges: Vec<Value> = vec![];
+    let mut last_start = None;
+    // In source order, so of two that start on a line the outer comes first.
+    for fold in folds(source) {
+        let (start, end) = (lines.position(fold.start).0, lines.position(fold.end).0);
+        if start >= end || last_start == Some(start) {
+            continue;
+        }
+        last_start = Some(start);
+        let mut range = json!({"startLine": start, "endLine": end});
+        if fold.comment {
+            range["kind"] = json!("comment");
+        }
+        ranges.push(range);
+    }
+    ranges
 }
 
 /// The edits "Format document" makes: the safe fixes `--fix` applies, to the
@@ -1486,6 +1822,11 @@ fn diagnostic(f: &Finding, lines: &Lines) -> Value {
     if matches!(f.code.as_str(), "QF016" | "QF017") && f.end_column.is_some() {
         d["tags"] = json!([DIAGNOSTIC_TAG_UNNECESSARY]);
     }
+    // What makes the code a link in a Problems panel: the rule's row in the
+    // generated rules document, which says what `--explain` would.
+    if let Some(href) = rule_url(&f.code) {
+        d["codeDescription"] = json!({"href": href});
+    }
     d
 }
 
@@ -1503,9 +1844,10 @@ fn severity(name: &str) -> i64 {
 /// Where each line starts, as an LSP client counts lines: the protocol ends
 /// one at `\n`, at `\r\n`, and at a lone `\r`. Every position this server
 /// sends - diagnostics, code actions, semantic tokens - goes through it, so
-/// none of them is a line high after a stray carriage return. Nothing comes
-/// the other way: documents are synced whole, and a code action's
-/// diagnostics are matched against ranges made here.
+/// none of them is a line high after a stray carriage return. A code
+/// action's diagnostics are matched against ranges made here, and the one
+/// position a client sends - where the cursor is, for navigation - comes
+/// back through `offset`.
 struct Lines<'a> {
     source: &'a str,
     starts: Vec<usize>,
@@ -1545,6 +1887,26 @@ impl<'a> Lines<'a> {
     fn json(&self, byte: usize) -> Value {
         let (line, character) = self.position(byte);
         json!({"line": line, "character": character})
+    }
+
+    /// The byte offset of a position a client sends: the 0-based `line` as
+    /// LSP counts lines, and `character` UTF-16 code units into it. A
+    /// character past the line's end is its end, and a line past the last
+    /// the end of the text (LSP 3.17, "Position").
+    fn offset(&self, line: usize, character: usize) -> usize {
+        let Some(&start) = self.starts.get(line) else {
+            return self.source.len();
+        };
+        let rest = &self.source[start..];
+        let text = &rest[..rest.find(['\n', '\r']).unwrap_or(rest.len())];
+        let mut units = 0;
+        for (i, c) in text.char_indices() {
+            if units >= character {
+                return start + i;
+            }
+            units += c.len_utf16();
+        }
+        start + text.len()
     }
 
     /// The text of a 0-based line as q counts lines, less its line ending.

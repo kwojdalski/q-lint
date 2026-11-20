@@ -6,11 +6,18 @@ VS Code client for it.
 ## The property the whole design rests on
 
 **This tool never executes the source it reads.** That is what makes it safe
-to run on every keystroke in an editor, and it is the reason several
-capabilities are absent rather than merely unimplemented: completion, hover
-and go-to-definition need a resolver and a symbol table, and building one
-would mean giving up the guarantee. A change that would require evaluating
-input is a change to the premise, not a feature.
+to run on every keystroke in an editor, and it bounds every editor feature:
+navigation (symbols, definition, references, rename of a local) answers from
+the names the source spells and nothing else, so a name built at run time is
+not found and a global is never renamed; hover, signature help and completion
+answer from the same source and from the catalogue in `src/builtins.json`, so
+they know no column and no value. A feature that could only be right by
+evaluating input is a change to the premise, not a feature.
+
+The server starts no process either. The call hierarchy and the file graph
+(`q-lint/graph`, `q-lint/affectedTests`) are the same reading of names; which
+files changed against git is the client's to say, so the editor asks git and
+sends the answer.
 
 ## Verify with
 

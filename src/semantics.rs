@@ -1,6 +1,9 @@
 use crate::{Finding, blank, boundary, matching, operand_ends, signature};
 use std::collections::{HashMap, HashSet};
 
+pub(crate) mod help;
+pub(crate) mod navigate;
+
 struct Scope {
     start: usize,
     end: usize,
@@ -1226,6 +1229,19 @@ pub fn index(code: &str, raw: &str) -> crate::FileIndex {
     }
 }
 
+/// Where the file first switches context. Before it the file runs in the
+/// context it is loaded in, which the file does not say.
+fn first_switch(code: &str, raw: &str) -> usize {
+    let mut offset = 0;
+    code.split_inclusive('\n')
+        .find_map(|line| {
+            let at = offset;
+            offset += line.len();
+            opens(line, &raw[at..at + line.len()]).map(|_| at)
+        })
+        .unwrap_or(code.len())
+}
+
 /// The global names a file reads, the scripts it loads by a literal path, and
 /// the places reading it cannot see through. The other half of `index`, for
 /// the dependency graph: read, never run, with the same scopes and the same
@@ -1238,18 +1254,7 @@ pub fn index(code: &str, raw: &str) -> crate::FileIndex {
 /// files.
 pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
     let (scopes, namespaces) = scopes(code, raw);
-    // Where the file first switches context. Before it the file runs in the
-    // context it is loaded in, which the file does not say.
-    let first_switch = {
-        let mut offset = 0;
-        code.split_inclusive('\n')
-            .find_map(|line| {
-                let at = offset;
-                offset += line.len();
-                opens(line, &raw[at..at + line.len()]).map(|_| at)
-            })
-            .unwrap_or(code.len())
-    };
+    let first_switch = first_switch(code, raw);
     let ns_at = |at: usize| {
         namespaces[namespaces
             .partition_point(|(p, _)| *p <= at)
