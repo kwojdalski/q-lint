@@ -36,6 +36,17 @@ export const CONNECT_TIMEOUT_MS = 10_000;
 const CAPABILITY = 3;
 const SYNC = 1;
 const RESPONSE = 2;
+/// The response to a sync request from the process: a q error.
+const SYNC_REFUSED = ((): Buffer => {
+  const text = Buffer.from("q-lint answers no sync request", "utf8");
+  const message = Buffer.alloc(10 + text.length);
+  message.writeUInt8(1, 0);
+  message.writeUInt8(RESPONSE, 1);
+  message.writeUInt32LE(message.length, 4);
+  message.writeInt8(-128, 8);
+  text.copy(message, 9);
+  return message;
+})();
 
 /// A list of statements as the codec must be given it. The codec sends a
 /// string that starts with a backtick as a symbol - "`a`b" arrives as the
@@ -218,7 +229,13 @@ export class QConnection {
       const message = this.buffer.subarray(0, length);
       this.buffer = this.buffer.subarray(length);
       // Only a response answers a query. Async messages the user's code
-      // sends back (`neg[.z.w] x`) are not results, and are dropped.
+      // sends back (`neg[.z.w] x`) are not results, and are dropped. A sync
+      // one (`.z.w x`) waits for an answer, and the process with it, so it
+      // gets an error: q-lint runs nothing a process sends it.
+      if (message.readUInt8(1) === SYNC) {
+        this.socket.write(SYNC_REFUSED);
+        continue;
+      }
       if (message.readUInt8(1) !== RESPONSE) {
         continue;
       }

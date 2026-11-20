@@ -432,3 +432,54 @@ test("a compressed answer keeps its q type (#894)", async (t) => {
   const answer = await runUnwrapped(connection, ["1000#7"], { size: [25, 80], limit: 10, unlimited: false, grid: false });
   assert.deepStrictEqual(answer.text, [`${"7 ".repeat(39)}..`]);
 });
+
+/// `text` as a q message of `kind` (0 async, 1 sync, 2 response): a char
+/// vector.
+function charMessage(kind, text) {
+  const body = Buffer.from(text, "utf8");
+  const message = Buffer.alloc(14 + body.length);
+  message.writeUInt8(1, 0);
+  message.writeUInt8(kind, 1);
+  message.writeUInt32LE(message.length, 4);
+  message.writeInt8(10, 8);
+  message.writeUInt32LE(body.length, 10);
+  body.copy(message, 14);
+  return message;
+}
+
+test("a sync request from the process is answered with an error, so the process does not hang (#894)", async (t) => {
+  let replied;
+  const fake = await fakeProcess((message, socket) => {
+    if (message.readUInt8(1) === 1 && replied === undefined && message.readInt8(8) === 10) {
+      // The query: the user's code calls back on .z.w, synchronously.
+      replied = null;
+      socket.write(charMessage(1, "1+1"));
+    } else if (replied === null && message.readUInt8(1) === 2) {
+      replied = message;
+      socket.write(charMessage(2, "done"));
+    }
+  });
+  t.after(() => fake.close());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: fake.port });
+  t.after(() => connection.abort());
+  const timer = setTimeout(() => connection.abort(), 2000);
+  const { value } = await connection.evaluate(".z.w \"1+1\"");
+  clearTimeout(timer);
+  assert.strictEqual(value, "done");
+  // q reads it as an error: type -128 and a message.
+  assert.strictEqual(replied.readInt8(8), -128);
+  assert.match(replied.subarray(9, replied.length - 1).toString(), /q-lint/);
+});
+
+test("a sync request back to q-lint fails in the process instead of hanging it (#894)", { skip }, async (t) => {
+  const q = await startQ();
+  t.after(() => q.stop());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  t.after(() => connection.abort());
+  const timer = setTimeout(() => connection.abort(), 3000);
+  const answer = await connection.query(['.z.w "1+1"'], SIZE);
+  clearTimeout(timer);
+  assert.strictEqual(answer.ok, false);
+  assert.match(answer.error, /q-lint/);
+  assert.deepStrictEqual(await connection.query(["1+1"], SIZE), { ok: true, type: -7, text: ["2"] });
+});
