@@ -1,0 +1,227 @@
+// What a notebook cell asks the process for in `@grid` and `@chart` mode,
+// and the outputs a cell shows.
+//
+// `DATA` runs the statements as `query.ts`'s `RUN` does - one lambda sent
+// with the cell, nothing defined on the process, the same trace - and when
+// the value is a table, answers with the table itself rather than its
+// console text: each column as a list of strings, as `string` writes them
+// (so a timestamp keeps its nanoseconds), a nested column's items with
+// `-3!`. A keyed table is unkeyed and says how many key columns it had.
+// At most `rows` rows are sent, with the table's count, so a large table is
+// cut by the process. A value that is not a table answers as `RUN` would.
+// `rows` and `size` arrive as floats, and are made long there.
+//
+//   table     `ok`table`columns`types`keys`data`total!(1b;1b;...)
+//   other     `ok`table`type`text!(1b;0b;type;.Q.S lines)
+//   failure   `ok`error`trace!(0b;q's error;its backtrace, or "")
+//
+// It works on kdb+/KDB-X and on PeachQ.
+import type { Answer } from "./query";
+import { NULL_TYPE } from "./query";
+import type { CellMode, ChartKind } from "./celldirectives";
+
+export const DATA = [
+  "{[s;rows;size]",
+  " r:$[`trp in key `.Q;",
+  "   .Q.trp[{(1b;last value each x)};s;{(0b;x;.Q.sbt -4_y)}];",
+  "   @[{(1b;last value each x)};s;{(0b;x;\"\")}]];",
+  " if[not r 0;:`ok`error`trace!(0b;r 1;r 2)];",
+  " v:r 1;",
+  " k:$[99h=type v;$[98h=type key v;count cols key v;0];0];",
+  " t:$[k>0;0!v;v];",
+  " if[not 98h=type t;:`ok`table`type`text!(1b;0b;type v;.Q.S[\"j\"$size;0j] v)];",
+  " c:value flip (\"j\"$rows) sublist t;",
+  " str:{$[0h=type x;{$[10h=type x;x;-3!x]} each x;string x]};",
+  " `ok`table`columns`types`keys`data`total!(1b;1b;cols t;type each c;k;str each c;count t)}",
+].join("\n");
+
+/// How many rows `@grid` and `@chart` ask for.
+export const GRID_ROWS = 1000;
+/// How much of one value the grid shows.
+const VALUE_LIMIT = 500;
+
+export interface Table {
+  columns: string[];
+  /// Each column's q type.
+  types: number[];
+  /// How many of the first columns were the key of a keyed table.
+  keys: number;
+  /// Column by column, each value as q writes it.
+  data: string[][];
+  /// The table's count: more than the rows in `data` when it was cut.
+  total: number;
+}
+
+export type CellData = Answer | { ok: true; table: Table };
+
+const strings = (v: unknown): string[] =>
+  Array.isArray(v) ? v.map((x) => (typeof x === "string" ? x : String(x))) : typeof v === "string" ? [v] : [];
+
+/// A q long as a number: the IPC client decodes one as a `Long`.
+const long = (v: unknown): number | undefined =>
+  typeof v === "number"
+    ? v
+    : typeof (v as { toNumber?: unknown } | null)?.toNumber === "function"
+      ? (v as { toNumber: () => number }).toNumber()
+      : undefined;
+
+/// The answer `DATA` gave. Throws when it is not one, as `readAnswer` does.
+export function readCellData(raw: unknown): CellData {
+  const r = raw as Record<string, unknown> | null;
+  if (r === null || typeof r !== "object" || typeof r.ok !== "boolean") {
+    throw new Error(`the process answered something other than a cell result: ${JSON.stringify(raw)?.slice(0, 200)}`);
+  }
+  if (!r.ok) {
+    return {
+      ok: false,
+      error: typeof r.error === "string" ? r.error : String(r.error),
+      trace: typeof r.trace === "string" ? r.trace : "",
+    };
+  }
+  if (r.table !== true) {
+    return { ok: true, type: typeof r.type === "number" ? r.type : 0, text: strings(r.text) };
+  }
+  const columns = strings(r.columns);
+  const data = Array.isArray(r.data) ? r.data.map(strings) : [];
+  const types = Array.isArray(r.types) ? r.types.map(Number) : [];
+  if (data.length !== columns.length) {
+    throw new Error(`the process answered ${data.length} columns of data for ${columns.length} column names`);
+  }
+  return {
+    ok: true,
+    table: {
+      columns,
+      types,
+      keys: long(r.keys) ?? 0,
+      data,
+      total: long(r.total) ?? data[0]?.length ?? 0,
+    },
+  };
+}
+
+const rowCount = (table: Table): number => table.data[0]?.length ?? 0;
+
+/// What says a table was cut, or nothing when it was not.
+export function cutNote(table: Table): string | undefined {
+  const shown = rowCount(table);
+  return table.total > shown ? `Showing the first ${shown.toLocaleString("en")} of ${table.total.toLocaleString("en")} rows.` : undefined;
+}
+
+const ESCAPES: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+
+/// `text` safe anywhere in HTML: as an element's text or an attribute's value.
+export function escapeHtml(text: string): string {
+  return text.replace(/[&<>"']/g, (c) => ESCAPES[c]);
+}
+
+const clip = (value: string): string => (value.length > VALUE_LIMIT ? `${value.slice(0, VALUE_LIMIT - 1)}…` : value);
+
+/// A number, right-aligned: q's byte to float (4 to 9).
+const numeric = (type: number): boolean => type >= 4 && type <= 9;
+
+const STYLE = [
+  ".qnb-grid{border-collapse:collapse;font-family:var(--vscode-editor-font-family,monospace);",
+  "font-size:var(--vscode-editor-font-size,13px);color:var(--vscode-editor-foreground,inherit)}",
+  ".qnb-grid th,.qnb-grid td{border:1px solid var(--vscode-panel-border,rgba(128,128,128,.35));",
+  "padding:1px 8px;white-space:pre;text-align:left;vertical-align:top}",
+  ".qnb-grid th{background:var(--vscode-editorWidget-background,rgba(128,128,128,.12));font-weight:600}",
+  ".qnb-grid td.n{text-align:right}",
+  ".qnb-grid th.k{border-bottom-width:2px}",
+  ".qnb-grid td.k{background:var(--vscode-editorWidget-background,rgba(128,128,128,.08))}",
+  ".qnb-note{opacity:.75;margin-top:4px;font-family:var(--vscode-font-family,sans-serif)}",
+].join("");
+
+/// A table as HTML: a `<style>` scoped to its own classes, coloured from the
+/// editor's theme, and a `<table>`. Every name and value is escaped, and
+/// there is no script.
+export function tableHtml(table: Table): string {
+  const rows = rowCount(table);
+  const cls = (i: number): string => [i < table.keys ? "k" : "", numeric(table.types[i]) ? "n" : ""].filter(Boolean).join(" ");
+  const attr = (i: number): string => (cls(i) === "" ? "" : ` class="${cls(i)}"`);
+  const head = table.columns.map((c, i) => `<th${attr(i)}>${escapeHtml(c)}</th>`).join("");
+  const body: string[] = [];
+  for (let r = 0; r < rows; r++) {
+    body.push(`<tr>${table.data.map((column, i) => `<td${attr(i)}>${escapeHtml(clip(column[r] ?? ""))}</td>`).join("")}</tr>`);
+  }
+  const note = cutNote(table);
+  return [
+    `<style>${STYLE}</style>`,
+    `<table class="qnb-grid"><thead><tr>${head}</tr></thead><tbody>${body.join("")}</tbody></table>`,
+    note === undefined ? "" : `<div class="qnb-note">${escapeHtml(note)}</div>`,
+  ].join("");
+}
+
+/// A table as text laid out as q's console lays it out: the names, a rule,
+/// the rows, a `|` after a keyed table's key columns.
+export function tableText(table: Table): string[] {
+  const rows = rowCount(table);
+  const widths = table.columns.map((c, i) => Math.max(c.length, ...table.data[i].map((v) => clip(v).length)));
+  const line = (cell: (i: number) => string): string =>
+    table.columns
+      .map((_, i) => cell(i).padEnd(widths[i]) + (i === table.keys - 1 && i < table.columns.length - 1 ? "|" : ""))
+      .join(" ");
+  const header = line((i) => table.columns[i]);
+  const lines = [header.trimEnd(), "-".repeat(header.length)];
+  for (let r = 0; r < rows; r++) {
+    lines.push(line((i) => clip(table.data[i][r] ?? "")).trimEnd());
+  }
+  const note = cutNote(table);
+  return note === undefined ? lines : [...lines, note];
+}
+
+export interface OutputItem {
+  mime: string;
+  text: string;
+}
+
+/// One output of a cell: items that are views of the same thing, the editor
+/// showing the richest it can, or an error.
+export type OutputPart =
+  | { kind: "items"; items: OutputItem[] }
+  | { kind: "error"; name: string; message: string; stack: string };
+
+const plain = (lines: string[]): OutputPart => ({ kind: "items", items: [{ mime: "text/plain", text: lines.join("\n") }] });
+
+/// q's error as a cell's error output: its message, and its trace as the
+/// stack.
+export function errorPart(error: string, trace: string): OutputPart {
+  const stack = trace.trim() === "" ? "" : `'${error}\n${trace.replace(/\n+$/, "")}`;
+  return { kind: "error", name: "q error", message: `'${error}`, stack };
+}
+
+/// Where a notebook chart renderer plugs in (#870): the outputs
+/// for `/ @chart <kind>` of `table`. Until it does, the table as text, with
+/// a note saying so.
+export function chartOutputs(kind: ChartKind, table: Table): OutputPart[] {
+  return [plain([`${kind} chart: a notebook does not draw charts yet (query Chart mode does); the data is shown as text.`, ...tableText(table)])];
+}
+
+/// The outputs of a cell run in `mode` that answered `data`. A console run
+/// that gave q's generic null, such as an assignment ending in `;`, shows
+/// nothing, as q's console does.
+export function cellOutputs(mode: CellMode, data: CellData): OutputPart[] {
+  if (!data.ok) {
+    return [errorPart(data.error, data.trace)];
+  }
+  if ("table" in data) {
+    if (mode.mode === "chart") {
+      return chartOutputs(mode.chart, data.table);
+    }
+    return [
+      {
+        kind: "items",
+        items: [
+          { mime: "text/html", text: tableHtml(data.table) },
+          { mime: "text/plain", text: tableText(data.table).join("\n") },
+        ],
+      },
+    ];
+  }
+  if (data.type === NULL_TYPE) {
+    return [];
+  }
+  if (mode.mode === "console") {
+    return [plain(data.text)];
+  }
+  return [plain([...data.text, `(@${mode.mode} shows a table; this is not one, so it is shown as text.)`])];
+}

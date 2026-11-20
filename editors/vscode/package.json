@@ -3,7 +3,7 @@
   "displayName": "q-lint",
   "description": "q/kdb+ for VS Code: linting, Quick Fixes, navigation and help from the source, and connections to q processes to run code on.",
   "icon": "icon.png",
-  "version": "0.18.0",
+  "version": "0.19.0",
   "publisher": "wojdalski",
   "license": "MIT",
   "engines": {
@@ -14,7 +14,8 @@
     "Programming Languages"
   ],
   "activationEvents": [
-    "onLanguage:q"
+    "onLanguage:q",
+    "onNotebook:q-lint-notebook"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -39,6 +40,17 @@
         "embeddedLanguages": {
           "meta.embedded.block.python.q": "python"
         }
+      }
+    ],
+    "notebooks": [
+      {
+        "type": "q-lint-notebook",
+        "displayName": "q Notebook",
+        "selector": [
+          {
+            "filenamePattern": "*.qnb"
+          }
+        ]
       }
     ],
     "snippets": [
@@ -240,6 +252,83 @@
             "default": false,
             "order": 103,
             "markdownDescription": "Show nothing for a query whose value is `::`, such as an assignment ending in `;`."
+          },
+          "q-lint.query.mode": {
+            "type": "string",
+            "enum": [
+              "console",
+              "grid",
+              "chart"
+            ],
+            "enumDescriptions": [
+              "Show every result in the **q-lint: query** output, as q formats it.",
+              "Show a table, dictionary or list in the **q-lint: result** panel as a table you can sort, filter and copy as CSV. Anything else goes to the output.",
+              "Show a table, dictionary or list in the **q-lint: result** panel as a chart of its numeric columns. Anything else goes to the output."
+            ],
+            "default": "console",
+            "order": 110,
+            "markdownDescription": "Where a query's result is shown. **q-lint: Switch Query Mode** changes it."
+          },
+          "q-lint.query.gridLimit": {
+            "type": "integer",
+            "default": 10000,
+            "minimum": 1,
+            "order": 111,
+            "markdownDescription": "The most rows of a result the process sends to the grid or chart. The panel says when a result was cut, and how many rows it had."
+          },
+          "q-lint.query.gridDecimals": {
+            "type": "integer",
+            "default": -1,
+            "minimum": -1,
+            "maximum": 20,
+            "order": 112,
+            "markdownDescription": "Decimal places the grid shows a float or real to, and copies as CSV. `-1`: as the process writes it, to its `\\P` precision."
+          },
+          "q-lint.processExplorer.excludedNamespaces": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [
+              "q",
+              "Q",
+              "h",
+              "j",
+              "o",
+              "s"
+            ],
+            "order": 120,
+            "markdownDescription": "Namespaces the **Process Explorer** and live completion leave out, without the leading dot. Their nested namespaces are left out with them."
+          },
+          "q-lint.processExplorer.previewLimit": {
+            "type": "integer",
+            "default": 5,
+            "minimum": 1,
+            "order": 121,
+            "markdownDescription": "Rows of a table **Preview** shows in the **q-lint: query** output."
+          },
+          "q-lint.processExplorer.autoRefresh": {
+            "type": "boolean",
+            "default": false,
+            "order": 122,
+            "markdownDescription": "Read the active process again after each query, so the **Process Explorer** and live completion show what it defined. Off, they are read on connect and on **Refresh Process Explorer**."
+          }
+        }
+      },
+      {
+        "title": "q-lint: terminal",
+        "properties": {
+          "q-lint.terminal.qBinary": {
+            "type": "string",
+            "default": "q",
+            "order": 200,
+            "markdownDescription": "The q binary **Run Code from Terminal** and **Send ... to Terminal** start: a name on `PATH` or a path. It is quoted for the terminal's shell, so it is one program, not a command line with arguments."
+          },
+          "q-lint.terminal.envPath": {
+            "type": "string",
+            "default": "",
+            "order": 201,
+            "markdownDescription": "A file of `NAME=value` lines set for q in a q terminal, such as `QHOME` and `QLIC`, on the command line that starts it, so they win over the shell's startup files. Relative to the workspace folder. Values are taken as written: `$HOME` is not expanded."
           }
         }
       }
@@ -321,6 +410,26 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "q-lint.refreshProcessExplorer",
+        "title": "Refresh Process Explorer",
+        "category": "q-lint",
+        "icon": "$(refresh)",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.previewProcessExplorerItem",
+        "title": "Preview",
+        "category": "q-lint",
+        "icon": "$(preview)",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.toggleProcessExplorerAutoRefresh",
+        "title": "Toggle Process Explorer Auto Refresh",
+        "category": "q-lint",
+        "icon": "$(sync)"
+      },
+      {
         "command": "q-lint.insertActiveConnectionLabel",
         "title": "Insert Active Connection Label",
         "category": "q-lint"
@@ -361,6 +470,39 @@
         "title": "Clear Query History",
         "category": "q-lint",
         "icon": "$(clear-all)"
+      },
+      {
+        "command": "q-lint.exportNotebook",
+        "title": "Export Notebook as q Script",
+        "category": "q-lint",
+        "icon": "$(export)"
+      },
+      {
+        "command": "q-lint.runInTerminal",
+        "title": "Run Code from Terminal",
+        "category": "q-lint",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "q-lint.sendCurrentLineToTerminal",
+        "title": "Send Current Line to Terminal",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.sendSelectionToTerminal",
+        "title": "Send Current Selection to Terminal",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.sendBlockToTerminal",
+        "title": "Send Current Block to Terminal",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.switchQueryMode",
+        "title": "Switch Query Mode",
+        "category": "q-lint",
+        "icon": "$(table)"
       }
     ],
     "views": {
@@ -377,6 +519,11 @@
         {
           "id": "q-lint.processes",
           "name": "Processes",
+          "contextualTitle": "q-lint"
+        },
+        {
+          "id": "q-lint.processExplorer",
+          "name": "Process Explorer",
           "contextualTitle": "q-lint"
         },
         {
@@ -417,6 +564,16 @@
           "command": "q-lint.exportProcesses",
           "when": "view == q-lint.processes",
           "group": "list@2"
+        },
+        {
+          "command": "q-lint.refreshProcessExplorer",
+          "when": "view == q-lint.processExplorer",
+          "group": "navigation@1"
+        },
+        {
+          "command": "q-lint.toggleProcessExplorerAutoRefresh",
+          "when": "view == q-lint.processExplorer",
+          "group": "navigation@2"
         },
         {
           "command": "q-lint.clearQueryHistory",
@@ -461,6 +618,16 @@
           "group": "3_delete@1"
         },
         {
+          "command": "q-lint.previewProcessExplorerItem",
+          "when": "view == q-lint.processExplorer && viewItem =~ /^explorer\\.(table|variable)$/",
+          "group": "inline"
+        },
+        {
+          "command": "q-lint.previewProcessExplorerItem",
+          "when": "view == q-lint.processExplorer && viewItem =~ /^explorer\\.(table|variable)$/",
+          "group": "1_preview@1"
+        },
+        {
           "command": "q-lint.rerunQuery",
           "when": "view == q-lint.queryHistory && viewItem == history",
           "group": "inline"
@@ -476,6 +643,25 @@
           "command": "q-lint.querySelection",
           "when": "editorLangId == q",
           "group": "navigation@2"
+        },
+        {
+          "command": "q-lint.runInTerminal",
+          "when": "editorLangId == q && resourceScheme == file",
+          "group": "navigation@3"
+        }
+      ],
+      "notebook/toolbar": [
+        {
+          "command": "q-lint.exportNotebook",
+          "when": "notebookType == q-lint-notebook",
+          "group": "navigation"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "q-lint.exportNotebook",
+          "when": "resourceExtname == .qnb",
+          "group": "q-lint"
         }
       ],
       "editor/context": [
@@ -493,6 +679,17 @@
           "command": "q-lint.queryBlock",
           "when": "editorLangId == q",
           "group": "q-lint@3"
+        },
+        {
+          "command": "q-lint.runInTerminal",
+          "when": "editorLangId == q && resourceScheme == file",
+          "group": "q-lint@4"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "q-lint.previewProcessExplorerItem",
+          "when": "false"
         }
       ]
     },
@@ -525,6 +722,21 @@
       {
         "command": "q-lint.queryBlock",
         "key": "ctrl+e",
+        "when": "editorTextFocus && editorLangId == q"
+      },
+      {
+        "command": "q-lint.sendCurrentLineToTerminal",
+        "key": "ctrl+shift+q",
+        "when": "editorTextFocus && editorLangId == q"
+      },
+      {
+        "command": "q-lint.sendSelectionToTerminal",
+        "key": "ctrl+shift+r",
+        "when": "editorTextFocus && editorLangId == q"
+      },
+      {
+        "command": "q-lint.sendBlockToTerminal",
+        "key": "ctrl+shift+e",
         "when": "editorTextFocus && editorLangId == q"
       }
     ]

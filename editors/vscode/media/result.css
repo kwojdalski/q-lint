@@ -1,0 +1,164 @@
+/* The q-lint result panel, in the editor's theme. */
+html,
+body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  background: var(--vscode-editor-background);
+  color: var(--vscode-foreground);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+}
+
+[hidden] {
+  display: none !important;
+}
+
+button,
+select,
+input {
+  font: inherit;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 2px;
+}
+
+button {
+  color: var(--vscode-button-secondaryForeground);
+  background: var(--vscode-button-secondaryBackground);
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: var(--vscode-button-secondaryHoverBackground);
+}
+
+button.on {
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+}
+
+.bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.views {
+  display: flex;
+  gap: 2px;
+}
+
+.meta {
+  color: var(--vscode-descriptionForeground);
+  margin-left: auto;
+}
+
+.grid-view,
+.chart-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.scroller {
+  flex: 1;
+  overflow: auto;
+}
+
+table {
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-family: var(--vscode-editor-font-family);
+  font-size: var(--vscode-editor-font-size);
+}
+
+th,
+td {
+  /* result.js's ROW: one row is 22px. */
+  height: 21px;
+  line-height: 21px;
+  padding: 0 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-bottom: 1px solid var(--vscode-editorGroup-border, transparent);
+  text-align: left;
+}
+
+thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  cursor: pointer;
+  user-select: none;
+  background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background));
+  font-weight: 600;
+}
+
+thead tr.filters th {
+  top: 22px;
+  cursor: default;
+  padding: 1px 2px;
+}
+
+thead tr.filters input {
+  width: 100%;
+  box-sizing: border-box;
+  height: 18px;
+}
+
+td.num,
+th.num {
+  text-align: right;
+}
+
+td.key,
+th.key {
+  background: var(--vscode-editor-inactiveSelectionBackground);
+}
+
+tbody tr:hover td {
+  background: var(--vscode-list-hoverBackground);
+}
+
+tr.spacer td {
+  padding: 0;
+  border: 0;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 8px;
+}
+
+.controls input[type="number"] {
+  width: 5em;
+}
+
+.canvas {
+  position: relative;
+  flex: 1;
+  min-height: 200px;
+  padding: 0 8px 8px;
+}
+
+.note {
+  padding: 0 8px;
+  color: var(--vscode-descriptionForeground);
+}

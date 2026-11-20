@@ -18,11 +18,18 @@
 // no trace. The last four frames of one are this lambda's own (itself,
 // `.Q.trp`, the runner and `each`) and are dropped.
 
-export const RUN = [
-  "{[s;size]",
+/// The lines that run the statements `s` into `r`: `(1b; last value)` or
+/// `(0b; error; trace)`. `grid.ts`'s lambda runs them the same way, from a
+/// lambda as deep, so the four frames dropped are its own there too.
+export const TRAP = [
   " r:$[`trp in key `.Q;",
   "   .Q.trp[{(1b;last value each x)};s;{(0b;x;.Q.sbt -4_y)}];",
   "   @[{(1b;last value each x)};s;{(0b;x;\"\")}]];",
+];
+
+export const RUN = [
+  "{[s;size]",
+  ...TRAP,
   " $[r 0;",
   "   `ok`type`text!(1b;type r 1;.Q.S[\"j\"$size;0j] r 1);",
   "   `ok`error`trace!(0b;r 1;r 2)]}",

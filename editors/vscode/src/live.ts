@@ -5,12 +5,15 @@
 // is touched only once the user connects to it, and then only by the code
 // the user sends. What a query sends is `query.ts`'s; how a block is cut into
 // statements, `statements.ts`'s; how processes are read and grouped,
-// `processes.ts`'s. This file is the VS Code around them.
+// `processes.ts`'s; what a terminal is sent, `terminal.ts`'s. This file is
+// the VS Code around them.
+import * as path from "path";
 import {
   commands,
   EventEmitter,
   MarkdownString,
   StatusBarAlignment,
+  env,
   ThemeColor,
   ThemeIcon,
   TreeItem,
@@ -21,6 +24,7 @@ import {
   type ExtensionContext,
   type OutputChannel,
   type StatusBarItem,
+  type Terminal,
   type TextEditor,
   type TreeDataProvider,
 } from "vscode";
@@ -33,10 +37,12 @@ import {
   processColour,
   type Process,
 } from "./processes";
-import { COMMANDS, CONNECTED, VIEWS, readLive } from "./liveconfig";
+import { COMMANDS, CONNECTED, VIEWS, readLive, readTerminal } from "./liveconfig";
 import { QConnection } from "./qclient";
 import { render } from "./query";
+import { QueryModes, type Rendered } from "./resultpanel";
 import { blockAt, statements } from "./statements";
+import { commandLine, parseEnv, replLines, shellKind } from "./terminal";
 
 const PROCESSES_KEY = "q-lint.processes";
 const HISTORY_KEY = "q-lint.queryHistory";
@@ -60,6 +66,33 @@ export interface HistoryEntry {
   millis: number;
   outcome: "ok" | "error" | "aborted";
   error?: string;
+}
+
+type From = "line" | "selection" | "block";
+
+/// The code a query or a send takes from `editor`: the selection, the
+/// statement the cursor is in, or its line. Undefined when the cursor is on
+/// no statement.
+function codeAt(editor: TextEditor, from: From): string | undefined {
+  const document = editor.document;
+  const line = editor.selection.active.line;
+  if (from === "selection" && !editor.selection.isEmpty) {
+    return document.getText(editor.selection);
+  }
+  if (from === "block") {
+    const lines = document.getText().split(/\r?\n/);
+    const block = blockAt(lines, line);
+    return block === undefined ? undefined : lines.slice(block.start, block.end + 1).join("\n");
+  }
+  return document.lineAt(line).text;
+}
+
+function nothingThere(from: From): void {
+  void window.showInformationMessage(
+    from === "block"
+      ? "q-lint: the cursor is on no statement (a blank line, a comment, or inside a block comment)."
+      : "q-lint: nothing to run there: it is blank or a comment.",
+  );
 }
 
 const colours = { red: "charts.red", blue: "charts.blue", green: "charts.green" } as const;
@@ -149,17 +182,143 @@ class HistoryView implements TreeDataProvider<HistoryEntry> {
   }
 }
 
+/// q in VS Code terminals: a file run in one, and code sent to one. The
+/// terminal runs the user's shell, which starts q, so q exiting leaves the
+/// shell and the command line shows what was run.
+class QTerminals {
+  /// The terminals started here, still open.
+  private readonly ours = new Set<Terminal>();
+  /// Where code is sent: the last q terminal started.
+  private last: Terminal | undefined;
+
+  constructor(context: ExtensionContext) {
+    context.subscriptions.push(
+      window.onDidCloseTerminal((terminal) => {
+        this.ours.delete(terminal);
+        if (terminal === this.last) {
+          this.last = undefined;
+        }
+      }),
+    );
+  }
+
+  /// Run the active file in a terminal named after it, saving it first. A
+  /// terminal of the same name started before is closed: running the file
+  /// again starts a fresh q.
+  async runFile(): Promise<void> {
+    const document = window.activeTextEditor?.document;
+    if (document === undefined || document.uri.scheme !== "file") {
+      void window.showInformationMessage("q-lint: open a q file saved on disk to run it.");
+      return;
+    }
+    if (document.isDirty && !(await document.save())) {
+      return;
+    }
+    const name = path.basename(document.uri.fsPath);
+    for (const terminal of this.ours) {
+      if (terminal.name === name) {
+        terminal.dispose();
+      }
+    }
+    const terminal = await this.start(name, document.uri, document.uri.fsPath);
+    terminal?.show();
+  }
+
+  /// Send the code at the cursor to the q terminal, starting one if none is
+  /// open. Each statement goes as one line, since that is what q's console
+  /// reads.
+  async send(from: From): Promise<void> {
+    const editor = window.activeTextEditor;
+    if (editor === undefined) {
+      return;
+    }
+    const lines = replLines(codeAt(editor, from) ?? "");
+    if (lines.length === 0) {
+      nothingThere(from);
+      return;
+    }
+    const terminal = this.last ?? (await this.start("q", editor.document.uri));
+    if (terminal === undefined) {
+      return;
+    }
+    terminal.show(true);
+    for (const line of lines) {
+      terminal.sendText(line, true);
+    }
+  }
+
+  /// A terminal named `name` that starts `q-lint.terminal.qBinary`, on
+  /// `file` if one is given, with the variables of `q-lint.terminal.envPath`
+  /// set for it. It starts in the workspace folder of `from`, so a script's
+  /// relative `\l` reads as it does from a shell there. Undefined if the env
+  /// file cannot be read.
+  private async start(name: string, from: Uri, file?: string): Promise<Terminal | undefined> {
+    const configuration = workspace.getConfiguration("q-lint", from);
+    const settings = readTerminal((key, fallback) => configuration.get(key, fallback));
+    const folder = workspace.getWorkspaceFolder(from) ?? workspace.workspaceFolders?.[0];
+    const cwd = folder?.uri.fsPath ?? (file !== undefined ? path.dirname(file) : undefined);
+    let variables: Record<string, string> = {};
+    if (settings.envPath !== "") {
+      if (!path.isAbsolute(settings.envPath) && folder === undefined) {
+        void window.showErrorMessage(
+          `q-lint: q-lint.terminal.envPath "${settings.envPath}" is relative, and there is no workspace folder to read it from.`,
+        );
+        return undefined;
+      }
+      const envFile = path.resolve(folder?.uri.fsPath ?? "", settings.envPath);
+      let text: string;
+      try {
+        text = Buffer.from(await workspace.fs.readFile(Uri.file(envFile))).toString("utf8");
+      } catch (error) {
+        void window.showErrorMessage(
+          `q-lint: could not read the env file ${envFile}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        return undefined;
+      }
+      const parsed = parseEnv(text);
+      variables = parsed.env;
+      if (parsed.problems.length > 0) {
+        void window.showWarningMessage(
+          `q-lint: skipped ${parsed.problems.length} line(s) of ${envFile}: ${parsed.problems.slice(0, 3).join("; ")}`,
+        );
+      }
+    }
+    const terminal = window.createTerminal({ name, cwd });
+    this.ours.add(terminal);
+    this.last = terminal;
+    // A file inside the folder is named relative to it, as you would type it.
+    const relative = file !== undefined && cwd !== undefined ? path.relative(cwd, file) : "";
+    const inside = relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+    const args = file === undefined ? [] : [inside ? relative : file];
+    terminal.sendText(commandLine(settings.qBinary, args, shellKind(env.shell), variables), true);
+    return terminal;
+  }
+}
+
 export class Live {
   private connection: QConnection | undefined;
+  /// The query history, newest first. Kept here and written through to
+  /// `globalState`, never rebuilt from it: a read of `globalState` straight
+  /// after a write can return the value before it, and a list rebuilt from
+  /// that drops the entry just added.
+  private queries: HistoryEntry[] | undefined;
   private active: Process | undefined;
   /// A connect in progress, so a second one waits for it instead of opening
   /// another.
   private connecting: Promise<boolean> | undefined;
   private running: { code: string; started: number } | undefined;
+  /// The process explorer's call on the connection, if one is out: a query
+  /// waits for it (`borrow`).
+  private borrowed: Promise<unknown> | undefined;
+  private readonly changed = new EventEmitter<"connected" | "disconnected" | "queried">();
+  /// Fired when a connection opens or closes, and when a query has finished:
+  /// what the process explorer refreshes on.
+  readonly onDidChange = this.changed.event;
   private readonly status: StatusBarItem;
   private readonly output: OutputChannel;
   private readonly processesView: ProcessesView;
   private readonly historyView: HistoryView;
+  private readonly modes: QueryModes;
 
   constructor(private readonly context: ExtensionContext) {
     this.output = window.createOutputChannel("q-lint: query");
@@ -168,6 +327,8 @@ export class Live {
     this.status.command = COMMANDS.connect;
     this.processesView = new ProcessesView(this);
     this.historyView = new HistoryView(this);
+    const terminals = new QTerminals(context);
+    this.modes = new QueryModes(context);
     const c = (name: string, run: (...args: never[]) => unknown) => commands.registerCommand(name, run);
     context.subscriptions.push(
       this.output,
@@ -190,6 +351,11 @@ export class Live {
       c(COMMANDS.abort, () => this.abort()),
       c(COMMANDS.rerun, (entry?: HistoryEntry) => this.rerun(entry)),
       c(COMMANDS.clearHistory, () => this.clearHistory()),
+      c(COMMANDS.runInTerminal, () => terminals.runFile()),
+      c(COMMANDS.sendLine, () => terminals.send("line")),
+      c(COMMANDS.sendSelection, () => terminals.send("selection")),
+      c(COMMANDS.sendBlock, () => terminals.send("block")),
+      this.changed,
       { dispose: () => void this.connection?.close() },
     );
     this.showStatus();
@@ -198,11 +364,18 @@ export class Live {
 
   /// What the extension returns from `activate`: a read-only view for tests
   /// and for other extensions. Passwords are never in it.
-  api(): { processes: () => Process[]; activeLabel: () => string | undefined; history: () => HistoryEntry[] } {
+  api(): {
+    processes: () => Process[];
+    activeLabel: () => string | undefined;
+    history: () => HistoryEntry[];
+    /// What the result panel last drew.
+    result: () => Rendered | undefined;
+  } {
     return {
       processes: () => this.processes(),
       activeLabel: () => this.activeLabel(),
       history: () => this.history(),
+      result: () => this.modes.lastRendered(),
     };
   }
 
@@ -215,7 +388,27 @@ export class Live {
   }
 
   history(): HistoryEntry[] {
-    return this.context.globalState.get<HistoryEntry[]>(HISTORY_KEY, []);
+    this.queries ??= this.context.globalState.get<HistoryEntry[]>(HISTORY_KEY, []);
+    return this.queries;
+  }
+
+  /// Run `use` on the active connection now, if there is one and no query
+  /// is running on it; undefined otherwise. A query sent meanwhile waits for
+  /// it instead of being refused.
+  borrow<T>(use: (connection: QConnection, process: Process) => Promise<T>): Promise<T> | undefined {
+    const connection = this.connection;
+    const process = this.active;
+    if (connection === undefined || process === undefined || !connection.isOpen || connection.isBusy) {
+      return undefined;
+    }
+    const call = use(connection, process);
+    const settled: Promise<unknown> = call.catch(() => {}).finally(() => {
+      if (this.borrowed === settled) {
+        this.borrowed = undefined;
+      }
+    });
+    this.borrowed = settled;
+    return call;
   }
 
   private async save(processes: Process[]): Promise<void> {
@@ -512,9 +705,11 @@ export class Live {
             this.running = undefined;
             this.showStatus();
             this.processesView.refresh();
+            this.changed.fire("disconnected");
             void window.showWarningMessage(`q-lint: the connection to ${process.label} closed.`);
           }
         });
+        this.changed.fire("connected");
         return true;
       } catch (error) {
         void window.showErrorMessage(
@@ -538,57 +733,77 @@ export class Live {
     await connection?.close();
     this.showStatus();
     this.processesView.refresh();
+    this.changed.fire("disconnected");
   }
 
   // --- queries
 
-  private code(editor: TextEditor, from: "line" | "selection" | "block"): string | undefined {
-    const document = editor.document;
-    const line = editor.selection.active.line;
-    if (from === "selection" && !editor.selection.isEmpty) {
-      return document.getText(editor.selection);
-    }
-    if (from === "block") {
-      const lines = document.getText().split(/\r?\n/);
-      const block = blockAt(lines, line);
-      return block === undefined ? undefined : lines.slice(block.start, block.end + 1).join("\n");
-    }
-    return document.lineAt(line).text;
-  }
-
-  private async queryFrom(from: "line" | "selection" | "block"): Promise<void> {
+  private async queryFrom(from: From): Promise<void> {
     const editor = window.activeTextEditor;
     if (editor === undefined) {
       return;
     }
-    const code = this.code(editor, from);
+    const code = codeAt(editor, from);
     if (code === undefined || statements(code).length === 0) {
-      void window.showInformationMessage(
-        from === "block"
-          ? "q-lint: the cursor is on no statement (a blank line, a comment, or inside a block comment)."
-          : "q-lint: nothing to run there: it is blank or a comment.",
-      );
+      nothingThere(from);
       return;
     }
     await this.run(code);
   }
 
-  /// Run `code` on the active connection, connecting first if there is none.
-  private async run(code: string): Promise<void> {
+  /// The active connection and its process, connecting first if there is
+  /// none; undefined when none was connected or a query is still running.
+  private async ready(): Promise<{ connection: QConnection; process: Process } | undefined> {
     if (this.connection === undefined && !(await this.connectTo())) {
-      return;
+      return undefined;
     }
+    await this.borrowed;
     const connection = this.connection;
     const process = this.active;
     if (connection === undefined || process === undefined) {
-      return;
+      return undefined;
     }
     if (connection.isBusy) {
       void window.showInformationMessage(
         `q-lint: a query is still running on ${process.label}. q-lint: Abort Current Query stops waiting for it.`,
       );
+      return undefined;
+    }
+    return { connection, process };
+  }
+
+  /// Run `query` on the active connection, connecting first if there is
+  /// none, for a caller that shows its own result - a notebook cell. The
+  /// status bar shows it running, and `abort` stops waiting for it.
+  /// Undefined when nothing was run; throws what `query` throws.
+  async runOnActive<T>(code: string, query: (connection: QConnection) => Promise<T>): Promise<{ process: string; value: T } | undefined> {
+    const ready = await this.ready();
+    if (ready === undefined) {
+      return undefined;
+    }
+    const started = Date.now();
+    this.running = { code, started };
+    this.showStatus();
+    try {
+      return { process: ready.process.label, value: await query(ready.connection) };
+    } finally {
+      if (this.running?.started === started) {
+        this.running = undefined;
+      }
+      this.showStatus();
+      // A cell can define names as a query can: the explorer refreshes after it.
+      this.changed.fire("queried");
+    }
+  }
+
+  /// Run `code` on the active connection, connecting first if there is none.
+  /// The process explorer's Preview runs here too.
+  async run(code: string): Promise<void> {
+    const ready = await this.ready();
+    if (ready === undefined) {
       return;
     }
+    const { connection, process } = ready;
     const configuration = workspace.getConfiguration("q-lint");
     const settings = readLive((key, fallback) => configuration.get(key, fallback));
     const started = Date.now();
@@ -596,7 +811,12 @@ export class Live {
     this.showStatus();
     let entry: HistoryEntry;
     try {
-      const answer = await connection.query(statements(code), settings.consoleSize);
+      // Grid and chart modes ask for the rows too; a value that is not
+      // tabular comes back as console mode's text.
+      const answer =
+        settings.mode === "console"
+          ? await connection.query(statements(code), settings.consoleSize)
+          : await connection.queryGrid(statements(code), settings.consoleSize, settings.gridLimit);
       const millis = Date.now() - started;
       entry = {
         process: process.label,
@@ -606,7 +826,9 @@ export class Live {
         outcome: answer.ok ? "ok" : "error",
         ...(answer.ok ? {} : { error: answer.error }),
       };
-      this.show(render({ process: process.label, code, answer, millis }, settings), settings.autoClear);
+      if (!this.modes.show({ process: process.label, code, answer, millis }, settings)) {
+        this.show(render({ process: process.label, code, answer, millis }, settings), settings.autoClear);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const aborted = this.running === undefined || !connection.isOpen;
@@ -625,6 +847,7 @@ export class Live {
       }
       this.showStatus();
     }
+    this.changed.fire("queried");
     await this.record(entry);
   }
 
@@ -642,7 +865,7 @@ export class Live {
   /// Stop waiting for the running query: q has no message that cancels one,
   /// so the connection is closed - which also stops the process from sending
   /// a result nobody wants - and opened again.
-  private async abort(): Promise<void> {
+  async abort(): Promise<void> {
     const connection = this.connection;
     const process = this.active;
     if (connection === undefined || process === undefined || !connection.isBusy) {
@@ -667,8 +890,9 @@ export class Live {
   }
 
   private async record(entry: HistoryEntry): Promise<void> {
-    await this.context.globalState.update(HISTORY_KEY, [entry, ...this.history()].slice(0, HISTORY_LIMIT));
+    this.queries = [entry, ...this.history()].slice(0, HISTORY_LIMIT);
     this.historyView.refresh();
+    await this.context.globalState.update(HISTORY_KEY, this.queries);
   }
 
   private async rerun(entry?: HistoryEntry): Promise<void> {
@@ -685,7 +909,8 @@ export class Live {
   }
 
   private async clearHistory(): Promise<void> {
-    await this.context.globalState.update(HISTORY_KEY, []);
+    this.queries = [];
     this.historyView.refresh();
+    await this.context.globalState.update(HISTORY_KEY, this.queries);
   }
 }

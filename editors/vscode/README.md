@@ -103,7 +103,7 @@ to a process you add and connect to, and sends only the code you run.
 
 ## q processes and queries
 
-The **q-lint** panel in the activity bar holds two views.
+The **q-lint** panel in the activity bar holds three views.
 
 **Processes** lists the q processes you add, grouped by tag. Tags `prod`
 (or `prd`), `uat` and `dev` are coloured red, blue and green. Click a
@@ -145,6 +145,135 @@ running the query, and the new connection is made once it is free.
 **Query History** lists each query with its process, time, duration and
 outcome; the button on a row runs it again on the active connection, and
 **Clear Query History** empties it.
+
+**Query modes.** **Switch Query Mode** (or the mode in the status bar) picks
+where a result goes; it sets `q-lint.query.mode`, and takes `console`,
+`grid` or `chart` as an argument for a keybinding.
+- **Console**, the default: every result in the **q-lint: query** output, as
+  above.
+- **Grid**: a table, a keyed table (unkeyed, its key columns shaded), a
+  dictionary (as `key` and `value` columns) or a list (as one `value`
+  column) opens in the **q-lint: result** panel. Click a header to sort,
+  type under it to filter (by the text shown, ignoring case), and **Copy as
+  CSV** copies the rows shown, in the order shown. Each cell is what q
+  prints in a table: a timestamp keeps its nanoseconds, a long above 2^53
+  every digit, a null is blank and an infinity is `0W` or `0w`. Sorting is
+  q's own order (`iasc` on the process), nulls first.
+- **Chart**: the same results as a line, bar, scatter or histogram chart of
+  the numeric columns against the first, chosen in the panel; the panel's
+  **Grid** and **Chart** buttons switch between the two for one result.
+
+The process sends at most `q-lint.query.gridLimit` rows, and the panel says
+when a result was cut and how many rows it had. Anything that is not
+tabular - an atom, a string, a function - and every error still goes to the
+output. As in console mode, nothing is defined on the process: the rows are
+shaped by the lambda sent with the query. The panel loads only the
+extension's own files, under a Content-Security-Policy that allows no
+inline script and no network. Its charts are drawn by
+[Chart.js](https://www.chartjs.org) 4.5.1 (MIT), shipped in
+`media/vendor/` with its licence.
+
+**q terminal.** With a q file open:
+- **Run Code from Terminal**, in the editor's run menu: saves the file and
+  starts `q-lint.terminal.qBinary` on it in a terminal named after the
+  file, in the workspace folder. Running it again closes that terminal and
+  starts a fresh q.
+- **Send Current Line to Terminal**, `ctrl+shift+q`.
+- **Send Current Selection to Terminal**, `ctrl+shift+r`: the current line
+  when nothing is selected.
+- **Send Current Block to Terminal**, `ctrl+shift+e`.
+
+The code goes to the last q terminal q-lint started, and with none open a
+new one starts `q-lint.terminal.qBinary` with no file. It is cut into
+statements as a query is, and each statement is sent as one line, since q's
+console reads one line per statement: its continuation lines are joined
+with a space, as q joins them in a script, a trailing `/` comment is cut,
+and a string that runs onto the next line keeps the newline as `\n`. A
+`\d` line moves the console's namespace as it would a script's. The
+terminal runs your shell, which starts q, so the code goes to whatever the
+terminal is running: once q exits, it goes to the shell.
+
+**Process Explorer** shows what the connected process holds: its
+namespaces, the root first, less those in
+`q-lint.processExplorer.excludedNamespaces`; under each, its tables with
+their row counts and columns (key columns marked), its functions with their
+parameters, and its variables with their type and count. A partitioned table
+is not loaded to count it: its count is each partition's, from `.Q.cn`, and
+the row says so. It is read in one call that defines nothing on the process,
+on connect, on **Refresh Process Explorer**, and after each query when
+**Toggle Process Explorer Auto Refresh** has turned
+`q-lint.processExplorer.autoRefresh` on - never as you type. On a process
+with thousands of names it reads 100 namespaces at most and the first 500
+names of each, in sorted order, and says how many it left out. **Preview**,
+on a table or a variable, runs its first `q-lint.processExplorer.previewLimit`
+rows, or the variable, as a query. The explorer shares the query connection:
+while a query runs it waits and refreshes after, and a query sent while it
+reads waits for it.
+
+**Live completion.** While connected, completion in a q file adds the
+process's global names, as read by the explorer, to the language server's,
+and inside a qSQL statement - `select`, `exec`, `update` or `delete` ... `from
+t` - the columns of `t` first.
+
+## q notebooks
+
+A `.qnb` file opens as a notebook of q code cells and markdown cells. Its
+cells run on the active connection - with none, the first run asks which
+process to connect to - one at a time, in order, each numbered and timed.
+A cell is cut into statements as a query is, and runs as one, defining
+nothing on the process but what its code defines. A run of several cells
+stops at the first that fails. Interrupting a cell does what **Abort
+Current Query** does: q-lint stops waiting, and reconnects once the process
+is free. Cells are not linted.
+
+A cell's first lines can choose how its result is shown:
+- `/ @console`, the default: the result as the process formats it, at
+  `q-lint.output.consoleSize`. A value of `::`, such as an assignment
+  ending in `;`, shows nothing, as in q's console.
+- `/ @grid`: a table as an HTML table, coloured from the editor's theme,
+  with a key column marked. At most 1,000 rows are sent, and the output
+  says when the table was cut. Each value is sent as `string` writes it, so
+  a timestamp keeps its nanoseconds.
+- `/ @chart line`, `bar`, `scatter` or `histogram`: for now the table as
+  text, with a note: query **Chart** mode draws charts, a notebook does not
+  yet (#870).
+
+They are q comments, so a cell runs the same as a query or in a script. A
+directive q-lint does not know, or a chart of no known kind, fails the cell
+with the directives it does know. An error shows q's message and, on kdb+
+3.5 and later, its backtrace.
+
+**Export Notebook as q Script**, on the notebook's toolbar and a `.qnb`
+file's context menu, writes the code cells as a `.q` script q can load,
+each markdown cell as a `/` ... `\` block comment. A cell's code runs from
+the script as it ran in the cell: an indented first line is unindented, a
+block comment a cell leaves open is closed, and a lone `\`, which ends a
+cell, comments out the rest of it instead of ending the script.
+
+The file is JSON, format 1:
+
+```json
+{
+ "qnb": 1,
+ "cells": [
+  {"kind": "markdown", "source": ["# Prices"]},
+  {"kind": "code", "source": ["/ @grid", "select from t"],
+   "execution": {"order": 1, "success": true, "start": 1700000000000, "end": 1700000000012},
+   "outputs": [{"items": [{"mime": "text/html", "text": "<table>...</table>"},
+                          {"mime": "text/plain", "text": "..."}]}]}
+ ]
+}
+```
+
+`qnb` is the format version; a newer one than this extension reads is
+refused with that said. `source` is the cell's lines. A code cell is q
+unless it has a `language`. Outputs are saved, so a notebook reopens with
+its results: an item is `text` when it is UTF-8 and `base64` otherwise.
+`execution` holds the run's number, outcome and start and end, in
+milliseconds since the epoch. Fields with nothing in them are left out, and
+saving a notebook that was opened unchanged writes the same file. A file
+that is not a notebook does not open: the editor says what is wrong with
+it, and the file is left as it was. An empty file is a new notebook.
 
 ## Requirements
 
@@ -221,13 +350,26 @@ nothing.
 | `q-lint.output.autoClear` | `false` | Clear the output before each result. | `q-output.cfg.autoClear` |
 | `q-lint.output.includeQuery` | `false` | Show the code above its result. | `q-output.cfg.includeQuery` |
 | `q-lint.output.ignoreNullReturn` | `false` | Show nothing when the value is `::`. | `q-output.cfg.ignoreNullReturn` |
+| `q-lint.query.mode` | `"console"` | Where a result goes: `console`, `grid` or `chart`. | `q-processes.cfg.queryMode` |
+| `q-lint.query.gridLimit` | `10000` | The most rows the process sends to the grid or chart. | - |
+| `q-lint.query.gridDecimals` | `-1` | Decimal places of a float or real in the grid and its CSV; `-1` as the process writes it (`\P`). | `q-processes.cfg.queryGridDecimals` (default 3) |
+| `q-lint.processExplorer.excludedNamespaces` | `["q","Q","h","j","o","s"]` | Namespaces the Process Explorer and live completion leave out, with those nested in them. | - |
+| `q-lint.processExplorer.previewLimit` | `5` | Rows of a table Preview shows. | - |
+| `q-lint.processExplorer.autoRefresh` | `false` | Read the process again after each query. | - |
+
+### Terminal settings
+
+Read when a q terminal starts, so a change applies to the next one. None
+reaches the language server.
+
+| Setting | Default | What it does | q-pro |
+| --- | --- | --- | --- |
+| `q-lint.terminal.qBinary` | `"q"` | The q binary a terminal starts: a name on `PATH` or a path. It is quoted for the terminal's shell (POSIX, PowerShell or cmd), so it names one program, not a command with arguments. | `q-terminal.cfg.qBinary` |
+| `q-lint.terminal.envPath` | `""` | A file of `NAME=value` lines set for q, such as `QHOME` and `QLIC`. They go on the command line that starts q (`NAME=value q`, `$env:NAME=` in PowerShell, `set` in cmd), so they win over what your shell's startup files set, and show there. Relative to the workspace folder. It is read, not run as a shell script as q-pro's is: `#` lines are comments, `export ` is allowed, quotes around a value are dropped, and nothing is expanded: `$HOME` stays `$HOME`. | `q-terminal.cfg.envPath` |
 
 ### Not here, and why
 
-q-pro's query mode and grid decimals, its q binary and environment file, its
-process explorer and its discovery server are not here yet: they come with
-the grid, the terminal and the process explorer (#852). `kuki` is not
-planned. Its
+q-pro's discovery server is not planned for now, nor is `kuki`. Its
 `sourceFiles.includeGlob` is not mirrored either: the index reads every `.q`
 file `qlinter .` would - less what the configuration's `exclude` skips - and
 `q-lint.workspaceIndex.exclude` narrows it.

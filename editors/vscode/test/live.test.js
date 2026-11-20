@@ -17,8 +17,10 @@ const {
   tagColour,
 } = require("../out/processes.js");
 const { NULL_TYPE, RUN, readAnswer, render } = require("../out/query.js");
-const { COMMANDS, CONNECTED, VIEWS, readLive } = require("../out/liveconfig.js");
+const { COMMANDS, CONNECTED, QUERY_MODES, VIEWS, readLive } = require("../out/liveconfig.js");
+const { EXPLORER, readExplorer } = require("../out/explorer.js");
 const relations = require("../out/relations.js");
+const { NOTEBOOK } = require("../out/qnb.js");
 const { needsRestart } = require("../out/settings.js");
 
 test("a statement is a line and the indented lines after it", () => {
@@ -206,7 +208,9 @@ test("package.json declares exactly the commands the extension registers", () =>
   const declared = pkg.contributes.commands.map((c) => c.command).sort();
   const registered = [
     ...Object.values(COMMANDS),
+    ...Object.values(EXPLORER).filter((id) => id !== EXPLORER.view),
     ...Object.values(relations.COMMANDS),
+    NOTEBOOK.exportCommand,
     "q-lint.restartServer",
   ].sort();
   assert.deepStrictEqual(declared, registered);
@@ -217,7 +221,7 @@ test("the views live in their own container, and every menu names a declared com
   assert.strictEqual(container.id, VIEWS.container);
   assert.deepStrictEqual(
     pkg.contributes.views[VIEWS.container].map((v) => v.id),
-    [VIEWS.processes, VIEWS.history],
+    [VIEWS.processes, EXPLORER.view, VIEWS.history],
   );
   const declared = new Set(pkg.contributes.commands.map((c) => c.command));
   for (const [where, items] of Object.entries(pkg.contributes.menus)) {
@@ -230,6 +234,12 @@ test("the views live in their own container, and every menu names a declared com
   }
   const abort = pkg.contributes.commands.find((c) => c.command === COMMANDS.abort);
   assert.strictEqual(abort.enablement, CONNECTED);
+});
+
+test("the query modes are the ones package.json offers", () => {
+  const mode = pkg.contributes.configuration[1].properties["q-lint.query.mode"];
+  assert.deepStrictEqual(mode.enum, [...QUERY_MODES]);
+  assert.strictEqual(mode.enumDescriptions.length, QUERY_MODES.length);
 });
 
 test("the query keys are ctrl+q, ctrl+r and ctrl+e in a q editor", () => {
@@ -245,10 +255,12 @@ test("the query keys are ctrl+q, ctrl+r and ctrl+e in a q editor", () => {
 test("every query setting is read, with the default package.json declares, and none restarts the server", () => {
   const declared = pkg.contributes.configuration[1].properties;
   const read = new Map();
-  const live = readLive((key, fallback) => {
+  const get = (key, fallback) => {
     read.set(key, fallback);
     return fallback;
-  });
+  };
+  const live = readLive(get);
+  const explorer = readExplorer(get);
   for (const [key, spec] of Object.entries(declared)) {
     const short = key.replace(/^q-lint\./, "");
     assert.ok(read.has(short), `${key} is declared but never read`);
@@ -257,7 +269,26 @@ test("every query setting is read, with the default package.json declares, and n
     assert.strictEqual(needsRestart(affects), false, key);
   }
   assert.strictEqual(read.size, Object.keys(declared).length);
-  assert.deepStrictEqual(live, { consoleSize: [50, 160], autoClear: false, includeQuery: false, ignoreNullReturn: false });
+  assert.deepStrictEqual(live, {
+    consoleSize: [50, 160],
+    autoClear: false,
+    includeQuery: false,
+    ignoreNullReturn: false,
+    mode: "console",
+    gridLimit: 10000,
+    gridDecimals: -1,
+  });
+  assert.deepStrictEqual(explorer, { excludedNamespaces: ["q", "Q", "h", "j", "o", "s"], previewLimit: 5, autoRefresh: false });
   // A size that is not one falls back to the default.
   assert.deepStrictEqual(readLive((key, fallback) => (key === "output.consoleSize" ? "big" : fallback)).consoleSize, [50, 160]);
+  // So do a mode, a limit and decimals that are not ones.
+  const set = (values) => readLive((key, fallback) => (key in values ? values[key] : fallback));
+  assert.strictEqual(set({ "query.mode": "chart" }).mode, "chart");
+  assert.strictEqual(set({ "query.mode": "table" }).mode, "console");
+  assert.strictEqual(set({ "query.gridLimit": 50 }).gridLimit, 50);
+  assert.strictEqual(set({ "query.gridLimit": 0 }).gridLimit, 10000);
+  assert.strictEqual(set({ "query.gridLimit": 2.5 }).gridLimit, 10000);
+  assert.strictEqual(set({ "query.gridDecimals": 3 }).gridDecimals, 3);
+  assert.strictEqual(set({ "query.gridDecimals": -7 }).gridDecimals, -1);
+  assert.strictEqual(set({ "query.gridDecimals": 99 }).gridDecimals, 20);
 });
