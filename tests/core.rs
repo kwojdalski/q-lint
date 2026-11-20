@@ -884,8 +884,14 @@ fn a_long_where_phrase_lints_in_bounded_time() {
     };
     time(4000); // warm the allocator and the regex caches
     let (small, large) = (time(4000), time(32000));
+    eprintln!("4000 conditions took {small:?} and 32000 took {large:?}");
+    // Quadratic is 64 times. Linear measures 7.7 here (15 ms and 117 ms on
+    // Apple silicon), but the release build's Intel macOS runner, seven
+    // times slower, measured 12.4 for the 0.20.0 code - unchanged from
+    // 0.19.0 on this path - so 12 was a margin the hardware ate, not a
+    // regression. 16 still fails a quadratic walk by four times.
     assert!(
-        large < small * 12,
+        large < small * 16,
         "4000 conditions took {small:?} and 32000 took {large:?}"
     );
 }
