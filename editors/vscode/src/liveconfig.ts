@@ -27,6 +27,10 @@ export const COMMANDS = {
   abort: "q-lint.abortQuery",
   rerun: "q-lint.rerunQuery",
   clearHistory: "q-lint.clearQueryHistory",
+  runInTerminal: "q-lint.runInTerminal",
+  sendLine: "q-lint.sendCurrentLineToTerminal",
+  sendSelection: "q-lint.sendSelectionToTerminal",
+  sendBlock: "q-lint.sendBlockToTerminal",
 } as const;
 
 /// Set while a q process is connected.
@@ -47,5 +51,20 @@ export function readLive(get: <T>(key: string, fallback: T) => T): LiveSettings 
     autoClear: get("output.autoClear", false),
     includeQuery: get("output.includeQuery", false),
     ignoreNullReturn: get("output.ignoreNullReturn", false),
+  };
+}
+
+export interface TerminalSettings {
+  qBinary: string;
+  envPath: string;
+}
+
+/// The terminal settings, read as `readLive` reads the query ones. Each is
+/// read when a terminal starts, so a change applies to the next one.
+export function readTerminal(get: <T>(key: string, fallback: T) => T): TerminalSettings {
+  const qBinary = get("terminal.qBinary", "q").trim();
+  return {
+    qBinary: qBinary === "" ? "q" : qBinary,
+    envPath: get("terminal.envPath", "").trim(),
   };
 }

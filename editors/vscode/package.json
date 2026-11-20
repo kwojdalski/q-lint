@@ -254,6 +254,23 @@
             "markdownDescription": "Show nothing for a query whose value is `::`, such as an assignment ending in `;`."
           }
         }
+      },
+      {
+        "title": "q-lint: terminal",
+        "properties": {
+          "q-lint.terminal.qBinary": {
+            "type": "string",
+            "default": "q",
+            "order": 200,
+            "markdownDescription": "The q binary **Run Code from Terminal** and **Send ... to Terminal** start: a name on `PATH` or a path. It is quoted for the terminal's shell, so it is one program, not a command line with arguments."
+          },
+          "q-lint.terminal.envPath": {
+            "type": "string",
+            "default": "",
+            "order": 201,
+            "markdownDescription": "A file of `NAME=value` lines set for q in a q terminal, such as `QHOME` and `QLIC`, on the command line that starts it, so they win over the shell's startup files. Relative to the workspace folder. Values are taken as written: `$HOME` is not expanded."
+          }
+        }
       }
     ],
     "commands": [
@@ -379,6 +396,27 @@
         "title": "Export Notebook as q Script",
         "category": "q-lint",
         "icon": "$(export)"
+      },
+      {
+        "command": "q-lint.runInTerminal",
+        "title": "Run Code from Terminal",
+        "category": "q-lint",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "q-lint.sendCurrentLineToTerminal",
+        "title": "Send Current Line to Terminal",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.sendSelectionToTerminal",
+        "title": "Send Current Selection to Terminal",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.sendBlockToTerminal",
+        "title": "Send Current Block to Terminal",
+        "category": "q-lint"
       }
     ],
     "views": {
@@ -494,6 +532,11 @@
           "command": "q-lint.querySelection",
           "when": "editorLangId == q",
           "group": "navigation@2"
+        },
+        {
+          "command": "q-lint.runInTerminal",
+          "when": "editorLangId == q && resourceScheme == file",
+          "group": "navigation@3"
         }
       ],
       "notebook/toolbar": [
@@ -525,6 +568,11 @@
           "command": "q-lint.queryBlock",
           "when": "editorLangId == q",
           "group": "q-lint@3"
+        },
+        {
+          "command": "q-lint.runInTerminal",
+          "when": "editorLangId == q && resourceScheme == file",
+          "group": "q-lint@4"
         }
       ]
     },
@@ -557,6 +605,21 @@
       {
         "command": "q-lint.queryBlock",
         "key": "ctrl+e",
+        "when": "editorTextFocus && editorLangId == q"
+      },
+      {
+        "command": "q-lint.sendCurrentLineToTerminal",
+        "key": "ctrl+shift+q",
+        "when": "editorTextFocus && editorLangId == q"
+      },
+      {
+        "command": "q-lint.sendSelectionToTerminal",
+        "key": "ctrl+shift+r",
+        "when": "editorTextFocus && editorLangId == q"
+      },
+      {
+        "command": "q-lint.sendBlockToTerminal",
+        "key": "ctrl+shift+e",
         "when": "editorTextFocus && editorLangId == q"
       }
     ]
