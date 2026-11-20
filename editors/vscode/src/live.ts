@@ -156,6 +156,13 @@ export class Live {
   /// another.
   private connecting: Promise<boolean> | undefined;
   private running: { code: string; started: number } | undefined;
+  /// The process explorer's call on the connection, if one is out: a query
+  /// waits for it (`borrow`).
+  private borrowed: Promise<unknown> | undefined;
+  private readonly changed = new EventEmitter<"connected" | "disconnected" | "queried">();
+  /// Fired when a connection opens or closes, and when a query has finished:
+  /// what the process explorer refreshes on.
+  readonly onDidChange = this.changed.event;
   private readonly status: StatusBarItem;
   private readonly output: OutputChannel;
   private readonly processesView: ProcessesView;
@@ -190,6 +197,7 @@ export class Live {
       c(COMMANDS.abort, () => this.abort()),
       c(COMMANDS.rerun, (entry?: HistoryEntry) => this.rerun(entry)),
       c(COMMANDS.clearHistory, () => this.clearHistory()),
+      this.changed,
       { dispose: () => void this.connection?.close() },
     );
     this.showStatus();
@@ -216,6 +224,25 @@ export class Live {
 
   history(): HistoryEntry[] {
     return this.context.globalState.get<HistoryEntry[]>(HISTORY_KEY, []);
+  }
+
+  /// Run `use` on the active connection now, if there is one and no query
+  /// is running on it; undefined otherwise. A query sent meanwhile waits for
+  /// it instead of being refused.
+  borrow<T>(use: (connection: QConnection, process: Process) => Promise<T>): Promise<T> | undefined {
+    const connection = this.connection;
+    const process = this.active;
+    if (connection === undefined || process === undefined || !connection.isOpen || connection.isBusy) {
+      return undefined;
+    }
+    const call = use(connection, process);
+    const settled: Promise<unknown> = call.catch(() => {}).finally(() => {
+      if (this.borrowed === settled) {
+        this.borrowed = undefined;
+      }
+    });
+    this.borrowed = settled;
+    return call;
   }
 
   private async save(processes: Process[]): Promise<void> {
@@ -512,9 +539,11 @@ export class Live {
             this.running = undefined;
             this.showStatus();
             this.processesView.refresh();
+            this.changed.fire("disconnected");
             void window.showWarningMessage(`q-lint: the connection to ${process.label} closed.`);
           }
         });
+        this.changed.fire("connected");
         return true;
       } catch (error) {
         void window.showErrorMessage(
@@ -538,6 +567,7 @@ export class Live {
     await connection?.close();
     this.showStatus();
     this.processesView.refresh();
+    this.changed.fire("disconnected");
   }
 
   // --- queries
@@ -574,10 +604,12 @@ export class Live {
   }
 
   /// Run `code` on the active connection, connecting first if there is none.
-  private async run(code: string): Promise<void> {
+  /// The process explorer's Preview runs here too.
+  async run(code: string): Promise<void> {
     if (this.connection === undefined && !(await this.connectTo())) {
       return;
     }
+    await this.borrowed;
     const connection = this.connection;
     const process = this.active;
     if (connection === undefined || process === undefined) {
@@ -625,6 +657,7 @@ export class Live {
       }
       this.showStatus();
     }
+    this.changed.fire("queried");
     await this.record(entry);
   }
 
