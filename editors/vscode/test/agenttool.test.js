@@ -1,5 +1,5 @@
-// The Run q Query tool around `agent.ts` (#886): its timeout and
-// cancellation, with VS Code and the live half
+// The Run q Query tool around `agent.ts` (#886): which process a call runs
+// on, and its timeout and cancellation, with VS Code and the live half
 // replaced by stand-ins. Run after `tsc`; agent_q.test.js runs the query
 // itself against a real q.
 const test = require("node:test");
@@ -133,6 +133,32 @@ test("a cancellation while the query waits for the connection keeps it from runn
   assert.notStrictEqual(result, "still waiting");
   assert.match(result.error, /cancelled/);
   assert.deepStrictEqual(live.ran, []);
+});
+
+test("a query runs only on the process the user confirmed", async () => {
+  settings = { "agent.queryTimeout": 0 };
+  // Asked with dev active; the user connects to prod before answering.
+  const live = fakeLive({ active: dev });
+  const t = register(live);
+  const input = { query: "delete from `trades" };
+  const asked = t.prepareInvocation({ input });
+  assert.strictEqual(asked.confirmationMessages.title, "Run a q query on dev?");
+  live.active = prod;
+  const result = await within(t.run({ ...input }, token()), 2000);
+  assert.deepStrictEqual(live.ran, []);
+  assert.match(result.error, /dev/);
+  assert.match(result.error, /prod/);
+});
+
+test("nor on one the connection moved to while the query waited for it", async () => {
+  settings = { "agent.queryTimeout": 0 };
+  const live = fakeLive({ active: dev, wait: 50, during: (l) => (l.active = prod) });
+  const t = register(live);
+  const input = { query: "delete from `trades" };
+  t.prepareInvocation({ input });
+  const result = await within(t.run(input, token()), 2000);
+  assert.deepStrictEqual(live.ran, []);
+  assert.match(result.error, /prod/);
 });
 
 test("a query confirmed on the process it runs on runs, and its timeout aborts it", async () => {

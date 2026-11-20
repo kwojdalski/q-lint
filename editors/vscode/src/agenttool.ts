@@ -37,7 +37,16 @@ import { statements } from "./statements";
 
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
+/// A call as `prepareInvocation` and `invoke` both see it: each is handed
+/// its own copy of the input.
+const callKey = (input: AgentInput): string => JSON.stringify([input.query ?? "", input.process?.trim() ?? ""]);
+
 class RunQueryTool implements LanguageModelTool<AgentInput> {
+  /// The process the user was asked to run each prepared call on. The
+  /// active connection can change while the question is open, and a call
+  /// that names no process runs on whichever is active then.
+  private readonly asked = new Map<string, string>();
+
   constructor(private readonly live: Live) {}
 
   /// The process `input` names, or the active one; with whether q-lint
@@ -75,6 +84,12 @@ class RunQueryTool implements LanguageModelTool<AgentInput> {
     if (asked === undefined) {
       return { invocationMessage: "Running a q query" };
     }
+    this.asked.delete(callKey(options.input));
+    this.asked.set(callKey(options.input), asked.process);
+    // Calls asked about and never run are forgotten, oldest first.
+    for (const key of [...this.asked.keys()].slice(0, -20)) {
+      this.asked.delete(key);
+    }
     return {
       invocationMessage: `Running a q query on ${asked.process}`,
       confirmationMessages: { title: asked.title, message: new MarkdownString(asked.message) },
@@ -97,6 +112,11 @@ class RunQueryTool implements LanguageModelTool<AgentInput> {
       return target;
     }
     const { process } = target;
+    const shown = this.asked.get(callKey(input));
+    this.asked.delete(callKey(input));
+    if (shown !== undefined && shown !== process.label) {
+      return { error: `Nothing was run: the user was asked to run it on ${shown}, and it would now run on ${process.label}. Ask again.` };
+    }
     if (target.connects && !(await this.live.connectTo(process.label))) {
       return { error: `Could not connect to ${process.label} (${process.host}:${process.port}); q-lint showed the user why.` };
     }
@@ -131,6 +151,11 @@ class RunQueryTool implements LanguageModelTool<AgentInput> {
       const ran = await this.live.runOnActive(code, (connection) => {
         if (stopped !== undefined) {
           throw new Error("not run");
+        }
+        // The connection can change while the query waits for it.
+        const now = this.live.activeLabel();
+        if (now !== process.label) {
+          throw new Error(`Nothing was run: the active connection moved from ${process.label} to ${now ?? "none"} before the query could start. Ask again.`);
         }
         running = true;
         return runAgentQuery(connection, code, settings.consoleSize);
