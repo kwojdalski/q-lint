@@ -217,7 +217,7 @@ it, or `ALL`.
 | <a id="qs006"></a>`QS006` | lambda-length | Lambda longer than twenty five lines | `styleq` and above |
 | <a id="qs007"></a>`QS007` | documented-parameter-absent | `@param` names a parameter the lambda does not take | `styleq` and above |
 | <a id="qs008"></a>`QS008` | implicit-name-out-of-position | `x`, `y` or `z` declared in a position q would not give it | `styleq` and above |
-| <a id="qs009"></a>`QS009` | implicit-name-as-local | `x`, `y` or `z` used as a local beside named parameters | `styleq` and above |
+| <a id="qs009"></a>`QS009` | implicit-name-as-local | `y` or `z` assigned before it is read in a lambda without a parameter list, which makes it an argument the caller has to pass and the body throws away | `styleq` and above |
 | <a id="qs010"></a>`QS010` | mixed-naming-convention | Names in one file mix naming conventions: camelCase, PascalCase, snake_case, Hungarian, kebab-case or a function in capitals | `styleq` and above |
 
 ## External - findings relayed from another tool

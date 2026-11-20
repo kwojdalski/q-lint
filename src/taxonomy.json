@@ -654,7 +654,7 @@
     "code": "QS009",
     "name": "implicit-name-as-local",
     "category": "style-guide",
-    "summary": "`x`, `y` or `z` used as a local beside named parameters",
+    "summary": "`y` or `z` assigned before it is read in a lambda without a parameter list, which makes it an argument the caller has to pass and the body throws away",
     "scope": "styleq"
   },
   {

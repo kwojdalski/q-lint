@@ -2480,32 +2480,77 @@ pub fn check(
             }
         }
     }
-    // The other half of the same guidance: "avoid using these letters as local
-    // variables" when the parameters are named. `{[a;b] x:a+b; ...}` works,
-    // but `x` in a q body means the first argument to every reader who has not
-    // yet looked at the signature.
+    // `y` or `z` assigned in a lambda with no parameter list. q counts the
+    // implicit arguments by the highest of the three the body names, and an
+    // assignment names it too: in q 5 `g:{z:x+1; z}` takes three arguments,
+    // so `g 1` is a projection, and whatever the caller passes as `z` is
+    // thrown away unread. With a parameter list the letters are ordinary
+    // locals - `{[a;b] z:a+b; z*2}[1;2]` is 6 and `value` lists only `a`
+    // and `b` - and rebinding `x` keeps the rank, so neither is reported.
+    // An assignment that follows a read of the same name rebinds an argument
+    // the body uses, `{y:y+1; x+y}`, which is not this.
     for scope in &scopes {
-        if !scope.named || scope.params.iter().any(|p| matches!(&**p, "x" | "y" | "z")) {
+        if scope.named {
             continue;
         }
         let statements = statement_view(&scope.direct);
+        let direct = re!(r"`[A-Za-z0-9_./:]*")
+            .replace_all(&scope.direct, |m: &regex::Captures| " ".repeat(m[0].len()));
+        let reads = |text: &str, name: &str| {
+            text.match_indices(name).any(|(i, _)| {
+                boundary(text, i)
+                    && !text[i + 1..]
+                        .starts_with(|c: char| c.is_ascii_alphanumeric() || "_.".contains(c))
+                    && !re!(r"^[ \t]*:(?:[^:]|$)").is_match(&text[i + 1..])
+            })
+        };
+        let mut seen = HashSet::new();
         for a in assignment.captures_iter(&statements) {
             let whole = a.get(0).unwrap();
-            if !boundary(&statements, whole.start()) || a.get(2).is_some() {
+            let name = a.get(1).unwrap().as_str();
+            if !boundary(&statements, whole.start())
+                || a.get(2).is_some()
+                || !matches!(name, "y" | "z")
+                || !seen.insert(name)
+            {
                 continue;
             }
-            if matches!(&a[1], "x" | "y" | "z") {
-                out.push(Finding::at(
-                    path,
-                    raw,
-                    scope.body + whole.start(),
-                    "QS009",
-                    format!(
-                        "`{}` is a local here, but in a q body it reads as an implicit argument",
-                        &a[1]
-                    ),
-                ));
+            // `y[k]:v` amends the argument in place, which reads it: the
+            // brackets are blank in `statements` but not in the body.
+            if direct[whole.start() + name.len()..]
+                .trim_start_matches([' ', '\t'])
+                .starts_with('[')
+            {
+                continue;
             }
+            // Read first: before the assignment, or on its right, which q
+            // evaluates before it stores - up to the `;` or bracket that
+            // ends the statement.
+            let (mut end, mut depth, bytes) = (whole.end(), 0i32, direct.as_bytes());
+            while end < bytes.len() {
+                match bytes[end] {
+                    b'(' | b'[' | b'{' => depth += 1,
+                    b')' | b']' | b'}' if depth == 0 => break,
+                    b')' | b']' | b'}' => depth -= 1,
+                    b';' if depth == 0 => break,
+                    _ => {}
+                }
+                end += 1;
+            }
+            if reads(&direct[..whole.start()], name) || reads(&direct[whole.end()..end], name) {
+                continue;
+            }
+            let rank = crate::lambda_rank(code, raw, scope.start, scope.end);
+            out.push(Finding::at(
+                path,
+                raw,
+                scope.body + whole.start(),
+                "QS009",
+                format!(
+                    "`{name}` is assigned before it is read, so q counts it as an argument: \
+                     this lambda takes {rank}, and the caller's `{name}` is thrown away"
+                ),
+            ));
         }
     }
     // From the FINOS q coding guidelines:

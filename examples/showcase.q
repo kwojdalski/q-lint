@@ -206,11 +206,15 @@ wrapped:(1)+2
 / expect-next: QS008
 misplaced:{[t;x] t+x}
 
-/ QS009: the other half of the same guidance - "avoid using these letters as
-/ local variables" when the parameters are named. This works; it just reads as
-/ an implicit argument to anyone who has not looked at the signature yet.
+/ QS009: `z` assigned in a lambda with no parameter list. q counts the
+/ implicit arguments by the highest letter the body names, the assignment
+/ included, so this takes three: `shadowed 1` is a projection, and the
+/ caller's third argument is thrown away unread.
 / expect-next: QS009
-shadowed:{[p;q] x:p+q; x}
+shadowed:{z:x+1; z}
+
+/ clean: with a parameter list the same name is an ordinary local.
+local:{[p;q] z:p+q; z}
 
 / QS007: documentation naming a parameter the lambda does not take. The
 / signature changed and the comment did not, or the name is a typo. Only names

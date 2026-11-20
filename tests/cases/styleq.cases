@@ -18,7 +18,7 @@ export:([check])
 === QS003 profile: styleq | `l` reads as `1`
 l:1
 
-=== QS001 QS002 QS003 profile: styleq | an assignment that is not first on its line, or opens a lambda (#662)
+=== QS001 QS002 QS003 QS009 profile: styleq | an assignment that is not first on its line, or opens a lambda (#662)
 x:1;my_var:2
 f:{l:1;l}
 g:{y:1;my.var:2;y}
@@ -116,8 +116,32 @@ f:{[a;y] a+y}
 === clean profile: styleq | no signature at all, so the implicit names are q's own
 f:{x+y}
 
-=== QS009 profile: styleq | `x` as a local beside named parameters
+=== clean profile: styleq | with a parameter list the implicit names are ordinary locals (q 5: {[a;b] z:a+b; z*2}[1;2] is 6, value lists only a and b)
 f:{[p;q] x:p+q; x}
+g:{[f] z:-21!f; z}
+h:{[a;b] z:a+b; z*2}
+
+=== QS009 profile: styleq | `z` assigned in a lambda with no parameter list makes it take three arguments (q 5: type {z:x+1; z} 1 is 104h)
+g:{z:x+1; z}
+
+=== QS009 profile: styleq | and `y` two
+h:{y:x+1; y}
+
+=== QS009 profile: styleq | an assignment after another statement still comes before any read
+h:{a:x; z:a*2; z}
+
+=== clean profile: styleq | rebinding `x` keeps the rank (q 5: {x:x+1; x} 1 is 2)
+k:{x:x+1; x}
+
+=== clean profile: styleq | nor is an argument the body reads before rebinding it
+f:{y:y+1; x+y}
+g:{a:z; z:0; a+x+z}
+
+=== clean profile: styleq | nor one it amends in place, which reads it (KxSystems ml's create.q)
+f:{y[`a;z]:x z; y}
+
+=== clean profile: styleq | a nested lambda's `z` is its own, not the outer lambda's
+f:{x+{[a] z:a; z} 1}
 
 === clean profile: styleq | a local that is not one of q's argument names
 f:{[p;q] r:p+q; r}
