@@ -21,8 +21,8 @@
 use super::navigate::{Cursor, Sources, range};
 use super::{Lines, file_key, utf16_len};
 use q_lint_rs::{
-    BUILTINS, Builtin, BuiltinKind, Name, builtin, call_at, comment_above, completing, mentions,
-    name_at, word_at,
+    BUILTINS, Builtin, BuiltinKind, Name, applied, builtin, call_at, comment_above, completing,
+    glyph_at, mentions, name_at, word_at,
 };
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashSet};
@@ -34,6 +34,9 @@ const REFERENCE: &str = "https://code.kx.com/q/ref/";
 const MAX_DEFINITIONS: usize = 5;
 /// How much of a statement's first line a hover quotes.
 const MAX_LINE: usize = 120;
+/// How many names one alias may lead through to a function: `a:b`, `b:c`,
+/// `c:{...}` is three. A cycle, `a:b` and `b:a`, ends here too.
+const MAX_ALIASES: usize = 4;
 /// How many items one completion reply carries. Past that the reply says it
 /// is incomplete, and the client asks again as the name grows.
 const MAX_ITEMS: usize = 1000;
@@ -52,6 +55,8 @@ pub(super) struct Client {
     /// A parameter named as a span of its signature's label, and not as a
     /// string to find there - which finds the first `x` of `x in x`.
     label_offsets: bool,
+    /// `null` understood as no active parameter (LSP 3.18).
+    no_active_parameter: bool,
     completion_markdown: bool,
 }
 
@@ -71,6 +76,9 @@ impl Client {
             )
             .and_then(Value::as_bool)
             .unwrap_or(false),
+            no_active_parameter: at("signatureHelp/signatureInformation/noActiveParameterSupport")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
             completion_markdown: markdown("completion/completionItem/documentationFormat"),
         }
     }
@@ -109,6 +117,10 @@ struct Defined {
     /// The first line of the statement.
     line: String,
     file: String,
+    /// What is assigned, when it is no lambda but another name - by the
+    /// names that one answers to and as it is spelled - or a projection of
+    /// one, by which of its slots are given.
+    of: Option<(HashSet<String>, String, Option<Vec<bool>>)>,
 }
 
 impl Defined {
@@ -131,7 +143,8 @@ fn defined(sources: &Sources, names: &HashSet<String>) -> Vec<Defined> {
         let Some((_, text)) = sources.text(key) else {
             continue;
         };
-        for m in &mentions(&text) {
+        let all = mentions(&text);
+        for m in &all {
             let Some(definition) = &m.definition else {
                 continue;
             };
@@ -153,12 +166,24 @@ fn defined(sources: &Sources, names: &HashSet<String>) -> Vec<Defined> {
                 Some((cut, _)) => format!("{} ...", &statement[..cut]),
                 None => statement.to_string(),
             };
+            let of = (!definition.function)
+                .then(|| applied(&text, m.at + m.len))
+                .flatten()
+                .map(|a| {
+                    let names = all
+                        .iter()
+                        .filter(|read| read.at == a.at && read.definition.is_none())
+                        .flat_map(|read| sources.names(&text, read, &file.placement))
+                        .collect();
+                    (names, text[a.at..a.at + a.len].to_string(), a.given)
+                });
             out.push(Defined {
                 name,
                 params: definition.function.then(|| definition.params.clone()),
                 comment: comment_above(&text, definition.start),
                 line,
                 file: shown(sources, key),
+                of,
             });
         }
     }
@@ -273,27 +298,35 @@ fn hover(params: &Value, sources: &Sources, client: Client) -> Value {
     let builtin_at = |at: usize, len: usize| {
         builtin(&cursor.text[at..at + len]).map(|b| builtin_described(b, markdown))
     };
-    let (at, len, sections) = match name_at(cursor.text, cursor.offset) {
-        Some(Name::Local(_)) => return Value::Null,
-        Some(Name::Global { at, len, .. }) => {
-            let sections: Vec<String> = defined(sources, &sources.targets(&cursor, at))
-                .iter()
-                .map(|d| {
-                    let code = d.label().unwrap_or_else(|| d.line.clone());
-                    described(&code, &d.comment, Some((&d.file, None)), markdown)
-                })
-                .collect();
-            if sections.is_empty() {
-                (at, len, builtin_at(at, len).into_iter().collect())
-            } else {
-                (at, len, sections)
+    // A glyph is no name, and is described where the cursor is on it - also
+    // right after a name, which `name_at` would answer for.
+    let glyph = glyph_at(cursor.text, cursor.offset)
+        .and_then(|(at, len)| Some((at, len, builtin_at(at, len)?)));
+    let (at, len, sections) = if let Some((at, len, section)) = glyph {
+        (at, len, vec![section])
+    } else {
+        match name_at(cursor.text, cursor.offset) {
+            Some(Name::Local(_)) => return Value::Null,
+            Some(Name::Global { at, len, .. }) => {
+                let sections: Vec<String> = defined(sources, &sources.targets(&cursor, at))
+                    .iter()
+                    .map(|d| {
+                        let code = d.label().unwrap_or_else(|| d.line.clone());
+                        described(&code, &d.comment, Some((&d.file, None)), markdown)
+                    })
+                    .collect();
+                if sections.is_empty() {
+                    (at, len, builtin_at(at, len).into_iter().collect())
+                } else {
+                    (at, len, sections)
+                }
             }
+            // A keyword is no name to `name_at`, and is one here.
+            None => match word_at(cursor.text, cursor.offset) {
+                Some((at, len)) => (at, len, builtin_at(at, len).into_iter().collect()),
+                None => return Value::Null,
+            },
         }
-        // A keyword is no name to `name_at`, and is one here.
-        None => match word_at(cursor.text, cursor.offset) {
-            Some((at, len)) => (at, len, builtin_at(at, len).into_iter().collect()),
-            None => return Value::Null,
-        },
     };
     if sections.is_empty() {
         return Value::Null;
@@ -322,44 +355,115 @@ struct Signature {
 /// document: the workspace's functions of that name, one for each list of
 /// parameters, or q's own.
 fn signatures(sources: &Sources, cursor: &Cursor, at: usize, len: usize) -> Vec<Signature> {
-    let mut found: Vec<Signature> = vec![];
-    match name_at(cursor.text, at) {
+    let found = match name_at(cursor.text, at) {
         // What a local holds is whatever was assigned to it last.
-        Some(Name::Local(_)) => return found,
-        Some(Name::Global { at, .. }) => {
-            for d in defined(sources, &sources.targets(cursor, at)) {
-                let Some(params) = d.params else { continue };
-                if !found.iter().any(|s| s.name == d.name && s.params == params) {
-                    found.push(Signature {
-                        name: d.name,
-                        params,
-                        said: d.comment,
-                        open: false,
-                    });
-                }
-            }
-        }
-        None => {}
+        Some(Name::Local(_)) => return vec![],
+        Some(Name::Global { at, .. }) => called(sources, &sources.targets(cursor, at), MAX_ALIASES),
+        None => vec![],
+    };
+    if found.is_empty() {
+        return builtin_signature(&cursor.text[at..at + len])
+            .into_iter()
+            .collect();
     }
-    if found.is_empty()
-        && let Some(b) = builtin(&cursor.text[at..at + len])
-        && matches!(b.kind, BuiltinKind::Function | BuiltinKind::Control)
-        && !b.params.is_empty()
-    {
-        found.push(Signature {
+    found
+}
+
+/// q's own signature for `name`, when it is called with arguments.
+fn builtin_signature(name: &str) -> Option<Signature> {
+    let b = builtin(name)?;
+    (matches!(b.kind, BuiltinKind::Function | BuiltinKind::Control) && !b.params.is_empty()).then(
+        || Signature {
             name: b.name.clone(),
             params: b.params.clone(),
             said: b.summary.clone(),
             open: b.kind == BuiltinKind::Control,
-        });
+        },
+    )
+}
+
+/// The ways to call the global known by `names`: each lambda assigned to
+/// it, and through each name or projection assigned to it, up to `depth`
+/// names deep, what that leads to - a projection taking the parameters it
+/// leaves open, `pr:add[;2;]` taking `add`'s first and third.
+fn called(sources: &Sources, names: &HashSet<String>, depth: usize) -> Vec<Signature> {
+    let mut found: Vec<Signature> = vec![];
+    for d in defined(sources, names) {
+        let mut ways = vec![];
+        if let Some(params) = d.params {
+            ways.push(Signature {
+                name: d.name,
+                params,
+                said: d.comment,
+                open: false,
+            });
+        } else if let Some((targets, spelled, given)) = d.of.filter(|_| depth > 0) {
+            let mut under = called(sources, &targets, depth - 1);
+            if under.is_empty() {
+                under.extend(builtin_signature(&spelled));
+            }
+            for s in under {
+                let params = match &given {
+                    None => s.params,
+                    // An open list of expressions has no slots to count.
+                    Some(_) if s.open => continue,
+                    Some(given) => match projected(s.params, given) {
+                        Some(params) => params,
+                        None => continue,
+                    },
+                };
+                ways.push(Signature {
+                    name: d.name.clone(),
+                    params,
+                    said: if d.comment.is_empty() {
+                        s.said
+                    } else {
+                        d.comment.clone()
+                    },
+                    open: s.open && given.is_none(),
+                });
+            }
+        }
+        for way in ways {
+            if !found
+                .iter()
+                .any(|s| s.name == way.name && s.params == way.params)
+            {
+                found.push(way);
+            }
+        }
     }
     found
+}
+
+/// The parameters a projection leaves open: each one no slot of `given`
+/// fills, past the slots written too. `None` when it is no projection -
+/// every parameter given, which is a call, or more slots than parameters,
+/// which q refuses. `f[]` is `f[::]`, its first slot given.
+fn projected(params: Vec<String>, given: &[bool]) -> Option<Vec<String>> {
+    if given.len() > params.len() {
+        return None;
+    }
+    let given = if given == [false] { &[true][..] } else { given };
+    let open: Vec<String> = params
+        .into_iter()
+        .enumerate()
+        .filter(|(i, _)| !given.get(*i).copied().unwrap_or(false))
+        .map(|(_, param)| param)
+        .collect();
+    (!open.is_empty()).then_some(open)
 }
 
 /// `textDocument/signatureHelp`: the parameters of the name whose brackets
 /// the cursor is in, and which of them is being written - counted by the
 /// `;`s before the cursor. Nothing for what is not called by a name: a
 /// lambda written in place, or an operator's bracket form.
+///
+/// Past the last parameter no parameter is being written, and the
+/// signature says the call has too many arguments. Its active parameter is
+/// `null` to a client that reads that as none; to any other it is the index
+/// past the last, which the clients that highlight one draw as none - where
+/// leaving it out would mean the first.
 fn signature_help(params: &Value, sources: &Sources, client: Client) -> Value {
     let Some(cursor) = sources.cursor(params) else {
         return Value::Null;
@@ -377,11 +481,16 @@ fn signature_help(params: &Value, sources: &Sources, client: Client) -> Value {
         .iter()
         .position(|s| s.open || call.argument < s.params.len())
         .unwrap_or(0);
+    let over = |s: &Signature| !s.open && call.argument >= s.params.len();
     let parameter = |s: &Signature| {
         if s.open {
-            call.argument.min(s.params.len() - 1)
+            json!(call.argument.min(s.params.len() - 1))
+        } else if !over(s) {
+            json!(call.argument)
+        } else if client.no_active_parameter {
+            Value::Null
         } else {
-            call.argument
+            json!(s.params.len())
         }
     };
     let listed: Vec<Value> = found
@@ -407,8 +516,18 @@ fn signature_help(params: &Value, sources: &Sources, client: Client) -> Value {
                 "parameters": parameters,
                 "activeParameter": parameter(s),
             });
-            if !s.said.is_empty() {
-                signature["documentation"] = documentation(&s.said, client.signature_markdown);
+            let said = if over(s) {
+                let takes = match s.params.len() {
+                    1 => "1 argument".to_string(),
+                    n => format!("{n} arguments"),
+                };
+                format!("Too many arguments: {} takes {takes}.\n{}", s.name, s.said)
+            } else {
+                s.said.clone()
+            };
+            if !said.trim().is_empty() {
+                signature["documentation"] =
+                    documentation(said.trim_end(), client.signature_markdown);
             }
             signature
         })
@@ -517,6 +636,8 @@ fn completion(params: &Value, sources: &Sources, client: Client) -> Value {
             BuiltinKind::Function | BuiltinKind::Callback => FUNCTION,
             BuiltinKind::Control | BuiltinKind::Query => KEYWORD,
             BuiltinKind::Constant | BuiltinKind::Variable => VARIABLE,
+            // A glyph is no name, and completes none.
+            BuiltinKind::Operator | BuiltinKind::Iterator => continue,
         };
         let group = if b.name.starts_with('.') { 3 } else { 2 };
         offer(group, &b.name, kind, Some(b));

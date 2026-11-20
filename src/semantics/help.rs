@@ -7,7 +7,7 @@
 //! open bracket, and a completion is a name the source already holds: all of
 //! it read from the text, and none of it from running the script.
 use super::{Scope, scope_at, scopes};
-use crate::{Call, Completing, boundary, matching, signature};
+use crate::{Applied, Call, Completing, boundary, ends_in_name, matching, signature};
 
 const NAME: &str = r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*";
 /// How many lines of comment above a definition are its description. A
@@ -110,9 +110,90 @@ pub fn comment_above(comments: &str, raw: &str, at: usize) -> String {
     lines.join("\n").trim_matches('\n').to_string()
 }
 
+/// What the assignment of the name ending at `end` assigns, when it is
+/// another name or a projection of one and the statement ends there:
+/// `al:add`, `pr:add[;2;]`, `g::f[1]`. Anything after it - `add+1`,
+/// `add 1`, `x:y:add` - and it is a value this does not read.
+pub fn applied(code: &str, raw: &str, end: usize) -> Option<Applied> {
+    let blank = |s: &str| s.trim_start_matches([' ', '\t']).len();
+    let rest = &code[code.len() - blank(code.get(end..)?)..];
+    let rest = rest.strip_prefix("::").or_else(|| rest.strip_prefix(':'))?;
+    let at = code.len() - blank(rest);
+    let len = re!(&format!("^{NAME}")).find(&code[at..])?.end();
+    let mut after = at + len;
+    let mut given = None;
+    let open = code.len() - blank(&code[after..]);
+    if code[open..].starts_with('[') {
+        let close = matching(code, open, b'[', b']')?;
+        // Cut where the code view says, and read in the source, where a
+        // string is not blank.
+        let mut start = open + 1;
+        given = Some(
+            crate::slots(&code[start..close - 1])
+                .iter()
+                .map(|slot| {
+                    let filled = !raw[start..start + slot.len()].trim().is_empty();
+                    start += slot.len() + 1;
+                    filled
+                })
+                .collect(),
+        );
+        after = close;
+    }
+    let tail = &code[code.len() - blank(&code[after..])..];
+    (tail.is_empty() || tail.starts_with([';', '\n', '\r', ')', ']', '}'])).then_some(Applied {
+        at,
+        len,
+        given,
+    })
+}
+
+/// The glyphs q reads as an operator or an iterator, and of them the ones
+/// written as two characters.
+const GLYPHS: &[u8] = b"+-*%&|^=<>~!#_$?@.,:'/\\";
+const PAIRS: [&str; 7] = ["<=", ">=", "<>", "::", "':", "/:", "\\:"];
+
+/// The glyph at `offset`, as where it starts and how long it is. Not one
+/// that is part of something else: the `.` of a name or a number, the `_`
+/// of a name, the `-` of a negative number, the `:` of `0:`, or anything
+/// in a string, a comment, a symbol or a system command.
+pub fn glyph_at(code: &str, raw: &str, offset: usize) -> Option<(usize, usize)> {
+    let line = code.get(..offset)?.rfind('\n').map_or(0, |p| p + 1);
+    if crate::system_command(&raw[line..]) {
+        return None;
+    }
+    let code = crate::unsymbolled(code);
+    let bytes = code.as_bytes();
+    if !bytes.get(offset).is_some_and(|b| GLYPHS.contains(b)) {
+        return None;
+    }
+    let (at, len) = [offset.checked_sub(1), Some(offset)]
+        .into_iter()
+        .flatten()
+        .find(|&start| {
+            code.get(start..start + 2)
+                .is_some_and(|pair| PAIRS.contains(&pair))
+        })
+        .map_or((offset, 1), |start| (start, 2));
+    let before = bytes[..at].last().copied().unwrap_or(b' ');
+    let after = bytes.get(at + len).copied().unwrap_or(b' ');
+    let part_of = match &code[at..at + len] {
+        "." => after.is_ascii_alphanumeric() || before.is_ascii_alphanumeric(),
+        "_" => ends_in_name(&code[..at]),
+        // `x-1` subtracts, and `x -1` and `(-1` are a number.
+        "-" => {
+            after.is_ascii_digit() && !(before.is_ascii_alphanumeric() || b")]}_".contains(&before))
+        }
+        ":" => before.is_ascii_digit() && !ends_in_name(&code[..at]),
+        _ => false,
+    };
+    (!part_of).then_some((at, len))
+}
+
 /// The bracketed call the cursor at `offset` is in, when what is called is
 /// written as a name: the innermost open `[`, and how many `;` of its own
-/// lie between it and the cursor. A parenthesis starts the count again,
+/// lie between it and the cursor. A space or a tab may part the name from
+/// its bracket: q 5 reads `f [1;2;3]` as `f[1;2;3]` wherever it is written. A parenthesis starts the count again,
 /// since `f[a;(b;c` is still in the second argument; a brace ends the
 /// search, since inside `f[a;{x+` what is being written is a lambda's body.
 /// In a comment nothing is being called, whatever brackets are open above.
@@ -131,18 +212,22 @@ pub fn call_at(code: &str, comments: &str, raw: &str, offset: usize) -> Option<C
             b'(' => argument = 0,
             b'{' => return None,
             b'[' => {
-                let mut start = i;
+                let mut end = i;
+                while end > 0 && b" \t".contains(&bytes[end - 1]) {
+                    end -= 1;
+                }
+                let mut start = end;
                 while start > 0
                     && (bytes[start - 1].is_ascii_alphanumeric()
                         || b"_.".contains(&bytes[start - 1]))
                 {
                     start -= 1;
                 }
-                return (re!(&format!("^{NAME}$")).is_match(&code[start..i])
+                return (re!(&format!("^{NAME}$")).is_match(&code[start..end])
                     && boundary(code, start))
                 .then_some(Call {
                     at: start,
-                    len: i - start,
+                    len: end - start,
                     argument,
                 });
             }

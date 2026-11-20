@@ -441,8 +441,9 @@ and a new name that is a q builtin or that the lambda already uses.
 
 Hover, signature help and completion answer from two places and never from a
 running q: the workspace's own source, and a catalogue of q's words that ships
-in the binary (`src/builtins.json` - the keywords, the control words, and the
-commonly used names under `.z`, `.Q`, `.h` and `.j`).
+in the binary (`src/builtins.json` - the keywords, the control words, the
+commonly used names under `.z`, `.Q`, `.h` and `.j`, and the operator and
+iterator glyphs).
 
 A hover on a name the workspace defines shows `name[a;b]` for a function - the
 signature it declares, or `x`, `y` and `z` as far as its body reads them, or
@@ -450,14 +451,21 @@ the slots a projection leaves open - and the line that assigns anything else,
 then the comment directly above the definition (`/` lines, or a block comment
 ending there) and the file. A name several files define shows each, up to
 five. A word of q shows how it is written, a line on what it gives, and a link
-to its page on code.kx.com. A lambda's own parameter or local shows nothing:
-its definition is on screen.
+to its page on code.kx.com, and so does a glyph - `+`, `#`, `/:` - outside a
+name, a number, a string and a comment. A lambda's own parameter or local
+shows nothing: its definition is on screen.
 
 Signature help answers inside the brackets of a call written as a name -
-`.lib.add[1;` - with the parameters and the one being written. A lambda
-called in place, an operator's bracket form (`$[`, `@[`, `.[`, `?[`, `![`) and
-a call by juxtaposition have no signature shown. `if`, `do` and `while` take
-any number of expressions, so the last parameter stays marked.
+`.lib.add[1;`, or `.lib.add [1;`, which q reads the same - with the
+parameters and the one being written, inside a string still open there too.
+A name assigned another name (`al:add`) or a projection of one
+(`pr:add[;2;]`) is called as what it leads to: the alias with all of `add`'s
+parameters, the projection with the slots it leaves open. A lambda called in
+place, an operator's bracket form (`$[`, `@[`, `.[`, `?[`, `![`) and a call by
+juxtaposition have no signature shown. `if`, `do` and `while` take any number
+of expressions, so the last parameter stays marked; past the last parameter
+of anything else no parameter is marked, and the signature says the call has
+too many arguments.
 
 Completion is off unless `completion.enable` asks for it, because an editor
 told that a server completes stops offering the words already in the buffer,

@@ -2,8 +2,8 @@
 //! completion - first as the library reads one file and the catalogue of
 //! q's own names, then as the language server answers an editor.
 use q_lint_rs::{
-    BUILTINS, BuiltinKind, Call, Profile, builtin, call_at, comment_above, completing, lint,
-    mentions, word_at,
+    Applied, BUILTINS, BuiltinKind, Call, Profile, applied, builtin, call_at, comment_above,
+    completing, glyph_at, lint, mentions, word_at,
 };
 use serde_json::{Value, json};
 use std::{
@@ -22,32 +22,53 @@ fn at(source: &str, context: &str, skip: usize) -> usize {
 // ---------------------------------------------------------------------------
 // The catalogue.
 
+/// The characters q's operators and iterators are written in.
+const GLYPHS: &str = "+-*%&|^=<>~!#_$?@.,:'/\\";
+
+fn is_glyph(name: &str) -> bool {
+    name.chars().all(|c| GLYPHS.contains(c))
+}
+
 #[test]
 fn every_reserved_word_is_in_the_catalogue_once_and_nothing_else_bare_is() {
     let reserved: Vec<String> = serde_json::from_str(include_str!("../src/reserved.json")).unwrap();
     let bare: Vec<&str> = BUILTINS
         .iter()
         .map(|b| b.name.as_str())
-        .filter(|name| !name.starts_with('.'))
+        .filter(|name| name.starts_with(|c: char| c.is_ascii_alphabetic()))
         .collect();
     let mut expected: Vec<&str> = reserved.iter().map(String::as_str).collect();
     expected.sort_unstable();
     // In order, so a word is found by eye and a second entry stands out.
     assert_eq!(bare, expected);
-    let dotted: Vec<&str> = BUILTINS
+    // Then the qualified names, in order, then the glyphs.
+    let rest: Vec<&str> = BUILTINS
         .iter()
         .map(|b| b.name.as_str())
         .skip(bare.len())
         .collect();
+    let split = rest.iter().position(|name| is_glyph(name)).unwrap();
+    let (dotted, glyphs) = rest.split_at(split);
+    let qualified = regex::Regex::new(r"^\.[A-Za-z]\.[A-Za-z][A-Za-z0-9]*$").unwrap();
     assert!(
-        dotted.iter().all(|name| name.starts_with('.')),
+        dotted.iter().all(|name| qualified.is_match(name)),
         "{dotted:?}"
     );
     assert!(
         dotted.windows(2).all(|pair| pair[0] < pair[1]),
         "{dotted:?}"
     );
-    assert!(dotted.contains(&".z.p") && dotted.contains(&".Q.s") && dotted.contains(&".j.k"));
+    for namespace in [".Q.", ".h.", ".j.", ".z."] {
+        assert!(
+            dotted.iter().any(|name| name.starts_with(namespace)),
+            "{namespace}"
+        );
+    }
+    assert!(glyphs.iter().all(|name| is_glyph(name)), "{glyphs:?}");
+    let mut once = glyphs.to_vec();
+    once.sort_unstable();
+    once.dedup();
+    assert_eq!(once.len(), glyphs.len(), "{glyphs:?}");
 }
 
 #[test]
@@ -70,11 +91,25 @@ fn each_entry_says_how_it_is_written_and_what_it_gives_in_a_line_or_two() {
             assert!(b.syntax.contains(param.as_str()), "{name}: {param}");
         }
         match b.kind {
-            BuiltinKind::Function | BuiltinKind::Control | BuiltinKind::Callback => {}
+            BuiltinKind::Function | BuiltinKind::Control => {}
+            // Written as it is assigned.
+            BuiltinKind::Callback => assert!(
+                b.syntax.starts_with(&format!("{name}:{{[")),
+                "{name}: {}",
+                b.syntax
+            ),
             BuiltinKind::Query | BuiltinKind::Constant | BuiltinKind::Variable => {
                 assert!(b.params.is_empty(), "{name} takes no arguments")
             }
+            BuiltinKind::Operator => assert_eq!(b.params, ["x", "y"], "{name}"),
+            BuiltinKind::Iterator => assert!(b.params.contains(&"f".to_string()), "{name}"),
         }
+        // A glyph is an operator or an iterator, and nothing else is.
+        assert_eq!(
+            is_glyph(name),
+            matches!(b.kind, BuiltinKind::Operator | BuiltinKind::Iterator),
+            "{name}"
+        );
         if let Some(page) = &b.page {
             assert!(
                 page.chars()
@@ -82,7 +117,23 @@ fn each_entry_says_how_it_is_written_and_what_it_gives_in_a_line_or_two() {
                 "{name}: {page}"
             );
         }
+        // A namespace's names are on its own page.
+        for (namespace, page) in [
+            (".Q.", "dotq"),
+            (".h.", "doth"),
+            (".j.", "dotj"),
+            (".z.", "dotz"),
+        ] {
+            if name.starts_with(namespace) {
+                assert_eq!(b.page.as_deref(), Some(page), "{name}");
+            }
+        }
     }
+    let mut names: Vec<&str> = BUILTINS.iter().map(|b| b.name.as_str()).collect();
+    names.sort_unstable();
+    let count = names.len();
+    names.dedup();
+    assert_eq!(names.len(), count, "a name is in the catalogue twice");
     assert_eq!(builtin("no_such_word").map(|b| &b.name), None);
     assert_eq!(builtin("til").unwrap().params, ["x"]);
 }
@@ -234,6 +285,103 @@ fn nothing_is_called_outside_brackets_or_by_what_is_not_a_name() {
     assert_eq!(call("(1 2 3)["), None);
     assert_eq!(call("x:`sym["), None);
     assert_eq!(call(""), None);
+}
+
+#[test]
+fn a_space_before_the_bracket_still_calls_the_name() {
+    // q 5 reads `f [1;2;3]` as `f[1;2;3]`, after a tab too, at the top
+    // level, in an assignment and in a lambda.
+    assert_eq!(call("x:f [1;"), Some(("f", 1)));
+    assert_eq!(call("x:f\t[1;2;"), Some(("f", 2)));
+    assert_eq!(call("g:{.lib.add  [x;"), Some((".lib.add", 1)));
+    assert_eq!(call("r:in [a;"), Some(("in", 1)));
+    // What is before the space is still to be a name.
+    assert_eq!(call("x:`sym ["), None);
+    assert_eq!(call("x:1 2 ["), None);
+    assert_eq!(call("x:(a) [1;"), None);
+}
+
+#[test]
+fn a_call_goes_on_inside_a_string_left_open() {
+    // A `;`, a bracket or a brace in the string is part of it.
+    assert_eq!(call("x:ssr[\"ab;"), Some(("ssr", 0)));
+    assert_eq!(call("x:ssr[1;\"a[b;{"), Some(("ssr", 1)));
+    assert_eq!(call("x:ssr[1;\"a\\\"b;"), Some(("ssr", 1)));
+    // Over an indented line; a line at column 0 ends the statement, string
+    // and all, as it does in q.
+    assert_eq!(call("x:ssr[1;\"ab\n  c;d"), Some(("ssr", 1)));
+    assert_eq!(call("x:ssr[1;\"ab\nc"), None);
+}
+
+/// What the assignment of `name` in `source` assigns, as the name it reads
+/// and the slots it gives.
+fn assigns<'a>(source: &'a str, name: &str) -> Option<(&'a str, Option<Vec<bool>>)> {
+    let end = source.find(name).unwrap() + name.len();
+    applied(source, end).map(|Applied { at, len, given }| (&source[at..at + len], given))
+}
+
+#[test]
+fn an_assignment_of_a_name_or_a_projection_says_what_it_applies() {
+    assert_eq!(assigns("al:add\n", "al"), Some(("add", None)));
+    assert_eq!(
+        assigns(".zz.pr:.zz.add[;2;]\n", ".zz.pr"),
+        Some((".zz.add", Some(vec![false, true, false])))
+    );
+    assert_eq!(
+        assigns("f:{g::h [1]; 2}", "g"),
+        Some(("h", Some(vec![true])))
+    );
+    assert_eq!(assigns("al:ssr / the same\n", "al"), Some(("ssr", None)));
+    // A string fills its slot, though the code view blanks it.
+    assert_eq!(
+        assigns("sub:ssr[;\"a;b\";]\n", "sub"),
+        Some(("ssr", Some(vec![false, true, false])))
+    );
+    for (source, name) in [
+        ("x:add+1\n", "x"),
+        ("x:add 1\n", "x"),
+        ("x:y:add\n", "x"),
+        ("x:`add\n", "x"),
+        ("x:1\n", "x"),
+        ("x:{x}\n", "x"),
+        ("x:add[1]+1\n", "x"),
+    ] {
+        assert_eq!(assigns(source, name), None, "{source}");
+    }
+}
+
+/// The glyph at `skip` bytes into `context` in `source`.
+fn glyph<'a>(source: &'a str, context: &str, skip: usize) -> Option<&'a str> {
+    glyph_at(source, at(source, context, skip)).map(|(at, len)| &source[at..at + len])
+}
+
+#[test]
+fn a_glyph_is_one_outside_names_numbers_strings_and_comments() {
+    let source = "r:a+/:b; s:x<=y; t:2_ys; u:f':[v]; w:x . y\n";
+    assert_eq!(glyph(source, "+/:", 0), Some("+"));
+    assert_eq!(glyph(source, "/:", 0), Some("/:"));
+    assert_eq!(glyph(source, "/:", 1), Some("/:"));
+    assert_eq!(glyph(source, "<=", 1), Some("<="));
+    assert_eq!(glyph(source, "_ys", 0), Some("_"));
+    assert_eq!(glyph(source, "':", 0), Some("':"));
+    assert_eq!(glyph(source, " . ", 1), Some("."));
+    assert_eq!(glyph(source, "r:", 1), Some(":"));
+    let source = "a:x_y; b:.z.p; c:1.5; d:x -1; e:x-1; f:\"+\" / +\ng:`a.b; h:10 0:t\n\\l x.q\n";
+    for (context, skip) in [
+        ("x_y", 1),
+        (".z.p", 0),
+        (".z.p", 2),
+        ("1.5", 1),
+        ("-1;", 0),
+        ("\"+\"", 1),
+        ("/ +", 2),
+        ("`a.b", 2),
+        ("0:t", 1),
+        ("x.q", 1),
+    ] {
+        assert_eq!(glyph(source, context, skip), None, "{context}");
+    }
+    assert_eq!(glyph(source, "x-1", 1), Some("-"));
 }
 
 #[test]
@@ -649,7 +797,6 @@ fn nothing_is_shown_for_a_local_a_string_a_comment_or_an_unknown_name() {
         ("\"til\"", 2),
         ("/ til", 3),
         ("unknown_name", 2),
-        ("+1", 0),
     ] {
         let reply = server.ask("textDocument/hover", &uri, text, context, skip, Value::Null);
         assert_eq!(reply["result"], Value::Null, "{context}");
@@ -959,4 +1106,138 @@ fn completion_offers_nothing_where_no_name_is_written() {
             "{context}"
         );
     }
+}
+
+/// A workspace of a function of three, a projection and aliases of it.
+const ZZ: &str = "/ Adds three numbers.\n.zz.add:{[a;b;c] a+b+c}\n.zz.pr:.zz.add[;2;]\n\
+                  .zz.al:.zz.add\n/ Projected twice.\n.zz.ch:.zz.pr[1]\n.zz.loop:.zz.back\n\
+                  .zz.back:.zz.loop\nsub:ssr[;\"a\";]\n";
+
+/// Signature help at the end of `typed`, written after `ZZ` in `zz.q`.
+fn zz_help(client: Value, typed: &str) -> Value {
+    let dir = tempfile::tempdir().unwrap();
+    let text = format!("{ZZ}{typed}");
+    let (mut server, _) = Server::over(dir.path(), &[("zz.q", &text)], client, Value::Null);
+    let uri = server.open(dir.path(), "zz.q", &text);
+    let reply = server.ask(
+        "textDocument/signatureHelp",
+        &uri,
+        &text,
+        typed,
+        typed.len(),
+        Value::Null,
+    );
+    reply["result"].clone()
+}
+
+fn labelled(help: &Value) -> (String, Value) {
+    (
+        help["signatures"][help["activeSignature"].as_u64().unwrap() as usize]["label"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
+        help["activeParameter"].clone(),
+    )
+}
+
+#[test]
+fn signature_help_for_a_projection_shows_the_slots_it_leaves_open() {
+    let help = zz_help(plain(), "r:.zz.pr[1;");
+    assert_eq!(labelled(&help), (".zz.pr[a;c]".to_string(), json!(1)));
+    // With no comment of its own, what it projects says what it does.
+    assert_eq!(
+        help["signatures"][0]["documentation"],
+        "Adds three numbers."
+    );
+    // A projection of a projection, with its own comment.
+    let help = zz_help(plain(), "r:.zz.ch[");
+    assert_eq!(labelled(&help), (".zz.ch[c]".to_string(), json!(0)));
+    assert_eq!(help["signatures"][0]["documentation"], "Projected twice.");
+    // And of a word of q.
+    let help = zz_help(plain(), "r:sub[s;");
+    assert_eq!(labelled(&help), ("sub[x;z]".to_string(), json!(1)));
+}
+
+#[test]
+fn signature_help_for_an_alias_is_the_function_it_names() {
+    let help = zz_help(plain(), "r:.zz.al[1;2;");
+    assert_eq!(labelled(&help), (".zz.al[a;b;c]".to_string(), json!(2)));
+    // Two aliases of each other lead nowhere, and say nothing.
+    assert_eq!(zz_help(plain(), "r:.zz.loop[1;"), Value::Null);
+}
+
+#[test]
+fn signature_help_reads_a_call_with_a_space_before_its_bracket() {
+    let help = zz_help(plain(), "r:.zz.add [1;");
+    assert_eq!(labelled(&help), (".zz.add[a;b;c]".to_string(), json!(1)));
+}
+
+#[test]
+fn signature_help_goes_on_inside_a_string_left_open() {
+    let help = zz_help(plain(), "r:.zz.add[1;\"a;b[");
+    assert_eq!(labelled(&help), (".zz.add[a;b;c]".to_string(), json!(1)));
+}
+
+#[test]
+fn signature_help_past_the_last_parameter_says_there_are_too_many() {
+    // An index past the last parameter, which highlights none, to a client
+    // that does not take null for that.
+    let help = zz_help(plain(), "r:.zz.add[1;2;3;");
+    assert_eq!(labelled(&help), (".zz.add[a;b;c]".to_string(), json!(3)));
+    assert_eq!(help["signatures"][0]["activeParameter"], 3);
+    let said = help["signatures"][0]["documentation"].as_str().unwrap();
+    assert!(
+        said.starts_with("Too many arguments: .zz.add takes 3 arguments.\n"),
+        "{said}"
+    );
+    // Null to one that does.
+    let mut client = client();
+    client["textDocument"]["signatureHelp"]["signatureInformation"]["noActiveParameterSupport"] =
+        json!(true);
+    let help = zz_help(client, "r:.zz.add[1;2;3;4;");
+    assert_eq!(help["activeParameter"], Value::Null);
+    assert_eq!(help["signatures"][0]["activeParameter"], Value::Null);
+    // The last parameter is no overflow, and an open list of expressions
+    // never has one.
+    let help = zz_help(plain(), "r:.zz.add[1;2;");
+    assert_eq!(help["activeParameter"], 2);
+    assert!(
+        !help["signatures"][0]["documentation"]
+            .as_str()
+            .unwrap()
+            .contains("Too many")
+    );
+    let help = zz_help(plain(), "if[a;b;c;d;");
+    assert_eq!(help["activeParameter"], 2);
+}
+
+#[test]
+fn hovering_a_glyph_shows_its_catalogue_entry() {
+    let dir = tempfile::tempdir().unwrap();
+    let text = "r:a+/:b\ns:2_ys\nt:x<=y\n";
+    let (mut server, uri) = serving(dir.path(), text, plain(), Value::Null);
+    let hover = |server: &mut Server, context: &str, skip: usize| {
+        server.ask("textDocument/hover", &uri, text, context, skip, Value::Null)["result"].clone()
+    };
+    // On the glyph right after a name, the glyph is meant.
+    let reply = hover(&mut server, "+/:", 0);
+    let value = reply["contents"]["value"].as_str().unwrap();
+    assert!(value.starts_with("x+y\n\nx plus y"), "{value}");
+    assert!(value.ends_with("https://code.kx.com/q/ref/add/"), "{value}");
+    assert_eq!(span(&reply["range"]), (0, 3, 4));
+    let reply = hover(&mut server, "/:", 1);
+    assert!(
+        reply["contents"]["value"]
+            .as_str()
+            .unwrap()
+            .starts_with("x f/: y\n\nEach right")
+    );
+    assert_eq!(span(&reply["range"]), (0, 4, 6));
+    assert!(
+        hover(&mut server, "_ys", 0)["contents"]["value"]
+            .as_str()
+            .unwrap()
+            .starts_with("x _ y")
+    );
+    assert_eq!(span(&hover(&mut server, "<=", 0)["range"]), (2, 3, 5));
 }

@@ -273,6 +273,17 @@ pub struct Call {
     pub argument: usize,
 }
 
+/// What a definition that is no lambda may still be called as: the name at
+/// byte `at` for `len` bytes, itself (`al:add`) or projected (`pr:add[;2;]`).
+/// `given` is `None` for the name itself, and for a projection says of each
+/// slot written whether it holds an argument.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Applied {
+    pub at: usize,
+    pub len: usize,
+    pub given: Option<Vec<bool>>,
+}
+
 /// What is being typed at a cursor: the name so far starts at byte `start`,
 /// inside a lambda whose parameters and locals are `locals`, under the
 /// context `namespace` - `.ns` after `\d .ns`, and empty at the root.
@@ -295,6 +306,20 @@ pub fn comment_above(source: &str, at: usize) -> String {
 pub fn call_at(source: &str, offset: usize) -> Option<Call> {
     let v = views(source);
     semantics::help::call_at(&v.code, &v.comments, source, offset)
+}
+
+/// What the assignment of the name ending at byte `end` assigns, when that
+/// is another name or a projection of one and nothing more.
+pub fn applied(source: &str, end: usize) -> Option<Applied> {
+    let v = views(source);
+    semantics::help::applied(&v.code, source, end)
+}
+
+/// The operator or iterator glyph at byte `offset`, as its start and length:
+/// nothing in a string, a comment, a name, a number or a system command.
+pub fn glyph_at(source: &str, offset: usize) -> Option<(usize, usize)> {
+    let v = views(source);
+    semantics::help::glyph_at(&v.code, source, offset)
 }
 
 /// The name at byte `offset`, a keyword included, as its start and length.
@@ -366,17 +391,23 @@ pub enum BuiltinKind {
     Variable,
     /// A name q calls when the script assigns it, as `.z.pg`.
     Callback,
+    /// A glyph that takes an argument on each side, as `+` and `#`.
+    Operator,
+    /// A glyph that derives a function from the one before it, as `/`.
+    Iterator,
 }
 
-/// One name q defines: every reserved word, and the names in `.z`, `.Q` and
-/// `.j` a script is most likely to meet. `syntax` is how it is written,
+/// One name q defines: every reserved word, the names in `.z`, `.Q`, `.h`
+/// and `.j` a script is most likely to meet, and the operator and iterator
+/// glyphs. `syntax` is how it is written,
 /// `params` what it takes - their count is its rank - `summary` one or two
 /// sentences on what it gives back, and `page` where the reference
 /// describes it, under <https://code.kx.com/q/ref/>.
 ///
-/// The words are the ones `reserved.json` lists and the ranks the ones a
-/// running q reports (`tests/test_builtins_runtime.py`); the descriptions
-/// are this project's own.
+/// The words are the ones `reserved.json` lists, and the ranks and the
+/// qualified names the ones a running q reports and defines
+/// (`tests/test_builtins_runtime.py`); the descriptions are this project's
+/// own.
 #[derive(Debug, Deserialize)]
 pub struct Builtin {
     pub name: String,
@@ -2444,7 +2475,7 @@ pub(crate) fn unsymbolled(code: &str) -> String {
 /// dotted name may begin with `_`: `.a.b.__perf` and `.h._ranks` are one name
 /// each (q 5 `parse "a._ns"` is `` `a._ns ``), so `_` after `name.` still
 /// continues it - while `._ns` with nothing before the dot is no name at all.
-fn ends_in_name(s: &str) -> bool {
+pub(crate) fn ends_in_name(s: &str) -> bool {
     let token: Vec<char> = s
         .chars()
         .rev()
