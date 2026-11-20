@@ -420,3 +420,14 @@ test("the explorer's call survives a partitioned table it cannot count", { skip 
   const tables = explorerTree(g, []).find((n) => n.label === ".").children.find((c) => c.label === "Tables");
   assert.strictEqual(tables.children.find((c) => c.label === "trade").description, "rows not counted · 3 columns");
 });
+
+test("preview reads a name q cannot parse, by its symbol", { skip }, async (t) => {
+  const q = await startQ('(`$"caf\u00e9") set ([] a:7 8 9);\n(`$"a b") set 42;\n');
+  t.after(() => q.stop());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  t.after(() => connection.close());
+  const table = await connection.query([previewCode({ kind: "table", name: "caf\u00e9" }, 2)], SIZE);
+  assert.ok(table.ok && table.text.some((l) => l.trim() === "8"), JSON.stringify(table));
+  const variable = await connection.query([previewCode({ kind: "variable", name: "a b" }, 2)], SIZE);
+  assert.deepStrictEqual([variable.ok, variable.text], [true, ["42"]]);
+});

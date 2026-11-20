@@ -288,15 +288,24 @@ export function explorerTree(g: Gathered, excluded: string[]): Node[] {
 /// The code Preview runs: the first `limit` rows of a table, or a variable
 /// whole - the output cuts it to the console size. A partitioned table is
 /// read by `.Q.ind`, since `sublist` and `select[n]` refuse one, and only
-/// those rows are read.
+/// those rows are read. A name q cannot parse is read by its symbol.
 export function previewCode(node: Pick<Node, "kind" | "name" | "partitioned">, limit: number): string | undefined {
   if (node.name === undefined) {
     return undefined;
   }
+  const name = qName(node.name);
   if (node.kind === "table") {
-    return node.partitioned ? `.Q.ind[${node.name};til ${limit}&count ${node.name}]` : `${limit} sublist ${node.name}`;
+    return node.partitioned ? `.Q.ind[${name};til ${limit}&count ${name}]` : `${limit} sublist ${name}`;
   }
-  return node.kind === "variable" ? node.name : undefined;
+  return node.kind === "variable" ? name : undefined;
+}
+
+/// `name` as q code reads it: as written when q parses it as a name, else
+/// by its symbol - `set` makes a name of any symbol, `café` or `a b`.
+function qName(name: string): string {
+  return /^\.?[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)*$/.test(name)
+    ? name
+    : `get\`$"${name.replace(/[\\"]/g, (c) => `\\${c}`)}"`;
 }
 
 /// The table a qSQL statement reads, when `offset` is inside one in `text`:

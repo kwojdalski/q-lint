@@ -141,6 +141,17 @@ test("preview shows a table's first rows, reading a partitioned one by .Q.ind", 
   assert.strictEqual(previewCode({ kind: "column" }, 5), undefined);
 });
 
+test("preview names a table or variable q cannot parse as a name by its symbol", () => {
+  // `set` makes any symbol a name: unicode, a space, a quote.
+  assert.strictEqual(previewCode({ kind: "variable", name: "café" }, 5), 'get`$"café"');
+  assert.strictEqual(previewCode({ kind: "table", name: ".ns.été" }, 5), '5 sublist get`$".ns.été"');
+  assert.strictEqual(
+    previewCode({ kind: "table", name: 'a "b"\\c', partitioned: true }, 2),
+    '.Q.ind[get`$"a \\"b\\"\\\\c";til 2&count get`$"a \\"b\\"\\\\c"]',
+  );
+  assert.strictEqual(previewCode({ kind: "variable", name: ".ns.sub.v_1" }, 5), ".ns.sub.v_1");
+});
+
 test("the explorer settings are read, and a preview limit that is not one is 5", () => {
   const from = (values) => readExplorer((key, fallback) => (key in values ? values[key] : fallback));
   assert.deepStrictEqual(from({}), { excludedNamespaces: ["q", "Q", "h", "j", "o", "s"], previewLimit: 5, autoRefresh: false });
