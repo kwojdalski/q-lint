@@ -50,10 +50,17 @@ export interface AgentSettings {
   queryTimeout: number;
 }
 
-/// The agent settings, read as `readLive` reads the query ones.
+/// The longest timeout a timer holds, in seconds: a longer one fires at once.
+const LONGEST_TIMEOUT = Math.floor((2 ** 31 - 1) / 1000);
+
+/// The agent settings, read as `readLive` reads the query ones. The timeout
+/// is at most `LONGEST_TIMEOUT`, which would otherwise abort every query as
+/// it started.
 export function readAgent(get: <T>(key: string, fallback: T) => T): AgentSettings {
   const timeout = get("agent.queryTimeout", 30);
-  return { queryTimeout: typeof timeout === "number" && Number.isInteger(timeout) && timeout >= 0 ? timeout : 30 };
+  return {
+    queryTimeout: typeof timeout === "number" && Number.isInteger(timeout) && timeout >= 0 ? Math.min(timeout, LONGEST_TIMEOUT) : 30,
+  };
 }
 
 /// A real as the shortest decimal that reads back as the same float32. The

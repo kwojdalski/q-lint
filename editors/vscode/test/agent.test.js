@@ -204,4 +204,8 @@ test("every agent setting is read, with the default package.json declares, and n
   assert.strictEqual(set(5), 5);
   assert.strictEqual(set(-1), 30);
   assert.strictEqual(set(1.5), 30);
+  // A timer longer than 2^31-1 ms fires at once, which would abort every
+  // query the moment it started: the longest one a timer holds is kept.
+  assert.strictEqual(set(2147483), 2147483);
+  assert.strictEqual(set(3000000), 2147483);
 });
