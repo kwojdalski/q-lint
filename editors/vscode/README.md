@@ -165,6 +165,12 @@ first connect, and keeps it in secret storage under `server/label`.
   selected.
 - **Query Current Block**, `ctrl+e`: the statement the cursor is in, with
   its indented continuation lines.
+- **Execute Entire File**, `ctrl+f10`, also in the editor's run menu: the
+  whole file as one query, cut into statements as a block is. `ctrl+f10` is
+  in none of VS Code's default keybindings on macOS, Windows or Linux; the
+  keys KX's extension uses, `ctrl+d` and `ctrl+shift+d`, are VS Code's "add
+  next occurrence" and Run and Debug view, and a `ctrl+alt` key is AltGr on
+  Windows, which types `ę`, `€` or `@` on many layouts.
 
 The code is cut into statements by q's own script rules: a line starting
 with a space or tab continues the one above, `/` lines and block comments
@@ -183,8 +189,51 @@ a query, so the connection is closed and opened again; the process goes on
 running the query, and the new connection is made once it is free.
 
 **Query History** lists each query with its process, time, duration and
-outcome; the button on a row runs it again on the active connection, and
-**Clear Query History** empties it.
+outcome; the buttons on a row run it again on the active connection and
+**Copy Query** copies its code, and **Clear Query History** empties it.
+
+**Query controls.**
+- **Toggle Unlimited Query**: while on, the console text is not cut at
+  `q-lint.output.consoleSize`, and a grid or chart is sent every row, not
+  `q-lint.query.gridLimit`. The status bar shows `unlimited`, and clicking
+  it turns it off. It stays on until turned off, as q-pro's does, but only
+  for the window: a reload turns it off, so a result sent whole is never
+  left over from an earlier session. One cut q makes itself remains: KDB-X
+  writes an atom or a list item with `-3!`, which stops at the process's own
+  `\c` width, so a simple list (`til 100000`) is sent as its value and
+  written out by q-lint instead, and a general list's long items are still
+  cut at `\c`.
+- **Toggle Unwrapped Query**, or `q-lint.query.unwrapped`: for a gateway
+  that refuses a lambda, the code is sent as plain strings, one per
+  statement in order, stopping at the first error, as a client that sends
+  strings sends them; q-lint runs nothing of its own there. The process
+  evaluates each as it evaluates any string (its `.z.pg`), so a `\d` lasts
+  only for its own statement. The answer is whatever the process returns,
+  formatted by q-lint: tables, keyed tables, dictionaries, lists and atoms
+  as q's console writes them, and a table, dictionary or list reaches the
+  grid and chart too. q-lint knows less than q does, so it is close but not
+  exact: inside a table or a general list a symbol and a string are both
+  shown as text, a timestamp is shown to the microsecond, and a function's
+  text is not sent. Errors still come back as q errors, without a trace.
+  The status bar shows `unwrapped`.
+- **Query timeout**, `q-lint.query.timeout` seconds (`0`, the default, is
+  none): a query still running then is aborted exactly as **Abort Current
+  Query** aborts it, and the history records it as timed out.
+- **Choose Connection for File** binds the active file to a process, kept
+  per workspace, and takes a label as an argument for a keybinding. A query
+  from that file (line, selection, block or entire file) switches the
+  connection to its process first, connecting if nothing is connected -
+  there is one connection at a time, so the file's process becomes the
+  active one, and an unbound file then queries it too. The history, a
+  rerun, Preview and notebooks use the active connection, never a binding.
+  While the file's process is not the active connection, the status bar
+  shows `file: <label>`. **Clear Connection for File** removes the binding.
+- **Reveal Process** selects the connected process in the **Processes**
+  view, and shows the view. **Open q-lint Settings** opens Settings at
+  q-lint's.
+
+Unlimited, unwrapped and the timeout apply to queries from the editor,
+the history and Preview; a notebook cell runs as before.
 
 **Query modes.** **Switch Query Mode** (or the mode in the status bar) picks
 where a result goes; it sets `q-lint.query.mode`, and takes `console`,
@@ -222,6 +271,10 @@ inline script and no network. Its charts are drawn by
 - **Send Current Selection to Terminal**, `ctrl+shift+r`: the current line
   when nothing is selected.
 - **Send Current Block to Terminal**, `ctrl+shift+e`.
+
+**Start q REPL** starts `q-lint.terminal.qBinary` with no file in a new
+terminal named `q`, with `q-lint.terminal.envPath`'s variables, in the
+workspace folder; code is sent there from then on.
 
 The code goes to the last q terminal q-lint started, and with none open a
 new one starts `q-lint.terminal.qBinary` with no file. It is cut into
@@ -410,6 +463,8 @@ nothing.
 | `q-lint.query.mode` | `"console"` | Where a result goes: `console`, `grid` or `chart`. | `q-processes.cfg.queryMode` |
 | `q-lint.query.gridLimit` | `10000` | The most rows the process sends to the grid or chart. | - |
 | `q-lint.query.gridDecimals` | `-1` | Decimal places of a float or real in the grid and its CSV; `-1` as the process writes it (`\P`). | `q-processes.cfg.queryGridDecimals` (default 3) |
+| `q-lint.query.unwrapped` | `false` | Send code as plain strings, for a gateway that refuses a lambda, and format the result in q-lint. **Toggle Unwrapped Query** changes it. | - |
+| `q-lint.query.timeout` | `0` | Seconds a query may run before it is aborted, as Abort does; `0` none. | - |
 | `q-lint.processExplorer.excludedNamespaces` | `["q","Q","h","j","o","s"]` | Namespaces the Process Explorer and live completion leave out, with those nested in them. | - |
 | `q-lint.processExplorer.previewLimit` | `5` | Rows of a table Preview shows. | - |
 | `q-lint.processExplorer.autoRefresh` | `false` | Read the process again after each query. | - |

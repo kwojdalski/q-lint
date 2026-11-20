@@ -1,0 +1,156 @@
+// Query controls (#887): the unlimited and unwrapped toggles, a file's own
+// connection, and Open q-lint Settings, as VS Code commands and status bar
+// items. What they send and how they are kept is `querycontrols.ts`'s; the
+// queries themselves are `live.ts`'s, which asks this class what to do.
+import {
+  commands,
+  ConfigurationTarget,
+  StatusBarAlignment,
+  window,
+  workspace,
+  type ExtensionContext,
+  type StatusBarItem,
+  type Uri,
+} from "vscode";
+import {
+  CONTROL_COMMANDS,
+  FILE_CONNECTIONS_KEY,
+  bindingFor,
+  bindingText,
+  flagsText,
+  readControls,
+  withBinding,
+  type ControlSettings,
+} from "./querycontrols";
+
+/// What the controls need of the live half.
+export interface ControlsHost {
+  activeLabel(): string | undefined;
+  /// A process the user picks, by label; undefined if none was.
+  pick(title: string): Promise<string | undefined>;
+}
+
+export class QueryControls {
+  /// Unlimited is a toggle held for this window, as q-pro holds it: it stays
+  /// on until turned off, and is off again after a reload, so a result sent
+  /// whole is never a surprise left over from another day.
+  private unlimitedOn = false;
+  private readonly flags: StatusBarItem;
+  private readonly fileItem: StatusBarItem;
+
+  constructor(
+    private readonly context: ExtensionContext,
+    private readonly host: ControlsHost,
+  ) {
+    // Between the connection (50) and the query mode (49).
+    this.flags = window.createStatusBarItem("q-lint.queryFlags", StatusBarAlignment.Left, 49.6);
+    this.flags.name = "q-lint: query flags";
+    this.fileItem = window.createStatusBarItem("q-lint.fileConnection", StatusBarAlignment.Left, 49.8);
+    this.fileItem.name = "q-lint: file's q process";
+    this.fileItem.command = CONTROL_COMMANDS.chooseFileConnection;
+    const c = (name: string, run: (...args: never[]) => unknown) => commands.registerCommand(name, run);
+    context.subscriptions.push(
+      this.flags,
+      this.fileItem,
+      c(CONTROL_COMMANDS.toggleUnlimited, () => this.toggleUnlimited()),
+      c(CONTROL_COMMANDS.toggleUnwrapped, () => this.toggleUnwrapped()),
+      c(CONTROL_COMMANDS.chooseFileConnection, (label?: string) => this.chooseFileConnection(label)),
+      c(CONTROL_COMMANDS.clearFileConnection, () => this.clearFileConnection()),
+      c(CONTROL_COMMANDS.openSettings, () =>
+        commands.executeCommand("workbench.action.openSettings", `@ext:${context.extension.id}`),
+      ),
+      window.onDidChangeActiveTextEditor(() => this.refresh()),
+      workspace.onDidChangeConfiguration((event) => {
+        if (event.affectsConfiguration("q-lint.query.unwrapped")) {
+          this.refresh();
+        }
+      }),
+    );
+    this.refresh();
+  }
+
+  get unlimited(): boolean {
+    return this.unlimitedOn;
+  }
+
+  settings(): ControlSettings {
+    const configuration = workspace.getConfiguration("q-lint");
+    return readControls((key, fallback) => configuration.get(key, fallback));
+  }
+
+  /// The process `uri` is bound to, if it is.
+  binding(uri: Uri): string | undefined {
+    return bindingFor(this.context.workspaceState.get(FILE_CONNECTIONS_KEY), uri.toString());
+  }
+
+  /// Show the flags, and the active file's process when it is not the
+  /// active connection. The live half calls it when the connection changes.
+  refresh(): void {
+    const unwrapped = this.settings().unwrapped;
+    const flags = flagsText(this.unlimitedOn, unwrapped);
+    if (flags === "") {
+      this.flags.hide();
+    } else {
+      this.flags.text = flags;
+      this.flags.command = this.unlimitedOn ? CONTROL_COMMANDS.toggleUnlimited : CONTROL_COMMANDS.toggleUnwrapped;
+      this.flags.tooltip = [
+        this.unlimitedOn ? "Unlimited query: console text is not cut at q-lint.output.consoleSize, and a grid or chart is sent every row." : "",
+        unwrapped ? "Unwrapped query (q-lint.query.unwrapped): code is sent as a plain string, and the result formatted here." : "",
+        `Click to turn ${this.unlimitedOn ? "unlimited" : "unwrapped"} off.`,
+      ].filter(Boolean).join("\n");
+      this.flags.show();
+    }
+    const uri = window.activeTextEditor?.document.uri;
+    const bound = uri === undefined ? undefined : this.binding(uri);
+    const text = bindingText(bound, this.host.activeLabel());
+    if (text === undefined) {
+      this.fileItem.hide();
+    } else {
+      this.fileItem.text = text;
+      this.fileItem.tooltip = `This file's queries go to ${bound}, which q-lint connects to when one is sent. Click to choose another.`;
+      this.fileItem.show();
+    }
+  }
+
+  private toggleUnlimited(): void {
+    this.unlimitedOn = !this.unlimitedOn;
+    this.refresh();
+  }
+
+  private async toggleUnwrapped(): Promise<void> {
+    // Set where it is set already, so a workspace's choice is not shadowed.
+    const configuration = workspace.getConfiguration("q-lint");
+    const where = configuration.inspect("query.unwrapped");
+    const target = where?.workspaceValue !== undefined ? ConfigurationTarget.Workspace : ConfigurationTarget.Global;
+    await configuration.update("query.unwrapped", !this.settings().unwrapped, target);
+    this.refresh();
+  }
+
+  private async chooseFileConnection(label?: string): Promise<void> {
+    const document = window.activeTextEditor?.document;
+    if (document === undefined) {
+      void window.showInformationMessage("q-lint: open the file to choose its q process.");
+      return;
+    }
+    const chosen = typeof label === "string" ? label : await this.host.pick("Send this file's queries to which q process?");
+    if (chosen === undefined) {
+      return;
+    }
+    await this.store(document.uri, chosen);
+  }
+
+  private async clearFileConnection(): Promise<void> {
+    const document = window.activeTextEditor?.document;
+    if (document === undefined || this.binding(document.uri) === undefined) {
+      void window.showInformationMessage("q-lint: this file has no q process of its own.");
+      return;
+    }
+    await this.store(document.uri, undefined);
+  }
+
+  private async store(uri: Uri, label: string | undefined): Promise<void> {
+    const stored = this.context.workspaceState.get(FILE_CONNECTIONS_KEY);
+    await this.context.workspaceState.update(FILE_CONNECTIONS_KEY, withBinding(stored, uri.toString(), label));
+    this.refresh();
+  }
+}

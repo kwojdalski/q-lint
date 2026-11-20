@@ -45,6 +45,8 @@ import { render } from "./query";
 import { QueryModes, type Rendered } from "./resultpanel";
 import { blockAt, statements } from "./statements";
 import { commandLine, parseEnv, replLines, shellKind } from "./terminal";
+import { QueryControls } from "./controls";
+import { CONTROL_COMMANDS, UNLIMITED, armTimeout, limits, readUnlimited, runUnwrapped, timedOutError } from "./querycontrols";
 
 const PROCESSES_KEY = "q-lint.processes";
 const HISTORY_KEY = "q-lint.queryHistory";
@@ -65,11 +67,11 @@ export interface HistoryEntry {
   /// When it was sent, as an ISO string.
   at: string;
   millis: number;
-  outcome: "ok" | "error" | "aborted";
+  outcome: "ok" | "error" | "aborted" | "timeout";
   error?: string;
 }
 
-type From = "line" | "selection" | "block";
+type From = "line" | "selection" | "block" | "file";
 
 /// The code a query or a send takes from `editor`: the selection, the
 /// statement the cursor is in, or its line. Undefined when the cursor is on
@@ -79,6 +81,9 @@ function codeAt(editor: TextEditor, from: From): string | undefined {
   const line = editor.selection.active.line;
   if (from === "selection" && !editor.selection.isEmpty) {
     return document.getText(editor.selection);
+  }
+  if (from === "file") {
+    return document.getText();
   }
   if (from === "block") {
     const lines = document.getText().split(/\r?\n/);
@@ -92,7 +97,9 @@ function nothingThere(from: From): void {
   void window.showInformationMessage(
     from === "block"
       ? "q-lint: the cursor is on no statement (a blank line, a comment, or inside a block comment)."
-      : "q-lint: nothing to run there: it is blank or a comment.",
+      : from === "file"
+        ? "q-lint: the file has no statement to run."
+        : "q-lint: nothing to run there: it is blank or a comment.",
   );
 }
 
@@ -101,15 +108,54 @@ const colours = { red: "charts.red", blue: "charts.blue", green: "charts.green" 
 class ProcessesView implements TreeDataProvider<Row> {
   private readonly changed = new EventEmitter<void>();
   readonly onDidChangeTreeData = this.changed.event;
+  /// The rows given out since the last refresh, by parent, and each row's
+  /// parent: `reveal` finds a row by the object VS Code was given, so the
+  /// same rows are given out until the tree changes.
+  private given = new Map<Row | undefined, Row[]>();
+  private parents = new Map<Row, Row | undefined>();
 
   constructor(private readonly live: Live) {}
 
   refresh(): void {
+    this.given = new Map();
+    this.parents = new Map();
     this.changed.fire();
   }
 
   getChildren(row?: Row): Row[] {
-    return children(this.live.processes(), this.live.discovery.discovered(), row);
+    let rows = this.given.get(row);
+    if (rows === undefined) {
+      rows = children(this.live.processes(), this.live.discovery.discovered(), row);
+      this.given.set(row, rows);
+      for (const child of rows) {
+        this.parents.set(child, row);
+      }
+    }
+    return rows;
+  }
+
+  getParent(row: Row): Row | undefined {
+    return this.parents.get(row);
+  }
+
+  /// The row of the process connected to as `label`: a saved process under
+  /// its first tag, or a discovered one under its server.
+  find(label: string, under?: Row): Row | undefined {
+    for (const row of this.getChildren(under)) {
+      if (row.kind === "process" && row.process.label === label) {
+        return row;
+      }
+      if (row.kind === "discovered" && qualified(row.server, row.process.label) === label) {
+        return row;
+      }
+      if (row.kind === "tag" || row.kind === "servers" || row.kind === "server") {
+        const found = this.find(label, row);
+        if (found !== undefined) {
+          return found;
+        }
+      }
+    }
+    return undefined;
   }
 
   getTreeItem(row: Row): TreeItem {
@@ -169,7 +215,7 @@ class HistoryView implements TreeDataProvider<HistoryEntry> {
     const when = new Date(entry.at);
     item.description = `${entry.process} · ${when.toLocaleTimeString()} · ${entry.millis} ms`;
     item.iconPath = new ThemeIcon(
-      entry.outcome === "ok" ? "pass" : entry.outcome === "error" ? "error" : "circle-slash",
+      entry.outcome === "ok" ? "pass" : entry.outcome === "error" ? "error" : entry.outcome === "timeout" ? "watch" : "circle-slash",
       new ThemeColor(entry.outcome === "ok" ? "testing.iconPassed" : entry.outcome === "error" ? "errorForeground" : "disabledForeground"),
     );
     const tooltip = new MarkdownString();
@@ -226,6 +272,12 @@ class QTerminals {
     terminal?.show();
   }
 
+  /// Start q with no file in a new terminal, which code is sent to from then.
+  async repl(): Promise<void> {
+    const terminal = await this.start("q", window.activeTextEditor?.document.uri ?? workspace.workspaceFolders?.[0]?.uri);
+    terminal?.show();
+  }
+
   /// Send the code at the cursor to the q terminal, starting one if none is
   /// open. Each statement goes as one line, since that is what q's console
   /// reads.
@@ -254,10 +306,10 @@ class QTerminals {
   /// set for it. It starts in the workspace folder of `from`, so a script's
   /// relative `\l` reads as it does from a shell there. Undefined if the env
   /// file cannot be read.
-  private async start(name: string, from: Uri, file?: string): Promise<Terminal | undefined> {
+  private async start(name: string, from: Uri | undefined, file?: string): Promise<Terminal | undefined> {
     const configuration = workspace.getConfiguration("q-lint", from);
     const settings = readTerminal((key, fallback) => configuration.get(key, fallback));
-    const folder = workspace.getWorkspaceFolder(from) ?? workspace.workspaceFolders?.[0];
+    const folder = (from && workspace.getWorkspaceFolder(from)) ?? workspace.workspaceFolders?.[0];
     const cwd = folder?.uri.fsPath ?? (file !== undefined ? path.dirname(file) : undefined);
     let variables: Record<string, string> = {};
     if (settings.envPath !== "") {
@@ -309,6 +361,9 @@ export class Live {
   /// another.
   private connecting: Promise<boolean> | undefined;
   private running: { code: string; started: number } | undefined;
+  /// When the query that timed out started, so its entry says so.
+  private timedOut: number | undefined;
+  private readonly controls: QueryControls;
   /// The process explorer's call on the connection, if one is out: a query
   /// waits for it (`borrow`).
   private borrowed: Promise<unknown> | undefined;
@@ -336,6 +391,10 @@ export class Live {
     this.discovery = new DiscoveryServers(context, { list: () => this.processes(), save: (processes) => this.save(processes) });
     const terminals = new QTerminals(context);
     this.modes = new QueryModes(context);
+    this.controls = new QueryControls(context, {
+      activeLabel: () => this.activeLabel(),
+      pick: async (title) => (await this.chosen(undefined, title, true))?.label,
+    });
     const c = (name: string, run: (...args: never[]) => unknown) => commands.registerCommand(name, run);
     context.subscriptions.push(
       this.output,
@@ -362,6 +421,10 @@ export class Live {
       c(COMMANDS.sendLine, () => terminals.send("line")),
       c(COMMANDS.sendSelection, () => terminals.send("selection")),
       c(COMMANDS.sendBlock, () => terminals.send("block")),
+      c(CONTROL_COMMANDS.queryFile, () => this.queryFrom("file")),
+      c(CONTROL_COMMANDS.startRepl, () => terminals.repl()),
+      c(CONTROL_COMMANDS.copyQuery, (entry?: HistoryEntry) => this.copyQuery(entry)),
+      c(CONTROL_COMMANDS.revealProcess, () => this.revealProcess()),
       this.changed,
       this.discovery.onDidChange(() => this.processesView.refresh()),
       { dispose: () => void this.connection?.close() },
@@ -380,6 +443,10 @@ export class Live {
     result: () => Rendered | undefined;
     /// Each discovery server, what it last listed, and why it failed.
     discovered: () => { server: string; url: string; processes: Process[]; problems: string[]; error?: string; loading: boolean }[];
+    /// The label of the row selected in the Processes view, and whether
+    /// unlimited queries are on.
+    selectedProcess: () => string | undefined;
+    unlimited: () => boolean;
   } {
     return {
       processes: () => this.processes(),
@@ -395,6 +462,11 @@ export class Live {
           ...(state.error !== undefined ? { error: state.error } : {}),
           loading: state.loading,
         })),
+      selectedProcess: () => {
+        const row = this.processesTree.selection[0];
+        return row?.kind === "process" ? row.process.label : row?.kind === "discovered" ? qualified(row.server, row.process.label) : undefined;
+      },
+      unlimited: () => this.controls.unlimited,
     };
   }
 
@@ -450,6 +522,7 @@ export class Live {
     // VS Code also shows a view's badge on its container's activity-bar icon.
     this.processesTree.badge = label === undefined ? undefined : { value: 1, tooltip: `Connected to ${label}` };
     void commands.executeCommand("setContext", CONNECTED, label !== undefined);
+    this.controls?.refresh();
   }
 
   // --- processes
@@ -798,6 +871,19 @@ export class Live {
       nothingThere(from);
       return;
     }
+    // A file with a process of its own switches the connection to it.
+    const bound = this.controls.binding(editor.document.uri);
+    if (bound !== undefined && bound !== this.activeLabel()) {
+      if (this.connection?.isBusy) {
+        void window.showInformationMessage(
+          `q-lint: a query is still running on ${this.active?.label}; this file's queries go to ${bound}. q-lint: Abort Current Query stops waiting for it.`,
+        );
+        return;
+      }
+      if (!(await this.connectTo(bound))) {
+        return;
+      }
+    }
     await this.run(code);
   }
 
@@ -856,17 +942,31 @@ export class Live {
     const { connection, process } = ready;
     const configuration = workspace.getConfiguration("q-lint");
     const settings = readLive((key, fallback) => configuration.get(key, fallback));
+    const controls = this.controls.settings();
+    const unlimited = this.controls.unlimited;
+    const { consoleSize, gridLimit } = limits(settings, unlimited);
     const started = Date.now();
     this.running = { code, started };
     this.showStatus();
+    // A query still running at the timeout is aborted as Abort does.
+    const disarm = armTimeout(controls.timeout, () => {
+      if (this.running?.started === started) {
+        this.timedOut = started;
+        void this.abort(controls.timeout);
+      }
+    });
     let entry: HistoryEntry;
     try {
       // Grid and chart modes ask for the rows too; a value that is not
       // tabular comes back as console mode's text.
-      const answer =
-        settings.mode === "console"
-          ? await connection.query(statements(code), settings.consoleSize)
-          : await connection.queryGrid(statements(code), settings.consoleSize, settings.gridLimit);
+      const cut = statements(code);
+      const answer = controls.unwrapped
+        ? await runUnwrapped(connection, cut, { size: consoleSize, limit: gridLimit, unlimited, grid: settings.mode !== "console" })
+        : settings.mode !== "console"
+          ? await connection.queryGrid(cut, consoleSize, gridLimit)
+          : unlimited
+            ? readUnlimited(await connection.call(UNLIMITED, cut, consoleSize))
+            : await connection.query(cut, consoleSize);
       const millis = Date.now() - started;
       entry = {
         process: process.label,
@@ -882,16 +982,21 @@ export class Live {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const aborted = this.running === undefined || !connection.isOpen;
+      const timedOut = this.timedOut === started;
       entry = {
         process: process.label,
         code,
         at: new Date(started).toISOString(),
         millis: Date.now() - started,
-        outcome: aborted ? "aborted" : "error",
-        error: aborted && this.running === undefined ? "aborted" : message,
+        outcome: timedOut ? "timeout" : aborted ? "aborted" : "error",
+        error: timedOut ? timedOutError(controls.timeout) : aborted && this.running === undefined ? "aborted" : message,
       };
-      this.show([`# ${process.label} - ${aborted ? "aborted" : "failed"}: ${message}`], false);
+      this.show([`# ${process.label} - ${timedOut ? timedOutError(controls.timeout) : aborted ? "aborted" : "failed"}: ${message}`], false);
     } finally {
+      disarm();
+      if (this.timedOut === started) {
+        this.timedOut = undefined;
+      }
       if (this.running?.started === started) {
         this.running = undefined;
       }
@@ -915,7 +1020,7 @@ export class Live {
   /// Stop waiting for the running query: q has no message that cancels one,
   /// so the connection is closed - which also stops the process from sending
   /// a result nobody wants - and opened again.
-  async abort(): Promise<void> {
+  async abort(timedOut?: number): Promise<void> {
     const connection = this.connection;
     const process = this.active;
     if (connection === undefined || process === undefined || !connection.isBusy) {
@@ -935,7 +1040,7 @@ export class Live {
       }
     });
     void window.showInformationMessage(
-      `q-lint: stopped waiting for the query. ${process.label} may still be running it; q-lint reconnects once it is free.`,
+      `q-lint: ${timedOut === undefined ? "stopped waiting for the query" : `the query ${timedOutError(timedOut)} (q-lint.query.timeout), and was aborted`}. ${process.label} may still be running it; q-lint reconnects once it is free.`,
     );
   }
 
@@ -956,6 +1061,30 @@ export class Live {
     if (entry !== undefined) {
       await this.run(entry.code);
     }
+  }
+
+  private async copyQuery(entry?: HistoryEntry): Promise<void> {
+    entry ??= this.history()[0];
+    if (entry === undefined) {
+      void window.showInformationMessage("q-lint: the query history is empty.");
+      return;
+    }
+    await env.clipboard.writeText(entry.code);
+  }
+
+  /// Select the connected process in the Processes view, and show the view.
+  private async revealProcess(): Promise<void> {
+    const label = this.activeLabel();
+    if (label === undefined) {
+      void window.showInformationMessage("q-lint: not connected to a q process.");
+      return;
+    }
+    const row = this.processesView.find(label);
+    if (row === undefined) {
+      void window.showInformationMessage(`q-lint: ${label} is not in the Processes view.`);
+      return;
+    }
+    await this.processesTree.reveal(row, { select: true, focus: true, expand: true });
   }
 
   private async clearHistory(): Promise<void> {

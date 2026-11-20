@@ -17,6 +17,10 @@ import { deserialize, serialize } from "node-q/lib/c.js";
 import { GRID, readGridAnswer, type GridAnswer } from "./grid";
 import { RUN, readAnswer, type Answer } from "./query";
 
+/// The process answered with an error (`'msg`), as against the connection
+/// failing: the query ran, and this is what it gave.
+export class QError extends Error {}
+
 export interface Target {
   host: string;
   port: number;
@@ -37,6 +41,9 @@ export class QConnection {
   private buffer: Buffer = Buffer.alloc(0);
   private pending: { resolve: (v: unknown) => void; reject: (e: Error) => void } | undefined;
   private closed = false;
+  /// The q type of the last answer, read from its first byte; undefined
+  /// when it came compressed, since only the codec reads past that.
+  private answerType: number | undefined;
   private readonly onClose: (() => void)[] = [];
 
   private constructor(private readonly socket: net.Socket) {
@@ -110,18 +117,41 @@ export class QConnection {
     return this.call(GRID, statements, size, limit).then(readGridAnswer);
   }
 
+  /// Send `text` as a char vector, as a client that sends a string does,
+  /// for the process to evaluate as its `.z.pg` does (`value`, unless it is
+  /// set): nothing of ours runs there. Resolves with the value as the codec
+  /// decodes it and its q type; rejects with a `QError` for a q error.
+  async evaluate(text: string): Promise<{ value: unknown; type: number | undefined }> {
+    const body = Buffer.from(text, "utf8");
+    // A char vector (type 10, no attribute, its length), built here: the
+    // codec sends a string starting with a backtick as a symbol.
+    const message = Buffer.alloc(14 + body.length);
+    message.writeUInt8(1, 0);
+    message.writeUInt8(SYNC, 1);
+    message.writeUInt32LE(message.length, 4);
+    message.writeInt8(10, 8);
+    message.writeUInt32LE(body.length, 10);
+    body.copy(message, 14);
+    const value = await this.send(message);
+    return { value, type: this.answerType };
+  }
+
   /// Send `expression` applied to `args` as a sync message, and resolve with
   /// what q answers. One at a time: q answers a handle's messages in order,
   /// so a second would only wait behind the first.
   call(expression: string, ...args: unknown[]): Promise<unknown> {
+    const message: Buffer = serialize(args.length === 0 ? expression : [expression, ...args]);
+    message.writeUInt8(SYNC, 1);
+    return this.send(message);
+  }
+
+  private send(message: Buffer): Promise<unknown> {
     if (this.closed) {
       return Promise.reject(new Error("the connection is closed"));
     }
     if (this.pending !== undefined) {
       return Promise.reject(new Error("a query is already running on this connection"));
     }
-    const message: Buffer = serialize(args.length === 0 ? expression : [expression, ...args]);
-    message.writeUInt8(SYNC, 1);
     return new Promise((resolve, reject) => {
       this.pending = { resolve, reject };
       this.socket.write(message);
@@ -176,12 +206,15 @@ export class QConnection {
       if (pending === undefined) {
         continue;
       }
+      const compressed = message.readUInt8(2) === 1;
+      this.answerType = compressed || message.length < 9 ? undefined : message.readInt8(8);
       try {
         pending.resolve(deserialize(message, false, true, false, false));
       } catch (error) {
         // A q error arrives as a message of type -128, which the codec
         // throws as an Error holding q's text.
-        pending.reject(error instanceof Error ? error : new Error(String(error)));
+        const text = error instanceof Error ? error.message : String(error);
+        pending.reject(this.answerType === -128 ? new QError(text) : error instanceof Error ? error : new Error(text));
       }
     }
   }
