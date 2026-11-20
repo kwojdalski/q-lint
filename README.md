@@ -404,8 +404,17 @@ Around those:
 - `textDocument/foldingRange` folds the lambdas, parenthesised lists,
   bracketed blocks and block comments that span lines, found in the masked
   text so that a bracket in a string or a comment folds nothing. A statement
-  continued over indented lines with no bracket open is not a range, and a
-  buffer whose brackets do not close has none until they do.
+  continued over indented lines with no bracket open is not a range.
+- While a bracket or a string is open - every keystroke of a call or a
+  string being typed - a file reports only QE001, as the CLI does, placed at
+  the bracket that is not closed rather than the closer it runs into. The
+  rest of the file is not blanked meanwhile: the diagnostics and folds of the
+  last version whose brackets all closed are kept on every line that has not
+  changed since, moved up or down by the lines added or removed above them,
+  except within the statement that does not close. They are the last good
+  results, so a finding that an unchanged line owes to the statement being
+  typed goes only once that statement closes. A file that has not closed
+  since it was opened has only the QE001, and no folds.
 
 **The reason it is a server rather than an editor plugin shelling out to the
 CLI**: `didChange` carries the buffer, so what gets linted is what is on

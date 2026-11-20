@@ -2863,3 +2863,122 @@ fn folding_a_broken_or_unknown_buffer_returns_no_ranges() {
     );
     assert_eq!(server.shutdown_and_exit(), 0);
 }
+
+/// Each diagnostic as `(code, line, character)`, in the order sent.
+fn places(diagnostics: &[Value]) -> Vec<(String, u64, u64)> {
+    diagnostics
+        .iter()
+        .map(|d| {
+            (
+                d["code"].as_str().unwrap_or("").to_string(),
+                d["range"]["start"]["line"].as_u64().unwrap(),
+                d["range"]["start"]["character"].as_u64().unwrap(),
+            )
+        })
+        .collect()
+}
+
+fn change(server: &mut Server, uri: &str, version: u64, text: &str) {
+    server.send(json!({"jsonrpc":"2.0","method":"textDocument/didChange",
+        "params":{"textDocument":{"uri":uri,"version":version},
+                  "contentChanges":[{"text":text}]}}));
+}
+
+/// Three lambdas, two with a finding and each a fold.
+const THREE: &str = "f:{[a]\n  a==1}\ng:{[b]\n  b+1}\nh:{[c]\n  c==2}\n";
+
+#[test]
+fn a_bracket_being_typed_keeps_the_rest_of_the_files_findings_and_folds() {
+    let mut server = Server::start();
+    server.initialize();
+    let uri = "file:///tmp/typing.q";
+    server.open(uri, THREE);
+    let qe004 = |line| ("QE004".to_string(), line, 3);
+    assert_eq!(places(&server.diagnostics_for(uri)), [qe004(1), qe004(5)]);
+    let folds = json!([{"startLine": 0, "endLine": 1}, {"startLine": 2, "endLine": 3},
+                       {"startLine": 4, "endLine": 5}]);
+    assert_eq!(server.folding_ranges(uri), folds);
+
+    // A call being typed on a new line in `g`: the QE001 is at its `[`,
+    // where the typing is, not at the `}` a line below; `f`'s finding stays
+    // where it was and `h`'s moves down the line that was added. `g` itself
+    // is the statement that does not close, and nothing is said of it.
+    let typing = "f:{[a]\n  a==1}\ng:{[b]\n  x:f[1;\n  b+1}\nh:{[c]\n  c==2}\n";
+    change(&mut server, uri, 2, typing);
+    let diagnostics = server.diagnostics_for(uri);
+    assert_eq!(
+        places(&diagnostics),
+        [("QE001".to_string(), 3, 5), qe004(1), qe004(6)]
+    );
+    assert_eq!(
+        diagnostics[0]["message"],
+        "Unclosed delimiter; expected ']' before the '}' on line 5"
+    );
+    assert_eq!(
+        server.folding_ranges(uri),
+        json!([{"startLine": 0, "endLine": 1}, {"startLine": 5, "endLine": 6}])
+    );
+
+    // Typed on: what is carried is the last version that closed, not the
+    // one before this.
+    let more = "f:{[a]\n  a==1}\ng:{[b]\n  x:f[1;2\n  b+1}\nh:{[c]\n  c==2}\n";
+    change(&mut server, uri, 3, more);
+    assert_eq!(
+        places(&server.diagnostics_for(uri)),
+        [("QE001".to_string(), 3, 5), qe004(1), qe004(6)]
+    );
+
+    // A string opened in the last statement: what is above it stands.
+    let string = format!("{THREE}s:\"abc\n");
+    change(&mut server, uri, 4, &string);
+    assert_eq!(
+        places(&server.diagnostics_for(uri)),
+        [("QE001".to_string(), 6, 2), qe004(1), qe004(5)]
+    );
+    assert_eq!(server.folding_ranges(uri), folds);
+
+    // Closed, the file is linted whole again, and it is what is carried
+    // next: `g`'s new line has a finding of its own.
+    let closed = "f:{[a]\n  a==1}\ng:{[b]\n  b==2;\n  b+1}\nh:{[c]\n  c==2}\n";
+    change(&mut server, uri, 5, closed);
+    assert_eq!(
+        places(&server.diagnostics_for(uri)),
+        [qe004(1), qe004(3), qe004(6)]
+    );
+    let broken = "f:{[a]\n  a==1}\ng:{[b]\n  b==2;\n  b+1}\nh:{[c]\n  c==(2}\n";
+    change(&mut server, uri, 6, broken);
+    assert_eq!(
+        places(&server.diagnostics_for(uri)),
+        [("QE001".to_string(), 6, 5), qe004(1), qe004(3)]
+    );
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn a_document_that_never_closed_has_nothing_to_carry() {
+    // Opened broken, there is no version whose results can be trusted, and
+    // closing one document forgets what it had.
+    let mut server = Server::start();
+    server.initialize();
+    let uri = "file:///tmp/never-closed.q";
+    server.open(uri, "f:{[a]\n  a==1}\ng:{[b]\n  f[1;\n  b}\n");
+    assert_eq!(
+        places(&server.diagnostics_for(uri)),
+        [("QE001".to_string(), 3, 3)]
+    );
+    assert_eq!(server.folding_ranges(uri), json!([]));
+    server.open(uri, THREE);
+    server.diagnostics_for(uri);
+    server.send(json!({"jsonrpc":"2.0","method":"textDocument/didClose",
+        "params":{"textDocument":{"uri":uri}}}));
+    server.diagnostics_for(uri);
+    server.open(
+        uri,
+        "f:{[a]\n  a==1}\ng:{[b]\n  f[1;\n  b}\nh:{[c]\n  c==2}\n",
+    );
+    assert_eq!(
+        places(&server.diagnostics_for(uri)),
+        [("QE001".to_string(), 3, 3)]
+    );
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
