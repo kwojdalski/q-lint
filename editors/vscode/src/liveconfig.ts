@@ -34,6 +34,16 @@ export const COMMANDS = {
   switchMode: "q-lint.switchQueryMode",
 } as const;
 
+/// The discovery server commands (#874), registered by `DiscoveryServers`.
+export const DISCOVERY_COMMANDS = {
+  add: "q-lint.addDiscoveryServer",
+  edit: "q-lint.editDiscoveryServer",
+  remove: "q-lint.deleteDiscoveryServer",
+  reload: "q-lint.reloadDiscoveryServer",
+  download: "q-lint.downloadDiscoveredProcesses",
+  forget: "q-lint.removeDiscoveredProcesses",
+} as const;
+
 /// Where a query's result is shown: the output, or the result panel as a
 /// grid or a chart.
 export const QUERY_MODES = ["console", "grid", "chart"] as const;
@@ -88,4 +98,15 @@ export function readTerminal(get: <T>(key: string, fallback: T) => T): TerminalS
     qBinary: qBinary === "" ? "q" : qBinary,
     envPath: get("terminal.envPath", "").trim(),
   };
+}
+
+export interface DiscoverySettings {
+  /// Minutes between fetches of every discovery server; 0: only on Reload.
+  refreshInterval: number;
+}
+
+/// The discovery settings, read as `readLive` reads the query ones. The
+/// interval is at most a day, since a longer one overflows a timer.
+export function readDiscovery(get: <T>(key: string, fallback: T) => T): DiscoverySettings {
+  return { refreshInterval: Math.min(whole(get("discovery.refreshInterval", 30), 0, 30), 1440) };
 }

@@ -119,6 +119,40 @@ switches. The commands:
   which entries it skipped.
 - **Insert Active Connection Label**, at the cursor.
 
+**Discovery servers** list processes so a desk's need not be typed in by
+hand. A discovery server is a URL that answers a `GET` with the same JSON as
+an import: a list of processes, or `{"processes": [...]}`. Its processes are
+shown under it, in a **Discovery Servers** group at the bottom of the view,
+and connect like any other. They are kept in memory only, never saved to
+disk. The commands:
+- **Add**, **Edit** and **Delete Discovery Server**: a label and a URL, and
+  an optional auth header kept in VS Code's secret storage. It is sent as
+  `Authorization` (`Bearer <token>`, `Basic <base64>`), or, written as
+  `Name: value`, under its own name. **Add Discovery Server** also takes
+  `{"label", "url", "secret"?}` as an argument, and **Edit** a server's
+  label and those fields.
+- **Reload Discovery Server**: fetch it now; given no server - from the
+  view's menu or the palette - fetch them all. Each is also fetched when it
+  is added or edited, and at startup and every
+  `q-lint.discovery.refreshInterval` minutes unless that is `0`.
+- **Download Processes**: save a server's processes to the list. One whose
+  label a saved process has is skipped and named, never replaced.
+- **Remove Processes**: drop a server's processes from the view. The
+  periodic fetch leaves it alone until it is reloaded.
+
+A fetch waits 10 seconds at most, and takes only a 2xx `application/json`
+answer of 5 MB or less. Why one failed - no answer, a status, the wrong
+content type, too large, not JSON - shows under the server's row, as do the
+entries it skipped and why; nothing pops up.
+
+A discovered process may share a label with a saved one, or with one another
+server lists. Its row shows its own label, but once connected it is
+`server/label` - in the status bar, the query history, and **Connect to
+Process**'s argument - so the two are never taken for each other. A bare
+label names a saved process first, then a discovered one if only one server
+lists it. A discovered process with a `user` asks for its password on the
+first connect, and keeps it in secret storage under `server/label`.
+
 **Querying.** With a q file open:
 - **Query Current Line**, `ctrl+q`.
 - **Query Current Selection**, `ctrl+r`: the current line when nothing is
@@ -384,11 +418,17 @@ reaches the language server.
 | `q-lint.terminal.qBinary` | `"q"` | The q binary a terminal starts: a name on `PATH` or a path. It is quoted for the terminal's shell (POSIX, PowerShell or cmd), so it names one program, not a command with arguments. | `q-terminal.cfg.qBinary` |
 | `q-lint.terminal.envPath` | `""` | A file of `NAME=value` lines set for q, such as `QHOME` and `QLIC`. They go on the command line that starts q (`NAME=value q`, `$env:NAME=` in PowerShell, `set` in cmd), so they win over what your shell's startup files set, and show there. Relative to the workspace folder. It is read, not run as a shell script as q-pro's is: `#` lines are comments, `export ` is allowed, quotes around a value are dropped, and nothing is expanded: `$HOME` stays `$HOME`. | `q-terminal.cfg.envPath` |
 
+### Discovery settings
+
+| Setting | Default | What it does | q-pro |
+| --- | --- | --- | --- |
+| `q-lint.discovery.refreshInterval` | `30` | Minutes between fetches of every discovery server, at most 1440. `0` fetches a server only on **Reload Discovery Server**, and when it is added or edited. | - |
+
 ### Not here, and why
 
-q-pro's discovery server is not planned for now, nor is `kuki`. Its
-`sourceFiles.includeGlob` is not mirrored either: the index reads every `.q`
-file `qlinter .` would - less what the configuration's `exclude` skips - and
+`kuki` is not planned for now. q-pro's `sourceFiles.includeGlob` is not
+mirrored either: the index reads every `.q` file `qlinter .` would - less
+what the configuration's `exclude` skips - and
 `q-lint.workspaceIndex.exclude` narrows it.
 
 ## Formatting

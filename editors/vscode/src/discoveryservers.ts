@@ -1,0 +1,376 @@
+// Discovery servers in the Processes view (#874): the servers the user adds,
+// kept in `globalState` with their auth header in secret storage, fetched on
+// Reload and every `q-lint.discovery.refreshInterval` minutes. What they list
+// is kept in memory only. How a server is fetched and its rows built is
+// `discovery.ts`'s; this file is the VS Code around it.
+import {
+  commands,
+  EventEmitter,
+  MarkdownString,
+  ThemeColor,
+  ThemeIcon,
+  TreeItem,
+  TreeItemCollapsibleState,
+  window,
+  workspace,
+  type ExtensionContext,
+} from "vscode";
+import {
+  EMPTY_STATE,
+  fetchProcesses,
+  parseServers,
+  serverDescription,
+  serverLabelProblem,
+  toDownload,
+  urlProblem,
+  type Discovered,
+  type DiscoveryServer,
+  type Row,
+  type ServerState,
+} from "./discovery";
+import { DISCOVERY_COMMANDS, readDiscovery } from "./liveconfig";
+import type { Process } from "./processes";
+
+const SERVERS_KEY = "q-lint.discoveryServers";
+const secretKey = (label: string): string => `q-lint.discovery.auth.${label}`;
+
+/// What a server command is given: its row, its label, or nothing - then the
+/// user picks one.
+type ServerArg = Row | string | undefined;
+
+/// The fields Add and Edit Discovery Server take as an argument instead of
+/// asking. `secret` is the auth header; on Edit, an empty one removes it.
+interface ServerFields {
+  label?: string;
+  url?: string;
+  secret?: string;
+}
+
+export class DiscoveryServers {
+  private readonly states = new Map<string, ServerState>();
+  /// The fetch in progress per server, so a second Reload waits for it.
+  private readonly inFlight = new Map<string, Promise<void>>();
+  private timer: ReturnType<typeof setInterval> | undefined;
+  private readonly changed = new EventEmitter<void>();
+  /// Fired when a server or what it lists changes: what the view refreshes on.
+  readonly onDidChange = this.changed.event;
+
+  constructor(
+    private readonly context: ExtensionContext,
+    private readonly saved: { list: () => Process[]; save: (processes: Process[]) => Promise<void> },
+  ) {
+    const c = (name: string, run: (...args: never[]) => unknown) => commands.registerCommand(name, run);
+    context.subscriptions.push(
+      c(DISCOVERY_COMMANDS.add, (fields?: ServerFields) => this.add(fields)),
+      c(DISCOVERY_COMMANDS.edit, (arg?: ServerArg, fields?: ServerFields) => this.edit(arg, fields)),
+      c(DISCOVERY_COMMANDS.remove, (arg?: ServerArg) => this.remove(arg)),
+      c(DISCOVERY_COMMANDS.reload, (arg?: ServerArg) => this.reload(arg)),
+      c(DISCOVERY_COMMANDS.download, (arg?: ServerArg) => this.download(arg)),
+      c(DISCOVERY_COMMANDS.forget, (arg?: ServerArg) => this.forget(arg)),
+      workspace.onDidChangeConfiguration((event) => {
+        if (event.affectsConfiguration("q-lint.discovery")) {
+          this.schedule(false);
+        }
+      }),
+      this.changed,
+      { dispose: () => clearInterval(this.timer) },
+    );
+    this.schedule(true);
+  }
+
+  servers(): DiscoveryServer[] {
+    return parseServers(this.context.globalState.get<unknown>(SERVERS_KEY, []));
+  }
+
+  /// Each server with what it last answered.
+  discovered(): Discovered[] {
+    return this.servers().map((server) => ({ server, state: this.states.get(server.label) ?? EMPTY_STATE }));
+  }
+
+  /// Fetch every server now when `now`, and then every interval; with an
+  /// interval of 0, only on Reload.
+  private schedule(now: boolean): void {
+    clearInterval(this.timer);
+    this.timer = undefined;
+    const minutes = readDiscovery((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback)).refreshInterval;
+    if (minutes === 0) {
+      return;
+    }
+    const all = (): void => {
+      for (const server of this.servers()) {
+        if (!this.states.get(server.label)?.removed) {
+          void this.fetch(server);
+        }
+      }
+    };
+    if (now) {
+      all();
+    }
+    this.timer = setInterval(all, minutes * 60_000);
+  }
+
+  private set(label: string, state: ServerState): void {
+    this.states.set(label, state);
+    this.changed.fire();
+  }
+
+  /// Fetch `server` and keep what it answered. A failure is kept as its
+  /// state and shown under its row, never in a message.
+  private fetch(server: DiscoveryServer): Promise<void> {
+    const running = this.inFlight.get(server.label);
+    if (running !== undefined) {
+      return running;
+    }
+    const before = this.states.get(server.label) ?? EMPTY_STATE;
+    this.set(server.label, { ...before, loading: true, removed: false });
+    const done = (async () => {
+      let state: ServerState;
+      try {
+        const secret = await this.context.secrets.get(secretKey(server.label));
+        const { processes, problems } = await fetchProcesses(server.url, { secret });
+        state = { processes, problems, loading: false, fetchedAt: Date.now(), removed: false };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        state = { processes: [], problems: [], error: message, loading: false, fetchedAt: Date.now(), removed: false };
+      }
+      // A server edited or deleted meanwhile keeps what its new URL answers.
+      const now = this.servers().find((s) => s.label === server.label);
+      if (now?.url === server.url) {
+        this.set(server.label, state);
+      }
+    })().finally(() => this.inFlight.delete(server.label));
+    this.inFlight.set(server.label, done);
+    return done;
+  }
+
+  private async store(servers: DiscoveryServer[]): Promise<void> {
+    await this.context.globalState.update(SERVERS_KEY, servers);
+    this.changed.fire();
+  }
+
+  /// Ask for a server's fields, starting from `from`; undefined if the user
+  /// stops part way. `secret` is undefined to keep the stored one.
+  private async ask(from: Partial<DiscoveryServer>, taken: Set<string>, stored: boolean): Promise<Required<Pick<ServerFields, "label" | "url">> & { secret?: string } | undefined> {
+    const label = await window.showInputBox({
+      title: "Discovery server: label",
+      value: from.label,
+      prompt: "A name for the server, unique among them; its processes are shown under it",
+      validateInput: (v) => serverLabelProblem(v, taken),
+    });
+    if (label === undefined) {
+      return undefined;
+    }
+    const url = await window.showInputBox({
+      title: "Discovery server: URL",
+      value: from.url ?? "https://",
+      prompt: "Answers a GET with a JSON list of {label, host, port, tags?, user?, tls?}",
+      validateInput: urlProblem,
+    });
+    if (url === undefined) {
+      return undefined;
+    }
+    let secret: string | undefined;
+    if (stored) {
+      const keep = "Keep the stored auth header";
+      const change = "Change it";
+      const drop = "Send none";
+      const picked = await window.showQuickPick([keep, change, drop], { title: "Discovery server: auth header" });
+      if (picked === undefined) {
+        return undefined;
+      }
+      secret = picked === drop ? "" : picked === keep ? undefined : await this.askSecret();
+    } else {
+      secret = await this.askSecret();
+    }
+    return secret === undefined && !stored ? undefined : { label: label.trim(), url: url.trim(), secret };
+  }
+
+  private askSecret(): Thenable<string | undefined> {
+    return window.showInputBox({
+      title: "Discovery server: auth header",
+      password: true,
+      prompt: "Sent as Authorization (such as Bearer <token>), or as Name: value. Kept in VS Code's secret storage. Leave empty for none.",
+    });
+  }
+
+  private async add(fields?: ServerFields): Promise<void> {
+    const servers = this.servers();
+    const taken = new Set(servers.map((s) => s.label));
+    let answer: { label: string; url: string; secret?: string } | undefined;
+    if (fields?.label !== undefined && fields.url !== undefined) {
+      const bad = serverLabelProblem(fields.label, taken) ?? urlProblem(fields.url);
+      if (bad !== undefined) {
+        void window.showErrorMessage(`q-lint: cannot add the discovery server: ${bad}`);
+        return;
+      }
+      answer = { label: fields.label.trim(), url: fields.url.trim(), secret: fields.secret ?? "" };
+    } else {
+      answer = await this.ask({}, taken, false);
+    }
+    if (answer === undefined) {
+      return;
+    }
+    const server = { label: answer.label, url: answer.url };
+    await this.keepSecret(server.label, answer.secret);
+    await this.store([...servers, server]);
+    await this.fetch(server);
+  }
+
+  private async keepSecret(label: string, secret: string | undefined): Promise<void> {
+    if (secret === undefined) {
+      return;
+    }
+    await (secret.trim() === ""
+      ? this.context.secrets.delete(secretKey(label))
+      : this.context.secrets.store(secretKey(label), secret.trim()));
+  }
+
+  /// The server a command was given, or one the user picks.
+  private async chosen(arg: ServerArg, title: string): Promise<DiscoveryServer | undefined> {
+    const servers = this.servers();
+    if (typeof arg === "string") {
+      const named = servers.find((s) => s.label === arg);
+      if (named === undefined) {
+        void window.showErrorMessage(`q-lint: no discovery server is labelled "${arg}".`);
+      }
+      return named;
+    }
+    if (arg?.kind === "server") {
+      return arg.server;
+    }
+    if (servers.length === 0) {
+      void window.showInformationMessage("q-lint: no discovery servers yet.");
+      return undefined;
+    }
+    const picked = await window.showQuickPick(
+      servers.map((s) => ({ label: s.label, description: s.url, server: s })),
+      { title, matchOnDescription: true },
+    );
+    return picked?.server;
+  }
+
+  private async edit(arg?: ServerArg, fields?: ServerFields): Promise<void> {
+    const old = await this.chosen(arg, "Edit which discovery server?");
+    if (old === undefined) {
+      return;
+    }
+    const servers = this.servers();
+    const taken = new Set(servers.map((s) => s.label).filter((l) => l !== old.label));
+    const stored = (await this.context.secrets.get(secretKey(old.label))) !== undefined;
+    let answer: { label: string; url: string; secret?: string } | undefined;
+    if (fields !== undefined) {
+      answer = { label: (fields.label ?? old.label).trim(), url: (fields.url ?? old.url).trim(), secret: fields.secret };
+      const bad = serverLabelProblem(answer.label, taken) ?? urlProblem(answer.url);
+      if (bad !== undefined) {
+        void window.showErrorMessage(`q-lint: cannot change the discovery server: ${bad}`);
+        return;
+      }
+    } else {
+      answer = await this.ask(old, taken, stored);
+    }
+    if (answer === undefined) {
+      return;
+    }
+    const server = { label: answer.label, url: answer.url };
+    if (server.label !== old.label) {
+      const kept = await this.context.secrets.get(secretKey(old.label));
+      await this.context.secrets.delete(secretKey(old.label));
+      if (kept !== undefined && answer.secret === undefined) {
+        await this.context.secrets.store(secretKey(server.label), kept);
+      }
+      this.states.delete(old.label);
+    }
+    await this.keepSecret(server.label, answer.secret);
+    await this.store(servers.map((s) => (s.label === old.label ? server : s)));
+    await this.fetch(server);
+  }
+
+  private async remove(arg?: ServerArg): Promise<void> {
+    const server = await this.chosen(arg, "Delete which discovery server?");
+    if (server === undefined) {
+      return;
+    }
+    const yes = "Delete";
+    const sure = await window.showWarningMessage(
+      `Delete the discovery server "${server.label}"? Processes downloaded from it stay in the list.`,
+      { modal: true },
+      yes,
+    );
+    if (sure !== yes) {
+      return;
+    }
+    await this.context.secrets.delete(secretKey(server.label));
+    this.states.delete(server.label);
+    await this.store(this.servers().filter((s) => s.label !== server.label));
+  }
+
+  /// Fetch the server given, or every server when given none.
+  private async reload(arg?: ServerArg): Promise<void> {
+    const servers = arg === undefined ? this.servers() : [await this.chosen(arg, "Reload which discovery server?")];
+    await Promise.all(servers.flatMap((s) => (s === undefined ? [] : [this.fetch(s)])));
+  }
+
+  /// Copy what a server lists into the saved processes.
+  private async download(arg?: ServerArg): Promise<void> {
+    const server = await this.chosen(arg, "Download the processes of which discovery server?");
+    if (server === undefined) {
+      return;
+    }
+    const listed = this.states.get(server.label)?.processes ?? [];
+    if (listed.length === 0) {
+      void window.showInformationMessage(`q-lint: ${server.label} lists no processes to download. Reload it first.`);
+      return;
+    }
+    const saved = this.saved.list();
+    const { added, skipped } = toDownload(saved, listed);
+    await this.saved.save([...saved, ...added]);
+    const note = skipped.length ? ` Skipped ${skipped.length} whose label is taken: ${skipped.slice(0, 5).join(", ")}.` : "";
+    void window.showInformationMessage(`q-lint: saved ${added.length} process(es) from ${server.label}.${note}`);
+  }
+
+  /// Drop what a server lists from the view, until it is reloaded.
+  private async forget(arg?: ServerArg): Promise<void> {
+    const server = await this.chosen(arg, "Remove the processes of which discovery server?");
+    if (server !== undefined) {
+      this.set(server.label, { ...EMPTY_STATE, removed: true });
+    }
+  }
+}
+
+/// The tree item of a row this file owns: the group, a server, a note.
+export function discoveryItem(row: Row): TreeItem {
+  if (row.kind === "servers") {
+    const item = new TreeItem("Discovery Servers", TreeItemCollapsibleState.Expanded);
+    item.iconPath = new ThemeIcon("globe");
+    item.contextValue = "discoveryServers";
+    return item;
+  }
+  if (row.kind === "server") {
+    const { server, state } = row;
+    const item = new TreeItem(server.label, TreeItemCollapsibleState.Expanded);
+    item.description = serverDescription(state);
+    item.iconPath = state.loading
+      ? new ThemeIcon("sync~spin")
+      : new ThemeIcon("cloud", state.error !== undefined ? new ThemeColor("errorForeground") : undefined);
+    const tooltip = new MarkdownString();
+    tooltip.appendMarkdown(`**${server.label}**\n\n`);
+    tooltip.appendText(server.url);
+    if (state.fetchedAt !== undefined) {
+      tooltip.appendMarkdown(`\n\nlast fetched ${new Date(state.fetchedAt).toLocaleTimeString()}`);
+    }
+    item.tooltip = tooltip;
+    item.contextValue = "discoveryServer";
+    return item;
+  }
+  const text = row.kind === "note" ? row.text : "";
+  const item = new TreeItem(text, TreeItemCollapsibleState.None);
+  item.tooltip = text;
+  if (row.kind === "note") {
+    item.iconPath = new ThemeIcon(
+      row.level === "error" ? "error" : row.level === "warning" ? "warning" : "info",
+      row.level === "error" ? new ThemeColor("errorForeground") : row.level === "warning" ? new ThemeColor("editorWarning.foreground") : undefined,
+    );
+  }
+  item.contextValue = "discoveryNote";
+  return item;
+}
