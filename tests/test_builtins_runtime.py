@@ -56,3 +56,33 @@ def test_a_function_takes_as_many_arguments_as_q_says(tmp_path):
     # Most of the catalogue is checkable; an interpreter that defines almost
     # none of it would otherwise pass by holding nothing.
     assert held > len(functions) // 2, (held, len(functions))
+
+
+# A partitioned database loaded, and .Q.bv run over it, so the names q sets
+# only for one - .Q.pf, .Q.PD, .Q.vp and the rest - are there to be found.
+# Loading it changes directory, so the names are read first.
+DEFINED = """
+names:read0 `:../names.txt;
+t:([]sym:`a`b;px:1 2f);
+{.Q.dpft[`:db;x;`sym;`t]} each 2024.01.01 2024.01.02;
+\\l db
+.Q.bv[];
+{-1 x,"\\t",string @[{value x;1b};x;0b]} each names;
+exit 0
+"""
+
+
+def test_every_qualified_name_but_a_handler_is_defined(tmp_path):
+    # A handler is undefined until a script assigns it, and q calls it then.
+    names = [b["name"] for b in CATALOGUE if b["name"].startswith(".")
+             and b["kind"] not in ("callback", "operator", "iterator")]
+    assert all(NAME.fullmatch(name) for name in names), sorted(names)
+    (tmp_path / "names.txt").write_text("\n".join(names) + "\n")
+    (tmp_path / "run").mkdir()
+    (tmp_path / "run" / "defined.q").write_text(DEFINED)
+    run = subprocess.run([Q, "defined.q", "-q"], cwd=tmp_path / "run", text=True,
+                         capture_output=True, timeout=30, stdin=subprocess.DEVNULL)
+    rows = [line.split("\t") for line in run.stdout.splitlines() if line.count("\t") == 1]
+    assert len(rows) == len(names), (run.stdout[-2000:], run.stderr[-2000:])
+    # .z.s is the function being evaluated, and there is none at the top.
+    assert [name for name, found in rows if found != "1"] == [".z.s"]

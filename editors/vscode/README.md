@@ -71,11 +71,14 @@ to a process you add and connect to, and sends only the code you run.
   and a rename that misses one of those breaks the program quietly.
 - **Hover** on a name the workspace defines shows its parameters, the
   comment written above its definition and the file it is in; on a word of
-  q itself - `ssr`, `select`, `.z.p`, `.Q.s` - how it is written, what it
-  gives, and a link to its page in the KX reference.
-- **Signature help** inside `name[`: the parameters, with the one being
-  written marked, for a workspace function or a q function called with
-  brackets.
+  q itself - `ssr`, `select`, `.z.p`, `.Q.s`, `.h.hy`, or a glyph such as
+  `#` or `/:` - how it is written, what it gives, and a link to its page in
+  the KX reference.
+- **Signature help** inside `name[` (or `name [`): the parameters, with the
+  one being written marked, for a workspace function, an alias or projection
+  of one - showing the slots it leaves open - or a q function called with
+  brackets. Past the last parameter none is marked, and it says the call has
+  too many arguments.
 - **Completion**, when turned on with `q-lint.completion.enable`: a lambda's
   parameters and locals first, then the names the workspace defines, spelled
   as the `\d` context in force reads them, then q's own words. It does not
