@@ -54,10 +54,7 @@
       },
       {
         "id": "q-console",
-        "aliases": [],
-        "mimetypes": [
-          "text/x-code-output"
-        ]
+        "aliases": []
       }
     ],
     "grammars": [

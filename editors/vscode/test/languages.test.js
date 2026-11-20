@@ -248,6 +248,17 @@ test("the k, quke and q-console languages and their grammars are declared", () =
   assert.deepStrictEqual(grammars.quke.embeddedLanguages, { "meta.embedded.block.q": "q" });
 });
 
+test("q-console claims no output channel but its own", () => {
+  // VS Code gives a channel created without a language the language that
+  // last registered the mimetype text/x-code-output - an extension's beats
+  // the built-in one - so claiming it would colour every other extension's
+  // output, and q-lint's own server log, as q console text. The query
+  // channel names its language itself.
+  for (const lang of pkg.contributes.languages) {
+    assert.ok(!(lang.mimetypes ?? []).includes("text/x-code-output"), lang.id);
+  }
+});
+
 test("the query channel is created with the q-console language", () => {
   const live = fs.readFileSync(path.join(root, "src", "live.ts"), "utf8");
   assert.match(live, /createOutputChannel\("q-lint: query", "q-console"\)/);
