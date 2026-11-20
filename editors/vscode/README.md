@@ -109,14 +109,34 @@ to a process you add and connect to, and sends only the code you run.
 
 ## q processes and queries
 
-The **q-lint** panel in the activity bar holds three views.
+The **q-lint** panel in the activity bar holds four views: Processes,
+Process Explorer, Query History, and Help and Feedback.
+
+New to it? **q-lint: Get Started** opens the walkthrough, also listed on
+VS Code's Welcome page: see a lint finding, add a process, connect and run
+a query, open the Process Explorer, switch to the grid, and try a notebook.
+Each step's button runs the real command, and the step is ticked once you
+have done it.
 
 **Processes** lists the q processes you add, grouped by tag. Tags `prod`
-(or `prd`), `uat` and `dev` are coloured red, blue and green. Click a
-process to connect; the status bar shows the connection, and clicking it
-switches. The commands:
-- **Add**, **Edit** and **Delete Process**, and **Tag Process**. A password
-  is kept in VS Code's secret storage, never in settings or in an export.
+(or `prd`), `uat` and `dev` are coloured red, blue and green, and
+`q-lint.processes.tagColors` colours any tag, or overrides those. A process
+takes its most cautious tag's colour: red, orange, yellow, blue, purple,
+then green. Click a process to connect; the status bar shows the connection,
+and clicking it switches. The commands:
+- **Add**, **Edit** and **Delete Process**, and **Tag Process**. Add and
+  Edit ask for a label, host and port; **TLS**, yes or no (yes for a process
+  started with `-E 1` or `-E 2`; Edit offers the current choice first, so
+  Enter keeps it); then authentication: a user, and, when there is one, that
+  user's password. The password is kept in VS Code's SecretStorage, never in
+  settings or in an export; on Edit, an empty password keeps the stored one,
+  and clearing the user forgets it. Last come the tags.
+- **Edit Tag Color**, on a tag row: one of the chart colours, or `default`
+  to go back to the built-in colour (or none). It is written to your user
+  settings, as the process list is kept per user and the colour should follow
+  the tag into every workspace - unless the workspace settings already set
+  `q-lint.processes.tagColors`, which would hide a user-level change, and
+  then it is written there.
 - **Connect to Process**, which also takes a process's label as an
   argument for a keybinding, and **Disconnect**.
 - **Import** and **Export Processes**: a JSON file holding
@@ -250,6 +270,13 @@ rows, or the variable, as a query. The explorer shares the query connection:
 while a query runs it waits and refreshes after, and a query sent while it
 reads waits for it.
 
+**Help and Feedback** links to this README, the
+[rule reference](https://github.com/kwojdalski/q-lint/blob/master/docs/rules.md),
+**Report a Bug** and **Suggest a Feature** (a new GitHub issue, labelled
+`bug` or `enhancement`) and the
+[release notes](https://github.com/kwojdalski/q-lint/releases). Each opens in
+your browser.
+
 **Live completion.** While connected, completion in a q file adds the
 process's global names, as read by the explorer, to the language server's,
 and inside a qSQL statement - `select`, `exec`, `update` or `delete` ... `from
@@ -257,7 +284,8 @@ t` - the columns of `t` first.
 
 ## q notebooks
 
-A `.qnb` file opens as a notebook of q code cells and markdown cells. Its
+A `.qnb` file opens as a notebook of q code cells and markdown cells;
+**New q Notebook** opens an untitled one, to save as a `.qnb` file. Its
 cells run on the active connection - with none, the first run asks which
 process to connect to - one at a time, in order, each numbered and timed.
 A cell is cut into statements as a query is, and runs as one, defining
@@ -429,6 +457,12 @@ reaches the language server.
 | Setting | Default | What it does | q-pro |
 | --- | --- | --- | --- |
 | `q-lint.discovery.refreshInterval` | `30` | Minutes between fetches of every discovery server, at most 1440. `0` fetches a server only on **Reload Discovery Server**, and when it is added or edited. | - |
+
+### Process settings
+
+| Setting | Default | What it does | q-pro |
+| --- | --- | --- | --- |
+| `q-lint.processes.tagColors` | `{}` | A tag's colour in the Processes view, as a theme colour id: `{"eu": "charts.purple"}`. Over the built-in `prod`, `uat` and `dev` colours; a value that is not a colour id is ignored. Changing it recolours the view at once. | - |
 
 ### Not here, and why
 

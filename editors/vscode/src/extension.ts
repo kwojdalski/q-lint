@@ -16,6 +16,7 @@ import {
 } from "vscode";
 import { launch, needsRestart } from "./settings";
 import { Live } from "./live";
+import { registerOnboarding } from "./onboardingview";
 import { registerNotebooks, type RenderedChart } from "./notebook";
 import { ProcessExplorer } from "./explorerview";
 import { Relations } from "./relate";
@@ -87,6 +88,7 @@ export async function activate(
   const live = new Live(context);
   const notebook = registerNotebooks(context, live);
   const explorer = new ProcessExplorer(context, live);
+  registerOnboarding(context, () => live.processes());
   relations = new Relations(context, () => client);
   await serial.run(() => start(context));
   relations.serverChanged();

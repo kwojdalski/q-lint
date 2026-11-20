@@ -138,11 +138,91 @@ export function tagColour(tag: string): "red" | "blue" | "green" | undefined {
   }
 }
 
-/// The colour a process is shown in: its first coloured tag's, the most
-/// cautious first.
-export function processColour(process: Process): "red" | "blue" | "green" | undefined {
-  const colours = process.tags.map(tagColour);
-  return (["red", "blue", "green"] as const).find((c) => colours.includes(c));
+/// The ThemeColor ids a tag can be given from **Edit Tag Color**: the chart
+/// colours every theme defines, the most cautious first. A process with
+/// tags of two colours takes the one earlier here.
+export const TAG_COLOURS = [
+  "charts.red",
+  "charts.orange",
+  "charts.yellow",
+  "charts.blue",
+  "charts.purple",
+  "charts.green",
+] as const;
+
+const BUILT_IN = { red: "charts.red", blue: "charts.blue", green: "charts.green" } as const;
+
+/// A ThemeColor id as `contributes.colors` spells one: dotted words.
+const COLOUR_ID = /^[A-Za-z][A-Za-z0-9]*(\.[A-Za-z0-9]+)*$/;
+
+/// `q-lint.processes.tagColors` as written: an object from tag to
+/// ThemeColor id. Keys are lower-cased, as tags are; an entry whose value is
+/// not a colour id is dropped, so a typo leaves the built-in colour.
+export function tagColours(value: unknown): Record<string, string> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return {};
+  }
+  const out: Record<string, string> = {};
+  for (const [tag, colour] of Object.entries(value as Record<string, unknown>)) {
+    const key = tag.trim().toLowerCase();
+    if (key !== "" && typeof colour === "string" && COLOUR_ID.test(colour.trim())) {
+      out[key] = colour.trim();
+    }
+  }
+  return out;
+}
+
+/// The ThemeColor id a tag is shown in: the setting's, else the built-in
+/// (`tagColour`), else none.
+export function tagThemeColour(tag: string, overrides: Record<string, string>): string | undefined {
+  const own = overrides[tag.toLowerCase()];
+  if (own !== undefined) {
+    return own;
+  }
+  const builtIn = tagColour(tag);
+  return builtIn === undefined ? undefined : BUILT_IN[builtIn];
+}
+
+/// The ThemeColor id a process is shown in: of its tags' colours, the one
+/// earliest in `TAG_COLOURS`, then the first tag's of any other colour.
+export function processThemeColour(process: Process, overrides: Record<string, string>): string | undefined {
+  const colours = process.tags.map((t) => tagThemeColour(t, overrides)).filter((c): c is string => c !== undefined);
+  return TAG_COLOURS.find((c) => colours.includes(c)) ?? colours[0];
+}
+
+/// `overrides` with `tag` given `colour`, or with its entry removed when
+/// `colour` is undefined (back to the built-in colour, or none). Keys
+/// stay sorted, so the settings file reads in order.
+export function withTagColour(
+  overrides: Record<string, string>,
+  tag: string,
+  colour: string | undefined,
+): Record<string, string> {
+  const key = tag.toLowerCase();
+  const entries = Object.entries(overrides).filter(([t]) => t !== key);
+  if (colour !== undefined) {
+    entries.push([key, colour]);
+  }
+  return Object.fromEntries(entries.sort(([a], [b]) => a.localeCompare(b)));
+}
+
+/// Where **Edit Tag Color** writes: the workspace settings when they
+/// already set `q-lint.processes.tagColors` (a user-level write would be
+/// hidden by them), else the user settings, since the process list itself
+/// is kept per user and not per workspace.
+export function tagColourTarget(inspected: { workspaceValue?: unknown } | undefined): "workspace" | "user" {
+  return inspected?.workspaceValue !== undefined ? "workspace" : "user";
+}
+
+/// The TLS choices for Add and Edit Process, the current one first so that
+/// Enter keeps it. A new process (`current` undefined) starts on No.
+export function tlsChoices(
+  current: boolean | undefined,
+): { label: string; tls: boolean; detail: string; description?: string }[] {
+  const no = { label: "No", tls: false, detail: "Plain TCP, as q listens by default" };
+  const yes = { label: "Yes", tls: true, detail: "TLS: the process was started with -E 1 or -E 2" };
+  const [first, second] = current ? [yes, no] : [no, yes];
+  return [current === undefined ? first : { ...first, description: "current" }, second];
 }
 
 /// `"50 160"` as console height and width, or undefined when it is not two

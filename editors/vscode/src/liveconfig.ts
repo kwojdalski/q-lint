@@ -2,7 +2,7 @@
 // `vscode` import so a test can hold them against `package.json`: a command
 // declared and never registered is a palette entry that fails when chosen,
 // and a setting declared and never read is one someone sets and believes.
-import { consoleSize } from "./processes";
+import { consoleSize, tagColours } from "./processes";
 
 export const VIEWS = {
   container: "q-lint",
@@ -109,4 +109,15 @@ export interface DiscoverySettings {
 /// interval is at most a day, since a longer one overflows a timer.
 export function readDiscovery(get: <T>(key: string, fallback: T) => T): DiscoverySettings {
   return { refreshInterval: Math.min(whole(get("discovery.refreshInterval", 30), 0, 30), 1440) };
+}
+
+export interface ProcessSettings {
+  /// Tag to ThemeColor id, over the built-in prod, uat and dev colours.
+  tagColors: Record<string, string>;
+}
+
+/// The Processes view's settings, read as `readLive` reads the query ones.
+/// A change recolours the view at once.
+export function readProcessSettings(get: <T>(key: string, fallback: T) => T): ProcessSettings {
+  return { tagColors: tagColours(get<unknown>("processes.tagColors", {})) };
 }
