@@ -241,6 +241,19 @@ test("grid and chart mode: what the process sends for a result", { skip }, async
     assert.deepStrictEqual(list.cells, [["1", "`a", '"bc"']]);
   });
 
+  await t.test("a dictionary keyed by a table whose value is a list is its key columns and a value column", async () => {
+    // q prints it as it prints a keyed table; `0!` refuses it.
+    const { answer, grid: g } = await grid("([] a:2 1)!`x`y");
+    assert.strictEqual(answer.gridError, undefined);
+    assert.deepStrictEqual(g.columns.map((c) => [c.name, c.key]), [["a", true], ["value", false]]);
+    assert.deepStrictEqual(g.cells, [["2", "1"], ["x", "y"]]);
+    assert.deepStrictEqual(g.rank, [[1, 0], [0, 1]]);
+    // A key column named value keeps its own values.
+    const same = (await grid("(flip enlist[`value]!enlist 2 1)!3 4")).grid;
+    assert.deepStrictEqual(same.columns.map((c) => [c.name, c.key]), [["value", true], ["value", false]]);
+    assert.deepStrictEqual(same.cells, [["2", "1"], ["3", "4"]]);
+  });
+
   await t.test("a large result is cut at the limit, and says how many rows it had", async () => {
     const { grid: g } = await grid("([] a:til 100000; b:100000?1f)", 250);
     assert.strictEqual(g.cells[0].length, 250);

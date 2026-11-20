@@ -5,7 +5,8 @@
 // and answers the same `ok`type`text, so a result that is not tabular, or an
 // error, is shown in the output exactly as in console mode. When the value is
 // a table (keyed ones unkeyed with `0!`), a dictionary (as `key` and `value`
-// columns) or a list other than a string (as one `value` column), `grid`
+// columns; keyed by a table, as its key columns and a `value` column) or a
+// list other than a string (as one `value` column), `grid`
 // holds, for its first `limit` rows (its last when `limit` is negative, as
 // a notebook's `q-lint.notebook.rowLimitFrom` can ask; all of them when it
 // is infinite):
@@ -48,7 +49,9 @@ export const GRID = [
   "   `ok`type`text`grid!(1b;type r 1;.Q.S[\"j\"$size;0j] r 1;.[{[v;n]",
   "     k:$[99h<>type v;0;98h=type key v;count cols key v;1];",
   "     t:$[98h=type v;v;",
-  "       99h=type v;$[98h=type key v;0!v;flip`key`value!(key v;value v)];",
+  "       99h=type v;$[98h<>type key v;flip`key`value!(key v;value v);",
+  "         98h=type value v;0!v;",
+  "         flip(cols[key v],`value)!value[flip key v],enlist value v];",
   "       (10h=type v)|not type[v] within 0 97h;();",
   "       flip(enlist`value)!enlist v];",
   "     $[98h<>type t;t;",
