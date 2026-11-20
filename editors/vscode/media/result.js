@@ -79,6 +79,8 @@
   const gridView = el("main", "grid-view");
   const chartView = el("main", "chart-view");
   document.body.append(bar, gridView, chartView);
+  // Until a result arrives: what fills the page, as a view's welcome would.
+  gridView.append(el("p", "note", "No result yet. Run a query in grid or chart mode (q-lint: Switch Query Mode) to show it here."));
 
   function save() {
     vscode.setState(state);
@@ -93,6 +95,8 @@
     const grid = result.grid;
     vscode.postMessage({
       type: "rendered",
+      // The rows shown, in order: what Export Results to CSV writes.
+      rows: rows,
       rendered: Object.assign({
         view: state.view,
         rows: rows.length,
@@ -134,7 +138,12 @@
     copy.addEventListener("click", function () {
       vscode.postMessage({ type: "copy", rows: rows });
     });
-    bar.append(views, info, meta, copy);
+    const exporter = el("button", "", "Export to CSV");
+    exporter.title = "Save the rows shown, in the order shown, to a CSV file";
+    exporter.addEventListener("click", function () {
+      vscode.postMessage({ type: "export", rows: rows });
+    });
+    bar.append(views, info, meta, copy, exporter);
   }
 
   // --- grid
@@ -172,6 +181,7 @@
         rows = visibleRows(grid, state.filters, state.sort);
         drawGrid();
         drawBar();
+        rendered();
       });
       names.append(th);
       const ft = el("th", c.key ? "key" : "");
@@ -186,6 +196,7 @@
         scroller.scrollTop = 0;
         paint();
         drawBar();
+        rendered();
       });
       ft.append(input);
       filters.append(ft);

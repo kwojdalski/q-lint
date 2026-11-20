@@ -194,14 +194,23 @@ where a result goes; it sets `q-lint.query.mode`, and takes `console`,
 - **Grid**: a table, a keyed table (unkeyed, its key columns shaded), a
   dictionary (as `key` and `value` columns) or a list (as one `value`
   column) opens in the **q-lint: result** panel. Click a header to sort,
-  type under it to filter (by the text shown, ignoring case), and **Copy as
-  CSV** copies the rows shown, in the order shown. Each cell is what q
+  type under it to filter (by the text shown, ignoring case). **Copy as
+  CSV** copies the rows shown, in the order shown, and **Export to CSV**
+  saves them to a file you pick; the command **Export Results to CSV** does
+  the same, and takes the file's `Uri` as an argument to skip the dialog. Each cell is what q
   prints in a table: a timestamp keeps its nanoseconds, a long above 2^53
   every digit, a null is blank and an infinity is `0W` or `0w`. Sorting is
   q's own order (`iasc` on the process), nulls first.
 - **Chart**: the same results as a line, bar, scatter or histogram chart of
   the numeric columns against the first, chosen in the panel; the panel's
   **Grid** and **Chart** buttons switch between the two for one result.
+
+The panel opens beside the editor. With `q-lint.query.resultsLocation` set
+to `panel`, results go instead to the **q Results** view in the bottom
+panel, beside the terminal and the output, and the editor keeps the focus.
+It is the same page as the editor's - the same grid, chart and buttons -
+and keeps its view, sort and filters when the panel is hidden and shown
+again.
 
 The process sends at most `q-lint.query.gridLimit` rows, and the panel says
 when a result was cut and how many rows it had. Anything that is not
@@ -271,16 +280,27 @@ A cell's first lines can choose how its result is shown:
   `q-lint.output.consoleSize`. A value of `::`, such as an assignment
   ending in `;`, shows nothing, as in q's console.
 - `/ @grid`: a table as an HTML table, coloured from the editor's theme,
-  with a key column marked. At most 1,000 rows are sent, and the output
-  says when the table was cut. Each value is sent as `string` writes it, so
+  with a key column marked. At most `q-lint.notebook.rowLimit` rows (1,000)
+  are sent - the table's first, or with `q-lint.notebook.rowLimitFrom` set
+  to `last` its last - and the output says when the table was cut and
+  which rows it shows. Each value is sent as `string` writes it, so
   a timestamp keeps its nanoseconds.
 - `/ @chart line`, `bar`, `scatter` or `histogram`: a table, a keyed
   table, a dictionary or a list as a chart, drawn as query **Chart** mode
   draws it - the numeric columns against the first (a histogram bins every
   numeric column, in 20 bins), a temporal x axis written in q's notation,
-  colours from the editor's theme - from the same rows, at most 1,000.
+  colours from the editor's theme - from the same rows: the first or the
+  last `q-lint.notebook.rowLimit`.
   `/ @title <text>` puts a title above it and `/ @height <px>` makes it
   that many pixels tall (100 to 2000; 300 otherwise).
+
+**Set Notebook Row Limit**, on the notebook's toolbar, picks the row limit
+- 10, 100, 1,000, 10,000, 100,000 or all - and whether it takes the first
+rows or the last, and sets the two settings. The process cuts the table, so
+only the rows shown are sent. The limit is a setting, not a property of the
+notebook: a `.qnb` file carries no row limit of its own, so it shows the
+same for everyone who opens it with the same settings, and a workspace's
+settings can set one for its notebooks.
 
 They are q comments, so a cell runs the same as a query or in a script. A
 directive q-lint does not know, a chart of no known kind, or a title or
@@ -410,6 +430,7 @@ nothing.
 | `q-lint.query.mode` | `"console"` | Where a result goes: `console`, `grid` or `chart`. | `q-processes.cfg.queryMode` |
 | `q-lint.query.gridLimit` | `10000` | The most rows the process sends to the grid or chart. | - |
 | `q-lint.query.gridDecimals` | `-1` | Decimal places of a float or real in the grid and its CSV; `-1` as the process writes it (`\P`). | `q-processes.cfg.queryGridDecimals` (default 3) |
+| `q-lint.query.resultsLocation` | `"editor"` | Where a grid or chart opens: `editor`, beside it, or `panel`, the **q Results** view in the bottom panel. | - |
 | `q-lint.processExplorer.excludedNamespaces` | `["q","Q","h","j","o","s"]` | Namespaces the Process Explorer and live completion leave out, with those nested in them. | - |
 | `q-lint.processExplorer.previewLimit` | `5` | Rows of a table Preview shows. | - |
 | `q-lint.processExplorer.autoRefresh` | `false` | Read the process again after each query. | - |
@@ -429,6 +450,15 @@ reaches the language server.
 | Setting | Default | What it does | q-pro |
 | --- | --- | --- | --- |
 | `q-lint.discovery.refreshInterval` | `30` | Minutes between fetches of every discovery server, at most 1440. `0` fetches a server only on **Reload Discovery Server**, and when it is added or edited. | - |
+
+### Notebook settings
+
+Read when a cell runs. None reaches the language server.
+
+| Setting | Default | What it does | q-pro |
+| --- | --- | --- | --- |
+| `q-lint.notebook.rowLimit` | `1000` | The most rows of a table a `@grid` or `@chart` cell is sent; `0`: every row. | - |
+| `q-lint.notebook.rowLimitFrom` | `"first"` | Which rows of a larger table a cell shows: `first` or `last`. | - |
 
 ### Not here, and why
 

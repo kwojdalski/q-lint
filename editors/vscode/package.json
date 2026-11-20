@@ -295,6 +295,20 @@
             "order": 112,
             "markdownDescription": "Decimal places the grid shows a float or real to, and copies as CSV. `-1`: as the process writes it, to its `\\P` precision."
           },
+          "q-lint.query.resultsLocation": {
+            "type": "string",
+            "enum": [
+              "editor",
+              "panel"
+            ],
+            "enumDescriptions": [
+              "Open the **q-lint: result** panel beside the editor.",
+              "Show the result in the **q Results** view in the bottom panel, beside the terminal and the output."
+            ],
+            "default": "editor",
+            "order": 113,
+            "markdownDescription": "Where a grid or chart result is shown: beside the editor, or in the **q Results** view in the bottom panel."
+          },
           "q-lint.processExplorer.excludedNamespaces": {
             "type": "array",
             "items": {
@@ -353,6 +367,32 @@
             "maximum": 1440,
             "order": 300,
             "markdownDescription": "Minutes between fetches of every discovery server's process list, at most 1440. `0` fetches only on **Reload Discovery Server**, and when a server is added or edited."
+          }
+        }
+      },
+      {
+        "title": "q-lint: notebooks",
+        "properties": {
+          "q-lint.notebook.rowLimit": {
+            "type": "integer",
+            "default": 1000,
+            "minimum": 0,
+            "order": 400,
+            "markdownDescription": "The most rows of a table a notebook's `@grid` or `@chart` cell is sent; the process cuts it. `0`: every row. **q-lint: Set Notebook Row Limit** changes it."
+          },
+          "q-lint.notebook.rowLimitFrom": {
+            "type": "string",
+            "enum": [
+              "first",
+              "last"
+            ],
+            "enumDescriptions": [
+              "Show a larger table's first rows.",
+              "Show a larger table's last rows, such as the latest of a table in time order."
+            ],
+            "default": "first",
+            "order": 401,
+            "markdownDescription": "Which rows of a table larger than `#q-lint.notebook.rowLimit#` a notebook cell shows: its first or its last."
           }
         }
       }
@@ -538,6 +578,18 @@
         "icon": "$(export)"
       },
       {
+        "command": "q-lint.setNotebookRowLimit",
+        "title": "Set Notebook Row Limit",
+        "category": "q-lint",
+        "icon": "$(list-filter)"
+      },
+      {
+        "command": "q-lint.exportResults",
+        "title": "Export Results to CSV",
+        "category": "q-lint",
+        "icon": "$(save-as)"
+      },
+      {
         "command": "q-lint.runInTerminal",
         "title": "Run Code from Terminal",
         "category": "q-lint",
@@ -593,6 +645,15 @@
           "id": "q-lint.queryHistory",
           "name": "Query History",
           "icon": "media/view-history.svg",
+          "contextualTitle": "q-lint"
+        }
+      ],
+      "q-lint-results": [
+        {
+          "type": "webview",
+          "id": "q-lint.results",
+          "name": "q Results",
+          "icon": "media/view-results.svg",
           "contextualTitle": "q-lint"
         }
       ]
@@ -652,6 +713,11 @@
         {
           "command": "q-lint.clearQueryHistory",
           "when": "view == q-lint.queryHistory",
+          "group": "navigation"
+        },
+        {
+          "command": "q-lint.exportResults",
+          "when": "view == q-lint.results",
           "group": "navigation"
         }
       ],
@@ -784,6 +850,11 @@
           "command": "q-lint.exportNotebook",
           "when": "notebookType == q-lint-notebook",
           "group": "navigation"
+        },
+        {
+          "command": "q-lint.setNotebookRowLimit",
+          "when": "notebookType == q-lint-notebook",
+          "group": "navigation"
         }
       ],
       "explorer/context": [
@@ -828,6 +899,13 @@
           "id": "q-lint",
           "title": "q-lint",
           "icon": "media/q-lint.svg"
+        }
+      ],
+      "panel": [
+        {
+          "id": "q-lint-results",
+          "title": "q Results",
+          "icon": "media/view-results.svg"
         }
       ]
     },
