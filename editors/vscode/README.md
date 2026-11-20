@@ -323,7 +323,8 @@ where a result goes; it sets `q-lint.query.mode`, and takes `console`,
   Each cell is what q
   prints in a table: a timestamp keeps its nanoseconds, a long above 2^53
   every digit, a null is blank and an infinity is `0W` or `0w`. Sorting is
-  q's own order (`iasc` on the process), nulls first.
+  q's own order (`iasc` on the process), nulls first, and either way keeps
+  equal values in their order, as `xasc` and `xdesc` do.
 - **Chart**: the same results as a line, bar, scatter or histogram chart of
   the numeric columns against the first, chosen in the panel; the panel's
   **Grid** and **Chart** buttons switch between the two for one result.

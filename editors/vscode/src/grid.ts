@@ -20,8 +20,9 @@
 //   raw    the column itself, made its underlying number - `"j"$` of a
 //          timestamp, `"i"$` of a date - for the numeric, temporal and guid
 //          types; `()` for the rest
-//   rank   each row's place in the column sorted by q (`iasc iasc`), or `()`
-//          where q cannot sort it
+//   rank   each row's value's place among the column's distinct values,
+//          sorted by q (`iasc`), so equal values share one; `()` where q
+//          cannot sort it
 //
 // Why this shape. The text is the process's own, so a timestamp keeps its
 // nanoseconds and a long above 2^53 its last digits - a JavaScript number
@@ -59,7 +60,7 @@ export const GRID = [
   "        `count`keys`names`types`cells`raw`rank!(\"f\"$m;\"i\"$k;cols t;type each c;",
   "          {$[type[x] within 1 76h;string x;{$[200<count x;(197#x),\"...\";x]} each -3!'x]} each c;",
   "          {[c]u:type c;$[u in 12 16h;\"j\"$c;u in 13 14 17 18 19h;\"i\"$c;u=15h;\"f\"$c;u in 2 5 6 7 8 9h;c;()]} each c;",
-  "          {@[{\"i\"$iasc iasc x};x;{[e]()}]} each c)]]};",
+  "          {@[{i:iasc x;\"i\"$@[count[x]#0;i;:;-1+sums differ x i]};x;{[e]()}]} each c)]]};",
   "     (r 1;\"j\"$limit);{[e]e}]);",
   "   `ok`error`trace!(0b;r 1;r 2)]}",
 ].join("\n");
@@ -182,8 +183,10 @@ export interface Grid {
   columns: Column[];
   /// What each cell shows.
   cells: string[][];
-  /// Each row's place when its column is sorted ascending; null where q
-  /// could not sort the column, which the panel then sorts by text.
+  /// Each row's value's place among its column's distinct values sorted
+  /// ascending, so equal values share one and a sort either way can keep
+  /// them in their order; null where q could not sort the column, which the
+  /// panel then sorts by text.
   rank: (number[] | null)[];
   /// A numeric or temporal column's values as numbers (temporals in their
   /// own unit since 2000.01.01, as q holds them), null for a null or an

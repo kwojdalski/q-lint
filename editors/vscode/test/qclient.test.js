@@ -220,6 +220,15 @@ test("grid and chart mode: what the process sends for a result", { skip }, async
     assert.deepStrictEqual(g.rank[g.columns.findIndex((c) => c.name === "h")], [1, 0]);
   });
 
+  await t.test("equal values share a rank, so either sort keeps them in their order", async () => {
+    const { grid: g } = await grid("([] s:`a`a`b`a; f:1 0n 1 0n; l:(\"ab\";\"ab\";\"a\";\"b\"))");
+    assert.deepStrictEqual(g.rank, [
+      [0, 0, 1, 0],
+      [1, 0, 1, 0],
+      [2, 2, 0, 1],
+    ]);
+  });
+
   await t.test("floats to the decimals asked for", async () => {
     const answer = await connection.queryGrid(["([] f:1.23456 2 0n)"], SIZE, 100);
     assert.deepStrictEqual(toGrid(answer.grid, 2).cells, [["1.23", "2.00", ""]]);

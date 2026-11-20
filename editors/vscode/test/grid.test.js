@@ -257,6 +257,21 @@ test("the panel sorts by q's ranks, either way, and filters on the text shown", 
   assert.deepStrictEqual(panel.visibleRows(grid, [], { column: 2, descending: false }), [3, 0, 2, 1]);
 });
 
+test("sorting either way keeps equal values in their order, as xasc and xdesc do", () => {
+  // `s xdesc ([] s:`a`a`b`a)` is rows 2 0 1 3. GRID ranks equal values the
+  // same: by their value's place among the column's distinct values.
+  const grid = toGrid(
+    { count: 4, keys: 0, names: ["s"], types: [11], cells: [["a", "a", "b", "a"]], raw: [[]], rank: [[0, 0, 1, 0]] },
+    -1,
+  );
+  assert.deepStrictEqual(panel.visibleRows(grid, [], { column: 0, descending: false }), [0, 1, 3, 2]);
+  assert.deepStrictEqual(panel.visibleRows(grid, [], { column: 0, descending: true }), [2, 0, 1, 3]);
+  // By text, where q could not rank the column, the same.
+  grid.rank[0] = null;
+  assert.deepStrictEqual(panel.visibleRows(grid, [], { column: 0, descending: false }), [0, 1, 3, 2]);
+  assert.deepStrictEqual(panel.visibleRows(grid, [], { column: 0, descending: true }), [2, 0, 1, 3]);
+});
+
 test("a chart plots the numeric columns, against the first but for a histogram", () => {
   const grid = sample();
   assert.deepStrictEqual(charts.chartable(grid, "line"), [1]);

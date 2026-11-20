@@ -16,8 +16,9 @@
 
   /// The rows to show, in order: those whose cells hold each column's filter
   /// text (ignoring case), sorted by `sort` ({column, descending}) when set.
-  /// A column the process ranked sorts by its rank, as q's `xasc` would;
-  /// one it could not sort, by its text.
+  /// A column the process ranked sorts by its rank, as q's `xasc` or
+  /// `xdesc` would, equal values kept in their order either way; one it
+  /// could not sort, by its text.
   function visibleRows(grid, filters, sort) {
     const active = [];
     (filters || []).forEach(function (f, c) {
@@ -36,8 +37,8 @@
       const cells = grid.cells[sort.column];
       const up = rank
         ? function (a, b) { return rank[a] - rank[b]; }
-        : function (a, b) { return cells[a] < cells[b] ? -1 : cells[a] > cells[b] ? 1 : a - b; };
-      rows.sort(sort.descending ? function (a, b) { return up(b, a); } : up);
+        : function (a, b) { return cells[a] < cells[b] ? -1 : cells[a] > cells[b] ? 1 : 0; };
+      rows.sort(function (a, b) { return (sort.descending ? up(b, a) : up(a, b)) || a - b; });
     }
     return rows;
   }
