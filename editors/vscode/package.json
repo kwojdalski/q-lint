@@ -41,6 +41,12 @@
         }
       }
     ],
+    "snippets": [
+      {
+        "language": "q",
+        "path": "./snippets/q.json"
+      }
+    ],
     "configuration": {
       "title": "q-lint",
       "properties": {
