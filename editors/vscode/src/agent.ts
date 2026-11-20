@@ -56,6 +56,19 @@ export function readAgent(get: <T>(key: string, fallback: T) => T): AgentSetting
   return { queryTimeout: typeof timeout === "number" && Number.isInteger(timeout) && timeout >= 0 ? timeout : 30 };
 }
 
+/// A real as the shortest decimal that reads back as the same float32. The
+/// codec widens a real's four bytes to the nearest double, so 1.1e arrives as
+/// 1.100000023841858 - a number q neither holds nor prints.
+function real(x: number): number {
+  for (let digits = 1; digits < 9; digits++) {
+    const n = Number(x.toPrecision(digits));
+    if (Math.fround(n) === x) {
+      return n;
+    }
+  }
+  return x;
+}
+
 /// One cell as a JSON value: a boolean, a number where a double holds it
 /// exactly, null for a null, and q's text for the rest - a temporal, a
 /// symbol, a guid, a nested value, an infinity, a long past 2^53.
@@ -76,6 +89,7 @@ export function jsonCell(type: number, text: string, raw: unknown): Cell {
       return text !== "" && Number.isSafeInteger(n) ? n : text;
     }
     case 8:
+      return typeof raw === "number" ? real(raw) : text;
     case 9:
       return typeof raw === "number" ? raw : text;
     default:

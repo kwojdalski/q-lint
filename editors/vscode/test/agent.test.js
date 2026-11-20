@@ -91,6 +91,20 @@ test("a cell survives JSON: exact numbers as numbers, the rest as q's text", () 
   }
 });
 
+test("a real is the number q wrote, not its float32 widened to a double", () => {
+  // node-q decodes a real's four bytes to the double nearest them: 1.1e
+  // arrives as 1.100000023841858, which is not what q holds or prints.
+  assert.strictEqual(jsonCell(8, "1.1", Math.fround(1.1)), 1.1);
+  assert.strictEqual(jsonCell(8, "0.3", Math.fround(0.30000001)), 0.3);
+  assert.strictEqual(jsonCell(8, "2", 2), 2);
+  assert.strictEqual(jsonCell(8, "3.402823e+38", Math.fround(3.4028234e38)), 3.4028235e38);
+  // Every real comes back as itself.
+  for (const x of [1.1, 0.1, 1 / 3, 123456.789, 1e-30, -7.25]) {
+    const f = Math.fround(x);
+    assert.strictEqual(Math.fround(jsonCell(8, "", f)), f, String(x));
+  }
+});
+
 const saved = [
   { label: "rdb", host: "h", port: 5011, tags: ["prod"] },
   { label: "hdb", host: "h", port: 5012, tags: [] },
