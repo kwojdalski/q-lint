@@ -37,6 +37,7 @@ import {
   parseTags,
   portProblem,
   processThemeColour,
+  readProcessFile,
   tlsChoices,
   type Process,
 } from "./processes";
@@ -763,14 +764,14 @@ export class Live {
     if (files === undefined || files.length === 0) {
       return;
     }
-    let json: unknown;
+    let read: { processes: Process[]; problems: string[] };
     try {
-      json = JSON.parse(Buffer.from(await workspace.fs.readFile(files[0])).toString("utf8"));
+      read = readProcessFile(Buffer.from(await workspace.fs.readFile(files[0])).toString("utf8"));
     } catch (error) {
       void window.showErrorMessage(`q-lint: could not read ${files[0].fsPath}: ${String(error)}`);
       return;
     }
-    const { processes, problems } = parseProcesses(json);
+    const { processes, problems } = read;
     await this.save(merge(this.processes(), processes));
     const note = problems.length ? ` Skipped ${problems.length}: ${problems.slice(0, 3).join(" ")}` : "";
     void window.showInformationMessage(`q-lint: imported ${processes.length} q process(es).${note}`);

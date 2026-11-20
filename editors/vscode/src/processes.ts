@@ -97,6 +97,13 @@ export function parseProcesses(json: unknown): { processes: Process[]; problems:
   return { processes, problems };
 }
 
+/// The processes a process file lists, as `parseProcesses` reads them. A
+/// byte order mark, which Windows editors write, is skipped. Throws a
+/// SyntaxError when the text is not JSON.
+export function readProcessFile(text: string): { processes: Process[]; problems: string[] } {
+  return parseProcesses(JSON.parse(text.replace(/^\uFEFF/, "")));
+}
+
 /// `processes` merged with `incoming`: an incoming process replaces the one
 /// of its label, and the rest are added after.
 export function merge(processes: Process[], incoming: Process[]): Process[] {
