@@ -2,7 +2,7 @@
 // `vscode` import so a test can hold them against `package.json`: a command
 // declared and never registered is a palette entry that fails when chosen,
 // and a setting declared and never read is one someone sets and believes.
-import { consoleSize } from "./processes";
+import { consoleSize, tagColours } from "./processes";
 
 export const VIEWS = {
   container: "q-lint",
@@ -44,6 +44,24 @@ export const DISCOVERY_COMMANDS = {
   forget: "q-lint.removeDiscoveredProcesses",
 } as const;
 
+/// The q Results view (#889): the result panel docked in the bottom panel,
+/// its container, and the commands on results and notebook row limits.
+export const RESULTS = {
+  container: "q-lint-results",
+  view: "q-lint.results",
+  exportCsv: "q-lint.exportResults",
+  setRowLimit: "q-lint.setNotebookRowLimit",
+} as const;
+
+/// Where the result panel opens: beside the editor, or in the bottom panel.
+export const RESULTS_LOCATIONS = ["editor", "panel"] as const;
+export type ResultsLocation = (typeof RESULTS_LOCATIONS)[number];
+
+/// Which rows of a table a notebook cell shows when it has more than its
+/// row limit.
+export const ROW_LIMIT_FROM = ["first", "last"] as const;
+export type RowLimitFrom = (typeof ROW_LIMIT_FROM)[number];
+
 /// Where a query's result is shown: the output, or the result panel as a
 /// grid or a chart.
 export const QUERY_MODES = ["console", "grid", "chart"] as const;
@@ -63,6 +81,8 @@ export interface LiveSettings {
   /// Decimal places a float or real is shown to in the grid; negative: as
   /// the process writes it (`\P`).
   gridDecimals: number;
+  /// Where the result panel opens.
+  resultsLocation: ResultsLocation;
 }
 
 /// A whole number from `get`, or `fallback` when it is not one or is below
@@ -82,6 +102,7 @@ export function readLive(get: <T>(key: string, fallback: T) => T): LiveSettings 
     mode: QUERY_MODES.find((m) => m === get("query.mode", "console")) ?? "console",
     gridLimit: whole(get("query.gridLimit", 10000), 1, 10000),
     gridDecimals: Math.min(whole(get("query.gridDecimals", -1), -1, -1), 20),
+    resultsLocation: RESULTS_LOCATIONS.find((l) => l === get("query.resultsLocation", "editor")) ?? "editor",
   };
 }
 
@@ -109,4 +130,47 @@ export interface DiscoverySettings {
 /// interval is at most a day, since a longer one overflows a timer.
 export function readDiscovery(get: <T>(key: string, fallback: T) => T): DiscoverySettings {
   return { refreshInterval: Math.min(whole(get("discovery.refreshInterval", 30), 0, 30), 1440) };
+}
+
+export interface NotebookSettings {
+  /// The most rows a `@grid` or `@chart` cell is sent; 0: every row.
+  rowLimit: number;
+  /// Whether those are the table's first rows or its last.
+  rowLimitFrom: RowLimitFrom;
+}
+
+/// The notebook settings, read as `readLive` reads the query ones. Each is
+/// read when a cell runs.
+export function readNotebook(get: <T>(key: string, fallback: T) => T): NotebookSettings {
+  return {
+    rowLimit: whole(get("notebook.rowLimit", 1000), 0, 1000),
+    rowLimitFrom: ROW_LIMIT_FROM.find((f) => f === get("notebook.rowLimitFrom", "first")) ?? "first",
+  };
+}
+
+/// The row count a cell's lambda takes with `sublist`: the first `rowLimit`
+/// rows, the last as a negative count, and every row as an infinite one
+/// (`0w`, which the process makes `0W`).
+export function rowsArgument(settings: NotebookSettings): number {
+  const n = settings.rowLimit === 0 ? Infinity : settings.rowLimit;
+  return settings.rowLimitFrom === "last" ? -n : n;
+}
+
+/// The row limits **Set Notebook Row Limit** offers; 0 is every row.
+export const ROW_LIMIT_CHOICES = [10, 100, 1000, 10000, 100000, 0] as const;
+
+/// A row limit as the quick pick and the settings describe it.
+export function rowLimitLabel(limit: number): string {
+  return limit === 0 ? "All rows" : `${limit.toLocaleString("en")} rows`;
+}
+
+export interface ProcessSettings {
+  /// Tag to ThemeColor id, over the built-in prod, uat and dev colours.
+  tagColors: Record<string, string>;
+}
+
+/// The Processes view's settings, read as `readLive` reads the query ones.
+/// A change recolours the view at once.
+export function readProcessSettings(get: <T>(key: string, fallback: T) => T): ProcessSettings {
+  return { tagColors: tagColours(get<unknown>("processes.tagColors", {})) };
 }

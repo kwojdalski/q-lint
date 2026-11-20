@@ -10,6 +10,16 @@
 // `initialize`. Either way the server reads it once: a change restarts it.
 import { isAbsolute, join } from "node:path";
 
+/// The documents the language client hands the server: a saved `.q` file, and
+/// nothing else. `language: "q"` alone would also match a console buffer or an
+/// untitled scratch that some other q extension has labelled `q`, and this
+/// linter has nothing true to say about a REPL transcript. Nor about the `k`,
+/// `quke` and `q-console` languages this extension colours: k is not q, a
+/// qcumber spec is not a script q loads, and the console is q's output. The
+/// server applies the same rule, so an editor that is not VS Code is protected
+/// too.
+export const LINTED = [{ scheme: "file", language: "q", pattern: "**/*.q" }];
+
 /// The part of `WorkspaceConfiguration` this needs, so a test can hand in a
 /// plain object.
 export interface Settings {

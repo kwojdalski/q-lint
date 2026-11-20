@@ -59,6 +59,15 @@ to a process you add and connect to, and sends only the code you run.
   function is coloured wherever it is called, even when another `.q` file in
   the workspace defines it, and a parameter wherever its body reads it.
   Unused parameters and locals are faded.
+- **`.k` and `.quke` files are coloured, not linted.** A `.k` file is k, the
+  language q is written in: comments, strings, symbols, numbers and temporal
+  literals, the adverbs `' / \ ': /: \:` and `\` system commands. A `.quke`
+  file is a [qcumber](https://code.kx.com/developer/qcumber/) spec:
+  `feature`, `should`, `expect`, `bench` and the other keywords as
+  structure, and the code under each block coloured as q. The linter has
+  nothing true to say about either - k is not q, and a spec is not a script
+  q loads - so only `.q` files reach the server, and opening one of these
+  starts nothing.
 - **Navigation**: the outline and breadcrumbs, **Go to Symbol in Workspace**,
   **Go to Definition** and **Find All References** across the workspace's
   `.q` files, and occurrence highlights that tell a write from a read. A
@@ -109,14 +118,34 @@ to a process you add and connect to, and sends only the code you run.
 
 ## q processes and queries
 
-The **q-lint** panel in the activity bar holds three views.
+The **q-lint** panel in the activity bar holds four views: Processes,
+Process Explorer, Query History, and Help and Feedback.
+
+New to it? **q-lint: Get Started** opens the walkthrough, also listed on
+VS Code's Welcome page: see a lint finding, add a process, connect and run
+a query, open the Process Explorer, switch to the grid, and try a notebook.
+Each step's button runs the real command, and the step is ticked once you
+have done it.
 
 **Processes** lists the q processes you add, grouped by tag. Tags `prod`
-(or `prd`), `uat` and `dev` are coloured red, blue and green. Click a
-process to connect; the status bar shows the connection, and clicking it
-switches. The commands:
-- **Add**, **Edit** and **Delete Process**, and **Tag Process**. A password
-  is kept in VS Code's secret storage, never in settings or in an export.
+(or `prd`), `uat` and `dev` are coloured red, blue and green, and
+`q-lint.processes.tagColors` colours any tag, or overrides those. A process
+takes its most cautious tag's colour: red, orange, yellow, blue, purple,
+then green. Click a process to connect; the status bar shows the connection,
+and clicking it switches. The commands:
+- **Add**, **Edit** and **Delete Process**, and **Tag Process**. Add and
+  Edit ask for a label, host and port; **TLS**, yes or no (yes for a process
+  started with `-E 1` or `-E 2`; Edit offers the current choice first, so
+  Enter keeps it); then authentication: a user, and, when there is one, that
+  user's password. The password is kept in VS Code's SecretStorage, never in
+  settings or in an export; on Edit, an empty password keeps the stored one,
+  and clearing the user forgets it. Last come the tags.
+- **Edit Tag Color**, on a tag row: one of the chart colours, or `default`
+  to go back to the built-in colour (or none). It is written to your user
+  settings, as the process list is kept per user and the colour should follow
+  the tag into every workspace - unless the workspace settings already set
+  `q-lint.processes.tagColors`, which would hide a user-level change, and
+  then it is written there.
 - **Connect to Process**, which also takes a process's label as an
   argument for a keybinding, and **Disconnect**.
 - **Import** and **Export Processes**: a JSON file holding
@@ -124,6 +153,8 @@ switches. The commands:
   An import replaces processes of the same label, adds the rest, and says
   which entries it skipped.
 - **Insert Active Connection Label**, at the cursor.
+- **Copy Label for Agent Query**, on a process row: the label an agent's
+  query names the process by (`server/label` for a discovered one).
 
 **Discovery servers** list processes so a desk's need not be typed in by
 hand. A discovery server is a URL that answers a `GET` with the same JSON as
@@ -165,6 +196,12 @@ first connect, and keeps it in secret storage under `server/label`.
   selected.
 - **Query Current Block**, `ctrl+e`: the statement the cursor is in, with
   its indented continuation lines.
+- **Execute Entire File**, `ctrl+f10`, also in the editor's run menu: the
+  whole file as one query, cut into statements as a block is. `ctrl+f10` is
+  in none of VS Code's default keybindings on macOS, Windows or Linux; the
+  keys KX's extension uses, `ctrl+d` and `ctrl+shift+d`, are VS Code's "add
+  next occurrence" and Run and Debug view, and a `ctrl+alt` key is AltGr on
+  Windows, which types `ę`, `€` or `@` on many layouts.
 
 The code is cut into statements by q's own script rules: a line starting
 with a space or tab continues the one above, `/` lines and block comments
@@ -176,15 +213,61 @@ your code defines. The result is formatted by the process at
 `q-lint.output.consoleSize` and shown in the **q-lint: query** output with
 the process and the time taken. An error shows q's message and, on kdb+ 3.5
 and later, its backtrace. With no connection, a query asks which process to
-connect to first.
+connect to first. The output is coloured from the editor's theme: each
+answer's `# process (n ms)` header, the error and its backtrace (each frame,
+where it is and the caret under it), a table's rule and a keyed table's `|`,
+numbers, symbols, temporal literals and strings, and an included query as q.
 
 **Abort Current Query** stops waiting at once. q has no message that cancels
 a query, so the connection is closed and opened again; the process goes on
 running the query, and the new connection is made once it is free.
 
 **Query History** lists each query with its process, time, duration and
-outcome; the button on a row runs it again on the active connection, and
-**Clear Query History** empties it.
+outcome; the buttons on a row run it again on the active connection and
+**Copy Query** copies its code, and **Clear Query History** empties it.
+
+**Query controls.**
+- **Toggle Unlimited Query**: while on, the console text is not cut at
+  `q-lint.output.consoleSize`, and a grid or chart is sent every row, not
+  `q-lint.query.gridLimit`. The status bar shows `unlimited`, and clicking
+  it turns it off. It stays on until turned off, as q-pro's does, but only
+  for the window: a reload turns it off, so a result sent whole is never
+  left over from an earlier session. One cut q makes itself remains: KDB-X
+  writes an atom or a list item with `-3!`, which stops at the process's own
+  `\c` width, so a simple list (`til 100000`) is sent as its value and
+  written out by q-lint instead, and a general list's long items are still
+  cut at `\c`.
+- **Toggle Unwrapped Query**, or `q-lint.query.unwrapped`: for a gateway
+  that refuses a lambda, the code is sent as plain strings, one per
+  statement in order, stopping at the first error, as a client that sends
+  strings sends them; q-lint runs nothing of its own there. The process
+  evaluates each as it evaluates any string (its `.z.pg`), so a `\d` lasts
+  only for its own statement. The answer is whatever the process returns,
+  formatted by q-lint: tables, keyed tables, dictionaries, lists and atoms
+  as q's console writes them, and a table, dictionary or list reaches the
+  grid and chart too. q-lint knows less than q does, so it is close but not
+  exact: inside a table or a general list a symbol and a string are both
+  shown as text, a timestamp is shown to the microsecond, and a function's
+  text is not sent. Errors still come back as q errors, without a trace.
+  The status bar shows `unwrapped`.
+- **Query timeout**, `q-lint.query.timeout` seconds (`0`, the default, is
+  none): a query still running then is aborted exactly as **Abort Current
+  Query** aborts it, and the history records it as timed out.
+- **Choose Connection for File** binds the active file to a process, kept
+  per workspace, and takes a label as an argument for a keybinding. A query
+  from that file (line, selection, block or entire file) switches the
+  connection to its process first, connecting if nothing is connected -
+  there is one connection at a time, so the file's process becomes the
+  active one, and an unbound file then queries it too. The history, a
+  rerun, Preview and notebooks use the active connection, never a binding.
+  While the file's process is not the active connection, the status bar
+  shows `file: <label>`. **Clear Connection for File** removes the binding.
+- **Reveal Process** selects the connected process in the **Processes**
+  view, and shows the view. **Open q-lint Settings** opens Settings at
+  q-lint's.
+
+Unlimited, unwrapped and the timeout apply to queries from the editor,
+the history and Preview; a notebook cell runs as before.
 
 **Query modes.** **Switch Query Mode** (or the mode in the status bar) picks
 where a result goes; it sets `q-lint.query.mode`, and takes `console`,
@@ -194,14 +277,23 @@ where a result goes; it sets `q-lint.query.mode`, and takes `console`,
 - **Grid**: a table, a keyed table (unkeyed, its key columns shaded), a
   dictionary (as `key` and `value` columns) or a list (as one `value`
   column) opens in the **q-lint: result** panel. Click a header to sort,
-  type under it to filter (by the text shown, ignoring case), and **Copy as
-  CSV** copies the rows shown, in the order shown. Each cell is what q
+  type under it to filter (by the text shown, ignoring case). **Copy as
+  CSV** copies the rows shown, in the order shown, and **Export to CSV**
+  saves them to a file you pick; the command **Export Results to CSV** does
+  the same, and takes the file's `Uri` as an argument to skip the dialog. Each cell is what q
   prints in a table: a timestamp keeps its nanoseconds, a long above 2^53
   every digit, a null is blank and an infinity is `0W` or `0w`. Sorting is
   q's own order (`iasc` on the process), nulls first.
 - **Chart**: the same results as a line, bar, scatter or histogram chart of
   the numeric columns against the first, chosen in the panel; the panel's
   **Grid** and **Chart** buttons switch between the two for one result.
+
+The panel opens beside the editor. With `q-lint.query.resultsLocation` set
+to `panel`, results go instead to the **q Results** view in the bottom
+panel, beside the terminal and the output, and the editor keeps the focus.
+It is the same page as the editor's - the same grid, chart and buttons -
+and keeps its view, sort and filters when the panel is hidden and shown
+again.
 
 The process sends at most `q-lint.query.gridLimit` rows, and the panel says
 when a result was cut and how many rows it had. Anything that is not
@@ -222,6 +314,10 @@ inline script and no network. Its charts are drawn by
 - **Send Current Selection to Terminal**, `ctrl+shift+r`: the current line
   when nothing is selected.
 - **Send Current Block to Terminal**, `ctrl+shift+e`.
+
+**Start q REPL** starts `q-lint.terminal.qBinary` with no file in a new
+terminal named `q`, with `q-lint.terminal.envPath`'s variables, in the
+workspace folder; code is sent there from then on.
 
 The code goes to the last q terminal q-lint started, and with none open a
 new one starts `q-lint.terminal.qBinary` with no file. It is cut into
@@ -250,14 +346,49 @@ rows, or the variable, as a query. The explorer shares the query connection:
 while a query runs it waits and refreshes after, and a query sent while it
 reads waits for it.
 
+**Help and Feedback** links to this README, the
+[rule reference](https://github.com/kwojdalski/q-lint/blob/master/docs/rules.md),
+**Report a Bug** and **Suggest a Feature** (a new GitHub issue, labelled
+`bug` or `enhancement`) and the
+[release notes](https://github.com/kwojdalski/q-lint/releases). Each opens in
+your browser.
+
 **Live completion.** While connected, completion in a q file adds the
 process's global names, as read by the explorer, to the language server's,
 and inside a qSQL statement - `select`, `exec`, `update` or `delete` ... `from
 t` - the columns of `t` first.
 
+**Agents.** The **Run q Query** language-model tool (`q-lint_runQuery`,
+`#qQuery` in a chat prompt) lets Copilot and other agents run a q query and
+get the result as JSON. It takes `{"query", "process"?}`: without `process`
+it runs on the active connection, and with none answers that nothing is
+connected; with a process's label it connects to that process first, which
+becomes the active connection, and an unknown label answers with the labels
+there are. Before each call VS Code asks you to confirm, naming the process
+and showing the query; for a process tagged `prod`, `prd` or `production`
+it warns that the query runs on production. The query runs as **Query
+Current Block** would, with the same lambda as grid mode, so nothing is
+defined on the process but what the query defines. The agent gets:
+- a table, keyed table, dictionary or list: `{columns, types, rowCount,
+  data}`, `data` being the first 200 rows as arrays of values, with
+  `truncated: true` when there were more and `keyColumns` for a keyed
+  table. Booleans and numbers are JSON values and nulls `null`; a
+  temporal, a symbol, a guid or a nested value is q's text, and so are a
+  long above 2^53 and an infinity, so a timestamp keeps its nanoseconds;
+- any other value: `{output}`, the process's text of it at
+  `q-lint.output.consoleSize`;
+- a failure: `{error, trace?}`.
+
+A query running longer than `q-lint.agent.queryTimeout` seconds, or one the
+agent cancels, is aborted as **Abort Current Query** aborts one, and the
+agent is told so. Each agent query goes into **Query History**, marked
+`agent`. The tool needs VS Code 1.95 or later; before it, only the command
+is there.
+
 ## q notebooks
 
-A `.qnb` file opens as a notebook of q code cells and markdown cells. Its
+A `.qnb` file opens as a notebook of q code cells and markdown cells;
+**New q Notebook** opens an untitled one, to save as a `.qnb` file. Its
 cells run on the active connection - with none, the first run asks which
 process to connect to - one at a time, in order, each numbered and timed.
 A cell is cut into statements as a query is, and runs as one, defining
@@ -271,16 +402,27 @@ A cell's first lines can choose how its result is shown:
   `q-lint.output.consoleSize`. A value of `::`, such as an assignment
   ending in `;`, shows nothing, as in q's console.
 - `/ @grid`: a table as an HTML table, coloured from the editor's theme,
-  with a key column marked. At most 1,000 rows are sent, and the output
-  says when the table was cut. Each value is sent as `string` writes it, so
+  with a key column marked. At most `q-lint.notebook.rowLimit` rows (1,000)
+  are sent - the table's first, or with `q-lint.notebook.rowLimitFrom` set
+  to `last` its last - and the output says when the table was cut and
+  which rows it shows. Each value is sent as `string` writes it, so
   a timestamp keeps its nanoseconds.
 - `/ @chart line`, `bar`, `scatter` or `histogram`: a table, a keyed
   table, a dictionary or a list as a chart, drawn as query **Chart** mode
   draws it - the numeric columns against the first (a histogram bins every
   numeric column, in 20 bins), a temporal x axis written in q's notation,
-  colours from the editor's theme - from the same rows, at most 1,000.
+  colours from the editor's theme - from the same rows: the first or the
+  last `q-lint.notebook.rowLimit`.
   `/ @title <text>` puts a title above it and `/ @height <px>` makes it
   that many pixels tall (100 to 2000; 300 otherwise).
+
+**Set Notebook Row Limit**, on the notebook's toolbar, picks the row limit
+- 10, 100, 1,000, 10,000, 100,000 or all - and whether it takes the first
+rows or the last, and sets the two settings. The process cuts the table, so
+only the rows shown are sent. The limit is a setting, not a property of the
+notebook: a `.qnb` file carries no row limit of its own, so it shows the
+same for everyone who opens it with the same settings, and a workspace's
+settings can set one for its notebooks.
 
 They are q comments, so a cell runs the same as a query or in a script. A
 directive q-lint does not know, a chart of no known kind, or a title or
@@ -410,6 +552,9 @@ nothing.
 | `q-lint.query.mode` | `"console"` | Where a result goes: `console`, `grid` or `chart`. | `q-processes.cfg.queryMode` |
 | `q-lint.query.gridLimit` | `10000` | The most rows the process sends to the grid or chart. | - |
 | `q-lint.query.gridDecimals` | `-1` | Decimal places of a float or real in the grid and its CSV; `-1` as the process writes it (`\P`). | `q-processes.cfg.queryGridDecimals` (default 3) |
+| `q-lint.query.resultsLocation` | `"editor"` | Where a grid or chart opens: `editor`, beside it, or `panel`, the **q Results** view in the bottom panel. | - |
+| `q-lint.query.unwrapped` | `false` | Send code as plain strings, for a gateway that refuses a lambda, and format the result in q-lint. **Toggle Unwrapped Query** changes it. | - |
+| `q-lint.query.timeout` | `0` | Seconds a query may run before it is aborted, as Abort does; `0` none. | - |
 | `q-lint.processExplorer.excludedNamespaces` | `["q","Q","h","j","o","s"]` | Namespaces the Process Explorer and live completion leave out, with those nested in them. | - |
 | `q-lint.processExplorer.previewLimit` | `5` | Rows of a table Preview shows. | - |
 | `q-lint.processExplorer.autoRefresh` | `false` | Read the process again after each query. | - |
@@ -429,6 +574,27 @@ reaches the language server.
 | Setting | Default | What it does | q-pro |
 | --- | --- | --- | --- |
 | `q-lint.discovery.refreshInterval` | `30` | Minutes between fetches of every discovery server, at most 1440. `0` fetches a server only on **Reload Discovery Server**, and when it is added or edited. | - |
+
+### Notebook settings
+
+Read when a cell runs. None reaches the language server.
+
+| Setting | Default | What it does | q-pro |
+| --- | --- | --- | --- |
+| `q-lint.notebook.rowLimit` | `1000` | The most rows of a table a `@grid` or `@chart` cell is sent; `0`: every row. | - |
+| `q-lint.notebook.rowLimitFrom` | `"first"` | Which rows of a larger table a cell shows: `first` or `last`. | - |
+
+### Agent settings
+
+| Setting | Default | What it does | q-pro |
+| --- | --- | --- | --- |
+| `q-lint.agent.queryTimeout` | `30` | Seconds a query run by an agent through **Run q Query** may take before it is aborted, as **Abort Current Query** aborts one. `0` sets no limit. | - |
+
+### Process settings
+
+| Setting | Default | What it does | q-pro |
+| --- | --- | --- | --- |
+| `q-lint.processes.tagColors` | `{}` | A tag's colour in the Processes view, as a theme colour id: `{"eu": "charts.purple"}`. Over the built-in `prod`, `uat` and `dev` colours; a value that is not a colour id is ignored. Changing it recolours the view at once. | - |
 
 ### Not here, and why
 
@@ -512,5 +678,7 @@ the tree under the same version (#558). Packaging puts one there:
 before `vsce package`, and the release workflow unpacks each platform's.
 By hand: `cargo build --release && mkdir -p editors/vscode/server && install
 -m 755 target/release/qlinter editors/vscode/server/qlinter`. Without one, the
-extension falls back to `qlinter` on `PATH`. The grammar is generated:
+extension falls back to `qlinter` on `PATH`. The q grammar is generated:
 `python3 scripts/q_grammar.py > editors/vscode/syntaxes/q.tmLanguage.json`.
+The `k`, `quke` (qcumber) and `q-console` (the query output) grammars beside
+it are written by hand; `test/languages.test.js` pins what they colour.

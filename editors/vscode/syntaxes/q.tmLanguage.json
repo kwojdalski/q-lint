@@ -83,7 +83,12 @@
               "name": "keyword.other.language-prefix.q"
             }
           },
-          "contentName": "string.unquoted.k.q"
+          "contentName": "source.k",
+          "patterns": [
+            {
+              "include": "source.k"
+            }
+          ]
         }
       ]
     },

@@ -14,6 +14,7 @@ const { QConnection } = require("../out/qclient.js");
 const { statements } = require("../out/statements.js");
 const { CHART_MIME, DATA, cellOutputs, chartCellOutputs, GRID_ROWS, readCellData } = require("../out/celldata.js");
 const { cellDirective } = require("../out/celldirectives.js");
+const { rowsArgument } = require("../out/liveconfig.js");
 const { exportScript } = require("../out/qnb.js");
 
 const Q = process.env.QLINT_TEST_Q;
@@ -107,6 +108,25 @@ test("notebook cells against a real q process", { skip }, async (t) => {
     assert.match(grid.items[0].text, /Showing the first 10 of 2,000 rows\./);
   });
 
+  await t.test("the row limit takes the last rows, or every row, on the process (#889)", async () => {
+    const last = await data("big", rowsArgument({ rowLimit: 3, rowLimitFrom: "last" }));
+    assert.strictEqual(last.table.total, 2000);
+    assert.deepStrictEqual(last.table.data[0], ["1997", "1998", "1999"]);
+    const [grid] = cellOutputs({ mode: "grid" }, last, "last");
+    assert.match(grid.items[0].text, /Showing the last 3 of 2,000 rows\./);
+    // A keyed table's last rows keep their keys.
+    const keyed = await data("kt", rowsArgument({ rowLimit: 1, rowLimitFrom: "last" }));
+    assert.deepStrictEqual([keyed.table.keys, keyed.table.data], [1, [["2"], ["y"]]]);
+    for (const rowLimitFrom of ["first", "last"]) {
+      const all = await data("big", rowsArgument({ rowLimit: 0, rowLimitFrom }));
+      assert.strictEqual(all.table.data[0].length, 2000, rowLimitFrom);
+      assert.deepStrictEqual([all.table.data[0][0], all.table.data[0][1999]], ["0", "1999"]);
+      assert.ok(!cellOutputs({ mode: "grid" }, all, rowLimitFrom)[0].items[0].text.includes("Showing"));
+    }
+    // A table shorter than the limit comes back whole, from either end.
+    assert.deepStrictEqual((await data("kt", rowsArgument({ rowLimit: 10, rowLimitFrom: "last" }))).table.data[0], ["1", "2"]);
+  });
+
   await t.test("an empty table has its columns and no rows", async () => {
     const answer = await data("0#t");
     assert.deepStrictEqual(answer.table.columns, ["sym", "ts", "px", "note", "n"]);
@@ -180,6 +200,20 @@ test("notebook cells against a real q process", { skip }, async (t) => {
     const big = JSON.parse((await chart("/ @chart line\nbig"))[0].items[0].text);
     assert.strictEqual(big.grid.cells[0].length, GRID_ROWS);
     assert.strictEqual(big.note, "Showing the first 1,000 of 2,000 rows.");
+  });
+
+  await t.test("a chart cell's row limit takes the last rows, or every row, on the process (#889)", async () => {
+    const lastChart = async (source, limit) =>
+      chartCellOutputs(cellDirective(source), await connection.queryGrid(statements(source), SIZE, rowsArgument(limit)), limit.rowLimitFrom);
+    const [part] = await lastChart("/ @chart line\nbig", { rowLimit: 5, rowLimitFrom: "last" });
+    const spec = JSON.parse(part.items[0].text);
+    assert.deepStrictEqual(spec.grid.cells[0], ["1995", "1996", "1997", "1998", "1999"]);
+    assert.deepStrictEqual(spec.grid.values[0], [1995, 1996, 1997, 1998, 1999]);
+    assert.strictEqual(spec.note, "Showing the last 5 of 2,000 rows.");
+    assert.strictEqual(part.items[1].text.split("\n").at(-1), "Showing the last 5 of 2,000 rows.");
+    const all = JSON.parse((await lastChart("/ @chart line\nbig", { rowLimit: 0, rowLimitFrom: "last" }))[0].items[0].text);
+    assert.strictEqual(all.grid.cells[0].length, 2000);
+    assert.strictEqual(all.note, undefined);
   });
 
   await t.test("a chart cell whose value is no table, or fails, shows it as other cells do", async () => {

@@ -1,0 +1,93 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "qcumber",
+  "scopeName": "source.quke",
+  "comment": "qcumber specs (.quke): a `feature` holds `should` blocks, each holding `expect` blocks, beside `before`/`after` (each), `skip if` and `bench` with its `baseline`/`behaviour`/`setup`/`teardown`. An `x` before a keyword skips its block. The lines under a block's keyword, up to the next keyword line, are q: a `while` rule ends the block at that line whatever state the q inside it was left in, so an unclosed bracket in one test cannot colour the rest of the file.",
+  "patterns": [
+    {
+      "include": "#comment"
+    },
+    {
+      "include": "#code-block"
+    },
+    {
+      "include": "#structure"
+    },
+    {
+      "include": "#inline"
+    }
+  ],
+  "repository": {
+    "comment": {
+      "match": "^\\s*(/).*$",
+      "name": "comment.line.quke",
+      "captures": {
+        "1": {
+          "name": "punctuation.definition.comment.quke"
+        }
+      }
+    },
+    "code-block": {
+      "comment": "A keyword whose block is q code, its description, then the q under it.",
+      "begin": "^\\s*((?:x?expect|before each|after each|before|after|skip if|baseline|behaviour|behavior|setup|teardown|x?property))(?=\\s|$)(.*)$",
+      "while": "^(?!\\s*(?:x?(?:feature|should|expect|bench|property)|before|after|skip if|baseline|behaviour|behavior|setup|teardown|timelimit|tolerance|replicate)(?=\\s|$))",
+      "beginCaptures": {
+        "1": {
+          "name": "keyword.control.block.quke"
+        },
+        "2": {
+          "name": "string.unquoted.description.quke"
+        }
+      },
+      "contentName": "meta.embedded.block.q",
+      "patterns": [
+        {
+          "include": "source.q"
+        }
+      ]
+    },
+    "structure": {
+      "comment": "A feature line names a feature; a should or bench line describes one behaviour of it.",
+      "patterns": [
+        {
+          "match": "^\\s*(x?feature)(?=\\s|$)(.*)$",
+          "captures": {
+            "1": {
+              "name": "keyword.control.structure.quke"
+            },
+            "2": {
+              "name": "entity.name.type.feature.quke"
+            }
+          }
+        },
+        {
+          "match": "^\\s*(x?(?:should|bench))(?=\\s|$)(.*)$",
+          "captures": {
+            "1": {
+              "name": "keyword.control.structure.quke"
+            },
+            "2": {
+              "name": "entity.name.function.behaviour.quke"
+            }
+          }
+        }
+      ]
+    },
+    "inline": {
+      "comment": "A setting whose value follows it on the line, as q.",
+      "match": "^\\s*(timelimit|tolerance|replicate)(?=\\s|$)(.*)$",
+      "captures": {
+        "1": {
+          "name": "keyword.other.setting.quke"
+        },
+        "2": {
+          "patterns": [
+            {
+              "include": "source.q"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

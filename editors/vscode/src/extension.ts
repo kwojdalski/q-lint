@@ -14,8 +14,10 @@ import {
   type ExtensionContext,
   type OutputChannel,
 } from "vscode";
-import { launch, needsRestart } from "./settings";
+import { LINTED, launch, needsRestart } from "./settings";
 import { Live } from "./live";
+import { registerAgentTool } from "./agenttool";
+import { registerOnboarding } from "./onboardingview";
 import { registerNotebooks, type RenderedChart } from "./notebook";
 import { ProcessExplorer } from "./explorerview";
 import { Relations } from "./relate";
@@ -68,7 +70,7 @@ function bundledServer(context: ExtensionContext): string | undefined {
 
 export async function activate(
   context: ExtensionContext,
-): Promise<ReturnType<Live["api"]> & { explorer: ProcessExplorer["rows"]; notebookCharts: () => RenderedChart[] }> {
+): Promise<ReturnType<Live["api"]> & { explorer: ProcessExplorer["rows"]; notebookCharts: () => RenderedChart[]; agentConfirmation: ReturnType<typeof registerAgentTool> }> {
   // Replacing the binary does not restart the server, and a window reload is
   // a blunt way to pick up a new one. This is the small way.
   context.subscriptions.push(commands.registerCommand("q-lint.restartServer", () => restart(context)));
@@ -85,12 +87,14 @@ export async function activate(
   // The q processes, queries and their history: in the editor only, and
   // started before the server so they work when it does not.
   const live = new Live(context);
+  const agentConfirmation = registerAgentTool(context, live);
   const notebook = registerNotebooks(context, live);
   const explorer = new ProcessExplorer(context, live);
+  registerOnboarding(context, () => live.processes());
   relations = new Relations(context, () => client);
   await serial.run(() => start(context));
   relations.serverChanged();
-  return { ...live.api(), explorer: () => explorer.rows(), notebookCharts: () => notebook.charts() };
+  return { ...live.api(), explorer: () => explorer.rows(), notebookCharts: () => notebook.charts(), agentConfirmation };
 }
 
 function restart(context: ExtensionContext): Promise<void> {
@@ -136,12 +140,8 @@ async function start(context: ExtensionContext): Promise<void> {
   const args = settings.args;
   const options: LanguageClientOptions = {
     initializationOptions: settings.initializationOptions,
-    // A saved `.q` file, and nothing else. `language: "q"` alone would also
-    // match a console buffer or an untitled scratch that some other q
-    // extension has labelled `q`, and this linter has nothing true to say
-    // about a REPL transcript. The server applies the same rule, so an editor
-    // that is not VS Code is protected too.
-    documentSelector: [{ scheme: "file", language: "q", pattern: "**/*.q" }],
+    // A saved `.q` file, and nothing else: see LINTED.
+    documentSelector: LINTED,
     // The output channel the server's own trace goes to, so a user debugging
     // the integration has one place to look.
     outputChannel: channel,

@@ -6,7 +6,9 @@
 // error, is shown in the output exactly as in console mode. When the value is
 // a table (keyed ones unkeyed with `0!`), a dictionary (as `key` and `value`
 // columns) or a list other than a string (as one `value` column), `grid`
-// holds, for its first `limit` rows:
+// holds, for its first `limit` rows (its last when `limit` is negative, as
+// a notebook's `q-lint.notebook.rowLimitFrom` can ask; all of them when it
+// is infinite):
 //
 //   count  the rows the whole result has, as a float: it can pass 2^31
 //   keys   how many of the leading columns are keys

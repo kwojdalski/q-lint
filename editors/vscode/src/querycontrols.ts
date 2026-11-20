@@ -1,0 +1,185 @@
+// Query controls (#887), as data: the commands and settings, what an
+// unlimited and an unwrapped query send and how their answers are read, and
+// how a file's own connection is kept and shown. No `vscode` import, so all
+// of it is tested with node; `controls.ts` is the VS Code around it.
+//
+// Unlimited: console text is not cut at `q-lint.output.consoleSize`, and a
+// grid or chart is sent every row. q's own formatting still cuts in one
+// place: KDB-X's `-3!`, which `.Q.S` writes an atom or a simple list with,
+// stops at the process's `\c` width whatever size is asked for, and `\c` is
+// the process's to set, not ours. So `UNLIMITED` sends a simple list itself,
+// and it is written here (`qformat.ts`); everything else is the process's
+// `.Q.S` at a size nothing reaches.
+//
+// Unwrapped: the code is sent as a plain string, statement by statement, for
+// a gateway that refuses a lambda. The process evaluates each as it
+// evaluates any string a client sends, and the answer is whatever it
+// returns, formatted here.
+import { gridOf, cutLines, formatValue, vectorText } from "./qformat";
+import { TRAP, readAnswer, type Answer } from "./query";
+import type { GridAnswer } from "./grid";
+import { QError } from "./qclient";
+
+export const CONTROL_COMMANDS = {
+  queryFile: "q-lint.queryEntireFile",
+  toggleUnlimited: "q-lint.toggleUnlimitedQuery",
+  toggleUnwrapped: "q-lint.toggleUnwrappedQuery",
+  chooseFileConnection: "q-lint.chooseConnectionForFile",
+  clearFileConnection: "q-lint.clearConnectionForFile",
+  startRepl: "q-lint.startRepl",
+  copyQuery: "q-lint.copyQuery",
+  revealProcess: "q-lint.revealProcess",
+  openSettings: "q-lint.openSettings",
+} as const;
+
+/// Where a file's connection is kept: `workspaceState`, under this key, as
+/// `{ [uri]: label }`.
+export const FILE_CONNECTIONS_KEY = "q-lint.fileConnections";
+
+export interface ControlSettings {
+  /// Send the code as a plain string, for a gateway that refuses lambdas.
+  unwrapped: boolean;
+  /// Seconds a query may run before it is aborted; 0: no limit.
+  timeout: number;
+}
+
+/// The settings read as `readLive` reads the query ones, at each query.
+export function readControls(get: <T>(key: string, fallback: T) => T): ControlSettings {
+  const timeout = get<unknown>("query.timeout", 0);
+  return {
+    unwrapped: get<unknown>("query.unwrapped", false) === true,
+    // A timer takes at most 2^31-1 ms; a day is plenty.
+    timeout: typeof timeout === "number" && Number.isFinite(timeout) && timeout > 0 ? Math.min(timeout, 86_400) : 0,
+  };
+}
+
+/// The console size an unlimited query asks `.Q.S` for: more lines and
+/// columns than any result has.
+export const UNLIMITED_SIZE: [number, number] = [1e9, 1e9];
+/// The rows an unlimited grid or chart asks for: every one.
+export const UNLIMITED_ROWS = Number.MAX_SAFE_INTEGER;
+
+/// The console size and grid rows a query asks for.
+export function limits(
+  settings: { consoleSize: [number, number]; gridLimit: number },
+  unlimited: boolean,
+): { consoleSize: [number, number]; gridLimit: number } {
+  return unlimited
+    ? { consoleSize: UNLIMITED_SIZE, gridLimit: UNLIMITED_ROWS }
+    : { consoleSize: settings.consoleSize, gridLimit: settings.gridLimit };
+}
+
+/// `RUN` for an unlimited console query: the same answer, except that a
+/// simple list (types 1 to 19) comes as `value`, with no text, for
+/// `readUnlimited` to write. Like `RUN` it defines nothing on the process.
+export const UNLIMITED = [
+  "{[s;size]",
+  ...TRAP,
+  " t:type r 1;",
+  " $[r 0;",
+  "   $[t within 1 19h;`ok`type`text`value!(1b;t;();r 1);`ok`type`text!(1b;t;.Q.S[\"j\"$size;0j] r 1)];",
+  "   `ok`error`trace!(0b;r 1;r 2)]}",
+].join("\n");
+
+/// The answer `UNLIMITED` gave, as `readAnswer` reads `RUN`'s, a simple list
+/// written out whole.
+export function readUnlimited(raw: unknown): Answer {
+  const answer = readAnswer(raw);
+  const r = raw as Record<string, unknown>;
+  if (answer.ok && "value" in r && answer.type >= 1 && answer.type <= 19) {
+    return { ...answer, text: [vectorText(r.value, answer.type)] };
+  }
+  return answer;
+}
+
+/// What `runUnwrapped` needs of a connection.
+export interface Evaluator {
+  evaluate(text: string): Promise<{ value: unknown; type: number | undefined }>;
+}
+
+/// Run `statements` unwrapped: each sent as a plain string, in order,
+/// stopping at the first q error, and the last one's value shown. Its text
+/// is formatted here and cut at `size` unless `unlimited`; when `grid` asks
+/// and the value is tabular, its rows (at most `limit`, unless `unlimited`)
+/// come too. A q error is the answer's error, with no trace: the process
+/// sends none. Anything else - the connection closing, an abort - throws.
+export async function runUnwrapped(
+  connection: Evaluator,
+  statements: string[],
+  options: { size: [number, number]; limit: number; unlimited: boolean; grid: boolean },
+): Promise<GridAnswer> {
+  let last: { value: unknown; type: number | undefined } = { value: null, type: 101 };
+  for (const statement of statements) {
+    try {
+      last = await connection.evaluate(statement);
+    } catch (error) {
+      if (error instanceof QError) {
+        return { ok: false, error: error.message, trace: "" };
+      }
+      throw error;
+    }
+  }
+  const lines = formatValue(last.value, last.type);
+  const text = options.unlimited ? lines : cutLines(lines, options.size);
+  const answer: GridAnswer = { ok: true, type: last.type ?? 0, text };
+  if (!options.grid) {
+    return answer;
+  }
+  // A string is shown as text, as `GRID` shows one.
+  const grid = typeof last.value === "string" ? undefined : gridOf(last.value, last.type, options.unlimited ? Infinity : options.limit);
+  return grid === undefined ? answer : { ...answer, grid };
+}
+
+/// The process a file is bound to, from what `workspaceState` holds.
+export function bindingFor(stored: unknown, uri: string): string | undefined {
+  if (typeof stored !== "object" || stored === null) {
+    return undefined;
+  }
+  const label = (stored as Record<string, unknown>)[uri];
+  return typeof label === "string" && label !== "" ? label : undefined;
+}
+
+/// What `workspaceState` holds once `uri` is bound to `label`, or unbound
+/// when `label` is undefined. Entries that are not labels are dropped.
+export function withBinding(stored: unknown, uri: string, label: string | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (typeof stored === "object" && stored !== null) {
+    for (const [k, v] of Object.entries(stored as Record<string, unknown>)) {
+      if (typeof v === "string" && v !== "") {
+        out[k] = v;
+      }
+    }
+  }
+  if (label === undefined) {
+    delete out[uri];
+  } else {
+    out[uri] = label;
+  }
+  return out;
+}
+
+/// What the status bar says of the query flags: empty when none is on.
+export function flagsText(unlimited: boolean, unwrapped: boolean): string {
+  return [unlimited ? "$(unfold) unlimited" : "", unwrapped ? "$(symbol-string) unwrapped" : ""].filter(Boolean).join(" ");
+}
+
+/// What the status bar says of the active file's process: undefined when it
+/// has none, or it is the active connection.
+export function bindingText(bound: string | undefined, active: string | undefined): string | undefined {
+  return bound === undefined || bound === active ? undefined : `$(file-symlink-file) file: ${bound}`;
+}
+
+/// Run `expire` once `seconds` have passed, unless the function returned is
+/// called first; with no timeout (0) it never runs.
+export function armTimeout(seconds: number, expire: () => void): () => void {
+  if (!(seconds > 0)) {
+    return () => {};
+  }
+  const timer = setTimeout(expire, seconds * 1000);
+  return () => clearTimeout(timer);
+}
+
+/// How the history says a query timed out.
+export function timedOutError(seconds: number): string {
+  return `timed out after ${seconds} s`;
+}

@@ -13,15 +13,32 @@ const {
   parseProcesses,
   parseTags,
   portProblem,
-  processColour,
+  processThemeColour,
   tagColour,
 } = require("../out/processes.js");
 const { NULL_TYPE, RUN, readAnswer, render } = require("../out/query.js");
-const { COMMANDS, CONNECTED, DISCOVERY_COMMANDS, QUERY_MODES, VIEWS, readLive } = require("../out/liveconfig.js");
+const {
+  COMMANDS,
+  CONNECTED,
+  DISCOVERY_COMMANDS,
+  QUERY_MODES,
+  RESULTS,
+  RESULTS_LOCATIONS,
+  ROW_LIMIT_CHOICES,
+  ROW_LIMIT_FROM,
+  VIEWS,
+  readLive,
+  readNotebook,
+  rowLimitLabel,
+  rowsArgument,
+} = require("../out/liveconfig.js");
 const { EXPLORER, readExplorer } = require("../out/explorer.js");
 const relations = require("../out/relations.js");
 const { NOTEBOOK } = require("../out/qnb.js");
 const { needsRestart } = require("../out/settings.js");
+const { AGENT } = require("../out/agent.js");
+const { CONTROL_COMMANDS, readControls } = require("../out/querycontrols.js");
+const { ONBOARDING } = require("../out/onboarding.js");
 
 test("a statement is a line and the indented lines after it", () => {
   assert.deepStrictEqual(statements("a:1\nb:a+1\nb*10"), ["a:1", "b:a+1", "b*10"]);
@@ -160,8 +177,8 @@ test("production is red, uat blue, development green; the most cautious wins", (
   assert.strictEqual(tagColour("uat"), "blue");
   assert.strictEqual(tagColour("development"), "green");
   assert.strictEqual(tagColour("eu"), undefined);
-  assert.strictEqual(processColour({ label: "x", host: "h", port: 1, tags: ["dev", "prod"] }), "red");
-  assert.strictEqual(processColour({ label: "x", host: "h", port: 1, tags: ["eu"] }), undefined);
+  assert.strictEqual(processThemeColour({ label: "x", host: "h", port: 1, tags: ["dev", "prod"] }, {}), "charts.red");
+  assert.strictEqual(processThemeColour({ label: "x", host: "h", port: 1, tags: ["eu"] }, {}), undefined);
 });
 
 test("a console size is two positive whole numbers", () => {
@@ -208,10 +225,15 @@ test("package.json declares exactly the commands the extension registers", () =>
   const declared = pkg.contributes.commands.map((c) => c.command).sort();
   const registered = [
     ...Object.values(COMMANDS),
+    ...Object.values(CONTROL_COMMANDS),
     ...Object.values(DISCOVERY_COMMANDS),
     ...Object.values(EXPLORER).filter((id) => id !== EXPLORER.view),
     ...Object.values(relations.COMMANDS),
     NOTEBOOK.exportCommand,
+    RESULTS.exportCsv,
+    RESULTS.setRowLimit,
+    AGENT.copyLabel,
+    ...[ONBOARDING.getStarted, ONBOARDING.openHelpLink, ONBOARDING.editTagColor, ONBOARDING.newNotebook],
     "q-lint.restartServer",
   ].sort();
   assert.deepStrictEqual(declared, registered);
@@ -222,7 +244,7 @@ test("the views live in their own container, and every menu names a declared com
   assert.strictEqual(container.id, VIEWS.container);
   assert.deepStrictEqual(
     pkg.contributes.views[VIEWS.container].map((v) => v.id),
-    [VIEWS.processes, EXPLORER.view, VIEWS.history],
+    [VIEWS.processes, EXPLORER.view, VIEWS.history, ONBOARDING.helpView],
   );
   const declared = new Set(pkg.contributes.commands.map((c) => c.command));
   for (const [where, items] of Object.entries(pkg.contributes.menus)) {
@@ -243,7 +265,7 @@ test("every view has an icon that ships, and every welcome names a view and comm
   const root = path.join(__dirname, "..");
   const shipped = (file) => assert.ok(fs.existsSync(path.join(root, file)), file);
   shipped(pkg.icon);
-  for (const container of pkg.contributes.viewsContainers.activitybar) {
+  for (const container of Object.values(pkg.contributes.viewsContainers).flat()) {
     shipped(container.icon);
   }
   for (const view of Object.values(pkg.contributes.views).flat()) {
@@ -299,6 +321,7 @@ test("every query setting is read, with the default package.json declares, and n
   };
   const live = readLive(get);
   const explorer = readExplorer(get);
+  const controls = readControls(get);
   for (const [key, spec] of Object.entries(declared)) {
     const short = key.replace(/^q-lint\./, "");
     assert.ok(read.has(short), `${key} is declared but never read`);
@@ -315,7 +338,9 @@ test("every query setting is read, with the default package.json declares, and n
     mode: "console",
     gridLimit: 10000,
     gridDecimals: -1,
+    resultsLocation: "editor",
   });
+  assert.deepStrictEqual(controls, { unwrapped: false, timeout: 0 });
   assert.deepStrictEqual(explorer, { excludedNamespaces: ["q", "Q", "h", "j", "o", "s"], previewLimit: 5, autoRefresh: false });
   // A size that is not one falls back to the default.
   assert.deepStrictEqual(readLive((key, fallback) => (key === "output.consoleSize" ? "big" : fallback)).consoleSize, [50, 160]);
@@ -329,4 +354,81 @@ test("every query setting is read, with the default package.json declares, and n
   assert.strictEqual(set({ "query.gridDecimals": 3 }).gridDecimals, 3);
   assert.strictEqual(set({ "query.gridDecimals": -7 }).gridDecimals, -1);
   assert.strictEqual(set({ "query.gridDecimals": 99 }).gridDecimals, 20);
+  assert.strictEqual(set({ "query.resultsLocation": "panel" }).resultsLocation, "panel");
+  assert.strictEqual(set({ "query.resultsLocation": "sidebar" }).resultsLocation, "editor");
+  assert.deepStrictEqual(declared["q-lint.query.resultsLocation"].enum, [...RESULTS_LOCATIONS]);
+});
+
+test("the q Results view is a webview in its own container in the bottom panel (#889)", () => {
+  const [container] = pkg.contributes.viewsContainers.panel;
+  assert.strictEqual(container.id, RESULTS.container);
+  assert.strictEqual(container.title, "q Results");
+  const [view] = pkg.contributes.views[RESULTS.container];
+  assert.strictEqual(view.id, RESULTS.view);
+  assert.strictEqual(view.type, "webview");
+  // Export Results to CSV is on the view's title bar; the row limit on a
+  // notebook's toolbar.
+  assert.ok(pkg.contributes.menus["view/title"].some((m) => m.command === RESULTS.exportCsv && m.when === `view == ${RESULTS.view}`));
+  assert.ok(pkg.contributes.menus["notebook/toolbar"].some((m) => m.command === RESULTS.setRowLimit));
+});
+
+test("every notebook setting is read, with the default package.json declares, and none restarts the server (#889)", () => {
+  const section = pkg.contributes.configuration.find((c) => c.title === "q-lint: notebooks");
+  const declared = section.properties;
+  const read = new Map();
+  const settings = readNotebook((key, fallback) => {
+    read.set(key, fallback);
+    return fallback;
+  });
+  for (const [key, spec] of Object.entries(declared)) {
+    const short = key.replace(/^q-lint\./, "");
+    assert.ok(read.has(short), `${key} is declared but never read`);
+    assert.deepStrictEqual(read.get(short), spec.default, key);
+    const affects = (s) => key === s || key.startsWith(`${s}.`);
+    assert.strictEqual(needsRestart(affects), false, key);
+  }
+  assert.strictEqual(read.size, Object.keys(declared).length);
+  assert.deepStrictEqual(settings, { rowLimit: 1000, rowLimitFrom: "first" });
+  assert.deepStrictEqual(declared["q-lint.notebook.rowLimitFrom"].enum, [...ROW_LIMIT_FROM]);
+  const set = (values) => readNotebook((key, fallback) => (key in values ? values[key] : fallback));
+  assert.deepStrictEqual(set({ "notebook.rowLimit": 0, "notebook.rowLimitFrom": "last" }), { rowLimit: 0, rowLimitFrom: "last" });
+  assert.strictEqual(set({ "notebook.rowLimit": -5 }).rowLimit, 1000);
+  assert.strictEqual(set({ "notebook.rowLimit": 2.5 }).rowLimit, 1000);
+  assert.strictEqual(set({ "notebook.rowLimitFrom": "middle" }).rowLimitFrom, "first");
+});
+
+test("a row limit is one signed count for sublist: last negative, all infinite (#889)", () => {
+  assert.strictEqual(rowsArgument({ rowLimit: 1000, rowLimitFrom: "first" }), 1000);
+  assert.strictEqual(rowsArgument({ rowLimit: 10, rowLimitFrom: "last" }), -10);
+  assert.strictEqual(rowsArgument({ rowLimit: 0, rowLimitFrom: "first" }), Infinity);
+  assert.strictEqual(rowsArgument({ rowLimit: 0, rowLimitFrom: "last" }), -Infinity);
+  assert.deepStrictEqual([...ROW_LIMIT_CHOICES], [10, 100, 1000, 10000, 100000, 0]);
+  assert.deepStrictEqual(ROW_LIMIT_CHOICES.map(rowLimitLabel), ["10 rows", "100 rows", "1,000 rows", "10,000 rows", "100,000 rows", "All rows"]);
+  // The default is one of the choices.
+  assert.ok(ROW_LIMIT_CHOICES.includes(readNotebook((_, fallback) => fallback).rowLimit));
+});
+
+test("query controls: a timeout is a positive number of seconds, at most a day; unwrapped only when true", () => {
+  const set = (values) => readControls((key, fallback) => (key in values ? values[key] : fallback));
+  assert.strictEqual(set({ "query.timeout": 2.5 }).timeout, 2.5);
+  assert.strictEqual(set({ "query.timeout": -1 }).timeout, 0);
+  assert.strictEqual(set({ "query.timeout": "5" }).timeout, 0);
+  assert.strictEqual(set({ "query.timeout": 1e9 }).timeout, 86400);
+  assert.strictEqual(set({ "query.unwrapped": true }).unwrapped, true);
+  assert.strictEqual(set({ "query.unwrapped": "yes" }).unwrapped, false);
+});
+
+test("Execute Entire File is bound to a key no VS Code default takes, and is in the run menu", () => {
+  const binding = pkg.contributes.keybindings.find((k) => k.command === CONTROL_COMMANDS.queryFile);
+  // ctrl+f10 is in none of VS Code 1.147's default keybindings on macOS,
+  // Windows or Linux; ctrl+shift+d (Run and Debug) and ctrl+d (add next
+  // occurrence) are what KX's extension uses, and both clash.
+  assert.strictEqual(binding.key, "ctrl+f10");
+  assert.ok(!binding.mac && !binding.win && !binding.linux);
+  const keys = pkg.contributes.keybindings.map((k) => k.key);
+  assert.strictEqual(new Set(keys).size, keys.length, "two commands share a key");
+  assert.ok(pkg.contributes.menus["editor/title/run"].some((m) => m.command === CONTROL_COMMANDS.queryFile));
+  // Copy Query is on a history row, inline and in its menu.
+  const rows = pkg.contributes.menus["view/item/context"].filter((m) => m.command === CONTROL_COMMANDS.copyQuery);
+  assert.deepStrictEqual(rows.map((m) => m.group).sort(), ["1_history@2", "inline"]);
 });

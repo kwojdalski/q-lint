@@ -13,7 +13,10 @@
 // (so a timestamp keeps its nanoseconds), a nested column's items with
 // `-3!`. A keyed table is unkeyed and says how many key columns it had.
 // At most `rows` rows are sent, with the table's count, so a large table is
-// cut by the process. A value that is not a table answers as `RUN` would.
+// cut by the process: the first `rows`, or the last when `rows` is negative,
+// and every row when it is infinite (`sublist` with `0W`). The row limit and
+// where it counts from are `q-lint.notebook.rowLimit` and `rowLimitFrom`,
+// made one signed count by `liveconfig.ts`'s `rowsArgument`. A value that is not a table answers as `RUN` would.
 // `rows` and `size` arrive as floats, and are made long there.
 //
 //   table     `ok`table`columns`types`keys`data`total!(1b;1b;...)
@@ -24,6 +27,7 @@
 import type { Answer } from "./query";
 import { NULL_TYPE } from "./query";
 import type { CellMode, ChartMode } from "./celldirectives";
+import type { RowLimitFrom } from "./liveconfig";
 import { toGrid, type Grid, type GridAnswer } from "./grid";
 
 export const DATA = [
@@ -41,7 +45,8 @@ export const DATA = [
   " `ok`table`columns`types`keys`data`total!(1b;1b;cols t;type each c;k;str each c;count t)}",
 ].join("\n");
 
-/// How many rows `@grid` and `@chart` ask for.
+/// How many rows `@grid` and `@chart` ask for by default:
+/// `q-lint.notebook.rowLimit`'s default.
 export const GRID_ROWS = 1000;
 /// How much of one value the grid shows.
 const VALUE_LIMIT = 500;
@@ -56,6 +61,8 @@ export interface Table {
   data: string[][];
   /// The table's count: more than the rows in `data` when it was cut.
   total: number;
+  /// Whether a cut table holds its first rows or its last: first when unset.
+  from?: RowLimitFrom;
 }
 
 export type CellData = Answer | { ok: true; table: Table };
@@ -110,7 +117,7 @@ const rowCount = (table: Table): number => table.data[0]?.length ?? 0;
 /// What says a table was cut, or nothing when it was not.
 export function cutNote(table: Table): string | undefined {
   const shown = rowCount(table);
-  return table.total > shown ? `Showing the first ${shown.toLocaleString("en")} of ${table.total.toLocaleString("en")} rows.` : undefined;
+  return table.total > shown ? `Showing the ${table.from ?? "first"} ${shown.toLocaleString("en")} of ${table.total.toLocaleString("en")} rows.` : undefined;
 }
 
 const ESCAPES: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
@@ -210,19 +217,21 @@ export interface ChartSpec {
 }
 
 /// A grid as a `Table`, for its text.
-const gridTable = (grid: Grid): Table => ({
+const gridTable = (grid: Grid, from: RowLimitFrom): Table => ({
   columns: grid.columns.map((c) => c.name),
   types: grid.columns.map((c) => c.type),
   keys: grid.columns.filter((c) => c.key).length,
   data: grid.cells,
   total: grid.total,
+  from,
 });
 
 /// The output of a `/ @chart` cell whose value was `grid`: the chart, and
 /// the table as text beside it, which an editor without the renderer - or
-/// another tool reading the saved notebook - shows instead.
-export function chartOutputs(mode: ChartMode, grid: Grid): OutputPart[] {
-  const table = gridTable(grid);
+/// another tool reading the saved notebook - shows instead. `from` says
+/// which rows a cut grid holds.
+export function chartOutputs(mode: ChartMode, grid: Grid, from: RowLimitFrom = "first"): OutputPart[] {
+  const table = gridTable(grid, from);
   const { rank: _rank, ...shown } = grid;
   const note = cutNote(table);
   const spec: ChartSpec = {
@@ -246,9 +255,9 @@ export function chartOutputs(mode: ChartMode, grid: Grid): OutputPart[] {
 /// The outputs of a `/ @chart` cell that answered `answer`, `GRID`'s answer:
 /// a chart when the value was a table, a dictionary or a list, and otherwise
 /// what `cellOutputs` shows.
-export function chartCellOutputs(mode: ChartMode, answer: GridAnswer): OutputPart[] {
+export function chartCellOutputs(mode: ChartMode, answer: GridAnswer, from: RowLimitFrom = "first"): OutputPart[] {
   if (answer.ok && answer.grid !== undefined) {
-    return chartOutputs(mode, toGrid(answer.grid, -1));
+    return chartOutputs(mode, toGrid(answer.grid, -1), from);
   }
   if (answer.ok && answer.gridError !== undefined) {
     return [plain([...answer.text, `(@chart could not shape this as a table: '${answer.gridError}. It is shown as text.)`])];
@@ -258,18 +267,19 @@ export function chartCellOutputs(mode: ChartMode, answer: GridAnswer): OutputPar
 
 /// The outputs of a cell run in `mode` that answered `data`. A console run
 /// that gave q's generic null, such as an assignment ending in `;`, shows
-/// nothing, as q's console does.
-export function cellOutputs(mode: CellMode, data: CellData): OutputPart[] {
+/// nothing, as q's console does. `from` says which rows a cut table holds.
+export function cellOutputs(mode: CellMode, data: CellData, from: RowLimitFrom = "first"): OutputPart[] {
   if (!data.ok) {
     return [errorPart(data.error, data.trace)];
   }
   if ("table" in data) {
+    const table: Table = { ...data.table, from };
     return [
       {
         kind: "items",
         items: [
-          { mime: "text/html", text: tableHtml(data.table) },
-          { mime: "text/plain", text: tableText(data.table).join("\n") },
+          { mime: "text/html", text: tableHtml(table) },
+          { mime: "text/plain", text: tableText(table).join("\n") },
         ],
       },
     ];

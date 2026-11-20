@@ -169,6 +169,18 @@ test("a cut table says so, in the grid and in its text", () => {
   assert.strictEqual(tableText(cut).at(-1), "Showing the first 2 of 25,000 rows.");
 });
 
+test("a table cut to its last rows says last, in a grid cell and a chart cell (#889)", () => {
+  const [grid] = cellOutputs({ mode: "grid" }, { ok: true, table: { ...TABLE, total: 25000 } }, "last");
+  assert.ok(grid.items[0].text.includes('<div class="qnb-note">Showing the last 2 of 25,000 rows.</div>'));
+  assert.strictEqual(grid.items[1].text.split("\n").at(-1), "Showing the last 2 of 25,000 rows.");
+  const [chart] = chartCellOutputs({ mode: "chart", chart: "line" }, GRID_ANSWER, "last");
+  assert.strictEqual(JSON.parse(chart.items[0].text).note, "Showing the last 2 of 3 rows.");
+  assert.strictEqual(chart.items[1].text.split("\n").at(-1), "Showing the last 2 of 3 rows.");
+  // A table that was not cut says nothing, whichever end it counts from.
+  const [whole] = cellOutputs({ mode: "grid" }, { ok: true, table: TABLE }, "last");
+  assert.ok(!whole.items[0].text.includes("Showing"));
+});
+
 test("a table as text is laid out as q's console lays it out", () => {
   assert.deepStrictEqual(tableText(TABLE), [
     "sym| px    note",
