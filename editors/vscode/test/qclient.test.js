@@ -12,6 +12,7 @@ const path = require("node:path");
 const { QConnection } = require("../out/qclient.js");
 const { statements } = require("../out/statements.js");
 const { GATHER, LIMITS, explorerTree, previewCode, readGathered } = require("../out/explorer.js");
+const { toGrid } = require("../out/grid.js");
 
 const Q = process.env.QLINT_TEST_Q;
 const skip = Q ? false : "QLINT_TEST_Q names no q binary";
@@ -21,6 +22,11 @@ const SERVER = `
 t:([] sym:\`a\`b\`c; px:1.5 2.5 3.5)
 slow:{system "sleep ",string x; x}
 .z.pw:{[u;p] not u~\`locked}
+types:([] b:10b; g:("G"$"8c680a01-5a49-5aab-5a65-d4bfddb6a661";0Ng); x:0x01ff; h:1 0Nh; i:1 0Wi;
+  j:9007199254740993 -0Wj; e:1.5 0Ne; f:3.14159265358979 -0w; c:"a "; s:\`abc\`;
+  p:2026.11.20D10:11:12.123456789 0Np; m:2026.11 0Wm; d:2026.11.20 -0Wd; z:2026.11.20T10:11:12.123 0Wz;
+  n:-0D01:02:03.000000001 0Wn; u:10:11 0Nu; v:10:11:12 0Wv; tt:10:11:12.123 -0Wt; str:("ab";"c"); l:(1 2 3;\`a\`b))
+kt:([k:\`b\`a] v:2 1)
 `;
 
 function freePort() {
@@ -155,6 +161,114 @@ test("queries, blocks, errors, abort and close against a real q process", { skip
     await assert.rejects(other.query(["exit 0"], SIZE), /closed/);
     await heard;
     assert.strictEqual(other.isOpen, false);
+  });
+});
+
+test("grid and chart mode: what the process sends for a result", { skip }, async (t) => {
+  const q = await startQ();
+  t.after(() => q.stop());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  t.after(() => connection.close());
+  const grid = async (code, limit = 100) => {
+    const answer = await connection.queryGrid(statements(code), SIZE, limit);
+    return { answer, grid: answer.grid && toGrid(answer.grid, -1) };
+  };
+
+  await t.test("every type is shown as kdb+ prints it in a table, nulls and infinities too", async () => {
+    const { answer, grid: g } = await grid("types");
+    assert.strictEqual(answer.type, 98);
+    assert.ok(answer.text.length > 0, "the console text comes too");
+    const cells = Object.fromEntries(g.columns.map((c, i) => [c.name, g.cells[i]]));
+    assert.deepStrictEqual(cells, {
+      b: ["1", "0"],
+      g: ["8c680a01-5a49-5aab-5a65-d4bfddb6a661", "00000000-0000-0000-0000-000000000000"],
+      x: ["01", "ff"],
+      h: ["1", ""],
+      i: ["1", "0W"],
+      j: ["9007199254740993", "-0W"],
+      e: ["1.5", ""],
+      f: ["3.141593", "-0w"],
+      c: ["a", " "],
+      s: ["abc", ""],
+      p: ["2026.11.20D10:11:12.123456789", ""],
+      m: ["2026.11", "0W"],
+      d: ["2026.11.20", "-0W"],
+      z: ["2026.11.20T10:11:12.123", "0w"],
+      n: ["-0D01:02:03.000000001", "0W"],
+      u: ["10:11", ""],
+      v: ["10:11:12", "0W"],
+      tt: ["10:11:12.123", "-0W"],
+      str: ['"ab"', '"c"'],
+      l: ["1 2 3", "`a`b"],
+    });
+    assert.deepStrictEqual(
+      g.columns.map((c) => c.type),
+      [1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 0, 0],
+    );
+    // Values for charting, in q's own units; nulls and infinities null.
+    const values = Object.fromEntries(g.columns.map((c, i) => [c.name, g.values[i]]));
+    assert.deepStrictEqual(values.f, [3.14159265358979, null]);
+    assert.deepStrictEqual(values.d, [9820, null]);
+    assert.deepStrictEqual(values.u, [611, null]);
+    assert.strictEqual(values.s, null);
+    // Ranks as q sorts: a null first.
+    assert.deepStrictEqual(g.rank[g.columns.findIndex((c) => c.name === "h")], [1, 0]);
+  });
+
+  await t.test("floats to the decimals asked for", async () => {
+    const answer = await connection.queryGrid(["([] f:1.23456 2 0n)"], SIZE, 100);
+    assert.deepStrictEqual(toGrid(answer.grid, 2).cells, [["1.23", "2.00", ""]]);
+  });
+
+  await t.test("a keyed table is unkeyed, with its key columns marked", async () => {
+    const { grid: g } = await grid("kt");
+    assert.deepStrictEqual(g.columns.map((c) => [c.name, c.key]), [["k", true], ["v", false]]);
+    assert.deepStrictEqual(g.cells, [["b", "a"], ["2", "1"]]);
+    assert.deepStrictEqual(g.rank, [[1, 0], [1, 0]]);
+  });
+
+  await t.test("a dictionary is key and value columns, a list one value column", async () => {
+    const dict = (await grid("`x`y!10 20")).grid;
+    assert.deepStrictEqual(dict.columns.map((c) => [c.name, c.key]), [["key", true], ["value", false]]);
+    assert.deepStrictEqual(dict.cells, [["x", "y"], ["10", "20"]]);
+    const list = (await grid("(1;`a;\"bc\")")).grid;
+    assert.deepStrictEqual(list.columns.map((c) => c.name), ["value"]);
+    assert.deepStrictEqual(list.cells, [["1", "`a", '"bc"']]);
+  });
+
+  await t.test("a large result is cut at the limit, and says how many rows it had", async () => {
+    const { grid: g } = await grid("([] a:til 100000; b:100000?1f)", 250);
+    assert.strictEqual(g.cells[0].length, 250);
+    assert.strictEqual(g.total, 100000);
+    assert.strictEqual(g.cells[0][249], "249");
+  });
+
+  await t.test("an atom, a string, a function and :: are not tabular: text only", async () => {
+    for (const code of ["42", "\"abc\"", "{x+1}", "a:1;"]) {
+      const { answer } = await grid(code);
+      assert.strictEqual(answer.ok, true, code);
+      assert.strictEqual(answer.grid, undefined, code);
+      assert.strictEqual(answer.gridError, undefined, code);
+    }
+    assert.deepStrictEqual((await grid("42")).answer.text, ["42"]);
+  });
+
+  await t.test("an error reads as in console mode, with a trace of the user's code only", async () => {
+    const { answer } = await grid("g:{x+`a}\ng 1");
+    assert.strictEqual(answer.ok, false);
+    assert.strictEqual(answer.error, "type");
+    assert.match(answer.trace, /\{x\+`a\}/);
+    assert.doesNotMatch(answer.trace, /\.Q\.trp|value each|sublist/);
+  });
+
+  await t.test("nothing is defined on the process", async () => {
+    const before = (await connection.query(["(key `.;key `.q;key `.Q)"], [100, 2000])).text.join("\n");
+    await grid("types");
+    await grid("kt");
+    await grid("`x`y!1 2");
+    await grid("1+`a");
+    const after = (await connection.query(["(key `.;key `.q;key `.Q)"], [100, 2000])).text.join("\n");
+    assert.strictEqual(after, before);
   });
 });
 

@@ -40,6 +40,7 @@ import {
 import { COMMANDS, CONNECTED, VIEWS, readLive, readTerminal } from "./liveconfig";
 import { QConnection } from "./qclient";
 import { render } from "./query";
+import { QueryModes, type Rendered } from "./resultpanel";
 import { blockAt, statements } from "./statements";
 import { commandLine, parseEnv, replLines, shellKind } from "./terminal";
 
@@ -296,6 +297,11 @@ class QTerminals {
 
 export class Live {
   private connection: QConnection | undefined;
+  /// The query history, newest first. Kept here and written through to
+  /// `globalState`, never rebuilt from it: a read of `globalState` straight
+  /// after a write can return the value before it, and a list rebuilt from
+  /// that drops the entry just added.
+  private queries: HistoryEntry[] | undefined;
   private active: Process | undefined;
   /// A connect in progress, so a second one waits for it instead of opening
   /// another.
@@ -312,6 +318,7 @@ export class Live {
   private readonly output: OutputChannel;
   private readonly processesView: ProcessesView;
   private readonly historyView: HistoryView;
+  private readonly modes: QueryModes;
 
   constructor(private readonly context: ExtensionContext) {
     this.output = window.createOutputChannel("q-lint: query");
@@ -321,6 +328,7 @@ export class Live {
     this.processesView = new ProcessesView(this);
     this.historyView = new HistoryView(this);
     const terminals = new QTerminals(context);
+    this.modes = new QueryModes(context);
     const c = (name: string, run: (...args: never[]) => unknown) => commands.registerCommand(name, run);
     context.subscriptions.push(
       this.output,
@@ -356,11 +364,18 @@ export class Live {
 
   /// What the extension returns from `activate`: a read-only view for tests
   /// and for other extensions. Passwords are never in it.
-  api(): { processes: () => Process[]; activeLabel: () => string | undefined; history: () => HistoryEntry[] } {
+  api(): {
+    processes: () => Process[];
+    activeLabel: () => string | undefined;
+    history: () => HistoryEntry[];
+    /// What the result panel last drew.
+    result: () => Rendered | undefined;
+  } {
     return {
       processes: () => this.processes(),
       activeLabel: () => this.activeLabel(),
       history: () => this.history(),
+      result: () => this.modes.lastRendered(),
     };
   }
 
@@ -373,7 +388,8 @@ export class Live {
   }
 
   history(): HistoryEntry[] {
-    return this.context.globalState.get<HistoryEntry[]>(HISTORY_KEY, []);
+    this.queries ??= this.context.globalState.get<HistoryEntry[]>(HISTORY_KEY, []);
+    return this.queries;
   }
 
   /// Run `use` on the active connection now, if there is one and no query
@@ -795,7 +811,12 @@ export class Live {
     this.showStatus();
     let entry: HistoryEntry;
     try {
-      const answer = await connection.query(statements(code), settings.consoleSize);
+      // Grid and chart modes ask for the rows too; a value that is not
+      // tabular comes back as console mode's text.
+      const answer =
+        settings.mode === "console"
+          ? await connection.query(statements(code), settings.consoleSize)
+          : await connection.queryGrid(statements(code), settings.consoleSize, settings.gridLimit);
       const millis = Date.now() - started;
       entry = {
         process: process.label,
@@ -805,7 +826,9 @@ export class Live {
         outcome: answer.ok ? "ok" : "error",
         ...(answer.ok ? {} : { error: answer.error }),
       };
-      this.show(render({ process: process.label, code, answer, millis }, settings), settings.autoClear);
+      if (!this.modes.show({ process: process.label, code, answer, millis }, settings)) {
+        this.show(render({ process: process.label, code, answer, millis }, settings), settings.autoClear);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const aborted = this.running === undefined || !connection.isOpen;
@@ -867,8 +890,9 @@ export class Live {
   }
 
   private async record(entry: HistoryEntry): Promise<void> {
-    await this.context.globalState.update(HISTORY_KEY, [entry, ...this.history()].slice(0, HISTORY_LIMIT));
+    this.queries = [entry, ...this.history()].slice(0, HISTORY_LIMIT);
     this.historyView.refresh();
+    await this.context.globalState.update(HISTORY_KEY, this.queries);
   }
 
   private async rerun(entry?: HistoryEntry): Promise<void> {
@@ -885,7 +909,8 @@ export class Live {
   }
 
   private async clearHistory(): Promise<void> {
-    await this.context.globalState.update(HISTORY_KEY, []);
+    this.queries = [];
     this.historyView.refresh();
+    await this.context.globalState.update(HISTORY_KEY, this.queries);
   }
 }

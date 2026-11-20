@@ -253,6 +253,37 @@
             "order": 103,
             "markdownDescription": "Show nothing for a query whose value is `::`, such as an assignment ending in `;`."
           },
+          "q-lint.query.mode": {
+            "type": "string",
+            "enum": [
+              "console",
+              "grid",
+              "chart"
+            ],
+            "enumDescriptions": [
+              "Show every result in the **q-lint: query** output, as q formats it.",
+              "Show a table, dictionary or list in the **q-lint: result** panel as a table you can sort, filter and copy as CSV. Anything else goes to the output.",
+              "Show a table, dictionary or list in the **q-lint: result** panel as a chart of its numeric columns. Anything else goes to the output."
+            ],
+            "default": "console",
+            "order": 110,
+            "markdownDescription": "Where a query's result is shown. **q-lint: Switch Query Mode** changes it."
+          },
+          "q-lint.query.gridLimit": {
+            "type": "integer",
+            "default": 10000,
+            "minimum": 1,
+            "order": 111,
+            "markdownDescription": "The most rows of a result the process sends to the grid or chart. The panel says when a result was cut, and how many rows it had."
+          },
+          "q-lint.query.gridDecimals": {
+            "type": "integer",
+            "default": -1,
+            "minimum": -1,
+            "maximum": 20,
+            "order": 112,
+            "markdownDescription": "Decimal places the grid shows a float or real to, and copies as CSV. `-1`: as the process writes it, to its `\\P` precision."
+          },
           "q-lint.processExplorer.excludedNamespaces": {
             "type": "array",
             "items": {
@@ -266,20 +297,20 @@
               "o",
               "s"
             ],
-            "order": 110,
+            "order": 120,
             "markdownDescription": "Namespaces the **Process Explorer** and live completion leave out, without the leading dot. Their nested namespaces are left out with them."
           },
           "q-lint.processExplorer.previewLimit": {
             "type": "integer",
             "default": 5,
             "minimum": 1,
-            "order": 111,
+            "order": 121,
             "markdownDescription": "Rows of a table **Preview** shows in the **q-lint: query** output."
           },
           "q-lint.processExplorer.autoRefresh": {
             "type": "boolean",
             "default": false,
-            "order": 112,
+            "order": 122,
             "markdownDescription": "Read the active process again after each query, so the **Process Explorer** and live completion show what it defined. Off, they are read on connect and on **Refresh Process Explorer**."
           }
         }
@@ -466,6 +497,12 @@
         "command": "q-lint.sendBlockToTerminal",
         "title": "Send Current Block to Terminal",
         "category": "q-lint"
+      },
+      {
+        "command": "q-lint.switchQueryMode",
+        "title": "Switch Query Mode",
+        "category": "q-lint",
+        "icon": "$(table)"
       }
     ],
     "views": {

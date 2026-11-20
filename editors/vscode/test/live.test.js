@@ -17,7 +17,7 @@ const {
   tagColour,
 } = require("../out/processes.js");
 const { NULL_TYPE, RUN, readAnswer, render } = require("../out/query.js");
-const { COMMANDS, CONNECTED, VIEWS, readLive } = require("../out/liveconfig.js");
+const { COMMANDS, CONNECTED, QUERY_MODES, VIEWS, readLive } = require("../out/liveconfig.js");
 const { EXPLORER, readExplorer } = require("../out/explorer.js");
 const relations = require("../out/relations.js");
 const { NOTEBOOK } = require("../out/qnb.js");
@@ -236,6 +236,12 @@ test("the views live in their own container, and every menu names a declared com
   assert.strictEqual(abort.enablement, CONNECTED);
 });
 
+test("the query modes are the ones package.json offers", () => {
+  const mode = pkg.contributes.configuration[1].properties["q-lint.query.mode"];
+  assert.deepStrictEqual(mode.enum, [...QUERY_MODES]);
+  assert.strictEqual(mode.enumDescriptions.length, QUERY_MODES.length);
+});
+
 test("the query keys are ctrl+q, ctrl+r and ctrl+e in a q editor", () => {
   const keys = Object.fromEntries(pkg.contributes.keybindings.map((k) => [k.command, k]));
   assert.strictEqual(keys[COMMANDS.queryLine].key, "ctrl+q");
@@ -263,8 +269,26 @@ test("every query setting is read, with the default package.json declares, and n
     assert.strictEqual(needsRestart(affects), false, key);
   }
   assert.strictEqual(read.size, Object.keys(declared).length);
-  assert.deepStrictEqual(live, { consoleSize: [50, 160], autoClear: false, includeQuery: false, ignoreNullReturn: false });
+  assert.deepStrictEqual(live, {
+    consoleSize: [50, 160],
+    autoClear: false,
+    includeQuery: false,
+    ignoreNullReturn: false,
+    mode: "console",
+    gridLimit: 10000,
+    gridDecimals: -1,
+  });
   assert.deepStrictEqual(explorer, { excludedNamespaces: ["q", "Q", "h", "j", "o", "s"], previewLimit: 5, autoRefresh: false });
   // A size that is not one falls back to the default.
   assert.deepStrictEqual(readLive((key, fallback) => (key === "output.consoleSize" ? "big" : fallback)).consoleSize, [50, 160]);
+  // So do a mode, a limit and decimals that are not ones.
+  const set = (values) => readLive((key, fallback) => (key in values ? values[key] : fallback));
+  assert.strictEqual(set({ "query.mode": "chart" }).mode, "chart");
+  assert.strictEqual(set({ "query.mode": "table" }).mode, "console");
+  assert.strictEqual(set({ "query.gridLimit": 50 }).gridLimit, 50);
+  assert.strictEqual(set({ "query.gridLimit": 0 }).gridLimit, 10000);
+  assert.strictEqual(set({ "query.gridLimit": 2.5 }).gridLimit, 10000);
+  assert.strictEqual(set({ "query.gridDecimals": 3 }).gridDecimals, 3);
+  assert.strictEqual(set({ "query.gridDecimals": -7 }).gridDecimals, -1);
+  assert.strictEqual(set({ "query.gridDecimals": 99 }).gridDecimals, 20);
 });

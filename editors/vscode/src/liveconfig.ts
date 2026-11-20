@@ -31,7 +31,13 @@ export const COMMANDS = {
   sendLine: "q-lint.sendCurrentLineToTerminal",
   sendSelection: "q-lint.sendSelectionToTerminal",
   sendBlock: "q-lint.sendBlockToTerminal",
+  switchMode: "q-lint.switchQueryMode",
 } as const;
+
+/// Where a query's result is shown: the output, or the result panel as a
+/// grid or a chart.
+export const QUERY_MODES = ["console", "grid", "chart"] as const;
+export type QueryMode = (typeof QUERY_MODES)[number];
 
 /// Set while a q process is connected.
 export const CONNECTED = "q-lint.connected";
@@ -41,6 +47,18 @@ export interface LiveSettings {
   autoClear: boolean;
   includeQuery: boolean;
   ignoreNullReturn: boolean;
+  mode: QueryMode;
+  /// The most rows a grid or chart is sent.
+  gridLimit: number;
+  /// Decimal places a float or real is shown to in the grid; negative: as
+  /// the process writes it (`\P`).
+  gridDecimals: number;
+}
+
+/// A whole number from `get`, or `fallback` when it is not one or is below
+/// `least`.
+function whole(value: unknown, least: number, fallback: number): number {
+  return typeof value === "number" && Number.isInteger(value) && value >= least ? value : fallback;
 }
 
 /// The query settings, read with `get` as `workspace.getConfiguration("q-lint")`
@@ -51,6 +69,9 @@ export function readLive(get: <T>(key: string, fallback: T) => T): LiveSettings 
     autoClear: get("output.autoClear", false),
     includeQuery: get("output.includeQuery", false),
     ignoreNullReturn: get("output.ignoreNullReturn", false),
+    mode: QUERY_MODES.find((m) => m === get("query.mode", "console")) ?? "console",
+    gridLimit: whole(get("query.gridLimit", 10000), 1, 10000),
+    gridDecimals: Math.min(whole(get("query.gridDecimals", -1), -1, -1), 20),
   };
 }
 

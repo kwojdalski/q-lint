@@ -189,11 +189,11 @@ export function errorPart(error: string, trace: string): OutputPart {
   return { kind: "error", name: "q error", message: `'${error}`, stack };
 }
 
-/// Where the chart renderer of query modes (L3, #855) plugs in: the outputs
+/// Where a notebook chart renderer plugs in (#870): the outputs
 /// for `/ @chart <kind>` of `table`. Until it does, the table as text, with
 /// a note saying so.
 export function chartOutputs(kind: ChartKind, table: Table): OutputPart[] {
-  return [plain([`${kind} chart: charts arrive with query modes (L3); the data is shown as text for now.`, ...tableText(table)])];
+  return [plain([`${kind} chart: a notebook does not draw charts yet (query Chart mode does); the data is shown as text.`, ...tableText(table)])];
 }
 
 /// The outputs of a cell run in `mode` that answered `data`. A console run

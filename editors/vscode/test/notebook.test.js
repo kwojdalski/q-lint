@@ -167,7 +167,7 @@ test("a cell's outputs follow its mode", () => {
   assert.deepStrictEqual(grid.items.map((i) => i.mime), ["text/html", "text/plain"]);
   const [chart] = cellOutputs({ mode: "chart", chart: "line" }, table);
   assert.deepStrictEqual(chart.items.map((i) => i.mime), ["text/plain"]);
-  assert.match(chart.items[0].text, /^line chart: charts arrive with query modes \(L3\)/);
+  assert.match(chart.items[0].text, /^line chart: a notebook does not draw charts yet/);
   assert.match(chart.items[0].text, /sym\| px/);
   assert.deepStrictEqual(cellOutputs({ mode: "console" }, { ok: true, type: -7, text: ["2"] }), [
     { kind: "items", items: [{ mime: "text/plain", text: "2" }] },
