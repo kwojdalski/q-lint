@@ -25,6 +25,7 @@ const SERVER = `
 t:([] sym:\`a\`b\`c; ts:2024.01.01D12:00:00.123456789+0 1 2; px:1.5 0n 3.5; note:(enlist "x";"<b>y</b>";enlist "z"); n:(1 2;\`a;"q"))
 kt:([k:1 2] v:\`x\`y)
 big:([] i:til 2000)
+sp:get (hsym \`$(string .z.f),"_db/sp/") set ([] s:("ab";enlist "c";"de"); n:1 2 3)
 `;
 
 function freePort() {
@@ -138,6 +139,19 @@ test("notebook cells against a real q process", { skip }, async (t) => {
     assert.deepStrictEqual(await data("1+1"), { ok: true, type: -7, text: ["2"] });
     const dict = await data("`a`b!1 2");
     assert.strictEqual(dict.type, 99);
+  });
+
+  await t.test("a splayed table on disk comes back as a table, its string column as strings", async () => {
+    // A table mapped from disk, as an HDB's splayed tables are; its string
+    // column is a mapped list (77h on KDB-X, 87h on PeachQ).
+    for (const rows of [1000, 2]) {
+      const answer = await data("sp", rows);
+      assert.ok(answer.table !== undefined, JSON.stringify(answer));
+      assert.deepStrictEqual(answer.table.columns, ["s", "n"]);
+      assert.deepStrictEqual(answer.table.data, [["ab", "c", "de"].slice(0, rows), ["1", "2", "3"].slice(0, rows)]);
+      assert.strictEqual(answer.table.total, 3);
+    }
+    assert.deepStrictEqual((await data("select from sp where n>1")).table.data[0], ["c", "de"]);
   });
 
   await t.test("a dictionary keyed by a table, with a list for its value, comes back as text", async () => {
