@@ -40,6 +40,8 @@ export interface InitializationOptions {
   format: { enable: boolean };
   semanticTokens: { enable: boolean };
   navigation: { enable: boolean };
+  callHierarchy: { enable: boolean };
+  graph: { enable: boolean };
   workspaceIndex: { enable: boolean; exclude: string[] };
 }
 
@@ -100,6 +102,8 @@ export function launch(settings: Settings, folder: string | undefined): Launch {
       format: { enable: settings.get<boolean>("format.enable", true) },
       semanticTokens: { enable: settings.get<boolean>("semanticTokens.enable", true) },
       navigation: { enable: settings.get<boolean>("navigation.enable", true) },
+      callHierarchy: { enable: settings.get<boolean>("callHierarchy.enable", true) },
+      graph: { enable: settings.get<boolean>("graph.enable", true) },
       workspaceIndex: {
         enable: settings.get<boolean>("workspaceIndex.enable", true),
         exclude: strings(settings, "workspaceIndex.exclude"),
@@ -121,6 +125,8 @@ const RESTARTING = [
   "format",
   "semanticTokens",
   "navigation",
+  "callHierarchy",
+  "graph",
   "workspaceIndex",
 ];
 

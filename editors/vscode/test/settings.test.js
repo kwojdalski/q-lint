@@ -35,6 +35,8 @@ test("the defaults start the server as it was started before settings", () => {
     format: { enable: true },
     semanticTokens: { enable: true },
     navigation: { enable: true },
+    callHierarchy: { enable: true },
+    graph: { enable: true },
     workspaceIndex: { enable: true, exclude: [] },
   });
 });
@@ -83,6 +85,8 @@ test("every editor-only setting reaches the server's options", () => {
       "format.enable": false,
       "semanticTokens.enable": false,
       "navigation.enable": false,
+      "callHierarchy.enable": false,
+      "graph.enable": false,
       "workspaceIndex.enable": false,
       "workspaceIndex.exclude": ["vendor/**"],
     }),
@@ -96,6 +100,8 @@ test("every editor-only setting reaches the server's options", () => {
     format: { enable: false },
     semanticTokens: { enable: false },
     navigation: { enable: false },
+    callHierarchy: { enable: false },
+    graph: { enable: false },
     workspaceIndex: { enable: false, exclude: ["vendor/**"] },
   });
 });

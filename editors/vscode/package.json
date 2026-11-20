@@ -154,6 +154,18 @@
           "order": 23,
           "markdownDescription": "Offer the outline, workspace symbols, **Go to Definition**, **Find All References**, occurrence highlights and renaming a lambda's parameter or local - all read from the source, never by running it. Off, q-lint announces none of them: turn it off when another q extension already navigates and both would answer."
         },
+        "q-lint.callHierarchy.enable": {
+          "type": "boolean",
+          "default": true,
+          "order": 26,
+          "markdownDescription": "Offer **Show Call Hierarchy** on a global function: the definitions and files that name it, and the workspace functions its own definition names. Read from the source, never by running it, so a name used as a value counts as a call and a call made through a string is not seen. Off, q-lint does not announce it."
+        },
+        "q-lint.graph.enable": {
+          "type": "boolean",
+          "default": true,
+          "order": 27,
+          "markdownDescription": "Offer the **q Dependencies** view - the files the active q file depends on and those depending on it - and **q-lint: List Affected Tests**, the test files that reach a q file changed against git HEAD. Both are what `qlinter analyze graph` prints. Off, the server answers neither and the view is hidden."
+        },
         "q-lint.workspaceIndex.enable": {
           "type": "boolean",
           "default": true,
@@ -187,8 +199,44 @@
         "command": "q-lint.restartServer",
         "title": "Restart Server",
         "category": "q-lint"
+      },
+      {
+        "command": "q-lint.showDependencies",
+        "title": "Show Dependencies",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.refreshDependencies",
+        "title": "Refresh Dependencies",
+        "category": "q-lint",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "q-lint.listAffectedTests",
+        "title": "List Affected Tests",
+        "category": "q-lint"
       }
-    ]
+    ],
+    "views": {
+      "explorer": [
+        {
+          "id": "q-lint.dependencies",
+          "name": "q Dependencies",
+          "contextualTitle": "q-lint",
+          "when": "q-lint.hasGraph",
+          "visibility": "collapsed"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "q-lint.refreshDependencies",
+          "when": "view == q-lint.dependencies",
+          "group": "navigation"
+        }
+      ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
