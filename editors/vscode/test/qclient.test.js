@@ -528,3 +528,50 @@ test("an answer split anywhere, or sent with others in one chunk, is read whole"
   assert.strictEqual(await connection.call("x"), "answer 1");
   assert.strictEqual(await connection.call("x"), "answer 2");
 });
+
+// A root name that is not a namespace: kdb+ lists `.cfg:42` in `key \``
+// (PeachQ does not), and the explorer read its "names" with `key 42`,
+// `til 42`, failing the whole call with 'type.
+test("the explorer's call skips a dotted root name that is not a namespace", { skip }, async (t) => {
+  const q = await startQ("x:1;\n.cfg:42;\n.tbl:([]a:1 2);\n.kt:([k:1 2]v:3 4);\n.ok.y:2;\n");
+  t.after(() => q.stop());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  t.after(() => connection.close());
+  const g = readGathered(await connection.call(GATHER, EXCLUDED, LIMITS));
+  assert.deepStrictEqual(g.spaces.map((s) => s.ns).sort(), [".", ".ok"]);
+  assert.deepStrictEqual(g.entries.map((e) => `${e.ns} ${e.name}`).sort(), [". x", ".ok y"]);
+});
+
+// A partition missing one table's directory (what `.Q.chk` repairs): the
+// table still serves the other dates, but `.Q.cn` fails on it, and that
+// failed the whole explorer call.
+const DAMAGED = (dir) => `
+{[d;dt] .Q.dd[d;dt,\`trade\`] set .Q.en[d] ([] sym:\`a\`b\`c; px:1.5 2.5 3.5)}[hsym \`$"${dir}/hdb"] each 2024.01.02;
+system "mkdir -p ${dir}/hdb/2024.01.01";
+system "l ${dir}/hdb";
+x:1;
+`;
+
+test("the explorer's call survives a partitioned table it cannot count", { skip }, async (t) => {
+  const q = await startQ(DAMAGED);
+  t.after(() => q.stop());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  t.after(() => connection.close());
+  const g = readGathered(await connection.call(GATHER, EXCLUDED, LIMITS));
+  const trade = g.entries.find((e) => e.name === "trade");
+  assert.deepStrictEqual([trade.kind, trade.count, trade.partitioned, trade.cols], ["table", null, true, ["date", "sym", "px"]]);
+  assert.ok(g.entries.some((e) => e.name === "x"));
+  const tables = explorerTree(g, []).find((n) => n.label === ".").children.find((c) => c.label === "Tables");
+  assert.strictEqual(tables.children.find((c) => c.label === "trade").description, "rows not counted · 3 columns");
+});
+
+test("preview reads a name q cannot parse, by its symbol", { skip }, async (t) => {
+  const q = await startQ('(`$"caf\u00e9") set ([] a:7 8 9);\n(`$"a b") set 42;\n');
+  t.after(() => q.stop());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  t.after(() => connection.close());
+  const table = await connection.query([previewCode({ kind: "table", name: "caf\u00e9" }, 2)], SIZE);
+  assert.ok(table.ok && table.text.some((l) => l.trim() === "8"), JSON.stringify(table));
+  const variable = await connection.query([previewCode({ kind: "variable", name: "a b" }, 2)], SIZE);
+  assert.deepStrictEqual([variable.ok, variable.text], [true, ["42"]]);
+});

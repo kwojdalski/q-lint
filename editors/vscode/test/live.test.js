@@ -14,6 +14,7 @@ const {
   parseTags,
   portProblem,
   processThemeColour,
+  readProcessFile,
   tagColour,
 } = require("../out/processes.js");
 const { NULL_TYPE, RUN, readAnswer, render } = require("../out/query.js");
@@ -164,6 +165,12 @@ test("a process list is read, and what is wrong with it is said", () => {
   assert.strictEqual(parseProcesses([{ label: "a", host: "h", port: 1 }]).processes.length, 1);
   assert.match(parseProcesses({ nope: 1 }).problems[0], /Expected a list/);
   assert.match(parseProcesses(null).problems[0], /Expected a list/);
+});
+
+test("a process file is read with a byte order mark and CRLF line ends", () => {
+  const text = '\uFEFF{"processes": [\r\n  {"label": "rdb", "host": "h", "port": 5011}\r\n]}\r\n';
+  assert.deepStrictEqual(readProcessFile(text), { processes: [{ label: "rdb", host: "h", port: 5011, tags: [] }], problems: [] });
+  assert.throws(() => readProcessFile("{nope"), SyntaxError);
 });
 
 test("an import replaces processes of the same label and adds the rest", () => {

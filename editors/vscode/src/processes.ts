@@ -97,6 +97,13 @@ export function parseProcesses(json: unknown): { processes: Process[]; problems:
   return { processes, problems };
 }
 
+/// The processes a process file lists, as `parseProcesses` reads them. A
+/// byte order mark, which Windows editors write, is skipped. Throws a
+/// SyntaxError when the text is not JSON.
+export function readProcessFile(text: string): { processes: Process[]; problems: string[] } {
+  return parseProcesses(JSON.parse(text.replace(/^\uFEFF/, "")));
+}
+
 /// `processes` merged with `incoming`: an incoming process replaces the one
 /// of its label, and the rest are added after.
 export function merge(processes: Process[], incoming: Process[]): Process[] {
@@ -166,7 +173,8 @@ export function tagColours(value: unknown): Record<string, string> {
   for (const [tag, colour] of Object.entries(value as Record<string, unknown>)) {
     const key = tag.trim().toLowerCase();
     if (key !== "" && typeof colour === "string" && COLOUR_ID.test(colour.trim())) {
-      out[key] = colour.trim();
+      // Defined, not assigned: `out.__proto__ = ...` would set nothing.
+      Object.defineProperty(out, key, { value: colour.trim(), enumerable: true, writable: true, configurable: true });
     }
   }
   return out;
@@ -175,9 +183,10 @@ export function tagColours(value: unknown): Record<string, string> {
 /// The ThemeColor id a tag is shown in: the setting's, else the built-in
 /// (`tagColour`), else none.
 export function tagThemeColour(tag: string, overrides: Record<string, string>): string | undefined {
-  const own = overrides[tag.toLowerCase()];
-  if (own !== undefined) {
-    return own;
+  // Own keys only: a tag named `constructor` is not Object's.
+  const key = tag.toLowerCase();
+  if (Object.prototype.hasOwnProperty.call(overrides, key)) {
+    return overrides[key];
   }
   const builtIn = tagColour(tag);
   return builtIn === undefined ? undefined : BUILT_IN[builtIn];

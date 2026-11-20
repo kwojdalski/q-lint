@@ -37,6 +37,7 @@ import {
   parseTags,
   portProblem,
   processThemeColour,
+  readProcessFile,
   tlsChoices,
   type Process,
 } from "./processes";
@@ -765,14 +766,14 @@ export class Live {
     if (files === undefined || files.length === 0) {
       return;
     }
-    let json: unknown;
+    let read: { processes: Process[]; problems: string[] };
     try {
-      json = JSON.parse(Buffer.from(await workspace.fs.readFile(files[0])).toString("utf8"));
+      read = readProcessFile(Buffer.from(await workspace.fs.readFile(files[0])).toString("utf8"));
     } catch (error) {
       void window.showErrorMessage(`q-lint: could not read ${files[0].fsPath}: ${String(error)}`);
       return;
     }
-    const { processes, problems } = parseProcesses(json);
+    const { processes, problems } = read;
     await this.save(merge(this.processes(), processes));
     const note = problems.length ? ` Skipped ${problems.length}: ${problems.slice(0, 3).join(" ")}` : "";
     void window.showInformationMessage(`q-lint: imported ${processes.length} q process(es).${note}`);
@@ -831,7 +832,13 @@ export class Live {
       }
       await this.context.secrets.store(passwordKey(process.label), password);
     }
-    return this.open(process);
+    const connected = await this.open(process);
+    // A discovered process cannot be edited, so a password that did not
+    // connect is forgotten: the next connect asks for it again.
+    if (!connected && !saved && process.user) {
+      await this.context.secrets.delete(passwordKey(process.label));
+    }
+    return connected;
   }
 
   /// Connect to `process`, closing the connection there was. Whether it
@@ -839,7 +846,8 @@ export class Live {
   private open(process: Process): Promise<boolean> {
     if (this.connecting !== undefined) {
       // A connect to another process - a reconnect after an abort, waiting
-      // for that process to be free - is let finish, and this one follows.
+      // for that process to be free - is let finish and this one follows:
+      // its result says nothing of this process.
       return this.connectingTo === process.label ? this.connecting : this.connecting.then(() => this.open(process));
     }
     this.connectingTo = process.label;

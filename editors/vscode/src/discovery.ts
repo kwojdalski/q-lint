@@ -32,6 +32,8 @@ export const EMPTY_STATE: ServerState = { processes: [], problems: [], loading: 
 /// The longest a fetch waits for the whole answer, and the most it reads.
 export const FETCH_TIMEOUT_MS = 10_000;
 export const MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
+/// The most redirects a fetch follows; the auth header only to its origin.
+const MAX_REDIRECTS = 20;
 
 /// Why `label` cannot name a discovery server, or undefined when it can.
 /// A `/` would make a qualified label (`server/process`) ambiguous.
@@ -109,8 +111,9 @@ export interface FetchOptions {
 }
 
 /// The processes `url` lists, and what was wrong with the entries it skipped.
-/// The answer must be a 2xx, `application/json`, at most `maxBytes` long and
-/// all in within `timeoutMs`; a list of processes or `{processes: [...]}`.
+/// The answer must be a 2xx, `application/json` (UTF-8, or the charset it
+/// names), at most `maxBytes` long and all in within `timeoutMs`; a list
+/// of processes or `{processes: [...]}`.
 /// Throws an Error saying, in a few words, what went wrong otherwise.
 export async function fetchProcesses(url: string, options: FetchOptions = {}): Promise<{ processes: Process[]; problems: string[] }> {
   const timeoutMs = options.timeoutMs ?? FETCH_TIMEOUT_MS;
@@ -120,18 +123,42 @@ export async function fetchProcesses(url: string, options: FetchOptions = {}): P
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const timedOut = (): Error => new Error(`no answer within ${timeoutMs / 1000} s`);
   try {
+    // Redirects are followed here rather than by fetch, which strips only
+    // `Authorization` on the way to another origin: a secret sent under its
+    // own name (`X-Api-Key: ...`) would go to wherever the server pointed.
     let response: Response;
-    try {
-      response = await fetch(url, {
-        headers: { Accept: "application/json", ...(header ? { [header[0]]: header[1] } : {}) },
-        signal: controller.signal,
-      });
-    } catch (error) {
-      if (controller.signal.aborted) {
-        throw timedOut();
+    let at = url;
+    let send = header;
+    for (let hops = 0; ; hops++) {
+      try {
+        response = await fetch(at, {
+          headers: { Accept: "application/json", ...(send ? { [send[0]]: send[1] } : {}) },
+          signal: controller.signal,
+          redirect: "manual",
+        });
+      } catch (error) {
+        if (controller.signal.aborted) {
+          throw timedOut();
+        }
+        const cause = error instanceof Error && error.cause instanceof Error ? error.cause.message : String(error);
+        throw new Error(`could not reach it: ${cause}`);
       }
-      const cause = error instanceof Error && error.cause instanceof Error ? error.cause.message : String(error);
-      throw new Error(`could not reach it: ${cause}`);
+      const location = response.headers.get("location");
+      if (![301, 302, 303, 307, 308].includes(response.status) || location === null) {
+        break;
+      }
+      await response.body?.cancel().catch(() => {});
+      if (hops === MAX_REDIRECTS) {
+        throw new Error(`it redirected more than ${MAX_REDIRECTS} times`);
+      }
+      const next = new URL(location, at);
+      if (next.protocol !== "http:" && next.protocol !== "https:") {
+        throw new Error(`it redirected to ${next.protocol} URL`);
+      }
+      if (next.origin !== new URL(at).origin) {
+        send = undefined;
+      }
+      at = next.href;
     }
     const refuse = async (why: string): Promise<never> => {
       controller.abort();
@@ -141,7 +168,8 @@ export async function fetchProcesses(url: string, options: FetchOptions = {}): P
     if (!response.ok) {
       await refuse(`it answered ${response.status}${response.statusText ? ` ${response.statusText}` : ""}`);
     }
-    const type = (response.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+    const contentType = response.headers.get("content-type") ?? "";
+    const type = contentType.split(";")[0].trim().toLowerCase();
     if (type !== "application/json") {
       await refuse(`it answered ${type === "" ? "with no content type" : type}, not application/json`);
     }
@@ -164,13 +192,24 @@ export async function fetchProcesses(url: string, options: FetchOptions = {}): P
     }
     let json: unknown;
     try {
-      json = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      json = JSON.parse(decode(Buffer.concat(chunks), contentType));
     } catch (error) {
       throw new Error(`its answer is not JSON: ${error instanceof Error ? error.message : String(error)}`);
     }
     return parseProcesses(json);
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/// `bytes` as text in the charset `contentType` names, UTF-8 when it names
+/// none or one TextDecoder does not know; a byte order mark is dropped.
+function decode(bytes: Uint8Array, contentType: string): string {
+  const charset = /;\s*charset\s*=\s*"?([^";\s]+)/i.exec(contentType)?.[1];
+  try {
+    return new TextDecoder(charset ?? "utf-8").decode(bytes);
+  } catch {
+    return new TextDecoder("utf-8").decode(bytes);
   }
 }
 

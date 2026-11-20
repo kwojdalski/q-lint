@@ -5,7 +5,9 @@
 //
 // Like a query (`query.ts`), the call is one lambda sent with its arguments,
 // and nothing is defined on the process. It walks the namespaces breadth
-// first from the root and `key \``, skipping the excluded ones, and answers
+// first from the root and `key \``, skipping the excluded ones and any
+// dotted root name that is not a dictionary of names (kdb+ lists `.cfg:42`
+// in `key \``), and answers
 //
 //   rows    one per name: ns, name, kind (table, function or variable), type,
 //           count, cols, keys, params, partitioned
@@ -20,7 +22,8 @@
 // A partitioned table is never loaded to count it: `.Q.cn` reads each
 // partition's count, and keeps it in `.Q.pn` - kdb+'s own cache, which
 // `count` or a select on the table fills the same way - so a second refresh
-// costs nothing. A row says when its count came that way.
+// costs nothing. A row says when its count came that way; a table it
+// cannot count (a partition missing its directory) is not counted.
 //
 // The limits arrive as floats, a JavaScript number being sent as one, and
 // are made long there; counts go back as floats, which the IPC client reads
@@ -35,6 +38,7 @@ export const GATHER = [
   "{[ex;lim]",
   " n:\"j\"$lim 0;m:\"j\"$lim 1;",
   " todo:`.,` sv'`,'asc(key`)except(`$\" \" vs ex),`;",
+  " todo:todo where{$[99h=type d:@[get;x;0];11h=type key d;0b]}each todo;",
   " seen:`$();rows:();spaces:();",
   " while[(count todo)&m>count seen;",
   "  ns:first todo;todo:1_todo;seen,:ns;",
@@ -45,10 +49,10 @@ export const GATHER = [
   "  k:k except kids;",
   "  spaces,:enlist`ns`total!(ns;\"f\"$count k);",
   "  rows,:{[ns;n;nm;x]",
-  "   t:type x;tb:.Q.qt x;fn:t within 100 112h;part:$[tb;1b~.Q.qp x;0b];",
+  "   t:type x;tb:$[98h=t;1b;.Q.qt x];fn:t within 100 112h;part:$[tb;1b~.Q.qp x;0b];",
   "   `ns`name`kind`type`count`cols`keys`params`partitioned!(ns;nm;",
   "    $[tb;`table;fn;`function;`variable];t;",
-  "    \"f\"$$[fn;0N;part;sum .Q.cn x;count x];",
+  "    \"f\"$$[fn;0N;part;@[{sum .Q.cn x};x;0n];count x];",
   "    $[tb;n sublist(),cols x;`$()];",
   "    $[tb&99h=t;(),keys x;`$()];",
   "    $[100h=t;@[{(),(value x)1};x;{`$()}];`$()];",
@@ -211,7 +215,7 @@ export interface Node {
 
 function tableNode(e: Entry): Node {
   const rows = e.count === null ? "rows not counted" : plural(e.count, "row");
-  const how = e.partitioned ? " (partitioned, counted by .Q.cn)" : "";
+  const how = e.partitioned && e.count !== null ? " (partitioned, counted by .Q.cn)" : "";
   return {
     kind: "table",
     label: e.name,
@@ -284,24 +288,81 @@ export function explorerTree(g: Gathered, excluded: string[]): Node[] {
 /// The code Preview runs: the first `limit` rows of a table, or a variable
 /// whole - the output cuts it to the console size. A partitioned table is
 /// read by `.Q.ind`, since `sublist` and `select[n]` refuse one, and only
-/// those rows are read.
+/// those rows are read. A name q cannot parse is read by its symbol.
 export function previewCode(node: Pick<Node, "kind" | "name" | "partitioned">, limit: number): string | undefined {
   if (node.name === undefined) {
     return undefined;
   }
+  const name = qName(node.name);
   if (node.kind === "table") {
-    return node.partitioned ? `.Q.ind[${node.name};til ${limit}&count ${node.name}]` : `${limit} sublist ${node.name}`;
+    return node.partitioned ? `.Q.ind[${name};til ${limit}&count ${name}]` : `${limit} sublist ${name}`;
   }
-  return node.kind === "variable" ? node.name : undefined;
+  return node.kind === "variable" ? name : undefined;
+}
+
+/// `name` as q code reads it: as written when q parses it as a name, else
+/// by its symbol - `set` makes a name of any symbol, `café` or `a b`.
+function qName(name: string): string {
+  return /^\.?[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)*$/.test(name)
+    ? name
+    : `get\`$"${name.replace(/[\\"]/g, (c) => `\\${c}`)}"`;
+}
+
+/// What each character of q `text` is: `c` code, `s` inside a string (from
+/// its opening quote; the closing one is code), `y` a symbol, `m` a comment
+/// - a line from a `/` that starts it or follows a space or tab.
+export function charKinds(text: string): string {
+  let out = "";
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    const lineStart = i === 0 || text[i - 1] === "\n";
+    if (ch === "/" && (lineStart || text[i - 1] === " " || text[i - 1] === "\t")) {
+      const end = text.indexOf("\n", i);
+      const stop = end === -1 ? text.length : end;
+      out += "m".repeat(stop - i);
+      i = stop;
+    } else if (ch === "\"") {
+      let j = i + 1;
+      while (j < text.length && text[j] !== "\"") {
+        j += text[j] === "\\" ? 2 : 1;
+      }
+      j = Math.min(j, text.length);
+      out += "s".repeat(j - i) + (j < text.length ? "c" : "");
+      i = j + 1;
+    } else if (ch === "`") {
+      let j = i + 1;
+      while (j < text.length && /[\w.:/]/.test(text[j])) {
+        j++;
+      }
+      out += "y".repeat(j - i);
+      i = j;
+    } else {
+      out += "c";
+      i++;
+    }
+  }
+  return out;
+}
+
+/// Whether the cursor at `offset` in `text` is typing code: not inside a
+/// string or a comment.
+export function inCode(text: string, offset: number): boolean {
+  const kind = charKinds(text.slice(0, offset)).slice(-1);
+  return kind !== "s" && kind !== "m";
 }
 
 /// The table a qSQL statement reads, when `offset` is inside one in `text`:
 /// the nearest `select`, `exec`, `update` or `delete` before the cursor, and
-/// the first `from t` after it, which may come before the cursor or after
-/// it (`select | from t`). Undefined outside a statement, or once a `;` at
-/// the statement's own bracket depth has ended it.
+/// the first `from t` after it in the same statement, which may come before
+/// the cursor or after it (`select | from t`). Undefined outside a
+/// statement, or once a `;` at the statement's own bracket depth has ended
+/// it. Strings, symbols and comments are not read: `\`delete` and
+/// `"update"` are no keyword, and a `;` in a string ends nothing.
 export function qsqlTable(text: string, offset: number): string | undefined {
-  const before = text.slice(0, offset);
+  const kinds = charKinds(text);
+  const code = [...text].map((ch, i) => (kinds[i] === "c" ? ch : " ")).join("");
+  const before = code.slice(0, offset);
   let keyword: RegExpExecArray | undefined;
   for (const m of before.matchAll(/(?<![\w.])(select|exec|update|delete)(?![\w.])/g)) {
     keyword = m as RegExpExecArray;
@@ -310,23 +371,25 @@ export function qsqlTable(text: string, offset: number): string | undefined {
     return undefined;
   }
   const start = keyword.index + keyword[0].length;
-  const from = /(?<![\w.])from\s+(\.?[A-Za-z][\w.]*)/.exec(text.slice(start));
-  if (from === null) {
-    return undefined;
-  }
-  // A `;` between the keyword and the cursor, outside brackets opened after
-  // the keyword, ends the statement.
+  // Where the statement ends: a `;` outside brackets opened after the keyword.
   let depth = 0;
-  for (const ch of before.slice(start)) {
+  let end = code.length;
+  for (let i = start; i < code.length; i++) {
+    const ch = code[i];
     if ("([{".includes(ch)) {
       depth++;
     } else if (")]}".includes(ch)) {
       depth--;
     } else if (ch === ";" && depth <= 0) {
-      return undefined;
+      end = i;
+      break;
     }
   }
-  return from[1];
+  if (end < offset) {
+    return undefined;
+  }
+  const from = /(?<![\w.])from\s+(\.?[A-Za-z][\w.]*)/.exec(code.slice(start, end));
+  return from === null ? undefined : from[1];
 }
 
 /// The columns of the table `name` names, as q code would name it there.

@@ -48,8 +48,12 @@ interface ServerFields {
 
 export class DiscoveryServers {
   private readonly states = new Map<string, ServerState>();
-  /// The fetch in progress per server, so a second Reload waits for it.
-  private readonly inFlight = new Map<string, Promise<void>>();
+  /// The fetch in progress per server, of which URL and after how many
+  /// removals, so a second Reload waits for it.
+  private readonly inFlight = new Map<string, { url: string; removals: number; done: Promise<void> }>();
+  /// Bumped per server by Remove Processes, so a fetch out at the time
+  /// does not bring them back.
+  private readonly removals = new Map<string, number>();
   private timer: ReturnType<typeof setInterval> | undefined;
   private readonly changed = new EventEmitter<void>();
   /// Fired when a server or what it lists changes: what the view refreshes on.
@@ -117,9 +121,13 @@ export class DiscoveryServers {
   /// Fetch `server` and keep what it answered. A failure is kept as its
   /// state and shown under its row, never in a message.
   private fetch(server: DiscoveryServer): Promise<void> {
+    const removals = this.removals.get(server.label) ?? 0;
     const running = this.inFlight.get(server.label);
     if (running !== undefined) {
-      return running;
+      // One of the URL the server had before an edit, or from before its
+      // processes were removed, will not be kept: this one follows it.
+      const same = running.url === server.url && running.removals === removals;
+      return same ? running.done : running.done.then(() => this.fetch(server));
     }
     const before = this.states.get(server.label) ?? EMPTY_STATE;
     this.set(server.label, { ...before, loading: true, removed: false });
@@ -133,13 +141,14 @@ export class DiscoveryServers {
         const message = error instanceof Error ? error.message : String(error);
         state = { processes: [], problems: [], error: message, loading: false, fetchedAt: Date.now(), removed: false };
       }
-      // A server edited or deleted meanwhile keeps what its new URL answers.
+      // A server edited or deleted meanwhile keeps what its new URL answers,
+      // and one whose processes were removed meanwhile stays so.
       const now = this.servers().find((s) => s.label === server.label);
-      if (now?.url === server.url) {
+      if (now?.url === server.url && (this.removals.get(server.label) ?? 0) === removals) {
         this.set(server.label, state);
       }
     })().finally(() => this.inFlight.delete(server.label));
-    this.inFlight.set(server.label, done);
+    this.inFlight.set(server.label, { url: server.url, removals, done });
     return done;
   }
 
@@ -332,6 +341,7 @@ export class DiscoveryServers {
   private async forget(arg?: ServerArg): Promise<void> {
     const server = await this.chosen(arg, "Remove the processes of which discovery server?");
     if (server !== undefined) {
+      this.removals.set(server.label, (this.removals.get(server.label) ?? 0) + 1);
       this.set(server.label, { ...EMPTY_STATE, removed: true });
     }
   }
