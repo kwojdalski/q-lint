@@ -1,0 +1,194 @@
+// One connection to a q process, as promises.
+//
+// Values are encoded and decoded by node-q's codec (MIT,
+// github.com/michaelwittig/node-q): every q type, and compressed messages.
+// The connection around it is this file's, because an editor needs what
+// node-q's own does not give: a connect that gives up and closes what it
+// opened, one query at a time, and an abort that is immediate.
+//
+// The protocol (code.kx.com/q/basics/ipc): the client sends `user:password`,
+// a capability byte and a NUL; the process answers one byte, or closes the
+// socket to refuse. Each message after that has an 8-byte header - byte 0
+// the byte order (1, little-endian), byte 1 the type (0 async, 1 sync,
+// 2 response), bytes 4-7 the whole length - and a body.
+import * as net from "node:net";
+import * as tls from "node:tls";
+import { deserialize, serialize } from "node-q/lib/c.js";
+import { RUN, readAnswer, type Answer } from "./query";
+
+export interface Target {
+  host: string;
+  port: number;
+  user?: string;
+  password?: string;
+  tls?: boolean;
+}
+
+/// How long a connect may take before it is given up.
+export const CONNECT_TIMEOUT_MS = 10_000;
+/// Compression, timestamps and timespans, and GUIDs: what a kdb+ 3 client
+/// announces.
+const CAPABILITY = 3;
+const SYNC = 1;
+const RESPONSE = 2;
+
+export class QConnection {
+  private buffer: Buffer = Buffer.alloc(0);
+  private pending: { resolve: (v: unknown) => void; reject: (e: Error) => void } | undefined;
+  private closed = false;
+  private readonly onClose: (() => void)[] = [];
+
+  private constructor(private readonly socket: net.Socket) {
+    socket.on("data", (chunk) => this.received(chunk));
+    socket.on("close", () => this.closedNow());
+    // An error is followed by a close, which is what callers hear.
+    socket.on("error", () => {});
+  }
+
+  /// Open a connection, or reject with why not within `timeoutMs`. A
+  /// connect given up is closed, so nothing is left open behind it.
+  static open(target: Target, timeoutMs: number = CONNECT_TIMEOUT_MS): Promise<QConnection> {
+    return new Promise((resolve, reject) => {
+      const options = { host: target.host, port: target.port };
+      const socket = target.tls
+        ? tls.connect({ ...options, servername: net.isIP(target.host) ? undefined : target.host })
+        : net.connect(options);
+      let settled = false;
+      const fail = (error: Error): void => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          socket.destroy();
+          reject(error);
+        }
+      };
+      const timer = setTimeout(
+        () => fail(new Error(`no answer from ${target.host}:${target.port} in ${timeoutMs / 1000} s`)),
+        timeoutMs,
+      );
+      socket.once("error", fail);
+      // A process that refuses the user closes the socket without a byte.
+      socket.once("close", () => fail(new Error(`${target.host}:${target.port} closed the connection: the user or password was refused`)));
+      socket.once(target.tls ? "secureConnect" : "connect", () => {
+        const auth = target.user !== undefined ? `${target.user}:${target.password ?? ""}` : "";
+        socket.write(Buffer.concat([Buffer.from(auth, "utf8"), Buffer.from([CAPABILITY, 0])]));
+      });
+      socket.once("data", (chunk: Buffer) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timer);
+        socket.removeAllListeners();
+        const connection = new QConnection(socket);
+        // Anything after the capability byte is already a message.
+        if (chunk.length > 1) {
+          connection.received(chunk.subarray(1));
+        }
+        resolve(connection);
+      });
+    });
+  }
+
+  get isOpen(): boolean {
+    return !this.closed;
+  }
+
+  get isBusy(): boolean {
+    return this.pending !== undefined;
+  }
+
+  /// Run `statements` on the process and read the answer.
+  query(statements: string[], size: [number, number]): Promise<Answer> {
+    return this.call(RUN, statements, size).then(readAnswer);
+  }
+
+  /// Send `expression` applied to `args` as a sync message, and resolve with
+  /// what q answers. One at a time: q answers a handle's messages in order,
+  /// so a second would only wait behind the first.
+  call(expression: string, ...args: unknown[]): Promise<unknown> {
+    if (this.closed) {
+      return Promise.reject(new Error("the connection is closed"));
+    }
+    if (this.pending !== undefined) {
+      return Promise.reject(new Error("a query is already running on this connection"));
+    }
+    const message: Buffer = serialize(args.length === 0 ? expression : [expression, ...args]);
+    message.writeUInt8(SYNC, 1);
+    return new Promise((resolve, reject) => {
+      this.pending = { resolve, reject };
+      this.socket.write(message);
+    });
+  }
+
+  /// Close now, a query running or not: the only way to stop waiting for
+  /// one, since q has no message that cancels a query.
+  abort(): void {
+    this.socket.destroy();
+    this.closedNow();
+  }
+
+  /// Close, letting the process see a clean end.
+  close(): Promise<void> {
+    if (this.closed) {
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      this.whenClosed(resolve);
+      this.socket.end();
+      // A process that does not close its side is not waited for.
+      setTimeout(() => this.abort(), 2000).unref();
+    });
+  }
+
+  /// Run `listener` once, when this connection closes for any reason.
+  whenClosed(listener: () => void): void {
+    if (this.closed) {
+      listener();
+    } else {
+      this.onClose.push(listener);
+    }
+  }
+
+  private received(chunk: Buffer): void {
+    this.buffer = this.buffer.length === 0 ? chunk : Buffer.concat([this.buffer, chunk]);
+    while (this.buffer.length >= 8) {
+      const length = this.buffer.readUInt32LE(4);
+      if (this.buffer.length < length) {
+        return;
+      }
+      const message = this.buffer.subarray(0, length);
+      this.buffer = this.buffer.subarray(length);
+      // Only a response answers a query. Async messages the user's code
+      // sends back (`neg[.z.w] x`) are not results, and are dropped.
+      if (message.readUInt8(1) !== RESPONSE) {
+        continue;
+      }
+      const pending = this.pending;
+      this.pending = undefined;
+      if (pending === undefined) {
+        continue;
+      }
+      try {
+        pending.resolve(deserialize(message, false, true, false, false));
+      } catch (error) {
+        // A q error arrives as a message of type -128, which the codec
+        // throws as an Error holding q's text.
+        pending.reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    }
+  }
+
+  private closedNow(): void {
+    if (this.closed) {
+      return;
+    }
+    this.closed = true;
+    const pending = this.pending;
+    this.pending = undefined;
+    pending?.reject(new Error("the connection closed before the process answered"));
+    for (const listener of this.onClose.splice(0)) {
+      listener();
+    }
+  }
+}

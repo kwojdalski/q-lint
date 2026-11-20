@@ -6,12 +6,15 @@ const test = require("node:test");
 const assert = require("node:assert");
 const path = require("node:path");
 const pkg = require("../package.json");
+// The server's settings: the first section. The second holds the query
+// settings, which never reach it (`liveconfig.ts`, tested in live.test.js).
+const serverSettings = pkg.contributes.configuration[0].properties;
 const { launch, needsRestart } = require("../out/settings.js");
 
 // A WorkspaceConfiguration over `user`, the values a user set, falling back
 // to the defaults package.json declares - as VS Code's does.
 function configuration(user = {}) {
-  const declared = pkg.contributes.configuration.properties;
+  const declared = serverSettings;
   return {
     get(key, fallback) {
       if (key in user) return user[key];
@@ -118,7 +121,7 @@ test("an unknown run mode falls back to linting on type", () => {
 });
 
 test("every setting but the trace level restarts the server", () => {
-  const declared = Object.keys(pkg.contributes.configuration.properties);
+  const declared = Object.keys(serverSettings);
   for (const key of declared) {
     // VS Code reports a change to `q-lint.lint.run` as affecting it and
     // every section above it.
@@ -143,7 +146,7 @@ test("every declared setting is read", () => {
     },
   };
   launch(spy, undefined);
-  for (const key of Object.keys(pkg.contributes.configuration.properties)) {
+  for (const key of Object.keys(serverSettings)) {
     const short = key.replace(/^q-lint\./, "");
     // The trace level is read by the language client itself, by its id.
     if (short === "trace.server") continue;
