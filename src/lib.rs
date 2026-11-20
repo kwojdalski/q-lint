@@ -445,6 +445,163 @@ fn query_argument_end(
     (cut > from).then_some(cut)
 }
 
+/// Where the right operand of an infix operator ends, the operand starting
+/// at `from`. q evaluates right to left, so it runs to the end of the
+/// expression the operator sits in, as a prefix argument does - except in a
+/// qSQL template, where the phrase it is written in ends first. Parse trees
+/// compared in KDB-X (#847):
+///
+/// - after `select`, `exec`, `update` or `delete` it ends at the phrase's own
+///   comma, or at `by` or `from`; after `by`, at the comma or at `from`;
+/// - after `where`, at the comma, or where the template does;
+/// - after `from` it runs to `where`, or to the template's end: the table is
+///   one expression, and a comma in it is a join.
+///
+/// A comma inside brackets of the operand's own is a join everywhere. With
+/// no template open round the operand, one that opens inside it is part of
+/// it - `r:a*b+exec c from t` is `a*(b+exec c from t)` - and `from`, `by` and
+/// `where` are names like any other. `None` where the end cannot be told: a
+/// template opening inside the operand of another's phrase, whose table then
+/// takes the commas after it (`where a*b+exec c from u, d` is one
+/// constraint), or a qSQL word where no phrase expects one.
+fn operand_end(v: &Views, source: &str, from: usize) -> Option<usize> {
+    let end = argument_end(&v.code, &v.comments, source, from)?;
+    let bytes = v.code.as_bytes();
+    // Where the expression starts: after the bracket that opens round the
+    // operand, a `;` at its depth, or a newline its statement does not
+    // continue past. Indentation is read on the source, as `argument_end`
+    // reads it: a line that starts with a string looks indented in `code`.
+    let (mut depth, mut unit) = (0usize, from);
+    while unit > 0 {
+        match bytes[unit - 1] {
+            b')' | b']' | b'}' => depth += 1,
+            b'(' | b'[' | b'{' if depth == 0 => break,
+            b'(' | b'[' | b'{' => depth -= 1,
+            b';' if depth == 0 => break,
+            b'\n' if depth == 0 && !continues_after(&v.comments, source, unit - 1) => break,
+            _ => {}
+        }
+        unit -= 1;
+    }
+    // A symbol may spell a qSQL word and is none: `` `:db/select ``.
+    let words = unsymbolled(&v.code[unit..end]);
+    let word = |at: usize| query_word(&words, at - unit);
+    // The phrase the operand is written in: the last qSQL word before it at
+    // its depth that the phrase before could be followed by. `where` is the
+    // function anywhere but after `from`: `select v:f c where e from t`.
+    let (mut depth, mut phrase) = (0usize, None);
+    for (at, byte) in bytes.iter().enumerate().take(from).skip(unit) {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            _ if depth == 0 => {
+                phrase = match (phrase, word(at)) {
+                    (_, Some(head @ ("select" | "exec" | "update" | "delete"))) => Some(head),
+                    (None, _) | (_, None) => phrase,
+                    (Some("from"), Some("where")) => Some("where"),
+                    (_, Some("where")) => phrase,
+                    (Some("from" | "where"), _) | (Some("by"), Some("by")) => return None,
+                    (_, next) => next,
+                }
+            }
+            _ => {}
+        }
+    }
+    let Some(phrase) = phrase else {
+        return Some(end);
+    };
+    let (mut depth, mut at) = (0usize, from);
+    while at < end {
+        match bytes[at] {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            b',' if depth == 0 && phrase != "from" => break,
+            _ if depth == 0 => match (phrase, word(at)) {
+                (_, None) => {}
+                ("from", Some("where")) => break,
+                (_, Some("where")) => {}
+                ("from" | "where", _) => return None,
+                ("by", Some("from")) => break,
+                ("by", _) => return None,
+                (_, Some("by" | "from")) => break,
+                _ => return None,
+            },
+            _ => {}
+        }
+        at += 1;
+    }
+    // A column or grouping phrase is closed by `from`; one that is not has
+    // been misread.
+    if at == end && !matches!(phrase, "from" | "where") {
+        return None;
+    }
+    let (raw, comments) = (source.as_bytes(), v.comments.as_bytes());
+    while at > from && (raw[at - 1].is_ascii_whitespace() || comments[at - 1] == b' ') {
+        at -= 1;
+    }
+    (at > from).then_some(at)
+}
+
+/// The right operand of the infix operator at `op`, as the range a pair of
+/// parentheses goes round without changing the program. `None` where there
+/// is no such range: the operand's end cannot be told (`operand_end`), the
+/// operator is applied in brackets, or its right side is a composition.
+fn right_operand(v: &Views, source: &str, op: usize) -> Option<(usize, usize)> {
+    // An adverb is part of the operator: `a*/:b+c` is `a*/:(b+c)`.
+    let mut after = op + 1;
+    while v.code[after..].starts_with([':', '/', '\\', '\'']) {
+        after += 1;
+    }
+    let from = argument_start(source, &v.comments, after)?;
+    // `a*[b;c]+d` applies `*` in brackets: what follows is its argument
+    // list, and in parentheses it would be a table header.
+    if source[from..].starts_with('[') {
+        return None;
+    }
+    let end = operand_end(v, source, from)?;
+    // A right side ending in an operator or `::` is a composition, not an
+    // operand - `1f%1f+exp neg::` - so parentheses would change it.
+    if v.comments[from..end].ends_with(|c: char| "+-*%&|^=<>~,#_!?@.$:'/\\".contains(c)) {
+        return None;
+    }
+    Some((from, end))
+}
+
+/// Where QP005 (`trap`) or QP007 puts its parentheses in the statement group
+/// `group`: round the right operand of the operator just before a change of
+/// family - the first that has such an operand - in the last run of the
+/// rule's kind that has one. This is the one place that says where the
+/// forward fix puts a pair, so a pair is one the fix would write exactly
+/// when it is the `right_operand` of a `+`, `-`, `*` or `%` and what it holds
+/// opens a run of the other family.
+fn precedence_pair(
+    v: &Views,
+    source: &str,
+    group: (usize, usize),
+    trap: bool,
+) -> Option<(usize, usize)> {
+    let (start, end) = group;
+    infix_runs(&v.code[start..end])
+        .iter()
+        .rev()
+        .filter(|run| mixes(run) && traps(run) == trap)
+        .find_map(|run| {
+            // A run is read off the line, not off the expression: on a later
+            // line of a template its `from` is a name to `infix_runs`, and
+            // `e*f from t where g+h` is one run of two phrases. The operand
+            // of the `*` ends before the `+`; a pair there would group
+            // nothing, and the fix would never be done. So the pair has to
+            // hold the operator that changes family, and where the first
+            // change has no such operand the next one is tried.
+            (1..run.len())
+                .filter(|&k| run[k].1 != run[k - 1].1)
+                .find_map(|k| {
+                    right_operand(v, source, start + run[k - 1].0)
+                        .filter(|&(_, close)| close > start + run[k].0)
+                })
+        })
+}
+
 /// The single source of replacements for the CLI and LSP. Findings have UTF-16
 /// positions for editors, while edits use byte offsets to change Rust strings.
 pub fn fix_for(finding: &Finding, source: &str) -> Option<Fix> {
@@ -591,9 +748,13 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
     // one wrong finding corrupt the file too: QB015 once read the `=` of the
     // string `"="` as an operator, and its fix rewrote the string as
     // `" like "`. Only three rules are about those bytes - an escape inside a
-    // string, a definition kept in a comment, and the byte-order mark.
-    if !matches!(finding.code.as_str(), "QE002" | "QL002" | "QE005")
-        && v.code.as_bytes().get(start) != source.as_bytes().get(start)
+    // string, a definition kept in a comment, and the byte-order mark - and
+    // QP005 and QP007 are reported at their line's first character, a string
+    // or not, and edit at an operator the masked code holds.
+    if !matches!(
+        finding.code.as_str(),
+        "QE002" | "QL002" | "QE005" | "QP005" | "QP007"
+    ) && v.code.as_bytes().get(start) != source.as_bytes().get(start)
     {
         return None;
     }
@@ -899,35 +1060,18 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         }
         // Parentheses where q already groups: around the right operand of
         // the operator just before the first change of family. The parse
-        // tree is the same - `2*3+4` and `2*(3+4)` are one program.
-        "QP005" => {
-            let (_, line_end) = statement_groups(&v.code, source)
+        // tree is the same - `2*3+4` and `2*(3+4)` are one program. The
+        // finding is on its line's first character; the edit is wherever
+        // on that line the run is.
+        "QP005" | "QP007" => {
+            let group = statement_groups(&v.code, source)
                 .into_iter()
-                .find(|&(from, _)| from == start)?;
-            let run = mixed_run(&v.code[start..line_end])?;
-            let k = (1..run.len()).find(|&k| run[k].1 != run[k - 1].1)?;
-            let mut after = start + run[k - 1].0 + 1;
-            while v.code[after..].starts_with([':', '/', '\\', '\'']) {
-                after += 1;
-            }
-            let from = argument_start(source, &v.comments, after)?;
-            let end = argument_end(&v.code, &v.comments, source, from)?;
-            // In qSQL a comma separates columns and `from`, `by` and `where`
-            // end an expression, which this scan does not read. And a right
-            // side ending in an operator or `::` is a composition, not an
-            // operand - `1f%1f+exp neg::` - so parentheses would change it.
-            let statement_end = argument_end(&v.code, &v.comments, source, start)?.max(end);
-            if re!(r"\b(?:select|exec|update|delete|from|by|where)\b")
-                .is_match(&v.code[start..statement_end])
-                || v.code[from..end]
-                    .trim_end()
-                    .ends_with(|c: char| "+-*%&|^=<>~,#_!?@.$:'/\\".contains(c))
-            {
-                return None;
-            }
+                .find(|&(a, b)| a <= start && start < b)?;
+            let (from, end) = precedence_pair(v, source, group, finding.code == "QP005")?;
+            begin = from;
             (
-                &source[start..end],
-                format!("{}({})", &source[start..from], &source[from..end]).into(),
+                &source[from..end],
+                format!("({})", &source[from..end]).into(),
                 "Parenthesise to show the order q evaluates in".into(),
                 true,
             )
@@ -2535,22 +2679,59 @@ fn phrase_end(code: &str, from: usize) -> usize {
 /// `(a*b)+c` the `*` and the `+` are never in one run, while `(a*b+c)`,
 /// `f[a*b+c]` and `r:a*b+c;` each hold one that mixes (#511). A `+`/`-`
 /// counts only after an operand, and not as the sign of a literal.
+///
+/// A qSQL template holds an expression in each phrase, so the word that
+/// closes a phrase ends a run as well: `by` and `from` after the template's
+/// first word, and `where` after its `from`. In `select a*b from t where
+/// c+d` nothing is mixed (#847). Only a template that opens on this line is
+/// seen; anywhere else the three are names, or `where` the function.
 fn infix_runs(line: &str) -> Vec<Vec<(usize, bool)>> {
     let b = line.as_bytes();
     let mut runs = vec![];
-    // The run open at each bracket level, the outermost first.
+    // The run open at each bracket level, the outermost first, and beside it
+    // the phrase of the template open there.
     let mut open: Vec<Vec<(usize, bool)>> = vec![vec![]];
+    let mut phrase: Vec<Option<&str>> = vec![None];
+    // A symbol may spell a qSQL word; blanking them is put off until a word
+    // is met.
+    let mut words: Option<String> = None;
     let mut prev = b'\0';
     for (i, &c) in b.iter().enumerate() {
         match c {
-            b'(' | b'[' => open.push(vec![]),
+            b'(' | b'[' => {
+                open.push(vec![]);
+                phrase.push(None);
+            }
             // A bracket opened on an earlier line closes the run it held.
             b')' | b']' => runs.push(if open.len() > 1 {
+                phrase.pop();
                 open.pop().unwrap()
             } else {
+                phrase[0] = None;
                 std::mem::take(&mut open[0])
             }),
-            b'{' | b'}' | b';' | b',' => runs.push(std::mem::take(open.last_mut().unwrap())),
+            b'{' | b'}' | b';' => {
+                runs.push(std::mem::take(open.last_mut().unwrap()));
+                *phrase.last_mut().unwrap() = None;
+            }
+            b',' => runs.push(std::mem::take(open.last_mut().unwrap())),
+            b'b' | b'd' | b'e' | b'f' | b's' | b'u' | b'w' if query_word(line, i).is_some() => {
+                let word = query_word(words.get_or_insert_with(|| unsymbolled(line)), i);
+                let at = phrase.last_mut().unwrap();
+                let next = match (*at, word) {
+                    (_, Some(head @ ("select" | "exec" | "update" | "delete"))) => Some(head),
+                    (Some("from"), Some("where")) => Some("where"),
+                    (Some("select" | "exec" | "update" | "delete" | "by"), Some("where")) => *at,
+                    (Some("select" | "exec" | "update" | "delete" | "by"), Some(closes)) => {
+                        Some(closes)
+                    }
+                    _ => *at,
+                };
+                if next != *at && !matches!(next, Some("select" | "exec" | "update" | "delete")) {
+                    runs.push(std::mem::take(open.last_mut().unwrap()));
+                }
+                *at = next;
+            }
             b'*' | b'%' => open.last_mut().unwrap().push((i, true)),
             b'+' | b'-' => {
                 let operand = matches!(
@@ -2589,11 +2770,19 @@ fn infix_runs(line: &str) -> Vec<Vec<(usize, bool)>> {
     runs.extend(open);
     runs
 }
-/// The run QP005 judges: the line's last that mixes the two families.
-fn mixed_run(line: &str) -> Option<Vec<(usize, bool)>> {
-    infix_runs(line)
-        .into_iter()
-        .rfind(|run| run.iter().any(|o| o.1) && run.iter().any(|o| !o.1))
+/// Whether a run mixes the two families: a `*` or `%`, and a `+` or `-`.
+fn mixes(run: &[(usize, bool)]) -> bool {
+    run.iter().any(|o| o.1) && run.iter().any(|o| !o.1)
+}
+/// Whether a run is the precedence trap, QP005's: some `*` or `%` has a `+`
+/// or `-` to its right, which q performs first and school precedence second,
+/// so `0.5*bid+ask` is `0.5*(bid+ask)`. A mixed run that is no trap has every
+/// `+` and `-` before every `*` and `%`, as `start+step*til n` has: both
+/// readings multiply first, and it is QP007's (#847).
+fn traps(run: &[(usize, bool)]) -> bool {
+    run.iter()
+        .position(|o| o.1)
+        .is_some_and(|first| run[first..].iter().any(|o| !o.1))
 }
 /// The top-level statements of a file as byte ranges: a line and the indented
 /// lines q continues it with. Shared by the rules that read a statement and
@@ -2691,9 +2880,6 @@ pub(crate) fn q_bytes(body: &str) -> Vec<u8> {
         }
     }
     out
-}
-fn mixed_infix(line: &str) -> bool {
-    mixed_run(line).is_some()
 }
 struct Views {
     comments: String,
@@ -3992,6 +4178,9 @@ impl Profile {
             "style" => self != Profile::General,
             "styleq" => matches!(self, Profile::StyleQ | Profile::Uqf),
             "uqf" => self == Profile::Uqf,
+            // In no profile: a rule a configuration selects by code, for a
+            // tree that wants more than its profile asks (#847).
+            "opt-in" => false,
             // qls and python-hook findings arrive from elsewhere; this is not
             // the place that decides whether they ran.
             _ => true,
@@ -4061,6 +4250,30 @@ pub fn lint_selecting(
     profile: Profile,
     ws: &Workspace,
     structure_selected: bool,
+) -> Vec<Finding> {
+    lint_rules(source, path, profile, ws, structure_selected, false)
+}
+
+/// Every rule this binary has, the `opt-in` ones too: what a configuration
+/// filters down to the rules it selects. No profile reports an `opt-in`
+/// rule, so there is no `Profile` to ask for one with; `structure_selected`
+/// is `lint_selecting`'s.
+pub fn lint_every_rule(
+    source: &str,
+    path: &str,
+    ws: &Workspace,
+    structure_selected: bool,
+) -> Vec<Finding> {
+    lint_rules(source, path, Profile::Uqf, ws, structure_selected, true)
+}
+
+fn lint_rules(
+    source: &str,
+    path: &str,
+    profile: Profile,
+    ws: &Workspace,
+    structure_selected: bool,
+    opt_in: bool,
 ) -> Vec<Finding> {
     let uqf = profile == Profile::Uqf;
     let _lines = LineScope::install(source);
@@ -7608,10 +7821,10 @@ pub fn lint_selecting(
                 }
             }
         }
-        // QP002, QP003 and QP005 pass over a test file, but which file is a
-        // test is the configuration's to say - a `tests` directory below its
-        // root - so that exemption is applied where the root is known, in
-        // `Policy::lint` (#800).
+        // QP002, QP003, QP005 and QP007 pass over a test file, but which file
+        // is a test is the configuration's to say - a `tests` directory below
+        // its root - so that exemption is applied where the root is known,
+        // in `Policy::lint` (#800).
         if uqf {
             // Every pattern but the first has to match code: a help table
             // that spells `".z.Z"` or `"0Nz"` in a string uses neither. The
@@ -7694,14 +7907,36 @@ pub fn lint_selecting(
                     ),
                 );
             }
-            if mixed_infix(line) {
-                add(
-                    offset,
-                    "QP005",
-                    "`*` or `%` mixed with `+` or `-` without parentheses: q evaluates \
-                     right-to-left, and the line does not say which order was meant"
-                        .into(),
-                );
+            // One run of each kind is reported per line, its last, and the
+            // message names the operators of that run. In a trap the `+` or
+            // `-` named is the first after the line's first `*` or `%`; in
+            // the other kind the two named are neighbours.
+            let runs = infix_runs(line);
+            let operator = |o: &(usize, bool)| line.as_bytes()[o.0] as char;
+            for (id, trap) in [("QP005", true), ("QP007", false)] {
+                let Some(run) = runs.iter().rfind(|run| mixes(run) && traps(run) == trap) else {
+                    continue;
+                };
+                let Some(first) = run.iter().position(|o| o.1) else {
+                    continue;
+                };
+                let multiply = operator(&run[first]);
+                let detail = if trap {
+                    let add = run[first..].iter().find(|o| !o.1).map_or('+', operator);
+                    format!(
+                        "`{multiply}` with `{add}` to its right and no parentheses: q \
+                         evaluates right-to-left and performs the `{add}` first, where \
+                         school precedence performs the `{multiply}` first"
+                    )
+                } else {
+                    let add = operator(&run[first - 1]);
+                    format!(
+                        "`{add}` with `{multiply}` to its right and no parentheses: q \
+                         evaluates right-to-left and performs the `{multiply}` first, as \
+                         school precedence does"
+                    )
+                };
+                add(offset, id, detail);
             }
         }
         // Infix, or the pattern as the second argument in brackets:
@@ -7913,7 +8148,7 @@ pub fn lint_selecting(
         RULES
             .iter()
             .find(|r| r.code == f.code)
-            .is_none_or(|r| profile.allows(&r.scope))
+            .is_none_or(|r| profile.allows(&r.scope) || opt_in && r.scope == "opt-in")
     });
     suppress(&mut out, source, &v.comments);
     out.sort_by(|a, b| {

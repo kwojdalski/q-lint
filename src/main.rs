@@ -366,6 +366,7 @@ fn run(args: Args) -> Result<u8, String> {
                     "style" => "style and above",
                     "styleq" => "styleq and above",
                     "uqf" => "uqf",
+                    "opt-in" => "no profile: select it by code",
                     "python-hook" => "a Python hook",
                     "qls" => "the qls backend",
                     other => other,
@@ -709,6 +710,34 @@ fn run(args: Args) -> Result<u8, String> {
             sources.len(),
             findings.len()
         );
+    }
+    // What --fix leaves it could not fix, and the run says so: a finding
+    // still listed is otherwise read as one to run --fix on again (#847).
+    // Most have a rule with no fix; some a fix that was refused where the
+    // finding is, as QP005's is where an operand's end cannot be told; and
+    // a file the run never rewrites has no fix for anything in it.
+    if args.fix {
+        let (mut unfixed, mut editor_only) = (0, 0);
+        for (path, source) in &sources {
+            let here: Vec<_> = findings.iter().filter(|f| f.path == *path).collect();
+            let fixes = if lossy.contains(path.as_str()) || !balanced(source) {
+                vec![]
+            } else {
+                fixes_for(here.iter().copied(), source)
+            };
+            unfixed += here.len() - fixes.len();
+            editor_only += fixes.iter().filter(|fix| !fix.batch_safe).count();
+        }
+        if unfixed > 0 {
+            eprintln!(
+                "qlinter: {unfixed} finding(s) left have no fix: --fix again would not change them"
+            );
+        }
+        if editor_only > 0 && !args.unsafe_fixes {
+            eprintln!(
+                "qlinter: {editor_only} finding(s) left have a fix that only --unsafe-fixes applies"
+            );
+        }
     }
     if failed {
         return Ok(2);

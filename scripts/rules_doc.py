@@ -21,6 +21,7 @@ PROFILES = {
     "style": ("`style` and above", "q that runs and is wrong: a habit, an idiom misread, a construct that says one thing and means another"),
     "styleq": ("`styleq` and above", "conventions the published q style guides state as rules"),
     "uqf": ("`uqf`", "one repository's house conventions"),
+    "opt-in": ("no profile", "a convention stricter than any profile asks for, on only where it is selected"),
     "python-hook": ("a Python hook", "raised by the embedded-q hook, not by this binary"),
     "qls": ("the qls backend", "relayed from KX's qls when `--backend qls` is given"),
 }
@@ -82,10 +83,15 @@ def main() -> int:
     print("| `general` | only what q refuses to run |")
     print("| `style` | `general`, plus q that runs and is wrong |")
     print("| `styleq` | `style`, plus the published style-guide conventions |")
-    print("| `uqf` | everything - the default |")
+    print("| `uqf` | every rule a profile turns on - the default |")
     print()
     print("The default is the broadest. This binary reports all it can see; a consumer")
     print("that wants fewer findings narrows in its own configuration.")
+    print()
+    print("A rule marked *no profile* is the exception: no profile reports it, `uqf`")
+    print("included. It is a convention stricter than any profile asks for, and is on")
+    print("only where `select` or `extend-select` names it - by its code, a prefix of")
+    print("it, or `ALL`.")
     print()
     for cat, title in CATEGORIES.items():
         group = by_cat.get(cat)

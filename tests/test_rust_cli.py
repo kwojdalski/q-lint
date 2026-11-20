@@ -37,6 +37,11 @@ def test_stdin_and_taxonomy():
     # The profile the rule runs under, not the taxonomy's `builtin` (#791).
     assert explained.stdout.rstrip().endswith("(every profile)")
     assert run("--explain", "QS001").stdout.rstrip().endswith("(styleq and above)")
+    # A rule in no profile says how it is turned on (#847).
+    assert run("--explain", "QP005").stdout.rstrip().endswith("(uqf)")
+    routine = run("--explain", "QP007").stdout
+    assert routine.startswith("QP007 [policy] mixed-infix-unparenthesised:")
+    assert routine.rstrip().endswith("(no profile: select it by code)")
     assert run("--explain", "UNKNOWN").returncode == 2
 
 

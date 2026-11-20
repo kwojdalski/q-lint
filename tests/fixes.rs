@@ -394,6 +394,13 @@ fn each_fix_rewrites_to_the_right_text_and_says_whether_it_is_batch_safe() {
         ("QP005", "h:2*3+4;", "h:2*(3+4);", true),
         ("QP005", "g:{[a;b] a*b+1}", "g:{[a;b] a*(b+1)}", true),
         ("QP005", "k:(2*3+4)", "k:(2*(3+4))", true),
+        // In a qSQL phrase the operand ends where the column does (#847).
+        (
+            "QP005",
+            "r:select mid:0.5*bid+ask from q",
+            "r:select mid:0.5*(bid+ask) from q",
+            true,
+        ),
         (
             "QB008",
             "t:([]s:`a`b`c);r:select from t where s=`a`b",
@@ -687,7 +694,6 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
         ("QB015", "t:([]s:`ab);r:select from t where s=\"a*\""), // a pattern
         ("QB015", "t:([]s:`ab);r:select from t where \"ab\"=s"), // like reads its pattern on the right (#639)
         ("QB020", "f:{[x] :x;\n  x+1}"),                         // across lines
-        ("QP005", "r:select mid:0.5*bid+ask from q"),            // qSQL columns
         ("QP005", "tanh:1f-2f%1f+exp 2f*"),                      // a composition
         ("QR004", "r:count {x+1}' b"),                           // `{x+1}'` infix
         ("QA006", "r:`int$[a=1;b]"),                             // `if` would fuse onto `int
@@ -736,6 +742,315 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
             assert!(fix_for(finding, source).is_none(), "{code} fixed {source}");
         }
     }
+}
+
+/// The findings of `codes` alone, with every rule run: QP007 is in no
+/// profile, so a profile cannot be asked for it.
+#[cfg(test)]
+fn selected(source: &str, codes: &[&str]) -> Vec<q_lint_rs::Finding> {
+    q_lint_rs::lint_every_rule(source, "probe.q", &q_lint_rs::Workspace::default(), true)
+        .into_iter()
+        .filter(|f| codes.contains(&f.code.as_str()))
+        .collect()
+}
+
+/// What `--fix` leaves of `source` with `codes` selected.
+#[cfg(test)]
+fn fixed_selecting(source: &str, codes: &[&str]) -> String {
+    q_lint_rs::fix_all(source, false, |text| Ok::<_, ()>(selected(text, codes)))
+        .unwrap()
+        .text
+}
+
+/// QP005 and QP007 share one fix - parentheses round the right operand of
+/// the operator before a change of family, where q groups already - and it
+/// reaches a mix wherever its operand has an end: any line of a statement,
+/// a qSQL phrase, beside a dotted name that ends in a qSQL word (#846,
+/// #847). Each row is a source, then what is left of it with QP005 selected,
+/// with QP007, and with both. Every changed row was parsed in KDB-X before
+/// and after, and the trees were the same.
+#[test]
+fn the_precedence_fix_reaches_every_line_of_a_statement_and_every_phrase() {
+    let cases = [
+        (
+            "mid:0.5*bid+ask",
+            "mid:0.5*(bid+ask)",
+            "mid:0.5*bid+ask",
+            "mid:0.5*(bid+ask)",
+        ),
+        (
+            "stamp:start+step*til n",
+            "stamp:start+step*til n",
+            "stamp:start+(step*til n)",
+            "stamp:start+(step*til n)",
+        ),
+        (
+            "d:s*1+0.0005*-1+2*r",
+            "d:s*(1+(0.0005*(-1+2*r)))",
+            "d:s*1+0.0005*-1+2*r",
+            "d:s*(1+(0.0005*(-1+(2*r))))",
+        ),
+        (
+            "ts:t0+0D00:00:01*til n",
+            "ts:t0+0D00:00:01*til n",
+            "ts:t0+(0D00:00:01*til n)",
+            "ts:t0+(0D00:00:01*til n)",
+        ),
+        (
+            "f:{[a;b]\n  c:a*b+1;\n  d:a+b*2;\n  c+d}",
+            "f:{[a;b]\n  c:a*(b+1);\n  d:a+b*2;\n  c+d}",
+            "f:{[a;b]\n  c:a*b+1;\n  d:a+(b*2);\n  c+d}",
+            "f:{[a;b]\n  c:a*(b+1);\n  d:a+(b*2);\n  c+d}",
+        ),
+        (
+            "t:([] a:1 2 3;\n  b:2*x+1;\n  c:x+y*2)",
+            "t:([] a:1 2 3;\n  b:2*(x+1);\n  c:x+y*2)",
+            "t:([] a:1 2 3;\n  b:2*x+1;\n  c:x+(y*2))",
+            "t:([] a:1 2 3;\n  b:2*(x+1);\n  c:x+(y*2))",
+        ),
+        (
+            "r:select mid:0.5*bid+ask, spread:ask-bid from q",
+            "r:select mid:0.5*(bid+ask), spread:ask-bid from q",
+            "r:select mid:0.5*bid+ask, spread:ask-bid from q",
+            "r:select mid:0.5*(bid+ask), spread:ask-bid from q",
+        ),
+        (
+            "r:select a:x+y*z, b by c*d+e from t where f*g+h, i",
+            "r:select a:x+y*z, b by c*(d+e) from t where f*(g+h), i",
+            "r:select a:x+(y*z), b by c*d+e from t where f*g+h, i",
+            "r:select a:x+(y*z), b by c*(d+e) from t where f*(g+h), i",
+        ),
+        (
+            "x:.a.from+0D01*1+til 5",
+            "x:.a.from+(0D01*(1+til 5))",
+            "x:.a.from+0D01*1+til 5",
+            "x:.a.from+(0D01*(1+til 5))",
+        ),
+        (
+            "v:.a.by+0D01*1+til 5",
+            "v:.a.by+(0D01*(1+til 5))",
+            "v:.a.by+0D01*1+til 5",
+            "v:.a.by+(0D01*(1+til 5))",
+        ),
+        (
+            "r:select a from t,u*v+w where b",
+            "r:select a from t,u*(v+w) where b",
+            "r:select a from t,u*v+w where b",
+            "r:select a from t,u*(v+w) where b",
+        ),
+        (
+            "r:select a*b+(c,d), e from t",
+            "r:select a*(b+(c,d)), e from t",
+            "r:select a*b+(c,d), e from t",
+            "r:select a*(b+(c,d)), e from t",
+        ),
+        (
+            "r:select from t where a*b+c>0, d",
+            "r:select from t where a*(b+c>0), d",
+            "r:select from t where a*b+c>0, d",
+            "r:select from t where a*(b+c>0), d",
+        ),
+        (
+            "r:a*b+\n  c",
+            "r:a*(b+\n  c)",
+            "r:a*b+\n  c",
+            "r:a*(b+\n  c)",
+        ),
+        (
+            "r:a*b+c / note",
+            "r:a*(b+c) / note",
+            "r:a*b+c / note",
+            "r:a*(b+c) / note",
+        ),
+        (
+            "\"s\",string 2*3+4",
+            "\"s\",string 2*(3+4)",
+            "\"s\",string 2*3+4",
+            "\"s\",string 2*(3+4)",
+        ),
+        (
+            "r:f[2*3+4;1]",
+            "r:f[2*(3+4);1]",
+            "r:f[2*3+4;1]",
+            "r:f[2*(3+4);1]",
+        ),
+        (
+            "k:(2*3+4;5+6*7)",
+            "k:(2*(3+4);5+6*7)",
+            "k:(2*3+4;5+(6*7))",
+            "k:(2*(3+4);5+(6*7))",
+        ),
+        ("r:a+b*c-d", "r:a+(b*(c-d))", "r:a+b*c-d", "r:a+(b*(c-d))"),
+        ("r:a*/:b+c", "r:a*/:(b+c)", "r:a*/:b+c", "r:a*/:(b+c)"),
+        (
+            "r:a*b+exec c from t where d, e",
+            "r:a*(b+exec c from t where d, e)",
+            "r:a*b+exec c from t where d, e",
+            "r:a*(b+exec c from t where d, e)",
+        ),
+        (
+            "s:select a*b from t where c+d*e",
+            "s:select a*b from t where c+d*e",
+            "s:select a*b from t where c+(d*e)",
+            "s:select a*b from t where c+(d*e)",
+        ),
+        (
+            "u:update v:a%b-c by s from t",
+            "u:update v:a%(b-c) by s from t",
+            "u:update v:a%b-c by s from t",
+            "u:update v:a%(b-c) by s from t",
+        ),
+        (
+            "g:{[t] select a:b*c+d,\n    e:f+g*h\n    from t}",
+            "g:{[t] select a:b*(c+d),\n    e:f+g*h\n    from t}",
+            "g:{[t] select a:b*c+d,\n    e:f+(g*h)\n    from t}",
+            "g:{[t] select a:b*(c+d),\n    e:f+(g*h)\n    from t}",
+        ),
+    ];
+    for (source, trap, routine, both) in cases {
+        for (codes, expected) in [
+            (&["QP005"][..], trap),
+            (&["QP007"][..], routine),
+            (&["QP005", "QP007"][..], both),
+        ] {
+            let once = fixed_selecting(source, codes);
+            assert_eq!(once, expected, "{codes:?} on {source}");
+            // Nothing the rule reports is left, and a second run has nothing
+            // to do: `--fix` twice is `--fix` once.
+            assert!(
+                selected(&once, codes).is_empty(),
+                "{codes:?} left in {once}"
+            );
+            assert_eq!(fixed_selecting(&once, codes), once, "{codes:?} twice");
+        }
+    }
+}
+
+/// Where the right operand's end cannot be told there is no fix, the text
+/// is left as it was, and the finding stays for a person to read.
+#[test]
+fn the_precedence_fix_is_refused_where_the_operand_has_no_end() {
+    for (code, source) in [
+        // A right side that ends in an operator, or in `::`, is a composition.
+        ("QP005", "tanh:1f-2f%1f+exp 2f*"),
+        ("QP005", "r:a*b+neg::"),
+        ("QP007", "r:a+b*neg::"),
+        // `*[b;c]` applies in brackets: in parentheses it is a table header.
+        ("QP005", "r:a*[b;c]+d"),
+        // A template that opens in the phrase of another, with no
+        // parentheses of its own, takes the commas after it into its table:
+        // q 5 reads this as one constraint, not two.
+        ("QP005", "r:select from t where a*b+exec c from u, d"),
+        ("QP007", "r:select from t where a+b*exec c from u, d"),
+        // A qSQL word where no phrase expects one.
+        ("QP005", "r:select from t where a*b+c from, d"),
+    ] {
+        let found = selected(source, &[code]);
+        assert_eq!(found.len(), 1, "{code} on {source}: {found:?}");
+        assert!(
+            q_lint_rs::fix_for(&found[0], source).is_none(),
+            "{code} fixed {source}"
+        );
+        assert_eq!(fixed_selecting(source, &["QP005", "QP007"]), source);
+    }
+}
+
+/// Each message names the two operators of the run it is about and says
+/// which of them q performs first - the one fact the two rules differ in.
+#[test]
+fn each_precedence_message_says_which_operation_q_performs_first() {
+    let detail = |source: &str| -> Vec<(String, String)> {
+        selected(source, &["QP005", "QP007"])
+            .into_iter()
+            .map(|f| (f.code, f.detail))
+            .collect()
+    };
+    assert_eq!(
+        detail("mid:0.5*bid+ask"),
+        [(
+            "QP005".to_string(),
+            "`*` with `+` to its right and no parentheses: q evaluates right-to-left and \
+             performs the `+` first, where school precedence performs the `*` first"
+                .to_string()
+        )]
+    );
+    assert_eq!(
+        detail("r:a-b%c"),
+        [(
+            "QP007".to_string(),
+            "`-` with `%` to its right and no parentheses: q evaluates right-to-left and \
+             performs the `%` first, as school precedence does"
+                .to_string()
+        )]
+    );
+    // The operators named are the trap's: the `%` and the `-` after it, not
+    // the `+` before.
+    assert_eq!(
+        detail("r:a+b%c-d"),
+        [(
+            "QP005".to_string(),
+            "`%` with `-` to its right and no parentheses: q evaluates right-to-left and \
+             performs the `-` first, where school precedence performs the `%` first"
+                .to_string()
+        )]
+    );
+}
+
+/// `--fix` twice writes what `--fix` once did, and a finding it leaves is
+/// counted on standard error as one it has no fix for, so that "still
+/// reported" is not read as "run it again" (#847).
+#[test]
+fn fix_says_how_many_findings_it_has_no_fix_for() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("mix.q");
+    let source = "mid:0.5*bid+ask\nstamp:start+step*til n\ntanh:1f-2f%1f+exp 2f*\n";
+    fs::write(&path, source).unwrap();
+    let fix = |select: &str| {
+        let output = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .args(["--isolated", "--select", select, "--fix"])
+            .arg(&path)
+            .output()
+            .unwrap();
+        (
+            String::from_utf8(output.stderr).unwrap(),
+            fs::read_to_string(&path).unwrap(),
+        )
+    };
+    let left = "qlinter: 1 finding(s) left have no fix: --fix again would not change them\n";
+    let once = "mid:0.5*(bid+ask)\nstamp:start+(step*til n)\ntanh:1f-2f%1f+exp 2f*\n";
+    assert_eq!(
+        fix("QP005,QP007"),
+        (
+            format!("qlinter: fixed 2 finding(s) in 1 file(s)\n{left}"),
+            once.to_string()
+        )
+    );
+    assert_eq!(
+        fix("QP005,QP007"),
+        (
+            format!("qlinter: fixed 0 finding(s) in 0 file(s)\n{left}"),
+            once.to_string()
+        )
+    );
+    // Nothing is said where nothing is left, or where what is left has a fix
+    // the run was not asked to apply - except to say which flag applies it.
+    fs::write(&path, "mid:0.5*bid+ask\nc:1&&2\n").unwrap();
+    assert_eq!(fix("QP005").0, "qlinter: fixed 1 finding(s) in 1 file(s)\n");
+    assert_eq!(
+        fix("QE004").0,
+        "qlinter: fixed 0 finding(s) in 0 file(s)\n\
+         qlinter: 1 finding(s) left have a fix that only --unsafe-fixes applies\n"
+    );
+    // A file whose brackets do not close is never rewritten, so nothing in
+    // it has a fix, whatever the rule.
+    fs::write(&path, "f:{[x]\nmid:0.5*bid+ask\n").unwrap();
+    assert_eq!(
+        fix("QP005"),
+        (
+            format!("qlinter: fixed 0 finding(s) in 0 file(s)\n{left}"),
+            "f:{[x]\nmid:0.5*bid+ask\n".to_string()
+        )
+    );
 }
 
 /// A fix that deletes a token from between two numeric literals would leave

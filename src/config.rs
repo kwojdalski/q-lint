@@ -40,7 +40,7 @@
 //!
 //! Nothing here reads q source; a configuration is TOML and is only parsed.
 
-use q_lint_rs::{Finding, Profile, RULES, Workspace, lint_selecting};
+use q_lint_rs::{Finding, Profile, RULES, Workspace, lint_every_rule};
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
@@ -366,15 +366,16 @@ impl Policy {
     }
 
     /// The findings for one file: every rule run, then only those the
-    /// configuration selects for this path. Running the broadest profile and
-    /// filtering is exact, because a profile only decides which rules report
-    /// - none changes what another finds.
+    /// configuration selects for this path. Running them all and filtering
+    /// is exact, because a profile only decides which rules report - none
+    /// changes what another finds - and it is how a rule in no profile, an
+    /// `opt-in` one, is there to be selected by code.
     pub fn lint(&self, source: &str, path: &str, ws: &Workspace) -> Result<Vec<Finding>, String> {
         let file = Path::new(path);
         let settings = self.settings(file)?;
         let structure =
             self.configured(&settings, "QE001") && !per_file_ignored(&settings, "QE001", file);
-        let mut found = lint_selecting(source, path, Profile::Uqf, ws, structure);
+        let mut found = lint_every_rule(source, path, ws, structure);
         found.retain(|f| {
             self.selected(&settings, &f.code)
                 && !per_file_ignored(&settings, &f.code, file)
@@ -384,13 +385,14 @@ impl Policy {
     }
 
     /// A test may build a legacy datetime, read the local clock or mix infix
-    /// arithmetic on purpose, so QP002, QP003 and QP005 pass over a file in
-    /// a `tests` directory below the project root: where the configuration's
-    /// patterns are rooted, or the current directory when there is none. A `tests` above the
-    /// root - a checkout under `~/tests` - exempts nothing, and a rule the
-    /// command line selects by code reports regardless (#800, #416).
+    /// arithmetic on purpose, so QP002, QP003, QP005 and QP007 pass over a
+    /// file in a `tests` directory below the project root: where the
+    /// configuration's patterns are rooted, or the current directory when
+    /// there is none. A `tests` above the root - a checkout under `~/tests` -
+    /// exempts nothing, and a rule the command line selects by code reports
+    /// regardless (#800, #416).
     fn test_exempt(&self, settings: &Settings, code: &str, path: &Path) -> bool {
-        if !["QP002", "QP003", "QP005"].contains(&code) {
+        if !["QP002", "QP003", "QP005", "QP007"].contains(&code) {
             return false;
         }
         let cli = &self.overrides.layer;

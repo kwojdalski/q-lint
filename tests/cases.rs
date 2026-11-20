@@ -4,7 +4,7 @@
 //! text file, and so that the negative cases - source that must stay silent -
 //! sit next to the positives they are the counterweight to. See
 //! `tests/cases/README.md` for the format.
-use q_lint_rs::{Profile, lint};
+use q_lint_rs::{Profile, Workspace, lint, lint_every_rule};
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
@@ -13,7 +13,8 @@ struct Case {
     line: usize,
     title: String,
     expected: BTreeSet<String>,
-    profile: Profile,
+    /// `None` for `profile: every`: the rules no profile reports as well.
+    profile: Option<Profile>,
     source: String,
 }
 
@@ -23,17 +24,18 @@ fn parse(file: &str, text: &str) -> Vec<Case> {
         if let Some(header) = line.strip_prefix("=== ") {
             let (codes, title) = header.split_once('|').unwrap_or((header, ""));
             let mut expected = BTreeSet::new();
-            let mut profile = Profile::Style;
+            let mut profile = Some(Profile::Style);
             let mut tokens = codes.split_whitespace().peekable();
             while let Some(token) = tokens.next() {
                 match token {
                     "clean" => {}
                     "profile:" => {
                         profile = match tokens.next() {
-                            Some("uqf") => Profile::Uqf,
-                            Some("styleq") => Profile::StyleQ,
-                            Some("general") => Profile::General,
-                            _ => Profile::Style,
+                            Some("every") => None,
+                            Some("uqf") => Some(Profile::Uqf),
+                            Some("styleq") => Some(Profile::StyleQ),
+                            Some("general") => Some(Profile::General),
+                            _ => Some(Profile::Style),
                         }
                     }
                     code => {
@@ -76,10 +78,13 @@ fn every_case_says_what_it_means() {
 
     let mut failures = String::new();
     for case in &cases {
-        let found: BTreeSet<String> = lint(&case.source, "t.q", case.profile)
-            .into_iter()
-            .map(|f| f.code.to_string())
-            .collect();
+        let found: BTreeSet<String> = match case.profile {
+            Some(profile) => lint(&case.source, "t.q", profile),
+            None => lint_every_rule(&case.source, "t.q", &Workspace::default(), true),
+        }
+        .into_iter()
+        .map(|f| f.code.to_string())
+        .collect();
         // Both directions: a missed code is a hole, an extra one is noise, and
         // a linter is only as useful as the second of those is rare.
         let missing: Vec<_> = case.expected.difference(&found).collect();
