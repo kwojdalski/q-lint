@@ -359,6 +359,20 @@
             "order": 113,
             "markdownDescription": "Where a grid or chart result is shown: beside the editor, or in the **q Results** view in the bottom panel."
           },
+          "q-lint.query.unwrapped": {
+            "type": "boolean",
+            "default": false,
+            "order": 114,
+            "markdownDescription": "Send a query as a plain string, statement by statement, for a gateway that refuses a lambda, instead of in the lambda q-lint runs it with. The result is whatever the process returns, formatted by q-lint rather than the process, so it is close to q's console but not exact, and an error has no backtrace. **q-lint: Toggle Unwrapped Query** changes it."
+          },
+          "q-lint.query.timeout": {
+            "type": "number",
+            "default": 0,
+            "minimum": 0,
+            "maximum": 86400,
+            "order": 115,
+            "markdownDescription": "Seconds a query may run before it is aborted, as **q-lint: Abort Current Query** aborts it; the history records it as timed out. `0`: no limit."
+          },
           "q-lint.processExplorer.excludedNamespaces": {
             "type": "array",
             "items": {
@@ -683,6 +697,61 @@
         "title": "Switch Query Mode",
         "category": "q-lint",
         "icon": "$(table)"
+      },
+      {
+        "command": "q-lint.queryEntireFile",
+        "title": "Execute Entire File",
+        "category": "q-lint",
+        "icon": "$(run-all)"
+      },
+      {
+        "command": "q-lint.toggleUnlimitedQuery",
+        "title": "Toggle Unlimited Query",
+        "category": "q-lint",
+        "icon": "$(unfold)"
+      },
+      {
+        "command": "q-lint.toggleUnwrappedQuery",
+        "title": "Toggle Unwrapped Query",
+        "category": "q-lint",
+        "icon": "$(symbol-string)"
+      },
+      {
+        "command": "q-lint.chooseConnectionForFile",
+        "title": "Choose Connection for File",
+        "category": "q-lint",
+        "icon": "$(file-symlink-file)"
+      },
+      {
+        "command": "q-lint.clearConnectionForFile",
+        "title": "Clear Connection for File",
+        "category": "q-lint",
+        "icon": "$(close)"
+      },
+      {
+        "command": "q-lint.startRepl",
+        "title": "Start q REPL",
+        "category": "q-lint",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "q-lint.copyQuery",
+        "title": "Copy Query",
+        "category": "q-lint",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "q-lint.revealProcess",
+        "title": "Reveal Process",
+        "category": "q-lint",
+        "icon": "$(target)",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.openSettings",
+        "title": "Open q-lint Settings",
+        "category": "q-lint",
+        "icon": "$(gear)"
       }
     ],
     "views": {
@@ -787,6 +856,16 @@
           "command": "q-lint.exportResults",
           "when": "view == q-lint.results",
           "group": "navigation"
+        },
+        {
+          "command": "q-lint.revealProcess",
+          "when": "view == q-lint.processes && q-lint.connected",
+          "group": "1_processes@3"
+        },
+        {
+          "command": "q-lint.openSettings",
+          "when": "view == q-lint.processes",
+          "group": "3_settings@1"
         }
       ],
       "view/item/context": [
@@ -899,6 +978,21 @@
           "command": "q-lint.rerunQuery",
           "when": "view == q-lint.queryHistory && viewItem == history",
           "group": "inline"
+        },
+        {
+          "command": "q-lint.copyQuery",
+          "when": "view == q-lint.queryHistory && viewItem == history",
+          "group": "inline"
+        },
+        {
+          "command": "q-lint.rerunQuery",
+          "when": "view == q-lint.queryHistory && viewItem == history",
+          "group": "1_history@1"
+        },
+        {
+          "command": "q-lint.copyQuery",
+          "when": "view == q-lint.queryHistory && viewItem == history",
+          "group": "1_history@2"
         }
       ],
       "editor/title/run": [
@@ -916,6 +1010,11 @@
           "command": "q-lint.runInTerminal",
           "when": "editorLangId == q && resourceScheme == file",
           "group": "navigation@3"
+        },
+        {
+          "command": "q-lint.queryEntireFile",
+          "when": "editorLangId == q",
+          "group": "navigation@4"
         }
       ],
       "notebook/toolbar": [
@@ -957,6 +1056,11 @@
           "command": "q-lint.runInTerminal",
           "when": "editorLangId == q && resourceScheme == file",
           "group": "q-lint@4"
+        },
+        {
+          "command": "q-lint.queryEntireFile",
+          "when": "editorLangId == q",
+          "group": "q-lint@5"
         }
       ],
       "commandPalette": [
@@ -1026,6 +1130,11 @@
       {
         "command": "q-lint.sendBlockToTerminal",
         "key": "ctrl+shift+e",
+        "when": "editorTextFocus && editorLangId == q"
+      },
+      {
+        "command": "q-lint.queryEntireFile",
+        "key": "ctrl+f10",
         "when": "editorTextFocus && editorLangId == q"
       }
     ],

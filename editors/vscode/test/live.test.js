@@ -37,6 +37,7 @@ const relations = require("../out/relations.js");
 const { NOTEBOOK } = require("../out/qnb.js");
 const { needsRestart } = require("../out/settings.js");
 const { AGENT } = require("../out/agent.js");
+const { CONTROL_COMMANDS, readControls } = require("../out/querycontrols.js");
 
 test("a statement is a line and the indented lines after it", () => {
   assert.deepStrictEqual(statements("a:1\nb:a+1\nb*10"), ["a:1", "b:a+1", "b*10"]);
@@ -223,6 +224,7 @@ test("package.json declares exactly the commands the extension registers", () =>
   const declared = pkg.contributes.commands.map((c) => c.command).sort();
   const registered = [
     ...Object.values(COMMANDS),
+    ...Object.values(CONTROL_COMMANDS),
     ...Object.values(DISCOVERY_COMMANDS),
     ...Object.values(EXPLORER).filter((id) => id !== EXPLORER.view),
     ...Object.values(relations.COMMANDS),
@@ -317,6 +319,7 @@ test("every query setting is read, with the default package.json declares, and n
   };
   const live = readLive(get);
   const explorer = readExplorer(get);
+  const controls = readControls(get);
   for (const [key, spec] of Object.entries(declared)) {
     const short = key.replace(/^q-lint\./, "");
     assert.ok(read.has(short), `${key} is declared but never read`);
@@ -335,6 +338,7 @@ test("every query setting is read, with the default package.json declares, and n
     gridDecimals: -1,
     resultsLocation: "editor",
   });
+  assert.deepStrictEqual(controls, { unwrapped: false, timeout: 0 });
   assert.deepStrictEqual(explorer, { excludedNamespaces: ["q", "Q", "h", "j", "o", "s"], previewLimit: 5, autoRefresh: false });
   // A size that is not one falls back to the default.
   assert.deepStrictEqual(readLive((key, fallback) => (key === "output.consoleSize" ? "big" : fallback)).consoleSize, [50, 160]);
@@ -400,4 +404,29 @@ test("a row limit is one signed count for sublist: last negative, all infinite (
   assert.deepStrictEqual(ROW_LIMIT_CHOICES.map(rowLimitLabel), ["10 rows", "100 rows", "1,000 rows", "10,000 rows", "100,000 rows", "All rows"]);
   // The default is one of the choices.
   assert.ok(ROW_LIMIT_CHOICES.includes(readNotebook((_, fallback) => fallback).rowLimit));
+});
+
+test("query controls: a timeout is a positive number of seconds, at most a day; unwrapped only when true", () => {
+  const set = (values) => readControls((key, fallback) => (key in values ? values[key] : fallback));
+  assert.strictEqual(set({ "query.timeout": 2.5 }).timeout, 2.5);
+  assert.strictEqual(set({ "query.timeout": -1 }).timeout, 0);
+  assert.strictEqual(set({ "query.timeout": "5" }).timeout, 0);
+  assert.strictEqual(set({ "query.timeout": 1e9 }).timeout, 86400);
+  assert.strictEqual(set({ "query.unwrapped": true }).unwrapped, true);
+  assert.strictEqual(set({ "query.unwrapped": "yes" }).unwrapped, false);
+});
+
+test("Execute Entire File is bound to a key no VS Code default takes, and is in the run menu", () => {
+  const binding = pkg.contributes.keybindings.find((k) => k.command === CONTROL_COMMANDS.queryFile);
+  // ctrl+f10 is in none of VS Code 1.147's default keybindings on macOS,
+  // Windows or Linux; ctrl+shift+d (Run and Debug) and ctrl+d (add next
+  // occurrence) are what KX's extension uses, and both clash.
+  assert.strictEqual(binding.key, "ctrl+f10");
+  assert.ok(!binding.mac && !binding.win && !binding.linux);
+  const keys = pkg.contributes.keybindings.map((k) => k.key);
+  assert.strictEqual(new Set(keys).size, keys.length, "two commands share a key");
+  assert.ok(pkg.contributes.menus["editor/title/run"].some((m) => m.command === CONTROL_COMMANDS.queryFile));
+  // Copy Query is on a history row, inline and in its menu.
+  const rows = pkg.contributes.menus["view/item/context"].filter((m) => m.command === CONTROL_COMMANDS.copyQuery);
+  assert.deepStrictEqual(rows.map((m) => m.group).sort(), ["1_history@2", "inline"]);
 });
