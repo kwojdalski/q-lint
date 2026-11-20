@@ -483,3 +483,48 @@ test("a sync request back to q-lint fails in the process instead of hanging it (
   assert.match(answer.error, /q-lint/);
   assert.deepStrictEqual(await connection.query(["1+1"], SIZE), { ok: true, type: -7, text: ["2"] });
 });
+
+test("a large answer is read in time linear in its size (#894)", async (t) => {
+  // 100 MB, sent as the socket delivers it: in chunks of 64 KB or so.
+  const size = 100_000_000;
+  const fake = await fakeProcess((_, socket) => {
+    const message = Buffer.alloc(size, 97);
+    message.writeUInt8(1, 0);
+    message.writeUInt8(2, 1);
+    message.writeUInt32LE(size, 4);
+    message.writeInt8(10, 8);
+    message.writeInt8(0, 9);
+    message.writeUInt32LE(size - 14, 10);
+    socket.write(message);
+  });
+  t.after(() => fake.close());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: fake.port });
+  t.after(() => connection.abort());
+  const started = Date.now();
+  const value = await connection.call("x");
+  const took = Date.now() - started;
+  assert.strictEqual(value.length, size - 14);
+  // Joining each chunk onto all before it took 12 s here; once, well under 1.
+  assert.ok(took < 4000, `${took} ms`);
+});
+
+test("an answer split anywhere, or sent with others in one chunk, is read whole", async (t) => {
+  let n = 0;
+  const fake = await fakeProcess((_, socket) => {
+    const answer = charMessage(2, `answer ${++n}`);
+    if (n === 1) {
+      // Split inside the header, then inside the body.
+      socket.write(answer.subarray(0, 3));
+      setTimeout(() => socket.write(answer.subarray(3, 12)), 20);
+      setTimeout(() => socket.write(answer.subarray(12)), 40);
+    } else {
+      // An async message the user's code sent, and the answer, as one chunk.
+      socket.write(Buffer.concat([charMessage(0, "pushed"), answer]));
+    }
+  });
+  t.after(() => fake.close());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: fake.port });
+  t.after(() => connection.abort());
+  assert.strictEqual(await connection.call("x"), "answer 1");
+  assert.strictEqual(await connection.call("x"), "answer 2");
+});

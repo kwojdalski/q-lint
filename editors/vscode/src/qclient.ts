@@ -70,7 +70,11 @@ function typeOf(message: Buffer): number | undefined {
 }
 
 export class QConnection {
-  private buffer: Buffer = Buffer.alloc(0);
+  /// What has arrived of the messages not yet read, in the chunks it came
+  /// in: joined only once a whole message is there, since joining each
+  /// chunk onto all before it is quadratic in a large answer.
+  private chunks: Buffer[] = [];
+  private size = 0;
   private pending: { resolve: (v: unknown) => void; reject: (e: Error) => void } | undefined;
   private closed = false;
   /// The q type of the last answer, read from the first byte of its body.
@@ -219,15 +223,27 @@ export class QConnection {
     }
   }
 
+  /// The chunks that have arrived, as one buffer.
+  private joined(): Buffer {
+    if (this.chunks.length !== 1) {
+      this.chunks = [Buffer.concat(this.chunks, this.size)];
+    }
+    return this.chunks[0];
+  }
+
   private received(chunk: Buffer): void {
-    this.buffer = this.buffer.length === 0 ? chunk : Buffer.concat([this.buffer, chunk]);
-    while (this.buffer.length >= 8) {
-      const length = this.buffer.readUInt32LE(4);
-      if (this.buffer.length < length) {
+    this.chunks.push(chunk);
+    this.size += chunk.length;
+    while (this.size >= 8) {
+      const length = (this.chunks[0].length >= 8 ? this.chunks[0] : this.joined()).readUInt32LE(4);
+      if (this.size < length) {
         return;
       }
-      const message = this.buffer.subarray(0, length);
-      this.buffer = this.buffer.subarray(length);
+      const all = this.joined();
+      const message = all.subarray(0, length);
+      const rest = all.subarray(length);
+      this.chunks = rest.length > 0 ? [rest] : [];
+      this.size = rest.length;
       // Only a response answers a query. Async messages the user's code
       // sends back (`neg[.z.w] x`) are not results, and are dropped. A sync
       // one (`.z.w x`) waits for an answer, and the process with it, so it
