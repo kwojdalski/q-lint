@@ -30,6 +30,34 @@
           ".q"
         ],
         "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "k",
+        "aliases": [
+          "k"
+        ],
+        "extensions": [
+          ".k"
+        ],
+        "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "quke",
+        "aliases": [
+          "qcumber",
+          "quke"
+        ],
+        "extensions": [
+          ".quke"
+        ],
+        "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "q-console",
+        "aliases": [],
+        "mimetypes": [
+          "text/x-code-output"
+        ]
       }
     ],
     "grammars": [
@@ -39,6 +67,27 @@
         "path": "./syntaxes/q.tmLanguage.json",
         "embeddedLanguages": {
           "meta.embedded.block.python.q": "python"
+        }
+      },
+      {
+        "language": "k",
+        "scopeName": "source.k",
+        "path": "./syntaxes/k.tmLanguage.json"
+      },
+      {
+        "language": "quke",
+        "scopeName": "source.quke",
+        "path": "./syntaxes/quke.tmLanguage.json",
+        "embeddedLanguages": {
+          "meta.embedded.block.q": "q"
+        }
+      },
+      {
+        "language": "q-console",
+        "scopeName": "source.q-console",
+        "path": "./syntaxes/q-console.tmLanguage.json",
+        "embeddedLanguages": {
+          "meta.embedded.line.q": "q"
         }
       }
     ],

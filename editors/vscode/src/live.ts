@@ -328,7 +328,7 @@ export class Live {
   readonly discovery: DiscoveryServers;
 
   constructor(private readonly context: ExtensionContext) {
-    this.output = window.createOutputChannel("q-lint: query");
+    this.output = window.createOutputChannel("q-lint: query", "q-console");
     this.status = window.createStatusBarItem("q-lint.connection", StatusBarAlignment.Left, 50);
     this.status.name = "q-lint: q connection";
     this.status.command = COMMANDS.connect;

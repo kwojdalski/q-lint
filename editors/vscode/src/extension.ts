@@ -14,7 +14,7 @@ import {
   type ExtensionContext,
   type OutputChannel,
 } from "vscode";
-import { launch, needsRestart } from "./settings";
+import { LINTED, launch, needsRestart } from "./settings";
 import { Live } from "./live";
 import { registerAgentTool } from "./agenttool";
 import { registerNotebooks, type RenderedChart } from "./notebook";
@@ -138,12 +138,8 @@ async function start(context: ExtensionContext): Promise<void> {
   const args = settings.args;
   const options: LanguageClientOptions = {
     initializationOptions: settings.initializationOptions,
-    // A saved `.q` file, and nothing else. `language: "q"` alone would also
-    // match a console buffer or an untitled scratch that some other q
-    // extension has labelled `q`, and this linter has nothing true to say
-    // about a REPL transcript. The server applies the same rule, so an editor
-    // that is not VS Code is protected too.
-    documentSelector: [{ scheme: "file", language: "q", pattern: "**/*.q" }],
+    // A saved `.q` file, and nothing else: see LINTED.
+    documentSelector: LINTED,
     // The output channel the server's own trace goes to, so a user debugging
     // the integration has one place to look.
     outputChannel: channel,

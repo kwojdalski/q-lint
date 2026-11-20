@@ -59,6 +59,15 @@ to a process you add and connect to, and sends only the code you run.
   function is coloured wherever it is called, even when another `.q` file in
   the workspace defines it, and a parameter wherever its body reads it.
   Unused parameters and locals are faded.
+- **`.k` and `.quke` files are coloured, not linted.** A `.k` file is k, the
+  language q is written in: comments, strings, symbols, numbers and temporal
+  literals, the adverbs `' / \ ': /: \:` and `\` system commands. A `.quke`
+  file is a [qcumber](https://code.kx.com/developer/qcumber/) spec:
+  `feature`, `should`, `expect`, `bench` and the other keywords as
+  structure, and the code under each block coloured as q. The linter has
+  nothing true to say about either - k is not q, and a spec is not a script
+  q loads - so only `.q` files reach the server, and opening one of these
+  starts nothing.
 - **Navigation**: the outline and breadcrumbs, **Go to Symbol in Workspace**,
   **Go to Definition** and **Find All References** across the workspace's
   `.q` files, and occurrence highlights that tell a write from a read. A
@@ -178,7 +187,10 @@ your code defines. The result is formatted by the process at
 `q-lint.output.consoleSize` and shown in the **q-lint: query** output with
 the process and the time taken. An error shows q's message and, on kdb+ 3.5
 and later, its backtrace. With no connection, a query asks which process to
-connect to first.
+connect to first. The output is coloured from the editor's theme: each
+answer's `# process (n ms)` header, the error and its backtrace (each frame,
+where it is and the caret under it), a table's rule and a keyed table's `|`,
+numbers, symbols, temporal literals and strings, and an included query as q.
 
 **Abort Current Query** stops waiting at once. q has no message that cancels
 a query, so the connection is closed and opened again; the process goes on
@@ -577,5 +589,7 @@ the tree under the same version (#558). Packaging puts one there:
 before `vsce package`, and the release workflow unpacks each platform's.
 By hand: `cargo build --release && mkdir -p editors/vscode/server && install
 -m 755 target/release/qlinter editors/vscode/server/qlinter`. Without one, the
-extension falls back to `qlinter` on `PATH`. The grammar is generated:
+extension falls back to `qlinter` on `PATH`. The q grammar is generated:
 `python3 scripts/q_grammar.py > editors/vscode/syntaxes/q.tmLanguage.json`.
+The `k`, `quke` (qcumber) and `q-console` (the query output) grammars beside
+it are written by hand; `test/languages.test.js` pins what they colour.
