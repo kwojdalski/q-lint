@@ -14,8 +14,9 @@ development, and already catching the most common problems. A finding that
 looks wrong is worth an [issue](https://github.com/kwojdalski/q-lint/issues).
 
 **It never executes your code**, which is why it is safe on every keystroke.
-Navigation is read from the source the same way; there is no completion or
-hover.
+Navigation, hovers, signature help and completion are read from the source
+the same way, and from a catalogue of q's own words that ships with the
+server: none of them asks a running q anything.
 
 ## Features
 
@@ -45,6 +46,17 @@ hover.
 - **Rename** for a lambda's parameters and locals. A global is refused with
   the reason: it can be reached from a string, a symbol or another process,
   and a rename that misses one of those breaks the program quietly.
+- **Hover** on a name the workspace defines shows its parameters, the
+  comment written above its definition and the file it is in; on a word of
+  q itself - `ssr`, `select`, `.z.p`, `.Q.s` - how it is written, what it
+  gives, and a link to its page in the KX reference.
+- **Signature help** inside `name[`: the parameters, with the one being
+  written marked, for a workspace function or a q function called with
+  brackets.
+- **Completion**, when turned on with `q-lint.completion.enable`: a lambda's
+  parameters and locals first, then the names the workspace defines, spelled
+  as the `\d` context in force reads them, then q's own words. It does not
+  know a table's columns or anything only a running process holds.
 
 ## Requirements
 
@@ -74,6 +86,8 @@ q-pro column names the setting of [q-pro](https://marketplace.visualstudio.com/i
 | `q-lint.format.enable` | `true` | Register **Format Document** (the safe fixes). | - |
 | `q-lint.semanticTokens.enable` | `true` | Colour calls and parameter reads on top of the grammar. | - |
 | `q-lint.navigation.enable` | `true` | Offer the outline, workspace symbols, definitions, references, highlights and local rename. Off when another q extension already navigates. | - |
+| `q-lint.help.enable` | `true` | Show hovers and signature help, from the source and the built-in catalogue of q's words. | - |
+| `q-lint.completion.enable` | `false` | Complete locals, workspace names and q's words. Off by default: an editor told a server completes stops offering the words already in the file. | - |
 | `q-lint.workspaceIndex.enable` | `true` | Read every workspace `.q` file at startup for the names it defines, up to 20,000 files or 500,000 directory entries. Off: only open files. | - |
 | `q-lint.workspaceIndex.exclude` | `[]` | Globs, relative to the workspace folder, the index does not read: `["vendor/**"]`. | `q-lang-server.sourceFiles.ignoreGlob` |
 | `q-lint.trace.server` | `off` | Log client-server traffic: `off`, `messages`, `verbose`. | `q-lang-server.trace.server` |

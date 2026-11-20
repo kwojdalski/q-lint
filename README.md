@@ -366,9 +366,35 @@ symbol or another process, and no reading of the source finds those. So are an
 implicit `x`, `y` or `z`, a local a qSQL phrase reads (it may be a column),
 and a new name that is a q builtin or that the lambda already uses.
 
-Not implemented: completion and hover. Announcing a capability and answering
-emptily is worse than not announcing it, because an editor told that a server
-provides completion stops offering its own word-based fallback.
+Hover, signature help and completion answer from two places and never from a
+running q: the workspace's own source, and a catalogue of q's words that ships
+in the binary (`src/builtins.json` - the keywords, the control words, and the
+commonly used names under `.z`, `.Q`, `.h` and `.j`).
+
+A hover on a name the workspace defines shows `name[a;b]` for a function - the
+signature it declares, or `x`, `y` and `z` as far as its body reads them, or
+the slots a projection leaves open - and the line that assigns anything else,
+then the comment directly above the definition (`/` lines, or a block comment
+ending there) and the file. A name several files define shows each, up to
+five. A word of q shows how it is written, a line on what it gives, and a link
+to its page on code.kx.com. A lambda's own parameter or local shows nothing:
+its definition is on screen.
+
+Signature help answers inside the brackets of a call written as a name -
+`.lib.add[1;` - with the parameters and the one being written. A lambda
+called in place, an operator's bracket form (`$[`, `@[`, `.[`, `?[`, `![`) and
+a call by juxtaposition have no signature shown. `if`, `do` and `while` take
+any number of expressions, so the last parameter stays marked.
+
+Completion is off unless `completion.enable` asks for it, because an editor
+told that a server completes stops offering the words already in the buffer,
+and this server's list is narrower than that fallback in one way that matters:
+it knows no table's columns, no key of a dictionary and nothing a running
+process defines. What it offers, in this order: the parameters and locals of
+the lambda being written; the names the workspace defines, spelled as the
+`\d` context in force reads them; q's words; and every name by its full
+path. Nothing is offered in a string, a comment, a symbol, a number or a
+system command.
 
 ### VS Code
 
@@ -439,6 +465,7 @@ Every key is optional, and these are the defaults:
 {"lint": {"select": [], "ignore": [], "run": "onType", "severity": {}},
  "fixes": {"unsafe": true}, "format": {"enable": true},
  "semanticTokens": {"enable": true}, "navigation": {"enable": true},
+ "help": {"enable": true}, "completion": {"enable": false},
  "workspaceIndex": {"enable": true, "exclude": []}}
 ```
 
@@ -447,9 +474,11 @@ configuration and the command line, and only turn rules off: a rule reports
 when the configuration selects it and they do too. `lint.run` is `onType` or
 `onSave`. `lint.severity` maps a code or prefix to `error`, `warning`,
 `information` or `hint`, the longest winning. `fixes.unsafe: false` offers
-only the fixes `--fix` applies; `format.enable`, `semanticTokens.enable` and
-`navigation.enable` set to `false` leave the capability unannounced - the
-last for when another q language server already answers those requests. `workspaceIndex.exclude`
+only the fixes `--fix` applies; `format.enable`, `semanticTokens.enable`,
+`navigation.enable` and `help.enable` (hover and signature help) set to
+`false` leave the capability unannounced - the last two for when another q
+language server already answers those requests. `completion.enable` is the
+one that starts off; `true` announces completion. `workspaceIndex.exclude`
 holds globs relative to each workspace folder that the index does not read.
 The index stops after 20,000 `.q` files or 500,000 directory entries of any
 kind, whichever comes first, so a folder opened at `/` cannot stall the

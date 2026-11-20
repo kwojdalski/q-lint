@@ -99,6 +99,14 @@ impl Workspace {
     pub(crate) fn is_lambda(&self, name: &str) -> bool {
         self.lambdas.contains_key(name)
     }
+
+    /// Every name the workspace defines, in no order, with whether a file
+    /// assigns it a lambda.
+    pub fn names(&self) -> impl Iterator<Item = (&str, bool)> {
+        self.defined
+            .keys()
+            .map(|name| (name.as_str(), self.is_lambda(name)))
+    }
 }
 
 /// What `source` defines, for indexing it into a `Workspace`.
@@ -182,12 +190,15 @@ pub struct Mention {
 
 /// One write of a global. `function` when what it assigns is a lambda, with
 /// its signature as written in `detail` - `[a;b]`, and empty for an implicit
-/// one. `start..end` is the statement making the write, for an outline to
-/// select and fold.
+/// one - and in `params` what a caller of the name passes: the signature's
+/// slots, x, y and z as far as a body without one reads them, and for a
+/// projection the slots it leaves open. `start..end` is the statement making
+/// the write, for an outline to select and fold.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Definition {
     pub function: bool,
     pub detail: String,
+    pub params: Vec<String>,
     pub start: usize,
     pub end: usize,
 }
@@ -253,6 +264,52 @@ pub fn rename(source: &str, offset: usize, new: &str) -> Result<Vec<(usize, usiz
     semantics::navigate::rename(&v.code, source, offset, new)
 }
 
+/// A bracketed call around a cursor: the name called, at byte `at` for `len`
+/// bytes, and which argument the cursor is in, from 0.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Call {
+    pub at: usize,
+    pub len: usize,
+    pub argument: usize,
+}
+
+/// What is being typed at a cursor: the name so far starts at byte `start`,
+/// inside a lambda whose parameters and locals are `locals`, under the
+/// context `namespace` - `.ns` after `\d .ns`, and empty at the root.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Completing {
+    pub start: usize,
+    pub locals: Vec<String>,
+    pub namespace: String,
+}
+
+/// The comment directly above the statement at byte `at`, without its `/`
+/// markers: what a hover shows under a function's signature.
+pub fn comment_above(source: &str, at: usize) -> String {
+    let v = views(source);
+    semantics::help::comment_above(&v.comments, source, at)
+}
+
+/// The call the cursor at byte `offset` is in, when it is in the brackets
+/// of one written as a name.
+pub fn call_at(source: &str, offset: usize) -> Option<Call> {
+    let v = views(source);
+    semantics::help::call_at(&v.code, &v.comments, source, offset)
+}
+
+/// The name at byte `offset`, a keyword included, as its start and length.
+pub fn word_at(source: &str, offset: usize) -> Option<(usize, usize)> {
+    let v = views(source);
+    semantics::help::word_at(&v.code, source, offset)
+}
+
+/// What is being typed at byte `offset`, or `None` where no name is - in a
+/// string, a comment, a symbol, a number or a system command.
+pub fn completing(source: &str, offset: usize) -> Option<Completing> {
+    let v = views(source);
+    semantics::help::completing(&v.code, &v.comments, &v.string_starts, source, offset)
+}
+
 pub mod graph;
 
 /// The names in `source` an editor can colour by what they refer to, as byte
@@ -280,6 +337,50 @@ pub static RULES: LazyLock<Vec<Rule>> =
     LazyLock::new(|| serde_json::from_str(include_str!("taxonomy.json")).unwrap());
 pub(crate) static RESERVED: LazyLock<Vec<String>> =
     LazyLock::new(|| serde_json::from_str(include_str!("reserved.json")).unwrap());
+
+/// What a name q defines is, as far as an editor shows it differently.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BuiltinKind {
+    /// Called with `params`, infix or bracketed.
+    Function,
+    /// `if`, `do` and `while`: brackets, and no value.
+    Control,
+    /// A word of a qSQL template, which takes no arguments of its own.
+    Query,
+    Constant,
+    /// A value q keeps current, as `.z.p`.
+    Variable,
+    /// A name q calls when the script assigns it, as `.z.pg`.
+    Callback,
+}
+
+/// One name q defines: every reserved word, and the names in `.z`, `.Q` and
+/// `.j` a script is most likely to meet. `syntax` is how it is written,
+/// `params` what it takes - their count is its rank - `summary` one or two
+/// sentences on what it gives back, and `page` where the reference
+/// describes it, under <https://code.kx.com/q/ref/>.
+///
+/// The words are the ones `reserved.json` lists and the ranks the ones a
+/// running q reports (`tests/test_builtins_runtime.py`); the descriptions
+/// are this project's own.
+#[derive(Debug, Deserialize)]
+pub struct Builtin {
+    pub name: String,
+    pub kind: BuiltinKind,
+    pub syntax: String,
+    pub params: Vec<String>,
+    pub summary: String,
+    #[serde(default)]
+    pub page: Option<String>,
+}
+pub static BUILTINS: LazyLock<Vec<Builtin>> =
+    LazyLock::new(|| serde_json::from_str(include_str!("builtins.json")).unwrap());
+
+/// The catalogue's entry for `name`, when q defines it.
+pub fn builtin(name: &str) -> Option<&'static Builtin> {
+    BUILTINS.iter().find(|builtin| builtin.name == name)
+}
 
 #[derive(Debug, Serialize)]
 pub struct Finding {

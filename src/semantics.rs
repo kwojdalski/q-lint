@@ -1,6 +1,7 @@
 use crate::{Finding, blank, boundary, matching, operand_ends, signature};
 use std::collections::{HashMap, HashSet};
 
+pub(crate) mod help;
 pub(crate) mod navigate;
 
 struct Scope {

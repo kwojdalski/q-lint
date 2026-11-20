@@ -86,17 +86,18 @@ pub fn mentions(code: &str, raw: &str) -> Vec<Mention> {
             };
             writes.insert(at);
             let function = assigns_lambda(code, raw, value);
-            let detail = if function {
+            let (detail, params) = if function {
                 let brace = value + code[value..].len() - code[value..].trim_start().len();
                 let sig = signature(code, raw, brace);
                 let slots: Vec<&str> = sig.slots.iter().map(|slot| slot.trim()).collect();
-                if sig.named {
+                let detail = if sig.named {
                     format!("[{}]", slots.join(";"))
                 } else {
                     String::new()
-                }
+                };
+                (detail, super::help::parameters(code, raw, &scopes, brace))
             } else {
-                String::new()
+                (String::new(), vec![])
             };
             // The whole statement at the top level, lambda and all, which is
             // what an outline folds and selects; inside a lambda, where
@@ -123,6 +124,7 @@ pub fn mentions(code: &str, raw: &str) -> Vec<Mention> {
                 definition: Some(Definition {
                     function,
                     detail,
+                    params,
                     start,
                     end,
                 }),

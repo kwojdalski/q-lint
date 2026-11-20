@@ -649,7 +649,7 @@ fn an_unsupported_request_is_refused_rather_than_ignored() {
     // A request with no reply looks like a hung server to every client.
     let mut server = Server::start();
     server.initialize();
-    server.send(json!({"jsonrpc":"2.0","id":7,"method":"textDocument/completion","params":{}}));
+    server.send(json!({"jsonrpc":"2.0","id":7,"method":"textDocument/inlayHint","params":{}}));
     let reply = server.receive();
     assert_eq!(reply["id"], 7);
     assert_eq!(reply["error"]["code"], -32601);
