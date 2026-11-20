@@ -95,6 +95,11 @@
           "match": "`[A-Za-z0-9_.:]*"
         },
         {
+          "comment": "A guid, as q prints one: before the numbers, whose rules would colour its all-digit groups.",
+          "name": "constant.other.guid.q-console",
+          "match": "(?<![A-Za-z0-9_.`-])[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?![A-Za-z0-9_-])"
+        },
+        {
           "name": "constant.numeric.temporal.q-console",
           "match": "(?<![A-Za-z0-9_.`])(?:\\d{4}\\.\\d{2}\\.\\d{2}[DT](?:\\d{2}(?::\\d{2}(?::\\d{2}(?:\\.\\d*)?)?)?)?[pz]?|\\d{4}\\.\\d{2}(?:\\.\\d{2}d?|m)|-?\\d+D(?:\\d{2}(?::\\d{2}(?::\\d{2}(?:\\.\\d*)?)?)?)?n?|-?\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d+)?)?[tuv]?)(?![A-Za-z0-9_])"
         },

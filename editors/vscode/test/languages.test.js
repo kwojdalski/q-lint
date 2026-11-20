@@ -211,6 +211,13 @@ cases("source.q-console", [
   ["the caret", OUT, "^", "invalid.illegal.caret.q-console", 0],
 ]);
 
+test("source.q-console: a guid is one value, not hex with numbers in it", async () => {
+  // As .Q.S prints a guid column: 1?0Ng and the null guid.
+  for (const guid of ["8c6b8b64-6815-6084-0a3e-178401251b68", "00000000-0000-0000-0000-000000000000"]) {
+    assert.deepStrictEqual(await innermost("source.q-console", `g\n----\n${guid}`, guid), ["constant.other.guid.q-console"], guid);
+  }
+});
+
 test("source.q-console: a table's column names are left plain", async () => {
   const g = await registry.loadGrammar("source.q-console");
   const { tokens: line } = g.tokenizeLine(OUT.split("\n")[2], tm.INITIAL);
