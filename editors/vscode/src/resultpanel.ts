@@ -67,6 +67,9 @@ interface Shown {
   millis: number;
   payload: GridPayload;
   view: "grid" | "chart";
+  /// `q-lint.query.gridLimit` when it ran: what the panel says a cut
+  /// result was cut at, though the setting has changed since.
+  limit: number;
   /// Counts results, so the panel tells a new one from the same one sent
   /// again and keeps the view, sort and filters chosen for it. Prefixed by
   /// the session: a view's page keeps its state across a window reload,
@@ -165,6 +168,7 @@ export class QueryModes {
       millis: result.millis,
       payload: answer.grid,
       view: live.mode,
+      limit: live.gridLimit,
       id: `${this.session}.${++this.results}`,
     };
     this.order = undefined;
@@ -280,7 +284,7 @@ export class QueryModes {
     if (this.shown === undefined) {
       return;
     }
-    const { process, code, millis, payload, view, id } = this.shown;
+    const { process, code, millis, payload, view, limit, id } = this.shown;
     const live = settings();
     const message = {
       type: "result",
@@ -289,7 +293,7 @@ export class QueryModes {
       process,
       code,
       millis,
-      limit: live.gridLimit,
+      limit,
       grid: toGrid(payload, live.gridDecimals),
     };
     const pages = only !== undefined ? [only] : [this.panel?.webview, this.view?.webview];

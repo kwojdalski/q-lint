@@ -129,3 +129,17 @@ test("a result's id is new to the page after a reload, so the page does not keep
   }
   assert.notStrictEqual(ids[0], ids[1]);
 });
+
+test("a cut result says the limit it was cut at, after the setting changes", () => {
+  const fake = fakeVscode({ "query.gridLimit": 100 });
+  const modes = loadModes(fake);
+  modes.show(result([1, 2, 3], 1000), live({ gridLimit: 100 }));
+  assert.strictEqual(fake.pages[0].posted.at(-1).limit, 100);
+  // The grid on show is re-sent when a query setting changes.
+  fake.config["query.gridLimit"] = 5000;
+  for (const f of fake.listeners.config) {
+    f({ affectsConfiguration: () => true });
+  }
+  assert.strictEqual(fake.pages[0].posted.length, 2);
+  assert.strictEqual(fake.pages[0].posted.at(-1).limit, 100);
+});
