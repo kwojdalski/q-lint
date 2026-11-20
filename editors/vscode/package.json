@@ -331,6 +331,19 @@
             "markdownDescription": "A file of `NAME=value` lines set for q in a q terminal, such as `QHOME` and `QLIC`, on the command line that starts it, so they win over the shell's startup files. Relative to the workspace folder. Values are taken as written: `$HOME` is not expanded."
           }
         }
+      },
+      {
+        "title": "q-lint: discovery servers",
+        "properties": {
+          "q-lint.discovery.refreshInterval": {
+            "type": "integer",
+            "default": 30,
+            "minimum": 0,
+            "maximum": 1440,
+            "order": 300,
+            "markdownDescription": "Minutes between fetches of every discovery server's process list, at most 1440. `0` fetches only on **Reload Discovery Server**, and when a server is added or edited."
+          }
+        }
       }
     ],
     "commands": [
@@ -408,6 +421,42 @@
         "title": "Refresh Processes",
         "category": "q-lint",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "q-lint.addDiscoveryServer",
+        "title": "Add Discovery Server",
+        "category": "q-lint",
+        "icon": "$(globe)"
+      },
+      {
+        "command": "q-lint.editDiscoveryServer",
+        "title": "Edit Discovery Server",
+        "category": "q-lint",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "q-lint.deleteDiscoveryServer",
+        "title": "Delete Discovery Server",
+        "category": "q-lint",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "q-lint.reloadDiscoveryServer",
+        "title": "Reload Discovery Server",
+        "category": "q-lint",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "q-lint.downloadDiscoveredProcesses",
+        "title": "Download Processes",
+        "category": "q-lint",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "q-lint.removeDiscoveredProcesses",
+        "title": "Remove Processes",
+        "category": "q-lint",
+        "icon": "$(clear-all)"
       },
       {
         "command": "q-lint.refreshProcessExplorer",
@@ -566,6 +615,16 @@
           "group": "list@2"
         },
         {
+          "command": "q-lint.addDiscoveryServer",
+          "when": "view == q-lint.processes",
+          "group": "list@3"
+        },
+        {
+          "command": "q-lint.reloadDiscoveryServer",
+          "when": "view == q-lint.processes",
+          "group": "list@4"
+        },
+        {
           "command": "q-lint.refreshProcessExplorer",
           "when": "view == q-lint.processExplorer",
           "group": "navigation@1"
@@ -615,6 +674,61 @@
         {
           "command": "q-lint.deleteProcess",
           "when": "view == q-lint.processes && viewItem =~ /^process/",
+          "group": "3_delete@1"
+        },
+        {
+          "command": "q-lint.connectProcess",
+          "when": "view == q-lint.processes && viewItem == discovered",
+          "group": "inline"
+        },
+        {
+          "command": "q-lint.disconnectProcess",
+          "when": "view == q-lint.processes && viewItem == discovered.connected",
+          "group": "inline"
+        },
+        {
+          "command": "q-lint.connectProcess",
+          "when": "view == q-lint.processes && viewItem =~ /^discovered/",
+          "group": "1_connect@1"
+        },
+        {
+          "command": "q-lint.disconnectProcess",
+          "when": "view == q-lint.processes && viewItem == discovered.connected",
+          "group": "1_connect@2"
+        },
+        {
+          "command": "q-lint.addDiscoveryServer",
+          "when": "view == q-lint.processes && viewItem == discoveryServers",
+          "group": "inline"
+        },
+        {
+          "command": "q-lint.reloadDiscoveryServer",
+          "when": "view == q-lint.processes && viewItem == discoveryServer",
+          "group": "inline"
+        },
+        {
+          "command": "q-lint.reloadDiscoveryServer",
+          "when": "view == q-lint.processes && viewItem == discoveryServer",
+          "group": "1_list@1"
+        },
+        {
+          "command": "q-lint.downloadDiscoveredProcesses",
+          "when": "view == q-lint.processes && viewItem == discoveryServer",
+          "group": "1_list@2"
+        },
+        {
+          "command": "q-lint.removeDiscoveredProcesses",
+          "when": "view == q-lint.processes && viewItem == discoveryServer",
+          "group": "1_list@3"
+        },
+        {
+          "command": "q-lint.editDiscoveryServer",
+          "when": "view == q-lint.processes && viewItem == discoveryServer",
+          "group": "2_edit@1"
+        },
+        {
+          "command": "q-lint.deleteDiscoveryServer",
+          "when": "view == q-lint.processes && viewItem == discoveryServer",
           "group": "3_delete@1"
         },
         {
@@ -705,7 +819,7 @@
     "viewsWelcome": [
       {
         "view": "q-lint.processes",
-        "contents": "No q processes yet.\n[Add Process](command:q-lint.addProcess)\n[Import Processes](command:q-lint.importProcesses)\nq-lint connects only to a process you add here, and runs only the code you send it."
+        "contents": "No q processes yet.\n[Add Process](command:q-lint.addProcess)\n[Import Processes](command:q-lint.importProcesses)\n[Add Discovery Server](command:q-lint.addDiscoveryServer)\nq-lint connects only to a process you add here, and runs only the code you send it."
       }
     ],
     "keybindings": [

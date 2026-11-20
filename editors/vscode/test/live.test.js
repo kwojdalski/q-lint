@@ -17,7 +17,7 @@ const {
   tagColour,
 } = require("../out/processes.js");
 const { NULL_TYPE, RUN, readAnswer, render } = require("../out/query.js");
-const { COMMANDS, CONNECTED, QUERY_MODES, VIEWS, readLive } = require("../out/liveconfig.js");
+const { COMMANDS, CONNECTED, DISCOVERY_COMMANDS, QUERY_MODES, VIEWS, readLive } = require("../out/liveconfig.js");
 const { EXPLORER, readExplorer } = require("../out/explorer.js");
 const relations = require("../out/relations.js");
 const { NOTEBOOK } = require("../out/qnb.js");
@@ -208,6 +208,7 @@ test("package.json declares exactly the commands the extension registers", () =>
   const declared = pkg.contributes.commands.map((c) => c.command).sort();
   const registered = [
     ...Object.values(COMMANDS),
+    ...Object.values(DISCOVERY_COMMANDS),
     ...Object.values(EXPLORER).filter((id) => id !== EXPLORER.view),
     ...Object.values(relations.COMMANDS),
     NOTEBOOK.exportCommand,

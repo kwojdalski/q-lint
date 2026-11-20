@@ -1,0 +1,287 @@
+// Discovery servers, as data: a URL that answers with a JSON list of q
+// processes, how one is fetched and read, and how the Processes view shows
+// what each one listed. Nothing here imports `vscode`, so all of it is tested
+// with node - the fetch against a local HTTP server.
+import { grouped, parseProcesses, type Process } from "./processes";
+
+export interface DiscoveryServer {
+  /// Unique among the discovery servers; names its group in the view and
+  /// prefixes its processes' labels when one is connected to.
+  label: string;
+  url: string;
+}
+
+/// What a server last answered. Its processes are kept only here, in memory:
+/// they are never written to disk.
+export interface ServerState {
+  processes: Process[];
+  /// What `parseProcesses` said about the entries it skipped.
+  problems: string[];
+  /// Why the last fetch failed; its processes are then the empty list.
+  error?: string;
+  loading: boolean;
+  /// When the last fetch finished, as `Date.now()`.
+  fetchedAt?: number;
+  /// Set by Remove Processes: the periodic refresh leaves the server alone
+  /// until it is reloaded.
+  removed: boolean;
+}
+
+export const EMPTY_STATE: ServerState = { processes: [], problems: [], loading: false, removed: false };
+
+/// The longest a fetch waits for the whole answer, and the most it reads.
+export const FETCH_TIMEOUT_MS = 10_000;
+export const MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
+
+/// Why `label` cannot name a discovery server, or undefined when it can.
+/// A `/` would make a qualified label (`server/process`) ambiguous.
+export function serverLabelProblem(label: string, taken: Set<string>): string | undefined {
+  const l = label.trim();
+  return l === ""
+    ? "A label is needed."
+    : l.includes("/")
+      ? "A discovery server's label cannot hold a /."
+      : taken.has(l)
+        ? "That label is taken."
+        : undefined;
+}
+
+/// Why `url` is not one a discovery server can have, or undefined when it is.
+export function urlProblem(url: string): string | undefined {
+  let parsed: URL;
+  try {
+    parsed = new URL(url.trim());
+  } catch {
+    return "Not a URL.";
+  }
+  return parsed.protocol === "http:" || parsed.protocol === "https:" ? undefined : "The URL must be http or https.";
+}
+
+/// The discovery servers a stored JSON value lists; anything that is not one
+/// is dropped, and a label seen before is skipped.
+export function parseServers(json: unknown): DiscoveryServer[] {
+  if (!Array.isArray(json)) {
+    return [];
+  }
+  const seen = new Set<string>();
+  const servers: DiscoveryServer[] = [];
+  for (const entry of json) {
+    if (typeof entry !== "object" || entry === null) {
+      continue;
+    }
+    const { label, url } = entry as Record<string, unknown>;
+    if (typeof label !== "string" || typeof url !== "string") {
+      continue;
+    }
+    if (serverLabelProblem(label, seen) !== undefined || urlProblem(url) !== undefined) {
+      continue;
+    }
+    seen.add(label.trim());
+    servers.push({ label: label.trim(), url: url.trim() });
+  }
+  return servers;
+}
+
+/// The header the stored secret is sent as: `Name: value` names its own
+/// header, and anything else is the value of `Authorization` - `Bearer
+/// <token>`, `Basic <base64>`. Undefined when there is no secret.
+export function authHeader(secret: string | undefined): [string, string] | undefined {
+  const s = (secret ?? "").trim();
+  if (s === "") {
+    return undefined;
+  }
+  const named = /^([!#$%&'*+.^_`|~0-9A-Za-z-]+):\s+(.+)$/.exec(s);
+  return named ? [named[1], named[2]] : ["Authorization", s];
+}
+
+/// How a discovered process is named once connected to - in the status bar,
+/// the query history and `connectProcess`'s argument - so that it cannot be
+/// taken for a saved process of the same label.
+export function qualified(server: string, label: string): string {
+  return `${server}/${label}`;
+}
+
+export interface FetchOptions {
+  /// The stored secret, as `authHeader` reads it.
+  secret?: string;
+  timeoutMs?: number;
+  maxBytes?: number;
+}
+
+/// The processes `url` lists, and what was wrong with the entries it skipped.
+/// The answer must be a 2xx, `application/json`, at most `maxBytes` long and
+/// all in within `timeoutMs`; a list of processes or `{processes: [...]}`.
+/// Throws an Error saying, in a few words, what went wrong otherwise.
+export async function fetchProcesses(url: string, options: FetchOptions = {}): Promise<{ processes: Process[]; problems: string[] }> {
+  const timeoutMs = options.timeoutMs ?? FETCH_TIMEOUT_MS;
+  const maxBytes = options.maxBytes ?? MAX_RESPONSE_BYTES;
+  const header = authHeader(options.secret);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const timedOut = (): Error => new Error(`no answer within ${timeoutMs / 1000} s`);
+  try {
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        headers: { Accept: "application/json", ...(header ? { [header[0]]: header[1] } : {}) },
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (controller.signal.aborted) {
+        throw timedOut();
+      }
+      const cause = error instanceof Error && error.cause instanceof Error ? error.cause.message : String(error);
+      throw new Error(`could not reach it: ${cause}`);
+    }
+    const refuse = async (why: string): Promise<never> => {
+      controller.abort();
+      await response.body?.cancel().catch(() => {});
+      throw new Error(why);
+    };
+    if (!response.ok) {
+      await refuse(`it answered ${response.status}${response.statusText ? ` ${response.statusText}` : ""}`);
+    }
+    const type = (response.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+    if (type !== "application/json") {
+      await refuse(`it answered ${type === "" ? "with no content type" : type}, not application/json`);
+    }
+    const tooBig = `its answer is over ${maxBytes} bytes`;
+    if (Number(response.headers.get("content-length") ?? 0) > maxBytes) {
+      await refuse(tooBig);
+    }
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    try {
+      for await (const chunk of response.body ?? []) {
+        size += chunk.byteLength;
+        if (size > maxBytes) {
+          await refuse(tooBig);
+        }
+        chunks.push(chunk);
+      }
+    } catch (error) {
+      throw controller.signal.aborted && !(error instanceof Error && error.message === tooBig) ? timedOut() : error;
+    }
+    let json: unknown;
+    try {
+      json = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    } catch (error) {
+      throw new Error(`its answer is not JSON: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    return parseProcesses(json);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/// A row of the Processes view: the saved processes' tag groups and rows, the
+/// Discovery Servers group, a server, a process it listed, and a note under a
+/// server - why its fetch failed, an entry it skipped, or that it is loading.
+export type Row =
+  | { kind: "tag"; tag: string; processes: Process[] }
+  | { kind: "process"; process: Process }
+  | { kind: "servers" }
+  | { kind: "server"; server: DiscoveryServer; state: ServerState }
+  | { kind: "discovered"; server: string; process: Process }
+  | { kind: "note"; level: "error" | "warning" | "info"; text: string };
+
+export interface Discovered {
+  server: DiscoveryServer;
+  state: ServerState;
+}
+
+/// The most skipped entries shown under a server; the rest are counted.
+const PROBLEMS_SHOWN = 10;
+
+/// The children of `row` in the Processes view, or its top level when `row`
+/// is undefined: the saved processes grouped by tag as `grouped` groups them,
+/// the untagged ones at the top level, then a Discovery Servers group when
+/// there is a server. Under a server, its notes come first, then its
+/// processes by label.
+export function children(saved: Process[], discovered: Discovered[], row?: Row): Row[] {
+  if (row === undefined) {
+    return [
+      ...grouped(saved).flatMap((group): Row[] =>
+        group.tag === ""
+          ? group.processes.map((process): Row => ({ kind: "process", process }))
+          : [{ kind: "tag", tag: group.tag, processes: group.processes }],
+      ),
+      ...(discovered.length > 0 ? [{ kind: "servers" } as const] : []),
+    ];
+  }
+  switch (row.kind) {
+    case "tag":
+      return row.processes.map((process) => ({ kind: "process", process }));
+    case "servers":
+      return [...discovered]
+        .sort((a, b) => a.server.label.localeCompare(b.server.label))
+        .map(({ server, state }) => ({ kind: "server", server, state }));
+    case "server":
+      return serverChildren(row.server, row.state);
+    default:
+      return [];
+  }
+}
+
+function serverChildren(server: DiscoveryServer, state: ServerState): Row[] {
+  const note = (level: "error" | "warning" | "info", text: string): Row => ({ kind: "note", level, text });
+  if (state.error !== undefined) {
+    return [note("error", `Could not load: ${state.error}.`)];
+  }
+  if (state.removed) {
+    return [note("info", "Processes removed. Reload to list them again.")];
+  }
+  if (state.fetchedAt === undefined) {
+    return [note("info", state.loading ? "Loading..." : "Not loaded yet. Reload to list its processes.")];
+  }
+  const problems = state.problems.slice(0, PROBLEMS_SHOWN).map((p) => note("warning", `Skipped: ${p}`));
+  const more = state.problems.length - PROBLEMS_SHOWN;
+  return [
+    ...problems,
+    ...(more > 0 ? [note("warning", `Skipped ${more} more.`)] : []),
+    ...(state.processes.length === 0 && state.problems.length === 0 ? [note("info", "It lists no processes.")] : []),
+    ...[...state.processes]
+      .sort((a, b) => a.label.localeCompare(b.label))
+      .map((process): Row => ({ kind: "discovered", server: server.label, process })),
+  ];
+}
+
+/// What a server's row says beside its label.
+export function serverDescription(state: ServerState): string {
+  if (state.loading) {
+    return "loading";
+  }
+  if (state.error !== undefined) {
+    return "failed";
+  }
+  if (state.removed || state.fetchedAt === undefined) {
+    return "";
+  }
+  const n = state.processes.length;
+  return `${n} process${n === 1 ? "" : "es"}`;
+}
+
+/// The discovered process `name` names, with its label qualified: either
+/// `server/label`, or a bare label only one server lists. Undefined when it
+/// names none, or a bare label several servers list.
+export function findDiscovered(discovered: Discovered[], name: string): Process | undefined {
+  const all = discovered.flatMap(({ server, state }) =>
+    state.processes.map((process) => ({ server: server.label, process })),
+  );
+  const exact = all.find(({ server, process }) => qualified(server, process.label) === name);
+  const bare = all.filter(({ process }) => process.label === name);
+  const hit = exact ?? (bare.length === 1 ? bare[0] : undefined);
+  return hit && { ...hit.process, label: qualified(hit.server, hit.process.label) };
+}
+
+/// The processes Download Processes adds to the saved list: those whose label
+/// no saved process has, under their own label. The rest are skipped, never
+/// replaced: a saved process is the user's, and a server's list should not
+/// overwrite it.
+export function toDownload(saved: Process[], listed: Process[]): { added: Process[]; skipped: string[] } {
+  const taken = new Set(saved.map((p) => p.label));
+  return {
+    added: listed.filter((p) => !taken.has(p.label)),
+    skipped: listed.filter((p) => taken.has(p.label)).map((p) => p.label),
+  };
+}
