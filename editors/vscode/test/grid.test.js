@@ -1,5 +1,6 @@
 // Query modes (#855): how a grid answer becomes the cells, ranks and values
-// the result panel shows, CSV, and the panel script's own helpers. Run after
+// the result panel shows, CSV, the panel script's own helpers, and what a
+// chart draws (media/chartspec.js, which notebook charts share). Run after
 // `tsc`; the payloads are what node-q's codec makes of `GRID`'s answer, as
 // qclient.test.js gets from a real q.
 const test = require("node:test");
@@ -8,6 +9,7 @@ const Long = require("long");
 const { GRID, readGridAnswer, toGrid, toCsv, csvField, cellText, typeName, rowCount } = require("../out/grid.js");
 const { RUN } = require("../out/query.js");
 const panel = require("../media/result.js");
+const charts = require("../media/chartspec.js");
 
 const NULL_GUID = "00000000-0000-0000-0000-000000000000";
 const big = Long.fromString("9007199254740993");
@@ -193,7 +195,7 @@ test("CSV is the header and the rows given, as the cells show them", () => {
   assert.strictEqual(toCsv(grid, []), "s,px,str\n");
 });
 
-// --- media/result.js
+// --- media/result.js and media/chartspec.js
 
 const sample = () =>
   toGrid(
@@ -226,35 +228,78 @@ test("the panel sorts by q's ranks, either way, and filters on the text shown", 
 
 test("a chart plots the numeric columns, against the first but for a histogram", () => {
   const grid = sample();
-  assert.deepStrictEqual(panel.chartable(grid, "line"), [1]);
-  assert.deepStrictEqual(panel.chartable(grid, "histogram"), [1]);
-  const line = panel.chartData(grid, [0, 1, 2, 3], "line", [1], 10);
+  assert.deepStrictEqual(charts.chartable(grid, "line"), [1]);
+  assert.deepStrictEqual(charts.chartable(grid, "histogram"), [1]);
+  const line = charts.chartData(grid, [0, 1, 2, 3], "line", [1], 10);
   assert.deepStrictEqual(line, { type: "line", labels: ["d1", "d2", "d3", "d4"], datasets: [{ label: "px", column: 1, data: [3, 1, null, 2] }] });
-  assert.strictEqual(panel.chartData(grid, [0], "bar", [1], 10).type, "bar");
+  assert.strictEqual(charts.chartData(grid, [0], "bar", [1], 10).type, "bar");
   // Scatter: x from the first column's values; a null on either side drops the point.
-  const scatter = panel.chartData(grid, [0, 1, 2, 3], "scatter", [1], 10);
+  const scatter = charts.chartData(grid, [0, 1, 2, 3], "scatter", [1], 10);
   assert.deepStrictEqual(scatter.datasets[0].data.map((p) => [p.x, p.y]), [[1, 3], [2, 1], [4, 2]]);
-  assert.match(panel.chartData(grid, [0], "line", [], 10).note, /No numeric column/);
+  assert.match(charts.chartData(grid, [0], "line", [], 10).note, /No numeric column/);
 });
 
 test("a histogram bins every series over one range", () => {
-  assert.deepStrictEqual(panel.histogram([[0, 1, 2, 3, 4, null, Infinity]], 2), { edges: [0, 2, 4], counts: [[2, 3]] });
-  assert.deepStrictEqual(panel.histogram([[1, 1, 1]], 10), { edges: [1, 1], counts: [[3]] });
-  assert.deepStrictEqual(panel.histogram([[0, 10], [5]], 2), { edges: [0, 5, 10], counts: [[1, 1], [0, 1]] });
-  assert.deepStrictEqual(panel.histogram([[null]], 4), { edges: [], counts: [[]] });
-  const h = panel.chartData(sample(), [0, 1, 2, 3], "histogram", [1], 2);
+  assert.deepStrictEqual(charts.histogram([[0, 1, 2, 3, 4, null, Infinity]], 2), { edges: [0, 2, 4], counts: [[2, 3]] });
+  assert.deepStrictEqual(charts.histogram([[1, 1, 1]], 10), { edges: [1, 1], counts: [[3]] });
+  assert.deepStrictEqual(charts.histogram([[0, 10], [5]], 2), { edges: [0, 5, 10], counts: [[1, 1], [0, 1]] });
+  assert.deepStrictEqual(charts.histogram([[null]], 4), { edges: [], counts: [[]] });
+  const h = charts.chartData(sample(), [0, 1, 2, 3], "histogram", [1], 2);
   assert.deepStrictEqual(h.labels, ["1 - 2", "2 - 3"]);
   assert.deepStrictEqual(h.datasets[0].data, [1, 2]);
 });
 
 test("a temporal axis is labelled in q's notation", () => {
-  assert.strictEqual(panel.temporalLabel(12, 848484672123456789), "2026.11.20D10:11:12");
-  assert.strictEqual(panel.temporalLabel(13, 322), "2026.11");
-  assert.strictEqual(panel.temporalLabel(13, -1), "1999.12");
-  assert.strictEqual(panel.temporalLabel(14, 9820), "2026.11.20");
-  assert.strictEqual(panel.temporalLabel(15, 9820.5), "2026.11.20T12:00:00");
-  assert.strictEqual(panel.temporalLabel(16, -3723000000001), "-0D01:02:03");
-  assert.strictEqual(panel.temporalLabel(17, 611), "10:11");
-  assert.strictEqual(panel.temporalLabel(18, 36672), "10:11:12");
-  assert.strictEqual(panel.temporalLabel(19, 36672123), "10:11:12");
+  assert.strictEqual(charts.temporalLabel(12, 848484672123456789), "2026.11.20D10:11:12");
+  assert.strictEqual(charts.temporalLabel(13, 322), "2026.11");
+  assert.strictEqual(charts.temporalLabel(13, -1), "1999.12");
+  assert.strictEqual(charts.temporalLabel(14, 9820), "2026.11.20");
+  assert.strictEqual(charts.temporalLabel(15, 9820.5), "2026.11.20T12:00:00");
+  assert.strictEqual(charts.temporalLabel(16, -3723000000001), "-0D01:02:03");
+  assert.strictEqual(charts.temporalLabel(17, 611), "10:11");
+  assert.strictEqual(charts.temporalLabel(18, 36672), "10:11:12");
+  assert.strictEqual(charts.temporalLabel(19, 36672123), "10:11:12");
+});
+
+const LOOK = { colours: ["#111111", "#222222"], foreground: "#eeeeee", border: "#333333", font: "Menlo" };
+
+test("a chart's configuration takes the theme's colours and the grid's axes", () => {
+  const grid = sample();
+  const line = charts.chartConfig(grid, [0, 1, 2, 3], "line", charts.chartData(grid, [0, 1, 2, 3], "line", [1], 10), LOOK);
+  assert.strictEqual(line.type, "line");
+  assert.deepStrictEqual(line.data.labels, ["d1", "d2", "d3", "d4"]);
+  assert.strictEqual(line.data.datasets[0].borderColor, "#111111");
+  assert.strictEqual(line.options.scales.x.type, "category");
+  assert.strictEqual(line.options.scales.x.title.text, "t");
+  assert.strictEqual(line.options.plugins.title.display, false);
+  assert.strictEqual(line.options.animation, false);
+  // A bar is translucent; a scatter is linear, its temporal x axis in q's notation.
+  const bar = charts.chartConfig(grid, [0], "bar", charts.chartData(grid, [0], "bar", [1], 10), LOOK);
+  assert.strictEqual(bar.data.datasets[0].backgroundColor, "#11111199");
+  const scatter = charts.chartConfig(grid, [0, 1], "scatter", charts.chartData(grid, [0, 1], "scatter", [1], 10), LOOK, "Prices");
+  assert.strictEqual(scatter.options.scales.x.type, "linear");
+  assert.strictEqual(scatter.options.scales.x.ticks.callback(848484672123456789), "2026.11.20D10:11:12");
+  assert.deepStrictEqual(scatter.options.plugins.title, { display: true, text: "Prices" });
+  const histogram = charts.chartConfig(grid, [0, 1], "histogram", charts.chartData(grid, [0, 1], "histogram", [1], 2), LOOK);
+  assert.deepStrictEqual(histogram.options.scales.y.title, { display: true, text: "count" });
+});
+
+test("a chart's theme is the editor's variables, with fallbacks, and is set on Chart.js's defaults", () => {
+  const vars = { "--vscode-charts-blue": "#0000ff", "--vscode-foreground": "#abcdef" };
+  const look = charts.theme((name, fallback) => vars[name] ?? fallback);
+  assert.strictEqual(look.colours[0], "#0000ff");
+  assert.strictEqual(look.colours[1], "#d18616");
+  assert.strictEqual(look.foreground, "#abcdef");
+  const Chart = { defaults: { font: {} } };
+  charts.applyTheme(Chart, look);
+  assert.deepStrictEqual(Chart.defaults, { color: "#abcdef", borderColor: look.border, font: { family: "sans-serif" } });
+});
+
+test("what a chart drew is summed up for the extension", () => {
+  const grid = sample();
+  assert.deepStrictEqual(charts.summary("line", charts.chartData(grid, [0, 1, 2, 3], "line", [1], 10)), {
+    kind: "line",
+    datasets: [{ label: "px", points: 4 }],
+  });
+  assert.match(charts.summary("line", charts.chartData(grid, [0], "line", [], 10)).note, /No numeric column/);
 });

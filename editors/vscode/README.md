@@ -234,13 +234,18 @@ A cell's first lines can choose how its result is shown:
   with a key column marked. At most 1,000 rows are sent, and the output
   says when the table was cut. Each value is sent as `string` writes it, so
   a timestamp keeps its nanoseconds.
-- `/ @chart line`, `bar`, `scatter` or `histogram`: for now the table as
-  text, with a note: query **Chart** mode draws charts, a notebook does not
-  yet (#870).
+- `/ @chart line`, `bar`, `scatter` or `histogram`: a table, a keyed
+  table, a dictionary or a list as a chart, drawn as query **Chart** mode
+  draws it - the numeric columns against the first (a histogram bins every
+  numeric column, in 20 bins), a temporal x axis written in q's notation,
+  colours from the editor's theme - from the same rows, at most 1,000.
+  `/ @title <text>` puts a title above it and `/ @height <px>` makes it
+  that many pixels tall (100 to 2000; 300 otherwise).
 
 They are q comments, so a cell runs the same as a query or in a script. A
-directive q-lint does not know, or a chart of no known kind, fails the cell
-with the directives it does know. An error shows q's message and, on kdb+
+directive q-lint does not know, a chart of no known kind, or a title or
+height on a cell with no `/ @chart`, fails the cell with the directives it
+does know. An error shows q's message and, on kdb+
 3.5 and later, its backtrace.
 
 **Export Notebook as q Script**, on the notebook's toolbar and a `.qnb`
@@ -264,6 +269,18 @@ The file is JSON, format 1:
  ]
 }
 ```
+
+A chart's output is two items: an `application/vnd.q-lint.chart+json`
+item, which q-lint's notebook renderer draws, and the table as `text/plain`,
+which an editor without the renderer, or another tool reading the file,
+shows instead. The JSON holds the chart's `kind`, its `title` and `height`
+when given, a `note` when the table was cut, and the `grid` the result
+panel gets: each column's `name`, `type` and whether it is a `key`,
+`numeric` or `temporal`, its `cells` as q writes them, a numeric or temporal
+column's `values` as numbers (a temporal in its own unit since
+2000.01.01), and the table's `total` rows. The renderer loads Chart.js from
+the extension's files, not the network, and redraws in the new colours when
+the theme changes.
 
 `qnb` is the format version; a newer one than this extension reads is
 refused with that said. `source` is the cell's lines. A code cell is q

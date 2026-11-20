@@ -3,6 +3,8 @@
 //   / @console            the result as the process formats it (the default)
 //   / @grid               a table as an HTML table
 //   / @chart line         a table as a chart: line, bar, scatter or histogram
+//   / @title Daily volume a chart's title
+//   / @height 400         a chart's height, in pixels
 //
 // They are q comments, so the cell runs the same in a notebook, a query or
 // an exported script. Only the lines before the first that is neither blank
@@ -11,17 +13,30 @@
 export const CHART_KINDS = ["line", "bar", "scatter", "histogram"] as const;
 export type ChartKind = (typeof CHART_KINDS)[number];
 
-export type CellMode = { mode: "console" } | { mode: "grid" } | { mode: "chart"; chart: ChartKind };
+/// The heights `/ @height` takes, in pixels.
+export const CHART_HEIGHT = { min: 100, max: 2000 } as const;
+
+export interface ChartMode {
+  mode: "chart";
+  chart: ChartKind;
+  title?: string;
+  height?: number;
+}
+
+export type CellMode = { mode: "console" } | { mode: "grid" } | ChartMode;
 
 export type Directive = CellMode | { problem: string };
 
 const DIRECTIVE = /^\/\s*@(\S*)\s*(.*?)\s*$/;
 
 /// What the cell's leading directives ask for: the last one wins. A directive
-/// this does not know, or a chart of no known kind, is a problem the cell
-/// reports instead of running.
+/// this does not know, a chart of no known kind, or a title or height on a
+/// cell that draws no chart, is a problem the cell reports instead of
+/// running.
 export function cellDirective(source: string): Directive {
   let found: CellMode = { mode: "console" };
+  let title: string | undefined;
+  let height: number | undefined;
   for (const line of source.split(/\r?\n/)) {
     if (line.trim() === "") {
       continue;
@@ -44,9 +59,30 @@ export function cellDirective(source: string): Directive {
         };
       }
       found = { mode: "chart", chart: kind };
+    } else if (name === "title") {
+      if (rest === "") {
+        return { problem: "`/ @title` takes the chart's title after it." };
+      }
+      title = rest;
+    } else if (name === "height") {
+      const px = /^\d+$/.test(rest) ? Number(rest) : NaN;
+      if (!(px >= CHART_HEIGHT.min && px <= CHART_HEIGHT.max)) {
+        return {
+          problem: `\`/ @height\` takes the chart's height in pixels, ${CHART_HEIGHT.min} to ${CHART_HEIGHT.max}${rest === "" ? "" : `, and was given "${rest}"`}.`,
+        };
+      }
+      height = px;
     } else {
-      return { problem: `\`/ @${name}\` is not a cell directive. They are \`/ @console\`, \`/ @grid\` and \`/ @chart <${CHART_KINDS.join("|")}>\`.` };
+      return {
+        problem: `\`/ @${name}\` is not a cell directive. They are \`/ @console\`, \`/ @grid\`, \`/ @chart <${CHART_KINDS.join("|")}>\`, \`/ @title <text>\` and \`/ @height <px>\`.`,
+      };
     }
   }
-  return found;
+  if (title === undefined && height === undefined) {
+    return found;
+  }
+  if (found.mode !== "chart") {
+    return { problem: `\`/ @${title !== undefined ? "title" : "height"}\` is for a chart, and this cell has no \`/ @chart\`.` };
+  }
+  return { ...found, ...(title !== undefined ? { title } : {}), ...(height !== undefined ? { height } : {}) };
 }

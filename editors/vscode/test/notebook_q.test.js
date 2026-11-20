@@ -1,6 +1,7 @@
 // A notebook's cells against a real q process (#857): the data lambda a
-// `@grid` or `@chart` cell sends, the outputs a cell shows from what it
-// answers, and an exported notebook loaded by q. Needs a q binary, so it
+// `@grid` cell sends, what a `@chart` cell asks for and the chart item it
+// makes (#870), the outputs a cell shows from what it answers, and an
+// exported notebook loaded by q. Needs a q binary, so it
 // runs only when QLINT_TEST_Q names one, as qclient.test.js does.
 const test = require("node:test");
 const assert = require("node:assert");
@@ -11,7 +12,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { QConnection } = require("../out/qclient.js");
 const { statements } = require("../out/statements.js");
-const { DATA, cellOutputs, readCellData } = require("../out/celldata.js");
+const { CHART_MIME, DATA, cellOutputs, chartCellOutputs, GRID_ROWS, readCellData } = require("../out/celldata.js");
 const { cellDirective } = require("../out/celldirectives.js");
 const { exportScript } = require("../out/qnb.js");
 
@@ -145,6 +146,49 @@ test("notebook cells against a real q process", { skip }, async (t) => {
     assert.deepStrictEqual(grid.items.map((i) => i.mime), ["text/html", "text/plain"]);
     assert.ok(grid.items[0].text.includes("<td>&lt;b&gt;y&lt;/b&gt;</td>"), grid.items[0].text);
     assert.ok(!grid.items[0].text.includes("<b>y</b>"));
+  });
+
+  const chart = async (source) => {
+    const mode = cellDirective(source);
+    return chartCellOutputs(mode, await connection.queryGrid(statements(source), SIZE, GRID_ROWS));
+  };
+
+  await t.test("a chart cell makes the chart item and the table as text", async () => {
+    const [part] = await chart("/ @chart scatter\n/ @title Prices\nselect ts, px from t");
+    assert.deepStrictEqual(part.items.map((i) => i.mime), [CHART_MIME, "text/plain"]);
+    const spec = JSON.parse(part.items[0].text);
+    assert.strictEqual(spec.kind, "scatter");
+    assert.strictEqual(spec.title, "Prices");
+    assert.deepStrictEqual(spec.grid.columns.map((c) => [c.name, c.type, c.temporal, c.numeric]), [
+      ["ts", 12, true, false],
+      ["px", 9, false, true],
+    ]);
+    // The timestamp in nanoseconds since 2000.01.01, the null float a null.
+    assert.deepStrictEqual(spec.grid.values[0], [757425600123456789, 757425600123456790, 757425600123456791].map(Number));
+    assert.deepStrictEqual(spec.grid.values[1], [1.5, null, 3.5]);
+    assert.strictEqual(spec.note, undefined);
+    assert.match(part.items[1].text, /^ts +px\n-+\n2024\.01\.01D12:00:00\.123456789 1\.5\n/);
+  });
+
+  await t.test("a chart cell charts a keyed table, a dictionary and a list as the panel does, and cuts a large table", async () => {
+    const keyed = JSON.parse((await chart("/ @chart bar\nkt"))[0].items[0].text);
+    assert.deepStrictEqual(keyed.grid.columns.map((c) => [c.name, c.key]), [["k", true], ["v", false]]);
+    const dict = JSON.parse((await chart("/ @chart bar\n`a`b!1 2"))[0].items[0].text);
+    assert.deepStrictEqual(dict.grid.columns.map((c) => c.name), ["key", "value"]);
+    const list = JSON.parse((await chart("/ @chart histogram\n1 2 2 3f"))[0].items[0].text);
+    assert.deepStrictEqual(list.grid.values[0], [1, 2, 2, 3]);
+    const big = JSON.parse((await chart("/ @chart line\nbig"))[0].items[0].text);
+    assert.strictEqual(big.grid.cells[0].length, GRID_ROWS);
+    assert.strictEqual(big.note, "Showing the first 1,000 of 2,000 rows.");
+  });
+
+  await t.test("a chart cell whose value is no table, or fails, shows it as other cells do", async () => {
+    const [atom] = await chart("/ @chart line\n1+1");
+    assert.deepStrictEqual(atom.items.map((i) => i.mime), ["text/plain"]);
+    assert.match(atom.items[0].text, /^2\n\(@chart shows a table/);
+    const [error] = await chart("/ @chart line\n1+`a");
+    assert.strictEqual(error.kind, "error");
+    assert.strictEqual(error.message, "'type");
   });
 });
 
