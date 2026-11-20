@@ -56,7 +56,7 @@ export const GRID = [
   "       (10h=type v)|not type[v] within 0 97h;();",
   "       flip(enlist`value)!enlist v];",
   "     $[98h<>type t;t;",
-  "       [m:count t;t:n sublist t;c:t cols t;",
+  "       [m:count t;t:n sublist t;c:$[count[cols t]=count distinct cols t;t cols t;value flip t];",
   "        `count`keys`names`types`cells`raw`rank!(\"f\"$m;\"i\"$k;cols t;type each c;",
   "          {$[type[x] within 1 76h;string x;{$[200<count x;(197#x),\"...\";x]} each -3!'x]} each c;",
   "          {[c]u:type c;$[u in 12 16h;\"j\"$c;u in 13 14 17 18 19h;\"i\"$c;u=15h;\"f\"$c;u in 2 5 6 7 8 9h;c;()]} each c;",
