@@ -1,9 +1,9 @@
 {
   "name": "q-lint",
   "displayName": "q-lint",
-  "description": "Linting, Quick Fixes and syntax colouring for q/kdb+. Early version; catches the most common problems.",
+  "description": "q/kdb+ for VS Code: linting, Quick Fixes, navigation and help from the source, and connections to q processes to run code on.",
   "icon": "icon.png",
-  "version": "0.18.0",
+  "version": "0.19.0",
   "publisher": "wojdalski",
   "license": "MIT",
   "engines": {
@@ -14,7 +14,8 @@
     "Programming Languages"
   ],
   "activationEvents": [
-    "onLanguage:q"
+    "onLanguage:q",
+    "onNotebook:q-lint-notebook"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -41,177 +42,297 @@
         }
       }
     ],
+    "notebooks": [
+      {
+        "type": "q-lint-notebook",
+        "displayName": "q Notebook",
+        "selector": [
+          {
+            "filenamePattern": "*.qnb"
+          }
+        ]
+      }
+    ],
     "snippets": [
       {
         "language": "q",
         "path": "./snippets/q.json"
       }
     ],
-    "configuration": {
-      "title": "q-lint",
-      "properties": {
-        "q-lint.enable": {
-          "type": "boolean",
-          "default": true,
-          "order": 0,
-          "markdownDescription": "Run the q-lint language server. Off, the extension keeps the syntax colouring and starts no server: no diagnostics, Quick Fixes, formatting or semantic colouring."
-        },
-        "q-lint.serverPath": {
-          "type": "string",
-          "default": "",
-          "markdownDescription": "Path to the `qlinter` binary. Left empty, the extension uses the server it was packaged with, and falls back to looking up `qlinter` on `PATH` when it was packaged without one.",
-          "order": 1
-        },
-        "q-lint.serverArgs": {
-          "type": "array",
-          "items": {
-            "type": "string"
+    "configuration": [
+      {
+        "title": "q-lint",
+        "properties": {
+          "q-lint.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 0,
+            "markdownDescription": "Run the q-lint language server. Off, the extension keeps the syntax colouring and starts no server: no diagnostics, Quick Fixes, formatting or semantic colouring."
           },
-          "default": [],
-          "order": 2,
-          "markdownDescription": "Extra command-line arguments for `qlinter --lsp`, after the ones the other settings produce - for example `[\"--isolated\"]` or `[\"--extend-select\", \"QS001\"]`. Flags given here keep their command-line meaning, so unlike `#q-lint.lint.select#` they can widen what the repository's configuration selects."
-        },
-        "q-lint.profile": {
-          "type": "string",
-          "enum": [
-            "general",
-            "style",
-            "styleq",
-            "uqf"
-          ],
-          "default": "style",
-          "markdownDescription": "Which rules to run. Set here, it overrides `profile` in a repository's `qlinter.toml`; left unset, the repository's configuration decides, and `style` applies where there is none. `style` reports what q refuses and what q runs but is almost certainly a mistake. `general` keeps only what q itself rejects; `styleq` adds the conventions of published q style guides; `uqf` adds one repository's house conventions on top of those.",
-          "order": 3
-        },
-        "q-lint.configFile": {
-          "type": "string",
-          "default": "",
-          "order": 4,
-          "markdownDescription": "A configuration file to use for every document instead of the nearest `.qlinter.toml`, `qlinter.toml` or `pyproject.toml` `[tool.qlinter]` (the server's `--config`). Relative to the first workspace folder. Empty: the nearest one governs each file, as on the command line and in CI."
-        },
-        "q-lint.lint.select": {
-          "type": "array",
-          "items": {
-            "type": "string"
+          "q-lint.serverPath": {
+            "type": "string",
+            "default": "",
+            "markdownDescription": "Path to the `qlinter` binary. Left empty, the extension uses the server it was packaged with, and falls back to looking up `qlinter` on `PATH` when it was packaged without one.",
+            "order": 1
           },
-          "default": [],
-          "order": 10,
-          "markdownDescription": "Show only these rules, among those the configuration already turns on. Rule codes or prefixes, as `qlinter --rules` lists them. It narrows and never widens: a rule the repository's configuration leaves off stays off. Empty: no narrowing."
-        },
-        "q-lint.lint.ignore": {
-          "type": "array",
-          "items": {
-            "type": "string"
+          "q-lint.serverArgs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [],
+            "order": 2,
+            "markdownDescription": "Extra command-line arguments for `qlinter --lsp`, after the ones the other settings produce - for example `[\"--isolated\"]` or `[\"--extend-select\", \"QS001\"]`. Flags given here keep their command-line meaning, so unlike `#q-lint.lint.select#` they can widen what the repository's configuration selects."
           },
-          "default": [],
-          "order": 11,
-          "markdownDescription": "Hide these rules in the editor. Rule codes or prefixes, as `qlinter --rules` lists them. Applied after the configuration, so it can only hide; the repository's configuration, which CI reads, is unchanged."
-        },
-        "q-lint.lint.run": {
-          "type": "string",
-          "enum": [
-            "onType",
-            "onSave"
-          ],
-          "default": "onType",
-          "order": 12,
-          "enumDescriptions": [
-            "Lint the buffer on every change.",
-            "Lint when the file is opened and saved. Quick Fixes match the last saved lint, so they appear again after a save."
-          ],
-          "markdownDescription": "When to lint."
-        },
-        "q-lint.lint.severity": {
-          "type": "object",
-          "default": {},
-          "order": 13,
-          "additionalProperties": {
+          "q-lint.profile": {
             "type": "string",
             "enum": [
-              "error",
-              "warning",
-              "information",
-              "hint"
-            ]
+              "general",
+              "style",
+              "styleq",
+              "uqf"
+            ],
+            "default": "style",
+            "markdownDescription": "Which rules to run. Set here, it overrides `profile` in a repository's `qlinter.toml`; left unset, the repository's configuration decides, and `style` applies where there is none. `style` reports what q refuses and what q runs but is almost certainly a mistake. `general` keeps only what q itself rejects; `styleq` adds the conventions of published q style guides; `uqf` adds one repository's house conventions on top of those.",
+            "order": 3
           },
-          "markdownDescription": "The severity the editor shows, by rule code or prefix; the longest that names a rule decides. For example `{\"QS\": \"hint\", \"QE\": \"error\"}`. Display only: what is reported does not change."
-        },
-        "q-lint.fixes.unsafe": {
-          "type": "boolean",
-          "default": true,
-          "order": 20,
-          "markdownDescription": "Offer the editor-only Quick Fixes too: those `qlinter --fix` applies only with `--unsafe-fixes`, because they can change what a working program does or guess at what was meant. Off, only the fixes `qlinter --fix` applies are offered."
-        },
-        "q-lint.format.enable": {
-          "type": "boolean",
-          "default": true,
-          "order": 21,
-          "markdownDescription": "Offer **Format Document**, which applies the fixes `qlinter --fix` applies and nothing else. Off, q-lint does not register as a formatter."
-        },
-        "q-lint.semanticTokens.enable": {
-          "type": "boolean",
-          "default": true,
-          "order": 22,
-          "markdownDescription": "Colour functions where they are called and parameters where they are read, on top of the grammar's colouring. Off, only the grammar colours."
-        },
-        "q-lint.navigation.enable": {
-          "type": "boolean",
-          "default": true,
-          "order": 23,
-          "markdownDescription": "Offer the outline, workspace symbols, **Go to Definition**, **Find All References**, occurrence highlights and renaming a lambda's parameter or local - all read from the source, never by running it. Off, q-lint announces none of them: turn it off when another q extension already navigates and both would answer."
-        },
-        "q-lint.help.enable": {
-          "type": "boolean",
-          "default": true,
-          "order": 24,
-          "markdownDescription": "Show a hover and signature help: for a name the workspace defines, its parameters, the comment above its definition and its file; for a word of q itself, how it is written and what it gives. Read from the source and a built-in catalogue, never from a running q. Off, q-lint announces neither."
-        },
-        "q-lint.completion.enable": {
-          "type": "boolean",
-          "default": false,
-          "order": 25,
-          "markdownDescription": "Complete names as you type: a lambda's parameters and locals, the names the workspace's `.q` files define, and q's own words. It knows no table's columns and nothing only a running process holds. Off by default, because an editor that is told a server completes stops offering the words already in the file."
-        },
-        "q-lint.callHierarchy.enable": {
-          "type": "boolean",
-          "default": true,
-          "order": 26,
-          "markdownDescription": "Offer **Show Call Hierarchy** on a global function: the definitions and files that name it, and the workspace functions its own definition names. Read from the source, never by running it, so a name used as a value counts as a call and a call made through a string is not seen. Off, q-lint does not announce it."
-        },
-        "q-lint.graph.enable": {
-          "type": "boolean",
-          "default": true,
-          "order": 27,
-          "markdownDescription": "Offer the **q Dependencies** view - the files the active q file depends on and those depending on it - and **q-lint: List Affected Tests**, the test files that reach a q file changed against git HEAD. Both are what `qlinter analyze graph` prints. Off, the server answers neither and the view is hidden."
-        },
-        "q-lint.workspaceIndex.enable": {
-          "type": "boolean",
-          "default": true,
-          "order": 30,
-          "markdownDescription": "Read every `.q` file in the workspace at startup, never running it, so a name another file defines is not reported as undefined and is coloured as a function. Off, only open files are indexed."
-        },
-        "q-lint.workspaceIndex.exclude": {
-          "type": "array",
-          "items": {
-            "type": "string"
+          "q-lint.configFile": {
+            "type": "string",
+            "default": "",
+            "order": 4,
+            "markdownDescription": "A configuration file to use for every document instead of the nearest `.qlinter.toml`, `qlinter.toml` or `pyproject.toml` `[tool.qlinter]` (the server's `--config`). Relative to the first workspace folder. Empty: the nearest one governs each file, as on the command line and in CI."
           },
-          "default": [],
-          "order": 31,
-          "markdownDescription": "Globs, relative to the workspace folder, of files and directories the workspace index does not read - for example `[\"vendor/**\", \"**/generated/**\"]`. An open file is still linted and indexed. Whatever the configuration's `exclude` skips - by default `.git`, `.venv`, `node_modules`, `__pycache__`, `build`, `dist` and `target` - is skipped too, as `qlinter .` skips it."
-        },
-        "q-lint.trace.server": {
-          "type": "string",
-          "enum": [
-            "off",
-            "messages",
-            "verbose"
-          ],
-          "default": "off",
-          "description": "Log the traffic between VS Code and the server, for debugging the integration itself.",
-          "order": 40
+          "q-lint.lint.select": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [],
+            "order": 10,
+            "markdownDescription": "Show only these rules, among those the configuration already turns on. Rule codes or prefixes, as `qlinter --rules` lists them. It narrows and never widens: a rule the repository's configuration leaves off stays off. Empty: no narrowing."
+          },
+          "q-lint.lint.ignore": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [],
+            "order": 11,
+            "markdownDescription": "Hide these rules in the editor. Rule codes or prefixes, as `qlinter --rules` lists them. Applied after the configuration, so it can only hide; the repository's configuration, which CI reads, is unchanged."
+          },
+          "q-lint.lint.run": {
+            "type": "string",
+            "enum": [
+              "onType",
+              "onSave"
+            ],
+            "default": "onType",
+            "order": 12,
+            "enumDescriptions": [
+              "Lint the buffer on every change.",
+              "Lint when the file is opened and saved. Quick Fixes match the last saved lint, so they appear again after a save."
+            ],
+            "markdownDescription": "When to lint."
+          },
+          "q-lint.lint.severity": {
+            "type": "object",
+            "default": {},
+            "order": 13,
+            "additionalProperties": {
+              "type": "string",
+              "enum": [
+                "error",
+                "warning",
+                "information",
+                "hint"
+              ]
+            },
+            "markdownDescription": "The severity the editor shows, by rule code or prefix; the longest that names a rule decides. For example `{\"QS\": \"hint\", \"QE\": \"error\"}`. Display only: what is reported does not change."
+          },
+          "q-lint.fixes.unsafe": {
+            "type": "boolean",
+            "default": true,
+            "order": 20,
+            "markdownDescription": "Offer the editor-only Quick Fixes too: those `qlinter --fix` applies only with `--unsafe-fixes`, because they can change what a working program does or guess at what was meant. Off, only the fixes `qlinter --fix` applies are offered."
+          },
+          "q-lint.format.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 21,
+            "markdownDescription": "Offer **Format Document**, which applies the fixes `qlinter --fix` applies and nothing else. Off, q-lint does not register as a formatter."
+          },
+          "q-lint.semanticTokens.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 22,
+            "markdownDescription": "Colour functions where they are called and parameters where they are read, on top of the grammar's colouring. Off, only the grammar colours."
+          },
+          "q-lint.navigation.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 23,
+            "markdownDescription": "Offer the outline, workspace symbols, **Go to Definition**, **Find All References**, occurrence highlights and renaming a lambda's parameter or local - all read from the source, never by running it. Off, q-lint announces none of them: turn it off when another q extension already navigates and both would answer."
+          },
+          "q-lint.help.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 24,
+            "markdownDescription": "Show a hover and signature help: for a name the workspace defines, its parameters, the comment above its definition and its file; for a word of q itself, how it is written and what it gives. Read from the source and a built-in catalogue, never from a running q. Off, q-lint announces neither."
+          },
+          "q-lint.completion.enable": {
+            "type": "boolean",
+            "default": false,
+            "order": 25,
+            "markdownDescription": "Complete names as you type: a lambda's parameters and locals, the names the workspace's `.q` files define, and q's own words. It knows no table's columns and nothing only a running process holds. Off by default, because an editor that is told a server completes stops offering the words already in the file."
+          },
+          "q-lint.callHierarchy.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 26,
+            "markdownDescription": "Offer **Show Call Hierarchy** on a global function: the definitions and files that name it, and the workspace functions its own definition names. Read from the source, never by running it, so a name used as a value counts as a call and a call made through a string is not seen. Off, q-lint does not announce it."
+          },
+          "q-lint.graph.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 27,
+            "markdownDescription": "Offer the **q Dependencies** view - the files the active q file depends on and those depending on it - and **q-lint: List Affected Tests**, the test files that reach a q file changed against git HEAD. Both are what `qlinter analyze graph` prints. Off, the server answers neither and the view is hidden."
+          },
+          "q-lint.workspaceIndex.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 30,
+            "markdownDescription": "Read every `.q` file in the workspace at startup, never running it, so a name another file defines is not reported as undefined and is coloured as a function. Off, only open files are indexed."
+          },
+          "q-lint.workspaceIndex.exclude": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [],
+            "order": 31,
+            "markdownDescription": "Globs, relative to the workspace folder, of files and directories the workspace index does not read - for example `[\"vendor/**\", \"**/generated/**\"]`. An open file is still linted and indexed. Whatever the configuration's `exclude` skips - by default `.git`, `.venv`, `node_modules`, `__pycache__`, `build`, `dist` and `target` - is skipped too, as `qlinter .` skips it."
+          },
+          "q-lint.trace.server": {
+            "type": "string",
+            "enum": [
+              "off",
+              "messages",
+              "verbose"
+            ],
+            "default": "off",
+            "description": "Log the traffic between VS Code and the server, for debugging the integration itself.",
+            "order": 40
+          }
+        }
+      },
+      {
+        "title": "q-lint: queries",
+        "properties": {
+          "q-lint.output.consoleSize": {
+            "type": "string",
+            "default": "50 160",
+            "pattern": "^\\s*\\d+\\s+\\d+\\s*$",
+            "order": 100,
+            "markdownDescription": "Height and width, in characters, a query's result is formatted to (`.Q.S` on the process). A larger result is cut there, by the process, before it is sent."
+          },
+          "q-lint.output.autoClear": {
+            "type": "boolean",
+            "default": false,
+            "order": 101,
+            "markdownDescription": "Clear the **q-lint: query** output before each result."
+          },
+          "q-lint.output.includeQuery": {
+            "type": "boolean",
+            "default": false,
+            "order": 102,
+            "markdownDescription": "Show the code that was run above its result."
+          },
+          "q-lint.output.ignoreNullReturn": {
+            "type": "boolean",
+            "default": false,
+            "order": 103,
+            "markdownDescription": "Show nothing for a query whose value is `::`, such as an assignment ending in `;`."
+          },
+          "q-lint.query.mode": {
+            "type": "string",
+            "enum": [
+              "console",
+              "grid",
+              "chart"
+            ],
+            "enumDescriptions": [
+              "Show every result in the **q-lint: query** output, as q formats it.",
+              "Show a table, dictionary or list in the **q-lint: result** panel as a table you can sort, filter and copy as CSV. Anything else goes to the output.",
+              "Show a table, dictionary or list in the **q-lint: result** panel as a chart of its numeric columns. Anything else goes to the output."
+            ],
+            "default": "console",
+            "order": 110,
+            "markdownDescription": "Where a query's result is shown. **q-lint: Switch Query Mode** changes it."
+          },
+          "q-lint.query.gridLimit": {
+            "type": "integer",
+            "default": 10000,
+            "minimum": 1,
+            "order": 111,
+            "markdownDescription": "The most rows of a result the process sends to the grid or chart. The panel says when a result was cut, and how many rows it had."
+          },
+          "q-lint.query.gridDecimals": {
+            "type": "integer",
+            "default": -1,
+            "minimum": -1,
+            "maximum": 20,
+            "order": 112,
+            "markdownDescription": "Decimal places the grid shows a float or real to, and copies as CSV. `-1`: as the process writes it, to its `\\P` precision."
+          },
+          "q-lint.processExplorer.excludedNamespaces": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [
+              "q",
+              "Q",
+              "h",
+              "j",
+              "o",
+              "s"
+            ],
+            "order": 120,
+            "markdownDescription": "Namespaces the **Process Explorer** and live completion leave out, without the leading dot. Their nested namespaces are left out with them."
+          },
+          "q-lint.processExplorer.previewLimit": {
+            "type": "integer",
+            "default": 5,
+            "minimum": 1,
+            "order": 121,
+            "markdownDescription": "Rows of a table **Preview** shows in the **q-lint: query** output."
+          },
+          "q-lint.processExplorer.autoRefresh": {
+            "type": "boolean",
+            "default": false,
+            "order": 122,
+            "markdownDescription": "Read the active process again after each query, so the **Process Explorer** and live completion show what it defined. Off, they are read on connect and on **Refresh Process Explorer**."
+          }
+        }
+      },
+      {
+        "title": "q-lint: terminal",
+        "properties": {
+          "q-lint.terminal.qBinary": {
+            "type": "string",
+            "default": "q",
+            "order": 200,
+            "markdownDescription": "The q binary **Run Code from Terminal** and **Send ... to Terminal** start: a name on `PATH` or a path. It is quoted for the terminal's shell, so it is one program, not a command line with arguments."
+          },
+          "q-lint.terminal.envPath": {
+            "type": "string",
+            "default": "",
+            "order": 201,
+            "markdownDescription": "A file of `NAME=value` lines set for q in a q terminal, such as `QHOME` and `QLIC`, on the command line that starts it, so they win over the shell's startup files. Relative to the workspace folder. Values are taken as written: `$HOME` is not expanded."
+          }
         }
       }
-    },
+    ],
     "commands": [
       {
         "command": "q-lint.restartServer",
@@ -233,6 +354,155 @@
         "command": "q-lint.listAffectedTests",
         "title": "List Affected Tests",
         "category": "q-lint"
+      },
+      {
+        "command": "q-lint.addProcess",
+        "title": "Add Process",
+        "category": "q-lint",
+        "icon": "$(add)"
+      },
+      {
+        "command": "q-lint.editProcess",
+        "title": "Edit Process",
+        "category": "q-lint",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "q-lint.deleteProcess",
+        "title": "Delete Process",
+        "category": "q-lint",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "q-lint.connectProcess",
+        "title": "Connect to Process",
+        "category": "q-lint",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "q-lint.disconnectProcess",
+        "title": "Disconnect",
+        "category": "q-lint",
+        "icon": "$(debug-disconnect)"
+      },
+      {
+        "command": "q-lint.tagProcess",
+        "title": "Tag Process",
+        "category": "q-lint",
+        "icon": "$(tag)"
+      },
+      {
+        "command": "q-lint.importProcesses",
+        "title": "Import Processes",
+        "category": "q-lint",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "q-lint.exportProcesses",
+        "title": "Export Processes",
+        "category": "q-lint",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "q-lint.refreshProcesses",
+        "title": "Refresh Processes",
+        "category": "q-lint",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "q-lint.refreshProcessExplorer",
+        "title": "Refresh Process Explorer",
+        "category": "q-lint",
+        "icon": "$(refresh)",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.previewProcessExplorerItem",
+        "title": "Preview",
+        "category": "q-lint",
+        "icon": "$(preview)",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.toggleProcessExplorerAutoRefresh",
+        "title": "Toggle Process Explorer Auto Refresh",
+        "category": "q-lint",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "q-lint.insertActiveConnectionLabel",
+        "title": "Insert Active Connection Label",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.queryCurrentLine",
+        "title": "Query Current Line",
+        "category": "q-lint",
+        "icon": "$(play)"
+      },
+      {
+        "command": "q-lint.querySelection",
+        "title": "Query Current Selection",
+        "category": "q-lint",
+        "icon": "$(run-all)"
+      },
+      {
+        "command": "q-lint.queryBlock",
+        "title": "Query Current Block",
+        "category": "q-lint",
+        "icon": "$(run-above)"
+      },
+      {
+        "command": "q-lint.abortQuery",
+        "title": "Abort Current Query",
+        "category": "q-lint",
+        "icon": "$(debug-stop)",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.rerunQuery",
+        "title": "Rerun Query",
+        "category": "q-lint",
+        "icon": "$(debug-rerun)"
+      },
+      {
+        "command": "q-lint.clearQueryHistory",
+        "title": "Clear Query History",
+        "category": "q-lint",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "q-lint.exportNotebook",
+        "title": "Export Notebook as q Script",
+        "category": "q-lint",
+        "icon": "$(export)"
+      },
+      {
+        "command": "q-lint.runInTerminal",
+        "title": "Run Code from Terminal",
+        "category": "q-lint",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "q-lint.sendCurrentLineToTerminal",
+        "title": "Send Current Line to Terminal",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.sendSelectionToTerminal",
+        "title": "Send Current Selection to Terminal",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.sendBlockToTerminal",
+        "title": "Send Current Block to Terminal",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.switchQueryMode",
+        "title": "Switch Query Mode",
+        "category": "q-lint",
+        "icon": "$(table)"
       }
     ],
     "views": {
@@ -244,6 +514,23 @@
           "when": "q-lint.hasGraph",
           "visibility": "collapsed"
         }
+      ],
+      "q-lint": [
+        {
+          "id": "q-lint.processes",
+          "name": "Processes",
+          "contextualTitle": "q-lint"
+        },
+        {
+          "id": "q-lint.processExplorer",
+          "name": "Process Explorer",
+          "contextualTitle": "q-lint"
+        },
+        {
+          "id": "q-lint.queryHistory",
+          "name": "Query History",
+          "contextualTitle": "q-lint"
+        }
       ]
     },
     "menus": {
@@ -252,9 +539,207 @@
           "command": "q-lint.refreshDependencies",
           "when": "view == q-lint.dependencies",
           "group": "navigation"
+        },
+        {
+          "command": "q-lint.addProcess",
+          "when": "view == q-lint.processes",
+          "group": "navigation@1"
+        },
+        {
+          "command": "q-lint.refreshProcesses",
+          "when": "view == q-lint.processes",
+          "group": "navigation@2"
+        },
+        {
+          "command": "q-lint.disconnectProcess",
+          "when": "view == q-lint.processes && q-lint.connected",
+          "group": "navigation@3"
+        },
+        {
+          "command": "q-lint.importProcesses",
+          "when": "view == q-lint.processes",
+          "group": "list@1"
+        },
+        {
+          "command": "q-lint.exportProcesses",
+          "when": "view == q-lint.processes",
+          "group": "list@2"
+        },
+        {
+          "command": "q-lint.refreshProcessExplorer",
+          "when": "view == q-lint.processExplorer",
+          "group": "navigation@1"
+        },
+        {
+          "command": "q-lint.toggleProcessExplorerAutoRefresh",
+          "when": "view == q-lint.processExplorer",
+          "group": "navigation@2"
+        },
+        {
+          "command": "q-lint.clearQueryHistory",
+          "when": "view == q-lint.queryHistory",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "q-lint.connectProcess",
+          "when": "view == q-lint.processes && viewItem == process",
+          "group": "inline"
+        },
+        {
+          "command": "q-lint.disconnectProcess",
+          "when": "view == q-lint.processes && viewItem == process.connected",
+          "group": "inline"
+        },
+        {
+          "command": "q-lint.connectProcess",
+          "when": "view == q-lint.processes && viewItem =~ /^process/",
+          "group": "1_connect@1"
+        },
+        {
+          "command": "q-lint.disconnectProcess",
+          "when": "view == q-lint.processes && viewItem == process.connected",
+          "group": "1_connect@2"
+        },
+        {
+          "command": "q-lint.editProcess",
+          "when": "view == q-lint.processes && viewItem =~ /^process/",
+          "group": "2_edit@1"
+        },
+        {
+          "command": "q-lint.tagProcess",
+          "when": "view == q-lint.processes && viewItem =~ /^process/",
+          "group": "2_edit@2"
+        },
+        {
+          "command": "q-lint.deleteProcess",
+          "when": "view == q-lint.processes && viewItem =~ /^process/",
+          "group": "3_delete@1"
+        },
+        {
+          "command": "q-lint.previewProcessExplorerItem",
+          "when": "view == q-lint.processExplorer && viewItem =~ /^explorer\\.(table|variable)$/",
+          "group": "inline"
+        },
+        {
+          "command": "q-lint.previewProcessExplorerItem",
+          "when": "view == q-lint.processExplorer && viewItem =~ /^explorer\\.(table|variable)$/",
+          "group": "1_preview@1"
+        },
+        {
+          "command": "q-lint.rerunQuery",
+          "when": "view == q-lint.queryHistory && viewItem == history",
+          "group": "inline"
+        }
+      ],
+      "editor/title/run": [
+        {
+          "command": "q-lint.queryBlock",
+          "when": "editorLangId == q",
+          "group": "navigation@1"
+        },
+        {
+          "command": "q-lint.querySelection",
+          "when": "editorLangId == q",
+          "group": "navigation@2"
+        },
+        {
+          "command": "q-lint.runInTerminal",
+          "when": "editorLangId == q && resourceScheme == file",
+          "group": "navigation@3"
+        }
+      ],
+      "notebook/toolbar": [
+        {
+          "command": "q-lint.exportNotebook",
+          "when": "notebookType == q-lint-notebook",
+          "group": "navigation"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "q-lint.exportNotebook",
+          "when": "resourceExtname == .qnb",
+          "group": "q-lint"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "q-lint.queryCurrentLine",
+          "when": "editorLangId == q",
+          "group": "q-lint@1"
+        },
+        {
+          "command": "q-lint.querySelection",
+          "when": "editorLangId == q && editorHasSelection",
+          "group": "q-lint@2"
+        },
+        {
+          "command": "q-lint.queryBlock",
+          "when": "editorLangId == q",
+          "group": "q-lint@3"
+        },
+        {
+          "command": "q-lint.runInTerminal",
+          "when": "editorLangId == q && resourceScheme == file",
+          "group": "q-lint@4"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "q-lint.previewProcessExplorerItem",
+          "when": "false"
         }
       ]
-    }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "q-lint",
+          "title": "q-lint",
+          "icon": "media/q-lint.svg"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "q-lint.processes",
+        "contents": "No q processes yet.\n[Add Process](command:q-lint.addProcess)\n[Import Processes](command:q-lint.importProcesses)\nq-lint connects only to a process you add here, and runs only the code you send it."
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "q-lint.queryCurrentLine",
+        "key": "ctrl+q",
+        "when": "editorTextFocus && editorLangId == q"
+      },
+      {
+        "command": "q-lint.querySelection",
+        "key": "ctrl+r",
+        "when": "editorTextFocus && editorLangId == q"
+      },
+      {
+        "command": "q-lint.queryBlock",
+        "key": "ctrl+e",
+        "when": "editorTextFocus && editorLangId == q"
+      },
+      {
+        "command": "q-lint.sendCurrentLineToTerminal",
+        "key": "ctrl+shift+q",
+        "when": "editorTextFocus && editorLangId == q"
+      },
+      {
+        "command": "q-lint.sendSelectionToTerminal",
+        "key": "ctrl+shift+r",
+        "when": "editorTextFocus && editorLangId == q"
+      },
+      {
+        "command": "q-lint.sendBlockToTerminal",
+        "key": "ctrl+shift+e",
+        "when": "editorTextFocus && editorLangId == q"
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
@@ -264,6 +749,7 @@
     "test": "tsc -p ./ && node --test test/*.test.js"
   },
   "dependencies": {
+    "node-q": "^2.7.0",
     "vscode-languageclient": "^9.0.1"
   },
   "devDependencies": {

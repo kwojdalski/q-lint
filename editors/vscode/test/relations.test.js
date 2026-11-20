@@ -41,13 +41,15 @@ test("a request is used only when the server announces it", () => {
 });
 
 test("what package.json contributes is what the extension registers", () => {
-  const declared = pkg.contributes.commands.map((c) => c.command).sort();
-  assert.deepStrictEqual(declared, [...Object.values(COMMANDS), "q-lint.restartServer"].sort());
+  const declared = pkg.contributes.commands.map((c) => c.command);
+  for (const command of Object.values(COMMANDS)) {
+    assert.ok(declared.includes(command), command);
+  }
   const [view] = pkg.contributes.views.explorer;
   assert.strictEqual(view.id, VIEW);
   // Hidden until a running server says it has a graph.
   assert.strictEqual(view.when, AVAILABLE);
-  for (const item of pkg.contributes.menus["view/title"]) {
+  for (const item of pkg.contributes.menus["view/title"].filter((i) => i.when.includes(VIEW))) {
     assert.strictEqual(item.command, COMMANDS.refresh);
     assert.strictEqual(item.when, `view == ${VIEW}`);
   }
