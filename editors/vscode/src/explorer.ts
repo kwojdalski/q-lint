@@ -5,7 +5,9 @@
 //
 // Like a query (`query.ts`), the call is one lambda sent with its arguments,
 // and nothing is defined on the process. It walks the namespaces breadth
-// first from the root and `key \``, skipping the excluded ones, and answers
+// first from the root and `key \``, skipping the excluded ones and any
+// dotted root name that is not a dictionary of names (kdb+ lists `.cfg:42`
+// in `key \``), and answers
 //
 //   rows    one per name: ns, name, kind (table, function or variable), type,
 //           count, cols, keys, params, partitioned
@@ -35,6 +37,7 @@ export const GATHER = [
   "{[ex;lim]",
   " n:\"j\"$lim 0;m:\"j\"$lim 1;",
   " todo:`.,` sv'`,'asc(key`)except(`$\" \" vs ex),`;",
+  " todo:todo where{$[99h=type d:@[get;x;0];11h=type key d;0b]}each todo;",
   " seen:`$();rows:();spaces:();",
   " while[(count todo)&m>count seen;",
   "  ns:first todo;todo:1_todo;seen,:ns;",

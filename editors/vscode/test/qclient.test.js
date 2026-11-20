@@ -384,3 +384,16 @@ test("the explorer's call against a real q process", { skip }, async (t) => {
     assert.ok(kt.ok && kt.text.some((l) => /^1\s*\|?\s*3/.test(l.replace(/^\|\s*/, ""))), kt.text.join("\n"));
   });
 });
+
+// A root name that is not a namespace: kdb+ lists `.cfg:42` in `key \``
+// (PeachQ does not), and the explorer read its "names" with `key 42`,
+// `til 42`, failing the whole call with 'type.
+test("the explorer's call skips a dotted root name that is not a namespace", { skip }, async (t) => {
+  const q = await startQ("x:1;\n.cfg:42;\n.tbl:([]a:1 2);\n.kt:([k:1 2]v:3 4);\n.ok.y:2;\n");
+  t.after(() => q.stop());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  t.after(() => connection.close());
+  const g = readGathered(await connection.call(GATHER, EXCLUDED, LIMITS));
+  assert.deepStrictEqual(g.spaces.map((s) => s.ns).sort(), [".", ".ok"]);
+  assert.deepStrictEqual(g.entries.map((e) => `${e.ns} ${e.name}`).sort(), [". x", ".ok y"]);
+});
