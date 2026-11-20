@@ -15,10 +15,16 @@ const onig = og.loadWASM(wasm).then(() => ({
   createOnigScanner: (p) => new og.OnigScanner(p),
   createOnigString: (s) => new og.OnigString(s),
 }));
+// k, for the `k)` lines q embeds it in.
+const kPath = path.join(__dirname, "..", "syntaxes", "k.tmLanguage.json");
 const registry = new tm.Registry({
   onigLib: onig,
   loadGrammar: async (scope) =>
-    scope === "source.q" ? tm.parseRawGrammar(fs.readFileSync(grammarPath, "utf8"), grammarPath) : null,
+    scope === "source.q"
+      ? tm.parseRawGrammar(fs.readFileSync(grammarPath, "utf8"), grammarPath)
+      : scope === "source.k"
+        ? tm.parseRawGrammar(fs.readFileSync(kPath, "utf8"), kPath)
+        : null,
 });
 const grammar = registry.loadGrammar("source.q");
 
@@ -74,4 +80,15 @@ test("a slash after whitespace opens a comment, and one after a value is over", 
 test("a lone backslash ends the script, and what follows is comment", async () => {
   const scopes = await scopesOf("x:1\n\\\ny:2", "y:2");
   assert.ok(scopes[0].startsWith("comment.block.end-of-script.q"), scopes[0]);
+});
+
+test("a k) line is k, coloured by the k grammar, and the next q line is q again", async () => {
+  const g = await grammar;
+  const first = g.tokenizeLine("k)x+1 2 3", tm.INITIAL);
+  const plus = first.tokens.find((t) => "k)x+1 2 3".slice(t.startIndex, t.endIndex) === "+");
+  assert.ok(plus.scopes.includes("source.k"), JSON.stringify(plus.scopes));
+  assert.ok(plus.scopes.includes("meta.embedded.block.k.q"), JSON.stringify(plus.scopes));
+  const next = g.tokenizeLine("f:{x+1}", first.ruleStack);
+  const f = next.tokens.find((t) => "f:{x+1}".slice(t.startIndex, t.endIndex) === "f");
+  assert.ok(!f.scopes.includes("source.k"), JSON.stringify(f.scopes));
 });
