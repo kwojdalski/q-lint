@@ -27,6 +27,7 @@ import {
   type Terminal,
   type TextEditor,
   type TreeDataProvider,
+  type TreeView,
 } from "vscode";
 import { children, findDiscovered, qualified, type Row } from "./discovery";
 import { DiscoveryServers, discoveryItem } from "./discoveryservers";
@@ -130,7 +131,7 @@ class ProcessesView implements TreeDataProvider<Row> {
     const item = new TreeItem(process.label, TreeItemCollapsibleState.None);
     item.description = `${process.host}:${process.port}${active ? " - connected" : ""}`;
     const colour = processColour(process);
-    item.iconPath = new ThemeIcon(active ? "debug-start" : "server-process", colour ? new ThemeColor(colours[colour]) : undefined);
+    item.iconPath = new ThemeIcon(active ? "vm-active" : "server-process", colour ? new ThemeColor(colours[colour]) : undefined);
     item.tooltip = new MarkdownString(
       [
         `**${process.label}**`,
@@ -169,7 +170,7 @@ class HistoryView implements TreeDataProvider<HistoryEntry> {
     item.description = `${entry.process} · ${when.toLocaleTimeString()} · ${entry.millis} ms`;
     item.iconPath = new ThemeIcon(
       entry.outcome === "ok" ? "pass" : entry.outcome === "error" ? "error" : "circle-slash",
-      entry.outcome === "ok" ? undefined : new ThemeColor(entry.outcome === "error" ? "errorForeground" : "disabledForeground"),
+      new ThemeColor(entry.outcome === "ok" ? "testing.iconPassed" : entry.outcome === "error" ? "errorForeground" : "disabledForeground"),
     );
     const tooltip = new MarkdownString();
     tooltip.appendMarkdown(`${entry.process}, ${when.toLocaleString()}, ${entry.millis} ms`);
@@ -318,6 +319,8 @@ export class Live {
   private readonly status: StatusBarItem;
   private readonly output: OutputChannel;
   private readonly processesView: ProcessesView;
+  /// The Processes view, whose badge shows a live connection.
+  private readonly processesTree: TreeView<Row>;
   private readonly historyView: HistoryView;
   private readonly modes: QueryModes;
   readonly discovery: DiscoveryServers;
@@ -329,6 +332,7 @@ export class Live {
     this.status.command = COMMANDS.connect;
     this.processesView = new ProcessesView(this);
     this.historyView = new HistoryView(this);
+    this.processesTree = window.createTreeView(VIEWS.processes, { treeDataProvider: this.processesView });
     this.discovery = new DiscoveryServers(context, { list: () => this.processes(), save: (processes) => this.save(processes) });
     const terminals = new QTerminals(context);
     this.modes = new QueryModes(context);
@@ -336,7 +340,7 @@ export class Live {
     context.subscriptions.push(
       this.output,
       this.status,
-      window.registerTreeDataProvider(VIEWS.processes, this.processesView),
+      this.processesTree,
       window.registerTreeDataProvider(VIEWS.history, this.historyView),
       c(COMMANDS.add, () => this.add()),
       c(COMMANDS.edit, (row?: ProcessArg) => this.edit(row)),
@@ -443,6 +447,8 @@ export class Live {
       this.status.text = "$(debug-disconnect) q: not connected";
       this.status.tooltip = "Click to connect to a q process.";
     }
+    // VS Code also shows a view's badge on its container's activity-bar icon.
+    this.processesTree.badge = label === undefined ? undefined : { value: 1, tooltip: `Connected to ${label}` };
     void commands.executeCommand("setContext", CONNECTED, label !== undefined);
   }
 

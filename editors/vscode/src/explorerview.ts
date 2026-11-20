@@ -159,9 +159,11 @@ export class ProcessExplorer implements TreeDataProvider<Node> {
   private show(): void {
     const label = this.live.activeLabel();
     this.view.description = settings().autoRefresh ? "auto refresh" : undefined;
+    // Not connected, the view is empty and its welcome content (package.json)
+    // says so, with a link to connect.
     this.view.message =
       label === undefined
-        ? "Not connected to a q process."
+        ? undefined
         : this.problem !== undefined
           ? `Could not read ${label}: ${this.problem}`
           : this.refreshing && this.kept === undefined
@@ -191,7 +193,9 @@ export class ProcessExplorer implements TreeDataProvider<Node> {
     const item = new TreeItem(node.label, node.children?.length ? open : TreeItemCollapsibleState.None);
     item.description = node.description;
     item.tooltip = node.tooltip;
-    item.iconPath = new ThemeIcon(ICONS[node.kind]);
+    // A group (Tables, Functions, Variables) wears the icon of what it holds.
+    const kind = node.kind === "group" && node.children?.length ? node.children[0].kind : node.kind;
+    item.iconPath = new ThemeIcon(ICONS[kind]);
     item.contextValue = `explorer.${node.kind}`;
     return item;
   }

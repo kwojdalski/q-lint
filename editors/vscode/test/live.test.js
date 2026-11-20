@@ -237,6 +237,43 @@ test("the views live in their own container, and every menu names a declared com
   assert.strictEqual(abort.enablement, CONNECTED);
 });
 
+test("every view has an icon that ships, and every welcome names a view and commands that exist", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const root = path.join(__dirname, "..");
+  const shipped = (file) => assert.ok(fs.existsSync(path.join(root, file)), file);
+  shipped(pkg.icon);
+  for (const container of pkg.contributes.viewsContainers.activitybar) {
+    shipped(container.icon);
+  }
+  for (const view of Object.values(pkg.contributes.views).flat()) {
+    assert.ok(view.icon, `${view.id} has no icon`);
+    shipped(view.icon);
+  }
+  // Every view in the q-lint container can be empty, and says what to do then.
+  assert.deepStrictEqual(
+    [...new Set(pkg.contributes.viewsWelcome.map((w) => w.view))].sort(),
+    pkg.contributes.views[VIEWS.container].map((v) => v.id).sort(),
+  );
+  const declared = new Set(pkg.contributes.commands.map((c) => c.command));
+  for (const welcome of pkg.contributes.viewsWelcome) {
+    for (const [, command] of welcome.contents.matchAll(/\(command:([^)?]+)/g)) {
+      assert.ok(declared.has(command), `${welcome.view}: ${command}`);
+    }
+  }
+  // The explorer's welcome is for when nothing is connected: connected, it
+  // says what it is reading in its message instead.
+  const explorer = pkg.contributes.viewsWelcome.find((w) => w.view === EXPLORER.view);
+  assert.strictEqual(explorer.when, `!${CONNECTED}`);
+  // The query keys the history's welcome names are the ones bound.
+  const history = pkg.contributes.viewsWelcome.find((w) => w.view === VIEWS.history);
+  const keys = Object.fromEntries(pkg.contributes.keybindings.map((k) => [k.command, k.key]));
+  for (const command of [COMMANDS.queryLine, COMMANDS.querySelection, COMMANDS.queryBlock]) {
+    const key = keys[command].replace(/(^|\+)(\w)/g, (_, plus, c) => plus + c.toUpperCase());
+    assert.ok(history.contents.includes(key), `${command}: ${key}`);
+  }
+});
+
 test("the query modes are the ones package.json offers", () => {
   const mode = pkg.contributes.configuration[1].properties["q-lint.query.mode"];
   assert.deepStrictEqual(mode.enum, [...QUERY_MODES]);
