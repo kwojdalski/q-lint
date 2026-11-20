@@ -124,6 +124,8 @@ switches. The commands:
   An import replaces processes of the same label, adds the rest, and says
   which entries it skipped.
 - **Insert Active Connection Label**, at the cursor.
+- **Copy Label for Agent Query**, on a process row: the label an agent's
+  query names the process by (`server/label` for a discovered one).
 
 **Discovery servers** list processes so a desk's need not be typed in by
 hand. A discovery server is a URL that answers a `GET` with the same JSON as
@@ -254,6 +256,33 @@ reads waits for it.
 process's global names, as read by the explorer, to the language server's,
 and inside a qSQL statement - `select`, `exec`, `update` or `delete` ... `from
 t` - the columns of `t` first.
+
+**Agents.** The **Run q Query** language-model tool (`q-lint_runQuery`,
+`#qQuery` in a chat prompt) lets Copilot and other agents run a q query and
+get the result as JSON. It takes `{"query", "process"?}`: without `process`
+it runs on the active connection, and with none answers that nothing is
+connected; with a process's label it connects to that process first, which
+becomes the active connection, and an unknown label answers with the labels
+there are. Before each call VS Code asks you to confirm, naming the process
+and showing the query; for a process tagged `prod`, `prd` or `production`
+it warns that the query runs on production. The query runs as **Query
+Current Block** would, with the same lambda as grid mode, so nothing is
+defined on the process but what the query defines. The agent gets:
+- a table, keyed table, dictionary or list: `{columns, types, rowCount,
+  data}`, `data` being the first 200 rows as arrays of values, with
+  `truncated: true` when there were more and `keyColumns` for a keyed
+  table. Booleans and numbers are JSON values and nulls `null`; a
+  temporal, a symbol, a guid or a nested value is q's text, and so are a
+  long above 2^53 and an infinity, so a timestamp keeps its nanoseconds;
+- any other value: `{output}`, the process's text of it at
+  `q-lint.output.consoleSize`;
+- a failure: `{error, trace?}`.
+
+A query running longer than `q-lint.agent.queryTimeout` seconds, or one the
+agent cancels, is aborted as **Abort Current Query** aborts one, and the
+agent is told so. Each agent query goes into **Query History**, marked
+`agent`. The tool needs VS Code 1.95 or later; before it, only the command
+is there.
 
 ## q notebooks
 
@@ -429,6 +458,12 @@ reaches the language server.
 | Setting | Default | What it does | q-pro |
 | --- | --- | --- | --- |
 | `q-lint.discovery.refreshInterval` | `30` | Minutes between fetches of every discovery server, at most 1440. `0` fetches a server only on **Reload Discovery Server**, and when it is added or edited. | - |
+
+### Agent settings
+
+| Setting | Default | What it does | q-pro |
+| --- | --- | --- | --- |
+| `q-lint.agent.queryTimeout` | `30` | Seconds a query run by an agent through **Run q Query** may take before it is aborted, as **Abort Current Query** aborts one. `0` sets no limit. | - |
 
 ### Not here, and why
 
