@@ -368,6 +368,8 @@ export class Live {
   /// A connect in progress, so a second one waits for it instead of opening
   /// another.
   private connecting: Promise<boolean> | undefined;
+  /// The label of the process `connecting` connects to.
+  private connectingTo: string | undefined;
   private running: { code: string; started: number } | undefined;
   /// When the query that timed out started, so its entry says so.
   private timedOut: number | undefined;
@@ -836,8 +838,11 @@ export class Live {
   /// connected.
   private open(process: Process): Promise<boolean> {
     if (this.connecting !== undefined) {
-      return this.connecting;
+      // A connect to another process - a reconnect after an abort, waiting
+      // for that process to be free - is let finish, and this one follows.
+      return this.connectingTo === process.label ? this.connecting : this.connecting.then(() => this.open(process));
     }
+    this.connectingTo = process.label;
     this.connecting = (async () => {
       if (this.connection !== undefined) {
         const old = this.connection;
@@ -926,6 +931,11 @@ export class Live {
   /// The active connection and its process, connecting first if there is
   /// none; undefined when none was connected or a query is still running.
   private async ready(): Promise<{ connection: QConnection; process: Process } | undefined> {
+    // A reconnect still under way (after an abort) is waited for, not
+    // replaced by asking which process to connect to.
+    if (this.connection === undefined && this.connecting !== undefined) {
+      await this.connecting;
+    }
     if (this.connection === undefined && !(await this.connectTo())) {
       return undefined;
     }

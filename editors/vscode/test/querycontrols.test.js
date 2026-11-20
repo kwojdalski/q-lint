@@ -21,6 +21,7 @@ const {
 } = require("../out/querycontrols.js");
 const { QError } = require("../out/qclient.js");
 const { toGrid } = require("../out/grid.js");
+const { deserialize } = require("node-q/lib/c.js");
 
 const day = (y, m, d, ms = 0) => new Date(Date.UTC(y, m - 1, d) + ms);
 /// A q time as the codec makes it: 2000.01.01 plus the time.
@@ -73,10 +74,80 @@ test("simple lists are written as q writes them", () => {
   assert.strictEqual(vectorText([day(2026, 11, 1), day(2026, 12, 1)], 13), "2026.11 2026.12m");
 });
 
+/// What the codec makes of a message q serialized (`-8!x`, as hex), and its
+/// q type, as an uncompressed answer gives them to `formatValue`.
+const decoded = (hex) => {
+  const b = Buffer.from(hex, "hex");
+  return { value: deserialize(b, false, true, false, false), type: b.readInt8(8) };
+};
+const shown = (hex) => {
+  const { value, type } = decoded(hex);
+  return formatValue(value, type);
+};
+
+test("temporal infinities are written as q writes them, not NaN (#894)", () => {
+  // The codec makes a temporal infinity an invalid Date, and keeps a
+  // timestamp's and a timespan's as Infinity.
+  assert.deepStrictEqual(shown("0100000011000000f4ffffffffffffff7f"), ["0Wp"]);
+  assert.deepStrictEqual(shown("0100000011000000f0ffffffffffffff7f"), ["0Wn"]);
+  assert.deepStrictEqual(shown("010000000d000000f2ffffff7f"), ["0Wd"]);
+  assert.deepStrictEqual(shown("0100000011000000f1000000000000f07f"), ["0wz"]);
+  assert.deepStrictEqual(shown("010000000d000000edffffff7f"), ["0Wt"]);
+  assert.deepStrictEqual(shown("010000000d000000f3ffffff7f"), ["0Wm"]);
+  assert.deepStrictEqual(shown("010000000d000000efffffff7f"), ["0Wu"]);
+  assert.deepStrictEqual(shown("010000000d000000eeffffff7f"), ["0Wv"]);
+  assert.deepStrictEqual(shown("01000000160000000e0002000000891c0000ffffff7f"), ["2020.01.01 0W"]);
+  const table = "010000003f0000006200630b000200000064007a000000020000000e0002000000891c0000ffffff7f0f00020000000000000000000000000000000000f07f";
+  // In a table the column's type is guessed: a datetime at midnight is a
+  // Date as a date is, and its infinity an invalid Date, so both read as dates.
+  assert.deepStrictEqual(shown(table), ["d          z", "---------------------", "2020.01.01 2000.01.01", "0W         0W"]);
+  const { value } = decoded(table);
+  const grid = gridOf(value, 98, 10);
+  assert.deepStrictEqual(grid.cells, [["2020.01.01", "0W"], ["2000.01.01", "0W"]]);
+  assert.deepStrictEqual(grid.raw[0], [7305, Infinity]);
+});
+
+test("a null in a real list is 0N, as q writes it: 1 0Ne, not 1 0ne (#894)", () => {
+  assert.deepStrictEqual(shown("01000000160000000800020000000000803f0000c07f"), ["1 0Ne"]);
+  assert.strictEqual(vectorText([null, null], 8), "0N 0Ne");
+  // A float list's null stays 0n, and an infinity 0w in both.
+  assert.strictEqual(vectorText([2, null, Infinity], 9), "2 0n 0w");
+  assert.strictEqual(vectorText([1, Infinity], 8), "1 0we");
+});
+
+test("a month before 2000 is its own month, not one a year earlier (#894)", () => {
+  // The codec makes 1999.12m (-1 months from 2000) a Date in 1998.12.
+  assert.deepStrictEqual(shown("010000000d000000f3ffffffff"), ["1999.12m"]);
+  assert.deepStrictEqual(shown("010000001a0000000d0003000000feffffffe8ffffff0e000000"), ["1999.11 1998.01 2001.03m"]);
+  const { value } = decoded("010000001a0000000d0003000000feffffffe8ffffff0e000000");
+  assert.deepStrictEqual(gridOf(value, 13, 10).raw[0], [-2, -24, 14]);
+});
+
 test("floats keep q's seven significant digits", () => {
   assert.strictEqual(floatText(1.5), "1.5");
   assert.strictEqual(floatText(2), "2");
   assert.strictEqual(floatText(1 / 3), "0.3333333");
+  // q writes a float as C's %.7g: an exponent from 1e7 up and below 1e-4,
+  // of at least two digits (#894). KDB-X's console, for each.
+  assert.strictEqual(floatText(123456789), "1.234568e+08");
+  assert.strictEqual(floatText(12345678), "1.234568e+07");
+  assert.strictEqual(floatText(1234567), "1234567");
+  assert.strictEqual(floatText(9999999.6), "1e+07");
+  assert.strictEqual(floatText(1e15), "1e+15");
+  assert.strictEqual(floatText(1e100), "1e+100");
+  assert.strictEqual(floatText(0.0001), "0.0001");
+  assert.strictEqual(floatText(0.00001), "1e-05");
+  assert.strictEqual(floatText(1.5e-7), "1.5e-07");
+  assert.strictEqual(floatText(-0.00012345678), "-0.0001234568");
+  assert.strictEqual(floatText(123.456789), "123.4568");
+  assert.strictEqual(floatText(0), "0");
+  assert.strictEqual(atomText(123456789, -9), "1.234568e+08");
+  assert.strictEqual(atomText(1234567, -9), "1234567f");
+  assert.strictEqual(vectorText([1e8, 2], 9), "1e+08 2");
+  // In a table an int and a float are both numbers: a whole one is written
+  // whole, as an int column needs.
+  assert.strictEqual(cellText(123456789), "123456789");
+  assert.strictEqual(cellText(0.00001), "1e-05");
 });
 
 test("a table is laid out as q's console lays it out, a keyed one with its bar", () => {
