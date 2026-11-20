@@ -15,6 +15,7 @@ import {
   NotebookCellOutput,
   NotebookCellOutputItem,
   NotebookData,
+  ConfigurationTarget,
   Uri,
   commands,
   notebooks,
@@ -29,9 +30,18 @@ import {
   type NotebookSerializer,
 } from "vscode";
 import * as path from "node:path";
-import { cellOutputs, chartCellOutputs, DATA, GRID_ROWS, readCellData, type OutputPart } from "./celldata";
+import { cellOutputs, chartCellOutputs, DATA, readCellData, type OutputPart } from "./celldata";
 import { cellDirective } from "./celldirectives";
-import { readLive } from "./liveconfig";
+import {
+  readLive,
+  readNotebook,
+  rowLimitLabel,
+  rowsArgument,
+  RESULTS,
+  ROW_LIMIT_CHOICES,
+  ROW_LIMIT_FROM,
+  type RowLimitFrom,
+} from "./liveconfig";
 import type { Live } from "./live";
 import { decodeItem, encodeItem, exportScript, NOTEBOOK, parseQnb, serializeQnb, type QnbCell } from "./qnb";
 import { statements } from "./statements";
@@ -180,6 +190,8 @@ class QnbKernel {
     }
     const configuration = workspace.getConfiguration("q-lint");
     const { consoleSize } = readLive((key, fallback) => configuration.get(key, fallback));
+    const limit = readNotebook((key, fallback) => configuration.get(key, fallback));
+    const rows = rowsArgument(limit);
     let running = false;
     const listener = execution.token.onCancellationRequested(() => {
       // As Abort Current Query: stop waiting, and reconnect once the process
@@ -192,13 +204,13 @@ class QnbKernel {
       const result = await this.live.runOnActive(source, async (connection): Promise<[boolean, OutputPart[]]> => {
         running = true;
         if (directive.mode === "chart") {
-          const answer = await connection.queryGrid(cut, consoleSize, GRID_ROWS);
-          return [answer.ok, chartCellOutputs(directive, answer)];
+          const answer = await connection.queryGrid(cut, consoleSize, rows);
+          return [answer.ok, chartCellOutputs(directive, answer, limit.rowLimitFrom)];
         }
         const answer = directive.mode === "console"
           ? await connection.query(cut, consoleSize)
-          : readCellData(await connection.call(DATA, cut, GRID_ROWS, consoleSize));
-        return [answer.ok, cellOutputs(directive, answer)];
+          : readCellData(await connection.call(DATA, cut, rows, consoleSize));
+        return [answer.ok, cellOutputs(directive, answer, limit.rowLimitFrom)];
       });
       if (result === undefined) {
         return finish(false, [notice("Not run: no q process is connected, or a query is still running on it.")]);
@@ -263,6 +275,55 @@ async function exportNotebook(source?: Uri, target?: Uri): Promise<void> {
   }
 }
 
+/// Set `q-lint.notebook.rowLimit` and `rowLimitFrom`: to `limit` and `from`
+/// when given (0 or "all": every row), and otherwise from a quick pick each.
+/// Each is set where it is set already, so a workspace's choice is not
+/// shadowed.
+async function setRowLimit(limit?: number | "all", from?: string): Promise<void> {
+  const configuration = workspace.getConfiguration("q-lint");
+  const current = readNotebook((key, fallback) => configuration.get(key, fallback));
+  let chosen = limit === "all" ? 0 : ROW_LIMIT_CHOICES.find((n) => n === limit);
+  if (chosen === undefined) {
+    const picked = await window.showQuickPick(
+      ROW_LIMIT_CHOICES.map((n) => ({
+        label: rowLimitLabel(n),
+        description: n === current.rowLimit ? "current" : undefined,
+        limit: n,
+      })),
+      { title: "q-lint: rows a notebook's @grid and @chart cells show" },
+    );
+    if (picked === undefined) {
+      return;
+    }
+    chosen = picked.limit;
+  }
+  let side = ROW_LIMIT_FROM.find((f) => f === from);
+  if (side === undefined && chosen !== 0) {
+    const picked = await window.showQuickPick(
+      ROW_LIMIT_FROM.map((f) => ({
+        label: f === "first" ? "First rows" : "Last rows",
+        description: f === current.rowLimitFrom ? "current" : undefined,
+        detail: `The ${f} ${rowLimitLabel(chosen as number)} of a larger table`,
+        from: f,
+      })),
+      { title: "q-lint: which rows of a larger table" },
+    );
+    if (picked === undefined) {
+      return;
+    }
+    side = picked.from;
+  }
+  const set = async (key: string, value: unknown): Promise<void> => {
+    const where = configuration.inspect(key);
+    const target = where?.workspaceValue !== undefined ? ConfigurationTarget.Workspace : ConfigurationTarget.Global;
+    await configuration.update(key, value, target);
+  };
+  await set("notebook.rowLimit", chosen);
+  if (side !== undefined) {
+    await set("notebook.rowLimitFrom", side satisfies RowLimitFrom);
+  }
+}
+
 /// What the chart renderer drew for one output, as it reported it: for
 /// tests, through the API `activate` returns.
 export interface RenderedChart {
@@ -290,6 +351,7 @@ export function registerNotebooks(context: ExtensionContext, live: Live): { char
     workspace.registerNotebookSerializer(NOTEBOOK.type, new QnbSerializer()),
     new QnbKernel(live),
     commands.registerCommand(NOTEBOOK.exportCommand, (source?: Uri, target?: Uri) => exportNotebook(source, target)),
+    commands.registerCommand(RESULTS.setRowLimit, (limit?: number | "all", from?: string) => setRowLimit(limit, from)),
     messaging.onDidReceiveMessage(({ message }: { message: { type?: string; id?: string; chart?: Omit<RenderedChart, "id"> } }) => {
       if (message.type === "rendered" && typeof message.id === "string" && message.chart !== undefined) {
         drawn.delete(message.id);

@@ -17,7 +17,21 @@ const {
   tagColour,
 } = require("../out/processes.js");
 const { NULL_TYPE, RUN, readAnswer, render } = require("../out/query.js");
-const { COMMANDS, CONNECTED, DISCOVERY_COMMANDS, QUERY_MODES, VIEWS, readLive } = require("../out/liveconfig.js");
+const {
+  COMMANDS,
+  CONNECTED,
+  DISCOVERY_COMMANDS,
+  QUERY_MODES,
+  RESULTS,
+  RESULTS_LOCATIONS,
+  ROW_LIMIT_CHOICES,
+  ROW_LIMIT_FROM,
+  VIEWS,
+  readLive,
+  readNotebook,
+  rowLimitLabel,
+  rowsArgument,
+} = require("../out/liveconfig.js");
 const { EXPLORER, readExplorer } = require("../out/explorer.js");
 const relations = require("../out/relations.js");
 const { NOTEBOOK } = require("../out/qnb.js");
@@ -212,6 +226,8 @@ test("package.json declares exactly the commands the extension registers", () =>
     ...Object.values(EXPLORER).filter((id) => id !== EXPLORER.view),
     ...Object.values(relations.COMMANDS),
     NOTEBOOK.exportCommand,
+    RESULTS.exportCsv,
+    RESULTS.setRowLimit,
     "q-lint.restartServer",
   ].sort();
   assert.deepStrictEqual(declared, registered);
@@ -243,7 +259,7 @@ test("every view has an icon that ships, and every welcome names a view and comm
   const root = path.join(__dirname, "..");
   const shipped = (file) => assert.ok(fs.existsSync(path.join(root, file)), file);
   shipped(pkg.icon);
-  for (const container of pkg.contributes.viewsContainers.activitybar) {
+  for (const container of Object.values(pkg.contributes.viewsContainers).flat()) {
     shipped(container.icon);
   }
   for (const view of Object.values(pkg.contributes.views).flat()) {
@@ -315,6 +331,7 @@ test("every query setting is read, with the default package.json declares, and n
     mode: "console",
     gridLimit: 10000,
     gridDecimals: -1,
+    resultsLocation: "editor",
   });
   assert.deepStrictEqual(explorer, { excludedNamespaces: ["q", "Q", "h", "j", "o", "s"], previewLimit: 5, autoRefresh: false });
   // A size that is not one falls back to the default.
@@ -329,4 +346,56 @@ test("every query setting is read, with the default package.json declares, and n
   assert.strictEqual(set({ "query.gridDecimals": 3 }).gridDecimals, 3);
   assert.strictEqual(set({ "query.gridDecimals": -7 }).gridDecimals, -1);
   assert.strictEqual(set({ "query.gridDecimals": 99 }).gridDecimals, 20);
+  assert.strictEqual(set({ "query.resultsLocation": "panel" }).resultsLocation, "panel");
+  assert.strictEqual(set({ "query.resultsLocation": "sidebar" }).resultsLocation, "editor");
+  assert.deepStrictEqual(declared["q-lint.query.resultsLocation"].enum, [...RESULTS_LOCATIONS]);
+});
+
+test("the q Results view is a webview in its own container in the bottom panel (#889)", () => {
+  const [container] = pkg.contributes.viewsContainers.panel;
+  assert.strictEqual(container.id, RESULTS.container);
+  assert.strictEqual(container.title, "q Results");
+  const [view] = pkg.contributes.views[RESULTS.container];
+  assert.strictEqual(view.id, RESULTS.view);
+  assert.strictEqual(view.type, "webview");
+  // Export Results to CSV is on the view's title bar; the row limit on a
+  // notebook's toolbar.
+  assert.ok(pkg.contributes.menus["view/title"].some((m) => m.command === RESULTS.exportCsv && m.when === `view == ${RESULTS.view}`));
+  assert.ok(pkg.contributes.menus["notebook/toolbar"].some((m) => m.command === RESULTS.setRowLimit));
+});
+
+test("every notebook setting is read, with the default package.json declares, and none restarts the server (#889)", () => {
+  const section = pkg.contributes.configuration.find((c) => c.title === "q-lint: notebooks");
+  const declared = section.properties;
+  const read = new Map();
+  const settings = readNotebook((key, fallback) => {
+    read.set(key, fallback);
+    return fallback;
+  });
+  for (const [key, spec] of Object.entries(declared)) {
+    const short = key.replace(/^q-lint\./, "");
+    assert.ok(read.has(short), `${key} is declared but never read`);
+    assert.deepStrictEqual(read.get(short), spec.default, key);
+    const affects = (s) => key === s || key.startsWith(`${s}.`);
+    assert.strictEqual(needsRestart(affects), false, key);
+  }
+  assert.strictEqual(read.size, Object.keys(declared).length);
+  assert.deepStrictEqual(settings, { rowLimit: 1000, rowLimitFrom: "first" });
+  assert.deepStrictEqual(declared["q-lint.notebook.rowLimitFrom"].enum, [...ROW_LIMIT_FROM]);
+  const set = (values) => readNotebook((key, fallback) => (key in values ? values[key] : fallback));
+  assert.deepStrictEqual(set({ "notebook.rowLimit": 0, "notebook.rowLimitFrom": "last" }), { rowLimit: 0, rowLimitFrom: "last" });
+  assert.strictEqual(set({ "notebook.rowLimit": -5 }).rowLimit, 1000);
+  assert.strictEqual(set({ "notebook.rowLimit": 2.5 }).rowLimit, 1000);
+  assert.strictEqual(set({ "notebook.rowLimitFrom": "middle" }).rowLimitFrom, "first");
+});
+
+test("a row limit is one signed count for sublist: last negative, all infinite (#889)", () => {
+  assert.strictEqual(rowsArgument({ rowLimit: 1000, rowLimitFrom: "first" }), 1000);
+  assert.strictEqual(rowsArgument({ rowLimit: 10, rowLimitFrom: "last" }), -10);
+  assert.strictEqual(rowsArgument({ rowLimit: 0, rowLimitFrom: "first" }), Infinity);
+  assert.strictEqual(rowsArgument({ rowLimit: 0, rowLimitFrom: "last" }), -Infinity);
+  assert.deepStrictEqual([...ROW_LIMIT_CHOICES], [10, 100, 1000, 10000, 100000, 0]);
+  assert.deepStrictEqual(ROW_LIMIT_CHOICES.map(rowLimitLabel), ["10 rows", "100 rows", "1,000 rows", "10,000 rows", "100,000 rows", "All rows"]);
+  // The default is one of the choices.
+  assert.ok(ROW_LIMIT_CHOICES.includes(readNotebook((_, fallback) => fallback).rowLimit));
 });
