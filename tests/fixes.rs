@@ -996,6 +996,228 @@ fn each_precedence_message_says_which_operation_q_performs_first() {
     );
 }
 
+/// F, the forward fix: what `--fix` leaves with QP005 and QP007 selected.
+#[cfg(test)]
+fn forward(source: &str) -> String {
+    fixed_selecting(source, &["QP005", "QP007"])
+}
+
+/// R, the reverse fix: what `--fix` leaves with QP008 selected.
+#[cfg(test)]
+fn reverse(source: &str) -> String {
+    fixed_selecting(source, &["QP008"])
+}
+
+/// The round trip QP008 promises, on one source: R(F(x)) is R(x) and
+/// F(R(x)) is F(x), each fix is idempotent, and R takes out parentheses and
+/// nothing else - the same text with every pair dropped, and never a pair
+/// F would not have written (#848).
+#[cfg(test)]
+fn assert_round_trip(x: &str) {
+    let (f, r) = (forward(x), reverse(x));
+    assert_eq!(reverse(&f), r, "R(F(x)) on {x}");
+    assert_eq!(forward(&r), f, "F(R(x)) on {x}");
+    assert_eq!(forward(&f), f, "F twice on {x}");
+    assert_eq!(reverse(&r), r, "R twice on {x}");
+    assert!(selected(&r, &["QP008"]).is_empty(), "QP008 left in {r}");
+    let bare = |t: &str| t.replace(['(', ')'], "");
+    assert_eq!(bare(&r), bare(x), "R changed more than parentheses in {x}");
+    assert!(
+        r.matches('(').count() <= x.matches('(').count(),
+        "R added a pair to {x}"
+    );
+}
+
+/// QP008 is QP005's and QP007's fix read backwards: each row is a source,
+/// then F(x) - the forward fix with both selected - and R(x), the reverse.
+/// Every row R changes was parsed in KDB-X before and after, and the trees
+/// were the same.
+#[test]
+fn the_reverse_fix_undoes_the_forward_fix_byte_for_byte() {
+    let cases = [
+        ("mid:0.5*(bid+ask)", "mid:0.5*(bid+ask)", "mid:0.5*bid+ask"),
+        ("mid:0.5*bid+ask", "mid:0.5*(bid+ask)", "mid:0.5*bid+ask"),
+        (
+            "stamp:start+(step*til n)",
+            "stamp:start+(step*til n)",
+            "stamp:start+step*til n",
+        ),
+        (
+            "d:s*1+0.0005*-1+2*r",
+            "d:s*(1+(0.0005*(-1+(2*r))))",
+            "d:s*1+0.0005*-1+2*r",
+        ),
+        (
+            "d:s*(1+0.0005*-1+2*r)",
+            "d:s*(1+(0.0005*(-1+(2*r))))",
+            "d:s*1+0.0005*-1+2*r",
+        ),
+        (
+            "f:{[a;b]\n  c:a*(b+1);\n  d:a+b*2;\n  c+d}",
+            "f:{[a;b]\n  c:a*(b+1);\n  d:a+(b*2);\n  c+d}",
+            "f:{[a;b]\n  c:a*b+1;\n  d:a+b*2;\n  c+d}",
+        ),
+        (
+            "r:select a:x+(y*z), b by c*(d+e) from t where f*(g+h), i",
+            "r:select a:x+(y*z), b by c*(d+e) from t where f*(g+h), i",
+            "r:select a:x+y*z, b by c*d+e from t where f*g+h, i",
+        ),
+        (
+            "x:.a.from+(0D01*(1+til 5))",
+            "x:.a.from+(0D01*(1+til 5))",
+            "x:.a.from+0D01*1+til 5",
+        ),
+        (
+            "r:select a*(b+(c,d)), e from t",
+            "r:select a*(b+(c,d)), e from t",
+            "r:select a*b+(c,d), e from t",
+        ),
+        ("r:a*(b+\n  c)", "r:a*(b+\n  c)", "r:a*b+\n  c"),
+        ("r:a*(b+c) / note", "r:a*(b+c) / note", "r:a*b+c / note"),
+        ("r:f[2*(3+4);1]", "r:f[2*(3+4);1]", "r:f[2*3+4;1]"),
+        (
+            "k:(2*(3+4);5+6*7)",
+            "k:(2*(3+4);5+(6*7))",
+            "k:(2*3+4;5+6*7)",
+        ),
+        ("r:a*/:(b+c)", "r:a*/:(b+c)", "r:a*/:b+c"),
+        ("r:a* (b+c)", "r:a* (b+c)", "r:a* b+c"),
+        ("r:a -(b*c)", "r:a -(b*c)", "r:a -b*c"),
+        ("r:a*(-1+b)", "r:a*(-1+b)", "r:a*-1+b"),
+        (
+            "r:t+($[p;-1;1]*12:00)",
+            "r:t+($[p;-1;1]*12:00)",
+            "r:t+$[p;-1;1]*12:00",
+        ),
+        ("r:a+(@[f;x]*2)", "r:a+(@[f;x]*2)", "r:a+@[f;x]*2"),
+        ("r:a*(-[b;c]+d)", "r:a*(-[b;c]+d)", "r:a*-[b;c]+d"),
+        (
+            "r:a*(b+exec c from t where d, e)",
+            "r:a*(b+exec c from t where d, e)",
+            "r:a*b+exec c from t where d, e",
+        ),
+        (
+            "g:{[t] select a:b*(c+d),\n    e:f+(g*h)\n    from t}",
+            "g:{[t] select a:b*(c+d),\n    e:f+(g*h)\n    from t}",
+            "g:{[t] select a:b*c+d,\n    e:f+g*h\n    from t}",
+        ),
+        // A pair F would not write stays, and F adds its own beside it.
+        ("r:a*(b*c+d)", "r:a*(b*(c+d))", "r:a*(b*c+d)"),
+        ("r:a+b*(c+d)", "r:a+(b*(c+d))", "r:a+b*c+d"),
+    ];
+    for (x, f, r) in cases {
+        assert_eq!(forward(x), f, "F on {x}");
+        assert_eq!(reverse(x), r, "R on {x}");
+        assert_round_trip(x);
+    }
+}
+
+/// Parentheses that change the parse, or that the forward fix would not
+/// have written, are never reported: QP008 reads only the pairs it can give
+/// back (#848).
+#[test]
+fn the_reverse_rule_reports_no_pair_the_forward_fix_would_not_write() {
+    for source in [
+        // Regrouped: q would read the line differently without them.
+        "r:(0.5*bid)+ask",
+        "r:(a*b)+c",
+        "r:a*(b+c)*d",
+        "r:a*(b+c)[0]",
+        // The same family on both sides, or no operator inside.
+        "r:a+(b+c)",
+        "r:a*(b*c)",
+        "r:a*(b)",
+        "r:a*(f x)",
+        // Not the right operand of an infix operator.
+        "r:f[(a*b);c]",
+        "r:(a;b+c*d)",
+        "r:g (a+b*c)",
+        "r:a,(b*c)",
+        "r:a*(b+c;d)",
+        // A token would fuse: `-1` becomes a literal, `c` and `from` a name.
+        "r:a -(1+b)",
+        "r:a -(.5*b)",
+        "r:2 -(1*b)",
+        "q:select m:a*(b+c)from t",
+        // What it holds starts with an operator, or an adverb.
+        "r:a*(-b+c)",
+        "r:a+('[f;g]*2)",
+        // A run of the other family that does not open what it holds.
+        "r:a*(b,c+d)",
+        // Without the pair the operand would run on: a template opening in
+        // another's phrase, or a newline the statement does not continue.
+        "r:select from t where a*(b+exec c from u), d",
+        "r:a*(b+\nc)",
+        // A blank or a comment inside: the forward fix writes neither.
+        "r:a*( b+c)",
+        "r:a*(b+c )",
+        "r:a*(b+c / note\n  )",
+        // In a string or a comment.
+        "s:\"a*(b+c)\"",
+        "r:1 / a*(b+c)",
+    ] {
+        let found = selected(source, &["QP008"]);
+        assert!(found.is_empty(), "QP008 on {source}: {found:?}");
+        assert_eq!(reverse(source), source);
+    }
+}
+
+/// The round trip over expressions nobody wrote by hand: every operator
+/// pattern over a few operand kinds, each with no parentheses, with the
+/// forward fix's, and with pairs placed at random - some the fix's, most
+/// not - in the contexts the forward fix reaches (#848).
+#[test]
+fn the_round_trip_holds_over_generated_infix_expressions() {
+    let operands = ["a", "1", "2.5", "f x", "b c", "-1", "til n", "x`y"];
+    let ops = ['+', '-', '*', '%'];
+    let contexts = [
+        ("r:", ""),
+        ("r:f[", ";1]"),
+        ("g:{[a;b] c:", "; c}"),
+        ("s:select m:", ", n by k from t"),
+        ("s:select from t where ", ", k"),
+        ("r:(", ";0)"),
+    ];
+    // A small linear congruential generator: the cases are the same on
+    // every run, and no dependency is added for them.
+    let mut seed = 0x2545_f491_4f6c_dd1du64;
+    let mut next = |n: usize| {
+        seed = seed
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        (seed >> 33) as usize % n
+    };
+    const ROUNDS: usize = 40;
+    let mut checked = 0;
+    for _ in 0..ROUNDS {
+        let len = 2 + next(4);
+        let tokens: Vec<String> = (0..len)
+            .map(|_| operands[next(operands.len())].to_string())
+            .collect();
+        let chosen: Vec<char> = (1..len).map(|_| ops[next(ops.len())]).collect();
+        // A pair from operand i to the end, for each i a coin says.
+        let mut text = tokens[0].clone();
+        let mut closes = 0;
+        for (i, op) in chosen.iter().enumerate() {
+            text.push(*op);
+            if next(3) == 0 {
+                text.push('(');
+                closes += 1;
+            }
+            text.push_str(&tokens[i + 1]);
+        }
+        text.push_str(&")".repeat(closes));
+        let (head, tail) = contexts[next(contexts.len())];
+        let x = format!("{head}{text}{tail}");
+        assert_round_trip(&x);
+        // And from the bare line, and from the fully parenthesised one.
+        assert_round_trip(&format!("{head}{}{tail}", text.replace(['(', ')'], "")));
+        assert_round_trip(&forward(&x));
+        checked += 1;
+    }
+    assert_eq!(checked, ROUNDS);
+}
+
 /// `--fix` twice writes what `--fix` once did, and a finding it leaves is
 /// counted on standard error as one it has no fix for, so that "still
 /// reported" is not read as "run it again" (#847).

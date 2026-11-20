@@ -1632,6 +1632,50 @@ fn the_precedence_fix_is_a_quick_fix_for_the_trap_and_for_the_routine_mix() {
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 
+/// QP008, the opposite convention, is a quick fix too: it removes the pair
+/// QP005's fix writes, and "Format document" removes every such pair, nested
+/// ones included, leaving the bare line q reads the same way (#848). The
+/// opposite convention beside QP005 stops no editor: the server says so on
+/// standard error and keeps the forward rule, the profile's.
+#[test]
+fn the_reverse_precedence_fix_is_a_quick_fix_that_removes_the_pair() {
+    let dir = tempfile::tempdir().unwrap();
+    let before = "mid:0.5*(bid+ask)\nd:s*(1+(2*r))\nw:a*b+c\n";
+    let uri = "file:///tmp/restated.q";
+    let mut server = Server::start_in(dir.path(), &["--extend-select", "QP008"]);
+    server.initialize();
+    server.open(uri, before);
+    assert_eq!(codes_of(&server.diagnostics_for(uri)), ["QP005"]);
+    assert_eq!(server.shutdown_and_exit(), 0);
+
+    let mut server = Server::start_in(
+        dir.path(),
+        &["--extend-select", "QP008", "--ignore", "QP005"],
+    );
+    server.initialize();
+    server.open(uri, before);
+    let diagnostics = server.diagnostics_for(uri);
+    assert_eq!(codes_of(&diagnostics), ["QP008", "QP008", "QP008"]);
+    let actions = server.code_actions(uri, std::slice::from_ref(&diagnostics[0]));
+    assert_eq!(actions.len(), 2, "{actions:?}");
+    assert_eq!(
+        actions[0]["title"],
+        "Remove the parentheses q's order already implies"
+    );
+    assert_eq!(
+        actions[0]["edit"]["changes"][uri],
+        json!([{"range":{"start":{"line":0,"character":8},
+                         "end":{"line":0,"character":17}},
+                "newText":"bid+ask"}])
+    );
+    let edits = server.format(uri)["result"].as_array().cloned().unwrap();
+    let after = apply_edits(before, &edits);
+    assert_eq!(after, "mid:0.5*bid+ask\nd:s*1+2*r\nw:a*b+c\n");
+    server.change(uri, 2, &after);
+    assert!(server.diagnostics_for(uri).is_empty());
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
 #[test]
 fn formatting_leaves_an_unbalanced_document_alone_with_qe001_deselected() {
     // Deselecting QE001 hides the finding; it does not make the brackets

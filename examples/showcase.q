@@ -771,6 +771,13 @@ mixed: 2*3+4
 / expect-next: QP007
 routine: 2+3*4
 
+/ QP008: the opposite convention. These parentheses are where QP005's fix
+/ would put them, and q groups the same without them, so a tree that wants
+/ the bare spelling removes them. Selected only by its own code, and never
+/ beside QP005 or QP007: `--fix` would undo itself.
+/ expect-next: QP008
+restated: 2*(3+4)
+
 / QP006: `widen` is a function this file defines, applied by writing it
 / beside its argument. q reads that as widen[3+4]; the brackets the uqf
 / profile asks for say where the argument ends without the reader having
