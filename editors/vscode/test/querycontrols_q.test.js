@@ -84,6 +84,24 @@ test("unlimited, unwrapped and timed-out queries against a real q process", { sk
     assert.deepStrictEqual(readUnlimited(await connection.call(UNLIMITED, ["enlist 3i"], UNLIMITED_SIZE)).text, [",3i"]);
   });
 
+  await t.test("unlimited: a temporal list reads as the process writes it, nanoseconds and all (#894)", async () => {
+    for (const list of [
+      "(2026.11.20D10:11:12.123456789;0Np;0Wp;-0Wp)",
+      "(1999.12m;2000.01m;0Nm;0Wm)",
+      "(-0Wd;1999.12.31;0Nd;0Wd)",
+      "(1999.12.31T23:59:59.999;0Nz;0wz)",
+      "(-0D01:02:03.000000001;0Nn;0Wn)",
+      "(10:11;0Nu;0Wu)",
+      "(10:11:12;0Nv;-0Wv)",
+      "(10:11:12.123;0Nt;0Wt)",
+    ]) {
+      const own = await connection.query([list], SIZE);
+      const whole = readUnlimited(await connection.call(UNLIMITED, [list], UNLIMITED_SIZE));
+      assert.strictEqual(own.ok, true, list);
+      assert.deepStrictEqual(whole.text, own.text, list);
+    }
+  });
+
   await t.test("unlimited: a table is every row, formatted by the process", async () => {
     const cut = await connection.query(["big"], SIZE);
     assert.ok(cut.text.length <= SIZE[0]);

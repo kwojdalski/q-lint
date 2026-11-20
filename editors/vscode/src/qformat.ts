@@ -145,6 +145,41 @@ function timestampText(ns: number): string {
   return `${ymd(d)}D${hms(d)}.${String((micros - seconds * 1e6) * 1000).padStart(9, "0")}`;
 }
 
+/// A timestamp of `ns` nanoseconds since 2000.01.01, as q holds one.
+function exactTimestampText(ns: bigint): string {
+  const day = 86_400_000_000_000n;
+  const days = ns >= 0n ? ns / day : -((-ns + day - 1n) / day);
+  const d = new Date(EPOCH_MS + Number(days) * DAY_MS);
+  return `${ymd(d)}D${spanText(ns - days * day).slice(2)}`;
+}
+
+/// A temporal item of type `t` (13 to 19) given as the number q holds it
+/// as - months, days or float days since 2000, minutes, seconds or
+/// milliseconds - which an unlimited query sends; undefined for any other
+/// type.
+function temporalText(x: number | LongLike, t: number): string | undefined {
+  const n = Number(x.toString());
+  switch (t) {
+    case 13: {
+      const m = n + 24_000;
+      return `${Math.floor(m / 12)}.${pad2((m % 12) + 1)}`;
+    }
+    case 14:
+      return ymd(new Date(EPOCH_MS + n * DAY_MS));
+    case 15: {
+      const d = new Date(EPOCH_MS + Math.round(n * DAY_MS));
+      return `${ymd(d)}T${hms(d)}.${pad3(d.getUTCMilliseconds())}`;
+    }
+    case 17:
+      return clock(n, "minute");
+    case 18:
+      return clock(n, "second");
+    case 19:
+      return clock(n, "milli");
+  }
+  return undefined;
+}
+
 /// One item of a simple list, or an atom, of q type `t` (positive), without
 /// the suffix a list or an atom ends with. Undefined for a null, which the
 /// caller writes.
@@ -175,9 +210,15 @@ function itemText(x: unknown, t: number): string | undefined {
     case 11:
       return String(x);
     case 12:
-      return timestampText(Number(x));
+      return isLong(x) ? exactTimestampText(BigInt(x.toString())) : timestampText(Number(x));
     case 16:
       return spanText(BigInt(String(x)));
+  }
+  if (typeof x === "number" || isLong(x)) {
+    const n = temporalText(x, t);
+    if (n !== undefined) {
+      return n;
+    }
   }
   if (!(x instanceof Date)) {
     return String(x);
