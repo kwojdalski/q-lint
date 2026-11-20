@@ -36,6 +36,13 @@
 //! `help`: textDocument/hover, textDocument/signatureHelp and - only when
 //! the client's options ask for it - textDocument/completion, from the
 //! source and the catalogue of q's own words.
+//! And how files and functions relate, in `relate`: the call hierarchy
+//! (textDocument/prepareCallHierarchy, callHierarchy/incomingCalls and
+//! outgoingCalls), and two requests of this server's own, announced under
+//! `experimental` - `q-lint/graph`, a document's dependencies and dependents
+//! as `qlinter analyze graph` has them, and `q-lint/affectedTests`, the test
+//! files reaching the files a client says changed. Which files changed is
+//! git's to say and the client's to ask: this server starts no process.
 //!
 //! Around those: each diagnostic links its code to that rule's row in the
 //! reference (`codeDescription`); beside its fix, or without one, a finding
@@ -47,8 +54,9 @@
 //! brackets and block comments that span lines.
 //!
 //! A workspace index: every `.q` file under the workspace folders is read at
-//! startup - never run - for the global names it defines, and kept current
-//! from open buffers, closes, and workspace/didChangeWatchedFiles. A name
+//! startup - never run - for the global names it defines and reads, and
+//! kept current from open buffers, closes, and
+//! workspace/didChangeWatchedFiles. A name
 //! another file defines is not undefined here, a name two files assign is not
 //! tracked by value, and another file's function is coloured as one.
 //! The server registers the watchers itself (`watchers`), for a client that
@@ -105,13 +113,16 @@
 //! one. Nor does navigation: where a name is written and where it is read is
 //! in the text, under the same `\d` resolution the checks use, and what it
 //! cannot see - a name reached through a string or from another process - is
-//! why it renames nothing but a lambda's locals.
+//! why it renames nothing but a lambda's locals. The call hierarchy is the
+//! same reading, grouped by the definition a name is written in, and its
+//! limit is the same one: a call is a function's name in a body, so a name
+//! handed on as a value is listed and a call through a string is not.
 use crate::config::{FILES, Layer, Policy, selector};
 use crate::jsonrpc::{INVALID_REQUEST, receive, send};
 use q_lint_rs::graph::Placement;
 use q_lint_rs::{
-    FileIndex, Finding, Fix, TokenKind, Workspace, balanced, fix_all, fix_for, folds, rule_url,
-    semantic_tokens_in, suppressions_for, whole_edit,
+    FileIndex, Finding, Fix, References, TokenKind, Workspace, balanced, fix_all, fix_for, folds,
+    rule_url, semantic_tokens_in, suppressions_for, whole_edit,
 };
 use serde_json::{Value, json};
 use std::{
@@ -136,6 +147,7 @@ const REQUEST_FAILED: i64 = -32803;
 
 mod help;
 mod navigate;
+mod relate;
 
 /// Open documents, by URI. The editor is the authority on their contents from
 /// didOpen until didClose, so nothing here reads from disk.
@@ -194,6 +206,10 @@ struct Indexed {
     implicit: Vec<String>,
     placement: Placement,
     placed: FileIndex,
+    /// What the file reads, for the dependency graph `relate` draws when it
+    /// is asked for one. Names and no positions, like the rest - and never
+    /// compared, so a read added or dropped relints nothing.
+    read: References,
 }
 
 impl Index {
@@ -209,7 +225,7 @@ impl Index {
         let path = file_key(path);
         let own = index(text);
         let read = guarded(|| q_lint_rs::references(text, false)).unwrap_or_default();
-        let (loads, implicit) = (read.loads, read.implicit_defines);
+        let (loads, implicit) = (read.loads.clone(), read.implicit_defines.clone());
         let old = self.files.remove(&path);
         self.stale |= old.as_ref().is_none_or(|old| old.loads != loads);
         let placement = old
@@ -232,6 +248,7 @@ impl Index {
             implicit,
             placement,
             placed,
+            read,
         };
         self.files.insert(path, file);
         changed
@@ -269,10 +286,7 @@ impl Index {
                 .iter()
                 .map(|k| self.files[k].loads.as_slice())
                 .collect();
-            let cwd = self
-                .roots
-                .first()
-                .map_or_else(|| std::env::current_dir().unwrap_or_default(), Into::into);
+            let cwd = self.cwd();
             guarded(|| q_lint_rs::graph::placements(&paths, &loads, &cwd))
                 .unwrap_or_else(|_| vec![Placement::default(); keys.len()])
         } else {
@@ -298,6 +312,15 @@ impl Index {
             self.generation += 1;
         }
         changed
+    }
+
+    /// The directory a relative `\l` is tried against first: the first
+    /// workspace folder, which is where a q process over this tree is most
+    /// likely started, since the source does not say.
+    fn cwd(&self) -> std::path::PathBuf {
+        self.roots
+            .first()
+            .map_or_else(|| std::env::current_dir().unwrap_or_default(), Into::into)
     }
 
     /// Forget `path` and, when it was a directory, every file under it but
@@ -506,6 +529,7 @@ fn workspace_roots(params: &Value) -> Vec<String> {
 ///  "fixes": {"unsafe": true}, "format": {"enable": true},
 ///  "semanticTokens": {"enable": true}, "navigation": {"enable": true},
 ///  "help": {"enable": true}, "completion": {"enable": false},
+///  "callHierarchy": {"enable": true}, "graph": {"enable": true},
 ///  "workspaceIndex": {"enable": true, "exclude": []}}
 /// ```
 ///
@@ -536,6 +560,12 @@ struct Options {
     /// names offered here - the workspace's, a lambda's locals and q's own -
     /// leave out the columns and keys those words include.
     completion: bool,
+    /// Answer the call hierarchy requests. Its own switch, since an editor
+    /// asks every server that announces the capability and shows one answer.
+    call_hierarchy: bool,
+    /// Answer `q-lint/graph` and `q-lint/affectedTests`, the file-to-file
+    /// dependency graph `qlinter analyze graph` prints.
+    graph: bool,
     /// A diagnostic severity by code or prefix; the longest that names a
     /// code decides.
     severity: Vec<(String, i64)>,
@@ -553,6 +583,8 @@ impl Default for Options {
             navigation: true,
             help: true,
             completion: false,
+            call_hierarchy: true,
+            graph: true,
             severity: vec![],
         }
     }
@@ -582,6 +614,8 @@ impl Options {
                         "navigation",
                         "help",
                         "completion",
+                        "callHierarchy",
+                        "graph",
                     ]
                     .contains(&key.as_str())
                         && !value.is_object()
@@ -610,6 +644,8 @@ impl Options {
         options.navigation = flag("/navigation/enable", true);
         options.help = flag("/help/enable", true);
         options.completion = flag("/completion/enable", false);
+        options.call_hierarchy = flag("/callHierarchy/enable", true);
+        options.graph = flag("/graph/enable", true);
         match init.pointer("/lint/run") {
             None | Some(Value::Null) => {}
             Some(v) if v == "onType" => {}
@@ -836,6 +872,7 @@ pub fn serve(
                 }
                 help_client = help::Client::read(&params);
                 help::announce(&mut result["capabilities"], opts.help, opts.completion);
+                relate::announce(&mut result["capabilities"], opts.call_hierarchy, opts.graph);
                 send(writer, json!({"id": id, "result": result}))?;
                 initialized = true;
             }
@@ -902,7 +939,9 @@ pub fn serve(
                 | "textDocument/foldingRange"
                 | "textDocument/hover"
                 | "textDocument/signatureHelp"
-                | "textDocument/completion",
+                | "textDocument/completion"
+                | "textDocument/prepareCallHierarchy"
+                | "q-lint/graph",
                 id,
             ) if !params["textDocument"]["uri"].is_string() => {
                 let message = format!("{method}: params.textDocument.uri must be a string");
@@ -1072,6 +1111,23 @@ pub fn serve(
                     }
                     let sources = navigate::Sources::new(&docs, &idx);
                     help::answer(&method, &params, &sources, help_client)
+                });
+                match answer {
+                    Ok(result) => send(writer, json!({"id": id, "result": result}))?,
+                    Err(panic) => send(writer, internal_error(id, &panic))?,
+                }
+            }
+            (
+                "textDocument/prepareCallHierarchy"
+                | "callHierarchy/incomingCalls"
+                | "callHierarchy/outgoingCalls"
+                | "q-lint/graph"
+                | "q-lint/affectedTests",
+                Some(id),
+            ) => {
+                let answer = guarded(|| {
+                    let sources = navigate::Sources::new(&docs, &idx);
+                    relate::answer(&method, &params, &sources, opts.call_hierarchy, opts.graph)
                 });
                 match answer {
                     Ok(result) => send(writer, json!({"id": id, "result": result}))?,

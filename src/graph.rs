@@ -7,7 +7,7 @@
 //! the same approximation the workspace already makes for colouring, and
 //! where reading cannot know what a name is, the file says so in `dynamic`
 //! rather than the graph guessing.
-use crate::{Dynamic, FileIndex, references};
+use crate::{Dynamic, FileIndex, References, references};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Component, Path, PathBuf};
 
@@ -33,18 +33,28 @@ pub struct Node {
 /// the process's directory and nowhere else, and the source does not say
 /// which directory that is.
 pub fn build(files: &[(PathBuf, String)], symbols: bool, cwd: &Path) -> BTreeMap<PathBuf, Node> {
+    let paths: Vec<PathBuf> = files.iter().map(|(p, _)| p.clone()).collect();
+    let reads: Vec<References> = files
+        .iter()
+        .map(|(_, source)| references(source, symbols))
+        .collect();
+    build_from(&paths, &reads.iter().collect::<Vec<_>>(), cwd)
+}
+
+/// `build`, for a caller that already holds what each file reads: `reads[i]`
+/// is `references` of the file at `paths[i]`. The language server keeps that
+/// for every file it indexes - an open buffer's as the editor has it - so
+/// the graph it draws is the one this module defines, of the text on screen,
+/// without reading the tree again for each request.
+pub fn build_from(paths: &[PathBuf], reads: &[&References], cwd: &Path) -> BTreeMap<PathBuf, Node> {
     let mut definers: HashMap<String, Vec<usize>> = HashMap::new();
-    let mut reads = Vec::with_capacity(files.len());
-    for (i, (_, source)) in files.iter().enumerate() {
-        let read = references(source, symbols);
+    for (i, read) in reads.iter().enumerate() {
         for name in &read.defines {
             definers.entry(name.clone()).or_default().push(i);
         }
-        reads.push(read);
     }
-    let paths: Vec<PathBuf> = files.iter().map(|(p, _)| p.clone()).collect();
     let loads: Vec<_> = reads.iter().map(|r| r.loads.as_slice()).collect();
-    let tree = Tree::new(&paths, cwd);
+    let tree = Tree::new(paths, cwd);
     let contexts = contexts(&loads, &tree);
     for (d, namespaces) in contexts.iter().enumerate() {
         for namespace in namespaces {
@@ -59,7 +69,7 @@ pub fn build(files: &[(PathBuf, String)], symbols: bool, cwd: &Path) -> BTreeMap
     let identity = &tree.identity;
     let targets = |i: usize, load: &str| tree.targets(i, load);
     let mut graph = BTreeMap::new();
-    for (i, (path, _)) in files.iter().enumerate() {
+    for (i, path) in paths.iter().enumerate() {
         let mut node = Node {
             dynamic: reads[i].dynamic.clone(),
             ..Node::default()
@@ -103,19 +113,19 @@ pub fn build(files: &[(PathBuf, String)], symbols: bool, cwd: &Path) -> BTreeMap
                 continue;
             }
             for &&d in &others {
-                node.dependencies.insert(files[d].0.clone());
+                node.dependencies.insert(paths[d].clone());
             }
             if defs.iter().any(|&d| identity[d] != identity[defs[0]]) {
                 node.ambiguous.insert(
                     name.to_string(),
-                    defs.iter().map(|&d| files[d].0.clone()).collect(),
+                    defs.iter().map(|&d| paths[d].clone()).collect(),
                 );
             }
         }
         for (load, _) in &reads[i].loads {
             for d in targets(i, load) {
                 if identity[d] != identity[i] {
-                    node.dependencies.insert(files[d].0.clone());
+                    node.dependencies.insert(paths[d].clone());
                 }
             }
         }
@@ -328,6 +338,87 @@ pub fn placements(paths: &[PathBuf], loads: &[&[(String, String)]], cwd: &Path) 
             root,
         })
         .collect()
+}
+
+/// Each file of `graph` that reaches one of `changed`, with those of
+/// `changed` it reaches, by their place in `changed`: a changed file itself,
+/// every file depending on it, and every file depending on one of those.
+/// This is the question the graph is built for - a change here, so which
+/// files may now behave differently - answered along the edges and no
+/// further: a file that gets to a changed one only by a name or a path
+/// computed at run time has no edge to follow, and says so in its
+/// `Node::dynamic` instead. A changed file the graph does not hold is in no
+/// answer.
+///
+/// By place and not by path, since a change to a file most of a tree reads
+/// reaches most of the tree, and the answer is that many times `changed`.
+pub fn reaching(
+    graph: &BTreeMap<PathBuf, Node>,
+    changed: &[PathBuf],
+) -> BTreeMap<PathBuf, Vec<usize>> {
+    let place: HashMap<&Path, usize> = graph
+        .keys()
+        .enumerate()
+        .map(|(i, file)| (file.as_path(), i))
+        .collect();
+    let mut dependents: Vec<Vec<usize>> = vec![vec![]; graph.len()];
+    for (i, node) in graph.values().enumerate() {
+        for dependency in &node.dependencies {
+            if let Some(&d) = place.get(dependency.as_path()) {
+                dependents[d].push(i);
+            }
+        }
+    }
+    let mut reached: Vec<Vec<usize>> = vec![vec![]; graph.len()];
+    for (c, origin) in changed.iter().enumerate() {
+        let Some(&origin) = place.get(origin.as_path()) else {
+            continue;
+        };
+        let mut seen = vec![false; graph.len()];
+        seen[origin] = true;
+        let mut pending = vec![origin];
+        while let Some(file) = pending.pop() {
+            reached[file].push(c);
+            for &dependent in &dependents[file] {
+                if !std::mem::replace(&mut seen[dependent], true) {
+                    pending.push(dependent);
+                }
+            }
+        }
+    }
+    graph
+        .keys()
+        .zip(reached)
+        .filter(|(_, origins)| !origins.is_empty())
+        .map(|(file, origins)| (file.clone(), origins))
+        .collect()
+}
+
+/// Whether `path` is a test, going by the only thing reading has: where the
+/// file is and what it is called, q having no test framework of its own to
+/// recognise one by. A `.q` file named `test_*.q` or `*_test.q`, or one in
+/// a directory named `test` or `tests`, in any case.
+///
+/// `path` is relative to the tree being read, so that a checkout which
+/// itself sits under some `tests` directory is not all tests. It is wide on
+/// purpose: a helper beside the tests is counted as one, because for "which
+/// tests does this change reach" a file listed that need not have been costs
+/// a glance, and a test left out is one nobody runs.
+pub fn is_test(path: &Path) -> bool {
+    let lower = |part: &std::ffi::OsStr| part.to_string_lossy().to_ascii_lowercase();
+    if !path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("q"))
+    {
+        return false;
+    }
+    let stem = path.file_stem().map(lower).unwrap_or_default();
+    stem.starts_with("test_")
+        || stem.ends_with("_test")
+        || path.parent().is_some_and(|dir| {
+            dir.components()
+                .any(|c| matches!(lower(c.as_os_str()).as_str(), "test" | "tests"))
+        })
 }
 
 /// The definers of `name`. A name no file defines is tried without its last

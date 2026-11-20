@@ -76,6 +76,26 @@ server: none of them asks a running q anything.
   parameters and locals first, then the names the workspace defines, spelled
   as the `\d` context in force reads them, then q's own words. It does not
   know a table's columns or anything only a running process holds.
+- **Call hierarchy** (**Show Call Hierarchy**, **Peek Call Hierarchy**) on a
+  global function: the definitions and files that name it, and the workspace
+  functions its own definition names. It is read from the names, so a
+  function passed as a value (`f each x`) counts as called, and one called
+  through a string or from another process is not listed. A name at a
+  script's top level is listed under the file.
+- **q Dependencies**, a view in the Explorer: the files the active q file
+  depends on - it loads them or reads a name they define - and the files
+  depending on it, as `qlinter analyze graph` prints them. It also lists the
+  lines where the file reaches a name computed at run time, which the graph
+  cannot follow. Choosing a row opens the file. It follows the active editor
+  and is redrawn after a save; the button in its title redraws it now.
+  **q-lint: Show Dependencies** opens it.
+- **q-lint: List Affected Tests**: the test files that reach a q file changed
+  against git `HEAD` (uncommitted and untracked files, and buffers not yet
+  saved), each with the changes it reaches. Choosing one opens it. It lists
+  and never runs anything: running them is your test runner's job. A test
+  file is a `.q` file named `test_*` or `*_test`, or under a `test` or
+  `tests` directory. A changed file that was deleted or is excluded from
+  the index cannot be followed, and the list says how many were.
 
 ## Requirements
 
@@ -107,6 +127,8 @@ q-pro column names the setting of [q-pro](https://marketplace.visualstudio.com/i
 | `q-lint.navigation.enable` | `true` | Offer the outline, workspace symbols, definitions, references, highlights and local rename. Off when another q extension already navigates. | - |
 | `q-lint.help.enable` | `true` | Show hovers and signature help, from the source and the built-in catalogue of q's words. | - |
 | `q-lint.completion.enable` | `false` | Complete locals, workspace names and q's words. Off by default: an editor told a server completes stops offering the words already in the file. | - |
+| `q-lint.callHierarchy.enable` | `true` | Offer the call hierarchy of a global function. | - |
+| `q-lint.graph.enable` | `true` | Offer the **q Dependencies** view and **q-lint: List Affected Tests**. Off: the view is hidden and the server answers neither. | - |
 | `q-lint.workspaceIndex.enable` | `true` | Read every workspace `.q` file at startup for the names it defines, up to 20,000 files or 500,000 directory entries. Off: only open files. | - |
 | `q-lint.workspaceIndex.exclude` | `[]` | Globs, relative to the workspace folder, the index does not read: `["vendor/**"]`. | `q-lang-server.sourceFiles.ignoreGlob` |
 | `q-lint.trace.server` | `off` | Log client-server traffic: `off`, `messages`, `verbose`. | `q-lang-server.trace.server` |
@@ -205,6 +227,14 @@ Open **Output → q-lint**: the first line names the server version and binary,
 and the server's errors land there. After replacing the binary, run
 **q-lint: Restart Server**. On macOS, apps started from the Dock do not see
 your shell's `PATH`, so give `q-lint.serverPath` an absolute path.
+
+**q-lint: List Affected Tests** runs `git` - VS Code's `git.path` when you
+set one, else the one on `PATH` - in each workspace folder, so it needs the
+folder to be in a repository with at least one commit, and a trusted
+workspace. A git that has not answered in 30 seconds is stopped. What
+changed inside a submodule is not listed: git names the submodule, not the
+files in it. With `q-lint.workspaceIndex.enable` off, the dependencies and the
+tests are only those among the files you have open.
 
 `qlinter --rules` lists every rule; `qlinter --explain <CODE>` explains one.
 

@@ -14,6 +14,11 @@ answer from the same source and from the catalogue in `src/builtins.json`, so
 they know no column and no value. A feature that could only be right by
 evaluating input is a change to the premise, not a feature.
 
+The server starts no process either. The call hierarchy and the file graph
+(`q-lint/graph`, `q-lint/affectedTests`) are the same reading of names; which
+files changed against git is the client's to say, so the editor asks git and
+sends the answer.
+
 ## Verify with
 
 ```sh

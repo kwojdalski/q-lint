@@ -42,6 +42,8 @@ export interface InitializationOptions {
   navigation: { enable: boolean };
   help: { enable: boolean };
   completion: { enable: boolean };
+  callHierarchy: { enable: boolean };
+  graph: { enable: boolean };
   workspaceIndex: { enable: boolean; exclude: string[] };
 }
 
@@ -104,6 +106,8 @@ export function launch(settings: Settings, folder: string | undefined): Launch {
       navigation: { enable: settings.get<boolean>("navigation.enable", true) },
       help: { enable: settings.get<boolean>("help.enable", true) },
       completion: { enable: settings.get<boolean>("completion.enable", false) },
+      callHierarchy: { enable: settings.get<boolean>("callHierarchy.enable", true) },
+      graph: { enable: settings.get<boolean>("graph.enable", true) },
       workspaceIndex: {
         enable: settings.get<boolean>("workspaceIndex.enable", true),
         exclude: strings(settings, "workspaceIndex.exclude"),
@@ -127,6 +131,8 @@ const RESTARTING = [
   "navigation",
   "help",
   "completion",
+  "callHierarchy",
+  "graph",
   "workspaceIndex",
 ];
 

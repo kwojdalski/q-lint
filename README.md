@@ -419,10 +419,72 @@ the lambda being written; the names the workspace defines, spelled as the
 path. Nothing is offered in a string, a comment, a symbol, a number or a
 system command.
 
+**How files and functions relate** is read the same way, and comes in three
+requests.
+
+`textDocument/prepareCallHierarchy`, `callHierarchy/incomingCalls` and
+`callHierarchy/outgoingCalls` are the references list, grouped. A hierarchy
+starts on a global function, wherever it is named, and has one item for each
+file that assigns the name a lambda. Its incoming calls are the top-level
+definitions whose statement names it, each with every place it does; a
+place outside every definition - a script's own `main[]` - is put under an
+item for the file itself (`SymbolKind` File, detail `top level`), which has
+calls and no callers. Its outgoing calls are the workspace functions its own
+statement names. This is what the source spells, which is more than calls and
+less than all of them: a function handed on as a value (`f each x`,
+`` `handler set f ``) is listed as called, and one reached through a string,
+a symbol built at run time or another process is in no list. Only a name
+assigned a lambda starts a hierarchy, so a projection or an alias (`g:f`)
+is a caller and never a callee, and what a function assigned inside another
+names is listed under the definition around it.
+
+`q-lint/graph` and `q-lint/affectedTests` are this server's own, announced
+under `capabilities.experimental` by those names, and answer from the graph
+[`qlinter analyze graph`](#the-dependency-graph-qlinter-analyze-graph)
+prints - the same edges by the same rules, over the indexed files with open
+buffers as the editor has them, and without `--symbols`:
+
+```
+q-lint/graph          {"textDocument": {"uri": U}}
+                   -> {"uri": U, "dependencies": [uri], "dependents": [uri],
+                       "ambiguous": {name: [uri]}, "dynamic": [{"line": 1-based, "kind": K}]}
+                      or null for a document that is not an indexed .q file
+q-lint/affectedTests  {"changed": [uri]}
+                   -> {"tests": [{"uri": uri, "reaches": [index into "changed" below],
+                                  "self": its own index there, or null}],
+                       "changed": [uri], "unindexed": [uri]}
+```
+
+`affectedTests` lists the test files that reach a changed file along the
+graph, a changed test among them. Which files changed is the client's to
+say: the server starts no process and so never asks git - the VS Code
+extension sends what differs from `HEAD` and what is untracked. `changed`
+in the answer is the sent files the index holds, each once; `unindexed` is
+the sent `.q` files it does not hold - deleted, excluded, outside the
+workspace - whose dependents cannot be followed, so a client can say the
+list is short. A test file is a `.q` file named `test_*` or `*_test`, or
+under a directory named `test` or `tests` below its workspace folder, which
+is wide on purpose: a helper listed with the tests costs a glance, a test
+left out costs a regression. The limits are the graph's: an edge through a
+name built at run time is not there (`dynamic` says where a file has one),
+and a name several files define is an edge to each. It lists; running the
+tests is left to whatever runs them. Each request draws the graph again
+from what the index already holds - about a quarter of a second over 3,665
+files - so a client should ask when a view is shown or a file saved, not on
+every keystroke.
+
 ### VS Code
 
 The extension in `editors/vscode` is small: it launches the
 server and lets the protocol do the rest.
+
+Two things in it are its own, because the protocol has no word for them: a
+**q Dependencies** view of the active file's `q-lint/graph`, and **q-lint:
+List Affected Tests**, which asks git for the files changed against `HEAD`
+(`git diff --name-only HEAD` and the untracked files, run without a shell
+and only in a trusted workspace), adds the q buffers not yet saved, and
+lists what `q-lint/affectedTests` answers. Choosing a row opens the file;
+nothing is run.
 
 ```sh
 cargo build --release                      # produces target/release/qlinter
@@ -492,6 +554,7 @@ Every key is optional, and these are the defaults:
  "fixes": {"unsafe": true}, "format": {"enable": true},
  "semanticTokens": {"enable": true}, "navigation": {"enable": true},
  "help": {"enable": true}, "completion": {"enable": false},
+ "callHierarchy": {"enable": true}, "graph": {"enable": true},
  "workspaceIndex": {"enable": true, "exclude": []}}
 ```
 
@@ -504,7 +567,10 @@ only the fixes `--fix` applies; `format.enable`, `semanticTokens.enable`,
 `navigation.enable` and `help.enable` (hover and signature help) set to
 `false` leave the capability unannounced - the last two for when another q
 language server already answers those requests. `completion.enable` is the
-one that starts off; `true` announces completion. `workspaceIndex.exclude`
+one that starts off; `true` announces completion.
+`callHierarchy.enable` set to `false` leaves the call hierarchy unannounced,
+and `graph.enable` does that for `q-lint/graph` and `q-lint/affectedTests`,
+which then answer `null`. `workspaceIndex.exclude`
 holds globs relative to each workspace folder that the index does not read.
 The index stops after 20,000 `.q` files or 500,000 directory entries of any
 kind, whichever comes first, so a folder opened at `/` cannot stall the

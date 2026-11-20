@@ -32,8 +32,8 @@ use std::{
 };
 
 /// LSP's `SymbolKind`s for what a q script defines.
-const FUNCTION: u8 = 12;
-const VARIABLE: u8 = 13;
+pub(super) const FUNCTION: u8 = 12;
+pub(super) const VARIABLE: u8 = 13;
 /// LSP's `DocumentHighlightKind`s.
 const READ: u8 = 2;
 const WRITE: u8 = 3;
@@ -48,7 +48,7 @@ pub(super) struct Sources<'a> {
     pub(super) idx: &'a Index,
     /// The open `.q` buffers by their key in the index, each with the URI
     /// the client knows it by - which a location in it has to repeat.
-    open: HashMap<String, &'a str>,
+    pub(super) open: HashMap<String, &'a str>,
 }
 
 /// Where a request's `position` is: in which document, and at which byte.
