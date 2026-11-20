@@ -178,7 +178,11 @@ export function tableText(table: Table): string[] {
       .map((_, i) => cell(i).padEnd(widths[i]) + (i === table.keys - 1 && i < table.columns.length - 1 ? "|" : ""))
       .join(" ");
   const header = line((i) => table.columns[i]);
-  const lines = [header.trimEnd(), "-".repeat(header.length)];
+  // A keyed table's rule breaks at its `|`, as the console's does: `-| -`.
+  const keyed = table.keys > 0 && table.keys < table.columns.length;
+  const keyWidth = widths.slice(0, table.keys).reduce((sum, w) => sum + w, 0) + table.keys - 1;
+  const rule = keyed ? `${"-".repeat(keyWidth)}| ${"-".repeat(header.length - keyWidth - 2)}` : "-".repeat(header.length);
+  const lines = [header.trimEnd(), rule];
   for (let r = 0; r < rows; r++) {
     lines.push(line((i) => clip(table.data[i][r] ?? "")).trimEnd());
   }

@@ -12,7 +12,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { QConnection } = require("../out/qclient.js");
 const { statements } = require("../out/statements.js");
-const { CHART_MIME, DATA, cellOutputs, chartCellOutputs, GRID_ROWS, readCellData } = require("../out/celldata.js");
+const { CHART_MIME, DATA, cellOutputs, chartCellOutputs, GRID_ROWS, readCellData, tableText } = require("../out/celldata.js");
 const { cellDirective } = require("../out/celldirectives.js");
 const { rowsArgument } = require("../out/liveconfig.js");
 const { exportScript } = require("../out/qnb.js");
@@ -24,6 +24,7 @@ const SIZE = [25, 80];
 const SERVER = `
 t:([] sym:\`a\`b\`c; ts:2024.01.01D12:00:00.123456789+0 1 2; px:1.5 0n 3.5; note:(enlist "x";"<b>y</b>";enlist "z"); n:(1 2;\`a;"q"))
 kt:([k:1 2] v:\`x\`y)
+kt2:([k:1 2; j:\`a\`bb] v:\`xx\`y; w:3 4)
 big:([] i:til 2000)
 sp:get (hsym \`$(string .z.f),"_db/sp/") set ([] s:("ab";enlist "c";"de"); n:1 2 3)
 `;
@@ -99,6 +100,13 @@ test("notebook cells against a real q process", { skip }, async (t) => {
   await t.test("a keyed table is unkeyed and says how many key columns it had", async () => {
     const answer = await data("kt");
     assert.deepStrictEqual(answer.table, { columns: ["k", "v"], types: [7, 11], keys: 1, data: [["1", "2"], ["x", "y"]], total: 2 });
+  });
+
+  await t.test("a table's text is the text q's console shows for it, a keyed table's rule included", async () => {
+    for (const name of ["kt", "kt2", "([] a:1 22; b:`x`yyy)"]) {
+      const console = await connection.query([name], SIZE);
+      assert.deepStrictEqual(tableText((await data(name)).table), console.text.map((l) => l.trimEnd()), name);
+    }
   });
 
   await t.test("a large table is cut by the process, and its count kept", async () => {

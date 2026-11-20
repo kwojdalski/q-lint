@@ -190,7 +190,7 @@ test("a table cut to its last rows says last, in a grid cell and a chart cell (#
 test("a table as text is laid out as q's console lays it out", () => {
   assert.deepStrictEqual(tableText(TABLE), [
     "sym| px    note",
-    "---------------------",
+    "---| ----------------",
     "a  | 1.5   <b>x</b>",
     "bb | 22.25 it's & \"q\"",
   ]);
