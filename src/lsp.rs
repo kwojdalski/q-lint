@@ -34,6 +34,15 @@
 //! find references, textDocument/documentHighlight, and a rename of a
 //! lambda's own parameters and locals - never of a global.
 //!
+//! Around those: each diagnostic links its code to that rule's row in the
+//! reference (`codeDescription`); beside its fix, or without one, a finding
+//! has a quick fix that accepts it with `/ noqa: CODE` on its line, offered
+//! only where the linter would read that comment (`suppression_for`);
+//! textDocument/codeAction also answers `source.fixAll.q-lint` with the
+//! formatting edit, for `editor.codeActionsOnSave` in an editor where this
+//! server is not the formatter; and textDocument/foldingRange folds the
+//! brackets and block comments that span lines.
+//!
 //! A workspace index: every `.q` file under the workspace folders is read at
 //! startup - never run - for the global names it defines, and kept current
 //! from open buffers, closes, and workspace/didChangeWatchedFiles. A name
@@ -58,6 +67,18 @@
 //! the second time. Range formatting is not offered: one fix can leave
 //! another to make outside the range, and a selection's half of a pass is
 //! not something `--fix` ever produces.
+//!
+//! FOLDING IS THE BRACKETS THAT SPAN LINES, AND REPLACES THE EDITOR'S OWN
+//!
+//! A lambda, a parenthesised list, a bracketed block and a block comment
+//! fold, each from the line it opens on to the line it closes on, found in
+//! the masked text so that a bracket in a string or a comment folds nothing
+//! (`folds`). That is all of it: a statement continued over indented lines
+//! with no bracket open is not a range here. An editor told a server folds
+//! stops folding by indentation, so this is a trade and not only a gain -
+//! exact ranges where the brackets are, for none where they are not - and
+//! one a person can decline (`editor.foldingStrategy: "indentation"`). A
+//! buffer whose brackets do not close has no ranges rather than wrong ones.
 //!
 //! EDITOR SETTINGS ARRIVE AS initializationOptions, AND ONLY NARROW
 //!
@@ -84,8 +105,8 @@ use crate::config::{FILES, Layer, Policy, selector};
 use crate::jsonrpc::{INVALID_REQUEST, receive, send};
 use q_lint_rs::graph::Placement;
 use q_lint_rs::{
-    FileIndex, Finding, TokenKind, Workspace, balanced, fix_all, fix_for, semantic_tokens_in,
-    whole_edit,
+    FileIndex, Finding, Fix, TokenKind, Workspace, balanced, fix_all, fix_for, folds, rule_url,
+    semantic_tokens_in, suppressions_for, whole_edit,
 };
 use serde_json::{Value, json};
 use std::{
@@ -854,7 +875,8 @@ pub fn serve(
                 | "textDocument/references"
                 | "textDocument/documentHighlight"
                 | "textDocument/prepareRename"
-                | "textDocument/rename",
+                | "textDocument/rename"
+                | "textDocument/foldingRange",
                 id,
             ) if !params["textDocument"]["uri"].is_string() => {
                 let message = format!("{method}: params.textDocument.uri must be a string");
@@ -1002,6 +1024,12 @@ pub fn serve(
                     Err(panic) => send(writer, internal_error(id, &panic))?,
                 }
             }
+            ("textDocument/foldingRange", Some(id)) => {
+                match guarded(|| folding_ranges(&params, &docs)) {
+                    Ok(ranges) => send(writer, json!({"id": id, "result": ranges}))?,
+                    Err(panic) => send(writer, internal_error(id, &panic))?,
+                }
+            }
 
             // A `.q` file created, changed or deleted outside the editor - a
             // pull, a checkout, another tool. An open file's buffer still wins.
@@ -1127,8 +1155,11 @@ fn capabilities(opts: &Options, code_action_literals: bool) -> Value {
         },
     });
     if code_action_literals {
-        capabilities["codeActionProvider"] = json!(true);
+        // The kinds, not a bare `true`: an editor asks for `source.fixAll`
+        // actions on save only of a server that says it has some.
+        capabilities["codeActionProvider"] = json!({"codeActionKinds": [QUICK_FIX, FIX_ALL]});
     }
+    capabilities["foldingRangeProvider"] = json!(true);
     capabilities["workspace"] = json!({
         "workspaceFolders": {"supported": true, "changeNotifications": true},
     });
@@ -1298,6 +1329,33 @@ fn path_uri(path: &std::path::Path) -> String {
     uri
 }
 
+/// The kind of a fix for one diagnostic, and of the one action that applies
+/// every safe fix to the document. The second is named for this server, as
+/// `source.fixAll.eslint` is for its: a person lists it under
+/// `editor.codeActionsOnSave` to have exactly these fixes run on save.
+const QUICK_FIX: &str = "quickfix";
+const FIX_ALL: &str = "source.fixAll.q-lint";
+
+/// Whether a kind the client asks for (`context.only`) takes in `kind`. Kinds
+/// are hierarchical, a dot at a time: `source` and `source.fixAll` each ask
+/// for `source.fixAll.q-lint`, and `source.fixAllOrNothing` does not.
+fn asks_for(only: &str, kind: &str) -> bool {
+    kind.strip_prefix(only)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
+}
+
+/// The code actions for a request: the quick fixes for the diagnostics it
+/// carries, and - only when asked for by kind - the fix-all action.
+///
+/// WITHOUT `context.only`, QUICK FIXES AND NOTHING ELSE. That request is the
+/// lightbulb's, made as the cursor moves, about the diagnostics at one range.
+/// A fix-all there is about neither: it would run every fix over the document
+/// on each of those requests, to offer what VS Code leaves out of that menu
+/// anyway (a `source` action is shown under Source Action, which asks by
+/// kind), and what a client that does show everything already has as Format
+/// Document - the same edit. So it is returned to a client that names it,
+/// `source.fixAll` or `source` in `only`, which is what
+/// `editor.codeActionsOnSave` and the Source Action menu both do.
 fn code_actions(
     params: &Value,
     docs: &Documents,
@@ -1305,14 +1363,41 @@ fn code_actions(
     policy: &Policy,
     unsafe_fixes: bool,
 ) -> Vec<Value> {
-    if let Some(only) = params["context"]["only"].as_array()
-        && !only.iter().any(|kind| {
-            kind.as_str()
-                .is_some_and(|kind| kind == "quickfix" || kind.starts_with("quickfix."))
-        })
-    {
-        return vec![];
+    let only: Option<Vec<&str>> = params["context"]["only"]
+        .as_array()
+        .map(|only| only.iter().filter_map(Value::as_str).collect());
+    let mut actions = vec![];
+    if only.as_ref().is_none_or(|only| {
+        only.iter()
+            .any(|kind| *kind == QUICK_FIX || kind.starts_with("quickfix."))
+    }) {
+        actions.extend(quick_fixes(params, docs, ws, policy, unsafe_fixes));
     }
+    if only
+        .as_ref()
+        .is_some_and(|only| only.iter().any(|kind| asks_for(kind, FIX_ALL)))
+    {
+        actions.extend(fix_all_action(params, docs, ws, policy));
+    }
+    actions
+}
+
+/// The fixes for the diagnostics a request carries, and after them, for each
+/// of those diagnostics, the edit that accepts it instead: `/ noqa: CODE` on
+/// its line. That one is offered wherever such a comment would be read as
+/// one (`suppression_for` refuses where it would not), fix or no fix, and
+/// never as the preferred action: the fix is what the finding asks for, and
+/// silencing it is a decision nobody should make with a keystroke meant for
+/// something else. Once for a line and a code, however many of the
+/// diagnostics are that code on that line: one comment accepts them all, and
+/// the action says so by listing them.
+fn quick_fixes(
+    params: &Value,
+    docs: &Documents,
+    ws: &Workspace,
+    policy: &Policy,
+    unsafe_fixes: bool,
+) -> Vec<Value> {
     let uri = uri_of(&params["textDocument"]);
     let Some(source) = docs.get(&uri) else {
         return vec![];
@@ -1325,43 +1410,126 @@ fn code_actions(
         return vec![];
     };
     let mut actions = vec![];
+    let mut suppressions: Vec<Value> = vec![];
     // Every finding that has a fix, the editor-only ones included unless the
     // client turned them off: here a person sees each edit and accepts it or
     // not.
     let lines = Lines::new(source);
-    for finding in policy.lint(source, &path, ws).unwrap_or_default() {
-        let current = diagnostic(&finding, &lines);
-        let Some(client_diagnostic) = context.iter().find(|d| {
-            d["code"] == current["code"]
-                && d["range"]["start"] == current["range"]["start"]
-                && d["message"] == current["message"]
-        }) else {
-            continue;
-        };
-        let Some(fix) = fix_for(&finding, source).filter(|f| f.batch_safe || unsafe_fixes) else {
-            continue;
-        };
+    let asked_about: Vec<(Finding, &Value)> = policy
+        .lint(source, &path, ws)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|finding| {
+            let current = diagnostic(&finding, &lines);
+            let client_diagnostic = context.iter().find(|d| {
+                d["code"] == current["code"]
+                    && d["range"]["start"] == current["range"]["start"]
+                    && d["message"] == current["message"]
+            })?;
+            Some((finding, client_diagnostic))
+        })
+        .collect();
+    // For them all at once: a selection of the whole of a long file asks
+    // about every finding in it, and each would mask the file again.
+    let accepted = suppressions_for(asked_about.iter().map(|(finding, _)| finding), source);
+    for ((finding, client_diagnostic), suppression) in asked_about.iter().zip(accepted) {
         // The edit's range comes from the fix, not from the diagnostic. The
         // two coincide for an operator swapped in place, but `f x` becomes
         // `f[x]` by replacing the whole application while the diagnostic
         // underlines only the name.
-        let range = json!({
-            "start": lines.json(fix.start),
-            "end": lines.json(fix.end),
-        });
-        let mut changes = serde_json::Map::new();
-        changes.insert(
-            uri.clone(),
-            json!([{"range": range, "newText": fix.replacement}]),
+        let action = |fix: Fix| {
+            let range = json!({
+                "start": lines.json(fix.start),
+                "end": lines.json(fix.end),
+            });
+            let mut changes = serde_json::Map::new();
+            changes.insert(
+                uri.clone(),
+                json!([{"range": range, "newText": fix.replacement}]),
+            );
+            json!({
+                "title": fix.title,
+                "kind": QUICK_FIX,
+                "diagnostics": [client_diagnostic],
+                "edit": {"changes": changes},
+            })
+        };
+        actions.extend(
+            fix_for(finding, source)
+                .filter(|f| f.batch_safe || unsafe_fixes)
+                .map(action),
         );
-        actions.push(json!({
-            "title": fix.title,
-            "kind": "quickfix",
-            "diagnostics": [client_diagnostic],
-            "edit": {"changes": changes},
-        }));
+        if let Some(suppression) = suppression.map(action) {
+            match suppressions
+                .iter_mut()
+                .find(|s| s["edit"] == suppression["edit"])
+            {
+                Some(same) => same["diagnostics"]
+                    .as_array_mut()
+                    .expect("made above")
+                    .push((*client_diagnostic).clone()),
+                None => suppressions.push(suppression),
+            }
+        }
     }
+    actions.extend(suppressions);
     actions
+}
+
+/// Every safe fix at once, as one action of kind `source.fixAll.q-lint`: the
+/// edit Format Document makes, for an editor where something else formats q
+/// or nothing does. `format` computes it, so the two cannot differ - and
+/// there is no action, as there are no edits, for a buffer with nothing to
+/// fix, one whose brackets or strings do not close, or one that is not open
+/// or not q. Not subject to `format.enable`: that setting says whether this
+/// server is a formatter, and this action runs only where a person named it.
+fn fix_all_action(
+    params: &Value,
+    docs: &Documents,
+    ws: &Workspace,
+    policy: &Policy,
+) -> Option<Value> {
+    let edits = format(params, docs, ws, policy);
+    if edits.is_empty() {
+        return None;
+    }
+    let mut changes = serde_json::Map::new();
+    changes.insert(uri_of(&params["textDocument"]), json!(edits));
+    Some(json!({
+        "title": "Apply every safe q-lint fix",
+        "kind": FIX_ALL,
+        "edit": {"changes": changes},
+    }))
+}
+
+/// What there is to fold in an open q document, as the lines a client
+/// counts: `folds`' pairs, less any that start and end on one line, and one
+/// to a line - the widest, since the rest on that line could only be folded
+/// with it, and VS Code drops all but the first it is given. A document that
+/// is not open or not q, and one whose brackets do not close, has none: an
+/// empty list, which is what an editor shows while a line is being typed.
+fn folding_ranges(params: &Value, docs: &Documents) -> Vec<Value> {
+    let uri = uri_of(&params["textDocument"]);
+    let Some(source) = docs.get(&uri).filter(|_| is_q_uri(&uri)) else {
+        return vec![];
+    };
+    let lines = Lines::new(source);
+    let mut ranges: Vec<Value> = vec![];
+    let mut last_start = None;
+    // In source order, so of two that start on a line the outer comes first.
+    for fold in folds(source) {
+        let (start, end) = (lines.position(fold.start).0, lines.position(fold.end).0);
+        if start >= end || last_start == Some(start) {
+            continue;
+        }
+        last_start = Some(start);
+        let mut range = json!({"startLine": start, "endLine": end});
+        if fold.comment {
+            range["kind"] = json!("comment");
+        }
+        ranges.push(range);
+    }
+    ranges
 }
 
 /// The edits "Format document" makes: the safe fixes `--fix` applies, to the
@@ -1549,6 +1717,11 @@ fn diagnostic(f: &Finding, lines: &Lines) -> Value {
     // line-wide range it would fade the code around it too.
     if matches!(f.code.as_str(), "QF016" | "QF017") && f.end_column.is_some() {
         d["tags"] = json!([DIAGNOSTIC_TAG_UNNECESSARY]);
+    }
+    // What makes the code a link in a Problems panel: the rule's row in the
+    // generated rules document, which says what `--explain` would.
+    if let Some(href) = rule_url(&f.code) {
+        d["codeDescription"] = json!({"href": href});
     }
     d
 }

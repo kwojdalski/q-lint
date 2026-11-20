@@ -20,7 +20,9 @@ hover.
 ## Features
 
 - **Diagnostics** for what q would refuse, plus likely mistakes and style
-  conventions, depending on the profile.
+  conventions, depending on the profile. A finding's code, in the Problems
+  panel and on hover, links to that rule in the
+  [rule reference](https://github.com/kwojdalski/q-lint/blob/master/docs/rules.md).
 - **Quick Fixes** for over forty rules, among them operators and keywords
   from other languages (`==`, `&&`, `+=`, `true`, `return`), invalid string
   escapes, symbols where q wants strings, `f(a;b)` calls, one-row tables,
@@ -28,9 +30,26 @@ hover.
   a nested lambda reading its parent's local.
   Those that cannot change a working program also run in bulk with
   `qlinter --fix`; `--unsafe-fixes` adds the rest.
+- **Suppress CODE on this line**, a Quick Fix on every finding that writes
+  `/ noqa: CODE` after its line, or adds the code to the `noqa` already
+  there. It is missing where no such comment would be read as one - a line
+  that ends inside a string, a system command, a block comment, a file whose
+  brackets do not close - and it is never the preferred fix.
 - **Format Document** applies the fixes `qlinter --fix` makes - those that
   cannot change a working program - and nothing else: it is not a
   whitespace or layout formatter, and it never applies an editor-only fix.
+  The same edit is the code action `source.fixAll.q-lint`, to
+  [run on save](#formatting) beside another formatter.
+- **Folding** of lambdas, parenthesised lists, bracketed blocks and block
+  comments that span lines, read from the brackets and never from one inside
+  a string or a comment. See [Folding](#folding) for what that replaces.
+- **Snippets** for the forms q is mostly written in: qSQL (`select`,
+  `selectby`, `update`, `updateby`, `exec`, `execby`, `delete`,
+  `deletecols`, and the functional `fselect` and `fupdate`), protected
+  evaluation (`trap`, `trapn`), the iterators (`each`, `peach`, `eachboth`,
+  `eachleft`, `eachright`, `eachprior`), control flow (`cond`, `condn`,
+  `if`, `do`, `while`), a function under a qdoc header (`fn`) and a `\d`
+  block (`namespace`).
 - **Syntax colouring** from a TextMate grammar, plus semantic tokens: a
   function is coloured wherever it is called, even when another `.q` file in
   the workspace defines it, and a parameter wherever its body reads it.
@@ -128,6 +147,35 @@ to apply its safe fixes on every save, add this to your `settings.json`:
 Leave out `editor.formatOnSave` to format only when you ask (**Format
 Document**). A file with nothing to fix, or whose brackets or strings do not
 close, is left as it is.
+
+To apply the same fixes on save without making q-lint the formatter - where
+another extension formats q, or nothing should - ask for its fix-all code
+action instead:
+
+```json
+"[q]": {"editor.codeActionsOnSave": {"source.fixAll.q-lint": "explicit"}}
+```
+
+`"source.fixAll": "explicit"` runs it too, with every other extension's.
+`q-lint.format.enable` does not turn this off: it says whether q-lint is a
+formatter, and this runs only where you list it.
+
+## Folding
+
+A lambda, a parenthesised list, a bracketed block (`if[...]`, `$[...]`, an
+argument list) and a block comment each fold from the line they open on to
+the line they close on. A closing bracket with more code after it on its
+line keeps that line in view.
+
+VS Code folds by indentation until a language server says it folds, and by
+the server's ranges after. So a statement continued over indented lines with
+no bracket open - a long qSQL `select`, say - folded before and does not
+now, and while a bracket is unclosed nothing folds. To have the indentation
+folding back for q:
+
+```json
+"[q]": {"editor.foldingStrategy": "indentation"}
+```
 
 ## Repository settings
 

@@ -1,0 +1,134 @@
+{
+  "qSQL select": {
+    "prefix": "select",
+    "description": "select: rows of a table that pass a filter, as a table",
+    "body": "select ${1:price} from ${2:trade} where ${3:size>0}$0"
+  },
+  "qSQL select by": {
+    "prefix": "selectby",
+    "description": "select ... by: one row per group, as a keyed table",
+    "body": "select ${1:avg price} by ${2:sym} from ${3:trade} where ${4:size>0}$0"
+  },
+  "qSQL update": {
+    "prefix": "update",
+    "description": "update: new or changed columns on the rows that pass a filter",
+    "body": "update ${1:notional:price*size} from ${2:trade} where ${3:size>0}$0"
+  },
+  "qSQL update by": {
+    "prefix": "updateby",
+    "description": "update ... by: a column computed within each group, one value per row",
+    "body": "update ${1:vwap:size wavg price} by ${2:sym} from ${3:trade}$0"
+  },
+  "qSQL exec": {
+    "prefix": "exec",
+    "description": "exec: one column as a list, or several as a dictionary",
+    "body": "exec ${1:price} from ${2:trade} where ${3:size>0}$0"
+  },
+  "qSQL exec by": {
+    "prefix": "execby",
+    "description": "exec ... by: a dictionary from each group to its values",
+    "body": "exec ${1:price} by ${2:sym} from ${3:trade}$0"
+  },
+  "qSQL delete rows": {
+    "prefix": "delete",
+    "description": "delete ... where: the table without the rows that pass a filter",
+    "body": "delete from ${1:trade} where ${2:size=0}$0"
+  },
+  "qSQL delete columns": {
+    "prefix": "deletecols",
+    "description": "delete cols from: the table without the named columns",
+    "body": "delete ${1:size} from ${2:trade}$0"
+  },
+  "Functional select": {
+    "prefix": "fselect",
+    "description": "?[t;c;b;a]: select with the table, constraints, grouping and aggregates as data",
+    "body": "?[${1:trade};${2:enlist(>;`size;0)};${3:0b};${4:()}]$0"
+  },
+  "Functional update": {
+    "prefix": "fupdate",
+    "description": "![t;c;b;a]: update with the table, constraints, grouping and assignments as data",
+    "body": "![${1:trade};${2:()};${3:0b};${4:enlist[`notional]!enlist(*;`price;`size)}]$0"
+  },
+  "Protected evaluation, one argument": {
+    "prefix": "trap",
+    "description": "@[f;x;handler]: call f on x, and hand an error's text to the handler instead of signalling it",
+    "body": "@[${1:f};${2:x};{[${3:err}] ${4:'\"failed: \",err}}]$0"
+  },
+  "Protected evaluation, several arguments": {
+    "prefix": "trapn",
+    "description": ".[f;args;handler]: call f on a list of arguments, and hand an error's text to the handler",
+    "body": ".[${1:f};${2:(x;y)};{[${3:err}] ${4:'\"failed: \",err}}]$0"
+  },
+  "each": {
+    "prefix": "each",
+    "description": "f each x: f on every item of x",
+    "body": "${1:f} each ${2:x}$0"
+  },
+  "peach": {
+    "prefix": "peach",
+    "description": "f peach x: f on every item of x, across the secondary threads or processes",
+    "body": "${1:f} peach ${2:x}$0"
+  },
+  "each-both": {
+    "prefix": "eachboth",
+    "description": "x f' y: f on the items of x and y pairwise",
+    "body": "${1:x} ${2:,}' ${3:y}$0"
+  },
+  "each-left": {
+    "prefix": "eachleft",
+    "description": "x f\\: y: f on every item of x, each with the whole of y",
+    "body": "${1:x} ${2:,}\\\\: ${3:y}$0"
+  },
+  "each-right": {
+    "prefix": "eachright",
+    "description": "x f/: y: f on the whole of x with every item of y",
+    "body": "${1:x} ${2:,}/: ${3:y}$0"
+  },
+  "each-prior": {
+    "prefix": "eachprior",
+    "description": "(f':) x: f on every item of x and the one before it",
+    "body": "(${1:-}':) ${2:x}$0"
+  },
+  "Conditional": {
+    "prefix": "cond",
+    "description": "$[c;t;f]: t when c is true, otherwise f - only the branch taken is evaluated",
+    "body": "\\$[${1:x>0};${2:x};${3:neg x}]$0"
+  },
+  "Conditional, several tests": {
+    "prefix": "condn",
+    "description": "$[c1;t1;c2;t2;f]: the result paired with the first test that is true, otherwise the last",
+    "body": ["\\$[${1:x>0};${2:1};", "\t${3:x<0};${4:-1};", "\t${5:0}]$0"]
+  },
+  "if": {
+    "prefix": "if",
+    "description": "if[c;...]: run the statements when c is true; it has no result",
+    "body": ["if[${1:x>0};", "\t${0:x:0}];"]
+  },
+  "do": {
+    "prefix": "do",
+    "description": "do[n;...]: run the statements n times",
+    "body": ["do[${1:n};", "\t${0:x+:1}];"]
+  },
+  "while": {
+    "prefix": "while",
+    "description": "while[c;...]: run the statements for as long as c is true",
+    "body": ["while[${1:x<n};", "\t${0:x+:1}];"]
+  },
+  "Function with a qdoc header": {
+    "prefix": ["fn", "function", "qdoc"],
+    "description": "A named lambda under a qdoc comment: what it does, each parameter, what it returns",
+    "body": [
+      "/ ${2:What it does.}",
+      "/ @param ${3:arg} ${4:What it is.}",
+      "/ @returns ${5:What comes back.}",
+      "${1:name}:{[$3]",
+      "\t${0:arg}",
+      "\t};"
+    ]
+  },
+  "Namespace block": {
+    "prefix": "namespace",
+    "description": "\\d .ns ... \\d .: define what is between in a namespace, then return to the root",
+    "body": ["\\\\d .${1:ns}", "", "$0", "", "\\\\d ."]
+  }
+}
