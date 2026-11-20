@@ -369,6 +369,7 @@ export class Live {
   /// A connect in progress, so a second one waits for it instead of opening
   /// another.
   private connecting: Promise<boolean> | undefined;
+  private connectingTo: string | undefined;
   private running: { code: string; started: number } | undefined;
   /// When the query that timed out started, so its entry says so.
   private timedOut: number | undefined;
@@ -837,8 +838,11 @@ export class Live {
   /// connected.
   private open(process: Process): Promise<boolean> {
     if (this.connecting !== undefined) {
-      return this.connecting;
+      // A connect to another process opens this one after it, rather than
+      // answering for it: its result says nothing of this process.
+      return this.connectingTo === process.label ? this.connecting : this.connecting.then(() => this.open(process));
     }
+    this.connectingTo = process.label;
     this.connecting = (async () => {
       if (this.connection !== undefined) {
         const old = this.connection;
