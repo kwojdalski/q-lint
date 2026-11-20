@@ -13,7 +13,7 @@ const {
   parseProcesses,
   parseTags,
   portProblem,
-  processColour,
+  processThemeColour,
   tagColour,
 } = require("../out/processes.js");
 const { NULL_TYPE, RUN, readAnswer, render } = require("../out/query.js");
@@ -38,6 +38,7 @@ const { NOTEBOOK } = require("../out/qnb.js");
 const { needsRestart } = require("../out/settings.js");
 const { AGENT } = require("../out/agent.js");
 const { CONTROL_COMMANDS, readControls } = require("../out/querycontrols.js");
+const { ONBOARDING } = require("../out/onboarding.js");
 
 test("a statement is a line and the indented lines after it", () => {
   assert.deepStrictEqual(statements("a:1\nb:a+1\nb*10"), ["a:1", "b:a+1", "b*10"]);
@@ -176,8 +177,8 @@ test("production is red, uat blue, development green; the most cautious wins", (
   assert.strictEqual(tagColour("uat"), "blue");
   assert.strictEqual(tagColour("development"), "green");
   assert.strictEqual(tagColour("eu"), undefined);
-  assert.strictEqual(processColour({ label: "x", host: "h", port: 1, tags: ["dev", "prod"] }), "red");
-  assert.strictEqual(processColour({ label: "x", host: "h", port: 1, tags: ["eu"] }), undefined);
+  assert.strictEqual(processThemeColour({ label: "x", host: "h", port: 1, tags: ["dev", "prod"] }, {}), "charts.red");
+  assert.strictEqual(processThemeColour({ label: "x", host: "h", port: 1, tags: ["eu"] }, {}), undefined);
 });
 
 test("a console size is two positive whole numbers", () => {
@@ -232,6 +233,7 @@ test("package.json declares exactly the commands the extension registers", () =>
     RESULTS.exportCsv,
     RESULTS.setRowLimit,
     AGENT.copyLabel,
+    ...[ONBOARDING.getStarted, ONBOARDING.openHelpLink, ONBOARDING.editTagColor, ONBOARDING.newNotebook],
     "q-lint.restartServer",
   ].sort();
   assert.deepStrictEqual(declared, registered);
@@ -242,7 +244,7 @@ test("the views live in their own container, and every menu names a declared com
   assert.strictEqual(container.id, VIEWS.container);
   assert.deepStrictEqual(
     pkg.contributes.views[VIEWS.container].map((v) => v.id),
-    [VIEWS.processes, EXPLORER.view, VIEWS.history],
+    [VIEWS.processes, EXPLORER.view, VIEWS.history, ONBOARDING.helpView],
   );
   const declared = new Set(pkg.contributes.commands.map((c) => c.command));
   for (const [where, items] of Object.entries(pkg.contributes.menus)) {

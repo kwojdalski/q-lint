@@ -36,10 +36,11 @@ import {
   parseProcesses,
   parseTags,
   portProblem,
-  processColour,
+  processThemeColour,
+  tlsChoices,
   type Process,
 } from "./processes";
-import { COMMANDS, CONNECTED, VIEWS, readLive, readTerminal } from "./liveconfig";
+import { COMMANDS, CONNECTED, VIEWS, readLive, readProcessSettings, readTerminal } from "./liveconfig";
 import { QConnection } from "./qclient";
 import { render } from "./query";
 import { QueryModes, type Rendered } from "./resultpanel";
@@ -105,7 +106,13 @@ function nothingThere(from: From): void {
   );
 }
 
-const colours = { red: "charts.red", blue: "charts.blue", green: "charts.green" } as const;
+/// A tag's or a process's colour, from `q-lint.processes.tagColors` over
+/// the built-in ones.
+function colourOf(tags: string[]): ThemeColor | undefined {
+  const { tagColors } = readProcessSettings((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback));
+  const id = processThemeColour({ label: "", host: "", port: 0, tags }, tagColors);
+  return id === undefined ? undefined : new ThemeColor(id);
+}
 
 class ProcessesView implements TreeDataProvider<Row> {
   private readonly changed = new EventEmitter<void>();
@@ -166,8 +173,7 @@ class ProcessesView implements TreeDataProvider<Row> {
     }
     if (row.kind === "tag") {
       const item = new TreeItem(row.tag, TreeItemCollapsibleState.Expanded);
-      const colour = processColour({ label: "", host: "", port: 0, tags: [row.tag] });
-      item.iconPath = new ThemeIcon("tag", colour ? new ThemeColor(colours[colour]) : undefined);
+      item.iconPath = new ThemeIcon("tag", colourOf([row.tag]));
       item.contextValue = "tag";
       return item;
     }
@@ -178,8 +184,7 @@ class ProcessesView implements TreeDataProvider<Row> {
     const active = this.live.activeLabel() === (from === undefined ? process.label : qualified(from, process.label));
     const item = new TreeItem(process.label, TreeItemCollapsibleState.None);
     item.description = `${process.host}:${process.port}${active ? " - connected" : ""}`;
-    const colour = processColour(process);
-    item.iconPath = new ThemeIcon(active ? "vm-active" : "server-process", colour ? new ThemeColor(colours[colour]) : undefined);
+    item.iconPath = new ThemeIcon(active ? "vm-active" : "server-process", colourOf(process.tags));
     item.tooltip = new MarkdownString(
       [
         `**${process.label}**`,
@@ -429,6 +434,11 @@ export class Live {
       c(CONTROL_COMMANDS.revealProcess, () => this.revealProcess()),
       this.changed,
       this.discovery.onDidChange(() => this.processesView.refresh()),
+      workspace.onDidChangeConfiguration((event) => {
+        if (event.affectsConfiguration("q-lint.processes.tagColors")) {
+          this.processesView.refresh();
+        }
+      }),
       { dispose: () => void this.connection?.close() },
     );
     this.showStatus();
@@ -562,10 +572,20 @@ export class Live {
     if (port === undefined) {
       return undefined;
     }
+    // Editing, an unset `tls` is a process without it; adding, there is no
+    // current value.
+    const tls = await window.showQuickPick(tlsChoices(from.label === undefined ? undefined : from.tls === true), {
+      title: "q process: TLS",
+      placeHolder: "Connect over TLS?",
+    });
+    if (tls === undefined) {
+      return undefined;
+    }
+    // Authentication: a user, then that user's password.
     const user = await window.showInputBox({
-      title: "q process: user",
+      title: "q process: authentication (1 of 2) - user",
       value: from.user ?? "",
-      prompt: "Leave empty to connect without a user",
+      prompt: "The user sent in q's handshake. Leave empty to connect without one, and no password is asked for.",
     });
     if (user === undefined) {
       return undefined;
@@ -573,9 +593,12 @@ export class Live {
     let password: string | undefined;
     if (user.trim() !== "") {
       password = await window.showInputBox({
-        title: "q process: password",
+        title: `q process: authentication (2 of 2) - password of ${user.trim()}`,
         password: true,
-        prompt: "Kept in VS Code's secret storage. Leave empty to keep the stored one.",
+        prompt:
+          from.label === undefined
+            ? "Stored in VS Code's SecretStorage, never in settings or an export. Leave empty for none."
+            : "Stored in VS Code's SecretStorage, never in settings or an export. Leave empty to keep the stored one.",
       });
       if (password === undefined) {
         return undefined;
@@ -584,7 +607,7 @@ export class Live {
     const tags = await window.showInputBox({
       title: "q process: tags",
       value: (from.tags ?? []).join(", "),
-      prompt: "Comma separated. prod, uat and dev are coloured.",
+      prompt: "Comma separated. prod, uat and dev are coloured; Edit Tag Color colours any other.",
     });
     if (tags === undefined) {
       return undefined;
@@ -596,7 +619,7 @@ export class Live {
         port: Number(port),
         ...(user.trim() !== "" ? { user: user.trim() } : {}),
         tags: parseTags(tags),
-        ...(from.tls ? { tls: true } : {}),
+        ...(tls.tls ? { tls: true } : {}),
       },
       ...(password ? { password } : {}),
     };
@@ -716,7 +739,7 @@ export class Live {
     const tags = await window.showInputBox({
       title: `Tags of ${process.label}`,
       value: process.tags.join(", "),
-      prompt: "Comma separated. prod, uat and dev are coloured.",
+      prompt: "Comma separated. prod, uat and dev are coloured; Edit Tag Color colours any other.",
     });
     if (tags === undefined) {
       return;

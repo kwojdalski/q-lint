@@ -10,7 +10,7 @@
 // nanoseconds, so those are q's own text.
 import { findDiscovered, qualified, type Discovered, type Row } from "./discovery";
 import { cellText, typeName, type GridAnswer, type GridPayload } from "./grid";
-import { processColour, type Process } from "./processes";
+import { tagColour, type Process } from "./processes";
 import type { QConnection } from "./qclient";
 import { statements } from "./statements";
 
@@ -159,7 +159,9 @@ export function rowLabel(row: Row | undefined): string | undefined {
 
 /// Tagged prod, prd or production.
 export function isProduction(process: Process): boolean {
-  return processColour(process) === "red";
+  // By the tag, not its colour: a user may recolour prod in
+  // q-lint.processes.tagColors, and that must not quiet the warning.
+  return process.tags.some((tag) => tagColour(tag) === "red");
 }
 
 /// `code` fenced as q, with a fence longer than any run of backticks in it.

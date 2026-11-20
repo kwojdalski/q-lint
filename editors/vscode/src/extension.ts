@@ -17,6 +17,7 @@ import {
 import { LINTED, launch, needsRestart } from "./settings";
 import { Live } from "./live";
 import { registerAgentTool } from "./agenttool";
+import { registerOnboarding } from "./onboardingview";
 import { registerNotebooks, type RenderedChart } from "./notebook";
 import { ProcessExplorer } from "./explorerview";
 import { Relations } from "./relate";
@@ -89,6 +90,7 @@ export async function activate(
   const agentConfirmation = registerAgentTool(context, live);
   const notebook = registerNotebooks(context, live);
   const explorer = new ProcessExplorer(context, live);
+  registerOnboarding(context, () => live.processes());
   relations = new Relations(context, () => client);
   await serial.run(() => start(context));
   relations.serverChanged();

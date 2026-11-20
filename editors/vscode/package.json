@@ -471,6 +471,29 @@
             "markdownDescription": "Seconds a query run by an agent through the **Run q Query** tool may take. A query that takes longer is aborted, as **Abort Current Query** aborts one, and the agent is told it timed out. `0` sets no limit."
           }
         }
+      },
+      {
+        "title": "q-lint: processes",
+        "properties": {
+          "q-lint.processes.tagColors": {
+            "type": "object",
+            "default": {},
+            "additionalProperties": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9]*(\\.[A-Za-z0-9]+)*$",
+              "patternErrorMessage": "A theme colour id, such as charts.purple.",
+              "examples": [
+                "charts.red",
+                "charts.orange",
+                "charts.yellow",
+                "charts.blue",
+                "charts.purple",
+                "charts.green"
+              ]
+            },
+            "markdownDescription": "The colour of each tag in the Processes view, as a theme colour id: `{\"eu\": \"charts.purple\"}`. Over the built-in colours (`prod` red, `uat` blue, `dev` green); a process takes its most cautious tag's colour. **Edit Tag Color** on a tag row writes it."
+          }
+        }
       }
     ],
     "commands": [
@@ -752,6 +775,27 @@
         "title": "Open q-lint Settings",
         "category": "q-lint",
         "icon": "$(gear)"
+      },
+      {
+        "command": "q-lint.getStarted",
+        "title": "Get Started",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.openHelpLink",
+        "title": "Help and Feedback",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.editTagColor",
+        "title": "Edit Tag Color",
+        "category": "q-lint",
+        "icon": "$(symbol-color)"
+      },
+      {
+        "command": "q-lint.newNotebook",
+        "title": "New q Notebook",
+        "category": "q-lint"
       }
     ],
     "views": {
@@ -783,6 +827,13 @@
           "name": "Query History",
           "icon": "media/view-history.svg",
           "contextualTitle": "q-lint"
+        },
+        {
+          "id": "q-lint.help",
+          "name": "Help and Feedback",
+          "icon": "media/view-help.svg",
+          "contextualTitle": "q-lint",
+          "visibility": "collapsed"
         }
       ],
       "q-lint-results": [
@@ -908,6 +959,16 @@
           "command": "q-lint.deleteProcess",
           "when": "view == q-lint.processes && viewItem =~ /^process/",
           "group": "3_delete@1"
+        },
+        {
+          "command": "q-lint.editTagColor",
+          "when": "view == q-lint.processes && viewItem == tag",
+          "group": "inline"
+        },
+        {
+          "command": "q-lint.editTagColor",
+          "when": "view == q-lint.processes && viewItem == tag",
+          "group": "2_edit@1"
         },
         {
           "command": "q-lint.connectProcess",
@@ -1099,6 +1160,10 @@
       {
         "view": "q-lint.queryHistory",
         "contents": "No queries yet. In a q file, Ctrl+Q runs the current line, Ctrl+R the selection and Ctrl+E the block on the connected process. Each query is kept here, with its outcome and time, to rerun."
+      },
+      {
+        "view": "q-lint.help",
+        "contents": "[Get Started](command:q-lint.getStarted) with q-lint, or read the [documentation](https://github.com/kwojdalski/q-lint/blob/master/editors/vscode/README.md) and the [rule reference](https://github.com/kwojdalski/q-lint/blob/master/docs/rules.md).\nFound a problem? [Report a bug](https://github.com/kwojdalski/q-lint/issues/new?labels=bug) or [suggest a feature](https://github.com/kwojdalski/q-lint/issues/new?labels=enhancement)."
       }
     ],
     "keybindings": [
@@ -1163,6 +1228,86 @@
             "query"
           ]
         }
+      }
+    ],
+    "walkthroughs": [
+      {
+        "id": "getStarted",
+        "title": "Get started with q-lint",
+        "description": "Lint q as you type, connect to a q process, run code on it and browse it.",
+        "steps": [
+          {
+            "id": "lint",
+            "title": "See a lint finding",
+            "description": "Open a q file: q-lint underlines what it finds as you type, and never runs the file. The Problems panel lists every finding.\n[Open a q File](command:workbench.action.files.openFile)\n[Show Problems](command:workbench.actions.view.problems)",
+            "media": {
+              "markdown": "media/walkthrough/lint.md"
+            },
+            "completionEvents": [
+              "onContext:q-lint.sawFinding",
+              "onView:workbench.panel.markers.view"
+            ]
+          },
+          {
+            "id": "addProcess",
+            "title": "Add a process",
+            "description": "Give q-lint a q process to connect to: a label, host and port, TLS, a user and password, and tags.\n[Add Process](command:q-lint.addProcess)",
+            "media": {
+              "markdown": "media/walkthrough/process.md"
+            },
+            "completionEvents": [
+              "onCommand:q-lint.addProcess",
+              "onCommand:q-lint.importProcesses"
+            ]
+          },
+          {
+            "id": "query",
+            "title": "Connect and run a query",
+            "description": "Connect to the process, then run the current line of a q file with Ctrl+Q.\n[Connect to Process](command:q-lint.connectProcess)\n[Query Current Line](command:q-lint.queryCurrentLine)",
+            "media": {
+              "markdown": "media/walkthrough/query.md"
+            },
+            "completionEvents": [
+              "onCommand:q-lint.queryCurrentLine",
+              "onCommand:q-lint.querySelection",
+              "onCommand:q-lint.queryBlock"
+            ]
+          },
+          {
+            "id": "explorer",
+            "title": "Open the Process Explorer",
+            "description": "Browse the connected process's namespaces, tables, functions and variables.\n[Open the Process Explorer](command:q-lint.processExplorer.focus)",
+            "media": {
+              "markdown": "media/walkthrough/explorer.md"
+            },
+            "completionEvents": [
+              "onView:q-lint.processExplorer"
+            ]
+          },
+          {
+            "id": "grid",
+            "title": "Switch query mode to grid",
+            "description": "Show a table result as a grid to sort, filter and copy, instead of text.\n[Switch to Grid](command:q-lint.switchQueryMode?%5B%22grid%22%5D)",
+            "media": {
+              "markdown": "media/walkthrough/grid.md"
+            },
+            "completionEvents": [
+              "onSettingChanged:q-lint.query.mode",
+              "onCommand:q-lint.switchQueryMode"
+            ]
+          },
+          {
+            "id": "notebook",
+            "title": "Try a notebook",
+            "description": "Run q in cells and keep each one's output, in a .qnb notebook.\n[New q Notebook](command:q-lint.newNotebook)",
+            "media": {
+              "markdown": "media/walkthrough/notebook.md"
+            },
+            "completionEvents": [
+              "onCommand:q-lint.newNotebook"
+            ]
+          }
+        ]
       }
     ]
   },
