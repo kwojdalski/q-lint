@@ -2513,32 +2513,77 @@ pub fn check(
             }
         }
     }
-    // The other half of the same guidance: "avoid using these letters as local
-    // variables" when the parameters are named. `{[a;b] x:a+b; ...}` works,
-    // but `x` in a q body means the first argument to every reader who has not
-    // yet looked at the signature.
+    // `y` or `z` assigned in a lambda with no parameter list. q counts the
+    // implicit arguments by the highest of the three the body names, and an
+    // assignment names it too: in q 5 `g:{z:x+1; z}` takes three arguments,
+    // so `g 1` is a projection, and whatever the caller passes as `z` is
+    // thrown away unread. With a parameter list the letters are ordinary
+    // locals - `{[a;b] z:a+b; z*2}[1;2]` is 6 and `value` lists only `a`
+    // and `b` - and rebinding `x` keeps the rank, so neither is reported.
+    // An assignment that follows a read of the same name rebinds an argument
+    // the body uses, `{y:y+1; x+y}`, which is not this.
     for scope in &scopes {
-        if !scope.named || scope.params.iter().any(|p| matches!(&**p, "x" | "y" | "z")) {
+        if scope.named {
             continue;
         }
         let statements = statement_view(&scope.direct);
+        let direct = re!(r"`[A-Za-z0-9_./:]*")
+            .replace_all(&scope.direct, |m: &regex::Captures| " ".repeat(m[0].len()));
+        let reads = |text: &str, name: &str| {
+            text.match_indices(name).any(|(i, _)| {
+                boundary(text, i)
+                    && !text[i + 1..]
+                        .starts_with(|c: char| c.is_ascii_alphanumeric() || "_.".contains(c))
+                    && !re!(r"^[ \t]*:(?:[^:]|$)").is_match(&text[i + 1..])
+            })
+        };
+        let mut seen = HashSet::new();
         for a in assignment.captures_iter(&statements) {
             let whole = a.get(0).unwrap();
-            if !boundary(&statements, whole.start()) || a.get(2).is_some() {
+            let name = a.get(1).unwrap().as_str();
+            if !boundary(&statements, whole.start())
+                || a.get(2).is_some()
+                || !matches!(name, "y" | "z")
+                || !seen.insert(name)
+            {
                 continue;
             }
-            if matches!(&a[1], "x" | "y" | "z") {
-                out.push(Finding::at(
-                    path,
-                    raw,
-                    scope.body + whole.start(),
-                    "QS009",
-                    format!(
-                        "`{}` is a local here, but in a q body it reads as an implicit argument",
-                        &a[1]
-                    ),
-                ));
+            // `y[k]:v` amends the argument in place, which reads it: the
+            // brackets are blank in `statements` but not in the body.
+            if direct[whole.start() + name.len()..]
+                .trim_start_matches([' ', '\t'])
+                .starts_with('[')
+            {
+                continue;
             }
+            // Read first: before the assignment, or on its right, which q
+            // evaluates before it stores - up to the `;` or bracket that
+            // ends the statement.
+            let (mut end, mut depth, bytes) = (whole.end(), 0i32, direct.as_bytes());
+            while end < bytes.len() {
+                match bytes[end] {
+                    b'(' | b'[' | b'{' => depth += 1,
+                    b')' | b']' | b'}' if depth == 0 => break,
+                    b')' | b']' | b'}' => depth -= 1,
+                    b';' if depth == 0 => break,
+                    _ => {}
+                }
+                end += 1;
+            }
+            if reads(&direct[..whole.start()], name) || reads(&direct[whole.end()..end], name) {
+                continue;
+            }
+            let rank = crate::lambda_rank(code, raw, scope.start, scope.end);
+            out.push(Finding::at(
+                path,
+                raw,
+                scope.body + whole.start(),
+                "QS009",
+                format!(
+                    "`{name}` is assigned before it is read, so q counts it as an argument: \
+                     this lambda takes {rank}, and the caller's `{name}` is thrown away"
+                ),
+            ));
         }
     }
     // From the FINOS q coding guidelines:
@@ -2549,15 +2594,28 @@ pub fn check(
     // The second threshold, not the first: over ten is 11% of the lambdas in
     // real q and over twenty five is 2%, and a rule that fires on a tenth of
     // everything is one nobody leaves on.
+    //
+    // Lines of code only, read in `comments`, which blanks a comment and
+    // keeps a string: a blank line or a comment is not something to hold in
+    // mind, and a lambda of fourteen statements with a dozen lines of doc
+    // comment between them is not long. A line inside a multi-line string
+    // is code. A nested lambda's lines count toward the one around it: they
+    // are read as part of it, inline, and moving a nested lambda out to a
+    // name of its own is exactly the shortening this rule asks for.
     for scope in &scopes {
-        let lines = code[scope.start..scope.end].matches('\n').count() + 1;
+        let lines = comments[scope.start..(scope.end + 1).min(comments.len())]
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .count();
         if lines > 25 {
             out.push(Finding::at(
                 path,
                 raw,
                 scope.start,
                 "QS006",
-                format!("This lambda is {lines} lines; over twenty five is hard to hold in mind"),
+                format!(
+                    "This lambda is {lines} lines of code; over twenty five is hard to hold in mind"
+                ),
             ));
         }
     }
@@ -3093,16 +3151,16 @@ pub fn check(
         }
     }
     // Writing a function beside its argument - `f x` where `f[x]` would do -
-    // is valid q, and for a builtin it is how q is meant to be read: `count x`
-    // gains nothing from brackets. For a function this file defines it is a
-    // choice between two spellings of one call, and this repository's
-    // convention is the bracket, which shows where the argument ends without
-    // the reader having to apply q's right-to-left rule. Only a name this file
-    // assigns a lambda is reported: juxtaposition after anything else is
-    // indexing, where brackets would be saying something different about the
-    // code.
+    // is valid q, and for a function of one argument it is the whole call
+    // either way: `count x` and `nsq 3` gain nothing from brackets. For a
+    // function of two or more it is a hazard, because juxtaposition passes
+    // exactly one argument, everything to its right: after `add:{[a;b] a+b}`,
+    // `add 1 2` is `add[1 2]`, a projection where the author meant 3, and q
+    // says nothing. So only a name this file assigns a lambda of rank two or
+    // more is reported - juxtaposition after anything else is indexing, where
+    // brackets would be saying something different about the code.
     if !evaluates {
-        // Whether `name` holds a lambda where it is used at `at`. A name can be
+        // What `name` holds where it is used at `at`. A name can be
         // assigned more than once - qbists's aoc 02.q makes `d2` a function
         // and later a dictionary, and `d2 inp` after that is indexing - so it
         // is the assignment in force that decides: at root the last one
@@ -3111,10 +3169,10 @@ pub fn check(
         // for whether the file defines the name at all: one inside a lambda
         // happens if and when the lambda runs, and is usually a test stub
         // standing in for a function another file defines (#110).
-        let holds_lambda = |name: &str, at: usize, in_lambda: bool| {
-            let Some(assignments) = globals.get(name) else {
-                return false;
-            };
+        // It answers with the rank that lambda still takes, `None` when the
+        // name holds no lambda there.
+        let held_rank = |name: &str, at: usize, in_lambda: bool| {
+            let assignments = globals.get(name)?;
             // `sqrt enorm2::` composes - psaris's funq defines `enorm` so - and
             // the `::` with nothing after it assigns nothing.
             let mut root: Vec<usize> = assignments
@@ -3133,8 +3191,11 @@ pub fn check(
                 root.iter().rev().find(|&&a| a < at)
             };
             match live {
-                Some(&a) => assigns_lambda(code, raw, a),
-                None => root.iter().any(|&a| assigns_lambda(code, raw, a)),
+                Some(&a) => assigned_rank(code, raw, a),
+                None => root
+                    .iter()
+                    .filter_map(|&a| assigned_rank(code, raw, a))
+                    .max(),
             }
         };
         // Two passes, because the two views disagree about what an argument
@@ -3166,7 +3227,7 @@ pub fn check(
             queries[..i].last().filter(|&&(_, hi, _)| at < hi)
         };
         // The columns of the table literal `table` holds where it is read at
-        // `at`, by the same assignment-in-force rule as `holds_lambda`.
+        // `at`, by the same assignment-in-force rule as `held_rank`.
         let columns_of = |table: &str, at: usize, in_lambda: bool| -> Option<Vec<String>> {
             let mut root: Vec<usize> = globals
                 .get(table)?
@@ -3278,13 +3339,15 @@ pub fn check(
             if code[line_start..].trim_start().starts_with('\\') {
                 continue;
             }
-            // Head position only. `x f y` is infix and `sum f x` is a call
-            // whose own argument this rule cannot delimit, so a name is
-            // reported only where it opens the expression it belongs to -
-            // after a separator or an operator, or alone at the left margin.
-            // A qSQL keyword opens its phrase, and an infix keyword's right
-            // operand is an expression of its own: q 5 reads `select g s
-            // from t` and `s in g 1` as calls of `g` (#780).
+            // Head position only. `x f y` is infix, so a name is reported
+            // only where it opens the expression it belongs to - after a
+            // separator or an operator, or alone at the left margin. A qSQL
+            // keyword opens its phrase, and an infix keyword's right operand
+            // is an expression of its own: q 5 reads `select g s from t` and
+            // `s in g 1` as calls of `g` (#780). So does a unary keyword's
+            // argument, which runs to the end of the expression exactly as
+            // an operator's right operand does: `not g a b` is `not g[a b]`,
+            // the same as `0=g a b` is `0=g[a b]`.
             let before = code[..at].trim_end();
             // Only the word that ends it and the byte before that: the
             // pattern is anchored at the end, and run over all of `before`
@@ -3300,11 +3363,14 @@ pub fn check(
                 .captures(&before[tail..])
                 .is_some_and(|m| {
                     let word = &m[1];
-                    // `by`, `from` and `where` only inside a query: outside
-                    // one `where` is a unary, and `sum f x` is not reported.
+                    // `by`, `from` and `where` open a phrase only inside a
+                    // query; outside one `where` is a unary like `not`.
                     matches!(word, "select" | "exec" | "update")
                         || matches!(word, "by" | "from" | "where") && query_at(at).is_some()
                         || INFIX.contains(&word)
+                        || crate::builtin(word).is_some_and(|b| {
+                            b.kind == crate::BuiltinKind::Function && b.params.len() == 1
+                        })
                 });
             let head = match before.chars().next_back() {
                 None => true,
@@ -3359,7 +3425,10 @@ pub fn check(
             // has no root fallback, so after `f:{x+1}`, `\d .a`, `h:{f 1}`,
             // `.a.h[]` is 'f.
             let namespace = scope.map_or_else(|| ns_at(at), |i| scopes[i].namespace.as_str());
-            if !holds_lambda(&qualify(bare, namespace), at, scope.is_some()) {
+            let Some(rank) = held_rank(&qualify(bare, namespace), at, scope.is_some()) else {
+                continue;
+            };
+            if rank < 2 {
                 continue;
             }
             // In a query the table's columns come first: with a column `f`,
@@ -3376,8 +3445,15 @@ pub fn check(
                 at,
                 "QP006",
                 format!(
-                    "`{bare}` is a function defined in this file, applied without brackets; \
-                     the convention here is `{bare}[...]`"
+                    "`{bare}` takes {rank} arguments but is applied without brackets, which \
+                     passes it one; write `{bare}[...]`{}",
+                    // The fix declines the table after `from`, which runs on
+                    // to `where`: where the brackets close is a person's call.
+                    if crate::query_clause(code, at) == Some("from") {
+                        " (after `from`, where they close is left to you)"
+                    } else {
+                        ""
+                    }
                 ),
             );
             finding.end_column = finding.column.map(|c| c + bare.chars().count());
@@ -4954,37 +5030,47 @@ fn parse_tree_names(body: &str) -> HashSet<&str> {
 /// chainedtp.q - applies one on the spot and assigns the result, a
 /// dictionary there, and calling that a function made `t k` a "call".
 fn assigns_lambda(code: &str, raw: &str, at: usize) -> bool {
+    assigned_rank(code, raw, at).is_some()
+}
+
+/// How many arguments the lambda assigned at `at` still takes, or `None`
+/// when the value is not a function. A projection takes what its open slots
+/// and missing trailing arguments leave: `{[a;b;c] ...}[;1]` takes two.
+fn assigned_rank(code: &str, raw: &str, at: usize) -> Option<usize> {
     let rest = code[at..].trim_start();
     let brace = code.len() - rest.len();
     let ends = |from: usize| {
         let after = code[from..].trim_start_matches([' ', '\t']);
         after.is_empty() || after.starts_with([';', '\n', '\r', ')', ']', '}'])
     };
-    rest.starts_with('{')
-        && matching(code, brace, b'{', b'}').is_some_and(|end| {
-            if ends(end) {
-                return true;
-            }
-            let rank = || crate::lambda_rank(code, raw, brace, end - 1);
-            // A projection is still a function: qbists's klondike writes
-            // `turn:{[g;n] ...}[;TURN]`, one argument fixed and one slot
-            // left open, and `turn g` is a call. So is one given fewer
-            // arguments than it takes: q 5's `{[a;b] a+b}[1]` is 104h (#551).
-            if code[end..].starts_with('[') {
-                return matching(code, end, b'[', b']').is_some_and(|close| {
-                    let slots = crate::slots(&code[end + 1..close - 1]);
-                    (slots.iter().any(|slot| slot.trim().is_empty()) || slots.len() < rank())
-                        && ends(close)
-                });
-            }
-            // And juxtaposition gives exactly one argument, everything to its
-            // right: `{x+y} 1` and `{x+y} 1+2` are 104h in q 5. Only after a
-            // literal, since a name there may be an infix keyword - `{x+y}
-            // each l` applies `each`, not the lambda.
-            code[end..].starts_with([' ', '\t'])
-                && code[end..]
-                    .trim_start_matches([' ', '\t'])
-                    .starts_with(|c: char| c.is_ascii_digit() || "\"`(".contains(c))
-                && rank() >= 2
-        })
+    if !rest.starts_with('{') {
+        return None;
+    }
+    let end = matching(code, brace, b'{', b'}')?;
+    let rank = || crate::lambda_rank(code, raw, brace, end - 1);
+    if ends(end) {
+        return Some(rank());
+    }
+    // A projection is still a function: qbists's klondike writes
+    // `turn:{[g;n] ...}[;TURN]`, one argument fixed and one slot
+    // left open, and `turn g` is a call. So is one given fewer
+    // arguments than it takes: q 5's `{[a;b] a+b}[1]` is 104h (#551).
+    if code[end..].starts_with('[') {
+        let close = matching(code, end, b'[', b']')?;
+        let slots = crate::slots(&code[end + 1..close - 1]);
+        let open = slots.iter().filter(|slot| slot.trim().is_empty()).count();
+        let missing = rank().saturating_sub(slots.len());
+        return (open + missing > 0 && ends(close)).then_some(open + missing);
+    }
+    // And juxtaposition gives exactly one argument, everything to its
+    // right: `{x+y} 1` and `{x+y} 1+2` are 104h in q 5. Only after a
+    // literal, since a name there may be an infix keyword - `{x+y}
+    // each l` applies `each`, not the lambda.
+    let rank = rank();
+    (code[end..].starts_with([' ', '\t'])
+        && code[end..]
+            .trim_start_matches([' ', '\t'])
+            .starts_with(|c: char| c.is_ascii_digit() || "\"`(".contains(c))
+        && rank >= 2)
+        .then(|| rank - 1)
 }

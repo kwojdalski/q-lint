@@ -206,11 +206,15 @@ wrapped:(1)+2
 / expect-next: QS008
 misplaced:{[t;x] t+x}
 
-/ QS009: the other half of the same guidance - "avoid using these letters as
-/ local variables" when the parameters are named. This works; it just reads as
-/ an implicit argument to anyone who has not looked at the signature yet.
+/ QS009: `z` assigned in a lambda with no parameter list. q counts the
+/ implicit arguments by the highest letter the body names, the assignment
+/ included, so this takes three: `shadowed 1` is a projection, and the
+/ caller's third argument is thrown away unread.
 / expect-next: QS009
-shadowed:{[p;q] x:p+q; x}
+shadowed:{z:x+1; z}
+
+/ clean: with a parameter list the same name is an ordinary local.
+local:{[p;q] z:p+q; z}
 
 / QS007: documentation naming a parameter the lambda does not take. The
 / signature changed and the comment did not, or the name is a typo. Only names
@@ -778,13 +782,16 @@ routine: 2+3*4
 / expect-next: QP008
 restated: 2*(3+4)
 
-/ QP006: `widen` is a function this file defines, applied by writing it
-/ beside its argument. q reads that as widen[3+4]; the brackets the uqf
-/ profile asks for say where the argument ends without the reader having
-/ to apply the right-to-left rule to find out.
-widen:{x*2}
+/ QP006: `widen` is a function of two arguments this file defines,
+/ applied by writing it beside its argument. Juxtaposition passes exactly
+/ one, so q reads that as widen[3 4]: a projection, not 6.
+widen:{x*y}
 / expect-next: QP006
-widened: widen 3+4
+widened: widen 3 4
+
+/ clean: a function of one argument beside it is the whole call either way.
+double:{x*2}
+doubled: double 3+4
 
 / clean: a builtin beside its argument is how q is meant to read, and
 / brackets around this one would be noise rather than clarity.

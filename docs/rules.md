@@ -202,7 +202,7 @@ it, or `ALL`.
 | <a id="qp002"></a>`QP002` | datetime-type | Legacy datetime precision | `uqf` |
 | <a id="qp003"></a>`QP003` | wall-clock-temporal | Wall-clock timestamp where the convention is UTC | `uqf` |
 | <a id="qp005"></a>`QP005` | mixed-infix-precedence | Unparenthesised * or % with + or - to its right: q performs the + or - first, where school precedence multiplies first | `uqf` |
-| <a id="qp006"></a>`QP006` | juxtaposed-application | Function defined in this file applied without brackets | `uqf` |
+| <a id="qp006"></a>`QP006` | juxtaposed-application | Function of two or more arguments defined in this file applied without brackets, which passes it one and returns a projection; the fix is left to a person after `from` | `uqf` |
 | <a id="qp007"></a>`QP007` | mixed-infix-unparenthesised | Unparenthesised + or - with * or % to its right: q multiplies first and so does school precedence, so QP005 passes it | no profile |
 | <a id="qp008"></a>`QP008` | restated-precedence-parentheses | Parentheses round the right operand of + - * % that only restate q's right-to-left order, exactly where QP005's and QP007's fix puts them: the opposite convention, selected only by its own code and refused beside either | no profile |
 
@@ -214,10 +214,10 @@ it, or `ALL`.
 | <a id="qs002"></a>`QS002` | dot-in-name | Name has an interior dot but is not a namespace | `styleq` and above |
 | <a id="qs003"></a>`QS003` | name-l | `l` as a name reads as `1` | `styleq` and above |
 | <a id="qs004"></a>`QS004` | redundant-parentheses | A single token wrapped in parentheses | `styleq` and above |
-| <a id="qs006"></a>`QS006` | lambda-length | Lambda longer than twenty five lines | `styleq` and above |
+| <a id="qs006"></a>`QS006` | lambda-length | Lambda longer than twenty five lines of code, not counting blank lines and comments | `styleq` and above |
 | <a id="qs007"></a>`QS007` | documented-parameter-absent | `@param` names a parameter the lambda does not take | `styleq` and above |
 | <a id="qs008"></a>`QS008` | implicit-name-out-of-position | `x`, `y` or `z` declared in a position q would not give it | `styleq` and above |
-| <a id="qs009"></a>`QS009` | implicit-name-as-local | `x`, `y` or `z` used as a local beside named parameters | `styleq` and above |
+| <a id="qs009"></a>`QS009` | implicit-name-as-local | `y` or `z` assigned before it is read in a lambda without a parameter list, which makes it an argument the caller has to pass and the body throws away | `styleq` and above |
 | <a id="qs010"></a>`QS010` | mixed-naming-convention | Names in one file mix naming conventions: camelCase, PascalCase, snake_case, Hungarian, kebab-case or a function in capitals | `styleq` and above |
 
 ## External - findings relayed from another tool

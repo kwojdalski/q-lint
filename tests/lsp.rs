@@ -1035,7 +1035,7 @@ fn the_bracket_quick_fix_covers_the_whole_application() {
     let mut server = Server::start();
     server.initialize();
     let uri = "file:///tmp/calls.q";
-    server.open(uri, "f:{x+1}\nr:f 3+4\n");
+    server.open(uri, "f:{x+y}\nr:f 3+4\n");
     let diagnostics = server.diagnostics_for(uri);
     let juxtaposed: Vec<Value> = diagnostics
         .iter()

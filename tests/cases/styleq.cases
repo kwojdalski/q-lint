@@ -18,7 +18,7 @@ export:([check])
 === QS003 profile: styleq | `l` reads as `1`
 l:1
 
-=== QS001 QS002 QS003 profile: styleq | an assignment that is not first on its line, or opens a lambda (#662)
+=== QS001 QS002 QS003 QS009 profile: styleq | an assignment that is not first on its line, or opens a lambda (#662)
 x:1;my_var:2
 f:{l:1;l}
 g:{y:1;my.var:2;y}
@@ -116,8 +116,134 @@ f:{[a;y] a+y}
 === clean profile: styleq | no signature at all, so the implicit names are q's own
 f:{x+y}
 
-=== QS009 profile: styleq | `x` as a local beside named parameters
+=== clean profile: styleq | with a parameter list the implicit names are ordinary locals (q 5: {[a;b] z:a+b; z*2}[1;2] is 6, value lists only a and b)
 f:{[p;q] x:p+q; x}
+g:{[f] z:-21!f; z}
+h:{[a;b] z:a+b; z*2}
+
+=== QS009 profile: styleq | `z` assigned in a lambda with no parameter list makes it take three arguments (q 5: type {z:x+1; z} 1 is 104h)
+g:{z:x+1; z}
+
+=== QS009 profile: styleq | and `y` two
+h:{y:x+1; y}
+
+=== QS009 profile: styleq | an assignment after another statement still comes before any read
+h:{a:x; z:a*2; z}
+
+=== clean profile: styleq | rebinding `x` keeps the rank (q 5: {x:x+1; x} 1 is 2)
+k:{x:x+1; x}
+
+=== clean profile: styleq | nor is an argument the body reads before rebinding it
+f:{y:y+1; x+y}
+g:{a:z; z:0; a+x+z}
+
+=== clean profile: styleq | nor one it amends in place, which reads it (KxSystems ml's create.q)
+f:{y[`a;z]:x z; y}
+
+=== clean profile: styleq | a nested lambda's `z` is its own, not the outer lambda's
+f:{x+{[a] z:a; z} 1}
+
+=== clean profile: styleq | comments and blank lines are not lines of code: 41 lines, 22 of them code
+documented:{[a]
+  r:a;
+  r:r+1;
+  / step 1 of the work, explained
+
+  r:r+2;
+  / step 2 of the work, explained
+
+  r:r+3;
+  / step 3 of the work, explained
+
+  r:r+4;
+  / step 4 of the work, explained
+
+  r:r+5;
+  / step 5 of the work, explained
+
+  r:r+6;
+  / step 6 of the work, explained
+
+  r:r+7;
+  / step 7 of the work, explained
+
+  r:r+8;
+  / step 8 of the work, explained
+  r:r+9;
+  / step 9 of the work, explained
+  r:r+10;
+  / step 10 of the work, explained
+  r:r+11;
+  / step 11 of the work, explained
+  r:r+12;
+  / step 12 of the work, explained
+  r:r+13;
+  r:r+14;
+  r:r+15;
+  r:r+16;
+  r:r+17;
+  r:r+18;
+  r:r+19;
+  r}
+
+=== QS006 profile: styleq | while 26 lines of code are reported, comments or not
+sprawling:{[a]
+  r:a;
+  r:r+1;
+  / step 1 of the work, explained
+  r:r+2;
+  / step 2 of the work, explained
+  r:r+3;
+  / step 3 of the work, explained
+  r:r+4;
+  r:r+5;
+  r:r+6;
+  r:r+7;
+  r:r+8;
+  r:r+9;
+  r:r+10;
+  r:r+11;
+  r:r+12;
+  r:r+13;
+  r:r+14;
+  r:r+15;
+  r:r+16;
+  r:r+17;
+  r:r+18;
+  r:r+19;
+  r:r+20;
+  r:r+21;
+  r:r+22;
+  r:r+23;
+  r}
+
+=== QS006 profile: styleq | a nested lambda's lines count toward the lambda around it: 12 here and 14 outside it
+outer:{[a]
+  f:{[b]
+    c:b;
+    c:c+1;
+    c:c+2;
+    c:c+3;
+    c:c+4;
+    c:c+5;
+    c:c+6;
+    c:c+7;
+    c:c+8;
+    c:c+9;
+    c};
+  r:f a;
+  r:r+1;
+  r:r+2;
+  r:r+3;
+  r:r+4;
+  r:r+5;
+  r:r+6;
+  r:r+7;
+  r:r+8;
+  r:r+9;
+  r:r+10;
+  r:r+11;
+  r}
 
 === clean profile: styleq | a local that is not one of q's argument names
 f:{[p;q] r:p+q; r}
