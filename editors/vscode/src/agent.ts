@@ -50,10 +50,30 @@ export interface AgentSettings {
   queryTimeout: number;
 }
 
-/// The agent settings, read as `readLive` reads the query ones.
+/// The longest timeout a timer holds, in seconds: a longer one fires at once.
+const LONGEST_TIMEOUT = Math.floor((2 ** 31 - 1) / 1000);
+
+/// The agent settings, read as `readLive` reads the query ones. The timeout
+/// is at most `LONGEST_TIMEOUT`, which would otherwise abort every query as
+/// it started.
 export function readAgent(get: <T>(key: string, fallback: T) => T): AgentSettings {
   const timeout = get("agent.queryTimeout", 30);
-  return { queryTimeout: typeof timeout === "number" && Number.isInteger(timeout) && timeout >= 0 ? timeout : 30 };
+  return {
+    queryTimeout: typeof timeout === "number" && Number.isInteger(timeout) && timeout >= 0 ? Math.min(timeout, LONGEST_TIMEOUT) : 30,
+  };
+}
+
+/// A real as the shortest decimal that reads back as the same float32. The
+/// codec widens a real's four bytes to the nearest double, so 1.1e arrives as
+/// 1.100000023841858 - a number q neither holds nor prints.
+function real(x: number): number {
+  for (let digits = 1; digits < 9; digits++) {
+    const n = Number(x.toPrecision(digits));
+    if (Math.fround(n) === x) {
+      return n;
+    }
+  }
+  return x;
 }
 
 /// One cell as a JSON value: a boolean, a number where a double holds it
@@ -76,6 +96,7 @@ export function jsonCell(type: number, text: string, raw: unknown): Cell {
       return text !== "" && Number.isSafeInteger(n) ? n : text;
     }
     case 8:
+      return typeof raw === "number" ? real(raw) : text;
     case 9:
       return typeof raw === "number" ? raw : text;
     default:
@@ -137,7 +158,18 @@ function listed(saved: Process[], discovered: Discovered[]): string {
 /// Connect reads a label. An error listing the labels when none is.
 export function resolveProcess(label: string, saved: Process[], discovered: Discovered[]): { process: Process } | { error: string } {
   const process = saved.find((p) => p.label === label) ?? findDiscovered(discovered, label);
-  return process !== undefined ? { process } : { error: `No q process is labelled "${label}". ${listed(saved, discovered)}` };
+  if (process !== undefined) {
+    return { process };
+  }
+  // A bare label that more than one server lists names none of them.
+  const servers = discovered.filter(({ state }) => state.processes.some((p) => p.label === label));
+  if (servers.length > 1) {
+    const names = servers.map(({ server }) => qualified(server.label, label));
+    return {
+      error: `More than one discovery server lists a q process labelled "${label}": name it as ${names.slice(0, -1).join(", ")} or ${names[names.length - 1]}.`,
+    };
+  }
+  return { error: `No q process is labelled "${label}". ${listed(saved, discovered)}` };
 }
 
 /// The error for a query that names no process when none is connected.

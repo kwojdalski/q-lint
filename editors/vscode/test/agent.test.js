@@ -91,6 +91,20 @@ test("a cell survives JSON: exact numbers as numbers, the rest as q's text", () 
   }
 });
 
+test("a real is the number q wrote, not its float32 widened to a double", () => {
+  // node-q decodes a real's four bytes to the double nearest them: 1.1e
+  // arrives as 1.100000023841858, which is not what q holds or prints.
+  assert.strictEqual(jsonCell(8, "1.1", Math.fround(1.1)), 1.1);
+  assert.strictEqual(jsonCell(8, "0.3", Math.fround(0.30000001)), 0.3);
+  assert.strictEqual(jsonCell(8, "2", 2), 2);
+  assert.strictEqual(jsonCell(8, "3.402823e+38", Math.fround(3.4028234e38)), 3.4028235e38);
+  // Every real comes back as itself.
+  for (const x of [1.1, 0.1, 1 / 3, 123456.789, 1e-30, -7.25]) {
+    const f = Math.fround(x);
+    assert.strictEqual(Math.fround(jsonCell(8, "", f)), f, String(x));
+  }
+});
+
 const saved = [
   { label: "rdb", host: "h", port: 5011, tags: ["prod"] },
   { label: "hdb", host: "h", port: 5012, tags: [] },
@@ -115,6 +129,16 @@ test("an unknown label, or no connection, is an error that lists the labels", ()
   assert.strictEqual(error, 'No q process is labelled "nope". The labels are: rdb, hdb, disc/gw, disc/rdb.');
   assert.match(resolveProcess("nope", [], []).error, /No q process is saved/);
   assert.match(notConnected(saved, []), /^No q process is connected\. .*"process"\. The labels are: rdb, hdb\.$/);
+});
+
+test("a bare label two discovery servers list is ambiguous, not unknown", () => {
+  const two = [
+    ...discovered,
+    { server: { label: "east", url: "http://y" }, state: { processes: [{ label: "gw", host: "e", port: 3, tags: [] }], problems: [], loading: false, removed: false } },
+  ];
+  const { error } = resolveProcess("gw", saved, two);
+  assert.doesNotMatch(error, /No q process is labelled/);
+  assert.strictEqual(error, 'More than one discovery server lists a q process labelled "gw": name it as disc/gw or east/gw.');
 });
 
 test("Copy Label copies a row's label, a discovered process's qualified", () => {
@@ -180,4 +204,8 @@ test("every agent setting is read, with the default package.json declares, and n
   assert.strictEqual(set(5), 5);
   assert.strictEqual(set(-1), 30);
   assert.strictEqual(set(1.5), 30);
+  // A timer longer than 2^31-1 ms fires at once, which would abort every
+  // query the moment it started: the longest one a timer holds is kept.
+  assert.strictEqual(set(2147483), 2147483);
+  assert.strictEqual(set(3000000), 2147483);
 });

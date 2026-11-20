@@ -187,11 +187,16 @@ def grammar():
             "symbol": {
                 "patterns": [
                     {
-                        "comment": "A file or network handle: `:path/to/file, `:host:port.",
-                        "match": r"`:[A-Za-z0-9_.:/\-]*",
+                        "comment": "A file or network handle: `:path/to/file, `:host:port. "
+                        "A minus is not in one: `:a-b is `:a minus b.",
+                        "match": r"`:[A-Za-z0-9_.:/]*",
                         "name": "constant.other.symbol.handle.q",
                     },
-                    {"match": r"`[A-Za-z0-9_.:]*", "name": "constant.other.symbol.q"},
+                    {
+                        "comment": "Past a colon a symbol takes slashes too: `a:b/c is one symbol.",
+                        "match": r"`[A-Za-z0-9_.]*(?::[A-Za-z0-9_.:/]*)?",
+                        "name": "constant.other.symbol.q",
+                    },
                 ],
             },
             "lambda": {
@@ -233,12 +238,13 @@ def grammar():
                             [
                                 # timestamp and datetime
                                 r"\d{4}\.\d{2}\.\d{2}[DT](?:\d{2}(?::\d{2}(?::\d{2}(?:\.\d*)?)?)?)?[pz]?",
-                                # month, date
-                                r"\d{4}\.\d{2}(?:\.\d{2}d?|m)",
+                                # month, date, and a date as a timestamp (p) or datetime (z)
+                                r"\d{4}\.\d{2}(?:\.\d{2}[dpz]?|m)",
                                 # timespan
                                 r"\d+D(?:\d{2}(?::\d{2}(?::\d{2}(?:\.\d*)?)?)?)?n?",
-                                # time, minute, second
-                                r"\d{2}:\d{2}(?::\d{2}(?:\.\d{3})?)?[tuv]?",
+                                # time, minute, second: a fraction of any length, and
+                                # past three places a timespan (12:00:00.123456789)
+                                r"\d{2,}:\d{2}(?::\d{2}(?:\.\d*)?)?[tuvn]?",
                             ]
                         )
                         + ")"
@@ -252,7 +258,7 @@ def grammar():
                     {"name": "constant.numeric.byte.q", "match": BEFORE + r"0x[0-9a-fA-F]*" + AFTER},
                     {
                         "name": "constant.numeric.q",
-                        "match": BEFORE + r"(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?[hijefcnuvt]?" + AFTER,
+                        "match": BEFORE + r"(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?[hijefcnuvt]?" + AFTER,
                     },
                 ],
             },
@@ -292,13 +298,14 @@ def grammar():
                 "after an operand the same characters are each (f') and assignment (a:).",
                 "patterns": [
                     {
-                        "comment": "`:x` returns. `;:;` is the assignment function in @[d;i;:;v].",
-                        "match": r"(?:^|(?<=[\[;{]))\s*(:)(?![:/\\'])(?!\s*[;\]])",
+                        "comment": "`:x` returns. `;:;` is the assignment function in @[d;i;:;v]. "
+                        "\\G is where a lambda's parameter list ends: {[x]:x} returns too.",
+                        "match": r"(?:^|\G|(?<=[\[;{]))\s*(:)(?![:/\\'])(?!\s*[;\]])",
                         "captures": {"1": {"name": "keyword.control.flow.return.q"}},
                     },
                     {
                         "comment": "`'x` signals. A space does not decide it - `{x} '[1 2]` is each.",
-                        "match": r"(?:^|(?<=[\[(;{:]))\s*(')(?![:/\\])",
+                        "match": r"(?:^|\G|(?<=[\[(;{:]))\s*(')(?![:/\\])",
                         "captures": {"1": {"name": "keyword.control.flow.signal.q"}},
                     },
                 ],

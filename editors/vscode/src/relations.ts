@@ -293,7 +293,9 @@ export function onPath(
     return binary;
   }
   const endings = win32.extname(binary) === "" ? [".com", ".exe"] : [""];
-  for (const dir of (path ?? "").split(";")) {
+  for (const entry of (path ?? "").split(";")) {
+    // An entry may be quoted, as libuv reads it too.
+    const dir = entry.replace(/"/g, "");
     // An entry that is not absolute is read against the directory the
     // program starts in, which is the one being kept out.
     if (!win32.isAbsolute(dir)) {

@@ -79,11 +79,17 @@ cases("source.k", [
   ["an escape k does not define is illegal", 's:"a\\qb"', "\\q", "invalid.illegal.escape.k"],
   ["a symbol", "s:`abc", "`abc", "constant.other.symbol.k"],
   ["a file handle", "h:`:data/x", "`:data/x", "constant.other.symbol.handle.k"],
+  ["a slash after a symbol's colon is in the symbol", "s:`a:b/c", "`a:b/c", "constant.other.symbol.k"],
+  ["a minus ends a handle", "h:`:a-b", "`:a", "constant.other.symbol.handle.k"],
   ["a number", "n:1.5e3", "1.5e3", "constant.numeric.k"],
   ["a date", "d:2024.01.02", "2024.01.02", "constant.numeric.temporal.k"],
   ["a timestamp", "t:2024.01.02D10:00:00.5", "2024.01.02D10:00:00.5", "constant.numeric.temporal.k"],
   ["a time", "t:10:00:00.000", "10:00:00.000", "constant.numeric.temporal.k"],
   ["a typed null", "x:0Nd", "0Nd", "constant.language.null.k"],
+  ["a time's fraction is any length", "t:10:00:00.1", "10:00:00.1", "constant.numeric.temporal.k"],
+  ["a nanosecond time is one literal", "t:12:00:00.123456789", "12:00:00.123456789", "constant.numeric.temporal.k"],
+  ["a date made a timestamp with p", "d:2024.01.02p", "2024.01.02p", "constant.numeric.temporal.k"],
+  ["an upper-case exponent", "n:1.5E3", "1.5E3", "constant.numeric.k"],
   ["a boolean vector", "b:101b", "101b", "constant.language.boolean.k"],
   ["a bracket", "f[1]", "[", "punctuation.section.brackets.k"],
   ["a parameter", "f:{[a;b] a+b}", "b", "variable.parameter.k", 0],
@@ -205,6 +211,13 @@ cases("source.q-console", [
   ["the caret", OUT, "^", "invalid.illegal.caret.q-console", 0],
 ]);
 
+test("source.q-console: a guid is one value, not hex with numbers in it", async () => {
+  // As .Q.S prints a guid column: 1?0Ng and the null guid.
+  for (const guid of ["8c6b8b64-6815-6084-0a3e-178401251b68", "00000000-0000-0000-0000-000000000000"]) {
+    assert.deepStrictEqual(await innermost("source.q-console", `g\n----\n${guid}`, guid), ["constant.other.guid.q-console"], guid);
+  }
+});
+
 test("source.q-console: a table's column names are left plain", async () => {
   const g = await registry.loadGrammar("source.q-console");
   const { tokens: line } = g.tokenizeLine(OUT.split("\n")[2], tm.INITIAL);
@@ -233,6 +246,17 @@ test("the k, quke and q-console languages and their grammars are declared", () =
     assert.strictEqual(JSON.parse(fs.readFileSync(path.join(root, grammars[id].path), "utf8")).scopeName, scope);
   }
   assert.deepStrictEqual(grammars.quke.embeddedLanguages, { "meta.embedded.block.q": "q" });
+});
+
+test("q-console claims no output channel but its own", () => {
+  // VS Code gives a channel created without a language the language that
+  // last registered the mimetype text/x-code-output - an extension's beats
+  // the built-in one - so claiming it would colour every other extension's
+  // output, and q-lint's own server log, as q console text. The query
+  // channel names its language itself.
+  for (const lang of pkg.contributes.languages) {
+    assert.ok(!(lang.mimetypes ?? []).includes("text/x-code-output"), lang.id);
+  }
 });
 
 test("the query channel is created with the q-console language", () => {

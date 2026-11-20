@@ -128,6 +128,10 @@ test("an agent's query against a real q process", { skip }, async (t) => {
     ]);
   });
 
+  await t.test("a real is the number q wrote, not its float32 widened", async () => {
+    assert.deepStrictEqual((await json("1.1 0.3 2 0N 0We")).data, [[1.1], [0.3], [2], [null], ["0w"]]);
+  });
+
   await t.test("any other value is the process's text", async () => {
     assert.deepStrictEqual(await json("6*7"), { output: "42" });
     assert.deepStrictEqual(await json('"abc"'), { output: '"abc"' });
