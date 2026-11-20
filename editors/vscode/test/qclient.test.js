@@ -11,6 +11,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { QConnection } = require("../out/qclient.js");
 const { statements } = require("../out/statements.js");
+const { GATHER, LIMITS, explorerTree, previewCode, readGathered } = require("../out/explorer.js");
 
 const Q = process.env.QLINT_TEST_Q;
 const skip = Q ? false : "QLINT_TEST_Q names no q binary";
@@ -31,11 +32,13 @@ function freePort() {
   });
 }
 
-/// Start a q process listening on a free port; resolves once it accepts.
-async function startQ() {
+/// Start a q process running `source` - a script, or a function of the
+/// temporary directory it runs in giving one - listening on a free port;
+/// resolves once it accepts.
+async function startQ(source = SERVER) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-qclient-"));
   const script = path.join(dir, "server.q");
-  fs.writeFileSync(script, SERVER);
+  fs.writeFileSync(script, typeof source === "function" ? source(dir) : source);
   const port = await freePort();
   const child = spawn(`${Q} ${script} -p ${port}`, { shell: true, stdio: ["ignore", "ignore", "pipe"], detached: true });
   for (let i = 0; i < 100; i++) {
@@ -168,4 +171,97 @@ test("a connect that gets no answer gives up", { skip }, async () => {
   await assert.rejects(QConnection.open({ host: "127.0.0.1", port: silent.address().port }, 300), /no answer/);
   assert.ok(Date.now() - started < 1500);
   silent.close();
+});
+
+// A process with what the explorer shows (#854): namespaces nested two deep,
+// tables in memory, a keyed one, a partitioned one on disk, functions, and a
+// namespace of 3,000 names.
+const EXPLORED = (dir) => `
+{[d;dt] .Q.dd[d;dt,\`trade\`] set .Q.en[d] ([] sym:\`a\`b\`c; px:1.5 2.5 3.5)}[hsym \`$"${dir}/hdb"] each 2024.01.01 2024.01.02;
+system "l ${dir}/hdb";
+t:([] a:1 2 3);
+kt:([k:1 2] v:3 4);
+f:{[x;y] x+y};
+p:f[1];
+v:1 2 3f;
+.ns.g:{[a] a};
+.ns.sub.z:"abc";
+.ns.sub.deep.w:42;
+{(\` sv \`.big,x) set 1} each \`$"n",/:string til 3000;
+`;
+
+/// What a process holds, as names: root, namespaces, and each namespace's.
+const NAMES = "{(key`.;key`;{key x}each` sv'`,'key`)}";
+/// The explorer's settings in these tests: what differs between kdb+ and
+/// PeachQ (`.z`, `.help`) is excluded too.
+const EXCLUDED = "q Q h j o s z help";
+
+test("the explorer's call against a real q process", { skip }, async (t) => {
+  const q = await startQ(EXPLORED);
+  t.after(() => q.stop());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  t.after(() => connection.close());
+  const before = await connection.call(NAMES);
+  const g = readGathered(await connection.call(GATHER, EXCLUDED, LIMITS));
+  const entry = (ns, name) => g.entries.find((e) => e.ns === ns && e.name === name);
+
+  await t.test("it defines nothing on the process", async () => {
+    assert.deepStrictEqual(await connection.call(NAMES), before);
+  });
+
+  await t.test("namespaces nested at any depth, the excluded ones left out", () => {
+    assert.deepStrictEqual(g.spaces.map((s) => s.ns).sort(), [".", ".big", ".ns", ".ns.sub", ".ns.sub.deep"]);
+    assert.strictEqual(g.more, 0);
+  });
+
+  await t.test("tables with their counts and columns, and a keyed table's keys", () => {
+    assert.deepStrictEqual(entry(".", "t"), {
+      ns: ".", name: "t", kind: "table", type: 98, count: 3, cols: ["a"], keys: [], params: [], partitioned: false,
+    });
+    assert.deepStrictEqual(
+      [entry(".", "kt").type, entry(".", "kt").count, entry(".", "kt").cols, entry(".", "kt").keys],
+      [99, 2, ["k", "v"], ["k"]],
+    );
+  });
+
+  await t.test("a partitioned table is counted by .Q.cn and said to be partitioned", () => {
+    const trade = entry(".", "trade");
+    assert.deepStrictEqual([trade.kind, trade.type, trade.count, trade.cols, trade.partitioned], ["table", 98, 6, ["date", "sym", "px"], true]);
+    const tables = explorerTree(g, []).find((n) => n.label === ".").children.find((c) => c.label === "Tables");
+    assert.strictEqual(tables.children.find((c) => c.label === "trade").description, "6 rows (partitioned, counted by .Q.cn) · 3 columns");
+  });
+
+  await t.test("functions with their parameters, and variables with type and count", () => {
+    assert.deepStrictEqual([entry(".", "f").kind, entry(".", "f").params, entry(".", "f").count], ["function", ["x", "y"], null]);
+    assert.deepStrictEqual([entry(".", "p").kind, entry(".", "p").type], ["function", 104]);
+    assert.deepStrictEqual([entry(".ns", "g").params], [["a"]]);
+    assert.deepStrictEqual([entry(".", "v").kind, entry(".", "v").type, entry(".", "v").count], ["variable", 9, 3]);
+    assert.deepStrictEqual([entry(".ns.sub", "z").type, entry(".ns.sub", "z").count], [10, 3]);
+    assert.deepStrictEqual([entry(".ns.sub.deep", "w").type, entry(".ns.sub.deep", "w").count], [-7, 1]);
+    // A nested namespace is a namespace, not a variable of its parent.
+    assert.strictEqual(entry(".ns", "sub"), undefined);
+  });
+
+  await t.test("bounded: the first names of a large namespace, and its total", async () => {
+    assert.deepStrictEqual(g.spaces.find((s) => s.ns === ".big"), { ns: ".big", total: 3000 });
+    assert.strictEqual(g.entries.filter((e) => e.ns === ".big").length, LIMITS[0]);
+    const few = readGathered(await connection.call(GATHER, EXCLUDED, [2, 2]));
+    assert.deepStrictEqual(few.spaces.map((s) => s.ns), [".", ".big"]);
+    assert.strictEqual(few.entries.length, 4);
+    assert.strictEqual(few.more, 1);
+  });
+
+  await t.test("with nothing excluded, the system namespaces are read too", async () => {
+    const all = readGathered(await connection.call(GATHER, "", LIMITS));
+    assert.ok(all.spaces.some((s) => s.ns === ".q"), JSON.stringify(all.spaces));
+  });
+
+  await t.test("preview shows a partitioned table's first rows", async () => {
+    const answer = await connection.query([previewCode({ kind: "table", name: "trade", partitioned: true }, 2)], SIZE);
+    assert.strictEqual(answer.ok, true, JSON.stringify(answer));
+    // A header, a rule and two rows; PeachQ also prints the column types.
+    assert.ok(answer.text.filter((l) => /\d{4}\.\d\d\.\d\d/.test(l)).length === 2, answer.text.join("\n"));
+    const kt = await connection.query([previewCode({ kind: "table", name: "kt" }, 1)], SIZE);
+    assert.ok(kt.ok && kt.text.some((l) => /^1\s*\|?\s*3/.test(l.replace(/^\|\s*/, ""))), kt.text.join("\n"));
+  });
 });

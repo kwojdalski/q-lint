@@ -103,7 +103,7 @@ to a process you add and connect to, and sends only the code you run.
 
 ## q processes and queries
 
-The **q-lint** panel in the activity bar holds two views.
+The **q-lint** panel in the activity bar holds three views.
 
 **Processes** lists the q processes you add, grouped by tag. Tags `prod`
 (or `prd`), `uat` and `dev` are coloured red, blue and green. Click a
@@ -165,6 +165,28 @@ and a string that runs onto the next line keeps the newline as `\n`. A
 `\d` line moves the console's namespace as it would a script's. The
 terminal runs your shell, which starts q, so the code goes to whatever the
 terminal is running: once q exits, it goes to the shell.
+
+**Process Explorer** shows what the connected process holds: its
+namespaces, the root first, less those in
+`q-lint.processExplorer.excludedNamespaces`; under each, its tables with
+their row counts and columns (key columns marked), its functions with their
+parameters, and its variables with their type and count. A partitioned table
+is not loaded to count it: its count is each partition's, from `.Q.cn`, and
+the row says so. It is read in one call that defines nothing on the process,
+on connect, on **Refresh Process Explorer**, and after each query when
+**Toggle Process Explorer Auto Refresh** has turned
+`q-lint.processExplorer.autoRefresh` on - never as you type. On a process
+with thousands of names it reads 100 namespaces at most and the first 500
+names of each, in sorted order, and says how many it left out. **Preview**,
+on a table or a variable, runs its first `q-lint.processExplorer.previewLimit`
+rows, or the variable, as a query. The explorer shares the query connection:
+while a query runs it waits and refreshes after, and a query sent while it
+reads waits for it.
+
+**Live completion.** While connected, completion in a q file adds the
+process's global names, as read by the explorer, to the language server's,
+and inside a qSQL statement - `select`, `exec`, `update` or `delete` ... `from
+t` - the columns of `t` first.
 
 ## q notebooks
 
@@ -300,6 +322,9 @@ nothing.
 | `q-lint.output.autoClear` | `false` | Clear the output before each result. | `q-output.cfg.autoClear` |
 | `q-lint.output.includeQuery` | `false` | Show the code above its result. | `q-output.cfg.includeQuery` |
 | `q-lint.output.ignoreNullReturn` | `false` | Show nothing when the value is `::`. | `q-output.cfg.ignoreNullReturn` |
+| `q-lint.processExplorer.excludedNamespaces` | `["q","Q","h","j","o","s"]` | Namespaces the Process Explorer and live completion leave out, with those nested in them. | - |
+| `q-lint.processExplorer.previewLimit` | `5` | Rows of a table Preview shows. | - |
+| `q-lint.processExplorer.autoRefresh` | `false` | Read the process again after each query. | - |
 
 ### Terminal settings
 
@@ -313,10 +338,8 @@ reaches the language server.
 
 ### Not here, and why
 
-q-pro's query mode and grid decimals, its process explorer and its
-discovery server are not here yet: they come with the grid and the process
-explorer (#852). `kuki` is not
-planned. Its
+q-pro's query mode and grid decimals are not here yet: they come with the
+grid (#855). Its discovery server is not planned for now, nor is `kuki`. Its
 `sourceFiles.includeGlob` is not mirrored either: the index reads every `.q`
 file `qlinter .` would - less what the configuration's `exclude` skips - and
 `q-lint.workspaceIndex.exclude` narrows it.

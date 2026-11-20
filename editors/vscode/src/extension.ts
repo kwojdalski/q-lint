@@ -17,6 +17,7 @@ import {
 import { launch, needsRestart } from "./settings";
 import { Live } from "./live";
 import { registerNotebooks } from "./notebook";
+import { ProcessExplorer } from "./explorerview";
 import { Relations } from "./relate";
 import { Serial } from "./serial";
 import { chmodSync, existsSync, statSync } from "node:fs";
@@ -65,7 +66,9 @@ function bundledServer(context: ExtensionContext): string | undefined {
   return path;
 }
 
-export async function activate(context: ExtensionContext): Promise<ReturnType<Live["api"]>> {
+export async function activate(
+  context: ExtensionContext,
+): Promise<ReturnType<Live["api"]> & { explorer: ProcessExplorer["rows"] }> {
   // Replacing the binary does not restart the server, and a window reload is
   // a blunt way to pick up a new one. This is the small way.
   context.subscriptions.push(commands.registerCommand("q-lint.restartServer", () => restart(context)));
@@ -83,10 +86,11 @@ export async function activate(context: ExtensionContext): Promise<ReturnType<Li
   // started before the server so they work when it does not.
   const live = new Live(context);
   registerNotebooks(context, live);
+  const explorer = new ProcessExplorer(context, live);
   relations = new Relations(context, () => client);
   await serial.run(() => start(context));
   relations.serverChanged();
-  return live.api();
+  return { ...live.api(), explorer: () => explorer.rows() };
 }
 
 function restart(context: ExtensionContext): Promise<void> {
