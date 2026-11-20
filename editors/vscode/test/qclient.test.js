@@ -77,6 +77,11 @@ test("queries, blocks, errors, abort and close against a real q process", { skip
   t.after(() => q.stop());
   const connection = await QConnection.open({ host: "127.0.0.1", port: q.port });
 
+  await t.test("a statement that starts with a backtick runs, not arrives as a symbol", async () => {
+    assert.deepStrictEqual(await connection.query(["`a`b"], SIZE), { ok: true, type: 11, text: ["`a`b"] });
+    assert.deepStrictEqual((await connection.query(["`c"], SIZE)).text, ["`c"]);
+  });
+
   await t.test("a line", async () => {
     assert.deepStrictEqual(await connection.query(["1+1"], SIZE), { ok: true, type: -7, text: ["2"] });
   });

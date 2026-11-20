@@ -37,6 +37,17 @@ const CAPABILITY = 3;
 const SYNC = 1;
 const RESPONSE = 2;
 
+/// A list of statements as the codec must be given it. The codec sends a
+/// string that starts with a backtick as a symbol - "`a`b" arrives as the
+/// symbol `a`b, which `value` cannot run - so such a statement goes with a
+/// space in front, which q reads past. Anything that is not a list of
+/// strings goes as it is.
+export function statementsOut(arg: unknown): unknown {
+  return Array.isArray(arg) && arg.every((s) => typeof s === "string")
+    ? arg.map((s: string) => (s.startsWith("`") ? ` ${s}` : s))
+    : arg;
+}
+
 export class QConnection {
   private buffer: Buffer = Buffer.alloc(0);
   private pending: { resolve: (v: unknown) => void; reject: (e: Error) => void } | undefined;
@@ -140,7 +151,8 @@ export class QConnection {
   /// what q answers. One at a time: q answers a handle's messages in order,
   /// so a second would only wait behind the first.
   call(expression: string, ...args: unknown[]): Promise<unknown> {
-    const message: Buffer = serialize(args.length === 0 ? expression : [expression, ...args]);
+    const sent = args.map(statementsOut);
+    const message: Buffer = serialize(sent.length === 0 ? expression : [expression, ...sent]);
     message.writeUInt8(SYNC, 1);
     return this.send(message);
   }
