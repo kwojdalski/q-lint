@@ -187,11 +187,16 @@ def grammar():
             "symbol": {
                 "patterns": [
                     {
-                        "comment": "A file or network handle: `:path/to/file, `:host:port.",
-                        "match": r"`:[A-Za-z0-9_.:/\-]*",
+                        "comment": "A file or network handle: `:path/to/file, `:host:port. "
+                        "A minus is not in one: `:a-b is `:a minus b.",
+                        "match": r"`:[A-Za-z0-9_.:/]*",
                         "name": "constant.other.symbol.handle.q",
                     },
-                    {"match": r"`[A-Za-z0-9_.:]*", "name": "constant.other.symbol.q"},
+                    {
+                        "comment": "Past a colon a symbol takes slashes too: `a:b/c is one symbol.",
+                        "match": r"`[A-Za-z0-9_.]*(?::[A-Za-z0-9_.:/]*)?",
+                        "name": "constant.other.symbol.q",
+                    },
                 ],
             },
             "lambda": {

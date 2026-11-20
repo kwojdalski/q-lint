@@ -62,6 +62,10 @@ const cases = [
   ["a builtin is a builtin", "r:sum 1 2", "sum", "support.function.builtin.q"],
   ["a .z name is the system's", "r:.z.p", ".z.p", "support.function.system.q"],
   ["a file handle is a handle", "h:`:data/x", "`:data/x", "constant.other.symbol.handle.q"],
+  // As KDB-X parses them: past a colon a symbol takes slashes, and a minus
+  // ends a handle (`:a-b is `:a minus b).
+  ["a slash after a symbol's colon is in the symbol", "s:`a:b/c", "`a:b/c", "constant.other.symbol.q"],
+  ["a minus ends a handle", "h:`:a-b", "`:a", "constant.other.symbol.handle.q"],
   ["an escape q defines is an escape", 's:"a\\tb"', "\\t", "constant.character.escape.q"],
   ["one it does not is illegal", 's:"a\\qb"', "\\q", "invalid.illegal.escape.q"],
   ["a temporal literal is temporal", "d:2024.01.02", "2024.01.02", "constant.numeric.temporal.q"],

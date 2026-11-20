@@ -79,6 +79,8 @@ cases("source.k", [
   ["an escape k does not define is illegal", 's:"a\\qb"', "\\q", "invalid.illegal.escape.k"],
   ["a symbol", "s:`abc", "`abc", "constant.other.symbol.k"],
   ["a file handle", "h:`:data/x", "`:data/x", "constant.other.symbol.handle.k"],
+  ["a slash after a symbol's colon is in the symbol", "s:`a:b/c", "`a:b/c", "constant.other.symbol.k"],
+  ["a minus ends a handle", "h:`:a-b", "`:a", "constant.other.symbol.handle.k"],
   ["a number", "n:1.5e3", "1.5e3", "constant.numeric.k"],
   ["a date", "d:2024.01.02", "2024.01.02", "constant.numeric.temporal.k"],
   ["a timestamp", "t:2024.01.02D10:00:00.5", "2024.01.02D10:00:00.5", "constant.numeric.temporal.k"],
