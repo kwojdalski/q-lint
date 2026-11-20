@@ -36,6 +36,7 @@ const { EXPLORER, readExplorer } = require("../out/explorer.js");
 const relations = require("../out/relations.js");
 const { NOTEBOOK } = require("../out/qnb.js");
 const { needsRestart } = require("../out/settings.js");
+const { AGENT } = require("../out/agent.js");
 
 test("a statement is a line and the indented lines after it", () => {
   assert.deepStrictEqual(statements("a:1\nb:a+1\nb*10"), ["a:1", "b:a+1", "b*10"]);
@@ -228,6 +229,7 @@ test("package.json declares exactly the commands the extension registers", () =>
     NOTEBOOK.exportCommand,
     RESULTS.exportCsv,
     RESULTS.setRowLimit,
+    AGENT.copyLabel,
     "q-lint.restartServer",
   ].sort();
   assert.deepStrictEqual(declared, registered);

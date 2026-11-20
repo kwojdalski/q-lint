@@ -67,6 +67,8 @@ export interface HistoryEntry {
   millis: number;
   outcome: "ok" | "error" | "aborted";
   error?: string;
+  /// Sent by an agent through the language-model tool (#886).
+  agent?: true;
 }
 
 type From = "line" | "selection" | "block";
@@ -167,13 +169,13 @@ class HistoryView implements TreeDataProvider<HistoryEntry> {
     const first = entry.code.split("\n")[0];
     const item = new TreeItem(first.length > 80 ? `${first.slice(0, 79)}…` : first, TreeItemCollapsibleState.None);
     const when = new Date(entry.at);
-    item.description = `${entry.process} · ${when.toLocaleTimeString()} · ${entry.millis} ms`;
+    item.description = `${entry.agent ? "agent · " : ""}${entry.process} · ${when.toLocaleTimeString()} · ${entry.millis} ms`;
     item.iconPath = new ThemeIcon(
       entry.outcome === "ok" ? "pass" : entry.outcome === "error" ? "error" : "circle-slash",
       new ThemeColor(entry.outcome === "ok" ? "testing.iconPassed" : entry.outcome === "error" ? "errorForeground" : "disabledForeground"),
     );
     const tooltip = new MarkdownString();
-    tooltip.appendMarkdown(`${entry.process}, ${when.toLocaleString()}, ${entry.millis} ms`);
+    tooltip.appendMarkdown(`${entry.process}, ${when.toLocaleString()}, ${entry.millis} ms${entry.agent ? ", run by an agent" : ""}`);
     if (entry.error !== undefined) {
       tooltip.appendMarkdown(`\n\n'${entry.error}`);
     }
@@ -404,6 +406,11 @@ export class Live {
 
   activeLabel(): string | undefined {
     return this.connection?.isOpen ? this.active?.label : undefined;
+  }
+
+  /// The connected process, as connected to: a discovered one's label qualified.
+  activeProcess(): Process | undefined {
+    return this.connection?.isOpen ? this.active : undefined;
   }
 
   history(): HistoryEntry[] {
@@ -702,7 +709,7 @@ export class Live {
 
   // --- connections
 
-  private async connectTo(row?: ProcessArg): Promise<boolean> {
+  async connectTo(row?: ProcessArg): Promise<boolean> {
     const process = await this.chosen(row, "Connect to which q process?", true);
     if (process === undefined) {
       return false;
@@ -939,7 +946,7 @@ export class Live {
     );
   }
 
-  private async record(entry: HistoryEntry): Promise<void> {
+  async record(entry: HistoryEntry): Promise<void> {
     this.queries = [entry, ...this.history()].slice(0, HISTORY_LIMIT);
     this.historyView.refresh();
     await this.context.globalState.update(HISTORY_KEY, this.queries);

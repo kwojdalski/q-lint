@@ -395,6 +395,18 @@
             "markdownDescription": "Which rows of a table larger than `#q-lint.notebook.rowLimit#` a notebook cell shows: its first or its last."
           }
         }
+      },
+      {
+        "title": "q-lint: agents",
+        "properties": {
+          "q-lint.agent.queryTimeout": {
+            "type": "integer",
+            "default": 30,
+            "minimum": 0,
+            "order": 500,
+            "markdownDescription": "Seconds a query run by an agent through the **Run q Query** tool may take. A query that takes longer is aborted, as **Abort Current Query** aborts one, and the agent is told it timed out. `0` sets no limit."
+          }
+        }
       }
     ],
     "commands": [
@@ -454,6 +466,12 @@
         "title": "Tag Process",
         "category": "q-lint",
         "icon": "$(tag)"
+      },
+      {
+        "command": "q-lint.copyAgentLabel",
+        "title": "Copy Label for Agent Query",
+        "category": "q-lint",
+        "icon": "$(copy)"
       },
       {
         "command": "q-lint.importProcesses",
@@ -753,6 +771,11 @@
           "group": "2_edit@2"
         },
         {
+          "command": "q-lint.copyAgentLabel",
+          "when": "view == q-lint.processes && viewItem =~ /^(process|discovered)/",
+          "group": "2_edit@3"
+        },
+        {
           "command": "q-lint.deleteProcess",
           "when": "view == q-lint.processes && viewItem =~ /^process/",
           "group": "3_delete@1"
@@ -954,6 +977,33 @@
         "command": "q-lint.sendBlockToTerminal",
         "key": "ctrl+shift+e",
         "when": "editorTextFocus && editorLangId == q"
+      }
+    ],
+    "languageModelTools": [
+      {
+        "name": "q-lint_runQuery",
+        "displayName": "Run q Query",
+        "toolReferenceName": "qQuery",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(database)",
+        "userDescription": "Run a q query on the active q process, or on one named by its label, and get the result as JSON.",
+        "modelDescription": "Runs q (kdb+) code on a q process the user has set up in the q-lint extension, and returns the result as JSON. Without `process`, the code runs on the active connection, the process the user is connected to; with `process`, a label from the user's q-lint process list (a process listed by a discovery server is `server/label`), q-lint connects to that process first and it becomes the active connection. The code is run as the process's console runs a script: each line is a statement, indented lines continue the one above, and the value of the last statement is returned. Nothing is defined on the process except what the code itself defines, so prefer queries that only read. The user confirms every call, and a query that runs longer than the user's timeout (30 s unless set) is aborted. The result is one of three JSON objects. A table, keyed table, dictionary (as columns `key` and `value`) or list (as one column `value`) gives `{columns, types, rowCount, data, keyColumns?, truncated?}`: `columns` the column names, `types` their q types, `rowCount` how many rows the whole result has, `data` its first 200 rows as arrays of values, `keyColumns` how many leading columns are keys, and `truncated: true` when `data` holds fewer rows than `rowCount`. In `data`, booleans and numbers are JSON values and nulls are null; temporal values (timestamps, dates, times, timespans), symbols, guids and nested values are strings as q prints them, and so are longs beyond 2^53 and infinities (`0W`, `-0w`). Any other value - an atom, a string, a function - gives `{output}`, q's console text of it. A failure gives `{error, trace?}`: q's error and its backtrace, or why nothing ran - no process connected, an unknown label (the error lists the known labels), a timeout or a cancellation. Ask for only the rows and columns needed (`select ... where ...`, `n#t`), since at most 200 rows come back.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The q code to run. Several lines run in order, as a script; the last statement's value is returned."
+            },
+            "process": {
+              "type": "string",
+              "description": "The label of the q process to run on, as the user's q-lint process list names it (`server/label` for a discovered one). Omit to use the active connection."
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
       }
     ]
   },
