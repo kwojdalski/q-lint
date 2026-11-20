@@ -160,6 +160,18 @@
           "order": 23,
           "markdownDescription": "Offer the outline, workspace symbols, **Go to Definition**, **Find All References**, occurrence highlights and renaming a lambda's parameter or local - all read from the source, never by running it. Off, q-lint announces none of them: turn it off when another q extension already navigates and both would answer."
         },
+        "q-lint.help.enable": {
+          "type": "boolean",
+          "default": true,
+          "order": 24,
+          "markdownDescription": "Show a hover and signature help: for a name the workspace defines, its parameters, the comment above its definition and its file; for a word of q itself, how it is written and what it gives. Read from the source and a built-in catalogue, never from a running q. Off, q-lint announces neither."
+        },
+        "q-lint.completion.enable": {
+          "type": "boolean",
+          "default": false,
+          "order": 25,
+          "markdownDescription": "Complete names as you type: a lambda's parameters and locals, the names the workspace's `.q` files define, and q's own words. It knows no table's columns and nothing only a running process holds. Off by default, because an editor that is told a server completes stops offering the words already in the file."
+        },
         "q-lint.workspaceIndex.enable": {
           "type": "boolean",
           "default": true,

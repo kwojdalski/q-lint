@@ -9,7 +9,9 @@ VS Code client for it.
 to run on every keystroke in an editor, and it bounds every editor feature:
 navigation (symbols, definition, references, rename of a local) answers from
 the names the source spells and nothing else, so a name built at run time is
-not found and a global is never renamed. A feature that could only be right by
+not found and a global is never renamed; hover, signature help and completion
+answer from the same source and from the catalogue in `src/builtins.json`, so
+they know no column and no value. A feature that could only be right by
 evaluating input is a change to the premise, not a feature.
 
 ## Verify with

@@ -32,7 +32,10 @@
 //! textDocument/semanticTokens/full. And navigation, in `navigate`: the
 //! outline (textDocument/documentSymbol), workspace/symbol, go to definition,
 //! find references, textDocument/documentHighlight, and a rename of a
-//! lambda's own parameters and locals - never of a global.
+//! lambda's own parameters and locals - never of a global. And help, in
+//! `help`: textDocument/hover, textDocument/signatureHelp and - only when
+//! the client's options ask for it - textDocument/completion, from the
+//! source and the catalogue of q's own words.
 //!
 //! Around those: each diagnostic links its code to that rule's row in the
 //! reference (`codeDescription`); beside its fix, or without one, a finding
@@ -90,11 +93,13 @@
 //! was started with - `--profile`, `--select` and the rest - are the
 //! command line's, and keep their meaning.
 //!
-//! Not here: completion and hover. Those need to know what a name holds,
-//! and this crate reads source text without executing it - the property that
-//! makes it safe to run on every keystroke. Claiming those capabilities and
-//! answering emptily is worse than not claiming them: an editor that is told
-//! a server provides completion stops offering its own word-based fallback.
+//! Not here: what a name holds. This crate reads source text without
+//! executing it, the property that makes it safe to run on every keystroke.
+//! So a hover shows where a name is defined and what its definition says,
+//! never its value, and completion offers no table's columns. That is why
+//! completion is announced only when asked for: an editor that is told a
+//! server completes stops offering its own word-based fallback, which does
+//! know the column typed three lines up (see `help`).
 //! Formatting does not share the problem: its answer comes from rules that
 //! read text, and when there is nothing to fix, an empty answer is the true
 //! one. Nor does navigation: where a name is written and where it is read is
@@ -129,6 +134,7 @@ const SERVER_NOT_INITIALIZED: i64 = -32002;
 /// carry out, with the reason as its message - a rename it refuses.
 const REQUEST_FAILED: i64 = -32803;
 
+mod help;
 mod navigate;
 
 /// Open documents, by URI. The editor is the authority on their contents from
@@ -499,6 +505,7 @@ fn workspace_roots(params: &Value) -> Vec<String> {
 /// {"lint": {"select": [], "ignore": [], "run": "onType", "severity": {}},
 ///  "fixes": {"unsafe": true}, "format": {"enable": true},
 ///  "semanticTokens": {"enable": true}, "navigation": {"enable": true},
+///  "help": {"enable": true}, "completion": {"enable": false},
 ///  "workspaceIndex": {"enable": true, "exclude": []}}
 /// ```
 ///
@@ -522,6 +529,13 @@ struct Options {
     /// extension answers them already, and would otherwise list each
     /// definition twice.
     navigation: bool,
+    /// Answer hover and signature help.
+    help: bool,
+    /// Answer completion. Off unless asked for: an editor told a server
+    /// completes stops offering the words of the open buffers, and the
+    /// names offered here - the workspace's, a lambda's locals and q's own -
+    /// leave out the columns and keys those words include.
+    completion: bool,
     /// A diagnostic severity by code or prefix; the longest that names a
     /// code decides.
     severity: Vec<(String, i64)>,
@@ -537,6 +551,8 @@ impl Default for Options {
             index: true,
             index_exclude: vec![],
             navigation: true,
+            help: true,
+            completion: false,
             severity: vec![],
         }
     }
@@ -564,6 +580,8 @@ impl Options {
                         "semanticTokens",
                         "workspaceIndex",
                         "navigation",
+                        "help",
+                        "completion",
                     ]
                     .contains(&key.as_str())
                         && !value.is_object()
@@ -590,6 +608,8 @@ impl Options {
         options.semantic_tokens = flag("/semanticTokens/enable", true);
         options.index = flag("/workspaceIndex/enable", true);
         options.navigation = flag("/navigation/enable", true);
+        options.help = flag("/help/enable", true);
+        options.completion = flag("/completion/enable", false);
         match init.pointer("/lint/run") {
             None | Some(Value::Null) => {}
             Some(v) if v == "onType" => {}
@@ -701,6 +721,7 @@ pub fn serve(
     // Whether the client takes the outline as `DocumentSymbol`s, and asks
     // before a rename what would be renamed.
     let mut nested_symbols = false;
+    let mut help_client = help::Client::default();
     let mut next_request: u64 = 0;
     // Whether the client takes file watchers the server registers - Neovim
     // and Helix send didChangeWatchedFiles only for those (#792) - and ones
@@ -813,6 +834,8 @@ pub fn serve(
                         client("rename/prepareSupport"),
                     );
                 }
+                help_client = help::Client::read(&params);
+                help::announce(&mut result["capabilities"], opts.help, opts.completion);
                 send(writer, json!({"id": id, "result": result}))?;
                 initialized = true;
             }
@@ -876,7 +899,10 @@ pub fn serve(
                 | "textDocument/documentHighlight"
                 | "textDocument/prepareRename"
                 | "textDocument/rename"
-                | "textDocument/foldingRange",
+                | "textDocument/foldingRange"
+                | "textDocument/hover"
+                | "textDocument/signatureHelp"
+                | "textDocument/completion",
                 id,
             ) if !params["textDocument"]["uri"].is_string() => {
                 let message = format!("{method}: params.textDocument.uri must be a string");
@@ -1027,6 +1053,28 @@ pub fn serve(
             ("textDocument/foldingRange", Some(id)) => {
                 match guarded(|| folding_ranges(&params, &docs)) {
                     Ok(ranges) => send(writer, json!({"id": id, "result": ranges}))?,
+                    Err(panic) => send(writer, internal_error(id, &panic))?,
+                }
+            }
+            (
+                "textDocument/hover" | "textDocument/signatureHelp" | "textDocument/completion",
+                Some(id),
+            ) => {
+                // Asked of a server that did not announce it, a request is
+                // answered with nothing rather than refused.
+                let on = match method.as_str() {
+                    "textDocument/completion" => opts.completion,
+                    _ => opts.help,
+                };
+                let answer = guarded(|| {
+                    if !on {
+                        return Value::Null;
+                    }
+                    let sources = navigate::Sources::new(&docs, &idx);
+                    help::answer(&method, &params, &sources, help_client)
+                });
+                match answer {
+                    Ok(result) => send(writer, json!({"id": id, "result": result}))?,
                     Err(panic) => send(writer, internal_error(id, &panic))?,
                 }
             }

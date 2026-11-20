@@ -45,18 +45,18 @@ const MAX_SYMBOLS: usize = 512;
 /// them, and every other indexed file as it is on disk.
 pub(super) struct Sources<'a> {
     docs: &'a Documents,
-    idx: &'a Index,
+    pub(super) idx: &'a Index,
     /// The open `.q` buffers by their key in the index, each with the URI
     /// the client knows it by - which a location in it has to repeat.
     open: HashMap<String, &'a str>,
 }
 
 /// Where a request's `position` is: in which document, and at which byte.
-struct Cursor<'a> {
+pub(super) struct Cursor<'a> {
     uri: &'a str,
-    key: String,
-    text: &'a str,
-    offset: usize,
+    pub(super) key: String,
+    pub(super) text: &'a str,
+    pub(super) offset: usize,
 }
 
 impl<'a> Sources<'a> {
@@ -78,7 +78,7 @@ impl<'a> Sources<'a> {
         is_q_uri(uri).then_some((uri.as_str(), text.as_str()))
     }
 
-    fn cursor(&self, params: &Value) -> Option<Cursor<'a>> {
+    pub(super) fn cursor(&self, params: &Value) -> Option<Cursor<'a>> {
         let (uri, text) = self.document(params)?;
         let position = &params["position"];
         let offset = Lines::new(text).offset(
@@ -94,14 +94,14 @@ impl<'a> Sources<'a> {
     }
 
     /// The indexed files, in an order that does not change between requests.
-    fn keys(&self) -> Vec<&'a str> {
+    pub(super) fn keys(&self) -> Vec<&'a str> {
         let mut keys: Vec<&str> = self.idx.files.keys().map(String::as_str).collect();
         keys.sort_unstable();
         keys
     }
 
     /// A file's URI and text: the open buffer's, or the disk's.
-    fn text(&self, key: &str) -> Option<(String, Cow<'a, str>)> {
+    pub(super) fn text(&self, key: &str) -> Option<(String, Cow<'a, str>)> {
         if let Some(uri) = self.open.get(key) {
             return Some((uri.to_string(), Cow::Borrowed(self.docs[*uri].as_str())));
         }
@@ -112,7 +112,7 @@ impl<'a> Sources<'a> {
         ))
     }
 
-    fn placement(&self, key: &str) -> Placement {
+    pub(super) fn placement(&self, key: &str) -> Placement {
         self.idx
             .files
             .get(key)
@@ -125,7 +125,12 @@ impl<'a> Sources<'a> {
     /// before the file's first `\d` - that name in each context the file is
     /// loaded in. A bare read that none of those defines is `.q`'s, when
     /// `.q` has it: q looks there from every context.
-    fn names(&self, text: &str, mention: &Mention, placement: &Placement) -> Vec<String> {
+    pub(super) fn names(
+        &self,
+        text: &str,
+        mention: &Mention,
+        placement: &Placement,
+    ) -> Vec<String> {
         let names = placed(&mention.name, mention.implicit, placement);
         let word = &text[mention.at..mention.at + mention.len];
         if mention.definition.is_none()
@@ -142,7 +147,7 @@ impl<'a> Sources<'a> {
 
     /// The global at byte `at` of the cursor's document, as the names it
     /// answers to.
-    fn targets(&self, cursor: &Cursor, at: usize) -> HashSet<String> {
+    pub(super) fn targets(&self, cursor: &Cursor, at: usize) -> HashSet<String> {
         let placement = self.placement(&cursor.key);
         mentions(cursor.text)
             .iter()
@@ -222,7 +227,7 @@ fn placed(name: &str, implicit: bool, placement: &Placement) -> Vec<String> {
         .collect()
 }
 
-fn range(lines: &Lines, at: usize, len: usize) -> Value {
+pub(super) fn range(lines: &Lines, at: usize, len: usize) -> Value {
     json!({"start": lines.json(at), "end": lines.json(at + len)})
 }
 

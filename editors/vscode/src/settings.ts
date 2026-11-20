@@ -40,6 +40,8 @@ export interface InitializationOptions {
   format: { enable: boolean };
   semanticTokens: { enable: boolean };
   navigation: { enable: boolean };
+  help: { enable: boolean };
+  completion: { enable: boolean };
   workspaceIndex: { enable: boolean; exclude: string[] };
 }
 
@@ -100,6 +102,8 @@ export function launch(settings: Settings, folder: string | undefined): Launch {
       format: { enable: settings.get<boolean>("format.enable", true) },
       semanticTokens: { enable: settings.get<boolean>("semanticTokens.enable", true) },
       navigation: { enable: settings.get<boolean>("navigation.enable", true) },
+      help: { enable: settings.get<boolean>("help.enable", true) },
+      completion: { enable: settings.get<boolean>("completion.enable", false) },
       workspaceIndex: {
         enable: settings.get<boolean>("workspaceIndex.enable", true),
         exclude: strings(settings, "workspaceIndex.exclude"),
@@ -121,6 +125,8 @@ const RESTARTING = [
   "format",
   "semanticTokens",
   "navigation",
+  "help",
+  "completion",
   "workspaceIndex",
 ];
 
