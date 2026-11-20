@@ -146,6 +146,26 @@ running the query, and the new connection is made once it is free.
 outcome; the button on a row runs it again on the active connection, and
 **Clear Query History** empties it.
 
+**q terminal.** With a q file open:
+- **Run Code from Terminal**, in the editor's run menu: saves the file and
+  starts `q-lint.terminal.qBinary` on it in a terminal named after the
+  file, in the workspace folder. Running it again closes that terminal and
+  starts a fresh q.
+- **Send Current Line to Terminal**, `ctrl+shift+q`.
+- **Send Current Selection to Terminal**, `ctrl+shift+r`: the current line
+  when nothing is selected.
+- **Send Current Block to Terminal**, `ctrl+shift+e`.
+
+The code goes to the last q terminal q-lint started, and with none open a
+new one starts `q-lint.terminal.qBinary` with no file. It is cut into
+statements as a query is, and each statement is sent as one line, since q's
+console reads one line per statement: its continuation lines are joined
+with a space, as q joins them in a script, a trailing `/` comment is cut,
+and a string that runs onto the next line keeps the newline as `\n`. A
+`\d` line moves the console's namespace as it would a script's. The
+terminal runs your shell, which starts q, so the code goes to whatever the
+terminal is running: once q exits, it goes to the shell.
+
 ## Requirements
 
 None on macOS (Apple Silicon and Intel), Linux x64 or Windows x64: the
@@ -222,11 +242,21 @@ nothing.
 | `q-lint.output.includeQuery` | `false` | Show the code above its result. | `q-output.cfg.includeQuery` |
 | `q-lint.output.ignoreNullReturn` | `false` | Show nothing when the value is `::`. | `q-output.cfg.ignoreNullReturn` |
 
+### Terminal settings
+
+Read when a q terminal starts, so a change applies to the next one. None
+reaches the language server.
+
+| Setting | Default | What it does | q-pro |
+| --- | --- | --- | --- |
+| `q-lint.terminal.qBinary` | `"q"` | The q binary a terminal starts: a name on `PATH` or a path. It is quoted for the terminal's shell (POSIX, PowerShell or cmd), so it names one program, not a command with arguments. | `q-terminal.cfg.qBinary` |
+| `q-lint.terminal.envPath` | `""` | A file of `NAME=value` lines set for q, such as `QHOME` and `QLIC`. They go on the command line that starts q (`NAME=value q`, `$env:NAME=` in PowerShell, `set` in cmd), so they win over what your shell's startup files set, and show there. Relative to the workspace folder. It is read, not run as a shell script as q-pro's is: `#` lines are comments, `export ` is allowed, quotes around a value are dropped, and nothing is expanded: `$HOME` stays `$HOME`. | `q-terminal.cfg.envPath` |
+
 ### Not here, and why
 
-q-pro's query mode and grid decimals, its q binary and environment file, its
-process explorer and its discovery server are not here yet: they come with
-the grid, the terminal and the process explorer (#852). `kuki` is not
+q-pro's query mode and grid decimals, its process explorer and its
+discovery server are not here yet: they come with the grid and the process
+explorer (#852). `kuki` is not
 planned. Its
 `sourceFiles.includeGlob` is not mirrored either: the index reads every `.q`
 file `qlinter .` would - less what the configuration's `exclude` skips - and
