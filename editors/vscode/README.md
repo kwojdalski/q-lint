@@ -178,7 +178,9 @@ disk. The commands:
   periodic fetch leaves it alone until it is reloaded.
 
 A fetch waits 10 seconds at most, and takes only a 2xx `application/json`
-answer of 5 MB or less. Why one failed - no answer, a status, the wrong
+answer of 5 MB or less, read as UTF-8 or the charset it names. It follows
+up to 20 redirects, and sends the auth header only to the server's own
+origin. Why one failed - no answer, a status, the wrong
 content type, too large, not JSON - shows under the server's row, as do the
 entries it skipped and why; nothing pops up.
 
@@ -188,7 +190,8 @@ server lists. Its row shows its own label, but once connected it is
 Process**'s argument - so the two are never taken for each other. A bare
 label names a saved process first, then a discovered one if only one server
 lists it. A discovered process with a `user` asks for its password on the
-first connect, and keeps it in secret storage under `server/label`.
+first connect, and keeps it in secret storage under `server/label`; one
+that fails to connect is forgotten, and asked for again on the next.
 
 **Querying.** With a q file open:
 - **Query Current Line**, `ctrl+q`.
@@ -372,7 +375,8 @@ namespaces, the root first, less those in
 their row counts and columns (key columns marked), its functions with their
 parameters, and its variables with their type and count. A partitioned table
 is not loaded to count it: its count is each partition's, from `.Q.cn`, and
-the row says so. It is read in one call that defines nothing on the process,
+the row says so; one it cannot count (a partition missing its directory) is
+shown not counted. It is read in one call that defines nothing on the process,
 on connect, on **Refresh Process Explorer**, and after each query when
 **Toggle Process Explorer Auto Refresh** has turned
 `q-lint.processExplorer.autoRefresh` on - never as you type. On a process
@@ -393,7 +397,7 @@ your browser.
 **Live completion.** While connected, completion in a q file adds the
 process's global names, as read by the explorer, to the language server's,
 and inside a qSQL statement - `select`, `exec`, `update` or `delete` ... `from
-t` - the columns of `t` first.
+t` - the columns of `t` first. It adds nothing inside a string or a comment.
 
 **Agents.** The **Run q Query** language-model tool (`q-lint_runQuery`,
 `#qQuery` in a chat prompt) lets Copilot and other agents run a q query and
