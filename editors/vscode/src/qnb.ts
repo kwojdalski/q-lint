@@ -17,8 +17,9 @@
 // one line is a change to one line of the file. A code cell is q unless it
 // names a `language`. An output item is `text` when its bytes are UTF-8 and
 // `base64` otherwise. `execution`, `outputs` and `metadata` are written only
-// when there is something in them. Saving what was opened gives the same
-// file back.
+// when there is something in them. A field this extension does not know,
+// on the file or on a cell, is kept and written back after the ones it
+// does. Saving what was opened gives the same file back.
 //
 // A file that is not one is refused with what is wrong with it, never read as
 // an empty notebook that a save would then write over it.
@@ -62,11 +63,15 @@ export interface QnbCell {
   outputs?: QnbOutput[];
   execution?: QnbExecution;
   metadata?: Record<string, unknown>;
+  /// The cell's fields this extension does not know, kept for the save.
+  extra?: Record<string, unknown>;
 }
 
 export interface Qnb {
   cells: QnbCell[];
   metadata?: Record<string, unknown>;
+  /// The file's fields this extension does not know, kept for the save.
+  extra?: Record<string, unknown>;
 }
 
 export class QnbError extends Error {}
@@ -74,6 +79,25 @@ export class QnbError extends Error {}
 type Json = Record<string, unknown>;
 
 const isObject = (v: unknown): v is Json => typeof v === "object" && v !== null && !Array.isArray(v);
+
+const FILE_FIELDS = ["qnb", "cells", "metadata"];
+const CELL_FIELDS = ["kind", "source", "language", "outputs", "execution", "metadata"];
+
+/// The fields of `json` not in `known`, as `{extra}`, or nothing when none.
+function unknown(json: Json, known: string[]): { extra?: Json } {
+  const extra = Object.fromEntries(Object.entries(json).filter(([key]) => !known.includes(key)));
+  return Object.keys(extra).length > 0 ? { extra } : {};
+}
+
+/// `extra`'s fields added to `out`, less any `out` has a field of its own for.
+function withExtra(out: Json, extra: Json | undefined, known: string[]): Json {
+  for (const [key, value] of Object.entries(extra ?? {})) {
+    if (!known.includes(key)) {
+      out[key] = value;
+    }
+  }
+  return out;
+}
 
 /// Read a `.qnb`. An empty file is a new, empty notebook; anything else that
 /// is not a notebook throws a `QnbError` saying where it is wrong. A byte
@@ -103,7 +127,7 @@ export function parseQnb(raw: string): Qnb {
     throw new QnbError("not a q notebook: \"cells\" is missing or not a list");
   }
   const cells = json.cells.map((cell, i) => readCell(cell, `cell ${i + 1}`));
-  return { cells, ...(isObject(json.metadata) ? { metadata: json.metadata } : {}) };
+  return { cells, ...(isObject(json.metadata) ? { metadata: json.metadata } : {}), ...unknown(json, FILE_FIELDS) };
 }
 
 function readCell(raw: unknown, where: string): QnbCell {
@@ -159,7 +183,7 @@ function readCell(raw: unknown, where: string): QnbCell {
   if (isObject(raw.metadata)) {
     cell.metadata = raw.metadata;
   }
-  return cell;
+  return { ...cell, ...unknown(raw, CELL_FIELDS) };
 }
 
 function readOutput(raw: unknown, where: string): QnbOutput {
@@ -204,13 +228,13 @@ export function serializeQnb(notebook: Qnb): string {
     if (cell.metadata !== undefined && Object.keys(cell.metadata).length > 0) {
       out.metadata = cell.metadata;
     }
-    return out;
+    return withExtra(out, cell.extra, CELL_FIELDS);
   });
   const file: Json = { qnb: QNB_VERSION, cells };
   if (notebook.metadata !== undefined && Object.keys(notebook.metadata).length > 0) {
     file.metadata = notebook.metadata;
   }
-  return JSON.stringify(file, null, 1) + "\n";
+  return JSON.stringify(withExtra(file, notebook.extra, FILE_FIELDS), null, 1) + "\n";
 }
 
 /// An output item's bytes as the file keeps them: text when they are UTF-8.

@@ -41,6 +41,26 @@ test("a notebook survives a save and an open unchanged", () => {
   assert.strictEqual(serializeQnb(parseQnb(serializeQnb(read))), text);
 });
 
+test("fields this extension does not know are kept, so a save loses nothing", () => {
+  // Another tool's, or a later q-lint's: a save of what was opened writes them back.
+  const file = {
+    qnb: 1,
+    cells: [
+      { kind: "code", source: ["1"], tags: ["slow"], id: "c1" },
+      { kind: "markdown", source: ["# a"], id: "c2" },
+    ],
+    metadata: { author: "me" },
+    kernel: { name: "q" },
+  };
+  const text = JSON.stringify(file, null, 1) + "\n";
+  assert.strictEqual(serializeQnb(parseQnb(text)), text);
+  // A known field is never written twice.
+  assert.deepStrictEqual(JSON.parse(serializeQnb({ cells: [{ kind: "code", source: "2", extra: { source: ["1"], id: "x" } }], extra: { qnb: 9 } })), {
+    qnb: QNB_VERSION,
+    cells: [{ kind: "code", source: ["2"], id: "x" }],
+  });
+});
+
 test("source keeps every character, CRLF and trailing newlines included", () => {
   const cells = [{ kind: "code", source: "a:1\r\nb:2\n\n" }, { kind: "code", source: "" }];
   assert.deepStrictEqual(parseQnb(serializeQnb({ cells })).cells, cells);

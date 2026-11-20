@@ -46,6 +46,24 @@ import type { Live } from "./live";
 import { decodeItem, encodeItem, exportScript, NOTEBOOK, parseQnb, serializeQnb, type QnbCell } from "./qnb";
 import { statements } from "./statements";
 
+/// Where the fields of a file or a cell this extension does not know ride in
+/// VS Code's metadata between an open and a save; never written as metadata.
+const EXTRA = "q-lint.unknownFields";
+
+/// `metadata` with `extra` added under `EXTRA`, or undefined when both are empty.
+function stash(metadata: Record<string, unknown> | undefined, extra: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  return extra === undefined ? metadata : { ...metadata, [EXTRA]: extra };
+}
+
+/// VS Code's metadata split back into the file's `metadata` and `extra`.
+function unstash(metadata: { [key: string]: unknown } | undefined): { metadata?: Record<string, unknown>; extra?: Record<string, unknown> } {
+  if (metadata === undefined) {
+    return {};
+  }
+  const { [EXTRA]: extra, ...rest } = metadata;
+  return { metadata: rest, ...(typeof extra === "object" && extra !== null ? { extra: extra as Record<string, unknown> } : {}) };
+}
+
 class QnbSerializer implements NotebookSerializer {
   deserializeNotebook(content: Uint8Array, _token: CancellationToken): NotebookData {
     // A file that is not a notebook throws here, and the editor says why
@@ -72,14 +90,16 @@ class QnbSerializer implements NotebookSerializer {
             timing: start !== undefined && end !== undefined ? { startTime: start, endTime: end } : undefined,
           };
         }
-        if (cell.metadata !== undefined) {
-          item.metadata = cell.metadata;
+        const metadata = stash(cell.metadata, cell.extra);
+        if (metadata !== undefined) {
+          item.metadata = metadata;
         }
         return item;
       }),
     );
-    if (qnb.metadata !== undefined) {
-      data.metadata = qnb.metadata;
+    const metadata = stash(qnb.metadata, qnb.extra);
+    if (metadata !== undefined) {
+      data.metadata = metadata;
     }
     return data;
   }
@@ -110,10 +130,10 @@ class QnbSerializer implements NotebookSerializer {
               },
             }
           : {}),
-        ...(cell.metadata !== undefined ? { metadata: cell.metadata } : {}),
+        ...unstash(cell.metadata),
       };
     });
-    return Buffer.from(serializeQnb({ cells, ...(data.metadata !== undefined ? { metadata: data.metadata } : {}) }), "utf8");
+    return Buffer.from(serializeQnb({ cells, ...unstash(data.metadata) }), "utf8");
   }
 }
 
