@@ -78,8 +78,8 @@ use crate::config::{FILES, Layer, Policy, selector};
 use crate::jsonrpc::{INVALID_REQUEST, receive, send};
 use q_lint_rs::graph::Placement;
 use q_lint_rs::{
-    FileIndex, Finding, TokenKind, Workspace, balanced, fix_all, fix_for, rule_url,
-    semantic_tokens_in, whole_edit,
+    FileIndex, Finding, Fix, TokenKind, Workspace, balanced, fix_all, fix_for, rule_url,
+    semantic_tokens_in, suppressions_for, whole_edit,
 };
 use serde_json::{Value, json};
 use std::{
@@ -1289,8 +1289,15 @@ fn code_actions(
     actions
 }
 
-/// The fixes for the diagnostics a request carries: one quick fix for each
-/// finding that has one, for a person to see and accept or not.
+/// The fixes for the diagnostics a request carries, and after them, for each
+/// of those diagnostics, the edit that accepts it instead: `/ noqa: CODE` on
+/// its line. That one is offered wherever such a comment would be read as
+/// one (`suppression_for` refuses where it would not), fix or no fix, and
+/// never as the preferred action: the fix is what the finding asks for, and
+/// silencing it is a decision nobody should make with a keystroke meant for
+/// something else. Once for a line and a code, however many of the
+/// diagnostics are that code on that line: one comment accepts them all, and
+/// the action says so by listing them.
 fn quick_fixes(
     params: &Value,
     docs: &Documents,
@@ -1310,42 +1317,69 @@ fn quick_fixes(
         return vec![];
     };
     let mut actions = vec![];
+    let mut suppressions: Vec<Value> = vec![];
     // Every finding that has a fix, the editor-only ones included unless the
     // client turned them off: here a person sees each edit and accepts it or
     // not.
     let lines = Lines::new(source);
-    for finding in policy.lint(source, &path, ws).unwrap_or_default() {
-        let current = diagnostic(&finding, &lines);
-        let Some(client_diagnostic) = context.iter().find(|d| {
-            d["code"] == current["code"]
-                && d["range"]["start"] == current["range"]["start"]
-                && d["message"] == current["message"]
-        }) else {
-            continue;
-        };
-        let Some(fix) = fix_for(&finding, source).filter(|f| f.batch_safe || unsafe_fixes) else {
-            continue;
-        };
+    let asked_about: Vec<(Finding, &Value)> = policy
+        .lint(source, &path, ws)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|finding| {
+            let current = diagnostic(&finding, &lines);
+            let client_diagnostic = context.iter().find(|d| {
+                d["code"] == current["code"]
+                    && d["range"]["start"] == current["range"]["start"]
+                    && d["message"] == current["message"]
+            })?;
+            Some((finding, client_diagnostic))
+        })
+        .collect();
+    // For them all at once: a selection of the whole of a long file asks
+    // about every finding in it, and each would mask the file again.
+    let accepted = suppressions_for(asked_about.iter().map(|(finding, _)| finding), source);
+    for ((finding, client_diagnostic), suppression) in asked_about.iter().zip(accepted) {
         // The edit's range comes from the fix, not from the diagnostic. The
         // two coincide for an operator swapped in place, but `f x` becomes
         // `f[x]` by replacing the whole application while the diagnostic
         // underlines only the name.
-        let range = json!({
-            "start": lines.json(fix.start),
-            "end": lines.json(fix.end),
-        });
-        let mut changes = serde_json::Map::new();
-        changes.insert(
-            uri.clone(),
-            json!([{"range": range, "newText": fix.replacement}]),
+        let action = |fix: Fix| {
+            let range = json!({
+                "start": lines.json(fix.start),
+                "end": lines.json(fix.end),
+            });
+            let mut changes = serde_json::Map::new();
+            changes.insert(
+                uri.clone(),
+                json!([{"range": range, "newText": fix.replacement}]),
+            );
+            json!({
+                "title": fix.title,
+                "kind": QUICK_FIX,
+                "diagnostics": [client_diagnostic],
+                "edit": {"changes": changes},
+            })
+        };
+        actions.extend(
+            fix_for(finding, source)
+                .filter(|f| f.batch_safe || unsafe_fixes)
+                .map(action),
         );
-        actions.push(json!({
-            "title": fix.title,
-            "kind": QUICK_FIX,
-            "diagnostics": [client_diagnostic],
-            "edit": {"changes": changes},
-        }));
+        if let Some(suppression) = suppression.map(action) {
+            match suppressions
+                .iter_mut()
+                .find(|s| s["edit"] == suppression["edit"])
+            {
+                Some(same) => same["diagnostics"]
+                    .as_array_mut()
+                    .expect("made above")
+                    .push((*client_diagnostic).clone()),
+                None => suppressions.push(suppression),
+            }
+        }
     }
+    actions.extend(suppressions);
     actions
 }
 

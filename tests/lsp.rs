@@ -173,6 +173,15 @@ impl Server {
         reply["result"].as_array().cloned().unwrap()
     }
 
+    /// The code actions that fix something: every one but the "Suppress
+    /// CODE on this line" a diagnostic is offered beside its fix, or
+    /// without one. The tests of the fixes count these.
+    fn fixes(&mut self, uri: &str, diagnostics: &[Value]) -> Vec<Value> {
+        let mut actions = self.code_actions(uri, diagnostics);
+        actions.retain(|action| !is_suppression(action));
+        actions
+    }
+
     /// The code actions of the kinds in `only`, asked for as an editor asks
     /// on save or from its Source Action menu: for the whole document, with
     /// no diagnostics.
@@ -194,6 +203,14 @@ impl Server {
         self.send(json!({"jsonrpc":"2.0","method":"exit"}));
         self.child.wait().unwrap().code().unwrap_or(-1)
     }
+}
+
+/// Whether a code action is the one that accepts a finding with a `noqa`
+/// comment, not one that fixes it.
+fn is_suppression(action: &Value) -> bool {
+    action["title"]
+        .as_str()
+        .is_some_and(|title| title.starts_with("Suppress "))
 }
 
 /// What a server that offers quick fixes says it offers: the kinds, so an
@@ -280,11 +297,11 @@ fn quick_fixes_replace_foreign_operators_at_exact_utf16_positions() {
     );
     assert_eq!(
         server
-            .code_actions(uri, std::slice::from_ref(equality_diagnostic))
+            .fixes(uri, std::slice::from_ref(equality_diagnostic))
             .len(),
         1
     );
-    let actions = server.code_actions(uri, &operators);
+    let actions = server.fixes(uri, &operators);
     assert_eq!(actions.len(), 3, "{actions:?}");
     let equality = actions
         .iter()
@@ -327,7 +344,7 @@ fn logical_operator_fixes_clear_the_diagnostics_after_use() {
         .cloned()
         .collect();
     assert_eq!(operators.len(), 2, "{diagnostics:?}");
-    let actions = server.code_actions(uri, &operators);
+    let actions = server.fixes(uri, &operators);
     assert_eq!(actions.len(), 2, "{actions:?}");
     assert_eq!(
         actions
@@ -350,13 +367,13 @@ fn quick_fixes_ignore_stale_and_non_fixable_diagnostics() {
     let uri = "file:///tmp/stale-fix.q";
     server.open(uri, "a:1==1\n");
     let old = server.diagnostics_for(uri);
-    assert_eq!(server.code_actions(uri, &old).len(), 1);
+    assert_eq!(server.fixes(uri, &old).len(), 1);
     server.send(json!({"jsonrpc":"2.0","method":"textDocument/didChange",
         "params":{"textDocument":{"uri":uri,"version":2},
                   "contentChanges":[{"text":"a:1=1\nmissing;\n"}]}}));
     let current = server.diagnostics_for(uri);
     assert!(server.code_actions(uri, &old).is_empty());
-    assert!(server.code_actions(uri, &current).is_empty());
+    assert!(server.fixes(uri, &current).is_empty());
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 
@@ -373,7 +390,7 @@ fn quick_fixes_convert_assignment_operators() {
         .cloned()
         .collect();
     assert_eq!(operators.len(), 3, "{diagnostics:?}");
-    let actions = server.code_actions(uri, &operators);
+    let actions = server.fixes(uri, &operators);
     assert_eq!(actions.len(), 3, "{actions:?}");
     for (character, replacement) in [(6, "+:"), (12, "-:"), (18, "*:")] {
         let action = actions
@@ -401,7 +418,7 @@ fn quick_fix_removes_only_the_leading_bom() {
         bom["range"],
         json!({"start":{"line":0,"character":0},"end":{"line":0,"character":1}})
     );
-    let actions = server.code_actions(uri, std::slice::from_ref(bom));
+    let actions = server.fixes(uri, std::slice::from_ref(bom));
     assert_eq!(actions.len(), 1);
     assert_eq!(actions[0]["title"], "Remove byte-order mark");
     assert_eq!(actions[0]["edit"]["changes"][uri][0]["newText"], "");
@@ -634,7 +651,7 @@ fn a_lone_carriage_return_is_a_line_break_to_the_client() {
         let range = json!({"start":{"line":line,"character":3},"end":{"line":line,"character":5}});
         assert_eq!(equality.len(), 1, "{diagnostics:?}");
         assert_eq!(equality[0]["range"], range, "{text:?}");
-        let actions = server.code_actions(&uri, &equality);
+        let actions = server.fixes(&uri, &equality);
         assert_eq!(actions.len(), 1, "{actions:?}");
         assert_eq!(actions[0]["edit"]["changes"][&uri][0]["range"], range);
         server.send(
@@ -1017,7 +1034,7 @@ fn the_bracket_quick_fix_covers_the_whole_application() {
         juxtaposed[0]["range"],
         json!({"start":{"line":1,"character":2},"end":{"line":1,"character":3}})
     );
-    let actions = server.code_actions(uri, &juxtaposed);
+    let actions = server.fixes(uri, &juxtaposed);
     assert_eq!(actions.len(), 1, "{actions:?}");
     assert_eq!(actions[0]["kind"], "quickfix");
     assert_eq!(actions[0]["title"], "Call `f` with brackets");
@@ -1437,7 +1454,7 @@ fn every_rule_with_a_fix_offers_it_in_the_editor() {
         .iter()
         .filter(|d| d["code"] == "QB007" || d["code"] == "QR001")
     {
-        for action in server.code_actions(uri, std::slice::from_ref(d)) {
+        for action in server.fixes(uri, std::slice::from_ref(d)) {
             titles.push(action["title"].as_str().unwrap().to_string());
         }
     }
@@ -1574,7 +1591,7 @@ fn formatting_never_applies_an_unsafe_fix() {
         "{diagnostics:?}"
     );
     // The fixes exist - they are offered as Quick Fixes - but not here.
-    assert_eq!(server.code_actions(uri, &diagnostics).len(), 2);
+    assert_eq!(server.fixes(uri, &diagnostics).len(), 2);
     assert_eq!(server.format(uri)["result"], json!([]));
     assert_eq!(server.shutdown_and_exit(), 0);
 }
@@ -1743,7 +1760,7 @@ fn unsafe_quick_fixes_are_offered_only_while_enabled() {
         let diagnostics = server.diagnostics_for(uri);
         let mut fixed = vec![];
         for d in &diagnostics {
-            if !server.code_actions(uri, std::slice::from_ref(d)).is_empty() {
+            if !server.fixes(uri, std::slice::from_ref(d)).is_empty() {
                 fixed.push(d["code"].as_str().unwrap().to_string());
             }
         }
@@ -2295,6 +2312,193 @@ fn a_diagnostic_links_its_code_to_the_rule_reference() {
         );
     }
     assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+/// The diagnostics of `text`, less what cannot be compared across an edit
+/// that only lengthens a line: everything but where each is and what it
+/// says.
+fn summary(diagnostics: &[Value]) -> Vec<(Value, Value, Value)> {
+    diagnostics
+        .iter()
+        .map(|d| (d["code"].clone(), d["range"].clone(), d["message"].clone()))
+        .collect()
+}
+
+/// "Suppress CODE on this line" writes the comment the linter reads: after
+/// the edit the finding is gone, every other one is where it was, and
+/// nothing new is reported.
+#[test]
+fn suppressing_a_finding_writes_a_noqa_the_linter_honours() {
+    for (before, after) in [
+        // After the code.
+        ("a:1==1\nb:1!=2\n", "a:1==1 / noqa: QE004\nb:1!=2\n"),
+        // In place of the blanks that end the line, and before its `\r`.
+        ("a:1==1  \r\nb:2\r\n", "a:1==1 / noqa: QE004\r\nb:2\r\n"),
+        // After the comment already there.
+        ("a:1==1 / why\n", "a:1==1 / why / noqa: QE004\n"),
+        // Added to the directive already there, before its reason.
+        (
+            "f:{[desc] 1==1} / noqa: QF001 the caller's name\n",
+            "f:{[desc] 1==1} / noqa: QF001, QE004 the caller's name\n",
+        ),
+        // On the finding's own line of a lambda, where ` /` is a comment
+        // still, and counted in UTF-16 past an emoji.
+        (
+            "f:{[x]\n  s:\"\u{1F600}\"; x==1\n  }\n",
+            "f:{[x]\n  s:\"\u{1F600}\"; x==1 / noqa: QE004\n  }\n",
+        ),
+        // A file with no final newline.
+        ("a:1==1", "a:1==1 / noqa: QE004"),
+    ] {
+        let mut server = Server::start();
+        server.initialize();
+        let uri = "file:///tmp/suppress.q";
+        server.open(uri, before);
+        let diagnostics = server.diagnostics_for(uri);
+        let target = diagnostics
+            .iter()
+            .find(|d| d["code"] == "QE004")
+            .unwrap_or_else(|| panic!("{before:?}: {diagnostics:?}"));
+        let actions = server.code_actions(uri, std::slice::from_ref(target));
+        let suppressions: Vec<&Value> = actions.iter().filter(|a| is_suppression(a)).collect();
+        assert_eq!(suppressions.len(), 1, "{before:?}: {actions:?}");
+        let action = suppressions[0];
+        assert_eq!(action["title"], "Suppress QE004 on this line");
+        assert_eq!(action["kind"], "quickfix");
+        assert_eq!(action["diagnostics"], json!([target]));
+        // The fix is what the finding asks for; accepting it is never what
+        // a "fix this" keystroke does.
+        assert!(action.get("isPreferred").is_none(), "{action}");
+        // And it comes after the fix, which this finding has.
+        assert!(!is_suppression(&actions[0]), "{actions:?}");
+
+        let edited = apply_edits(before, action["edit"]["changes"][uri].as_array().unwrap());
+        assert_eq!(edited, after);
+        server.change(uri, 2, &edited);
+        let mut expected = summary(&diagnostics);
+        expected.retain(|(code, range, _)| !(code == "QE004" && *range == target["range"]));
+        assert_eq!(
+            summary(&server.diagnostics_for(uri)),
+            expected,
+            "{before:?}"
+        );
+        assert_eq!(server.shutdown_and_exit(), 0);
+    }
+}
+
+/// One comment accepts every finding of a code on its line, so they share
+/// one action; another code on that line has its own, and taking the two in
+/// turn leaves one directive naming both.
+#[test]
+fn suppressions_are_one_to_a_line_and_code() {
+    let mut server = Server::start();
+    server.initialize();
+    let uri = "file:///tmp/suppress-many.q";
+    let text = "f:{[desc] a:1==1; a&&0b}\n";
+    server.open(uri, text);
+    let diagnostics = server.diagnostics_for(uri);
+    assert_eq!(
+        codes_of(&diagnostics),
+        ["QE004", "QE004", "QF001"],
+        "{diagnostics:?}"
+    );
+    let actions = server.code_actions(uri, &diagnostics);
+    let suppressions: Vec<&Value> = actions.iter().filter(|a| is_suppression(a)).collect();
+    assert_eq!(
+        suppressions
+            .iter()
+            .map(|a| (
+                a["title"].as_str().unwrap(),
+                a["diagnostics"].as_array().unwrap().len()
+            ))
+            .collect::<Vec<_>>(),
+        [
+            ("Suppress QE004 on this line", 2),
+            ("Suppress QF001 on this line", 1)
+        ],
+        "{actions:?}"
+    );
+    // Every fix first, then every suppression.
+    let first = actions.iter().position(is_suppression).unwrap();
+    assert!(actions[first..].iter().all(is_suppression), "{actions:?}");
+
+    let once = apply_edits(
+        text,
+        suppressions[0]["edit"]["changes"][uri].as_array().unwrap(),
+    );
+    assert_eq!(once, "f:{[desc] a:1==1; a&&0b} / noqa: QE004\n");
+    server.change(uri, 2, &once);
+    let left = server.diagnostics_for(uri);
+    assert_eq!(codes_of(&left), ["QF001"], "{left:?}");
+    let actions = server.code_actions(uri, &left);
+    let suppression = actions.iter().find(|a| is_suppression(a)).unwrap();
+    let twice = apply_edits(
+        &once,
+        suppression["edit"]["changes"][uri].as_array().unwrap(),
+    );
+    assert_eq!(twice, "f:{[desc] a:1==1; a&&0b} / noqa: QE004, QF001\n");
+    server.change(uri, 3, &twice);
+    assert!(server.diagnostics_for(uri).is_empty());
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+/// Where no comment on the finding's line would be a comment the linter
+/// reads - or would change what q runs - there is nothing to offer, and a
+/// wrong suppression is worse than none.
+#[test]
+fn no_suppression_is_offered_where_a_noqa_would_not_be_one() {
+    for (text, code, line, why) in [
+        (
+            "a:1==1; s:\"first\n second\"\n",
+            "QE004",
+            0,
+            "the line ends inside a string",
+        ),
+        ("a:1\n/\n", "QP001", 1, "a bare slash stops being bare"),
+        ("a:1\n/\n", "QE003", 1, "a bare slash stops being bare"),
+        (
+            "a:1\n/\nTODO in a block\n\\\nb:2\n",
+            "QL001",
+            2,
+            "a block comment's line is not code a comment can trail",
+        ),
+        (
+            "\\l lib.q / TODO drop this\na:1\n",
+            "QL001",
+            0,
+            "a system command's argument runs to the end of its line",
+        ),
+        (
+            "a:1\n\\\nb:1 / TODO after the script ends\n",
+            "QL001",
+            2,
+            "nothing after the line that ends the script is read",
+        ),
+        (
+            "f:{[x] x==1\n",
+            "QE001",
+            0,
+            "accepting an unclosed bracket reports what it stood in front of",
+        ),
+    ] {
+        let mut server = Server::start();
+        server.initialize();
+        let uri = "file:///tmp/no-suppress.q";
+        server.open(uri, text);
+        let diagnostics = server.diagnostics_for(uri);
+        let target: Vec<Value> = diagnostics
+            .iter()
+            .filter(|d| d["code"] == code && d["range"]["start"]["line"] == line)
+            .cloned()
+            .collect();
+        assert_eq!(target.len(), 1, "{text:?} {code}: {diagnostics:?}");
+        let actions = server.code_actions(uri, &target);
+        assert!(
+            !actions.iter().any(is_suppression),
+            "{text:?} ({why}): {actions:?}"
+        );
+        assert_eq!(server.shutdown_and_exit(), 0);
+    }
 }
 
 /// `source.fixAll.q-lint` is Format Document's edit as a code action, for an

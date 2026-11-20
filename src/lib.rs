@@ -2717,6 +2717,10 @@ struct Views {
     /// lines after it are blank in both views, so no rule sees them; this is
     /// the only trace that they were swallowed at all.
     open_block: Option<usize>,
+    /// Each block comment that does close: where its bare `/` line begins
+    /// and where the bare `\` line that ends it does. The outermost only -
+    /// one nested inside is part of the comment it is in.
+    blocks: Vec<(usize, usize)>,
     /// Where each string literal's opening quote is, in order. A `"` in the
     /// source is one of these, the closing quote of one, an escaped quote, or
     /// part of a comment - and only `views` has followed the text closely
@@ -2777,6 +2781,10 @@ fn views(source: &str) -> Views {
         v.unterminated.iter_mut().for_each(shift);
         v.foreign_offsets.iter_mut().for_each(shift);
         v.open_block.iter_mut().for_each(shift);
+        v.blocks.iter_mut().for_each(|(open, close)| {
+            *open += n;
+            *close += n;
+        });
         v.string_starts.iter_mut().for_each(shift);
         v.script_end.iter_mut().for_each(shift);
         return v;
@@ -2788,6 +2796,7 @@ fn views(source: &str) -> Views {
     let mut foreign = false;
     let mut foreign_offsets = Vec::new();
     let mut open_block = None;
+    let mut blocks = Vec::new();
     let mut script_end = None;
     let mut string_starts = Vec::new();
     let mut unterminated = None;
@@ -2889,7 +2898,7 @@ fn views(source: &str) -> Views {
             } else if block > 0 && stripped == "\\" {
                 block -= 1;
                 if block == 0 {
-                    open_block = None;
+                    blocks.extend(open_block.take().map(|open| (open, offset)));
                 }
             }
         } else if string.is_none()
@@ -2965,6 +2974,7 @@ fn views(source: &str) -> Views {
         unterminated: unterminated.or(string),
         foreign_offsets,
         open_block,
+        blocks,
         string_starts,
         script_end,
     }
@@ -4018,28 +4028,14 @@ impl Profile {
 /// directive - and only the codes it names: a bare `/ noqa` suppresses
 /// nothing. Anything after the codes is a free-text reason.
 fn suppress(out: &mut Vec<Finding>, source: &str, comments: &str) {
-    let (raw, blanked) = (source.as_bytes(), comments.as_bytes());
     let mut noqa: std::collections::HashMap<usize, Vec<&str>> = Default::default();
     let mut offset = 0;
     for (n, line) in source.split_inclusive('\n').enumerate() {
         let end = offset + line.len();
-        let start = (offset..end).find(|&i| {
-            raw[i] == b'/'
-                && blanked[i] == b' '
-                && (i == offset
-                    || raw[i - 1].is_ascii_whitespace()
-                    // `views` reads `<BOM>/ note` as a comment line (#221),
-                    // and so does its noqa (#427).
-                    || i == 3 && source.starts_with('\u{feff}'))
-        });
-        if let Some(caps) = start.and_then(|i| {
-            re!(r"(?:^|\s)/+\s*(?i:noqa)\s*:\s*([A-Z]+[0-9]+\b(?:\s*,\s*[A-Z]+[0-9]+\b|\s+[A-Z]+[0-9]+\b)*)")
-                .captures(&source[i..end])
-        }) {
-            let codes = caps.get(1).unwrap().as_str();
+        if let Some(codes) = noqa_codes(source, comments, offset, end) {
             noqa.entry(n + 1)
                 .or_default()
-                .extend(codes.split([',', ' ', '\t']).filter(|c| !c.is_empty()));
+                .extend(codes_in(&source[codes]));
         }
         offset = end;
     }
@@ -4050,6 +4046,145 @@ fn suppress(out: &mut Vec<Finding>, source: &str, comments: &str) {
                 .is_some_and(|codes| codes.contains(&f.code.as_str()))
         });
     }
+}
+
+/// The codes the `noqa` comment of the line at `offset..end` names, as the
+/// one span of the source that lists them: `QF016, QF017` of
+/// `/ noqa: QF016, QF017 reason`. `suppress` reads it and `suppression_for`
+/// writes it, so an edit the second makes is one the first honours.
+fn noqa_codes(
+    source: &str,
+    comments: &str,
+    offset: usize,
+    end: usize,
+) -> Option<std::ops::Range<usize>> {
+    let (raw, blanked) = (source.as_bytes(), comments.as_bytes());
+    let start = (offset..end).find(|&i| {
+        raw[i] == b'/'
+            && blanked[i] == b' '
+            && (i == offset
+                || raw[i - 1].is_ascii_whitespace()
+                // `views` reads `<BOM>/ note` as a comment line (#221),
+                // and so does its noqa (#427).
+                || i == 3 && source.starts_with('\u{feff}'))
+    })?;
+    re!(
+        r"(?:^|\s)/+\s*(?i:noqa)\s*:\s*([A-Z]+[0-9]+\b(?:\s*,\s*[A-Z]+[0-9]+\b|\s+[A-Z]+[0-9]+\b)*)"
+    )
+    .captures(&source[start..end])?
+    .get(1)
+    .map(|codes| start + codes.start()..start + codes.end())
+}
+
+/// Each code of a `noqa` comment's list.
+fn codes_in(list: &str) -> impl Iterator<Item = &str> {
+    list.split([',', ' ', '\t']).filter(|c| !c.is_empty())
+}
+
+/// The edit that accepts `finding` where it is reported: ` / noqa: CODE`
+/// after its line, or the code added to the `noqa` already there. `None`
+/// where no comment on that line would be one, or would be read as the
+/// directive - there is no correct suppression to offer then, and a wrong
+/// one is worse than none:
+///
+/// - a line that ends inside a string: the text would join the string;
+/// - a system command, whose argument runs to the end of its line, and a
+///   `k)` or `p)` line, which is another language's to read;
+/// - a block comment - its bare `/` and `\` stop being bare with anything
+///   after them - and what follows the line that ends the script;
+/// - a blank line, where the comment would trail nothing;
+/// - a file whose brackets or strings do not close. That is reported alone
+///   (QE001), and accepting it would put every finding it stood in front of
+///   in its place.
+///
+/// A finding that spans lines is accepted on its first, which is the line
+/// `suppress` looks it up by. And the edit is checked rather than trusted:
+/// the edited source must mask exactly as the original does, with the new
+/// text blank in both views - a comment, and nothing else read differently -
+/// and its line must name the code to `noqa_codes`.
+///
+/// Never batch-safe: accepting a finding is a person's decision, one line at
+/// a time, and `--fix` must never make it for them.
+pub fn suppression_for(finding: &Finding, source: &str) -> Option<Fix> {
+    suppressions_for([finding], source).pop()?
+}
+
+/// `suppression_for` each of many findings in one source, in their order,
+/// masking it once for them all as `fixes_for` does. Each edit is still
+/// checked against a masking of its own: that is the cost of one here.
+pub fn suppressions_for<'a>(
+    findings: impl IntoIterator<Item = &'a Finding>,
+    source: &str,
+) -> Vec<Option<Fix>> {
+    let v = views(source);
+    let balanced = structure("", source, &v).is_empty();
+    findings
+        .into_iter()
+        .map(|finding| {
+            balanced
+                .then(|| suppression_with(finding, source, &v))
+                .flatten()
+        })
+        .collect()
+}
+
+fn suppression_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
+    let code = finding.code.as_str();
+    if !re!(r"^[A-Z]+[0-9]+$").is_match(code) {
+        return None;
+    }
+    let row = finding.line.checked_sub(1)?;
+    let start = match row {
+        0 => 0,
+        _ => source.match_indices('\n').nth(row - 1)?.0 + 1,
+    };
+    let line = source[start..].split_inclusive('\n').next()?;
+    let text = line.strip_suffix('\n').unwrap_or(line);
+    let text = text.strip_suffix('\r').unwrap_or(text);
+    let in_block = v.open_block.is_some_and(|open| start >= open)
+        || v.blocks
+            .iter()
+            .any(|&(open, close)| (open..=close).contains(&start));
+    if text.trim().is_empty()
+        || in_block
+        || system_command(line)
+        || v.script_end.is_some_and(|end| start >= end)
+        || v.foreign_offsets.binary_search(&start).is_ok()
+    {
+        return None;
+    }
+    // Added to the directive already there, before any reason it gives; or
+    // put after the line, in place of the blanks that end it.
+    let (at, end, replacement) = match noqa_codes(source, &v.comments, start, start + line.len()) {
+        Some(codes) => (codes.end, codes.end, format!(", {code}")),
+        // Only blanks are replaced: nothing q reads goes with them.
+        None => (
+            start + text.trim_end_matches([' ', '\t']).len(),
+            start + text.len(),
+            format!(" / noqa: {code}"),
+        ),
+    };
+    let mut edited = source.to_string();
+    edited.replace_range(at..end, &replacement);
+    let after = views(&edited);
+    let comment_only = |before: &str, after: &str| {
+        let (before, after) = (before.as_bytes(), after.as_bytes());
+        let added = at + replacement.len();
+        before[..at] == after[..at]
+            && after[at..added].iter().all(|&b| b == b' ')
+            && before[end..] == after[added..]
+    };
+    let line_end = start + line.len() - (end - at) + replacement.len();
+    let named = noqa_codes(&edited, &after.comments, start, line_end)
+        .is_some_and(|codes| codes_in(&edited[codes]).any(|c| c == code));
+    (named && comment_only(&v.code, &after.code) && comment_only(&v.comments, &after.comments))
+        .then(|| Fix {
+            start: at,
+            end,
+            replacement: replacement.into(),
+            title: format!("Suppress {code} on this line").into(),
+            batch_safe: false,
+        })
 }
 
 pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
