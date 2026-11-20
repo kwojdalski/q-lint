@@ -115,6 +115,14 @@ test("a null in a real list is 0N, as q writes it: 1 0Ne, not 1 0ne (#894)", () 
   assert.strictEqual(vectorText([1, Infinity], 8), "1 0we");
 });
 
+test("a month before 2000 is its own month, not one a year earlier (#894)", () => {
+  // The codec makes 1999.12m (-1 months from 2000) a Date in 1998.12.
+  assert.deepStrictEqual(shown("010000000d000000f3ffffffff"), ["1999.12m"]);
+  assert.deepStrictEqual(shown("010000001a0000000d0003000000feffffffe8ffffff0e000000"), ["1999.11 1998.01 2001.03m"]);
+  const { value } = decoded("010000001a0000000d0003000000feffffffe8ffffff0e000000");
+  assert.deepStrictEqual(gridOf(value, 13, 10).raw[0], [-2, -24, 14]);
+});
+
 test("floats keep q's seven significant digits", () => {
   assert.strictEqual(floatText(1.5), "1.5");
   assert.strictEqual(floatText(2), "2");

@@ -107,6 +107,17 @@ function infinite(x: unknown): boolean {
   return x === Infinity || x === -Infinity || (x instanceof Date && Number.isNaN(x.getTime()));
 }
 
+/// The months since 2000.01 of a Date the codec made of a q month. The
+/// codec makes a month before 2000 that is not a January a year early
+/// (1999.12m, -1, as 1998.12): it takes the year as `2000 + m/12` cut toward
+/// zero and the month as `m mod 12`, negative. A month after 2000 is never
+/// made a year before it, so a Date before 2000 that is not a January was
+/// made that way, and is moved a year on.
+function monthsOf(d: Date): number {
+  const months = (d.getUTCFullYear() - 2000) * 12 + d.getUTCMonth();
+  return months < 0 && d.getUTCMonth() !== 0 ? months + 12 : months;
+}
+
 /// Milliseconds since 2000.01.01 of a Date the codec made of a q time.
 const sinceEpoch = (d: Date): number => d.getTime() - EPOCH_MS;
 
@@ -172,8 +183,10 @@ function itemText(x: unknown, t: number): string | undefined {
     return String(x);
   }
   switch (t) {
-    case 13:
-      return `${x.getUTCFullYear()}.${pad2(x.getUTCMonth() + 1)}`;
+    case 13: {
+      const m = monthsOf(x) + 24_000;
+      return `${Math.floor(m / 12)}.${pad2((m % 12) + 1)}`;
+    }
     case 14:
       return ymd(x);
     case 15:
@@ -421,7 +434,7 @@ function rawNumber(x: unknown, t: number): number | null {
     const ms = sinceEpoch(x);
     switch (t) {
       case 13:
-        return (x.getUTCFullYear() - 2000) * 12 + x.getUTCMonth();
+        return monthsOf(x);
       case 14:
         return Math.round(ms / DAY_MS);
       case 15:
