@@ -67,6 +67,20 @@ trap - every `+` and `-` left of every `*` and `%`, as in
 that wants every mix parenthesised whichever way round it is. Each message
 names the operation q performs first.
 
+QP008 is the opposite convention, for a tree that wants the bare spelling:
+it reports a pair of parentheses that only restates q's order, exactly where
+the QP005 and QP007 fix would have written it, and its fix removes the pair -
+`mid:0.5*(bid+ask)` becomes `mid:0.5*bid+ask`. A pair that changes the
+grouping (`(0.5*bid)+ask`), holds the same family (`a+(b+c)`), is a list or
+an argument, or whose removal would fuse two tokens (`a -(1+b)`) is never
+reported. The two fixes are inverses: with F the forward fix and R the
+reverse, R(F(x)) is R(x) and F(R(x)) is F(x), byte for byte. Only its own
+code selects QP008 - a prefix or `ALL` would turn both conventions on - and
+a run where it and QP005 or QP007 would both report on a file is refused
+with a message naming the two, since `--fix` would undo itself; under `uqf`,
+select it with `--ignore QP005`. The language server keeps the forward rule
+there and says so on standard error.
+
 ## Design
 
 There is no parser here. Rules read a masked view of the source - strings and
@@ -113,7 +127,8 @@ pattern (`` `a* `` → `"a*"`), `f . ()` → `f[]`, `til 5.0` → `til 5` (and `
 a number signalled → a string, `where a:1` → `where a=1`, `distinct asc distinct` → `asc distinct`,
 redundant parentheses around one token (styleq), and - under `--profile uqf` -
 parentheses showing the order q already evaluates `a*b+c` in (QP005, and
-QP007 for `a+b*c` where that is selected), and the
+QP007 for `a+b*c` where that is selected) or removing them where QP008 is
+selected, and the
 brackets QP006 asks for, rewriting `f x` as `f[x]` with whatever the
 application swallowed. Each was checked in q 5 to leave the program alone, or
 to replace code that could only fail.
@@ -677,7 +692,7 @@ language server driven over real LSP framing as a real process.
 
 ### Rule and multiline regression corpus
 
-The taxonomy contains 122 codes. Ten literal-call rules cover excess builtin
+The taxonomy contains 123 codes. Ten literal-call rules cover excess builtin
 arguments (QA010), invalid literal types/shapes (QT008–QT014), and negative
 `til`/`where` counts (QD001–QD002). These checks leave unknown expressions
 unresolved and account for projections, seeded scans and variadic `enlist`.
@@ -686,7 +701,7 @@ unresolved and account for projections, seeded scans and variadic `enlist`.
 `tests/showcase.rs` checks exact code/line pairs under every profile, including
 silence in the clean section. Together with the three companion examples -
 `syntax-error.q`, `byte-order-mark.q` and `query-injection.q`, each holding
-a rule that would hide or stop the others - it covers all 120 rules available
+a rule that would hide or stop the others - it covers all 121 rules available
 in this build; QF006 and QLS001 are excluded.
 
 Multiline fixtures cover nested lambdas, split argument lists, comments,

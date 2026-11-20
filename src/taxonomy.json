@@ -798,6 +798,13 @@
     "scope": "opt-in"
   },
   {
+    "code": "QP008",
+    "name": "restated-precedence-parentheses",
+    "category": "policy",
+    "summary": "Parentheses round the right operand of + - * % that only restate q's right-to-left order, exactly where QP005's and QP007's fix puts them: the opposite convention, selected only by its own code and refused beside either",
+    "scope": "opt-in"
+  },
+  {
     "code": "QX001",
     "name": "query-injection",
     "category": "security",

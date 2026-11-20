@@ -1126,6 +1126,73 @@ fn the_routine_mix_is_in_no_profile_and_reports_only_where_it_is_selected() {
 }
 
 #[test]
+fn the_reverse_convention_is_selected_only_by_its_code_and_refused_beside_the_forward_one() {
+    // QP008 removes the parentheses QP005 and QP007 add. A prefix or `ALL`
+    // would turn both sides on, so only its own code selects it; and where
+    // it and either forward rule would both report on a file, the run is
+    // refused before anything is reported or rewritten (#848).
+    let repo = Repo::new();
+    let source = "mid:0.5*(bid+ask)\nstamp:start+step*til n\nw:a*b+c\n";
+    repo.write("plain/src/a.q", source)
+        .write("plain/tests/a.q", source)
+        .write("chosen/qlinter.toml", "extend-select = [\"QP008\"]\n")
+        .write("chosen/src/a.q", source)
+        .write(
+            "settled/qlinter.toml",
+            "extend-select = [\"QP008\"]\nignore = [\"QP005\"]\n",
+        )
+        .write("settled/src/a.q", source);
+    let mixes = |cwd: &str, args: &[&str]| -> Vec<String> {
+        let mut codes = repo.codes(cwd, args);
+        codes.retain(|c| c.starts_with("QP00") && c.as_str() >= "QP005");
+        codes
+    };
+    let refusal = |cwd: &str, args: &[&str]| -> String {
+        let out = run(&repo.path(cwd), args);
+        assert_eq!(out.status.code(), Some(2), "{args:?}");
+        String::from_utf8(out.stderr).unwrap()
+    };
+    for selector in ["QP", "QP00", "ALL"] {
+        assert_eq!(
+            mixes("plain", &["--select", selector, "src/a.q"]),
+            ["QP005", "QP007"],
+            "{selector}"
+        );
+    }
+    assert_eq!(mixes("plain", &["--select", "QP008", "src/a.q"]), ["QP008"]);
+    // Under `uqf` QP005 is on, so naming QP008 alone is the pairing.
+    let message = refusal("plain", &["--extend-select", "QP008", "src/a.q"]);
+    assert!(
+        message.contains("QP008 (restated-precedence-parentheses) and QP005 (mixed-infix-precedence) are opposite conventions"),
+        "{message}"
+    );
+    assert!(
+        refusal("plain", &["--select", "QP008,QP007", "src/a.q"]).contains("and QP007"),
+        "QP007"
+    );
+    refusal("chosen", &["src/a.q"]);
+    refusal("chosen", &["--fix", "src/a.q"]);
+    assert_eq!(
+        fs::read_to_string(repo.path("chosen/src/a.q")).unwrap(),
+        source
+    );
+    // Settled by ignoring the forward rule, or by the tests exemption that
+    // takes QP005 off a test file.
+    assert_eq!(
+        mixes(
+            "plain",
+            &["--extend-select", "QP008", "--ignore", "QP005", "src/a.q"]
+        ),
+        ["QP008"]
+    );
+    assert_eq!(
+        mixes("plain", &["--extend-select", "QP008", "tests/a.q"]),
+        ["QP008"]
+    );
+    assert_eq!(mixes("settled", &["src/a.q"]), ["QP008"]);
+}
+
+#[test]
 fn force_exclude_reads_default_directories_from_the_project_root_not_the_cwd() {
     // Run from inside build/, or beside it, the file is still in build/
     // below the configuration's root: the walk of the project skips it, so

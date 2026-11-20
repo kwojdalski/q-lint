@@ -808,6 +808,123 @@ fn precedence_pair(
         })
 }
 
+/// A file's text with one pair of parentheses blanked, for QP008 to ask
+/// `right_operand` what the line would be without them. Made once per file
+/// and restored after each pair: a copy per pair grew with pairs times file
+/// size, on a tree that parenthesises every mix.
+struct Unparenthesised {
+    v: Views,
+    source: String,
+}
+impl Unparenthesised {
+    fn new(v: &Views, source: &str) -> Self {
+        Unparenthesised {
+            v: Views {
+                comments: v.comments.clone(),
+                code: v.code.clone(),
+                unterminated: None,
+                foreign_offsets: vec![],
+                open_block: None,
+                blocks: vec![],
+                string_starts: vec![],
+                script_end: None,
+            },
+            source: source.to_string(),
+        }
+    }
+    /// Writes `byte` at `at` in every text. One byte for one byte, so no
+    /// offset moves.
+    fn set(&mut self, at: usize, byte: &str) {
+        self.v.code.replace_range(at..at + 1, byte);
+        self.v.comments.replace_range(at..at + 1, byte);
+        self.source.replace_range(at..at + 1, byte);
+    }
+}
+
+/// QP008's reading of the pair whose `(` is at `open` in the statement
+/// group `group`: the operator it is the right operand of, when the pair is
+/// one QP005's and QP007's fix would write. The two are opposite
+/// conventions, and this is the forward fix read backwards, so removing the
+/// pair and fixing forward writes it back byte for byte (#848). A pair is
+/// one the fix writes exactly when
+///
+/// - it follows a `+`, `-`, `*` or `%`, past any adverb and blanks;
+/// - without it, `right_operand` of that operator is what it held - so it
+///   closes where the operand ends anyway;
+/// - without it, the next operator of the operator's run is inside it and of
+///   the other family: what it holds opens a run of its own at top level.
+///
+/// The fix's parse tree is the same before and after - `2*3+4` and `2*(3+4)`
+/// are one program - so removing the pair keeps it too, wherever the text
+/// left reads as the text was. Not where a token would fuse: `a -(1+b)`
+/// would become `a -1+b`, whose `-1` is a literal, and `(b+c)from` the name
+/// `cfrom`; nor where what it holds starts with an operator not applied in
+/// brackets.
+fn restated_pair(
+    v: &Views,
+    source: &str,
+    group: (usize, usize),
+    open: usize,
+    scratch: &mut Option<Unparenthesised>,
+) -> Option<usize> {
+    let (start, end) = group;
+    let bytes = source.as_bytes();
+    let mut op = source[..open].trim_end().len();
+    while op > start && v.code[..op].ends_with([':', '/', '\\', '\'']) {
+        op -= 1;
+    }
+    let op = op.checked_sub(1).filter(|&op| op >= start)?;
+    if !matches!(v.code.as_bytes()[op], b'+' | b'-' | b'*' | b'%') {
+        return None;
+    }
+    let close = matching(&v.code, open, b'(', b')')? - 1;
+    let inner = &source[open + 1..close];
+    let numeric = |t: &str| {
+        t.starts_with(|c: char| c.is_ascii_digit())
+            || t.strip_prefix('.')
+                .is_some_and(|t| t.starts_with(|c: char| c.is_ascii_digit()))
+    };
+    let word = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'.';
+    // An operator applied in brackets is an operand, `$[c;a;b]` and
+    // `@[f;x]` among them: q 5 parses `a+@[f;x]*2` as it does with the pair.
+    // Not an adverb or `:`, which would join the operator before.
+    let operator = inner.starts_with(|c: char| "+-*%&|^=<>~,#_!?@$:'/\\".contains(c))
+        && !inner.strip_prefix('-').is_some_and(numeric)
+        && !(inner.as_bytes().get(1) == Some(&b'[') && !inner.starts_with([':', '\'', '/', '\\']));
+    let literal = bytes[op] == b'-'
+        && open == op + 1
+        && op > 0
+        && bytes[op - 1].is_ascii_whitespace()
+        && numeric(inner);
+    let fused =
+        inner.bytes().last().is_some_and(word) && bytes.get(close + 1).is_some_and(|&b| word(b));
+    if operator || literal || fused {
+        return None;
+    }
+    // The run, read off the group with the pair gone. The `)` may close on a
+    // later line, past the group.
+    let mut line = v.code[start..end].to_string();
+    for at in [open, close].into_iter().filter(|&at| at < end) {
+        line.replace_range(at - start..at - start + 1, " ");
+    }
+    let runs = infix_runs(&line);
+    let (run, k) = runs.iter().find_map(|run| {
+        let k = run.iter().position(|o| o.0 == op - start)?;
+        Some((run, k))
+    })?;
+    let next = run.get(k + 1)?;
+    if next.1 == run[k].1 || start + next.0 > close {
+        return None;
+    }
+    let blanked = scratch.get_or_insert_with(|| Unparenthesised::new(v, source));
+    blanked.set(open, " ");
+    blanked.set(close, " ");
+    let operand = right_operand(&blanked.v, &blanked.source, op);
+    blanked.set(open, "(");
+    blanked.set(close, ")");
+    (operand == Some((open + 1, close))).then_some(op)
+}
+
 /// The single source of replacements for the CLI and LSP. Findings have UTF-16
 /// positions for editors, while edits use byte offsets to change Rust strings.
 pub fn fix_for(finding: &Finding, source: &str) -> Option<Fix> {
@@ -1279,6 +1396,21 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 &source[from..end],
                 format!("({})", &source[from..end]).into(),
                 "Parenthesise to show the order q evaluates in".into(),
+                true,
+            )
+        }
+        // The pair QP005's fix would write, removed: the inverse edit, and
+        // the same parse tree.
+        "QP008" => {
+            let group = statement_groups(&v.code, source)
+                .into_iter()
+                .find(|&(a, b)| a <= start && start < b)?;
+            restated_pair(v, source, group, start, &mut None)?;
+            let close = matching(&v.code, start, b'(', b')')?;
+            (
+                &source[start..close],
+                source[start + 1..close - 1].to_string().into(),
+                "Remove the parentheses q's order already implies".into(),
                 true,
             )
         }
@@ -2050,16 +2182,19 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
     }
     // Nor may it leave a negative literal against an operand, where its
     // `-` would read as minus: `{[x]r:-1;x}` would become `{[x]-1;x}`,
-    // which q 5 refuses with '- (#563). A blank keeps it a literal.
+    // which q 5 refuses with '- (#563). A blank keeps it a literal. Not
+    // QP008's: its `-` follows an operand, where q 5 reads `a-2.5`, `1-2.5`
+    // and `` `y-2.5 `` as minus, and a blank would be one F does not give
+    // back (#848).
     let negative = next.starts_with('-') && numeric(&next[1..]);
-    let replacement =
-        if source[..begin].ends_with('-') && !numeric(&source[begin..]) && numeric(&next)
-            || ends_in_token(&source[..begin]) && negative && !source[begin..].starts_with('-')
-        {
-            format!(" {replacement}").into()
-        } else {
-            replacement
-        };
+    let replacement = if finding.code != "QP008"
+        && (source[..begin].ends_with('-') && !numeric(&source[begin..]) && numeric(&next)
+            || ends_in_token(&source[..begin]) && negative && !source[begin..].starts_with('-'))
+    {
+        format!(" {replacement}").into()
+    } else {
+        replacement
+    };
     Some(Fix {
         start: begin,
         end: begin + old.len(),
@@ -7461,6 +7596,8 @@ fn lint_rules(
             .collect()
     };
     let statements = statement_groups(code, source);
+    // QP008's copy of the file, made at its first candidate pair.
+    let mut unparenthesised = None;
     // QB015's exception: a char column compared with a string as long (#754).
     let char_columns = semantics::char_column_comparisons(code, &v.comments);
     // Where each group's top-level statement ends. Inside a bracket every
@@ -8353,6 +8490,23 @@ fn lint_rules(
                     )
                 };
                 add(offset, id, detail);
+            }
+            // QP008, the opposite convention: each pair the forward fix
+            // would have written, at its `(`.
+            for (at, _) in line.match_indices('(') {
+                if let Some(op) =
+                    restated_pair(&v, source, (start, end), start + at, &mut unparenthesised)
+                {
+                    add(
+                        start + at,
+                        "QP008",
+                        format!(
+                            "Parentheses round the right operand of `{}` that q's order already \
+                             implies: q evaluates right-to-left, so the operand is grouped without them",
+                            source.as_bytes()[op] as char
+                        ),
+                    );
+                }
             }
         }
         // Infix, or the pattern as the second argument in brackets:

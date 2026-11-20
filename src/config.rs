@@ -375,13 +375,57 @@ impl Policy {
         let settings = self.settings(file)?;
         let structure =
             self.configured(&settings, "QE001") && !per_file_ignored(&settings, "QE001", file);
+        // A language server must not stop linting over it: it says so once
+        // and keeps the forward rules, which are the profile's.
+        let conflict = match self.conflict(&settings, file) {
+            Err(e) if self.lenient => {
+                if self.warned.borrow_mut().insert(e.clone()) {
+                    eprintln!("qlinter: {e}; reporting {} only", UNDOES.join(" and "));
+                }
+                true
+            }
+            other => other.map(|()| false)?,
+        };
         let mut found = lint_every_rule(source, path, ws, structure);
         found.retain(|f| {
-            self.selected(&settings, &f.code)
+            !(conflict && OPPOSITE.contains(&f.code.as_str()))
+                && self.selected(&settings, &f.code)
                 && !per_file_ignored(&settings, &f.code, file)
                 && !self.test_exempt(&settings, &f.code, file)
         });
         Ok(found)
+    }
+
+    /// Refuses a selection with QP008 and QP005 or QP007 both on for
+    /// `path`: opposite conventions, so `--fix` would undo itself. Only where
+    /// both would report - a per-file ignore or the tests exemption settles
+    /// it - and before any rule runs, so nothing is reported or rewritten.
+    /// Under a language server, see `lint`.
+    fn conflict(&self, settings: &Settings, path: &Path) -> Result<(), String> {
+        let on = |code: &str| {
+            self.configured(settings, code)
+                && !per_file_ignored(settings, code, path)
+                && !self.test_exempt(settings, code, path)
+        };
+        let name = |code: &str| {
+            RULES
+                .iter()
+                .find(|r| r.code == code)
+                .map_or(String::new(), |r| format!(" ({})", r.name))
+        };
+        for reverse in OPPOSITE.into_iter().filter(|code| on(code)) {
+            if let Some(forward) = UNDOES.into_iter().find(|code| on(code)) {
+                return Err(format!(
+                    "{}: {reverse}{} and {forward}{} are opposite conventions - one removes the \
+                     parentheses the other adds, so --fix would undo itself; select one \
+                     (`--ignore {forward}`, or drop {reverse})",
+                    path.display(),
+                    name(reverse),
+                    name(forward)
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// A test may build a legacy datetime, read the local clock or mix infix
@@ -422,6 +466,7 @@ impl Policy {
     /// QLS001 comes only from qls.
     pub fn describe(&self, path: &Path, backend: &str) -> Result<String, String> {
         let settings = self.settings(path)?;
+        self.conflict(&settings, path)?;
         let runs = |scope: &str| match scope {
             "python-hook" => false,
             "qls" => backend != "builtin",
@@ -464,7 +509,16 @@ fn apply(layer: &Layer, code: &str, on: bool) -> bool {
             .map(|s| if s == "ALL" { 0 } else { s.len() })
             .max()
     };
-    let enable = longest(&mut layer.select.iter().flatten().chain(&layer.extend_select));
+    // QP008 is the opposite convention to QP005 and QP007: a prefix or
+    // `ALL` would turn both sides on, so only its own code selects it.
+    let enable = longest(
+        &mut layer
+            .select
+            .iter()
+            .flatten()
+            .chain(&layer.extend_select)
+            .filter(|s| !OPPOSITE.contains(&code) || *s == code),
+    );
     let disable = longest(&mut layer.ignore.iter());
     match (enable, disable) {
         (Some(e), Some(d)) => e > d,
@@ -473,6 +527,12 @@ fn apply(layer: &Layer, code: &str, on: bool) -> bool {
         (None, None) => on && layer.select.is_none(),
     }
 }
+
+/// The rules whose convention is the opposite of another's, each beside
+/// the rules it undoes: `--fix` with both would write a pair and take it out
+/// again, so a file that selects both is refused (#848).
+const OPPOSITE: [&str; 1] = ["QP008"];
+const UNDOES: [&str; 2] = ["QP005", "QP007"];
 
 fn names(selector: &str, code: &str) -> bool {
     selector == "ALL" || code.starts_with(selector)

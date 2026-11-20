@@ -42,6 +42,9 @@ def test_stdin_and_taxonomy():
     routine = run("--explain", "QP007").stdout
     assert routine.startswith("QP007 [policy] mixed-infix-unparenthesised:")
     assert routine.rstrip().endswith("(no profile: select it by code)")
+    reverse = run("--explain", "QP008").stdout
+    assert reverse.startswith("QP008 [policy] restated-precedence-parentheses:")
+    assert "opposite convention" in reverse
     assert run("--explain", "UNKNOWN").returncode == 2
 
 
