@@ -308,13 +308,61 @@ function qName(name: string): string {
     : `get\`$"${name.replace(/[\\"]/g, (c) => `\\${c}`)}"`;
 }
 
+/// What each character of q `text` is: `c` code, `s` inside a string (from
+/// its opening quote; the closing one is code), `y` a symbol, `m` a comment
+/// - a line from a `/` that starts it or follows a space or tab.
+export function charKinds(text: string): string {
+  let out = "";
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    const lineStart = i === 0 || text[i - 1] === "\n";
+    if (ch === "/" && (lineStart || text[i - 1] === " " || text[i - 1] === "\t")) {
+      const end = text.indexOf("\n", i);
+      const stop = end === -1 ? text.length : end;
+      out += "m".repeat(stop - i);
+      i = stop;
+    } else if (ch === "\"") {
+      let j = i + 1;
+      while (j < text.length && text[j] !== "\"") {
+        j += text[j] === "\\" ? 2 : 1;
+      }
+      j = Math.min(j, text.length);
+      out += "s".repeat(j - i) + (j < text.length ? "c" : "");
+      i = j + 1;
+    } else if (ch === "`") {
+      let j = i + 1;
+      while (j < text.length && /[\w.:/]/.test(text[j])) {
+        j++;
+      }
+      out += "y".repeat(j - i);
+      i = j;
+    } else {
+      out += "c";
+      i++;
+    }
+  }
+  return out;
+}
+
+/// Whether the cursor at `offset` in `text` is typing code: not inside a
+/// string or a comment.
+export function inCode(text: string, offset: number): boolean {
+  const kind = charKinds(text.slice(0, offset)).slice(-1);
+  return kind !== "s" && kind !== "m";
+}
+
 /// The table a qSQL statement reads, when `offset` is inside one in `text`:
 /// the nearest `select`, `exec`, `update` or `delete` before the cursor, and
-/// the first `from t` after it, which may come before the cursor or after
-/// it (`select | from t`). Undefined outside a statement, or once a `;` at
-/// the statement's own bracket depth has ended it.
+/// the first `from t` after it in the same statement, which may come before
+/// the cursor or after it (`select | from t`). Undefined outside a
+/// statement, or once a `;` at the statement's own bracket depth has ended
+/// it. Strings, symbols and comments are not read: `\`delete` and
+/// `"update"` are no keyword, and a `;` in a string ends nothing.
 export function qsqlTable(text: string, offset: number): string | undefined {
-  const before = text.slice(0, offset);
+  const kinds = charKinds(text);
+  const code = [...text].map((ch, i) => (kinds[i] === "c" ? ch : " ")).join("");
+  const before = code.slice(0, offset);
   let keyword: RegExpExecArray | undefined;
   for (const m of before.matchAll(/(?<![\w.])(select|exec|update|delete)(?![\w.])/g)) {
     keyword = m as RegExpExecArray;
@@ -323,23 +371,25 @@ export function qsqlTable(text: string, offset: number): string | undefined {
     return undefined;
   }
   const start = keyword.index + keyword[0].length;
-  const from = /(?<![\w.])from\s+(\.?[A-Za-z][\w.]*)/.exec(text.slice(start));
-  if (from === null) {
-    return undefined;
-  }
-  // A `;` between the keyword and the cursor, outside brackets opened after
-  // the keyword, ends the statement.
+  // Where the statement ends: a `;` outside brackets opened after the keyword.
   let depth = 0;
-  for (const ch of before.slice(start)) {
+  let end = code.length;
+  for (let i = start; i < code.length; i++) {
+    const ch = code[i];
     if ("([{".includes(ch)) {
       depth++;
     } else if (")]}".includes(ch)) {
       depth--;
     } else if (ch === ";" && depth <= 0) {
-      return undefined;
+      end = i;
+      break;
     }
   }
-  return from[1];
+  if (end < offset) {
+    return undefined;
+  }
+  const from = /(?<![\w.])from\s+(\.?[A-Za-z][\w.]*)/.exec(code.slice(start, end));
+  return from === null ? undefined : from[1];
 }
 
 /// The columns of the table `name` names, as q code would name it there.

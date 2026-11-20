@@ -9,6 +9,7 @@ const {
   columnsOf,
   explorerTree,
   fullName,
+  inCode,
   liveCompletions,
   previewCode,
   qsqlTable,
@@ -188,6 +189,35 @@ test("no table outside a qSQL statement", () => {
   // A name that only contains a keyword is not one.
   assert.strictEqual(at("selection:1; | from t"), undefined);
   assert.strictEqual(at(".my.select | from t"), undefined);
+});
+
+test("a keyword or a ; in a string, symbol or comment is not read as one", () => {
+  // A symbol or a string that spells a keyword is no statement of its own.
+  assert.strictEqual(at("select from t where action=`delete, |"), "t");
+  assert.strictEqual(at('select from t where s like "update*", |'), "t");
+  assert.strictEqual(at("select from t / delete the rest\n  where |"), "t");
+  // A `;` in a string does not end the statement.
+  assert.strictEqual(at('select from t where s like "a;b", |'), "t");
+  // A statement in a string is no statement.
+  assert.strictEqual(at('show "select a from t",|'), undefined);
+});
+
+test("the table is read from the cursor's own statement, not the next one", () => {
+  assert.strictEqual(at("x:select a|; y:select from u"), undefined);
+  assert.strictEqual(at("x:select a| from t; y:select from u"), "t");
+});
+
+test("the cursor is typing code outside strings and comments", () => {
+  const code = (text) => inCode(text.replace("|", ""), text.indexOf("|"));
+  assert.strictEqual(code("a:tr|"), true);
+  assert.strictEqual(code('a:"tr|"'), false);
+  assert.strictEqual(code('a:"tr"|'), true);
+  assert.strictEqual(code('a:"a\\"tr|"'), false);
+  assert.strictEqual(code("a:1 / tr|"), false);
+  assert.strictEqual(code("/ tr|"), false);
+  assert.strictEqual(code("a:1/tr|"), true);
+  // A symbol is code: it can name a table.
+  assert.strictEqual(code("`tr|"), true);
 });
 
 test("completion offers every name, and the table's columns in its statement", () => {

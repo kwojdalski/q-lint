@@ -27,6 +27,7 @@ import {
   GATHER,
   LIMITS,
   explorerTree,
+  inCode,
   liveCompletions,
   previewCode,
   qsqlTable,
@@ -206,9 +207,18 @@ export class ProcessExplorer implements TreeDataProvider<Node> {
       return [];
     }
     const lines = document.getText().split(/\r?\n/);
-    const block = blockAt(lines, position.line) ?? { start: position.line, end: position.line };
+    const found = blockAt(lines, position.line);
+    // No block on a line with text: a comment, or inside a block comment.
+    if (found === undefined && lines[position.line].trim() !== "") {
+      return [];
+    }
+    const block = found ?? { start: position.line, end: position.line };
     const text = lines.slice(block.start, block.end + 1).join("\n");
     const offset = lines.slice(block.start, position.line).reduce((n, l) => n + l.length + 1, 0) + position.character;
+    // Nothing from the process inside a string or a trailing comment.
+    if (!inCode(text, offset)) {
+      return [];
+    }
     const table = qsqlTable(text, offset);
     // The word being typed, dots and all, so `.ns.f` replaces `.ns.` whole.
     const typed = /[.\w]*$/.exec(lines[position.line].slice(0, position.character))?.[0] ?? "";
