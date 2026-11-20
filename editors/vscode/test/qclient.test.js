@@ -397,3 +397,26 @@ test("the explorer's call skips a dotted root name that is not a namespace", { s
   assert.deepStrictEqual(g.spaces.map((s) => s.ns).sort(), [".", ".ok"]);
   assert.deepStrictEqual(g.entries.map((e) => `${e.ns} ${e.name}`).sort(), [". x", ".ok y"]);
 });
+
+// A partition missing one table's directory (what `.Q.chk` repairs): the
+// table still serves the other dates, but `.Q.cn` fails on it, and that
+// failed the whole explorer call.
+const DAMAGED = (dir) => `
+{[d;dt] .Q.dd[d;dt,\`trade\`] set .Q.en[d] ([] sym:\`a\`b\`c; px:1.5 2.5 3.5)}[hsym \`$"${dir}/hdb"] each 2024.01.02;
+system "mkdir -p ${dir}/hdb/2024.01.01";
+system "l ${dir}/hdb";
+x:1;
+`;
+
+test("the explorer's call survives a partitioned table it cannot count", { skip }, async (t) => {
+  const q = await startQ(DAMAGED);
+  t.after(() => q.stop());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  t.after(() => connection.close());
+  const g = readGathered(await connection.call(GATHER, EXCLUDED, LIMITS));
+  const trade = g.entries.find((e) => e.name === "trade");
+  assert.deepStrictEqual([trade.kind, trade.count, trade.partitioned, trade.cols], ["table", null, true, ["date", "sym", "px"]]);
+  assert.ok(g.entries.some((e) => e.name === "x"));
+  const tables = explorerTree(g, []).find((n) => n.label === ".").children.find((c) => c.label === "Tables");
+  assert.strictEqual(tables.children.find((c) => c.label === "trade").description, "rows not counted · 3 columns");
+});

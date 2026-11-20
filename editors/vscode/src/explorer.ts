@@ -22,7 +22,8 @@
 // A partitioned table is never loaded to count it: `.Q.cn` reads each
 // partition's count, and keeps it in `.Q.pn` - kdb+'s own cache, which
 // `count` or a select on the table fills the same way - so a second refresh
-// costs nothing. A row says when its count came that way.
+// costs nothing. A row says when its count came that way; a table it
+// cannot count (a partition missing its directory) is not counted.
 //
 // The limits arrive as floats, a JavaScript number being sent as one, and
 // are made long there; counts go back as floats, which the IPC client reads
@@ -48,10 +49,10 @@ export const GATHER = [
   "  k:k except kids;",
   "  spaces,:enlist`ns`total!(ns;\"f\"$count k);",
   "  rows,:{[ns;n;nm;x]",
-  "   t:type x;tb:.Q.qt x;fn:t within 100 112h;part:$[tb;1b~.Q.qp x;0b];",
+  "   t:type x;tb:$[98h=t;1b;.Q.qt x];fn:t within 100 112h;part:$[tb;1b~.Q.qp x;0b];",
   "   `ns`name`kind`type`count`cols`keys`params`partitioned!(ns;nm;",
   "    $[tb;`table;fn;`function;`variable];t;",
-  "    \"f\"$$[fn;0N;part;sum .Q.cn x;count x];",
+  "    \"f\"$$[fn;0N;part;@[{sum .Q.cn x};x;0n];count x];",
   "    $[tb;n sublist(),cols x;`$()];",
   "    $[tb&99h=t;(),keys x;`$()];",
   "    $[100h=t;@[{(),(value x)1};x;{`$()}];`$()];",
@@ -214,7 +215,7 @@ export interface Node {
 
 function tableNode(e: Entry): Node {
   const rows = e.count === null ? "rows not counted" : plural(e.count, "row");
-  const how = e.partitioned ? " (partitioned, counted by .Q.cn)" : "";
+  const how = e.partitioned && e.count !== null ? " (partitioned, counted by .Q.cn)" : "";
   return {
     kind: "table",
     label: e.name,
