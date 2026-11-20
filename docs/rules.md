@@ -1,6 +1,6 @@
 # Rules
 
-All 121 rules, generated from `src/taxonomy.json` - the same data
+All 122 rules, generated from `src/taxonomy.json` - the same data
 `qlinter --rules` and `qlinter --explain <CODE>` print from. Regenerate with
 `python3 scripts/rules_doc.py > docs/rules.md`; a test fails when this is stale.
 
@@ -33,10 +33,15 @@ against real q and refused, with the numbers.
 | `general` | only what q refuses to run |
 | `style` | `general`, plus q that runs and is wrong |
 | `styleq` | `style`, plus the published style-guide conventions |
-| `uqf` | everything - the default |
+| `uqf` | every rule a profile turns on - the default |
 
 The default is the broadest. This binary reports all it can see; a consumer
 that wants fewer findings narrows in its own configuration.
+
+A rule marked *no profile* is the exception: no profile reports it, `uqf`
+included. It is a convention stricter than any profile asks for, and is on
+only where `select` or `extend-select` names it - by its code, a prefix of
+it, or `ALL`.
 
 ## Syntax - source q cannot read at all
 
@@ -196,8 +201,9 @@ that wants fewer findings narrows in its own configuration.
 | <a id="qp001"></a>`QP001` | bare-slash-block | Bare slash opens a block comment | `uqf` |
 | <a id="qp002"></a>`QP002` | datetime-type | Legacy datetime precision | `uqf` |
 | <a id="qp003"></a>`QP003` | wall-clock-temporal | Wall-clock timestamp where the convention is UTC | `uqf` |
-| <a id="qp005"></a>`QP005` | mixed-infix-precedence | Unparenthesised * or % mixed with + or - relies on right-to-left order | `uqf` |
+| <a id="qp005"></a>`QP005` | mixed-infix-precedence | Unparenthesised * or % with + or - to its right: q performs the + or - first, where school precedence multiplies first | `uqf` |
 | <a id="qp006"></a>`QP006` | juxtaposed-application | Function defined in this file applied without brackets | `uqf` |
+| <a id="qp007"></a>`QP007` | mixed-infix-unparenthesised | Unparenthesised + or - with * or % to its right: q multiplies first and so does school precedence, so QP005 passes it | no profile |
 
 ## Style guide - conventions from published q guidance
 

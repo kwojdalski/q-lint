@@ -1,5 +1,5 @@
 //! Check explanatory markers against actual diagnostic locations, including silence.
-use q_lint_rs::{Profile, RULES, lint};
+use q_lint_rs::{Profile, RULES, Workspace, lint, lint_every_rule};
 use std::collections::BTreeSet;
 
 #[test]
@@ -28,14 +28,33 @@ fn showcase_reports_exactly_the_marked_lines_in_every_profile() {
             .collect();
         assert_eq!(actual, expected, "{profile:?}");
     }
+    // And with no profile deciding: every marker, the ones for a rule no
+    // profile reports among them.
+    let expected: BTreeSet<_> = source
+        .lines()
+        .enumerate()
+        .filter_map(|(i, line)| Some((i, line.trim_start().strip_prefix("/ expect-next: ")?)))
+        .flat_map(|(i, codes)| {
+            codes
+                .split_whitespace()
+                .map(move |c| (i + 2, c.to_string()))
+        })
+        .collect();
+    let actual: BTreeSet<_> = lint_every_rule(source, "showcase.q", &Workspace::default(), true)
+        .into_iter()
+        .map(|f| (f.line, f.code))
+        .collect();
+    assert_eq!(actual, expected, "every rule");
 }
 
 #[test]
 fn examples_cover_all_available_rules() {
-    let mut shown: BTreeSet<_> = lint(
+    // Every rule, not `uqf`'s: one in no profile has its example too.
+    let mut shown: BTreeSet<_> = lint_every_rule(
         include_str!("../examples/showcase.q"),
         "showcase.q",
-        Profile::Uqf,
+        &Workspace::default(),
+        true,
     )
     .into_iter()
     .map(|f| f.code)

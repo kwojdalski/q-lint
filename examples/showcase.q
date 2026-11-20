@@ -758,10 +758,18 @@ stamp2: 2024.01.01T09:30:00.000
 / expect-next: QP003
 wall: .z.P
 
-/ QP005: q evaluates right-to-left, so this is 2*(3+4); parentheses say
-/ which order was meant, and their absence is the finding.
+/ QP005: q evaluates right-to-left, so this is 2*(3+4) and 14, where school
+/ precedence multiplies first and reads 10. The `+` right of the `*` is the
+/ trap; parentheses say which order was meant.
 / expect-next: QP005
 mixed: 2*3+4
+
+/ QP007: the same two families the other way round. q reads 2+(3*4), and so
+/ does school precedence, so nobody is misled and QP005 passes it. No profile
+/ reports this one: a tree that wants every mix parenthesised selects it by
+/ code, `extend-select = ["QP007"]`.
+/ expect-next: QP007
+routine: 2+3*4
 
 / QP006: `widen` is a function this file defines, applied by writing it
 / beside its argument. q reads that as widen[3+4]; the brackets the uqf

@@ -26,8 +26,41 @@ t:.z.P
 === clean profile: uqf | UTC temporals are what the profile asks for
 t:.z.p
 
-=== QP005 profile: uqf | multiplication mixed with addition relies on evaluation order
+=== QP005 profile: uqf | a multiplication with an addition to its right: q adds first
 r:2*3+4
+mid:0.5*bid+ask
+
+=== clean profile: uqf | an addition with a multiplication to its right is no trap: both readings multiply first (#847)
+stamp:start+step*til n
+ts:t0+0D00:00:01*til n
+r:a-b%c
+
+=== QP007 profile: every | and that is the mix the rule in no profile reports
+stamp:start+step*til n
+
+=== QP005 profile: every | the trap is QP005's alone
+mid:0.5*bid+ask
+
+=== QP005 QP007 profile: every | one run is one or the other, and a line can hold a run of each
+d:s*1+0.0005*-1+2*r
+e:(a*b+c;a+b*c)
+
+=== QP005 profile: uqf | a subtraction left of the multiplication does not make the addition right of it safe
+r:a-b*c+d
+
+=== clean profile: every | a qSQL phrase is an expression of its own: `from` and `where` end a run as a comma does
+r:select a*b from t where c+d>0
+s:select sum size*price by sym from trade where time>start-0D01
+u:update v:a%b from t where c-d
+
+=== QP005 QP007 profile: every | and inside one phrase a mix is a mix
+r:select mid:0.5*bid+ask, spread:ask-bid from q
+s:select from t where a+b*c>0
+
+=== QP005 profile: every | `from` and `where` close nothing where no template is open, nor does a name that ends in one
+x:.a.from*1+til 5
+f:{[from;to] from*2+to}
+w:2*where a+b
 
 === clean profile: uqf | parenthesised, the order is said out loud
 r:(2*3)+4

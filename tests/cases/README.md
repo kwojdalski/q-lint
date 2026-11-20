@@ -17,7 +17,9 @@ point, since a linter nobody trusts is one that cried wolf.
 header chooses
 the rule set. Cases run under `style` unless they say otherwise, since that is
 where most rules live; `general` is the right choice for a case that exists to
-show the default staying quiet.
+show the default staying quiet. `profile: every` is no profile at all: it
+runs every rule, the ones `docs/rules.md` marks *no profile* beside all of
+`uqf`'s, and is how a rule that is only ever selected by code gets its cases.
 
 Every rule has a case here except three, each for a reason: `QE005` needs a
 byte-order mark, which only exists at the start of a file and cannot sit in a

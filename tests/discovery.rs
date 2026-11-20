@@ -1080,6 +1080,52 @@ fn the_tests_exemption_from_qp002_counts_only_directories_below_the_root() {
 }
 
 #[test]
+fn the_routine_mix_is_in_no_profile_and_reports_only_where_it_is_selected() {
+    // QP007 is the mix school precedence reads as q does: no profile turns
+    // it on, a selector that names it does - its code, a prefix, or `ALL` -
+    // and it passes over a `tests` directory as QP005 does, unless the
+    // command line names it (#847).
+    let repo = Repo::new();
+    let source = "mid:0.5*bid+ask\nstamp:start+step*til n\n";
+    repo.write("plain/src/a.q", source)
+        .write("chosen/qlinter.toml", "extend-select = [\"QP007\"]\n")
+        .write("chosen/src/a.q", source)
+        .write("chosen/tests/a.q", source);
+    let mixes = |cwd: &str, args: &[&str]| -> Vec<String> {
+        let mut codes = repo.codes(cwd, args);
+        codes.retain(|c| c == "QP005" || c == "QP007");
+        codes
+    };
+    assert_eq!(mixes("plain", &["--profile", "uqf", "src/a.q"]), ["QP005"]);
+    for selector in ["QP007", "QP", "ALL"] {
+        assert_eq!(
+            mixes("plain", &["--extend-select", selector, "src/a.q"]),
+            ["QP005", "QP007"],
+            "{selector}"
+        );
+    }
+    assert_eq!(mixes("plain", &["--select", "QP007", "src/a.q"]), ["QP007"]);
+    assert_eq!(
+        mixes(
+            "plain",
+            &["--extend-select", "QP007", "--ignore", "QP007", "src/a.q"]
+        ),
+        ["QP005"]
+    );
+    // From the configuration file, and the tests exemption with it.
+    assert_eq!(mixes("chosen", &["src/a.q"]), ["QP005", "QP007"]);
+    assert_eq!(mixes("chosen", &["tests/a.q"]), Vec::<String>::new());
+    assert_eq!(
+        mixes("chosen", &["--select", "QP007", "tests/a.q"]),
+        ["QP007"]
+    );
+    assert_eq!(
+        mixes("chosen", &["--extend-select", "QP005", "tests/a.q"]),
+        ["QP005"]
+    );
+}
+
+#[test]
 fn force_exclude_reads_default_directories_from_the_project_root_not_the_cwd() {
     // Run from inside build/, or beside it, the file is still in build/
     // below the configuration's root: the walk of the project skips it, so

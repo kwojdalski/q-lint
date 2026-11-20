@@ -56,6 +56,17 @@ rules for most of `style`, and the published q style guides for `styleq`.
 The default profile is the broadest. This binary reports everything it can
 see; narrowing belongs in the configuration of the repository being linted.
 
+One rule is in no profile, `uqf` included, and reports only where a selector
+names it - `--extend-select QP007`, or `extend-select = ["QP007"]`; the
+prefix `QP` and `ALL` name it as they name any rule. It is the
+other half of QP005, which reports the precedence trap: a `*` or `%` with a
+`+` or `-` to its right, as in `mid:0.5*bid+ask`, where q adds first and
+school precedence would multiply first. QP007 reports the mix that is no
+trap - every `+` and `-` left of every `*` and `%`, as in
+`stamp:start+step*til n`, which both readings multiply first - for a tree
+that wants every mix parenthesised whichever way round it is. Each message
+names the operation q performs first.
+
 ## Design
 
 There is no parser here. Rules read a masked view of the source - strings and
@@ -92,14 +103,17 @@ it is, and `git apply` too for files under the current directory: a file
 outside it is named through `..`, and git applies no patch to a path outside
 the directory it runs in, so run it from one that holds the files. To write
 the edits, run `qlinter --fix path/to/file.q`.
-`--fix` re-lints the changed files and reports any remaining findings. Batch fixing handles `==`, `!=`, `+=`, `-=`,
+`--fix` re-lints the changed files and reports any remaining findings, and
+says on standard error how many of them it has no fix for, so that a finding
+still listed is not taken for one to run `--fix` on again. Batch fixing handles `==`, `!=`, `+=`, `-=`,
 `*=`, a leading UTF-8 BOM, an invalid string escape (`"C:\data"` →
 `"C:\\data"`), `true`/`false`/`None`/`return x` → `1b`/`0b`/`(::)`/`:x`,
 a table literal of scalars (each column enlisted), a symbol used as a `like`
 pattern (`` `a* `` → `"a*"`), `f . ()` → `f[]`, `til 5.0` → `til 5` (and `2.0 rotate`, `3.0 mavg`),
 a number signalled → a string, `where a:1` → `where a=1`, `distinct asc distinct` → `asc distinct`,
 redundant parentheses around one token (styleq), and - under `--profile uqf` -
-parentheses showing the order q already evaluates `a*b+c` in, and the
+parentheses showing the order q already evaluates `a*b+c` in (QP005, and
+QP007 for `a+b*c` where that is selected), and the
 brackets QP006 asks for, rewriting `f x` as `f[x]` with whatever the
 application swallowed. Each was checked in q 5 to leave the program alone, or
 to replace code that could only fail.
@@ -134,6 +148,26 @@ t` as `g[s]`. A call in the table expression after `from` is left alone, as is
 one whose argument holds a query of its own: after `from`, q reads up to
 `where` as one expression (`select from g v,w` is `g[v,w]`), and this tool
 does not parse. Each keeps its finding, so nothing is silently dropped.
+
+QP005 and QP007 share one fix: parentheses round the right operand of the
+operator before the change of family, which is where q groups already -
+`2*3+4` and `2*(3+4)` are one parse tree. It reaches a mix on any line of a
+statement - a lambda's body, a bracketed argument, an item of a list or a
+column of a table literal - where the operand ends at the `;` or the bracket
+that closes round it. In a qSQL phrase the operand ends where the phrase
+does: at the comma, `by` or `from` of a column or grouping list, at the comma
+of a `where` constraint, and after `from` at `where` or the template's end,
+since the table is one expression and a comma in it is a join - as is a comma
+inside parentheses anywhere. A dotted name is a name whatever it ends in:
+`x:.a.from+0D01*1+til 5` becomes `x:.a.from+(0D01*(1+til 5))`. A nested mix
+takes a pair for each change, in one run: under QP005 alone
+`d:s*1+0.0005*-1+2*r` becomes `d:s*(1+(0.0005*(-1+2*r)))`, and with QP007
+selected too the last `2*r` is parenthesised as well. The fix is refused,
+and the finding kept, where the operand's end cannot be told: a right side
+that ends in an operator or `::` and so is a composition, an operator applied
+in brackets (`a*[b;c]+d`), and a template that opens inside the phrase of
+another without parentheses of its own, whose table then takes the commas
+after it.
 
 ### The dependency graph: `qlinter analyze graph`
 
@@ -254,7 +288,8 @@ user-level file). So `qlinter .. --exclude src/`, run from `proj/tests`,
 names `proj/tests/src`; a leading `../` climbs from the root, as Ruff resolves
 it, and `qlinter .. --exclude ../src` is the one that names `proj/src`.
 
-Under `uqf`, QP002, QP003 and QP005 pass over a file in a `tests`
+Under `uqf`, QP002, QP003 and QP005 - and QP007 where it is selected - pass
+over a file in a `tests`
 directory below that root - the configuration's directory, or the current
 one without a configuration - since a test may build a datetime or read the
 local clock on purpose. A `tests` above the root exempts nothing, and
@@ -642,7 +677,7 @@ language server driven over real LSP framing as a real process.
 
 ### Rule and multiline regression corpus
 
-The taxonomy contains 121 codes. Ten literal-call rules cover excess builtin
+The taxonomy contains 122 codes. Ten literal-call rules cover excess builtin
 arguments (QA010), invalid literal types/shapes (QT008–QT014), and negative
 `til`/`where` counts (QD001–QD002). These checks leave unknown expressions
 unresolved and account for projections, seeded scans and variadic `enlist`.
@@ -651,7 +686,7 @@ unresolved and account for projections, seeded scans and variadic `enlist`.
 `tests/showcase.rs` checks exact code/line pairs under every profile, including
 silence in the clean section. Together with the three companion examples -
 `syntax-error.q`, `byte-order-mark.q` and `query-injection.q`, each holding
-a rule that would hide or stop the others - it covers all 119 rules available
+a rule that would hide or stop the others - it covers all 120 rules available
 in this build; QF006 and QLS001 are excluded.
 
 Multiline fixtures cover nested lambdas, split argument lists, comments,
