@@ -68,8 +68,10 @@ interface Shown {
   payload: GridPayload;
   view: "grid" | "chart";
   /// Counts results, so the panel tells a new one from the same one sent
-  /// again and keeps the view, sort and filters chosen for it.
-  id: number;
+  /// again and keeps the view, sort and filters chosen for it. Prefixed by
+  /// the session: a view's page keeps its state across a window reload,
+  /// and must not take the next session's first result for its last.
+  id: string;
 }
 
 function settings(): LiveSettings {
@@ -112,6 +114,8 @@ export class QueryModes {
   private order: number[] | undefined;
   private readonly status: StatusBarItem;
   private readonly media: Uri;
+  private readonly session = randomBytes(6).toString("hex");
+  private results = 0;
 
   constructor(private readonly context: ExtensionContext) {
     this.media = Uri.joinPath(context.extensionUri, "media");
@@ -161,7 +165,7 @@ export class QueryModes {
       millis: result.millis,
       payload: answer.grid,
       view: live.mode,
-      id: (this.shown?.id ?? 0) + 1,
+      id: `${this.session}.${++this.results}`,
     };
     this.order = undefined;
     if (live.resultsLocation === "panel") {
