@@ -3984,6 +3984,81 @@ fn structure(path: &str, source: &str, v: &Views) -> Vec<Finding> {
     found
 }
 
+/// Lines an editor can fold away, as two bytes of the source: one on the
+/// line that stays in view, and one on the last line hidden under it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Fold {
+    pub start: usize,
+    pub end: usize,
+    /// A block comment, which an editor can fold apart from the code.
+    pub comment: bool,
+}
+
+/// What there is to fold in `source`: each brace, bracket and parenthesis
+/// that closes on a later line than it opens, and each block comment from
+/// its bare `/` to its bare `\`. In source order, an outer before what it
+/// holds.
+///
+/// Read from the view the rules read, so a bracket inside a string or a
+/// comment folds nothing, and paired as `structure` pairs them. Nothing at
+/// all for a file `structure` reports on: with one bracket unmatched there
+/// is no saying which of the others pair, and a guess would move as the
+/// line is typed. Nor for a block comment nothing closes - q reads that one
+/// to the end of the file, and QE003 says so.
+///
+/// A fold ends on the line of its closer when nothing follows it there but
+/// more closers and a `;`, and on the line before when something does: an
+/// editor hides whole lines, and `}[1;2]` or `} each x` is the half of the
+/// statement that says what the lambda is for.
+pub fn folds(source: &str) -> Vec<Fold> {
+    let v = views(source);
+    if !structure("", source, &v).is_empty() {
+        return vec![];
+    }
+    let mut found: Vec<Fold> = v
+        .blocks
+        .iter()
+        .map(|&(start, end)| Fold {
+            start,
+            end,
+            comment: true,
+        })
+        .collect();
+    let mut stack = vec![];
+    let mut offset = 0;
+    for line in v.code.split_inclusive('\n') {
+        // As `structure` reads them: a command's argument is no q.
+        if !system_command(&source[offset..offset + line.len()]) {
+            for (i, c) in line.bytes().enumerate() {
+                if b"([{".contains(&c) {
+                    stack.push(offset + i);
+                } else if b")]}".contains(&c)
+                    && let Some(start) = stack.pop()
+                    // Opened on a line before this one, or nothing to fold.
+                    && start < offset
+                {
+                    let closes_line = line[i + 1..]
+                        .trim_matches(|ch: char| ch.is_ascii_whitespace() || ")]};".contains(ch))
+                        .is_empty();
+                    // `offset - 1` is the break that ends the line before:
+                    // there is one, with the opener on a line before this.
+                    let end = if closes_line { offset + i } else { offset - 1 };
+                    if source[start..end].contains('\n') {
+                        found.push(Fold {
+                            start,
+                            end,
+                            comment: false,
+                        });
+                    }
+                }
+            }
+        }
+        offset += line.len();
+    }
+    found.sort_by_key(|fold| fold.start);
+    found
+}
+
 /// Which rules a run is asking for.
 ///
 /// The default answers only one question - would q refuse this? - because

@@ -196,6 +196,16 @@ impl Server {
         reply["result"].as_array().cloned().unwrap()
     }
 
+    fn folding_ranges(&mut self, uri: &str) -> Value {
+        self.send(
+            json!({"jsonrpc":"2.0","id":40,"method":"textDocument/foldingRange",
+            "params":{"textDocument":{"uri":uri}}}),
+        );
+        let reply = self.until(|m| m["id"] == 40);
+        assert!(reply.get("error").is_none(), "{reply}");
+        reply["result"].clone()
+    }
+
     fn shutdown_and_exit(&mut self) -> i32 {
         self.send(json!({"jsonrpc":"2.0","id":99,"method":"shutdown"}));
         let reply = self.receive();
@@ -245,6 +255,10 @@ fn initialize_announces_full_document_sync() {
     assert_eq!(
         reply["result"]["capabilities"]["codeActionProvider"],
         code_action_provider()
+    );
+    assert_eq!(
+        reply["result"]["capabilities"]["foldingRangeProvider"],
+        true
     );
     assert_eq!(reply["result"]["serverInfo"]["name"], "q-lint");
     assert_eq!(server.shutdown_and_exit(), 0);
@@ -2246,6 +2260,7 @@ fn a_document_method_without_a_uri_is_refused_or_dropped() {
         (2, "textDocument/formatting", Value::Null),
         (3, "textDocument/codeAction", json!(5)),
         (4, "textDocument/semanticTokens/full", json!({})),
+        (5, "textDocument/foldingRange", json!({"textDocument": {}})),
     ] {
         server.send(json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}));
         // The first message back is this reply: neither didOpen published.
@@ -2625,6 +2640,125 @@ fn fix_all_does_not_depend_on_the_formatter_being_enabled() {
             actions[0]["edit"]["changes"][uri].as_array().unwrap()
         ),
         "a:1=1\n"
+    );
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+/// What folds: a lambda, a parenthesised list, a bracketed block and a block
+/// comment, each where it spans lines - and nothing that only looks like
+/// one from inside a string or a comment.
+#[test]
+fn folding_ranges_cover_multi_line_brackets_and_block_comments() {
+    let mut server = Server::start();
+    server.initialize();
+    let uri = "file:///tmp/folds.q";
+    let text = [
+        "f:{[x;y]",                     // 0  lambda, to its closer on 9
+        "  t:(1;",                      // 1  list, to 3
+        "    2;",                       // 2
+        "    3);",                      // 3
+        "  if[x>0;",                    // 4  block, to 6
+        "    y:1;",                     // 5
+        "    ];",                       // 6
+        "  s:\"{ ( [\"; / { ( [",       // 7  brackets a rule never reads
+        "  g:{[a] a+1}; h:(1;2); x[0]", // 8  each closed where it opened
+        "  }",                          // 9
+        "/",                            // 10 block comment, to 13
+        "k:{ never code",               // 11
+        "  (",                          // 12
+        "\\",                           // 13
+        "/ a comment line { (",         // 14
+        "m:1",                          // 15
+        "",
+    ]
+    .join("\n");
+    server.open(uri, &text);
+    assert!(
+        server
+            .diagnostics_for(uri)
+            .iter()
+            .all(|d| d["code"] != "QE001")
+    );
+    assert_eq!(
+        server.folding_ranges(uri),
+        json!([
+            {"startLine": 0, "endLine": 9},
+            {"startLine": 1, "endLine": 3},
+            {"startLine": 4, "endLine": 6},
+            {"startLine": 10, "endLine": 13, "kind": "comment"},
+        ])
+    );
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+/// A fold hides every line after its first through its last. So one whose
+/// closer has code after it stops a line short, and that code stays on
+/// screen; and of two that open on one line only the outer is a fold, which
+/// is all an editor keeps for a line.
+#[test]
+fn a_fold_stops_before_a_closer_with_code_after_it() {
+    let mut server = Server::start();
+    server.initialize();
+    for (uri, text, expected) in [
+        (
+            "file:///tmp/fold-tail.q",
+            "r:{[x]\n  x+1\n  }[2]; s:3\n",
+            json!([{"startLine": 0, "endLine": 1}]),
+        ),
+        // Nothing left to fold once the line of the closer is kept.
+        ("file:///tmp/fold-short.q", "r:(1;\n  2) + 3\n", json!([])),
+        // Closers and separators after a closer are not code.
+        (
+            "file:///tmp/fold-closers.q",
+            "r:{[x] (x;\n  {[y]\n    y}\n  )} ;\n",
+            json!([{"startLine": 0, "endLine": 3}, {"startLine": 1, "endLine": 2}]),
+        ),
+        // Lines the client breaks at a lone `\r`, which q does not.
+        (
+            "file:///tmp/fold-cr.q",
+            "a:1 / note\rmore\nf:{[x]\n  x}\n",
+            json!([{"startLine": 2, "endLine": 3}]),
+        ),
+        // Behind a byte-order mark, and with `\r\n` for a line break.
+        (
+            "file:///tmp/fold-bom.q",
+            "\u{feff}a:1\r\n/\r\nnote\r\n\\\r\nf:{[x]\r\n  x}\r\n",
+            json!([
+                {"startLine": 1, "endLine": 3, "kind": "comment"},
+                {"startLine": 4, "endLine": 5},
+            ]),
+        ),
+    ] {
+        server.open(uri, text);
+        server.diagnostics_for(uri);
+        assert_eq!(server.folding_ranges(uri), expected, "{text:?}");
+    }
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+/// Nothing to fold is an empty list, not an error: a buffer whose brackets
+/// do not close yet - every line being typed is one - a document that is
+/// not q, and one that was never opened.
+#[test]
+fn folding_a_broken_or_unknown_buffer_returns_no_ranges() {
+    let mut server = Server::start();
+    server.initialize();
+    for (uri, text) in [
+        (
+            "file:///tmp/fold-unclosed.q",
+            "f:{[x]\n  x+1\ng:{[y]\n  y}\n",
+        ),
+        ("file:///tmp/fold-string.q", "f:{[x]\n  x}\ns:\"abc\n"),
+        ("file:///tmp/fold-not-q.k", "f:{[x]\n  x}\n"),
+        ("file:///tmp/fold-none.q", "a:1\nb:{[x] x}\n"),
+    ] {
+        server.open(uri, text);
+        server.diagnostics_for(uri);
+        assert_eq!(server.folding_ranges(uri), json!([]), "{uri}");
+    }
+    assert_eq!(
+        server.folding_ranges("file:///tmp/fold-never-opened.q"),
+        json!([])
     );
     assert_eq!(server.shutdown_and_exit(), 0);
 }

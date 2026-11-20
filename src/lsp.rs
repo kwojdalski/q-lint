@@ -78,7 +78,7 @@ use crate::config::{FILES, Layer, Policy, selector};
 use crate::jsonrpc::{INVALID_REQUEST, receive, send};
 use q_lint_rs::graph::Placement;
 use q_lint_rs::{
-    FileIndex, Finding, Fix, TokenKind, Workspace, balanced, fix_all, fix_for, rule_url,
+    FileIndex, Finding, Fix, TokenKind, Workspace, balanced, fix_all, fix_for, folds, rule_url,
     semantic_tokens_in, suppressions_for, whole_edit,
 };
 use serde_json::{Value, json};
@@ -816,7 +816,8 @@ pub fn serve(
                 | "textDocument/didClose"
                 | "textDocument/semanticTokens/full"
                 | "textDocument/codeAction"
-                | "textDocument/formatting",
+                | "textDocument/formatting"
+                | "textDocument/foldingRange",
                 id,
             ) if !params["textDocument"]["uri"].is_string() => {
                 let message = format!("{method}: params.textDocument.uri must be a string");
@@ -935,6 +936,12 @@ pub fn serve(
                 };
                 match edits {
                     Ok(edits) => send(writer, json!({"id": id, "result": edits}))?,
+                    Err(panic) => send(writer, internal_error(id, &panic))?,
+                }
+            }
+            ("textDocument/foldingRange", Some(id)) => {
+                match guarded(|| folding_ranges(&params, &docs)) {
+                    Ok(ranges) => send(writer, json!({"id": id, "result": ranges}))?,
                     Err(panic) => send(writer, internal_error(id, &panic))?,
                 }
             }
@@ -1067,6 +1074,7 @@ fn capabilities(opts: &Options, code_action_literals: bool) -> Value {
         // actions on save only of a server that says it has some.
         capabilities["codeActionProvider"] = json!({"codeActionKinds": [QUICK_FIX, FIX_ALL]});
     }
+    capabilities["foldingRangeProvider"] = json!(true);
     capabilities["workspace"] = json!({
         "workspaceFolders": {"supported": true, "changeNotifications": true},
     });
@@ -1407,6 +1415,36 @@ fn fix_all_action(
         "kind": FIX_ALL,
         "edit": {"changes": changes},
     }))
+}
+
+/// What there is to fold in an open q document, as the lines a client
+/// counts: `folds`' pairs, less any that start and end on one line, and one
+/// to a line - the widest, since the rest on that line could only be folded
+/// with it, and VS Code drops all but the first it is given. A document that
+/// is not open or not q, and one whose brackets do not close, has none: an
+/// empty list, which is what an editor shows while a line is being typed.
+fn folding_ranges(params: &Value, docs: &Documents) -> Vec<Value> {
+    let uri = uri_of(&params["textDocument"]);
+    let Some(source) = docs.get(&uri).filter(|_| is_q_uri(&uri)) else {
+        return vec![];
+    };
+    let lines = Lines::new(source);
+    let mut ranges: Vec<Value> = vec![];
+    let mut last_start = None;
+    // In source order, so of two that start on a line the outer comes first.
+    for fold in folds(source) {
+        let (start, end) = (lines.position(fold.start).0, lines.position(fold.end).0);
+        if start >= end || last_start == Some(start) {
+            continue;
+        }
+        last_start = Some(start);
+        let mut range = json!({"startLine": start, "endLine": end});
+        if fold.comment {
+            range["kind"] = json!("comment");
+        }
+        ranges.push(range);
+    }
+    ranges
 }
 
 /// The edits "Format document" makes: the safe fixes `--fix` applies, to the
