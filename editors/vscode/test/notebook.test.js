@@ -228,6 +228,16 @@ test("a table of every row is laid out as text, however many rows it has", () =>
   assert.strictEqual(text.at(-1), String(rows - 1));
 });
 
+test("a long value is cut between characters, never inside one", () => {
+  // 498 letters then an emoji, two UTF-16 units: the cut at 499 falls between them.
+  const value = "a".repeat(498) + "\u{1F600}" + "b".repeat(10);
+  const table = { columns: ["s"], types: [0], keys: 0, data: [[value]], total: 1 };
+  const lone = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+  assert.doesNotMatch(tableText(table)[2], lone);
+  assert.doesNotMatch(tableHtml(table), lone);
+  assert.ok(tableText(table)[2].endsWith("a…"));
+});
+
 test("a cell's outputs follow its mode", () => {
   const table = { ok: true, table: TABLE };
   const [grid] = cellOutputs({ mode: "grid" }, table);

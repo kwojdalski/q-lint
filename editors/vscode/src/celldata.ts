@@ -130,7 +130,15 @@ export function escapeHtml(text: string): string {
   return text.replace(/[&<>"']/g, (c) => ESCAPES[c]);
 }
 
-const clip = (value: string): string => (value.length > VALUE_LIMIT ? `${value.slice(0, VALUE_LIMIT - 1)}…` : value);
+/// `value` cut to `VALUE_LIMIT`, never between the two halves of a character
+/// outside the BMP, which would show as a replacement character.
+const clip = (value: string): string => {
+  if (value.length <= VALUE_LIMIT) {
+    return value;
+  }
+  const end = /[\uD800-\uDBFF]/.test(value[VALUE_LIMIT - 2]) ? VALUE_LIMIT - 2 : VALUE_LIMIT - 1;
+  return `${value.slice(0, end)}…`;
+};
 
 /// A number, right-aligned: q's byte to float (4 to 9).
 const numeric = (type: number): boolean => type >= 4 && type <= 9;
