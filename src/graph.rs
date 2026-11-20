@@ -191,21 +191,38 @@ impl<'a> Tree<'a> {
 
     /// The files `\l load` in file `i` leads to.
     fn targets(&self, i: usize, load: &str) -> Vec<usize> {
-        let candidates = load_targets(&self.files[i], load, self.cwd);
-        candidates
-            .iter()
-            .find_map(|p| {
-                self.position
-                    .get(p)
-                    .or_else(|| self.position.get(&std::fs::canonicalize(p).ok()?))
-                    .map(|&d| vec![d])
-            })
-            // A directory only where q looks, the current one: `\l .`, a
-            // database reloading itself, is no load of the scripts beside
-            // the file that says it.
-            .or_else(|| self.scripts_in.get(candidates.first()?.as_path()).cloned())
-            .unwrap_or_default()
+        loaded(
+            &self.files[i],
+            load,
+            self.cwd,
+            |p| self.position.get(p).copied(),
+            |dir| self.scripts_in.get(dir).cloned().unwrap_or_default(),
+        )
     }
+}
+
+/// The files `\l load` in the file at `from` leads to, as the graph follows
+/// it: the first place q tries that `file` finds, under the path tried or
+/// the real path it names, or else the scripts `scripts_in` finds directly
+/// in the directory at the first place - a directory only where q looks, the
+/// current one: `\l .`, a database reloading itself, is no load of the
+/// scripts beside the file that says it. Nothing for a load that reaches no
+/// file. The language server follows a load line with this too, over the
+/// files it indexes.
+pub fn loaded<T>(
+    from: &Path,
+    load: &str,
+    cwd: &Path,
+    file: impl Fn(&Path) -> Option<T>,
+    scripts_in: impl FnOnce(&Path) -> Vec<T>,
+) -> Vec<T> {
+    let candidates = load_targets(from, load, cwd);
+    candidates
+        .iter()
+        .find_map(|p| file(p).or_else(|| file(&std::fs::canonicalize(p).ok()?)))
+        .map(|d| vec![d])
+        .or_else(|| Some(scripts_in(candidates.first()?.as_path())))
+        .unwrap_or_default()
 }
 
 /// The contexts each file is loaded in by another, `.a` for a `\l` under

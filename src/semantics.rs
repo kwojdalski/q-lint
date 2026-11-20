@@ -1,5 +1,6 @@
 use crate::{Finding, blank, boundary, matching, operand_ends, signature};
 use std::collections::{HashMap, HashSet};
+use std::ops::Range;
 
 pub(crate) mod help;
 pub(crate) mod navigate;
@@ -1252,18 +1253,10 @@ fn first_switch(code: &str, raw: &str) -> usize {
 /// root: after `f:{42}`, `\d .a`, `g:{f[]}`, calling `.a.g[]` is 'f. Which
 /// file defines it is the graph's question, since the answer is in other
 /// files.
-pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
-    let (scopes, namespaces) = scopes(code, raw);
-    let first_switch = first_switch(code, raw);
-    let ns_at = |at: usize| {
-        namespaces[namespaces
-            .partition_point(|(p, _)| *p <= at)
-            .saturating_sub(1)]
-        .1
-        .as_str()
-    };
-    // System commands (`\d .a`, `\l x.q`) are not expressions: `.a` there is a
-    // context being opened, not a read. Offsets stay where they were.
+/// `code` with its system commands blanked. `\d .a` and `\l x.q` are not
+/// expressions: `.a` there is a context being opened, not a read. Offsets
+/// stay where they were.
+fn commands_blanked(code: &str, raw: &str) -> String {
     let mut view = code.as_bytes().to_vec();
     let mut offset = 0;
     for line in code.split_inclusive('\n') {
@@ -1275,7 +1268,20 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
         }
         offset += line.len();
     }
-    let view = String::from_utf8(view).unwrap_or_default();
+    String::from_utf8(view).unwrap_or_default()
+}
+
+pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
+    let (scopes, namespaces) = scopes(code, raw);
+    let first_switch = first_switch(code, raw);
+    let ns_at = |at: usize| {
+        namespaces[namespaces
+            .partition_point(|(p, _)| *p <= at)
+            .saturating_sub(1)]
+        .1
+        .as_str()
+    };
+    let view = commands_blanked(code, raw);
     // A symbol literal names nothing it reads, and runs on past where a name
     // would stop: over `:` anywhere, and over `/` after `` `: ``. Verified
     // with parse in q 5: "`a:b" and "`:hdb/sym" are each one symbol. Left in,
@@ -1541,8 +1547,25 @@ fn loads(
     namespace_at: impl Fn(usize) -> String,
     moved: &mut Vec<usize>,
 ) -> Vec<(String, String)> {
-    let cd = raw
-        .split_inclusive('\n')
+    let cd = changes_directory(raw, view);
+    let mut loads = vec![];
+    for (at, path, symbol) in load_sites(code, raw, view) {
+        let path = &raw[path];
+        if !symbol && at > cd && !path.starts_with('/') {
+            moved.push(at);
+        } else {
+            loads.push((path.to_string(), namespace_at(at)));
+        }
+    }
+    loads.sort();
+    loads.dedup();
+    loads
+}
+
+/// Where the script first changes directory, `\cd lib` or `system "cd lib"`,
+/// or past the end when it never does.
+fn changes_directory(raw: &str, view: &str) -> usize {
+    raw.split_inclusive('\n')
         .scan(0, |offset, line| {
             let at = *offset;
             *offset += line.len();
@@ -1558,18 +1581,18 @@ fn loads(
                 .filter(|&at| view[at..].starts_with("system")),
         )
         .min()
-        .unwrap_or(usize::MAX);
-    let mut loads = vec![];
-    let mut push = |path: &str, at: usize| {
-        if at > cd && !path.starts_with('/') {
-            moved.push(at);
-        } else {
-            loads.push((path.to_string(), namespace_at(at)));
-        }
-    };
+        .unwrap_or(usize::MAX)
+}
+
+/// Each literal load `loads` reads: where its statement starts, the bytes of
+/// its path, and whether it is a file symbol, which no `\cd` moves.
+fn load_sites(code: &str, raw: &str, view: &str) -> Vec<(usize, Range<usize>, bool)> {
+    let mut sites = vec![];
     for (at, rest) in load_lines(code, raw) {
         if let Some(m) = re!(r"^\s+(\S+)").captures(rest) {
-            push(&m[1], at);
+            let from = rest.as_ptr() as usize - code.as_ptr() as usize;
+            let path = m.get(1).unwrap().range();
+            sites.push((at, from + path.start..from + path.end, false));
         }
     }
     // Applied with brackets or `@`, or trapped, it loads as well: q 5 loads
@@ -1585,17 +1608,27 @@ fn loads(
             .trim_start_matches([' ', '\t'])
             .starts_with(',');
         if view[at..].starts_with(&raw[at..at + 2]) && !joined {
-            push(&m[1], at);
+            sites.push((at, m.get(1).unwrap().range(), false));
         }
     }
     // The symbol runs on over `:` and `/`, so `.q` must end it: `` `:x.qd ``
     // and `` `:x.q/y `` name something else.
     for m in re!(r"`:([A-Za-z0-9_./]*\.q)(?:[^A-Za-z0-9_.:/]|$)").captures_iter(view) {
-        loads.push((m[1].to_string(), namespace_at(m.get(0).unwrap().start())));
+        sites.push((m.get(0).unwrap().start(), m.get(1).unwrap().range(), true));
     }
-    loads.sort();
-    loads.dedup();
-    loads
+    sites
+}
+
+/// The bytes of each path `references` counts as a load, which a
+/// navigation request on one follows to the file it names.
+pub fn load_paths(code: &str, raw: &str) -> Vec<Range<usize>> {
+    let view = commands_blanked(code, raw);
+    let cd = changes_directory(raw, &view);
+    load_sites(code, raw, &view)
+        .into_iter()
+        .filter(|(at, path, symbol)| *symbol || *at <= cd || raw[path.clone()].starts_with('/'))
+        .map(|(_, path, _)| path)
+        .collect()
 }
 
 /// The places a name is reached by a value computed at run time, which no

@@ -63,9 +63,12 @@ to a process you add and connect to, and sends only the code you run.
   **Go to Definition** and **Find All References** across the workspace's
   `.q` files, and occurrence highlights that tell a write from a read. A
   name is resolved as q resolves it under the `\d` context in force,
-  including in a file another loads under a context. What only running the
-  code would tell - a name built at run time, `value "..."`, another
-  process - is not found.
+  including in a file another loads under a context. A name several
+  scripts assign goes first to the current file's own assignment, then to
+  those in files it loads; the outline groups names by namespace; and Go to
+  Definition on the path in `\l path/file.q` opens that file. What only
+  running the code would tell - a name built at run time, `value "..."`,
+  another process - is not found.
 - **Rename** for a lambda's parameters and locals. A global is refused with
   the reason: it can be reached from a string, a symbol or another process,
   and a rename that misses one of those breaks the program quietly.

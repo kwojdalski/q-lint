@@ -23,15 +23,17 @@
 //! is in no list here, which is why only a lambda's own parameters and
 //! locals can be renamed: every place those are named is inside the lambda.
 use super::{Documents, Index, Lines, file_key, is_q_uri, path_of, path_uri};
-use q_lint_rs::graph::Placement;
-use q_lint_rs::{Mention, Name, mentions, name_at};
+use q_lint_rs::graph::{self, Placement};
+use q_lint_rs::{Mention, Name, load_at, mentions, name_at};
 use serde_json::{Value, json};
 use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
+    path::Path,
 };
 
 /// LSP's `SymbolKind`s for what a q script defines.
+const NAMESPACE: u8 = 3;
 pub(super) const FUNCTION: u8 = 12;
 pub(super) const VARIABLE: u8 = 13;
 /// LSP's `DocumentHighlightKind`s.
@@ -156,15 +158,134 @@ impl<'a> Sources<'a> {
             .collect()
     }
 
-    /// Each place a file writes one of `names`, as a location. Only the
-    /// files the index has defining one are read.
-    fn definitions(&self, names: &HashSet<String>) -> Vec<Value> {
-        let mut out = vec![];
-        for key in self.keys() {
-            let file = &self.idx.files[key];
-            if !names.iter().any(|name| file.placed.defined.contains(name)) {
-                continue;
+    /// The files the index has defining one of `names`, best first for a
+    /// reader in the file `from` - see `ranked`.
+    pub(super) fn definers(&self, names: &HashSet<String>, from: &str) -> Vec<&'a str> {
+        let definers = self
+            .keys()
+            .into_iter()
+            .filter(|key| {
+                let defined = &self.idx.files[*key].placed.defined;
+                names.iter().any(|name| defined.contains(name))
+            })
+            .collect();
+        self.ranked(definers, from)
+    }
+
+    /// `definers` in the order a reader in `from` wants them: `from` itself,
+    /// then each file it loads, directly or through another, then each file
+    /// that loads it, then the rest - each group in the order of `keys`.
+    ///
+    /// Where `from` assigns the name itself, the rest are left out. A file
+    /// that neither loads `from` nor is loaded by it, by any chain of loads
+    /// the source spells, is another program that happens to use the name -
+    /// eight scripts each with their own `opts:.Q.opt .z.x` - and its
+    /// assignment is not one this file can see. One connected by a load
+    /// stays, ranked: it may run in the same process, and which assignment
+    /// ran last is not something reading says. Where `from` does not assign
+    /// the name, nothing is left out, since the name has to come from
+    /// somewhere and a loader outside the workspace may be what joins them.
+    fn ranked(&self, definers: Vec<&'a str>, from: &str) -> Vec<&'a str> {
+        if definers.len() < 2 {
+            return definers;
+        }
+        let mut edges = HashMap::new();
+        let loaded = self.reached(from, &mut edges);
+        let mut rank: Vec<(u8, &str)> = definers
+            .into_iter()
+            .map(|key| {
+                let rank = if key == from {
+                    0
+                } else if loaded.contains(key) {
+                    1
+                } else if self.reached(key, &mut edges).contains(from) {
+                    2
+                } else {
+                    3
+                };
+                (rank, key)
+            })
+            .collect();
+        rank.sort_by_key(|(rank, _)| *rank);
+        let own = rank.first().is_some_and(|(rank, _)| *rank == 0);
+        rank.into_iter()
+            .filter(|(rank, _)| !own || *rank < 3)
+            .map(|(_, key)| key)
+            .collect()
+    }
+
+    /// Each indexed file `from` loads, directly or through another, by its
+    /// key. `edges` keeps where each file's loads lead, so one request
+    /// follows a file's loads once however many files it asks about.
+    fn reached(&self, from: &str, edges: &mut HashMap<String, Vec<String>>) -> HashSet<String> {
+        let mut seen = HashSet::new();
+        let mut pending = vec![from.to_string()];
+        while let Some(file) = pending.pop() {
+            if !edges.contains_key(&file) {
+                let next = self.idx.files.get(&file).map_or_else(Vec::new, |f| {
+                    f.loads
+                        .iter()
+                        .flat_map(|(load, _)| self.loaded(&file, load, false))
+                        .collect()
+                });
+                edges.insert(file.clone(), next);
             }
+            for next in &edges[&file] {
+                if seen.insert(next.clone()) {
+                    pending.push(next.clone());
+                }
+            }
+        }
+        seen
+    }
+
+    /// The files `\l load` in the file `from` leads to, as the dependency
+    /// graph follows it: by their key in the index, or - with `disk` - by
+    /// their path, for a file the index does not hold and the disk does.
+    pub(super) fn loaded(&self, from: &str, load: &str, disk: bool) -> Vec<String> {
+        let indexed = |path: &Path| {
+            let path = path.to_str()?;
+            if self.idx.files.contains_key(path) {
+                Some(path.to_string())
+            } else {
+                (disk && Path::new(path).is_file()).then(|| file_key(path))
+            }
+        };
+        let scripts_in = |dir: &Path| {
+            let dir = file_key(&dir.to_string_lossy());
+            self.keys()
+                .into_iter()
+                .filter(|key| Path::new(key).parent() == Some(Path::new(&dir)))
+                .map(str::to_string)
+                .collect()
+        };
+        graph::loaded(Path::new(from), load, &self.idx.cwd(), indexed, scripts_in)
+    }
+
+    /// The URI a location in the file `key` names it by: the open buffer's,
+    /// or the file's on disk.
+    pub(super) fn uri(&self, key: &str) -> String {
+        self.open
+            .get(key)
+            .map_or_else(|| path_uri(Path::new(key)), |uri| uri.to_string())
+    }
+
+    /// The path of the load under the cursor, as its start and length, with
+    /// the files it leads to - none when it leads nowhere. Nothing when the
+    /// cursor is on no load.
+    pub(super) fn load_under(&self, cursor: &Cursor) -> Option<(usize, usize, Vec<String>)> {
+        let (at, len) = load_at(cursor.text, cursor.offset)?;
+        let files = self.loaded(&cursor.key, &cursor.text[at..at + len], true);
+        Some((at, len, files))
+    }
+
+    /// Each place a file writes one of `names`, as a location, best first
+    /// for a reader in the file `from`. Only the files the index has
+    /// defining one are read.
+    fn definitions(&self, names: &HashSet<String>, from: &str) -> Vec<Value> {
+        let mut out = vec![];
+        for key in self.definers(names, from) {
+            let file = &self.idx.files[key];
             let Some((uri, text)) = self.text(key) else {
                 continue;
             };
@@ -276,12 +397,20 @@ pub(super) fn answer(
 }
 
 /// `textDocument/definition`: where a local is declared, or each place the
-/// workspace assigns a global - every one, since which assignment ran last
-/// is not something reading says.
+/// workspace assigns a global - every one connected to this file, since
+/// which assignment ran last is not something reading says, and this file's
+/// own first (`Sources::ranked`). On the path of a load, the file it loads.
 fn definition(params: &Value, sources: &Sources) -> Value {
     let Some(cursor) = sources.cursor(params) else {
         return Value::Null;
     };
+    // The path of a load goes to the file it loads, at its start.
+    if let Some((_, _, files)) = sources.load_under(&cursor) {
+        return files
+            .iter()
+            .map(|file| json!({"uri": sources.uri(file), "range": range(&Lines::new(""), 0, 0)}))
+            .collect();
+    }
     let lines = Lines::new(cursor.text);
     match name_at(cursor.text, cursor.offset) {
         None => Value::Null,
@@ -293,7 +422,7 @@ fn definition(params: &Value, sources: &Sources) -> Value {
             }),
         Some(Name::Global { at, .. }) => {
             let targets = sources.targets(&cursor, at);
-            let mut found = sources.definitions(&targets);
+            let mut found = sources.definitions(&targets, &cursor.key);
             if found.is_empty() {
                 // Or the namespace holding it, assigned as a whole: after
                 // `.cfg:d`, that is where `.cfg.n` comes from.
@@ -308,7 +437,7 @@ fn definition(params: &Value, sources: &Sources) -> Value {
                     })
                     .map(str::to_string)
                     .collect();
-                found = sources.definitions(&holders);
+                found = sources.definitions(&holders, &cursor.key);
             }
             json!(found)
         }
@@ -386,81 +515,300 @@ fn document_symbols(params: &Value, sources: &Sources, nested: bool) -> Value {
     };
     let lines = Lines::new(text);
     let mut listed = HashSet::new();
-    mentions(text)
+    let all = mentions(text);
+    let defined: Vec<(&Mention, bool, usize, usize)> = all
         .iter()
         .filter_map(|m| {
             let definition = m.definition.as_ref()?;
             if !listed.insert(m.name.as_str()) {
                 return None;
             }
-            let kind = if definition.function {
-                FUNCTION
-            } else {
-                VARIABLE
-            };
-            Some(if nested {
-                // The selection has to lie within the range (LSP 3.17).
-                let start = definition.start.min(m.at);
-                let end = definition.end.max(m.at + m.len);
+            // The selection has to lie within the range (LSP 3.17).
+            let start = definition.start.min(m.at);
+            let end = definition.end.max(m.at + m.len);
+            Some((m, definition.function, start, end))
+        })
+        .collect();
+    if !nested {
+        return defined
+            .iter()
+            .map(|(m, function, ..)| {
                 json!({
                     "name": m.name,
-                    "detail": definition.detail,
-                    "kind": kind,
-                    "range": range(&lines, start, end - start),
-                    "selectionRange": range(&lines, m.at, m.len),
-                })
-            } else {
-                json!({
-                    "name": m.name,
-                    "kind": kind,
+                    "kind": if *function { FUNCTION } else { VARIABLE },
                     "location": location(uri, &lines, m.at, m.len),
                 })
             })
+            .collect();
+    }
+    outline(&defined, &lines)
+}
+
+/// The namespace `name` is in, the whole of it before its last dot: `.a.b`
+/// for `.a.b.c`, and none for `c` or `.c`.
+fn namespace(name: &str) -> Option<&str> {
+    name.rfind('.')
+        .filter(|&dot| dot > 0)
+        .map(|dot| &name[..dot])
+}
+
+/// The nested outline: each name under the namespace it is in, the whole of
+/// it before its last dot - `.qetl.io.read` as `read` under `.qetl.io` - and
+/// a name with no namespace at the top.
+///
+/// One level, and not one for every dot. A file mostly writes into one or
+/// two contexts, all under one project prefix: nesting `.qetl.io` under
+/// `.qetl` puts the whole file under a single node with a single child,
+/// and grouping at the first level only, under `.qetl`, does the same. A
+/// group per context the file writes into is what `\d` names, and what an
+/// outline of a large file is scanned by. A namespace the file also assigns
+/// whole, `.cfg:()!()` beside `.cfg.port:5010`, is that assignment, with the
+/// names in it as its children.
+fn outline(defined: &[(&Mention, bool, usize, usize)], lines: &Lines) -> Value {
+    let used: HashSet<&str> = defined
+        .iter()
+        .filter_map(|(m, ..)| namespace(&m.name))
+        .collect();
+    /// A namespace in the outline: its name, its own assignment, and the
+    /// names in it, each by its place in `defined`.
+    struct Group<'m> {
+        name: &'m str,
+        own: Option<usize>,
+        children: Vec<usize>,
+    }
+    let mut groups: Vec<Group> = vec![];
+    let mut group_of: HashMap<&str, usize> = HashMap::new();
+    // In order of first appearance: a group stands where its first name, or
+    // its own assignment, does. `Err` is a group, by its place in `groups`.
+    let mut top: Vec<Result<usize, usize>> = vec![];
+    for (i, (m, ..)) in defined.iter().enumerate() {
+        let (name, own) = match namespace(&m.name) {
+            _ if used.contains(m.name.as_str()) => (m.name.as_str(), true),
+            Some(ns) => (ns, false),
+            None => {
+                top.push(Ok(i));
+                continue;
+            }
+        };
+        let g = *group_of.entry(name).or_insert_with(|| {
+            groups.push(Group {
+                name,
+                own: None,
+                children: vec![],
+            });
+            top.push(Err(groups.len() - 1));
+            groups.len() - 1
+        });
+        if own {
+            groups[g].own = Some(i);
+        } else {
+            groups[g].children.push(i);
+        }
+    }
+    let symbol = |i: usize, name: &str| {
+        let (m, function, start, end) = defined[i];
+        json!({
+            "name": name,
+            "detail": m.definition.as_ref().map_or("", |d| d.detail.as_str()),
+            "kind": if function { FUNCTION } else { VARIABLE },
+            "range": range(lines, start, end - start),
+            "selectionRange": range(lines, m.at, m.len),
+        })
+    };
+    top.into_iter()
+        .map(|entry| match entry {
+            Ok(i) => symbol(i, &defined[i].0.name),
+            Err(g) => {
+                let group = &groups[g];
+                let members = group.own.iter().chain(&group.children);
+                let start = members.clone().map(|&i| defined[i].2).min().unwrap_or(0);
+                let end = members.map(|&i| defined[i].3).max().unwrap_or(0);
+                let children: Vec<Value> = group
+                    .children
+                    .iter()
+                    .map(|&i| {
+                        let name = &defined[i].0.name;
+                        symbol(i, &name[group.name.len() + 1..])
+                    })
+                    .collect();
+                let mut node = match group.own {
+                    Some(own) => symbol(own, group.name),
+                    None => {
+                        let first = defined[group.children[0]].0;
+                        json!({
+                            "name": group.name,
+                            "kind": NAMESPACE,
+                            "selectionRange": range(lines, first.at, first.len),
+                        })
+                    }
+                };
+                node["range"] = range(lines, start, end - start);
+                node["children"] = json!(children);
+                node
+            }
         })
         .collect()
 }
 
-/// `workspace/symbol`: the globals the workspace assigns whose name holds
-/// the query, whatever its case - and all of them, up to `MAX_SYMBOLS`, for
-/// an empty one, each once for every file that assigns it. Only the files the index has defining a match are read.
+/// How well `name`, lower-cased, answers a `workspace/symbol` query, by its
+/// `words` lower-cased - lower is better, `None` not at all. 0 when it is
+/// the query, 1 when its last segment is (`.u.st` for `st`), 2 when it or
+/// its last segment starts with it, 3 when it holds it - every word of it,
+/// for a query of several (`bounded fail`) - and 4 when it holds its letters
+/// in order, as an editor filters (`qior` for `.qetl.io.read`).
+fn matched(name: &str, words: &[&str]) -> Option<u8> {
+    let [query] = words else {
+        return words.iter().all(|word| name.contains(word)).then_some(3);
+    };
+    let leaf = name.rsplit('.').next().unwrap_or(name);
+    if name == *query {
+        Some(0)
+    } else if leaf == *query {
+        Some(1)
+    } else if name.starts_with(query) || leaf.starts_with(query) {
+        Some(2)
+    } else if name.contains(query) {
+        Some(3)
+    } else {
+        let mut letters = name.chars();
+        query.chars().all(|c| letters.any(|n| n == c)).then_some(4)
+    }
+}
+
+/// `workspace/symbol`: the globals the workspace assigns that answer the
+/// query, whatever its case, each once for every file that assigns it -
+/// ranked by `matched`, and only then cut to `MAX_SYMBOLS`, so an exact name
+/// is never lost among longer ones that hold it. The ranking is over the
+/// index's names; only the files holding a name that makes the cut are
+/// read, for its position. Within a rank they go by file, then name: by
+/// length instead, the shortest 512 of thousands of matches are spread over
+/// hundreds of files, and reading those made the request several times
+/// slower for an order the client sorts again by its own score anyway.
 fn workspace_symbols(params: &Value, sources: &Sources) -> Value {
     let query = params["query"].as_str().unwrap_or_default().to_lowercase();
-    let matches = |name: &str| name.to_lowercase().contains(&query);
-    let mut out = vec![];
+    let words: Vec<&str> = query.split_whitespace().collect();
+    let mut ranked: Vec<(u8, &str, &str)> = vec![];
     for key in sources.keys() {
-        let file = &sources.idx.files[key];
-        if !file.placed.defined.iter().any(|name| matches(name)) {
-            continue;
-        }
-        let Some((uri, text)) = sources.text(key) else {
-            continue;
-        };
-        let lines = Lines::new(&text);
-        let mut listed = HashSet::new();
-        for m in &mentions(&text) {
-            let Some(definition) = &m.definition else {
-                continue;
-            };
-            // Once a file, where it first assigns the name: as the outline.
-            if !listed.insert(m.name.as_str()) {
-                continue;
+        for name in &sources.idx.files[key].placed.defined {
+            if let Some(rank) = matched(&name.to_lowercase(), &words) {
+                ranked.push((rank, key, name));
             }
-            for name in placed(&m.name, m.implicit, &file.placement) {
-                if !matches(&name) {
-                    continue;
-                }
-                if out.len() == MAX_SYMBOLS {
-                    return json!(out);
-                }
-                out.push(json!({
-                    "name": name,
-                    "kind": if definition.function { FUNCTION } else { VARIABLE },
-                    "location": location(&uri, &lines, m.at, m.len),
-                }));
+        }
+    }
+    ranked.sort_unstable();
+    // Each file read once.
+    let mut read: HashMap<&str, Symbols> = HashMap::new();
+    let mut out = vec![];
+    let mut rest = ranked.as_mut_slice();
+    while out.len() < MAX_SYMBOLS && !rest.is_empty() {
+        let rank = rest[0].0;
+        let (tier, after) = rest.split_at_mut(rest.partition_point(|c| c.0 == rank));
+        rest = after;
+        // A file read for a better rank first: the names it holds cost no
+        // further read.
+        tier.sort_by_key(|(_, key, _)| !read.contains_key(key));
+        let mut wanted = HashSet::new();
+        let unread = tier
+            .iter()
+            .take(MAX_SYMBOLS - out.len())
+            .map(|(_, key, _)| *key)
+            .filter(|key| !read.contains_key(key) && wanted.insert(*key));
+        read.extend(assigned_in(sources, unread.collect()));
+        for &(_, key, name) in tier.iter() {
+            if !symbol(sources, &mut read, &mut out, key, name) {
+                break;
             }
         }
     }
     json!(out)
+}
+
+/// Add the symbol `name` the file `key` assigns to `out`, reading the file
+/// into `read` if it is not there yet - or nothing, for a name the index
+/// has from a write that is no mention, which has no position to give.
+/// Whether `out` has room for more.
+fn symbol<'k>(
+    sources: &Sources,
+    read: &mut HashMap<&'k str, Symbols>,
+    out: &mut Vec<Value>,
+    key: &'k str,
+    name: &str,
+) -> bool {
+    let found = read.entry(key).or_insert_with(|| assigned(sources, key));
+    if let Some((location, kind)) = found.get(name) {
+        out.push(json!({"name": name, "kind": kind, "location": location}));
+    }
+    out.len() < MAX_SYMBOLS
+}
+
+/// `assigned` of each of `keys`, the files read side by side: a short query
+/// ranks names from a hundred files and more to the top, and reading them
+/// one after another made the request twice as slow as the unranked one,
+/// which stopped at the first files it came to.
+fn assigned_in<'k>(sources: &Sources, keys: Vec<&'k str>) -> Vec<(&'k str, Symbols)> {
+    let threads = std::thread::available_parallelism()
+        .map_or(1, |n| n.get())
+        .min(8)
+        .min(keys.len());
+    if threads < 2 {
+        return keys
+            .into_iter()
+            .map(|key| (key, assigned(sources, key)))
+            .collect();
+    }
+    std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..threads)
+            .map(|first| {
+                let keys = &keys;
+                scope.spawn(move || {
+                    keys.iter()
+                        .skip(first)
+                        .step_by(threads)
+                        .map(|key| (*key, assigned(sources, key)))
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .flat_map(|worker| {
+                worker
+                    .join()
+                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+            })
+            .collect()
+    })
+}
+
+/// The globals one file assigns, each as the location where it first does
+/// and its kind.
+type Symbols = HashMap<String, (Value, u8)>;
+
+/// The globals the file `key` assigns, where each first is - as the outline
+/// has it.
+fn assigned(sources: &Sources, key: &str) -> Symbols {
+    let mut found = HashMap::new();
+    let Some((uri, text)) = sources.text(key) else {
+        return found;
+    };
+    let placement = &sources.idx.files[key].placement;
+    let lines = Lines::new(&text);
+    for m in &mentions(&text) {
+        let Some(definition) = &m.definition else {
+            continue;
+        };
+        for placed in placed(&m.name, m.implicit, placement) {
+            found.entry(placed).or_insert_with(|| {
+                let kind = if definition.function {
+                    FUNCTION
+                } else {
+                    VARIABLE
+                };
+                (location(&uri, &lines, m.at, m.len), kind)
+            });
+        }
+    }
+    found
 }
 
 /// `textDocument/prepareRename`: the range of the local under the cursor,

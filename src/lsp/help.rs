@@ -120,14 +120,12 @@ impl Defined {
 }
 
 /// Each place a file writes one of `names`, read as `Sources::definitions`
-/// reads them, up to `MAX_DEFINITIONS`.
-fn defined(sources: &Sources, names: &HashSet<String>) -> Vec<Defined> {
+/// reads them and in its order, best first for a reader in the file `from`,
+/// up to `MAX_DEFINITIONS`.
+fn defined(sources: &Sources, names: &HashSet<String>, from: &str) -> Vec<Defined> {
     let mut out = vec![];
-    for key in sources.keys() {
+    for key in sources.definers(names, from) {
         let file = &sources.idx.files[key];
-        if !names.iter().any(|name| file.placed.defined.contains(name)) {
-            continue;
-        }
         let Some((_, text)) = sources.text(key) else {
             continue;
         };
@@ -262,27 +260,31 @@ fn builtin_described(builtin: &Builtin, markdown: bool) -> String {
 
 /// `textDocument/hover`: for a global, each definition the workspace has of
 /// it - a function as its name and parameters, anything else as the line
-/// that assigns it - with the comment above; for a name q defines, its
-/// catalogue entry. Nothing for a local, and nothing for a name nobody
-/// defines.
+/// that assigns it - with the comment above, the best first; for a name q
+/// defines, its catalogue entry; for the path of a load, the file it loads.
+/// Nothing for a local, and nothing for a name nobody defines.
 fn hover(params: &Value, sources: &Sources, client: Client) -> Value {
     let Some(cursor) = sources.cursor(params) else {
         return Value::Null;
     };
     let markdown = client.hover_markdown;
+    if let Some((at, len, files)) = sources.load_under(&cursor) {
+        return loaded(sources, &cursor, at, len, &files, markdown);
+    }
     let builtin_at = |at: usize, len: usize| {
         builtin(&cursor.text[at..at + len]).map(|b| builtin_described(b, markdown))
     };
     let (at, len, sections) = match name_at(cursor.text, cursor.offset) {
         Some(Name::Local(_)) => return Value::Null,
         Some(Name::Global { at, len, .. }) => {
-            let sections: Vec<String> = defined(sources, &sources.targets(&cursor, at))
-                .iter()
-                .map(|d| {
-                    let code = d.label().unwrap_or_else(|| d.line.clone());
-                    described(&code, &d.comment, Some((&d.file, None)), markdown)
-                })
-                .collect();
+            let sections: Vec<String> =
+                defined(sources, &sources.targets(&cursor, at), &cursor.key)
+                    .iter()
+                    .map(|d| {
+                        let code = d.label().unwrap_or_else(|| d.line.clone());
+                        described(&code, &d.comment, Some((&d.file, None)), markdown)
+                    })
+                    .collect();
             if sections.is_empty() {
                 (at, len, builtin_at(at, len).into_iter().collect())
             } else {
@@ -308,6 +310,36 @@ fn hover(params: &Value, sources: &Sources, client: Client) -> Value {
     })
 }
 
+/// The hover on the path of a load: the file it loads, under the workspace
+/// folder that holds it - or the scripts, for a directory. Nothing for a
+/// load that leads nowhere.
+fn loaded(
+    sources: &Sources,
+    cursor: &Cursor,
+    at: usize,
+    len: usize,
+    files: &[String],
+    markdown: bool,
+) -> Value {
+    if files.is_empty() {
+        return Value::Null;
+    }
+    let shown: Vec<String> = files
+        .iter()
+        .map(|file| {
+            let file = shown(sources, file);
+            if markdown { escaped(&file) } else { file }
+        })
+        .collect();
+    json!({
+        "contents": {
+            "kind": if markdown { "markdown" } else { "plaintext" },
+            "value": shown.join(if markdown { "  \n" } else { "\n" }),
+        },
+        "range": range(&Lines::new(cursor.text), at, len),
+    })
+}
+
 /// One way to call a name: how it is written, what it takes, and what is
 /// said about it.
 struct Signature {
@@ -327,7 +359,7 @@ fn signatures(sources: &Sources, cursor: &Cursor, at: usize, len: usize) -> Vec<
         // What a local holds is whatever was assigned to it last.
         Some(Name::Local(_)) => return found,
         Some(Name::Global { at, .. }) => {
-            for d in defined(sources, &sources.targets(cursor, at)) {
+            for d in defined(sources, &sources.targets(cursor, at), &cursor.key) {
                 let Some(params) = d.params else { continue };
                 if !found.iter().any(|s| s.name == d.name && s.params == params) {
                     found.push(Signature {
