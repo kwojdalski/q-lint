@@ -131,6 +131,16 @@ test("an unknown label, or no connection, is an error that lists the labels", ()
   assert.match(notConnected(saved, []), /^No q process is connected\. .*"process"\. The labels are: rdb, hdb\.$/);
 });
 
+test("a bare label two discovery servers list is ambiguous, not unknown", () => {
+  const two = [
+    ...discovered,
+    { server: { label: "east", url: "http://y" }, state: { processes: [{ label: "gw", host: "e", port: 3, tags: [] }], problems: [], loading: false, removed: false } },
+  ];
+  const { error } = resolveProcess("gw", saved, two);
+  assert.doesNotMatch(error, /No q process is labelled/);
+  assert.strictEqual(error, 'More than one discovery server lists a q process labelled "gw": name it as disc/gw or east/gw.');
+});
+
 test("Copy Label copies a row's label, a discovered process's qualified", () => {
   assert.strictEqual(rowLabel({ kind: "process", process: saved[0] }), "rdb");
   assert.strictEqual(rowLabel({ kind: "discovered", server: "disc", process: saved[1] }), "disc/hdb");

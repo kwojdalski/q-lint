@@ -151,7 +151,18 @@ function listed(saved: Process[], discovered: Discovered[]): string {
 /// Connect reads a label. An error listing the labels when none is.
 export function resolveProcess(label: string, saved: Process[], discovered: Discovered[]): { process: Process } | { error: string } {
   const process = saved.find((p) => p.label === label) ?? findDiscovered(discovered, label);
-  return process !== undefined ? { process } : { error: `No q process is labelled "${label}". ${listed(saved, discovered)}` };
+  if (process !== undefined) {
+    return { process };
+  }
+  // A bare label that more than one server lists names none of them.
+  const servers = discovered.filter(({ state }) => state.processes.some((p) => p.label === label));
+  if (servers.length > 1) {
+    const names = servers.map(({ server }) => qualified(server.label, label));
+    return {
+      error: `More than one discovery server lists a q process labelled "${label}": name it as ${names.slice(0, -1).join(", ")} or ${names[names.length - 1]}.`,
+    };
+  }
+  return { error: `No q process is labelled "${label}". ${listed(saved, discovered)}` };
 }
 
 /// The error for a query that names no process when none is connected.
