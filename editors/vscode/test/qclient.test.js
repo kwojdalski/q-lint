@@ -384,3 +384,51 @@ test("the explorer's call against a real q process", { skip }, async (t) => {
     assert.ok(kt.ok && kt.text.some((l) => /^1\s*\|?\s*3/.test(l.replace(/^\|\s*/, ""))), kt.text.join("\n"));
   });
 });
+
+/// A process played by a socket server: it answers the handshake, then
+/// hands each message it gets, whole, to `answer` with the socket. No q
+/// needed, so these run everywhere.
+async function fakeProcess(answer) {
+  const server = net.createServer((socket) => {
+    socket.on("error", () => {});
+    let shook = false;
+    let buffer = Buffer.alloc(0);
+    socket.on("data", (chunk) => {
+      if (!shook) {
+        shook = true;
+        socket.write(Buffer.from([3]));
+        return;
+      }
+      buffer = Buffer.concat([buffer, chunk]);
+      while (buffer.length >= 8 && buffer.length >= buffer.readUInt32LE(4)) {
+        const length = buffer.readUInt32LE(4);
+        const message = buffer.subarray(0, length);
+        buffer = buffer.subarray(length);
+        answer(message, socket);
+      }
+    });
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  return { port: server.address().port, close: () => server.close() };
+}
+
+/// `1000#7j` as kdb+ compresses it (`-18!`), sent as a response.
+const COMPRESSED = "01000100db0000004e1f0000c00700e803000007000000ff000207ff0002000107ff0001000207ffff0002000107ff0001000207ff00020001ff07ff0001000207ff0002000107ff0001ff000207ff0002000107ff0001000207ffff0002000107ff0001000207ff00020001ff07ff0001000207ff0002000107ff0001ff000207ff0002000107ff0001000207ffff0002000107ff0001000207ff00020001ff07ff0001000207ff0002000107ff0001ff000207ff0002000107ff0001000207ffff0002000107ff0001000207ff000200010f07ff000100020746";
+
+test("a compressed answer keeps its q type (#894)", async (t) => {
+  const fake = await fakeProcess((_, socket) => {
+    const message = Buffer.from(COMPRESSED, "hex");
+    message.writeUInt8(2, 1);
+    socket.write(message);
+  });
+  t.after(() => fake.close());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: fake.port });
+  t.after(() => connection.abort());
+  const { value, type } = await connection.evaluate("1000#7");
+  assert.strictEqual(value.length, 1000);
+  assert.strictEqual(type, 7);
+  // So an unwrapped query writes it as q does, on one line.
+  const { runUnwrapped } = require("../out/querycontrols.js");
+  const answer = await runUnwrapped(connection, ["1000#7"], { size: [25, 80], limit: 10, unlimited: false, grid: false });
+  assert.deepStrictEqual(answer.text, [`${"7 ".repeat(39)}..`]);
+});

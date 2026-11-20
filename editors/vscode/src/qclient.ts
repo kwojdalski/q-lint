@@ -48,12 +48,21 @@ export function statementsOut(arg: unknown): unknown {
     : arg;
 }
 
+/// The q type of a message: the first byte of its body. A compressed body
+/// starts, after its uncompressed length, with a flag byte and then that
+/// byte as a literal, since nothing before it can be copied.
+function typeOf(message: Buffer): number | undefined {
+  if (message.readUInt8(2) !== 1) {
+    return message.length > 8 ? message.readInt8(8) : undefined;
+  }
+  return message.length > 13 && (message.readUInt8(12) & 1) === 0 ? message.readInt8(13) : undefined;
+}
+
 export class QConnection {
   private buffer: Buffer = Buffer.alloc(0);
   private pending: { resolve: (v: unknown) => void; reject: (e: Error) => void } | undefined;
   private closed = false;
-  /// The q type of the last answer, read from its first byte; undefined
-  /// when it came compressed, since only the codec reads past that.
+  /// The q type of the last answer, read from the first byte of its body.
   private answerType: number | undefined;
   private readonly onClose: (() => void)[] = [];
 
@@ -218,8 +227,7 @@ export class QConnection {
       if (pending === undefined) {
         continue;
       }
-      const compressed = message.readUInt8(2) === 1;
-      this.answerType = compressed || message.length < 9 ? undefined : message.readInt8(8);
+      this.answerType = typeOf(message);
       try {
         pending.resolve(deserialize(message, false, true, false, false));
       } catch (error) {

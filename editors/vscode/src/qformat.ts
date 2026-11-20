@@ -6,7 +6,7 @@
 // The codec keeps less than q knows, so this is q's console as nearly as is
 // practical, not exactly:
 // - The q type of the whole value is known when the caller passes it (the
-//   type byte of an uncompressed answer, or `type` sent beside the value),
+//   type byte of an answer, or `type` sent beside the value),
 //   and then an atom or a simple list is written as q writes it, suffix and
 //   all. Inside a table, a dictionary or a general list the codec gives
 //   plain JavaScript values, and the type is guessed from them: a symbol and
