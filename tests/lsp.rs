@@ -2982,3 +2982,91 @@ fn a_document_that_never_closed_has_nothing_to_carry() {
     );
     assert_eq!(server.shutdown_and_exit(), 0);
 }
+
+/// A file long enough that linting it takes longer than sending it: a
+/// thousand lambdas, each with one QE004.
+fn long_file() -> String {
+    (0..1000)
+        .map(|i| format!("f{i}:{{[a]\n  a==1}}\n"))
+        .collect()
+}
+
+#[test]
+fn a_burst_of_changes_is_linted_at_its_last() {
+    // Twenty edits sent faster than one can be linted. Each was linted in
+    // turn, and the last diagnostics came after nineteen nobody could read
+    // (#867); now a change with another behind it is not linted.
+    let mut server = Server::start();
+    server.initialize();
+    let uri = "file:///tmp/burst.q";
+    let text = long_file();
+    server.open(uri, &text);
+    assert_eq!(server.diagnostics_for(uri).len(), 1000);
+    // Change `i` adds `i` lines with a finding each, so a publish says
+    // which version it is of.
+    let mut version = text.clone();
+    for i in 1..=20 {
+        version.push_str(&format!("b{i}:1==2\n"));
+        change(&mut server, uri, i + 1, &version);
+        // A request between two changes is answered on the text before it,
+        // linted or not.
+        if i == 10 {
+            server.send(
+                json!({"jsonrpc":"2.0","id":51,"method":"textDocument/documentSymbol",
+                "params":{"textDocument":{"uri":uri}}}),
+            );
+        }
+    }
+    // Answered after every change before it was handled.
+    server.send(
+        json!({"jsonrpc":"2.0","id":50,"method":"textDocument/foldingRange",
+        "params":{"textDocument":{"uri":uri}}}),
+    );
+    let (mut published, mut symbols) = (vec![], None);
+    loop {
+        let message = server.receive();
+        if message["id"] == 50 {
+            break;
+        }
+        if message["id"] == 51 {
+            symbols = message["result"].as_array().map(Vec::len);
+        }
+        if message["method"] == "textDocument/publishDiagnostics" {
+            published.push(message["params"]["diagnostics"].as_array().unwrap().len());
+        }
+    }
+    assert_eq!(symbols, Some(1010));
+    assert_eq!(published.last(), Some(&1020), "{published:?}");
+    assert!(published.len() < 20, "{published:?}");
+    assert!(published.windows(2).all(|w| w[0] < w[1]), "{published:?}");
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
+fn a_request_cancelled_while_it_waits_is_answered_cancelled() {
+    // LSP 3.17: a cancelled request is still answered, with
+    // RequestCancelled when it was not run. The server is kept busy linting
+    // a long file while the request and its cancellation arrive behind it.
+    let mut server = Server::start();
+    server.initialize();
+    let uri = "file:///tmp/cancel.q";
+    let text = long_file();
+    server.open(uri, &text);
+    change(&mut server, uri, 2, &format!("{text}a:1\n"));
+    change(&mut server, uri, 3, &format!("{text}a:2\n"));
+    let fold = |id: u64| {
+        json!({"jsonrpc":"2.0","id":id,"method":"textDocument/foldingRange",
+               "params":{"textDocument":{"uri":uri}}})
+    };
+    server.send(fold(60));
+    server.send(fold(61));
+    server.send(json!({"jsonrpc":"2.0","method":"$/cancelRequest","params":{"id":60}}));
+    let cancelled = server.until(|m| m["id"] == 60);
+    assert_eq!(cancelled["error"]["code"], -32800, "{cancelled}");
+    // The one not cancelled is run; a cancel for a request already answered
+    // is dropped, and answers nothing.
+    let answered = server.until(|m| m["id"] == 61);
+    assert_eq!(answered["result"].as_array().map(Vec::len), Some(1000));
+    server.send(json!({"jsonrpc":"2.0","method":"$/cancelRequest","params":{"id":61}}));
+    assert_eq!(server.shutdown_and_exit(), 0);
+}

@@ -22,6 +22,17 @@
 //! replies in order is the whole design, and it keeps this crate's dependency
 //! tree exactly as it was.
 //!
+//! One thread more than that: a reader, which only takes messages off stdin
+//! as they come (`read_ahead`). A large file is still tens of milliseconds a
+//! lint, and a person types faster than that, so while one change is linted
+//! the next ones wait - and with the reader, the loop can see them waiting.
+//! A change with a later change to the same document behind it is taken but
+//! not linted, so a burst of keystrokes is linted once, at its last; and a
+//! request with a `$/cancelRequest` for it behind it is answered
+//! RequestCancelled without being run (`superseded`, `cancelled`). What is
+//! running is never interrupted: no answer here takes long enough for that
+//! to be worth a second thread touching the documents.
+//!
 //! WHAT IT IMPLEMENTS, AND WHAT IT DELIBERATELY DOES NOT
 //!
 //! initialize/initialized, didOpen/didChange/didSave/didClose, shutdown/exit,
@@ -121,7 +132,7 @@
 //! limit is the same one: a call is a function's name in a body, so a name
 //! handed on as a value is listed and a call through a string is not.
 use crate::config::{FILES, Layer, Policy, selector};
-use crate::jsonrpc::{INVALID_REQUEST, receive, send};
+use crate::jsonrpc::{INVALID_REQUEST, Malformed, receive, send};
 use q_lint_rs::graph::Placement;
 use q_lint_rs::{
     FileIndex, Finding, Fix, References, TokenKind, Workspace, balanced, broken_statement, fix_all,
@@ -129,9 +140,10 @@ use q_lint_rs::{
 };
 use serde_json::{Value, json};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     io::{BufRead, Write},
     path::Path,
+    sync::mpsc::{Receiver, channel},
 };
 
 /// Full document sync (`TextDocumentSyncKind.Full`): every change carries the
@@ -147,6 +159,9 @@ const SERVER_NOT_INITIALIZED: i64 = -32002;
 /// LSP 3.17's `RequestFailed`: a well-formed request the server will not
 /// carry out, with the reason as its message - a rename it refuses.
 const REQUEST_FAILED: i64 = -32803;
+/// LSP 3.17's `RequestCancelled`: the reply to a request the client
+/// cancelled before it was run.
+const REQUEST_CANCELLED: i64 = -32800;
 
 mod help;
 mod navigate;
@@ -786,11 +801,50 @@ impl Options {
     }
 }
 
+/// What `read_ahead` hands the loop: `receive`'s answer for each message.
+type Incoming = Result<Option<Result<Value, Malformed>>, String>;
+
+/// Every message on `reader`, read as it arrives by a thread of its own,
+/// up to the end of the stream or the first error that loses the framing,
+/// which is handed on and ends it.
+///
+/// Detached: the loop returns on `exit` while the client may still hold
+/// stdin open, and the process ends with the thread blocked in a read.
+fn read_ahead(mut reader: impl BufRead + Send + 'static) -> Receiver<Incoming> {
+    let (sender, messages) = channel();
+    std::thread::spawn(move || {
+        loop {
+            let next = receive(&mut reader);
+            let more = matches!(next, Ok(Some(_)));
+            if sender.send(next).is_err() || !more {
+                return;
+            }
+        }
+    });
+    messages
+}
+
+/// Whether a queued message is a `didChange` of the document `uri`.
+fn is_change_to(incoming: &Incoming, uri: &str) -> bool {
+    matches!(incoming, Ok(Some(Ok(m)))
+        if m["method"] == "textDocument/didChange" && m.get("id").is_none()
+            && m["params"]["textDocument"]["uri"] == uri)
+}
+
+/// Whether a queued message is a `$/cancelRequest` of the request `id`.
+fn cancels(incoming: &Incoming, id: &Value) -> bool {
+    matches!(incoming, Ok(Some(Ok(m)))
+        if m["method"] == "$/cancelRequest" && m.get("id").is_none() && m["params"]["id"] == *id)
+}
+
 pub fn serve(
-    reader: &mut impl BufRead,
+    reader: impl BufRead + Send + 'static,
     writer: &mut impl Write,
     policy: &Policy,
 ) -> Result<u8, String> {
+    let messages = read_ahead(reader);
+    // What has arrived and is not yet handled, oldest first.
+    let mut queue: VecDeque<Incoming> = VecDeque::new();
     let mut docs: Documents = HashMap::new();
     let mut unsaved = Unsaved::new();
     let mut kept = Kept::new();
@@ -819,7 +873,19 @@ pub fn serve(
     let mut watch_id: Option<String> = None;
     let mut shutdown_requested = false;
     loop {
-        let message = match receive(reader)? {
+        // Everything the client has sent so far, before the oldest of it is
+        // handled: what is behind a message can make it moot.
+        if queue.is_empty() {
+            match messages.recv() {
+                Ok(next) => queue.push_back(next),
+                // The reader handed on how the stream ended and stopped; the
+                // loop has already returned on it.
+                Err(_) => return Ok(if shutdown_requested { 0 } else { 1 }),
+            }
+        }
+        queue.extend(messages.try_iter());
+        let next = queue.pop_front().expect("a message, just queued");
+        let message = match next? {
             Some(Ok(message)) => message,
             // Answered, with the `id: null` JSON-RPC 2.0 §5 requires when the
             // id could not be read, and the server carries on: the framing
@@ -870,6 +936,38 @@ pub fn serve(
             continue;
         }
         let params = message.get("params").cloned().unwrap_or(Value::Null);
+        // LSP 3.17, Cancellation Support: a request cancelled is still
+        // answered, and RequestCancelled says it was not run. Only one still
+        // waiting can be; one already answered had its cancel come too late,
+        // and the notification is dropped like any other unknown one.
+        // `initialize` and `shutdown` are carried out whatever follows them:
+        // either, left undone, leaves the session in no state at all.
+        if let Some(id) = &id
+            && initialized
+            && method != "shutdown"
+            && queue.iter().any(|later| cancels(later, id))
+        {
+            send(
+                writer,
+                json!({"id": id, "error": {"code": REQUEST_CANCELLED,
+                       "message": "cancelled before it was run"}}),
+            )?;
+            continue;
+        }
+        // A change with another change to the same document already behind
+        // it: its text is taken, so whatever comes between is answered on
+        // it, and it is not linted, since its diagnostics would be replaced
+        // before a person could read them. The last change of a burst is.
+        // A request is not dropped in the same way when its document has
+        // changed behind it: LSP 3.17 says a server should NOT answer
+        // ContentModified for a change still in its queue, as an answer on
+        // the older text can still be of use, and it is the client's to
+        // cancel one that is not.
+        let superseded = method == "textDocument/didChange"
+            && id.is_none()
+            && queue.iter().any(|later| {
+                is_change_to(later, params["textDocument"]["uri"].as_str().unwrap_or(""))
+            });
 
         let generation = idx.generation;
         match (method.as_str(), id) {
@@ -1036,6 +1134,11 @@ pub fn serve(
                         // screen; linted, and indexed, when it is saved.
                         docs.insert(uri.clone(), text.to_string());
                         unsaved.insert(uri);
+                    } else if superseded {
+                        // Indexed with the change that is linted, which
+                        // compares what the document defines with what it
+                        // did before the burst.
+                        docs.insert(uri, text.to_string());
                     } else {
                         publish(
                             writer,

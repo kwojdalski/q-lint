@@ -416,6 +416,19 @@ Around those:
   typed goes only once that statement closes. A file that has not closed
   since it was opened has only the QE001, and no folds.
 
+The server answers one message at a time, in the order they arrive, and
+reads ahead while it works. A change to a document that has another change
+to the same document queued behind it is taken but not linted, so a burst of
+keystrokes on a large file is linted once, at the last of them: twenty
+one-character edits to a 1,948-line file publish diagnostics twice and the
+final ones arrive about 0.1 s after the first edit, where each edit used to
+be linted in turn and the last diagnostics took about a second. A request
+still queued when its `$/cancelRequest` arrives is answered
+`RequestCancelled` (-32800) and is not run. A request already running is not
+interrupted. A request whose document changes behind it is still answered
+on the text it was asked about, since LSP 3.17 tells a server not to answer
+`ContentModified` for a change it has not yet handled.
+
 **The reason it is a server rather than an editor plugin shelling out to the
 CLI**: `didChange` carries the buffer, so what gets linted is what is on
 screen, including edits that have not been saved yet. A CLI over paths cannot
