@@ -311,6 +311,13 @@ test("on Windows a bare git is found on PATH, never in the folder it runs in", (
   );
   assert.strictEqual(onPath("git", path, on("C:\\Tools\\git.cmd"), "win32"), undefined);
   assert.strictEqual(onPath("git", undefined, on(), "win32"), undefined);
+  // A PATH entry may be quoted, as the installer of a program under
+  // C:\Program Files can write it; libuv, which spawns git otherwise,
+  // reads such an entry without its quotes, and so does this.
+  assert.strictEqual(
+    onPath("git", '"C:\\Program Files\\Git\\cmd";C:\\Tools', on("C:\\Program Files\\Git\\cmd\\git.exe"), "win32"),
+    "C:\\Program Files\\Git\\cmd\\git.exe",
+  );
   // A path names its file, and elsewhere a bare name is PATH's alone.
   const never = () => assert.fail("nothing is looked for");
   assert.strictEqual(onPath("C:\\git\\git.exe", path, never, "win32"), "C:\\git\\git.exe");
