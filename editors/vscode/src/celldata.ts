@@ -1,5 +1,10 @@
-// What a notebook cell asks the process for in `@grid` and `@chart` mode,
-// and the outputs a cell shows.
+// What a notebook cell asks the process for in `@grid` mode, and the outputs
+// a cell shows.
+//
+// A `@chart` cell asks for what query Chart mode does - `grid.ts`'s `GRID` -
+// so its chart has the same values, columns and axes as the result panel's,
+// drawn by the notebook renderer `media/chartrenderer.js` from the output
+// item `chartOutputs` writes.
 //
 // `DATA` runs the statements as `query.ts`'s `RUN` does - one lambda sent
 // with the cell, nothing defined on the process, the same trace - and when
@@ -18,7 +23,8 @@
 // It works on kdb+/KDB-X and on PeachQ.
 import type { Answer } from "./query";
 import { NULL_TYPE } from "./query";
-import type { CellMode, ChartKind } from "./celldirectives";
+import type { CellMode, ChartMode } from "./celldirectives";
+import { toGrid, type Grid, type GridAnswer } from "./grid";
 
 export const DATA = [
   "{[s;rows;size]",
@@ -189,11 +195,65 @@ export function errorPart(error: string, trace: string): OutputPart {
   return { kind: "error", name: "q error", message: `'${error}`, stack };
 }
 
-/// Where a notebook chart renderer plugs in (#870): the outputs
-/// for `/ @chart <kind>` of `table`. Until it does, the table as text, with
-/// a note saying so.
-export function chartOutputs(kind: ChartKind, table: Table): OutputPart[] {
-  return [plain([`${kind} chart: a notebook does not draw charts yet (query Chart mode does); the data is shown as text.`, ...tableText(table)])];
+/// The output item the notebook chart renderer draws.
+export const CHART_MIME = "application/vnd.q-lint.chart+json";
+
+/// What a `CHART_MIME` item holds: the chart asked for and the grid it is
+/// drawn from, as the result panel gets it less the sort ranks.
+export interface ChartSpec {
+  kind: ChartMode["chart"];
+  title?: string;
+  height?: number;
+  /// Says the table was cut, as `cutNote` does.
+  note?: string;
+  grid: Omit<Grid, "rank">;
+}
+
+/// A grid as a `Table`, for its text.
+const gridTable = (grid: Grid): Table => ({
+  columns: grid.columns.map((c) => c.name),
+  types: grid.columns.map((c) => c.type),
+  keys: grid.columns.filter((c) => c.key).length,
+  data: grid.cells,
+  total: grid.total,
+});
+
+/// The output of a `/ @chart` cell whose value was `grid`: the chart, and
+/// the table as text beside it, which an editor without the renderer - or
+/// another tool reading the saved notebook - shows instead.
+export function chartOutputs(mode: ChartMode, grid: Grid): OutputPart[] {
+  const table = gridTable(grid);
+  const { rank: _rank, ...shown } = grid;
+  const note = cutNote(table);
+  const spec: ChartSpec = {
+    kind: mode.chart,
+    ...(mode.title !== undefined ? { title: mode.title } : {}),
+    ...(mode.height !== undefined ? { height: mode.height } : {}),
+    ...(note !== undefined ? { note } : {}),
+    grid: shown,
+  };
+  return [
+    {
+      kind: "items",
+      items: [
+        { mime: CHART_MIME, text: JSON.stringify(spec) },
+        { mime: "text/plain", text: tableText(table).join("\n") },
+      ],
+    },
+  ];
+}
+
+/// The outputs of a `/ @chart` cell that answered `answer`, `GRID`'s answer:
+/// a chart when the value was a table, a dictionary or a list, and otherwise
+/// what `cellOutputs` shows.
+export function chartCellOutputs(mode: ChartMode, answer: GridAnswer): OutputPart[] {
+  if (answer.ok && answer.grid !== undefined) {
+    return chartOutputs(mode, toGrid(answer.grid, -1));
+  }
+  if (answer.ok && answer.gridError !== undefined) {
+    return [plain([...answer.text, `(@chart could not shape this as a table: '${answer.gridError}. It is shown as text.)`])];
+  }
+  return cellOutputs(mode, answer);
 }
 
 /// The outputs of a cell run in `mode` that answered `data`. A console run
@@ -204,9 +264,6 @@ export function cellOutputs(mode: CellMode, data: CellData): OutputPart[] {
     return [errorPart(data.error, data.trace)];
   }
   if ("table" in data) {
-    if (mode.mode === "chart") {
-      return chartOutputs(mode.chart, data.table);
-    }
     return [
       {
         kind: "items",

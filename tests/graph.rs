@@ -135,6 +135,28 @@ fn a_parenthesised_set_target_is_a_definition() {
 }
 
 #[test]
+fn a_computed_set_target_defines_no_root_name() {
+    // q 5: `ns:`.app; (` sv ns,`run) set {x+1}` defines `.app.run`, and
+    // `(st`pending) upsert t` writes the table `st` names - neither root
+    // `run` nor `pending` (#860). Each set of a symbol list likewise.
+    let lib = "ns:`.app\n(` sv ns,`run) set {x+1}\n(st`pending) upsert t\n(st`a`b) set' 1 2\n";
+    let g = graph(
+        &[("lib.q", lib), ("main.q", "r:(run;pending;a;b)\n")],
+        false,
+    );
+    assert!(deps(&g, "main.q").is_empty(), "{:?}", deps(&g, "main.q"));
+    // A symbol alone in parentheses still names its target.
+    let g = graph(
+        &[
+            ("lib.q", "( `e ) set 5\n(`p`q) set' 1 2\n"),
+            ("main.q", "r:e+p\n"),
+        ],
+        false,
+    );
+    assert_eq!(deps(&g, "main.q"), ["lib.q"]);
+}
+
+#[test]
 fn system_d_and_a_commented_backslash_d_open_a_context() {
     // q 5: after `system "d .b"` and `k:{1}`, `key `.b` is ``k; after
     // `\d .c  / note` and `m:1`, `key `.c` is ``m.

@@ -30,6 +30,8 @@ export const NOTEBOOK = {
   type: "q-lint-notebook",
   controller: "q-lint-notebook-kernel",
   exportCommand: "q-lint.exportNotebook",
+  /// The renderer that draws a `/ @chart` cell's output.
+  renderer: "q-lint.chart",
 } as const;
 
 export interface QnbItem {

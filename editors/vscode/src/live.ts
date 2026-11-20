@@ -5,8 +5,8 @@
 // is touched only once the user connects to it, and then only by the code
 // the user sends. What a query sends is `query.ts`'s; how a block is cut into
 // statements, `statements.ts`'s; how processes are read and grouped,
-// `processes.ts`'s; what a terminal is sent, `terminal.ts`'s. This file is
-// the VS Code around them.
+// `processes.ts`'s; discovery servers, `discoveryservers.ts`'s; what a
+// terminal is sent, `terminal.ts`'s. This file is the VS Code around them.
 import * as path from "path";
 import {
   commands,
@@ -28,8 +28,9 @@ import {
   type TextEditor,
   type TreeDataProvider,
 } from "vscode";
+import { children, findDiscovered, qualified, type Row } from "./discovery";
+import { DiscoveryServers, discoveryItem } from "./discoveryservers";
 import {
-  grouped,
   merge,
   parseProcesses,
   parseTags,
@@ -52,11 +53,10 @@ const HISTORY_LIMIT = 200;
 
 const passwordKey = (label: string): string => `q-lint.password.${label}`;
 
-type ProcessRow = { kind: "tag"; tag: string; processes: Process[] } | { kind: "process"; process: Process };
 /// What a process command is given: a view row, a process's label (from a
 /// keybinding's `args`, or another extension), or nothing - then the user
-/// picks one.
-type ProcessArg = ProcessRow | string | undefined;
+/// picks one. A discovered process is named `server/label`.
+type ProcessArg = Row | string | undefined;
 
 export interface HistoryEntry {
   process: string;
@@ -97,7 +97,7 @@ function nothingThere(from: From): void {
 
 const colours = { red: "charts.red", blue: "charts.blue", green: "charts.green" } as const;
 
-class ProcessesView implements TreeDataProvider<ProcessRow> {
+class ProcessesView implements TreeDataProvider<Row> {
   private readonly changed = new EventEmitter<void>();
   readonly onDidChangeTreeData = this.changed.event;
 
@@ -107,18 +107,14 @@ class ProcessesView implements TreeDataProvider<ProcessRow> {
     this.changed.fire();
   }
 
-  getChildren(row?: ProcessRow): ProcessRow[] {
-    if (row === undefined) {
-      return grouped(this.live.processes()).flatMap((group) =>
-        group.tag === ""
-          ? group.processes.map((process): ProcessRow => ({ kind: "process", process }))
-          : [{ kind: "tag", tag: group.tag, processes: group.processes }],
-      );
-    }
-    return row.kind === "tag" ? row.processes.map((process) => ({ kind: "process", process })) : [];
+  getChildren(row?: Row): Row[] {
+    return children(this.live.processes(), this.live.discovery.discovered(), row);
   }
 
-  getTreeItem(row: ProcessRow): TreeItem {
+  getTreeItem(row: Row): TreeItem {
+    if (row.kind !== "tag" && row.kind !== "process" && row.kind !== "discovered") {
+      return discoveryItem(row);
+    }
     if (row.kind === "tag") {
       const item = new TreeItem(row.tag, TreeItemCollapsibleState.Expanded);
       const colour = processColour({ label: "", host: "", port: 0, tags: [row.tag] });
@@ -127,7 +123,10 @@ class ProcessesView implements TreeDataProvider<ProcessRow> {
       return item;
     }
     const { process } = row;
-    const active = this.live.activeLabel() === process.label;
+    // A discovered process is connected to under its qualified label, so a
+    // saved process of the same label is not shown connected with it.
+    const from = row.kind === "discovered" ? row.server : undefined;
+    const active = this.live.activeLabel() === (from === undefined ? process.label : qualified(from, process.label));
     const item = new TreeItem(process.label, TreeItemCollapsibleState.None);
     item.description = `${process.host}:${process.port}${active ? " - connected" : ""}`;
     const colour = processColour(process);
@@ -138,9 +137,11 @@ class ProcessesView implements TreeDataProvider<ProcessRow> {
         `${process.host}:${process.port}${process.tls ? " (TLS)" : ""}`,
         process.user ? `user \`${process.user}\`` : "no user",
         process.tags.length ? `tags: ${process.tags.join(", ")}` : "no tags",
+        ...(from === undefined ? [] : [`listed by ${from}, connected to as \`${qualified(from, process.label)}\``]),
       ].join("\n\n"),
     );
-    item.contextValue = active ? "process.connected" : "process";
+    const kind = from === undefined ? "process" : "discovered";
+    item.contextValue = active ? `${kind}.connected` : kind;
     // A click connects: the row is the process, and connecting is what it is for.
     item.command = { command: COMMANDS.connect, title: "Connect", arguments: [row] };
     return item;
@@ -319,6 +320,7 @@ export class Live {
   private readonly processesView: ProcessesView;
   private readonly historyView: HistoryView;
   private readonly modes: QueryModes;
+  readonly discovery: DiscoveryServers;
 
   constructor(private readonly context: ExtensionContext) {
     this.output = window.createOutputChannel("q-lint: query");
@@ -327,6 +329,7 @@ export class Live {
     this.status.command = COMMANDS.connect;
     this.processesView = new ProcessesView(this);
     this.historyView = new HistoryView(this);
+    this.discovery = new DiscoveryServers(context, { list: () => this.processes(), save: (processes) => this.save(processes) });
     const terminals = new QTerminals(context);
     this.modes = new QueryModes(context);
     const c = (name: string, run: (...args: never[]) => unknown) => commands.registerCommand(name, run);
@@ -356,6 +359,7 @@ export class Live {
       c(COMMANDS.sendSelection, () => terminals.send("selection")),
       c(COMMANDS.sendBlock, () => terminals.send("block")),
       this.changed,
+      this.discovery.onDidChange(() => this.processesView.refresh()),
       { dispose: () => void this.connection?.close() },
     );
     this.showStatus();
@@ -370,12 +374,23 @@ export class Live {
     history: () => HistoryEntry[];
     /// What the result panel last drew.
     result: () => Rendered | undefined;
+    /// Each discovery server, what it last listed, and why it failed.
+    discovered: () => { server: string; url: string; processes: Process[]; problems: string[]; error?: string; loading: boolean }[];
   } {
     return {
       processes: () => this.processes(),
       activeLabel: () => this.activeLabel(),
       history: () => this.history(),
       result: () => this.modes.lastRendered(),
+      discovered: () =>
+        this.discovery.discovered().map(({ server, state }) => ({
+          server: server.label,
+          url: server.url,
+          processes: state.processes,
+          problems: state.problems,
+          ...(state.error !== undefined ? { error: state.error } : {}),
+          loading: state.loading,
+        })),
     };
   }
 
@@ -514,9 +529,12 @@ export class Live {
   }
 
   /// The process a command was given from a view row, or one the user picks.
-  private async chosen(row: ProcessArg, title: string): Promise<Process | undefined> {
+  /// A discovered process only when `discovered`, with its label qualified;
+  /// a label names a saved process before a discovered one.
+  private async chosen(row: ProcessArg, title: string, discovered = false): Promise<Process | undefined> {
+    const listed = discovered ? this.discovery.discovered() : [];
     if (typeof row === "string") {
-      const named = this.processes().find((p) => p.label === row);
+      const named = this.processes().find((p) => p.label === row) ?? findDiscovered(listed, row);
       if (named === undefined) {
         void window.showErrorMessage(`q-lint: no q process is labelled "${row}".`);
       }
@@ -525,7 +543,17 @@ export class Live {
     if (row?.kind === "process") {
       return row.process;
     }
-    const processes = this.processes();
+    if (row?.kind === "discovered") {
+      if (!discovered) {
+        void window.showInformationMessage("q-lint: a discovered process is not saved. Download Processes saves it.");
+        return undefined;
+      }
+      return { ...row.process, label: qualified(row.server, row.process.label) };
+    }
+    const processes = [
+      ...this.processes(),
+      ...listed.flatMap(({ server, state }) => state.processes.map((p) => ({ ...p, label: qualified(server.label, p.label) }))),
+    ];
     if (processes.length === 0) {
       const add = "Add Process";
       if ((await window.showInformationMessage("q-lint: no q processes yet.", add)) === add) {
@@ -669,8 +697,24 @@ export class Live {
   // --- connections
 
   private async connectTo(row?: ProcessArg): Promise<boolean> {
-    const process = await this.chosen(row, "Connect to which q process?");
-    return process === undefined ? false : this.open(process);
+    const process = await this.chosen(row, "Connect to which q process?", true);
+    if (process === undefined) {
+      return false;
+    }
+    // A discovered process's user has no password stored until asked for one.
+    const saved = this.processes().some((p) => p.label === process.label);
+    if (!saved && process.user && (await this.context.secrets.get(passwordKey(process.label))) === undefined) {
+      const password = await window.showInputBox({
+        title: `q process ${process.label}: password of ${process.user}`,
+        password: true,
+        prompt: "Kept in VS Code's secret storage.",
+      });
+      if (password === undefined) {
+        return false;
+      }
+      await this.context.secrets.store(passwordKey(process.label), password);
+    }
+    return this.open(process);
   }
 
   /// Connect to `process`, closing the connection there was. Whether it

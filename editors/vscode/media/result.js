@@ -2,8 +2,10 @@
 //
 // The extension sends a `grid.ts` Grid - each column's cells as text, the
 // ranks the process sorted them to, and the numeric columns' values - and
-// this script only lays it out. The helpers at the top touch no DOM, and
-// test/result.test.js runs them under node; the rest runs in the webview.
+// this script only lays it out. What a chart draws is chartspec.js's, loaded
+// before this script, which the notebook's chart renderer draws with too.
+// The helpers at the top touch no DOM, and test/grid.test.js runs them
+// under node; the rest runs in the webview.
 (function (root) {
   "use strict";
 
@@ -40,138 +42,9 @@
     return rows;
   }
 
-  /// The columns a chart can plot: the numeric ones, and for every kind but
-  /// a histogram not the first, which is the x axis.
-  function chartable(grid, kind) {
-    const out = [];
-    grid.columns.forEach(function (c, i) {
-      if (c.numeric && (kind === "histogram" || i > 0)) {
-        out.push(i);
-      }
-    });
-    return out;
-  }
-
-  /// `bins` equal bins over the finite values of every series in `series`,
-  /// sharing one range: {edges (bins + 1 of them), counts (one list per
-  /// series)}. One value repeated makes one bin.
-  function histogram(series, bins) {
-    let lo = Infinity;
-    let hi = -Infinity;
-    series.forEach(function (values) {
-      values.forEach(function (v) {
-        if (v !== null && isFinite(v)) {
-          lo = Math.min(lo, v);
-          hi = Math.max(hi, v);
-        }
-      });
-    });
-    if (lo > hi) {
-      return { edges: [], counts: series.map(function () { return []; }) };
-    }
-    const n = lo === hi ? 1 : Math.max(1, Math.floor(bins));
-    const width = (hi - lo) / n;
-    const edges = [];
-    for (let i = 0; i <= n; i++) {
-      edges.push(i === n ? hi : lo + i * width);
-    }
-    const counts = series.map(function (values) {
-      const count = new Array(n).fill(0);
-      values.forEach(function (v) {
-        if (v !== null && isFinite(v)) {
-          count[width === 0 ? 0 : Math.min(n - 1, Math.floor((v - lo) / width))] += 1;
-        }
-      });
-      return count;
-    });
-    return { edges: edges, counts: counts };
-  }
-
-  const pad = function (n, w) { return String(n).padStart(w || 2, "0"); };
-
-  /// How an axis writes a temporal column's value - its own unit since
-  /// 2000.01.01, as grid.ts sends it - in q's notation, to the second.
-  function temporalLabel(type, v) {
-    const day = 86400000;
-    const stamp = function (ms, sep) {
-      const d = new Date(946684800000 + ms);
-      return d.getUTCFullYear() + "." + pad(d.getUTCMonth() + 1) + "." + pad(d.getUTCDate()) +
-        (sep ? sep + pad(d.getUTCHours()) + ":" + pad(d.getUTCMinutes()) + ":" + pad(d.getUTCSeconds()) : "");
-    };
-    const clock = function (s) {
-      const neg = s < 0 ? "-" : "";
-      s = Math.abs(s);
-      return neg + pad(Math.floor(s / 3600)) + ":" + pad(Math.floor(s / 60) % 60) + ":" + pad(Math.floor(s) % 60);
-    };
-    switch (type) {
-      case 12: return stamp(v / 1e6, "D");
-      case 13: return (2000 + Math.floor(v / 12)) + "." + pad(((v % 12) + 12) % 12 + 1);
-      case 14: return stamp(v * day);
-      case 15: return stamp(v * day, "T");
-      case 16: return (v < 0 ? "-" : "") + Math.floor(Math.abs(v) / 864e11) + "D" + clock((Math.abs(v) % 864e11) / 1e9);
-      case 17: return clock(v * 60).slice(0, -3);
-      case 18: return clock(v);
-      case 19: return clock(v / 1000);
-      default: return String(v);
-    }
-  }
-
-  /// A number short enough for an axis or a bin label.
-  function short(v) {
-    return Math.abs(v) >= 1e6 || (v !== 0 && Math.abs(v) < 1e-3) ? v.toExponential(3) : String(+v.toPrecision(6));
-  }
-
-  /// What a chart of `kind` over `rows` of the grid draws, before colours:
-  /// {type, labels?, datasets: [{label, data}], note?}. `columns` are the
-  /// y columns, as chartable() gives them; `bins` is for a histogram.
-  function chartData(grid, rows, kind, columns, bins) {
-    if (columns.length === 0) {
-      return { type: "bar", datasets: [], note: "No numeric column to chart" + (kind === "histogram" ? "." : " against the first.") };
-    }
-    const values = function (c) {
-      return rows.map(function (r) { return grid.values[c][r]; });
-    };
-    const name = function (c) { return grid.columns[c].name; };
-    if (kind === "histogram") {
-      const h = histogram(columns.map(values), bins);
-      const labels = h.edges.slice(1).map(function (e, i) { return short(h.edges[i]) + " - " + short(e); });
-      return {
-        type: "bar",
-        labels: labels,
-        datasets: columns.map(function (c, i) { return { label: name(c), column: c, data: h.counts[i] }; }),
-      };
-    }
-    if (kind === "scatter") {
-      const xs = grid.values[0];
-      return {
-        type: "scatter",
-        datasets: columns.map(function (c) {
-          const data = [];
-          rows.forEach(function (r, i) {
-            const x = xs ? xs[r] : i;
-            const y = grid.values[c][r];
-            if (x !== null && y !== null) {
-              data.push({ x: x, y: y, row: r });
-            }
-          });
-          return { label: name(c), column: c, data: data };
-        }),
-      };
-    }
-    return {
-      type: kind === "bar" ? "bar" : "line",
-      labels: rows.map(function (r) { return grid.cells[0][r]; }),
-      datasets: columns.map(function (c) { return { label: name(c), column: c, data: values(c) }; }),
-    };
-  }
-
   const helpers = {
     rowCount: rowCount,
     visibleRows: visibleRows,
-    chartable: chartable,
-    histogram: histogram,
-    chartData: chartData,
-    temporalLabel: temporalLabel,
   };
   if (typeof module !== "undefined" && module.exports) {
     module.exports = helpers;
@@ -183,10 +56,11 @@
   // --- the webview
 
   const vscode = acquireVsCodeApi();
+  const C = root.qlintChart;
   /// Pixels a grid row takes: result.css sets the same.
   const ROW = 22;
   const KINDS = ["line", "bar", "scatter", "histogram"];
-  const state = Object.assign({ id: 0, view: "grid", sort: null, filters: [], kind: "line", columns: null, bins: 20 }, vscode.getState() || {});
+  const state = Object.assign({ id: 0, view: "grid", sort: null, filters: [], kind: "line", columns: null, bins: C.BINS }, vscode.getState() || {});
   let result = null;
   let rows = [];
   let chart = null;
@@ -366,12 +240,6 @@
 
   // --- chart
 
-  function palette() {
-    return ["blue", "orange", "green", "red", "purple", "yellow"].map(function (c, i) {
-      return cssVar("--vscode-charts-" + c, ["#3794ff", "#d18616", "#89d185", "#f14c4c", "#b180d7", "#cca700"][i]);
-    });
-  }
-
   function drawChart() {
     const grid = result.grid;
     chartView.replaceChildren();
@@ -393,7 +261,7 @@
       drawChart();
     });
     controls.append(kind);
-    const can = chartable(grid, state.kind);
+    const can = C.chartable(grid, state.kind);
     const picked = state.columns === null ? can : can.filter(function (c) { return state.columns.indexOf(grid.columns[c].name) >= 0; });
     can.forEach(function (c) {
       const label = el("label");
@@ -417,7 +285,7 @@
       bins.max = "500";
       bins.value = String(state.bins);
       bins.addEventListener("change", function () {
-        state.bins = Math.max(1, Math.min(500, parseInt(bins.value, 10) || 20));
+        state.bins = Math.max(1, Math.min(500, parseInt(bins.value, 10) || C.BINS));
         save();
         drawChart();
       });
@@ -425,11 +293,8 @@
       controls.append(label);
     }
     chartView.append(controls);
-    const data = chartData(grid, rows, state.kind, picked, state.bins);
-    const summary = {
-      kind: state.kind,
-      datasets: data.datasets.map(function (d) { return { label: d.label, points: d.data.length }; }),
-    };
+    const data = C.chartData(grid, rows, state.kind, picked, state.bins);
+    const summary = C.summary(state.kind, data);
     if (data.note || typeof Chart !== "function") {
       const note = data.note || "The chart library did not load.";
       chartView.append(el("p", "note", note));
@@ -441,51 +306,9 @@
     const canvas = el("canvas");
     box.append(canvas);
     chartView.append(box);
-    const colours = palette();
-    const fg = cssVar("--vscode-foreground", "#ccc");
-    const line = cssVar("--vscode-panel-border", "rgba(128,128,128,0.35)");
-    Chart.defaults.color = fg;
-    Chart.defaults.borderColor = line;
-    Chart.defaults.font.family = cssVar("--vscode-font-family", "sans-serif");
-    const x = grid.columns[0];
-    const translucent = function (colour) { return /^#[0-9a-f]{6}$/i.test(colour) ? colour + "99" : colour; };
-    chart = new Chart(canvas, {
-      type: data.type,
-      data: {
-        labels: data.labels,
-        datasets: data.datasets.map(function (d, i) {
-          const colour = colours[i % colours.length];
-          return Object.assign({}, d, {
-            borderColor: colour,
-            backgroundColor: state.kind === "line" ? colour : translucent(colour),
-            pointRadius: state.kind === "line" ? (rows.length > 200 ? 0 : 2) : 3,
-            borderWidth: state.kind === "bar" || state.kind === "histogram" ? 0 : 1.5,
-            spanGaps: false,
-          });
-        }),
-      },
-      options: {
-        animation: false,
-        responsive: true,
-        maintainAspectRatio: false,
-        interaction: { mode: state.kind === "scatter" ? "nearest" : "index", intersect: false },
-        scales: {
-          x: {
-            title: { display: state.kind !== "histogram", text: state.kind === "scatter" && !grid.values[0] ? "row" : x.name },
-            type: state.kind === "scatter" ? "linear" : "category",
-            ticks: state.kind === "scatter" && x.temporal
-              ? { callback: function (v) { return temporalLabel(x.type, v); } }
-              : { autoSkip: true, maxRotation: 0 },
-          },
-          y: { title: { display: state.kind === "histogram", text: "count" } },
-        },
-        plugins: {
-          tooltip: state.kind === "scatter"
-            ? { callbacks: { label: function (ctx) { const r = ctx.raw.row; return ctx.dataset.label + ": " + grid.cells[0][r] + ", " + grid.cells[ctx.dataset.column][r]; } } }
-            : {},
-        },
-      },
-    });
+    const look = C.theme(cssVar);
+    C.applyTheme(Chart, look);
+    chart = new Chart(canvas, C.chartConfig(grid, rows, state.kind, data, look));
     rendered({ chart: summary });
   }
 

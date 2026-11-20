@@ -4,7 +4,8 @@
 // The file's format and the script an export writes are `qnb.ts`'s; how a
 // cell asks for its output, `celldirectives.ts`'s; what a `@grid` or
 // `@chart` cell asks the process for and the outputs a cell shows,
-// `celldata.ts`'s. A cell is cut into statements as a query is
+// `celldata.ts`'s; drawing a chart, the renderer `media/chartrenderer.js`'s,
+// which says here what it drew. A cell is cut into statements as a query is
 // (`statements.ts`) and runs on the extension's active connection through
 // `Live`, so a notebook and the editor's queries share one process, one
 // status bar and one Abort.
@@ -28,7 +29,7 @@ import {
   type NotebookSerializer,
 } from "vscode";
 import * as path from "node:path";
-import { cellOutputs, DATA, GRID_ROWS, readCellData, type OutputPart } from "./celldata";
+import { cellOutputs, chartCellOutputs, DATA, GRID_ROWS, readCellData, type OutputPart } from "./celldata";
 import { cellDirective } from "./celldirectives";
 import { readLive } from "./liveconfig";
 import type { Live } from "./live";
@@ -188,17 +189,22 @@ class QnbKernel {
       }
     });
     try {
-      const result = await this.live.runOnActive(source, (connection) => {
+      const result = await this.live.runOnActive(source, async (connection): Promise<[boolean, OutputPart[]]> => {
         running = true;
-        return directive.mode === "console"
-          ? connection.query(cut, consoleSize)
-          : connection.call(DATA, cut, GRID_ROWS, consoleSize).then(readCellData);
+        if (directive.mode === "chart") {
+          const answer = await connection.queryGrid(cut, consoleSize, GRID_ROWS);
+          return [answer.ok, chartCellOutputs(directive, answer)];
+        }
+        const answer = directive.mode === "console"
+          ? await connection.query(cut, consoleSize)
+          : readCellData(await connection.call(DATA, cut, GRID_ROWS, consoleSize));
+        return [answer.ok, cellOutputs(directive, answer)];
       });
       if (result === undefined) {
         return finish(false, [notice("Not run: no q process is connected, or a query is still running on it.")]);
       }
-      const parts = cellOutputs(directive, result.value);
-      return finish(result.value.ok, parts.map(toOutput));
+      const [ok, parts] = result.value;
+      return finish(ok, parts.map(toOutput));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (execution.token.isCancellationRequested) {
@@ -257,10 +263,42 @@ async function exportNotebook(source?: Uri, target?: Uri): Promise<void> {
   }
 }
 
-export function registerNotebooks(context: ExtensionContext, live: Live): void {
+/// What the chart renderer drew for one output, as it reported it: for
+/// tests, through the API `activate` returns.
+export interface RenderedChart {
+  /// The output item's id.
+  id: string;
+  kind: string;
+  title?: string;
+  datasets: { label: string; points: number }[];
+  /// Shown instead of a chart, when there was nothing to plot.
+  note?: string;
+  /// The canvas's size, and how many of its pixels were drawn on.
+  width?: number;
+  height?: number;
+  painted?: number;
+}
+
+/// How many outputs' charts are remembered: the latest drawn.
+const CHARTS_KEPT = 100;
+
+export function registerNotebooks(context: ExtensionContext, live: Live): { charts: () => RenderedChart[] } {
+  // By output, the last drawing of each, in the order last drawn.
+  const drawn = new Map<string, RenderedChart>();
+  const messaging = notebooks.createRendererMessaging(NOTEBOOK.renderer);
   context.subscriptions.push(
     workspace.registerNotebookSerializer(NOTEBOOK.type, new QnbSerializer()),
     new QnbKernel(live),
     commands.registerCommand(NOTEBOOK.exportCommand, (source?: Uri, target?: Uri) => exportNotebook(source, target)),
+    messaging.onDidReceiveMessage(({ message }: { message: { type?: string; id?: string; chart?: Omit<RenderedChart, "id"> } }) => {
+      if (message.type === "rendered" && typeof message.id === "string" && message.chart !== undefined) {
+        drawn.delete(message.id);
+        drawn.set(message.id, { id: message.id, ...message.chart });
+        if (drawn.size > CHARTS_KEPT) {
+          drawn.delete(drawn.keys().next().value as string);
+        }
+      }
+    }),
   );
+  return { charts: () => [...drawn.values()] };
 }

@@ -119,6 +119,40 @@ switches. The commands:
   which entries it skipped.
 - **Insert Active Connection Label**, at the cursor.
 
+**Discovery servers** list processes so a desk's need not be typed in by
+hand. A discovery server is a URL that answers a `GET` with the same JSON as
+an import: a list of processes, or `{"processes": [...]}`. Its processes are
+shown under it, in a **Discovery Servers** group at the bottom of the view,
+and connect like any other. They are kept in memory only, never saved to
+disk. The commands:
+- **Add**, **Edit** and **Delete Discovery Server**: a label and a URL, and
+  an optional auth header kept in VS Code's secret storage. It is sent as
+  `Authorization` (`Bearer <token>`, `Basic <base64>`), or, written as
+  `Name: value`, under its own name. **Add Discovery Server** also takes
+  `{"label", "url", "secret"?}` as an argument, and **Edit** a server's
+  label and those fields.
+- **Reload Discovery Server**: fetch it now; given no server - from the
+  view's menu or the palette - fetch them all. Each is also fetched when it
+  is added or edited, and at startup and every
+  `q-lint.discovery.refreshInterval` minutes unless that is `0`.
+- **Download Processes**: save a server's processes to the list. One whose
+  label a saved process has is skipped and named, never replaced.
+- **Remove Processes**: drop a server's processes from the view. The
+  periodic fetch leaves it alone until it is reloaded.
+
+A fetch waits 10 seconds at most, and takes only a 2xx `application/json`
+answer of 5 MB or less. Why one failed - no answer, a status, the wrong
+content type, too large, not JSON - shows under the server's row, as do the
+entries it skipped and why; nothing pops up.
+
+A discovered process may share a label with a saved one, or with one another
+server lists. Its row shows its own label, but once connected it is
+`server/label` - in the status bar, the query history, and **Connect to
+Process**'s argument - so the two are never taken for each other. A bare
+label names a saved process first, then a discovered one if only one server
+lists it. A discovered process with a `user` asks for its password on the
+first connect, and keeps it in secret storage under `server/label`.
+
 **Querying.** With a q file open:
 - **Query Current Line**, `ctrl+q`.
 - **Query Current Selection**, `ctrl+r`: the current line when nothing is
@@ -234,13 +268,18 @@ A cell's first lines can choose how its result is shown:
   with a key column marked. At most 1,000 rows are sent, and the output
   says when the table was cut. Each value is sent as `string` writes it, so
   a timestamp keeps its nanoseconds.
-- `/ @chart line`, `bar`, `scatter` or `histogram`: for now the table as
-  text, with a note: query **Chart** mode draws charts, a notebook does not
-  yet (#870).
+- `/ @chart line`, `bar`, `scatter` or `histogram`: a table, a keyed
+  table, a dictionary or a list as a chart, drawn as query **Chart** mode
+  draws it - the numeric columns against the first (a histogram bins every
+  numeric column, in 20 bins), a temporal x axis written in q's notation,
+  colours from the editor's theme - from the same rows, at most 1,000.
+  `/ @title <text>` puts a title above it and `/ @height <px>` makes it
+  that many pixels tall (100 to 2000; 300 otherwise).
 
 They are q comments, so a cell runs the same as a query or in a script. A
-directive q-lint does not know, or a chart of no known kind, fails the cell
-with the directives it does know. An error shows q's message and, on kdb+
+directive q-lint does not know, a chart of no known kind, or a title or
+height on a cell with no `/ @chart`, fails the cell with the directives it
+does know. An error shows q's message and, on kdb+
 3.5 and later, its backtrace.
 
 **Export Notebook as q Script**, on the notebook's toolbar and a `.qnb`
@@ -264,6 +303,18 @@ The file is JSON, format 1:
  ]
 }
 ```
+
+A chart's output is two items: an `application/vnd.q-lint.chart+json`
+item, which q-lint's notebook renderer draws, and the table as `text/plain`,
+which an editor without the renderer, or another tool reading the file,
+shows instead. The JSON holds the chart's `kind`, its `title` and `height`
+when given, a `note` when the table was cut, and the `grid` the result
+panel gets: each column's `name`, `type` and whether it is a `key`,
+`numeric` or `temporal`, its `cells` as q writes them, a numeric or temporal
+column's `values` as numbers (a temporal in its own unit since
+2000.01.01), and the table's `total` rows. The renderer loads Chart.js from
+the extension's files, not the network, and redraws in the new colours when
+the theme changes.
 
 `qnb` is the format version; a newer one than this extension reads is
 refused with that said. `source` is the cell's lines. A code cell is q
@@ -367,11 +418,17 @@ reaches the language server.
 | `q-lint.terminal.qBinary` | `"q"` | The q binary a terminal starts: a name on `PATH` or a path. It is quoted for the terminal's shell (POSIX, PowerShell or cmd), so it names one program, not a command with arguments. | `q-terminal.cfg.qBinary` |
 | `q-lint.terminal.envPath` | `""` | A file of `NAME=value` lines set for q, such as `QHOME` and `QLIC`. They go on the command line that starts q (`NAME=value q`, `$env:NAME=` in PowerShell, `set` in cmd), so they win over what your shell's startup files set, and show there. Relative to the workspace folder. It is read, not run as a shell script as q-pro's is: `#` lines are comments, `export ` is allowed, quotes around a value are dropped, and nothing is expanded: `$HOME` stays `$HOME`. | `q-terminal.cfg.envPath` |
 
+### Discovery settings
+
+| Setting | Default | What it does | q-pro |
+| --- | --- | --- | --- |
+| `q-lint.discovery.refreshInterval` | `30` | Minutes between fetches of every discovery server, at most 1440. `0` fetches a server only on **Reload Discovery Server**, and when it is added or edited. | - |
+
 ### Not here, and why
 
-q-pro's discovery server is not planned for now, nor is `kuki`. Its
-`sourceFiles.includeGlob` is not mirrored either: the index reads every `.q`
-file `qlinter .` would - less what the configuration's `exclude` skips - and
+`kuki` is not planned for now. q-pro's `sourceFiles.includeGlob` is not
+mirrored either: the index reads every `.q` file `qlinter .` would - less
+what the configuration's `exclude` skips - and
 `q-lint.workspaceIndex.exclude` narrows it.
 
 ## Formatting
