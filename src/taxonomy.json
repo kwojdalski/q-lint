@@ -500,7 +500,7 @@
     "code": "QP005",
     "name": "mixed-infix-precedence",
     "category": "policy",
-    "summary": "Unparenthesised * or % mixed with + or - relies on right-to-left order",
+    "summary": "Unparenthesised * or % with + or - to its right: q performs the + or - first, where school precedence multiplies first",
     "scope": "uqf"
   },
   {
@@ -789,6 +789,13 @@
     "category": "policy",
     "summary": "Function defined in this file applied without brackets",
     "scope": "uqf"
+  },
+  {
+    "code": "QP007",
+    "name": "mixed-infix-unparenthesised",
+    "category": "policy",
+    "summary": "Unparenthesised + or - with * or % to its right: q multiplies first and so does school precedence, so QP005 passes it",
+    "scope": "opt-in"
   },
   {
     "code": "QX001",

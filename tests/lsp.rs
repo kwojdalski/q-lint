@@ -1575,6 +1575,63 @@ fn formatting_applies_the_safe_fixes_and_is_idempotent() {
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 
+/// QP005 and QP007 share one fix, and the editor offers it for both: QP007
+/// is in no profile, so the server reports it only where the configuration
+/// selects it, and then its Quick Fix and "Format document" are the same
+/// parentheses `qlinter --fix` writes (#847).
+#[test]
+fn the_precedence_fix_is_a_quick_fix_for_the_trap_and_for_the_routine_mix() {
+    let dir = tempfile::tempdir().unwrap();
+    let before = "mid:0.5*bid+ask\nstamp:start+step*til n\n";
+
+    // Without the selection the routine mix is not reported at all.
+    let mut server = Server::start_in(dir.path(), &[]);
+    server.initialize();
+    let uri = "file:///tmp/precedence.q";
+    server.open(uri, before);
+    assert_eq!(codes_of(&server.diagnostics_for(uri)), ["QP005"]);
+    assert_eq!(server.shutdown_and_exit(), 0);
+
+    let mut server = Server::start_in(dir.path(), &["--extend-select", "QP007"]);
+    server.initialize();
+    server.open(uri, before);
+    let diagnostics = server.diagnostics_for(uri);
+    assert_eq!(codes_of(&diagnostics), ["QP005", "QP007"]);
+    for (diagnostic, range, text) in [
+        (&diagnostics[0], (0, 8, 15), "(bid+ask)"),
+        (&diagnostics[1], (1, 12, 22), "(step*til n)"),
+    ] {
+        let actions = server.code_actions(uri, std::slice::from_ref(diagnostic));
+        // The fix, then the `/ noqa` suppression every finding is offered.
+        assert_eq!(actions.len(), 2, "{actions:?}");
+        assert_eq!(
+            actions[0]["title"],
+            "Parenthesise to show the order q evaluates in"
+        );
+        assert_eq!(
+            actions[1]["title"],
+            format!(
+                "Suppress {} on this line",
+                diagnostic["code"].as_str().unwrap()
+            )
+        );
+        let (line, start, end) = range;
+        assert_eq!(
+            actions[0]["edit"]["changes"][uri],
+            json!([{"range":{"start":{"line":line,"character":start},
+                             "end":{"line":line,"character":end}},
+                    "newText":text}])
+        );
+    }
+    let edits = server.format(uri)["result"].as_array().cloned().unwrap();
+    let after = apply_edits(before, &edits);
+    assert_eq!(after, "mid:0.5*(bid+ask)\nstamp:start+(step*til n)\n");
+    server.change(uri, 2, &after);
+    assert!(server.diagnostics_for(uri).is_empty());
+    assert_eq!(server.format(uri)["result"], json!([]));
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
 #[test]
 fn formatting_leaves_an_unbalanced_document_alone_with_qe001_deselected() {
     // Deselecting QE001 hides the finding; it does not make the brackets
