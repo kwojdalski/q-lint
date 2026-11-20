@@ -233,12 +233,13 @@ def grammar():
                             [
                                 # timestamp and datetime
                                 r"\d{4}\.\d{2}\.\d{2}[DT](?:\d{2}(?::\d{2}(?::\d{2}(?:\.\d*)?)?)?)?[pz]?",
-                                # month, date
-                                r"\d{4}\.\d{2}(?:\.\d{2}d?|m)",
+                                # month, date, and a date as a timestamp (p) or datetime (z)
+                                r"\d{4}\.\d{2}(?:\.\d{2}[dpz]?|m)",
                                 # timespan
                                 r"\d+D(?:\d{2}(?::\d{2}(?::\d{2}(?:\.\d*)?)?)?)?n?",
-                                # time, minute, second
-                                r"\d{2}:\d{2}(?::\d{2}(?:\.\d{3})?)?[tuv]?",
+                                # time, minute, second: a fraction of any length, and
+                                # past three places a timespan (12:00:00.123456789)
+                                r"\d{2,}:\d{2}(?::\d{2}(?:\.\d*)?)?[tuvn]?",
                             ]
                         )
                         + ")"
@@ -252,7 +253,7 @@ def grammar():
                     {"name": "constant.numeric.byte.q", "match": BEFORE + r"0x[0-9a-fA-F]*" + AFTER},
                     {
                         "name": "constant.numeric.q",
-                        "match": BEFORE + r"(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?[hijefcnuvt]?" + AFTER,
+                        "match": BEFORE + r"(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?[hijefcnuvt]?" + AFTER,
                     },
                 ],
             },

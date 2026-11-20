@@ -61,6 +61,15 @@ const cases = [
   ["one it does not is illegal", 's:"a\\qb"', "\\q", "invalid.illegal.escape.q"],
   ["a temporal literal is temporal", "d:2024.01.02", "2024.01.02", "constant.numeric.temporal.q"],
   ["a typed null is a null", "x:0Nd", "0Nd", "constant.language.null.q"],
+  // Each as KDB-X reads it: a time's fraction is any length, a time with
+  // more than three places is a timespan, a date may carry p or z, and an
+  // exponent may be E.
+  ["a time with one decimal place is one time", "t:10:00:00.1", "10:00:00.1", "constant.numeric.temporal.q"],
+  ["a time with nine places is a timespan, still one literal", "t:12:00:00.123456789", "12:00:00.123456789", "constant.numeric.temporal.q"],
+  ["a second past 99 hours is one literal", "t:100:00:00", "100:00:00", "constant.numeric.temporal.q"],
+  ["a date made a timestamp with p is one literal", "d:2024.01.02p", "2024.01.02p", "constant.numeric.temporal.q"],
+  ["and made a datetime with z", "d:2024.01.02z", "2024.01.02z", "constant.numeric.temporal.q"],
+  ["an upper-case exponent is part of the number", "n:1.5E3", "1.5E3", "constant.numeric.q"],
 ];
 
 for (const [description, source, text, scope, which = -1] of cases) {
