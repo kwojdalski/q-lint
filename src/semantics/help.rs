@@ -1,0 +1,269 @@
+//! What an editor shows while a line is being read or written: the
+//! parameters a function takes and the comment above it, which call the
+//! cursor is in, and what is being typed.
+//!
+//! As in navigation, nothing here resolves a value. A function's parameters
+//! are the ones its definition spells, a call is the name written before an
+//! open bracket, and a completion is a name the source already holds: all of
+//! it read from the text, and none of it from running the script.
+use super::{Scope, scope_at, scopes};
+use crate::{Call, Completing, boundary, matching, signature};
+
+const NAME: &str = r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*";
+/// How many lines of comment above a definition are its description. A
+/// licence header over a file's first function is not one.
+const MAX_COMMENT: usize = 40;
+
+/// The parameters of what is assigned at `brace`, a lambda, as whoever calls
+/// the name sees them: the signature's slots as written, or - with no
+/// signature - x, y and z as far as the body reads them, which is how q
+/// counts them (`{x+z}` takes three). A projection takes what it leaves
+/// open: `{[g;n] ...}[;7]` takes `g`, and `{[a;b] a+b}[1]` takes `b`.
+pub(super) fn parameters(code: &str, raw: &str, scopes: &[Scope], brace: usize) -> Vec<String> {
+    let sig = signature(code, raw, brace);
+    let params: Vec<String> = if sig.named {
+        match sig.slots.as_slice() {
+            // `{[] ...}` names none.
+            [only] if only.trim().is_empty() => vec![],
+            slots => slots.iter().map(|slot| slot.trim().to_string()).collect(),
+        }
+    } else {
+        let direct = scopes
+            .iter()
+            .find(|scope| scope.start == brace)
+            .map_or("", |scope| scope.direct.as_str());
+        let reads = |name: &str| {
+            re!(NAME)
+                .find_iter(direct)
+                .any(|m| m.as_str() == name && boundary(direct, m.start()))
+        };
+        let taken = if reads("z") {
+            3
+        } else if reads("y") {
+            2
+        } else {
+            usize::from(reads("x"))
+        };
+        ["x", "y", "z"][..taken]
+            .iter()
+            .map(|name| name.to_string())
+            .collect()
+    };
+    let Some(end) = matching(code, brace, b'{', b'}') else {
+        return params;
+    };
+    if code[end..].starts_with('[') {
+        let Some(close) = matching(code, end, b'[', b']') else {
+            return params;
+        };
+        let given = crate::slots(&code[end + 1..close - 1]);
+        return params
+            .into_iter()
+            .enumerate()
+            .filter(|(i, _)| given.get(*i).is_none_or(|slot| slot.trim().is_empty()))
+            .map(|(_, param)| param)
+            .collect();
+    }
+    // Juxtaposition gives the first argument: `{x+y} 1` takes `y`.
+    let after = code[end..].trim_start_matches([' ', '\t']);
+    if !(after.is_empty() || after.starts_with([';', '\n', '\r', ')', ']', '}'])) {
+        return params.into_iter().skip(1).collect();
+    }
+    params
+}
+
+/// The comment directly above the statement at `at`: the `/` lines over it
+/// with no blank line between, and a `/` ... `\` block ending there, without
+/// their markers. Empty when the line above is code or blank.
+///
+/// `comments` is the view that keeps a string and blanks a comment: a line
+/// of a string that runs over lines may start with `/` and is no comment.
+pub fn comment_above(comments: &str, raw: &str, at: usize) -> String {
+    let Some(before) = raw.get(..at) else {
+        return String::new();
+    };
+    let mut end = before.rfind('\n').map_or(0, |p| p + 1);
+    let mut lines: Vec<&str> = vec![];
+    let mut block = false;
+    while end > 0 && lines.len() < MAX_COMMENT {
+        let start = raw[..end - 1].rfind('\n').map_or(0, |p| p + 1);
+        let text = raw[start..end].trim();
+        if block {
+            if text == "/" {
+                block = false;
+            } else {
+                lines.push(raw[start..end].trim_end());
+            }
+        } else if text.is_empty() || !comments[start..end].trim().is_empty() {
+            break;
+        } else if text == "\\" {
+            block = true;
+        } else if text != "/" && text.starts_with('/') {
+            let said = text.trim_start_matches('/');
+            lines.push(said.strip_prefix(' ').unwrap_or(said));
+        } else {
+            break;
+        }
+        end = start;
+    }
+    lines.reverse();
+    lines.join("\n").trim_matches('\n').to_string()
+}
+
+/// The bracketed call the cursor at `offset` is in, when what is called is
+/// written as a name: the innermost open `[`, and how many `;` of its own
+/// lie between it and the cursor. A parenthesis starts the count again,
+/// since `f[a;(b;c` is still in the second argument; a brace ends the
+/// search, since inside `f[a;{x+` what is being written is a lambda's body.
+/// In a comment nothing is being called, whatever brackets are open above.
+pub fn call_at(code: &str, comments: &str, raw: &str, offset: usize) -> Option<Call> {
+    if commented(comments, raw, offset) {
+        return None;
+    }
+    let bytes = code.as_bytes();
+    let (mut depth, mut argument) = (0usize, 0usize);
+    let mut i = offset.min(bytes.len());
+    while i > 0 {
+        i -= 1;
+        match bytes[i] {
+            b')' | b']' | b'}' => depth += 1,
+            b'(' | b'[' | b'{' if depth > 0 => depth -= 1,
+            b'(' => argument = 0,
+            b'{' => return None,
+            b'[' => {
+                let mut start = i;
+                while start > 0
+                    && (bytes[start - 1].is_ascii_alphanumeric()
+                        || b"_.".contains(&bytes[start - 1]))
+                {
+                    start -= 1;
+                }
+                return (re!(&format!("^{NAME}$")).is_match(&code[start..i])
+                    && boundary(code, start))
+                .then_some(Call {
+                    at: start,
+                    len: i - start,
+                    argument,
+                });
+            }
+            b';' if depth == 0 => argument += 1,
+            // A line at column 0 starts a statement, and no bracket of the
+            // one before is open in it. A lone `}` there closes a lambda.
+            b'\n' if bytes.get(i + 1).is_some_and(|b| !b" \t\r\n}".contains(b)) => {
+                return None;
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The name at byte `offset`, as where it starts and how long it is -
+/// whatever it names, a keyword included, which `name_at` passes over.
+/// Nothing in a string, a comment, a symbol or a system command.
+pub fn word_at(code: &str, raw: &str, offset: usize) -> Option<(usize, usize)> {
+    let line = code.get(..offset)?.rfind('\n').map_or(0, |p| p + 1);
+    if crate::system_command(&raw[line..]) {
+        return None;
+    }
+    let unsymbolled = crate::unsymbolled(code);
+    re!(NAME)
+        .find_iter(&unsymbolled)
+        .take_while(|m| m.start() <= offset)
+        .find(|m| offset <= m.end() && boundary(&unsymbolled, m.start()))
+        .map(|m| (m.start(), m.len()))
+}
+
+/// Whether `offset` is in a comment. One runs to the end of its line, so
+/// the cursor is in it when the last thing written before it on the line is
+/// blank in `comments`, the view that keeps all but comments. So is a line
+/// of a block comment and of another language. Not a `q)` prompt, which
+/// that view blanks too.
+fn commented(comments: &str, raw: &str, offset: usize) -> bool {
+    let Some(before) = raw.get(..offset) else {
+        return false;
+    };
+    let line = before.rfind('\n').map_or(0, |p| p + 1);
+    let prompt = if before[line..].starts_with("q)") {
+        2
+    } else {
+        0
+    };
+    before[line + prompt..]
+        .rfind(|c: char| !c.is_whitespace())
+        .is_some_and(|last| comments.as_bytes()[line + prompt + last] == b' ')
+}
+
+/// What is being typed at `offset`, when it is - or may become - a name:
+/// where it starts, the locals of the lambda around it, and the `\d` in
+/// force. `None` in a string, a comment, a symbol, a number or a system
+/// command, where no name is written.
+pub fn completing(
+    code: &str,
+    comments: &str,
+    string_starts: &[usize],
+    raw: &str,
+    offset: usize,
+) -> Option<Completing> {
+    let before = raw.get(..offset)?;
+    let line = before.rfind('\n').map_or(0, |p| p + 1);
+    if crate::system_command(&raw[line..]) || commented(comments, raw, offset) {
+        return None;
+    }
+    // A string runs on over lines: the last one opened is closed, or the
+    // cursor is in it.
+    if let Some(&open) = string_starts.get(
+        string_starts
+            .partition_point(|&start| start < offset)
+            .wrapping_sub(1),
+    ) {
+        let bytes = raw.as_bytes();
+        let (mut i, mut closed) = (open + 1, false);
+        while i < offset {
+            match bytes[i] {
+                b'\\' => i += 1,
+                b'"' => {
+                    closed = true;
+                    break;
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        if !closed {
+            return None;
+        }
+    }
+    let part = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'.';
+    let mut start = offset;
+    while start > line && part(raw.as_bytes()[start - 1]) {
+        start -= 1;
+    }
+    if raw[start..offset].starts_with(|c: char| c.is_ascii_digit())
+        || raw[..start].ends_with('`')
+        || (start < offset && !boundary(code, start))
+    {
+        return None;
+    }
+    let (scopes, namespaces) = scopes(code, raw);
+    // At the very end of a file, the cursor is in the lambda still open
+    // there, which runs to the last byte.
+    let within = start.min(code.len().saturating_sub(1));
+    let mut locals: Vec<String> = scope_at(&scopes, within)
+        .map(|s| scopes[s].locals.iter().cloned().collect())
+        .unwrap_or_default();
+    locals.sort_unstable();
+    let namespace = namespaces
+        .get(
+            namespaces
+                .partition_point(|(p, _)| *p <= start)
+                .saturating_sub(1),
+        )
+        .map(|(_, namespace)| namespace.clone())
+        .unwrap_or_default();
+    Some(Completing {
+        start,
+        locals,
+        namespace,
+    })
+}

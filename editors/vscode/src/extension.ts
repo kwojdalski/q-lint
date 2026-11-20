@@ -15,6 +15,7 @@ import {
   type OutputChannel,
 } from "vscode";
 import { launch, needsRestart } from "./settings";
+import { Relations } from "./relate";
 import { Serial } from "./serial";
 import { chmodSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -31,6 +32,9 @@ const serial = new Serial();
 /// make its own, and every restart would leave another "q-lint" in the
 /// Output panel's list.
 let channel: OutputChannel | undefined;
+/// The dependencies view and the affected-tests list, which ask whichever
+/// `client` is running and are told when it changes.
+let relations: Relations | undefined;
 
 /// The server this extension was packaged with, if it was packaged with one.
 ///
@@ -73,7 +77,9 @@ export async function activate(context: ExtensionContext): Promise<void> {
     }),
   );
   context.subscriptions.push({ dispose: () => void stop() });
+  relations = new Relations(context, () => client);
   await serial.run(() => start(context));
+  relations.serverChanged();
 }
 
 function restart(context: ExtensionContext): Promise<void> {
@@ -81,6 +87,7 @@ function restart(context: ExtensionContext): Promise<void> {
     await client?.stop().catch(() => {});
     client = undefined;
     await start(context);
+    relations?.serverChanged();
   });
 }
 
@@ -88,6 +95,7 @@ function stop(): Promise<void> {
   return serial.run(async () => {
     await client?.stop().catch(() => {});
     client = undefined;
+    relations?.serverChanged();
   });
 }
 

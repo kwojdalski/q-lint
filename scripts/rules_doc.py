@@ -98,7 +98,11 @@ def main() -> int:
         for r in sorted(group, key=lambda r: r["code"]):
             scope = PROFILES.get(r["scope"], (r["scope"], ""))[0]
             summary = r["summary"].replace("|", "\\|")
-            print(f"| `{r['code']}` | {r['name']} | {summary} | {scope} |")
+            # The anchor a diagnostic's link opens (`rule_url` in src/lib.rs).
+            # GitHub gives one only to a heading, and a row is not one; and it
+            # folds an anchor's case, so the code is lower case here and there.
+            anchor = f'<a id="{r["code"].lower()}"></a>'
+            print(f"| {anchor}`{r['code']}` | {r['name']} | {summary} | {scope} |")
         print()
     unknown = set(by_cat) - set(CATEGORIES)
     if unknown:

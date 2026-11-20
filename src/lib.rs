@@ -91,8 +91,21 @@ impl Workspace {
             .any(|n| self.defined.get(n).copied().unwrap_or(0) > usize::from(own.contains(n)))
     }
 
+    /// Whether any file defines `name`, exactly.
+    pub fn defines(&self, name: &str) -> bool {
+        self.defined.contains_key(name)
+    }
+
     pub(crate) fn is_lambda(&self, name: &str) -> bool {
         self.lambdas.contains_key(name)
+    }
+
+    /// Every name the workspace defines, in no order, with whether a file
+    /// assigns it a lambda.
+    pub fn names(&self) -> impl Iterator<Item = (&str, bool)> {
+        self.defined
+            .keys()
+            .map(|name| (name.as_str(), self.is_lambda(name)))
     }
 }
 
@@ -161,6 +174,142 @@ pub fn references(source: &str, symbols: bool) -> References {
     semantics::references(&v.code, source, symbols)
 }
 
+/// A global name at one place in a file: `name` as q resolves it under the
+/// `\d` in force, at byte `at` for `len` bytes. `implicit` when it is
+/// written without a leading dot before the file's first `\d`, where the
+/// context is whichever one the file is loaded in; `definition` when this
+/// is a write of the name and not a read.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Mention {
+    pub name: String,
+    pub implicit: bool,
+    pub at: usize,
+    pub len: usize,
+    pub definition: Option<Definition>,
+}
+
+/// One write of a global. `function` when what it assigns is a lambda, with
+/// its signature as written in `detail` - `[a;b]`, and empty for an implicit
+/// one - and in `params` what a caller of the name passes: the signature's
+/// slots, x, y and z as far as a body without one reads them, and for a
+/// projection the slots it leaves open. `start..end` is the statement making
+/// the write, for an outline to select and fold.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Definition {
+    pub function: bool,
+    pub detail: String,
+    pub params: Vec<String>,
+    pub start: usize,
+    pub end: usize,
+}
+
+/// What a name in the source refers to.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Name {
+    Local(Local),
+    /// A global at `at`, by each name q may resolve it to, with whether that
+    /// name is `Mention::implicit`.
+    Global {
+        at: usize,
+        len: usize,
+        names: Vec<(String, bool)>,
+    },
+}
+
+/// A parameter or local of one lambda, with each place the lambda names it.
+/// `declared` is the place, by index, that introduces it: the signature's
+/// for a parameter, the first assignment for a local. `implicit` for an x,
+/// y or z no signature declares.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Local {
+    pub name: String,
+    pub implicit: bool,
+    pub declared: Option<usize>,
+    pub places: Vec<Place>,
+}
+
+/// One place a local is named. `write` where it is declared or assigned;
+/// `column` inside a qSQL phrase, where the name is the table's column
+/// instead whenever the table has one.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Place {
+    pub at: usize,
+    pub len: usize,
+    pub write: bool,
+    pub column: bool,
+}
+
+/// Every global name `source` writes or reads, in order.
+pub fn mentions(source: &str) -> Vec<Mention> {
+    let v = views(source);
+    semantics::navigate::mentions(&v.code, source)
+}
+
+/// What the name at byte `offset` of `source` refers to, when there is one.
+pub fn name_at(source: &str, offset: usize) -> Option<Name> {
+    let v = views(source);
+    semantics::navigate::name_at(&v.code, source, offset)
+}
+
+/// The byte range of the local at `offset`, or why it cannot be renamed.
+pub fn rename_target(source: &str, offset: usize) -> Result<(usize, usize), String> {
+    let v = views(source);
+    semantics::navigate::rename_target(&v.code, source, offset)
+}
+
+/// The byte ranges to replace with `new` to rename the local at `offset`,
+/// or why it cannot be renamed to that.
+pub fn rename(source: &str, offset: usize, new: &str) -> Result<Vec<(usize, usize)>, String> {
+    let v = views(source);
+    semantics::navigate::rename(&v.code, source, offset, new)
+}
+
+/// A bracketed call around a cursor: the name called, at byte `at` for `len`
+/// bytes, and which argument the cursor is in, from 0.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Call {
+    pub at: usize,
+    pub len: usize,
+    pub argument: usize,
+}
+
+/// What is being typed at a cursor: the name so far starts at byte `start`,
+/// inside a lambda whose parameters and locals are `locals`, under the
+/// context `namespace` - `.ns` after `\d .ns`, and empty at the root.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Completing {
+    pub start: usize,
+    pub locals: Vec<String>,
+    pub namespace: String,
+}
+
+/// The comment directly above the statement at byte `at`, without its `/`
+/// markers: what a hover shows under a function's signature.
+pub fn comment_above(source: &str, at: usize) -> String {
+    let v = views(source);
+    semantics::help::comment_above(&v.comments, source, at)
+}
+
+/// The call the cursor at byte `offset` is in, when it is in the brackets
+/// of one written as a name.
+pub fn call_at(source: &str, offset: usize) -> Option<Call> {
+    let v = views(source);
+    semantics::help::call_at(&v.code, &v.comments, source, offset)
+}
+
+/// The name at byte `offset`, a keyword included, as its start and length.
+pub fn word_at(source: &str, offset: usize) -> Option<(usize, usize)> {
+    let v = views(source);
+    semantics::help::word_at(&v.code, source, offset)
+}
+
+/// What is being typed at byte `offset`, or `None` where no name is - in a
+/// string, a comment, a symbol, a number or a system command.
+pub fn completing(source: &str, offset: usize) -> Option<Completing> {
+    let v = views(source);
+    semantics::help::completing(&v.code, &v.comments, &v.string_starts, source, offset)
+}
+
 pub mod graph;
 
 /// The names in `source` an editor can colour by what they refer to, as byte
@@ -186,8 +335,65 @@ pub struct Rule {
 }
 pub static RULES: LazyLock<Vec<Rule>> =
     LazyLock::new(|| serde_json::from_str(include_str!("taxonomy.json")).unwrap());
+
+/// Where a rule is documented: its row in `docs/rules.md`, which
+/// `scripts/rules_doc.py` gives an anchor of the code in lower case - the
+/// case GitHub folds an anchor's name to, so `#QE001` would name nothing.
+/// `None` for a code the taxonomy does not hold, which has no row to open.
+pub fn rule_url(code: &str) -> Option<String> {
+    RULES.iter().any(|rule| rule.code == code).then(|| {
+        format!(
+            "https://github.com/kwojdalski/q-lint/blob/master/docs/rules.md#{}",
+            code.to_ascii_lowercase()
+        )
+    })
+}
 pub(crate) static RESERVED: LazyLock<Vec<String>> =
     LazyLock::new(|| serde_json::from_str(include_str!("reserved.json")).unwrap());
+
+/// What a name q defines is, as far as an editor shows it differently.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BuiltinKind {
+    /// Called with `params`, infix or bracketed.
+    Function,
+    /// `if`, `do` and `while`: brackets, and no value.
+    Control,
+    /// A word of a qSQL template, which takes no arguments of its own.
+    Query,
+    Constant,
+    /// A value q keeps current, as `.z.p`.
+    Variable,
+    /// A name q calls when the script assigns it, as `.z.pg`.
+    Callback,
+}
+
+/// One name q defines: every reserved word, and the names in `.z`, `.Q` and
+/// `.j` a script is most likely to meet. `syntax` is how it is written,
+/// `params` what it takes - their count is its rank - `summary` one or two
+/// sentences on what it gives back, and `page` where the reference
+/// describes it, under <https://code.kx.com/q/ref/>.
+///
+/// The words are the ones `reserved.json` lists and the ranks the ones a
+/// running q reports (`tests/test_builtins_runtime.py`); the descriptions
+/// are this project's own.
+#[derive(Debug, Deserialize)]
+pub struct Builtin {
+    pub name: String,
+    pub kind: BuiltinKind,
+    pub syntax: String,
+    pub params: Vec<String>,
+    pub summary: String,
+    #[serde(default)]
+    pub page: Option<String>,
+}
+pub static BUILTINS: LazyLock<Vec<Builtin>> =
+    LazyLock::new(|| serde_json::from_str(include_str!("builtins.json")).unwrap());
+
+/// The catalogue's entry for `name`, when q defines it.
+pub fn builtin(name: &str) -> Option<&'static Builtin> {
+    BUILTINS.iter().find(|builtin| builtin.name == name)
+}
 
 #[derive(Debug, Serialize)]
 pub struct Finding {
@@ -2704,6 +2910,10 @@ struct Views {
     /// lines after it are blank in both views, so no rule sees them; this is
     /// the only trace that they were swallowed at all.
     open_block: Option<usize>,
+    /// Each block comment that does close: where its bare `/` line begins
+    /// and where the bare `\` line that ends it does. The outermost only -
+    /// one nested inside is part of the comment it is in.
+    blocks: Vec<(usize, usize)>,
     /// Where each string literal's opening quote is, in order. A `"` in the
     /// source is one of these, the closing quote of one, an escaped quote, or
     /// part of a comment - and only `views` has followed the text closely
@@ -2764,6 +2974,10 @@ fn views(source: &str) -> Views {
         v.unterminated.iter_mut().for_each(shift);
         v.foreign_offsets.iter_mut().for_each(shift);
         v.open_block.iter_mut().for_each(shift);
+        v.blocks.iter_mut().for_each(|(open, close)| {
+            *open += n;
+            *close += n;
+        });
         v.string_starts.iter_mut().for_each(shift);
         v.script_end.iter_mut().for_each(shift);
         return v;
@@ -2775,6 +2989,7 @@ fn views(source: &str) -> Views {
     let mut foreign = false;
     let mut foreign_offsets = Vec::new();
     let mut open_block = None;
+    let mut blocks = Vec::new();
     let mut script_end = None;
     let mut string_starts = Vec::new();
     let mut unterminated = None;
@@ -2876,7 +3091,7 @@ fn views(source: &str) -> Views {
             } else if block > 0 && stripped == "\\" {
                 block -= 1;
                 if block == 0 {
-                    open_block = None;
+                    blocks.extend(open_block.take().map(|open| (open, offset)));
                 }
             }
         } else if string.is_none()
@@ -2952,6 +3167,7 @@ fn views(source: &str) -> Views {
         unterminated: unterminated.or(string),
         foreign_offsets,
         open_block,
+        blocks,
         string_starts,
         script_end,
     }
@@ -3961,6 +4177,81 @@ fn structure(path: &str, source: &str, v: &Views) -> Vec<Finding> {
     found
 }
 
+/// Lines an editor can fold away, as two bytes of the source: one on the
+/// line that stays in view, and one on the last line hidden under it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Fold {
+    pub start: usize,
+    pub end: usize,
+    /// A block comment, which an editor can fold apart from the code.
+    pub comment: bool,
+}
+
+/// What there is to fold in `source`: each brace, bracket and parenthesis
+/// that closes on a later line than it opens, and each block comment from
+/// its bare `/` to its bare `\`. In source order, an outer before what it
+/// holds.
+///
+/// Read from the view the rules read, so a bracket inside a string or a
+/// comment folds nothing, and paired as `structure` pairs them. Nothing at
+/// all for a file `structure` reports on: with one bracket unmatched there
+/// is no saying which of the others pair, and a guess would move as the
+/// line is typed. Nor for a block comment nothing closes - q reads that one
+/// to the end of the file, and QE003 says so.
+///
+/// A fold ends on the line of its closer when nothing follows it there but
+/// more closers and a `;`, and on the line before when something does: an
+/// editor hides whole lines, and `}[1;2]` or `} each x` is the half of the
+/// statement that says what the lambda is for.
+pub fn folds(source: &str) -> Vec<Fold> {
+    let v = views(source);
+    if !structure("", source, &v).is_empty() {
+        return vec![];
+    }
+    let mut found: Vec<Fold> = v
+        .blocks
+        .iter()
+        .map(|&(start, end)| Fold {
+            start,
+            end,
+            comment: true,
+        })
+        .collect();
+    let mut stack = vec![];
+    let mut offset = 0;
+    for line in v.code.split_inclusive('\n') {
+        // As `structure` reads them: a command's argument is no q.
+        if !system_command(&source[offset..offset + line.len()]) {
+            for (i, c) in line.bytes().enumerate() {
+                if b"([{".contains(&c) {
+                    stack.push(offset + i);
+                } else if b")]}".contains(&c)
+                    && let Some(start) = stack.pop()
+                    // Opened on a line before this one, or nothing to fold.
+                    && start < offset
+                {
+                    let closes_line = line[i + 1..]
+                        .trim_matches(|ch: char| ch.is_ascii_whitespace() || ")]};".contains(ch))
+                        .is_empty();
+                    // `offset - 1` is the break that ends the line before:
+                    // there is one, with the opener on a line before this.
+                    let end = if closes_line { offset + i } else { offset - 1 };
+                    if source[start..end].contains('\n') {
+                        found.push(Fold {
+                            start,
+                            end,
+                            comment: false,
+                        });
+                    }
+                }
+            }
+        }
+        offset += line.len();
+    }
+    found.sort_by_key(|fold| fold.start);
+    found
+}
+
 /// Which rules a run is asking for.
 ///
 /// The default answers only one question - would q refuse this? - because
@@ -4005,28 +4296,14 @@ impl Profile {
 /// directive - and only the codes it names: a bare `/ noqa` suppresses
 /// nothing. Anything after the codes is a free-text reason.
 fn suppress(out: &mut Vec<Finding>, source: &str, comments: &str) {
-    let (raw, blanked) = (source.as_bytes(), comments.as_bytes());
     let mut noqa: std::collections::HashMap<usize, Vec<&str>> = Default::default();
     let mut offset = 0;
     for (n, line) in source.split_inclusive('\n').enumerate() {
         let end = offset + line.len();
-        let start = (offset..end).find(|&i| {
-            raw[i] == b'/'
-                && blanked[i] == b' '
-                && (i == offset
-                    || raw[i - 1].is_ascii_whitespace()
-                    // `views` reads `<BOM>/ note` as a comment line (#221),
-                    // and so does its noqa (#427).
-                    || i == 3 && source.starts_with('\u{feff}'))
-        });
-        if let Some(caps) = start.and_then(|i| {
-            re!(r"(?:^|\s)/+\s*(?i:noqa)\s*:\s*([A-Z]+[0-9]+\b(?:\s*,\s*[A-Z]+[0-9]+\b|\s+[A-Z]+[0-9]+\b)*)")
-                .captures(&source[i..end])
-        }) {
-            let codes = caps.get(1).unwrap().as_str();
+        if let Some(codes) = noqa_codes(source, comments, offset, end) {
             noqa.entry(n + 1)
                 .or_default()
-                .extend(codes.split([',', ' ', '\t']).filter(|c| !c.is_empty()));
+                .extend(codes_in(&source[codes]));
         }
         offset = end;
     }
@@ -4037,6 +4314,145 @@ fn suppress(out: &mut Vec<Finding>, source: &str, comments: &str) {
                 .is_some_and(|codes| codes.contains(&f.code.as_str()))
         });
     }
+}
+
+/// The codes the `noqa` comment of the line at `offset..end` names, as the
+/// one span of the source that lists them: `QF016, QF017` of
+/// `/ noqa: QF016, QF017 reason`. `suppress` reads it and `suppression_for`
+/// writes it, so an edit the second makes is one the first honours.
+fn noqa_codes(
+    source: &str,
+    comments: &str,
+    offset: usize,
+    end: usize,
+) -> Option<std::ops::Range<usize>> {
+    let (raw, blanked) = (source.as_bytes(), comments.as_bytes());
+    let start = (offset..end).find(|&i| {
+        raw[i] == b'/'
+            && blanked[i] == b' '
+            && (i == offset
+                || raw[i - 1].is_ascii_whitespace()
+                // `views` reads `<BOM>/ note` as a comment line (#221),
+                // and so does its noqa (#427).
+                || i == 3 && source.starts_with('\u{feff}'))
+    })?;
+    re!(
+        r"(?:^|\s)/+\s*(?i:noqa)\s*:\s*([A-Z]+[0-9]+\b(?:\s*,\s*[A-Z]+[0-9]+\b|\s+[A-Z]+[0-9]+\b)*)"
+    )
+    .captures(&source[start..end])?
+    .get(1)
+    .map(|codes| start + codes.start()..start + codes.end())
+}
+
+/// Each code of a `noqa` comment's list.
+fn codes_in(list: &str) -> impl Iterator<Item = &str> {
+    list.split([',', ' ', '\t']).filter(|c| !c.is_empty())
+}
+
+/// The edit that accepts `finding` where it is reported: ` / noqa: CODE`
+/// after its line, or the code added to the `noqa` already there. `None`
+/// where no comment on that line would be one, or would be read as the
+/// directive - there is no correct suppression to offer then, and a wrong
+/// one is worse than none:
+///
+/// - a line that ends inside a string: the text would join the string;
+/// - a system command, whose argument runs to the end of its line, and a
+///   `k)` or `p)` line, which is another language's to read;
+/// - a block comment - its bare `/` and `\` stop being bare with anything
+///   after them - and what follows the line that ends the script;
+/// - a blank line, where the comment would trail nothing;
+/// - a file whose brackets or strings do not close. That is reported alone
+///   (QE001), and accepting it would put every finding it stood in front of
+///   in its place.
+///
+/// A finding that spans lines is accepted on its first, which is the line
+/// `suppress` looks it up by. And the edit is checked rather than trusted:
+/// the edited source must mask exactly as the original does, with the new
+/// text blank in both views - a comment, and nothing else read differently -
+/// and its line must name the code to `noqa_codes`.
+///
+/// Never batch-safe: accepting a finding is a person's decision, one line at
+/// a time, and `--fix` must never make it for them.
+pub fn suppression_for(finding: &Finding, source: &str) -> Option<Fix> {
+    suppressions_for([finding], source).pop()?
+}
+
+/// `suppression_for` each of many findings in one source, in their order,
+/// masking it once for them all as `fixes_for` does. Each edit is still
+/// checked against a masking of its own: that is the cost of one here.
+pub fn suppressions_for<'a>(
+    findings: impl IntoIterator<Item = &'a Finding>,
+    source: &str,
+) -> Vec<Option<Fix>> {
+    let v = views(source);
+    let balanced = structure("", source, &v).is_empty();
+    findings
+        .into_iter()
+        .map(|finding| {
+            balanced
+                .then(|| suppression_with(finding, source, &v))
+                .flatten()
+        })
+        .collect()
+}
+
+fn suppression_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
+    let code = finding.code.as_str();
+    if !re!(r"^[A-Z]+[0-9]+$").is_match(code) {
+        return None;
+    }
+    let row = finding.line.checked_sub(1)?;
+    let start = match row {
+        0 => 0,
+        _ => source.match_indices('\n').nth(row - 1)?.0 + 1,
+    };
+    let line = source[start..].split_inclusive('\n').next()?;
+    let text = line.strip_suffix('\n').unwrap_or(line);
+    let text = text.strip_suffix('\r').unwrap_or(text);
+    let in_block = v.open_block.is_some_and(|open| start >= open)
+        || v.blocks
+            .iter()
+            .any(|&(open, close)| (open..=close).contains(&start));
+    if text.trim().is_empty()
+        || in_block
+        || system_command(line)
+        || v.script_end.is_some_and(|end| start >= end)
+        || v.foreign_offsets.binary_search(&start).is_ok()
+    {
+        return None;
+    }
+    // Added to the directive already there, before any reason it gives; or
+    // put after the line, in place of the blanks that end it.
+    let (at, end, replacement) = match noqa_codes(source, &v.comments, start, start + line.len()) {
+        Some(codes) => (codes.end, codes.end, format!(", {code}")),
+        // Only blanks are replaced: nothing q reads goes with them.
+        None => (
+            start + text.trim_end_matches([' ', '\t']).len(),
+            start + text.len(),
+            format!(" / noqa: {code}"),
+        ),
+    };
+    let mut edited = source.to_string();
+    edited.replace_range(at..end, &replacement);
+    let after = views(&edited);
+    let comment_only = |before: &str, after: &str| {
+        let (before, after) = (before.as_bytes(), after.as_bytes());
+        let added = at + replacement.len();
+        before[..at] == after[..at]
+            && after[at..added].iter().all(|&b| b == b' ')
+            && before[end..] == after[added..]
+    };
+    let line_end = start + line.len() - (end - at) + replacement.len();
+    let named = noqa_codes(&edited, &after.comments, start, line_end)
+        .is_some_and(|codes| codes_in(&edited[codes]).any(|c| c == code));
+    (named && comment_only(&v.code, &after.code) && comment_only(&v.comments, &after.comments))
+        .then(|| Fix {
+            start: at,
+            end,
+            replacement: replacement.into(),
+            title: format!("Suppress {code} on this line").into(),
+            batch_safe: false,
+        })
 }
 
 pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
