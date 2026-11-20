@@ -29,7 +29,10 @@
 //! requested with textDocument/codeAction, document formatting with
 //! textDocument/formatting, and semantic tokens - the colour of a function at
 //! the places it is called, and of a parameter where its body reads it - with
-//! textDocument/semanticTokens/full.
+//! textDocument/semanticTokens/full. And navigation, in `navigate`: the
+//! outline (textDocument/documentSymbol), workspace/symbol, go to definition,
+//! find references, textDocument/documentHighlight, and a rename of a
+//! lambda's own parameters and locals - never of a global.
 //!
 //! A workspace index: every `.q` file under the workspace folders is read at
 //! startup - never run - for the global names it defines, and kept current
@@ -66,14 +69,17 @@
 //! was started with - `--profile`, `--select` and the rest - are the
 //! command line's, and keep their meaning.
 //!
-//! Not here: completion, hover, go-to-definition. Those need a resolver and a
-//! symbol table this crate does not have - it reads source text without
-//! executing it, which is the property that makes it safe to run on every
-//! keystroke. Claiming those capabilities and answering emptily is worse than
-//! not claiming them: an editor that is told a server provides completion
-//! stops offering its own word-based fallback. Formatting does not share the
-//! problem: its answer comes from rules that read text, and when there is
-//! nothing to fix, an empty answer is the true one.
+//! Not here: completion and hover. Those need to know what a name holds,
+//! and this crate reads source text without executing it - the property that
+//! makes it safe to run on every keystroke. Claiming those capabilities and
+//! answering emptily is worse than not claiming them: an editor that is told
+//! a server provides completion stops offering its own word-based fallback.
+//! Formatting does not share the problem: its answer comes from rules that
+//! read text, and when there is nothing to fix, an empty answer is the true
+//! one. Nor does navigation: where a name is written and where it is read is
+//! in the text, under the same `\d` resolution the checks use, and what it
+//! cannot see - a name reached through a string or from another process - is
+//! why it renames nothing but a lambda's locals.
 use crate::config::{FILES, Layer, Policy, selector};
 use crate::jsonrpc::{INVALID_REQUEST, receive, send};
 use q_lint_rs::graph::Placement;
@@ -98,6 +104,11 @@ const METHOD_NOT_FOUND: i64 = -32601;
 const INTERNAL_ERROR: i64 = -32603;
 const INVALID_PARAMS: i64 = -32602;
 const SERVER_NOT_INITIALIZED: i64 = -32002;
+/// LSP 3.17's `RequestFailed`: a well-formed request the server will not
+/// carry out, with the reason as its message - a rename it refuses.
+const REQUEST_FAILED: i64 = -32803;
+
+mod navigate;
 
 /// Open documents, by URI. The editor is the authority on their contents from
 /// didOpen until didClose, so nothing here reads from disk.
@@ -466,7 +477,7 @@ fn workspace_roots(params: &Value) -> Vec<String> {
 /// ```json
 /// {"lint": {"select": [], "ignore": [], "run": "onType", "severity": {}},
 ///  "fixes": {"unsafe": true}, "format": {"enable": true},
-///  "semanticTokens": {"enable": true},
+///  "semanticTokens": {"enable": true}, "navigation": {"enable": true},
 ///  "workspaceIndex": {"enable": true, "exclude": []}}
 /// ```
 ///
@@ -486,6 +497,10 @@ struct Options {
     /// are indexed.
     index: bool,
     index_exclude: Vec<glob::Pattern>,
+    /// Answer the navigation requests. Off for someone whose other q
+    /// extension answers them already, and would otherwise list each
+    /// definition twice.
+    navigation: bool,
     /// A diagnostic severity by code or prefix; the longest that names a
     /// code decides.
     severity: Vec<(String, i64)>,
@@ -500,6 +515,7 @@ impl Default for Options {
             semantic_tokens: true,
             index: true,
             index_exclude: vec![],
+            navigation: true,
             severity: vec![],
         }
     }
@@ -526,6 +542,7 @@ impl Options {
                         "format",
                         "semanticTokens",
                         "workspaceIndex",
+                        "navigation",
                     ]
                     .contains(&key.as_str())
                         && !value.is_object()
@@ -551,6 +568,7 @@ impl Options {
         options.format = flag("/format/enable", true);
         options.semantic_tokens = flag("/semanticTokens/enable", true);
         options.index = flag("/workspaceIndex/enable", true);
+        options.navigation = flag("/navigation/enable", true);
         match init.pointer("/lint/run") {
             None | Some(Value::Null) => {}
             Some(v) if v == "onType" => {}
@@ -659,6 +677,9 @@ pub fn serve(
     // Whether the client re-asks for semantic tokens when told to, and the
     // id of the next request the server sends it.
     let mut token_refresh = false;
+    // Whether the client takes the outline as `DocumentSymbol`s, and asks
+    // before a rename what would be renamed.
+    let mut nested_symbols = false;
     let mut next_request: u64 = 0;
     // Whether the client takes file watchers the server registers - Neovim
     // and Helix send didChangeWatchedFiles only for those (#792) - and ones
@@ -757,10 +778,21 @@ pub fn serve(
                 };
                 watch_registration = watched("dynamicRegistration");
                 relative_patterns = watched("relativePatternSupport");
-                send(
-                    writer,
-                    json!({"id": id, "result": capabilities(&opts, code_action_literals)}),
-                )?;
+                let client = |pointer: &str| {
+                    params
+                        .pointer(&format!("/capabilities/textDocument/{pointer}"))
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false)
+                };
+                nested_symbols = client("documentSymbol/hierarchicalDocumentSymbolSupport");
+                let mut result = capabilities(&opts, code_action_literals);
+                if opts.navigation {
+                    navigate::announce(
+                        &mut result["capabilities"],
+                        client("rename/prepareSupport"),
+                    );
+                }
+                send(writer, json!({"id": id, "result": result}))?;
                 initialized = true;
             }
             ("exit", _) => return Ok(if shutdown_requested { 0 } else { 1 }),
@@ -816,7 +848,13 @@ pub fn serve(
                 | "textDocument/didClose"
                 | "textDocument/semanticTokens/full"
                 | "textDocument/codeAction"
-                | "textDocument/formatting",
+                | "textDocument/formatting"
+                | "textDocument/documentSymbol"
+                | "textDocument/definition"
+                | "textDocument/references"
+                | "textDocument/documentHighlight"
+                | "textDocument/prepareRename"
+                | "textDocument/rename",
                 id,
             ) if !params["textDocument"]["uri"].is_string() => {
                 let message = format!("{method}: params.textDocument.uri must be a string");
@@ -935,6 +973,32 @@ pub fn serve(
                 };
                 match edits {
                     Ok(edits) => send(writer, json!({"id": id, "result": edits}))?,
+                    Err(panic) => send(writer, internal_error(id, &panic))?,
+                }
+            }
+            (
+                "textDocument/documentSymbol"
+                | "textDocument/definition"
+                | "textDocument/references"
+                | "textDocument/documentHighlight"
+                | "textDocument/prepareRename"
+                | "textDocument/rename"
+                | "workspace/symbol",
+                Some(id),
+            ) => {
+                let answer = guarded(|| {
+                    if !opts.navigation {
+                        return Ok(Value::Null);
+                    }
+                    let sources = navigate::Sources::new(&docs, &idx);
+                    navigate::answer(&method, &params, &sources, nested_symbols)
+                });
+                match answer {
+                    Ok(Ok(result)) => send(writer, json!({"id": id, "result": result}))?,
+                    Ok(Err(refusal)) => send(
+                        writer,
+                        json!({"id": id, "error": {"code": REQUEST_FAILED, "message": refusal}}),
+                    )?,
                     Err(panic) => send(writer, internal_error(id, &panic))?,
                 }
             }
@@ -1503,9 +1567,10 @@ fn severity(name: &str) -> i64 {
 /// Where each line starts, as an LSP client counts lines: the protocol ends
 /// one at `\n`, at `\r\n`, and at a lone `\r`. Every position this server
 /// sends - diagnostics, code actions, semantic tokens - goes through it, so
-/// none of them is a line high after a stray carriage return. Nothing comes
-/// the other way: documents are synced whole, and a code action's
-/// diagnostics are matched against ranges made here.
+/// none of them is a line high after a stray carriage return. A code
+/// action's diagnostics are matched against ranges made here, and the one
+/// position a client sends - where the cursor is, for navigation - comes
+/// back through `offset`.
 struct Lines<'a> {
     source: &'a str,
     starts: Vec<usize>,
@@ -1545,6 +1610,26 @@ impl<'a> Lines<'a> {
     fn json(&self, byte: usize) -> Value {
         let (line, character) = self.position(byte);
         json!({"line": line, "character": character})
+    }
+
+    /// The byte offset of a position a client sends: the 0-based `line` as
+    /// LSP counts lines, and `character` UTF-16 code units into it. A
+    /// character past the line's end is its end, and a line past the last
+    /// the end of the text (LSP 3.17, "Position").
+    fn offset(&self, line: usize, character: usize) -> usize {
+        let Some(&start) = self.starts.get(line) else {
+            return self.source.len();
+        };
+        let rest = &self.source[start..];
+        let text = &rest[..rest.find(['\n', '\r']).unwrap_or(rest.len())];
+        let mut units = 0;
+        for (i, c) in text.char_indices() {
+            if units >= character {
+                return start + i;
+            }
+            units += c.len_utf16();
+        }
+        start + text.len()
     }
 
     /// The text of a 0-based line as q counts lines, less its line ending.

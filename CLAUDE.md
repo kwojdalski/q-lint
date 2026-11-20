@@ -6,11 +6,11 @@ VS Code client for it.
 ## The property the whole design rests on
 
 **This tool never executes the source it reads.** That is what makes it safe
-to run on every keystroke in an editor, and it is the reason several
-capabilities are absent rather than merely unimplemented: completion, hover
-and go-to-definition need a resolver and a symbol table, and building one
-would mean giving up the guarantee. A change that would require evaluating
-input is a change to the premise, not a feature.
+to run on every keystroke in an editor, and it bounds every editor feature:
+navigation (symbols, definition, references, rename of a local) answers from
+the names the source spells and nothing else, so a name built at run time is
+not found and a global is never renamed. A feature that could only be right by
+evaluating input is a change to the premise, not a feature.
 
 ## Verify with
 

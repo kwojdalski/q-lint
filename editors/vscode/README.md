@@ -13,8 +13,9 @@ for other languages, such as [Ruff](https://docs.astral.sh/ruff/) for Python.
 development, and already catching the most common problems. A finding that
 looks wrong is worth an [issue](https://github.com/kwojdalski/q-lint/issues).
 
-**It never executes your code**, which is why it is safe on every keystroke -
-and why there is no completion, hover or go-to-definition.
+**It never executes your code**, which is why it is safe on every keystroke.
+Navigation is read from the source the same way; there is no completion or
+hover.
 
 ## Features
 
@@ -34,6 +35,16 @@ and why there is no completion, hover or go-to-definition.
   function is coloured wherever it is called, even when another `.q` file in
   the workspace defines it, and a parameter wherever its body reads it.
   Unused parameters and locals are faded.
+- **Navigation**: the outline and breadcrumbs, **Go to Symbol in Workspace**,
+  **Go to Definition** and **Find All References** across the workspace's
+  `.q` files, and occurrence highlights that tell a write from a read. A
+  name is resolved as q resolves it under the `\d` context in force,
+  including in a file another loads under a context. What only running the
+  code would tell - a name built at run time, `value "..."`, another
+  process - is not found.
+- **Rename** for a lambda's parameters and locals. A global is refused with
+  the reason: it can be reached from a string, a symbol or another process,
+  and a rename that misses one of those breaks the program quietly.
 
 ## Requirements
 
@@ -62,6 +73,7 @@ q-pro column names the setting of [q-pro](https://marketplace.visualstudio.com/i
 | `q-lint.fixes.unsafe` | `true` | Offer the editor-only Quick Fixes (`--unsafe-fixes`) as well as those `--fix` applies. | - |
 | `q-lint.format.enable` | `true` | Register **Format Document** (the safe fixes). | - |
 | `q-lint.semanticTokens.enable` | `true` | Colour calls and parameter reads on top of the grammar. | - |
+| `q-lint.navigation.enable` | `true` | Offer the outline, workspace symbols, definitions, references, highlights and local rename. Off when another q extension already navigates. | - |
 | `q-lint.workspaceIndex.enable` | `true` | Read every workspace `.q` file at startup for the names it defines, up to 20,000 files or 500,000 directory entries. Off: only open files. | - |
 | `q-lint.workspaceIndex.exclude` | `[]` | Globs, relative to the workspace folder, the index does not read: `["vendor/**"]`. | `q-lang-server.sourceFiles.ignoreGlob` |
 | `q-lint.trace.server` | `off` | Log client-server traffic: `off`, `messages`, `verbose`. | `q-lang-server.trace.server` |

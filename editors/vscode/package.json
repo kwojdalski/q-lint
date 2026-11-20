@@ -148,6 +148,12 @@
           "order": 22,
           "markdownDescription": "Colour functions where they are called and parameters where they are read, on top of the grammar's colouring. Off, only the grammar colours."
         },
+        "q-lint.navigation.enable": {
+          "type": "boolean",
+          "default": true,
+          "order": 23,
+          "markdownDescription": "Offer the outline, workspace symbols, **Go to Definition**, **Find All References**, occurrence highlights and renaming a lambda's parameter or local - all read from the source, never by running it. Off, q-lint announces none of them: turn it off when another q extension already navigates and both would answer."
+        },
         "q-lint.workspaceIndex.enable": {
           "type": "boolean",
           "default": true,

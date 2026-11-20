@@ -342,12 +342,33 @@ a `.q` file is linted: an untitled scratch or a console buffer labelled q gets
 no diagnostics, because nothing says it holds q source rather than a REPL
 transcript.
 
-Deliberately not implemented: completion, hover, go-to-definition.
-Those need a resolver and a symbol table this crate does not have — it reads
-source without executing it, which is what makes it safe to run on every
-keystroke. Announcing a capability and answering emptily is worse than not
-announcing it, because an editor told that a server provides completion stops
-offering its own word-based fallback.
+**Navigation** is read from the same source the diagnostics are, without
+running it: `textDocument/documentSymbol` (the outline; nested or flat, as
+the client declares), `workspace/symbol`, `textDocument/definition`,
+`textDocument/references`, `textDocument/documentHighlight` (a write told
+from a read), and `textDocument/prepareRename`/`textDocument/rename`.
+
+A global is named as q would resolve it where it is written: under the `\d`
+context in force, in each context a file is loaded in when it names none of
+its own, in `.q` when nothing else defines the bare name, and at the
+assignment of the nearest namespace when `.cfg.n` exists only because `.cfg`
+was assigned whole. Every way of writing one that the linter already reads
+counts as a definition - `name:`, `name::` in a lambda, `` `name set ``,
+an amend of `` `. `` - and an open buffer is read as the editor has it. A
+definition inside a lambda is still that global's definition. What only
+running the code would tell is not found: a name built at run time, a
+`value "..."` string, a definition another process sends. A column in a qSQL
+phrase reads like a global of that name and is listed with it.
+
+Rename is for a lambda's parameters and locals only. A global is refused, with
+the reason in the error, because it can be reached by name from a string, a
+symbol or another process, and no reading of the source finds those. So are an
+implicit `x`, `y` or `z`, a local a qSQL phrase reads (it may be a column),
+and a new name that is a q builtin or that the lambda already uses.
+
+Not implemented: completion and hover. Announcing a capability and answering
+emptily is worse than not announcing it, because an editor told that a server
+provides completion stops offering its own word-based fallback.
 
 ### VS Code
 
@@ -417,7 +438,7 @@ Every key is optional, and these are the defaults:
 ```json
 {"lint": {"select": [], "ignore": [], "run": "onType", "severity": {}},
  "fixes": {"unsafe": true}, "format": {"enable": true},
- "semanticTokens": {"enable": true},
+ "semanticTokens": {"enable": true}, "navigation": {"enable": true},
  "workspaceIndex": {"enable": true, "exclude": []}}
 ```
 
@@ -426,8 +447,9 @@ configuration and the command line, and only turn rules off: a rule reports
 when the configuration selects it and they do too. `lint.run` is `onType` or
 `onSave`. `lint.severity` maps a code or prefix to `error`, `warning`,
 `information` or `hint`, the longest winning. `fixes.unsafe: false` offers
-only the fixes `--fix` applies; `format.enable` and `semanticTokens.enable`
-set to `false` leave the capability unannounced. `workspaceIndex.exclude`
+only the fixes `--fix` applies; `format.enable`, `semanticTokens.enable` and
+`navigation.enable` set to `false` leave the capability unannounced - the
+last for when another q language server already answers those requests. `workspaceIndex.exclude`
 holds globs relative to each workspace folder that the index does not read.
 The index stops after 20,000 `.q` files or 500,000 directory entries of any
 kind, whichever comes first, so a folder opened at `/` cannot stall the

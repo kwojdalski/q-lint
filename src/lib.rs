@@ -91,6 +91,11 @@ impl Workspace {
             .any(|n| self.defined.get(n).copied().unwrap_or(0) > usize::from(own.contains(n)))
     }
 
+    /// Whether any file defines `name`, exactly.
+    pub fn defines(&self, name: &str) -> bool {
+        self.defined.contains_key(name)
+    }
+
     pub(crate) fn is_lambda(&self, name: &str) -> bool {
         self.lambdas.contains_key(name)
     }
@@ -159,6 +164,93 @@ pub struct Dynamic {
 pub fn references(source: &str, symbols: bool) -> References {
     let v = views(source);
     semantics::references(&v.code, source, symbols)
+}
+
+/// A global name at one place in a file: `name` as q resolves it under the
+/// `\d` in force, at byte `at` for `len` bytes. `implicit` when it is
+/// written without a leading dot before the file's first `\d`, where the
+/// context is whichever one the file is loaded in; `definition` when this
+/// is a write of the name and not a read.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Mention {
+    pub name: String,
+    pub implicit: bool,
+    pub at: usize,
+    pub len: usize,
+    pub definition: Option<Definition>,
+}
+
+/// One write of a global. `function` when what it assigns is a lambda, with
+/// its signature as written in `detail` - `[a;b]`, and empty for an implicit
+/// one. `start..end` is the statement making the write, for an outline to
+/// select and fold.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Definition {
+    pub function: bool,
+    pub detail: String,
+    pub start: usize,
+    pub end: usize,
+}
+
+/// What a name in the source refers to.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Name {
+    Local(Local),
+    /// A global at `at`, by each name q may resolve it to, with whether that
+    /// name is `Mention::implicit`.
+    Global {
+        at: usize,
+        len: usize,
+        names: Vec<(String, bool)>,
+    },
+}
+
+/// A parameter or local of one lambda, with each place the lambda names it.
+/// `declared` is the place, by index, that introduces it: the signature's
+/// for a parameter, the first assignment for a local. `implicit` for an x,
+/// y or z no signature declares.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Local {
+    pub name: String,
+    pub implicit: bool,
+    pub declared: Option<usize>,
+    pub places: Vec<Place>,
+}
+
+/// One place a local is named. `write` where it is declared or assigned;
+/// `column` inside a qSQL phrase, where the name is the table's column
+/// instead whenever the table has one.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Place {
+    pub at: usize,
+    pub len: usize,
+    pub write: bool,
+    pub column: bool,
+}
+
+/// Every global name `source` writes or reads, in order.
+pub fn mentions(source: &str) -> Vec<Mention> {
+    let v = views(source);
+    semantics::navigate::mentions(&v.code, source)
+}
+
+/// What the name at byte `offset` of `source` refers to, when there is one.
+pub fn name_at(source: &str, offset: usize) -> Option<Name> {
+    let v = views(source);
+    semantics::navigate::name_at(&v.code, source, offset)
+}
+
+/// The byte range of the local at `offset`, or why it cannot be renamed.
+pub fn rename_target(source: &str, offset: usize) -> Result<(usize, usize), String> {
+    let v = views(source);
+    semantics::navigate::rename_target(&v.code, source, offset)
+}
+
+/// The byte ranges to replace with `new` to rename the local at `offset`,
+/// or why it cannot be renamed to that.
+pub fn rename(source: &str, offset: usize, new: &str) -> Result<Vec<(usize, usize)>, String> {
+    let v = views(source);
+    semantics::navigate::rename(&v.code, source, offset, new)
 }
 
 pub mod graph;
