@@ -76,8 +76,10 @@ type Json = Record<string, unknown>;
 const isObject = (v: unknown): v is Json => typeof v === "object" && v !== null && !Array.isArray(v);
 
 /// Read a `.qnb`. An empty file is a new, empty notebook; anything else that
-/// is not a notebook throws a `QnbError` saying where it is wrong.
-export function parseQnb(text: string): Qnb {
+/// is not a notebook throws a `QnbError` saying where it is wrong. A byte
+/// order mark in front, which JSON does not allow, is skipped.
+export function parseQnb(raw: string): Qnb {
+  const text = raw.startsWith("\uFEFF") ? raw.slice(1) : raw;
   if (text.trim() === "") {
     return { cells: [] };
   }

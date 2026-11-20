@@ -54,6 +54,12 @@ test("empty fields are not written, and q is a code cell's default language", ()
   assert.deepStrictEqual(JSON.parse(text), { qnb: QNB_VERSION, cells: [{ kind: "code", source: ["1"] }] });
 });
 
+test("a file that starts with a byte order mark opens", () => {
+  // As Notepad and Windows PowerShell's Set-Content -Encoding UTF8 write one.
+  const text = JSON.stringify(SAMPLE, null, 1) + "\n";
+  assert.deepStrictEqual(parseQnb("\uFEFF" + text), parseQnb(text));
+});
+
 test("an empty file is a new notebook", () => {
   assert.deepStrictEqual(parseQnb(""), { cells: [] });
   assert.deepStrictEqual(parseQnb("  \n"), { cells: [] });
