@@ -66,6 +66,17 @@ test("a tag takes the setting's colour, else the built-in one", () => {
   assert.strictEqual(tagThemeColour("Prod", { prod: "charts.orange" }), "charts.orange");
 });
 
+test("a tag named like an Object property has no colour unless one is set", () => {
+  for (const tag of ["constructor", "toString", "__proto__", "hasOwnProperty"]) {
+    assert.strictEqual(tagThemeColour(tag, {}), undefined, tag);
+    assert.strictEqual(tagThemeColour(tag, tagColours({})), undefined, tag);
+    assert.strictEqual(processThemeColour(proc(tag), {}), undefined, tag);
+  }
+  // And one set for it is kept and used.
+  assert.strictEqual(tagThemeColour("__proto__", tagColours(JSON.parse('{"__proto__": "charts.purple"}'))), "charts.purple");
+  assert.strictEqual(tagThemeColour("constructor", tagColours({ constructor: "charts.blue" })), "charts.blue");
+});
+
 test("a process takes its most cautious tag's colour", () => {
   assert.strictEqual(processThemeColour(proc("dev", "prod"), {}), "charts.red");
   assert.strictEqual(processThemeColour(proc("eu", "dev"), { eu: "charts.yellow" }), "charts.yellow");
