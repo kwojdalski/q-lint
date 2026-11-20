@@ -168,7 +168,8 @@ export function tableHtml(table: Table): string {
 /// the rows, a `|` after a keyed table's key columns.
 export function tableText(table: Table): string[] {
   const rows = rowCount(table);
-  const widths = table.columns.map((c, i) => Math.max(c.length, ...table.data[i].map((v) => clip(v).length)));
+  // A loop, not `Math.max(...)`: every row is more than a call takes arguments.
+  const widths = table.columns.map((c, i) => table.data[i].reduce((w, v) => Math.max(w, clip(v).length), c.length));
   const line = (cell: (i: number) => string): string =>
     table.columns
       .map((_, i) => cell(i).padEnd(widths[i]) + (i === table.keys - 1 && i < table.columns.length - 1 ? "|" : ""))

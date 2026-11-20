@@ -192,6 +192,16 @@ test("a table as text is laid out as q's console lays it out", () => {
   assert.deepStrictEqual(tableText(plain), ["a bb", "----", "1 22"]);
 });
 
+test("a table of every row is laid out as text, however many rows it has", () => {
+  // q-lint.notebook.rowLimit 0 sends every row: far more than a call takes arguments.
+  const rows = 300000;
+  const big = { columns: ["i"], types: [7], keys: 0, data: [Array.from({ length: rows }, (_, i) => String(i))], total: rows };
+  const text = tableText(big);
+  assert.strictEqual(text.length, rows + 2);
+  assert.deepStrictEqual(text.slice(0, 3), ["i", "------", "0"]);
+  assert.strictEqual(text.at(-1), String(rows - 1));
+});
+
 test("a cell's outputs follow its mode", () => {
   const table = { ok: true, table: TABLE };
   const [grid] = cellOutputs({ mode: "grid" }, table);
