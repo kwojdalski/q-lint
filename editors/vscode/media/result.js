@@ -43,9 +43,21 @@
     return rows;
   }
 
+  /// The columns a chart draws, of those it `can`: the ones ticked
+  /// (`chosen`, their places, as the page saves them), or every one before
+  /// any is ticked. {columns, note?}: the note when none is ticked.
+  function chartColumns(can, chosen) {
+    if (!Array.isArray(chosen) || !chosen.every(Number.isInteger)) {
+      return { columns: can };
+    }
+    const columns = can.filter(function (c) { return chosen.indexOf(c) >= 0; });
+    return columns.length === 0 && can.length > 0 ? { columns: columns, note: "No column is ticked: tick one above to chart it." } : { columns: columns };
+  }
+
   const helpers = {
     rowCount: rowCount,
     visibleRows: visibleRows,
+    chartColumns: chartColumns,
   };
   if (typeof module !== "undefined" && module.exports) {
     module.exports = helpers;
@@ -275,15 +287,16 @@
     });
     controls.append(kind);
     const can = C.chartable(grid, state.kind);
-    const picked = state.columns === null ? can : can.filter(function (c) { return state.columns.indexOf(grid.columns[c].name) >= 0; });
+    const chosen = chartColumns(can, state.columns);
+    const picked = chosen.columns;
     can.forEach(function (c) {
       const label = el("label");
       const box = el("input");
       box.type = "checkbox";
       box.checked = picked.indexOf(c) >= 0;
       box.addEventListener("change", function () {
-        const names = can.filter(function (x) { return x === c ? box.checked : picked.indexOf(x) >= 0; });
-        state.columns = names.map(function (x) { return grid.columns[x].name; });
+        // By place: a keyed table's key and value columns can share a name.
+        state.columns = can.filter(function (x) { return x === c ? box.checked : picked.indexOf(x) >= 0; });
         save();
         drawChart();
       });
@@ -306,7 +319,7 @@
       controls.append(label);
     }
     chartView.append(controls);
-    const data = C.chartData(grid, rows, state.kind, picked, state.bins);
+    const data = chosen.note ? { type: "bar", datasets: [], note: chosen.note } : C.chartData(grid, rows, state.kind, picked, state.bins);
     const summary = C.summary(state.kind, data);
     if (data.note || typeof Chart !== "function") {
       const note = data.note || "The chart library did not load.";

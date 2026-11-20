@@ -285,6 +285,19 @@ test("a chart plots the numeric columns, against the first but for a histogram",
   assert.match(charts.chartData(grid, [0], "line", [], 10).note, /No numeric column/);
 });
 
+test("the panel's chart draws the columns ticked, told apart by place, not name", () => {
+  // Before any choice, every column it can.
+  assert.deepStrictEqual(panel.chartColumns([1, 2], null), { columns: [1, 2] });
+  // A keyed table whose key and value columns share a name: unticking one
+  // leaves the other.
+  assert.deepStrictEqual(panel.chartColumns([0, 1], [1]), { columns: [1] });
+  // None ticked: a note that says so, not that there is nothing to chart.
+  const none = panel.chartColumns([1, 2], []);
+  assert.deepStrictEqual(none.columns, []);
+  assert.match(none.note, /No column is ticked/);
+  assert.doesNotMatch(none.note, /No numeric column/);
+});
+
 test("a histogram bins every series over one range", () => {
   assert.deepStrictEqual(charts.histogram([[0, 1, 2, 3, 4, null, Infinity]], 2), { edges: [0, 2, 4], counts: [[2, 3]] });
   assert.deepStrictEqual(charts.histogram([[1, 1, 1]], 10), { edges: [1, 1], counts: [[3]] });
