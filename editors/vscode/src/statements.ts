@@ -7,7 +7,9 @@
 // a line that starts with a space or a tab continues the statement above it -
 // a closing `}` at column 0 starts a new one, which q refuses, here as there -
 // a line that starts with `/` is a comment, `/` alone opens a block comment
-// that `\` alone closes, and `\` alone outside one ends the script.
+// that `\` alone closes, and `\` alone outside one ends the script. A comment
+// is skipped without ending the statement around it: an indented line after
+// one still continues the statement above it.
 
 /// Whether `line` is read as part of the statement above it.
 function continues(line: string): boolean {
@@ -39,7 +41,6 @@ export function statements(text: string): string[] {
       continue;
     }
     if (line === "/") {
-      end();
       inBlock = true;
       continue;
     }
@@ -55,7 +56,6 @@ export function statements(text: string): string[] {
       continue;
     }
     if (line.startsWith("/")) {
-      end();
       continue;
     }
     end();
@@ -94,30 +94,28 @@ export function blockAt(lines: string[], line: number): { start: number; end: nu
   }
   const code = (i: number): boolean =>
     i >= 0 && i < lines.length && !commented[i] && !blank(at(i)) && !at(i).startsWith("/");
+  // A comment inside a statement is skipped, as `statements` skips it.
+  const skipped = (i: number): boolean => commented[i] || blank(at(i)) || at(i).startsWith("/");
   if (commented[line] ?? true) {
     return undefined;
   }
   if (blank(at(line))) {
     // A blank line is in a statement only when an indented line follows it.
     let next = line + 1;
-    while (next < lines.length && !commented[next] && blank(at(next))) {
+    while (next < lines.length && skipped(next)) {
       next++;
     }
-    if (next >= lines.length || commented[next] || !continues(at(next))) {
+    if (next >= lines.length || !continues(at(next))) {
       return undefined;
     }
   } else if (!code(line) && !continues(at(line))) {
     return undefined;
   }
   let start = line;
-  // Up past continuation lines and the blank lines between them, to the line
-  // that starts the statement.
+  // Up past continuation lines and the blank and comment lines between
+  // them, to the line that starts the statement.
   while (start >= 0) {
-    const text = at(start);
-    if (commented[start]) {
-      return undefined;
-    }
-    if (!blank(text) && !continues(text)) {
+    if (!skipped(start) && !continues(at(start))) {
       break;
     }
     start--;
@@ -127,14 +125,10 @@ export function blockAt(lines: string[], line: number): { start: number; end: nu
   }
   let end = line;
   for (let i = line + 1; i < lines.length; i++) {
-    const text = at(i);
-    if (commented[i]) {
-      break;
-    }
-    if (blank(text)) {
+    if (skipped(i)) {
       continue;
     }
-    if (!continues(text)) {
+    if (!continues(at(i))) {
       break;
     }
     end = i;

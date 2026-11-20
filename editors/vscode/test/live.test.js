@@ -59,8 +59,12 @@ test("comments are not sent", () => {
   assert.deepStrictEqual(statements("/ a comment\na:1\n/ another\nb:2"), ["a:1", "b:2"]);
   // A block comment: `/` alone to `\\` alone.
   assert.deepStrictEqual(statements("a:1\n/\nb:2\nc:3\n\\\nd:4"), ["a:1", "d:4"]);
-  // A comment line between a statement and an indented line ends the statement.
-  assert.deepStrictEqual(statements("a:1\n/ note\n  +2"), ["a:1", "+2"]);
+  // A comment line or a block comment between a statement and an indented
+  // line is skipped, and the statement goes on, as q loads a script: a
+  // file that loads runs the same as a query (#894).
+  assert.deepStrictEqual(statements("a:1\n/ note\n  +2"), ["a:1\n  +2"]);
+  assert.deepStrictEqual(statements("f:{\n/ a comment\n  x+1}\nf 1"), ["f:{\n  x+1}", "f 1"]);
+  assert.deepStrictEqual(statements("f:{\n/\njunk\n\\\n  x+1}"), ["f:{\n  x+1}"]);
   // A trailing comment stays: q's parser drops it.
   assert.deepStrictEqual(statements("a:1 / one"), ["a:1 / one"]);
 });
@@ -95,6 +99,17 @@ test("the block at the cursor is its statement and continuation lines", () => {
     assert.strictEqual(blockAt(lines, line), undefined, `line ${line}`);
   }
   assert.deepStrictEqual(blockAt(lines, 10), { start: 10, end: 10 });
+});
+
+test("a block runs on past comment lines and block comments inside it (#894)", () => {
+  const lines = ["f:{", "/ a comment", "  x+1;", "/", "junk", "\\", "  x}", "g 1"];
+  for (const line of [0, 2, 6]) {
+    assert.deepStrictEqual(blockAt(lines, line), { start: 0, end: 6 }, `line ${line}`);
+  }
+  for (const line of [1, 3, 4, 5]) {
+    assert.strictEqual(blockAt(lines, line), undefined, `line ${line}`);
+  }
+  assert.deepStrictEqual(statements(lines.slice(0, 7).join("\n")), ["f:{\n  x+1;\n  x}"]);
 });
 
 test("no block after a lone backslash, or on a blank line between statements", () => {
