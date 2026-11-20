@@ -187,6 +187,28 @@ struct Index {
     roots: Vec<String>,
     exclude: Vec<glob::Pattern>,
     enabled: bool,
+    /// Each workspace folder as the client named it, which is how an answer
+    /// names the files under it (`Sources::uri`).
+    folders: Vec<Folder>,
+}
+
+/// A workspace folder: the path it was given as, which is what a removal
+/// names, its key, which is what the files under it are keyed below, and the
+/// URI the client sent, which is what a file under it is named back by.
+struct Folder {
+    path: String,
+    key: std::path::PathBuf,
+    uri: String,
+}
+
+impl Folder {
+    fn of((path, uri): (String, String)) -> Self {
+        Folder {
+            key: file_key(&path).into(),
+            path,
+            uri,
+        }
+    }
 }
 
 /// Bounds on the scan, so a workspace opened at `/` cannot stall the server:
@@ -416,8 +438,23 @@ impl Index {
     /// names; a directory it names is not entered at all.
     /// Workspace folders the client added and removed after `initialize`:
     /// the added ones scanned, and what only the removed ones held forgotten.
-    fn change_roots(&mut self, added: Vec<String>, removed: Vec<String>, policy: &Policy) {
+    fn change_roots(
+        &mut self,
+        added: Vec<(String, String)>,
+        removed: Vec<String>,
+        policy: &Policy,
+    ) {
         self.roots.retain(|r| !removed.contains(r));
+        self.folders.retain(|f| !removed.contains(&f.path));
+        let added: Vec<String> = added
+            .into_iter()
+            .filter(|(path, _)| !self.roots.contains(path))
+            .map(|folder| {
+                let path = folder.0.clone();
+                self.folders.push(Folder::of(folder));
+                path
+            })
+            .collect();
         let kept: Vec<String> = self.roots.iter().map(|r| file_key(r)).collect();
         for gone in removed.iter().map(|r| file_key(r)) {
             let under = |key: &str, root: &str| std::path::Path::new(key).starts_with(root);
@@ -431,10 +468,6 @@ impl Index {
                 self.forget(&key);
             }
         }
-        let added: Vec<String> = added
-            .into_iter()
-            .filter(|r| !self.roots.contains(r))
-            .collect();
         if self.enabled && !added.is_empty() {
             let all = std::mem::replace(&mut self.roots, added.clone());
             self.scan(policy);
@@ -502,22 +535,24 @@ fn skipped(policy: &Policy, path: &std::path::Path) -> bool {
     policy.excluded(path).unwrap_or(false)
 }
 
-/// The folders an `initialize` request names, as filesystem paths: its
-/// `workspaceFolders`, or the older single `rootUri`.
-fn workspace_roots(params: &Value) -> Vec<String> {
-    let mut roots: Vec<String> = params["workspaceFolders"]
+/// The folders an `initialize` request names, each as a filesystem path and
+/// as the URI it was sent as: its `workspaceFolders`, or the older single
+/// `rootUri`.
+fn workspace_folders(params: &Value) -> Vec<(String, String)> {
+    let folder = |uri: &str| file_path(uri).map(|path| (path, uri.to_string()));
+    let mut folders: Vec<(String, String)> = params["workspaceFolders"]
         .as_array()
         .into_iter()
         .flatten()
         .filter_map(|f| f["uri"].as_str())
-        .filter_map(file_path)
+        .filter_map(folder)
         .collect();
-    if roots.is_empty()
-        && let Some(root) = params["rootUri"].as_str().and_then(file_path)
+    if folders.is_empty()
+        && let Some(root) = params["rootUri"].as_str().and_then(folder)
     {
-        roots.push(root);
+        folders.push(root);
     }
-    roots
+    folders
 }
 
 /// What a client asked for in `initializationOptions`. Every field defaults
@@ -833,7 +868,9 @@ pub fn serve(
                        "message": "initialize may only be sent once"}}),
             )?,
             ("initialize", Some(id)) => {
-                idx.roots = workspace_roots(&params);
+                let folders = workspace_folders(&params);
+                idx.roots = folders.iter().map(|(path, _)| path.clone()).collect();
+                idx.folders = folders.into_iter().map(Folder::of).collect();
                 let layer;
                 (opts, layer, problems) = Options::read(&params);
                 if layer.select.is_some() || !layer.ignore.is_empty() {
@@ -1170,9 +1207,11 @@ pub fn serve(
             }
             // A folder added to or removed from a multi-root workspace (#797).
             ("workspace/didChangeWorkspaceFolders", None) => {
-                let folders =
-                    |key: &str| workspace_roots(&json!({"workspaceFolders": params["event"][key]}));
-                idx.change_roots(folders("added"), folders("removed"), policy);
+                let folders = |key: &str| {
+                    workspace_folders(&json!({"workspaceFolders": params["event"][key]}))
+                };
+                let removed = folders("removed").into_iter().map(|(path, _)| path);
+                idx.change_roots(folders("added"), removed.collect(), policy);
                 // An open buffer still wins over what a folder held.
                 for (uri, text) in docs.iter().filter(|(uri, _)| is_q_uri(uri)) {
                     idx.put(&path_of(uri), text);
@@ -1423,6 +1462,12 @@ fn path_uri(path: &std::path::Path) -> String {
     } else {
         "file:///"
     });
+    escape(&mut uri, &text);
+    uri
+}
+
+/// `text` onto a URI, each byte a URI cannot hold as itself escaped.
+fn escape(uri: &mut String, text: &str) {
     for b in text.bytes() {
         if b.is_ascii_alphanumeric() || b"/-._~:".contains(&b) {
             uri.push(b as char);
@@ -1430,7 +1475,43 @@ fn path_uri(path: &std::path::Path) -> String {
             uri.push_str(&format!("%{b:02X}"));
         }
     }
-    uri
+}
+
+/// The URI an answer names an indexed file by - a location, a call, a file
+/// in the graph or among the tests a change reaches. Every one of them comes
+/// here, so a file is named one way whatever the request.
+///
+/// The file is keyed by its real path (`file_key`), and the client knows it
+/// by the spelling it used: a workspace opened as `/tmp/ws`, where `/tmp` is
+/// a link to `/private/tmp`, has its files keyed `/private/tmp/ws/...`, and a
+/// URI made from the key named a file the editor then opened a second time,
+/// and that it showed as an absolute path rather than one in its folder
+/// (#850). So: an open document by the URI it was opened with; a file under
+/// a workspace folder by that folder's URI as the client sent it and the
+/// path below it - the innermost folder, when one holds another; and only a
+/// file in no folder by its real path.
+impl navigate::Sources<'_> {
+    fn uri(&self, key: &str) -> String {
+        if let Some(uri) = self.open.get(key) {
+            return uri.to_string();
+        }
+        let path = Path::new(key);
+        let below = self
+            .idx
+            .folders
+            .iter()
+            .filter_map(|folder| Some((folder, path.strip_prefix(&folder.key).ok()?)))
+            .min_by_key(|(_, rest)| rest.components().count());
+        let Some((folder, rest)) = below else {
+            return path_uri(path);
+        };
+        let mut uri = folder.uri.trim_end_matches('/').to_string();
+        for part in rest.components() {
+            uri.push('/');
+            escape(&mut uri, &part.as_os_str().to_string_lossy());
+        }
+        uri
+    }
 }
 
 /// The kind of a fix for one diagnostic, and of the one action that applies

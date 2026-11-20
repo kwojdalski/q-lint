@@ -969,3 +969,100 @@ fn a_function_assigned_inside_another_has_callers_and_its_calls_are_the_outer_on
         [call("root_fn", FUNCTION, "lib.q", &[(0, 13, 20)])]
     );
 }
+
+/// Every `file:` URI anywhere in `value`.
+fn uris_in(value: &Value, out: &mut Vec<String>) {
+    match value {
+        Value::String(s) if s.starts_with("file:") => out.push(s.clone()),
+        Value::Array(items) => items.iter().for_each(|v| uris_in(v, out)),
+        Value::Object(map) => {
+            for (key, v) in map {
+                // A workspace edit is keyed by the URI it changes.
+                if key.starts_with("file:") {
+                    out.push(key.clone());
+                }
+                uris_in(v, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_workspace_opened_through_a_link_is_answered_in_the_links_spelling() {
+    // The folder is opened as `link`, a symlink to `real`, as a workspace
+    // under `/tmp` is on macOS. The index keys each file by its real path;
+    // answers named the files the editor had not opened by that path, which
+    // it showed as `/private/tmp/...` and opened a second time (#850).
+    let top = tempfile::tempdir().unwrap();
+    let real = top.path().join("real");
+    std::fs::create_dir(&real).unwrap();
+    let link = top.path().join("link");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let mut server = Server::start(&link, &WORKSPACE);
+    let main = server.open(&link, "main.q", MAIN);
+    let lib = file_uri(&link.join("lib.q"));
+    let test_main = file_uri(&link.join("tests/test_main.q"));
+    let at = |context: &str, skip: usize| {
+        let offset = MAIN.find(context).unwrap() + skip;
+        let line = MAIN[..offset].matches('\n').count();
+        let character = offset - MAIN[..offset].rfind('\n').map_or(0, |i| i + 1);
+        json!({"textDocument": {"uri": main}, "position": {"line": line, "character": character}})
+    };
+    let mut answers = vec![];
+    let definition = server.result("textDocument/definition", at(".lib.add", 6));
+    assert_eq!(definition[0]["uri"], json!(lib), "{definition}");
+    answers.push(definition);
+    let mut references = at("root_fn root_fn", 0);
+    references["context"] = json!({"includeDeclaration": true});
+    let references = server.result("textDocument/references", references);
+    let files: Vec<&Value> = references
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| &r["uri"])
+        .collect();
+    assert!(files.contains(&&json!(lib)), "{references}");
+    assert!(files.contains(&&json!(main)), "{references}");
+    answers.push(references);
+    let symbols = server.result("workspace/symbol", json!({"query": "root_fn"}));
+    assert_eq!(symbols[0]["location"]["uri"], json!(lib), "{symbols}");
+    answers.push(symbols);
+    answers.push(server.result(
+        "textDocument/documentSymbol",
+        json!({"textDocument": {"uri": main}}),
+    ));
+    let item = server.item(&main, MAIN, ".lib.add", 6);
+    assert_eq!(item["uri"], json!(lib));
+    answers.push(item.clone());
+    answers.push(server.result("callHierarchy/incomingCalls", json!({"item": item})));
+    let calc = server.item(&main, MAIN, "calc:", 0);
+    answers.push(server.result("callHierarchy/outgoingCalls", json!({"item": calc})));
+    let root_fn = server.item(&main, MAIN, "root_fn root_fn", 0);
+    answers.push(server.result("callHierarchy/incomingCalls", json!({"item": root_fn})));
+    let graph = server.graph(&main);
+    assert_eq!(graph["dependencies"], json!([lib]), "{graph}");
+    assert_eq!(graph["dependents"], json!([test_main]), "{graph}");
+    answers.push(graph);
+    let affected = server.result("q-lint/affectedTests", json!({"changed": [lib]}));
+    assert_eq!(affected["tests"][0]["uri"], json!(test_main), "{affected}");
+    assert_eq!(affected["changed"], json!([lib]));
+    answers.push(affected);
+    let mut rename = at("calc:{[n]", 7);
+    rename["newName"] = json!("k");
+    answers.push(server.result("textDocument/rename", rename));
+    // And nothing in any answer is named by the real path.
+    let mut named = vec![];
+    answers
+        .iter()
+        .for_each(|answer| uris_in(answer, &mut named));
+    let spelled = file_uri(&link);
+    assert!(named.len() > 10, "{named:?}");
+    for uri in &named {
+        assert!(
+            uri.starts_with(&format!("{spelled}/")),
+            "{uri} in {answers:?}"
+        );
+    }
+}

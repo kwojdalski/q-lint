@@ -523,6 +523,15 @@ from what the index already holds - about a quarter of a second over 3,665
 files - so a client should ask when a view is shown or a file saved, not on
 every keystroke.
 
+Every answer names a file the way the client knows it: an open document by
+the URI it was opened with, and a file under a workspace folder by that
+folder's URI as the client sent it, followed by the path below it. A
+workspace opened as `/tmp/ws` on macOS, where `/tmp` links to
+`/private/tmp`, is answered as `/tmp/ws/lib.q`, so the editor does not open
+a second copy of a file it already has open. The server still keys each file
+by its real path, so the two spellings are one file to it. Only a file
+outside every folder is named by its real path.
+
 ### VS Code
 
 The extension in `editors/vscode` is small: it launches the

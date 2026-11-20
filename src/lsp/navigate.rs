@@ -22,7 +22,7 @@
 //! a string (`value "f[]"`), a symbol built at run time, or another process
 //! is in no list here, which is why only a lambda's own parameters and
 //! locals can be renamed: every place those are named is inside the lambda.
-use super::{Documents, Index, Lines, file_key, is_q_uri, path_of, path_uri};
+use super::{Documents, Index, Lines, file_key, is_q_uri, path_of};
 use q_lint_rs::graph::Placement;
 use q_lint_rs::{Mention, Name, mentions, name_at};
 use serde_json::{Value, json};
@@ -107,7 +107,7 @@ impl<'a> Sources<'a> {
         }
         let bytes = std::fs::read(key).ok()?;
         Some((
-            path_uri(std::path::Path::new(key)),
+            self.uri(key),
             Cow::Owned(String::from_utf8_lossy(&bytes).into_owned()),
         ))
     }
