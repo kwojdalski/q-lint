@@ -31,6 +31,15 @@
 //! the places it is called, and of a parameter where its body reads it - with
 //! textDocument/semanticTokens/full.
 //!
+//! Around those: each diagnostic links its code to that rule's row in the
+//! reference (`codeDescription`); beside its fix, or without one, a finding
+//! has a quick fix that accepts it with `/ noqa: CODE` on its line, offered
+//! only where the linter would read that comment (`suppression_for`);
+//! textDocument/codeAction also answers `source.fixAll.q-lint` with the
+//! formatting edit, for `editor.codeActionsOnSave` in an editor where this
+//! server is not the formatter; and textDocument/foldingRange folds the
+//! brackets and block comments that span lines.
+//!
 //! A workspace index: every `.q` file under the workspace folders is read at
 //! startup - never run - for the global names it defines, and kept current
 //! from open buffers, closes, and workspace/didChangeWatchedFiles. A name
@@ -55,6 +64,18 @@
 //! the second time. Range formatting is not offered: one fix can leave
 //! another to make outside the range, and a selection's half of a pass is
 //! not something `--fix` ever produces.
+//!
+//! FOLDING IS THE BRACKETS THAT SPAN LINES, AND REPLACES THE EDITOR'S OWN
+//!
+//! A lambda, a parenthesised list, a bracketed block and a block comment
+//! fold, each from the line it opens on to the line it closes on, found in
+//! the masked text so that a bracket in a string or a comment folds nothing
+//! (`folds`). That is all of it: a statement continued over indented lines
+//! with no bracket open is not a range here. An editor told a server folds
+//! stops folding by indentation, so this is a trade and not only a gain -
+//! exact ranges where the brackets are, for none where they are not - and
+//! one a person can decline (`editor.foldingStrategy: "indentation"`). A
+//! buffer whose brackets do not close has no ranges rather than wrong ones.
 //!
 //! EDITOR SETTINGS ARRIVE AS initializationOptions, AND ONLY NARROW
 //!

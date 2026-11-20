@@ -334,6 +334,29 @@ is none. A document with nothing to fix, or whose brackets or strings do not
 close, gets no edits; formatting twice changes nothing the second time. Range
 formatting is not offered.
 
+Around those:
+
+- Each diagnostic links its code to that rule's row in
+  [docs/rules.md](docs/rules.md) (`codeDescription`), so the code is clickable
+  wherever an editor shows it.
+- Every finding has a Quick Fix, "Suppress CODE on this line", that writes
+  `/ noqa: CODE` after its line, or adds the code to the `noqa` already there.
+  It is offered only where the linter would read that comment and q would
+  still run the same line: not on a line that ends inside a string, a system
+  command, a `k)` or `p)` line, a block comment or the bare `/` that opens
+  one, nor in a file whose brackets or strings do not close. It is never the
+  preferred fix.
+- `textDocument/codeAction` answers the kind `source.fixAll.q-lint` - asked
+  for by that name, or as `source.fixAll` or `source` - with the edit Format
+  Document makes. That is how an editor applies the safe fixes on save where
+  q-lint is not its formatter; a request that names no kind gets the Quick
+  Fixes alone.
+- `textDocument/foldingRange` folds the lambdas, parenthesised lists,
+  bracketed blocks and block comments that span lines, found in the masked
+  text so that a bracket in a string or a comment folds nothing. A statement
+  continued over indented lines with no bracket open is not a range, and a
+  buffer whose brackets do not close has none until they do.
+
 **The reason it is a server rather than an editor plugin shelling out to the
 CLI**: `didChange` carries the buffer, so what gets linted is what is on
 screen, including edits that have not been saved yet. A CLI over paths cannot
@@ -378,6 +401,9 @@ severities, Quick Fixes, formatting, semantic colouring and the workspace
 index - are listed, with which wins over which, in the [extension's
 README](editors/vscode/README.md#settings). `qlinter --lsp` without
 `--profile` defaults to `style`.
+
+The extension also contributes what needs no server: the grammar, and
+snippets for the forms q is mostly written in (`editors/vscode/snippets/q.json`).
 
 ### Other editors
 
