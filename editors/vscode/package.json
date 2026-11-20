@@ -14,7 +14,8 @@
     "Programming Languages"
   ],
   "activationEvents": [
-    "onLanguage:q"
+    "onLanguage:q",
+    "onNotebook:q-lint-notebook"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -39,6 +40,17 @@
         "embeddedLanguages": {
           "meta.embedded.block.python.q": "python"
         }
+      }
+    ],
+    "notebooks": [
+      {
+        "type": "q-lint-notebook",
+        "displayName": "q Notebook",
+        "selector": [
+          {
+            "filenamePattern": "*.qnb"
+          }
+        ]
       }
     ],
     "snippets": [
@@ -361,6 +373,12 @@
         "title": "Clear Query History",
         "category": "q-lint",
         "icon": "$(clear-all)"
+      },
+      {
+        "command": "q-lint.exportNotebook",
+        "title": "Export Notebook as q Script",
+        "category": "q-lint",
+        "icon": "$(export)"
       }
     ],
     "views": {
@@ -476,6 +494,20 @@
           "command": "q-lint.querySelection",
           "when": "editorLangId == q",
           "group": "navigation@2"
+        }
+      ],
+      "notebook/toolbar": [
+        {
+          "command": "q-lint.exportNotebook",
+          "when": "notebookType == q-lint-notebook",
+          "group": "navigation"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "q-lint.exportNotebook",
+          "when": "resourceExtname == .qnb",
+          "group": "q-lint"
         }
       ],
       "editor/context": [

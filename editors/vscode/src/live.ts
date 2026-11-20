@@ -573,22 +573,55 @@ export class Live {
     await this.run(code);
   }
 
-  /// Run `code` on the active connection, connecting first if there is none.
-  private async run(code: string): Promise<void> {
+  /// The active connection and its process, connecting first if there is
+  /// none; undefined when none was connected or a query is still running.
+  private async ready(): Promise<{ connection: QConnection; process: Process } | undefined> {
     if (this.connection === undefined && !(await this.connectTo())) {
-      return;
+      return undefined;
     }
     const connection = this.connection;
     const process = this.active;
     if (connection === undefined || process === undefined) {
-      return;
+      return undefined;
     }
     if (connection.isBusy) {
       void window.showInformationMessage(
         `q-lint: a query is still running on ${process.label}. q-lint: Abort Current Query stops waiting for it.`,
       );
+      return undefined;
+    }
+    return { connection, process };
+  }
+
+  /// Run `query` on the active connection, connecting first if there is
+  /// none, for a caller that shows its own result - a notebook cell. The
+  /// status bar shows it running, and `abort` stops waiting for it.
+  /// Undefined when nothing was run; throws what `query` throws.
+  async runOnActive<T>(code: string, query: (connection: QConnection) => Promise<T>): Promise<{ process: string; value: T } | undefined> {
+    const ready = await this.ready();
+    if (ready === undefined) {
+      return undefined;
+    }
+    const started = Date.now();
+    this.running = { code, started };
+    this.showStatus();
+    try {
+      return { process: ready.process.label, value: await query(ready.connection) };
+    } finally {
+      if (this.running?.started === started) {
+        this.running = undefined;
+      }
+      this.showStatus();
+    }
+  }
+
+  /// Run `code` on the active connection, connecting first if there is none.
+  private async run(code: string): Promise<void> {
+    const ready = await this.ready();
+    if (ready === undefined) {
       return;
     }
+    const { connection, process } = ready;
     const configuration = workspace.getConfiguration("q-lint");
     const settings = readLive((key, fallback) => configuration.get(key, fallback));
     const started = Date.now();
@@ -642,7 +675,7 @@ export class Live {
   /// Stop waiting for the running query: q has no message that cancels one,
   /// so the connection is closed - which also stops the process from sending
   /// a result nobody wants - and opened again.
-  private async abort(): Promise<void> {
+  async abort(): Promise<void> {
     const connection = this.connection;
     const process = this.active;
     if (connection === undefined || process === undefined || !connection.isBusy) {

@@ -19,6 +19,7 @@ const {
 const { NULL_TYPE, RUN, readAnswer, render } = require("../out/query.js");
 const { COMMANDS, CONNECTED, VIEWS, readLive } = require("../out/liveconfig.js");
 const relations = require("../out/relations.js");
+const { NOTEBOOK } = require("../out/qnb.js");
 const { needsRestart } = require("../out/settings.js");
 
 test("a statement is a line and the indented lines after it", () => {
@@ -207,6 +208,7 @@ test("package.json declares exactly the commands the extension registers", () =>
   const registered = [
     ...Object.values(COMMANDS),
     ...Object.values(relations.COMMANDS),
+    NOTEBOOK.exportCommand,
     "q-lint.restartServer",
   ].sort();
   assert.deepStrictEqual(declared, registered);

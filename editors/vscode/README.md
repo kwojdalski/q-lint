@@ -146,6 +146,65 @@ running the query, and the new connection is made once it is free.
 outcome; the button on a row runs it again on the active connection, and
 **Clear Query History** empties it.
 
+## q notebooks
+
+A `.qnb` file opens as a notebook of q code cells and markdown cells. Its
+cells run on the active connection - with none, the first run asks which
+process to connect to - one at a time, in order, each numbered and timed.
+A cell is cut into statements as a query is, and runs as one, defining
+nothing on the process but what its code defines. A run of several cells
+stops at the first that fails. Interrupting a cell does what **Abort
+Current Query** does: q-lint stops waiting, and reconnects once the process
+is free. Cells are not linted.
+
+A cell's first lines can choose how its result is shown:
+- `/ @console`, the default: the result as the process formats it, at
+  `q-lint.output.consoleSize`. A value of `::`, such as an assignment
+  ending in `;`, shows nothing, as in q's console.
+- `/ @grid`: a table as an HTML table, coloured from the editor's theme,
+  with a key column marked. At most 1,000 rows are sent, and the output
+  says when the table was cut. Each value is sent as `string` writes it, so
+  a timestamp keeps its nanoseconds.
+- `/ @chart line`, `bar`, `scatter` or `histogram`: for now the table as
+  text, with a note; charts come with query modes (#855).
+
+They are q comments, so a cell runs the same as a query or in a script. A
+directive q-lint does not know, or a chart of no known kind, fails the cell
+with the directives it does know. An error shows q's message and, on kdb+
+3.5 and later, its backtrace.
+
+**Export Notebook as q Script**, on the notebook's toolbar and a `.qnb`
+file's context menu, writes the code cells as a `.q` script q can load,
+each markdown cell as a `/` ... `\` block comment. A cell's code runs from
+the script as it ran in the cell: an indented first line is unindented, a
+block comment a cell leaves open is closed, and a lone `\`, which ends a
+cell, comments out the rest of it instead of ending the script.
+
+The file is JSON, format 1:
+
+```json
+{
+ "qnb": 1,
+ "cells": [
+  {"kind": "markdown", "source": ["# Prices"]},
+  {"kind": "code", "source": ["/ @grid", "select from t"],
+   "execution": {"order": 1, "success": true, "start": 1700000000000, "end": 1700000000012},
+   "outputs": [{"items": [{"mime": "text/html", "text": "<table>...</table>"},
+                          {"mime": "text/plain", "text": "..."}]}]}
+ ]
+}
+```
+
+`qnb` is the format version; a newer one than this extension reads is
+refused with that said. `source` is the cell's lines. A code cell is q
+unless it has a `language`. Outputs are saved, so a notebook reopens with
+its results: an item is `text` when it is UTF-8 and `base64` otherwise.
+`execution` holds the run's number, outcome and start and end, in
+milliseconds since the epoch. Fields with nothing in them are left out, and
+saving a notebook that was opened unchanged writes the same file. A file
+that is not a notebook does not open: the editor says what is wrong with
+it, and the file is left as it was. An empty file is a new notebook.
+
 ## Requirements
 
 None on macOS (Apple Silicon and Intel), Linux x64 or Windows x64: the

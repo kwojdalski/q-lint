@@ -16,6 +16,7 @@ import {
 } from "vscode";
 import { launch, needsRestart } from "./settings";
 import { Live } from "./live";
+import { registerNotebooks } from "./notebook";
 import { Relations } from "./relate";
 import { Serial } from "./serial";
 import { chmodSync, existsSync, statSync } from "node:fs";
@@ -81,6 +82,7 @@ export async function activate(context: ExtensionContext): Promise<ReturnType<Li
   // The q processes, queries and their history: in the editor only, and
   // started before the server so they work when it does not.
   const live = new Live(context);
+  registerNotebooks(context, live);
   relations = new Relations(context, () => client);
   await serial.run(() => start(context));
   relations.serverChanged();
