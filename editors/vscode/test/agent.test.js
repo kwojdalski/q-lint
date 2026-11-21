@@ -120,7 +120,7 @@ test("a label names a saved process before a discovered one", () => {
   assert.strictEqual(resolveProcess("rdb", saved, discovered).process.host, "h");
   assert.strictEqual(resolveProcess("disc/rdb", saved, discovered).process.host, "other");
   // A discovered process by its bare label, when only one server lists it.
-  assert.deepStrictEqual(resolveProcess("gw", saved, discovered).process, { label: "disc/gw", host: "g", port: 1, tags: [] });
+  assert.deepStrictEqual(resolveProcess("gw", saved, discovered).process, { label: "disc/gw", host: "g", port: 1, tags: [], server: "disc" });
   assert.deepStrictEqual(knownLabels(saved, discovered), ["rdb", "hdb", "disc/gw", "disc/rdb"]);
 });
 

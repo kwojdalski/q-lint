@@ -328,7 +328,8 @@ export function serverDescription(state: ServerState): string {
   return `${n} process${n === 1 ? "" : "es"}`;
 }
 
-/// The discovered process `name` names, with its label qualified: either
+/// The discovered process `name` names, with its label qualified and its
+/// server: either
 /// `server/label`, or a bare label only one server lists. Undefined when it
 /// names none, or a bare label several servers list.
 export function findDiscovered(discovered: Discovered[], name: string): Process | undefined {
@@ -338,7 +339,7 @@ export function findDiscovered(discovered: Discovered[], name: string): Process 
   const exact = all.find(({ server, process }) => qualified(server, process.label) === name);
   const bare = all.filter(({ process }) => process.label === name);
   const hit = exact ?? (bare.length === 1 ? bare[0] : undefined);
-  return hit && { ...hit.process, label: qualified(hit.server, hit.process.label) };
+  return hit && { ...hit.process, label: qualified(hit.server, hit.process.label), server: hit.server };
 }
 
 /// The processes Download Processes adds to the saved list: those whose label

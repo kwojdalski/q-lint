@@ -62,3 +62,19 @@ test("a process's tooltip shows its label, host, user and tags as written", () =
     "**r**\n\n\\[::1\\]:1 (TLS)\n\nno user\n\nno tags\n\nlisted by desk\\_1, connected to as desk\\_1/r",
   );
 });
+
+// A saved process may be labelled `desk/rdb`, as a discovered one is named
+// once qualified. Both kept their password under that label, and Connect
+// took the discovered one for the saved one: the saved process's password
+// went to the host the discovery server named.
+test("a saved and a discovered process of one label keep their passwords apart", () => {
+  const { passwordKey } = require("../out/processes.js");
+  const { findDiscovered, EMPTY_STATE } = require("../out/discovery.js");
+  const discovered = [{ server: { label: "desk", url: "https://x/" }, state: { ...EMPTY_STATE, processes: [{ label: "rdb", host: "evil", port: 1, tags: [] }] } }];
+  const found = findDiscovered(discovered, "desk/rdb");
+  assert.deepStrictEqual(found, { label: "desk/rdb", host: "evil", port: 1, tags: [], server: "desk" });
+  assert.strictEqual(passwordKey({ label: "desk/rdb" }), "q-lint.password.desk/rdb");
+  assert.notStrictEqual(passwordKey(found), passwordKey({ label: "desk/rdb" }));
+  // A saved list never holds the server: it is not read back.
+  assert.strictEqual(parseProcesses([{ label: "a", host: "h", port: 1, server: "desk" }]).processes[0].server, undefined);
+});

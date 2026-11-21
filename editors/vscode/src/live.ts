@@ -38,6 +38,7 @@ import {
   parseProcesses,
   plainHost,
   parseTags,
+  passwordKey,
   portProblem,
   processThemeColour,
   processTooltip,
@@ -61,7 +62,6 @@ const HISTORY_KEY = "q-lint.queryHistory";
 const HISTORY_LIMIT = 200;
 
 
-const passwordKey = (label: string): string => `q-lint.password.${label}`;
 
 /// What a process command is given: a view row, a process's label (from a
 /// keybinding's `args`, or another extension), or nothing - then the user
@@ -153,18 +153,18 @@ class ProcessesView implements TreeDataProvider<Row> {
     return this.parents.get(row);
   }
 
-  /// The row of the process connected to as `label`: a saved process under
+  /// The row of `process`, as connected to: a saved process under
   /// its first tag, or a discovered one under its server.
-  find(label: string, under?: Row): Row | undefined {
+  find(process: Pick<Process, "label" | "server">, under?: Row): Row | undefined {
     for (const row of this.getChildren(under)) {
-      if (row.kind === "process" && row.process.label === label) {
+      if (row.kind === "process" && process.server === undefined && row.process.label === process.label) {
         return row;
       }
-      if (row.kind === "discovered" && qualified(row.server, row.process.label) === label) {
+      if (row.kind === "discovered" && row.server === process.server && qualified(row.server, row.process.label) === process.label) {
         return row;
       }
       if (row.kind === "tag" || row.kind === "servers" || row.kind === "server") {
-        const found = this.find(label, row);
+        const found = this.find(process, row);
         if (found !== undefined) {
           return found;
         }
@@ -187,7 +187,8 @@ class ProcessesView implements TreeDataProvider<Row> {
     // A discovered process is connected to under its qualified label, so a
     // saved process of the same label is not shown connected with it.
     const from = row.kind === "discovered" ? row.server : undefined;
-    const active = this.live.activeLabel() === (from === undefined ? process.label : qualified(from, process.label));
+    const connected = this.live.activeProcess();
+    const active = connected?.server === from && connected?.label === (from === undefined ? process.label : qualified(from, process.label));
     const item = new TreeItem(process.label, TreeItemCollapsibleState.None);
     item.description = `${address(process.host, process.port)}${active ? " - connected" : ""}`;
     item.iconPath = new ThemeIcon(active ? "vm-active" : "server-process", colourOf(process.tags));
@@ -365,7 +366,7 @@ export class Live {
   /// A connect in progress, so a second one waits for it instead of opening
   /// another.
   private connecting: Promise<boolean> | undefined;
-  /// The label of the process `connecting` connects to.
+  /// The process `connecting` connects to, as `passwordKey` names it.
   private connectingTo: string | undefined;
   private running: { code: string; started: number } | undefined;
   /// When the query that timed out started, so its entry says so.
@@ -637,7 +638,7 @@ export class Live {
       return;
     }
     if (answer.password !== undefined) {
-      await this.context.secrets.store(passwordKey(answer.process.label), answer.password);
+      await this.context.secrets.store(passwordKey(answer.process), answer.password);
     }
     await this.save([...processes, answer.process]);
   }
@@ -662,11 +663,11 @@ export class Live {
         void window.showInformationMessage("q-lint: a discovered process is not saved. Download Processes saves it.");
         return undefined;
       }
-      return { ...row.process, label: qualified(row.server, row.process.label) };
+      return { ...row.process, label: qualified(row.server, row.process.label), server: row.server };
     }
     const processes = [
       ...this.processes(),
-      ...listed.flatMap(({ server, state }) => state.processes.map((p) => ({ ...p, label: qualified(server.label, p.label) }))),
+      ...listed.flatMap(({ server, state }) => state.processes.map((p) => ({ ...p, label: qualified(server.label, p.label), server: server.label }))),
     ];
     if (processes.length === 0) {
       const add = "Add Process";
@@ -700,20 +701,20 @@ export class Live {
     }
     const { process } = answer;
     if (process.label !== old.label) {
-      const kept = await this.context.secrets.get(passwordKey(old.label));
-      await this.context.secrets.delete(passwordKey(old.label));
+      const kept = await this.context.secrets.get(passwordKey(old));
+      await this.context.secrets.delete(passwordKey(old));
       if (kept !== undefined && answer.password === undefined) {
-        await this.context.secrets.store(passwordKey(process.label), kept);
+        await this.context.secrets.store(passwordKey(process), kept);
       }
     }
     if (answer.password !== undefined) {
-      await this.context.secrets.store(passwordKey(process.label), answer.password);
+      await this.context.secrets.store(passwordKey(process), answer.password);
     }
     if (process.user === undefined) {
-      await this.context.secrets.delete(passwordKey(process.label));
+      await this.context.secrets.delete(passwordKey(process));
     }
     await this.save(processes.map((p) => (p.label === old.label ? process : p)));
-    if (this.active?.label === old.label) {
+    if (this.active?.label === old.label && this.active.server === undefined) {
       this.active = process;
       this.showStatus();
     }
@@ -729,10 +730,10 @@ export class Live {
     if (sure !== yes) {
       return;
     }
-    if (this.active?.label === process.label) {
+    if (this.active?.label === process.label && this.active.server === undefined) {
       await this.disconnect();
     }
-    await this.context.secrets.delete(passwordKey(process.label));
+    await this.context.secrets.delete(passwordKey(process));
     await this.save(this.processes().filter((p) => p.label !== process.label));
   }
 
@@ -816,8 +817,8 @@ export class Live {
       return false;
     }
     // A discovered process's user has no password stored until asked for one.
-    const saved = this.processes().some((p) => p.label === process.label);
-    if (!saved && process.user && (await this.context.secrets.get(passwordKey(process.label))) === undefined) {
+    const saved = process.server === undefined;
+    if (!saved && process.user && (await this.context.secrets.get(passwordKey(process))) === undefined) {
       const password = await window.showInputBox({
         title: `q process ${process.label}: password of ${process.user}`,
         password: true,
@@ -826,13 +827,13 @@ export class Live {
       if (password === undefined) {
         return false;
       }
-      await this.context.secrets.store(passwordKey(process.label), password);
+      await this.context.secrets.store(passwordKey(process), password);
     }
     const connected = await this.open(process);
     // A discovered process cannot be edited, so a password that did not
     // connect is forgotten: the next connect asks for it again.
     if (!connected && !saved && process.user) {
-      await this.context.secrets.delete(passwordKey(process.label));
+      await this.context.secrets.delete(passwordKey(process));
     }
     return connected;
   }
@@ -844,16 +845,16 @@ export class Live {
       // A connect to another process - a reconnect after an abort, waiting
       // for that process to be free - is let finish and this one follows:
       // its result says nothing of this process.
-      return this.connectingTo === process.label ? this.connecting : this.connecting.then(() => this.open(process));
+      return this.connectingTo === passwordKey(process) ? this.connecting : this.connecting.then(() => this.open(process));
     }
-    this.connectingTo = process.label;
+    this.connectingTo = passwordKey(process);
     this.connecting = (async () => {
       if (this.connection !== undefined) {
         const old = this.connection;
         this.connection = undefined;
         await old.close();
       }
-      const password = process.user ? await this.context.secrets.get(passwordKey(process.label)) : undefined;
+      const password = process.user ? await this.context.secrets.get(passwordKey(process)) : undefined;
       try {
         const connection = await window.withProgress(
           { location: { viewId: VIEWS.processes }, title: `Connecting to ${process.label}` },
@@ -1124,14 +1125,14 @@ export class Live {
 
   /// Select the connected process in the Processes view, and show the view.
   private async revealProcess(): Promise<void> {
-    const label = this.activeLabel();
-    if (label === undefined) {
+    const process = this.activeProcess();
+    if (process === undefined) {
       void window.showInformationMessage("q-lint: not connected to a q process.");
       return;
     }
-    const row = this.processesView.find(label);
+    const row = this.processesView.find(process);
     if (row === undefined) {
-      void window.showInformationMessage(`q-lint: ${label} is not in the Processes view.`);
+      void window.showInformationMessage(`q-lint: ${process.label} is not in the Processes view.`);
       return;
     }
     await this.processesTree.reveal(row, { select: true, focus: true, expand: true });

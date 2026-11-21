@@ -12,6 +12,16 @@ export interface Process {
   user?: string;
   tags: string[];
   tls?: boolean;
+  /// The discovery server that listed it, for a discovered process, whose
+  /// label is then `server/label`. Never saved or read from a file.
+  server?: string;
+}
+
+/// Where a process's password is kept in secret storage. A discovered
+/// process's is apart from any saved one's, since a saved label may be
+/// `desk/rdb` too: one process's password is never sent to the other.
+export function passwordKey(process: Pick<Process, "label" | "server">): string {
+  return process.server === undefined ? `q-lint.password.${process.label}` : `q-lint.discoveredPassword.${process.label}`;
 }
 
 /// Why `port` is not a port, or undefined when it is one.

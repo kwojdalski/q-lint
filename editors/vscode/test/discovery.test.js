@@ -121,8 +121,8 @@ test("a discovered process is named server/label, or by a label only one server 
     { server: { label: "b", url: "http://b" }, state: listed([proc("rdb", [], 3)]) },
   ];
   assert.strictEqual(qualified("a", "rdb"), "a/rdb");
-  assert.deepStrictEqual(findDiscovered(servers, "b/rdb"), { ...proc("b/rdb", [], 3) });
-  assert.deepStrictEqual(findDiscovered(servers, "hdb"), { ...proc("a/hdb", [], 2) });
+  assert.deepStrictEqual(findDiscovered(servers, "b/rdb"), { ...proc("b/rdb", [], 3), server: "b" });
+  assert.deepStrictEqual(findDiscovered(servers, "hdb"), { ...proc("a/hdb", [], 2), server: "a" });
   // Two servers list rdb: the bare label names neither.
   assert.strictEqual(findDiscovered(servers, "rdb"), undefined);
   assert.strictEqual(findDiscovered(servers, "c/rdb"), undefined);
