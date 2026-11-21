@@ -371,6 +371,10 @@ export class Live {
   private running: { code: string; started: number } | undefined;
   /// When the query that timed out started, so its entry says so.
   private timedOut: number | undefined;
+  /// When the query Abort, Disconnect or a connect elsewhere stopped waiting
+  /// for started, so its entry says so: a connection the process closed is
+  /// a failure, not an abort.
+  private aborted: number | undefined;
   private readonly controls: QueryControls;
   private readonly parameterCache: ParameterCache;
   /// The process explorer's call on the connection, if one is out: a query
@@ -852,6 +856,7 @@ export class Live {
       if (this.connection !== undefined) {
         const old = this.connection;
         this.connection = undefined;
+        this.aborted = this.running?.started;
         await old.close();
       }
       const password = process.user ? await this.context.secrets.get(passwordKey(process.label)) : undefined;
@@ -898,6 +903,8 @@ export class Live {
   private async disconnect(): Promise<void> {
     const connection = this.connection;
     this.connection = undefined;
+    // A query running on it was stopped by the user, as Abort stops one.
+    this.aborted = this.running?.started;
     this.running = undefined;
     await connection?.close();
     this.showStatus();
@@ -1032,7 +1039,7 @@ export class Live {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const aborted = this.running === undefined || !connection.isOpen;
+      const aborted = this.aborted === started;
       const timedOut = this.timedOut === started;
       entry = {
         process: process.label,
@@ -1040,13 +1047,16 @@ export class Live {
         at: new Date(started).toISOString(),
         millis: Date.now() - started,
         outcome: timedOut ? "timeout" : aborted ? "aborted" : "error",
-        error: timedOut ? timedOutError(controls.timeout) : aborted && this.running === undefined ? "aborted" : message,
+        error: timedOut ? timedOutError(controls.timeout) : aborted ? "aborted" : message,
       };
       this.show([`# ${process.label} - ${timedOut ? timedOutError(controls.timeout) : aborted ? "aborted" : "failed"}: ${message}`], false);
     } finally {
       disarm();
       if (this.timedOut === started) {
         this.timedOut = undefined;
+      }
+      if (this.aborted === started) {
+        this.aborted = undefined;
       }
       if (this.running?.started === started) {
         this.running = undefined;
@@ -1078,6 +1088,7 @@ export class Live {
       void window.showInformationMessage("q-lint: no query is running.");
       return;
     }
+    this.aborted = this.running?.started;
     this.running = undefined;
     this.connection = undefined;
     connection.abort();

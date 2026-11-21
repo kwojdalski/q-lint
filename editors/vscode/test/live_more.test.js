@@ -132,3 +132,37 @@ test("a history row and Run Again's pick are labelled with the first line of cod
   await stub.commands.get("q-lint.rerunQuery")();
   assert.deepStrictEqual(offered, labels);
 });
+
+// A query whose process closed the connection before answering - `exit 0`,
+// `\\`, a crash - was recorded as aborted, and the output said "aborted",
+// though nobody aborted it. Abort itself is still recorded as aborted.
+test("a query whose connection closes is a failure, not an abort", async (t) => {
+  let hold = false;
+  const q = await fakeQ((message) => (message.includes("exit") ? CLOSE : hold ? undefined : OK));
+  t.after(() => q.close());
+  const { live } = await setUp(t, [proc("p", q.port)]);
+  assert.strictEqual(await live.connectTo("p"), true);
+  await live.run("exit 0");
+  const [closed] = live.history();
+  assert.deepStrictEqual([closed.outcome, closed.error], ["error", "the connection closed before the process answered"]);
+  assert.ok(output.at(-1).includes("p - failed:"), output.at(-1));
+  assert.strictEqual(await live.connectTo("p"), true);
+  hold = true;
+  const running = live.run("slow 1");
+  await sleep(50);
+  await live.abort();
+  await running;
+  assert.deepStrictEqual([live.history()[0].outcome, live.history()[0].error], ["aborted", "aborted"]);
+});
+
+test("a query stopped by Disconnect is recorded as aborted", async (t) => {
+  const q = await fakeQ(() => undefined);
+  t.after(() => q.close());
+  const { live } = await setUp(t, [proc("p", q.port)]);
+  assert.strictEqual(await live.connectTo("p"), true);
+  const running = live.run("slow 1");
+  await sleep(50);
+  await stub.commands.get("q-lint.disconnectProcess")();
+  await running;
+  assert.deepStrictEqual([live.history()[0].outcome, live.history()[0].error], ["aborted", "aborted"]);
+});
