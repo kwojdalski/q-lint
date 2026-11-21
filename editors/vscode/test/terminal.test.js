@@ -192,3 +192,10 @@ test("a leading ~ in a q binary or env file setting is the home directory", () =
   assert.strictEqual(expandHome("/opt/~/q", "/Users/me"), "/opt/~/q");
   assert.strictEqual(expandHome("q", "/Users/me"), "q");
 });
+
+test("a terminal setting of the wrong type, as settings.json allows, is its default instead of failing every terminal", () => {
+  const read = (values) => () => readTerminal((key, fallback) => (key in values ? values[key] : fallback));
+  assert.doesNotThrow(read({ "terminal.qBinary": null, "terminal.envPath": 7 }));
+  assert.deepStrictEqual(read({ "terminal.qBinary": null, "terminal.envPath": 7 })(), { qBinary: "q", envPath: "" });
+  assert.deepStrictEqual(read({ "terminal.qBinary": ["q"], "terminal.envPath": null })(), { qBinary: "q", envPath: "" });
+});
