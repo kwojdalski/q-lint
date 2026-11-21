@@ -177,3 +177,48 @@ test("Export Notebook to a place it cannot write says so, instead of failing the
   await fake.registered.commands["q-lint.exportNotebook"](fake.vscode.Uri.file("/ws/a.qnb"), fake.vscode.Uri.file("/ws/a.q"));
   assert.match(fake.written.get("/ws/a.q").toString(), /^1\+1$/m);
 });
+
+/// A notebook of code cells with `sources`, as the kernel sees it.
+function notebookOf(sources) {
+  const notebook = { cells: [], getCells: () => notebook.cells };
+  notebook.cells = sources.map((source) => ({ notebook, executionSummary: undefined, document: { getText: () => source } }));
+  return notebook;
+}
+
+/// A stand-in Live whose query for `code` waits until `release(code)`.
+function slowLive() {
+  const waiting = new Map();
+  return {
+    release: (code) => waiting.get(code)?.(),
+    runOnActive: async (code, query) => {
+      await new Promise((resolve) => waiting.set(code, resolve));
+      return { process: "p", value: await query({ query: async () => ({ ok: true, type: -7, text: ["1"] }) }) };
+    },
+    abort: async () => {},
+  };
+}
+
+test("a cell interrupted while it waits for the cell before it stops waiting at once", async () => {
+  const fake = fakeVscode();
+  const live = slowLive();
+  load(fake, live);
+  const executions = [];
+  const create = fake.registered.controller.createNotebookCellExecution;
+  fake.registered.controller.createNotebookCellExecution = (cell) => {
+    const e = create(cell);
+    executions.push(e);
+    return e;
+  };
+  const notebook = notebookOf(["system \"sleep 60\"", "2"]);
+  const run = fake.registered.controller.executeHandler(notebook.cells, notebook);
+  await new Promise((r) => setTimeout(r, 10));
+  executions[1].cancel();
+  await new Promise((r) => setTimeout(r, 10));
+  // The second shows as not run while the first still runs.
+  assert.deepStrictEqual(executions[1].log, ["start", "end undefined"]);
+  assert.deepStrictEqual(executions[0].log, ["start"]);
+  live.release("system \"sleep 60\"");
+  await run;
+  assert.deepStrictEqual(executions[0].log, ["start", "end true"]);
+  assert.deepStrictEqual(executions[1].log, ["start", "end undefined"]);
+});

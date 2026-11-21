@@ -174,18 +174,32 @@ class QnbKernel {
       order = Math.max(order, cell.executionSummary?.executionOrder ?? 0);
     }
     this.orders.set(notebook, order);
+    // A cell not yet begun ends as not run: at once when it is interrupted
+    // while it waits, rather than once the cells before it are done.
+    const begun = new Set<NotebookCellExecution>();
+    const skip = (execution: NotebookCellExecution): void => {
+      if (!begun.has(execution)) {
+        begun.add(execution);
+        execution.start();
+        execution.end(undefined);
+      }
+    };
+    const waits = executions.map((execution) => execution.token.onCancellationRequested(() => skip(execution)));
     const run = this.queue.then(async () => {
       let go = true;
       for (const execution of executions) {
         if (!go || execution.token.isCancellationRequested) {
           // Not run: an earlier cell failed or was interrupted.
-          execution.start();
-          execution.end(undefined);
+          skip(execution);
           continue;
         }
+        if (begun.has(execution)) {
+          continue;
+        }
+        begun.add(execution);
         go = await this.runCell(execution);
       }
-    });
+    }).finally(() => waits.forEach((w) => w.dispose()));
     this.queue = run.catch(() => {});
     return run;
   }
