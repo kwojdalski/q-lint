@@ -176,3 +176,26 @@ test("Disconnect stops a reconnect after Abort", async (t) => {
   assert.strictEqual(live.activeLabel(), undefined);
   assert.strictEqual(events.filter((e) => e === "connected").length, 1);
 });
+
+// Add and Edit read the list before their input boxes and saved it back
+// after them: a process saved meanwhile - Download Processes, an import, or
+// another window, which shares the list - was lost, and a label taken
+// meanwhile was saved twice.
+test("Add and Edit Process keep what was saved while they asked", async (t) => {
+  const { context, live } = await setUp(t, [proc("old", 1)]);
+  const elsewhere = async (more) => context.globalState.update("q-lint.processes", [...live.processes(), ...more]);
+  stub.inputs = ["new", "localhost", "5001", "", async () => (await elsewhere([proc("downloaded", 2)]), "")];
+  stub.picks = ["No"];
+  await stub.commands.get("q-lint.addProcess")();
+  assert.deepStrictEqual(live.processes().map((p) => p.label), ["old", "downloaded", "new"]);
+  stub.inputs = ["renamed", "localhost", "5002", "", async () => (await elsewhere([proc("again", 3)]), "")];
+  stub.picks = ["No"];
+  await stub.commands.get("q-lint.editProcess")("old");
+  assert.deepStrictEqual(live.processes().map((p) => p.label), ["renamed", "downloaded", "new", "again"]);
+  // A label taken while the boxes were open is not saved twice.
+  stub.inputs = ["dup", "localhost", "5003", "", async () => (await elsewhere([proc("dup", 4)]), "")];
+  stub.picks = ["No"];
+  await stub.commands.get("q-lint.addProcess")();
+  assert.deepStrictEqual(live.processes().filter((p) => p.label === "dup").map((p) => p.port), [4]);
+  assert.ok(stub.messages.some(([, text]) => /dup.*taken/.test(text)), JSON.stringify(stub.messages));
+});

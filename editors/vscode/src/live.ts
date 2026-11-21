@@ -641,10 +641,16 @@ export class Live {
     if (answer === undefined) {
       return;
     }
+    // Read again: the list may have changed while the boxes were open.
+    const now = this.processes();
+    if (now.some((p) => p.label === answer.process.label)) {
+      void window.showErrorMessage(`q-lint: the label "${answer.process.label}" was taken meanwhile; the process was not added.`);
+      return;
+    }
     if (answer.password !== undefined) {
       await this.context.secrets.store(passwordKey(answer.process), answer.password);
     }
-    await this.save([...processes, answer.process]);
+    await this.save([...now, answer.process]);
   }
 
   /// The process a command was given from a view row, or one the user picks.
@@ -704,6 +710,17 @@ export class Live {
       return;
     }
     const { process } = answer;
+    // Read again: the list may have changed while the boxes were open.
+    const now = this.processes();
+    const problem = !now.some((p) => p.label === old.label)
+      ? `"${old.label}" was deleted meanwhile`
+      : process.label !== old.label && now.some((p) => p.label === process.label)
+        ? `the label "${process.label}" was taken meanwhile`
+        : undefined;
+    if (problem !== undefined) {
+      void window.showErrorMessage(`q-lint: ${problem}; the process was not changed.`);
+      return;
+    }
     if (process.label !== old.label) {
       const kept = await this.context.secrets.get(passwordKey(old));
       await this.context.secrets.delete(passwordKey(old));
@@ -717,7 +734,7 @@ export class Live {
     if (process.user === undefined) {
       await this.context.secrets.delete(passwordKey(process));
     }
-    await this.save(processes.map((p) => (p.label === old.label ? process : p)));
+    await this.save(now.map((p) => (p.label === old.label ? process : p)));
     if (this.active?.label === old.label && this.active.server === undefined) {
       this.active = process;
       this.showStatus();
