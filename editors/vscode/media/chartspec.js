@@ -72,8 +72,10 @@
   const WHOLE = [13, 14, 17, 18];
 
   /// How an axis writes a temporal column's value - its own unit since
-  /// 2000.01.01, as grid.ts sends it - in q's notation, to the second.
-  function temporalLabel(type, v) {
+  /// 2000.01.01, as grid.ts sends it - in q's notation, to the second; with
+  /// `step`, the axis's distance between ticks, under a second apart, to
+  /// the fraction of a second that tells them apart.
+  function temporalLabel(type, v, step) {
     const day = 86400000;
     const stamp = function (ms, sep) {
       const d = new Date(946684800000 + ms);
@@ -85,6 +87,37 @@
       s = Math.abs(s);
       return neg + pad(Math.floor(s / 3600)) + ":" + pad(Math.floor(s / 60) % 60) + ":" + pad(Math.floor(s) % 60);
     };
+    // Units a second holds: nanoseconds, or milliseconds (a datetime's too).
+    const per = { 12: 1e9, 15: 1e3, 16: 1e9, 19: 1e3 }[type];
+    if (per && step > 0) {
+      const u = type === 15 ? v * day : v;
+      const s = type === 15 ? step * day : step;
+      let digits = Math.max(0, Math.ceil(-Math.log10(s / per) - 1e-9));
+      const max = Math.round(Math.log10(per));
+      while (digits > 0 && digits < max && Math.abs(s / (per / Math.pow(10, digits)) - Math.round(s / (per / Math.pow(10, digits)))) > 1e-6) {
+        digits += 1;
+      }
+      digits = Math.min(digits, max);
+      if (digits > 0) {
+        // The whole seconds, written as before, and the fraction rounded to
+        // its digits, carried into the seconds at a whole one.
+        const q = per / Math.pow(10, digits);
+        const neg = (type === 16 || type === 19) && u < 0;
+        const mag = neg ? -u : u;
+        const f = ((mag % per) + per) % per;
+        let n = Math.round(f / q);
+        let whole = Math.round((mag - f) / per);
+        if (n * q >= per) {
+          n = 0;
+          whole += 1;
+        }
+        const fraction = "." + String(n).padStart(digits, "0");
+        if (type === 12 || type === 15) {
+          return stamp(whole * 1000, type === 12 ? "D" : "T") + fraction;
+        }
+        return (neg ? "-" : "") + temporalLabel(type, whole * per) + fraction;
+      }
+    }
     switch (type) {
       case 12: return stamp(v / 1e6, "D");
       case 13: v = Math.floor(v); return (2000 + Math.floor(v / 12)) + "." + pad(((v % 12) + 12) % 12 + 1);
@@ -208,7 +241,7 @@
             ticks: kind === "scatter" && rowAxis
               ? { precision: 0 }
               : kind === "scatter" && x.temporal
-                ? Object.assign({ callback: function (v) { return temporalLabel(x.type, v); } }, WHOLE.indexOf(x.type) >= 0 ? { precision: 0 } : {})
+                ? Object.assign({ callback: function (v, i, ticks) { return temporalLabel(x.type, v, ticks && ticks.length > 1 ? Math.abs(ticks[1].value - ticks[0].value) : 0); } }, WHOLE.indexOf(x.type) >= 0 ? { precision: 0 } : {})
                 : { autoSkip: true, maxRotation: 0 },
           },
           // And a count.

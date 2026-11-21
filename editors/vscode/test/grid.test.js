@@ -414,3 +414,21 @@ test("a row-number axis and a histogram's count axis tick whole numbers", () => 
   const own = charts.chartConfig(sample(), [0, 1], "line", charts.chartData(sample(), [0, 1], "line", [1], 10), LOOK);
   assert.strictEqual(own.options.scales.y.ticks?.precision, undefined);
 });
+
+test("a scatter's ticks under a second apart are told apart by their fraction", () => {
+  // Trades within one second: every tick read "2026.11.20D10:11:12".
+  const at = (type, values, step) => {
+    const grid = toGrid({ count: 2, keys: 0, names: ["t", "y"], types: [type, 9], cells: [["a", "b"], ["1", "2"]], raw: [values, [1, 2]], rank: [[0, 1], [0, 1]] }, -1);
+    const config = charts.chartConfig(grid, [0, 1], "scatter", charts.chartData(grid, [0, 1], "scatter", [1], 10), LOOK);
+    const ticks = [0, 1, 2].map((i) => ({ value: values[0] + i * step }));
+    return ticks.map((t, i) => config.options.scales.x.ticks.callback(t.value, i, ticks));
+  };
+  assert.deepStrictEqual(at(12, [848484672100000000, 848484672300000000], 1e8), ["2026.11.20D10:11:12.1", "2026.11.20D10:11:12.2", "2026.11.20D10:11:12.3"]);
+  assert.deepStrictEqual(at(19, [36672000, 36673000], 250), ["10:11:12.00", "10:11:12.25", "10:11:12.50"]);
+  assert.deepStrictEqual(at(16, [-500000000, 0], 250000000), ["-0D00:00:00.50", "-0D00:00:00.25", "0D00:00:00.00"]);
+  assert.deepStrictEqual(at(15, [9820.5, 9820.6], 0.5 / 86400), ["2026.11.20T12:00:00.0", "2026.11.20T12:00:00.5", "2026.11.20T12:00:01.0"]);
+  // A fraction that rounds up carries into the seconds.
+  assert.strictEqual(charts.temporalLabel(19, 36672999.9, 100), "10:11:13.0");
+  // A second or more apart, as before.
+  assert.deepStrictEqual(at(19, [36672000, 36674000], 1000), ["10:11:12", "10:11:13", "10:11:14"]);
+});
