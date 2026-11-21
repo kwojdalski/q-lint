@@ -102,6 +102,7 @@ function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir
     "./qsqldraft": { registerQsqlDraft() {} },
     "./interpreterview": { Interpreters: class { status() { return undefined; } } },
     "./taskprovider": { registerTasks: () => ({ registered: () => false }) },
+    "./devcontainerview": { registerDevContainer() {} },
   };
   const file = require.resolve("../out/extension.js");
   delete require.cache[file];

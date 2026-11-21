@@ -1311,6 +1311,22 @@ frame, so the loaded file of a `\l` - as KDB-X prints it
 PeachQ does (`'type`). Add `"problemMatcher": "$q"` to a task of your own
 that runs q to use it there.
 
+**Dev container.** **Add q Dev Container Configuration** shows a
+`.devcontainer/devcontainer.json` and `.devcontainer/install-kdbx.sh` for
+Dev Containers and Codespaces in a preview, and writes them into the
+workspace folder only when you choose **Write**. A file already there is
+left as it is, and named in the preview; nothing is ever written over. The
+container is Ubuntu with this extension in it and `q-lint.terminal.qBinary`
+set to `~/.kx/bin/q`. KDB-X is installed after it is created by KX's own
+installer, as [KX's install page](https://code.kx.com/get_started/kdb-x-install.html)
+gives it, from two secrets the template names but never holds:
+`KX_DOWNLOAD_TOKEN` (the bearer token of the Developer Center's install
+command) and `KDB_LICENSE_B64` (its `--b64lic` value; `KDB_LICENSE_K4B64`
+for a commercial `k4.lic`). In Codespaces they are Codespaces secrets; in a
+local container, run `bash .devcontainer/install-kdbx.sh` in its terminal
+and it asks for them without echoing them. Without them the container still
+starts, and the script says what to set.
+
 ## Requirements
 
 None on macOS (Apple Silicon and Intel), Linux x64 or Windows x64: the
@@ -1483,6 +1499,7 @@ Read when they are used, so a change needs no reload. None reaches the language 
 | `q-lint.licence.warningDays` | `30` | Days before the expiry date the warning starts, 0 to 365. | - |
 | `q-lint.env.enable` | `true` | Give the `.env` file's variables to the q terminals, launched processes and q tasks, in their environment, never shown. Off, the file is not read. | - |
 | `q-lint.env.file` | `".env"` | The `.env` file: relative to the workspace folder, which may set its own; a leading `~` is your home directory. | - |
+| `q-lint.devContainer.enable` | `true` | **Add q Dev Container Configuration**, which writes only on **Write** and never over a file. Off, the command is hidden and refuses. | - |
 | `q-lint.tasks.enable` | `true` | The `q` task type: detected **run current file** and **test** tasks, and `q` tasks in `tasks.json`. Off, the provider is unregistered and no q task runs. The `$q` problem matcher stays, inert unless a task names it. | - |
 
 ### Discovery settings

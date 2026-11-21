@@ -970,6 +970,12 @@
             "scope": "resource",
             "markdownDescription": "The `.env` file `q-lint.env.enable` reads: `NAME=value` lines, `#` comments, an optional `export `, quotes dropped and nothing expanded, as `q-lint.terminal.envPath` reads its file. Relative to the workspace folder; a leading `~` is your home directory. A missing file is no file."
           },
+          "q-lint.devContainer.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 215,
+            "markdownDescription": "**Add q Dev Container Configuration**: shows a `.devcontainer/` for Dev Containers and Codespaces that installs KDB-X, and writes it into the workspace folder only when you choose **Write**, never over a file already there. Off, the command is hidden and refuses."
+          },
           "q-lint.tasks.enable": {
             "type": "boolean",
             "default": true,
@@ -1584,6 +1590,11 @@
       {
         "command": "q-lint.checkLicence",
         "title": "Check q Licence Expiry",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.addDevContainer",
+        "title": "Add q Dev Container Configuration",
         "category": "q-lint"
       }
     ],
@@ -2373,6 +2384,10 @@
         {
           "command": "q-lint.checkLicence",
           "when": "config.q-lint.licence.expiryWarning.enable"
+        },
+        {
+          "command": "q-lint.addDevContainer",
+          "when": "config.q-lint.devContainer.enable && workspaceFolderCount > 0"
         }
       ],
       "editor/title": [
