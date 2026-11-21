@@ -106,3 +106,32 @@ test("a k4unit suite's rows are judged by their action", { skip }, async (t) => 
   assert.deepStrictEqual(results, [true, false, true, false, true]);
   assert.strictEqual(String((await c.evaluate("x")).value), "6");
 });
+
+test("a match row and a qUnit assertion carry both sides of a failure (#980)", { skip }, async (t) => {
+  const qunit = [
+    "\\d .qunit",
+    "ar:()",
+    "assertThat:{[actual;relation;expected;msg] p:.[relation;(actual;expected);0b]; ar::`actual`expected`msg!(actual;expected;msg); if[not p;'`assertThatFAIL]; actual}",
+    "assertEquals:{[actual;expected;msg] assertThat[actual;~;expected;msg]}",
+    "\\d .",
+    "",
+  ].join("\n");
+  const c = await connect(t, qunit);
+  const { splitMatch } = require("../out/testing.js");
+  const sides = splitMatch("(1 2 3*2)~2 4 7");
+  const failed = await run(c, [`(${sides.left};${sides.right})`], "match");
+  assert.strictEqual(failed.passed, false);
+  assert.deepStrictEqual(failed.diff, { expected: "2 4 7\n", actual: "2 4 6\n" });
+  assert.strictEqual(failureText(failed, "match"), "the two sides of ~ differ");
+  const passed = await run(c, ["(til 3;0 1 2)"], "match");
+  assert.deepStrictEqual(passed, { passed: true, text: "1b", errored: false });
+  // A side that signals is an error, as the row would be.
+  assert.strictEqual((await run(c, ["(1+`a;2)"], "match")).errored, true);
+  const q = await run(c, ["testEq:{[] .qunit.assertEquals[`a`b!1 2;`a`b!1 3;\"dict\"]}", "testEq[]"]);
+  assert.strictEqual(q.passed, false);
+  assert.strictEqual(q.text, "assertThatFAIL");
+  assert.deepStrictEqual(q.diff, { expected: "a| 1\nb| 3\n", actual: "a| 1\nb| 2\n" });
+  // A passing assertion leaves no diff on a later failure of another kind.
+  const other = await run(c, ["testOk:{[] .qunit.assertEquals[1;1;\"one\"]; '`boom}", "testOk[]"]);
+  assert.deepStrictEqual(other, { passed: false, text: "boom", errored: true });
+});

@@ -361,6 +361,16 @@ The process's `\d` is put back after each test. A failure shows q's error
 or the value at the test. `q-lint.testExplorer.enable` turns the
 integration off: the tests leave the view and nothing is read or sent.
 
+**Failed tests.** A failed assertion with two sides shows them as an
+expected-against-actual diff in the Testing view: a k4unit `true` row
+`a~b`, whose left side is one term (a name, literal, string, symbols or
+a bracketed group, with any indexes), is sent as `(a;b)` - evaluated in the
+same order, right first - and judged by `~`; a qUnit `assertEquals` or
+`assertThat` that signals `assertThatFAIL` is read from `.qunit.ar`. The
+right side is the expected value. **Re-run Failed q Tests** runs again
+those the last run failed or could not run. `q-lint.testExplorer.failedTests.enable`
+turns both off: a `true` row is sent as written.
+
 **Snapshot tests.** **Record Query Snapshot** (a q editor's context menu)
 runs the query at the cursor and writes its result, as the process prints
 it, to `__snapshots__/<name>.qsnap` beside the file - after showing what
@@ -1409,6 +1419,7 @@ nothing.
 | `q-lint.idiomSnippets.enable` | `true` | Offer the idiom snippets (joins, `.z` handlers, a TorQ process) in the completion list. | - |
 | `q-lint.processExplorer.driftDetection.enable` | `false` | **Check Drift Against Process**: compare the workspace's function definitions with the connected process. Off, the command is hidden and reads nothing. | - |
 | `q-lint.hotReload.enable` | `false` | On saving a q file, send the definitions the save changed to its process, after Redefine's confirmation. Off, nothing listens and nothing is sent. | - |
+| `q-lint.testExplorer.failedTests.enable` | `true` | Show a failed `a~b` row's or qUnit assertion's two sides as a diff, and offer **Re-run Failed q Tests**. | - |
 | `q-lint.snapshotTests.enable` | `true` | **Record Query Snapshot** and **Update Snapshot**, and `.qsnap` files as tests in the Testing view. Off, none is listed and the commands are hidden. | - |
 | `q-lint.testStub.enable` | `true` | Offer **Generate Test Stub** on a function's definition. | - |
 | `q-lint.backtraceLinks.enable` | `true` | Link each backtrace frame in the output and terminals to the line that failed. | - |

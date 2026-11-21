@@ -15,8 +15,12 @@
 // tagged prod, prd or production is confirmed first. Nothing is read or sent
 // while q-lint.testExplorer.enable is off: the controller is disposed.
 //
-// Snapshot files (`.qsnap`, #981, q-lint.snapshotTests.enable) are tests
-// too: the query is run again and its result compared with the file's.
+// Two more, each with its own switch. A failed assertion with two sides - a
+// k4unit `a~b` row, a qUnit assertion - shows them as a diff, and **Re-run
+// Failed q Tests** runs again those that failed (#980,
+// q-lint.testExplorer.failedTests.enable). Snapshot files (`.qsnap`, #981,
+// q-lint.snapshotTests.enable) are tests too: the query is run again and its
+// result compared with the file's.
 import {
   Location,
   Range,
@@ -24,6 +28,7 @@ import {
   TestRunProfileKind,
   TestRunRequest,
   Uri,
+  commands,
   tests,
   window,
   workspace,
@@ -34,12 +39,13 @@ import {
   type TestRun,
 } from "vscode";
 import { isProduction } from "./agent";
-import { editorFeatureOn, type EditorFeature, type Server } from "./editorfeatures";
+import { editorFeatureOff, editorFeatureOn, type EditorFeature, type Server } from "./editorfeatures";
 import type { Live } from "./live";
 import { readAnswer } from "./query";
 import { SNAPSHOT_EXTENSION, SNAPSHOT_RUN, parseSnapshot, sameResult, type Snapshot } from "./snapshot";
 import { statements } from "./statements";
 import {
+  RERUN_FAILED,
   TEST_RUN,
   failureText,
   isK4Test,
@@ -49,12 +55,14 @@ import {
   parseK4unit,
   readServerTests,
   readTestResult,
+  splitMatch,
   testStatements,
   type K4Row,
   type ServerTest,
   type TestMode,
 } from "./testing";
 
+export { RERUN_FAILED } from "./testing";
 export const TEST_CONTROLLER = "q-lint.tests";
 /// The server's request for the tests it reads.
 export const TESTS_REQUEST = "q-lint/tests";
@@ -108,11 +116,20 @@ export function registerTestExplorer(
       if (event.affectsConfiguration("q-lint.testExplorer")) {
         sync();
       }
-      if (event.affectsConfiguration("q-lint.snapshotTests")) {
+      if (event.affectsConfiguration("q-lint.testExplorer.failedTests") || event.affectsConfiguration("q-lint.snapshotTests")) {
         void running?.discover();
       }
     }),
     { dispose: () => running?.dispose() },
+    commands.registerCommand(RERUN_FAILED, async () => {
+      if (!on()) {
+        void window.showInformationMessage(editorFeatureOff("testExplorer"));
+      } else if (!featureOn("failedTests")) {
+        void window.showInformationMessage(editorFeatureOff("failedTests"));
+      } else if (running !== undefined) {
+        await running.rerunFailed();
+      }
+    }),
   );
   return {
     serverChanged: () => void running?.discover(),
@@ -158,6 +175,16 @@ class QTests {
       watcher.onDidChange(later),
       workspace.onDidSaveTextDocument((document) => /\.(q|csv|qsnap)$/i.test(document.uri.fsPath) && later()),
     ];
+  }
+
+  /// Run again the tests the last run failed or could not run.
+  async rerunFailed(): Promise<void> {
+    const failed = this.outcomes.filter((o) => o.state === "failed" || o.state === "errored").map((o) => o.id);
+    if (failed.length === 0) {
+      void window.showInformationMessage("q-lint: the last q test run failed no test.");
+      return;
+    }
+    await this.runIds(failed, false);
   }
 
   dispose(): void {
@@ -378,6 +405,12 @@ class QTests {
             }
             statements = [k4Statement(entry.row)];
             mode = k4Mode(entry.row);
+            // A true row `a~b` is sent as `(a;b)`, for both sides (#980).
+            const sides = mode === "true" && entry.row.lang !== "k" && featureOn("failedTests") ? splitMatch(entry.row.code) : undefined;
+            if (sides !== undefined) {
+              statements = [`(${sides.left};${sides.right})`];
+              mode = "match";
+            }
           }
           const done = await send(statements, mode);
           const duration = Date.now() - started;
@@ -389,7 +422,9 @@ class QTests {
             run.passed(item, duration);
             outcome(item, "passed");
           } else {
-            const message = new TestMessage(failureText(done.value, mode));
+            const diff = featureOn("failedTests") ? done.value.diff : undefined;
+            const message =
+              diff !== undefined ? TestMessage.diff(failureText(done.value, mode), diff.expected, diff.actual) : new TestMessage(failureText(done.value, mode));
             if (item.uri !== undefined && item.range !== undefined) {
               message.location = new Location(item.uri, item.range);
             }

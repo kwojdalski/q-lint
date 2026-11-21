@@ -673,6 +673,12 @@
             "order": 133,
             "markdownDescription": "Offer the q idiom snippets in a q editor's completion list: `aj`, `aj0`, `wj`, `wj1`, `lj`, `ij`, `uj`, a bucketed `xbar` select, the `.z` handlers (`zpg`, `zps`, `zpo`, `zpc`, `zpw`, `zts`, `zws`, `zexit`) and a TorQ process skeleton (`torq`). Off, they leave the list."
           },
+          "q-lint.testExplorer.failedTests.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 135,
+            "markdownDescription": "Show a failed assertion's expected and actual values as a diff - a k4unit `true` row `a~b`, sent as `(a;b)` so both sides come back, or a qUnit `assertEquals` - and offer **Re-run Failed q Tests**. Off, a `true` row is sent as written and the command is hidden."
+          },
           "q-lint.snapshotTests.enable": {
             "type": "boolean",
             "default": true,
@@ -1379,6 +1385,12 @@
         "category": "q-lint",
         "icon": "$(cloud-upload)",
         "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.rerunFailedTests",
+        "title": "Re-run Failed q Tests",
+        "category": "q-lint",
+        "icon": "$(debug-rerun)"
       },
       {
         "command": "q-lint.recordSnapshot",
@@ -2361,6 +2373,10 @@
         {
           "command": "q-lint.draftQsql",
           "when": "config.q-lint.chat.englishToQsql.enable"
+        },
+        {
+          "command": "q-lint.rerunFailedTests",
+          "when": "config.q-lint.testExplorer.enable && config.q-lint.testExplorer.failedTests.enable"
         },
         {
           "command": "q-lint.recordSnapshot",

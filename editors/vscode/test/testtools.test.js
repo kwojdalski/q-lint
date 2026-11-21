@@ -1,6 +1,7 @@
-// Snapshot tests in the Test Explorer (#981): with the switch off the files
-// are not listed; on, each is run again and compared. The q side is
-// snapshot_q.test.js.
+// The failed-test diff and Re-run Failed, and snapshot tests in the Test
+// Explorer (#980, #981): each with its switch off offers and sends nothing;
+// on, what is sent and what the Testing view is given. The q side is
+// testing_q.test.js and snapshot_q.test.js.
 const test = require("node:test");
 const assert = require("node:assert");
 const { stub, vscode } = require("./vscode_stub");
@@ -150,6 +151,63 @@ const TESTS = [
   },
 ];
 
+
+test("a failed assertion's two sides are a diff, and Re-run Failed runs only those that failed; off, neither", async () => {
+  stub.reset();
+  fakeVscode({ "/ws/suite.csv": "action,ms,bytes,lang,code,repeat,minver,comment\ntrue,0,0,q,f[1]~3,1,,\ntrue,0,0,q,count t,1,,\n" });
+  const server = { sendRequest: async () => TESTS };
+  const live = fakeLive((lambda, statements, mode) => {
+    const last = statements[statements.length - 1];
+    if (mode === "match") {
+      return { ok: true, failed: true, text: "0b", diff: ["3\n", "2\n"] };
+    }
+    return last.includes("bad") ? { ok: true, failed: true, text: "0b" } : { ok: true, failed: false, text: "1b" };
+  });
+  stub.config.user["testExplorer.coverage.enable"] = false;
+  const explorer = registerTestExplorer(stub.newContext(), live, () => server);
+  await explorer.discover();
+  await explorer.run();
+  // The match row went as its two sides.
+  assert.deepStrictEqual(live.sent.map((s) => [s.args[0].at(-1), s.args[1]]), [
+    ["test_f[]", "test"],
+    ["test_bad[]", "test"],
+    ["(f[1];3)", "match"],
+    ["count t", "true"],
+  ]);
+  assert.deepStrictEqual(
+    explorer.results().map((r) => r.state),
+    ["passed", "failed", "failed", "passed"],
+  );
+  assert.strictEqual(stub.commands.has(RERUN_FAILED), true);
+  live.sent.length = 0;
+  await stub.commands.get(RERUN_FAILED)();
+  assert.deepStrictEqual(live.sent.map((s) => s.args[0].at(-1)), ["test_bad[]", "(f[1];3)"]);
+
+  // Off: a true row goes as it is, no diff, and the command refuses.
+  stub.config.user["testExplorer.failedTests.enable"] = false;
+  stub.changeConfig("q-lint.testExplorer.failedTests.enable");
+  live.sent.length = 0;
+  await explorer.run();
+  assert.deepStrictEqual(live.sent.map((s) => s.args[1]), ["test", "test", "true", "true"]);
+  live.sent.length = 0;
+  await stub.commands.get(RERUN_FAILED)();
+  assert.deepStrictEqual(live.sent, []);
+  assert.match(stub.messages.at(-1)[1], /q-lint\.testExplorer\.failedTests\.enable to true/);
+});
+
+test("the diff reaches the Testing view as TestMessage.diff", async () => {
+  stub.reset();
+  const made = fakeVscode({ "/ws/suite.csv": "action,ms,bytes,lang,code,repeat,minver,comment\ntrue,0,0,q,f[1]~3,1,,\n" });
+  const live = fakeLive(() => ({ ok: true, failed: true, text: "0b", diff: ["3\n", "2\n"] }));
+  stub.config.user["testExplorer.coverage.enable"] = false;
+  const explorer = registerTestExplorer(stub.newContext(), live, () => undefined);
+  await explorer.discover();
+  await explorer.run();
+  const failed = made[0].runs[0].events.find((e) => e[0] === "failed");
+  assert.strictEqual(failed[2].message, "the two sides of ~ differ");
+  assert.strictEqual(failed[2].expectedOutput, "3\n");
+  assert.strictEqual(failed[2].actualOutput, "2\n");
+});
 
 test("a snapshot file is a test: its query run again and compared; off, not listed", async () => {
   stub.reset();
