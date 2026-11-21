@@ -49,16 +49,19 @@
       return { edges: [], counts: series.map(function () { return []; }) };
     }
     const n = lo === hi ? 1 : Math.max(1, Math.floor(bins));
-    const width = (hi - lo) / n;
+    // A range past the largest double (-1e308 to 1e308) is binned in
+    // halves, which cannot overflow; any other the same either way.
+    const k = isFinite(hi - lo) ? 1 : 2;
+    const width = (hi / k - lo / k) / n;
     const edges = [];
     for (let i = 0; i <= n; i++) {
-      edges.push(i === n ? hi : lo + i * width);
+      edges.push(i === n ? hi : k * (lo / k + i * width));
     }
     const counts = series.map(function (values) {
       const count = new Array(n).fill(0);
       values.forEach(function (v) {
         if (v !== null && isFinite(v)) {
-          count[width === 0 ? 0 : Math.min(n - 1, Math.floor((v - lo) / width))] += 1;
+          count[width === 0 ? 0 : Math.min(n - 1, Math.floor((v / k - lo / k) / width))] += 1;
         }
       });
       return count;

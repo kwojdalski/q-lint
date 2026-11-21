@@ -432,3 +432,12 @@ test("a scatter's ticks under a second apart are told apart by their fraction", 
   // A second or more apart, as before.
   assert.deepStrictEqual(at(19, [36672000, 36674000], 1000), ["10:11:12", "10:11:13", "10:11:14"]);
 });
+
+test("a histogram of floats spanning more than the largest double counts every value", () => {
+  // hi - lo overflowed to Infinity: the edges were NaN and the values
+  // counted at bin NaN, so the chart showed no bar.
+  const h = charts.histogram([[-1e308, 0, 1e308, 1e308]], 2);
+  assert.deepStrictEqual(h.counts, [[1, 3]]);
+  assert.ok(h.edges.every(Number.isFinite), String(h.edges));
+  assert.deepStrictEqual(h.edges, [-1e308, 0, 1e308]);
+});
