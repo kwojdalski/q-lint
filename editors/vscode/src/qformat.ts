@@ -21,7 +21,7 @@
 // - A lambda arrives with its text, which an unwrapped query shows. Any
 //   other function arrives as the word "func".
 // - An empty table arrives with no columns, so they cannot be shown.
-import type { GridPayload } from "./grid";
+import { TREE_NODES, type GridPayload, type TreeNode } from "./grid";
 import type { QValue } from "./qdecode";
 
 /// q's generic null, `(::)`.
@@ -872,5 +872,30 @@ export function gridOfQ(q: QValue, limit: number): GridPayload | undefined {
       c.q.v.map((x) => (x === null ? (c.q.kind === "vector" && [2, 11].includes(c.q.t) ? "" : -Infinity) : typeof x === "boolean" ? Number(x) : typeof x === "bigint" ? Number(x) : x)),
     );
   });
-  return { count, keys, names: shown.map((c) => c.name), types, cells, raw, rank };
+  const tree = q.kind === "list" || (q.kind === "dict" && q.k.kind !== "table") ? treeOfQ(q) : undefined;
+  return { count, keys, names: shown.map((c) => c.name), types, cells, raw, rank, ...(tree !== undefined ? { tree } : {}) };
+}
+
+/// A value decoded with its types as the tree `GRID` sends for it: a
+/// dictionary's entries and a list's items as children, at most `budget`
+/// nodes, each node's share divided among its children as `GRID` divides it.
+export function treeOfQ(q: QValue, budget = TREE_NODES, key = ""): TreeNode {
+  const dict = q.kind === "dict" && q.k.kind !== "table";
+  const open = dict || q.kind === "list" || q.kind === "vector";
+  const count = q.kind === "dict" ? countOf(q.k) : countOf(q);
+  const shown = open ? Math.min(count, Math.max(0, budget - 1)) : 0;
+  const share = shown > 0 ? Math.floor((budget - 1) / shown) : 0;
+  const type = q.kind === "list" ? 0 : q.kind === "chars" ? 10 : q.kind === "table" ? 98 : q.kind === "dict" ? 99 : q.t;
+  const cut = (text: string): string => (text.length > 200 ? `${text.slice(0, 197)}...` : text);
+  const text = open || q.kind === "table" || q.kind === "dict" ? "" : cut(oneLine(q));
+  let children: TreeNode[] = [];
+  if (shown > 0) {
+    const items = itemsOf(firstOf(q.kind === "dict" ? q.v : q, shown));
+    const keys =
+      q.kind === "dict"
+        ? itemsOf(firstOf(q.k, shown)).map((k) => (k.kind === "atom" && k.t === -11 ? String(k.v ?? "") : cut(oneLine(k))))
+        : items.map((_, i) => String(i));
+    children = items.slice(0, shown).map((item, i) => treeOfQ(item, share, keys[i]));
+  }
+  return { key, text, type, count, children };
 }

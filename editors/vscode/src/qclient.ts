@@ -14,7 +14,7 @@
 import * as net from "node:net";
 import * as tls from "node:tls";
 import { deserialize, serialize } from "node-q/lib/c.js";
-import { GRID, readGridAnswer, type GridAnswer } from "./grid";
+import { GRID, GRID_TREE, readGridAnswer, type GridAnswer } from "./grid";
 import { RUN, readAnswer, type Answer } from "./query";
 
 /// The process answered with an error (`'msg`), as against the connection
@@ -158,9 +158,10 @@ export class QConnection {
   }
 
   /// Run `statements` as `query` does, and when the value is tabular have
-  /// the process send its first `limit` rows for the result panel too.
-  queryGrid(statements: string[], size: [number, number], limit: number): Promise<GridAnswer> {
-    return this.call(GRID, statements, size, limit).then(readGridAnswer);
+  /// the process send its first `limit` rows for the result panel too;
+  /// with `tree`, a dictionary's or a nested list's tree as well.
+  queryGrid(statements: string[], size: [number, number], limit: number, tree = false): Promise<GridAnswer> {
+    return this.call(tree ? GRID_TREE : GRID, statements, size, limit).then(readGridAnswer);
   }
 
   /// Send `text` as a char vector, as a client that sends a string does,

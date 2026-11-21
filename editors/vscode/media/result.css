@@ -183,3 +183,144 @@ tr.spacer td {
   padding: 0 8px;
   color: var(--vscode-descriptionForeground);
 }
+
+/* The results kept, as tabs above the bar. */
+.tabs {
+  display: flex;
+  gap: 2px;
+  padding: 4px 8px 0;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.tabs .tab {
+  max-width: 24ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-bottom: 0;
+  border-radius: 2px 2px 0 0;
+  font-family: var(--vscode-editor-font-family);
+}
+
+.diff-summary {
+  flex-basis: 100%;
+  color: var(--vscode-descriptionForeground);
+}
+
+/* Compare with Previous Run: a changed cell, a new row or column. Each is
+   also told apart without colour: a changed cell is underlined and its
+   tooltip says what it was, a new row has a bar at its start. */
+td.changed {
+  background: color-mix(in srgb, var(--vscode-editorWarning-foreground, #cca700) 28%, transparent);
+  text-decoration: underline dotted;
+}
+
+tr.added td,
+td.added {
+  background: var(--vscode-diffEditor-insertedTextBackground, rgba(156, 204, 44, 0.2));
+}
+
+tr.added td:first-child {
+  box-shadow: inset 3px 0 var(--vscode-gitDecoration-addedResourceForeground, #81b88b);
+}
+
+.removed {
+  max-height: 40%;
+  overflow: auto;
+  padding: 4px 8px;
+  border-top: 1px solid var(--vscode-panel-border);
+}
+
+.removed summary {
+  cursor: pointer;
+  color: var(--vscode-descriptionForeground);
+}
+
+.removed td {
+  background: var(--vscode-diffEditor-removedTextBackground, rgba(255, 0, 0, 0.2));
+  text-decoration: line-through;
+}
+
+.removed th {
+  position: static;
+}
+
+.stats-view,
+.tree-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+table.stats {
+  width: auto;
+  table-layout: auto;
+}
+
+table.stats td {
+  max-width: 40ch;
+}
+
+table.stats thead th {
+  cursor: default;
+}
+
+ul.tree,
+ul.tree ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+ul.tree {
+  padding: 4px 8px;
+  font-family: var(--vscode-editor-font-family);
+  font-size: var(--vscode-editor-font-size);
+}
+
+.tree .node {
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  line-height: 22px;
+}
+
+.tree .node:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.tree .twist {
+  display: inline-block;
+  width: 18px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--vscode-foreground);
+  text-align: center;
+}
+
+.tree-key {
+  color: var(--vscode-symbolIcon-fieldForeground, var(--vscode-foreground));
+}
+
+.tree-sep {
+  color: var(--vscode-descriptionForeground);
+  white-space: pre;
+}
+
+.tree-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tree-kind,
+.tree-more {
+  color: var(--vscode-descriptionForeground);
+}
+
+.tree-more {
+  font-style: italic;
+  line-height: 22px;
+}

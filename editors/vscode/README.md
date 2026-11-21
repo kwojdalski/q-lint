@@ -384,6 +384,38 @@ where a result goes; it sets `q-lint.query.mode`, and takes `console`,
   chosen in the panel; the panel's
   **Grid** and **Chart** buttons switch between the two for one result.
 
+The panel has two more views of the same rows. **Stats** (or **Show Column
+Statistics**) gives each column's count, nulls, distinct values, min, max
+and mean, over the rows shown, so the grid's filters apply: min and max in
+q's own order, nulls left out, and the mean of a numeric column without its
+nulls or infinities. **Tree** (or **Show Result as Tree**), for a dictionary
+or a general list, shows the value as a tree that opens a level at a time:
+a dictionary's entries, a list's items, and a simple list's atoms. The
+process sends at most 2,000 nodes of it, shared out level by level, and a
+node says how many of its items were not sent.
+
+**Heatmap** in the grid (or **Toggle Result Heatmap**, which sets
+`q-lint.query.gridHeatmap`) colours the numeric columns by value in the
+theme's chart colours: blue from the least to the greatest, or, for a column
+either side of zero, blue above it and red below, stronger further out. A
+key column is left as it is.
+
+The panel keeps the last `q-lint.query.resultHistory` results (10) as tabs
+above it; choosing one shows it again with its own view, sort and filters,
+and **Show Result from History** picks one from a list. When a query has run
+before in this window, **Compare** (or **Compare Result with Previous Run**)
+marks what changed since: a changed cell is shaded and underlined, its
+tooltip says what it was, a new row or column is shaded, and the rows that
+went are listed under the grid. Rows are matched by their key when both
+results are keyed by the same columns, and by their place otherwise; cells
+are compared by the text the grid shows, so `q-lint.query.gridDecimals`
+applies. The previous run can be on another process, which the bar names.
+
+Each of these - the history, Compare, Stats, the heatmap and the tree - has
+its own `q-lint.results.<feature>.enable` setting, on by default. Turned
+off, its button and command are gone (the command, run anyway, says which
+setting turns it back on), and a change applies at once, without a reload.
+
 The panel opens beside the editor. With `q-lint.query.resultsLocation` set
 to `panel`, results go instead to the **q Results** view in the bottom
 panel, beside the terminal and the output, and the editor keeps the focus.
@@ -665,6 +697,13 @@ nothing.
 | `q-lint.query.resultsLocation` | `"editor"` | Where a grid or chart opens: `editor`, beside it, or `panel`, the **q Results** view in the bottom panel. | - |
 | `q-lint.query.unwrapped` | `false` | Send code as plain strings, for a gateway that refuses a lambda, and format the result in q-lint. **Toggle Unwrapped Query** changes it. | - |
 | `q-lint.query.timeout` | `0` | Seconds a query may run before it is aborted, as Abort does; `0` none. | - |
+| `q-lint.query.resultHistory` | `10` | Results the result panel keeps as tabs, 1 to 50. | - |
+| `q-lint.query.gridHeatmap` | `false` | Colour the grid's numeric columns by value. **Toggle Result Heatmap** changes it. | - |
+| `q-lint.results.history.enable` | `true` | Keep results as tabs, and offer **Show Result from History**. Off, the panel keeps only the result on show. | - |
+| `q-lint.results.diff.enable` | `true` | Offer **Compare** and **Compare Result with Previous Run**. Off, no previous run is kept. | - |
+| `q-lint.results.statistics.enable` | `true` | Offer the **Stats** view and **Show Column Statistics**. | - |
+| `q-lint.results.heatmap.enable` | `true` | Offer the **Heatmap** button and **Toggle Result Heatmap**. Off, nothing is coloured, whatever `q-lint.query.gridHeatmap` says. | - |
+| `q-lint.results.tree.enable` | `true` | Offer the **Tree** view and **Show Result as Tree**. Off, the process is not asked for the tree. | - |
 | `q-lint.processExplorer.excludedNamespaces` | `["q","Q","h","j","o","s"]` | Namespaces the Process Explorer and live completion leave out (`q`, or a nested one as `ns.sub`), with those nested in them. | - |
 | `q-lint.processExplorer.previewLimit` | `5` | Rows of a table Preview shows. | - |
 | `q-lint.processExplorer.autoRefresh` | `false` | Read the process again after each query. | - |

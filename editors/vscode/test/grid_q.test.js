@@ -91,4 +91,34 @@ test("the grid lambda against a real q process", { skip }, async (t) => {
     const own = (await connection.query(statements('-3!\'1_strs`s'), [25, 2000])).text.join("");
     assert.deepStrictEqual(cells.slice(1), ['"b\\"c\\n"', '"caf\\303\\251"', ',"x"', '""'], own);
   });
+
+  await t.test("a dictionary or a nested list comes with its tree, as unwrapped mode makes it (#928)", async () => {
+    const { runUnwrapped } = require("../out/querycontrols.js");
+    const { TREE_NODES } = require("../out/grid.js");
+    const code = '`a`b`c!(1;"xy";(1 2;`p`q!(3 4;`z)))';
+    const answer = await connection.queryGrid(statements(code), SIZE, 100, true);
+    assert.strictEqual(answer.gridError, undefined, answer.gridError);
+    const tree = answer.grid.tree;
+    // Not asked for (q-lint.results.tree.enable off, a notebook, an agent): not sent.
+    const without = await connection.queryGrid(statements(code), SIZE, 100);
+    assert.strictEqual(without.grid.tree, undefined);
+    assert.deepStrictEqual(without.grid.cells, answer.grid.cells);
+    assert.deepStrictEqual([tree.type, tree.count], [99, 3]);
+    assert.deepStrictEqual(tree.children.map((c) => [c.key, c.text, c.type, c.count]), [["a", "1", -7, 1], ["b", '"xy"', 10, 2], ["c", "", 0, 2]]);
+    const inner = tree.children[2].children[1];
+    assert.deepStrictEqual(inner.children.map((c) => [c.key, c.text, c.type]), [["p", "", 7], ["q", "`z", -11]]);
+    assert.deepStrictEqual(inner.children[0].children.map((c) => c.text), ["3", "4"]);
+    // Unwrapped mode decodes the value and makes the same tree here.
+    const here = await runUnwrapped(connection, [code], { size: SIZE, limit: 100, unlimited: false, grid: true });
+    assert.deepStrictEqual(here.grid.tree, tree);
+    // Wide: cut to the budget at every level, and the counts say how much.
+    const wide = (await connection.queryGrid(statements("10000#enlist til 100"), SIZE, 10, true)).grid.tree;
+    const nodes = (n) => 1 + n.children.reduce((k, c) => k + nodes(c), 0);
+    assert.strictEqual(nodes(wide), TREE_NODES);
+    assert.strictEqual(wide.count, 10000);
+    // A table, a keyed table and a simple list have none.
+    for (const plain of ["([] a:1 2)", "([k:1 2] v:3 4)", "til 5"]) {
+      assert.strictEqual((await connection.queryGrid(statements(plain), SIZE, 10, true)).grid.tree, undefined, plain);
+    }
+  });
 });
