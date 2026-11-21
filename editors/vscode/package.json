@@ -694,6 +694,12 @@
         "icon": "$(save-as)"
       },
       {
+        "command": "q-lint.exportResultsView",
+        "title": "Export Results to CSV",
+        "category": "q-lint",
+        "icon": "$(save-as)"
+      },
+      {
         "command": "q-lint.runInTerminal",
         "title": "Run Code from Terminal",
         "category": "q-lint",
@@ -909,7 +915,7 @@
           "group": "navigation"
         },
         {
-          "command": "q-lint.exportResults",
+          "command": "q-lint.exportResultsView",
           "when": "view == q-lint.results",
           "group": "navigation"
         },
@@ -1137,6 +1143,10 @@
       "commandPalette": [
         {
           "command": "q-lint.previewProcessExplorerItem",
+          "when": "false"
+        },
+        {
+          "command": "q-lint.exportResultsView",
           "when": "false"
         }
       ]

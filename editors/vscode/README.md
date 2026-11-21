@@ -244,9 +244,9 @@ outcome; the buttons on a row run it again on the active connection and
   for the window: a reload turns it off, so a result sent whole is never
   left over from an earlier session. One cut q makes itself remains: KDB-X
   writes an atom or a list item with `-3!`, which stops at the process's own
-  `\c` width, so a simple list (`til 100000`) is sent as its value and
-  written out by q-lint instead, and a general list's long items are still
-  cut at `\c`.
+  `\c` width, so a simple list (`til 100000`) or an enumerated one
+  (`exec sym from trade` on an HDB) is sent as its values and written out
+  by q-lint instead, and a general list's long items are still cut at `\c`.
 - **Toggle Unwrapped Query**, or `q-lint.query.unwrapped`: for a gateway
   that refuses a lambda, the code is sent as plain strings, one per
   statement in order, stopping at the first error, as a client that sends
@@ -264,8 +264,9 @@ outcome; the buttons on a row run it again on the active connection and
   none): a query still running then is aborted exactly as **Abort Current
   Query** aborts it, and the history records it as timed out.
 - **Choose Connection for File** binds the active file to a process, kept
-  per workspace (an untitled editor's only until the window closes, so the
-  next window's `Untitled-1` is not bound to it), and takes a label as an
+  per workspace and kept when the file is renamed or moved (an untitled
+  editor's only until it or the window closes, so the next `Untitled-1` is
+  not bound to it), and takes a label as an
   argument for a keybinding. A query from that file (line, selection, block or entire file) switches the
   connection to its process first, connecting if nothing is connected -
   there is one connection at a time, so the file's process becomes the
@@ -324,7 +325,7 @@ where a result goes; it sets `q-lint.query.mode`, and takes `console`,
   above.
 - **Grid**: a table, a keyed table (unkeyed, its key columns shaded), a
   dictionary (as `key` and `value` columns; one keyed by a table as its
-  key columns and a `value` column) or a list (as one `value` column) opens in the **q-lint: result** panel. Click a header to sort,
+  key columns and a `value` column) or a list (as one `value` column) opens in the **q-lint: result** panel. Click a header (or Tab to it and press Enter) to sort,
   type under it to filter (by the text shown, ignoring case). **Copy as
   CSV** copies the rows shown, in the order shown, and **Export to CSV**
   saves them to a file you pick; the command **Export Results to CSV** does
@@ -346,8 +347,8 @@ The panel opens beside the editor. With `q-lint.query.resultsLocation` set
 to `panel`, results go instead to the **q Results** view in the bottom
 panel, beside the terminal and the output, and the editor keeps the focus.
 It is the same page as the editor's - the same grid, chart and buttons -
-and keeps its view, sort and filters when the panel is hidden and shown
-again.
+and keeps its view, sort, filters and scroll when the panel is hidden and
+shown again, as the editor's page does when its tab is.
 
 The process sends at most `q-lint.query.gridLimit` rows, and the panel says
 when a result was cut and how many rows it had. Anything that is not

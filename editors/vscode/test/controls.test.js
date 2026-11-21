@@ -29,12 +29,20 @@ function fakeVscode(state, editor) {
     workspace: {
       getConfiguration: () => ({ get: (_k, fallback) => fallback, inspect: () => ({}), update: async () => {} }),
       onDidChangeConfiguration: () => disposable,
-      onDidCloseTextDocument: () => disposable,
+      onDidCloseTextDocument: (f) => {
+        fakeVscode.on.close = f;
+        return disposable;
+      },
+      onDidRenameFiles: (f) => {
+        fakeVscode.on.rename = f;
+        return disposable;
+      },
     },
     state,
   };
 }
 fakeVscode.commands = {};
+fakeVscode.on = {};
 
 function loadControls(vscode) {
   const load = Module._load;
@@ -79,4 +87,34 @@ test("an untitled editor's process is not kept for the next untitled editor of t
   await fakeVscode.commands["q-lint.chooseConnectionForFile"]("dev");
   assert.strictEqual(loadControls(fakeVscode(state, undefined)).binding(file), "dev");
   assert.strictEqual(filed.binding(file), "dev");
+});
+
+test("an untitled editor closed unsaved does not hand its process to the next new editor in this window", async () => {
+  // VS Code names the next new editor Untitled-1 again once the first is
+  // closed, in the same window.
+  const first = uri("untitled", "Untitled-1");
+  const controls = loadControls(fakeVscode({}, { document: { uri: first } }));
+  await fakeVscode.commands["q-lint.chooseConnectionForFile"]("prod");
+  fakeVscode.on.close({ uri: first });
+  assert.strictEqual(controls.binding(uri("untitled", "Untitled-1")), undefined);
+});
+
+test("a file renamed or moved keeps its process", async () => {
+  const state = {};
+  const file = uri("file", "/w/a.q");
+  const inFolder = uri("file", "/w/d/b.q");
+  const controls = loadControls(fakeVscode(state, { document: { uri: file } }));
+  await fakeVscode.commands["q-lint.chooseConnectionForFile"]("prod");
+  const other = loadControls(fakeVscode(state, { document: { uri: inFolder } }));
+  await fakeVscode.commands["q-lint.chooseConnectionForFile"]("dev");
+  await fakeVscode.on.rename({
+    files: [
+      { oldUri: file, newUri: uri("file", "/w/a 2.q") },
+      { oldUri: uri("file", "/w/d"), newUri: uri("file", "/w/e") },
+    ],
+  });
+  assert.strictEqual(other.binding(uri("file", "/w/a 2.q")), "prod");
+  assert.strictEqual(other.binding(file), undefined);
+  assert.strictEqual(other.binding(uri("file", "/w/e/b.q")), "dev");
+  assert.strictEqual(controls.binding(inFolder), undefined);
 });

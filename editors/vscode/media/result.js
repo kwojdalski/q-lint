@@ -109,7 +109,7 @@
   const vscode = acquireVsCodeApi();
   const C = root.qlintChart;
   const KINDS = ["line", "bar", "scatter", "histogram"];
-  const state = Object.assign({ id: 0, view: "grid", sort: null, filters: [], kind: "line", columns: null, bins: C.BINS }, vscode.getState() || {});
+  const state = Object.assign({ id: 0, view: "grid", sort: null, filters: [], kind: "line", columns: null, bins: C.BINS, top: 0 }, vscode.getState() || {});
   let result = null;
   let rows = [];
   let chart = null;
@@ -200,6 +200,10 @@
 
   let body = null;
   let scroller = null;
+  /// What paint() last drew: the rows (that list) and their span.
+  let painted = null;
+  /// The column headers drawn, by place.
+  let headers = [];
 
   function drawGrid() {
     const grid = result.grid;
@@ -220,18 +224,33 @@
     const head = el("thead");
     const names = el("tr");
     const filters = el("tr", "filters");
+    headers = [];
     grid.columns.forEach(function (c, i) {
       const sorted = state.sort && state.sort.column === i ? (state.sort.descending ? " ▼" : " ▲") : "";
       const th = el("th", (c.key ? "key" : "") + (c.numeric ? " num" : ""), c.name + sorted);
       th.title = c.name + ": " + c.typeName + ". Click to sort.";
-      th.addEventListener("click", function () {
+      // A keyboard sorts it too: Tab to it, then Enter or Space.
+      th.tabIndex = 0;
+      th.setAttribute("aria-sort", sorted === "" ? "none" : state.sort.descending ? "descending" : "ascending");
+      const sort = function () {
         const s = state.sort;
         state.sort = !s || s.column !== i ? { column: i, descending: false } : s.descending ? null : { column: i, descending: true };
+        state.top = 0;
         save();
         rows = visibleRows(grid, state.filters, state.sort);
         drawGrid();
         drawBar();
         rendered();
+      };
+      th.addEventListener("click", sort);
+      headers.push(th);
+      th.addEventListener("keydown", function (event) {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          sort();
+          // The header was drawn again: the focus stays on it.
+          headers[i].focus();
+        }
       });
       names.append(th);
       const ft = el("th", c.key ? "key" : "");
@@ -241,6 +260,7 @@
       input.value = state.filters[i] || "";
       input.addEventListener("input", function () {
         state.filters[i] = input.value;
+        state.top = 0;
         save();
         rows = visibleRows(grid, state.filters, state.sort);
         scroller.scrollTop = 0;
@@ -253,11 +273,21 @@
     });
     head.append(names, filters);
     body = el("tbody");
+    painted = null;
     table.append(cols, head, body);
     scroller.append(table);
     gridView.append(scroller);
-    scroller.addEventListener("scroll", paint);
+    scroller.addEventListener("scroll", function () {
+      // Kept, so a page reloaded - hidden and shown again - is back here.
+      state.top = scroller.scrollTop;
+      save();
+      paint();
+    });
     paint();
+    if (state.top > 0) {
+      scroller.scrollTop = state.top;
+      paint();
+    }
   }
 
   /// Draw the rows in view, and spacers for the rest: a grid holds up to
@@ -270,6 +300,12 @@
     const at = span(scroller.scrollTop, scroller.clientHeight || 600, rows.length);
     const start = at.start;
     const end = at.end;
+    // The same rows over the same spacers: leave them be, so a selection
+    // made in them, to copy, is not lost to a scroll.
+    if (painted && painted.rows === rows && painted.start === start && painted.end === end && painted.before === at.before && painted.after === at.after) {
+      return;
+    }
+    painted = { rows: rows, start: start, end: end, before: at.before, after: at.after };
     const spacer = function (px) {
       const tr = el("tr", "spacer");
       const td = el("td");
@@ -405,6 +441,7 @@
       }
       state.view = m.view;
       state.id = m.id;
+      state.top = 0;
       state.names = names;
     }
     result = m;

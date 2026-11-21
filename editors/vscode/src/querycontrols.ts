@@ -15,7 +15,7 @@
 // a gateway that refuses a lambda. The process evaluates each as it
 // evaluates any string a client sends, and the answer is whatever it
 // returns, formatted here.
-import { consoleLines, gridOf, gridOfQ, cutLines, formatQ, formatValue, vectorText } from "./qformat";
+import { attrText, consoleLines, gridOf, gridOfQ, cutLines, formatQ, formatValue, vectorText } from "./qformat";
 import { decode, type QValue } from "./qdecode";
 import { TRAP, readAnswer, type Answer } from "./query";
 import type { GridAnswer } from "./grid";
@@ -71,21 +71,24 @@ export function limits(
 }
 
 /// `RUN` for an unlimited console query: the same answer, except that a
-/// simple list (types 1 to 19) comes as `value`, with no text, for
-/// `readUnlimited` to write. A temporal list comes as the numbers q holds
-/// it as - timestamps and timespans long nanoseconds, a datetime float
-/// days, the rest ints - since the codec would make a timestamp a float,
-/// exact only to 256 ns, and loses the sign of a date's infinity. A string
-/// comes as its bytes, which the codec would read as UTF-8, losing any that
-/// are not. Its attribute comes as `attr`, and the process's `\P` as
-/// `precision`, the digits a float is written to. Like `RUN` it defines
-/// nothing on the process.
+/// simple list (types 1 to 19), or an enumerated one's values with its
+/// domain, comes as `value`, with no text, for `readUnlimited` to write. A
+/// temporal list comes as the numbers q holds it as - timestamps and
+/// timespans long nanoseconds, a datetime float days, the rest ints - since
+/// the codec would make a timestamp a float, exact only to 256 ns, and loses
+/// the sign of a date's infinity. A string comes as its bytes, which the
+/// codec would read as UTF-8, losing any that are not. Its attribute comes as
+/// `attr`, and the process's `\P` as `precision`, the digits a float is
+/// written to. Like `RUN` it defines nothing on the process.
 export const UNLIMITED = [
   "{[s;size]",
   ...TRAP,
   " t:type r 1;",
+  " e:$[r[0]&t within 20 76h;@[value;r 1;{()}];()];",
   " $[r 0;",
-  "   $[t within 1 19h;`ok`type`text`value`attr`precision!(1b;t;();$[t within 12 19h;\"jiifjiii\"[t-12h]$r 1;t=10h;\"x\"$r 1;r 1];attr r 1;system\"P\");`ok`type`text!(1b;t;.Q.S[\"j\"$size;0j] r 1)];",
+  "   $[t within 1 19h;`ok`type`text`value`attr`precision!(1b;t;();$[t within 12 19h;\"jiifjiii\"[t-12h]$r 1;t=10h;\"x\"$r 1;r 1];attr r 1;system\"P\");",
+  "     (t within 20 76h)&type[e] within 1 19h;`ok`type`text`value`attr`vtype`domain`eattr`precision!(1b;t;();$[type[e] within 12 19h;\"jiifjiii\"[type[e]-12h]$e;e];attr e;type e;key r 1;attr r 1;system\"P\");",
+  "     `ok`type`text!(1b;t;.Q.S[\"j\"$size;0j] r 1)];",
   "   `ok`error`trace!(0b;r 1;r 2)]}",
 ].join("\n");
 
@@ -94,9 +97,21 @@ export const UNLIMITED = [
 export function readUnlimited(raw: unknown): Answer {
   const answer = readAnswer(raw);
   const r = raw as Record<string, unknown>;
+  // The codec drops a list's attribute; q writes it first: `s#1 2 3.
   if (answer.ok && "value" in r && answer.type >= 1 && answer.type <= 19) {
     const precision = typeof r.precision === "number" ? r.precision : 7;
     return { ...answer, text: [vectorText(r.value, answer.type, typeof r.attr === "string" ? r.attr : null, precision)] };
+  }
+  // An enumerated list, as -3! writes it but whole: `sym$`a`b, its values'
+  // attribute after the domain (KDB-X writes `s#`sym$`s#`a`b), and an
+  // empty one `sym$().
+  if (answer.ok && "domain" in r && typeof r.domain === "string" && typeof r.vtype === "number") {
+    const precision = typeof r.precision === "number" ? r.precision : 7;
+    const body =
+      Array.isArray(r.value) && r.value.length === 0
+        ? "()"
+        : vectorText(r.value, r.vtype, typeof r.attr === "string" ? r.attr : null, precision);
+    return { ...answer, text: [`${attrText(typeof r.eattr === "string" ? r.eattr : null)}\`${r.domain}$${body}`] };
   }
   return answer;
 }

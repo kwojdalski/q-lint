@@ -514,3 +514,45 @@ test("a long line chart shows a value between two nulls, which no segment draws"
   const solid = charts.chartConfig(full, rows, "line", charts.chartData(full, rows, "line", [1], 10), LOOK).data.datasets[0];
   assert.strictEqual(typeof solid.pointRadius === "function" ? solid.pointRadius({ dataset: solid, dataIndex: 5 }) : solid.pointRadius, 0);
 });
+
+test("a line or bar chart's tooltip says the cell's value, not Chart.js's three decimals", () => {
+  // Chart.js writes a value with at most three decimals and the nearest
+  // double: an FX price 1.083415 read 1.083, a long above 2^53 lost digits.
+  const grid = toGrid({ count: 3, keys: 0, names: ["d", "px", "n"], types: [11, 9, 7], cells: [["a", "b", "c"], ["1.083415", "1.08342", "1.0835"], ["1", "9007199254740993", "3"]], raw: [[], [1.083415, 1.08342, 1.0835], [1, big, 3]], rank: [[0, 1, 2], [0, 1, 2], [0, 2, 1]] }, -1);
+  for (const kind of ["line", "bar"]) {
+    // Sorted: the second point drawn is row 2.
+    const rows = [0, 2, 1];
+    const config = charts.chartConfig(grid, rows, kind, charts.chartData(grid, rows, kind, [1, 2], 10), LOOK);
+    const label = config.options.plugins.tooltip.callbacks.label;
+    assert.strictEqual(label({ dataset: config.data.datasets[0], dataIndex: 0, raw: 1.083415, formattedValue: "1.083" }), "px: 1.083415");
+    assert.strictEqual(label({ dataset: config.data.datasets[1], dataIndex: 2, raw: 9007199254740992, formattedValue: "9,007,199,254,740,992" }), "n: 9007199254740993");
+    assert.strictEqual(label({ dataset: config.data.datasets[0], dataIndex: 1, raw: 1.0835, formattedValue: "1.084" }), "px: 1.0835");
+  }
+});
+
+/// The declarations of result.css's rule for `selector`, as written.
+function cssRule(selector) {
+  const css = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "media", "result.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  const found = [...css.matchAll(/([^{}]+)\{([^}]*)\}/g)].find((m) => m[1].split(",").map((s) => s.trim()).includes(selector));
+  return found ? found[2] : "";
+}
+
+test("the grid's table is laid out by its columns' widths, not by the cells in view", () => {
+  // `table-layout: fixed` is ignored on a table whose width is auto: a
+  // 150-character cell scrolled into view widened its column from 12ch
+  // to 1212 px and squeezed the next to 20 px (headless Chrome), so the
+  // columns jumped as the rows were scrolled.
+  const table = cssRule("table");
+  assert.match(table, /table-layout:\s*fixed/);
+  assert.match(table, /(^|;|\s)width:\s*(?!auto)[^;]+;/);
+});
+
+test("a key column's sticky header is opaque, though the key shade is translucent", () => {
+  // th.key's shade won over the header's background, and a theme's
+  // editor.inactiveSelectionBackground is often translucent (VS Code's
+  // default is the selection colour at half alpha; #ffffff80 in high
+  // contrast): the rows scrolled up showed through the key's header and
+  // its filter.
+  const head = cssRule("thead th.key");
+  assert.match(head, /background:[^;]*var\(--vscode-editor-inactiveSelectionBackground[^;]*,\s*var\(--vscode-editor(GroupHeader-tabs)?-background/);
+});
