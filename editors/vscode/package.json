@@ -255,6 +255,12 @@
             "order": 27,
             "markdownDescription": "Offer the **q Dependencies** view - the files the active q file depends on and those depending on it - and **q-lint: List Affected Tests**, the test files that reach a q file changed against git HEAD. Both are what `qlinter analyze graph` prints. Off, the server answers neither and the view is hidden."
           },
+          "q-lint.rename.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 23,
+            "markdownDescription": "Offer **Rename Symbol** (F2): a lambda's parameter or local within its lambda, and a global in every workspace file that names it, under the `\\d` each is written in. Needs `q-lint.navigation.enable`. Off, q-lint does not announce renaming, and the rest of navigation stays."
+          },
           "q-lint.inlayHints.enable": {
             "type": "boolean",
             "default": true,

@@ -1468,3 +1468,19 @@ fn a_global_rename_is_refused_where_it_would_change_what_the_code_means() {
         ]
     );
 }
+
+#[test]
+fn rename_can_be_turned_off_on_its_own() {
+    let dir = tempfile::tempdir().unwrap();
+    let options = json!({"rename": {"enable": false}});
+    let (mut server, reply) = Server::over(dir.path(), &[("lib.q", LIB)], client(), options);
+    let capabilities = &reply["result"]["capabilities"];
+    assert!(capabilities["renameProvider"].is_null(), "{capabilities}");
+    // The rest of navigation stays.
+    assert_eq!(capabilities["definitionProvider"], true, "{capabilities}");
+    let uri = server.open(dir.path(), "main.q", MAIN);
+    for method in ["textDocument/prepareRename", "textDocument/rename"] {
+        let reply = server.ask(method, &uri, MAIN, "root_fn m", 0, json!({"newName": "g"}));
+        assert_eq!(reply["result"], Value::Null, "{reply}");
+    }
+}

@@ -353,7 +353,7 @@ fn location(uri: &str, lines: &Lines, at: usize, len: usize) -> Value {
 /// What the server adds to its capabilities for the requests answered here.
 /// `prepare` when the client asks, before a rename, what would be renamed -
 /// the options form of `renameProvider` is for such a client only (LSP 3.17).
-pub(super) fn announce(capabilities: &mut Value, prepare: bool) {
+pub(super) fn announce(capabilities: &mut Value, prepare: bool, rename: bool) {
     for provider in [
         "documentSymbolProvider",
         "workspaceSymbolProvider",
@@ -362,6 +362,9 @@ pub(super) fn announce(capabilities: &mut Value, prepare: bool) {
         "documentHighlightProvider",
     ] {
         capabilities[provider] = json!(true);
+    }
+    if !rename {
+        return;
     }
     capabilities["renameProvider"] = if prepare {
         json!({"prepareProvider": true})

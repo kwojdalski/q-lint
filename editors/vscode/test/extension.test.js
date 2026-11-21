@@ -171,3 +171,12 @@ test("a Run lens's command sends its code as a query from its document", async (
   assert.strictEqual(w.queried.length, 1);
   await w.extension.deactivate();
 });
+
+test("with code lenses turned off, a lens's command says so and sends nothing", async () => {
+  const w = load({ settings: { "codeLens.enable": false } });
+  await w.extension.activate(w.context);
+  await w.commands[w.extension.RUN_DEFINITION]("f:{x}", "file:///ws/a.q");
+  assert.deepStrictEqual(w.queried, []);
+  assert.match(w.infos.join("\n"), /turned off \(q-lint\.codeLens\.enable\)/);
+  await w.extension.deactivate();
+});

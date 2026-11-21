@@ -501,7 +501,8 @@ file that names it, under the `\d` in force and the context the file is
 loaded in - and only its last part changes: `.lib.add` and `add` under
 `\d .lib` both become `plus`, given as `plus` or as `.lib.plus`, and a name
 in another namespace is refused. `prepareRename` answers with the range of
-that last part. The rename is refused for a name in a one-letter namespace
+that last part. `rename.enable: false` leaves renaming unannounced, and the
+rest of navigation on. The rename is refused for a name in a one-letter namespace
 (`.z.pg`, `.q.f`, which q keeps for itself), a name no indexed file assigns
 (q's own, or defined where the server cannot read), a new name that is not
 one q takes, is reserved or is already assigned, and one that is a
@@ -728,7 +729,7 @@ Every key is optional, and these are the defaults:
  "semanticTokens": {"enable": true}, "navigation": {"enable": true},
  "help": {"enable": true}, "completion": {"enable": false},
  "callHierarchy": {"enable": true}, "graph": {"enable": true},
- "inlayHints": {"enable": true}, "codeLens": {"enable": false},
+ "rename": {"enable": true}, "inlayHints": {"enable": true}, "codeLens": {"enable": false},
  "documentLinks": {"enable": true}, "generateQdoc": {"enable": true},
  "workspaceIndex": {"enable": true, "exclude": []}}
 ```

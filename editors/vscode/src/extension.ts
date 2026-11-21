@@ -101,9 +101,16 @@ export async function activate(
   // The server's Run and Run test lenses hand over the code to send and the
   // document it is from; it goes as a query from that editor would.
   context.subscriptions.push(
-    commands.registerCommand(RUN_DEFINITION, (code?: unknown, uri?: unknown) =>
-      typeof code === "string" && typeof uri === "string" ? live.queryCode(code, Uri.parse(uri)) : undefined,
-    ),
+    commands.registerCommand(RUN_DEFINITION, (code?: unknown, uri?: unknown) => {
+      // A lens drawn before the setting was turned off can still be clicked.
+      if (workspace.getConfiguration("q-lint").get<unknown>("codeLens.enable", true) === false) {
+        void window.showInformationMessage(
+          "q-lint: the Run code lenses are turned off (q-lint.codeLens.enable); turn the setting on to run a definition from its lens.",
+        );
+        return undefined;
+      }
+      return typeof code === "string" && typeof uri === "string" ? live.queryCode(code, Uri.parse(uri)) : undefined;
+    }),
   );
   const agentConfirmation = registerAgentTool(context, live);
   const notebook = registerNotebooks(context, live);

@@ -92,7 +92,8 @@ to a process you add and connect to, and sends only the code you run.
   parameter or local of a lambda that reads the global bare. A name reached
   through a string (`value "f[]"`), a bare symbol (`` `f ``) or another
   process is not seen and keeps its old name: preview the rename
-  (Shift+Enter) when that matters.
+  (Shift+Enter) when that matters. `q-lint.rename.enable` turns renaming off
+  and leaves the rest of navigation on.
 - **Generate qDoc**, a refactoring in the lightbulb and **Refactor...**
   menu inside a top-level function: it writes `/ @param` for each
   parameter - the signature's, or the `x`, `y` and `z` the body reads - and
@@ -606,6 +607,7 @@ q-pro column names the setting of [q-pro](https://marketplace.visualstudio.com/i
 | `q-lint.format.enable` | `true` | Register **Format Document** (the safe fixes). | - |
 | `q-lint.semanticTokens.enable` | `true` | Colour calls and parameter reads on top of the grammar. | - |
 | `q-lint.navigation.enable` | `true` | Offer the outline, workspace symbols, definitions, references, highlights and rename. Off when another q extension already navigates. | - |
+| `q-lint.rename.enable` | `true` | Offer **Rename Symbol** for a local, and for a global across the workspace. Needs `q-lint.navigation.enable`. | - |
 | `q-lint.help.enable` | `true` | Show hovers and signature help, from the source and the built-in catalogue of q's words. | - |
 | `q-lint.completion.enable` | `false` | Complete locals, workspace names and q's words. Off by default: an editor told a server completes stops offering the words already in the file. | - |
 | `q-lint.callHierarchy.enable` | `true` | Offer the call hierarchy of a global function. | - |

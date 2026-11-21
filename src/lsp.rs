@@ -630,6 +630,9 @@ struct Options {
     /// Answer `q-lint/graph` and `q-lint/affectedTests`, the file-to-file
     /// dependency graph `qlinter analyze graph` prints.
     graph: bool,
+    /// Answer rename and prepareRename, under `navigation`: its own switch,
+    /// since a global's rename edits every file that names it.
+    rename: bool,
     /// Answer inlay hints: parameter names at a call's arguments.
     inlay_hints: bool,
     /// Answer code lenses: Run above a function's definition. Off unless
@@ -659,6 +662,7 @@ impl Default for Options {
             completion: false,
             call_hierarchy: true,
             graph: true,
+            rename: true,
             inlay_hints: true,
             code_lens: false,
             document_links: true,
@@ -694,6 +698,7 @@ impl Options {
                         "completion",
                         "callHierarchy",
                         "graph",
+                        "rename",
                         "inlayHints",
                         "codeLens",
                         "documentLinks",
@@ -728,6 +733,7 @@ impl Options {
         options.completion = flag("/completion/enable", false);
         options.call_hierarchy = flag("/callHierarchy/enable", true);
         options.graph = flag("/graph/enable", true);
+        options.rename = flag("/rename/enable", true);
         options.inlay_hints = flag("/inlayHints/enable", true);
         options.code_lens = flag("/codeLens/enable", false);
         options.document_links = flag("/documentLinks/enable", true);
@@ -1040,6 +1046,7 @@ pub fn serve(
                     navigate::announce(
                         &mut result["capabilities"],
                         client("rename/prepareSupport"),
+                        opts.rename,
                     );
                 }
                 help_client = help::Client::read(&params);
@@ -1266,7 +1273,8 @@ pub fn serve(
                 Some(id),
             ) => {
                 let answer = guarded(|| {
-                    if !opts.navigation {
+                    let renaming = method.ends_with("ename");
+                    if !opts.navigation || (renaming && !opts.rename) {
                         return Ok(Value::Null);
                     }
                     let sources = navigate::Sources::new(&docs, &idx);

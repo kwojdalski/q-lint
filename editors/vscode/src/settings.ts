@@ -55,6 +55,7 @@ export interface InitializationOptions {
   completion: { enable: boolean };
   callHierarchy: { enable: boolean };
   graph: { enable: boolean };
+  rename: { enable: boolean };
   inlayHints: { enable: boolean };
   codeLens: { enable: boolean };
   documentLinks: { enable: boolean };
@@ -137,6 +138,7 @@ export function launch(settings: Settings, folder: string | undefined): Launch {
       completion: { enable: settings.get<boolean>("completion.enable", false) },
       callHierarchy: { enable: settings.get<boolean>("callHierarchy.enable", true) },
       graph: { enable: settings.get<boolean>("graph.enable", true) },
+      rename: { enable: settings.get<boolean>("rename.enable", true) },
       inlayHints: { enable: settings.get<boolean>("inlayHints.enable", true) },
       codeLens: { enable: settings.get<boolean>("codeLens.enable", true) },
       documentLinks: { enable: settings.get<boolean>("documentLinks.enable", true) },
@@ -166,6 +168,7 @@ const RESTARTING = [
   "completion",
   "callHierarchy",
   "graph",
+  "rename",
   "inlayHints",
   "codeLens",
   "documentLinks",
