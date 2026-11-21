@@ -34,6 +34,7 @@ import {
 } from "vscode";
 import { ASSIST_SETTINGS, assistOff, readAssist, type AssistFeature } from "./assistconfig";
 import { isProduction } from "./agent";
+import { guardedBy, readGuard } from "./guard";
 import {
   DRIFT,
   DRIFT_BATCH,
@@ -243,11 +244,15 @@ export class Drift implements TextDocumentContentProvider {
     const asking = `${process.label}|${key}`;
     if (plan.send.length > 0) {
       const sending = namesList(plan.send.map((s) => s.name));
+      // A production process, or one the read-only guard (#918) guards, is
+      // asked on every save: no "always" for it.
       const production = isProduction(process);
-      const also = `Saved in ${file}.${production ? " A production process is asked about on every save." : ""}`;
-      if (production || !this.always.has(asking)) {
+      const guarded = guardedBy(process, readGuard((k, fallback) => workspace.getConfiguration("q-lint").get(k, fallback))).length > 0;
+      const everySave = production || guarded;
+      const also = `Saved in ${file}.${production ? " A production process is asked about on every save." : guarded ? " A read-only guarded process is asked about on every save." : ""}`;
+      if (everySave || !this.always.has(asking)) {
         this.asking = sending;
-        const picked = await askRedefine(sending, process, production ? [RELOAD] : [RELOAD, ALWAYS], also).finally(() => (this.asking = undefined));
+        const picked = await askRedefine(sending, process, everySave ? [RELOAD] : [RELOAD, ALWAYS], also).finally(() => (this.asking = undefined));
         if (picked !== RELOAD && picked !== ALWAYS) {
           out.reason = "not confirmed";
           keep(new Set(plan.already));

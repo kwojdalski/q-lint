@@ -484,8 +484,9 @@ path that sends code: a query (line, selection, block, file, a Run lens, a
 rerun, Preview, a saved query, a watched one, asked once when it starts),
 **Query a Tag** and **Compare Query** (asked once, for every guarded
 process they reach), a notebook cell and **Run Notebook with Parameters**,
-**Redefine on Process** (whose confirmation says so, since it always
-assigns) and a connect script, asked at each connect, and skipped, with the
+**Redefine on Process** and hot reload on save (whose confirmation says so,
+since they always assign; hot reload asks at every save, with no
+**Reload on Every Save**) and a connect script, asked at each connect, and skipped, with the
 connection kept, when declined; also a result-grid drill-down query, a run
 from the Testing view (each test's definition), and a query to a TorQ
 gateway, read as written - and a `.gw.syncexec` or `.gw.asyncexec` call,

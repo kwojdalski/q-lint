@@ -143,8 +143,44 @@ test("a production process is asked about on every save, with the warning, and n
     await drift.reload(doc);
     assert.ok(stub.asked, "asked");
     assert.deepStrictEqual(stub.asked.items.slice(1), ["Reload"]);
-    assert.match(stub.asked.items[0].detail, /prod is a production process/);
+    // The read-only guard (#918) guards prod by default, and its warning
+    // takes the production one's place, as in Redefine's confirmation.
+    assert.match(stub.asked.items[0].detail, /prod is tagged prod, which q-lint\.processes\.readOnlyGuard\.tags guards/);
+    assert.match(stub.asked.items[0].detail, /A production process is asked about on every save\./);
   }
+  // With the guard off, the production warning is said.
+  stub.config.user["processes.readOnlyGuard.enable"] = false;
+  doc.text = "f:{x+3}\n";
+  stub.picks = [(o) => (stub.asked = o, "Reload")];
+  await drift.reload(doc);
+  assert.match(stub.asked.items[0].detail, /prod is a production process/);
+  assert.deepStrictEqual(stub.asked.items.slice(1), ["Reload"]);
+  assert.strictEqual(held.f, "{x+3}");
+});
+
+test("a process the read-only guard guards (#918) is named in the question on every save, never offered Every Save; declined, nothing is redefined", async () => {
+  const held = { f: "{x}" };
+  const live1 = { label: "live1", host: "h", port: 3, tags: ["live"] };
+  const { live, drift } = setup(held, { process: live1, settings: { "processes.readOnlyGuard.tags": ["live"] } });
+  const doc = documentOf("/w/a.q", "f:{x}\n");
+  listeners.open.forEach((l) => l(doc));
+  doc.text = "f:{x+1}\n";
+  stub.picks = [(o) => ((stub.asked = o), undefined)];
+  assert.strictEqual((await drift.reload(doc)).reason, "not confirmed");
+  assert.match(stub.asked.message, /^Redefine f on the read-only process live1\?/);
+  assert.match(stub.asked.items[0].detail, /tagged live, which q-lint\.processes\.readOnlyGuard\.tags guards/);
+  assert.match(stub.asked.items[0].detail, /A read-only guarded process is asked about on every save\./);
+  assert.deepStrictEqual(stub.asked.items.slice(1), ["Reload"]);
+  assert.deepStrictEqual(live.sent.map((s) => s[0]), ["DRIFT"]);
+  assert.strictEqual(held.f, "{x}");
+  // Confirmed, it is sent; the next save asks again.
+  stub.picks = ["Reload"];
+  assert.deepStrictEqual((await drift.reload(doc)).sent, ["f"]);
+  doc.text = "f:{x+2}\n";
+  stub.picks = [(o) => ((stub.asked = o), "Reload")];
+  stub.asked = undefined;
+  await drift.reload(doc);
+  assert.ok(stub.asked, "asked again");
   assert.strictEqual(held.f, "{x+2}");
 });
 
