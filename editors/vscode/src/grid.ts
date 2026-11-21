@@ -275,14 +275,14 @@ export function csvText(text: string): string {
 
 /// The grid as CSV: a header of the column names, then `rows` (indices, in
 /// the order shown) as their cells show them. Lines end in `\n`. Names
-/// and the cells of a column that is not numeric or temporal go through
-/// `csvText`: a symbol or a string can be anything.
+/// and every cell go through `csvText`: a symbol or a string can be
+/// anything, and a numeric or temporal column holds `-0W` and `-0D01:00`,
+/// which are no number either.
 export function toCsv(grid: Grid, rows?: number[]): string {
   const order = rows ?? [...Array(rowCount(grid)).keys()];
-  const text = grid.columns.map((c) => (c.numeric || c.temporal ? (t: string) => t : csvText));
   const lines = [grid.columns.map((c) => csvField(csvText(c.name))).join(",")];
   for (const r of order) {
-    lines.push(grid.cells.map((column, i) => csvField(text[i](column[r] ?? ""))).join(","));
+    lines.push(grid.cells.map((column) => csvField(csvText(column[r] ?? ""))).join(","));
   }
   return lines.join("\n") + "\n";
 }

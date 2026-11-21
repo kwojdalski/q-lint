@@ -322,8 +322,9 @@ where a result goes; it sets `q-lint.query.mode`, and takes `console`,
   CSV** copies the rows shown, in the order shown, and **Export to CSV**
   saves them to a file you pick; the command **Export Results to CSV** does
   the same, and takes the file's `Uri` as an argument to skip the dialog.
-  In the CSV, a name, symbol or string a spreadsheet would run as a
-  formula (`=`, `+`, `-` or `@` first, but not a number) starts with `'`.
+  In the CSV, a cell or name a spreadsheet would run as a formula (`=`,
+  `+`, `-` or `@` first, but not a number) starts with `'`: a symbol or a
+  string, and a `-0W` or a negative timespan too.
   Each cell is what q
   prints in a table: a timestamp keeps its nanoseconds, a long above 2^53
   every digit, a null is blank and an infinity is `0W` or `0w`. Sorting is

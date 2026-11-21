@@ -198,8 +198,9 @@ test("CSV is the header and the rows given, as the cells show them", () => {
 test("CSV keeps text a spreadsheet would run as a formula as text", () => {
   // A symbol, a string or a column name a spreadsheet opening the file
   // would read as a formula (=, +, -, @, a tab or a carriage return first)
-  // is written with a leading quote; a number, a temporal and a numeric
-  // or temporal column's cells are written as they are.
+  // is written with a leading quote; a number is written as it is. So is a
+  // negative infinity or a negative timespan: `-0W` and `-0D01:00:00` are
+  // no number, and a spreadsheet showed #NAME? for them.
   const grid = toGrid(
     {
       count: 3,
@@ -220,10 +221,13 @@ test("CSV keeps text a spreadsheet would run as a formula as text", () => {
   assert.strictEqual(
     toCsv(grid),
     "'=s,j,str,n\n" +
-      "\"'=HYPERLINK(\"\"http://x\"\")\",-1,'-2+3,-0D01:00:00.000000000\n" +
+      "\"'=HYPERLINK(\"\"http://x\"\")\",-1,'-2+3,'-0D01:00:00.000000000\n" +
       "'+1,2,-1.5,0D00:00:00.000000000\n" +
       "'@SUM(A1),3,'\tx,\n",
   );
+  // An infinity in a numeric column is text too; a negative number is not.
+  const inf = toGrid({ count: 2, keys: 0, names: ["j"], types: [7], cells: [["", "-5"]], raw: [[-Infinity, -5]], rank: [[0, 1]] }, -1);
+  assert.strictEqual(toCsv(inf), "j\n'-0W\n-5\n");
 });
 
 // --- media/result.js and media/chartspec.js
