@@ -38,9 +38,9 @@
 // Column by column, because a column is one q vector and arrives as one.
 //
 // Like `RUN`, it defines nothing on the process: every name in it is a local
-// or a parameter. A value it cannot shape (a partitioned table that
-// `sublist` refuses) gives q's error as a string in `grid`, and the result
-// is shown in the output instead.
+// or a parameter. A partitioned table, which `sublist` refuses, is read by
+// row index with `.Q.ind`. A value it cannot shape gives q's error as a
+// string in `grid`, and the result is shown in the output instead.
 import { TRAP, readAnswer, type Answer } from "./query";
 
 export const GRID = [
@@ -56,7 +56,9 @@ export const GRID = [
   "       (10h=type v)|not type[v] within 0 97h;();",
   "       flip(enlist`value)!enlist v];",
   "     $[98h<>type t;t;",
-  "       [m:count t;t:n sublist t;c:$[count[cols t]=count distinct cols t;t cols t;value flip t];",
+  "       [m:count t;",
+  "        t:$[1b~.Q.qp t;[j:$[n<0;(m+n)|0;0]+til m&abs n;$[count j;.Q.ind[t;j];select from t where i<0]];n sublist t];",
+  "        c:$[count[cols t]=count distinct cols t;t cols t;value flip t];",
   "        `count`keys`names`types`cells`raw`rank!(\"f\"$m;\"i\"$k;cols t;type each c;",
   "          {$[type[x] within 1 76h;string x;{$[200<count x;(197#x),\"...\";x]} each -3!'x]} each c;",
   "          {[c]u:type c;$[u in 12 16h;\"j\"$c;u in 13 14 17 18 19h;\"i\"$c;u=15h;\"f\"$c;u in 2 5 6 7 8 9h;c;()]} each c;",
