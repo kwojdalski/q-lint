@@ -154,3 +154,17 @@ test("a write from the new editor to a guarded process is held for confirmation 
   assert.ok(stub.messages.some(([kind, text]) => kind === "warning" && /would change prod1/.test(text)), JSON.stringify(stub.messages));
   assert.strictEqual(live.history().length, 0);
 });
+
+test("a read from the new editor to a guarded process is let through, unasked (real q)", { skip }, async (t) => {
+  const qa = await startQ(await freePort());
+  t.after(() => qa.stop());
+  // Guarded by a tag of its own, so only the guard can ask, not a production confirmation.
+  const { live } = await setUp(t, [proc("ro1", qa.port, ["ro"])], "me");
+  stub.config.user["processes.readOnlyGuard.tags"] = ["ro"];
+  await stub.commands.get(NEW_QUERY_COMMAND)("ro1");
+  await stub.commands.get("q-lint.queryCurrentLine")();
+  assert.ok(!stub.messages.some(([kind]) => kind === "warning"), JSON.stringify(stub.messages));
+  const [entry] = live.history();
+  assert.strictEqual(entry.process, "ro1");
+  assert.strictEqual(entry.outcome, "ok");
+});

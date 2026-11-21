@@ -11,6 +11,7 @@ const {
   ARGUMENT_SLOT,
   DEFINED_IN_WORKSPACE,
   NAMES_LIMIT,
+  PROCESS_NAMES,
   lensTarget,
   matching,
   processSymbolDocument,
@@ -215,6 +216,21 @@ test("process names join a workspace search only while turned on, without the wo
   assert.strictEqual(registered[0].disposed, true);
   assert.deepStrictEqual(await symbols.search(""), []);
   assert.strictEqual(live.sent.length, 1);
+});
+
+test("a process the read-only guard guards by a tag of its own is still read: the names are a fixed read-only call", async () => {
+  stub.reset();
+  const registered = fakeSymbols();
+  stub.config.user["processSymbols.enable"] = true;
+  stub.config.user["processes.readOnlyGuard.tags"] = ["ro"];
+  const server = { sendRequest: async (method, params) => params.names.map(() => false) };
+  const guarded = fakeLive({ label: "ro1", tags: ["ro"] });
+  const found = await registerProcessSymbols(stub.newContext(), guarded, () => server).search("onproc");
+  assert.deepStrictEqual(found.map((s) => s.name), ["onproc"]);
+  assert.strictEqual(guarded.sent.length, 1);
+  assert.strictEqual(guarded.sent[0].lambda, PROCESS_NAMES);
+  assert.ok(!stub.messages.some(([kind]) => kind === "warning"), JSON.stringify(stub.messages));
+  assert.strictEqual(registered.length, 1);
 });
 
 test("a production process, a busy one and no connection add nothing", async () => {
