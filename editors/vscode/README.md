@@ -266,13 +266,14 @@ changed.
 
 - **Run** and **Run test**, code lenses: **Run** above each function a
   statement at column 0 defines sends that statement, continuation lines
-  and all; **Run test**, above a function named `test_*`, sends it and then
-  calls it with no argument. A definition under `\d .ns` is sent between
-  `\d .ns` and `\d .`, so its body reads names as it does in the file, and
-  a test there is called by its full name, `.ns.test_x[]` - which leaves
-  the process at the root context afterwards. Either goes to the process
-  the file is bound to, as the commands above do, and lands in the history.
-  `q-lint.codeLens.enable` turns them off.
+  and all; **Run test**, above a function named `test_*` (or qUnit's
+  `testName`), sends it and then calls it with no argument. A definition
+  under `\d .ns` is sent between `\d .ns` and `\d .`, so its body reads
+  names as it does in the file, and a test there is called by its full
+  name, `.ns.test_x[]` - which leaves the process at the root context
+  afterwards. Either goes to the process the file is bound to, as the
+  commands above do, and lands in the history. `q-lint.codeLens.enable`
+  turns them off.
 
 The code is cut into statements by q's own script rules: a line starting
 with a space or tab continues the one above, `/` lines and block comments

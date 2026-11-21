@@ -280,7 +280,7 @@
             "type": "boolean",
             "default": true,
             "order": 29,
-            "markdownDescription": "Show **Run** above each function a statement at column 0 defines, and **Run test** above one named `test_*`. Run sends the definition to the connected process - under the `\\d` it is written in - as a query from the editor would be sent; Run test sends it and then calls it with no argument. Off, q-lint announces no lenses."
+            "markdownDescription": "Show **Run** above each function a statement at column 0 defines, and **Run test** above one named `test_*` (or qUnit's `testName`). Run sends the definition to the connected process - under the `\\d` it is written in - as a query from the editor would be sent; Run test sends it and then calls it with no argument. Off, q-lint announces no lenses."
           },
           "q-lint.documentLinks.enable": {
             "type": "boolean",

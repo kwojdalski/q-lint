@@ -54,6 +54,11 @@
 //! as `qlinter analyze graph` has them, and `q-lint/affectedTests`, the test
 //! files reaching the files a client says changed. Which files changed is
 //! git's to say and the client's to ask: this server starts no process.
+//! And what a client asks before it talks to a q process, in `live`, also
+//! under `experimental`: `q-lint/tests`, the test functions to run,
+//! `q-lint/globalAt`, the global a position names, and
+//! `q-lint/unresolvedNames`, the globals a document reads that no workspace
+//! file defines. The client runs and asks; this server reads.
 //!
 //! Around those: each diagnostic links its code to that rule's row in the
 //! reference (`codeDescription`); beside its fix, or without one, a finding
@@ -165,6 +170,7 @@ const REQUEST_CANCELLED: i64 = -32800;
 
 mod annotate;
 mod help;
+mod live;
 mod navigate;
 mod relate;
 
@@ -1065,6 +1071,7 @@ pub fn serve(
                 help_client = help::Client::read(&params);
                 help::announce(&mut result["capabilities"], opts.help, opts.completion);
                 relate::announce(&mut result["capabilities"], opts.call_hierarchy, opts.graph);
+                live::announce(&mut result["capabilities"]);
                 annotate::announce(
                     &mut result["capabilities"],
                     opts.inlay_hints,
@@ -1143,7 +1150,9 @@ pub fn serve(
                 | "textDocument/inlayHint"
                 | "textDocument/codeLens"
                 | "textDocument/documentLink"
-                | "q-lint/graph",
+                | "q-lint/graph"
+                | "q-lint/globalAt"
+                | "q-lint/unresolvedNames",
                 id,
             ) if !params["textDocument"]["uri"].is_string() => {
                 let message = format!("{method}: params.textDocument.uri must be a string");
@@ -1347,6 +1356,16 @@ pub fn serve(
                     }
                     let sources = navigate::Sources::new(&docs, &idx);
                     annotate::answer(&method, &params, &sources)
+                });
+                match answer {
+                    Ok(result) => send(writer, json!({"id": id, "result": result}))?,
+                    Err(panic) => send(writer, internal_error(id, &panic))?,
+                }
+            }
+            ("q-lint/tests" | "q-lint/globalAt" | "q-lint/unresolvedNames", Some(id)) => {
+                let answer = guarded(|| {
+                    let sources = navigate::Sources::new(&docs, &idx);
+                    live::answer(&method, &params, &sources)
                 });
                 match answer {
                     Ok(result) => send(writer, json!({"id": id, "result": result}))?,

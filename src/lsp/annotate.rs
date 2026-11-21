@@ -145,20 +145,31 @@ fn declared(sources: &Sources, names: &[String], from: &str) -> Option<Vec<Strin
     agreed.filter(|params| !params.is_empty())
 }
 
-/// `textDocument/codeLens`: above each function a statement at column 0
-/// defines, **Run**, which sends that statement to the connected process -
-/// under the `\d` it is written in, and back to the root after - and above a
-/// function whose name starts `test_`, **Run test** too, which sends it and
-/// then calls it with no argument.
-///
-/// The code is the lens's argument, as the text is when the lenses are
-/// asked for: an editor asks again as the document changes.
-fn code_lenses(params: &Value, sources: &Sources) -> Value {
-    let Some((uri, text)) = sources.document(params) else {
-        return json!([]);
-    };
-    let lines = Lines::new(text);
-    let mut lenses = vec![];
+/// A function a statement at column 0 defines, as a lens or a test runs
+/// it: the name as written at `at` for `len` bytes, the code that defines it
+/// (the statement, wrapped in `\d .ns` and `\d .` when it is written under
+/// `\d .ns`) and, for a test, the call that runs it once defined.
+pub(super) struct Runnable {
+    pub(super) at: usize,
+    pub(super) len: usize,
+    pub(super) code: String,
+    pub(super) test: Option<String>,
+}
+
+/// Whether a function named `name` is a test: its last part starts
+/// `test_`, as this repository's suites and uqf's `.qt` ones are written,
+/// or `test` and a capital, as qUnit's (`.mytests.testAddition`) are.
+pub(super) fn is_test(name: &str) -> bool {
+    let leaf = name.rsplit('.').next().unwrap_or(name);
+    leaf.starts_with("test_")
+        || leaf
+            .strip_prefix("test")
+            .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_uppercase()))
+}
+
+/// Each function a statement at column 0 of `text` defines, in order.
+pub(super) fn runnables(text: &str) -> Vec<Runnable> {
+    let mut out = vec![];
     let mut seen = HashSet::new();
     for m in &mentions(text) {
         let Some(definition) = &m.definition else {
@@ -180,23 +191,43 @@ fn code_lenses(params: &Value, sources: &Sources) -> Value {
             Some(ns) => format!("\\d {ns}\n{statement}\n\\d ."),
             None => statement.to_string(),
         };
-        let at = range(&lines, m.at, m.len);
+        // Called by the name it has once defined: a bare one before the
+        // file's first `\d` is wherever the process puts it, the root for a
+        // query.
+        let name = if m.implicit { spelled } else { &m.name };
+        out.push(Runnable {
+            at: m.at,
+            len: m.len,
+            test: is_test(spelled).then(|| format!("{name}[]")),
+            code,
+        });
+    }
+    out
+}
+
+/// `textDocument/codeLens`: above each function a statement at column 0
+/// defines, **Run**, which sends that statement to the connected process -
+/// under the `\d` it is written in, and back to the root after - and above a
+/// test (`is_test`), **Run test** too, which sends it and then calls it with
+/// no argument.
+///
+/// The code is the lens's argument, as the text is when the lenses are
+/// asked for: an editor asks again as the document changes.
+fn code_lenses(params: &Value, sources: &Sources) -> Value {
+    let Some((uri, text)) = sources.document(params) else {
+        return json!([]);
+    };
+    let lines = Lines::new(text);
+    let mut lenses = vec![];
+    for run in runnables(text) {
+        let at = range(&lines, run.at, run.len);
         let lens = |title: &str, code: String| {
             json!({"range": at, "command": {"title": title, "command": RUN_COMMAND,
                                              "arguments": [code, uri]}})
         };
-        lenses.push(lens("Run", code.clone()));
-        if spelled
-            .rsplit('.')
-            .next()
-            .unwrap_or(spelled)
-            .starts_with("test_")
-        {
-            // Called by the name it has once defined: a bare one before the
-            // file's first `\d` is wherever the process puts it, the root
-            // for a query.
-            let name = if m.implicit { spelled } else { &m.name };
-            lenses.push(lens("Run test", format!("{code}\n{name}[]")));
+        lenses.push(lens("Run", run.code.clone()));
+        if let Some(call) = &run.test {
+            lenses.push(lens("Run test", format!("{}\n{call}", run.code)));
         }
     }
     json!(lenses)

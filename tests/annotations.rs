@@ -633,3 +633,131 @@ fn extract_function_can_be_turned_off() {
     );
     assert_eq!(extracted(&actions, &uri, text), None, "{actions:?}");
 }
+
+#[test]
+fn the_workspace_tests_are_listed_with_the_code_that_runs_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let suite = "\\d .qt.m\nhelper:{x}\ntest_add:{[] 2~1+1}\ntestQunit:{[] 1b}\n\\d .\n";
+    let bare = "test_top:{[] 1b}\nnot_a_test:{[] 0b}\ntestlower:{[] 1b}\n";
+    let mut server = Server::start(
+        dir.path(),
+        &[("suite.q", suite), ("bare.q", bare), ("none.q", "a:1\n")],
+    );
+    let reply = server.request("q-lint/tests", json!({}));
+    let files = reply["result"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{reply}"));
+    type Listed = (String, String, String);
+    let listed: Vec<(String, Vec<Listed>)> = files
+        .iter()
+        .map(|f| {
+            let uri = f["uri"].as_str().unwrap();
+            let name = uri.rsplit('/').next().unwrap().to_string();
+            let tests = f["tests"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|t| {
+                    (
+                        t["name"].as_str().unwrap().to_string(),
+                        t["code"].as_str().unwrap().to_string(),
+                        t["call"].as_str().unwrap().to_string(),
+                    )
+                })
+                .collect();
+            (name, tests)
+        })
+        .collect();
+    assert_eq!(
+        listed,
+        vec![
+            (
+                "bare.q".to_string(),
+                vec![(
+                    "test_top".into(),
+                    "test_top:{[] 1b}".into(),
+                    "test_top[]".into()
+                )]
+            ),
+            (
+                "suite.q".to_string(),
+                vec![
+                    (
+                        "test_add".into(),
+                        "\\d .qt.m\ntest_add:{[] 2~1+1}\n\\d .".into(),
+                        ".qt.m.test_add[]".into()
+                    ),
+                    (
+                        "testQunit".into(),
+                        "\\d .qt.m\ntestQunit:{[] 1b}\n\\d .".into(),
+                        ".qt.m.testQunit[]".into()
+                    ),
+                ]
+            ),
+        ]
+    );
+    // One document's, by its URI; its range is the name.
+    let uri = file_uri(&dir.path().join("suite.q"));
+    let reply = server.request("q-lint/tests", json!({"textDocument": {"uri": uri}}));
+    let tests = &reply["result"][0]["tests"];
+    assert_eq!(tests.as_array().unwrap().len(), 2, "{reply}");
+    assert_eq!(span(&tests[0]["range"]), (2, 0, 8));
+}
+
+#[test]
+fn the_global_at_a_position_is_named_as_q_resolves_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let text = "\\d .lib\nrate:10\nf:{[px] px*rate}\n\\d .\ng:{count x}\n";
+    let uri = server.open(dir.path(), "lib.q", text);
+    let at = |server: &mut Server, line: u64, character: u64| {
+        server.whole(
+            "q-lint/globalAt",
+            &uri,
+            json!({"position": {"line": line, "character": character}}),
+        )["result"]
+            .clone()
+    };
+    let got = at(&mut server, 2, 12);
+    assert_eq!(got["names"], json!([".lib.rate"]), "{got}");
+    assert_eq!(span(&got["range"]), (2, 11, 15));
+    // A parameter, a word of q's, a blank: nothing to ask a process about.
+    assert_eq!(at(&mut server, 2, 9), Value::Null);
+    assert_eq!(at(&mut server, 4, 4), Value::Null);
+    assert_eq!(at(&mut server, 3, 3), Value::Null);
+}
+
+#[test]
+fn the_names_no_workspace_file_defines_are_listed_for_the_process() {
+    let dir = tempfile::tempdir().unwrap();
+    let lib = "\\d .lib\nrate:10\n\\d .\n";
+    let mut server = Server::start(dir.path(), &[("lib.q", lib)]);
+    let text = "f:{[px] px*.lib.rate+.lib.missing+other}\n\
+                g:{select from trade where sym=px, size>limit}\n\
+                h:{.z.p+.Q.dd[x;y]+count x}\n";
+    let uri = server.open(dir.path(), "main.q", text);
+    let reply = server.whole("q-lint/unresolvedNames", &uri, json!({}));
+    let got: Vec<(String, (u64, u64, u64))> = reply["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| {
+            (
+                n["written"].as_str().unwrap().to_string(),
+                span(&n["range"]),
+            )
+        })
+        .collect();
+    // Not `.lib.rate` (lib.q), `f` and `g` (here), the parameter, the
+    // columns, q's words or its one-letter namespaces: the table is asked
+    // about, the columns are not.
+    assert_eq!(
+        got,
+        vec![
+            (".lib.missing".to_string(), (0, 21, 33)),
+            ("other".to_string(), (0, 34, 39)),
+            ("trade".to_string(), (1, 15, 20)),
+        ],
+        "{reply}"
+    );
+}
