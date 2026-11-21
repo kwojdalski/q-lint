@@ -55,6 +55,22 @@ export const RESULTS = {
   setRowLimit: "q-lint.setNotebookRowLimit",
 } as const;
 
+/// The result panel's own commands: its views, its history and its diff.
+export const RESULT_VIEW = {
+  statistics: "q-lint.showResultStatistics",
+  tree: "q-lint.showResultTree",
+  compare: "q-lint.compareResultWithPrevious",
+  heatmap: "q-lint.toggleResultHeatmap",
+  history: "q-lint.showResultFromHistory",
+} as const;
+
+/// Context keys the result panel sets, for its commands' `when` clauses.
+export const RESULT_CONTEXT = {
+  shown: "q-lint.result.shown",
+  hasPrevious: "q-lint.result.hasPrevious",
+  hasTree: "q-lint.result.hasTree",
+} as const;
+
 /// Where the result panel opens: beside the editor, or in the bottom panel.
 export const RESULTS_LOCATIONS = ["editor", "panel"] as const;
 export type ResultsLocation = (typeof RESULTS_LOCATIONS)[number];
@@ -109,6 +125,35 @@ export function readLive(get: <T>(key: string, fallback: T) => T): LiveSettings 
     gridLimit: whole(get("query.gridLimit", 10000), 1, 10000),
     gridDecimals: Math.min(whole(get("query.gridDecimals", -1), -1, -1), 20),
     resultsLocation: RESULTS_LOCATIONS.find((l) => l === get("query.resultsLocation", "editor")) ?? "editor",
+  };
+}
+
+/// The result panel's features, each with its own `q-lint.results.<feature>.enable`.
+export const RESULT_FEATURES = ["history", "diff", "statistics", "heatmap", "tree"] as const;
+export type ResultFeature = (typeof RESULT_FEATURES)[number];
+
+export interface ResultViewSettings {
+  /// Results kept as tabs, 1 to 50; 1 while the history is off.
+  history: number;
+  /// Whether numeric columns are coloured by value: never while the
+  /// heatmap is off.
+  heatmap: boolean;
+  /// Which of the panel's features are on.
+  enable: Record<ResultFeature, boolean>;
+}
+
+/// The result view's own settings, read with `get` as `readLive` reads the
+/// query ones. Every feature is on unless its setting is `false`.
+export function readResultView(get: <T>(key: string, fallback: T) => T): ResultViewSettings {
+  const enable = Object.fromEntries(RESULT_FEATURES.map((f) => [f, get<unknown>(`results.${f}.enable`, true) !== false])) as Record<
+    ResultFeature,
+    boolean
+  >;
+  const n = get<unknown>("query.resultHistory", 10);
+  return {
+    history: !enable.history ? 1 : typeof n === "number" && Number.isInteger(n) ? Math.max(1, Math.min(50, n)) : 10,
+    heatmap: enable.heatmap && get<unknown>("query.gridHeatmap", false) === true,
+    enable,
   };
 }
 

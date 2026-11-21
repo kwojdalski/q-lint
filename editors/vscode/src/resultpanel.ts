@@ -18,6 +18,12 @@
 // `setState`, and asks for the result again, as a panel does. Export to CSV
 // writes the rows shown, after the filters and the sort, as Copy as CSV
 // copies them.
+//
+// The last `q-lint.query.resultHistory` results are kept, and the page shows
+// them as tabs: choosing one shows it again as it was drawn. Each result
+// also keeps the previous run of the same code, so the page can mark what
+// changed since (`resultdiff.ts`). A dictionary or a nested list comes with
+// its tree (`grid.ts`'s `tree`), which the page opens level by level.
 import { randomBytes } from "node:crypto";
 import {
   commands,
@@ -34,8 +40,22 @@ import {
   type WebviewPanel,
   type WebviewView,
 } from "vscode";
-import { COMMANDS, QUERY_MODES, readLive, RESULTS, type LiveSettings, type QueryMode, type ResultsLocation } from "./liveconfig";
+import {
+  COMMANDS,
+  QUERY_MODES,
+  readLive,
+  readResultView,
+  RESULT_CONTEXT,
+  RESULT_VIEW,
+  RESULTS,
+  type LiveSettings,
+  type QueryMode,
+  type ResultFeature,
+  type ResultViewSettings,
+  type ResultsLocation,
+} from "./liveconfig";
 import { rowCount, toCsv, toGrid, type GridAnswer, type GridPayload } from "./grid";
+import { diffGrids, type GridDiff } from "./resultdiff";
 
 const MODE_ICONS: Record<QueryMode, string> = { console: "output", grid: "table", chart: "graph-line" };
 const MODE_DETAILS: Record<QueryMode, string> = {
@@ -49,7 +69,7 @@ const MODE_DETAILS: Record<QueryMode, string> = {
 export interface Rendered {
   /// Where it was drawn: the editor-area panel, or the q Results view.
   location: ResultsLocation;
-  view: "grid" | "chart";
+  view: "grid" | "chart" | "stats" | "tree";
   /// Rows shown after the filters, and rows the panel holds.
   rows: number;
   held: number;
@@ -59,7 +79,28 @@ export interface Rendered {
   /// The cells of the first row shown.
   first: string[];
   chart?: { kind: string; datasets: { label: string; points: number }[]; note?: string };
+  /// The results the page offers as tabs, and the place of the one shown.
+  history?: { count: number; index: number };
+  /// What Compare with Previous Run marks, when it is on.
+  diff?: { changed: number; added: number; removed: number; matchedBy: string };
+  /// Cells the heatmap coloured, when it is on.
+  heat?: number;
+  /// The statistics view: one row per column.
+  stats?: { name: string; count: number; nulls: number; distinct: number; min: string; max: string; mean: string }[];
+  /// The tree view: the nodes drawn, and how many are open.
+  tree?: { drawn: number; open: number; labels: string[] };
 }
+
+/// What a page is asked to do by a command, once: `key` tells a request
+/// from the same one sent again with the next result.
+interface Control {
+  key: string;
+  action: "view" | "compare";
+  view?: "stats" | "tree";
+}
+
+/// How many results the previous run of each query is kept for.
+const PREVIOUS_RUNS = 20;
 
 interface Shown {
   process: string;
@@ -75,6 +116,17 @@ interface Shown {
   /// the session: a view's page keeps its state across a window reload,
   /// and must not take the next session's first result for its last.
   id: string;
+  /// When it ran.
+  at: number;
+  /// The previous run of the same code, when there was one.
+  before?: { payload: GridPayload; process: string; at: number };
+}
+
+/// A query's code on one line, for a tab or a pick: its first line, cut.
+function oneLine(code: string): string {
+  const line = code.trim().split(/\r?\n/)[0] ?? "";
+  const more = line.length > 60 || code.trim().includes("\n");
+  return more ? `${line.slice(0, 57)}...` : line;
 }
 
 function settings(): LiveSettings {
@@ -105,6 +157,8 @@ function resultHtml(webview: Webview, media: Uri, location: ResultsLocation): st
 /// What a page says to the extension.
 interface PageMessage {
   type?: string;
+  /// "select": the result chosen from the tabs.
+  pick?: string;
   /// The result the page drew: rows are rows of it.
   id?: string;
   rows?: number[];
@@ -123,6 +177,12 @@ export class QueryModes {
   private readonly media: Uri;
   private readonly session = randomBytes(6).toString("hex");
   private results = 0;
+  /// The results kept, oldest first; `shown` is one of them.
+  private history: Shown[] = [];
+  /// The last run of each query's code, for the next run to compare with.
+  private readonly previous = new Map<string, Shown>();
+  private control: Control | undefined;
+  private controls = 0;
 
   constructor(private readonly context: ExtensionContext) {
     this.media = Uri.joinPath(context.extensionUri, "media");
@@ -134,14 +194,26 @@ export class QueryModes {
       commands.registerCommand(COMMANDS.switchMode, (mode?: string) => this.switchMode(mode)),
       commands.registerCommand(RESULTS.exportCsv, (target?: Uri) => this.exportCsv(target, this.order[settings().resultsLocation])),
       commands.registerCommand(RESULTS.exportViewCsv, (target?: Uri) => this.exportCsv(target, this.order.panel)),
+      commands.registerCommand(RESULT_VIEW.statistics, () => this.enabled("statistics") && this.ask({ action: "view", view: "stats" })),
+      commands.registerCommand(RESULT_VIEW.tree, () => this.enabled("tree") && this.ask({ action: "view", view: "tree" })),
+      commands.registerCommand(RESULT_VIEW.compare, () => this.enabled("diff") && this.ask({ action: "compare" })),
+      commands.registerCommand(RESULT_VIEW.heatmap, () => this.enabled("heatmap") && this.toggleHeatmap()),
+      commands.registerCommand(RESULT_VIEW.history, (id?: string) => this.enabled("history") && this.pickFromHistory(id)),
       window.registerWebviewViewProvider(RESULTS.view, { resolveWebviewView: (view) => this.resolveView(view) }),
       workspace.onDidChangeConfiguration((event) => {
         if (event.affectsConfiguration("q-lint.query")) {
           this.showStatus();
         }
-        // New decimals apply to what is on show. Nothing else does, and a
-        // result sent again is drawn afresh, its grid back at the top.
-        if (event.affectsConfiguration("q-lint.query.gridDecimals")) {
+        // New decimals apply to what is on show, and so does the heatmap.
+        // Nothing else does, and a result sent again is drawn afresh, its
+        // grid back at the top.
+        // A result feature turned off is gone from the page at once, and
+        // what it kept is dropped.
+        const features = event.affectsConfiguration("q-lint.results") || event.affectsConfiguration("q-lint.query.resultHistory");
+        if (features) {
+          this.applyFeatures();
+        }
+        if (features || event.affectsConfiguration("q-lint.query.gridDecimals") || event.affectsConfiguration("q-lint.query.gridHeatmap")) {
           this.post();
         }
       }),
@@ -170,7 +242,9 @@ export class QueryModes {
     if (answer.grid === undefined) {
       return false;
     }
-    this.shown = {
+    const features = this.viewSettings();
+    const last = features.enable.diff ? this.previous.get(result.code) : undefined;
+    const shown: Shown = {
       process: result.process,
       code: result.code,
       millis: result.millis,
@@ -178,7 +252,18 @@ export class QueryModes {
       view: live.mode,
       limit: live.gridLimit,
       id: `${this.session}.${++this.results}`,
+      at: Date.now(),
+      ...(last !== undefined ? { before: { payload: last.payload, process: last.process, at: last.at } } : {}),
     };
+    // Kept by code, most recent last, so the oldest is the one dropped.
+    this.previous.delete(result.code);
+    this.previous.set(result.code, shown);
+    if (this.previous.size > PREVIOUS_RUNS) {
+      this.previous.delete(this.previous.keys().next().value as string);
+    }
+    this.history.push(shown);
+    this.shown = shown;
+    this.applyFeatures(features);
     this.order.editor = undefined;
     this.order.panel = undefined;
     if (live.resultsLocation === "panel") {
@@ -188,6 +273,111 @@ export class QueryModes {
     }
     this.post();
     return true;
+  }
+
+  private viewSettings(): ResultViewSettings {
+    const configuration = workspace.getConfiguration("q-lint");
+    return readResultView((key, fallback) => configuration.get(key, fallback));
+  }
+
+  /// Whether the result view should ask the process for a value's tree.
+  wantsTree(): boolean {
+    return this.viewSettings().enable.tree;
+  }
+
+  /// Whether `feature` is on; when it is not, say so and how to turn it on.
+  private enabled(feature: ResultFeature): boolean {
+    if (this.viewSettings().enable[feature]) {
+      return true;
+    }
+    void window.showInformationMessage(`q-lint: this result panel feature is turned off. Turn it on with the setting q-lint.results.${feature}.enable.`);
+    return false;
+  }
+
+  /// Keep only what the features on need: the history to its length, and
+  /// no previous runs while the diff is off.
+  private applyFeatures(features = this.viewSettings()): void {
+    this.history = this.history.slice(-features.history);
+    if (this.shown !== undefined && !this.history.includes(this.shown)) {
+      this.history.push(this.shown);
+      this.history = this.history.slice(-features.history);
+    }
+    if (!features.enable.diff) {
+      this.previous.clear();
+    }
+  }
+
+  /// Show a result kept in the history again, as it was drawn.
+  private select(id: string | undefined): boolean {
+    const chosen = this.history.find((h) => h.id === id);
+    if (chosen === undefined) {
+      return false;
+    }
+    if (chosen !== this.shown) {
+      this.shown = chosen;
+      this.order.editor = undefined;
+      this.order.panel = undefined;
+    }
+    this.post();
+    return true;
+  }
+
+  /// Show the result whose id is `id`, or one picked from the history.
+  private async pickFromHistory(id?: string): Promise<void> {
+    if (this.history.length === 0) {
+      void window.showInformationMessage("q-lint: no result yet. Run a query in grid or chart mode first.");
+      return;
+    }
+    let chosen = typeof id === "string" ? id : undefined;
+    if (chosen === undefined) {
+      const picked = await window.showQuickPick(
+        [...this.history].reverse().map((h) => ({
+          label: oneLine(h.code),
+          description: `${h.process} · ${new Date(h.at).toLocaleTimeString()}`,
+          detail: `${h.payload.count.toLocaleString("en-US")} row(s)${h === this.shown ? " · on show" : ""}`,
+          id: h.id,
+        })),
+        { title: "q-lint: show a result from the history" },
+      );
+      chosen = picked?.id;
+    }
+    if (chosen !== undefined && this.select(chosen)) {
+      this.reveal();
+    }
+  }
+
+  /// Ask the pages to show a view or to compare, once.
+  private ask(control: Omit<Control, "key">): void {
+    if (this.shown === undefined) {
+      void window.showInformationMessage("q-lint: no result yet. Run a query in grid or chart mode first.");
+      return;
+    }
+    if (control.action === "view" && control.view === "tree" && this.shown.payload.tree === undefined) {
+      void window.showInformationMessage("q-lint: the result on show is not a dictionary or a nested list, so it has no tree.");
+      return;
+    }
+    if (control.action === "compare" && this.shown.before === undefined) {
+      void window.showInformationMessage("q-lint: this query has not been run before in this window, so there is nothing to compare with.");
+      return;
+    }
+    this.control = { key: `${this.session}.${++this.controls}`, ...control };
+    this.reveal();
+    this.post();
+  }
+
+  private async toggleHeatmap(): Promise<void> {
+    const configuration = workspace.getConfiguration("q-lint");
+    const where = configuration.inspect("query.gridHeatmap");
+    const target = where?.workspaceValue !== undefined ? ConfigurationTarget.Workspace : ConfigurationTarget.Global;
+    await configuration.update("query.gridHeatmap", !this.viewSettings().heatmap, target);
+  }
+
+  private reveal(): void {
+    if (settings().resultsLocation === "panel") {
+      void this.revealView();
+    } else {
+      this.revealPanel();
+    }
   }
 
   private async switchMode(mode?: string): Promise<void> {
@@ -277,6 +467,13 @@ export class QueryModes {
     if (message.type === "ready") {
       // Also after the page was hidden and shown again, which reloads it.
       this.post(webview);
+    } else if (message.type === "select") {
+      // A tab: any result kept, not only the one on show.
+      this.select(message.pick);
+    } else if (message.type === "heatmap") {
+      if (this.enabled("heatmap")) {
+        void this.toggleHeatmap();
+      }
     } else if (!current) {
       return;
     } else if (message.type === "rendered" && message.rendered !== undefined) {
@@ -301,6 +498,14 @@ export class QueryModes {
     }
     const { process, code, millis, payload, view, limit, id } = this.shown;
     const live = settings();
+    const features = this.viewSettings();
+    const before = features.enable.diff ? this.shown.before : undefined;
+    const tree = features.enable.tree ? payload.tree : undefined;
+    const grid = toGrid(payload, live.gridDecimals);
+    let diff: (GridDiff & { process: string; at: number }) | undefined;
+    if (before !== undefined) {
+      diff = { process: before.process, at: before.at, ...diffGrids(toGrid(before.payload, live.gridDecimals), grid) };
+    }
     const message = {
       type: "result",
       id,
@@ -309,8 +514,17 @@ export class QueryModes {
       code,
       millis,
       limit,
-      grid: toGrid(payload, live.gridDecimals),
+      grid,
+      tree,
+      diff,
+      heatmap: features.heatmap,
+      features: { statistics: features.enable.statistics, heatmap: features.enable.heatmap },
+      history: (features.enable.history ? this.history : [this.shown]).map((h) => ({ id: h.id, process: h.process, code: oneLine(h.code), at: h.at, rows: h.payload.count })),
+      control: this.control,
     };
+    void commands.executeCommand("setContext", RESULT_CONTEXT.shown, true);
+    void commands.executeCommand("setContext", RESULT_CONTEXT.hasPrevious, before !== undefined);
+    void commands.executeCommand("setContext", RESULT_CONTEXT.hasTree, tree !== undefined);
     const pages = only !== undefined ? [only] : [this.panel?.webview, this.view?.webview];
     for (const page of pages) {
       void page?.postMessage(message);

@@ -24,12 +24,14 @@ const {
   DISCOVERY_COMMANDS,
   QUERY_MODES,
   RESULTS,
+  RESULT_VIEW,
   RESULTS_LOCATIONS,
   ROW_LIMIT_CHOICES,
   ROW_LIMIT_FROM,
   VIEWS,
   readLive,
   readNotebook,
+  readResultView,
   rowLimitLabel,
   rowsArgument,
 } = require("../out/liveconfig.js");
@@ -267,6 +269,7 @@ test("package.json declares exactly the commands the extension registers", () =>
     RESULTS.exportCsv,
     RESULTS.exportViewCsv,
     RESULTS.setRowLimit,
+    ...Object.values(RESULT_VIEW),
     AGENT.copyLabel,
     ...[ONBOARDING.getStarted, ONBOARDING.openHelpLink, ONBOARDING.editTagColor, ONBOARDING.newNotebook],
     "q-lint.restartServer",
@@ -357,6 +360,7 @@ test("every query setting is read, with the default package.json declares, and n
   const live = readLive(get);
   const explorer = readExplorer(get);
   const controls = readControls(get);
+  const resultView = readResultView(get);
   for (const [key, spec] of Object.entries(declared)) {
     const short = key.replace(/^q-lint\./, "");
     assert.ok(read.has(short), `${key} is declared but never read`);
@@ -376,6 +380,20 @@ test("every query setting is read, with the default package.json declares, and n
     resultsLocation: "editor",
   });
   assert.deepStrictEqual(controls, { unwrapped: false, timeout: 0 });
+  assert.deepStrictEqual(resultView, {
+    history: 10,
+    heatmap: false,
+    enable: { history: true, diff: true, statistics: true, heatmap: true, tree: true },
+  });
+  const view = (values) => readResultView((key, fallback) => (key in values ? values[key] : fallback));
+  assert.strictEqual(view({ "query.resultHistory": 0 }).history, 1);
+  assert.strictEqual(view({ "query.resultHistory": 99 }).history, 50);
+  assert.strictEqual(view({ "query.resultHistory": 2.5 }).history, 10);
+  assert.strictEqual(view({ "query.gridHeatmap": "true" }).heatmap, false);
+  // A feature turned off: the history keeps one result, the heatmap colours nothing.
+  assert.strictEqual(view({ "results.history.enable": false, "query.resultHistory": 20 }).history, 1);
+  assert.strictEqual(view({ "results.heatmap.enable": false, "query.gridHeatmap": true }).heatmap, false);
+  assert.strictEqual(view({ "results.tree.enable": false }).enable.tree, false);
   assert.deepStrictEqual(explorer, { excludedNamespaces: ["q", "Q", "h", "j", "o", "s"], previewLimit: 5, autoRefresh: false });
   // A size that is not one falls back to the default.
   assert.deepStrictEqual(readLive((key, fallback) => (key === "output.consoleSize" ? "big" : fallback)).consoleSize, [50, 160]);

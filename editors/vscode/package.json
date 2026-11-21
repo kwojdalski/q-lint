@@ -356,6 +356,50 @@
             "order": 113,
             "markdownDescription": "Where a grid or chart result is shown: beside the editor, or in the **q Results** view in the bottom panel."
           },
+          "q-lint.query.resultHistory": {
+            "type": "integer",
+            "default": 10,
+            "minimum": 1,
+            "maximum": 50,
+            "order": 116,
+            "markdownDescription": "How many grid or chart results the result panel keeps as tabs. **q-lint: Show Result from History** picks one too."
+          },
+          "q-lint.results.history.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 118,
+            "markdownDescription": "Keep the last `q-lint.query.resultHistory` results as tabs in the result panel, and offer **q-lint: Show Result from History**."
+          },
+          "q-lint.results.diff.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 119,
+            "markdownDescription": "Offer **Compare** in the result panel, and **q-lint: Compare Result with Previous Run**: mark what changed since the previous run of the same query. Off, no previous result is kept."
+          },
+          "q-lint.results.statistics.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 120,
+            "markdownDescription": "Offer the result panel's **Stats** view, and **q-lint: Show Column Statistics**: each column's count, nulls, distinct values, min, max and mean."
+          },
+          "q-lint.results.heatmap.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 121,
+            "markdownDescription": "Offer the grid's **Heatmap** button, and **q-lint: Toggle Result Heatmap**. Off, no column is coloured, whatever `q-lint.query.gridHeatmap` says."
+          },
+          "q-lint.results.tree.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 122,
+            "markdownDescription": "Offer the result panel's **Tree** view of a dictionary or a nested list, and **q-lint: Show Result as Tree**. Off, the process is not asked for the tree."
+          },
+          "q-lint.query.gridHeatmap": {
+            "type": "boolean",
+            "default": false,
+            "order": 117,
+            "markdownDescription": "Colour the grid's numeric columns by value, in the theme's chart colours: blue from the least to the greatest, or, for a column either side of zero, blue above it and red below. **q-lint: Toggle Result Heatmap** and the grid's **Heatmap** button change it."
+          },
           "q-lint.query.unwrapped": {
             "type": "boolean",
             "default": false,
@@ -700,6 +744,36 @@
         "icon": "$(save-as)"
       },
       {
+        "command": "q-lint.showResultStatistics",
+        "title": "Show Column Statistics",
+        "category": "q-lint",
+        "icon": "$(symbol-numeric)"
+      },
+      {
+        "command": "q-lint.showResultTree",
+        "title": "Show Result as Tree",
+        "category": "q-lint",
+        "icon": "$(list-tree)"
+      },
+      {
+        "command": "q-lint.compareResultWithPrevious",
+        "title": "Compare Result with Previous Run",
+        "category": "q-lint",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "q-lint.toggleResultHeatmap",
+        "title": "Toggle Result Heatmap",
+        "category": "q-lint",
+        "icon": "$(color-mode)"
+      },
+      {
+        "command": "q-lint.showResultFromHistory",
+        "title": "Show Result from History",
+        "category": "q-lint",
+        "icon": "$(history)"
+      },
+      {
         "command": "q-lint.runInTerminal",
         "title": "Run Code from Terminal",
         "category": "q-lint",
@@ -918,6 +992,11 @@
           "command": "q-lint.exportResultsView",
           "when": "view == q-lint.results",
           "group": "navigation"
+        },
+        {
+          "command": "q-lint.showResultFromHistory",
+          "when": "view == q-lint.results && q-lint.result.shown && config.q-lint.results.history.enable",
+          "group": "navigation@1"
         },
         {
           "command": "q-lint.revealProcess",
@@ -1148,6 +1227,26 @@
         {
           "command": "q-lint.exportResultsView",
           "when": "false"
+        },
+        {
+          "command": "q-lint.showResultStatistics",
+          "when": "q-lint.result.shown && config.q-lint.results.statistics.enable"
+        },
+        {
+          "command": "q-lint.showResultTree",
+          "when": "q-lint.result.hasTree && config.q-lint.results.tree.enable"
+        },
+        {
+          "command": "q-lint.compareResultWithPrevious",
+          "when": "q-lint.result.hasPrevious && config.q-lint.results.diff.enable"
+        },
+        {
+          "command": "q-lint.showResultFromHistory",
+          "when": "q-lint.result.shown && config.q-lint.results.history.enable"
+        },
+        {
+          "command": "q-lint.toggleResultHeatmap",
+          "when": "config.q-lint.results.heatmap.enable"
         }
       ]
     },

@@ -1176,7 +1176,7 @@ export class Live {
       const answer = controls.unwrapped
         ? await runUnwrapped(connection, cut, { size: consoleSize, limit: gridLimit, unlimited, grid: settings.mode !== "console" })
         : settings.mode !== "console"
-          ? await connection.queryGrid(cut, consoleSize, gridLimit)
+          ? await connection.queryGrid(cut, consoleSize, gridLimit, this.modes.wantsTree())
           : unlimited
             ? readUnlimited(await connection.call(UNLIMITED, cut, consoleSize))
             : await connection.query(cut, consoleSize);
