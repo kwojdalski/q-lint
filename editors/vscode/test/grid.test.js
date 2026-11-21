@@ -379,3 +379,24 @@ test("what a chart drew is summed up for the extension", () => {
   });
   assert.match(charts.summary("line", charts.chartData(grid, [0], "line", [], 10)).note, /No numeric column/);
 });
+
+test("a list, one numeric column, is charted against its row number", () => {
+  // `3 1 2` in chart mode: GRID sends it as one `value` column.
+  const grid = toGrid({ count: 3, keys: 0, names: ["value"], types: [7], cells: [["3", "1", "2"]], raw: [[3, 1, 2]], rank: [[2, 0, 1]] }, -1);
+  const rows = [0, 1, 2];
+  for (const kind of ["line", "bar", "scatter", "histogram"]) {
+    assert.deepStrictEqual(charts.chartable(grid, kind), [0], kind);
+  }
+  const line = charts.chartData(grid, rows, "line", [0], 10);
+  assert.strictEqual(line.note, undefined);
+  assert.deepStrictEqual(line.labels, ["0", "1", "2"]);
+  assert.deepStrictEqual(line.datasets[0].data, [3, 1, 2]);
+  const scatter = charts.chartData(grid, rows, "scatter", [0], 10);
+  assert.deepStrictEqual(scatter.datasets[0].data.map((p) => [p.x, p.y]), [[0, 3], [1, 1], [2, 2]]);
+  for (const kind of ["line", "scatter"]) {
+    const config = charts.chartConfig(grid, rows, kind, charts.chartData(grid, rows, kind, [0], 10), LOOK);
+    assert.strictEqual(config.options.scales.x.title.text, "row", kind);
+  }
+  // A table's first column is still its x axis, never a series.
+  assert.deepStrictEqual(charts.chartable(sample(), "line"), [1]);
+});

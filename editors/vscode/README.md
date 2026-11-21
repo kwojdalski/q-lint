@@ -329,7 +329,8 @@ where a result goes; it sets `q-lint.query.mode`, and takes `console`,
   q's own order (`iasc` on the process), nulls first, and either way keeps
   equal values in their order, as `xasc` and `xdesc` do.
 - **Chart**: the same results as a line, bar, scatter or histogram chart of
-  the numeric columns against the first, chosen in the panel; the panel's
+  the numeric columns against the first (a list against its row numbers),
+  chosen in the panel; the panel's
   **Grid** and **Chart** buttons switch between the two for one result.
 
 The panel opens beside the editor. With `q-lint.query.resultsLocation` set
@@ -454,7 +455,8 @@ A cell's first lines can choose how its result is shown:
   a timestamp keeps its nanoseconds.
 - `/ @chart line`, `bar`, `scatter` or `histogram`: a table, a keyed
   table, a dictionary or a list as a chart, drawn as query **Chart** mode
-  draws it - the numeric columns against the first (a histogram bins every
+  draws it - the numeric columns against the first (a list against its row
+  numbers; a histogram bins every
   numeric column, in 20 bins), a temporal x axis written in q's notation,
   colours from the editor's theme - from the same rows: the first or the
   last `q-lint.notebook.rowLimit`.

@@ -13,12 +13,18 @@
   /// Bins a histogram starts with.
   const BINS = 20;
 
+  /// A grid of one column - a list - is charted against its row numbers:
+  /// its column is a series, not the x axis.
+  function byRow(grid) {
+    return grid.columns.length === 1;
+  }
+
   /// The columns a chart can plot: the numeric ones, and for every kind but
-  /// a histogram not the first, which is the x axis.
+  /// a histogram not the first, which is the x axis, unless it is the only.
   function chartable(grid, kind) {
     const out = [];
     grid.columns.forEach(function (c, i) {
-      if (c.numeric && (kind === "histogram" || i > 0)) {
+      if (c.numeric && (kind === "histogram" || i > 0 || byRow(grid))) {
         out.push(i);
       }
     });
@@ -118,13 +124,13 @@
       };
     }
     if (kind === "scatter") {
-      const xs = grid.values[0];
+      const xs = byRow(grid) ? null : grid.values[0];
       return {
         type: "scatter",
         datasets: columns.map(function (c) {
           const data = [];
           rows.forEach(function (r, i) {
-            const x = xs ? xs[r] : i;
+            const x = xs ? xs[r] : byRow(grid) ? r : i;
             const y = grid.values[c][r];
             if (x !== null && y !== null) {
               data.push({ x: x, y: y, row: r });
@@ -136,7 +142,7 @@
     }
     return {
       type: kind === "bar" ? "bar" : "line",
-      labels: rows.map(function (r) { return grid.cells[0][r]; }),
+      labels: rows.map(function (r) { return byRow(grid) ? String(r) : grid.cells[0][r]; }),
       datasets: columns.map(function (c) { return { label: name(c), column: c, data: values(c) }; }),
     };
   }
@@ -191,7 +197,7 @@
         interaction: { mode: kind === "scatter" ? "nearest" : "index", intersect: false },
         scales: {
           x: {
-            title: { display: kind !== "histogram", text: kind === "scatter" && !grid.values[0] ? "row" : x.name },
+            title: { display: kind !== "histogram", text: byRow(grid) || (kind === "scatter" && !grid.values[0]) ? "row" : x.name },
             type: kind === "scatter" ? "linear" : "category",
             // A month, date, minute or second is a whole number: a tick
             // between two would repeat one's label, or name no month.
@@ -204,7 +210,7 @@
         plugins: {
           title: { display: Boolean(title), text: title || "" },
           tooltip: kind === "scatter"
-            ? { callbacks: { label: function (ctx) { const r = ctx.raw.row; return ctx.dataset.label + ": " + grid.cells[0][r] + ", " + grid.cells[ctx.dataset.column][r]; } } }
+            ? { callbacks: { label: function (ctx) { const r = ctx.raw.row; return ctx.dataset.label + ": " + (byRow(grid) ? String(r) : grid.cells[0][r]) + ", " + grid.cells[ctx.dataset.column][r]; } } }
             : {},
         },
       },
