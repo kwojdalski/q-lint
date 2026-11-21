@@ -21,6 +21,10 @@ export const AGENT = {
 
 /// The most rows a tabular result gives an agent.
 export const ROW_LIMIT = 200;
+/// The most columns, and the most lines of a backtrace: an answer past
+/// either would fill the agent's context as surely as unlimited rows.
+export const COLUMN_LIMIT = 100;
+export const TRACE_LIMIT = 40;
 
 /// What the tool is called with, as `package.json`'s `inputSchema` declares it.
 export interface AgentInput {
@@ -39,6 +43,8 @@ export type AgentResult =
       keyColumns?: number;
       /// The rows the whole result has.
       rowCount: number;
+      /// The columns it has, when there were more than `COLUMN_LIMIT`.
+      columnCount?: number;
       data: Cell[][];
       truncated?: true;
     }
@@ -104,12 +110,21 @@ export function jsonCell(type: number, text: string, raw: unknown): Cell {
   }
 }
 
-/// The rows of `grid`, each a list of JSON values.
-function rows(grid: GridPayload): Cell[][] {
+/// The rows of `grid`, each a list of JSON values, of its first `columns`.
+function rows(grid: GridPayload, columns: number): Cell[][] {
   const count = grid.cells[0]?.length ?? 0;
   return [...Array(count).keys()].map((r) =>
-    grid.cells.map((column, i) => jsonCell(grid.types[i], column[r], grid.raw[i][r])),
+    grid.cells.slice(0, columns).map((column, i) => jsonCell(grid.types[i], column[r], grid.raw[i][r])),
   );
+}
+
+/// A backtrace's first `TRACE_LIMIT` lines - its innermost frames, where it
+/// failed - and how many more there were.
+function cutTrace(trace: string): string {
+  const lines = trace.replace(/\n+$/, "").split("\n");
+  return lines.length <= TRACE_LIMIT
+    ? lines.join("\n")
+    : [...lines.slice(0, TRACE_LIMIT), `  ... ${lines.length - TRACE_LIMIT} more lines of backtrace`].join("\n");
 }
 
 /// What the agent is given for `answer`: the rows of a tabular value, the
@@ -117,20 +132,22 @@ function rows(grid: GridPayload): Cell[][] {
 /// could not cut (`gridError`) is given as its text.
 export function shape(answer: GridAnswer): AgentResult {
   if (!answer.ok) {
-    return { error: answer.error, ...(answer.trace.trim() !== "" ? { trace: answer.trace.replace(/\n+$/, "") } : {}) };
+    return { error: answer.error, ...(answer.trace.trim() !== "" ? { trace: cutTrace(answer.trace) } : {}) };
   }
   const grid = answer.grid;
   if (grid === undefined) {
     return { output: answer.text.join("\n") };
   }
-  const data = rows(grid);
+  const width = grid.names.length;
+  const data = rows(grid, COLUMN_LIMIT);
   return {
-    columns: grid.names,
-    types: grid.types.map(typeName),
-    ...(grid.keys > 0 ? { keyColumns: grid.keys } : {}),
+    columns: grid.names.slice(0, COLUMN_LIMIT),
+    types: grid.types.slice(0, COLUMN_LIMIT).map(typeName),
+    ...(grid.keys > 0 ? { keyColumns: Math.min(grid.keys, COLUMN_LIMIT) } : {}),
     rowCount: grid.count,
+    ...(width > COLUMN_LIMIT ? { columnCount: width } : {}),
     data,
-    ...(grid.count > data.length ? { truncated: true as const } : {}),
+    ...(grid.count > data.length || width > COLUMN_LIMIT ? { truncated: true as const } : {}),
   };
 }
 
@@ -149,9 +166,16 @@ export function knownLabels(saved: Process[], discovered: Discovered[]): string[
   ];
 }
 
+/// The most labels an error lists: a discovery server can list thousands.
+const LABEL_LIMIT = 50;
+
 function listed(saved: Process[], discovered: Discovered[]): string {
   const labels = knownLabels(saved, discovered);
-  return labels.length === 0 ? "No q process is saved in q-lint yet." : `The labels are: ${labels.join(", ")}.`;
+  if (labels.length === 0) {
+    return "No q process is saved in q-lint yet.";
+  }
+  const more = labels.length - LABEL_LIMIT;
+  return `The labels are: ${labels.slice(0, LABEL_LIMIT).join(", ")}${more > 0 ? `, and ${more} more` : ""}.`;
 }
 
 /// The process `label` names: a saved one before a discovered one, as

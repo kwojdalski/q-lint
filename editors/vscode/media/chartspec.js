@@ -13,12 +13,18 @@
   /// Bins a histogram starts with.
   const BINS = 20;
 
+  /// A grid of one column - a list - is charted against its row numbers:
+  /// its column is a series, not the x axis.
+  function byRow(grid) {
+    return grid.columns.length === 1;
+  }
+
   /// The columns a chart can plot: the numeric ones, and for every kind but
-  /// a histogram not the first, which is the x axis.
+  /// a histogram not the first, which is the x axis, unless it is the only.
   function chartable(grid, kind) {
     const out = [];
     grid.columns.forEach(function (c, i) {
-      if (c.numeric && (kind === "histogram" || i > 0)) {
+      if (c.numeric && (kind === "histogram" || i > 0 || byRow(grid))) {
         out.push(i);
       }
     });
@@ -43,16 +49,19 @@
       return { edges: [], counts: series.map(function () { return []; }) };
     }
     const n = lo === hi ? 1 : Math.max(1, Math.floor(bins));
-    const width = (hi - lo) / n;
+    // A range past the largest double (-1e308 to 1e308) is binned in
+    // halves, which cannot overflow; any other the same either way.
+    const k = isFinite(hi - lo) ? 1 : 2;
+    const width = (hi / k - lo / k) / n;
     const edges = [];
     for (let i = 0; i <= n; i++) {
-      edges.push(i === n ? hi : lo + i * width);
+      edges.push(i === n ? hi : k * (lo / k + i * width));
     }
     const counts = series.map(function (values) {
       const count = new Array(n).fill(0);
       values.forEach(function (v) {
         if (v !== null && isFinite(v)) {
-          count[width === 0 ? 0 : Math.min(n - 1, Math.floor((v - lo) / width))] += 1;
+          count[width === 0 ? 0 : Math.min(n - 1, Math.floor((v / k - lo / k) / width))] += 1;
         }
       });
       return count;
@@ -66,8 +75,10 @@
   const WHOLE = [13, 14, 17, 18];
 
   /// How an axis writes a temporal column's value - its own unit since
-  /// 2000.01.01, as grid.ts sends it - in q's notation, to the second.
-  function temporalLabel(type, v) {
+  /// 2000.01.01, as grid.ts sends it - in q's notation, to the second; with
+  /// `step`, the axis's distance between ticks, under a second apart, to
+  /// the fraction of a second that tells them apart.
+  function temporalLabel(type, v, step) {
     const day = 86400000;
     const stamp = function (ms, sep) {
       const d = new Date(946684800000 + ms);
@@ -79,6 +90,37 @@
       s = Math.abs(s);
       return neg + pad(Math.floor(s / 3600)) + ":" + pad(Math.floor(s / 60) % 60) + ":" + pad(Math.floor(s) % 60);
     };
+    // Units a second holds: nanoseconds, or milliseconds (a datetime's too).
+    const per = { 12: 1e9, 15: 1e3, 16: 1e9, 19: 1e3 }[type];
+    if (per && step > 0) {
+      const u = type === 15 ? v * day : v;
+      const s = type === 15 ? step * day : step;
+      let digits = Math.max(0, Math.ceil(-Math.log10(s / per) - 1e-9));
+      const max = Math.round(Math.log10(per));
+      while (digits > 0 && digits < max && Math.abs(s / (per / Math.pow(10, digits)) - Math.round(s / (per / Math.pow(10, digits)))) > 1e-6) {
+        digits += 1;
+      }
+      digits = Math.min(digits, max);
+      if (digits > 0) {
+        // The whole seconds, written as before, and the fraction rounded to
+        // its digits, carried into the seconds at a whole one.
+        const q = per / Math.pow(10, digits);
+        const neg = (type === 16 || type === 19) && u < 0;
+        const mag = neg ? -u : u;
+        const f = ((mag % per) + per) % per;
+        let n = Math.round(f / q);
+        let whole = Math.round((mag - f) / per);
+        if (n * q >= per) {
+          n = 0;
+          whole += 1;
+        }
+        const fraction = "." + String(n).padStart(digits, "0");
+        if (type === 12 || type === 15) {
+          return stamp(whole * 1000, type === 12 ? "D" : "T") + fraction;
+        }
+        return (neg ? "-" : "") + temporalLabel(type, whole * per) + fraction;
+      }
+    }
     switch (type) {
       case 12: return stamp(v / 1e6, "D");
       case 13: v = Math.floor(v); return (2000 + Math.floor(v / 12)) + "." + pad(((v % 12) + 12) % 12 + 1);
@@ -93,8 +135,12 @@
   }
 
   /// A number short enough for an axis or a bin label.
-  function short(v) {
-    return Math.abs(v) >= 1e6 || (v !== 0 && Math.abs(v) < 1e-3) ? v.toExponential(3) : String(+v.toPrecision(6));
+  /// With `step`, the distance to the next label, the digits that tell the
+  /// two apart, so bins over a narrow range of prices are not all
+  /// "1.08341 - 1.08341".
+  function short(v, step) {
+    const digits = step > 0 && v !== 0 ? Math.min(15, Math.max(6, Math.ceil(Math.log10(Math.abs(v) / step)) + 2)) : 6;
+    return Math.abs(v) >= 1e6 || (v !== 0 && Math.abs(v) < 1e-3) ? v.toExponential(step > 0 ? Math.max(3, digits - 1) : 3) : String(+v.toPrecision(digits));
   }
 
   /// What a chart of `kind` over `rows` of the grid draws, before colours:
@@ -110,7 +156,8 @@
     const name = function (c) { return grid.columns[c].name; };
     if (kind === "histogram") {
       const h = histogram(columns.map(values), bins);
-      const labels = h.edges.slice(1).map(function (e, i) { return short(h.edges[i]) + " - " + short(e); });
+      const step = h.edges.length > 1 ? Math.abs(h.edges[1] - h.edges[0]) : 0;
+      const labels = h.edges.slice(1).map(function (e, i) { return short(h.edges[i], step) + " - " + short(e, step); });
       return {
         type: "bar",
         labels: labels,
@@ -118,13 +165,13 @@
       };
     }
     if (kind === "scatter") {
-      const xs = grid.values[0];
+      const xs = byRow(grid) ? null : grid.values[0];
       return {
         type: "scatter",
         datasets: columns.map(function (c) {
           const data = [];
-          rows.forEach(function (r, i) {
-            const x = xs ? xs[r] : i;
+          rows.forEach(function (r) {
+            const x = xs ? xs[r] : r;
             const y = grid.values[c][r];
             if (x !== null && y !== null) {
               data.push({ x: x, y: y, row: r });
@@ -136,7 +183,7 @@
     }
     return {
       type: kind === "bar" ? "bar" : "line",
-      labels: rows.map(function (r) { return grid.cells[0][r]; }),
+      labels: rows.map(function (r) { return byRow(grid) ? String(r) : grid.cells[0][r]; }),
       datasets: columns.map(function (c) { return { label: name(c), column: c, data: values(c) }; }),
     };
   }
@@ -168,6 +215,16 @@
   /// it when given.
   function chartConfig(grid, rows, kind, data, look, title) {
     const x = grid.columns[0];
+    // The x axis is the rows' numbers: a list's, or a scatter's whose first
+    // column has no values to plot.
+    const rowAxis = byRow(grid) || (kind === "scatter" && !grid.values[0]);
+    // A long line has no points, only segments - but a value with a null
+    // (a gap) on each side has no segment either, and gets a point.
+    const isolated = function (ctx) {
+      const d = ctx.dataset.data;
+      const i = ctx.dataIndex;
+      return d[i] !== null && (i === 0 || d[i - 1] === null) && (i === d.length - 1 || d[i + 1] === null) ? 2 : 0;
+    };
     const translucent = function (colour) { return /^#[0-9a-f]{6}$/i.test(colour) ? colour + "99" : colour; };
     return {
       type: data.type,
@@ -178,7 +235,7 @@
           return Object.assign({}, d, {
             borderColor: colour,
             backgroundColor: kind === "line" ? colour : translucent(colour),
-            pointRadius: kind === "line" ? (rows.length > 200 ? 0 : 2) : 3,
+            pointRadius: kind === "line" ? (rows.length > 200 ? isolated : 2) : 3,
             borderWidth: kind === "bar" || kind === "histogram" ? 0 : 1.5,
             spanGaps: false,
           });
@@ -191,20 +248,24 @@
         interaction: { mode: kind === "scatter" ? "nearest" : "index", intersect: false },
         scales: {
           x: {
-            title: { display: kind !== "histogram", text: kind === "scatter" && !grid.values[0] ? "row" : x.name },
+            title: { display: kind !== "histogram", text: rowAxis ? "row" : x.name },
             type: kind === "scatter" ? "linear" : "category",
             // A month, date, minute or second is a whole number: a tick
             // between two would repeat one's label, or name no month.
-            ticks: kind === "scatter" && x.temporal
-              ? Object.assign({ callback: function (v) { return temporalLabel(x.type, v); } }, WHOLE.indexOf(x.type) >= 0 ? { precision: 0 } : {})
-              : { autoSkip: true, maxRotation: 0 },
+            // So is a row number.
+            ticks: kind === "scatter" && rowAxis
+              ? { precision: 0 }
+              : kind === "scatter" && x.temporal
+                ? Object.assign({ callback: function (v, i, ticks) { return temporalLabel(x.type, v, ticks && ticks.length > 1 ? Math.abs(ticks[1].value - ticks[0].value) : 0); } }, WHOLE.indexOf(x.type) >= 0 ? { precision: 0 } : {})
+                : { autoSkip: true, maxRotation: 0 },
           },
-          y: { title: { display: kind === "histogram", text: "count" } },
+          // And a count.
+          y: Object.assign({ title: { display: kind === "histogram", text: "count" } }, kind === "histogram" ? { ticks: { precision: 0 } } : {}),
         },
         plugins: {
           title: { display: Boolean(title), text: title || "" },
           tooltip: kind === "scatter"
-            ? { callbacks: { label: function (ctx) { const r = ctx.raw.row; return ctx.dataset.label + ": " + grid.cells[0][r] + ", " + grid.cells[ctx.dataset.column][r]; } } }
+            ? { callbacks: { label: function (ctx) { const r = ctx.raw.row; return ctx.dataset.label + ": " + (byRow(grid) ? String(r) : grid.cells[0][r]) + ", " + grid.cells[ctx.dataset.column][r]; } } }
             : {},
         },
       },

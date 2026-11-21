@@ -135,7 +135,10 @@ export class QueryModes {
       workspace.onDidChangeConfiguration((event) => {
         if (event.affectsConfiguration("q-lint.query")) {
           this.showStatus();
-          // New decimals apply to what is on show.
+        }
+        // New decimals apply to what is on show. Nothing else does, and a
+        // result sent again is drawn afresh, its grid back at the top.
+        if (event.affectsConfiguration("q-lint.query.gridDecimals")) {
           this.post();
         }
       }),
@@ -245,8 +248,9 @@ export class QueryModes {
     }
     const editor = window.activeTextEditor;
     await commands.executeCommand(`${RESULTS.view}.focus`);
+    // No selection: one given would replace every cursor, and scroll to it.
     if (editor !== undefined) {
-      await window.showTextDocument(editor.document, { viewColumn: editor.viewColumn, selection: editor.selection, preserveFocus: false });
+      await window.showTextDocument(editor.document, { viewColumn: editor.viewColumn, preserveFocus: false });
     }
   }
 

@@ -2,7 +2,7 @@
 // processes, how one is fetched and read, and how the Processes view shows
 // what each one listed. Nothing here imports `vscode`, so all of it is tested
 // with node - the fetch against a local HTTP server.
-import { grouped, parseProcesses, type Process } from "./processes";
+import { grouped, markdownText, parseProcesses, passwordKey, type Process } from "./processes";
 
 export interface DiscoveryServer {
   /// Unique among the discovery servers; names its group in the view and
@@ -49,7 +49,14 @@ export function serverLabelProblem(label: string, taken: Set<string>): string | 
 }
 
 /// Why `url` is not one a discovery server can have, or undefined when it is.
+/// A user or password in it is refused: fetch sends no such request, and
+/// the URL is kept and shown in the clear, unlike the auth header.
 export function urlProblem(url: string): string | undefined {
+  return schemeProblem(url) ?? (hasCredentials(new URL(url.trim())) ? "Put a user and password in the auth header, not the URL." : undefined);
+}
+
+/// Why `url` is not an http or https URL, or undefined when it is.
+function schemeProblem(url: string): string | undefined {
   let parsed: URL;
   try {
     parsed = new URL(url.trim());
@@ -58,6 +65,9 @@ export function urlProblem(url: string): string | undefined {
   }
   return parsed.protocol === "http:" || parsed.protocol === "https:" ? undefined : "The URL must be http or https.";
 }
+
+const hasCredentials = (url: URL): boolean => url.username !== "" || url.password !== "";
+const CREDENTIALS = "its URL holds a user or password: put them in the auth header";
 
 /// The discovery servers a stored JSON value lists; anything that is not one
 /// is dropped, and a label seen before is skipped.
@@ -75,7 +85,8 @@ export function parseServers(json: unknown): DiscoveryServer[] {
     if (typeof label !== "string" || typeof url !== "string") {
       continue;
     }
-    if (serverLabelProblem(label, seen) !== undefined || urlProblem(url) !== undefined) {
+    // One with a user or password in its URL is kept, so it can be edited.
+    if (serverLabelProblem(label, seen) !== undefined || schemeProblem(url) !== undefined) {
       continue;
     }
     seen.add(label.trim());
@@ -119,6 +130,14 @@ export async function fetchProcesses(url: string, options: FetchOptions = {}): P
   const timeoutMs = options.timeoutMs ?? FETCH_TIMEOUT_MS;
   const maxBytes = options.maxBytes ?? MAX_RESPONSE_BYTES;
   const header = authHeader(options.secret);
+  // Refused here, since fetch's own errors spell out the URL or the header
+  // value, password or secret and all.
+  if (hasCredentials(new URL(url))) {
+    throw new Error(CREDENTIALS);
+  }
+  if (header !== undefined && !/^[\t\x20-\x7e\x80-\xff]*$/.test(header[1])) {
+    throw new Error("its auth header holds a character HTTP cannot send");
+  }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const timedOut = (): Error => new Error(`no answer within ${timeoutMs / 1000} s`);
@@ -154,6 +173,9 @@ export async function fetchProcesses(url: string, options: FetchOptions = {}): P
       const next = new URL(location, at);
       if (next.protocol !== "http:" && next.protocol !== "https:") {
         throw new Error(`it redirected to ${next.protocol} URL`);
+      }
+      if (hasCredentials(next)) {
+        throw new Error(`it redirected to a URL that holds a user or password`);
       }
       if (next.origin !== new URL(at).origin) {
         send = undefined;
@@ -285,6 +307,12 @@ function serverChildren(server: DiscoveryServer, state: ServerState): Row[] {
   ];
 }
 
+/// A server row's tooltip, as Markdown: its label and URL as written, and
+/// `fetched`, when it was last fetched, as the caller words it.
+export function serverTooltip(server: DiscoveryServer, fetched?: string): string {
+  return [`**${markdownText(server.label)}**`, markdownText(server.url), ...(fetched === undefined ? [] : [`last fetched ${fetched}`])].join("\n\n");
+}
+
 /// What a server's row says beside its label.
 export function serverDescription(state: ServerState): string {
   if (state.loading) {
@@ -300,7 +328,8 @@ export function serverDescription(state: ServerState): string {
   return `${n} process${n === 1 ? "" : "es"}`;
 }
 
-/// The discovered process `name` names, with its label qualified: either
+/// The discovered process `name` names, with its label qualified and its
+/// server: either
 /// `server/label`, or a bare label only one server lists. Undefined when it
 /// names none, or a bare label several servers list.
 export function findDiscovered(discovered: Discovered[], name: string): Process | undefined {
@@ -310,7 +339,7 @@ export function findDiscovered(discovered: Discovered[], name: string): Process 
   const exact = all.find(({ server, process }) => qualified(server, process.label) === name);
   const bare = all.filter(({ process }) => process.label === name);
   const hit = exact ?? (bare.length === 1 ? bare[0] : undefined);
-  return hit && { ...hit.process, label: qualified(hit.server, hit.process.label) };
+  return hit && { ...hit.process, label: qualified(hit.server, hit.process.label), server: hit.server };
 }
 
 /// The processes Download Processes adds to the saved list: those whose label
@@ -323,4 +352,14 @@ export function toDownload(saved: Process[], listed: Process[]): { added: Proces
     added: listed.filter((p) => !taken.has(p.label)),
     skipped: listed.filter((p) => taken.has(p.label)).map((p) => p.label),
   };
+}
+
+/// The passwords Download Processes copies, as [from, to] secret keys: each
+/// downloaded process with a user takes the one given when it was connected
+/// to from `server`, which a saved process would otherwise never be asked
+/// for.
+export function downloadedPasswords(server: string, added: Process[]): [string, string][] {
+  return added
+    .filter((p) => p.user !== undefined)
+    .map((p) => [passwordKey({ label: qualified(server, p.label), server }), passwordKey({ label: p.label })]);
 }

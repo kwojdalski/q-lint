@@ -266,84 +266,233 @@
       ]
     },
     "lambda": {
-      "name": "meta.function.lambda.q",
-      "begin": "(\\{)\\s*(?:(\\[)([^\\]]*)(\\]))?",
-      "end": "\\}",
-      "beginCaptures": {
-        "1": {
-          "name": "punctuation.section.function.begin.q"
-        },
-        "2": {
-          "name": "punctuation.definition.parameters.begin.q"
-        },
-        "3": {
+      "comment": "x, y and z are a lambda's implicit parameters only when it declares none: in {[a] x+a} x is a global. So a lambda with a parameter list, on one line or several, is told from one without.",
+      "patterns": [
+        {
+          "name": "meta.function.lambda.q",
+          "begin": "(\\{)\\s*(\\[)([^\\]]*)(\\])",
+          "end": "\\}",
+          "beginCaptures": {
+            "1": {
+              "name": "punctuation.section.function.begin.q"
+            },
+            "2": {
+              "name": "punctuation.definition.parameters.begin.q"
+            },
+            "3": {
+              "patterns": [
+                {
+                  "match": "[A-Za-z][A-Za-z0-9_]*",
+                  "name": "variable.parameter.q"
+                },
+                {
+                  "match": ";",
+                  "name": "punctuation.separator.parameters.q"
+                }
+              ]
+            },
+            "4": {
+              "name": "punctuation.definition.parameters.end.q"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.section.function.end.q"
+            }
+          },
           "patterns": [
             {
-              "match": "[A-Za-z][A-Za-z0-9_]*",
-              "name": "variable.parameter.q"
+              "include": "#block-comment"
             },
             {
-              "match": ";",
-              "name": "punctuation.separator.parameters.q"
+              "include": "#end-of-script"
+            },
+            {
+              "include": "#comment"
+            },
+            {
+              "include": "#string"
+            },
+            {
+              "include": "#symbol"
+            },
+            {
+              "include": "#lambda"
+            },
+            {
+              "include": "#number"
+            },
+            {
+              "include": "#definition"
+            },
+            {
+              "include": "#flow"
+            },
+            {
+              "include": "#keyword"
+            },
+            {
+              "include": "#system-namespace"
+            },
+            {
+              "include": "#builtin"
+            },
+            {
+              "include": "#name"
+            },
+            {
+              "include": "#operator"
             }
           ]
         },
-        "4": {
-          "name": "punctuation.definition.parameters.end.q"
-        }
-      },
-      "endCaptures": {
-        "0": {
-          "name": "punctuation.section.function.end.q"
-        }
-      },
-      "patterns": [
         {
-          "include": "#block-comment"
+          "comment": "A parameter list that closes on a later line.",
+          "name": "meta.function.lambda.q",
+          "begin": "(\\{)\\s*(\\[)",
+          "end": "\\}",
+          "beginCaptures": {
+            "1": {
+              "name": "punctuation.section.function.begin.q"
+            },
+            "2": {
+              "name": "punctuation.definition.parameters.begin.q"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.section.function.end.q"
+            }
+          },
+          "patterns": [
+            {
+              "begin": "\\G",
+              "end": "\\]",
+              "endCaptures": {
+                "0": {
+                  "name": "punctuation.definition.parameters.end.q"
+                }
+              },
+              "patterns": [
+                {
+                  "include": "#comment"
+                },
+                {
+                  "match": "[A-Za-z][A-Za-z0-9_]*",
+                  "name": "variable.parameter.q"
+                },
+                {
+                  "match": ";",
+                  "name": "punctuation.separator.parameters.q"
+                }
+              ]
+            },
+            {
+              "include": "#block-comment"
+            },
+            {
+              "include": "#end-of-script"
+            },
+            {
+              "include": "#comment"
+            },
+            {
+              "include": "#string"
+            },
+            {
+              "include": "#symbol"
+            },
+            {
+              "include": "#lambda"
+            },
+            {
+              "include": "#number"
+            },
+            {
+              "include": "#definition"
+            },
+            {
+              "include": "#flow"
+            },
+            {
+              "include": "#keyword"
+            },
+            {
+              "include": "#system-namespace"
+            },
+            {
+              "include": "#builtin"
+            },
+            {
+              "include": "#name"
+            },
+            {
+              "include": "#operator"
+            }
+          ]
         },
         {
-          "include": "#end-of-script"
-        },
-        {
-          "include": "#comment"
-        },
-        {
-          "include": "#string"
-        },
-        {
-          "include": "#symbol"
-        },
-        {
-          "include": "#lambda"
-        },
-        {
-          "include": "#number"
-        },
-        {
-          "include": "#definition"
-        },
-        {
-          "comment": "x, y and z are a lambda's implicit parameters.",
-          "match": "(?<![A-Za-z0-9_.`])[xyz](?![A-Za-z0-9_])",
-          "name": "variable.language.implicit.q"
-        },
-        {
-          "include": "#flow"
-        },
-        {
-          "include": "#keyword"
-        },
-        {
-          "include": "#system-namespace"
-        },
-        {
-          "include": "#builtin"
-        },
-        {
-          "include": "#name"
-        },
-        {
-          "include": "#operator"
+          "name": "meta.function.lambda.q",
+          "begin": "\\{",
+          "end": "\\}",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.section.function.begin.q"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.section.function.end.q"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#block-comment"
+            },
+            {
+              "include": "#end-of-script"
+            },
+            {
+              "include": "#comment"
+            },
+            {
+              "include": "#string"
+            },
+            {
+              "include": "#symbol"
+            },
+            {
+              "include": "#lambda"
+            },
+            {
+              "include": "#number"
+            },
+            {
+              "include": "#definition"
+            },
+            {
+              "comment": "x, y and z are a lambda's implicit parameters.",
+              "match": "(?<![A-Za-z0-9_.`])[xyz](?![A-Za-z0-9_])",
+              "name": "variable.language.implicit.q"
+            },
+            {
+              "include": "#flow"
+            },
+            {
+              "include": "#keyword"
+            },
+            {
+              "include": "#system-namespace"
+            },
+            {
+              "include": "#builtin"
+            },
+            {
+              "include": "#name"
+            },
+            {
+              "include": "#operator"
+            }
+          ]
         }
       ]
     },
@@ -354,8 +503,9 @@
           "match": "(?<![A-Za-z0-9_.`])(?:\\d{4}\\.\\d{2}\\.\\d{2}[DT](?:\\d{2}(?::\\d{2}(?::\\d{2}(?:\\.\\d*)?)?)?)?[pz]?|\\d{4}\\.\\d{2}(?:\\.\\d{2}[dpz]?|m)|\\d+D(?:\\d{2}(?::\\d{2}(?::\\d{2}(?:\\.\\d*)?)?)?)?n?|\\d{2,}:\\d{2}(?::\\d{2}(?:\\.\\d*)?)?[tuvn]?)(?![A-Za-z0-9_])"
         },
         {
+          "comment": "A typed null or infinity. None is of symbol (the null symbol is a lone backtick) and no infinity of guid: q refuses 0Ns, 0Ws and 0Wg.",
           "name": "constant.language.null.q",
-          "match": "(?<![A-Za-z0-9_.`])-?0[NnWw][ghijefcspmdznuvt]?(?![A-Za-z0-9_])"
+          "match": "(?<![A-Za-z0-9_.`])-?0(?:[Nn][ghijefcpmdznuvt]?|[Ww][hijefcpmdznuvt]?)(?![A-Za-z0-9_])"
         },
         {
           "name": "constant.language.boolean.q",
@@ -366,8 +516,9 @@
           "match": "(?<![A-Za-z0-9_.`])0x[0-9a-fA-F]*(?![A-Za-z0-9_])"
         },
         {
+          "comment": "With p, a number is a timestamp that many hours past 2000: 1p.",
           "name": "constant.numeric.q",
-          "match": "(?<![A-Za-z0-9_.`])(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?[hijefcnuvt]?(?![A-Za-z0-9_])"
+          "match": "(?<![A-Za-z0-9_.`])(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?[hijefcnuvtp]?(?![A-Za-z0-9_])"
         }
       ]
     },

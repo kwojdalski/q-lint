@@ -204,9 +204,10 @@ export function parameters(text: string, lambda: Lambda, mask: boolean[] = codeM
       // A symbol; a file symbol (`:a/b) runs through its slashes.
       i = run(text[i + 1] === ":" ? /[A-Za-z0-9._:/]/ : /[A-Za-z0-9._:]/, i + 1);
     } else if (/[0-9]/.test(c) || (c === "." && /[0-9]/.test(text[i + 1] ?? ""))) {
-      // A number, with any type letter after it (0Nz is a null, not z).
+      // A number, with any type letter after it (0Nz is a null, not z). No
+      // number holds a `_`: `1_x` is 1, drop, x.
       let j = i + 1;
-      while (j < lambda.close && own(j) && (/[A-Za-z0-9._]/.test(text[j]) || (text[j] === ":" && /[0-9]/.test(text[j + 1] ?? "")))) {
+      while (j < lambda.close && own(j) && (/[A-Za-z0-9.]/.test(text[j]) || (text[j] === ":" && /[0-9]/.test(text[j + 1] ?? "")))) {
         j++;
       }
       i = j;

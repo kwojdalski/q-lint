@@ -207,6 +207,14 @@ test("the table is read from the cursor's own statement, not the next one", () =
   assert.strictEqual(at("x:select a| from t; y:select from u"), "t");
 });
 
+// A statement in brackets ends at its closing bracket: past it, the cursor
+// was offered the inner statement's columns, not its own.
+test("a qSQL statement in brackets ends at its closing bracket", () => {
+  assert.strictEqual(at("select from t where s in (exec s from u), |"), "t");
+  assert.strictEqual(at("select from t where s in (exec s from u|)"), "u");
+  assert.strictEqual(at("f[select from t]+|"), undefined);
+});
+
 test("the cursor is typing code outside strings and comments", () => {
   const code = (text) => inCode(text.replace("|", ""), text.indexOf("|"));
   assert.strictEqual(code("a:tr|"), true);

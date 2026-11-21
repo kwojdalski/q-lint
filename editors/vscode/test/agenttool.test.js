@@ -172,3 +172,45 @@ test("a query confirmed on the process it runs on runs, and its timeout aborts i
   assert.strictEqual(live.aborted, 1);
   assert.match(result.error, /ran longer than 1 s/);
 });
+
+test("an input of the wrong type is answered with an error, not a crash", async () => {
+  // A model can send a port for `process`, or a list for `query`; the schema
+  // asks for strings, and nothing checks it before the tool is called.
+  settings = { "agent.queryTimeout": 0 };
+  const live = fakeLive({ active: dev });
+  const t = register(live);
+  for (const input of [{ query: "1+1", process: 5001 }, { query: ["1+1"] }, { query: 7 }]) {
+    assert.doesNotThrow(() => t.prepareInvocation({ input }), JSON.stringify(input));
+    const result = await within(t.run(input, token()), 2000);
+    assert.ok(typeof result.error === "string", JSON.stringify(result));
+  }
+  assert.deepStrictEqual(live.ran, []);
+});
+
+test("a call the user was not asked about does not run once it could", async () => {
+  // Prepared when nothing was connected, so VS Code asked nothing; the
+  // user connects before the call is invoked.
+  settings = { "agent.queryTimeout": 0 };
+  const live = fakeLive({});
+  const t = register(live);
+  const input = { query: "delete from `trades" };
+  const asked = t.prepareInvocation({ input });
+  assert.strictEqual(asked.confirmationMessages, undefined);
+  live.active = prod;
+  const result = await within(t.run({ ...input }, token()), 2000);
+  assert.deepStrictEqual(live.ran, []);
+  assert.match(result.error, /not asked|Ask again/);
+});
+
+test("a call cancelled before it runs does not connect to its process", async () => {
+  settings = { "agent.queryTimeout": 0 };
+  const live = fakeLive({ active: dev });
+  const t = register(live);
+  const input = { query: "1+1", process: "prod" };
+  t.prepareInvocation({ input });
+  const cancelled = token();
+  cancelled.cancel();
+  const result = await within(t.run(input, cancelled), 2000);
+  assert.match(result.error, /cancelled/);
+  assert.strictEqual(live.active, dev, "the active connection was switched for a cancelled call");
+});

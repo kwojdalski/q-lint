@@ -37,6 +37,7 @@ export function cellDirective(source: string): Directive {
   let found: CellMode = { mode: "console" };
   let title: string | undefined;
   let height: number | undefined;
+  let charted = false;
   for (const line of source.split(/\r?\n/)) {
     if (line.trim() === "") {
       continue;
@@ -59,6 +60,7 @@ export function cellDirective(source: string): Directive {
         };
       }
       found = { mode: "chart", chart: kind };
+      charted = true;
     } else if (name === "title") {
       if (rest === "") {
         return { problem: "`/ @title` takes the chart's title after it." };
@@ -82,7 +84,12 @@ export function cellDirective(source: string): Directive {
     return found;
   }
   if (found.mode !== "chart") {
-    return { problem: `\`/ @${title !== undefined ? "title" : "height"}\` is for a chart, and this cell has no \`/ @chart\`.` };
+    const which = `\`/ @${title !== undefined ? "title" : "height"}\``;
+    return {
+      problem: charted
+        ? `${which} is for a chart, and this cell's \`/ @${found.mode}\` after its \`/ @chart\` draws none.`
+        : `${which} is for a chart, and this cell has no \`/ @chart\`.`,
+    };
   }
   return { ...found, ...(title !== undefined ? { title } : {}), ...(height !== undefined ? { height } : {}) };
 }

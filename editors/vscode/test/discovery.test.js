@@ -121,8 +121,8 @@ test("a discovered process is named server/label, or by a label only one server 
     { server: { label: "b", url: "http://b" }, state: listed([proc("rdb", [], 3)]) },
   ];
   assert.strictEqual(qualified("a", "rdb"), "a/rdb");
-  assert.deepStrictEqual(findDiscovered(servers, "b/rdb"), { ...proc("b/rdb", [], 3) });
-  assert.deepStrictEqual(findDiscovered(servers, "hdb"), { ...proc("a/hdb", [], 2) });
+  assert.deepStrictEqual(findDiscovered(servers, "b/rdb"), { ...proc("b/rdb", [], 3), server: "b" });
+  assert.deepStrictEqual(findDiscovered(servers, "hdb"), { ...proc("a/hdb", [], 2), server: "a" });
   // Two servers list rdb: the bare label names neither.
   assert.strictEqual(findDiscovered(servers, "rdb"), undefined);
   assert.strictEqual(findDiscovered(servers, "c/rdb"), undefined);
@@ -352,4 +352,51 @@ test("a redirect to another origin is not sent the auth header", async () => {
       await new Promise((resolve) => s.close(resolve));
     }
   }
+});
+
+// A URL's user and password: fetch refuses every such request, and its
+// error, shown under the server's row, spelled the URL out password and all.
+// The password was also kept in plain globalState and shown in the tooltip.
+test("a URL with a user or password is refused, and the password never shown", async () => {
+  assert.strictEqual(urlProblem("https://u:pw@x.example/list"), "Put a user and password in the auth header, not the URL.");
+  assert.strictEqual(urlProblem("https://u@x.example/list"), "Put a user and password in the auth header, not the URL.");
+  // One stored before stays listed, so it can be edited or deleted.
+  assert.deepStrictEqual(parseServers([{ label: "a", url: "https://u:pw@x.example/" }]), [{ label: "a", url: "https://u:pw@x.example/" }]);
+  await withServer(async (base) => {
+    const url = base.replace("://", "://u:s3cretpw@") + "/list";
+    await assert.rejects(fetchProcesses(url), (error) => {
+      assert.strictEqual(error.message, "its URL holds a user or password: put them in the auth header");
+      return true;
+    });
+  });
+});
+
+// An auth header fetch cannot send: its error named the header's value -
+// the secret - under the server's row, and called it unreachable.
+test("an auth header that cannot be sent is refused without showing it", async () => {
+  await withServer(async (base) => {
+    for (const secret of ["Bearer s3cret\nmore", "X-Api-Key: s3cret\u0000", "Bearer s3cr€t"]) {
+      await assert.rejects(fetchProcesses(`${base}/auth`, { secret }), (error) => {
+        assert.ok(!error.message.includes("s3cr"), error.message);
+        assert.strictEqual(error.message, "its auth header holds a character HTTP cannot send");
+        return true;
+      });
+    }
+  });
+});
+
+// The server row's tooltip read its label as Markdown.
+test("a server's tooltip shows its label as written", () => {
+  const { serverTooltip } = require("../out/discovery.js");
+  assert.strictEqual(serverTooltip({ label: "*eu*_desk", url: "https://x/a_b" }), "**\\*eu\\*\\_desk**\n\nhttps://x/a\\_b");
+  assert.strictEqual(serverTooltip({ label: "d", url: "https://x/" }, "10:00:00"), "**d**\n\nhttps://x/\n\nlast fetched 10:00:00");
+});
+
+// Download Processes saved a discovered process with a user, but not the
+// password given when connecting to it: the saved copy sent an empty one,
+// was refused, and was never asked for it - only Edit could set it.
+test("a download takes along the password of each process with a user", () => {
+  const { downloadedPasswords } = require("../out/discovery.js");
+  const added = [{ ...proc("rdb"), user: "u" }, proc("hdb")];
+  assert.deepStrictEqual(downloadedPasswords("desk", added), [["q-lint.discoveredPassword.desk/rdb", "q-lint.password.rdb"]]);
 });

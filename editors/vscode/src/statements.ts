@@ -9,7 +9,8 @@
 // a line that starts with `/` is a comment, `/` alone opens a block comment
 // that `\` alone closes, and `\` alone outside one ends the script. A comment
 // is skipped without ending the statement around it: an indented line after
-// one still continues the statement above it.
+// one still continues the statement above it. A first line starting `#!`
+// is skipped too, as q skips a script's shebang line.
 
 /// Whether `line` is read as part of the statement above it.
 function continues(line: string): boolean {
@@ -32,8 +33,11 @@ export function statements(text: string): string[] {
       current = undefined;
     }
   };
-  for (const raw of text.split(/\r?\n/)) {
+  for (const [i, raw] of text.split(/\r?\n/).entries()) {
     const line = raw.replace(/\s+$/, "");
+    if (i === 0 && line.startsWith("#!")) {
+      continue;
+    }
     if (inBlock) {
       if (line === "\\") {
         inBlock = false;
@@ -77,7 +81,7 @@ export function blockAt(lines: string[], line: number): { start: number; end: nu
   let ended = false;
   for (let i = 0; i < lines.length; i++) {
     const text = at(i);
-    if (ended) {
+    if (ended || (i === 0 && text.startsWith("#!"))) {
       commented.push(true);
     } else if (inBlock) {
       commented.push(true);

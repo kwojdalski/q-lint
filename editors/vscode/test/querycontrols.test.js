@@ -286,3 +286,189 @@ test("the status bar names the flags that are on", () => {
   assert.match(flagsText(true, true), /unlimited.*unwrapped/);
   assert.strictEqual(timedOutError(2), "timed out after 2 s");
 });
+
+/// An unwrapped answer as the connection gives it, from what q's `-8!` of
+/// the value is: the codec's value, the q type and the message.
+function fromQ(hex) {
+  const message = Buffer.from(hex.replace(/^0x/, ""), "hex");
+  message.writeUInt8(2, 1);
+  return { value: deserialize(message, false, true, false, false), type: message.readInt8(8), message };
+}
+
+/// What an unwrapped query shows for each `-8!` hex, as one text.
+async function unwrapped(hex, options = {}) {
+  const fake = { evaluate: async () => fromQ(hex) };
+  const answer = await runUnwrapped(fake, ["x"], { size: [1e9, 1e9], limit: 100, unlimited: true, grid: false, ...options });
+  return answer;
+}
+
+test("an unwrapped atom or simple list keeps nanoseconds, a negative infinity's sign and a negative time", async () => {
+  // -8!2026.11.20D10:11:12.123456789
+  assert.deepStrictEqual((await unwrapped("0x0100000011000000f4154d4857506cc60b")).text, ["2026.11.20D10:11:12.123456789"]);
+  // -8!1999.12.31D23:59:59.999999999 0Np
+  assert.deepStrictEqual(
+    (await unwrapped("0x010000001e0000000c0002000000ffffffffffffffff0000000000000080")).text,
+    ["1999.12.31D23:59:59.999999999 0N"],
+  );
+  // -8!-0Wd
+  assert.deepStrictEqual((await unwrapped("0x010000000d000000f201000080")).text, ["-0Wd"]);
+  // -8!-00:00:01.000
+  assert.deepStrictEqual((await unwrapped("0x010000000d000000ed18fcffff")).text, ["-00:00:01.000"]);
+});
+
+test("a string is written with q's escapes, unwrapped and unlimited", async () => {
+  // -8!"caf\303\251\001\377"
+  assert.deepStrictEqual((await unwrapped("0x01000000150000000a0007000000636166c3a901ff")).text, ['"caf\\303\\251\\001\\377"']);
+  // -8!"\t"
+  assert.deepStrictEqual((await unwrapped("0x010000000f0000000a000100000009")).text, [',"\\t"']);
+  // -8!"\001"
+  assert.deepStrictEqual((await unwrapped("0x010000000a000000f601")).text, ['"\\001"']);
+  // An unlimited string comes as its bytes.
+  const bytes = [...Buffer.from("café", "utf8"), 255];
+  assert.deepStrictEqual(readUnlimited({ ok: true, type: 10, text: [], value: bytes }).text, ['"caf\\303\\251\\377"']);
+  assert.ok(UNLIMITED.includes('t=10h;"x"$r 1'));
+  assert.deepStrictEqual(readUnlimited({ ok: true, type: 10, text: [], value: "é\u0001" }).text, ['"\\303\\251\\001"']);
+});
+
+test("a list's attribute is written before it, unwrapped and unlimited", async () => {
+  // -8!`s#1 2
+  assert.deepStrictEqual((await unwrapped("0x010000001e00000007010200000001000000000000000200000000000000")).text, ["`s#1 2"]);
+  // -8!`u#"ab"
+  assert.deepStrictEqual((await unwrapped("0x01000000100000000a02020000006162")).text, ['`u#"ab"']);
+  assert.ok(UNLIMITED.includes("attr r 1"));
+  assert.deepStrictEqual(readUnlimited({ ok: true, type: 11, text: [], value: ["a"], attr: "g" }).text, ["`g#,`a"]);
+  assert.deepStrictEqual(readUnlimited({ ok: true, type: 7, text: [], value: [], attr: "p" }).text, ["`p#`long$()"]);
+  assert.deepStrictEqual(readUnlimited({ ok: true, type: 7, text: [], value: [Long.fromInt(1)], attr: null }).text, [",1"]);
+});
+
+test("an unwrapped general list or dictionary tells a symbol from a string, and nests as q's console does", async () => {
+  // -8!(1;`a;"b")
+  assert.deepStrictEqual((await unwrapped("0x010000001c000000000003000000f90100000000000000f56100f662")).text, ["1", "`a", '"b"']);
+  // -8!`a`b!(`c`d!1 2;`e`f!3 4)
+  assert.deepStrictEqual(
+    (await unwrapped("0x010000005b000000630b000200000061006200000002000000630b00020000006300640007000200000001000000000000000200000000000000630b00020000006500660007000200000003000000000000000400000000000000")).text,
+    ["a| `c`d!1 2", "b| `e`f!3 4"],
+  );
+  // -8!1#.q: the null symbol key and the generic null.
+  assert.deepStrictEqual((await unwrapped("0x0100000018000000630b0001000000000000010000006500")).text, ["| ::"]);
+  // -8!(1 2;30 4): rows lined up.
+  assert.deepStrictEqual(
+    (await unwrapped("0x010000003a000000000002000000070002000000010000000000000002000000000000000700020000001e000000000000000400000000000000")).text,
+    ["1  2", "30 4"],
+  );
+  // -8!(`a;1)!(2;`b)
+  assert.deepStrictEqual(
+    (await unwrapped("0x010000002d00000063000002000000f56100f90100000000000000000002000000f90200000000000000f56200")).text,
+    ["`a| 2", "1 | `b"],
+  );
+});
+
+test("an unwrapped table shows each column as its own type, and its columns when it has no rows", async () => {
+  // -8!([]p:2026.11.20D10:11:12.123456789 0Np;t:10:11:12.123 0Nt;g:2#0Ng;s:("ab";"c"))
+  const table = await unwrapped(
+    "0x01000000790000006200630b000400000070007400670073000000040000000c0002000000154d4857506cc60b00000000000000801300020000007b922f020000008002000200000000000000000000000000000000000000000000000000000000000000000000000000020000000a00020000006162f663",
+  );
+  assert.deepStrictEqual(table.text.map((l) => l.trimEnd()), [
+    "p                             t            g                                    s",
+    "-".repeat(84),
+    '2026.11.20D10:11:12.123456789 10:11:12.123 00000000-0000-0000-0000-000000000000 "ab"',
+    '                                           00000000-0000-0000-0000-000000000000 "c"',
+  ]);
+  // -8!0#([]a:1 2)
+  assert.deepStrictEqual((await unwrapped("0x010000001f0000006200630b00010000006100000001000000070000000000")).text, ["a", "-"]);
+  // -8!([k:`a`b]v:1 2)
+  assert.deepStrictEqual(
+    (await unwrapped("0x010000004b000000636200630b00010000006b000000010000000b0002000000610062006200630b0001000000760000000100000007000200000001000000000000000200000000000000")).text,
+    ["k| v", "-| -", "a| 1", "b| 2"],
+  );
+});
+
+test("an unwrapped lambda is shown as its text, which the process sends", async () => {
+  // -8!{[x;y]\n  x+y}
+  assert.deepStrictEqual((await unwrapped("0x010000001d00000064000a000d0000007b5b783b795d0a2020782b797d")).text, ["{[x;y]", "  x+y}"]);
+  // -8!(+): a primitive has no text to show.
+  assert.match((await unwrapped("0x010000000a0000006601")).text[0], /function/);
+});
+
+test("an unwrapped grid has each column's own type, its rows' ranks shared by equal values, and a sorted dictionary", async () => {
+  const grid = async (hex) => (await unwrapped(hex, { unlimited: false, limit: 100, size: [25, 80], grid: true })).grid;
+  // -8!([]p:2026.11.20D10:11:12.123456789 0Np;u:10:11 10:11;m:2026.11 -0Wm;g:2#0Ng)
+  const g = toGrid(
+    await grid(
+      "0x01000000770000006200630b0004000000700075006d0067000000040000000c0002000000154d4857506cc60b000000000000008011000200000063020000630200000d000200000042010000010000800200020000000000000000000000000000000000000000000000000000000000000000000000",
+    ),
+    -1,
+  );
+  assert.deepStrictEqual(g.columns.map((c) => c.type), [12, 17, 13, 2]);
+  assert.deepStrictEqual(g.cells, [
+    ["2026.11.20D10:11:12.123456789", ""],
+    ["10:11", "10:11"],
+    ["2026.11", "-0W"],
+    ["00000000-0000-0000-0000-000000000000", "00000000-0000-0000-0000-000000000000"],
+  ]);
+  assert.deepStrictEqual(g.values.slice(1, 3), [[611, 611], [322, null]]);
+  // Equal values share a place, so a descending sort keeps their order.
+  assert.deepStrictEqual(g.rank[1], [0, 0]);
+  // -8!0#([]a:1 2): the columns of a table with no rows.
+  const empty = await grid("0x010000001f0000006200630b00010000006100000001000000070000000000");
+  assert.deepStrictEqual([empty.names, empty.types, empty.count], [["a"], [7], 0]);
+  // -8!`s#`a`b!1 2: a sorted dictionary, not a function.
+  const sorted = await unwrapped("0x01000000290000007f0b01020000006100620007000200000001000000000000000200000000000000", { grid: true });
+  assert.deepStrictEqual(sorted.text, ["a| 1", "b| 2"]);
+  assert.deepStrictEqual(sorted.grid.cells, [["a", "b"], ["1", "2"]]);
+});
+
+/// The message of a q table of one long column `a` of `n` rows, 0 to n-1.
+function longTable(n) {
+  const head = Buffer.from("0100000000000000" + "6200" + "630b0001000000" + "6100" + "000001000000" + "0700", "hex");
+  const count = Buffer.alloc(4);
+  count.writeUInt32LE(n);
+  const items = Buffer.alloc(8 * n);
+  for (let i = 0; i < n; i++) {
+    items.writeBigInt64LE(BigInt(i), 8 * i);
+  }
+  const message = Buffer.concat([head, count, items]);
+  message.writeUInt32LE(message.length, 4);
+  return message;
+}
+
+test("an unwrapped table or dictionary of more rows than a call takes arguments is written", async () => {
+  const message = longTable(300_000);
+  message.writeUInt8(2, 1);
+  const answer = { value: deserialize(message, false, true, false, false), type: 98, message };
+  const run = (m) => runUnwrapped({ evaluate: async () => m }, ["t"], { size: [25, 80], limit: 10, unlimited: true, grid: false });
+  const table = await run(answer);
+  assert.strictEqual(table.text.length, 300_002);
+  assert.strictEqual(table.text[300_001].trimEnd(), "299999");
+  // A dictionary keyed by that table, and one of as many keys.
+  const keyed = Buffer.concat([Buffer.from("0100000000000000" + "63", "hex"), message.subarray(8), message.subarray(8)]);
+  keyed.writeUInt8(2, 1);
+  keyed.writeUInt32LE(keyed.length, 4);
+  assert.strictEqual((await run({ value: null, type: 99, message: keyed })).text.length, 300_002);
+});
+
+test("an unwrapped table is cut to the console's rows before it is laid out, as .Q.S cuts it", async () => {
+  const message = longTable(20);
+  message.writeUInt8(2, 1);
+  const answer = { value: deserialize(message, false, true, false, false), type: 98, message };
+  const run = (size) => runUnwrapped({ evaluate: async () => answer }, ["t"], { size, limit: 10, unlimited: false, grid: false });
+  // As wide as the rows shown: "-", not "--" for a 19 cut off.
+  assert.deepStrictEqual((await run([5, 80])).text.map((l) => l.trimEnd()), ["a", "-", "0", "1", ".."]);
+  assert.deepStrictEqual((await run([25, 80])).text.length, 22);
+});
+
+test("an unlimited float list is written to the process's \\P, as its console writes it", () => {
+  const floats = (value, precision, type = 9) => readUnlimited({ ok: true, type, text: [], value, attr: null, precision }).text[0];
+  assert.ok(UNLIMITED.includes('system"P"'));
+  // \P 0: every digit a float holds.
+  assert.strictEqual(floats([1 / 3, 2 / 3], 0), "0.33333333333333331 0.66666666666666663");
+  assert.strictEqual(floats([1 / 3, 2], 10), "0.3333333333 2");
+  assert.strictEqual(floats([1234.5, 0.000123], 3), "1.23e+03 0.000123");
+  assert.strictEqual(floats([123456789012.5], 10), ",1.23456789e+11");
+  // A real at \P 0 is as few digits as give it back; at \P 10, ten.
+  assert.strictEqual(floats([Math.fround(1.1), Math.fround(2.2)], 0, 8), "1.1 2.2e");
+  assert.strictEqual(floats([Math.fround(1.1)], 10, 8), ",1.100000024e");
+  // q's default, and an answer with no precision.
+  assert.strictEqual(floats([1 / 3], 7), ",0.3333333");
+  assert.strictEqual(readUnlimited({ ok: true, type: 9, text: [], value: [1 / 3] }).text[0], ",0.3333333");
+});

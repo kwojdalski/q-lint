@@ -82,9 +82,16 @@ export class ProcessExplorer implements TreeDataProvider<Node> {
       this.changed,
       commands.registerCommand(EXPLORER.refresh, () => this.refresh()),
       commands.registerCommand(EXPLORER.preview, (node?: Node) => this.preview(node)),
-      commands.registerCommand(EXPLORER.toggleAutoRefresh, () =>
-        workspace.getConfiguration("q-lint").update("processExplorer.autoRefresh", !settings().autoRefresh, ConfigurationTarget.Global),
-      ),
+      commands.registerCommand(EXPLORER.toggleAutoRefresh, () => {
+        // Where it is set: a user-level write is hidden by a workspace value.
+        const configuration = workspace.getConfiguration("q-lint");
+        const inWorkspace = configuration.inspect("processExplorer.autoRefresh")?.workspaceValue !== undefined;
+        return configuration.update(
+          "processExplorer.autoRefresh",
+          !settings().autoRefresh,
+          inWorkspace ? ConfigurationTarget.Workspace : ConfigurationTarget.Global,
+        );
+      }),
       live.onDidChange((what) => {
         if (what === "connected") {
           void this.refresh();
