@@ -80,6 +80,8 @@ import { isProduction } from "./agent";
 import { PLACEHOLDER_VALUES_KEY, lastValue, placeholderNames, readPlaceholders, remembered, substitute } from "./placeholders";
 import { guardCheck, guardQuestion, guardRefusal, readGuard } from "./guard";
 import type { GridAnswer, GridPayload } from "./grid";
+import { WATCH, WATCHING, intervalProblem, readWatch, watchText } from "./watch";
+import { guardedBy } from "./guard";
 
 const PROCESSES_KEY = "q-lint.processes";
 const HISTORY_KEY = "q-lint.queryHistory";
@@ -457,6 +459,12 @@ export class Live {
   private historyFilter: HistoryFilter = {};
   private readonly modes: QueryModes;
   readonly discovery: DiscoveryServers;
+  /// The query being watched (#914): its code, the process it runs on, how
+  /// often, how many runs so far, its timer and status bar item, and
+  /// whether a run is out.
+  private watching:
+    | { code: string; label: string; every: number; runs: number; timer: ReturnType<typeof setInterval>; status: StatusBarItem; running: boolean }
+    | undefined;
 
   constructor(private readonly context: ExtensionContext) {
     this.output = window.createOutputChannel("q-lint: query", "q-console");
@@ -509,6 +517,8 @@ export class Live {
       c(HISTORY_COMMANDS.filter, (filter?: HistoryFilter) => this.filterHistory(filter)),
       c(HISTORY_COMMANDS.clearFilter, () => this.setHistoryFilter({})),
       c(HISTORY_COMMANDS.export, (file?: Uri) => this.exportHistory(file)),
+      c(WATCH.start, (code?: string, every?: number) => this.watch(code, every)),
+      c(WATCH.stop, () => this.stopWatching()),
       this.changed,
       this.discovery.onDidChange(() => this.processesView.refresh()),
       workspace.onDidChangeConfiguration((event) => {
@@ -528,15 +538,24 @@ export class Live {
         if (event.affectsConfiguration("q-lint.query.progress")) {
           this.showStatus();
         }
+        if (event.affectsConfiguration("q-lint.query.watch") && !this.setting(readWatch).enabled) {
+          this.stopWatching("q-lint.query.watch.enable was turned off");
+        }
       }),
       this.changed.event((what) => {
         if (what !== "queried") {
           this.restartHeartbeat();
         }
+        // A watch stops on disconnect, and on a connect elsewhere, which
+        // closes the connection it ran on first.
+        if (what === "disconnected" && this.watching !== undefined) {
+          this.stopWatching(`the connection to ${this.watching.label} closed`);
+        }
       }),
       {
         dispose: () => {
           this.disposed = true;
+          this.stopWatching();
           clearInterval(this.ticker);
           clearInterval(this.heartbeat);
           this.reconnectRun++;
@@ -571,6 +590,8 @@ export class Live {
     unlimited: () => boolean;
     /// How many lambdas in the active file cache their parameters (#892).
     cachedLambdas: () => number;
+    /// The query being watched, and how many times it has run (#914).
+    watching: () => { code: string; label: string; every: number; runs: number } | undefined;
   } {
     return {
       processes: () => this.processes(),
@@ -594,6 +615,10 @@ export class Live {
       },
       unlimited: () => this.controls.unlimited,
       cachedLambdas: () => this.parameterCache.cached(),
+      watching: () => {
+        const w = this.watching;
+        return w === undefined ? undefined : { code: w.code, label: w.label, every: w.every, runs: w.runs };
+      },
     };
   }
 
@@ -1732,14 +1757,136 @@ export class Live {
     );
   }
 
+  /// Watch Query (#914): run `code` (one given, or the editor's selection
+  /// or statement at the cursor) on the active connection now and then
+  /// every `every` seconds (one given, or asked for), refreshing its result
+  /// in place, until stopped, disconnected, or connected elsewhere. A run
+  /// due while a query is out is skipped. The read-only guard asks once, at
+  /// the start, as does a guarded or production process.
+  async watch(given?: string, every?: number): Promise<void> {
+    if (!this.featureOn(this.setting(readWatch).enabled, "Watch Query", "q-lint.query.watch.enable")) {
+      return;
+    }
+    const code = typeof given === "string" ? given : await this.codeFromEditor();
+    if (code === undefined) {
+      return;
+    }
+    if (statements(code).length === 0) {
+      void window.showInformationMessage("q-lint: the query is empty: it is blank or only comments.");
+      return;
+    }
+    let seconds = typeof every === "number" && intervalProblem(String(every)) === undefined ? every : undefined;
+    if (seconds === undefined) {
+      const text = await window.showInputBox({
+        title: "Watch Query: every how many seconds?",
+        value: String(this.setting(readWatch).interval),
+        prompt: "The query runs now, and again at this interval until Stop Watching Query, a disconnect, or a connect elsewhere.",
+        validateInput: intervalProblem,
+      });
+      if (text === undefined) {
+        return;
+      }
+      seconds = Number(text.trim());
+    }
+    const ready = await this.ready();
+    if (ready === undefined) {
+      return;
+    }
+    const { process } = ready;
+    if (!(await this.guardAllows(code, [process]))) {
+      return;
+    }
+    const tags = guardedBy(process, this.setting(readGuard));
+    if (tags.length > 0 || isProduction(process)) {
+      const yes = "Watch";
+      const asked = await window.showWarningMessage(
+        `Watch the query on ${process.label}?`,
+        {
+          modal: true,
+          detail: `${process.label} is tagged ${process.tags.join(", ")}. The query runs there every ${seconds} s until you stop it.`,
+        },
+        yes,
+      );
+      if (asked !== yes) {
+        return;
+      }
+    }
+    if (this.activeLabel() !== process.label) {
+      void window.showInformationMessage(`q-lint: the connection moved from ${process.label} while you were asked; nothing is watched.`);
+      return;
+    }
+    this.stopWatching();
+    const status = window.createStatusBarItem("q-lint.watch", StatusBarAlignment.Left, 48);
+    status.name = "q-lint: watched query";
+    status.command = WATCH.stop;
+    status.tooltip = `Watching on ${process.label} every ${seconds} s:\n${code}\nClick to stop.`;
+    this.watching = {
+      code,
+      label: process.label,
+      every: seconds,
+      runs: 0,
+      timer: setInterval(() => void this.watchRun(), seconds * 1000),
+      status,
+      running: false,
+    };
+    void commands.executeCommand("setContext", WATCHING, true);
+    status.show();
+    await this.watchRun();
+  }
+
+  /// One run of the watched query; skipped while a query, or the last run,
+  /// is still out.
+  private async watchRun(): Promise<void> {
+    const watched = this.watching;
+    if (watched === undefined || watched.running) {
+      return;
+    }
+    if (this.activeLabel() !== watched.label) {
+      this.stopWatching(`the connection is no longer to ${watched.label}`);
+      return;
+    }
+    if (this.connection?.isBusy || this.borrowed !== undefined) {
+      return;
+    }
+    watched.running = true;
+    const first = watched.runs === 0;
+    watched.runs++;
+    watched.status.text = watchText(iconsEscaped(watched.label), watched.every, watched.runs);
+    try {
+      await this.run(watched.code, first ? "watch" : "watched");
+    } finally {
+      watched.running = false;
+    }
+  }
+
+  /// Stop the watch, if there is one, saying why when `why` is given.
+  private stopWatching(why?: string): void {
+    const watched = this.watching;
+    if (watched === undefined) {
+      if (why === undefined && !this.disposed) {
+        void window.showInformationMessage("q-lint: no query is watched.");
+      }
+      return;
+    }
+    this.watching = undefined;
+    clearInterval(watched.timer);
+    watched.status.dispose();
+    void commands.executeCommand("setContext", WATCHING, false);
+    if (why !== undefined) {
+      void window.showInformationMessage(`q-lint: stopped watching the query: ${why}.`);
+    }
+  }
+
   /// Run `code` on the active connection, connecting first if there is none.
-  /// The process explorer's Preview runs here too.
-  async run(code: string): Promise<void> {
+  /// The process explorer's Preview runs here too. A watched query's first
+  /// run (`watch`) asks nothing more, and its later ones (`watched`) are
+  /// not recorded, and refresh the result in place.
+  async run(code: string, as?: "watch" | "watched"): Promise<void> {
     let ready = await this.ready();
     if (ready === undefined) {
       return;
     }
-    if (this.guardRefuses(code, [ready.process]) !== undefined) {
+    if (as === undefined && this.guardRefuses(code, [ready.process]) !== undefined) {
       if (!(await this.guardAllows(code, [ready.process]))) {
         return;
       }
@@ -1785,8 +1932,8 @@ export class Live {
         outcome: answer.ok ? "ok" : "error",
         ...(answer.ok ? {} : { error: answer.error }),
       };
-      if (!this.modes.show({ process: process.label, code, answer, millis }, settings)) {
-        this.show(render({ process: process.label, code, answer, millis }, settings), settings.autoClear);
+      if (!this.modes.show({ process: process.label, code, answer, millis }, settings, as === "watched")) {
+        this.show(render({ process: process.label, code, answer, millis }, settings), settings.autoClear || as === "watched");
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -1813,6 +1960,9 @@ export class Live {
         this.running = undefined;
       }
       this.showStatus();
+    }
+    if (as === "watched") {
+      return;
     }
     this.changed.fire("queried");
     this.notifyFinished(entry);

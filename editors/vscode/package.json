@@ -569,6 +569,20 @@
             "default": true,
             "order": 142,
             "markdownDescription": "The **Saved Queries** view: named queries kept for the workspace, run on the active connection, edited as q documents of their own, renamed and deleted. Off, the view is removed and its commands refuse; the queries are kept."
+          },
+          "q-lint.query.watch.enable": {
+            "type": "boolean",
+            "default": false,
+            "order": 143,
+            "markdownDescription": "**Watch Query**: run a query on the active connection every few seconds and refresh its result in place until stopped, disconnected, or connected elsewhere. Off by default, as it sends code on its own; off, the command is hidden and refuses, and a watch running stops."
+          },
+          "q-lint.query.watch.interval": {
+            "type": "number",
+            "default": 5,
+            "minimum": 1,
+            "maximum": 86400,
+            "order": 144,
+            "markdownDescription": "Seconds between a watched query's runs that **Watch Query** offers, with `#q-lint.query.watch.enable#` on."
           }
         }
       },
@@ -1234,6 +1248,18 @@
         "title": "Delete Saved Query",
         "category": "q-lint",
         "icon": "$(trash)"
+      },
+      {
+        "command": "q-lint.watchQuery",
+        "title": "Watch Query",
+        "category": "q-lint",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "q-lint.stopWatchingQuery",
+        "title": "Stop Watching Query",
+        "category": "q-lint",
+        "icon": "$(eye-closed)"
       }
     ],
     "views": {
@@ -1765,6 +1791,16 @@
           "command": "q-lint.saveQuery",
           "when": "editorLangId == q && config.q-lint.savedQueries.enable",
           "group": "q-lint@23"
+        },
+        {
+          "command": "q-lint.watchQuery",
+          "when": "editorLangId == q && config.q-lint.query.watch.enable",
+          "group": "q-lint@24"
+        },
+        {
+          "command": "q-lint.stopWatchingQuery",
+          "when": "editorLangId == q && q-lint.watching",
+          "group": "q-lint@25"
         }
       ],
       "commandPalette": [
@@ -1867,6 +1903,14 @@
         {
           "command": "q-lint.deleteSavedQuery",
           "when": "config.q-lint.savedQueries.enable"
+        },
+        {
+          "command": "q-lint.watchQuery",
+          "when": "config.q-lint.query.watch.enable"
+        },
+        {
+          "command": "q-lint.stopWatchingQuery",
+          "when": "q-lint.watching"
         }
       ],
       "editor/title": [

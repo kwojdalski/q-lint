@@ -407,3 +407,23 @@ test("each result feature turned off: its command refuses, the page is sent noth
   }
   assert.deepStrictEqual(page.posted.at(-1).history.map((h) => h.code), ["r"]);
 });
+
+test("a watched query's next run replaces its result in place: the same id, no new tab, the previous run kept to compare (#914)", () => {
+  const fake = fakeVscode();
+  const modes = loadModes(fake);
+  modes.show({ ...result([1]), code: "w" }, live());
+  const page = fake.pages[0];
+  const first = page.posted.at(-1);
+  modes.show({ ...result([2]), code: "w" }, live(), true);
+  const next = page.posted.at(-1);
+  assert.strictEqual(next.id, first.id);
+  assert.deepStrictEqual(next.grid.cells, [["2"]]);
+  assert.strictEqual(next.history.length, 1);
+  assert.deepStrictEqual(next.diff.changes, [[0, 0, "1"]]);
+  // Another query on show is not replaced: a run of `w` then is a new result.
+  modes.show({ ...result([3]), code: "other" }, live());
+  modes.show({ ...result([4]), code: "w" }, live(), true);
+  assert.notStrictEqual(page.posted.at(-1).id, first.id);
+  assert.strictEqual(page.posted.at(-1).history.length, 3);
+  assert.strictEqual(fake.pages.length, 1);
+});

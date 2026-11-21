@@ -230,7 +230,10 @@ export class QueryModes {
 
   /// Show a query's answer in the panel when the mode is grid or chart and
   /// the value was tabular. False when it belongs in the output instead.
-  show(result: { process: string; code: string; millis: number; answer: GridAnswer }, live: LiveSettings): boolean {
+  /// `inPlace`, for a watched query's next run (#914): when the result on
+  /// show is of the same code and process, it is replaced under its id, so
+  /// the page keeps its view, sort, filters and scroll, and no tab is added.
+  show(result: { process: string; code: string; millis: number; answer: GridAnswer }, live: LiveSettings, inPlace = false): boolean {
     const { answer } = result;
     if (live.mode === "console" || !answer.ok) {
       return false;
@@ -244,14 +247,15 @@ export class QueryModes {
     }
     const features = this.viewSettings();
     const last = features.enable.diff ? this.previous.get(result.code) : undefined;
+    const replaced = inPlace && this.shown?.code === result.code && this.shown.process === result.process ? this.shown : undefined;
     const shown: Shown = {
       process: result.process,
       code: result.code,
       millis: result.millis,
       payload: answer.grid,
-      view: live.mode,
+      view: replaced?.view ?? live.mode,
       limit: live.gridLimit,
-      id: `${this.session}.${++this.results}`,
+      id: replaced?.id ?? `${this.session}.${++this.results}`,
       at: Date.now(),
       ...(last !== undefined ? { before: { payload: last.payload, process: last.process, at: last.at } } : {}),
     };
@@ -261,11 +265,23 @@ export class QueryModes {
     if (this.previous.size > PREVIOUS_RUNS) {
       this.previous.delete(this.previous.keys().next().value as string);
     }
-    this.history.push(shown);
+    const at = replaced === undefined ? -1 : this.history.indexOf(replaced);
+    if (at >= 0) {
+      this.history[at] = shown;
+    } else {
+      this.history.push(shown);
+    }
     this.shown = shown;
     this.applyFeatures(features);
-    this.order.editor = undefined;
-    this.order.panel = undefined;
+    if (replaced === undefined) {
+      this.order.editor = undefined;
+      this.order.panel = undefined;
+    }
+    if (replaced !== undefined && (this.panel !== undefined || this.view !== undefined)) {
+      // Drawn again where it is, without taking the editor's place.
+      this.post();
+      return true;
+    }
     if (live.resultsLocation === "panel") {
       void this.revealView();
     } else {

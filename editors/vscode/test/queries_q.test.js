@@ -1,7 +1,8 @@
 // Queries on saved processes against real q processes, driven through the
 // stand-in `vscode` module: the read-only guard (#918), Query a Tag (#906),
-// Compare Query (#907) and saved queries (#912). Needs a q binary, so it
-// runs only when QLINT_TEST_Q names one, as qclient.test.js does.
+// Compare Query (#907), saved queries (#912) and Watch Query (#914). Needs
+// a q binary, so it runs only when QLINT_TEST_Q names one, as
+// qclient.test.js does.
 const { stub, vscode } = require("./vscode_stub.js");
 const test = require("node:test");
 const assert = require("node:assert");
@@ -173,4 +174,19 @@ test("a saved query runs on a real q process, its placeholder asked for (#912)",
   assert.strictEqual(last(), "rdb ok exec sum px from trade where sym=`a");
   const value = await live.runOnActive("x", (c) => c.query(["exec sum px from trade where sym=`a"], [10, 80]));
   assert.strictEqual(value.value.text[0], "4f");
+});
+
+test("Watch Query re-runs a query on a real q process until it is disconnected (#914)", { skip }, async (t) => {
+  const q = await startQ(t, "n:0\n.z.ts:{n+:1}\n\\t 100\n");
+  const { live } = await setUp(t, [proc("rdb", q.port)], { "query.watch.enable": true });
+  assert.strictEqual(await live.connectTo("rdb"), true);
+  await stub.commands.get("q-lint.watchQuery")("n", 1);
+  await sleep(2400);
+  const watching = live.api().watching();
+  assert.ok(watching.runs >= 3, `ran ${watching.runs} times`);
+  assert.deepStrictEqual(live.history().map((h) => `${h.outcome} ${h.code}`), ["ok n"]);
+  // The process goes away: the watch stops.
+  q.stop();
+  for (let i = 0; i < 100 && live.api().watching() !== undefined; i++) await sleep(50);
+  assert.strictEqual(live.api().watching(), undefined);
 });
