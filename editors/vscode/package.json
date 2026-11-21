@@ -950,6 +950,12 @@
             "default": true,
             "order": 705,
             "markdownDescription": "Read and watch the workspace's `.qlint/processes.json`, a process list committed with the code, and list its processes beside the saved ones; **Add to Shared Process List** writes a saved process there, never its password. A password or secret in the file is ignored and said. Connect scripts, SSH jump hosts and launch definitions in it are read only in a trusted workspace. Off: the file is not read, its group is removed, and the command is hidden."
+          },
+          "q-lint.processes.newQuery.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 706,
+            "markdownDescription": "Offer **New Query for Process**, in the palette and on a process in the Processes view: an untitled q editor whose queries go to that process, whatever is connected (as **Choose Connection for File** binds a file). Nothing is sent until you run a query from it. Off: the command is hidden and refuses."
           }
         }
       }
@@ -1550,6 +1556,12 @@
         "title": "Draft qSQL from a Description",
         "category": "q-lint",
         "icon": "$(sparkle)"
+      },
+      {
+        "command": "q-lint.newQueryForProcess",
+        "title": "New Query for Process",
+        "category": "q-lint",
+        "icon": "$(new-file)"
       }
     ],
     "views": {
@@ -1999,6 +2011,11 @@
           "command": "q-lint.addToSharedProcesses",
           "when": "view == q-lint.processes && viewItem =~ /^process/ && workspaceFolderCount > 0 && config.q-lint.processes.shared.enable",
           "group": "2_edit@7"
+        },
+        {
+          "command": "q-lint.newQueryForProcess",
+          "when": "view == q-lint.processes && viewItem =~ /^(process|discovered)/ && config.q-lint.processes.newQuery.enable",
+          "group": "1_connect@4"
         }
       ],
       "editor/title/run": [
@@ -2330,6 +2347,10 @@
         {
           "command": "q-lint.draftQsql",
           "when": "config.q-lint.chat.englishToQsql.enable"
+        },
+        {
+          "command": "q-lint.newQueryForProcess",
+          "when": "config.q-lint.processes.newQuery.enable"
         }
       ],
       "editor/title": [

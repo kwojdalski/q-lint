@@ -642,6 +642,14 @@ kept for when it is on again.
   shows `file: <label>`. **Clear Connection for File** removes the binding.
   Renaming the process (**Edit Process**) carries its files along, and
   deleting it removes their bindings.
+- **New Query for Process**, in the palette and on a process in the
+  **Processes** view, opens an untitled q editor already bound to that
+  process, as **Choose Connection for File** would bind it: what you run
+  from it goes there, whatever is connected, with the read-only guard and
+  the production confirmation as for any query. Nothing is sent until you
+  run something. The binding lasts as long as the editor: saved as a
+  file, it is a new file, which **Choose Connection for File** binds.
+  `q-lint.processes.newQuery.enable` off hides the command.
 - **Reveal Process** selects the connected process in the **Processes**
   view, and shows the view. **Open q-lint Settings** opens Settings at
   q-lint's.
@@ -1422,6 +1430,7 @@ Each applies at once, without a reload. None reaches the language server.
 | `q-lint.tickerplant.stream.enable` | `false` | **Stream Tickerplant Table**: subscribe with `.u.sub` and show a table's updates live. Off, the command is hidden and refuses, and open streams close. | - |
 | `q-lint.tickerplant.stream.rows` | `1000` | The newest rows a stream keeps, 1 to 10,000. | - |
 | `q-lint.processes.launcher.enable` | `true` | **Start Process**, **Stop Process** and **Set Launch Definition**. Off, they are hidden and refuse, and what was started is stopped. | - |
+| `q-lint.processes.newQuery.enable` | `true` | **New Query for Process**: an untitled q editor bound to a process. Off, the command is hidden and refuses. | - |
 | `q-lint.processes.shared.enable` | `true` | Read, watch and list `.qlint/processes.json`, and offer **Add to Shared Process List**. Off, the file is not read and the group is removed. | - |
 
 ### Terminal settings
