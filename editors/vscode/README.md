@@ -676,6 +676,41 @@ agent is told so. Each agent query goes into **Query History**, marked
 `agent`. The tool needs VS Code 1.95 or later; before it, only the command
 is there.
 
+Two more tools read and lint without running anything. **List q Tables**
+(`q-lint_listTables`, `#qTables`) answers the connected process's tables -
+each by the name a query uses, with its kind, rows and first 50 columns -
+or, given `{"table"}`, that table's schema from `meta`: each column's type,
+attribute and foreign key, its keys and rows. It reads as the Process
+Explorer reads, with the same lambdas and limits, and only the connected
+process: to read another, an agent connects with Run q Query's `process`.
+**Lint q Code** (`q-lint_lint`, `#qLint`) runs the qlinter the language
+server runs on the code it is given, as the file `{"file"}` names (for its
+configuration) or `snippet.q`, and answers its findings. Each has its own
+setting, `q-lint.agent.schemaTool.enable` and `q-lint.agent.lintTool.enable`;
+turned off, the tool is unregistered.
+
+**@q in the chat.** `@q <code>`, or `@q` with q code selected in an editor,
+explains the code, right to left. The model is the one picked in the chat,
+through VS Code's language-model API: q-lint holds no key and calls no
+service of its own. With the question go the language server's hovers on
+the selection's names and its findings there, and what the connected
+process holds for each name the code uses (a function's source, a table's
+columns, a variable's type and first items), read without running the
+code. `@q /error` explains the last failed query in Query History, with its
+code, or the error typed after it. The model may call q-lint's tools: Run q
+Query asks you first, as it always does. `q-lint.chat.participant.enable`
+off removes `@q`.
+
+**Draft qSQL from a Description**, in the palette or a q editor's context
+menu, asks a language model for a query that does what you describe, given
+the connected process's tables and columns, and opens the draft in a new q
+editor. Nothing runs: the notification offers **Run**, which runs the
+draft as it then stands, edited or not, as a query from an editor runs,
+and **Insert at Cursor**, which puts it in the editor you started from.
+Close it, and nothing happens. `q-lint.chat.englishToQsql.enable` off hides
+the command. Both need a language model in VS Code, such as GitHub
+Copilot's; without one they say so.
+
 ## q notebooks
 
 A `.qnb` file opens as a notebook of q code cells and markdown cells;
@@ -1024,6 +1059,10 @@ Read when a cell runs or a command is used, so a change needs no reload. None re
 | Setting | Default | What it does | q-pro |
 | --- | --- | --- | --- |
 | `q-lint.agent.queryTimeout` | `30` | Seconds a query run by an agent through **Run q Query** may take before it is aborted, as **Abort Current Query** aborts one. `0` sets no limit. | - |
+| `q-lint.agent.schemaTool.enable` | `true` | The **List q Tables** tool: the connected process's tables, or one table's schema. Off, it is unregistered. | - |
+| `q-lint.agent.lintTool.enable` | `true` | The **Lint q Code** tool: qlinter's findings on code an agent gives it. Off, it is unregistered. | - |
+| `q-lint.chat.participant.enable` | `true` | The **@q** chat participant. Off, it is removed from the chat. | - |
+| `q-lint.chat.englishToQsql.enable` | `true` | **Draft qSQL from a Description**, shown for review and run only on **Run**. Off, the command is hidden and refuses. | - |
 
 ### Process settings
 

@@ -45,6 +45,7 @@ const { INFO, readMonitorInterval } = require("../out/monitor.js");
 const { readInsight } = require("../out/insightconfig.js");
 const { readAssist, QUERY_FEATURES } = require("../out/assistconfig.js");
 const { DRIFT_COMMANDS } = require("../out/definitions.js");
+const { QSQL_COMMANDS } = require("../out/assist.js");
 const { CONTROL_COMMANDS, readControls } = require("../out/querycontrols.js");
 const { readProgress } = require("../out/progress.js");
 const { readPlaceholders } = require("../out/placeholders.js");
@@ -290,6 +291,7 @@ test("package.json declares exactly the commands the extension registers", () =>
     INFO.refreshMonitor,
     INFO.refreshHdb,
     ...Object.values(DRIFT_COMMANDS),
+    ...Object.values(QSQL_COMMANDS),
   ].sort();
   assert.deepStrictEqual(declared, registered);
 });

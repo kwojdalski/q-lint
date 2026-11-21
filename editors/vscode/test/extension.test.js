@@ -91,6 +91,9 @@ function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir
     "./funcsourceview": { FunctionSources: class { state() { return {}; } } },
     "./infoview": { registerInfoViews: () => ({ monitor: () => [], hdb: () => [] }) },
     "./driftview": { Drift: class { hotReloadState() { return {}; } } },
+    "./assisttools": { registerAssistTools: () => ({ registered: () => [] }) },
+    "./chat": { registerChat: () => ({ registered: () => false }) },
+    "./qsqldraft": { registerQsqlDraft() {} },
   };
   const file = require.resolve("../out/extension.js");
   delete require.cache[file];

@@ -663,6 +663,30 @@
             "minimum": 0,
             "order": 500,
             "markdownDescription": "Seconds a query run by an agent through the **Run q Query** tool may take. A query that takes longer is aborted, as **Abort Current Query** aborts one, and the agent is told it timed out. `0` sets no limit."
+          },
+          "q-lint.agent.schemaTool.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 501,
+            "markdownDescription": "The **List q Tables** language-model tool (`#qTables`): the connected process's tables, or one table's schema, read as the Process Explorer reads them. Off, the tool is unregistered."
+          },
+          "q-lint.agent.lintTool.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 502,
+            "markdownDescription": "The **Lint q Code** language-model tool (`#qLint`): qlinter's findings on q code an agent gives it. Off, the tool is unregistered."
+          },
+          "q-lint.chat.participant.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 503,
+            "markdownDescription": "The **@q** chat participant, which explains q code or a q error with the language server's and the connected process's help. Off, it is removed from the chat."
+          },
+          "q-lint.chat.englishToQsql.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 504,
+            "markdownDescription": "**Draft qSQL from a Description**: a language model drafts a query from your words, shown in a new editor for you to review; it runs only if you choose Run. Off, the command is hidden and refuses."
           }
         }
       },
@@ -1177,6 +1201,12 @@
         "category": "q-lint",
         "icon": "$(diff)",
         "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.draftQsql",
+        "title": "Draft qSQL from a Description",
+        "category": "q-lint",
+        "icon": "$(sparkle)"
       }
     ],
     "views": {
@@ -1641,6 +1671,11 @@
           "command": "q-lint.findCallers",
           "when": "editorLangId == q && q-lint.connected && config.q-lint.processExplorer.findCallers.enable",
           "group": "q-lint@8"
+        },
+        {
+          "command": "q-lint.draftQsql",
+          "when": "editorLangId == q && config.q-lint.chat.englishToQsql.enable",
+          "group": "q-lint@9"
         }
       ],
       "commandPalette": [
@@ -1719,6 +1754,10 @@
         {
           "command": "q-lint.checkDrift",
           "when": "config.q-lint.processExplorer.driftDetection.enable"
+        },
+        {
+          "command": "q-lint.draftQsql",
+          "when": "config.q-lint.chat.englishToQsql.enable"
         }
       ],
       "editor/title": [
@@ -1870,6 +1909,55 @@
             "query"
           ]
         }
+      },
+      {
+        "name": "q-lint_listTables",
+        "displayName": "List q Tables",
+        "toolReferenceName": "qTables",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(table)",
+        "when": "config.q-lint.agent.schemaTool.enable",
+        "userDescription": "List the tables of the connected q process, or one table's schema.",
+        "modelDescription": "Lists the tables of the q (kdb+) process the user is connected to in the q-lint extension, or gives one table's schema. It reads only, and never runs code. Without `table`, it returns `{process, tables, moreTables?, namespacesNotRead?}`: each table as `{name, kind, rows, keys?, columns, columnCount?}`, `name` as a query names it (`t` or `.ns.t`), `kind` one of table, keyed or partitioned, `rows` its row count (null when it could not be counted), `columns` its first 50 column names and `columnCount` how many it has when that is more; at most 200 tables. With `table`, it returns `{process, name, kind, rows, partitions?, keys, columns, columnCount?}` from `meta`: each column `{name, type, attribute?, foreignKey?}`, `type` the q type (`long`, `symbol lists`, ...), `attribute` sorted, unique, parted or grouped. A failure gives `{error}`. It reads the connected process only: to read another, connect to it first with the Run q Query tool's `process`. Use it before writing a query, to get table and column names right.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "table": {
+              "type": "string",
+              "description": "A table's name, as q code names it (`trade` or `.ns.trade`), for its schema. Omit to list the tables."
+            },
+            "process": {
+              "type": "string",
+              "description": "The label of the connected process, to check it is the one meant. Omit to use the active connection."
+            }
+          }
+        }
+      },
+      {
+        "name": "q-lint_lint",
+        "displayName": "Lint q Code",
+        "toolReferenceName": "qLint",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(checklist)",
+        "when": "config.q-lint.agent.lintTool.enable",
+        "userDescription": "Lint q code with qlinter, the linter behind q-lint.",
+        "modelDescription": "Lints q (kdb+) code with qlinter, the static linter behind the q-lint extension, without running it, and returns `{findings, count}`: each finding `{line, column, code, rule, severity, message}`, lines and columns 1-based in the code given. An empty list means no rule matched, which is weaker than the code being correct. A failure gives `{error}`. qlinter reads the workspace's configuration (`.qlinter.toml`) as for the file `file`. Use it to check q code before suggesting it or running it.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "description": "The q code to lint."
+            },
+            "file": {
+              "type": "string",
+              "description": "The workspace-relative path of a `.q` file to lint the code as, so its configuration applies. Omit for `snippet.q`."
+            }
+          },
+          "required": [
+            "code"
+          ]
+        }
       }
     ],
     "walkthroughs": [
@@ -1948,6 +2036,26 @@
             "completionEvents": [
               "onCommand:q-lint.newNotebook"
             ]
+          }
+        ]
+      }
+    ],
+    "chatParticipants": [
+      {
+        "id": "q-lint.q",
+        "name": "q",
+        "fullName": "q (q-lint)",
+        "description": "Explain q code or a q error",
+        "isSticky": false,
+        "when": "config.q-lint.chat.participant.enable",
+        "commands": [
+          {
+            "name": "explain",
+            "description": "Explain the q code typed or selected, with the language server's and the process's help"
+          },
+          {
+            "name": "error",
+            "description": "Explain the last failed query, or the q error typed"
           }
         ]
       }

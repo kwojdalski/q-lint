@@ -13,7 +13,7 @@ const {
   reloadPlan,
   namesList,
 } = require("../out/definitions.js");
-const { readAssist, assistOff, ASSIST_SETTINGS, QUERY_FEATURES } = require("../out/assistconfig.js");
+const { readAssist, assistOff, ASSIST_SETTINGS } = require("../out/assistconfig.js");
 const pkg = require("../package.json");
 
 test("definitions: top-level lambdas, in their context, with their lines", () => {
@@ -96,8 +96,7 @@ test("every switch is read with its default, and package.json declares it", () =
   assert.deepStrictEqual(defaults, { drift: false, hotReload: false, schemaTool: true, lintTool: true, chat: true, qsql: true });
   assert.deepStrictEqual(readAssist((k, f) => (k === "hotReload.enable" ? "yes" : f)).hotReload, false);
   const props = Object.assign({}, ...pkg.contributes.configuration.map((c) => c.properties));
-  for (const feature of QUERY_FEATURES) {
-    const { key, fallback } = ASSIST_SETTINGS[feature];
+  for (const [feature, { key, fallback }] of Object.entries(ASSIST_SETTINGS)) {
     const p = props[`q-lint.${key}`];
     assert.ok(p, key);
     assert.strictEqual(p.type, "boolean", key);
