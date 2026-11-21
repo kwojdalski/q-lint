@@ -554,14 +554,14 @@ function nested(q: QValue): string[] {
 /// The lines q's console would show for a value decoded with its types
 /// (`qdecode.ts`), as `.Q.S` writes them: from the numbers q holds, so a
 /// timestamp keeps its nanoseconds and a negative infinity its sign, and
-/// with each item's own type, so a symbol is told from a string. A table or
-/// a function is left to `formatValue`, which writes the codec's `value` of
-/// it, of q type `type`.
+/// with each item's own type, so a symbol is told from a string, and a
+/// table keeps its columns when it has no rows. A function is left to
+/// `formatValue`, which writes the codec's `value` of it, of q type `type`.
 export function formatQ(q: QValue, value: unknown, type?: number): string[] {
   if (q.kind === "atom" || q.kind === "vector" || q.kind === "chars") {
     return [oneLine(q)];
   }
-  if (q.kind === "table" || q.kind === "func" || (q.kind === "dict" && q.k.kind === "table")) {
+  if (q.kind === "func") {
     return formatValue(value, type);
   }
   return nested(q);
