@@ -22,6 +22,8 @@ t:([] sym:\`a\`b\`c; px:1.5 2.5 3.5)
 big:([] i:til 20000; s:20000#\`x\`y)
 kt:([k:\`b\`a] v:2 1)
 slow:{system "sleep ",string x; x}
+dom:\`a\`b\`c,\`$"s",/:string til 100
+ids:1 2 3
 `;
 
 function freePort() {
@@ -102,6 +104,39 @@ test("unlimited, unwrapped and timed-out queries against a real q process", { sk
     }
   });
 
+  await t.test("unlimited: a list keeps the attribute q writes before it", async () => {
+    for (const list of ["asc 3 1 2", "`u#`a`b", "`p#1 1 2", "`g#1 2", "`s#2026.01.01 2026.01.02", "`s#enlist 1", "`s#\"abc\""]) {
+      const own = await connection.query([list], SIZE);
+      const whole = readUnlimited(await connection.call(UNLIMITED, [list], UNLIMITED_SIZE));
+      assert.deepStrictEqual(whole.text, own.text, list);
+    }
+  });
+
+  await t.test("unlimited: a string is written as q writes it, UTF-8 and control bytes escaped", async () => {
+    for (const s of ['"caf\\303\\251"', 'enlist "\\303\\251"', '"a\\001b\\"\\\\"', 'enlist "x"', '""', '`s#"abc"']) {
+      const own = await connection.query([s], SIZE);
+      const whole = readUnlimited(await connection.call(UNLIMITED, [s], UNLIMITED_SIZE));
+      assert.deepStrictEqual(whole.text, own.text, s);
+    }
+    // And whole, where a query cuts it at \c.
+    const long = readUnlimited(await connection.call(UNLIMITED, ["300#\"ab\""], UNLIMITED_SIZE));
+    assert.deepStrictEqual(long.text, [`"${"ab".repeat(150)}"`]);
+  });
+
+  await t.test("unlimited: an enumerated list is written whole, as q writes it", async () => {
+    // exec sym from an HDB table is enumerated: .Q.S wrote it with -3!,
+    // which KDB-X cuts at \\c, unlimited or not.
+    const syms = Array.from({ length: 100 }, (_, i) => `\`s${i}`).join("");
+    const whole = readUnlimited(await connection.call(UNLIMITED, ["`dom$`$\"s\",/:string til 100"], UNLIMITED_SIZE));
+    assert.deepStrictEqual(whole.text, [`\`dom$${syms}`]);
+    assert.strictEqual(whole.type, 20);
+    for (const list of ["`dom$`a`b", "`dom$enlist`b", "`dom$0#`", "`s#`dom$`a`b", "`ids$1 3"]) {
+      const own = await connection.query([list], SIZE);
+      const one = readUnlimited(await connection.call(UNLIMITED, [list], UNLIMITED_SIZE));
+      assert.deepStrictEqual(one.text, own.text, list);
+    }
+  });
+
   await t.test("unlimited: a table is every row, formatted by the process", async () => {
     const cut = await connection.query(["big"], SIZE);
     assert.ok(cut.text.length <= SIZE[0]);
@@ -148,8 +183,8 @@ test("unlimited, unwrapped and timed-out queries against a real q process", { sk
     const dict = await runUnwrapped(connection, ["`a`b!1 2"], options);
     assert.deepStrictEqual(dict.text, ["a| 1", "b| 2"]);
     const atoms = await runUnwrapped(connection, ["(1.5;2026.11.20;`s)"], options);
-    // A symbol inside a general list arrives as a string, and is shown as one.
-    assert.deepStrictEqual(atoms.text, ["1.5", "2026.11.20", '"s"']);
+    // A symbol inside a general list is shown as a symbol.
+    assert.deepStrictEqual(atoms.text, ["1.5", "2026.11.20", "`s"]);
     assert.deepStrictEqual((await runUnwrapped(connection, ["2026.11.20D10:11:12.5"], options)).text, ["2026.11.20D10:11:12.500000000"]);
     assert.deepStrictEqual((await runUnwrapped(connection, ['"abc"'], options)).text, ['"abc"']);
     assert.deepStrictEqual((await runUnwrapped(connection, ["a:1;"], options)).type, 101);

@@ -79,7 +79,42 @@ const cases = [
   ["a date made a timestamp with p is one literal", "d:2024.01.02p", "2024.01.02p", "constant.numeric.temporal.q"],
   ["and made a datetime with z", "d:2024.01.02z", "2024.01.02z", "constant.numeric.temporal.q"],
   ["an upper-case exponent is part of the number", "n:1.5E3", "1.5E3", "constant.numeric.q"],
+  // A number with p is a timestamp that many hours past 2000: KDB-X and
+  // PeachQ read 1p as 2000.01.01D01:00:00.000000000.
+  ["a number made a timestamp with p is one literal", "t:1p", "1p", "constant.numeric.q"],
+  ["and a fractional one", "t:1.5p", "1.5p", "constant.numeric.q"],
 ];
+
+// x, y and z are a lambda's implicit parameters only when it declares none:
+// in {[a] x+a} x is a global, as KDB-X reads it.
+test("x is not an implicit parameter of a lambda that declares its own", async () => {
+  assert.deepStrictEqual(await scopesOf("f:{[a] x+a}", "x"), ["variable.other.q"]);
+  assert.deepStrictEqual(await scopesOf("f:{[a;b]\n  y*a}", "y"), ["variable.other.q"]);
+  // A declared x is the parameter; an undeclared one in a nested lambda
+  // with no list is that lambda's own.
+  assert.deepStrictEqual(await scopesOf("f:{[x] x+1}", "x"), ["variable.parameter.q", "variable.other.q"]);
+  assert.deepStrictEqual(await scopesOf("f:{[a] {x+1} a}", "x"), ["variable.language.implicit.q"]);
+});
+
+test("a parameter list over several lines is a parameter list", async () => {
+  const src = "f:{[a;\n  b]\n  a+b}";
+  assert.deepStrictEqual(await scopesOf(src, "b"), ["variable.parameter.q", "variable.other.q"]);
+  assert.deepStrictEqual(await scopesOf(src, "a"), ["variable.parameter.q", "variable.other.q"]);
+  assert.deepStrictEqual(await scopesOf(src, "]"), ["punctuation.definition.parameters.end.q"]);
+  // And the lambda still ends where it closes.
+  assert.deepStrictEqual(await scopesOf(src + "\ng:1", "g"), ["variable.other.definition.q"]);
+});
+
+// What KDB-X refuses: there is no typed null or infinity of symbol (the
+// null symbol is a lone backtick), and no infinite guid.
+test("0Ns, 0Ws and 0Wg are not coloured as nulls, since q refuses them", async () => {
+  for (const text of ["0Ns", "0ns", "0Ws", "-0ws", "0Wg"]) {
+    assert.notDeepStrictEqual(await scopesOf(`x:${text}`, text), ["constant.language.null.q"], text);
+  }
+  for (const text of ["0Ng", "0Nc", "0Wc", "-0Wp", "0wz"]) {
+    assert.deepStrictEqual(await scopesOf(`x:${text}`, text), ["constant.language.null.q"], text);
+  }
+});
 
 for (const [description, source, text, scope, which = -1] of cases) {
   test(description, async () => {

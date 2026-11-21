@@ -8,7 +8,8 @@
 //
 // They are q comments, so the cell runs the same in a notebook, a query or
 // an exported script. Only the lines before the first that is neither blank
-// nor a directive are read; a later `/ @grid` is an ordinary comment.
+// nor a directive are read; a later `/ @grid` is an ordinary comment, and so
+// is a qDoc line (`/ @param`, `/ @return`, ...).
 
 export const CHART_KINDS = ["line", "bar", "scatter", "histogram"] as const;
 export type ChartKind = (typeof CHART_KINDS)[number];
@@ -29,6 +30,15 @@ export type Directive = CellMode | { problem: string };
 
 const DIRECTIVE = /^\/\s*@(\S*)\s*(.*?)\s*$/;
 
+/// The tags of qDoc, q's documentation comments (`/ @param x ...`): the
+/// first of them ends the directives, as any other comment does, so a cell
+/// holding a documented function runs.
+const QDOC = new Set([
+  "author", "category", "deprecated", "desc", "doctest", "eg", "example", "fileOverview", "kind",
+  "name", "overview", "param", "private", "return", "returns", "see", "since", "subcategory",
+  "throws", "todo", "type", "typedef", "version",
+]);
+
 /// What the cell's leading directives ask for: the last one wins. A directive
 /// this does not know, a chart of no known kind, or a title or height on a
 /// cell that draws no chart, is a problem the cell reports instead of
@@ -37,12 +47,13 @@ export function cellDirective(source: string): Directive {
   let found: CellMode = { mode: "console" };
   let title: string | undefined;
   let height: number | undefined;
+  let charted = false;
   for (const line of source.split(/\r?\n/)) {
     if (line.trim() === "") {
       continue;
     }
     const match = DIRECTIVE.exec(line.trimEnd());
-    if (match === null) {
+    if (match === null || QDOC.has(match[1])) {
       break;
     }
     const [, name, rest] = match;
@@ -59,6 +70,7 @@ export function cellDirective(source: string): Directive {
         };
       }
       found = { mode: "chart", chart: kind };
+      charted = true;
     } else if (name === "title") {
       if (rest === "") {
         return { problem: "`/ @title` takes the chart's title after it." };
@@ -82,7 +94,12 @@ export function cellDirective(source: string): Directive {
     return found;
   }
   if (found.mode !== "chart") {
-    return { problem: `\`/ @${title !== undefined ? "title" : "height"}\` is for a chart, and this cell has no \`/ @chart\`.` };
+    const which = `\`/ @${title !== undefined ? "title" : "height"}\``;
+    return {
+      problem: charted
+        ? `${which} is for a chart, and this cell's \`/ @${found.mode}\` after its \`/ @chart\` draws none.`
+        : `${which} is for a chart, and this cell has no \`/ @chart\`.`,
+    };
   }
   return { ...found, ...(title !== undefined ? { title } : {}), ...(height !== undefined ? { height } : {}) };
 }

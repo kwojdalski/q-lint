@@ -32,20 +32,27 @@ import {
 import type { Row } from "./discovery";
 import type { Live } from "./live";
 import { readLive } from "./liveconfig";
-import type { Process } from "./processes";
+import { address, type Process } from "./processes";
 import { statements } from "./statements";
 
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
 /// A call as `prepareInvocation` and `invoke` both see it: each is handed
 /// its own copy of the input.
-const callKey = (input: AgentInput): string => JSON.stringify([input.query ?? "", input.process?.trim() ?? ""]);
+const callKey = (input: AgentInput): string => JSON.stringify([input.query ?? "", label(input) ?? ""]);
+
+/// The label `input` names, trimmed; undefined when it names none. A model
+/// can send any JSON, whatever the schema asks for, so a label that is not
+/// a string is kept as it came, for `target` to refuse.
+const label = (input: AgentInput): unknown =>
+  typeof input.process === "string" ? input.process.trim() : (input.process ?? undefined);
 
 class RunQueryTool implements LanguageModelTool<AgentInput> {
-  /// The process the user was asked to run each prepared call on. The
-  /// active connection can change while the question is open, and a call
-  /// that names no process runs on whichever is active then.
-  private readonly asked = new Map<string, string>();
+  /// The process the user was asked to run each prepared call on, or null
+  /// when they were asked nothing. The active connection can change while
+  /// the question is open, and a call that names no process runs on
+  /// whichever is active then.
+  private readonly asked = new Map<string, string | null>();
 
   constructor(private readonly live: Live) {}
 
@@ -55,7 +62,10 @@ class RunQueryTool implements LanguageModelTool<AgentInput> {
     const saved = this.live.processes();
     const discovered = this.live.discovery.discovered();
     const active = this.live.activeLabel();
-    const named = input.process?.trim();
+    const named = label(input);
+    if (named !== undefined && typeof named !== "string") {
+      return { error: `"process" must be a process's label, a string, not ${JSON.stringify(named)}.` };
+    }
     if (named) {
       const found = resolveProcess(named, saved, discovered);
       return "error" in found ? found : { process: found.process, connects: found.process.label !== active };
@@ -68,11 +78,11 @@ class RunQueryTool implements LanguageModelTool<AgentInput> {
   /// not run, and the call answers with why.
   confirm(input: AgentInput): { title: string; message: string; process: string } | undefined {
     const target = this.target(input);
-    if ("error" in target) {
+    if ("error" in target || typeof input.query !== "string") {
       return undefined;
     }
     const active = this.live.activeLabel();
-    const asked = confirmation(input.query ?? "", target.process, {
+    const asked = confirmation(input.query, target.process, {
       connects: target.connects,
       ...(target.connects && active !== undefined ? { replaces: active } : {}),
     });
@@ -81,11 +91,14 @@ class RunQueryTool implements LanguageModelTool<AgentInput> {
 
   prepareInvocation(options: LanguageModelToolInvocationPrepareOptions<AgentInput>): PreparedToolInvocation {
     const asked = this.confirm(options.input);
+    this.asked.delete(callKey(options.input));
+    // Null: the user was asked nothing, since the call would not run as
+    // things stood. Should it come to run - a connection made, a label
+    // listed - before it is invoked, it is refused rather than run unasked.
+    this.asked.set(callKey(options.input), asked?.process ?? null);
     if (asked === undefined) {
       return { invocationMessage: "Running a q query" };
     }
-    this.asked.delete(callKey(options.input));
-    this.asked.set(callKey(options.input), asked.process);
     // Calls asked about and never run are forgotten, oldest first.
     for (const key of [...this.asked.keys()].slice(0, -20)) {
       this.asked.delete(key);
@@ -103,7 +116,12 @@ class RunQueryTool implements LanguageModelTool<AgentInput> {
 
   /// Run the query `input` asks for, and answer with what the agent is given.
   async run(input: AgentInput, token: CancellationToken): Promise<AgentResult> {
-    const code = typeof input.query === "string" ? input.query : "";
+    if (typeof input.query !== "string") {
+      return { error: `"query" must be q code, a string, not ${JSON.stringify(input.query ?? null)}.` };
+    }
+    const code = input.query;
+    const shown = this.asked.get(callKey(input));
+    this.asked.delete(callKey(input));
     if (statements(code).length === 0) {
       return { error: "The query is empty: it is blank or only comments." };
     }
@@ -112,13 +130,18 @@ class RunQueryTool implements LanguageModelTool<AgentInput> {
       return target;
     }
     const { process } = target;
-    const shown = this.asked.get(callKey(input));
-    this.asked.delete(callKey(input));
+    if (shown === null) {
+      return { error: `Nothing was run: when the call was made it had no q process to run on, so the user was not asked to run it on ${process.label}. Ask again.` };
+    }
     if (shown !== undefined && shown !== process.label) {
       return { error: `Nothing was run: the user was asked to run it on ${shown}, and it would now run on ${process.label}. Ask again.` };
     }
+    // Before connecting: a connect makes the process the user's active one.
+    if (token.isCancellationRequested) {
+      return { error: "The query was cancelled before it ran." };
+    }
     if (target.connects && !(await this.live.connectTo(process.label))) {
-      return { error: `Could not connect to ${process.label} (${process.host}:${process.port}); q-lint showed the user why.` };
+      return { error: `Could not connect to ${process.label} (${address(process.host, process.port)}); q-lint showed the user why.` };
     }
     if (token.isCancellationRequested) {
       return { error: "The query was cancelled before it ran." };

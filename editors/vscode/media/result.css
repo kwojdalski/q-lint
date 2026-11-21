@@ -15,6 +15,11 @@ body {
   font-size: var(--vscode-font-size);
 }
 
+/* The q Results view, in the bottom panel: the panel's background. */
+body[data-location="panel"] {
+  background: var(--vscode-panel-background, var(--vscode-editor-background));
+}
+
 [hidden] {
   display: none !important;
 }
@@ -78,7 +83,10 @@ button.on {
 }
 
 table {
+  /* A fixed layout needs a width: as narrow as the columns allow, so they
+     keep result.js's widths whatever the rows in view hold. */
   table-layout: fixed;
+  width: 1px;
   border-collapse: separate;
   border-spacing: 0;
   font-family: var(--vscode-editor-font-family);
@@ -108,6 +116,11 @@ thead th {
   font-weight: 600;
 }
 
+thead th:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+
 thead tr.filters th {
   top: 22px;
   cursor: default;
@@ -128,6 +141,14 @@ th.num {
 td.key,
 th.key {
   background: var(--vscode-editor-inactiveSelectionBackground);
+}
+
+/* A sticky header: the key's shade, which can be translucent, over an
+   opaque ground, so the rows scrolled under it do not show through. */
+thead th.key {
+  background:
+    linear-gradient(var(--vscode-editor-inactiveSelectionBackground, transparent), var(--vscode-editor-inactiveSelectionBackground, transparent)),
+    var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background));
 }
 
 tbody tr:hover td {

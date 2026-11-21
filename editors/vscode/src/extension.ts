@@ -22,15 +22,23 @@ import { registerNotebooks, type RenderedChart } from "./notebook";
 import { ProcessExplorer } from "./explorerview";
 import { Relations } from "./relate";
 import { Serial } from "./serial";
+import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
+  CloseAction,
+  ErrorAction,
   LanguageClient,
+  type ErrorHandler,
   type LanguageClientOptions,
   type ServerOptions,
 } from "vscode-languageclient/node";
 
 let client: LanguageClient | undefined;
+/// How long a server has to answer `initialize`. qlinter answers it at once
+/// - the workspace is indexed after - so one still silent by then is hung,
+/// and every restart would otherwise queue behind it for good.
+export const timing = { start: 20_000 };
 /// Every start, restart and stop of `client`, one at a time.
 const serial = new Serial();
 /// One channel for the life of the extension. Each client would otherwise
@@ -73,7 +81,7 @@ export async function activate(
 ): Promise<ReturnType<Live["api"]> & { explorer: ProcessExplorer["rows"]; notebookCharts: () => RenderedChart[]; agentConfirmation: ReturnType<typeof registerAgentTool> }> {
   // Replacing the binary does not restart the server, and a window reload is
   // a blunt way to pick up a new one. This is the small way.
-  context.subscriptions.push(commands.registerCommand("q-lint.restartServer", () => restart(context)));
+  context.subscriptions.push(commands.registerCommand("q-lint.restartServer", () => restart(context, true)));
   // The server reads its settings once, at startup, so a change starts a new
   // one - except the trace level, which the client applies as it runs.
   context.subscriptions.push(
@@ -92,18 +100,29 @@ export async function activate(
   const explorer = new ProcessExplorer(context, live);
   registerOnboarding(context, () => live.processes());
   relations = new Relations(context, () => client);
-  await serial.run(() => start(context));
-  relations.serverChanged();
+  // Not awaited: nothing above needs the server, and a slow or hung one
+  // would hold up every command of the extension until it answered.
+  void serial.run(() => start(context)).then(() => relations?.serverChanged());
   return { ...live.api(), explorer: () => explorer.rows(), notebookCharts: () => notebook.charts(), agentConfirmation };
 }
 
-function restart(context: ExtensionContext): Promise<void> {
+/// Stop the server and start it again. `asked`: by Restart Server, which
+/// says so when the setting leaves it off rather than doing nothing.
+function restart(context: ExtensionContext, asked = false): Promise<void> {
   return serial.run(async () => {
     await client?.stop().catch(() => {});
     client = undefined;
     await start(context);
     relations?.serverChanged();
+    if (asked && client === undefined && workspace.getConfiguration("q-lint").get<unknown>("enable", true) === false) {
+      void window.showInformationMessage("q-lint: the language server is turned off (q-lint.enable), so Restart Server started none.");
+    }
   });
+}
+
+/// Whether `command --version` runs and succeeds.
+function answersVersion(command: string): boolean {
+  return spawnSync(command, ["--version"], { stdio: "ignore", timeout: 10_000, windowsHide: true }).status === 0;
 }
 
 function stop(): Promise<void> {
@@ -152,7 +171,16 @@ async function start(context: ExtensionContext): Promise<void> {
   };
 
   let started: unknown;
-  for (const command of candidates) {
+  for (const [i, command] of candidates.entries()) {
+    // The language client reports a server it cannot start with an error of
+    // its own, so a candidate with another after it is asked its version
+    // first: a bundled binary built for another platform then falls through
+    // to PATH without a false alarm. The last is left to the client, which
+    // says why it failed - and a wrapper script need not know --version.
+    if (i < candidates.length - 1 && !answersVersion(command)) {
+      started = new Error(`${command} --version did not run`);
+      continue;
+    }
     const server: ServerOptions = {
       // One entry, used for both: this server has no separate debug mode, and
       // giving it a fabricated one would mean a second thing to keep in step.
@@ -163,9 +191,32 @@ async function start(context: ExtensionContext): Promise<void> {
       run: { command, args },
       debug: { command, args },
     };
-    client = new LanguageClient("q-lint", "q-lint", server, options);
+    // A server given up on must not be restarted by its own client when it
+    // is killed: the default handler restarts a server that closes.
+    let abandoned = false;
+    let fallback: ErrorHandler | undefined;
+    const errorHandler: ErrorHandler = {
+      error: (error, message, count) =>
+        abandoned || fallback === undefined
+          ? { action: ErrorAction.Shutdown, handled: true }
+          : fallback.error(error, message, count),
+      closed: () =>
+        abandoned || fallback === undefined ? { action: CloseAction.DoNotRestart, handled: true } : fallback.closed(),
+    };
+    client = new LanguageClient("q-lint", "q-lint", server, { ...options, errorHandler });
+    fallback = client.createDefaultErrorHandler();
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      await client.start();
+      await Promise.race([
+        client.start(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            abandoned = true;
+            reject(new Error(`${command} did not answer initialize within ${timing.start / 1000} s.`));
+          }, timing.start);
+        }),
+      ]);
+      clearTimeout(timer);
       started = undefined;
       // Which server answered, and where it came from. The rules live in the
       // binary, so a diagnostic that looks wrong is often a diagnostic from a
@@ -175,7 +226,10 @@ async function start(context: ExtensionContext): Promise<void> {
       client.outputChannel.appendLine(`q-lint ${version} from ${command}`);
       break;
     } catch (error) {
+      clearTimeout(timer);
       started = error;
+      // A client still starting refuses to stop, but its server is killed
+      // all the same once the attempt settles.
       await client.stop().catch(() => {});
       client = undefined;
     }
@@ -184,7 +238,14 @@ async function start(context: ExtensionContext): Promise<void> {
   {
     const error = started;
     const command = candidates.join('", "');
-    if (client === undefined) {
+    if (client === undefined && configured) {
+      // The user named this binary, so the advice is about that setting -
+      // not to install one and set it, which they did.
+      window.showErrorMessage(
+        `q-lint: could not start "${configured}", the binary q-lint.serverPath names. ` +
+          `Check the path, or clear the setting to use the server bundled with the extension. ${error}`,
+      );
+    } else if (client === undefined) {
       // Name every binary that was tried. "Couldn't start the server" sends
       // someone to the logs; saying what was attempted, and that none of them
       // ran, tells them what to fix.

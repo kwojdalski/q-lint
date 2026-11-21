@@ -120,7 +120,7 @@ test("a label names a saved process before a discovered one", () => {
   assert.strictEqual(resolveProcess("rdb", saved, discovered).process.host, "h");
   assert.strictEqual(resolveProcess("disc/rdb", saved, discovered).process.host, "other");
   // A discovered process by its bare label, when only one server lists it.
-  assert.deepStrictEqual(resolveProcess("gw", saved, discovered).process, { label: "disc/gw", host: "g", port: 1, tags: [] });
+  assert.deepStrictEqual(resolveProcess("gw", saved, discovered).process, { label: "disc/gw", host: "g", port: 1, tags: [], server: "disc" });
   assert.deepStrictEqual(knownLabels(saved, discovered), ["rdb", "hdb", "disc/gw", "disc/rdb"]);
 });
 
@@ -208,4 +208,60 @@ test("every agent setting is read, with the default package.json declares, and n
   // query the moment it started: the longest one a timer holds is kept.
   assert.strictEqual(set(2147483), 2147483);
   assert.strictEqual(set(3000000), 2147483);
+});
+
+test("a deep backtrace and a wide table are cut, as the rows are", () => {
+  // A recursion 1000 deep fails with a backtrace of 2000 lines (54 KB on
+  // KDB-X), and a 3000-column table gave 2 MB of JSON: either fills an
+  // agent's context, which the 200-row cap is there to prevent.
+  const trace = Array.from({ length: 1000 }, (_, i) => `  [${1000 - i}]  {$[x=0;x+\`a;f x-1]}\n                   ^`).join("\n");
+  const failed = shape({ ok: false, error: "type", trace });
+  assert.ok(failed.trace.split("\n").length <= 41, `${failed.trace.split("\n").length} lines`);
+  assert.match(failed.trace, /1960 more lines/);
+  assert.ok(failed.trace.startsWith("  [1000]"), "the innermost frames are the ones kept");
+  const n = 3000;
+  const wide = grid({
+    names: Array.from({ length: n }, (_, i) => `c${i}`),
+    types: Array(n).fill(7),
+    cells: Array.from({ length: n }, () => ["1", "2"]),
+    raw: Array.from({ length: n }, () => [1, 2]),
+    rank: Array.from({ length: n }, () => []),
+  });
+  const shaped = shape(ok(wide));
+  assert.strictEqual(shaped.columns.length, 100);
+  assert.strictEqual(shaped.types.length, 100);
+  assert.ok(shaped.data.every((row) => row.length === 100));
+  assert.strictEqual(shaped.columnCount, n);
+  assert.strictEqual(shaped.truncated, true);
+  // A table within both limits says nothing of either.
+  assert.ok(!("columnCount" in shape(ok(grid()))));
+});
+
+test("the labels an error lists are cut, so a large discovery server cannot flood the answer", () => {
+  // A desk's discovery server can list thousands of processes; the error
+  // for an unknown label listed every one (60 KB for 2000).
+  const many = [
+    {
+      server: { label: "desk", url: "http://d" },
+      state: {
+        processes: Array.from({ length: 2000 }, (_, i) => ({ label: `rdb${i}`, host: "h", port: 5000 + i, tags: [] })),
+        problems: [],
+        loading: false,
+        removed: false,
+      },
+    },
+  ];
+  const { error } = resolveProcess("nope", saved, many);
+  assert.ok(error.length < 2000, `${error.length} characters`);
+  assert.match(error, /rdb, hdb, desk\/rdb0, /);
+  assert.match(error, /and 1952 more/);
+  assert.ok(notConnected(saved, many).length < 2000);
+});
+
+test("the confirmation writes an IPv6 address as a URL does, and a label with markdown in it as written", () => {
+  const v6 = confirmation("1", { label: "a&lt;b", host: "::1", port: 5000, tags: [] });
+  // Escaped, so the brackets show and are not a link.
+  assert.match(v6.message, /\(\\\[::1\\\]:5000\)/);
+  // `&lt;` would show as `<`: the user is asked about a label they do not have.
+  assert.match(v6.message, /\*\*a\\&lt;b\*\*/);
 });

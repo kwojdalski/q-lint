@@ -70,6 +70,16 @@ test("comments are not sent", () => {
   assert.deepStrictEqual(statements("a:1 / one"), ["a:1 / one"]);
 });
 
+test("a script's shebang line is skipped, as q skips it", () => {
+  assert.deepStrictEqual(statements("#!/usr/bin/env q\na:1\nb:2"), ["a:1", "b:2"]);
+  assert.deepStrictEqual(statements("#!/usr/bin/env q\r\na:1"), ["a:1"]);
+  // Only the first line: q refuses `#!` anywhere else.
+  assert.deepStrictEqual(statements("a:1\n#!x"), ["a:1", "#!x"]);
+  const lines = ["#!/usr/bin/env q", "a:1"];
+  assert.strictEqual(blockAt(lines, 0), undefined);
+  assert.deepStrictEqual(blockAt(lines, 1), { start: 1, end: 1 });
+});
+
 test("a lone backslash ends the script", () => {
   assert.deepStrictEqual(statements("a:1\n\\\nb:2"), ["a:1"]);
 });
@@ -255,6 +265,7 @@ test("package.json declares exactly the commands the extension registers", () =>
     ...Object.values(relations.COMMANDS),
     NOTEBOOK.exportCommand,
     RESULTS.exportCsv,
+    RESULTS.exportViewCsv,
     RESULTS.setRowLimit,
     AGENT.copyLabel,
     ...[ONBOARDING.getStarted, ONBOARDING.openHelpLink, ONBOARDING.editTagColor, ONBOARDING.newNotebook],
@@ -392,7 +403,7 @@ test("the q Results view is a webview in its own container in the bottom panel (
   assert.strictEqual(view.type, "webview");
   // Export Results to CSV is on the view's title bar; the row limit on a
   // notebook's toolbar.
-  assert.ok(pkg.contributes.menus["view/title"].some((m) => m.command === RESULTS.exportCsv && m.when === `view == ${RESULTS.view}`));
+  assert.ok(pkg.contributes.menus["view/title"].some((m) => m.command === RESULTS.exportViewCsv && m.when === `view == ${RESULTS.view}`));
   assert.ok(pkg.contributes.menus["notebook/toolbar"].some((m) => m.command === RESULTS.setRowLimit));
 });
 

@@ -181,3 +181,32 @@ test("every terminal setting is read, with the default package.json declares, an
   // An empty binary falls back to q.
   assert.strictEqual(readTerminal((key, fallback) => (key === "terminal.qBinary" ? "  " : fallback)).qBinary, "q");
 });
+
+test("a leading ~ in a q binary or env file setting is the home directory", () => {
+  const { expandHome } = require("../out/terminal.js");
+  assert.strictEqual(expandHome("~/q/m64/q", "/Users/me"), "/Users/me/q/m64/q");
+  assert.strictEqual(expandHome("~", "/Users/me"), "/Users/me");
+  assert.strictEqual(expandHome("~\\q\\w64\\q.exe", "C:\\Users\\me"), "C:\\Users\\me\\q\\w64\\q.exe");
+  // Another user's home, a ~ inside a path, and a plain name are left alone.
+  assert.strictEqual(expandHome("~bob/q", "/Users/me"), "~bob/q");
+  assert.strictEqual(expandHome("/opt/~/q", "/Users/me"), "/opt/~/q");
+  assert.strictEqual(expandHome("q", "/Users/me"), "q");
+});
+
+test("a terminal setting of the wrong type, as settings.json allows, is its default instead of failing every terminal", () => {
+  const read = (values) => () => readTerminal((key, fallback) => (key in values ? values[key] : fallback));
+  assert.doesNotThrow(read({ "terminal.qBinary": null, "terminal.envPath": 7 }));
+  assert.deepStrictEqual(read({ "terminal.qBinary": null, "terminal.envPath": 7 })(), { qBinary: "q", envPath: "" });
+  assert.deepStrictEqual(read({ "terminal.qBinary": ["q"], "terminal.envPath": null })(), { qBinary: "q", envPath: "" });
+});
+
+test("the terminal settings are read per workspace folder, so they are declared for one", () => {
+  // `start` reads them for the file's folder; a setting of the default
+  // "window" scope is ignored in a folder's settings of a multi-root workspace.
+  const props = Object.assign({}, ...pkg.contributes.configuration.map((c) => c.properties));
+  for (const key of ["q-lint.terminal.qBinary", "q-lint.terminal.envPath"]) {
+    assert.strictEqual(props[key].scope, "resource", key);
+    assert.match(props[key].markdownDescription, /Start q REPL/, key);
+    assert.match(props[key].markdownDescription, /`~`/, key);
+  }
+});

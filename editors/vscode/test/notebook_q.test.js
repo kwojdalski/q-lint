@@ -162,6 +162,14 @@ test("notebook cells against a real q process", { skip }, async (t) => {
     assert.deepStrictEqual((await data("select from sp where n>1")).table.data[0], ["c", "de"]);
   });
 
+  await t.test("a table with two columns of one name keeps both, as q shows them", async () => {
+    // A keyed table may name a value column as its key column.
+    const keyed = await data("([a:1 2] a:3 4)");
+    assert.deepStrictEqual([keyed.table.columns, keyed.table.keys, keyed.table.data], [["a", "a"], 1, [["1", "2"], ["3", "4"]]]);
+    const flipped = await data("flip `a`a!(1 2;3 4)");
+    assert.deepStrictEqual(flipped.table.data, [["1", "2"], ["3", "4"]]);
+  });
+
   await t.test("a dictionary keyed by a table, with a list for its value, comes back as text", async () => {
     const answer = await data("([] a:1 2)!3 4");
     assert.strictEqual(answer.ok, true, JSON.stringify(answer));
@@ -273,4 +281,24 @@ test("an exported notebook loads in q and defines what its cells define", { skip
   const loaded = await connection.query([`system "l ${file}"`], SIZE);
   assert.strictEqual(loaded.ok, true, JSON.stringify(loaded));
   assert.deepStrictEqual((await connection.query(["(a;f 1;exec v from r;b;c;d)"], SIZE)).text, ["1", "2", "2 3 4", "2", "3", "6"]);
+});
+
+test("an exported notebook whose comments hold a lone / loads to its end", { skip }, async (t) => {
+  // KDB-X opens a block comment inside a block comment on a lone `/`, and
+  // one `\` then closes only that one: the rest of the script was comment.
+  const cells = [
+    { kind: "markdown", source: "a path:\n/\nthe root" },
+    { kind: "code", source: "a:1\n/\nnot code\n/\nstill not\n\\" },
+    { kind: "code", source: "b:2\n\\\nended, and\n/\nstill ended" },
+    { kind: "code", source: "c:a+b" },
+  ];
+  const q = await startQ("");
+  t.after(() => q.stop());
+  const file = path.join(q.dir, "exported.q");
+  fs.writeFileSync(file, exportScript(cells, "a.qnb"));
+  const connection = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  t.after(() => connection.close());
+  const loaded = await connection.query([`system "l ${file}"`], SIZE);
+  assert.strictEqual(loaded.ok, true, JSON.stringify(loaded));
+  assert.deepStrictEqual((await connection.query(["(a;b;c)"], SIZE)).text, ["1 2 3"]);
 });

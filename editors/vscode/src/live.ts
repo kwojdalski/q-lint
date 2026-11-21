@@ -7,6 +7,7 @@
 // statements, `statements.ts`'s; how processes are read and grouped,
 // `processes.ts`'s; discovery servers, `discoveryservers.ts`'s; what a
 // terminal is sent, `terminal.ts`'s. This file is the VS Code around them.
+import * as os from "os";
 import * as path from "path";
 import {
   commands,
@@ -32,24 +33,31 @@ import {
 import { children, findDiscovered, qualified, type Row } from "./discovery";
 import { DiscoveryServers, discoveryItem } from "./discoveryservers";
 import {
+  address,
+  hostProblem,
   merge,
   parseProcesses,
+  plainHost,
   parseTags,
+  passwordKey,
+  passwordsToForget,
   portProblem,
   processThemeColour,
+  processTooltip,
   readProcessFile,
   tlsChoices,
   type Process,
 } from "./processes";
 import { COMMANDS, CONNECTED, VIEWS, readLive, readProcessSettings, readTerminal } from "./liveconfig";
 import { QConnection } from "./qclient";
+import { historyHeading, historyLabel, iconsEscaped } from "./history";
 import { render } from "./query";
 import { QueryModes, type Rendered } from "./resultpanel";
 import { blockAt, statements } from "./statements";
-import { commandLine, parseEnv, replLines, shellKind } from "./terminal";
+import { commandLine, expandHome, parseEnv, replLines, shellKind } from "./terminal";
 import { QueryControls } from "./controls";
 import { ParameterCache } from "./paramcachecontrol";
-import { CONTROL_COMMANDS, UNLIMITED, armTimeout, limits, readUnlimited, runUnwrapped, timedOutError } from "./querycontrols";
+import { CONTROL_COMMANDS, FILE_CONNECTIONS_KEY, UNLIMITED, armTimeout, limits, readUnlimited, runUnwrapped, timedOutError, withBinding } from "./querycontrols";
 
 const PROCESSES_KEY = "q-lint.processes";
 const HISTORY_KEY = "q-lint.queryHistory";
@@ -57,7 +65,6 @@ const HISTORY_KEY = "q-lint.queryHistory";
 const HISTORY_LIMIT = 200;
 
 
-const passwordKey = (label: string): string => `q-lint.password.${label}`;
 
 /// What a process command is given: a view row, a process's label (from a
 /// keybinding's `args`, or another extension), or nothing - then the user
@@ -96,6 +103,11 @@ function codeAt(editor: TextEditor, from: From): string | undefined {
     return block === undefined ? undefined : lines.slice(block.start, block.end + 1).join("\n");
   }
   return document.lineAt(line).text;
+}
+
+/// What a command that reads the active editor says when there is none.
+function noEditor(): void {
+  void window.showInformationMessage("q-lint: open a q file first: there is no active editor.");
 }
 
 function nothingThere(from: From): void {
@@ -149,18 +161,18 @@ class ProcessesView implements TreeDataProvider<Row> {
     return this.parents.get(row);
   }
 
-  /// The row of the process connected to as `label`: a saved process under
+  /// The row of `process`, as connected to: a saved process under
   /// its first tag, or a discovered one under its server.
-  find(label: string, under?: Row): Row | undefined {
+  find(process: Pick<Process, "label" | "server">, under?: Row): Row | undefined {
     for (const row of this.getChildren(under)) {
-      if (row.kind === "process" && row.process.label === label) {
+      if (row.kind === "process" && process.server === undefined && row.process.label === process.label) {
         return row;
       }
-      if (row.kind === "discovered" && qualified(row.server, row.process.label) === label) {
+      if (row.kind === "discovered" && row.server === process.server && qualified(row.server, row.process.label) === process.label) {
         return row;
       }
       if (row.kind === "tag" || row.kind === "servers" || row.kind === "server") {
-        const found = this.find(label, row);
+        const found = this.find(process, row);
         if (found !== undefined) {
           return found;
         }
@@ -183,19 +195,12 @@ class ProcessesView implements TreeDataProvider<Row> {
     // A discovered process is connected to under its qualified label, so a
     // saved process of the same label is not shown connected with it.
     const from = row.kind === "discovered" ? row.server : undefined;
-    const active = this.live.activeLabel() === (from === undefined ? process.label : qualified(from, process.label));
+    const connected = this.live.activeProcess();
+    const active = connected?.server === from && connected?.label === (from === undefined ? process.label : qualified(from, process.label));
     const item = new TreeItem(process.label, TreeItemCollapsibleState.None);
-    item.description = `${process.host}:${process.port}${active ? " - connected" : ""}`;
+    item.description = `${address(process.host, process.port)}${active ? " - connected" : ""}`;
     item.iconPath = new ThemeIcon(active ? "vm-active" : "server-process", colourOf(process.tags));
-    item.tooltip = new MarkdownString(
-      [
-        `**${process.label}**`,
-        `${process.host}:${process.port}${process.tls ? " (TLS)" : ""}`,
-        process.user ? `user \`${process.user}\`` : "no user",
-        process.tags.length ? `tags: ${process.tags.join(", ")}` : "no tags",
-        ...(from === undefined ? [] : [`listed by ${from}, connected to as \`${qualified(from, process.label)}\``]),
-      ].join("\n\n"),
-    );
+    item.tooltip = new MarkdownString(processTooltip(process, from));
     const kind = from === undefined ? "process" : "discovered";
     item.contextValue = active ? `${kind}.connected` : kind;
     // A click connects: the row is the process, and connecting is what it is for.
@@ -219,8 +224,7 @@ class HistoryView implements TreeDataProvider<HistoryEntry> {
   }
 
   getTreeItem(entry: HistoryEntry): TreeItem {
-    const first = entry.code.split("\n")[0];
-    const item = new TreeItem(first.length > 80 ? `${first.slice(0, 79)}…` : first, TreeItemCollapsibleState.None);
+    const item = new TreeItem(historyLabel(entry.code), TreeItemCollapsibleState.None);
     const when = new Date(entry.at);
     item.description = `${entry.agent ? "agent · " : ""}${entry.process} · ${when.toLocaleTimeString()} · ${entry.millis} ms`;
     item.iconPath = new ThemeIcon(
@@ -228,10 +232,7 @@ class HistoryView implements TreeDataProvider<HistoryEntry> {
       new ThemeColor(entry.outcome === "ok" ? "testing.iconPassed" : entry.outcome === "error" ? "errorForeground" : "disabledForeground"),
     );
     const tooltip = new MarkdownString();
-    tooltip.appendMarkdown(`${entry.process}, ${when.toLocaleString()}, ${entry.millis} ms${entry.agent ? ", run by an agent" : ""}`);
-    if (entry.error !== undefined) {
-      tooltip.appendMarkdown(`\n\n'${entry.error}`);
-    }
+    tooltip.appendMarkdown(historyHeading(entry, when.toLocaleString()));
     tooltip.appendCodeblock(entry.code, "q");
     item.tooltip = tooltip;
     item.contextValue = "history";
@@ -242,26 +243,30 @@ class HistoryView implements TreeDataProvider<HistoryEntry> {
 /// q in VS Code terminals: a file run in one, and code sent to one. The
 /// terminal runs the user's shell, which starts q, so q exiting leaves the
 /// shell and the command line shows what was run.
-class QTerminals {
+export class QTerminals {
   /// The terminals started here, still open.
   private readonly ours = new Set<Terminal>();
-  /// Where code is sent: the last q terminal started.
+  /// The file each Run Code from Terminal terminal runs.
+  private readonly files = new WeakMap<Terminal, string>();
+  /// Where code is sent: the last q terminal started, of those still open.
   private last: Terminal | undefined;
+  /// The terminal a send is starting, so a second send waits for it.
+  private starting: Promise<Terminal | undefined> | undefined;
 
   constructor(context: ExtensionContext) {
     context.subscriptions.push(
       window.onDidCloseTerminal((terminal) => {
         this.ours.delete(terminal);
         if (terminal === this.last) {
-          this.last = undefined;
+          this.last = [...this.ours].pop();
         }
       }),
     );
   }
 
-  /// Run the active file in a terminal named after it, saving it first. A
-  /// terminal of the same name started before is closed: running the file
-  /// again starts a fresh q.
+  /// Run the active file in a terminal named after it, saving it first. The
+  /// terminal it ran in before is closed: running the file again starts a
+  /// fresh q. Another file of the same name keeps its own.
   async runFile(): Promise<void> {
     const document = window.activeTextEditor?.document;
     if (document === undefined || document.uri.scheme !== "file") {
@@ -271,13 +276,18 @@ class QTerminals {
     if (document.isDirty && !(await document.save())) {
       return;
     }
-    const name = path.basename(document.uri.fsPath);
-    for (const terminal of this.ours) {
-      if (terminal.name === name) {
-        terminal.dispose();
+    const file = document.uri.fsPath;
+    // Closed only once the new one can start: an env file that cannot be
+    // read leaves the running q as it was.
+    const close = (): void => {
+      for (const terminal of this.ours) {
+        if (this.files.get(terminal) === file) {
+          this.ours.delete(terminal);
+          terminal.dispose();
+        }
       }
-    }
-    const terminal = await this.start(name, document.uri, document.uri.fsPath);
+    };
+    const terminal = await this.start(path.basename(file), document.uri, file, close);
     terminal?.show();
   }
 
@@ -293,6 +303,7 @@ class QTerminals {
   async send(from: From): Promise<void> {
     const editor = window.activeTextEditor;
     if (editor === undefined) {
+      noEditor();
       return;
     }
     const lines = replLines(codeAt(editor, from) ?? "");
@@ -300,7 +311,10 @@ class QTerminals {
       nothingThere(from);
       return;
     }
-    const terminal = this.last ?? (await this.start("q", editor.document.uri));
+    if (this.last === undefined && this.starting === undefined) {
+      this.starting = this.start("q", editor.document.uri).finally(() => (this.starting = undefined));
+    }
+    const terminal = this.last ?? (await this.starting);
     if (terminal === undefined) {
       return;
     }
@@ -314,10 +328,11 @@ class QTerminals {
   /// `file` if one is given, with the variables of `q-lint.terminal.envPath`
   /// set for it. It starts in the workspace folder of `from`, so a script's
   /// relative `\l` reads as it does from a shell there. Undefined if the env
-  /// file cannot be read.
-  private async start(name: string, from: Uri | undefined, file?: string): Promise<Terminal | undefined> {
+  /// file cannot be read; `before` runs only once it can start.
+  private async start(name: string, from: Uri | undefined, file?: string, before?: () => void): Promise<Terminal | undefined> {
     const configuration = workspace.getConfiguration("q-lint", from);
-    const settings = readTerminal((key, fallback) => configuration.get(key, fallback));
+    const read = readTerminal((key, fallback) => configuration.get(key, fallback));
+    const settings = { qBinary: expandHome(read.qBinary, os.homedir()), envPath: expandHome(read.envPath, os.homedir()) };
     const folder = (from && workspace.getWorkspaceFolder(from)) ?? workspace.workspaceFolders?.[0];
     const cwd = folder?.uri.fsPath ?? (file !== undefined ? path.dirname(file) : undefined);
     let variables: Record<string, string> = {};
@@ -346,8 +361,12 @@ class QTerminals {
         );
       }
     }
+    before?.();
     const terminal = window.createTerminal({ name, cwd });
     this.ours.add(terminal);
+    if (file !== undefined) {
+      this.files.set(terminal, file);
+    }
     this.last = terminal;
     // A file inside the folder is named relative to it, as you would type it.
     const relative = file !== undefined && cwd !== undefined ? path.relative(cwd, file) : "";
@@ -369,16 +388,25 @@ export class Live {
   /// A connect in progress, so a second one waits for it instead of opening
   /// another.
   private connecting: Promise<boolean> | undefined;
-  /// The label of the process `connecting` connects to.
+  /// The process `connecting` connects to, as `passwordKey` names it.
   private connectingTo: string | undefined;
+  /// Set by Disconnect, or a connect to another process, to stop a
+  /// reconnect after an abort from trying again.
+  private reconnectStopped = false;
   private running: { code: string; started: number } | undefined;
   /// When the query that timed out started, so its entry says so.
   private timedOut: number | undefined;
+  /// When the query Abort, Disconnect or a connect elsewhere stopped waiting
+  /// for started, so its entry says so: a connection the process closed is
+  /// a failure, not an abort.
+  private aborted: number | undefined;
   private readonly controls: QueryControls;
   private readonly parameterCache: ParameterCache;
   /// The process explorer's call on the connection, if one is out: a query
   /// waits for it (`borrow`).
   private borrowed: Promise<unknown> | undefined;
+  /// Set on deactivate: a connection opened after it is closed at once.
+  private disposed = false;
   private readonly changed = new EventEmitter<"connected" | "disconnected" | "queried">();
   /// Fired when a connection opens or closes, and when a query has finished:
   /// what the process explorer refreshes on.
@@ -445,7 +473,14 @@ export class Live {
           this.processesView.refresh();
         }
       }),
-      { dispose: () => void this.connection?.close() },
+      {
+        dispose: () => {
+          this.disposed = true;
+          // A reconnect after an abort stops trying.
+          this.reconnectStopped = true;
+          void this.connection?.close();
+        },
+      },
     );
     this.showStatus();
     this.status.show();
@@ -536,11 +571,11 @@ export class Live {
   private showStatus(): void {
     const label = this.activeLabel();
     if (this.running !== undefined && label !== undefined) {
-      this.status.text = `$(sync~spin) q: ${label}`;
+      this.status.text = `$(sync~spin) q: ${iconsEscaped(label)}`;
       this.status.tooltip = "A query is running. q-lint: Abort Current Query stops waiting for it.";
     } else if (label !== undefined) {
-      this.status.text = `$(plug) q: ${label}`;
-      this.status.tooltip = `Connected to ${this.active?.host}:${this.active?.port}. Click to switch.`;
+      this.status.text = `$(plug) q: ${iconsEscaped(label)}`;
+      this.status.tooltip = `Connected to ${this.active === undefined ? "" : address(this.active.host, this.active.port)}. Click to switch.`;
     } else {
       this.status.text = "$(debug-disconnect) q: not connected";
       this.status.tooltip = "Click to connect to a q process.";
@@ -568,7 +603,7 @@ export class Live {
     const host = await window.showInputBox({
       title: "q process: host",
       value: from.host ?? "localhost",
-      validateInput: (v) => (v.trim() === "" ? "A host is needed." : undefined),
+      validateInput: hostProblem,
     });
     if (host === undefined) {
       return undefined;
@@ -624,7 +659,7 @@ export class Live {
     return {
       process: {
         label: label.trim(),
-        host: host.trim(),
+        host: plainHost(host),
         port: Number(port),
         ...(user.trim() !== "" ? { user: user.trim() } : {}),
         tags: parseTags(tags),
@@ -640,10 +675,16 @@ export class Live {
     if (answer === undefined) {
       return;
     }
-    if (answer.password !== undefined) {
-      await this.context.secrets.store(passwordKey(answer.process.label), answer.password);
+    // Read again: the list may have changed while the boxes were open.
+    const now = this.processes();
+    if (now.some((p) => p.label === answer.process.label)) {
+      void window.showErrorMessage(`q-lint: the label "${answer.process.label}" was taken meanwhile; the process was not added.`);
+      return;
     }
-    await this.save([...processes, answer.process]);
+    if (answer.password !== undefined) {
+      await this.context.secrets.store(passwordKey(answer.process), answer.password);
+    }
+    await this.save([...now, answer.process]);
   }
 
   /// The process a command was given from a view row, or one the user picks.
@@ -666,11 +707,11 @@ export class Live {
         void window.showInformationMessage("q-lint: a discovered process is not saved. Download Processes saves it.");
         return undefined;
       }
-      return { ...row.process, label: qualified(row.server, row.process.label) };
+      return { ...row.process, label: qualified(row.server, row.process.label), server: row.server };
     }
     const processes = [
       ...this.processes(),
-      ...listed.flatMap(({ server, state }) => state.processes.map((p) => ({ ...p, label: qualified(server.label, p.label) }))),
+      ...listed.flatMap(({ server, state }) => state.processes.map((p) => ({ ...p, label: qualified(server.label, p.label), server: server.label }))),
     ];
     if (processes.length === 0) {
       const add = "Add Process";
@@ -681,8 +722,8 @@ export class Live {
     }
     const picked = await window.showQuickPick(
       processes.map((p) => ({
-        label: p.label,
-        description: `${p.host}:${p.port}`,
+        label: iconsEscaped(p.label),
+        description: address(p.host, p.port),
         detail: p.tags.length ? p.tags.join(", ") : undefined,
         process: p,
       })),
@@ -703,23 +744,51 @@ export class Live {
       return;
     }
     const { process } = answer;
+    // Read again: the list may have changed while the boxes were open.
+    const now = this.processes();
+    const problem = !now.some((p) => p.label === old.label)
+      ? `"${old.label}" was deleted meanwhile`
+      : process.label !== old.label && now.some((p) => p.label === process.label)
+        ? `the label "${process.label}" was taken meanwhile`
+        : undefined;
+    if (problem !== undefined) {
+      void window.showErrorMessage(`q-lint: ${problem}; the process was not changed.`);
+      return;
+    }
     if (process.label !== old.label) {
-      const kept = await this.context.secrets.get(passwordKey(old.label));
-      await this.context.secrets.delete(passwordKey(old.label));
+      const kept = await this.context.secrets.get(passwordKey(old));
+      await this.context.secrets.delete(passwordKey(old));
       if (kept !== undefined && answer.password === undefined) {
-        await this.context.secrets.store(passwordKey(process.label), kept);
+        await this.context.secrets.store(passwordKey(process), kept);
       }
     }
     if (answer.password !== undefined) {
-      await this.context.secrets.store(passwordKey(process.label), answer.password);
+      await this.context.secrets.store(passwordKey(process), answer.password);
     }
     if (process.user === undefined) {
-      await this.context.secrets.delete(passwordKey(process.label));
+      await this.context.secrets.delete(passwordKey(process));
     }
-    await this.save(processes.map((p) => (p.label === old.label ? process : p)));
-    if (this.active?.label === old.label) {
-      this.active = process;
+    await this.save(now.map((p) => (p.label === old.label ? process : p)));
+    if (process.label !== old.label) {
+      await this.rebind(old.label, process.label);
+    }
+    const active = this.active;
+    if (active?.label === old.label && active.server === undefined) {
+      // The connection is still to where it was opened: it takes the new
+      // label and tags, and keeps its address until connected again.
+      const { host, port, user, tls } = active;
+      this.active = { label: process.label, host, port, ...(user !== undefined ? { user } : {}), tags: process.tags, ...(tls ? { tls } : {}) };
       this.showStatus();
+      // The explorer keeps what it read under the label it read it for.
+      if (process.label !== old.label && this.activeLabel() !== undefined) {
+        this.changed.fire("connected");
+      }
+      const moved = process.host !== host || process.port !== port || process.user !== user || (process.tls === true) !== (tls === true);
+      if (moved && this.activeLabel() !== undefined) {
+        void window.showInformationMessage(
+          `q-lint: still connected to ${process.label} at ${address(host, port)}. Connect to it again to use ${address(process.host, process.port)}.`,
+        );
+      }
     }
   }
 
@@ -733,11 +802,28 @@ export class Live {
     if (sure !== yes) {
       return;
     }
-    if (this.active?.label === process.label) {
+    if (this.activeLabel() === process.label && this.active?.server === undefined) {
       await this.disconnect();
     }
-    await this.context.secrets.delete(passwordKey(process.label));
+    await this.context.secrets.delete(passwordKey(process));
     await this.save(this.processes().filter((p) => p.label !== process.label));
+    await this.rebind(process.label, undefined);
+  }
+
+  /// Bind the files bound to the process `from` to `to` instead, or unbind
+  /// them: a binding is by label, and one to no process fails every query.
+  private async rebind(from: string, to: string | undefined): Promise<void> {
+    let stored = this.context.workspaceState.get<unknown>(FILE_CONNECTIONS_KEY);
+    if (typeof stored !== "object" || stored === null) {
+      return;
+    }
+    for (const [uri, label] of Object.entries(stored)) {
+      if (label === from) {
+        stored = withBinding(stored, uri, to);
+      }
+    }
+    await this.context.workspaceState.update(FILE_CONNECTIONS_KEY, stored);
+    this.controls.refresh();
   }
 
   private async tag(row?: ProcessArg): Promise<void> {
@@ -754,6 +840,16 @@ export class Live {
       return;
     }
     await this.save(this.processes().map((p) => (p.label === process.label ? { ...p, tags: parseTags(tags) } : p)));
+    this.retagActive();
+  }
+
+  /// Give the connected process, when it is a saved one, its saved tags: an
+  /// agent's query warns by them.
+  private retagActive(): void {
+    const saved = this.active?.server === undefined ? this.processes().find((p) => p.label === this.active?.label) : undefined;
+    if (this.active !== undefined && saved !== undefined) {
+      this.active = { ...this.active, tags: saved.tags };
+    }
   }
 
   /// Import the processes `file` lists, or a file the user picks.
@@ -774,7 +870,12 @@ export class Live {
       return;
     }
     const { processes, problems } = read;
-    await this.save(merge(this.processes(), processes));
+    const before = this.processes();
+    for (const label of passwordsToForget(before, processes)) {
+      await this.context.secrets.delete(passwordKey({ label }));
+    }
+    await this.save(merge(before, processes));
+    this.retagActive();
     const note = problems.length ? ` Skipped ${problems.length}: ${problems.slice(0, 3).join(" ")}` : "";
     void window.showInformationMessage(`q-lint: imported ${processes.length} q process(es).${note}`);
   }
@@ -790,9 +891,15 @@ export class Live {
     if (file === undefined) {
       return;
     }
-    const text = JSON.stringify({ processes: this.processes() }, null, 2) + "\n";
-    await workspace.fs.writeFile(file, Buffer.from(text, "utf8"));
-    void window.showInformationMessage(`q-lint: exported ${this.processes().length} q process(es) to ${file.fsPath}.`);
+    const processes = this.processes();
+    const text = JSON.stringify({ processes }, null, 2) + "\n";
+    try {
+      await workspace.fs.writeFile(file, Buffer.from(text, "utf8"));
+    } catch (error) {
+      void window.showErrorMessage(`q-lint: could not write ${file.fsPath}: ${error instanceof Error ? error.message : String(error)}`);
+      return;
+    }
+    void window.showInformationMessage(`q-lint: exported ${processes.length} q process(es) to ${file.fsPath}.`);
   }
 
   private insertLabel(): void {
@@ -803,6 +910,7 @@ export class Live {
       return;
     }
     if (editor === undefined) {
+      noEditor();
       return;
     }
     void editor.edit((edit) => {
@@ -820,8 +928,8 @@ export class Live {
       return false;
     }
     // A discovered process's user has no password stored until asked for one.
-    const saved = this.processes().some((p) => p.label === process.label);
-    if (!saved && process.user && (await this.context.secrets.get(passwordKey(process.label))) === undefined) {
+    const saved = process.server === undefined;
+    if (!saved && process.user && (await this.context.secrets.get(passwordKey(process))) === undefined) {
       const password = await window.showInputBox({
         title: `q process ${process.label}: password of ${process.user}`,
         password: true,
@@ -830,45 +938,76 @@ export class Live {
       if (password === undefined) {
         return false;
       }
-      await this.context.secrets.store(passwordKey(process.label), password);
+      await this.context.secrets.store(passwordKey(process), password);
+      // Kept, so deleting the server forgets it even after a reload.
+      await this.discovery.passwordGiven(process.server!, process.label.slice(process.server!.length + 1));
     }
     const connected = await this.open(process);
     // A discovered process cannot be edited, so a password that did not
     // connect is forgotten: the next connect asks for it again.
     if (!connected && !saved && process.user) {
-      await this.context.secrets.delete(passwordKey(process.label));
+      await this.context.secrets.delete(passwordKey(process));
+      await this.discovery.passwordGiven(process.server!, process.label.slice(process.server!.length + 1), false);
     }
     return connected;
   }
 
   /// Connect to `process`, closing the connection there was. Whether it
-  /// connected.
-  private open(process: Process): Promise<boolean> {
+  /// connected. `untilFree`, after an abort: a process that does not answer
+  /// the handshake is still running the query it was left with, and is
+  /// tried again until it does, or until the user disconnects or connects
+  /// elsewhere.
+  private open(process: Process, untilFree = false): Promise<boolean> {
     if (this.connecting !== undefined) {
       // A connect to another process - a reconnect after an abort, waiting
-      // for that process to be free - is let finish and this one follows:
-      // its result says nothing of this process.
-      return this.connectingTo === process.label ? this.connecting : this.connecting.then(() => this.open(process));
+      // for that process to be free - is stopped and this one follows: its
+      // result says nothing of this process.
+      if (this.connectingTo === passwordKey(process)) {
+        return this.connecting;
+      }
+      this.reconnectStopped = true;
+      return this.connecting.then(() => this.open(process));
     }
-    this.connectingTo = process.label;
+    this.reconnectStopped = false;
+    this.connectingTo = passwordKey(process);
     this.connecting = (async () => {
       if (this.connection !== undefined) {
         const old = this.connection;
         this.connection = undefined;
+        this.aborted = this.running?.started;
         await old.close();
+        // Said now, not on connecting: the new one may never come.
+        this.changed.fire("disconnected");
       }
-      const password = process.user ? await this.context.secrets.get(passwordKey(process.label)) : undefined;
+      const password = process.user ? await this.context.secrets.get(passwordKey(process)) : undefined;
       try {
         const connection = await window.withProgress(
           { location: { viewId: VIEWS.processes }, title: `Connecting to ${process.label}` },
-          () =>
-            QConnection.open({
+          async () => {
+            const target = {
               host: process.host,
               port: process.port,
               ...(process.user ? { user: process.user, password: password ?? "" } : {}),
               ...(process.tls ? { tls: true } : {}),
-            }),
+            };
+            for (;;) {
+              try {
+                return await QConnection.open(target);
+              } catch (error) {
+                const busy = error instanceof Error && error.message.startsWith("no answer from ");
+                if (!untilFree || !busy || this.reconnectStopped) {
+                  throw error;
+                }
+              }
+            }
+          },
         );
+        // Opened after deactivate (a reconnect after an abort), when nothing
+        // would close it, or after the reconnect was stopped.
+        if (this.disposed || (untilFree && this.reconnectStopped)) {
+          await connection.close();
+          return false;
+        }
         this.connection = connection;
         this.active = process;
         connection.whenClosed(() => {
@@ -884,8 +1023,11 @@ export class Live {
         this.changed.fire("connected");
         return true;
       } catch (error) {
+        if (untilFree && this.reconnectStopped) {
+          return false;
+        }
         void window.showErrorMessage(
-          `q-lint: could not connect to ${process.label} (${process.host}:${process.port}): ${error instanceof Error ? error.message : String(error)}`,
+          `q-lint: could not connect to ${process.label} (${address(process.host, process.port)}): ${error instanceof Error ? error.message : String(error)}`,
         );
         return false;
       } finally {
@@ -899,8 +1041,15 @@ export class Live {
   }
 
   private async disconnect(): Promise<void> {
+    if (this.connection === undefined && this.connecting === undefined) {
+      void window.showInformationMessage("q-lint: not connected to a q process.");
+      return;
+    }
+    this.reconnectStopped = true;
     const connection = this.connection;
     this.connection = undefined;
+    // A query running on it was stopped by the user, as Abort stops one.
+    this.aborted = this.running?.started;
     this.running = undefined;
     await connection?.close();
     this.showStatus();
@@ -913,6 +1062,7 @@ export class Live {
   private async queryFrom(from: From): Promise<void> {
     const editor = window.activeTextEditor;
     if (editor === undefined) {
+      noEditor();
       return;
     }
     const code = codeAt(editor, from);
@@ -947,9 +1097,18 @@ export class Live {
     if (this.connection === undefined && !(await this.connectTo())) {
       return undefined;
     }
+    const before = this.connection;
     await this.borrowed;
     const connection = this.connection;
     const process = this.active;
+    if (connection !== before && before !== undefined) {
+      // Closed while the explorer's read was out: by Abort, which stopped
+      // that read, or by the process.
+      void window.showInformationMessage(
+        `q-lint: the connection to ${process?.label ?? "the process"} closed before the query was sent; it was not run.`,
+      );
+      return undefined;
+    }
     if (connection === undefined || process === undefined) {
       return undefined;
     }
@@ -1035,7 +1194,7 @@ export class Live {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const aborted = this.running === undefined || !connection.isOpen;
+      const aborted = this.aborted === started;
       const timedOut = this.timedOut === started;
       entry = {
         process: process.label,
@@ -1043,13 +1202,16 @@ export class Live {
         at: new Date(started).toISOString(),
         millis: Date.now() - started,
         outcome: timedOut ? "timeout" : aborted ? "aborted" : "error",
-        error: timedOut ? timedOutError(controls.timeout) : aborted && this.running === undefined ? "aborted" : message,
+        error: timedOut ? timedOutError(controls.timeout) : aborted ? "aborted" : message,
       };
       this.show([`# ${process.label} - ${timedOut ? timedOutError(controls.timeout) : aborted ? "aborted" : "failed"}: ${message}`], false);
     } finally {
       disarm();
       if (this.timedOut === started) {
         this.timedOut = undefined;
+      }
+      if (this.aborted === started) {
+        this.aborted = undefined;
       }
       if (this.running?.started === started) {
         this.running = undefined;
@@ -1081,6 +1243,7 @@ export class Live {
       void window.showInformationMessage("q-lint: no query is running.");
       return;
     }
+    this.aborted = this.running?.started;
     this.running = undefined;
     this.connection = undefined;
     connection.abort();
@@ -1088,13 +1251,15 @@ export class Live {
     // Not awaited: q runs one message at a time, so the new connection's
     // handshake waits until the process has finished the query it was left
     // with, and the command should not wait with it.
-    void this.open(process).then((connected) => {
+    void this.open(process, true).then((connected) => {
       if (connected) {
         void window.showInformationMessage(`q-lint: reconnected to ${process.label}.`);
       }
     });
     void window.showInformationMessage(
-      `q-lint: ${timedOut === undefined ? "stopped waiting for the query" : `the query ${timedOutError(timedOut)} (q-lint.query.timeout), and was aborted`}. ${process.label} may still be running it; q-lint reconnects once it is free.`,
+      this.aborted === undefined && timedOut === undefined
+        ? `q-lint: stopped the Process Explorer's read of ${process.label}, the only call running. q-lint reconnects once ${process.label} is free.`
+        : `q-lint: ${timedOut === undefined ? "stopped waiting for the query" : `the query ${timedOutError(timedOut)} (q-lint.query.timeout), and was aborted`}. ${process.label} may still be running it; q-lint reconnects once it is free.`,
     );
   }
 
@@ -1107,7 +1272,7 @@ export class Live {
   private async rerun(entry?: HistoryEntry): Promise<void> {
     if (entry === undefined) {
       const picked = await window.showQuickPick(
-        this.history().map((e) => ({ label: e.code.split("\n")[0], description: e.process, entry: e })),
+        this.history().map((e) => ({ label: iconsEscaped(historyLabel(e.code)), description: iconsEscaped(e.process), entry: e })),
         { title: "Run which query again?" },
       );
       entry = picked?.entry;
@@ -1128,14 +1293,14 @@ export class Live {
 
   /// Select the connected process in the Processes view, and show the view.
   private async revealProcess(): Promise<void> {
-    const label = this.activeLabel();
-    if (label === undefined) {
+    const process = this.activeProcess();
+    if (process === undefined) {
       void window.showInformationMessage("q-lint: not connected to a q process.");
       return;
     }
-    const row = this.processesView.find(label);
+    const row = this.processesView.find(process);
     if (row === undefined) {
-      void window.showInformationMessage(`q-lint: ${label} is not in the Processes view.`);
+      void window.showInformationMessage(`q-lint: ${process.label} is not in the Processes view.`);
       return;
     }
     await this.processesTree.reveal(row, { select: true, focus: true, expand: true });

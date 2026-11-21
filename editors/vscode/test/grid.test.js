@@ -198,8 +198,9 @@ test("CSV is the header and the rows given, as the cells show them", () => {
 test("CSV keeps text a spreadsheet would run as a formula as text", () => {
   // A symbol, a string or a column name a spreadsheet opening the file
   // would read as a formula (=, +, -, @, a tab or a carriage return first)
-  // is written with a leading quote; a number, a temporal and a numeric
-  // or temporal column's cells are written as they are.
+  // is written with a leading quote; a number is written as it is. So is a
+  // negative infinity or a negative timespan: `-0W` and `-0D01:00:00` are
+  // no number, and a spreadsheet showed #NAME? for them.
   const grid = toGrid(
     {
       count: 3,
@@ -220,10 +221,13 @@ test("CSV keeps text a spreadsheet would run as a formula as text", () => {
   assert.strictEqual(
     toCsv(grid),
     "'=s,j,str,n\n" +
-      "\"'=HYPERLINK(\"\"http://x\"\")\",-1,'-2+3,-0D01:00:00.000000000\n" +
+      "\"'=HYPERLINK(\"\"http://x\"\")\",-1,'-2+3,'-0D01:00:00.000000000\n" +
       "'+1,2,-1.5,0D00:00:00.000000000\n" +
       "'@SUM(A1),3,'\tx,\n",
   );
+  // An infinity in a numeric column is text too; a negative number is not.
+  const inf = toGrid({ count: 2, keys: 0, names: ["j"], types: [7], cells: [["", "-5"]], raw: [[-Infinity, -5]], rank: [[0, 1]] }, -1);
+  assert.strictEqual(toCsv(inf), "j\n'-0W\n-5\n");
 });
 
 // --- media/result.js and media/chartspec.js
@@ -378,4 +382,177 @@ test("what a chart drew is summed up for the extension", () => {
     datasets: [{ label: "px", points: 4 }],
   });
   assert.match(charts.summary("line", charts.chartData(grid, [0], "line", [], 10)).note, /No numeric column/);
+});
+
+test("a list, one numeric column, is charted against its row number", () => {
+  // `3 1 2` in chart mode: GRID sends it as one `value` column.
+  const grid = toGrid({ count: 3, keys: 0, names: ["value"], types: [7], cells: [["3", "1", "2"]], raw: [[3, 1, 2]], rank: [[2, 0, 1]] }, -1);
+  const rows = [0, 1, 2];
+  for (const kind of ["line", "bar", "scatter", "histogram"]) {
+    assert.deepStrictEqual(charts.chartable(grid, kind), [0], kind);
+  }
+  const line = charts.chartData(grid, rows, "line", [0], 10);
+  assert.strictEqual(line.note, undefined);
+  assert.deepStrictEqual(line.labels, ["0", "1", "2"]);
+  assert.deepStrictEqual(line.datasets[0].data, [3, 1, 2]);
+  const scatter = charts.chartData(grid, rows, "scatter", [0], 10);
+  assert.deepStrictEqual(scatter.datasets[0].data.map((p) => [p.x, p.y]), [[0, 3], [1, 1], [2, 2]]);
+  for (const kind of ["line", "scatter"]) {
+    const config = charts.chartConfig(grid, rows, kind, charts.chartData(grid, rows, kind, [0], 10), LOOK);
+    assert.strictEqual(config.options.scales.x.title.text, "row", kind);
+  }
+  // A table's first column is still its x axis, never a series.
+  assert.deepStrictEqual(charts.chartable(sample(), "line"), [1]);
+});
+
+test("a row-number axis and a histogram's count axis tick whole numbers", () => {
+  // Two rows, x a symbol: Chart.js ticked rows 0, 0.1, 0.2 ..., and a
+  // histogram of counts 1 and 2 ticked counts 1.1, 1.2 ...
+  const grid = toGrid({ count: 2, keys: 0, names: ["s", "y"], types: [11, 9], cells: [["a", "b"], ["1", "2"]], raw: [[], [1, 2]], rank: [[0, 1], [0, 1]] }, -1);
+  const rows = [0, 1];
+  const scatter = charts.chartConfig(grid, rows, "scatter", charts.chartData(grid, rows, "scatter", [1], 10), LOOK);
+  assert.strictEqual(scatter.options.scales.x.ticks.precision, 0);
+  const histogram = charts.chartConfig(grid, rows, "histogram", charts.chartData(grid, rows, "histogram", [1], 10), LOOK);
+  assert.strictEqual(histogram.options.scales.y.ticks?.precision, 0);
+  // A numeric x axis, or a y axis of values, keeps its fractions.
+  const own = charts.chartConfig(sample(), [0, 1], "line", charts.chartData(sample(), [0, 1], "line", [1], 10), LOOK);
+  assert.strictEqual(own.options.scales.y.ticks?.precision, undefined);
+});
+
+test("a scatter's ticks under a second apart are told apart by their fraction", () => {
+  // Trades within one second: every tick read "2026.11.20D10:11:12".
+  const at = (type, values, step) => {
+    const grid = toGrid({ count: 2, keys: 0, names: ["t", "y"], types: [type, 9], cells: [["a", "b"], ["1", "2"]], raw: [values, [1, 2]], rank: [[0, 1], [0, 1]] }, -1);
+    const config = charts.chartConfig(grid, [0, 1], "scatter", charts.chartData(grid, [0, 1], "scatter", [1], 10), LOOK);
+    const ticks = [0, 1, 2].map((i) => ({ value: values[0] + i * step }));
+    return ticks.map((t, i) => config.options.scales.x.ticks.callback(t.value, i, ticks));
+  };
+  assert.deepStrictEqual(at(12, [848484672100000000, 848484672300000000], 1e8), ["2026.11.20D10:11:12.1", "2026.11.20D10:11:12.2", "2026.11.20D10:11:12.3"]);
+  assert.deepStrictEqual(at(19, [36672000, 36673000], 250), ["10:11:12.00", "10:11:12.25", "10:11:12.50"]);
+  assert.deepStrictEqual(at(16, [-500000000, 0], 250000000), ["-0D00:00:00.50", "-0D00:00:00.25", "0D00:00:00.00"]);
+  assert.deepStrictEqual(at(15, [9820.5, 9820.6], 0.5 / 86400), ["2026.11.20T12:00:00.0", "2026.11.20T12:00:00.5", "2026.11.20T12:00:01.0"]);
+  // A fraction that rounds up carries into the seconds.
+  assert.strictEqual(charts.temporalLabel(19, 36672999.9, 100), "10:11:13.0");
+  // A second or more apart, as before.
+  assert.deepStrictEqual(at(19, [36672000, 36674000], 1000), ["10:11:12", "10:11:13", "10:11:14"]);
+});
+
+test("a histogram of floats spanning more than the largest double counts every value", () => {
+  // hi - lo overflowed to Infinity: the edges were NaN and the values
+  // counted at bin NaN, so the chart showed no bar.
+  const h = charts.histogram([[-1e308, 0, 1e308, 1e308]], 2);
+  assert.deepStrictEqual(h.counts, [[1, 3]]);
+  assert.ok(h.edges.every(Number.isFinite), String(h.edges));
+  assert.deepStrictEqual(h.edges, [-1e308, 0, 1e308]);
+});
+
+test("the bins field takes 0 as the fewest bins, not as the default 20", () => {
+  assert.strictEqual(panel.binsFrom("0", 20), 1);
+  assert.strictEqual(panel.binsFrom("-3", 20), 1);
+  assert.strictEqual(panel.binsFrom("7", 20), 7);
+  assert.strictEqual(panel.binsFrom("9999", 20), 500);
+  // Nothing typed: the default.
+  assert.strictEqual(panel.binsFrom("", 20), 20);
+});
+
+test("a grid of more rows than a page can be tall still scrolls to its last row", () => {
+  // 22 px a row: two million rows are 44,000,000 px, past the 33,554,432
+  // px Chromium lets an element be, so the last half million could not be
+  // scrolled to.
+  const count = 2e6;
+  const view = 600;
+  const top = panel.span(0, view, count);
+  assert.strictEqual(top.start, 0);
+  assert.ok(top.before + (top.end - top.start) * 22 + top.after <= panel.MAX_HEIGHT);
+  const bottom = panel.span(panel.MAX_HEIGHT - view, view, count);
+  assert.strictEqual(bottom.end, count);
+  assert.ok(bottom.before + (bottom.end - bottom.start) * 22 + bottom.after <= panel.MAX_HEIGHT + 1);
+  // The rows drawn are those in view: the spacer above ends at or before it.
+  assert.ok(bottom.before <= panel.MAX_HEIGHT - view);
+  // A grid that fits is laid out row for row, as before.
+  assert.deepStrictEqual(panel.span(220, view, 1000), { start: 0, end: 68, before: 0, after: (1000 - 68) * 22 });
+  assert.deepStrictEqual(panel.span(22000, view, 1000), { start: 980, end: 1000, before: 980 * 22, after: 0 });
+});
+
+test("a scatter against the row puts each point at its row, filtered or sorted", () => {
+  // x a symbol, so the axis is "row". Filtered to rows 3 and 1, the points
+  // were drawn at rows 0 and 1: their places in the list shown.
+  const grid = toGrid({ count: 4, keys: 0, names: ["s", "y"], types: [11, 9], cells: [["a", "b", "c", "d"], ["1", "2", "3", "4"]], raw: [[], [1, 2, 3, 4]], rank: [[0, 1, 2, 3], [0, 1, 2, 3]] }, -1);
+  const scatter = charts.chartData(grid, [3, 1], "scatter", [1], 10);
+  assert.deepStrictEqual(scatter.datasets[0].data.map((p) => [p.x, p.y]), [[3, 4], [1, 2]]);
+});
+
+test("a histogram's bins over a narrow range of prices are labelled apart", () => {
+  // EURUSD between 1.08341 and 1.08349 in 4 bins: every label read
+  // "1.08341 - 1.08341", six significant digits being too few.
+  const grid = toGrid({ count: 3, keys: 0, names: ["px"], types: [9], cells: [["a", "b", "c"]], raw: [[1.08341, 1.08345, 1.08349]], rank: [[0, 1, 2]] }, -1);
+  const h = charts.chartData(grid, [0, 1, 2], "histogram", [0], 4);
+  assert.deepStrictEqual(h.labels, ["1.08341 - 1.08343", "1.08343 - 1.08345", "1.08345 - 1.08347", "1.08347 - 1.08349"]);
+  // Large values the same, in exponent form.
+  const big = toGrid({ count: 2, keys: 0, names: ["n"], types: [7], cells: [["a", "b"]], raw: [[1e15, 1e15 + 4e10]], rank: [[0, 1]] }, -1);
+  const labels = charts.chartData(big, [0, 1], "histogram", [0], 2).labels;
+  assert.strictEqual(new Set(labels).size, 2, String(labels));
+  assert.notStrictEqual(labels[0].split(" - ")[0], labels[0].split(" - ")[1], String(labels));
+  // A wide range keeps its short labels.
+  assert.deepStrictEqual(charts.chartData(sample(), [0, 1, 2, 3], "histogram", [1], 2).labels, ["1 - 2", "2 - 3"]);
+});
+
+test("a long line chart shows a value between two nulls, which no segment draws", () => {
+  // Over 200 rows a line has no points, only segments, and a value with a
+  // null on each side has none: a column null every other row drew nothing.
+  const n = 300;
+  const raw = Array.from({ length: n }, (_, i) => (i % 2 === 0 ? i : null));
+  const grid = toGrid({ count: n, keys: 0, names: ["i", "px"], types: [7, 9], cells: [raw.map((_, i) => String(i)), raw.map(String)], raw: [raw.map((_, i) => i), raw], rank: [raw.map((_, i) => i), raw.map((_, i) => i)] }, -1);
+  const rows = [...Array(n).keys()];
+  const config = charts.chartConfig(grid, rows, "line", charts.chartData(grid, rows, "line", [1], 10), LOOK);
+  const dataset = config.data.datasets[0];
+  const radius = (i) => (typeof dataset.pointRadius === "function" ? dataset.pointRadius({ dataset, dataIndex: i }) : dataset.pointRadius);
+  assert.ok(radius(2) > 0, "an isolated value has a point");
+  assert.strictEqual(radius(1), 0, "a null has none");
+  // A value beside another is drawn by its segment, with no point.
+  const full = toGrid({ count: n, keys: 0, names: ["i", "px"], types: [7, 9], cells: [rows.map(String), rows.map(String)], raw: [rows, rows], rank: [rows, rows] }, -1);
+  const solid = charts.chartConfig(full, rows, "line", charts.chartData(full, rows, "line", [1], 10), LOOK).data.datasets[0];
+  assert.strictEqual(typeof solid.pointRadius === "function" ? solid.pointRadius({ dataset: solid, dataIndex: 5 }) : solid.pointRadius, 0);
+});
+
+test("a line or bar chart's tooltip says the cell's value, not Chart.js's three decimals", () => {
+  // Chart.js writes a value with at most three decimals and the nearest
+  // double: an FX price 1.083415 read 1.083, a long above 2^53 lost digits.
+  const grid = toGrid({ count: 3, keys: 0, names: ["d", "px", "n"], types: [11, 9, 7], cells: [["a", "b", "c"], ["1.083415", "1.08342", "1.0835"], ["1", "9007199254740993", "3"]], raw: [[], [1.083415, 1.08342, 1.0835], [1, big, 3]], rank: [[0, 1, 2], [0, 1, 2], [0, 2, 1]] }, -1);
+  for (const kind of ["line", "bar"]) {
+    // Sorted: the second point drawn is row 2.
+    const rows = [0, 2, 1];
+    const config = charts.chartConfig(grid, rows, kind, charts.chartData(grid, rows, kind, [1, 2], 10), LOOK);
+    const label = config.options.plugins.tooltip.callbacks.label;
+    assert.strictEqual(label({ dataset: config.data.datasets[0], dataIndex: 0, raw: 1.083415, formattedValue: "1.083" }), "px: 1.083415");
+    assert.strictEqual(label({ dataset: config.data.datasets[1], dataIndex: 2, raw: 9007199254740992, formattedValue: "9,007,199,254,740,992" }), "n: 9007199254740993");
+    assert.strictEqual(label({ dataset: config.data.datasets[0], dataIndex: 1, raw: 1.0835, formattedValue: "1.084" }), "px: 1.0835");
+  }
+});
+
+/// The declarations of result.css's rule for `selector`, as written.
+function cssRule(selector) {
+  const css = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "media", "result.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  const found = [...css.matchAll(/([^{}]+)\{([^}]*)\}/g)].find((m) => m[1].split(",").map((s) => s.trim()).includes(selector));
+  return found ? found[2] : "";
+}
+
+test("the grid's table is laid out by its columns' widths, not by the cells in view", () => {
+  // `table-layout: fixed` is ignored on a table whose width is auto: a
+  // 150-character cell scrolled into view widened its column from 12ch
+  // to 1212 px and squeezed the next to 20 px (headless Chrome), so the
+  // columns jumped as the rows were scrolled.
+  const table = cssRule("table");
+  assert.match(table, /table-layout:\s*fixed/);
+  assert.match(table, /(^|;|\s)width:\s*(?!auto)[^;]+;/);
+});
+
+test("a key column's sticky header is opaque, though the key shade is translucent", () => {
+  // th.key's shade won over the header's background, and a theme's
+  // editor.inactiveSelectionBackground is often translucent (VS Code's
+  // default is the selection colour at half alpha; #ffffff80 in high
+  // contrast): the rows scrolled up showed through the key's header and
+  // its filter.
+  const head = cssRule("thead th.key");
+  assert.match(head, /background:[^;]*var\(--vscode-editor-inactiveSelectionBackground[^;]*,\s*var\(--vscode-editor(GroupHeader-tabs)?-background/);
 });

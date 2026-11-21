@@ -29,6 +29,7 @@ import {
   type NotebookDocument,
   type NotebookSerializer,
 } from "vscode";
+import * as os from "node:os";
 import * as path from "node:path";
 import { cellOutputs, chartCellOutputs, DATA, readCellData, type OutputPart } from "./celldata";
 import { cellDirective } from "./celldirectives";
@@ -43,12 +44,18 @@ import {
   type RowLimitFrom,
 } from "./liveconfig";
 import type { Live } from "./live";
-import { decodeItem, encodeItem, exportScript, NOTEBOOK, parseQnb, serializeQnb, type QnbCell } from "./qnb";
+import { decodeItem, encodeItem, exportScript, NOTEBOOK, parseQnb, serializeQnb, type QnbCell, type QnbOutput } from "./qnb";
 import { statements } from "./statements";
 
-/// Where the fields of a file or a cell this extension does not know ride in
-/// VS Code's metadata between an open and a save; never written as metadata.
+/// Where the fields of a file, a cell or an output this extension does not
+/// know ride in VS Code's metadata between an open and a save; never written
+/// as metadata. An output's holds its items' too.
 const EXTRA = "q-lint.unknownFields";
+/// Where a cell's run's unknown fields ride, with the run they belong to:
+/// a run of the cell since does not get them.
+const RUN_EXTRA = "q-lint.unknownRunFields";
+
+type Json = Record<string, unknown>;
 
 /// `metadata` with `extra` added under `EXTRA`, or undefined when both are empty.
 function stash(metadata: Record<string, unknown> | undefined, extra: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
@@ -60,8 +67,35 @@ function unstash(metadata: { [key: string]: unknown } | undefined): { metadata?:
   if (metadata === undefined) {
     return {};
   }
-  const { [EXTRA]: extra, ...rest } = metadata;
+  const { [EXTRA]: extra, [RUN_EXTRA]: _run, ...rest } = metadata;
   return { metadata: rest, ...(typeof extra === "object" && extra !== null ? { extra: extra as Record<string, unknown> } : {}) };
+}
+
+const isJson = (v: unknown): v is Json => typeof v === "object" && v !== null && !Array.isArray(v);
+
+/// An output's metadata with its own and its items' unknown fields added.
+function stashOutput(output: QnbOutput): Json | undefined {
+  const items = output.items.map((i) => i.extra ?? null);
+  if (output.extra === undefined && items.every((i) => i === null)) {
+    return output.metadata;
+  }
+  return { ...output.metadata, [EXTRA]: { ...(output.extra !== undefined ? { output: output.extra } : {}), items } };
+}
+
+/// An output as the file keeps it, its unknown fields taken back out of its
+/// metadata.
+function unstashOutput(output: NotebookCellOutput): QnbOutput {
+  const { [EXTRA]: stashed, ...metadata } = output.metadata ?? {};
+  const extra = isJson(stashed) ? stashed : {};
+  const items = Array.isArray(extra.items) ? extra.items : [];
+  return {
+    items: output.items.map((i, k) => {
+      const item = encodeItem(i.mime, i.data);
+      return isJson(items[k]) ? { ...item, extra: items[k] as Json } : item;
+    }),
+    ...(output.metadata !== undefined ? { metadata } : {}),
+    ...(isJson(extra.output) ? { extra: extra.output } : {}),
+  };
 }
 
 class QnbSerializer implements NotebookSerializer {
@@ -79,7 +113,7 @@ class QnbSerializer implements NotebookSerializer {
         );
         if (cell.outputs !== undefined) {
           item.outputs = cell.outputs.map(
-            (o) => new NotebookCellOutput(o.items.map((i) => new NotebookCellOutputItem(decodeItem(i), i.mime)), o.metadata),
+            (o) => new NotebookCellOutput(o.items.map((i) => new NotebookCellOutputItem(decodeItem(i), i.mime)), stashOutput(o)),
           );
         }
         if (cell.execution !== undefined) {
@@ -90,7 +124,16 @@ class QnbSerializer implements NotebookSerializer {
             timing: start !== undefined && end !== undefined ? { startTime: start, endTime: end } : undefined,
           };
         }
-        const metadata = stash(cell.metadata, cell.extra);
+        let metadata = stash(cell.metadata, cell.extra);
+        // A start without an end, or an end alone, which VS Code's timing
+        // cannot hold, rides with the run's unknown fields.
+        const lone = cell.execution === undefined || (cell.execution.start === undefined) === (cell.execution.end === undefined)
+          ? undefined
+          : cell.execution.start !== undefined ? { start: cell.execution.start } : { end: cell.execution.end };
+        if (cell.execution?.extra !== undefined || lone !== undefined) {
+          const { order, start, extra } = cell.execution ?? {};
+          metadata = { ...metadata, [RUN_EXTRA]: { order, start: lone === undefined ? start : undefined, extra, lone } };
+        }
         if (metadata !== undefined) {
           item.metadata = metadata;
         }
@@ -108,16 +151,18 @@ class QnbSerializer implements NotebookSerializer {
     const cells = data.cells.map((cell): QnbCell => {
       const code = cell.kind === NotebookCellKind.Code;
       const summary = cell.executionSummary;
+      // The run's unknown fields, while the run is still the one they came with.
+      const run = cell.metadata?.[RUN_EXTRA];
+      const same = isJson(run) && run.order === summary?.executionOrder && run.start === summary?.timing?.startTime;
+      const runExtra = same && isJson(run.extra) ? { extra: run.extra } : {};
+      const lone = same && isJson(run.lone) && summary?.timing === undefined ? (run.lone as { start?: number; end?: number }) : {};
       return {
         kind: code ? "code" : "markdown",
         source: cell.value,
         ...(code && cell.languageId !== "q" ? { language: cell.languageId } : {}),
         ...(code && cell.outputs !== undefined
           ? {
-              outputs: cell.outputs.map((o) => ({
-                items: o.items.map((i) => encodeItem(i.mime, i.data)),
-                ...(o.metadata !== undefined ? { metadata: o.metadata } : {}),
-              })),
+              outputs: cell.outputs.map(unstashOutput),
             }
           : {}),
         ...(code && summary !== undefined
@@ -125,8 +170,9 @@ class QnbSerializer implements NotebookSerializer {
               execution: {
                 order: summary.executionOrder,
                 success: summary.success,
-                start: summary.timing?.startTime,
-                end: summary.timing?.endTime,
+                start: summary.timing?.startTime ?? lone.start,
+                end: summary.timing?.endTime ?? lone.end,
+                ...runExtra,
               },
             }
           : {}),
@@ -174,18 +220,32 @@ class QnbKernel {
       order = Math.max(order, cell.executionSummary?.executionOrder ?? 0);
     }
     this.orders.set(notebook, order);
+    // A cell not yet begun ends as not run: at once when it is interrupted
+    // while it waits, rather than once the cells before it are done.
+    const begun = new Set<NotebookCellExecution>();
+    const skip = (execution: NotebookCellExecution): void => {
+      if (!begun.has(execution)) {
+        begun.add(execution);
+        execution.start();
+        execution.end(undefined);
+      }
+    };
+    const waits = executions.map((execution) => execution.token.onCancellationRequested(() => skip(execution)));
     const run = this.queue.then(async () => {
       let go = true;
       for (const execution of executions) {
         if (!go || execution.token.isCancellationRequested) {
           // Not run: an earlier cell failed or was interrupted.
-          execution.start();
-          execution.end(undefined);
+          skip(execution);
           continue;
         }
+        if (begun.has(execution)) {
+          continue;
+        }
+        begun.add(execution);
         go = await this.runCell(execution);
       }
-    });
+    }).finally(() => waits.forEach((w) => w.dispose()));
     this.queue = run.catch(() => {});
     return run;
   }
@@ -275,11 +335,27 @@ async function cellsOf(uri: Uri): Promise<QnbCell[]> {
   return parseQnb(Buffer.from(await workspace.fs.readFile(uri)).toString("utf8")).cells;
 }
 
+/// Where Export Notebook offers to write `notebook`'s script: beside it, or,
+/// for an untitled notebook (New q Notebook's), in the first workspace
+/// folder - a save dialog cannot browse `untitled:`, and nothing can be
+/// written there.
+function scriptBeside(notebook: Uri): Uri {
+  const name = path.posix.basename(notebook.path).replace(/\.qnb$/i, ".q");
+  if (notebook.scheme !== "untitled") {
+    return notebook.with({ path: notebook.path.replace(/\.qnb$/i, ".q") });
+  }
+  const folder = workspace.workspaceFolders?.[0]?.uri ?? Uri.file(os.homedir());
+  return Uri.joinPath(folder, name);
+}
+
 /// Write the notebook at `source` - the active one when not given - as a q
 /// script, to `target` or where the user picks.
 async function exportNotebook(source?: Uri, target?: Uri): Promise<void> {
-  const from = source instanceof Uri ? source : window.activeNotebookEditor?.notebook.uri;
-  if (from === undefined || !from.path.endsWith(".qnb")) {
+  // A q notebook by its type, or a file by its extension in any case: VS
+  // Code opens `A.QNB` as one too.
+  const active = window.activeNotebookEditor?.notebook;
+  const from = source instanceof Uri ? source : active?.notebookType === NOTEBOOK.type ? active.uri : undefined;
+  if (from === undefined || (from !== active?.uri && !/\.qnb$/i.test(from.path))) {
     void window.showInformationMessage("q-lint: open a q notebook (.qnb) to export it.");
     return;
   }
@@ -295,13 +371,18 @@ async function exportNotebook(source?: Uri, target?: Uri): Promise<void> {
       ? target
       : await window.showSaveDialog({
           title: "Export the notebook as a q script",
-          defaultUri: from.with({ path: from.path.replace(/\.qnb$/, ".q") }),
+          defaultUri: scriptBeside(from),
           filters: { "q script": ["q"] },
         });
   if (to === undefined) {
     return;
   }
-  await workspace.fs.writeFile(to, Buffer.from(exportScript(cells, path.posix.basename(from.path)), "utf8"));
+  try {
+    await workspace.fs.writeFile(to, Buffer.from(exportScript(cells, path.posix.basename(from.path)), "utf8"));
+  } catch (error) {
+    void window.showErrorMessage(`q-lint: could not write ${to.fsPath}: ${error instanceof Error ? error.message : String(error)}`);
+    return;
+  }
   if (!(target instanceof Uri)) {
     void window.showInformationMessage(`q-lint: exported the notebook to ${to.fsPath}.`);
   }

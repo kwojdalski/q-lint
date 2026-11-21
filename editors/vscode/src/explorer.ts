@@ -5,12 +5,16 @@
 //
 // Like a query (`query.ts`), the call is one lambda sent with its arguments,
 // and nothing is defined on the process. It walks the namespaces breadth
-// first from the root and `key \``, skipping the excluded ones and any
+// first from the root and `key \``, skipping the excluded ones (a root
+// namespace, or a nested one as `ns.sub`) and any
 // dotted root name that is not a dictionary of names (kdb+ lists `.cfg:42`
-// in `key \``), and answers
+// in `key \``); below the root, a namespace is a dictionary of names whose
+// first value is `::`, and one keyed by anything else (`1 2!(::;3)`) is a
+// variable. It answers
 //
 //   rows    one per name: ns, name, kind (table, function or variable), type,
-//           count, cols, keys, params, partitioned
+//           count, cols, keys, params, partitioned, and ncols, a table's
+//           columns in all
 //   spaces  one per namespace read: ns, total (its names, nested namespaces
 //           not counted)
 //   more    how many namespaces were left unread
@@ -38,25 +42,26 @@ export const GATHER = [
   "{[ex;lim]",
   " n:\"j\"$lim 0;m:\"j\"$lim 1;",
   " todo:`.,` sv'`,'asc(key`)except(`$\" \" vs ex),`;",
+  " ex:` sv'`,'`$\" \" vs ex;",
   " todo:todo where{$[99h=type d:@[get;x;0];11h=type key d;0b]}each todo;",
   " seen:`$();rows:();spaces:();",
   " while[(count todo)&m>count seen;",
   "  ns:first todo;todo:1_todo;seen,:ns;",
   "  d:@[get;ns;{()!()}];",
   "  k:asc(key d)except`;",
-  "  kids:$[ns~`.;`$();k where{(99h=type x)&(::)~first x}each d k];",
-  "  todo,:` sv'ns,'kids;",
+  "  kids:$[ns~`.;`$();k where{$[99h=type x;$[11h=type key x;(::)~first x;0b];0b]}each d k];",
+  "  todo,:(` sv'ns,'kids)except ex;",
   "  k:k except kids;",
   "  spaces,:enlist`ns`total!(ns;\"f\"$count k);",
   "  rows,:{[ns;n;nm;x]",
   "   t:type x;tb:$[98h=t;1b;.Q.qt x];fn:t within 100 112h;part:$[tb;1b~.Q.qp x;0b];",
-  "   `ns`name`kind`type`count`cols`keys`params`partitioned!(ns;nm;",
+  "   `ns`name`kind`type`count`cols`keys`params`partitioned`ncols!(ns;nm;",
   "    $[tb;`table;fn;`function;`variable];t;",
   "    \"f\"$$[fn;0N;part;@[{sum .Q.cn x};x;0n];count x];",
   "    $[tb;n sublist(),cols x;`$()];",
   "    $[tb&99h=t;(),keys x;`$()];",
   "    $[100h=t;@[{(),(value x)1};x;{`$()}];`$()];",
-  "    part)}[ns;n]'[n sublist k;d n sublist k]];",
+  "    part;\"f\"$$[tb;count cols x;0])}[ns;n]'[n sublist k;d n sublist k]];",
   " `rows`spaces`more!(rows;spaces;\"f\"$count todo)}",
 ].join("\n");
 
@@ -87,7 +92,7 @@ export function readExplorer(get: <T>(key: string, fallback: T) => T): ExplorerS
       ? excluded.map((n) => String(n).trim().replace(/^\./, "")).filter((n) => n !== "" && !/\s/.test(n))
       : [],
     previewLimit: typeof limit === "number" && Number.isInteger(limit) && limit > 0 ? limit : 5,
-    autoRefresh: get("processExplorer.autoRefresh", false),
+    autoRefresh: get<unknown>("processExplorer.autoRefresh", false) === true,
   };
 }
 
@@ -103,6 +108,8 @@ export interface Entry {
   keys: string[];
   params: string[];
   partitioned: boolean;
+  /// A table's columns in all, when that is more than `cols` holds.
+  allCols?: number;
 }
 
 export interface Gathered {
@@ -136,6 +143,7 @@ export function readGathered(raw: unknown): Gathered {
             keys: strings(row.keys),
             params: strings(row.params),
             partitioned: row.partitioned === true,
+            ...(number(row.ncols) !== null && number(row.ncols)! > strings(row.cols).length ? { allCols: number(row.ncols)! } : {}),
           },
         ]
       : [],
@@ -216,18 +224,24 @@ export interface Node {
 function tableNode(e: Entry): Node {
   const rows = e.count === null ? "rows not counted" : plural(e.count, "row");
   const how = e.partitioned && e.count !== null ? " (partitioned, counted by .Q.cn)" : "";
+  const all = e.allCols ?? e.cols.length;
   return {
     kind: "table",
     label: e.name,
-    description: `${rows}${how} · ${plural(e.cols.length, "column")}`,
+    description: `${rows}${how} · ${plural(all, "column")}`,
     tooltip: `${fullName(e)}: ${typeName(e.type) === "dictionary" ? "keyed table" : "table"}, ${rows}${how}`,
     name: fullName(e),
     partitioned: e.partitioned,
-    children: e.cols.map((c) => ({
-      kind: "column",
-      label: c,
-      ...(e.keys.includes(c) ? { description: "key" } : {}),
-    })),
+    children: [
+      ...e.cols.map((c): Node => ({
+        kind: "column",
+        label: c,
+        ...(e.keys.includes(c) ? { description: "key" } : {}),
+      })),
+      ...(all > e.cols.length
+        ? [{ kind: "note" as const, label: `${plural(all - e.cols.length, "more column")} not shown`, description: `the first ${e.cols.length} are` }]
+        : []),
+    ],
   };
 }
 
@@ -247,7 +261,9 @@ function variableNode(e: Entry): Node {
   return { kind: "variable", label: e.name, description: `${t}${count}`, tooltip: `${fullName(e)}: ${t}${count}`, name: fullName(e) };
 }
 
-const excludedBy = (ns: string, excluded: string[]): boolean => ns !== "." && excluded.includes(ns.split(".")[1]);
+/// Whether `ns` is an excluded namespace (`q`, `ns.sub`) or nested in one.
+const excludedBy = (ns: string, excluded: string[]): boolean =>
+  excluded.some((e) => ns === `.${e}` || ns.startsWith(`.${e}.`));
 
 /// The explorer's tree from what `GATHER` answered: a row per namespace,
 /// sorted, the root first; under each, Tables, Functions and Variables, each
@@ -302,7 +318,7 @@ export function previewCode(node: Pick<Node, "kind" | "name" | "partitioned">, l
 
 /// `name` as q code reads it: as written when q parses it as a name, else
 /// by its symbol - `set` makes a name of any symbol, `café` or `a b`.
-function qName(name: string): string {
+export function qName(name: string): string {
   return /^\.?[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)*$/.test(name)
     ? name
     : `get\`$"${name.replace(/[\\"]/g, (c) => `\\${c}`)}"`;
@@ -353,43 +369,40 @@ export function inCode(text: string, offset: number): boolean {
 }
 
 /// The table a qSQL statement reads, when `offset` is inside one in `text`:
-/// the nearest `select`, `exec`, `update` or `delete` before the cursor, and
-/// the first `from t` after it in the same statement, which may come before
-/// the cursor or after it (`select | from t`). Undefined outside a
-/// statement, or once a `;` at the statement's own bracket depth has ended
-/// it. Strings, symbols and comments are not read: `\`delete` and
-/// `"update"` are no keyword, and a `;` in a string ends nothing.
+/// the nearest `select`, `exec`, `update` or `delete` before the cursor
+/// whose statement the cursor is in, and the first `from t` after it in the
+/// same statement, which may come before the cursor or after it (`select |
+/// from t`). Undefined outside a statement. A statement ends at a `;` at
+/// its own bracket depth, or at a bracket that closes one opened before it:
+/// past `(exec s from u)`, the cursor is in the statement around it.
+/// Strings, symbols and comments are not read: `\`delete` and `"update"`
+/// are no keyword, and a `;` in a string ends nothing.
 export function qsqlTable(text: string, offset: number): string | undefined {
   const kinds = charKinds(text);
   const code = [...text].map((ch, i) => (kinds[i] === "c" ? ch : " ")).join("");
-  const before = code.slice(0, offset);
-  let keyword: RegExpExecArray | undefined;
-  for (const m of before.matchAll(/(?<![\w.])(select|exec|update|delete)(?![\w.])/g)) {
-    keyword = m as RegExpExecArray;
-  }
-  if (keyword === undefined) {
-    return undefined;
-  }
-  const start = keyword.index + keyword[0].length;
-  // Where the statement ends: a `;` outside brackets opened after the keyword.
-  let depth = 0;
-  let end = code.length;
-  for (let i = start; i < code.length; i++) {
-    const ch = code[i];
-    if ("([{".includes(ch)) {
-      depth++;
-    } else if (")]}".includes(ch)) {
-      depth--;
-    } else if (ch === ";" && depth <= 0) {
-      end = i;
-      break;
+  const keywords = [...code.slice(0, offset).matchAll(/(?<![\w.])(select|exec|update|delete)(?![\w.])/g)];
+  for (const keyword of keywords.reverse()) {
+    const start = keyword.index + keyword[0].length;
+    let depth = 0;
+    let end = code.length;
+    for (let i = start; i < code.length; i++) {
+      const ch = code[i];
+      if ("([{".includes(ch)) {
+        depth++;
+      } else if (")]}".includes(ch) && --depth < 0) {
+        end = i;
+        break;
+      } else if (ch === ";" && depth === 0) {
+        end = i;
+        break;
+      }
+    }
+    if (end >= offset) {
+      const from = /(?<![\w.])from\s+(\.?[A-Za-z][\w.]*)/.exec(code.slice(start, end));
+      return from === null ? undefined : from[1];
     }
   }
-  if (end < offset) {
-    return undefined;
-  }
-  const from = /(?<![\w.])from\s+(\.?[A-Za-z][\w.]*)/.exec(code.slice(start, end));
-  return from === null ? undefined : from[1];
+  return undefined;
 }
 
 /// The columns of the table `name` names, as q code would name it there.

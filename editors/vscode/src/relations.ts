@@ -7,7 +7,7 @@
 // The server draws the graph and follows it. It does not know which files
 // changed, because it starts no process and so cannot ask git - that is done
 // here, on the client, and the answer is sent with the request.
-import { join, win32 } from "node:path";
+import { isAbsolute, join, relative, win32 } from "node:path";
 
 /// What `package.json` contributes for this, by the names `relate.ts`
 /// registers them under. A test holds the two together: a command declared
@@ -273,6 +273,19 @@ export const CHANGED = [
 export async function changedFiles(git: Git, folder: string): Promise<string[]> {
   const listed = await Promise.all(CHANGED.map((args) => git(args, folder)));
   return [...new Set(listed.flatMap(names))].map((name) => join(folder, name));
+}
+
+/// Of the unsaved files `dirty`, those in one of `folders`: the folders git
+/// said what changed in. One elsewhere - a scratch file opened from outside
+/// the workspace - differs from no HEAD, and the server, which indexes the
+/// workspace, would call it a changed file it cannot follow.
+export function unsavedIn(dirty: string[], folders: string[]): string[] {
+  return dirty.filter((file) =>
+    folders.some((folder) => {
+      const rel = relative(folder, file);
+      return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+    }),
+  );
 }
 
 /// The file `binary` is run as. Anything but a bare name on Windows is

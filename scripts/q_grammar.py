@@ -38,6 +38,10 @@ NAME = r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)*"
 # stay whole in the second.
 SPLIT = r"(\.[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)*(?=\.))?(" + NAME + ")"
 NAMESPACE = {"name": "entity.name.namespace.q"}
+PARAMETERS = [
+    {"match": r"[A-Za-z][A-Za-z0-9_]*", "name": "variable.parameter.q"},
+    {"match": ";", "name": "punctuation.separator.parameters.q"},
+]
 
 
 def words(names):
@@ -64,6 +68,26 @@ def grammar():
         {"include": "#name"},
         {"include": "#operator"},
     ]
+
+    # A lambda's body. A lone `/` or `\\` is read by the script loader line by
+    # line, so it opens a block or ends the script inside a lambda too.
+    def body(implicit):
+        return (
+            [{"include": "#block-comment"}, {"include": "#end-of-script"}]
+            + expression[:6]
+            + (
+                [
+                    {
+                        "comment": "x, y and z are a lambda's implicit parameters.",
+                        "match": BEFORE + "[xyz]" + AFTER,
+                        "name": "variable.language.implicit.q",
+                    }
+                ]
+                if implicit
+                else []
+            )
+            + expression[6:]
+        )
 
     return {
         "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
@@ -200,33 +224,52 @@ def grammar():
                 ],
             },
             "lambda": {
-                "name": "meta.function.lambda.q",
-                "begin": r"(\{)\s*(?:(\[)([^\]]*)(\]))?",
-                "end": r"\}",
-                "beginCaptures": {
-                    "1": {"name": "punctuation.section.function.begin.q"},
-                    "2": {"name": "punctuation.definition.parameters.begin.q"},
-                    "3": {
-                        "patterns": [
-                            {"match": r"[A-Za-z][A-Za-z0-9_]*", "name": "variable.parameter.q"},
-                            {"match": ";", "name": "punctuation.separator.parameters.q"},
-                        ]
-                    },
-                    "4": {"name": "punctuation.definition.parameters.end.q"},
-                },
-                "endCaptures": {"0": {"name": "punctuation.section.function.end.q"}},
-                # A lone `/` or `\\` is read by the script loader line by line, so
-                # it opens a block or ends the script inside a lambda too.
-                "patterns": [{"include": "#block-comment"}, {"include": "#end-of-script"}]
-                + expression[:6]
-                + [
+                "comment": "x, y and z are a lambda's implicit parameters only when it declares "
+                "none: in {[a] x+a} x is a global. So a lambda with a parameter list, on one "
+                "line or several, is told from one without.",
+                "patterns": [
                     {
-                        "comment": "x, y and z are a lambda's implicit parameters.",
-                        "match": BEFORE + "[xyz]" + AFTER,
-                        "name": "variable.language.implicit.q",
-                    }
-                ]
-                + expression[6:],
+                        "name": "meta.function.lambda.q",
+                        "begin": r"(\{)\s*(\[)([^\]]*)(\])",
+                        "end": r"\}",
+                        "beginCaptures": {
+                            "1": {"name": "punctuation.section.function.begin.q"},
+                            "2": {"name": "punctuation.definition.parameters.begin.q"},
+                            "3": {"patterns": PARAMETERS},
+                            "4": {"name": "punctuation.definition.parameters.end.q"},
+                        },
+                        "endCaptures": {"0": {"name": "punctuation.section.function.end.q"}},
+                        "patterns": body(implicit=False),
+                    },
+                    {
+                        "comment": "A parameter list that closes on a later line.",
+                        "name": "meta.function.lambda.q",
+                        "begin": r"(\{)\s*(\[)",
+                        "end": r"\}",
+                        "beginCaptures": {
+                            "1": {"name": "punctuation.section.function.begin.q"},
+                            "2": {"name": "punctuation.definition.parameters.begin.q"},
+                        },
+                        "endCaptures": {"0": {"name": "punctuation.section.function.end.q"}},
+                        "patterns": [
+                            {
+                                "begin": r"\G",
+                                "end": r"\]",
+                                "endCaptures": {"0": {"name": "punctuation.definition.parameters.end.q"}},
+                                "patterns": [{"include": "#comment"}] + PARAMETERS,
+                            }
+                        ]
+                        + body(implicit=False),
+                    },
+                    {
+                        "name": "meta.function.lambda.q",
+                        "begin": r"\{",
+                        "end": r"\}",
+                        "beginCaptures": {"0": {"name": "punctuation.section.function.begin.q"}},
+                        "endCaptures": {"0": {"name": "punctuation.section.function.end.q"}},
+                        "patterns": body(implicit=True),
+                    },
+                ],
             },
             "number": {
                 "patterns": [
@@ -251,14 +294,17 @@ def grammar():
                         + AFTER,
                     },
                     {
+                        "comment": "A typed null or infinity. None is of symbol (the null symbol "
+                        "is a lone backtick) and no infinity of guid: q refuses 0Ns, 0Ws and 0Wg.",
                         "name": "constant.language.null.q",
-                        "match": BEFORE + r"-?0[NnWw][ghijefcspmdznuvt]?" + AFTER,
+                        "match": BEFORE + r"-?0(?:[Nn][ghijefcpmdznuvt]?|[Ww][hijefcpmdznuvt]?)" + AFTER,
                     },
                     {"name": "constant.language.boolean.q", "match": BEFORE + r"[01]+b" + AFTER},
                     {"name": "constant.numeric.byte.q", "match": BEFORE + r"0x[0-9a-fA-F]*" + AFTER},
                     {
+                        "comment": "With p, a number is a timestamp that many hours past 2000: 1p.",
                         "name": "constant.numeric.q",
-                        "match": BEFORE + r"(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?[hijefcnuvt]?" + AFTER,
+                        "match": BEFORE + r"(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?[hijefcnuvtp]?" + AFTER,
                     },
                 ],
             },

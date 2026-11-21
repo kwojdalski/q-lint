@@ -95,12 +95,33 @@ cases("source.k", [
   ["a parameter", "f:{[a;b] a+b}", "b", "variable.parameter.k", 0],
   ["an implicit x", "f:{x+1}", "x", "variable.language.implicit.k"],
   ["an assignment", "a:1", ":", "keyword.operator.assignment.k"],
+  ["a number made a timestamp with p", "t:1p", "1p", "constant.numeric.k"],
 ]);
 
 test("source.k: a block comment runs from a lone / to a lone \\, and code follows", async () => {
   const src = "a:1\n/\nnot code\n\\\nb:2";
   assert.ok((await innermost("source.k", src, "not code"))[0].startsWith("comment.block.k"));
   assert.deepStrictEqual(await innermost("source.k", src, "b"), ["variable.other.k"]);
+});
+
+test("source.k: 0Ns, 0Ws and 0Wg are not nulls, since q refuses them", async () => {
+  for (const text of ["0Ns", "0Ws", "0Wg"]) {
+    assert.notDeepStrictEqual(await innermost("source.k", `x:${text}`, text), ["constant.language.null.k"], text);
+  }
+  assert.deepStrictEqual(await innermost("source.k", "x:0Ng", "0Ng"), ["constant.language.null.k"]);
+});
+
+test("source.k: x is implicit only in a lambda that declares no parameters, over however many lines", async () => {
+  assert.deepStrictEqual(await innermost("source.k", "f:{[a] x+a}", "x"), ["variable.other.k"]);
+  assert.deepStrictEqual(await innermost("source.k", "f:{x+1}", "x"), ["variable.language.implicit.k"]);
+  assert.deepStrictEqual(await innermost("source.k", "f:{[a;\n b] a+b}", "b"), ["variable.parameter.k", "variable.other.k"]);
+});
+
+test("source.k: a lone backslash ends the script inside an open lambda too", async () => {
+  // The loader reads a lone backslash line by line, whatever is open -
+  // as the q grammar has it.
+  const scopes = await innermost("source.k", "f:{x+\n\\\nb:2", "b:2");
+  assert.ok(scopes[0] && scopes[0].startsWith("comment.block.end-of-script.k"), String(scopes[0]));
 });
 
 test("source.k: a lone backslash outside a block ends the script", async () => {
@@ -180,6 +201,8 @@ const OUT = [
   "  [0]  f 1",
   "       ^",
   "# rdb-prod - failed: connection refused",
+  "# rdb-uat - timed out after 5 s: the connection closed before the process answered",
+  "`a:b/c",
 ].join("\n");
 
 cases("source.q-console", [
@@ -191,6 +214,11 @@ cases("source.q-console", [
   ["a failure's error in the header", OUT, "'type", "invalid.illegal.error.q-console", 0],
   ["and on its own line", OUT, "'type", "invalid.illegal.error.q-console", 1],
   ["a query that never answered", OUT, "failed: connection refused", "invalid.illegal.error.q-console"],
+  // As live.ts writes a query q-lint.query.timeout stopped.
+  ["a query that timed out", OUT, "timed out after 5 s: the connection closed before the process answered", "invalid.illegal.error.q-console"],
+  ["and its process", OUT, "rdb-uat", "entity.name.tag.process.q-console"],
+  // As q prints it: past a colon a symbol takes slashes.
+  ["a symbol with a slash past its colon", OUT, "`a:b/c", "constant.other.symbol.q-console"],
   ["the prompt of an included query", OUT, "q)", "punctuation.separator.prompt.q-console"],
   ["the query is q", OUT, "select", "keyword.other.qsql.q"],
   ["a table's rule", OUT, "------------------------------------------------------", "comment.line.separator.q-console"],

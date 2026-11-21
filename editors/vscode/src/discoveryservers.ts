@@ -17,10 +17,13 @@ import {
 } from "vscode";
 import {
   EMPTY_STATE,
+  downloadedPasswords,
   fetchProcesses,
   parseServers,
+  qualified,
   serverDescription,
   serverLabelProblem,
+  serverTooltip,
   toDownload,
   urlProblem,
   type Discovered,
@@ -29,9 +32,13 @@ import {
   type ServerState,
 } from "./discovery";
 import { DISCOVERY_COMMANDS, readDiscovery } from "./liveconfig";
-import type { Process } from "./processes";
+import { passwordKey, type Process } from "./processes";
 
 const SERVERS_KEY = "q-lint.discoveryServers";
+/// The discovered processes a password was given for, by server, as
+/// `{ [server]: label[] }`: kept, so a server deleted after a reload, before
+/// it has listed anything, still forgets them.
+const PASSWORDS_KEY = "q-lint.discoveredPasswords";
 const secretKey = (label: string): string => `q-lint.discovery.auth.${label}`;
 
 /// What a server command is given: its row, its label, or nothing - then the
@@ -52,7 +59,8 @@ export class DiscoveryServers {
   /// removals, so a second Reload waits for it.
   private readonly inFlight = new Map<string, { url: string; removals: number; done: Promise<void> }>();
   /// Bumped per server by Remove Processes, so a fetch out at the time
-  /// does not bring them back.
+  /// does not bring them back, and by a change of its auth header, so what
+  /// a fetch with the old one answers is not kept.
   private readonly removals = new Map<string, number>();
   private timer: ReturnType<typeof setInterval> | undefined;
   private readonly changed = new EventEmitter<void>();
@@ -219,16 +227,62 @@ export class DiscoveryServers {
     if (answer === undefined) {
       return;
     }
+    // Read again: the list may have changed while the boxes were open.
+    const now = this.servers();
+    if (now.some((s) => s.label === answer.label)) {
+      void window.showErrorMessage(`q-lint: the label "${answer.label}" was taken meanwhile; the discovery server was not added.`);
+      return;
+    }
     const server = { label: answer.label, url: answer.url };
     await this.keepSecret(server.label, answer.secret);
-    await this.store([...servers, server]);
+    await this.store([...now, server]);
     await this.fetch(server);
+  }
+
+  /// Forget the passwords given for the processes `label` listed: once the
+  /// server is gone, or lists from another URL, a process of the same label
+  /// may be another, at another host.
+  private async forgetPasswords(label: string): Promise<void> {
+    const given = this.given();
+    const labels = new Set([...(this.states.get(label)?.processes ?? []).map((p) => p.label), ...(given[label] ?? [])]);
+    for (const process of labels) {
+      await this.context.secrets.delete(passwordKey({ label: qualified(label, process), server: label }));
+    }
+    delete given[label];
+    await this.context.globalState.update(PASSWORDS_KEY, given);
+  }
+
+  /// What `PASSWORDS_KEY` holds, entries that are not lists of labels dropped.
+  private given(): Record<string, string[]> {
+    const stored = this.context.globalState.get<unknown>(PASSWORDS_KEY, {});
+    const out: Record<string, string[]> = Object.create(null);
+    if (typeof stored === "object" && stored !== null) {
+      for (const [server, labels] of Object.entries(stored)) {
+        if (Array.isArray(labels)) {
+          out[server] = labels.filter((l): l is string => typeof l === "string");
+        }
+      }
+    }
+    return out;
+  }
+
+  /// Record, or with `kept` false unrecord, that a password was given for the
+  /// process `label` that `server` lists (the label as the server lists it).
+  async passwordGiven(server: string, label: string, kept = true): Promise<void> {
+    const given = this.given();
+    const labels = (given[server] ?? []).filter((l) => l !== label);
+    given[server] = kept ? [...labels, label] : labels;
+    if (given[server].length === 0) {
+      delete given[server];
+    }
+    await this.context.globalState.update(PASSWORDS_KEY, given);
   }
 
   private async keepSecret(label: string, secret: string | undefined): Promise<void> {
     if (secret === undefined) {
       return;
     }
+    this.removals.set(label, (this.removals.get(label) ?? 0) + 1);
     await (secret.trim() === ""
       ? this.context.secrets.delete(secretKey(label))
       : this.context.secrets.store(secretKey(label), secret.trim()));
@@ -280,7 +334,20 @@ export class DiscoveryServers {
     if (answer === undefined) {
       return;
     }
+    const now = this.servers();
+    const problem = !now.some((s) => s.label === old.label)
+      ? `"${old.label}" was deleted meanwhile`
+      : answer.label !== old.label && now.some((s) => s.label === answer!.label)
+        ? `the label "${answer.label}" was taken meanwhile`
+        : undefined;
+    if (problem !== undefined) {
+      void window.showErrorMessage(`q-lint: ${problem}; the discovery server was not changed.`);
+      return;
+    }
     const server = { label: answer.label, url: answer.url };
+    if (server.label !== old.label || server.url !== old.url) {
+      await this.forgetPasswords(old.label);
+    }
     if (server.label !== old.label) {
       const kept = await this.context.secrets.get(secretKey(old.label));
       await this.context.secrets.delete(secretKey(old.label));
@@ -290,7 +357,7 @@ export class DiscoveryServers {
       this.states.delete(old.label);
     }
     await this.keepSecret(server.label, answer.secret);
-    await this.store(servers.map((s) => (s.label === old.label ? server : s)));
+    await this.store(now.map((s) => (s.label === old.label ? server : s)));
     await this.fetch(server);
   }
 
@@ -309,6 +376,7 @@ export class DiscoveryServers {
       return;
     }
     await this.context.secrets.delete(secretKey(server.label));
+    await this.forgetPasswords(server.label);
     this.states.delete(server.label);
     await this.store(this.servers().filter((s) => s.label !== server.label));
   }
@@ -332,6 +400,12 @@ export class DiscoveryServers {
     }
     const saved = this.saved.list();
     const { added, skipped } = toDownload(saved, listed);
+    for (const [from, to] of downloadedPasswords(server.label, added)) {
+      const password = await this.context.secrets.get(from);
+      if (password !== undefined) {
+        await this.context.secrets.store(to, password);
+      }
+    }
     await this.saved.save([...saved, ...added]);
     const note = skipped.length ? ` Skipped ${skipped.length} whose label is taken: ${skipped.slice(0, 5).join(", ")}.` : "";
     void window.showInformationMessage(`q-lint: saved ${added.length} process(es) from ${server.label}.${note}`);
@@ -362,13 +436,9 @@ export function discoveryItem(row: Row): TreeItem {
     item.iconPath = state.loading
       ? new ThemeIcon("sync~spin")
       : new ThemeIcon("cloud", state.error !== undefined ? new ThemeColor("errorForeground") : undefined);
-    const tooltip = new MarkdownString();
-    tooltip.appendMarkdown(`**${server.label}**\n\n`);
-    tooltip.appendText(server.url);
-    if (state.fetchedAt !== undefined) {
-      tooltip.appendMarkdown(`\n\nlast fetched ${new Date(state.fetchedAt).toLocaleTimeString()}`);
-    }
-    item.tooltip = tooltip;
+    item.tooltip = new MarkdownString(
+      serverTooltip(server, state.fetchedAt === undefined ? undefined : new Date(state.fetchedAt).toLocaleTimeString()),
+    );
     item.contextValue = "discoveryServer";
     return item;
   }

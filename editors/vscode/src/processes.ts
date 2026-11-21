@@ -12,6 +12,16 @@ export interface Process {
   user?: string;
   tags: string[];
   tls?: boolean;
+  /// The discovery server that listed it, for a discovered process, whose
+  /// label is then `server/label`. Never saved or read from a file.
+  server?: string;
+}
+
+/// Where a process's password is kept in secret storage. A discovered
+/// process's is apart from any saved one's, since a saved label may be
+/// `desk/rdb` too: one process's password is never sent to the other.
+export function passwordKey(process: Pick<Process, "label" | "server">): string {
+  return process.server === undefined ? `q-lint.password.${process.label}` : `q-lint.discoveredPassword.${process.label}`;
 }
 
 /// Why `port` is not a port, or undefined when it is one.
@@ -21,6 +31,51 @@ export function portProblem(port: string): string | undefined {
   }
   const n = Number(port);
   return n >= 1 && n <= 65535 ? undefined : "A port is between 1 and 65535.";
+}
+
+/// `host` as it is connected to: an IPv6 address written in brackets, as a
+/// URL writes one (`[::1]`), without them.
+export function plainHost(host: string): string {
+  const h = host.trim();
+  return /^\[[^\]]*:[^\]]*\]$/.test(h) ? h.slice(1, -1) : h;
+}
+
+/// Why `host` is not a host, or undefined when it is: a name or an address,
+/// with no port, scheme, space or slash.
+export function hostProblem(host: string): string | undefined {
+  const h = plainHost(host);
+  if (h === "") {
+    return "A host is needed.";
+  }
+  // One colon is a port or a scheme; an IPv6 address has two or more.
+  if (h.split(":").length === 2) {
+    return "A host only: the port is asked for next.";
+  }
+  return /[\s/\\]/.test(h) ? "A host has no spaces or slashes." : undefined;
+}
+
+/// `host:port` as it is shown, an IPv6 host in brackets so the port is not
+/// read as part of it.
+export function address(host: string, port: number): string {
+  return host.includes(":") ? `[${host}]:${port}` : `${host}:${port}`;
+}
+
+/// `text` as Markdown that shows it as written: every character Markdown
+/// could read as syntax is escaped.
+export function markdownText(text: string): string {
+  return text.replace(/[\\`*_{}[\]()#+\-.!|~<>&]/g, (c) => `\\${c}`);
+}
+
+/// A process row's tooltip, as Markdown: its label, address, user and tags
+/// as written. `from` is the discovery server that listed it.
+export function processTooltip(process: Process, from?: string): string {
+  return [
+    `**${markdownText(process.label)}**`,
+    `${markdownText(address(process.host, process.port))}${process.tls ? " (TLS)" : ""}`,
+    process.user ? `user ${markdownText(process.user)}` : "no user",
+    process.tags.length ? `tags: ${markdownText(process.tags.join(", "))}` : "no tags",
+    ...(from === undefined ? [] : [`listed by ${markdownText(from)}, connected to as ${markdownText(`${from}/${process.label}`)}`]),
+  ].join("\n\n");
 }
 
 /// Tags as written in an input box: comma or space separated, lower case,
@@ -60,7 +115,7 @@ export function parseProcesses(json: unknown): { processes: Process[]; problems:
     }
     const e = entry as Record<string, unknown>;
     const label = typeof e.label === "string" ? e.label.trim() : "";
-    const host = typeof e.host === "string" ? e.host.trim() : "";
+    const host = typeof e.host === "string" ? plainHost(e.host) : "";
     const port = typeof e.port === "number" ? String(e.port) : typeof e.port === "string" ? e.port : "";
     if (label === "") {
       problems.push(`${where} has no label.`);
@@ -111,6 +166,19 @@ export function merge(processes: Process[], incoming: Process[]): Process[] {
   const kept = processes.map((p) => byLabel.get(p.label) ?? p);
   const known = new Set(processes.map((p) => p.label));
   return [...kept, ...incoming.filter((p) => !known.has(p.label))];
+}
+
+/// The labels of the processes `merge` replaces with one at another host,
+/// port or user: their stored password was given for the old one, and is
+/// not to be sent to the new.
+export function passwordsToForget(processes: Process[], incoming: Process[]): string[] {
+  const byLabel = new Map(incoming.map((p) => [p.label, p]));
+  return processes
+    .filter((p) => {
+      const next = byLabel.get(p.label);
+      return next !== undefined && (next.host !== p.host || next.port !== p.port || next.user !== p.user);
+    })
+    .map((p) => p.label);
 }
 
 /// The view's top level: a group per tag, sorted, each holding its processes
@@ -235,8 +303,11 @@ export function tlsChoices(
 }
 
 /// `"50 160"` as console height and width, or undefined when it is not two
-/// positive whole numbers.
-export function consoleSize(text: string): [number, number] | undefined {
+/// positive whole numbers - or not a string, as a hand-written setting may be.
+export function consoleSize(text: unknown): [number, number] | undefined {
+  if (typeof text !== "string") {
+    return undefined;
+  }
   const parts = text.trim().split(/\s+/);
   if (parts.length !== 2 || !parts.every((p) => /^\d+$/.test(p))) {
     return undefined;

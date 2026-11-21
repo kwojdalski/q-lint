@@ -151,7 +151,8 @@ and clicking it switches. The commands:
 - **Import** and **Export Processes**: a JSON file holding
   `{"processes": [{"label", "host", "port", "user"?, "tags"?, "tls"?}]}`.
   An import replaces processes of the same label, adds the rest, and says
-  which entries it skipped.
+  which entries it skipped. A process it moves to another host, port or
+  user forgets its stored password, so that is never sent to the new one.
 - **Insert Active Connection Label**, at the cursor.
 - **Copy Label for Agent Query**, on a process row: the label an agent's
   query names the process by (`server/label` for a discovered one).
@@ -172,8 +173,9 @@ disk. The commands:
   view's menu or the palette - fetch them all. Each is also fetched when it
   is added or edited, and at startup and every
   `q-lint.discovery.refreshInterval` minutes unless that is `0`.
-- **Download Processes**: save a server's processes to the list. One whose
-  label a saved process has is skipped and named, never replaced.
+- **Download Processes**: save a server's processes to the list, with the
+  password given when connecting to any of them. One whose label a saved
+  process has is skipped and named, never replaced.
 - **Remove Processes**: drop a server's processes from the view. The
   periodic fetch leaves it alone until it is reloaded.
 
@@ -191,7 +193,9 @@ Process**'s argument - so the two are never taken for each other. A bare
 label names a saved process first, then a discovered one if only one server
 lists it. A discovered process with a `user` asks for its password on the
 first connect, and keeps it in secret storage under `server/label`; one
-that fails to connect is forgotten, and asked for again on the next.
+that fails to connect is forgotten, and asked for again on the next, and
+so are those of a server's processes when it is deleted or its URL or label
+changed.
 
 **Querying.** With a q file open:
 - **Query Current Line**, `ctrl+q`.
@@ -208,7 +212,8 @@ that fails to connect is forgotten, and asked for again on the next.
 
 The code is cut into statements by q's own script rules: a line starting
 with a space or tab continues the one above, `/` lines and block comments
-are skipped, and a `\` line is a system command. A closing `}` at column 0
+are skipped, as is a first line starting `#!`, and a `\` line is a system
+command. A closing `}` at column 0
 starts a new statement, which q refuses, here as when it loads the file.
 The statements run in order on the process, in its current `\d`, as its
 console would run them, and nothing is defined on the process but what
@@ -223,7 +228,9 @@ numbers, symbols, temporal literals and strings, and an included query as q.
 
 **Abort Current Query** stops waiting at once. q has no message that cancels
 a query, so the connection is closed and opened again; the process goes on
-running the query, and the new connection is made once it is free.
+running the query, and the new connection is made once it is free, however
+long that takes. **Disconnect**, or connecting to another process, stops
+it waiting.
 
 **Query History** lists each query with its process, time, duration and
 outcome; the buttons on a row run it again on the active connection and
@@ -237,9 +244,9 @@ outcome; the buttons on a row run it again on the active connection and
   for the window: a reload turns it off, so a result sent whole is never
   left over from an earlier session. One cut q makes itself remains: KDB-X
   writes an atom or a list item with `-3!`, which stops at the process's own
-  `\c` width, so a simple list (`til 100000`) is sent as its value and
-  written out by q-lint instead, and a general list's long items are still
-  cut at `\c`.
+  `\c` width, so a simple list (`til 100000`) or an enumerated one
+  (`exec sym from trade` on an HDB) is sent as its values and written out
+  by q-lint instead, and a general list's long items are still cut at `\c`.
 - **Toggle Unwrapped Query**, or `q-lint.query.unwrapped`: for a gateway
   that refuses a lambda, the code is sent as plain strings, one per
   statement in order, stopping at the first error, as a client that sends
@@ -248,23 +255,27 @@ outcome; the buttons on a row run it again on the active connection and
   only for its own statement. The answer is whatever the process returns,
   formatted by q-lint: tables, keyed tables, dictionaries, lists and atoms
   as q's console writes them, and a table, dictionary or list reaches the
-  grid and chart too. q-lint knows less than q does, so it is close but not
-  exact: inside a table or a general list a symbol and a string are both
-  shown as text, a timestamp is shown to the microsecond, and a function's
-  text is not sent. Errors still come back as q errors, without a trace.
-  The status bar shows `unwrapped`.
+  grid and chart too. A lambda is shown as its text; any other function
+  (a primitive, a projection, a composition) is only said to be one, and a
+  float is written at q's default `\P` of 7 digits, since q-lint asks the
+  process nothing of its own. Errors still come back as q errors, without
+  a trace. The status bar shows `unwrapped`.
 - **Query timeout**, `q-lint.query.timeout` seconds (`0`, the default, is
   none): a query still running then is aborted exactly as **Abort Current
   Query** aborts it, and the history records it as timed out.
 - **Choose Connection for File** binds the active file to a process, kept
-  per workspace, and takes a label as an argument for a keybinding. A query
-  from that file (line, selection, block or entire file) switches the
+  per workspace and kept when the file is renamed or moved (an untitled
+  editor's only until it or the window closes, so the next `Untitled-1` is
+  not bound to it), and takes a label as an
+  argument for a keybinding. A query from that file (line, selection, block or entire file) switches the
   connection to its process first, connecting if nothing is connected -
   there is one connection at a time, so the file's process becomes the
   active one, and an unbound file then queries it too. The history, a
   rerun, Preview and notebooks use the active connection, never a binding.
   While the file's process is not the active connection, the status bar
   shows `file: <label>`. **Clear Connection for File** removes the binding.
+  Renaming the process (**Edit Process**) carries its files along, and
+  deleting it removes their bindings.
 - **Reveal Process** selects the connected process in the **Processes**
   view, and shows the view. **Open q-lint Settings** opens Settings at
   q-lint's.
@@ -316,28 +327,30 @@ where a result goes; it sets `q-lint.query.mode`, and takes `console`,
   above.
 - **Grid**: a table, a keyed table (unkeyed, its key columns shaded), a
   dictionary (as `key` and `value` columns; one keyed by a table as its
-  key columns and a `value` column) or a list (as one `value` column) opens in the **q-lint: result** panel. Click a header to sort,
+  key columns and a `value` column) or a list (as one `value` column) opens in the **q-lint: result** panel. Click a header (or Tab to it and press Enter) to sort,
   type under it to filter (by the text shown, ignoring case). **Copy as
   CSV** copies the rows shown, in the order shown, and **Export to CSV**
   saves them to a file you pick; the command **Export Results to CSV** does
   the same, and takes the file's `Uri` as an argument to skip the dialog.
-  In the CSV, a name, symbol or string a spreadsheet would run as a
-  formula (`=`, `+`, `-` or `@` first, but not a number) starts with `'`.
+  In the CSV, a cell or name a spreadsheet would run as a formula (`=`,
+  `+`, `-` or `@` first, but not a number) starts with `'`: a symbol or a
+  string, and a `-0W` or a negative timespan too.
   Each cell is what q
   prints in a table: a timestamp keeps its nanoseconds, a long above 2^53
   every digit, a null is blank and an infinity is `0W` or `0w`. Sorting is
   q's own order (`iasc` on the process), nulls first, and either way keeps
   equal values in their order, as `xasc` and `xdesc` do.
 - **Chart**: the same results as a line, bar, scatter or histogram chart of
-  the numeric columns against the first, chosen in the panel; the panel's
+  the numeric columns against the first (a list against its row numbers),
+  chosen in the panel; the panel's
   **Grid** and **Chart** buttons switch between the two for one result.
 
 The panel opens beside the editor. With `q-lint.query.resultsLocation` set
 to `panel`, results go instead to the **q Results** view in the bottom
 panel, beside the terminal and the output, and the editor keeps the focus.
 It is the same page as the editor's - the same grid, chart and buttons -
-and keeps its view, sort and filters when the panel is hidden and shown
-again.
+and keeps its view, sort, filters and scroll when the panel is hidden and
+shown again, as the editor's page does when its tab is.
 
 The process sends at most `q-lint.query.gridLimit` rows, and the panel says
 when a result was cut and how many rows it had. Anything that is not
@@ -384,8 +397,9 @@ shown not counted. It is read in one call that defines nothing on the process,
 on connect, on **Refresh Process Explorer**, and after each query when
 **Toggle Process Explorer Auto Refresh** has turned
 `q-lint.processExplorer.autoRefresh` on - never as you type. On a process
-with thousands of names it reads 100 namespaces at most and the first 500
-names of each, in sorted order, and says how many it left out. **Preview**,
+with thousands of names it reads 100 namespaces at most, the first 500
+names of each in sorted order, and a table's first 500 columns, and says how
+many it left out. **Preview**,
 on a table or a variable, runs its first `q-lint.processExplorer.previewLimit`
 rows, or the variable, as a query. The explorer shares the query connection:
 while a query runs it waits and refreshes after, and a query sent while it
@@ -402,6 +416,8 @@ your browser.
 process's global names, as read by the explorer, to the language server's,
 and inside a qSQL statement - `select`, `exec`, `update` or `delete` ... `from
 t` - the columns of `t` first. It adds nothing inside a string or a comment.
+A name q cannot parse (`café`, `a b`, made with `set`) goes in as Preview
+reads it, by its symbol: ``get`$"café"``.
 
 **Agents.** The **Run q Query** language-model tool (`q-lint_runQuery`,
 `#qQuery` in a chat prompt) lets Copilot and other agents run a q query and
@@ -417,12 +433,13 @@ defined on the process but what the query defines. The agent gets:
 - a table, keyed table, dictionary or list: `{columns, types, rowCount,
   data}`, `data` being the first 200 rows as arrays of values, with
   `truncated: true` when there were more and `keyColumns` for a keyed
-  table. Booleans and numbers are JSON values and nulls `null`; a
+  table; a table of more than 100 columns gives its first 100, with
+  `columnCount` and `truncated: true`. Booleans and numbers are JSON values and nulls `null`; a
   temporal, a symbol, a guid or a nested value is q's text, and so are a
   long above 2^53 and an infinity, so a timestamp keeps its nanoseconds;
 - any other value: `{output}`, the process's text of it at
   `q-lint.output.consoleSize`;
-- a failure: `{error, trace?}`.
+- a failure: `{error, trace?}`, the backtrace cut at 40 lines.
 
 A query running longer than `q-lint.agent.queryTimeout` seconds, or one the
 agent cancels, is aborted as **Abort Current Query** aborts one, and the
@@ -454,7 +471,8 @@ A cell's first lines can choose how its result is shown:
   a timestamp keeps its nanoseconds.
 - `/ @chart line`, `bar`, `scatter` or `histogram`: a table, a keyed
   table, a dictionary or a list as a chart, drawn as query **Chart** mode
-  draws it - the numeric columns against the first (a histogram bins every
+  draws it - the numeric columns against the first (a list against its row
+  numbers; a histogram bins every
   numeric column, in 20 bins), a temporal x axis written in q's notation,
   colours from the editor's theme - from the same rows: the first or the
   last `q-lint.notebook.rowLimit`.
@@ -472,7 +490,9 @@ settings can set one for its notebooks.
 They are q comments, so a cell runs the same as a query or in a script. A
 directive q-lint does not know, a chart of no known kind, or a title or
 height on a cell with no `/ @chart`, fails the cell with the directives it
-does know. An error shows q's message and, on kdb+
+does know. A qDoc line (`/ @param`, `/ @return`, `/ @eg` and the rest) is
+documentation, not a directive: it ends the directives, so a cell that
+opens with a documented function runs. An error shows q's message and, on kdb+
 3.5 and later, its backtrace.
 
 **Export Notebook as q Script**, on the notebook's toolbar and a `.qnb`
@@ -515,7 +535,7 @@ unless it has a `language`. Outputs are saved, so a notebook reopens with
 its results: an item is `text` when it is UTF-8 and `base64` otherwise.
 `execution` holds the run's number, outcome and start and end, in
 milliseconds since the epoch. Fields with nothing in them are left out, a
-field q-lint does not know - on the file or on a cell - is kept and saved
+field q-lint does not know - on the file, a cell, an output, an item or a run - is kept and saved
 back, and saving a notebook that was opened unchanged writes the same file. A file
 that is not a notebook does not open: the editor says what is wrong with
 it, and the file is left as it was. An empty file is a new notebook.
@@ -535,11 +555,11 @@ q-pro column names the setting of [q-pro](https://marketplace.visualstudio.com/i
 
 | setting | default | what it does | q-pro |
 |---|---|---|---|
-| `q-lint.enable` | `true` | Run the language server. Off: syntax colouring only. | - |
-| `q-lint.serverPath` | empty | Your own `qlinter` binary. Empty uses the bundled one, then `qlinter` on `PATH`; set, it always wins. | - (q-pro runs `qls` from `PATH`) |
+| `q-lint.enable` | `true` | Run the language server. Off: no diagnostics, Quick Fixes, formatting, navigation or semantic colouring; the grammar's colouring, processes, queries and notebooks stay. | - |
+| `q-lint.serverPath` | empty | Your own `qlinter` binary. Empty uses the bundled one, then `qlinter` on `PATH`; set, it always wins. A leading `~` is your home directory. | - (q-pro runs `qls` from `PATH`) |
 | `q-lint.serverArgs` | `[]` | Extra `qlinter --lsp` arguments, after the ones the settings produce. They keep their command-line meaning, so `--extend-select` here can widen the repository's selection. | - |
 | `q-lint.profile` | unset | `general`: only what q refuses. `style`: also likely mistakes. `styleq`: also published style guides. `uqf`: also one repository's conventions. Unset, a repository's `qlinter.toml` decides, and `style` applies without one. | - |
-| `q-lint.configFile` | empty | One configuration file for every document instead of the nearest `qlinter.toml` (`--config`); relative to the first workspace folder. | - |
+| `q-lint.configFile` | empty | One configuration file for every document instead of the nearest `qlinter.toml` (`--config`); relative to the first workspace folder, and a leading `~` is your home directory. | - |
 | `q-lint.lint.select` | `[]` | Show only these rule codes or prefixes, among those the configuration turns on. Narrows, never widens. | - |
 | `q-lint.lint.ignore` | `[]` | Hide these rule codes or prefixes. | - |
 | `q-lint.lint.run` | `onType` | `onType` lints every change; `onSave` lints on open and save. | - |
@@ -601,7 +621,7 @@ nothing.
 | `q-lint.query.resultsLocation` | `"editor"` | Where a grid or chart opens: `editor`, beside it, or `panel`, the **q Results** view in the bottom panel. | - |
 | `q-lint.query.unwrapped` | `false` | Send code as plain strings, for a gateway that refuses a lambda, and format the result in q-lint. **Toggle Unwrapped Query** changes it. | - |
 | `q-lint.query.timeout` | `0` | Seconds a query may run before it is aborted, as Abort does; `0` none. | - |
-| `q-lint.processExplorer.excludedNamespaces` | `["q","Q","h","j","o","s"]` | Namespaces the Process Explorer and live completion leave out, with those nested in them. | - |
+| `q-lint.processExplorer.excludedNamespaces` | `["q","Q","h","j","o","s"]` | Namespaces the Process Explorer and live completion leave out (`q`, or a nested one as `ns.sub`), with those nested in them. | - |
 | `q-lint.processExplorer.previewLimit` | `5` | Rows of a table Preview shows. | - |
 | `q-lint.processExplorer.autoRefresh` | `false` | Read the process again after each query. | - |
 
@@ -612,8 +632,8 @@ reaches the language server.
 
 | Setting | Default | What it does | q-pro |
 | --- | --- | --- | --- |
-| `q-lint.terminal.qBinary` | `"q"` | The q binary a terminal starts: a name on `PATH` or a path. It is quoted for the terminal's shell (POSIX, PowerShell or cmd), so it names one program, not a command with arguments. | `q-terminal.cfg.qBinary` |
-| `q-lint.terminal.envPath` | `""` | A file of `NAME=value` lines set for q, such as `QHOME` and `QLIC`. They go on the command line that starts q (`NAME=value q`, `$env:NAME=` in PowerShell, `set` in cmd), so they win over what your shell's startup files set, and show there. Relative to the workspace folder. It is read, not run as a shell script as q-pro's is: `#` lines are comments, `export ` is allowed, quotes around a value are dropped, and nothing is expanded: `$HOME` stays `$HOME`. | `q-terminal.cfg.envPath` |
+| `q-lint.terminal.qBinary` | `"q"` | The q binary a terminal starts: a name on `PATH` or a path, where a leading `~` is your home directory. It is quoted for the terminal's shell (POSIX, PowerShell or cmd), so it names one program, not a command with arguments. | `q-terminal.cfg.qBinary` |
+| `q-lint.terminal.envPath` | `""` | A file of `NAME=value` lines set for q, such as `QHOME` and `QLIC`. They go on the command line that starts q (`NAME=value q`, `$env:NAME=` in PowerShell, `set` in cmd), so they win over what your shell's startup files set, and show there. Relative to the workspace folder; a leading `~` is your home directory. It is read, not run as a shell script as q-pro's is: `#` lines are comments, `export ` is allowed, quotes around a value are dropped, and nothing is expanded: `$HOME` stays `$HOME`. | `q-terminal.cfg.envPath` |
 
 ### Discovery settings
 

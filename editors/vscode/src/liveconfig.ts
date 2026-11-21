@@ -50,6 +50,8 @@ export const RESULTS = {
   container: "q-lint-results",
   view: "q-lint.results",
   exportCsv: "q-lint.exportResults",
+  /// The q Results view's own Export: its rows, whatever resultsLocation says.
+  exportViewCsv: "q-lint.exportResultsView",
   setRowLimit: "q-lint.setNotebookRowLimit",
 } as const;
 
@@ -91,14 +93,18 @@ function whole(value: unknown, least: number, fallback: number): number {
   return typeof value === "number" && Number.isInteger(value) && value >= least ? value : fallback;
 }
 
+/// Whether `get` gave `true`: settings.json may hold any type, and a string
+/// `"false"` is not true.
+const yes = (value: unknown): boolean => value === true;
+
 /// The query settings, read with `get` as `workspace.getConfiguration("q-lint")`
 /// would. None of them reaches the language server, and none restarts it.
 export function readLive(get: <T>(key: string, fallback: T) => T): LiveSettings {
   return {
-    consoleSize: consoleSize(get("output.consoleSize", "50 160")) ?? [50, 160],
-    autoClear: get("output.autoClear", false),
-    includeQuery: get("output.includeQuery", false),
-    ignoreNullReturn: get("output.ignoreNullReturn", false),
+    consoleSize: consoleSize(get<unknown>("output.consoleSize", "50 160")) ?? [50, 160],
+    autoClear: yes(get<unknown>("output.autoClear", false)),
+    includeQuery: yes(get<unknown>("output.includeQuery", false)),
+    ignoreNullReturn: yes(get<unknown>("output.ignoreNullReturn", false)),
     mode: QUERY_MODES.find((m) => m === get("query.mode", "console")) ?? "console",
     gridLimit: whole(get("query.gridLimit", 10000), 1, 10000),
     gridDecimals: Math.min(whole(get("query.gridDecimals", -1), -1, -1), 20),
@@ -114,10 +120,15 @@ export interface TerminalSettings {
 /// The terminal settings, read as `readLive` reads the query ones. Each is
 /// read when a terminal starts, so a change applies to the next one.
 export function readTerminal(get: <T>(key: string, fallback: T) => T): TerminalSettings {
-  const qBinary = get("terminal.qBinary", "q").trim();
+  // A hand-written `null` or number in settings.json is no setting.
+  const text = (key: string, fallback: string): string => {
+    const value = get<unknown>(key, fallback);
+    return typeof value === "string" ? value.trim() : "";
+  };
+  const qBinary = text("terminal.qBinary", "q");
   return {
     qBinary: qBinary === "" ? "q" : qBinary,
-    envPath: get("terminal.envPath", "").trim(),
+    envPath: text("terminal.envPath", ""),
   };
 }
 

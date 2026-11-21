@@ -54,10 +54,48 @@
     return columns.length === 0 && can.length > 0 ? { columns: columns, note: "No column is ticked: tick one above to chart it." } : { columns: columns };
   }
 
+  /// The bins a histogram's field asks for: 1 to 500, `fallback` when it
+  /// holds no number. 0 is a number: the fewest bins, not the default.
+  function binsFrom(text, fallback) {
+    const n = parseInt(text, 10);
+    return Number.isNaN(n) ? fallback : Math.max(1, Math.min(500, n));
+  }
+
+  /// Pixels a grid row takes: result.css sets the same.
+  const ROW = 22;
+  /// The tallest the rows may be laid out: under the 33,554,432 px Chromium
+  /// lets an element be, and Firefox's 17,895,697.
+  const MAX_HEIGHT = 15000000;
+
+  /// The rows to draw for a scroll position, and the spacers above and
+  /// below them, in pixels: {start, end, before, after}. Row for row while
+  /// they fit in MAX_HEIGHT; past that, the scrollbar's range is spread
+  /// over the rows, so the last is still reached.
+  function span(scrollTop, height, count) {
+    const visible = Math.ceil(height / ROW);
+    if (count * ROW <= MAX_HEIGHT) {
+      const start = Math.max(0, Math.floor(scrollTop / ROW) - 20);
+      const end = Math.min(count, start + visible + 40);
+      return { start: start, end: end, before: start * ROW, after: (count - end) * ROW };
+    }
+    const range = Math.max(1, MAX_HEIGHT - height);
+    const at = Math.max(0, Math.min(1, scrollTop / range));
+    const first = Math.round(at * Math.max(0, count - visible));
+    const start = Math.max(0, first - 20);
+    const end = Math.min(count, first + visible + 20);
+    // The first row in view sits at the top of the view; at the bottom,
+    // the last row ends where the rows do.
+    const before = Math.max(0, Math.min(scrollTop - (first - start) * ROW, MAX_HEIGHT - (end - start) * ROW));
+    return { start: start, end: end, before: before, after: Math.max(0, MAX_HEIGHT - before - (end - start) * ROW) };
+  }
+
   const helpers = {
     rowCount: rowCount,
     visibleRows: visibleRows,
     chartColumns: chartColumns,
+    binsFrom: binsFrom,
+    span: span,
+    MAX_HEIGHT: MAX_HEIGHT,
   };
   if (typeof module !== "undefined" && module.exports) {
     module.exports = helpers;
@@ -70,10 +108,8 @@
 
   const vscode = acquireVsCodeApi();
   const C = root.qlintChart;
-  /// Pixels a grid row takes: result.css sets the same.
-  const ROW = 22;
   const KINDS = ["line", "bar", "scatter", "histogram"];
-  const state = Object.assign({ id: 0, view: "grid", sort: null, filters: [], kind: "line", columns: null, bins: C.BINS }, vscode.getState() || {});
+  const state = Object.assign({ id: 0, view: "grid", sort: null, filters: [], kind: "line", columns: null, bins: C.BINS, top: 0 }, vscode.getState() || {});
   let result = null;
   let rows = [];
   let chart = null;
@@ -164,6 +200,10 @@
 
   let body = null;
   let scroller = null;
+  /// What paint() last drew: the rows (that list) and their span.
+  let painted = null;
+  /// The column headers drawn, by place.
+  let headers = [];
 
   function drawGrid() {
     const grid = result.grid;
@@ -184,18 +224,33 @@
     const head = el("thead");
     const names = el("tr");
     const filters = el("tr", "filters");
+    headers = [];
     grid.columns.forEach(function (c, i) {
       const sorted = state.sort && state.sort.column === i ? (state.sort.descending ? " ▼" : " ▲") : "";
       const th = el("th", (c.key ? "key" : "") + (c.numeric ? " num" : ""), c.name + sorted);
       th.title = c.name + ": " + c.typeName + ". Click to sort.";
-      th.addEventListener("click", function () {
+      // A keyboard sorts it too: Tab to it, then Enter or Space.
+      th.tabIndex = 0;
+      th.setAttribute("aria-sort", sorted === "" ? "none" : state.sort.descending ? "descending" : "ascending");
+      const sort = function () {
         const s = state.sort;
         state.sort = !s || s.column !== i ? { column: i, descending: false } : s.descending ? null : { column: i, descending: true };
+        state.top = 0;
         save();
         rows = visibleRows(grid, state.filters, state.sort);
         drawGrid();
         drawBar();
         rendered();
+      };
+      th.addEventListener("click", sort);
+      headers.push(th);
+      th.addEventListener("keydown", function (event) {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          sort();
+          // The header was drawn again: the focus stays on it.
+          headers[i].focus();
+        }
       });
       names.append(th);
       const ft = el("th", c.key ? "key" : "");
@@ -205,6 +260,7 @@
       input.value = state.filters[i] || "";
       input.addEventListener("input", function () {
         state.filters[i] = input.value;
+        state.top = 0;
         save();
         rows = visibleRows(grid, state.filters, state.sort);
         scroller.scrollTop = 0;
@@ -217,11 +273,21 @@
     });
     head.append(names, filters);
     body = el("tbody");
+    painted = null;
     table.append(cols, head, body);
     scroller.append(table);
     gridView.append(scroller);
-    scroller.addEventListener("scroll", paint);
+    scroller.addEventListener("scroll", function () {
+      // Kept, so a page reloaded - hidden and shown again - is back here.
+      state.top = scroller.scrollTop;
+      save();
+      paint();
+    });
     paint();
+    if (state.top > 0) {
+      scroller.scrollTop = state.top;
+      paint();
+    }
   }
 
   /// Draw the rows in view, and spacers for the rest: a grid holds up to
@@ -231,20 +297,26 @@
       return;
     }
     const grid = result.grid;
-    const height = scroller.clientHeight || 600;
-    const start = Math.max(0, Math.floor(scroller.scrollTop / ROW) - 20);
-    const end = Math.min(rows.length, start + Math.ceil(height / ROW) + 40);
-    const spacer = function (n) {
+    const at = span(scroller.scrollTop, scroller.clientHeight || 600, rows.length);
+    const start = at.start;
+    const end = at.end;
+    // The same rows over the same spacers: leave them be, so a selection
+    // made in them, to copy, is not lost to a scroll.
+    if (painted && painted.rows === rows && painted.start === start && painted.end === end && painted.before === at.before && painted.after === at.after) {
+      return;
+    }
+    painted = { rows: rows, start: start, end: end, before: at.before, after: at.after };
+    const spacer = function (px) {
       const tr = el("tr", "spacer");
       const td = el("td");
       td.colSpan = Math.max(1, grid.columns.length);
-      td.style.height = n * ROW + "px";
+      td.style.height = px + "px";
       tr.append(td);
       return tr;
     };
     const out = [];
-    if (start > 0) {
-      out.push(spacer(start));
+    if (at.before > 0) {
+      out.push(spacer(at.before));
     }
     for (let i = start; i < end; i++) {
       const r = rows[i];
@@ -257,8 +329,8 @@
       });
       out.push(tr);
     }
-    if (end < rows.length) {
-      out.push(spacer(rows.length - end));
+    if (at.after > 0) {
+      out.push(spacer(at.after));
     }
     body.replaceChildren.apply(body, out);
   }
@@ -311,7 +383,7 @@
       bins.max = "500";
       bins.value = String(state.bins);
       bins.addEventListener("change", function () {
-        state.bins = Math.max(1, Math.min(500, parseInt(bins.value, 10) || C.BINS));
+        state.bins = binsFrom(bins.value, C.BINS);
         save();
         drawChart();
       });
@@ -369,6 +441,7 @@
       }
       state.view = m.view;
       state.id = m.id;
+      state.top = 0;
       state.names = names;
     }
     result = m;

@@ -28,8 +28,8 @@
           }
         },
         {
-          "comment": "# rdb - failed: why, or # rdb - aborted: the query never answered.",
-          "match": "^(#) (.+?) - ((?:aborted|failed)\\b.*)$",
+          "comment": "# rdb - failed: why, # rdb - aborted: the query never answered, or # rdb - timed out after 5 s: it ran past q-lint.query.timeout.",
+          "match": "^(#) (.+?) - ((?:aborted|failed|timed out after \\d+(?:\\.\\d+)? s)\\b.*)$",
           "name": "markup.heading.query.q-console",
           "captures": {
             "1": { "name": "punctuation.definition.heading.q-console" },
@@ -91,8 +91,9 @@
           "match": "`:[A-Za-z0-9_.:/\\-]*"
         },
         {
+          "comment": "Past a colon a symbol takes slashes too: `a:b/c is one symbol.",
           "name": "constant.other.symbol.q-console",
-          "match": "`[A-Za-z0-9_.:]*"
+          "match": "`[A-Za-z0-9_.]*(?::[A-Za-z0-9_.:/]*)?"
         },
         {
           "comment": "A guid, as q prints one: before the numbers, whose rules would colour its all-digit groups.",

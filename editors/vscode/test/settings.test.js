@@ -153,3 +153,34 @@ test("every declared setting is read", () => {
     assert.ok(read.has(short), `${key} is declared but never read`);
   }
 });
+
+test("a leading ~ in the server path or the config file is the home directory", () => {
+  const home = require("node:os").homedir();
+  const l = launch(configuration({ serverPath: "~/bin/qlinter", configFile: "~/qlinter.toml" }), path.resolve("/ws"));
+  assert.strictEqual(l.serverPath, path.join(home, "bin/qlinter"));
+  assert.deepStrictEqual(l.args, ["--lsp", "--config", path.join(home, "qlinter.toml")]);
+  assert.strictEqual(launch(configuration({ serverPath: "~" }), undefined).serverPath, home);
+  // Only a whole leading ~: ~user and a ~ further in are names.
+  assert.strictEqual(launch(configuration({ serverPath: "~bob/qlinter" }), undefined).serverPath, "~bob/qlinter");
+  assert.strictEqual(launch(configuration({ serverPath: "/opt/a~/qlinter" }), undefined).serverPath, "/opt/a~/qlinter");
+});
+
+test("a setting of the wrong type is its default, not a crash or a junk argument", () => {
+  // settings.json is typed by hand: `null` resets a value, and a profile or
+  // path can be written without quotes.
+  const l = launch(configuration({ serverPath: null, configFile: 42, profile: 3, enable: null }), "/ws");
+  assert.strictEqual(l.serverPath, "");
+  assert.deepStrictEqual(l.args, ["--lsp"]);
+  assert.strictEqual(l.enabled, true);
+  assert.ok(l.args.every((a) => typeof a === "string"));
+});
+
+test("the server settings' descriptions say what the code does", () => {
+  const props = Object.assign({}, ...require("../package.json").contributes.configuration.map((c) => c.properties));
+  // A leading ~ is expanded, and a bundled binary that will not run falls back to PATH.
+  assert.match(props["q-lint.serverPath"].markdownDescription, /`~`/);
+  assert.match(props["q-lint.serverPath"].markdownDescription, /will not run/);
+  assert.match(props["q-lint.configFile"].markdownDescription, /`~`/);
+  // Off, more than the colouring stays: processes, queries, notebooks.
+  assert.match(props["q-lint.enable"].markdownDescription, /queries/);
+});

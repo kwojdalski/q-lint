@@ -12,8 +12,9 @@
 // console text: each column as a list of strings, as `string` writes them
 // (so a timestamp keeps its nanoseconds), a nested column's items with
 // `-3!`. The columns are read by name, as `value flip` does not read them
-// of a table mapped from disk, and a mapped nested column (77h and up) is
-// nested too. A keyed table is unkeyed and says how many key columns it had; a
+// of a table mapped from disk - unless two share a name, which a name would
+// read twice, as `grid.ts`'s `GRID` reads them - and a mapped nested column
+// (77h and up) is nested too. A keyed table is unkeyed and says how many key columns it had; a
 // dictionary keyed by a table whose value is not one is not a keyed table.
 // At most `rows` rows are sent, with the table's count, so a large table is
 // cut by the process: the first `rows`, or the last when `rows` is negative,
@@ -43,7 +44,7 @@ export const DATA = [
   " k:$[99h=type v;$[(98h=type key v)&98h=type value v;count cols key v;0];0];",
   " t:$[k>0;0!v;v];",
   " if[not 98h=type t;:`ok`table`type`text!(1b;0b;type v;.Q.S[\"j\"$size;0j] v)];",
-  " c:{x cols x} (\"j\"$rows) sublist t;",
+  " c:{$[count[cols x]=count distinct cols x;x cols x;value flip x]} (\"j\"$rows) sublist t;",
   " str:{$[(0h=type x)|76h<type x;{$[10h=type x;x;-3!x]} each x;string x]};",
   " `ok`table`columns`types`keys`data`total!(1b;1b;cols t;type each c;k;str each c;count t)}",
 ].join("\n");

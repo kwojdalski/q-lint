@@ -35,6 +35,10 @@ export class QueryControls {
   /// on until turned off, and is off again after a reload, so a result sent
   /// whole is never a surprise left over from another day.
   private unlimitedOn = false;
+  /// An untitled editor's process, kept for this window only: its name
+  /// (`Untitled-1`) is the next window's first new editor's too, whose
+  /// queries must not go where an editor closed unsaved was sent.
+  private readonly untitled = new Map<string, string>();
   private readonly flags: StatusBarItem;
   private readonly fileItem: StatusBarItem;
 
@@ -65,6 +69,14 @@ export class QueryControls {
           this.refresh();
         }
       }),
+      // The next new editor in this window takes a closed one's name.
+      workspace.onDidCloseTextDocument((document) => {
+        if (document.uri.scheme === "untitled") {
+          this.untitled.delete(document.uri.toString());
+        }
+      }),
+      // A file renamed or moved, or one in a folder that was, keeps its process.
+      workspace.onDidRenameFiles((event) => this.moved(event.files)),
     );
     this.refresh();
   }
@@ -80,6 +92,9 @@ export class QueryControls {
 
   /// The process `uri` is bound to, if it is.
   binding(uri: Uri): string | undefined {
+    if (uri.scheme === "untitled") {
+      return this.untitled.get(uri.toString());
+    }
     return bindingFor(this.context.workspaceState.get(FILE_CONNECTIONS_KEY), uri.toString());
   }
 
@@ -148,7 +163,36 @@ export class QueryControls {
     await this.store(document.uri, undefined);
   }
 
+  private async moved(files: readonly { oldUri: Uri; newUri: Uri }[]): Promise<void> {
+    const stored = this.context.workspaceState.get(FILE_CONNECTIONS_KEY);
+    let next = withBinding(stored, "", undefined);
+    let changed = false;
+    for (const { oldUri, newUri } of files) {
+      const from = oldUri.toString();
+      const to = newUri.toString();
+      for (const [key, label] of Object.entries(next)) {
+        if (key === from || key.startsWith(`${from}/`)) {
+          next = withBinding(withBinding(next, key, undefined), to + key.slice(from.length), label);
+          changed = true;
+        }
+      }
+    }
+    if (changed) {
+      await this.context.workspaceState.update(FILE_CONNECTIONS_KEY, next);
+      this.refresh();
+    }
+  }
+
   private async store(uri: Uri, label: string | undefined): Promise<void> {
+    if (uri.scheme === "untitled") {
+      if (label === undefined) {
+        this.untitled.delete(uri.toString());
+      } else {
+        this.untitled.set(uri.toString(), label);
+      }
+      this.refresh();
+      return;
+    }
     const stored = this.context.workspaceState.get(FILE_CONNECTIONS_KEY);
     await this.context.workspaceState.update(FILE_CONNECTIONS_KEY, withBinding(stored, uri.toString(), label));
     this.refresh();

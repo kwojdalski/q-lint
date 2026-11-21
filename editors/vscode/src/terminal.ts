@@ -87,6 +87,13 @@ export function commandLine(binary: string, args: string[], shell: Shell, env: R
   return [...names.map((n) => `set "${n}=${env[n]}"`), line].join(" && ");
 }
 
+/// `file` with a leading `~` read as `home`, as a shell reads it: a q
+/// binary or env file setting is quoted for the shell, which would
+/// otherwise look for a folder named `~`.
+export function expandHome(file: string, home: string): string {
+  return file === "~" || /^~[\\/]/.test(file) ? home + file.slice(1) : file;
+}
+
 /// The variables of an env file - one `NAME=value` a line, `#` comments and
 /// blank lines skipped, an `export ` in front allowed, and a value in
 /// matching quotes taken without them - and the lines it could not read.

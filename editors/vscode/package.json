@@ -3,7 +3,7 @@
   "displayName": "q-lint",
   "description": "q/kdb+ for VS Code: linting, Quick Fixes, navigation and help from the source, and connections to q processes to run code on.",
   "icon": "icon.png",
-  "version": "0.26.0",
+  "version": "0.27.0",
   "publisher": "wojdalski",
   "license": "MIT",
   "engines": {
@@ -125,12 +125,12 @@
             "type": "boolean",
             "default": true,
             "order": 0,
-            "markdownDescription": "Run the q-lint language server. Off, the extension keeps the syntax colouring and starts no server: no diagnostics, Quick Fixes, formatting or semantic colouring."
+            "markdownDescription": "Run the q-lint language server. Off, it starts no server: no diagnostics, Quick Fixes, formatting, navigation or semantic colouring. The grammar's colouring, processes, queries, the Process Explorer, notebooks and the agent tool stay."
           },
           "q-lint.serverPath": {
             "type": "string",
             "default": "",
-            "markdownDescription": "Path to the `qlinter` binary. Left empty, the extension uses the server it was packaged with, and falls back to looking up `qlinter` on `PATH` when it was packaged without one.",
+            "markdownDescription": "Path to the `qlinter` binary; a leading `~` is your home directory. Left empty, the extension uses the server it was packaged with, and falls back to `qlinter` on `PATH` when it was packaged without one or that one will not run. Set, it always wins.",
             "order": 1
           },
           "q-lint.serverArgs": {
@@ -158,7 +158,7 @@
             "type": "string",
             "default": "",
             "order": 4,
-            "markdownDescription": "A configuration file to use for every document instead of the nearest `.qlinter.toml`, `qlinter.toml` or `pyproject.toml` `[tool.qlinter]` (the server's `--config`). Relative to the first workspace folder. Empty: the nearest one governs each file, as on the command line and in CI."
+            "markdownDescription": "A configuration file to use for every document instead of the nearest `.qlinter.toml`, `qlinter.toml` or `pyproject.toml` `[tool.qlinter]` (the server's `--config`). Relative to the first workspace folder; a leading `~` is your home directory. Empty: the nearest one governs each file, as on the command line and in CI."
           },
           "q-lint.lint.select": {
             "type": "array",
@@ -384,7 +384,7 @@
               "s"
             ],
             "order": 120,
-            "markdownDescription": "Namespaces the **Process Explorer** and live completion leave out, without the leading dot. Their nested namespaces are left out with them."
+            "markdownDescription": "Namespaces the **Process Explorer** and live completion leave out, without the leading dot: a root namespace (`q`) or a nested one (`ns.sub`). The namespaces nested in them are left out with them."
           },
           "q-lint.processExplorer.previewLimit": {
             "type": "integer",
@@ -408,13 +408,15 @@
             "type": "string",
             "default": "q",
             "order": 200,
-            "markdownDescription": "The q binary **Run Code from Terminal** and **Send ... to Terminal** start: a name on `PATH` or a path. It is quoted for the terminal's shell, so it is one program, not a command line with arguments."
+            "scope": "resource",
+            "markdownDescription": "The q binary **Run Code from Terminal**, **Start q REPL** and **Send ... to Terminal** start: a name on `PATH` or a path, where a leading `~` is your home directory. It is quoted for the terminal's shell, so it is one program, not a command line with arguments. Read for the file's workspace folder."
           },
           "q-lint.terminal.envPath": {
             "type": "string",
             "default": "",
             "order": 201,
-            "markdownDescription": "A file of `NAME=value` lines set for q in a q terminal, such as `QHOME` and `QLIC`, on the command line that starts it, so they win over the shell's startup files. Relative to the workspace folder. Values are taken as written: `$HOME` is not expanded."
+            "scope": "resource",
+            "markdownDescription": "A file of `NAME=value` lines set for q in a q terminal (**Run Code from Terminal**, **Start q REPL**, **Send ... to Terminal**), such as `QHOME` and `QLIC`, on the command line that starts it, so they win over the shell's startup files. Relative to the workspace folder, which may set its own; a leading `~` is your home directory. Values are taken as written: `$HOME` is not expanded."
           }
         }
       },
@@ -692,6 +694,12 @@
         "icon": "$(save-as)"
       },
       {
+        "command": "q-lint.exportResultsView",
+        "title": "Export Results to CSV",
+        "category": "q-lint",
+        "icon": "$(save-as)"
+      },
+      {
         "command": "q-lint.runInTerminal",
         "title": "Run Code from Terminal",
         "category": "q-lint",
@@ -907,7 +915,7 @@
           "group": "navigation"
         },
         {
-          "command": "q-lint.exportResults",
+          "command": "q-lint.exportResultsView",
           "when": "view == q-lint.results",
           "group": "navigation"
         },
@@ -1096,7 +1104,7 @@
       "explorer/context": [
         {
           "command": "q-lint.exportNotebook",
-          "when": "resourceExtname == .qnb",
+          "when": "resourceExtname =~ /^\\.qnb$/i",
           "group": "q-lint"
         }
       ],
@@ -1135,6 +1143,10 @@
       "commandPalette": [
         {
           "command": "q-lint.previewProcessExplorerItem",
+          "when": "false"
+        },
+        {
+          "command": "q-lint.exportResultsView",
           "when": "false"
         }
       ]
@@ -1224,7 +1236,7 @@
         "canBeReferencedInPrompt": true,
         "icon": "$(database)",
         "userDescription": "Run a q query on the active q process, or on one named by its label, and get the result as JSON.",
-        "modelDescription": "Runs q (kdb+) code on a q process the user has set up in the q-lint extension, and returns the result as JSON. Without `process`, the code runs on the active connection, the process the user is connected to; with `process`, a label from the user's q-lint process list (a process listed by a discovery server is `server/label`), q-lint connects to that process first and it becomes the active connection. The code is run as the process's console runs a script: each line is a statement, indented lines continue the one above, and the value of the last statement is returned. Nothing is defined on the process except what the code itself defines, so prefer queries that only read. The user confirms every call, and a query that runs longer than the user's timeout (30 s unless set) is aborted. The result is one of three JSON objects. A table, keyed table, dictionary (as columns `key` and `value`) or list (as one column `value`) gives `{columns, types, rowCount, data, keyColumns?, truncated?}`: `columns` the column names, `types` their q types, `rowCount` how many rows the whole result has, `data` its first 200 rows as arrays of values, `keyColumns` how many leading columns are keys, and `truncated: true` when `data` holds fewer rows than `rowCount`. In `data`, booleans and numbers are JSON values and nulls are null; temporal values (timestamps, dates, times, timespans), symbols, guids and nested values are strings as q prints them, and so are longs beyond 2^53 and infinities (`0W`, `-0w`). Any other value - an atom, a string, a function - gives `{output}`, q's console text of it. A failure gives `{error, trace?}`: q's error and its backtrace, or why nothing ran - no process connected, an unknown label (the error lists the known labels), a timeout or a cancellation. Ask for only the rows and columns needed (`select ... where ...`, `n#t`), since at most 200 rows come back.",
+        "modelDescription": "Runs q (kdb+) code on a q process the user has set up in the q-lint extension, and returns the result as JSON. Without `process`, the code runs on the active connection, the process the user is connected to; with `process`, a label from the user's q-lint process list (a process listed by a discovery server is `server/label`), q-lint connects to that process first and it becomes the active connection. The code is run as the process's console runs a script: each line is a statement, indented lines continue the one above, and the value of the last statement is returned. Nothing is defined on the process except what the code itself defines, so prefer queries that only read. The user confirms every call, and a query that runs longer than the user's timeout (30 s unless set) is aborted. The result is one of three JSON objects. A table, keyed table, dictionary (as columns `key` and `value`) or list (as one column `value`) gives `{columns, types, rowCount, data, keyColumns?, columnCount?, truncated?}`: `columns` the column names, `types` their q types, `rowCount` how many rows the whole result has, `data` its first 200 rows as arrays of values, `keyColumns` how many leading columns are keys, `columnCount` how many columns it has when that is more than the 100 given, and `truncated: true` when `data` holds fewer rows than `rowCount` or fewer columns than `columnCount`. In `data`, booleans and numbers are JSON values and nulls are null; temporal values (timestamps, dates, times, timespans), symbols, guids and nested values are strings as q prints them, and so are longs beyond 2^53 and infinities (`0W`, `-0w`). Any other value - an atom, a string, a function - gives `{output}`, q's console text of it. A failure gives `{error, trace?}`: q's error and its backtrace (its first 40 lines), or why nothing ran - no process connected, an unknown label (the error lists the known labels), a timeout or a cancellation. Ask for only the rows and columns needed (`select ... where ...`, `n#t`), since at most 200 rows come back.",
         "inputSchema": {
           "type": "object",
           "properties": {

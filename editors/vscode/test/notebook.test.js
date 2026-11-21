@@ -389,3 +389,48 @@ test("package.json contributes the chart renderer, for the chart item's type, fr
   assert.doesNotMatch(source, /https?:\/\//);
   assert.match(source, /^export function activate\(/m);
 });
+
+test("a title on a cell whose /@chart a later /@grid replaces does not say it has no /@chart", () => {
+  // The last directive wins, so the cell draws no chart - but it has one.
+  const problem = cellDirective("/ @chart line\n/ @title Prices\n/ @grid\nt").problem;
+  assert.doesNotMatch(problem, /has no `\/ @chart`/);
+  assert.match(problem, /`\/ @title` is for a chart, and this cell's `\/ @grid` after its `\/ @chart` draws none/);
+  assert.match(cellDirective("/ @chart bar\n/ @console\n/ @height 400\nt").problem, /`\/ @console` after its `\/ @chart` draws none/);
+});
+
+test("export: a lone / inside a comment is indented, so no q nests a block comment there", () => {
+  const script = exportScript([
+    { kind: "markdown", source: "a path:\n/\nthe root" },
+    { kind: "code", source: "a:1\n/\nnot code\n/ \n\\" },
+    { kind: "code", source: "b:2\n\\\n/" },
+  ]);
+  assert.strictEqual(script, "/\na path:\n /\nthe root\n\\\n\na:1\n/\nnot code\n / \n\\\n\nb:2\n/\n /\n\\\n");
+});
+
+test("fields this extension does not know are kept on an output, an item and a run too", () => {
+  // Saved by a later q-lint, or another tool: the README promises a save of
+  // what was opened writes the same file.
+  const file = {
+    qnb: 1,
+    cells: [
+      { kind: "markdown", source: ["# a"], language: "markdown" },
+      {
+        kind: "code",
+        source: ["1"],
+        execution: { order: 1, success: true, start: 1, end: 2, host: "h" },
+        outputs: [{ items: [{ mime: "text/plain", text: "1", note: "n" }], id: "o1" }],
+      },
+    ],
+  };
+  const text = JSON.stringify(file, null, 1) + "\n";
+  assert.strictEqual(serializeQnb(parseQnb(text)), text);
+});
+
+test("a cell that opens with a qDoc comment runs: @param and its kin are documentation, not directives", () => {
+  const documented = "/ @param x long\n/ @return long\n/ @throws type\nf:{x+1}";
+  assert.deepStrictEqual(cellDirective(documented), { mode: "console" });
+  assert.deepStrictEqual(cellDirective("/ @private\n/ @eg f 1\nf:{x}"), { mode: "console" });
+  // A directive before the documentation still counts; a misspelt one is still caught.
+  assert.deepStrictEqual(cellDirective("/ @grid\n/ @param t table\nt"), { mode: "grid" });
+  assert.match(cellDirective("/ @grd\nt").problem, /not a cell directive/);
+});
