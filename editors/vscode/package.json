@@ -991,6 +991,21 @@
             "type": "boolean",
             "default": true,
             "markdownDescription": "Honour the `/ @process <label>` cell directive, which connects to that process before the cell runs (a production process is confirmed first). Off, a cell with it is not run, and nothing is sent."
+          },
+          "q-lint.notebook.diff.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Turn on **q-lint: Compare Notebook Cells**, a diff of a q notebook's cells against the last commit or another notebook that leaves outputs, run numbers and metadata out. It sends nothing to any process. Off, the command is hidden and refuses."
+          },
+          "q-lint.notebook.restartRunAll.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Turn on **q-lint: Restart Notebook Process and Run All**: the process a q notebook's cells ran on is restarted, when q-lint started it, and every q cell runs on it from 1. It acts only when you run it, and asks first; a process q-lint did not start is never restarted. Off, the command is hidden and refuses, and nothing is sent or restarted."
+          },
+          "q-lint.notebook.stripOutputs.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Turn on **q-lint: Clear Notebook Outputs** and **q-lint: Set Up Git to Strip Notebook Outputs**, which installs a git clean filter for `*.qnb` in one repository after showing what it writes. Each acts only when you run it and asks first. Off, both are hidden and refuse; a filter already set up keeps working, since git runs it, not VS Code."
           }
         }
       },
@@ -1871,6 +1886,29 @@
         "title": "Run Notebook with Parameters",
         "category": "q-lint",
         "icon": "$(run-all-coverage)"
+      },
+      {
+        "command": "q-lint.diffNotebook",
+        "title": "Compare Notebook Cells...",
+        "category": "q-lint",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "q-lint.stripNotebookOutputs",
+        "title": "Clear Notebook Outputs in File",
+        "category": "q-lint",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "q-lint.setUpNotebookStripFilter",
+        "title": "Set Up Git to Strip Notebook Outputs...",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.restartNotebookAndRunAll",
+        "title": "Restart Notebook Process and Run All",
+        "category": "q-lint",
+        "icon": "$(debug-restart)"
       },
       {
         "command": "q-lint.refreshNotebookVariables",
@@ -2793,6 +2831,11 @@
           "group": "navigation"
         },
         {
+          "command": "q-lint.restartNotebookAndRunAll",
+          "when": "notebookType == q-lint-notebook && config.q-lint.notebook.restartRunAll.enable",
+          "group": "navigation"
+        },
+        {
           "command": "q-lint.exportNotebookHtml",
           "when": "notebookType == q-lint-notebook && config.q-lint.notebook.export.enable",
           "group": "export"
@@ -2801,6 +2844,23 @@
           "command": "q-lint.exportNotebookIpynb",
           "when": "notebookType == q-lint-notebook && config.q-lint.notebook.export.enable",
           "group": "export"
+        },
+        {
+          "command": "q-lint.diffNotebook",
+          "when": "notebookType == q-lint-notebook && config.q-lint.notebook.diff.enable",
+          "group": "git"
+        },
+        {
+          "command": "q-lint.setUpNotebookStripFilter",
+          "when": "notebookType == q-lint-notebook && config.q-lint.notebook.stripOutputs.enable",
+          "group": "git"
+        }
+      ],
+      "scm/resourceState/context": [
+        {
+          "command": "q-lint.diffNotebook",
+          "when": "resourceExtname =~ /^\\.qnb$/i && config.q-lint.notebook.diff.enable",
+          "group": "q-lint"
         }
       ],
       "explorer/context": [
@@ -2842,6 +2902,16 @@
         {
           "command": "q-lint.openLog",
           "when": "resourceScheme == file && resourceExtname =~ /^\\.(log|out|err)$/i && config.q-lint.processes.logViewer.enable",
+          "group": "q-lint"
+        },
+        {
+          "command": "q-lint.diffNotebook",
+          "when": "resourceExtname =~ /^\\.qnb$/i && config.q-lint.notebook.diff.enable",
+          "group": "q-lint"
+        },
+        {
+          "command": "q-lint.stripNotebookOutputs",
+          "when": "resourceExtname =~ /^\\.qnb$/i && config.q-lint.notebook.stripOutputs.enable",
           "group": "q-lint"
         }
       ],
@@ -3485,6 +3555,22 @@
           "command": "q-lint.clearLogFilters",
           "when": "resourceScheme == q-log && config.q-lint.processes.logViewer.enable",
           "group": "1_qlog@3"
+        },
+        {
+          "command": "q-lint.diffNotebook",
+          "when": "config.q-lint.notebook.diff.enable"
+        },
+        {
+          "command": "q-lint.stripNotebookOutputs",
+          "when": "config.q-lint.notebook.stripOutputs.enable"
+        },
+        {
+          "command": "q-lint.setUpNotebookStripFilter",
+          "when": "config.q-lint.notebook.stripOutputs.enable"
+        },
+        {
+          "command": "q-lint.restartNotebookAndRunAll",
+          "when": "q-lint.notebookActive && config.q-lint.notebook.restartRunAll.enable"
         }
       ]
     },

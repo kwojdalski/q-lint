@@ -36,6 +36,8 @@ import { Launcher } from "./launcherview";
 import { NewQuery } from "./newqueryview";
 import { RunWithArguments } from "./runargsview";
 import { LogViewer } from "./logview";
+import { registerNotebookGit, type NotebookDiff, type NotebookStrip } from "./notebookgit";
+import { NotebookRestart } from "./notebookrestart";
 import type { InfoNode } from "./monitor";
 import { registerTestExplorer } from "./testexplorer";
 import { registerValueHover } from "./valuehoverview";
@@ -148,6 +150,9 @@ export async function activate(
     agentConfirmation: ReturnType<typeof registerAgentTool>;
     notebookLiveValues: () => RenderedLiveValue[];
     notebookVariables: ReturnType<typeof registerNotebookVariables>;
+    notebookDiff: NotebookDiff;
+    notebookStrip: NotebookStrip;
+    notebookRestart: NotebookRestart;
     processMonitor: () => InfoNode[];
     hdbBrowser: () => InfoNode[];
     functionSources: FunctionSources["state"];
@@ -240,6 +245,7 @@ export async function activate(
   const agentConfirmation = registerAgentTool(context, live);
   const notebook = registerNotebooks(context, live);
   const notebookVariables = registerNotebookVariables(context, live, notebook.processOf, notebook.onDidRun);
+  const notebookGit = registerNotebookGit(context);
   context.subscriptions.push(
     commands.registerCommand(NOTEBOOK.runWithParameters, (source?: Uri, target?: Uri, overrides?: Record<string, string>) =>
       runWithParameters(live, source, target, overrides),
@@ -267,6 +273,7 @@ export async function activate(
   const newQuery = new NewQuery(context, live);
   const runWithArguments = new RunWithArguments(context, live.runFileWith);
   const logViewer = new LogViewer(context);
+  const notebookRestart = new NotebookRestart(context, live, launcher, notebook);
   relations = new Relations(context, () => client);
   testExplorer = registerTestExplorer(context, live, running);
   const valueHover = registerValueHover(context, live, running);
@@ -310,6 +317,9 @@ export async function activate(
     agentConfirmation,
     notebookLiveValues: () => notebook.liveValues(),
     notebookVariables,
+    notebookDiff: notebookGit.diff,
+    notebookStrip: notebookGit.strip,
+    notebookRestart,
     processMonitor: infoViews.monitor,
     hdbBrowser: infoViews.hdb,
     functionSources: () => sources.state(),

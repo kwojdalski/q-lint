@@ -1,0 +1,18 @@
+[project]
+name = "qlint-kernel"
+version = "0.29.0"
+description = "A Jupyter kernel for q: cells run on a q process over IPC (from q-lint)"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+dependencies = ["pyzmq>=22"]
+
+[project.optional-dependencies]
+test = ["jupyter_client>=7"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["qlint_kernel"]

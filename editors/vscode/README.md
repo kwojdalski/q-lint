@@ -1635,6 +1635,23 @@ documentation, not a directive: it ends the directives, so a cell that
 opens with a documented function runs. An error shows q's message and, on kdb+
 3.5 and later, its backtrace.
 
+### Restart and run all
+
+**Restart Notebook Process and Run All**, on the notebook's toolbar, is
+Jupyter's Restart & Run All. The process is the one the notebook's cells
+last ran on (the active connection before any has run). When q-lint
+started it - **Start Process**, from its launch definition - it asks, then
+stops it, starts it again from the same definition, waits until it
+listens, connects to it, and runs every q cell in order. When q-lint did
+not start it, it is never restarted: q-lint says so and asks you to
+restart it yourself, or offers to run every cell on it as it is. Either
+way the run is a fresh one: cells are numbered from 1, the run stops at the
+first cell that fails, and the cells after it lose their old outputs, so
+nothing stale passes for this run's. The cells run as any cell does, so the
+read-only guard asks before one that would change a guarded process, and
+`/ @process` cells switch the connection. It refuses while a query is still
+running. `q-lint.notebook.restartRunAll.enable` turns it off.
+
 ### Live values in Markdown
 
 `{{q: expr}}` in a Markdown cell shows the value of `expr` on the process:
@@ -1763,6 +1780,81 @@ field q-lint does not know - on the file, a cell, an output, an item or a run - 
 back, and saving a notebook that was opened unchanged writes the same file. A file
 that is not a notebook does not open: the editor says what is wrong with
 it, and the file is left as it was. An empty file is a new notebook.
+
+### Notebooks in git
+
+**Compare Notebook Cells...**, on the notebook's toolbar, a `.qnb` file's
+context menu and a changed `.qnb` in Source Control, opens a diff of the
+notebook's cells against the last commit (`HEAD`) or another notebook you
+pick. Each side shows only the cells - a `%% markdown`, `%% code` or
+`%% code <language>` line, then the source - so a run that changed every
+output and run number shows no change, and an edited cell is the lines
+that changed in it. An open notebook is compared as it is, unsaved edits
+and all. A message says how many cells changed, were added, were removed
+and stayed the same; cells are matched as a diff matches lines, so a cell
+added at the top is one added cell. Nothing is sent to any process.
+`q-lint.notebook.diff.enable` turns it off.
+
+`git diff` and `git log -p` can show the same text, with the script the
+extension ships in `out/qnbgit.js` as git's `textconv` for `*.qnb`:
+
+```sh
+git config diff.qnb.textconv "node ~/.vscode/extensions/wojdalski.q-lint-<version>/out/qnbgit.js --text"
+echo '*.qnb diff=qnb' >> .gitattributes
+```
+
+The script needs only Node.js; a file that is not a notebook is shown as it
+is.
+
+Outputs need not be committed, as nbstripout arranges for Jupyter:
+
+- **Clear Notebook Outputs in File**, on a `.qnb` file's context menu (several
+  can be picked), asks, then removes each cell's outputs, run number and
+  times and the live values of Markdown cells from the file, keeping the
+  cells and everything else. A notebook open with unsaved edits is left
+  alone. VS Code's own **Clear All Outputs** clears an open notebook.
+- **Set Up Git to Strip Notebook Outputs...**, on the notebook's toolbar,
+  installs `qnbgit.js --strip` as a git clean filter for `*.qnb` in the
+  repository of the active notebook, or of the first workspace folder. It
+  asks whether the `*.qnb filter=qnb-strip` line goes in this clone's
+  `.git/info/attributes` or in `.gitattributes`, committed for everyone
+  (each clone sets the filter up for itself; one that has not commits
+  notebooks as they are), then shows what it will write - a copy of the
+  script in `.git/q-lint/`, `git config --local filter.qnb-strip.clean`,
+  and the attributes line, appended - and writes it only on **Write**. A
+  `filter.qnb-strip.clean` set to anything else is never changed, a copy of
+  the script from another version is replaced only on that **Write**, and
+  no hook is written. From then on git commits notebooks without their
+  outputs, the files keep them, and an output-only change does not show as
+  a change. The filter needs `node` on `PATH`; without it git commits
+  notebooks as they are. To undo it, remove the attributes line and run
+  `git config --unset filter.qnb-strip.clean`.
+
+`q-lint.notebook.stripOutputs.enable` turns both commands off; a filter set
+up before keeps working, since git runs it, not VS Code.
+
+### A Jupyter kernel for q
+
+`.ipynb` q notebooks - **Export Notebook as Jupyter Notebook**'s, or
+anyone's - run in Jupyter and other Jupyter frontends with the kernel in
+this repository's [`editors/jupyter`](https://github.com/kwojdalski/q-lint/tree/master/editors/jupyter), a separate
+Python package that needs only pyzmq:
+
+```sh
+pip install "git+https://github.com/kwojdalski/q-lint#subdirectory=editors/jupyter"
+python -m qlint_kernel install --q q                      # each kernel starts its own q
+python -m qlint_kernel install --connect localhost:5001   # or runs on a process already running
+```
+
+It cuts a cell into statements and runs them with the extension's query
+lambda, so a cell shows what it shows in a q notebook here; it completes
+names on the process, shows a name's value, and interrupts a cell. Restart
+starts a fresh q when the kernel started one. An exported notebook names
+jupyterq's kernel (`qpk`); pick **q (q-lint)** in the frontend, or install
+this one under that name with `--name qpk` where jupyterq is not installed.
+The extension does not run the kernel and has no setting for it: it is used
+only once installed. The read-only guard is the extension's, so it does not
+apply to cells the kernel runs.
 
 ## The local q
 
@@ -2092,6 +2184,9 @@ Read when a cell runs or a command is used, so a change needs no reload. None re
 | `q-lint.notebook.export.enable` | `true` | **Export Notebook as HTML**, **as Jupyter Notebook** and **Import Jupyter Notebook**. Off, they are hidden and refuse. | - |
 | `q-lint.notebook.liveValues.enable` | `true` | Read `{{q: expr}}` in Markdown cells when the code cell above runs; never on their own. Off, nothing is sent. | - |
 | `q-lint.notebook.processDirective.enable` | `true` | `/ @process <label>`. Off, a cell with it is not run and nothing is sent. | - |
+| `q-lint.notebook.diff.enable` | `true` | **Compare Notebook Cells**: a diff of a notebook's cells against `HEAD` or another notebook, outputs and metadata left out. Sends nothing. Off, the command is hidden and refuses. | - |
+| `q-lint.notebook.stripOutputs.enable` | `true` | **Clear Notebook Outputs in File** and **Set Up Git to Strip Notebook Outputs**, each only when run, asking first. Off, both are hidden and refuse. | - |
+| `q-lint.notebook.restartRunAll.enable` | `true` | **Restart Notebook Process and Run All**: restarts the notebook's process only when q-lint started it, and only after asking, then runs every q cell from 1. Off, the command is hidden and refuses, and nothing is sent or restarted. | - |
 
 ### Agent settings
 

@@ -1,0 +1,3 @@
+# What a build of the package leaves behind.
+build/
+*.egg-info/
