@@ -389,3 +389,11 @@ test("package.json contributes the chart renderer, for the chart item's type, fr
   assert.doesNotMatch(source, /https?:\/\//);
   assert.match(source, /^export function activate\(/m);
 });
+
+test("a title on a cell whose /@chart a later /@grid replaces does not say it has no /@chart", () => {
+  // The last directive wins, so the cell draws no chart - but it has one.
+  const problem = cellDirective("/ @chart line\n/ @title Prices\n/ @grid\nt").problem;
+  assert.doesNotMatch(problem, /has no `\/ @chart`/);
+  assert.match(problem, /`\/ @title` is for a chart, and this cell's `\/ @grid` after its `\/ @chart` draws none/);
+  assert.match(cellDirective("/ @chart bar\n/ @console\n/ @height 400\nt").problem, /`\/ @console` after its `\/ @chart` draws none/);
+});
