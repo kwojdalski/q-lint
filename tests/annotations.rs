@@ -311,3 +311,72 @@ fn code_lenses_are_off_unless_asked_for() {
     let reply = server.whole("textDocument/codeLens", &uri, json!({}));
     assert_eq!(reply["result"], Value::Null, "{reply}");
 }
+
+/// Each link as `(line, start, end, the target's path under `dir`)`.
+fn links(reply: &Value, dir: &Path) -> Vec<(u64, u64, u64, String)> {
+    let roots = [file_uri(&dir.canonicalize().unwrap()), file_uri(dir)];
+    reply["result"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a list of links, not {reply}"))
+        .iter()
+        .map(|l| {
+            let (line, start, end) = span(&l["range"]);
+            let target = l["target"].as_str().unwrap();
+            let file = roots
+                .iter()
+                .find_map(|root| target.strip_prefix(&format!("{root}/")))
+                .unwrap_or(target);
+            (line, start, end, file.to_string())
+        })
+        .collect()
+}
+
+#[test]
+fn each_load_path_links_to_the_file_it_loads() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("lib/sub")).unwrap();
+    std::fs::create_dir_all(dir.path().join("app")).unwrap();
+    let files = [
+        ("lib/util.q", "u:1\n"),
+        ("lib/sub/a.q", "a:1\n"),
+        ("lib/sub/b.q", "b:1\n"),
+        ("app/local.q", "l:1\n"),
+    ];
+    let mut server = Server::start(dir.path(), &files);
+    let text = "\\l lib/util.q\nsystem \"l local.q\"\n.q.x:`:lib/util.q\n\
+                \\l lib/sub\n\\l missing.q\ns:\"\\\\l lib/util.q\"\n";
+    std::fs::write(dir.path().join("app/main.q"), text).unwrap();
+    let uri = server.open(dir.path(), "app/main.q", text);
+    let reply = server.whole("textDocument/documentLink", &uri, json!({}));
+    assert_eq!(
+        links(&reply, dir.path()),
+        [
+            // Against the workspace folder, and the file's own directory.
+            (0, 3, 13, "lib/util.q".to_string()),
+            (1, 10, 17, "app/local.q".into()),
+            // A file symbol `.Q.l`-style loads read.
+            (2, 7, 17, "lib/util.q".into()),
+            // A directory loads several, and a missing file nothing; a
+            // string is no load.
+        ],
+        "{reply}"
+    );
+    let reply = &reply["result"][0];
+    assert_eq!(reply["tooltip"], "Open lib/util.q", "{reply}");
+}
+
+#[test]
+fn document_links_are_announced_and_can_be_turned_off() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_, reply) = Server::over(dir.path(), &[], client(), Value::Null);
+    assert_eq!(
+        reply["result"]["capabilities"]["documentLinkProvider"],
+        json!({"resolveProvider": false})
+    );
+    let options = json!({"documentLinks": {"enable": false}});
+    let (mut server, reply) = Server::over(dir.path(), &[("lib.q", "a:1\n")], client(), options);
+    assert!(reply["result"]["capabilities"]["documentLinkProvider"].is_null());
+    let uri = server.open(dir.path(), "main.q", "\\l lib.q\n");
+    let reply = server.whole("textDocument/documentLink", &uri, json!({}));
+    assert_eq!(reply["result"], Value::Null, "{reply}");
+}

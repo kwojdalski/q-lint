@@ -636,6 +636,8 @@ struct Options {
     /// asked for, since the lens runs a command only an editor that
     /// registers it has (`q-lint.runDefinition`, the VS Code extension's).
     code_lens: bool,
+    /// Answer document links: each load's path, to the file it loads.
+    document_links: bool,
     /// A diagnostic severity by code or prefix; the longest that names a
     /// code decides.
     severity: Vec<(String, i64)>,
@@ -657,6 +659,7 @@ impl Default for Options {
             graph: true,
             inlay_hints: true,
             code_lens: false,
+            document_links: true,
             severity: vec![],
         }
     }
@@ -690,6 +693,7 @@ impl Options {
                         "graph",
                         "inlayHints",
                         "codeLens",
+                        "documentLinks",
                     ]
                     .contains(&key.as_str())
                         && !value.is_object()
@@ -722,6 +726,7 @@ impl Options {
         options.graph = flag("/graph/enable", true);
         options.inlay_hints = flag("/inlayHints/enable", true);
         options.code_lens = flag("/codeLens/enable", false);
+        options.document_links = flag("/documentLinks/enable", true);
         match init.pointer("/lint/run") {
             None | Some(Value::Null) => {}
             Some(v) if v == "onType" => {}
@@ -1039,6 +1044,7 @@ pub fn serve(
                     &mut result["capabilities"],
                     opts.inlay_hints,
                     opts.code_lens,
+                    opts.document_links,
                 );
                 send(writer, json!({"id": id, "result": result}))?;
                 initialized = true;
@@ -1111,6 +1117,7 @@ pub fn serve(
                 | "textDocument/prepareCallHierarchy"
                 | "textDocument/inlayHint"
                 | "textDocument/codeLens"
+                | "textDocument/documentLink"
                 | "q-lint/graph",
                 id,
             ) if !params["textDocument"]["uri"].is_string() => {
@@ -1297,11 +1304,15 @@ pub fn serve(
                     Err(panic) => send(writer, internal_error(id, &panic))?,
                 }
             }
-            ("textDocument/inlayHint" | "textDocument/codeLens", Some(id)) => {
+            (
+                "textDocument/inlayHint" | "textDocument/codeLens" | "textDocument/documentLink",
+                Some(id),
+            ) => {
                 // Asked of a server that did not announce it, a request is
                 // answered with nothing rather than refused.
                 let on = match method.as_str() {
                     "textDocument/codeLens" => opts.code_lens,
+                    "textDocument/documentLink" => opts.document_links,
                     _ => opts.inlay_hints,
                 };
                 let answer = guarded(|| {

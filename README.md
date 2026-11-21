@@ -474,6 +474,10 @@ The path is followed as the dependency graph follows it: against the first
 workspace folder, then the loading file's own directory and each one above it;
 a directory loads the scripts directly in it. A load that reaches no file, or
 a relative one written after the script changes directory, goes nowhere.
+`textDocument/documentLink` makes each such path a link to the file it
+reaches, found the same way, with the file under its workspace folder as the
+tooltip; a load that reaches no file, or a directory (several files), has
+none. `documentLinks.enable: false` leaves it unannounced.
 
 A global is named as q would resolve it where it is written: under the `\d`
 context in force, in each context a file is loaded in when it names none of
@@ -717,6 +721,7 @@ Every key is optional, and these are the defaults:
  "help": {"enable": true}, "completion": {"enable": false},
  "callHierarchy": {"enable": true}, "graph": {"enable": true},
  "inlayHints": {"enable": true}, "codeLens": {"enable": false},
+ "documentLinks": {"enable": true},
  "workspaceIndex": {"enable": true, "exclude": []}}
 ```
 

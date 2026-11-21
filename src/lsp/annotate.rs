@@ -1,13 +1,15 @@
 //! What the server draws over the text of a document: parameter names at the
-//! arguments of a call (inlay hints) and a Run lens above each function
-//! definition (code lenses).
+//! arguments of a call (inlay hints), a Run lens above each function
+//! definition (code lenses), and each load's path as a link to the file it
+//! loads (document links).
 //!
-//! Read from the source as navigation reads it, and never by running it: a
-//! hint names the parameters a function's definition spells, and a lens
-//! hands the editor the statement to send.
+//! Each is read from the source as navigation reads it, and none runs it. A
+//! hint names the parameters a function's definition spells, a lens hands
+//! the editor the statement to send, and a link goes where Go to Definition
+//! on the path goes.
 use super::navigate::{Sources, range};
 use super::{Lines, file_key, path_of};
-use q_lint_rs::{Mention, bracket_calls, completing, mentions};
+use q_lint_rs::{Mention, bracket_calls, completing, load_paths, mentions};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 
@@ -19,12 +21,15 @@ const PARAMETER: u8 = 2;
 const RUN_COMMAND: &str = "q-lint.runDefinition";
 
 /// What the server adds to its capabilities for the requests answered here.
-pub(super) fn announce(capabilities: &mut Value, hints: bool, lenses: bool) {
+pub(super) fn announce(capabilities: &mut Value, hints: bool, lenses: bool, links: bool) {
     if hints {
         capabilities["inlayHintProvider"] = json!(true);
     }
     if lenses {
         capabilities["codeLensProvider"] = json!({"resolveProvider": false});
+    }
+    if links {
+        capabilities["documentLinkProvider"] = json!({"resolveProvider": false});
     }
 }
 
@@ -32,6 +37,7 @@ pub(super) fn answer(method: &str, params: &Value, sources: &Sources) -> Value {
     match method {
         "textDocument/inlayHint" => inlay_hints(params, sources),
         "textDocument/codeLens" => code_lenses(params, sources),
+        "textDocument/documentLink" => document_links(params, sources),
         _ => Value::Null,
     }
 }
@@ -194,4 +200,32 @@ fn code_lenses(params: &Value, sources: &Sources) -> Value {
         }
     }
     json!(lenses)
+}
+
+/// `textDocument/documentLink`: the path of each load - `\l path`,
+/// `system "l path"` or a file symbol `` `:lib/x.q `` - as a link to the
+/// file it loads, followed as Go to Definition follows it: against the
+/// workspace folder, then the loading file's own directory and each one
+/// above it. No link for a load that reaches no file, or a directory, which
+/// loads several.
+fn document_links(params: &Value, sources: &Sources) -> Value {
+    let Some((uri, text)) = sources.document(params) else {
+        return json!([]);
+    };
+    let key = file_key(&path_of(uri));
+    let lines = Lines::new(text);
+    load_paths(text)
+        .into_iter()
+        .filter_map(|(at, len)| {
+            let [file] = sources
+                .loaded(&key, &text[at..at + len], true)
+                .try_into()
+                .ok()?;
+            Some(json!({
+                "range": range(&lines, at, len),
+                "target": sources.uri(&file),
+                "tooltip": format!("Open {}", super::help::shown(sources, &file)),
+            }))
+        })
+        .collect()
 }

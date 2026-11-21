@@ -57,6 +57,7 @@ export interface InitializationOptions {
   graph: { enable: boolean };
   inlayHints: { enable: boolean };
   codeLens: { enable: boolean };
+  documentLinks: { enable: boolean };
   workspaceIndex: { enable: boolean; exclude: string[] };
 }
 
@@ -137,6 +138,7 @@ export function launch(settings: Settings, folder: string | undefined): Launch {
       graph: { enable: settings.get<boolean>("graph.enable", true) },
       inlayHints: { enable: settings.get<boolean>("inlayHints.enable", true) },
       codeLens: { enable: settings.get<boolean>("codeLens.enable", true) },
+      documentLinks: { enable: settings.get<boolean>("documentLinks.enable", true) },
       workspaceIndex: {
         enable: settings.get<boolean>("workspaceIndex.enable", true),
         exclude: strings(settings, "workspaceIndex.exclude"),
@@ -164,6 +166,7 @@ const RESTARTING = [
   "graph",
   "inlayHints",
   "codeLens",
+  "documentLinks",
   "workspaceIndex",
 ];
 

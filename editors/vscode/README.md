@@ -75,7 +75,10 @@ to a process you add and connect to, and sends only the code you run.
   including in a file another loads under a context. A name several
   scripts assign goes first to the current file's own assignment, then to
   those in files it loads; the outline groups names by namespace; and Go to
-  Definition on the path in `\l path/file.q` opens that file. What only
+  Definition on the path in `\l path/file.q` opens that file - and the path
+  is a link too, Ctrl/Cmd+click to open it, in `\l`, `system "l ..."` and a
+  file symbol `` `:lib/x.q `` alike (`q-lint.documentLinks.enable`). A path
+  that reaches no file, or a directory, is no link. What only
   running the code would tell - a name built at run time, `value "..."`,
   another process - is not found.
 - **Rename Symbol** (F2) for a lambda's parameters and locals, and for a
@@ -602,6 +605,7 @@ q-pro column names the setting of [q-pro](https://marketplace.visualstudio.com/i
 | `q-lint.graph.enable` | `true` | Offer the **q Dependencies** view and **q-lint: List Affected Tests**. Off: the view is hidden and the server answers neither. | - |
 | `q-lint.inlayHints.enable` | `true` | Show parameter names at the arguments of a call to a workspace function. | - |
 | `q-lint.codeLens.enable` | `true` | Show **Run** above each top-level function definition and **Run test** above a `test_*` one. | - |
+| `q-lint.documentLinks.enable` | `true` | Make each `\l`, `system "l ..."` and `` `:file.q `` path a link to the file it loads. | - |
 | `q-lint.workspaceIndex.enable` | `true` | Read every workspace `.q` file at startup for the names it defines, up to 20,000 files or 500,000 directory entries. Off: only open files. | - |
 | `q-lint.workspaceIndex.exclude` | `[]` | Globs, relative to the workspace folder, the index does not read: `["vendor/**"]`. | `q-lang-server.sourceFiles.ignoreGlob` |
 | `q-lint.trace.server` | `off` | Log client-server traffic: `off`, `messages`, `verbose`. | `q-lang-server.trace.server` |
