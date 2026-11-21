@@ -211,3 +211,43 @@ test("renaming the connected process keeps the Process Explorer", async (t) => {
   assert.strictEqual(live.activeLabel(), "renamed");
   assert.strictEqual(explorer.rows().length, 1);
 });
+
+// Live completion inserted a name as it is listed. A name q cannot parse -
+// one made with `set` from a symbol, `café` or `a b` - went in raw, which
+// q reads as something else (`a b` is `a` applied to `b`) or refuses.
+// Such a name goes in as Preview reads it, by its symbol.
+test("live completion inserts a name q cannot parse by its symbol", async (t) => {
+  let provider;
+  vscode.languages.registerCompletionItemProvider = (_selector, p) => ((provider = p), { dispose() {} });
+  vscode.CompletionItem = class {
+    constructor(label, kind) {
+      this.label = label;
+      this.kind = kind;
+    }
+  };
+  vscode.Range = class {
+    constructor(...at) {
+      this.at = at;
+    }
+  };
+  const { ProcessExplorer } = require("../out/explorerview.js");
+  const rows = ["café", "a b", "ok", "x.y"].map((name) => ({ ns: ".", name, kind: "variable", type: -7, count: 1, cols: [], keys: [], params: [], partitioned: false }));
+  rows.push({ ns: ".ns", name: "é", kind: "variable", type: -7, count: 1, cols: [], keys: [], params: [], partitioned: false });
+  const gathered = { rows, spaces: [{ ns: ".", total: 4 }, { ns: ".ns", total: 1 }], more: 0 };
+  const q = await fakeQ((message) => (message.includes("`rows`spaces`more") ? gathered : OK));
+  t.after(() => q.close());
+  const { context, live } = await setUp(t, [proc("p", q.port)]);
+  const explorer = new ProcessExplorer(context, live);
+  assert.strictEqual(await live.connectTo("p"), true);
+  for (let i = 0; i < 50 && explorer.rows().length === 0; i++) await sleep(10);
+  const document = { getText: () => "" };
+  const items = provider.provideCompletionItems(document, { line: 0, character: 0 });
+  const inserted = Object.fromEntries(items.map((i) => [i.label, i.insertText ?? i.label]));
+  assert.deepStrictEqual(inserted, {
+    "café": 'get`$"café"',
+    "a b": 'get`$"a b"',
+    ok: "ok",
+    "x.y": "x.y",
+    ".ns.é": 'get`$".ns.é"',
+  });
+});

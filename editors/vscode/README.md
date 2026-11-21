@@ -402,6 +402,8 @@ your browser.
 process's global names, as read by the explorer, to the language server's,
 and inside a qSQL statement - `select`, `exec`, `update` or `delete` ... `from
 t` - the columns of `t` first. It adds nothing inside a string or a comment.
+A name q cannot parse (`café`, `a b`, made with `set`) goes in as Preview
+reads it, by its symbol: ``get`$"café"``.
 
 **Agents.** The **Run q Query** language-model tool (`q-lint_runQuery`,
 `#qQuery` in a chat prompt) lets Copilot and other agents run a q query and

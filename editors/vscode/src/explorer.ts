@@ -306,7 +306,7 @@ export function previewCode(node: Pick<Node, "kind" | "name" | "partitioned">, l
 
 /// `name` as q code reads it: as written when q parses it as a name, else
 /// by its symbol - `set` makes a name of any symbol, `café` or `a b`.
-function qName(name: string): string {
+export function qName(name: string): string {
   return /^\.?[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)*$/.test(name)
     ? name
     : `get\`$"${name.replace(/[\\"]/g, (c) => `\\${c}`)}"`;
