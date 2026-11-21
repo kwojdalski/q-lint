@@ -264,9 +264,13 @@
         },
         plugins: {
           title: { display: Boolean(title), text: title || "" },
+          // A point says its cell, as the grid shows it: Chart.js would write
+          // the nearest double with three decimals at most.
           tooltip: kind === "scatter"
             ? { callbacks: { label: function (ctx) { const r = ctx.raw.row; return ctx.dataset.label + ": " + (byRow(grid) ? String(r) : grid.cells[0][r]) + ", " + grid.cells[ctx.dataset.column][r]; } } }
-            : {},
+            : kind === "histogram"
+              ? {}
+              : { callbacks: { label: function (ctx) { return ctx.dataset.label + ": " + grid.cells[ctx.dataset.column][rows[ctx.dataIndex]]; } } },
         },
       },
     };

@@ -514,3 +514,18 @@ test("a long line chart shows a value between two nulls, which no segment draws"
   const solid = charts.chartConfig(full, rows, "line", charts.chartData(full, rows, "line", [1], 10), LOOK).data.datasets[0];
   assert.strictEqual(typeof solid.pointRadius === "function" ? solid.pointRadius({ dataset: solid, dataIndex: 5 }) : solid.pointRadius, 0);
 });
+
+test("a line or bar chart's tooltip says the cell's value, not Chart.js's three decimals", () => {
+  // Chart.js writes a value with at most three decimals and the nearest
+  // double: an FX price 1.083415 read 1.083, a long above 2^53 lost digits.
+  const grid = toGrid({ count: 3, keys: 0, names: ["d", "px", "n"], types: [11, 9, 7], cells: [["a", "b", "c"], ["1.083415", "1.08342", "1.0835"], ["1", "9007199254740993", "3"]], raw: [[], [1.083415, 1.08342, 1.0835], [1, big, 3]], rank: [[0, 1, 2], [0, 1, 2], [0, 2, 1]] }, -1);
+  for (const kind of ["line", "bar"]) {
+    // Sorted: the second point drawn is row 2.
+    const rows = [0, 2, 1];
+    const config = charts.chartConfig(grid, rows, kind, charts.chartData(grid, rows, kind, [1, 2], 10), LOOK);
+    const label = config.options.plugins.tooltip.callbacks.label;
+    assert.strictEqual(label({ dataset: config.data.datasets[0], dataIndex: 0, raw: 1.083415, formattedValue: "1.083" }), "px: 1.083415");
+    assert.strictEqual(label({ dataset: config.data.datasets[1], dataIndex: 2, raw: 9007199254740992, formattedValue: "9,007,199,254,740,992" }), "n: 9007199254740993");
+    assert.strictEqual(label({ dataset: config.data.datasets[0], dataIndex: 1, raw: 1.0835, formattedValue: "1.084" }), "px: 1.0835");
+  }
+});
