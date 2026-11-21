@@ -709,6 +709,12 @@
             "order": 139,
             "markdownDescription": "**Add Logpoint**: wrap a function on the active process so each call's arguments are printed there with `0N!` and the last 1000 kept, without editing its file; **Remove Logpoint**, **Remove All Logpoints** and **Show Logpoint Hits**. Adding and removing go through the read-only guard. Off, the commands are hidden and nothing is sent."
           },
+          "q-lint.localsAtError.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 140,
+            "markdownDescription": "**Capture Locals at Last Error**: run the last query that failed again, after asking, with a function of its backtrace keeping its arguments, the statement it is on and its locals, put it back, and show what was kept. Off, the command is hidden and nothing is sent."
+          },
           "q-lint.processExplorer.driftDetection.enable": {
             "type": "boolean",
             "default": false,
@@ -1442,6 +1448,12 @@
       {
         "command": "q-lint.showLogpointHits",
         "title": "Show Logpoint Hits",
+        "category": "q-lint",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.captureLocals",
+        "title": "Capture Locals at Last Error",
         "category": "q-lint",
         "enablement": "q-lint.connected"
       },
@@ -2446,6 +2458,10 @@
         {
           "command": "q-lint.showLogpointHits",
           "when": "config.q-lint.logpoints.enable"
+        },
+        {
+          "command": "q-lint.captureLocals",
+          "when": "config.q-lint.localsAtError.enable"
         }
       ],
       "editor/title": [

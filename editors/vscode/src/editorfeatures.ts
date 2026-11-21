@@ -20,6 +20,7 @@ export const EDITOR_SETTINGS = {
   testStub: { key: "testStub.enable", fallback: true, name: "Generate Test Stub" },
   backtraceLinks: { key: "backtraceLinks.enable", fallback: true, name: "Clickable q backtraces" },
   logpoints: { key: "logpoints.enable", fallback: true, name: "Logpoints" },
+  localsAtError: { key: "localsAtError.enable", fallback: true, name: "Capture Locals at Last Error" },
 } as const;
 
 export type EditorFeature = keyof typeof EDITOR_SETTINGS;

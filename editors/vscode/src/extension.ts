@@ -45,6 +45,7 @@ import { registerSnapshots } from "./snapshotview";
 import { registerTestStubs } from "./teststubview";
 import { registerBacktraceLinks } from "./backtraceview";
 import { registerLogpoints } from "./logpointview";
+import { registerLocalsAtError } from "./localsview";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -139,6 +140,7 @@ export async function activate(
     testStubs: ReturnType<typeof registerTestStubs>;
     backtraceLinks: ReturnType<typeof registerBacktraceLinks>;
     logpoints: ReturnType<typeof registerLogpoints>;
+    localsAtError: ReturnType<typeof registerLocalsAtError>;
   }
 > {
   // Replacing the binary does not restart the server, and a window reload is
@@ -204,6 +206,7 @@ export async function activate(
   const testStubs = registerTestStubs(context);
   const backtraceLinks = registerBacktraceLinks(context);
   const logpoints = registerLogpoints(context, live);
+  const localsAtError = registerLocalsAtError(context, live);
   // Not awaited: nothing above needs the server, and a slow or hung one
   // would hold up every command of the extension until it answered.
   void serial.run(() => start(context)).then(() => serverChanged());
@@ -238,6 +241,7 @@ export async function activate(
     testStubs,
     backtraceLinks,
     logpoints,
+    localsAtError,
   };
 }
 

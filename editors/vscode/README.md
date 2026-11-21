@@ -743,6 +743,19 @@ a projection or alias made of the function before keeps calling the
 original. Adding and removing go through the read-only guard; reading the
 hits changes nothing. `q-lint.logpoints.enable` hides the commands.
 
+**Locals at the error.** **Capture Locals at Last Error** looks into the
+last query from the editor that failed. Pick a function its backtrace names
+(the innermost first), confirm, and the query runs again with that
+function replaced by a copy that keeps, as the parameter cache does, each
+call's arguments, the statement it is on, and each local a statement at the
+top of its body assigns (`a:`, `a+:`, `a[i]:`), once that statement has
+run. The function is put back in the same call, error or not, and what was
+kept opens as a document: the arguments, the statement that failed, and the
+locals. It runs the query again as written, so it can change data again;
+the replacing goes through the read-only guard. A local assigned inside an
+`if[...]` or a nested lambda is not seen. `q-lint.localsAtError.enable`
+hides the command.
+
 **Query modes.** **Switch Query Mode** (or the mode in the status bar) picks
 where a result goes; it sets `q-lint.query.mode`, and takes `console`,
 `grid` or `chart` as an argument for a keybinding.
@@ -1458,6 +1471,7 @@ nothing.
 | `q-lint.testStub.enable` | `true` | Offer **Generate Test Stub** on a function's definition. | - |
 | `q-lint.backtraceLinks.enable` | `true` | Link each backtrace frame in the output and terminals to the line that failed. | - |
 | `q-lint.logpoints.enable` | `true` | **Add Logpoint**, **Remove Logpoint**, **Remove All Logpoints** and **Show Logpoint Hits**. Off, the commands are hidden and nothing is sent. | - |
+| `q-lint.localsAtError.enable` | `true` | **Capture Locals at Last Error**. Off, the command is hidden and nothing is sent. | - |
 
 ### Connection settings
 

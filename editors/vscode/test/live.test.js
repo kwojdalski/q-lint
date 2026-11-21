@@ -52,6 +52,7 @@ const { RERUN_FAILED } = require("../out/testing.js");
 const { SNAPSHOT_COMMANDS } = require("../out/snapshot.js");
 const { TEST_STUB_COMMAND } = require("../out/teststub.js");
 const { LOGPOINT_COMMANDS } = require("../out/logpoint.js");
+const { CAPTURE_LOCALS } = require("../out/locals.js");
 const { CONTROL_COMMANDS, readControls } = require("../out/querycontrols.js");
 const { readProgress } = require("../out/progress.js");
 const { readPlaceholders } = require("../out/placeholders.js");
@@ -321,6 +322,7 @@ test("package.json declares exactly the commands the extension registers", () =>
     ...Object.values(SNAPSHOT_COMMANDS),
     TEST_STUB_COMMAND,
     ...Object.values(LOGPOINT_COMMANDS),
+    CAPTURE_LOCALS,
   ].sort();
   assert.deepStrictEqual(declared, registered);
 });
