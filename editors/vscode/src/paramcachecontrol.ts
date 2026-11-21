@@ -24,6 +24,13 @@ export class ParameterCache {
           this.refresh();
         }
       }),
+      // Change Language Mode reopens the document in its new language, and
+      // the active editor stays as it was.
+      workspace.onDidOpenTextDocument((document) => {
+        if (document === window.activeTextEditor?.document) {
+          this.refresh();
+        }
+      }),
     );
     this.refresh();
   }
@@ -49,7 +56,8 @@ export class ParameterCache {
 
   private async toggle(): Promise<void> {
     const editor = window.activeTextEditor;
-    if (editor === undefined) {
+    // The command palette offers it in any editor; only q is edited.
+    if (editor === undefined || editor.document.languageId !== "q") {
       void window.showInformationMessage("q-lint: open a q file and put the cursor in a lambda.");
       return;
     }
