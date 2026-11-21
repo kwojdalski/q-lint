@@ -400,3 +400,17 @@ test("a list, one numeric column, is charted against its row number", () => {
   // A table's first column is still its x axis, never a series.
   assert.deepStrictEqual(charts.chartable(sample(), "line"), [1]);
 });
+
+test("a row-number axis and a histogram's count axis tick whole numbers", () => {
+  // Two rows, x a symbol: Chart.js ticked rows 0, 0.1, 0.2 ..., and a
+  // histogram of counts 1 and 2 ticked counts 1.1, 1.2 ...
+  const grid = toGrid({ count: 2, keys: 0, names: ["s", "y"], types: [11, 9], cells: [["a", "b"], ["1", "2"]], raw: [[], [1, 2]], rank: [[0, 1], [0, 1]] }, -1);
+  const rows = [0, 1];
+  const scatter = charts.chartConfig(grid, rows, "scatter", charts.chartData(grid, rows, "scatter", [1], 10), LOOK);
+  assert.strictEqual(scatter.options.scales.x.ticks.precision, 0);
+  const histogram = charts.chartConfig(grid, rows, "histogram", charts.chartData(grid, rows, "histogram", [1], 10), LOOK);
+  assert.strictEqual(histogram.options.scales.y.ticks?.precision, 0);
+  // A numeric x axis, or a y axis of values, keeps its fractions.
+  const own = charts.chartConfig(sample(), [0, 1], "line", charts.chartData(sample(), [0, 1], "line", [1], 10), LOOK);
+  assert.strictEqual(own.options.scales.y.ticks?.precision, undefined);
+});

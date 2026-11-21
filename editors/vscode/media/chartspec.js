@@ -174,6 +174,9 @@
   /// it when given.
   function chartConfig(grid, rows, kind, data, look, title) {
     const x = grid.columns[0];
+    // The x axis is the rows' numbers: a list's, or a scatter's whose first
+    // column has no values to plot.
+    const rowAxis = byRow(grid) || (kind === "scatter" && !grid.values[0]);
     const translucent = function (colour) { return /^#[0-9a-f]{6}$/i.test(colour) ? colour + "99" : colour; };
     return {
       type: data.type,
@@ -197,15 +200,19 @@
         interaction: { mode: kind === "scatter" ? "nearest" : "index", intersect: false },
         scales: {
           x: {
-            title: { display: kind !== "histogram", text: byRow(grid) || (kind === "scatter" && !grid.values[0]) ? "row" : x.name },
+            title: { display: kind !== "histogram", text: rowAxis ? "row" : x.name },
             type: kind === "scatter" ? "linear" : "category",
             // A month, date, minute or second is a whole number: a tick
             // between two would repeat one's label, or name no month.
-            ticks: kind === "scatter" && x.temporal
-              ? Object.assign({ callback: function (v) { return temporalLabel(x.type, v); } }, WHOLE.indexOf(x.type) >= 0 ? { precision: 0 } : {})
-              : { autoSkip: true, maxRotation: 0 },
+            // So is a row number.
+            ticks: kind === "scatter" && rowAxis
+              ? { precision: 0 }
+              : kind === "scatter" && x.temporal
+                ? Object.assign({ callback: function (v) { return temporalLabel(x.type, v); } }, WHOLE.indexOf(x.type) >= 0 ? { precision: 0 } : {})
+                : { autoSkip: true, maxRotation: 0 },
           },
-          y: { title: { display: kind === "histogram", text: "count" } },
+          // And a count.
+          y: Object.assign({ title: { display: kind === "histogram", text: "count" } }, kind === "histogram" ? { ticks: { precision: 0 } } : {}),
         },
         plugins: {
           title: { display: Boolean(title), text: title || "" },
