@@ -15,7 +15,7 @@
 // a gateway that refuses a lambda. The process evaluates each as it
 // evaluates any string a client sends, and the answer is whatever it
 // returns, formatted here.
-import { gridOf, gridOfQ, cutLines, formatQ, formatValue, vectorText } from "./qformat";
+import { consoleLines, gridOf, gridOfQ, cutLines, formatQ, formatValue, vectorText } from "./qformat";
 import { decode, type QValue } from "./qdecode";
 import { TRAP, readAnswer, type Answer } from "./query";
 import type { GridAnswer } from "./grid";
@@ -134,8 +134,13 @@ export async function runUnwrapped(
   } catch {
     typed = undefined;
   }
-  const lines = typed === undefined ? formatValue(last.value, last.type) : formatQ(typed, last.value, last.type);
-  const text = options.unlimited ? lines : cutLines(lines, options.size);
+  let text: string[];
+  if (typed === undefined) {
+    const lines = formatValue(last.value, last.type);
+    text = options.unlimited ? lines : cutLines(lines, options.size);
+  } else {
+    text = options.unlimited ? formatQ(typed, last.value, last.type) : consoleLines(typed, options.size, last.value, last.type);
+  }
   const answer: GridAnswer = { ok: true, type: last.type ?? 0, text };
   if (!options.grid) {
     return answer;

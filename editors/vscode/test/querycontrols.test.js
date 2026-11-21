@@ -446,3 +446,13 @@ test("an unwrapped table or dictionary of more rows than a call takes arguments 
   keyed.writeUInt32LE(keyed.length, 4);
   assert.strictEqual((await run({ value: null, type: 99, message: keyed })).text.length, 300_002);
 });
+
+test("an unwrapped table is cut to the console's rows before it is laid out, as .Q.S cuts it", async () => {
+  const message = longTable(20);
+  message.writeUInt8(2, 1);
+  const answer = { value: deserialize(message, false, true, false, false), type: 98, message };
+  const run = (size) => runUnwrapped({ evaluate: async () => answer }, ["t"], { size, limit: 10, unlimited: false, grid: false });
+  // As wide as the rows shown: "-", not "--" for a 19 cut off.
+  assert.deepStrictEqual((await run([5, 80])).text.map((l) => l.trimEnd()), ["a", "-", "0", "1", ".."]);
+  assert.deepStrictEqual((await run([25, 80])).text.length, 22);
+});

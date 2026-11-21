@@ -573,6 +573,29 @@ export function formatQ(q: QValue, value: unknown, type?: number): string[] {
   return nested(q);
 }
 
+/// The lines q's console of `size` (height, width) shows for a value
+/// decoded with its types, cut as `.Q.S` cuts them: a table, keyed or not,
+/// or a dictionary, or a list, to the rows that fit - so its columns are as
+/// wide as the rows shown, not as rows cut off - then `..`, and each line
+/// at the width. `value` and `type` are as `formatQ` takes them.
+export function consoleLines(q: QValue, size: [number, number], value?: unknown, type?: number): string[] {
+  const [height, width] = size;
+  let shown = q;
+  let more = false;
+  if (q.kind === "table" || q.kind === "dict" || q.kind === "list") {
+    // A table's two header lines count against the height.
+    const tabular = q.kind === "table" || (q.kind === "dict" && q.k.kind === "table" && q.v.kind === "table");
+    const n = Math.max(0, height - (tabular ? 2 : 0));
+    const count = q.kind === "dict" ? countOf(q.k) : countOf(q);
+    more = count > n;
+    if (more) {
+      shown = q.kind === "dict" ? { ...q, k: firstOf(q.k, n - 1), v: firstOf(q.v, n - 1) } : firstOf(q, n - 1);
+    }
+  }
+  const lines = formatQ(shown, value, type);
+  return cutLines(more ? [...lines, ".."] : lines, [Infinity, width]);
+}
+
 /// `lines` cut to a console of `size` (height, width) as `.Q.S` cuts: a
 /// line longer than the width ends in `..`, and past the height the rest is
 /// one `..` line.
