@@ -865,6 +865,8 @@ fn deeply_nested_lambdas_lint_in_bounded_time() {
 /// start for each: a file of block comments, each a QP001 finding built and
 /// dropped later, took time quadratic in their number (#706). About 1 s in a
 /// debug build after the fix.
+/// File-level `noqa` (0.31) asked whether each `/` line sat in a block
+/// comment by walking every block, quadratic again in their number.
 #[test]
 fn many_findings_lint_in_bounded_time() {
     let source = "/\nsome text here {[ ( \"\n\\\n".repeat(20000);

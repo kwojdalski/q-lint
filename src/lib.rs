@@ -3472,6 +3472,19 @@ struct Views {
     /// comment, or `\\` - begins. q reads nothing after it.
     script_end: Option<usize>,
 }
+impl Views {
+    /// Whether `at` is in a block comment: one that closes, from its `/`
+    /// line to its `\` line, or the one nothing closes. `blocks` is in
+    /// order and holds only the outermost, so they never overlap and a
+    /// binary search finds the one that could hold `at`. Asked for each line
+    /// of a file, a walk over every block was quadratic in a file of them.
+    fn in_block(&self, at: usize) -> bool {
+        self.open_block.is_some_and(|open| at >= open)
+            || self.blocks[..self.blocks.partition_point(|&(open, _)| open <= at)]
+                .last()
+                .is_some_and(|&(_, close)| at <= close)
+    }
+}
 /// How much of a source line is a `\t` or `\ts` command, with any `q)`
 /// before it, 0 on any other line: these run their argument as q, so after
 /// the prefix the line is q (#222).
@@ -4986,11 +4999,7 @@ fn file_noqa(source: &str, v: &Views) -> Vec<std::ops::Range<usize>> {
         if raw.get(at) != Some(&b'/') || blanked.get(at) != Some(&b' ') {
             continue;
         }
-        let in_block = v.open_block.is_some_and(|open| at >= open)
-            || v.blocks
-                .iter()
-                .any(|&(open, close)| (open..=close).contains(&at));
-        if in_block || v.script_end.is_some_and(|end| at >= end) {
+        if v.in_block(at) || v.script_end.is_some_and(|end| at >= end) {
             continue;
         }
         if let Some(codes) = re!(
@@ -5138,10 +5147,7 @@ fn suppression_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
     let line = source[start..].split_inclusive('\n').next()?;
     let text = line.strip_suffix('\n').unwrap_or(line);
     let text = text.strip_suffix('\r').unwrap_or(text);
-    let in_block = v.open_block.is_some_and(|open| start >= open)
-        || v.blocks
-            .iter()
-            .any(|&(open, close)| (open..=close).contains(&start));
+    let in_block = v.in_block(start);
     if text.trim().is_empty()
         || in_block
         || system_command(line)
@@ -5205,13 +5211,7 @@ pub fn organise_loads(source: &str) -> Option<Fix> {
     if !problems(source, &v).is_empty() {
         return None;
     }
-    let skipped = |at: usize| {
-        v.open_block.is_some_and(|open| at >= open)
-            || v.blocks
-                .iter()
-                .any(|&(open, close)| (open..=close).contains(&at))
-            || v.script_end.is_some_and(|end| at >= end)
-    };
+    let skipped = |at: usize| v.in_block(at) || v.script_end.is_some_and(|end| at >= end);
     // Each line: where it starts, its text, its line ending, and its path
     // when it is a load.
     let mut lines: Vec<(usize, &str, &str, Option<&str>)> = vec![];
