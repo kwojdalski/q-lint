@@ -257,8 +257,9 @@ outcome; the buttons on a row run it again on the active connection and
   none): a query still running then is aborted exactly as **Abort Current
   Query** aborts it, and the history records it as timed out.
 - **Choose Connection for File** binds the active file to a process, kept
-  per workspace, and takes a label as an argument for a keybinding. A query
-  from that file (line, selection, block or entire file) switches the
+  per workspace (an untitled editor's only until the window closes, so the
+  next window's `Untitled-1` is not bound to it), and takes a label as an
+  argument for a keybinding. A query from that file (line, selection, block or entire file) switches the
   connection to its process first, connecting if nothing is connected -
   there is one connection at a time, so the file's process becomes the
   active one, and an unbound file then queries it too. The history, a

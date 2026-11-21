@@ -35,6 +35,10 @@ export class QueryControls {
   /// on until turned off, and is off again after a reload, so a result sent
   /// whole is never a surprise left over from another day.
   private unlimitedOn = false;
+  /// An untitled editor's process, kept for this window only: its name
+  /// (`Untitled-1`) is the next window's first new editor's too, whose
+  /// queries must not go where an editor closed unsaved was sent.
+  private readonly untitled = new Map<string, string>();
   private readonly flags: StatusBarItem;
   private readonly fileItem: StatusBarItem;
 
@@ -80,6 +84,9 @@ export class QueryControls {
 
   /// The process `uri` is bound to, if it is.
   binding(uri: Uri): string | undefined {
+    if (uri.scheme === "untitled") {
+      return this.untitled.get(uri.toString());
+    }
     return bindingFor(this.context.workspaceState.get(FILE_CONNECTIONS_KEY), uri.toString());
   }
 
@@ -149,6 +156,15 @@ export class QueryControls {
   }
 
   private async store(uri: Uri, label: string | undefined): Promise<void> {
+    if (uri.scheme === "untitled") {
+      if (label === undefined) {
+        this.untitled.delete(uri.toString());
+      } else {
+        this.untitled.set(uri.toString(), label);
+      }
+      this.refresh();
+      return;
+    }
     const stored = this.context.workspaceState.get(FILE_CONNECTIONS_KEY);
     await this.context.workspaceState.update(FILE_CONNECTIONS_KEY, withBinding(stored, uri.toString(), label));
     this.refresh();
