@@ -507,6 +507,27 @@ microseconds on macOS, so a statement faster than that reads 0. Editing the
 file, or **Clear Line Timings**, clears them. The read-only guard reads the
 statements as it reads a query (`q-lint.query.lineTimings.enable`).
 
+**Profile Functions on Process**, in a q editor's context menu or the
+palette, runs the selection, or the statement at the cursor, with every
+function of a namespace you name (`.lib`; the first one the code names is
+offered) timed, as cProfile times a Python program. Each lambda directly in
+the namespace is replaced for the run by a wrapper of the same rank that
+notes, by `.z.p`, when it is entered and left - through an error too - and
+the very objects that were there are put back after, whether the run
+succeeded or failed; a second message follows to make sure of it, and the
+working state in `.qlint.prof` is deleted. The panel shows the functions as
+a table - calls, total, self (less the calls it made), per call, longest -
+sortable by any column, and the calls as a flame chart, merged by their
+path of callers. The wrapper costs time on every call: it is measured on
+the process before each run (a thousand calls of `{x}` through a wrapper
+against a thousand direct ones; about 1.7 µs a call on KDB-X and 4.8 µs on
+PeachQ here) and the panel says how much it adds in all. Only functions
+called by name are seen: one stored in a dictionary or set as a callback
+before the run keeps the original, projections and compositions are not
+wrapped, and at most the first 100,000 calls are recorded. Since a run
+replaces the namespace's functions, the read-only guard asks first on a
+guarded process, whatever the query (`q-lint.query.functionProfile.enable`).
+
 **Read-only guard.** Code sent to a process tagged `prod`, `prd` or
 `production` (`q-lint.processes.readOnlyGuard.tags`, ignoring case) is read
 first, and when it would change the process, a modal asks before anything
@@ -530,8 +551,10 @@ connection kept, when declined; also a result-grid drill-down query, a run
 from the Testing view (each test's definition), and a query to a TorQ
 gateway, read as written - and a `.gw.syncexec` or `.gw.asyncexec` call,
 such as one rerun from the history, is read inside its strings. A guarded
-process holds no result for paging, since holding assigns `.qlint.held`,
-and streaming its table asks first, since `.u.sub` adds a subscriber. An agent's query cannot be asked about, so
+process holds no result for paging, since holding assigns `.qlint.held`;
+**Profile Functions on Process** asks first whatever the query, as it
+replaces the namespace's functions for the run; **Time Lines on Process**
+reads its statements as a query's; and streaming its table asks first, since `.u.sub` adds a subscriber. An agent's query cannot be asked about, so
 one that would change such a process is refused with why, and never offered
 to you. q-lint's own reads - the Process Explorer, Monitor, HDB browser,
 hovers and the heartbeat - define nothing and are not asked about. The
@@ -1414,6 +1437,7 @@ nothing.
 | `q-lint.idiomSnippets.enable` | `true` | Offer the idiom snippets (joins, `.z` handlers, a TorQ process) in the completion list. | - |
 | `q-lint.processExplorer.driftDetection.enable` | `false` | **Check Drift Against Process**: compare the workspace's function definitions with the connected process. Off, the command is hidden and reads nothing. | - |
 | `q-lint.query.lineTimings.enable` | `true` | **Time Lines on Process** and **Clear Line Timings**. Off, the commands are hidden and refuse, and the timings drawn are cleared. | - |
+| `q-lint.query.functionProfile.enable` | `true` | **Profile Functions on Process**. Off, the command is hidden and refuses, and the panel closes. | - |
 | `q-lint.hotReload.enable` | `false` | On saving a q file, send the definitions the save changed to its process, after Redefine's confirmation. Off, nothing listens and nothing is sent. | - |
 
 ### Connection settings

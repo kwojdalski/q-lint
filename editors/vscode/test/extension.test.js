@@ -101,6 +101,7 @@ function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir
     "./chat": { registerChat: () => ({ registered: () => false }) },
     "./qsqldraft": { registerQsqlDraft() {} },
     "./linetimingsview": { registerLineTimings: () => ({ registered: () => false }) },
+    "./profileview": { registerFunctionProfile: () => ({ panelOpen: () => false }) },
     "./formatchangedview": { registerFormatChanged: () => ({ registered: () => false }) },
     "./organiseloads": { registerOrganiseLoads() {} },
   };

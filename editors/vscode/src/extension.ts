@@ -42,6 +42,7 @@ import { registerAssistTools } from "./assisttools";
 import { registerChat } from "./chat";
 import { registerQsqlDraft } from "./qsqldraft";
 import { registerLineTimings } from "./linetimingsview";
+import { registerFunctionProfile } from "./profileview";
 import { registerFormatChanged } from "./formatchangedview";
 import { registerOrganiseLoads } from "./organiseloads";
 import { spawnSync } from "node:child_process";
@@ -136,6 +137,7 @@ export async function activate(
     assistTools: () => string[];
     chatParticipant: () => boolean;
     lineTimings: ReturnType<typeof registerLineTimings>;
+    functionProfile: ReturnType<typeof registerFunctionProfile>;
     formatChanged: ReturnType<typeof registerFormatChanged>;
   }
 > {
@@ -199,6 +201,7 @@ export async function activate(
   const undefinedNames = registerUndefinedNames(context, live, running);
   const idioms = registerIdioms(context);
   const lineTimings = registerLineTimings(context, live);
+  const functionProfile = registerFunctionProfile(context, live);
   const formatChanged = registerFormatChanged(context, running);
   registerOrganiseLoads(context);
   // Not awaited: nothing above needs the server, and a slow or hung one
@@ -226,6 +229,7 @@ export async function activate(
     assistTools: assistTools.registered,
     chatParticipant: chatParticipant.registered,
     lineTimings,
+    functionProfile,
     formatChanged,
   };
 }

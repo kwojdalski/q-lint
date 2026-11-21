@@ -714,6 +714,12 @@
             "default": true,
             "order": 145,
             "markdownDescription": "**Time Lines on Process**: run the selection, or the file, one statement at a time on the connected process, and show each statement's time (by `.z.p`) and memory (by `\\ts`) after its last line. Sends code only when the command is run, through the read-only guard. Off, the command is hidden and refuses, and the timings are cleared."
+          },
+          "q-lint.query.functionProfile.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 146,
+            "markdownDescription": "**Profile Functions on Process**: run the selection, or the statement at the cursor, with every function of a namespace timed, and show them as a sortable table and a flame chart. The functions are replaced by timing wrappers for the run and put back after; the read-only guard asks first on a guarded process. Off, the command is hidden and refuses."
           }
         }
       },
@@ -1574,6 +1580,13 @@
         "category": "q-lint"
       },
       {
+        "command": "q-lint.profileFunctions",
+        "title": "Profile Functions on Process",
+        "category": "q-lint",
+        "icon": "$(flame)",
+        "enablement": "q-lint.connected"
+      },
+      {
         "command": "q-lint.formatChangedLines",
         "title": "Format Changed Lines",
         "category": "q-lint"
@@ -2189,6 +2202,11 @@
           "command": "q-lint.timeLines",
           "when": "editorLangId == q && config.q-lint.query.lineTimings.enable",
           "group": "q-lint@40"
+        },
+        {
+          "command": "q-lint.profileFunctions",
+          "when": "editorLangId == q && config.q-lint.query.functionProfile.enable",
+          "group": "q-lint@41"
         }
       ],
       "commandPalette": [
@@ -2375,6 +2393,10 @@
         {
           "command": "q-lint.clearLineTimings",
           "when": "config.q-lint.query.lineTimings.enable"
+        },
+        {
+          "command": "q-lint.profileFunctions",
+          "when": "config.q-lint.query.functionProfile.enable && editorLangId == q"
         },
         {
           "command": "q-lint.formatChangedLines",
