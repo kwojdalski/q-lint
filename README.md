@@ -775,7 +775,7 @@ Every key is optional, and these are the defaults:
  "callHierarchy": {"enable": true}, "graph": {"enable": true},
  "rename": {"enable": true}, "inlayHints": {"enable": true}, "codeLens": {"enable": false},
  "documentLinks": {"enable": true}, "generateQdoc": {"enable": true},
- "extractFunction": {"enable": true},
+ "organiseLoads": {"enable": true}, "performanceLints": {"enable": true},
  "workspaceIndex": {"enable": true, "exclude": []}}
 ```
 
@@ -793,6 +793,7 @@ one that starts off; `true` announces completion.
 and `graph.enable` does that for `q-lint/graph` and `q-lint/affectedTests`,
 which then answer `null`; `inlayHints.enable` does it for inlay hints, and `codeLens.enable: true`
 announces the Run lenses.
+`performanceLints.enable: false` ignores the QV rules as `lint.ignore`
 `workspaceIndex.exclude`
 holds globs relative to each workspace folder that the index does not read.
 The index stops after 20,000 `.q` files or 500,000 directory entries of any
@@ -865,7 +866,7 @@ language server driven over real LSP framing as a real process.
 
 ### Rule and multiline regression corpus
 
-The taxonomy contains 123 codes. Ten literal-call rules cover excess builtin
+The taxonomy contains 126 codes. Ten literal-call rules cover excess builtin
 arguments (QA010), invalid literal types/shapes (QT008–QT014), and negative
 `til`/`where` counts (QD001–QD002). These checks leave unknown expressions
 unresolved and account for projections, seeded scans and variadic `enlist`.
@@ -874,7 +875,7 @@ unresolved and account for projections, seeded scans and variadic `enlist`.
 `tests/showcase.rs` checks exact code/line pairs under every profile, including
 silence in the clean section. Together with the three companion examples -
 `syntax-error.q`, `byte-order-mark.q` and `query-injection.q`, each holding
-a rule that would hide or stop the others - it covers all 121 rules available
+a rule that would hide or stop the others - it covers all 124 rules available
 in this build; QF006 and QLS001 are excluded.
 
 Multiline fixtures cover nested lambdas, split argument lists, comments,

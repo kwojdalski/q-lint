@@ -40,6 +40,15 @@ to a process you add and connect to, and sends only the code you run.
   there. It is missing where no such comment would be read as one - a line
   that ends inside a string, a system command, a block comment, a file whose
   brackets do not close - and it is never the preferred fix.
+- **Performance lints**, three rules after Ruff's `PERF`, each checked by
+  timing both forms on KDB-X: a where phrase that constrains the partition
+  column after another (`where sym=s, date=d` read 85 ms against 5 ms with
+  the date first, over 20 date partitions) - **QV001**; `each` over an
+  atomic builtin (`abs each x`, 63 ms against under 1 ms on a million
+  items) - **QV002**, with a Quick Fix; and `r:r,x` or `r:raze(r;x)` in a
+  `do` or `while` body, which copies `r` on every pass and makes the loop
+  quadratic where `r,:x` is linear - **QV003**, with a Quick Fix for the
+  first form. `q-lint.performanceLints.enable` hides them.
 - **Format Document** applies the fixes `qlinter --fix` makes - those that
   cannot change a working program - and nothing else: it is not a
   whitespace or layout formatter, and it never applies an editor-only fix.
@@ -1284,6 +1293,7 @@ q-pro column names the setting of [q-pro](https://marketplace.visualstudio.com/i
 | `q-lint.documentLinks.enable` | `true` | Make each `\l`, `system "l ..."` and `` `:file.q `` path a link to the file it loads. | - |
 | `q-lint.generateQdoc.enable` | `true` | Offer **Generate qDoc** above a top-level function. | - |
 | `q-lint.extractFunction.enable` | `true` | Offer **Extract Function** over a selection q reads as one value. | - |
+| `q-lint.performanceLints.enable` | `true` | Report the performance rules, `QV`. Off, they are hidden as `q-lint.lint.ignore` would. | - |
 | `q-lint.workspaceIndex.enable` | `true` | Read every workspace `.q` file at startup for the names it defines, up to 20,000 files or 500,000 directory entries. Off: only open files. | - |
 | `q-lint.workspaceIndex.exclude` | `[]` | Globs, relative to the workspace folder, the index does not read: `["vendor/**"]`. | `q-lang-server.sourceFiles.ignoreGlob` |
 | `q-lint.trace.server` | `off` | Log client-server traffic: `off`, `messages`, `verbose`. | `q-lang-server.trace.server` |

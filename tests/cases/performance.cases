@@ -1,0 +1,79 @@
+=== QV001 | the partition column constrained after another (KDB-X, 20 date partitions: 85 ms against 5 ms with date first)
+r:select from t where sym=`a, date=2024.01.05
+
+=== QV001 | within, after a numeric comparison (56 ms against 12 ms)
+r:select from t where size>500, date within 2024.01.05 2024.01.06
+
+=== QV001 | month and year partitions, and exec, update, delete
+a:exec price from t where sym in `a`b, month=2024.01m
+b:update x:1 from t where sym=s, year=2024
+c:delete from t where px>1.5, date<2024.01.01
+
+=== QV001 | a string literal before it
+r:select from t where name like "ab*", date=2024.01.05
+
+=== clean | the partition column first
+r:select from t where date=2024.01.05, sym=`a
+s:select from t where date within (d0;d1), size>500
+
+=== clean | an aggregate before it: moving date first changes the rows avg sees
+r:select from t where price>avg price, date=2024.01.05
+
+=== clean | no partition column at all, or only one constraint
+r:select from t where sym=`a, size>500
+s:select from t where date=2024.01.05
+
+=== clean | the first constraint already names the partition column
+r:select from t where (date=d) or sym=`a, date=2024.01.05
+
+=== clean | a date column that is not tested, only read
+r:select from t where sym=`a, date2=2024.01.05
+
+=== QV002 | each over an atomic builtin (KDB-X, a million items: abs each 63 ms, abs under 1 ms)
+r:abs each x
+s:sqrt each y
+u:not'[b]
+
+=== QV002 | inside a lambda and a select
+f:{[x] neg each x}
+r:select n:null each p from t
+
+=== clean | each over what is not atomic
+r:count each x
+s:string each y
+u:sum each z
+v:first each w
+
+=== clean | a name that ends in an atomic builtin's name, and a symbol
+r:myabs each x
+s:`abs
+u:.my.neg each x
+
+=== clean | abs alone
+r:abs x
+
+=== QV003 | a join to itself in a do loop (KDB-X: 10k, 20k, 40k passes 52, 205, 818 ms; with ,: 2.5, 5.5, 11 ms)
+f:{r:(); do[n; r:r,til 10]; r}
+
+=== QV003 | raze of itself in a while loop
+f:{r:(); i:0; while[i<n; r:raze(r;g i); i+:1]; r}
+
+=== clean | appending in place, and raze each
+f:{r:(); do[n; r,:til 10]; r}
+g:{raze h each til n}
+
+=== clean | a join to another name, or each-both
+f:{r:(); do[n; s:r,til 10]; s}
+g:{r:(); do[n; r:r,'x]; r}
+
+=== clean | outside a loop
+f:{[r] r:r,til 10; r}
+
+=== clean | in the condition of the loop, not its body
+f:{[r] while[count r:r,1; r:()]}
+
+=== QV003 | once, in a loop inside a loop
+f:{r:(); do[n; do[m; r:r,1]]; r}
+
+=== QV001 | once, for a where under two templates
+r:select max p by s from select from t where sym=`a, date=d

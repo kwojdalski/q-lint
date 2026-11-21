@@ -300,6 +300,12 @@
             "order": 29,
             "markdownDescription": "Offer **Extract function** in the lightbulb and **Refactor...** menu over a selection: it becomes a lambda defined above the top-level statement it is in, taking the parameters and locals it reads, and the selection a call to it. Only a selection q reads as one value is rewritten; **Refactor...** says why another is refused. Off, q-lint offers no such action."
           },
+          "q-lint.performanceLints.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 29,
+            "markdownDescription": "Report the performance rules, `QV`: a where phrase that constrains the partition column after another, `each` over an atomic builtin such as `abs`, and `r:r,x` in a loop. Off, they are hidden as `#q-lint.lint.ignore#` would hide them."
+          },
           "q-lint.workspaceIndex.enable": {
             "type": "boolean",
             "default": true,

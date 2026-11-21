@@ -1343,6 +1343,48 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 false,
             )
         }
+        // `abs each x` is `abs x` on every value but the empty list, where
+        // `each` gives `()` and the builtin a typed empty list - so only in
+        // the editor.
+        "QV002" => {
+            let m = re!(concat!(
+                r"^(?:abs|neg|sqrt|exp|log|floor|ceiling|not|null|signum|reciprocal)",
+                r"(?:([ \t]+each\b)|'\[)"
+            ))
+            .captures(source.get(start..)?)?;
+            let whole = m.get(0)?.as_str();
+            let name = whole.trim_end_matches('[').trim_end_matches('\'');
+            let name = name.split([' ', '\t']).next()?;
+            // `abs'[x]` keeps its bracket: `abs[x]`.
+            let old = if m.get(1).is_some() {
+                whole
+            } else {
+                &whole[..whole.len() - 1]
+            };
+            (
+                old,
+                name.to_string().into(),
+                format!("Remove `each`: `{name}` is atomic").into(),
+                false,
+            )
+        }
+        // `r:r,x` is `r,:x`, the same value, appended in place. Only in the
+        // editor: it is the loop's to decide, and a name another reference
+        // shares is copied either way.
+        "QV003" => {
+            let m =
+                re!(r"^(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]*:[ \t]*(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]*,")
+                    .captures(source.get(start..)?)?;
+            if m[1] != m[2] {
+                return None;
+            }
+            (
+                m.get(0)?.as_str(),
+                format!("{},:", &m[1]).into(),
+                format!("Append in place with `{},:`", &m[1]).into(),
+                false,
+            )
+        }
         // Sorting adds no duplicates, and q 5 agrees on the value and the
         // sorted attribute both.
         "QR003" => {

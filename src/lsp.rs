@@ -600,6 +600,7 @@ fn workspace_folders(params: &Value) -> Vec<(String, String)> {
 ///  "semanticTokens": {"enable": true}, "navigation": {"enable": true},
 ///  "help": {"enable": true}, "completion": {"enable": false},
 ///  "callHierarchy": {"enable": true}, "graph": {"enable": true},
+///  "performanceLints": {"enable": true}, "formatChangedLines": {"enable": false},
 ///  "workspaceIndex": {"enable": true, "exclude": []}}
 /// ```
 ///
@@ -651,6 +652,9 @@ struct Options {
     generate_qdoc: bool,
     /// Offer Extract Function on a selection.
     extract_function: bool,
+    /// Report the performance rules, QV. Off, they are ignored as
+    /// `lint.ignore` would.
+    performance_lints: bool,
     /// Whether the client shows an action it cannot take with the reason
     /// (`codeAction.disabledSupport`): a capability, not a setting.
     disabled_actions: bool,
@@ -679,6 +683,7 @@ impl Default for Options {
             document_links: true,
             generate_qdoc: true,
             extract_function: true,
+            performance_lints: true,
             disabled_actions: false,
             severity: vec![],
         }
@@ -717,6 +722,7 @@ impl Options {
                         "documentLinks",
                         "generateQdoc",
                         "extractFunction",
+                        "performanceLints",
                     ]
                     .contains(&key.as_str())
                         && !value.is_object()
@@ -753,6 +759,7 @@ impl Options {
         options.document_links = flag("/documentLinks/enable", true);
         options.generate_qdoc = flag("/generateQdoc/enable", true);
         options.extract_function = flag("/extractFunction/enable", true);
+        options.performance_lints = flag("/performanceLints/enable", true);
         options.disabled_actions = params
             .pointer("/capabilities/textDocument/codeAction/disabledSupport")
             .and_then(Value::as_bool)
@@ -795,7 +802,10 @@ impl Options {
                 .collect()
         };
         let select = codes("/lint/select", select);
-        let ignore = codes("/lint/ignore", ignore);
+        let mut ignore = codes("/lint/ignore", ignore);
+        if !options.performance_lints {
+            ignore.push("QV".to_string());
+        }
         for text in exclude {
             match crate::config::pattern(&text) {
                 Ok(p) => options.index_exclude.push(p),

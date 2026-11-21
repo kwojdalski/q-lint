@@ -3077,3 +3077,25 @@ fn a_request_cancelled_while_it_waits_is_answered_cancelled() {
     server.send(json!({"jsonrpc":"2.0","method":"$/cancelRequest","params":{"id":61}}));
     assert_eq!(server.shutdown_and_exit(), 0);
 }
+
+/// `performanceLints.enable: false` hides the QV rules as `lint.ignore`
+/// would, and leaves the rest.
+#[test]
+fn performance_lints_can_be_turned_off() {
+    let text = "r:abs each x\na:1==1\n";
+    let dir = tempfile::tempdir().unwrap();
+    let uri = file_uri(&dir.path().join("perf.q"));
+    let (mut server, _) = start_with_options(dir.path(), &["--lsp"], json!({}), None);
+    server.open(&uri, text);
+    assert_eq!(codes_of(&server.diagnostics_for(&uri)), ["QV002", "QE004"]);
+    assert_eq!(server.shutdown_and_exit(), 0);
+    let (mut server, _) = start_with_options(
+        dir.path(),
+        &["--lsp"],
+        json!({"performanceLints": {"enable": false}}),
+        None,
+    );
+    server.open(&uri, text);
+    assert_eq!(codes_of(&server.diagnostics_for(&uri)), ["QE004"]);
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
