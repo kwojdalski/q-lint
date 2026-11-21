@@ -405,7 +405,9 @@ function tableLines(rows: Record<string, unknown>[], keys = 0): string[] {
   }
   const names = Object.keys(rows[0]);
   const cells = names.map((n) => rows.map((r) => cellText(r[n])));
-  const widths = names.map((n, i) => Math.max(n.length, ...cells[i].map((c) => c.length)));
+  // A loop, not `Math.max(...)`: a large table has more rows than a call
+  // takes arguments.
+  const widths = names.map((n, i) => cells[i].reduce((w, c) => Math.max(w, c.length), n.length));
   const line = (texts: string[], fill = " "): string => {
     const parts = texts.map((t, i) => t.padEnd(widths[i], fill));
     return keys > 0 ? `${parts.slice(0, keys).join(" ")}| ${parts.slice(keys).join(" ")}` : parts.join(" ");
@@ -445,7 +447,7 @@ export function formatValue(value: unknown, type?: number): string[] {
   }
   if (isRow(value)) {
     const entries = Object.entries(value);
-    const width = Math.max(0, ...entries.map(([k]) => k.length));
+    const width = entries.reduce((w, [k]) => Math.max(w, k.length), 0);
     return entries.map(([k, v]) => `${k.padEnd(width)}| ${cellText(v)}`);
   }
   if (Array.isArray(value)) {
@@ -526,7 +528,7 @@ function nested(q: QValue): string[] {
       const d = nested(q.v);
       const k = lineUp(d.length, nested(q.k));
       const v = lineUp(k.length, d);
-      const width = Math.max(0, ...k.map((line) => line.length));
+      const width = k.reduce((w, line) => Math.max(w, line.length), 0);
       return k.map((line, i) => `${line.padEnd(width)}| ${v[i] ?? ""}`);
     }
     case "table": {

@@ -417,3 +417,32 @@ test("an unwrapped grid has each column's own type, its rows' ranks shared by eq
   assert.deepStrictEqual(sorted.text, ["a| 1", "b| 2"]);
   assert.deepStrictEqual(sorted.grid.cells, [["a", "b"], ["1", "2"]]);
 });
+
+/// The message of a q table of one long column `a` of `n` rows, 0 to n-1.
+function longTable(n) {
+  const head = Buffer.from("0100000000000000" + "6200" + "630b0001000000" + "6100" + "000001000000" + "0700", "hex");
+  const count = Buffer.alloc(4);
+  count.writeUInt32LE(n);
+  const items = Buffer.alloc(8 * n);
+  for (let i = 0; i < n; i++) {
+    items.writeBigInt64LE(BigInt(i), 8 * i);
+  }
+  const message = Buffer.concat([head, count, items]);
+  message.writeUInt32LE(message.length, 4);
+  return message;
+}
+
+test("an unwrapped table or dictionary of more rows than a call takes arguments is written", async () => {
+  const message = longTable(300_000);
+  message.writeUInt8(2, 1);
+  const answer = { value: deserialize(message, false, true, false, false), type: 98, message };
+  const run = (m) => runUnwrapped({ evaluate: async () => m }, ["t"], { size: [25, 80], limit: 10, unlimited: true, grid: false });
+  const table = await run(answer);
+  assert.strictEqual(table.text.length, 300_002);
+  assert.strictEqual(table.text[300_001].trimEnd(), "299999");
+  // A dictionary keyed by that table, and one of as many keys.
+  const keyed = Buffer.concat([Buffer.from("0100000000000000" + "63", "hex"), message.subarray(8), message.subarray(8)]);
+  keyed.writeUInt8(2, 1);
+  keyed.writeUInt32LE(keyed.length, 4);
+  assert.strictEqual((await run({ value: null, type: 99, message: keyed })).text.length, 300_002);
+});
