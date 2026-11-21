@@ -188,7 +188,17 @@ test("a real q process is started, connected to, and stopped", { skip: Q ? false
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-launch-q-"));
   fs.writeFileSync(path.join(dir, "server.q"), "-1 \"server up\";\nanswer:42\n");
   const port = await freePort();
-  const { live, launcher, output } = await setUp(t, [proc("q", port, { command: Q, script: "server.q", cwd: dir })]);
+  // QLINT_TEST_Q may be a command line, `env QLIC=.. QHOME=.. q`, as the
+  // other real-q tests take it: a launch definition gives its program and
+  // environment apart.
+  const words = Q.trim().split(/\s+/);
+  if (words[0] === "env") words.shift();
+  const env = {};
+  while (words.length > 1 && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0])) {
+    const [key, ...value] = words.shift().split("=");
+    env[key] = value.join("=");
+  }
+  const { live, launcher, output } = await setUp(t, [proc("q", port, { command: words[0], script: "server.q", cwd: dir, ...(words.length > 1 ? { args: words.slice(1) } : {}), env })]);
   await stub.commands.get(LAUNCH_COMMANDS.start)("q");
   for (let i = 0; i < 100 && !(await accepts(port)); i++) await sleep(100);
   assert.ok(await accepts(port), output("q"));
