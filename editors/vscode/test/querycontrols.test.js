@@ -456,3 +456,19 @@ test("an unwrapped table is cut to the console's rows before it is laid out, as 
   assert.deepStrictEqual((await run([5, 80])).text.map((l) => l.trimEnd()), ["a", "-", "0", "1", ".."]);
   assert.deepStrictEqual((await run([25, 80])).text.length, 22);
 });
+
+test("an unlimited float list is written to the process's \\P, as its console writes it", () => {
+  const floats = (value, precision, type = 9) => readUnlimited({ ok: true, type, text: [], value, attr: null, precision }).text[0];
+  assert.ok(UNLIMITED.includes('system"P"'));
+  // \P 0: every digit a float holds.
+  assert.strictEqual(floats([1 / 3, 2 / 3], 0), "0.33333333333333331 0.66666666666666663");
+  assert.strictEqual(floats([1 / 3, 2], 10), "0.3333333333 2");
+  assert.strictEqual(floats([1234.5, 0.000123], 3), "1.23e+03 0.000123");
+  assert.strictEqual(floats([123456789012.5], 10), ",1.23456789e+11");
+  // A real at \P 0 is as few digits as give it back; at \P 10, ten.
+  assert.strictEqual(floats([Math.fround(1.1), Math.fround(2.2)], 0, 8), "1.1 2.2e");
+  assert.strictEqual(floats([Math.fround(1.1)], 10, 8), ",1.100000024e");
+  // q's default, and an answer with no precision.
+  assert.strictEqual(floats([1 / 3], 7), ",0.3333333");
+  assert.strictEqual(readUnlimited({ ok: true, type: 9, text: [], value: [1 / 3] }).text[0], ",0.3333333");
+});

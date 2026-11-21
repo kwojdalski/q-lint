@@ -73,20 +73,29 @@ function hms(d: Date): string {
   return `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}:${pad2(d.getUTCSeconds())}`;
 }
 
-/// A float as q writes it at its default `\P` of 7 significant digits:
-/// C's `%.7g`, an exponent (of two digits at least) from 1e7 up and below
-/// 1e-4, trailing zeros dropped.
-export function floatText(x: number): string {
+/// A float as q writes it at a `\P` of `precision` significant digits (7,
+/// q's default, unless given): C's `%.{P}g`, an exponent (of two digits at
+/// least) from 10^P up and below 1e-4, trailing zeros dropped. `\P 0` is
+/// every digit a float holds, `%.17g`; a real (`real`) at `\P 0` is as few
+/// digits as give it back, as KDB-X writes one.
+export function floatText(x: number, precision = 7, real = false): string {
   if (x === 0 || !Number.isFinite(x)) {
     return String(x);
   }
-  const [mantissa, e] = x.toExponential(6).split("e");
-  const exponent = Number(e);
-  if (exponent < -4 || exponent >= 7) {
-    const digits = mantissa.replace(/\.?0+$/, "");
-    return `${digits}e${exponent < 0 ? "-" : "+"}${String(Math.abs(exponent)).padStart(2, "0")}`;
+  let p = precision > 0 ? Math.min(precision, 17) : 17;
+  if (real && precision <= 0) {
+    p = 1;
+    while (p < 9 && Math.fround(Number(x.toPrecision(p))) !== Math.fround(x)) {
+      p++;
+    }
   }
-  return String(Number(x.toFixed(6 - exponent)));
+  const [mantissa, e] = x.toExponential(p - 1).split("e");
+  const exponent = Number(e);
+  const trim = (digits: string): string => (digits.includes(".") ? digits.replace(/\.?0+$/, "") : digits);
+  if (exponent < -4 || exponent >= p) {
+    return `${trim(mantissa)}e${exponent < 0 ? "-" : "+"}${String(Math.abs(exponent)).padStart(2, "0")}`;
+  }
+  return trim(x.toFixed(p - 1 - exponent));
 }
 
 /// A time of day, or a span, from milliseconds or nanoseconds: `hh:mm`,
@@ -187,7 +196,7 @@ function temporalText(x: number | bigint | LongLike, t: number): string | undefi
 /// One item of a simple list, or an atom, of q type `t` (positive), without
 /// the suffix a list or an atom ends with. Undefined for a null, which the
 /// caller writes.
-function itemText(x: unknown, t: number): string | undefined {
+function itemText(x: unknown, t: number, precision = 7): string | undefined {
   if (x === null || x === undefined) {
     return undefined;
   }
@@ -208,7 +217,7 @@ function itemText(x: unknown, t: number): string | undefined {
       return String(x);
     case 8:
     case 9:
-      return floatText(Number(x));
+      return floatText(Number(x), precision, t === 8);
     case 10:
       return String(x);
     case 11:
@@ -284,12 +293,13 @@ export function attrText(attr: number | string | null | undefined): string {
 
 /// A simple list of q type `t` (1 to 19) as q's console writes it:
 /// `1 2 3i`, `101b`, `` `a`b ``, `"abc"`, `,1` for one item; with its
-/// attribute, when it has one, in front: `` `s#1 2 3 ``.
-export function vectorText(values: unknown, t: number, attr?: number | string | null): string {
-  return attrText(attr) + listText(values, t);
+/// attribute, when it has one, in front: `` `s#1 2 3 ``; a float or a real
+/// to `precision` digits, the process's `\P`.
+export function vectorText(values: unknown, t: number, attr?: number | string | null, precision = 7): string {
+  return attrText(attr) + listText(values, t, precision);
 }
 
-function listText(values: unknown, t: number): string {
+function listText(values: unknown, t: number, precision: number): string {
   if (t === 10) {
     // Bytes from a typed decoding or an unlimited query; a string from the
     // codec.
@@ -308,7 +318,7 @@ function listText(values: unknown, t: number): string {
   if (t === 11) {
     return one + items.map((s) => `\`${s ?? ""}`).join("");
   }
-  const texts = items.map((x) => itemText(x, t) ?? nullText(t));
+  const texts = items.map((x) => itemText(x, t, precision) ?? nullText(t));
   if (t === 1) {
     return `${one}${texts.join("")}b`;
   }

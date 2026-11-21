@@ -77,14 +77,15 @@ export function limits(
 /// days, the rest ints - since the codec would make a timestamp a float,
 /// exact only to 256 ns, and loses the sign of a date's infinity. A string
 /// comes as its bytes, which the codec would read as UTF-8, losing any that
-/// are not. Its attribute comes as `attr`. Like `RUN` it defines nothing on
-/// the process.
+/// are not. Its attribute comes as `attr`, and the process's `\P` as
+/// `precision`, the digits a float is written to. Like `RUN` it defines
+/// nothing on the process.
 export const UNLIMITED = [
   "{[s;size]",
   ...TRAP,
   " t:type r 1;",
   " $[r 0;",
-  "   $[t within 1 19h;`ok`type`text`value`attr!(1b;t;();$[t within 12 19h;\"jiifjiii\"[t-12h]$r 1;t=10h;\"x\"$r 1;r 1];attr r 1);`ok`type`text!(1b;t;.Q.S[\"j\"$size;0j] r 1)];",
+  "   $[t within 1 19h;`ok`type`text`value`attr`precision!(1b;t;();$[t within 12 19h;\"jiifjiii\"[t-12h]$r 1;t=10h;\"x\"$r 1;r 1];attr r 1;system\"P\");`ok`type`text!(1b;t;.Q.S[\"j\"$size;0j] r 1)];",
   "   `ok`error`trace!(0b;r 1;r 2)]}",
 ].join("\n");
 
@@ -94,7 +95,8 @@ export function readUnlimited(raw: unknown): Answer {
   const answer = readAnswer(raw);
   const r = raw as Record<string, unknown>;
   if (answer.ok && "value" in r && answer.type >= 1 && answer.type <= 19) {
-    return { ...answer, text: [vectorText(r.value, answer.type, typeof r.attr === "string" ? r.attr : null)] };
+    const precision = typeof r.precision === "number" ? r.precision : 7;
+    return { ...answer, text: [vectorText(r.value, answer.type, typeof r.attr === "string" ? r.attr : null, precision)] };
   }
   return answer;
 }
