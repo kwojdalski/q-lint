@@ -169,4 +169,29 @@ test("the grid lambda against a real q process", { skip }, async (t) => {
     const filled = fillDrilldown(`exec i from 0!(${code}) where k={{value}}, d={{row.d}}`, grid, 0, 2);
     assert.deepStrictEqual((await connection.query(statements(filled.code), SIZE)).text, [",2"]);
   });
+
+  await t.test("an exported q literal rebuilds a one-character string in a list, a symbol starting with _ and the other awkward cells (0.29.0 bug)", async () => {
+    const { tableLiteral } = require("../out/qliteral.js");
+    const tables = [
+      // A one-character string among strings, `-3!`'s `,"x"`, which q refuses
+      // as a list item; an empty string; quotes, a backslash and a two-byte
+      // character; symbols q cannot read bare: one starting with _, the
+      // empty one, one with a space.
+      '([] s:`$("a";"_y";"";"a b";"x.y"); w:("ab";enlist "x";"";"\\"q\\"\\\\";"é"); c:"ab cd")',
+      // A general column's items as `-3!` writes them: a monadic , before a
+      // string, a list, a symbol and a dictionary's values, and a symbol
+      // starting with _, alone and first in a vector.
+      '([] l:(enlist "x";`$"_z";enlist 1 2;enlist `$"_w";`a`b!(1;enlist 2);enlist enlist "y";`$("_v";"u")))',
+      // One row: every column enlisted once more.
+      '([] s:enlist `$"_y"; w:enlist enlist "x"; l:enlist enlist `$"_q")',
+      // Keyed by a symbol starting with _, so a name list is written too.
+      '([k:`$("_a";"b")] v:(enlist "x";"yz"))',
+    ];
+    for (const code of tables) {
+      const grid = (await connection.queryGrid(statements(code), SIZE, 100)).grid;
+      const literal = tableLiteral(grid).code;
+      const same = await connection.query(statements(`(${code})~${literal}`), SIZE);
+      assert.deepStrictEqual(same.text, ["1b"], `${code}\nwritten as\n${literal}`);
+    }
+  });
 });

@@ -611,6 +611,10 @@
         rendered();
       };
       th.addEventListener("click", sort);
+      if (feature("wrangler")) {
+        // Right-click for the editor's menu: Wrangle Column (#961).
+        th.setAttribute("data-vscode-context", JSON.stringify({ webviewSection: "column", column: i, preventDefaultContextMenuItems: false }));
+      }
       headers.push(th);
       th.addEventListener("keydown", function (event) {
         if (event.key === "Enter" || event.key === " ") {
@@ -835,6 +839,8 @@
     };
     const out = [];
     const drill = feature("drilldown");
+    // A cell's menu offers Edit Cell (#964) as well as Drill Down.
+    const cellMenu = drill || feature("editCells");
     if (at.before > 0) {
       out.push(spacer(at.before));
     }
@@ -856,8 +862,9 @@
         }
         const td = el("td", cls, text);
         td.title = was !== undefined ? text + "\nwas: " + (was === "" ? "(null)" : was) : text;
-        if (drill) {
-          // Double-click, or right-click for the editor's menu, to drill down.
+        if (cellMenu) {
+          // Double-click, or right-click for the editor's menu, to drill down
+          // or to edit the cell.
           td.setAttribute("data-c", ci);
           td.setAttribute("data-r", r);
           td.setAttribute("data-vscode-context", JSON.stringify({ webviewSection: "cell", column: ci, row: r, preventDefaultContextMenuItems: false }));
@@ -1060,6 +1067,22 @@
     C.applyTheme(Chart, look);
     chart = new Chart(canvas, C.chartConfig(grid, rows, state.kind, data, look, undefined, { y2: y2 }));
     drawnChart = { data: data, look: look, y2: y2, canvas: canvas };
+    // Kept in the q Plots view (#970), as the SVG Save SVG writes.
+    if (feature("plots")) {
+      vscode.postMessage({
+        type: "plotted",
+        id: result.id,
+        format: state.kind,
+        // At least 640 by 360: a plot drawn in a narrow panel is still one
+        // to read, and to save.
+        data: C.chartSvg(grid, rows, state.kind, data, look, {
+          width: Math.max(640, Math.round(canvas.clientWidth || 800)),
+          height: Math.max(360, Math.round(canvas.clientHeight || 450)),
+          background: cssVar("--vscode-editor-background", "#ffffff"),
+          y2: y2,
+        }),
+      });
+    }
     rendered({ chart: summary });
   }
 

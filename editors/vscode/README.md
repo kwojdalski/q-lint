@@ -64,6 +64,57 @@ to a process you add and connect to, and sends only the code you run.
   inserted over tables of the names they default to. They come from a
   completion provider rather than a contributed snippet file, so
   `q-lint.idiomSnippets.enable` can take them out of the list.
+- **Temporal hover**: hovering a temporal literal - `2024.01.02D03:04:05`,
+  `2024.01.02`, `2024.01m`, `0D01:00`, `09:30:00.000`, `09:30`, a legacy
+  `2024.01.02T03:04:05.123`, a null or infinity such as `0Np` or `-0Wd` -
+  shows what it converts to: the long or int q holds under it, the
+  timestamp, date or month, Unix seconds, milliseconds, microseconds and
+  nanoseconds, and ISO 8601 in UTC. A number of 9 digits or more shows it as
+  a timestamp of that many nanoseconds since 2000.01.01 (`"p"$`) and as the
+  Unix epoch its size suggests (10 digits seconds, 13 milliseconds, and so
+  on). **q-lint: Convert Temporal Value** replaces the selection, or the
+  literal under the cursor, with the conversion picked. Every value is
+  counted in integers, so a conversion read back gives the value it came
+  from, to the nanosecond; nulls and infinities convert as q's casts do. A
+  datetime is a float in q, so its conversions name its millisecond (KDB-X's
+  own `"p"$` can be microseconds off), and only between 1709 and 2290. A
+  timestamp outside those years, which KDB-X writes but will not read back
+  as a literal, converts to `"p"$` of its long. Nothing is sent to a process
+  (`q-lint.temporalHover.enable`).
+- **Paste Spreadsheet Data as q Table**: CSV or TSV on the clipboard - as a
+  spreadsheet copies cells, quotes and all - is pasted as a `([] ...)`
+  literal. Each column is booleans (`true`/`false`), longs, floats, dates,
+  timestamps or times when every filled cell reads as one, an empty cell its
+  type's null; otherwise symbols, or strings once a cell holds a space. The
+  first row is taken for the column names unless it reads as data, and the
+  names are made q names (`x y` becomes `x_y`, `count` becomes `count_`).
+  Each cell is read as q's `0:` reads the same text with the same type
+  letter, so the literal is the table `0:` would load. At most 10,000 rows;
+  the message says what was left out (`q-lint.pasteTable.enable`).
+- **Paste JSON as q** pastes the clipboard's JSON as the q that gives what
+  `.j.k` reads from it: numbers as floats, null as `0n`, an object as a
+  dictionary from symbols, an array of objects with the same keys as a
+  table. **Copy Value as JSON** sends the selection, or the statement at the
+  cursor, to the connected process as `.j.j value "..."` and copies the JSON
+  it answers; it goes as a query does, so the read-only guard holds one that
+  would change a guarded process (`q-lint.jsonConversion.enable`).
+- **Show Help for q Builtin** opens a page beside the editor for the
+  builtin under the cursor, or one picked from the list: its syntax, what it
+  gives, examples with their results, related builtins as links to their own
+  pages, and its page in the KX reference. It works offline. The syntax and
+  summary are the language server's hover; the examples and the cheat sheet
+  below are written for q-lint, and the tests run every one on a real q
+  (`q-lint.helpPages.enable`).
+- **Runnable examples**: hovering a builtin that has examples adds them to
+  the hover, each with **Try it**, which runs it on the connected process as
+  a query from the editor - the result where a query's goes, the read-only
+  guard asking first if an example would change a guarded process. Nothing
+  is sent until Try it is clicked. The help page has the same links
+  (`q-lint.tryExamples.enable`).
+- **q Cheat Sheet**, a view in the q-lint panel: iterators, joins, temporal
+  casts and attributes, each a row that inserts its form at the cursor when
+  chosen, its tooltip an example and what it gives
+  (`q-lint.cheatSheet.enable`).
 - **Syntax colouring** from a TextMate grammar, plus semantic tokens: a
   function is coloured wherever it is called, even when another `.q` file in
   the workspace defines it, and a parameter wherever its body reads it.
@@ -361,6 +412,60 @@ The process's `\d` is put back after each test. A failure shows q's error
 or the value at the test. `q-lint.testExplorer.enable` turns the
 integration off: the tests leave the view and nothing is read or sent.
 
+**Coverage.** The Testing view's **Coverage** profile (the run button's
+menu, or **Run Tests with Coverage**) runs the tests with line coverage.
+Before the first test, each function a workspace q file defines that the
+process holds with the same text (trailing blanks aside) is replaced there
+by a copy that counts each statement of its body, defined in its own
+namespace as Redefine defines it; after the last test, every one is put
+back and the counts show in the editor's gutter and the Test Coverage view.
+A function changed on the process since it was loaded, or not loaded, is
+left alone, and the run's output names those; one redefined while the tests
+ran is left as it is then. `.qlint.cov` holds the counts and the originals
+meanwhile, and is deleted after, with `.qlint` when nothing else of
+q-lint's is in it. A run interrupted before the functions were put back
+(the connection lost, say) is put right first thing in the next coverage
+run. The replacing goes through the read-only guard. A statement is
+counted, not each line inside it: an `if[...]` or a nested lambda counts
+as part of the statement it is in. `q-lint.testExplorer.coverage.enable`
+removes the profile.
+
+**Failed tests.** A failed assertion with two sides shows them as an
+expected-against-actual diff in the Testing view: a k4unit `true` row
+`a~b`, whose left side is one term (a name, literal, string, symbols or
+a bracketed group, with any indexes), is sent as `(a;b)` - evaluated in the
+same order, right first - and judged by `~`; a qUnit `assertEquals` or
+`assertThat` that signals `assertThatFAIL` is read from `.qunit.ar`. The
+right side is the expected value. **Re-run Failed q Tests** runs again
+those the last run failed or could not run. `q-lint.testExplorer.failedTests.enable`
+turns both off: a `true` row is sent as written.
+
+**Snapshot tests.** **Record Query Snapshot** (a q editor's context menu)
+runs the query at the cursor and writes its result, as the process prints
+it, to `__snapshots__/<name>.qsnap` beside the file - after showing what
+it will write and asking, a replacement included. The result is printed at
+a 2000 by 2000 console (`\c` is set for the query and put back), so `\P`
+still matters. Each `.qsnap` file is a test in the Testing view: its query
+runs again and passes when the result is the same line for line, trailing
+blanks aside, and a failure is shown as a diff. **Update Snapshot**, on a
+snapshot in the Testing view or an open `.qsnap` file, records the new
+result after asking. The file is plain text: `// q-lint snapshot`, `//
+query`, the query, `// result`, the result. `q-lint.snapshotTests.enable`
+turns them off: the files leave the view and the commands are hidden.
+
+**Generate Test Stub.** On a function's definition, the light bulb (and
+**Generate Test Stub**, in the context menu) writes a test for it in its
+test file's style: `test_<name>.q` or `<name>_test.q` in the workspace, or
+else a new `tests/test_<name>.q` (beside the file when there is no `tests`
+folder). In a file of `.qt` suites the test joins the first suite
+(`.qt.<suite>.test_<name>`); in a qUnit file it is `test<Name>`; otherwise
+`test_<name>`. It asserts with `.qunit.assertEquals` where the file does,
+and otherwise answers `actual~expected`. The arguments and the expected
+value are `(::)` with a TODO, so the test fails until they are filled in.
+It shows the stub and the file and asks first, adds to an existing file's
+end as an edit that can be undone, and never writes over a file.
+`q-lint.testStub.enable` removes the action and the command.
+
 The code is cut into statements by q's own script rules: a line starting
 with a space or tab continues the one above, `/` lines and block comments
 are skipped, as is a first line starting `#!`, and a `\` line is a system
@@ -376,6 +481,18 @@ connect to first. The output is coloured from the editor's theme: each
 answer's `# process (n ms)` header, the error and its backtrace (each frame,
 where it is and the caret under it), a table's rule and a keyed table's `|`,
 numbers, symbols, temporal literals and strings, and an included query as q.
+
+**Backtrace links.** Each frame of a backtrace (`[n]  file:line: code`) is
+a link to the line that failed: in the **q-lint: query** output, in other
+output channels such as a launched process's, and in a terminal running q
+under `\e 1`. KDB-X prints the line that failed and PeachQ the line the
+function starts on, followed by its whole text; the link reads the file and
+opens whichever line holds the code above the `^`, at its column. A path
+the process printed that is not on this machine opens the workspace file
+sharing the most trailing folders with it. A frame with no file - a
+function defined over IPC - links to where the workspace defines its name.
+In a terminal, only the frame's header line is seen, so the link opens the
+line the header names. `q-lint.backtraceLinks.enable` turns the links off.
 
 **TorQ gateways.** A query from the editor to a process marked as a TorQ
 gateway goes as `.gw.syncexec[query;servertypes]`, so the gateway runs it on
@@ -468,6 +585,77 @@ read-only guard guards) it asks before it starts, and code that would
 change a guarded process is asked about once, then. It also takes the code
 and the seconds as arguments.
 
+**Code cells.** A line that starts `/ %%` (or `/%%`) at column 0 starts a
+cell, as `# %%` does in a Python file; the text after `%%` names it. To q
+it is a comment, so the file loads as it always did. q's rules decide what
+is a marker: a `/ %%` line inside a block comment (`/` alone to `\` alone),
+after a `\` that ends the script, indented, or between a statement and its
+indented continuation lines (`f:{x+`, `/ %%`, `  y}` is one statement to
+q) marks nothing. The lines above the first marker are a cell when a
+statement starts there. **Run Cell** (Ctrl+Enter in a q file with cells, or
+the editor's context menu) runs the cell at the cursor and **Run All
+Cells** every cell, on the process the file is bound to (connecting first
+if none is), into the **q Interactive** window beside the editor: each run
+with its cell's name, its code without the marker, the process, the time
+and q's answer or error. Cells run one at a time, in order, and a run of
+several stops at the first that fails. **Open Interactive Window** and
+**Clear Interactive Window** do what they say. Each run lands in Query
+History, and the read-only guard asks before a cell that would change a
+guarded process. `q-lint.cells.enable` off hides and refuses the commands
+and closes the window.
+
+**Run Cell, Run Above, Run Below**: code lenses over each `/ %%` line.
+**Run Above** runs the cells before that one, and **Run Below** that one
+and those after it, as Jupyter's do, into the Interactive Window. The
+palette has them as **Run Cells Above** and **Run Cell and Below**, for the
+cell at the cursor. `q-lint.cells.codeLens.enable` off removes the lenses
+and hides and refuses the two commands.
+
+**Smart Send** is off by default, as it takes Shift+Enter and sends code
+on a keypress: turn on `q-lint.smartSend.enable`. Then Shift+Enter in a q
+editor sends the statement the cursor is in, continuation lines and all,
+and moves the cursor to the first line of the next statement, skipping
+blank lines, comments and block comments; on a blank or comment line it
+only moves. With a selection, it sends the selection and stays.
+`q-lint.smartSend.target` says where: `query` (the default) as **Query
+Current Block** does, placeholders and all; `interactiveWindow`; `repl`,
+the q REPL pane; or `terminal`, as **Send Current Block to Terminal** does.
+
+**q REPL pane.** **Open q REPL Pane** opens a console beside the editor on
+the connected process. Enter runs what is typed when its brackets are
+closed and no string is open, and otherwise starts a new line, as the
+Julia REPL does; Shift+Enter always starts one. A line typed inside an
+open bracket reaches q as a continuation line, so `f:{x+` then `y}` is one
+statement, as in a script. Up and Down walk the history (the last 500
+inputs, kept across sessions), and Ctrl+R searches it as a shell does:
+type to find the newest input containing the text, Ctrl+R again for the
+one before, Escape to leave it. Tab completes the name before the cursor
+from the process's own names (read with the Process Explorer's read-only
+call, once until the next run, and only when Tab asks), the language
+server's workspace symbols and q's words. Each input lands in Query
+History, and the read-only guard asks before one that would change a
+guarded process. Unlike **Start q REPL**, which starts a q in a terminal,
+it runs on the process you are connected to. `q-lint.repl.enable` off
+hides and refuses the command and closes the pane; the history is kept.
+
+**`.qlint.view` and `.qlint.plot`**, R's `View()` for q. **Define
+.qlint.view and .qlint.plot on Process** defines them on the connected
+process - q-lint defines nothing anywhere unasked, so only this command
+does, or each connect while `q-lint.view.defineOnConnect` is on (off by
+default; never on a process the read-only guard guards). Then, in code
+run from the editor, a notebook, a cell or the REPL, `.qlint.view t` opens
+t in the result grid and `.qlint.plot t` as a chart, whatever the query
+mode, and each gives t back, so `n:count .qlint.view select from t` works.
+A dictionary or a list opens as a grid does. The value is shaped on the
+process by the grid's own query (at most `q-lint.query.gridLimit` rows,
+as when it was defined) and sent back as an async message on the handle
+that called it; called from the process's own console or a timer, where
+there is no caller, it only gives the value back. It defines
+`.qlint.grid`, `.qlint.show`, `.qlint.view` and `.qlint.plot`. In grid or
+chart mode the query's own result follows it into the panel, as another
+tab. `q-lint.view.enable` off stops listening, so a call opens nothing,
+and hides and refuses the command.
+
 **Read-only guard.** Code sent to a process tagged `prod`, `prd` or
 `production` (`q-lint.processes.readOnlyGuard.tags`, ignoring case) is read
 first, and when it would change the process, a modal asks before anything
@@ -487,15 +675,17 @@ process they reach), a notebook cell and **Run Notebook with Parameters**,
 **Redefine on Process** and hot reload on save (whose confirmation says so,
 since they always assign; hot reload asks at every save, with no
 **Reload on Every Save**) and a connect script, asked at each connect, and skipped, with the
-connection kept, when declined; also a result-grid drill-down query, a run
-from the Testing view (each test's definition), and a query to a TorQ
+connection kept, when declined; also a result-grid drill-down query, a
+Data Wrangler step, a cell edit, a data file opened in the grid and a CSV
+load statement, a run from the Testing view (each test's definition), and a query to a TorQ
 gateway, read as written - and a `.gw.syncexec` or `.gw.asyncexec` call,
 such as one rerun from the history, is read inside its strings. A guarded
 process holds no result for paging, since holding assigns `.qlint.held`,
 and streaming its table asks first, since `.u.sub` adds a subscriber. An agent's query cannot be asked about, so
 one that would change such a process is refused with why, and never offered
 to you. q-lint's own reads - the Process Explorer, Monitor, HDB browser,
-hovers and the heartbeat - define nothing and are not asked about. The
+table templates' and the schema diagram's `meta`, hovers and the
+heartbeat - define nothing and are not asked about. The
 guard reads the code's text: a function defined earlier that writes, or a
 string built at run time and evaluated, is not seen, so it guards against a
 slip, not a person - a process that must not change needs its own `.z.pg`.
@@ -662,6 +852,34 @@ namespace. Toggling the statement off and loading the definition again stops
 that, but does not delete the globals already defined. Do not leave it in
 code that runs anywhere it matters.
 
+**Logpoints.** **Add Logpoint** (a q editor's context menu) logs the calls
+of the function under the cursor - or one named - on the active process
+without editing its file: the function is replaced there by a wrapper of
+the same parameters that prints `(name; arguments)` with `0N!`, to the
+process's console or log (a launched process's output channel), keeps the
+last 1000 calls as text in `.qlint.log.hits`, and calls the original, kept
+in `.qlint.log.orig`. The editor marks the definition `logpoint on
+<process>`. **Show Logpoint Hits** reads the calls kept, **Remove
+Logpoint** puts one function back, and **Remove All Logpoints** all of
+them; a function redefined while it had a logpoint is left as it is. With
+the last one removed, `.qlint.log` is deleted. Only a lambda takes one, and
+a projection or alias made of the function before keeps calling the
+original. Adding and removing go through the read-only guard; reading the
+hits changes nothing. `q-lint.logpoints.enable` hides the commands.
+
+**Locals at the error.** **Capture Locals at Last Error** looks into the
+last query from the editor that failed. Pick a function its backtrace names
+(the innermost first), confirm, and the query runs again with that
+function replaced by a copy that keeps, as the parameter cache does, each
+call's arguments, the statement it is on, and each local a statement at the
+top of its body assigns (`a:`, `a+:`, `a[i]:`), once that statement has
+run. The function is put back in the same call, error or not, and what was
+kept opens as a document: the arguments, the statement that failed, and the
+locals. It runs the query again as written, so it can change data again;
+the replacing goes through the read-only guard. A local assigned inside an
+`if[...]` or a nested lambda is not seen. `q-lint.localsAtError.enable`
+hides the command.
+
 **Query modes.** **Switch Query Mode** (or the mode in the status bar) picks
 where a result goes; it sets `q-lint.query.mode`, and takes `console`,
 `grid` or `chart` as an argument for a keybinding.
@@ -767,6 +985,18 @@ Result Chart as Image**, which takes `png` or `svg` and a `Uri`) save the
 chart: the PNG as drawn, on the editor's background, and the SVG as vector
 graphics drawn by q-lint from the same data, for a document or a slide.
 
+**q Plots.** Every chart the panel draws is kept in the **q Plots** view,
+beside q Results in the bottom panel (**q-lint: Show Plots**): one plot for
+each result and chart kind - ticking a column redraws it rather than adding
+another - with the query and process it came from, the newest 50. The
+arrows, or **Previous Plot** and **Next Plot**, step through them; **Save
+Plot As...** writes the one on show as SVG or as PNG on the editor's
+background (it also takes `svg` or `png` and a `Uri`); **Remove Plot** and
+**Clear Plots** forget them. Plots are kept for the window, not across a
+reload, and a notebook's charts are not among them
+(`q-lint.results.plots.enable`; off, the view goes and what it held is
+dropped).
+
 **Drill down.** `q-lint.results.drilldownTemplates` holds follow-up queries a
 grid cell offers: double-click a cell, or right-click it and choose **Drill
 Down from Cell**, pick one, and it runs on the process the result came
@@ -796,9 +1026,80 @@ holds one result, replaced by the next grid query while paging is on
 or in unwrapped mode. Turning paging off stops holding new results; one
 already held stays until the process restarts or `.qlint.held:()` frees it.
 
+**Data Wrangler.** **Wrangle Result...** (in the palette and on the q
+Results view's title bar), or **Wrangle Column...** on a column header's
+right-click menu, filters, sorts, renames, casts or drops, one step at a
+time, each recorded as q over the step before:
+
+| Step | q |
+| --- | --- |
+| Filter rows | `select from x where px>1` (also `<>`, `like`, `in`, `null`, `not null`) |
+| Sort | `` `px xasc x `` or `xdesc` |
+| Rename column | `` (enlist[`px]!enlist `price) xcol x `` |
+| Cast column | `update qty:"f"$qty from x`; a column of strings is parsed, `"J"$s`, or made symbols, `` `$s `` |
+| Drop column | `delete note from x` |
+
+After each step the steps, nested over the query the result came from, run
+on its process and show in the grid, and the next step goes on from that
+result. **Undo last step** and **Start over** run the query again without
+it, or without any. **Show steps as q** opens them in an editor as one
+statement to keep, a lambda run at once so it assigns nothing:
+
+```q
+{[]
+  w:select from trade;
+  w:select from w where px>1;
+  w:`px xdesc w;
+  w}[]
+```
+
+A step changes nothing on the process: each works on a value. So the query
+must be one expression - a script of several statements, an assignment or
+a system command is refused - and a column it names must be a plain q name.
+A step on a production process asks first, as a drill-down query does.
+
+**Edit Cell...**, on a grid cell's right-click menu, writes the update that
+sets it in the table the result came from: it asks for the table (guessed
+from a query like `select from trade where ...`) and the new value as q
+(the cell's own to start), then shows the statement:
+
+```q
+update px:(9.5) from `trade where (time~\:(2026.01.02D11:00:00.000000000)),(sym=`b),(px~\:(2f))
+```
+
+It is sent only on **Run** (**Open in Editor** opens it to change and run
+yourself), and the read-only guard reads it as any query, so a guarded
+process asks again. The rows are found by the edited row's values - a keyed
+result's keys, or else every column, compared with `~\:` so a null finds a
+null, and a symbol or enumeration with `=` - and every row of the table with
+those values is changed. It updates a table in memory; a splayed or
+partitioned table on disk is not changed by `update`.
+
+**Data files.** **Open Data File in Grid**, on a `.csv`, `.tsv`, `.psv`,
+`.txt` or `.json` file in the Explorer (or from the palette), loads it
+through the connected process and shows it in the grid, whatever the query
+mode. A delimited file is read with `0:` and a type string guessed from its
+first 1,000 rows (a long, a float, a date in `yyyy.mm.dd` or `yyyy-mm-dd`, a
+timestamp, a time, else a symbol or a string), the first line its header:
+`("SFJD";enlist ",")0:`:/data/trades.csv`. A JSON file is `.j.k` of its
+text, so an array of objects is a table of floats and strings. A process on
+this machine reads the file by its path; one on another host, or through an
+SSH tunnel, is sent the file's lines with the query instead, up to 256 KB.
+Parquet and Excel files are not read.
+
+**Load CSV into q...**, on a delimited file or from the palette, is the
+same guess as a wizard: a list of the columns with their types and a few
+values; pick one to change its type (any `0:` letter, or a space to skip
+it), or the delimiter, then **Done**, and name the table. The statement,
+`trades:("SFF D";enlist ",")0:`:/data/trades.csv`, opens in an editor, and
+is sent to the connected process only on **Run**, through the read-only
+guard, as it assigns a global. The process reads the file by its path, so it
+must run on this machine, or the path be changed in the editor first.
+
 Each of these - the history, Compare, Stats, the heatmap, the tree, export,
-paging, the pivot, the new charts and drill-down - has its own
-`q-lint.results.<feature>.enable` setting, on by default but for paging.
+paging, the pivot, the new charts, drill-down, the Data Wrangler, cell edits
+and the plots - has its own `q-lint.results.<feature>.enable` setting, on by
+default but for paging.
 Turned off, its button and command are gone (the command, run anyway, says
 which setting turns it back on), and a change applies at once, without a
 reload.
@@ -874,6 +1175,37 @@ splayed table is loaded or measured, and the hover says so. With
 since it asks the process whenever the mouse rests on a name), hovering a
 table's name in a q editor shows the same, shorter, beside the language
 server's hover. Details are read once per refresh of the explorer.
+
+**Table templates.** **Table Templates...**, on a table's right-click menu
+in the Process Explorer, reads the table's `meta` and offers:
+- **Select first 100**: `select[100] from trade`, or for a partitioned
+  table the last partition's first rows, `select from quote where
+  date=last date, i<100`;
+- **meta**: `meta trade`;
+- **Count by date**: rows per partition, `select count i by date from
+  quote`, or per date of the first date or timestamp column, `select count
+  i by date:time.date from trade`;
+- **Insert template**: `` `trade insert ( `` with a typed null for each
+  column, enlisted, one per line with its name and type (and the table a
+  foreign key needs a key of), for an in-memory table.
+
+A read picked runs as a query, as **Preview** does; the insert template
+opens in an editor to fill in, and is never sent.
+
+**Schema diagram.** **Show Schema Diagram**, on the Process Explorer's title
+bar or in the palette, draws the connected process's tables - the root
+namespace's and those of the namespaces the explorer shows, up to 80 - as
+boxes with their columns and types (keys underlined, the first 40 columns),
+and an arrow from each foreign key column (enumerated over a keyed table)
+and each link column (dashed) to the table it points into, all read from
+`meta` in one call that defines nothing. The panel runs no script. **Save
+Schema Diagram as SVG** and **Copy Schema as Mermaid** (an `erDiagram` for
+Markdown) are on its title bar.
+
+Each has its own setting, `q-lint.processExplorer.tableTemplates.enable` and
+`q-lint.processExplorer.schemaDiagram.enable`, on by default; off, its
+commands are hidden and refuse, an open diagram closes, and nothing is
+read.
 
 **Live values.** With `q-lint.liveValueHover.enable` on (off by default,
 since it asks the process whenever the mouse rests on a global), hovering a
@@ -1246,6 +1578,87 @@ back, and saving a notebook that was opened unchanged writes the same file. A fi
 that is not a notebook does not open: the editor says what is wrong with
 it, and the file is left as it was. An empty file is a new notebook.
 
+## The local q
+
+**q interpreter.** **Select q Interpreter**, or the status bar item beside
+a q editor, lists the q binaries on this machine: KDB-X's `~/.kx/bin/q`,
+`$QHOME/<platform>/q` (`~/q` when `QHOME` is unset), each `q` on `PATH`,
+and a PeachQ-style `q` (or `peachq`) at a workspace folder's root or in its
+`bin/`. One file reached twice - `~/.kx/bin` on `PATH`, a link - is listed
+once. Opening the picker starts each once with `-q`, to print its version
+and exit, so each shows as `q 4.1 2024.10.16`; one that does not answer
+says so. **Enter a q binary's path...** takes any other. The one picked
+becomes the workspace's `q-lint.terminal.qBinary`: what the q terminals,
+**Start Process** and the q tasks start. A binary inside a kdb+ install
+(`<home>/m64/q` beside `<home>/q.k`) is started with `QHOME=<home>`, and one
+inside a KDB-X install (`<home>/bin/q` with `<home>/q/` and a licence) with
+`QHOME=<home>/q` and `QLIC=<home>`, so a `QHOME` your shell sets for another
+q does not reach it; `q-lint.terminal.envPath` and the `.env` file still
+win. The item shows the version once the picker has asked for it, and the
+binary's name before.
+
+**Licence expiry.** When the picker or **Check q Licence Expiry** starts a
+q, it also prints the expiry date of its licence: the second item of
+`.z.l`, as [code.kx.com documents it](https://code.kx.com/q/ref/dotz/#zl).
+The licence files themselves (`kc.lic`, `k4.lic`) are not in a published
+format, so they are only located - in `QLIC`, `QHOME`, the KDB-X install or
+`~/q` - to notice one replaced, and never read. The date is kept on this
+machine with the binary's path and version, and nothing else: no banner
+text, no licensee, and it is sent nowhere. From then on, at start and when
+the binary changes, a licence within `q-lint.licence.warningDays` of its
+date is warned of once a day, without starting q. A q whose `.z.l` is empty
+(PeachQ, a 32-bit kdb+) reports no date, and nothing is guessed; a licence
+file changed since the date was learnt is not warned of until it is checked
+again.
+
+**`.env` files.** The variables of the workspace folder's `.env`
+(`q-lint.env.file`) go to every q the extension starts here: the q
+terminals and **Start q REPL**, **Start Process**, and the q tasks. The
+file is read as `q-lint.terminal.envPath` reads its file - `NAME=value`
+lines, `#` comments, quotes dropped, nothing expanded - each time one of
+them starts. Its values may be secrets, so they go in the environment and
+never on a command line, and no message or log ever shows one: a line that
+is not `NAME=value` is named by its number, and the variables by their
+names. In a terminal, q is started by your shell, so a variable your
+shell's startup files export wins over the `.env` file's; put that one in
+`q-lint.terminal.envPath` instead, whose variables go on the command line.
+A launched process gets the `.env` file's variables under its definition's
+own `env`. A missing file is no file.
+
+**q tasks.** **Terminal > Run Task > q** offers **run current file** and,
+for each test runner script in the workspace (`run_tests.q`, `runtests.q`,
+`run_all_tests.q`, `run_test.q`, `test_runner.q`, `testrunner.q`), a
+**test** task in the Test group. A `tasks.json` task can name any script:
+
+```json
+{ "type": "q", "script": "tests/run.q", "args": ["-quiet"], "label": "q tests" }
+```
+
+Each runs `q-lint.terminal.qBinary` on the script in the workspace folder,
+with the variables above and nothing on its input, so q exits when the
+script ends: 0 when it loaded, 1 at its first error. The `$q` problem
+matcher puts that error in Problems at its file and line - the innermost
+frame, so the loaded file of a `\l` - as KDB-X prints it
+(`'2026.11.21T19:31:44.874 type` then ``[2]  /w/e.q:3: c:a+`x``) and as
+PeachQ does (`'type`). Add `"problemMatcher": "$q"` to a task of your own
+that runs q to use it there.
+
+**Dev container.** **Add q Dev Container Configuration** shows a
+`.devcontainer/devcontainer.json` and `.devcontainer/install-kdbx.sh` for
+Dev Containers and Codespaces in a preview, and writes them into the
+workspace folder only when you choose **Write**. A file already there is
+left as it is, and named in the preview; nothing is ever written over. The
+container is Ubuntu with this extension in it and `q-lint.terminal.qBinary`
+set to `~/.kx/bin/q`. KDB-X is installed after it is created by KX's own
+installer, as [KX's install page](https://code.kx.com/get_started/kdb-x-install.html)
+gives it, from two secrets the template names but never holds:
+`KX_DOWNLOAD_TOKEN` (the bearer token of the Developer Center's install
+command) and `KDB_LICENSE_B64` (its `--b64lic` value; `KDB_LICENSE_K4B64`
+for a commercial `k4.lic`). In Codespaces they are Codespaces secrets; in a
+local container, run `bash .devcontainer/install-kdbx.sh` in its terminal
+and it asks for them without echoing them. Without them the container still
+starts, and the script says what to set.
+
 ## Requirements
 
 None on macOS (Apple Silicon and Intel), Linux x64 or Windows x64: the
@@ -1346,6 +1759,8 @@ nothing.
 | `q-lint.results.charts.enable` | `true` | Offer area, step and candle charts, a right axis, **Save PNG**, **Save SVG** and **Save Result Chart as Image**. | - |
 | `q-lint.results.drilldown.enable` | `true` | Offer a grid cell's drill-down queries, on a double-click or **Drill Down from Cell**. | - |
 | `q-lint.results.drilldownTemplates` | `[]` | The drill-down queries: `label`, `query` with `{{value}}`, `{{column}}` and `{{row.name}}`, and the `columns` each is offered for. | - |
+| `q-lint.results.wrangler.enable` | `true` | Offer the Data Wrangler: **Wrangle Result...** and a column header's **Wrangle Column...**, each step recorded as q and run over the result's query. | - |
+| `q-lint.results.editCells.enable` | `true` | Offer a cell's **Edit Cell...**: the `update` that sets it, shown and sent only on **Run**, through the read-only guard. | - |
 | `q-lint.query.progress.enable` | `true` | Count a running query's time in the status bar, and notify a long one's end. | - |
 | `q-lint.query.notifyAfter` | `10` | Seconds a query must run for its end to be notified while the window is not focused; `0` never. | - |
 | `q-lint.query.placeholders.enable` | `true` | Ask for a value for each `{{name}}` in the code a query sends, and put it in place. | - |
@@ -1362,6 +1777,10 @@ nothing.
 | `q-lint.processExplorer.findCallers.enable` | `true` | Find Callers in Process. | - |
 | `q-lint.processExplorer.tableHover.enable` | `true` | A table's details in its Process Explorer tooltip. | - |
 | `q-lint.processExplorer.editorTableHover.enable` | `false` | A table's details on hovering its name in a q editor; asks the process. | - |
+| `q-lint.processExplorer.tableTemplates.enable` | `true` | **Table Templates...** on a Process Explorer table: select first 100, `meta`, count by date, an insert template. | - |
+| `q-lint.processExplorer.schemaDiagram.enable` | `true` | **Show Schema Diagram**: the process's tables with their foreign keys and link columns. Off, an open diagram closes. | - |
+| `q-lint.dataFiles.open.enable` | `true` | **Open Data File in Grid** on a CSV, TSV or JSON file: loaded through q and shown in the grid. | - |
+| `q-lint.dataFiles.loadWizard.enable` | `true` | **Load CSV into q...**: adjust the guessed column types and get the `0:` load statement, sent only on **Run**. | - |
 | `q-lint.processMonitor.enable` | `true` | The Process Monitor view. | - |
 | `q-lint.processMonitor.refreshInterval` | `0` | Seconds between the Monitor's reads while it is shown; `0` none. | - |
 | `q-lint.hdbBrowser.enable` | `true` | The HDB Browser view. | - |
@@ -1371,6 +1790,34 @@ nothing.
 | `q-lint.idiomSnippets.enable` | `true` | Offer the idiom snippets (joins, `.z` handlers, a TorQ process) in the completion list. | - |
 | `q-lint.processExplorer.driftDetection.enable` | `false` | **Check Drift Against Process**: compare the workspace's function definitions with the connected process. Off, the command is hidden and reads nothing. | - |
 | `q-lint.hotReload.enable` | `false` | On saving a q file, send the definitions the save changed to its process, after Redefine's confirmation. Off, nothing listens and nothing is sent. | - |
+| `q-lint.results.plots.enable` | `true` | Keep every chart the result panel draws in the **q Plots** view, to step through and save as SVG or PNG. Off, the view is hidden and its plots dropped. | - |
+| `q-lint.temporalHover.enable` | `true` | Show a temporal literal or an epoch-sized number converted on hover, and offer **Convert Temporal Value**. Nothing is sent. | - |
+| `q-lint.pasteTable.enable` | `true` | **Paste Spreadsheet Data as q Table**: the clipboard's CSV or TSV as a `([] ...)` literal. | - |
+| `q-lint.jsonConversion.enable` | `true` | **Paste JSON as q** and **Copy Value as JSON** (`.j.k` and `.j.j`). Off, both are hidden and nothing is sent. | - |
+| `q-lint.helpPages.enable` | `true` | **Show Help for q Builtin**: a page with a builtin's syntax, examples and related builtins. | - |
+| `q-lint.tryExamples.enable` | `true` | A builtin's examples in its hover, each with **Try it** to run it on the connected process; sent only when clicked. Off, no hover is registered and nothing is sent. | - |
+| `q-lint.cheatSheet.enable` | `true` | The **q Cheat Sheet** view: iterators, joins, temporal casts and attributes, each inserted in one click. | - |
+| `q-lint.testExplorer.coverage.enable` | `true` | Offer the Testing view's **Coverage** profile: the workspace's functions replaced on the process by counting copies while the tests run, and put back. Off, the profile is not offered. | - |
+| `q-lint.testExplorer.failedTests.enable` | `true` | Show a failed `a~b` row's or qUnit assertion's two sides as a diff, and offer **Re-run Failed q Tests**. | - |
+| `q-lint.snapshotTests.enable` | `true` | **Record Query Snapshot** and **Update Snapshot**, and `.qsnap` files as tests in the Testing view. Off, none is listed and the commands are hidden. | - |
+| `q-lint.testStub.enable` | `true` | Offer **Generate Test Stub** on a function's definition. | - |
+| `q-lint.backtraceLinks.enable` | `true` | Link each backtrace frame in the output and terminals to the line that failed. | - |
+| `q-lint.logpoints.enable` | `true` | **Add Logpoint**, **Remove Logpoint**, **Remove All Logpoints** and **Show Logpoint Hits**. Off, the commands are hidden and nothing is sent. | - |
+| `q-lint.localsAtError.enable` | `true` | **Capture Locals at Last Error**. Off, the command is hidden and nothing is sent. | - |
+
+### Interactive settings
+
+Each applies at once, without a reload. None reaches the language server.
+
+| Setting | Default | What it does | q-pro |
+| --- | --- | --- | --- |
+| `q-lint.cells.enable` | `true` | `/ %%` lines split a q file into cells: **Run Cell** (Ctrl+Enter), **Run All Cells** and the **q Interactive** window. Off, the commands are hidden and refuse, and the window closes. | - |
+| `q-lint.cells.codeLens.enable` | `true` | **Run Cell**, **Run Above** and **Run Below** lenses over each cell, and **Run Cells Above** and **Run Cell and Below**. Off, no lens is drawn and the two commands are hidden and refuse. | - |
+| `q-lint.smartSend.enable` | `false` | **Smart Send** on Shift+Enter: send the statement at the cursor, or the selection, and move to the next statement. Off, Shift+Enter is left alone and the command refuses. | - |
+| `q-lint.smartSend.target` | `"query"` | Where Smart Send sends: `query`, `interactiveWindow`, `repl` or `terminal`. | - |
+| `q-lint.repl.enable` | `true` | **Open q REPL Pane**: a console on the connected process, with multiline input, history, Ctrl+R search and Tab completion. Off, the command is hidden and refuses, and the pane closes. | - |
+| `q-lint.view.enable` | `true` | Open what `.qlint.view` and `.qlint.plot` send, and offer **Define .qlint.view and .qlint.plot on Process**. Off, nothing listens and nothing is defined. | - |
+| `q-lint.view.defineOnConnect` | `false` | Define `.qlint.view` and `.qlint.plot` on each process as it is connected to; never on one the read-only guard guards. | - |
 
 ### Connection settings
 
@@ -1406,6 +1853,20 @@ reaches the language server.
 | --- | --- | --- | --- |
 | `q-lint.terminal.qBinary` | `"q"` | The q binary a terminal starts: a name on `PATH` or a path, where a leading `~` is your home directory. It is quoted for the terminal's shell (POSIX, PowerShell or cmd), so it names one program, not a command with arguments. | `q-terminal.cfg.qBinary` |
 | `q-lint.terminal.envPath` | `""` | A file of `NAME=value` lines set for q, such as `QHOME` and `QLIC`. They go on the command line that starts q (`NAME=value q`, `$env:NAME=` in PowerShell, `set` in cmd), so they win over what your shell's startup files set, and show there. Relative to the workspace folder; a leading `~` is your home directory. It is read, not run as a shell script as q-pro's is: `#` lines are comments, `export ` is allowed, quotes around a value are dropped, and nothing is expanded: `$HOME` stays `$HOME`. | `q-terminal.cfg.envPath` |
+
+### q environment settings
+
+Read when they are used, so a change needs no reload. None reaches the language server.
+
+| Setting | Default | What it does | q-pro |
+| --- | --- | --- | --- |
+| `q-lint.interpreter.enable` | `true` | **Select q Interpreter** and its status bar item. Off, both are hidden, and no q is started to ask its version; a binary's install no longer sets `QHOME`. | - |
+| `q-lint.licence.expiryWarning.enable` | `true` | The licence expiry warning and **Check q Licence Expiry**. The date is the one q reports in `.z.l`, kept on this machine; the licence file is never read. Off, nothing warns and the command is hidden and refuses. | - |
+| `q-lint.licence.warningDays` | `30` | Days before the expiry date the warning starts, 0 to 365. | - |
+| `q-lint.env.enable` | `true` | Give the `.env` file's variables to the q terminals, launched processes and q tasks, in their environment, never shown. Off, the file is not read. | - |
+| `q-lint.env.file` | `".env"` | The `.env` file: relative to the workspace folder, which may set its own; a leading `~` is your home directory. | - |
+| `q-lint.devContainer.enable` | `true` | **Add q Dev Container Configuration**, which writes only on **Write** and never over a file. Off, the command is hidden and refuses. | - |
+| `q-lint.tasks.enable` | `true` | The `q` task type: detected **run current file** and **test** tasks, and `q` tasks in `tasks.json`. Off, the provider is unregistered and no q task runs. The `$q` problem matcher stays, inert unless a task names it. | - |
 
 ### Discovery settings
 

@@ -31,6 +31,10 @@
 // cut at gridLimit stays on the process (`grid.ts`'s `HELD`) and the grid
 // asks for more of it as it scrolls. A cell's drill-down templates run a
 // follow-up query with its value put in (`drilldown.ts`).
+//
+// A column header's menu offers the Data Wrangler and a cell's Edit Cell
+// (`resulttools.ts`), which work from `current()`: the page only marks
+// where each menu applies.
 import { randomBytes } from "node:crypto";
 import {
   commands,
@@ -65,6 +69,7 @@ import { appendPage, rowCount, toCsv, toGrid, type GridAnswer, type GridPage, ty
 import { diffGrids, type GridDiff } from "./resultdiff";
 import { fillDrilldown, templatesFor } from "./drilldown";
 import { EXPORT_FORMATS, exportResult, FORMAT_INFO, type ExportFormat } from "./resultexport";
+import { plainSvg, PLOTS } from "./plots";
 
 const MODE_ICONS: Record<QueryMode, string> = { console: "output", grid: "table", chart: "graph-line" };
 const MODE_DETAILS: Record<QueryMode, string> = {
@@ -183,7 +188,8 @@ interface PageMessage {
   rendered?: Omit<Rendered, "location">;
   /// "exportAs", "copyAs": the format, when the page chose one.
   format?: string;
-  /// "image": the chart, as a PNG data URL or SVG text.
+  /// "image": the chart, as a PNG data URL or SVG text; "plotted": the
+  /// chart drawn, as SVG, its kind in `format`.
   data?: string;
   /// "image": the command's request it answers, if any.
   key?: string;
@@ -276,6 +282,13 @@ export class QueryModes {
   /// What the panel last drew, or undefined before it drew anything.
   lastRendered(): Rendered | undefined {
     return this.rendered;
+  }
+
+  /// The result on show, with the process and code it came from: what the
+  /// Data Wrangler (#961) and a cell edit (#964) work from.
+  current(): { process: string; code: string; payload: GridPayload } | undefined {
+    const shown = this.shown;
+    return shown === undefined ? undefined : { process: shown.process, code: shown.code, payload: shown.payload };
   }
 
   /// Where the live half fetches pages of a held result from.
@@ -650,6 +663,12 @@ export class QueryModes {
       if (this.enabled("drilldown")) {
         void this.drill(message.column, message.row);
       }
+    } else if (message.type === "plotted") {
+      // Every chart drawn goes to the q Plots view (#970), from the page
+      // results go to: with both open, each would draw it.
+      if (this.viewSettings().enable.plots && location === settings().resultsLocation && typeof message.format === "string" && plainSvg(message.data) && this.shown !== undefined) {
+        PLOTS.add({ key: `${this.shown.id}/${message.format}`, process: this.shown.process, code: this.shown.code, kind: message.format, svg: message.data, at: Date.now() });
+      }
     }
   }
 
@@ -890,6 +909,9 @@ export class QueryModes {
         pivot: features.enable.pivot,
         charts: features.enable.charts,
         drilldown: features.enable.drilldown,
+        wrangler: features.enable.wrangler,
+        editCells: features.enable.editCells,
+        plots: features.enable.plots,
       },
       // Whether the grid can ask for more rows as it scrolls.
       more: this.canPage(),

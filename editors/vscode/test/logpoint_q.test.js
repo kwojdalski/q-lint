@@ -1,0 +1,48 @@
+// Logpoints against a real q (#984): a function's calls are printed with 0N!
+// and kept, it answers as before, and removing the logpoint puts back the
+// very function it replaced - in its own context - with .qlint gone.
+// Needs QLINT_TEST_Q.
+const test = require("node:test");
+const assert = require("node:assert");
+const { connect, skip } = require("./qserver.js");
+const { LOG_ADD, LOG_REMOVE, LOG_LIST, readLogpoints } = require("../out/logpoint.js");
+
+const SRC = "\\d .fx\nmid:{[bid;ask] scale*(bid+ask)%2}\nscale:1f\n\\d .\nsq:{x*x}\nnow:{[] 42}\n";
+const value = async (c, text) => (await c.evaluate(text)).value;
+
+test("a logpoint logs each call and comes off leaving the function as it was", { skip }, async (t) => {
+  const { connection: c, output } = await connect(t, SRC);
+  const before = await value(c, "{.Q.s1 value each x}`.fx.mid`sq`now");
+  for (const name of [".fx.mid", "sq", "now"]) {
+    assert.strictEqual(await c.call(LOG_ADD, name), name);
+  }
+  // The wrapped functions answer as before; .fx.mid still reads .fx.scale.
+  assert.strictEqual(Number(await value(c, ".fx.mid[1f;2f]")), 1.5);
+  assert.strictEqual(Number(await value(c, "sq 3")), 9);
+  assert.strictEqual(Number(await value(c, "now[]")), 42);
+  // A second logpoint on one function is refused.
+  await assert.rejects(c.call(LOG_ADD, "sq"), /it has a logpoint already/);
+  await assert.rejects(c.call(LOG_ADD, ".fx.scale"), /not a lambda on the process/);
+  const { names, hits } = readLogpoints(await c.call(LOG_LIST));
+  assert.deepStrictEqual(names, [".fx.mid", "sq", "now"]);
+  assert.deepStrictEqual(hits.map((h) => [h.name, h.args]), [
+    [".fx.mid", "1 2f"],
+    ["sq", ",3"],
+    ["now", ",::"],
+  ]);
+  // Printed by the process.
+  for (let i = 0; i < 20 && !/`sq/.test(output()); i++) await new Promise((r) => setTimeout(r, 50));
+  assert.match(output(), /`\.fx\.mid/);
+  assert.match(output(), /`sq/);
+  // Redefined meanwhile: left as it is.
+  await value(c, "sq:{x*x*x}");
+  assert.strictEqual(await c.call(LOG_REMOVE, "sq"), false);
+  assert.strictEqual(await value(c, "last value sq"), "{x*x*x}");
+  await value(c, "sq:{x*x}");
+  assert.strictEqual(await c.call(LOG_REMOVE, ".fx.mid"), true);
+  assert.strictEqual(await c.call(LOG_REMOVE, "now"), true);
+  await assert.rejects(c.call(LOG_REMOVE, "now"), /it has no logpoint/);
+  assert.strictEqual(await value(c, "{.Q.s1 value each x}`.fx.mid`sq`now"), before);
+  assert.strictEqual(await value(c, "`qlint in key`."), false);
+  assert.deepStrictEqual(readLogpoints(await c.call(LOG_LIST)), { names: [], hits: [] });
+});

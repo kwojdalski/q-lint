@@ -56,7 +56,7 @@ import {
   withExtras,
   type Process,
 } from "./processes";
-import { COMMANDS, CONNECTED, VIEWS, readLive, readProcessSettings, readTerminal } from "./liveconfig";
+import { COMMANDS, CONNECTED, VIEWS, readLive, readProcessSettings, readTerminal, type QueryMode } from "./liveconfig";
 import { QConnection, QError, type Target } from "./qclient";
 import { SshTunnel, TUNNEL_COMMANDS, readTunnel } from "./tunnel";
 import { GATEWAY_COMMANDS, fileServerTypes, gatewayStatement, isGatewayCall, readGateway } from "./gateway";
@@ -66,6 +66,8 @@ import { render } from "./query";
 import { QueryModes, type Rendered } from "./resultpanel";
 import { blockAt, statements } from "./statements";
 import { commandLine, expandHome, parseEnv, replLines, shellKind } from "./terminal";
+import { terminalEnv } from "./qenv";
+import { dotenvFor, layoutEnvFor } from "./qenvironment";
 import { QueryControls } from "./controls";
 import { ParameterCache } from "./paramcachecontrol";
 import { CONTROL_COMMANDS, FILE_CONNECTIONS_KEY, UNLIMITED, armTimeout, limits, readUnlimited, runUnwrapped, timedOutError, withBinding } from "./querycontrols";
@@ -355,13 +357,23 @@ export class QTerminals {
       noEditor();
       return;
     }
-    const lines = replLines(codeAt(editor, from) ?? "");
-    if (lines.length === 0) {
+    const code = codeAt(editor, from) ?? "";
+    if (replLines(code).length === 0) {
       nothingThere(from);
       return;
     }
+    await this.sendCode(code, editor.document.uri);
+  }
+
+  /// Send `code`, from the document `from`, to the q terminal as `send`
+  /// does: Smart Send's terminal target (#957).
+  async sendCode(code: string, from: Uri): Promise<void> {
+    const lines = replLines(code);
+    if (lines.length === 0) {
+      return;
+    }
     if (this.last === undefined && this.starting === undefined) {
-      this.starting = this.start("q", editor.document.uri).finally(() => (this.starting = undefined));
+      this.starting = this.start("q", from).finally(() => (this.starting = undefined));
     }
     const terminal = this.last ?? (await this.starting);
     if (terminal === undefined) {
@@ -410,8 +422,12 @@ export class QTerminals {
         );
       }
     }
+    // The `.env` file's variables go in the terminal's environment, never on
+    // its command line, where they would show; the layout's stay under the
+    // env file's.
+    const { shown, hidden } = terminalEnv(layoutEnvFor(read.qBinary, from), variables, await dotenvFor(from));
     before?.();
-    const terminal = window.createTerminal({ name, cwd });
+    const terminal = window.createTerminal({ name, cwd, ...(Object.keys(hidden).length > 0 ? { env: hidden } : {}) });
     this.ours.add(terminal);
     if (file !== undefined) {
       this.files.set(terminal, file);
@@ -421,7 +437,7 @@ export class QTerminals {
     const relative = file !== undefined && cwd !== undefined ? path.relative(cwd, file) : "";
     const inside = relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
     const args = file === undefined ? [] : [inside ? relative : file];
-    terminal.sendText(commandLine(settings.qBinary, args, shellKind(env.shell), variables), true);
+    terminal.sendText(commandLine(settings.qBinary, args, shellKind(env.shell), shown), true);
     return terminal;
   }
 }
@@ -471,6 +487,10 @@ export class Live {
   /// for started, so its entry says so: a connection the process closed is
   /// a failure, not an abort.
   private aborted: number | undefined;
+  /// The last query from the editor that failed, with q's backtrace: what
+  /// Capture Locals at Last Error (#985) runs again. Not one sent through a
+  /// gateway, nor in unwrapped mode, which has no backtrace.
+  lastFailure: { process: string; code: string; error: string; trace: string } | undefined;
   private readonly controls: QueryControls;
   private readonly parameterCache: ParameterCache;
   /// The process explorer's call on the connection, if one is out: a query
@@ -506,6 +526,11 @@ export class Live {
   private sharedWatcher: Disposable | undefined;
   /// Bumped by each read, so a slow one does not overwrite a later one.
   private sharedRead = 0;
+  /// The q terminals, for Smart Send (#957).
+  private terminals: QTerminals | undefined;
+  /// Told each async message the active connection's process sends:
+  /// `.qlint.view` and `.qlint.plot` (#960).
+  private readonly asyncListeners = new Set<(message: Buffer, process: Process) => void>();
 
   constructor(private readonly context: ExtensionContext) {
     this.output = window.createOutputChannel("q-lint: query", "q-console");
@@ -518,9 +543,10 @@ export class Live {
     this.historyTree = window.createTreeView(VIEWS.history, { treeDataProvider: this.historyView });
     this.discovery = new DiscoveryServers(context, { list: () => this.processes(), save: (processes) => this.save(processes) });
     const terminals = new QTerminals(context);
+    this.terminals = terminals;
     this.modes = new QueryModes(context);
     this.modes.setPager((label, offset, count) => this.pageHeld(label, offset, count));
-    this.modes.setRunner((code, label) => this.runDrilldown(code, label));
+    this.modes.setRunner((code, label) => this.runOnProcess(code, label));
     this.controls = new QueryControls(context, {
       activeLabel: () => this.activeLabel(),
       pick: async (title) => (await this.chosen(undefined, title, true))?.label,
@@ -1564,6 +1590,13 @@ export class Live {
         await this.runConnectScript(connection, process);
         this.connection = connection;
         this.active = process;
+        connection.whenAsync((message) => {
+          if (this.connection === connection) {
+            for (const listener of this.asyncListeners) {
+              listener(message, process);
+            }
+          }
+        });
         connection.whenClosed(() => {
           if (this.connection === connection) {
             this.connection = undefined;
@@ -2064,6 +2097,29 @@ export class Live {
     return fill ? this.filledIn(written) : written;
   }
 
+  /// Run `code` from the document `uri` as Query Current Block runs it:
+  /// its placeholders asked for, on the process the file is bound to.
+  /// Smart Send's query target (#957).
+  async queryFilledIn(code: string, uri: Uri): Promise<void> {
+    const filled = await this.filledIn(code);
+    if (filled !== undefined) {
+      await this.queryCode(filled, uri);
+    }
+  }
+
+  /// Send `code` from the document `uri` to the q terminal, starting one if
+  /// none is open: Smart Send's terminal target (#957).
+  sendToTerminal(code: string, uri: Uri): Promise<void> {
+    return this.terminals?.sendCode(code, uri) ?? Promise.resolve();
+  }
+
+  /// Hear each async message the active connection's process sends, with
+  /// that process, until the returned disposable is disposed (#960).
+  onAsyncMessage(listener: (message: Buffer, process: Process) => void): Disposable {
+    this.asyncListeners.add(listener);
+    return { dispose: () => void this.asyncListeners.delete(listener) };
+  }
+
   /// Run `code` as a query from the editor is run, its placeholders asked
   /// for first: a saved query (#912).
   async runFilledIn(code: string): Promise<void> {
@@ -2129,12 +2185,14 @@ export class Live {
 
   /// Show `payload` in the result panel, as a grid when the query mode is
   /// the console, under `label`: Query a Tag's merged table.
-  showGrid(label: string, code: string, payload: GridPayload, millis: number): void {
+  /// `mode`: shown as that, whatever the query mode: `.qlint.plot`'s chart
+  /// (#960).
+  showGrid(label: string, code: string, payload: GridPayload, millis: number, mode?: "grid" | "chart"): void {
     const configuration = workspace.getConfiguration("q-lint");
     const settings = readLive((key, fallback) => configuration.get(key, fallback));
     this.modes.show(
       { process: label, code, millis, answer: { ok: true, type: 98, text: [], grid: payload } },
-      { ...settings, mode: settings.mode === "console" ? "grid" : settings.mode },
+      { ...settings, mode: mode ?? (settings.mode === "console" ? "grid" : settings.mode) },
     );
   }
 
@@ -2263,8 +2321,9 @@ export class Live {
   /// run (`watch`) asks nothing more, and its later ones (`watched`) are
   /// not recorded, and refresh the result in place. On a TorQ gateway the
   /// code goes through `.gw.syncexec` to `serverTypes` (#909); the guard
-  /// reads it as written.
-  async run(written: string, as?: "watch" | "watched", serverTypes?: string[]): Promise<void> {
+  /// reads it as written. `mode` shows the result as a grid or a chart
+  /// whatever q-lint.query.mode is: a data file opened in the grid (#962).
+  async run(written: string, as?: "watch" | "watched", serverTypes?: string[], mode?: QueryMode): Promise<void> {
     let ready = await this.ready();
     if (ready === undefined) {
       return;
@@ -2281,7 +2340,7 @@ export class Live {
     const { connection, process } = ready;
     const code = this.throughGateway(written, process, serverTypes);
     const configuration = workspace.getConfiguration("q-lint");
-    const settings = readLive((key, fallback) => configuration.get(key, fallback));
+    const settings = { ...readLive((key, fallback) => configuration.get(key, fallback)), ...(mode !== undefined ? { mode } : {}) };
     const controls = this.controls.settings();
     const unlimited = this.controls.unlimited;
     const { consoleSize, gridLimit } = limits(settings, unlimited);
@@ -2313,6 +2372,9 @@ export class Live {
             ? readUnlimited(await connection.call(UNLIMITED, cut, consoleSize))
             : await connection.query(cut, consoleSize);
       const millis = Date.now() - started;
+      if (!answer.ok && code === written && !controls.unwrapped) {
+        this.lastFailure = { process: process.label, code, error: answer.error, trace: answer.trace };
+      }
       entry = {
         process: process.label,
         code,
@@ -2372,14 +2434,21 @@ export class Live {
     return readPage(await connection.call(PAGE, offset, count));
   }
 
-  /// Run a drill-down query on the process the result came from, as a
-  /// query from the editor is run, after asking when it is a production one.
-  private async runDrilldown(code: string, label: string): Promise<void> {
+  /// The result the panel shows, with the process and code it came from.
+  resultOnShow(): { process: string; code: string; payload: GridPayload } | undefined {
+    return this.modes.current();
+  }
+
+  /// Run a query on the process a result came from - a drill-down query
+  /// (#927), a wrangle step (#961), a cell edit (#964) - as a query from the
+  /// editor is run, read by the guard, after asking when it is a production
+  /// one (unless `askProduction` is false: the caller asked already).
+  async runOnProcess(code: string, label: string, options: { what?: string; mode?: QueryMode; askProduction?: boolean } = {}): Promise<void> {
     const process = this.processes().find((p) => p.label === label) ?? (this.active?.label === label ? this.active : undefined);
-    if (process !== undefined && isProduction(process)) {
+    if (process !== undefined && isProduction(process) && options.askProduction !== false) {
       const yes = "Run";
       const sure = await window.showWarningMessage(
-        `${process.label} is a production process (tagged ${process.tags.join(", ")}). Run this drill-down query there?\n\n${code}`,
+        `${process.label} is a production process (tagged ${process.tags.join(", ")}). Run this ${options.what ?? "drill-down query"} there?\n\n${code}`,
         { modal: true },
         yes,
       );
@@ -2389,14 +2458,14 @@ export class Live {
     }
     if (this.activeLabel() !== label) {
       if (this.connection?.isBusy) {
-        void window.showInformationMessage(`q-lint: a query is still running on ${this.active?.label}; the drill-down query goes to ${label}.`);
+        void window.showInformationMessage(`q-lint: a query is still running on ${this.active?.label}; the ${options.what ?? "drill-down query"} goes to ${label}.`);
         return;
       }
       if (!(await this.connectTo(label))) {
         return;
       }
     }
-    await this.run(code);
+    await this.run(code, undefined, undefined, options.mode);
   }
 
   /// Say a long query has ended, when the window is not focused: the user

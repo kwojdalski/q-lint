@@ -1,0 +1,94 @@
+// Logpoints (#984) with the vscode stub: Add Logpoint sends the wrapper for
+// the function at the cursor through the guard, the editor marks it, Remove
+// Logpoint and Show Logpoint Hits read the process's own list; turned off,
+// every command refuses and nothing is sent.
+const test = require("node:test");
+const assert = require("node:assert");
+const { stub, vscode } = require("./vscode_stub");
+const { LOGPOINT_COMMANDS, LOG_ADD, LOG_REMOVE, LOG_LIST, readLogpoints, hitLines } = require("../out/logpoint.js");
+const { registerLogpoints } = require("../out/logpointview.js");
+
+test("the process's list and hits are read whatever shape q gives them", () => {
+  assert.deepStrictEqual(readLogpoints({ names: "sq", hits: [] }), { names: ["sq"], hits: [] });
+  assert.deepStrictEqual(readLogpoints({ names: [], hits: [["2026.01.01D00:00:00", "sq", ",3"], "junk"] }), {
+    names: [],
+    hits: [{ time: "2026.01.01D00:00:00", name: "sq", args: ",3" }],
+  });
+  assert.throws(() => readLogpoints(1), /something other than its logpoints/);
+  assert.deepStrictEqual(hitLines("dev", []), ["# dev: no logpoint has been hit"]);
+});
+
+function setup() {
+  stub.reset();
+  const text = "/ lib\nsq:{x*x}\n\\d .fx\nmid:{[b;a] (b+a)%2}\n";
+  const lines = text.split("\n");
+  const decorated = [];
+  vscode.window.createTextEditorDecorationType = () => ({ disposed: false, dispose() { this.disposed = true; } });
+  vscode.window.activeTextEditor = {
+    document: { languageId: "q", getText: () => text, lineAt: (i) => ({ range: { line: i }, text: lines[i] }) },
+    selection: { active: { line: 3 } },
+    setDecorations: (_d, ranges) => decorated.push(ranges.map((r) => r.range.line)),
+  };
+  const sent = [];
+  const held = new Set();
+  const connection = {
+    call: async (lambda, name) => {
+      sent.push([lambda, name]);
+      if (lambda === LOG_ADD) return held.add(name), name;
+      if (lambda === LOG_REMOVE) return held.delete(name), true;
+      if (lambda === LOG_LIST) return { names: [...held], hits: [["t", "sq", ",3"]] };
+      throw new Error("unexpected");
+    },
+  };
+  const process = { label: "dev", tags: [] };
+  const live = {
+    guarded: [],
+    activeLabel: () => "dev",
+    activeProcess: () => process,
+    borrow: (use) => use(connection, process),
+    onDidChange: () => ({ dispose() {} }),
+    async runOnActive(code, query) {
+      this.guarded.push(code);
+      return { process: "dev", value: await query(connection) };
+    },
+  };
+  const lines2 = [];
+  vscode.window.createOutputChannel = () => ({ clear() {}, appendLine: (l) => lines2.push(l), show() {}, dispose() {} });
+  const api = registerLogpoints(stub.newContext(), live);
+  return { sent, live, api, decorated, output: lines2 };
+}
+
+test("Add Logpoint wraps the function at the cursor through the guard and marks it; Remove puts it back", async () => {
+  const s = setup();
+  await stub.commands.get(LOGPOINT_COMMANDS.add)();
+  assert.deepStrictEqual(s.sent, [[LOG_ADD, ".fx.mid"]]);
+  assert.deepStrictEqual(s.live.guarded, [LOG_ADD]);
+  assert.deepStrictEqual(s.api.logged(), { dev: [".fx.mid"] });
+  assert.deepStrictEqual(s.api.marked(), [3]);
+  await stub.commands.get(LOGPOINT_COMMANDS.add)("sq");
+  assert.deepStrictEqual(s.api.marked(), [1, 3]);
+  await stub.commands.get(LOGPOINT_COMMANDS.hits)();
+  assert.deepStrictEqual(s.output, ["# dev: the last 1 logpoint hit, oldest first", "t sq ,3"]);
+  // Remove: the one at the cursor, read from the process's own list first.
+  await stub.commands.get(LOGPOINT_COMMANDS.remove)();
+  assert.deepStrictEqual(s.sent.slice(-2), [[LOG_LIST, undefined], [LOG_REMOVE, ".fx.mid"]]);
+  assert.deepStrictEqual(s.api.marked(), [1]);
+  await stub.commands.get(LOGPOINT_COMMANDS.removeAll)();
+  assert.deepStrictEqual(s.sent.slice(-1), [[LOG_REMOVE, "sq"]]);
+  assert.deepStrictEqual(s.api.marked(), []);
+  assert.deepStrictEqual(s.live.guarded, [LOG_ADD, LOG_ADD, LOG_REMOVE, LOG_REMOVE]);
+});
+
+test("off, every command refuses, nothing is sent, and the marks go", async () => {
+  const s = setup();
+  await stub.commands.get(LOGPOINT_COMMANDS.add)();
+  stub.config.user["logpoints.enable"] = false;
+  stub.changeConfig("q-lint.logpoints.enable");
+  assert.deepStrictEqual(s.api.marked(), []);
+  const before = s.sent.length;
+  for (const command of Object.values(LOGPOINT_COMMANDS)) {
+    await stub.commands.get(command)();
+    assert.match(stub.messages.at(-1)[1], /q-lint\.logpoints\.enable to true/);
+  }
+  assert.strictEqual(s.sent.length, before);
+});

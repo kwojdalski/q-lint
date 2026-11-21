@@ -1,0 +1,139 @@
+// The page of the Interactive Window and the q REPL pane (media/console.js)
+// over a small stand-in DOM: runs are drawn as text, never HTML, and the
+// REPL's keys ask the extension (Enter, Tab, Ctrl+R) or walk the history.
+const test = require("node:test");
+const assert = require("node:assert");
+const fs = require("node:fs");
+const path = require("node:path");
+const vm = require("node:vm");
+
+const SOURCE = fs.readFileSync(path.join(__dirname, "..", "media", "console.js"), "utf8");
+
+class El {
+  constructor(tag) {
+    this.tag = tag;
+    this.children = [];
+    this.listeners = {};
+    this.dataset = {};
+    this.attributes = {};
+    this._text = "";
+    this.className = "";
+    this.hidden = false;
+    this.value = "";
+    this.selectionStart = 0;
+    this.selectionEnd = 0;
+  }
+  append(...kids) { for (const k of kids) { k.parent = this; this.children.push(k); } }
+  replaceChildren(...kids) { this.children = []; this.append(...kids); }
+  remove() { if (this.parent) this.parent.children = this.parent.children.filter((c) => c !== this); }
+  addEventListener(type, f) { (this.listeners[type] ??= []).push(f); }
+  setAttribute(k, v) { this.attributes[k] = v; }
+  focus() {}
+  scrollIntoView() {}
+  set textContent(v) { this._text = String(v); this.children = []; }
+  get textContent() { return this._text + this.children.map((c) => c.textContent).join(""); }
+  get innerHTML() { throw new Error("the page must not read or write HTML"); }
+  set innerHTML(_v) { throw new Error("the page must not read or write HTML"); }
+}
+
+function load(input) {
+  const body = new El("body");
+  body.dataset.input = input ? "yes" : "no";
+  const posted = [];
+  const listeners = [];
+  const window = { addEventListener: (type, f) => type === "message" && listeners.push(f) };
+  vm.runInNewContext(SOURCE, {
+    // Posted from another realm: copied, so they compare as plain objects.
+    acquireVsCodeApi: () => ({ postMessage: (m) => posted.push(JSON.parse(JSON.stringify(m))) }),
+    document: { body, createElement: (tag) => new El(tag) },
+    window,
+  });
+  const send = (data) => listeners.forEach((f) => f({ data }));
+  const find = (tag, el = body) => (el.tag === tag ? [el] : []).concat(...el.children.map((c) => find(tag, c)));
+  const key = (k, extra = {}) => {
+    let prevented = false;
+    const event = { key: k, shiftKey: false, ctrlKey: false, metaKey: false, preventDefault: () => (prevented = true), ...extra };
+    find("textarea")[0].listeners.keydown.forEach((f) => f(event));
+    return prevented;
+  };
+  return { body, posted, send, find, key };
+}
+
+test("the Interactive Window draws each run as text: name, process, code and answer", () => {
+  const page = load(false);
+  assert.deepStrictEqual(page.posted, [{ type: "ready" }]);
+  assert.strictEqual(page.find("textarea").length, 0, "no input box");
+  page.send({ type: "all", entries: [{ id: 1, title: "<b>load</b>", code: "a:1\nb:2", process: "dev", millis: 3, ok: true, lines: ["<script>x</script>"] }] });
+  const text = page.find("main")[0].textContent;
+  assert.match(text, /<b>load<\/b>dev - 3 ms/);
+  assert.match(text, /q\)a:1\n  b:2/);
+  assert.match(text, /<script>x<\/script>/);
+  page.send({ type: "add", entry: { id: 2, code: "boom", lines: [] } });
+  assert.match(page.find("main")[0].textContent, /running\.\.\./);
+  page.send({ type: "update", entry: { id: 2, code: "boom", ok: false, lines: ["'boom"] } });
+  assert.strictEqual(page.find("pre").filter((p) => p.className === "error")[0].textContent, "'boom");
+  page.send({ type: "remove", id: 2 });
+  assert.strictEqual(page.find("section").length, 1);
+  page.find("button")[0].listeners.click[0]();
+  assert.deepStrictEqual(page.posted.at(-1), { type: "clear" });
+  page.send({ type: "clear" });
+  assert.strictEqual(page.find("section").length, 0);
+});
+
+test("the REPL's keys: Enter and Tab ask the extension, Up and Down walk the history", () => {
+  const page = load(true);
+  const input = page.find("textarea")[0];
+  page.send({ type: "all", entries: [], history: ["newest", "older"] });
+  input.value = "1+1";
+  input.selectionStart = input.selectionEnd = 3;
+  assert.ok(page.key("Enter"));
+  assert.deepStrictEqual(page.posted.at(-1), { type: "enter", code: "1+1" });
+  assert.ok(!page.key("Enter", { shiftKey: true }), "Shift+Enter is left to the textarea: a new line");
+  // The extension says the input is not complete: a new line goes in.
+  input.value = "f:{";
+  input.selectionStart = input.selectionEnd = 3;
+  page.send({ type: "newline" });
+  assert.strictEqual(input.value, "f:{\n");
+  // Accepted: cleared, and the history given.
+  page.send({ type: "accepted", history: ["f:{\n}", "newest", "older"] });
+  assert.strictEqual(input.value, "");
+  assert.ok(page.key("ArrowUp"));
+  assert.strictEqual(input.value, "f:{\n}");
+  input.selectionStart = input.selectionEnd = 0;
+  page.key("ArrowUp");
+  assert.strictEqual(input.value, "newest");
+  page.key("ArrowDown");
+  page.key("ArrowDown");
+  assert.strictEqual(input.value, "", "back to the draft");
+  // Tab asks; one answer goes straight in, several are listed.
+  input.value = "x:cou";
+  input.selectionStart = input.selectionEnd = 5;
+  assert.ok(page.key("Tab"));
+  assert.deepStrictEqual(page.posted.at(-1), { type: "complete", text: "x:cou", caret: 5 });
+  page.send({ type: "completions", start: 2, caret: 5, items: [{ label: "count", detail: "q" }] });
+  assert.strictEqual(input.value, "x:count");
+  input.value = "x:co";
+  page.send({ type: "completions", start: 2, caret: 4, items: [{ label: "cos", detail: "q" }, { label: "cols", detail: "q" }] });
+  const list = page.find("ul")[0];
+  assert.strictEqual(list.hidden, false);
+  page.key("ArrowDown");
+  page.key("Enter");
+  assert.strictEqual(input.value, "x:cols");
+  assert.strictEqual(list.hidden, true);
+});
+
+test("Ctrl+R searches the history through the extension, and a key other than typing keeps what it found", () => {
+  const page = load(true);
+  const input = page.find("textarea")[0];
+  assert.ok(page.key("r", { ctrlKey: true }));
+  page.key("s");
+  assert.deepStrictEqual(page.posted.at(-1), { type: "search", query: "s", from: 0 });
+  page.send({ type: "found", index: 2, code: "select from t" });
+  assert.strictEqual(input.value, "select from t");
+  page.key("r", { ctrlKey: true });
+  assert.deepStrictEqual(page.posted.at(-1), { type: "search", query: "s", from: 3 });
+  page.send({ type: "found", index: -1, code: "" });
+  assert.match(page.find("div").find((d) => d.className === "search").textContent, /reverse search: s \(no match\)/);
+  page.key("Enter");
+  assert.deepStrictEqual(page.posted.at(-1), { type: "enter", code: "select from t" });
+});

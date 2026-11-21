@@ -1,5 +1,6 @@
 // The switches for the editor features that work with a q process or add to
-// the editor's lists (#939, #940, #944, #945): each has its own `enable`
+// the editor's lists (#939, #940, #944, #945), and the test and debugging
+// tools built on them (#979-#985): each has its own `enable`
 // setting. Free of any `vscode` import, so node tests it. A feature turned
 // off has its commands hidden (package.json's `when`) and refusing, its
 // providers and listeners unregistered, and sends nothing.
@@ -13,6 +14,19 @@ export const EDITOR_SETTINGS = {
   liveValueHover: { key: "liveValueHover.enable", fallback: false, name: "The live value hover" },
   idiomSnippets: { key: "idiomSnippets.enable", fallback: true, name: "The q idiom snippets" },
   undefinedNames: { key: "undefinedNames.enable", fallback: false, name: "The undefined-name check against the process" },
+  temporalHover: { key: "temporalHover.enable", fallback: true, name: "The temporal hover and conversion" },
+  pasteTable: { key: "pasteTable.enable", fallback: true, name: "Pasting spreadsheet data as a q table" },
+  jsonConversion: { key: "jsonConversion.enable", fallback: true, name: "The JSON and q conversion" },
+  helpPages: { key: "helpPages.enable", fallback: true, name: "The help pages for q's builtins" },
+  tryExamples: { key: "tryExamples.enable", fallback: true, name: "Runnable examples in hovers" },
+  cheatSheet: { key: "cheatSheet.enable", fallback: true, name: "The q cheat sheet" },
+  testCoverage: { key: "testExplorer.coverage.enable", fallback: true, name: "Line coverage of q tests" },
+  failedTests: { key: "testExplorer.failedTests.enable", fallback: true, name: "The failed-test diff and Re-run Failed q Tests" },
+  snapshotTests: { key: "snapshotTests.enable", fallback: true, name: "Snapshot tests" },
+  testStub: { key: "testStub.enable", fallback: true, name: "Generate Test Stub" },
+  backtraceLinks: { key: "backtraceLinks.enable", fallback: true, name: "Clickable q backtraces" },
+  logpoints: { key: "logpoints.enable", fallback: true, name: "Logpoints" },
+  localsAtError: { key: "localsAtError.enable", fallback: true, name: "Capture Locals at Last Error" },
 } as const;
 
 export type EditorFeature = keyof typeof EDITOR_SETTINGS;

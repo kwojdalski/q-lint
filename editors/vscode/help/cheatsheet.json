@@ -1,0 +1,63 @@
+[
+  {
+    "section": "Iterators",
+    "items": [
+      { "label": "each", "insert": "f each x", "description": "f applied to each item of x", "example": "count each (1 2;\"abc\")", "result": "2 3" },
+      { "label": "each both '", "insert": "f'[x;y]", "description": "f applied to x and y item by item", "example": "{x+y}'[1 2;10 20]", "result": "11 22" },
+      { "label": "each left \\:", "insert": "x f\\: y", "description": "f applied to each item of x with all of y", "example": "1 2,\\:10", "result": "(1 10;2 10)" },
+      { "label": "each right /:", "insert": "x f/: y", "description": "f applied to all of x with each item of y", "example": "1 2,/:10 20", "result": "(1 2 10;1 2 20)" },
+      { "label": "each prior ':", "insert": "f':[x]", "description": "f applied to each item and the one before it", "example": "-':[1 4 9]", "result": "1 3 5" },
+      { "label": "over /", "insert": "f/[x]", "description": "f folded over x, the last result", "example": "+/[1 2 3]", "result": "6" },
+      { "label": "scan \\", "insert": "f\\[x]", "description": "f folded over x, every result", "example": "+\\[1 2 3]", "result": "1 3 6" },
+      { "label": "converge /", "insert": "f/[x]", "description": "f applied until the result stops changing", "example": "{x div 2}/[100]", "result": "0" },
+      { "label": "do n times /", "insert": "n f/x", "description": "f applied n times", "example": "3 {2*x}/1", "result": "8" },
+      { "label": "while /", "insert": "cond f/x", "description": "f applied while cond holds", "example": "{x<100} {2*x}/1", "result": "128" },
+      { "label": "peach", "insert": "f peach x", "description": "each, in parallel over secondary threads", "example": "{x*x} peach 1 2 3", "result": "1 4 9" }
+    ]
+  },
+  {
+    "section": "Joins",
+    "items": [
+      { "label": "lj, left join", "insert": "t lj kt", "description": "every row of t, with kt's columns where its key matches", "example": "([] k:1 2) lj ([k:enlist 1] v:enlist 10)", "result": "([] k:1 2; v:10 0N)" },
+      { "label": "ij, inner join", "insert": "t ij kt", "description": "the rows of t whose key kt has", "example": "([] k:1 2) ij ([k:enlist 1] v:enlist 10)", "result": "([] k:enlist 1; v:enlist 10)" },
+      { "label": "uj, union join", "insert": "t1 uj t2", "description": "the rows of both, the columns of both", "example": "([] a:enlist 1) uj ([] b:enlist 2)", "result": "([] a:1 0N; b:0N 2)" },
+      { "label": "ej, equi join", "insert": "ej[`k;t1;t2]", "description": "the rows of t1 and t2 that match on the named columns", "example": "ej[`k;([] k:1 2; a:3 4);([] k:2 2; b:5 6)]", "result": "([] k:2 2; a:4 4; b:5 6)" },
+      { "label": "pj, plus join", "insert": "t pj kt", "description": "kt's matching numeric values added to t's", "example": "([] k:1 2; v:1 1) pj ([k:enlist 2] v:enlist 10)", "result": "([] k:1 2; v:1 11)" },
+      { "label": "aj, as-of join", "insert": "aj[`sym`time;t;q]", "description": "each row of t with the last row of q at or before its time", "example": "aj[`sym`time;([] sym:enlist `a; time:enlist 10:00);([] sym:`a`a; time:09:00 11:00; px:1 2)]", "result": "([] sym:enlist `a; time:enlist 10:00; px:enlist 1)" },
+      { "label": "wj, window join", "insert": "wj[w;`sym`time;t;(q;(max;`px))]", "description": "an aggregate of q's rows within a window around each time of t", "example": "t:([] sym:enlist `a; time:enlist 10:00); q:([] sym:`a`a`a; time:09:58 10:01 10:05; px:1 2 3); wj[-2 2+\\:t`time;`sym`time;t;(q;(max;`px))]", "result": "([] sym:enlist `a; time:enlist 10:00; px:enlist 2)" },
+      { "label": ", (join rows)", "insert": "t1,t2", "description": "the rows of t2 after t1's, the columns the same", "example": "([] a:enlist 1),([] a:enlist 2)", "result": "([] a:1 2)" }
+    ]
+  },
+  {
+    "section": "Temporal casts",
+    "items": [
+      { "label": "timestamp to date", "insert": "`date$ts", "description": "the day a timestamp falls on", "example": "`date$2024.01.02D03:04:05", "result": "2024.01.02" },
+      { "label": "timestamp to time", "insert": "`time$ts", "description": "the time of day, to the millisecond", "example": "`time$2024.01.02D03:04:05.123456789", "result": "03:04:05.123" },
+      { "label": "timestamp to long", "insert": "`long$ts", "description": "nanoseconds since 2000.01.01", "example": "`long$2000.01.01D00:00:01", "result": "1000000000" },
+      { "label": "long to timestamp", "insert": "`timestamp$n", "description": "nanoseconds since 2000.01.01 as a timestamp", "example": "`timestamp$1000000000", "result": "2000.01.01D00:00:01" },
+      { "label": "Unix seconds to timestamp", "insert": "1970.01.01D+1000000000*s", "description": "a Unix epoch in seconds as a timestamp", "example": "1970.01.01D+1000000000*1704164645", "result": "2024.01.02D03:04:05" },
+      { "label": "timestamp to Unix seconds", "insert": "(`long$ts-1970.01.01D) div 1000000000", "description": "a timestamp as whole Unix seconds", "example": "(`long$2024.01.02D03:04:05-1970.01.01D) div 1000000000", "result": "1704164645" },
+      { "label": "date + time to timestamp", "insert": "d+t", "description": "a date plus a time of day", "example": "2024.01.02+03:04:05.000", "result": "2024.01.02D03:04:05" },
+      { "label": "date to month", "insert": "`month$d", "description": "the month a date falls in", "example": "`month$2024.03.15", "result": "2024.03m" },
+      { "label": "month to date", "insert": "`date$m", "description": "the first day of a month", "example": "`date$2024.03m", "result": "2024.03.01" },
+      { "label": "date to int", "insert": "`int$d", "description": "days since 2000.01.01", "example": "`int$2000.01.31", "result": "30i" },
+      { "label": "timespan to seconds", "insert": "`second$n", "description": "a timespan as whole seconds", "example": "`second$0D01:00:05", "result": "01:00:05" },
+      { "label": "parse a timestamp", "insert": "\"P\"$s", "description": "a timestamp from its text", "example": "\"P\"$\"2024-01-02T03:04:05\"", "result": "2024.01.02D03:04:05" },
+      { "label": "parse a date", "insert": "\"D\"$s", "description": "a date from its text", "example": "\"D\"$\"2024-01-02\"", "result": "2024.01.02" },
+      { "label": "bucket times", "insert": "0D00:05 xbar ts", "description": "times rounded down to five minutes", "example": "0D00:05 xbar 2024.01.02D03:04:05", "result": "2024.01.02D03:00" },
+      { "label": "year, month, day", "insert": "`year$d", "description": "a part of a date: `year, `mm, `dd; of a time `hh, `uu, `ss", "example": "`year`mm`dd$\\:2024.03.15", "result": "2024 3 15i" }
+    ]
+  },
+  {
+    "section": "Attributes",
+    "items": [
+      { "label": "sorted `s#", "insert": "`s#x", "description": "marks x ascending, for a binary search", "example": "attr `s#1 2 3", "result": "`s" },
+      { "label": "unique `u#", "insert": "`u#x", "description": "marks x's items distinct, for a hash lookup", "example": "attr `u#`a`b`c", "result": "`u" },
+      { "label": "parted `p#", "insert": "`p#x", "description": "marks equal items as contiguous, as on disk by sym", "example": "attr `p#`a`a`b", "result": "`p" },
+      { "label": "grouped `g#", "insert": "`g#x", "description": "keeps an index of where each value is", "example": "attr `g#`b`a`b", "result": "`g" },
+      { "label": "attribute of", "insert": "attr x", "description": "the attribute set on x, ` for none", "example": "attr asc 3 1 2", "result": "`s" },
+      { "label": "on a column", "insert": "update `g#sym from t", "description": "an attribute set on a table's column", "example": "attr exec sym from update `g#sym from ([] sym:`b`a`b)", "result": "`g" },
+      { "label": "remove", "insert": "`#x", "description": "takes any attribute off", "example": "attr `#`s#1 2 3", "result": "`" }
+    ]
+  }
+]

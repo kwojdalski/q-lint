@@ -1,0 +1,31 @@
+/* The q help page (helpview.ts): VS Code's own colours and fonts. */
+body {
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+  color: var(--vscode-foreground);
+  background: var(--vscode-editor-background);
+  padding: 0 16px 24px;
+  max-width: 60em;
+}
+h1 code { font-size: 1.3em; }
+h2 { font-size: 1.05em; margin-top: 1.4em; border-bottom: 1px solid var(--vscode-panel-border); }
+code, pre { font-family: var(--vscode-editor-font-family); }
+pre {
+  background: var(--vscode-textCodeBlock-background);
+  padding: 6px 10px;
+  border-radius: 3px;
+  overflow-x: auto;
+}
+.kind {
+  font-size: 0.8em;
+  color: var(--vscode-descriptionForeground);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 3px;
+  padding: 0 5px;
+  vertical-align: middle;
+}
+.result { margin-top: -4px; color: var(--vscode-descriptionForeground); }
+a { color: var(--vscode-textLink-foreground); }
+a.try { margin-left: 1em; }
+.related a { margin-right: 0.8em; }
+.reference { margin-top: 2em; color: var(--vscode-descriptionForeground); }

@@ -3,7 +3,7 @@
   "displayName": "q-lint",
   "description": "q/kdb+ for VS Code: linting, Quick Fixes, navigation and help from the source, and connections to q processes to run code on.",
   "icon": "icon.png",
-  "version": "0.29.0",
+  "version": "0.30.0",
   "publisher": "wojdalski",
   "license": "MIT",
   "engines": {
@@ -15,7 +15,8 @@
   ],
   "activationEvents": [
     "onLanguage:q",
-    "onNotebook:q-lint-notebook"
+    "onNotebook:q-lint-notebook",
+    "onTaskType:q"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -498,6 +499,18 @@
             },
             "markdownDescription": "Follow-up queries a grid cell offers. In `query`, `{{value}}` is the cell's value as a q literal (`` `AAPL ``, `2024.01.02`, `0Nj`), `{{column}}` its column's name as a symbol, and `{{row.name}}` the value of column `name` in the same row. For example `{\"label\": \"Trades\", \"query\": \"select from trade where date={{row.date}}, sym={{value}}\", \"columns\": [\"sym\"]}`."
           },
+          "q-lint.results.wrangler.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 129,
+            "markdownDescription": "Offer the **Data Wrangler**: **q-lint: Wrangle Result...**, and **Wrangle Column...** on a grid column header's menu. Filter, sort, rename, cast and drop, each step recorded as q (`select ... where`, `xasc`, `xcol`, `update`, `delete`) and run over the result's query on its process, in the grid; **Show steps as q** opens them in an editor. Only a result of a single expression can be wrangled."
+          },
+          "q-lint.results.editCells.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 130,
+            "markdownDescription": "Offer **Edit Cell...** on a grid cell's menu: it writes the `update` that sets the cell in the table the result came from (`` update c:v from `t where ... ``), shows it, and sends it only when you choose **Run**, through the read-only guard. Off, the menu item is hidden and nothing is written or sent."
+          },
           "q-lint.query.gridHeatmap": {
             "type": "boolean",
             "default": false,
@@ -605,6 +618,30 @@
             "order": 127,
             "markdownDescription": "A hover on a table's name in a q editor asks the connected process for its `meta`, rows and memory. Off by default: it queries the process whenever the mouse rests on a table's name."
           },
+          "q-lint.processExplorer.tableTemplates.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 128,
+            "markdownDescription": "**Table Templates...** on a table of the **Process Explorer**: Select first 100, `meta`, count by date (run as a query), and an insert template of typed nulls (opened in an editor, never sent). Off, its command is hidden and sends nothing."
+          },
+          "q-lint.processExplorer.schemaDiagram.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 129,
+            "markdownDescription": "**Show Schema Diagram**: the connected process's tables drawn with their columns, and an arrow for each foreign key and link column. It can be saved as SVG or copied as a Mermaid diagram. Off, its commands are hidden, an open diagram is closed, and nothing is read."
+          },
+          "q-lint.dataFiles.open.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 131,
+            "markdownDescription": "**Open Data File in Grid** on a `.csv`, `.tsv`, `.psv`, `.txt` or `.json` file in the Explorer: loaded through q (`0:` with a type string guessed from the first 1,000 rows, or `.j.k`) and shown in the result grid. A process on this machine reads the file by its path; one elsewhere is sent the file's lines, up to 256 KB. Off, its command is hidden and sends nothing."
+          },
+          "q-lint.dataFiles.loadWizard.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 132,
+            "markdownDescription": "**Load CSV into q...**: preview a delimited file's columns with their guessed types, change any or skip it, and get the `(\"SFJ\";enlist\",\")0:` load statement. It opens in an editor, and is sent only when you choose **Run**, through the read-only guard. Off, its command is hidden and sends nothing."
+          },
           "q-lint.processMonitor.enable": {
             "type": "boolean",
             "default": true,
@@ -673,6 +710,48 @@
             "order": 133,
             "markdownDescription": "Offer the q idiom snippets in a q editor's completion list: `aj`, `aj0`, `wj`, `wj1`, `lj`, `ij`, `uj`, a bucketed `xbar` select, the `.z` handlers (`zpg`, `zps`, `zpo`, `zpc`, `zpw`, `zts`, `zws`, `zexit`) and a TorQ process skeleton (`torq`). Off, they leave the list."
           },
+          "q-lint.testExplorer.coverage.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 134,
+            "markdownDescription": "Offer the Testing view's **Coverage** profile: the workspace's functions the process holds as their files define them are replaced there with copies that count each statement, the tests run, and every function is put back; the counts show as coverage in the editor's gutter. Only a run you start sends anything. Off, the profile is not offered."
+          },
+          "q-lint.testExplorer.failedTests.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 135,
+            "markdownDescription": "Show a failed assertion's expected and actual values as a diff - a k4unit `true` row `a~b`, sent as `(a;b)` so both sides come back, or a qUnit `assertEquals` - and offer **Re-run Failed q Tests**. Off, a `true` row is sent as written and the command is hidden."
+          },
+          "q-lint.snapshotTests.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 136,
+            "markdownDescription": "Snapshot tests: **Record Query Snapshot** writes a query's printed result to `__snapshots__/<name>.qsnap` beside its file, after showing it and asking; the Testing view runs each `.qsnap` file's query again and compares; **Update Snapshot** rewrites one, after asking. Off, the files are not listed and the commands are hidden."
+          },
+          "q-lint.testStub.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 137,
+            "markdownDescription": "Offer **Generate a test for ...** on a function's definition, and **Generate Test Stub**: a `test_` function in the style of the function's test file, added to its end (or a new `tests/test_<name>.q`) after showing it and asking. Off, the code action is not offered and the command is hidden."
+          },
+          "q-lint.backtraceLinks.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 138,
+            "markdownDescription": "Make each frame of a q backtrace a link to the line that failed: in the **q-lint: query** output and other output channels, and in a terminal running q under `\\e 1`. A path from another machine opens the workspace file sharing its trailing folders. Off, nothing is linked."
+          },
+          "q-lint.logpoints.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 139,
+            "markdownDescription": "**Add Logpoint**: wrap a function on the active process so each call's arguments are printed there with `0N!` and the last 1000 kept, without editing its file; **Remove Logpoint**, **Remove All Logpoints** and **Show Logpoint Hits**. Adding and removing go through the read-only guard. Off, the commands are hidden and nothing is sent."
+          },
+          "q-lint.localsAtError.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 140,
+            "markdownDescription": "**Capture Locals at Last Error**: run the last query that failed again, after asking, with a function of its backtrace keeping its arguments, the statement it is on and its locals, put it back, and show what was kept. Off, the command is hidden and nothing is sent."
+          },
           "q-lint.processExplorer.driftDetection.enable": {
             "type": "boolean",
             "default": false,
@@ -684,6 +763,48 @@
             "default": false,
             "order": 131,
             "markdownDescription": "On saving a q file, send the function definitions the save changed to its process (the file's bound one, or the active connection), after Redefine's confirmation. Only a function the process holds as the file had it before the edit is replaced. Off by default: it sends code to a process on save. Off, nothing listens and nothing is sent."
+          },
+          "q-lint.results.plots.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 706,
+            "markdownDescription": "Keep every chart the result panel draws in the **q Plots** view, beside q Results, to step back through and save as SVG or PNG. Off, the view is hidden, the plots kept are dropped and no more are kept."
+          },
+          "q-lint.temporalHover.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 707,
+            "markdownDescription": "On hovering a q temporal literal (`2024.01.02D03:04:05`, `2024.01.02`, `0D01:00`, `09:30:00.000`, `0Np` ...) or a number of 9 digits or more in a q editor, show it converted: the integer under it, a timestamp, a date, Unix seconds to nanoseconds, ISO 8601. Also offers **q-lint: Convert Temporal Value**. Computed in the editor: nothing is sent."
+          },
+          "q-lint.pasteTable.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 708,
+            "markdownDescription": "Offer **q-lint: Paste Spreadsheet Data as q Table**: CSV or TSV on the clipboard pasted as a `([] ...)` literal, each column's type inferred."
+          },
+          "q-lint.jsonConversion.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 709,
+            "markdownDescription": "Offer **q-lint: Paste JSON as q** (the clipboard's JSON as the value `.j.k` reads from it) and **q-lint: Copy Value as JSON** (an expression's value on the connected process, as `.j.j` writes it)."
+          },
+          "q-lint.helpPages.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 710,
+            "markdownDescription": "Offer **q-lint: Show Help for q Builtin**: a page for one of q's builtins with its syntax, examples and related builtins. Works offline."
+          },
+          "q-lint.tryExamples.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 711,
+            "markdownDescription": "Show a builtin's examples in its hover, each with a **Try it** link that runs it on the connected process, and offer Try it on its help page. An example is sent only when Try it is clicked."
+          },
+          "q-lint.cheatSheet.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 712,
+            "markdownDescription": "Show the **q Cheat Sheet** view: iterators, joins, temporal casts and attributes, each inserted at the cursor in one click."
           }
         }
       },
@@ -930,6 +1051,115 @@
             "default": true,
             "order": 705,
             "markdownDescription": "Read and watch the workspace's `.qlint/processes.json`, a process list committed with the code, and list its processes beside the saved ones; **Add to Shared Process List** writes a saved process there, never its password. A password or secret in the file is ignored and said. Connect scripts, SSH jump hosts and launch definitions in it are read only in a trusted workspace. Off: the file is not read, its group is removed, and the command is hidden."
+          }
+        }
+      },
+      {
+        "title": "q-lint: q environment",
+        "properties": {
+          "q-lint.interpreter.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 210,
+            "markdownDescription": "**Select q Interpreter** and the status bar item beside a q editor that shows the q this workspace starts. The picker lists the q binaries found in `~/.kx` (KDB-X), `QHOME` (or `~/q`), `PATH` and the workspace folders, starts each once with `-q` to show its version, and sets the one picked as the workspace's `q-lint.terminal.qBinary`. A binary in a kdb+ or KDB-X install is started with that install's `QHOME` (and `QLIC`). Off, the command and the item are hidden, and no q is started."
+          },
+          "q-lint.licence.expiryWarning.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 211,
+            "markdownDescription": "Warn, once a day, when the licence of the q this workspace starts is within `q-lint.licence.warningDays` of its expiry date, and offer **Check q Licence Expiry**. The date is the one q reports in `.z.l`, learnt when the picker or that command starts it, and kept on this machine: the licence file is never read or sent anywhere. Off, nothing warns and the command is hidden."
+          },
+          "q-lint.licence.warningDays": {
+            "type": "integer",
+            "default": 30,
+            "minimum": 0,
+            "maximum": 365,
+            "order": 212,
+            "markdownDescription": "How many days before the licence's expiry date `q-lint.licence.expiryWarning.enable` starts warning; `0` warns only on the day and after."
+          },
+          "q-lint.env.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 213,
+            "markdownDescription": "Give the variables of the workspace folder's `q-lint.env.file` to every q the extension starts on this machine: the q terminals and REPL, processes started from the Processes view, and q tasks. They go in the environment, never on a command line, and no value is ever shown or logged. Off, the file is not read."
+          },
+          "q-lint.env.file": {
+            "type": "string",
+            "default": ".env",
+            "order": 214,
+            "scope": "resource",
+            "markdownDescription": "The `.env` file `q-lint.env.enable` reads: `NAME=value` lines, `#` comments, an optional `export `, quotes dropped and nothing expanded, as `q-lint.terminal.envPath` reads its file. Relative to the workspace folder; a leading `~` is your home directory. A missing file is no file."
+          },
+          "q-lint.devContainer.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 215,
+            "markdownDescription": "**Add q Dev Container Configuration**: shows a `.devcontainer/` for Dev Containers and Codespaces that installs KDB-X, and writes it into the workspace folder only when you choose **Write**, never over a file already there. Off, the command is hidden and refuses."
+          },
+          "q-lint.tasks.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 216,
+            "markdownDescription": "The `q` task type: **run current file** and a **test** task per test runner script (`run_tests.q` and the like) under **Run Task**, and `q` tasks in `tasks.json`. Each runs `q-lint.terminal.qBinary` on its script, which exits when the script ends; the `$q` problem matcher puts q's error, with its file and line, in Problems. Off, the provider is unregistered and no task runs."
+          }
+        }
+      },
+      {
+        "title": "q-lint: interactive",
+        "properties": {
+          "q-lint.cells.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 0,
+            "markdownDescription": "Code cells: a line starting `/ %%` at column 0 starts a cell, as `# %%` does in a Python file. **Run Cell** (Ctrl+Enter in a file with cells), **Run All Cells** and **Open Interactive Window**; a cell runs on the file's process and its answer lands in the **q Interactive** window. Off: the commands are hidden and refuse, and the window closes."
+          },
+          "q-lint.cells.codeLens.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 1,
+            "markdownDescription": "Show **Run Cell**, **Run Above** and **Run Below** over each `/ %%` line, and offer **Run Cells Above** and **Run Cell and Below**. Needs `#q-lint.cells.enable#`."
+          },
+          "q-lint.smartSend.enable": {
+            "type": "boolean",
+            "default": false,
+            "order": 2,
+            "markdownDescription": "**Smart Send** on Shift+Enter in a q editor: send the statement at the cursor (or the selection) and move the cursor to the next statement. Off by default, since it takes Shift+Enter and sends code on a keypress."
+          },
+          "q-lint.smartSend.target": {
+            "type": "string",
+            "enum": [
+              "query",
+              "interactiveWindow",
+              "repl",
+              "terminal"
+            ],
+            "enumDescriptions": [
+              "As **Query Current Block** does: the result output or panel, and Query History.",
+              "The **q Interactive** window (needs `#q-lint.cells.enable#`).",
+              "The **q REPL** pane (needs `#q-lint.repl.enable#`).",
+              "The q terminal, as **Send Current Block to Terminal** does."
+            ],
+            "default": "query",
+            "order": 3,
+            "markdownDescription": "Where **Smart Send** sends the statement."
+          },
+          "q-lint.repl.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 4,
+            "markdownDescription": "**Open q REPL Pane**: a console beside the editor on the connected process, with multiline input, history (Up, Down, Ctrl+R) and Tab completion from q's words, the workspace and the process. Off: the command is hidden and refuses, and the pane closes."
+          },
+          "q-lint.view.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 5,
+            "markdownDescription": "Open what `.qlint.view t` (the grid) and `.qlint.plot t` (a chart) send from code you run, and offer **Define .qlint.view and .qlint.plot on Process**, which defines them there. Off: nothing is defined and a call only gives its value back."
+          },
+          "q-lint.view.defineOnConnect": {
+            "type": "boolean",
+            "default": false,
+            "order": 6,
+            "markdownDescription": "Define `.qlint.view` and `.qlint.plot` on each process as it is connected to. Never on a process the read-only guard guards. Needs `#q-lint.view.enable#`."
           }
         }
       }
@@ -1210,6 +1440,60 @@
         "icon": "$(search)"
       },
       {
+        "command": "q-lint.wrangleResult",
+        "title": "Wrangle Result...",
+        "category": "q-lint",
+        "icon": "$(wand)"
+      },
+      {
+        "command": "q-lint.wrangleResultColumn",
+        "title": "Wrangle Column...",
+        "category": "q-lint",
+        "icon": "$(wand)"
+      },
+      {
+        "command": "q-lint.editResultCell",
+        "title": "Edit Cell...",
+        "category": "q-lint",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "q-lint.openDataFile",
+        "title": "Open Data File in Grid",
+        "category": "q-lint",
+        "icon": "$(table)"
+      },
+      {
+        "command": "q-lint.loadCsvWizard",
+        "title": "Load CSV into q...",
+        "category": "q-lint",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "q-lint.tableTemplates",
+        "title": "Table Templates...",
+        "category": "q-lint",
+        "icon": "$(symbol-snippet)"
+      },
+      {
+        "command": "q-lint.showSchemaDiagram",
+        "title": "Show Schema Diagram",
+        "category": "q-lint",
+        "icon": "$(type-hierarchy)"
+      },
+      {
+        "command": "q-lint.saveSchemaDiagram",
+        "title": "Save Schema Diagram as SVG",
+        "category": "q-lint",
+        "icon": "$(save)"
+      },
+      {
+        "command": "q-lint.copySchemaMermaid",
+        "title": "Copy Schema as Mermaid",
+        "category": "q-lint",
+        "icon": "$(copy)"
+      },
+      {
         "command": "q-lint.runInTerminal",
         "title": "Run Code from Terminal",
         "category": "q-lint",
@@ -1360,6 +1644,59 @@
         "title": "Redefine on Process",
         "category": "q-lint",
         "icon": "$(cloud-upload)",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.rerunFailedTests",
+        "title": "Re-run Failed q Tests",
+        "category": "q-lint",
+        "icon": "$(debug-rerun)"
+      },
+      {
+        "command": "q-lint.recordSnapshot",
+        "title": "Record Query Snapshot",
+        "category": "q-lint",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.updateSnapshot",
+        "title": "Update Snapshot",
+        "category": "q-lint",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.generateTestStub",
+        "title": "Generate Test Stub",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.addLogpoint",
+        "title": "Add Logpoint",
+        "category": "q-lint",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.removeLogpoint",
+        "title": "Remove Logpoint",
+        "category": "q-lint",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.removeAllLogpoints",
+        "title": "Remove All Logpoints",
+        "category": "q-lint",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.showLogpointHits",
+        "title": "Show Logpoint Hits",
+        "category": "q-lint",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.captureLocals",
+        "title": "Capture Locals at Last Error",
+        "category": "q-lint",
         "enablement": "q-lint.connected"
       },
       {
@@ -1530,6 +1867,159 @@
         "title": "Draft qSQL from a Description",
         "category": "q-lint",
         "icon": "$(sparkle)"
+      },
+      {
+        "command": "q-lint.selectInterpreter",
+        "title": "Select q Interpreter",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.checkLicence",
+        "title": "Check q Licence Expiry",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.addDevContainer",
+        "title": "Add q Dev Container Configuration",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.runCell",
+        "title": "Run Cell",
+        "category": "q-lint",
+        "icon": "$(play)"
+      },
+      {
+        "command": "q-lint.runAllCells",
+        "title": "Run All Cells",
+        "category": "q-lint",
+        "icon": "$(run-all)"
+      },
+      {
+        "command": "q-lint.openInteractiveWindow",
+        "title": "Open Interactive Window",
+        "category": "q-lint",
+        "icon": "$(window)"
+      },
+      {
+        "command": "q-lint.clearInteractiveWindow",
+        "title": "Clear Interactive Window",
+        "category": "q-lint",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "q-lint.runCellsAbove",
+        "title": "Run Cells Above",
+        "category": "q-lint",
+        "icon": "$(run-above)"
+      },
+      {
+        "command": "q-lint.runCellsBelow",
+        "title": "Run Cell and Below",
+        "category": "q-lint",
+        "icon": "$(run-below)"
+      },
+      {
+        "command": "q-lint.smartSend",
+        "title": "Smart Send Statement and Move to the Next",
+        "category": "q-lint",
+        "icon": "$(debug-step-over)"
+      },
+      {
+        "command": "q-lint.openReplPane",
+        "title": "Open q REPL Pane",
+        "category": "q-lint",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "q-lint.defineViewHelpers",
+        "title": "Define .qlint.view and .qlint.plot on Process",
+        "category": "q-lint",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "q-lint.convertTemporal",
+        "title": "Convert Temporal Value",
+        "category": "q-lint",
+        "icon": "$(calendar)"
+      },
+      {
+        "command": "q-lint.pasteAsTable",
+        "title": "Paste Spreadsheet Data as q Table",
+        "category": "q-lint",
+        "icon": "$(table)"
+      },
+      {
+        "command": "q-lint.pasteJsonAsQ",
+        "title": "Paste JSON as q",
+        "category": "q-lint",
+        "icon": "$(json)"
+      },
+      {
+        "command": "q-lint.copyAsJson",
+        "title": "Copy Value as JSON",
+        "category": "q-lint",
+        "icon": "$(json)"
+      },
+      {
+        "command": "q-lint.showHelp",
+        "title": "Show Help for q Builtin",
+        "category": "q-lint",
+        "icon": "$(book)"
+      },
+      {
+        "command": "q-lint.tryExample",
+        "title": "Try Example on Process",
+        "category": "q-lint",
+        "icon": "$(play)"
+      },
+      {
+        "command": "q-lint.showCheatSheet",
+        "title": "Show Cheat Sheet",
+        "category": "q-lint",
+        "icon": "$(notebook)"
+      },
+      {
+        "command": "q-lint.insertCheatSheetEntry",
+        "title": "Insert Cheat Sheet Entry",
+        "category": "q-lint",
+        "icon": "$(insert)"
+      },
+      {
+        "command": "q-lint.showPlots",
+        "title": "Show Plots",
+        "category": "q-lint",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "q-lint.previousPlot",
+        "title": "Previous Plot",
+        "category": "q-lint",
+        "icon": "$(arrow-left)"
+      },
+      {
+        "command": "q-lint.nextPlot",
+        "title": "Next Plot",
+        "category": "q-lint",
+        "icon": "$(arrow-right)"
+      },
+      {
+        "command": "q-lint.savePlot",
+        "title": "Save Plot As...",
+        "category": "q-lint",
+        "icon": "$(save)"
+      },
+      {
+        "command": "q-lint.removePlot",
+        "title": "Remove Plot",
+        "category": "q-lint",
+        "icon": "$(close)"
+      },
+      {
+        "command": "q-lint.clearPlots",
+        "title": "Clear Plots",
+        "category": "q-lint",
+        "icon": "$(clear-all)"
       }
     ],
     "views": {
@@ -1598,6 +2088,12 @@
           "icon": "media/view-history.svg",
           "contextualTitle": "q-lint",
           "when": "config.q-lint.savedQueries.enable"
+        },
+        {
+          "id": "q-lint.cheatSheet",
+          "name": "q Cheat Sheet",
+          "when": "config.q-lint.cheatSheet.enable",
+          "icon": "media/view-cheatsheet.svg"
         }
       ],
       "q-lint-results": [
@@ -1607,6 +2103,13 @@
           "name": "q Results",
           "icon": "media/view-results.svg",
           "contextualTitle": "q-lint"
+        },
+        {
+          "type": "webview",
+          "id": "q-lint.plots",
+          "name": "q Plots",
+          "when": "config.q-lint.results.plots.enable",
+          "icon": "media/view-plots.svg"
         }
       ]
     },
@@ -1615,6 +2118,14 @@
         {
           "command": "q-lint.drillDownResultCell",
           "when": "(webviewId == 'q-lint.result' || webviewId == 'q-lint.results') && webviewSection == 'cell' && config.q-lint.results.drilldown.enable"
+        },
+        {
+          "command": "q-lint.editResultCell",
+          "when": "(webviewId == 'q-lint.result' || webviewId == 'q-lint.results') && webviewSection == 'cell' && config.q-lint.results.editCells.enable"
+        },
+        {
+          "command": "q-lint.wrangleResultColumn",
+          "when": "(webviewId == 'q-lint.result' || webviewId == 'q-lint.results') && webviewSection == 'column' && config.q-lint.results.wrangler.enable"
         }
       ],
       "view/title": [
@@ -1742,6 +2253,36 @@
           "command": "q-lint.checkDrift",
           "when": "view == q-lint.processExplorer && config.q-lint.processExplorer.driftDetection.enable",
           "group": "2_drift@1"
+        },
+        {
+          "command": "q-lint.showSchemaDiagram",
+          "when": "view == q-lint.processExplorer && q-lint.connected && config.q-lint.processExplorer.schemaDiagram.enable",
+          "group": "navigation@3"
+        },
+        {
+          "command": "q-lint.wrangleResult",
+          "when": "view == q-lint.results && q-lint.result.shown && config.q-lint.results.wrangler.enable",
+          "group": "navigation"
+        },
+        {
+          "command": "q-lint.previousPlot",
+          "when": "view == q-lint.plots && config.q-lint.results.plots.enable",
+          "group": "navigation@1"
+        },
+        {
+          "command": "q-lint.nextPlot",
+          "when": "view == q-lint.plots && config.q-lint.results.plots.enable",
+          "group": "navigation@2"
+        },
+        {
+          "command": "q-lint.savePlot",
+          "when": "view == q-lint.plots && config.q-lint.results.plots.enable",
+          "group": "navigation@3"
+        },
+        {
+          "command": "q-lint.clearPlots",
+          "when": "view == q-lint.plots && config.q-lint.results.plots.enable",
+          "group": "navigation@4"
         }
       ],
       "view/item/context": [
@@ -1979,6 +2520,11 @@
           "command": "q-lint.addToSharedProcesses",
           "when": "view == q-lint.processes && viewItem =~ /^process/ && workspaceFolderCount > 0 && config.q-lint.processes.shared.enable",
           "group": "2_edit@7"
+        },
+        {
+          "command": "q-lint.tableTemplates",
+          "when": "view == q-lint.processExplorer && viewItem == explorer.table && config.q-lint.processExplorer.tableTemplates.enable",
+          "group": "1_preview@2"
         }
       ],
       "editor/title/run": [
@@ -2054,6 +2600,16 @@
         {
           "command": "q-lint.importIpynb",
           "when": "resourceExtname =~ /^\\.ipynb$/i && config.q-lint.notebook.export.enable",
+          "group": "q-lint"
+        },
+        {
+          "command": "q-lint.openDataFile",
+          "when": "resourceExtname =~ /^\\.(csv|tsv|tab|psv|txt|json)$/i && config.q-lint.dataFiles.open.enable",
+          "group": "q-lint"
+        },
+        {
+          "command": "q-lint.loadCsvWizard",
+          "when": "resourceExtname =~ /^\\.(csv|tsv|tab|psv|txt)$/i && config.q-lint.dataFiles.loadWizard.enable",
           "group": "q-lint"
         }
       ],
@@ -2132,6 +2688,62 @@
           "command": "q-lint.draftQsql",
           "when": "editorLangId == q && config.q-lint.chat.englishToQsql.enable",
           "group": "q-lint@9"
+        },
+        {
+          "command": "q-lint.runCell",
+          "when": "editorLangId == q && q-lint.hasCells && config.q-lint.cells.enable",
+          "group": "q-lint@30"
+        },
+        {
+          "command": "q-lint.smartSend",
+          "when": "editorLangId == q && config.q-lint.smartSend.enable",
+          "group": "q-lint@31"
+        },
+        {
+          "command": "q-lint.showHelp",
+          "when": "editorLangId == q && config.q-lint.helpPages.enable",
+          "group": "q-lint@32"
+        },
+        {
+          "command": "q-lint.convertTemporal",
+          "when": "editorLangId == q && config.q-lint.temporalHover.enable",
+          "group": "q-lint@33"
+        },
+        {
+          "command": "q-lint.pasteAsTable",
+          "when": "editorLangId == q && config.q-lint.pasteTable.enable",
+          "group": "q-lint@34"
+        },
+        {
+          "command": "q-lint.pasteJsonAsQ",
+          "when": "editorLangId == q && config.q-lint.jsonConversion.enable",
+          "group": "q-lint@35"
+        },
+        {
+          "command": "q-lint.copyAsJson",
+          "when": "editorLangId == q && config.q-lint.jsonConversion.enable",
+          "group": "q-lint@36"
+        },
+        {
+          "command": "q-lint.recordSnapshot",
+          "when": "editorLangId == q && q-lint.connected && config.q-lint.snapshotTests.enable",
+          "group": "q-lint@10"
+        },
+        {
+          "command": "q-lint.addLogpoint",
+          "when": "editorLangId == q && q-lint.connected && config.q-lint.logpoints.enable",
+          "group": "q-lint@10"
+        },
+        {
+          "command": "q-lint.generateTestStub",
+          "when": "editorLangId == q && config.q-lint.testStub.enable",
+          "group": "q-lint@10"
+        }
+      ],
+      "testing/item/context": [
+        {
+          "command": "q-lint.updateSnapshot",
+          "when": "controllerId == q-lint.tests && testId =~ /\\.qsnap$/ && config.q-lint.snapshotTests.enable"
         }
       ],
       "commandPalette": [
@@ -2310,6 +2922,182 @@
         {
           "command": "q-lint.draftQsql",
           "when": "config.q-lint.chat.englishToQsql.enable"
+        },
+        {
+          "command": "q-lint.selectInterpreter",
+          "when": "config.q-lint.interpreter.enable"
+        },
+        {
+          "command": "q-lint.checkLicence",
+          "when": "config.q-lint.licence.expiryWarning.enable"
+        },
+        {
+          "command": "q-lint.addDevContainer",
+          "when": "config.q-lint.devContainer.enable && workspaceFolderCount > 0"
+        },
+        {
+          "command": "q-lint.runCell",
+          "when": "config.q-lint.cells.enable"
+        },
+        {
+          "command": "q-lint.runAllCells",
+          "when": "config.q-lint.cells.enable"
+        },
+        {
+          "command": "q-lint.openInteractiveWindow",
+          "when": "config.q-lint.cells.enable"
+        },
+        {
+          "command": "q-lint.clearInteractiveWindow",
+          "when": "config.q-lint.cells.enable"
+        },
+        {
+          "command": "q-lint.runCellsAbove",
+          "when": "config.q-lint.cells.enable && config.q-lint.cells.codeLens.enable"
+        },
+        {
+          "command": "q-lint.runCellsBelow",
+          "when": "config.q-lint.cells.enable && config.q-lint.cells.codeLens.enable"
+        },
+        {
+          "command": "q-lint.smartSend",
+          "when": "config.q-lint.smartSend.enable"
+        },
+        {
+          "command": "q-lint.openReplPane",
+          "when": "config.q-lint.repl.enable"
+        },
+        {
+          "command": "q-lint.defineViewHelpers",
+          "when": "config.q-lint.view.enable"
+        },
+        {
+          "command": "q-lint.wrangleResult",
+          "when": "q-lint.result.shown && config.q-lint.results.wrangler.enable"
+        },
+        {
+          "command": "q-lint.wrangleResultColumn",
+          "when": "false"
+        },
+        {
+          "command": "q-lint.editResultCell",
+          "when": "false"
+        },
+        {
+          "command": "q-lint.openDataFile",
+          "when": "config.q-lint.dataFiles.open.enable"
+        },
+        {
+          "command": "q-lint.loadCsvWizard",
+          "when": "config.q-lint.dataFiles.loadWizard.enable"
+        },
+        {
+          "command": "q-lint.tableTemplates",
+          "when": "false"
+        },
+        {
+          "command": "q-lint.showSchemaDiagram",
+          "when": "q-lint.connected && config.q-lint.processExplorer.schemaDiagram.enable"
+        },
+        {
+          "command": "q-lint.saveSchemaDiagram",
+          "when": "activeWebviewPanelId == 'q-lint.schema' && config.q-lint.processExplorer.schemaDiagram.enable"
+        },
+        {
+          "command": "q-lint.copySchemaMermaid",
+          "when": "activeWebviewPanelId == 'q-lint.schema' && config.q-lint.processExplorer.schemaDiagram.enable"
+        },
+        {
+          "command": "q-lint.convertTemporal",
+          "when": "config.q-lint.temporalHover.enable"
+        },
+        {
+          "command": "q-lint.pasteAsTable",
+          "when": "config.q-lint.pasteTable.enable"
+        },
+        {
+          "command": "q-lint.pasteJsonAsQ",
+          "when": "config.q-lint.jsonConversion.enable"
+        },
+        {
+          "command": "q-lint.copyAsJson",
+          "when": "config.q-lint.jsonConversion.enable"
+        },
+        {
+          "command": "q-lint.showHelp",
+          "when": "config.q-lint.helpPages.enable"
+        },
+        {
+          "command": "q-lint.tryExample",
+          "when": "false"
+        },
+        {
+          "command": "q-lint.showCheatSheet",
+          "when": "config.q-lint.cheatSheet.enable"
+        },
+        {
+          "command": "q-lint.insertCheatSheetEntry",
+          "when": "false"
+        },
+        {
+          "command": "q-lint.showPlots",
+          "when": "config.q-lint.results.plots.enable"
+        },
+        {
+          "command": "q-lint.previousPlot",
+          "when": "config.q-lint.results.plots.enable"
+        },
+        {
+          "command": "q-lint.nextPlot",
+          "when": "config.q-lint.results.plots.enable"
+        },
+        {
+          "command": "q-lint.savePlot",
+          "when": "config.q-lint.results.plots.enable"
+        },
+        {
+          "command": "q-lint.removePlot",
+          "when": "config.q-lint.results.plots.enable"
+        },
+        {
+          "command": "q-lint.clearPlots",
+          "when": "config.q-lint.results.plots.enable"
+        },
+        {
+          "command": "q-lint.rerunFailedTests",
+          "when": "config.q-lint.testExplorer.enable && config.q-lint.testExplorer.failedTests.enable"
+        },
+        {
+          "command": "q-lint.recordSnapshot",
+          "when": "config.q-lint.snapshotTests.enable && editorLangId == q"
+        },
+        {
+          "command": "q-lint.updateSnapshot",
+          "when": "config.q-lint.snapshotTests.enable"
+        },
+        {
+          "command": "q-lint.generateTestStub",
+          "when": "config.q-lint.testStub.enable && editorLangId == q"
+        },
+        {
+          "command": "q-lint.addLogpoint",
+          "when": "config.q-lint.logpoints.enable"
+        },
+        {
+          "command": "q-lint.removeLogpoint",
+          "when": "config.q-lint.logpoints.enable"
+        },
+        {
+          "command": "q-lint.removeAllLogpoints",
+          "when": "config.q-lint.logpoints.enable"
+        },
+        {
+          "command": "q-lint.showLogpointHits",
+          "when": "config.q-lint.logpoints.enable"
+        },
+        {
+          "command": "q-lint.captureLocals",
+          "when": "config.q-lint.localsAtError.enable"
         }
       ],
       "editor/title": [
@@ -2342,6 +3130,16 @@
         {
           "command": "q-lint.runNotebookWithParameters",
           "when": "config.q-lint.notebook.parameters.enable"
+        },
+        {
+          "command": "q-lint.saveSchemaDiagram",
+          "when": "activeWebviewPanelId == 'q-lint.schema' && config.q-lint.processExplorer.schemaDiagram.enable",
+          "group": "navigation@1"
+        },
+        {
+          "command": "q-lint.copySchemaMermaid",
+          "when": "activeWebviewPanelId == 'q-lint.schema' && config.q-lint.processExplorer.schemaDiagram.enable",
+          "group": "navigation@2"
         }
       ]
     },
@@ -2396,6 +3194,10 @@
       {
         "view": "q-lint.savedQueries",
         "contents": "No saved queries in this workspace.\n[Save Query](command:q-lint.saveQuery) saves the selection, or the statement at the cursor, under a name; Save Query on a Query History entry saves that one."
+      },
+      {
+        "view": "q-lint.cheatSheet",
+        "contents": "Iterators, joins, temporal casts and attributes, each inserted at the cursor when chosen.\n[Show Help for q Builtin](command:q-lint.showHelp)"
       }
     ],
     "keybindings": [
@@ -2438,6 +3240,16 @@
         "command": "q-lint.toggleParameterCache",
         "key": "ctrl+shift+'",
         "when": "editorTextFocus && editorLangId == q"
+      },
+      {
+        "command": "q-lint.runCell",
+        "key": "ctrl+enter",
+        "when": "editorTextFocus && editorLangId == q && q-lint.hasCells && config.q-lint.cells.enable"
+      },
+      {
+        "command": "q-lint.smartSend",
+        "key": "shift+enter",
+        "when": "editorTextFocus && editorLangId == q && !suggestWidgetVisible && !inlineSuggestionVisible && config.q-lint.smartSend.enable"
       }
     ],
     "languageModelTools": [
@@ -2612,6 +3424,51 @@
           {
             "name": "error",
             "description": "Explain the last failed query, or the q error typed"
+          }
+        ]
+      }
+    ],
+    "taskDefinitions": [
+      {
+        "type": "q",
+        "required": [
+          "script"
+        ],
+        "when": "config.q-lint.tasks.enable",
+        "properties": {
+          "script": {
+            "type": "string",
+            "description": "The q script to run, relative to the workspace folder; `${file}` is the current file."
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Arguments after the script, as q reads them: `-p 5001`."
+          }
+        }
+      }
+    ],
+    "problemMatchers": [
+      {
+        "name": "q",
+        "owner": "q-lint",
+        "source": "q",
+        "fileLocation": [
+          "autoDetect",
+          "${workspaceFolder}"
+        ],
+        "severity": "error",
+        "pattern": [
+          {
+            "regexp": "^'(?:\\d{4}\\.\\d{2}\\.\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d+ )?(.+?)\\r?$",
+            "message": 1
+          },
+          {
+            "regexp": "^\\s+\\[\\d+\\]\\s+(.+?):(\\d+):(?: .*)?\\r?$",
+            "file": 1,
+            "line": 2
           }
         ]
       }

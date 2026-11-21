@@ -41,6 +41,25 @@ import { Drift } from "./driftview";
 import { registerAssistTools } from "./assisttools";
 import { registerChat } from "./chat";
 import { registerQsqlDraft } from "./qsqldraft";
+import { Interpreters } from "./interpreterview";
+import { registerTasks } from "./taskprovider";
+import { registerDevContainer } from "./devcontainerview";
+import { registerInteractive } from "./interactiveview";
+import { registerRepl } from "./replview";
+import { registerViewHelpers } from "./viewhelpers";
+import { ResultTools } from "./resulttools";
+import { SchemaTools } from "./schemaview";
+import { registerTemporal } from "./temporalview";
+import { registerPaste } from "./pasteview";
+import { registerHelp } from "./helpview";
+import { registerCheatSheet } from "./cheatsheetview";
+import { PlotsView } from "./plotsview";
+import { PLOTS } from "./plots";
+import { registerSnapshots } from "./snapshotview";
+import { registerTestStubs } from "./teststubview";
+import { registerBacktraceLinks } from "./backtraceview";
+import { registerLogpoints } from "./logpointview";
+import { registerLocalsAtError } from "./localsview";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -132,6 +151,20 @@ export async function activate(
     hotReload: Drift["hotReloadState"];
     assistTools: () => string[];
     chatParticipant: () => boolean;
+    interpreter: { status: () => string | undefined };
+    qTasks: () => boolean;
+    interactive: ReturnType<typeof registerInteractive>;
+    repl: ReturnType<typeof registerRepl>;
+    viewHelpers: ReturnType<typeof registerViewHelpers>;
+    schemaDiagram: SchemaTools["state"];
+    temporal: ReturnType<typeof registerTemporal>;
+    help: ReturnType<typeof registerHelp>;
+    cheatSheet: ReturnType<typeof registerCheatSheet>;
+    plots: { registered: () => boolean; list: () => readonly { kind: string; process: string; code: string; svg: string }[]; current: () => number };
+    testStubs: ReturnType<typeof registerTestStubs>;
+    backtraceLinks: ReturnType<typeof registerBacktraceLinks>;
+    logpoints: ReturnType<typeof registerLogpoints>;
+    localsAtError: ReturnType<typeof registerLocalsAtError>;
   }
 > {
   // Replacing the binary does not restart the server, and a window reload is
@@ -185,6 +218,9 @@ export async function activate(
   });
   const chatParticipant = registerChat(context, live);
   registerQsqlDraft(context, live);
+  const repl = registerRepl(context, live);
+  const interactive = registerInteractive(context, live, repl);
+  const viewHelpers = registerViewHelpers(context, live);
   registerOnboarding(context, () => live.processes());
   const streams = new TableStreams(context, live);
   const launcher = new Launcher(context, live);
@@ -193,6 +229,21 @@ export async function activate(
   const valueHover = registerValueHover(context, live, running);
   const undefinedNames = registerUndefinedNames(context, live, running);
   const idioms = registerIdioms(context);
+  const interpreters = new Interpreters(context);
+  const qTasks = registerTasks(context);
+  registerDevContainer(context);
+  new ResultTools(context, live);
+  const schema = new SchemaTools(context, live);
+  const temporal = registerTemporal(context);
+  registerPaste(context, live);
+  const help = registerHelp(context, live);
+  const cheatSheet = registerCheatSheet(context);
+  const plots = new PlotsView(context);
+  registerSnapshots(context, live, () => void testExplorer?.discover());
+  const testStubs = registerTestStubs(context);
+  const backtraceLinks = registerBacktraceLinks(context);
+  const logpoints = registerLogpoints(context, live);
+  const localsAtError = registerLocalsAtError(context, live);
   // Not awaited: nothing above needs the server, and a slow or hung one
   // would hold up every command of the extension until it answered.
   void serial.run(() => start(context)).then(() => serverChanged());
@@ -210,13 +261,34 @@ export async function activate(
     savedQueries: () => saved.queries(),
     tableStreams: () => streams.state(),
     launchedProcesses: () => launcher.running(),
-    testExplorer: { discover: testExplorer.discover, items: testExplorer.items, results: testExplorer.results, run: testExplorer.run },
+    testExplorer: {
+      discover: testExplorer.discover,
+      items: testExplorer.items,
+      results: testExplorer.results,
+      run: testExplorer.run,
+      coverage: testExplorer.coverage,
+      profiles: testExplorer.profiles,
+    },
     valueHover,
     undefinedNames,
     idioms,
     hotReload: () => drift.hotReloadState(),
     assistTools: assistTools.registered,
     chatParticipant: chatParticipant.registered,
+    interpreter: { status: () => interpreters.status() },
+    qTasks: qTasks.registered,
+    interactive,
+    repl,
+    viewHelpers,
+    schemaDiagram: () => schema.state(),
+    temporal,
+    help,
+    cheatSheet,
+    plots: { registered: () => plots.registered(), list: () => PLOTS.list(), current: () => PLOTS.current },
+    testStubs,
+    backtraceLinks,
+    logpoints,
+    localsAtError,
   };
 }
 

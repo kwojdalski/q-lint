@@ -100,6 +100,22 @@ function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir
     "./assisttools": { registerAssistTools: () => ({ registered: () => [] }) },
     "./chat": { registerChat: () => ({ registered: () => false }) },
     "./qsqldraft": { registerQsqlDraft() {} },
+    "./interpreterview": { Interpreters: class { status() { return undefined; } } },
+    "./taskprovider": { registerTasks: () => ({ registered: () => false }) },
+    "./devcontainerview": { registerDevContainer() {} },
+    "./replview": { registerRepl: () => ({}) },
+    "./interactiveview": { registerInteractive: () => ({}) },
+    "./viewhelpers": { registerViewHelpers: () => ({}) },
+    "./temporalview": { registerTemporal: () => ({ registered: () => false }) },
+    "./pasteview": { registerPaste() {} },
+    "./helpview": { registerHelp: () => ({ hoverRegistered: () => false }) },
+    "./cheatsheetview": { registerCheatSheet: () => ({ view: () => undefined }) },
+    "./plotsview": { PlotsView: class { registered() { return false; } } },
+    "./snapshotview": { registerSnapshots() {} },
+    "./teststubview": { registerTestStubs: () => ({ registered: () => false }) },
+    "./backtraceview": { registerBacktraceLinks: () => ({ registered: () => false }) },
+    "./logpointview": { registerLogpoints: () => ({ logged: () => ({}), marked: () => [] }) },
+    "./localsview": { registerLocalsAtError: () => ({ last: () => undefined, failure: () => undefined }) },
   };
   const file = require.resolve("../out/extension.js");
   delete require.cache[file];
