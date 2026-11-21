@@ -222,3 +222,31 @@ test("a cell interrupted while it waits for the cell before it stops waiting at 
   assert.deepStrictEqual(executions[0].log, ["start", "end true"]);
   assert.deepStrictEqual(executions[1].log, ["start", "end undefined"]);
 });
+
+test("a save of what was opened keeps the fields of an output, an item and a run q-lint does not know", () => {
+  const fake = fakeVscode();
+  load(fake);
+  const file = {
+    qnb: 1,
+    cells: [
+      { kind: "markdown", source: ["# a"], language: "markdown" },
+      {
+        kind: "code",
+        source: ["1"],
+        execution: { order: 1, success: true, start: 1, end: 2, host: "h" },
+        outputs: [{ items: [{ mime: "text/plain", text: "1", note: "n" }], id: "o1" }],
+      },
+    ],
+  };
+  const text = JSON.stringify(file, null, 1) + "\n";
+  const serializer = fake.registered.serializer;
+  const data = serializer.deserializeNotebook(Buffer.from(text));
+  assert.strictEqual(Buffer.from(serializer.serializeNotebook(data)).toString(), text);
+  // Run again, the cell's new run and outputs carry none of the old ones' fields.
+  const cell = data.cells[1];
+  cell.executionSummary = { executionOrder: 2, success: true, timing: { startTime: 5, endTime: 6 } };
+  cell.outputs = [new fake.vscode.NotebookCellOutput([fake.vscode.NotebookCellOutputItem.text("1")])];
+  const saved = JSON.parse(Buffer.from(serializer.serializeNotebook(data)).toString());
+  assert.deepStrictEqual(saved.cells[1].execution, { order: 2, success: true, start: 5, end: 6 });
+  assert.deepStrictEqual(saved.cells[1].outputs, [{ items: [{ mime: "text/plain", text: "1" }] }]);
+});

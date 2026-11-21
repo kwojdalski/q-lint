@@ -43,12 +43,18 @@ import {
   type RowLimitFrom,
 } from "./liveconfig";
 import type { Live } from "./live";
-import { decodeItem, encodeItem, exportScript, NOTEBOOK, parseQnb, serializeQnb, type QnbCell } from "./qnb";
+import { decodeItem, encodeItem, exportScript, NOTEBOOK, parseQnb, serializeQnb, type QnbCell, type QnbOutput } from "./qnb";
 import { statements } from "./statements";
 
-/// Where the fields of a file or a cell this extension does not know ride in
-/// VS Code's metadata between an open and a save; never written as metadata.
+/// Where the fields of a file, a cell or an output this extension does not
+/// know ride in VS Code's metadata between an open and a save; never written
+/// as metadata. An output's holds its items' too.
 const EXTRA = "q-lint.unknownFields";
+/// Where a cell's run's unknown fields ride, with the run they belong to:
+/// a run of the cell since does not get them.
+const RUN_EXTRA = "q-lint.unknownRunFields";
+
+type Json = Record<string, unknown>;
 
 /// `metadata` with `extra` added under `EXTRA`, or undefined when both are empty.
 function stash(metadata: Record<string, unknown> | undefined, extra: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
@@ -60,8 +66,35 @@ function unstash(metadata: { [key: string]: unknown } | undefined): { metadata?:
   if (metadata === undefined) {
     return {};
   }
-  const { [EXTRA]: extra, ...rest } = metadata;
+  const { [EXTRA]: extra, [RUN_EXTRA]: _run, ...rest } = metadata;
   return { metadata: rest, ...(typeof extra === "object" && extra !== null ? { extra: extra as Record<string, unknown> } : {}) };
+}
+
+const isJson = (v: unknown): v is Json => typeof v === "object" && v !== null && !Array.isArray(v);
+
+/// An output's metadata with its own and its items' unknown fields added.
+function stashOutput(output: QnbOutput): Json | undefined {
+  const items = output.items.map((i) => i.extra ?? null);
+  if (output.extra === undefined && items.every((i) => i === null)) {
+    return output.metadata;
+  }
+  return { ...output.metadata, [EXTRA]: { ...(output.extra !== undefined ? { output: output.extra } : {}), items } };
+}
+
+/// An output as the file keeps it, its unknown fields taken back out of its
+/// metadata.
+function unstashOutput(output: NotebookCellOutput): QnbOutput {
+  const { [EXTRA]: stashed, ...metadata } = output.metadata ?? {};
+  const extra = isJson(stashed) ? stashed : {};
+  const items = Array.isArray(extra.items) ? extra.items : [];
+  return {
+    items: output.items.map((i, k) => {
+      const item = encodeItem(i.mime, i.data);
+      return isJson(items[k]) ? { ...item, extra: items[k] as Json } : item;
+    }),
+    ...(output.metadata !== undefined ? { metadata } : {}),
+    ...(isJson(extra.output) ? { extra: extra.output } : {}),
+  };
 }
 
 class QnbSerializer implements NotebookSerializer {
@@ -79,7 +112,7 @@ class QnbSerializer implements NotebookSerializer {
         );
         if (cell.outputs !== undefined) {
           item.outputs = cell.outputs.map(
-            (o) => new NotebookCellOutput(o.items.map((i) => new NotebookCellOutputItem(decodeItem(i), i.mime)), o.metadata),
+            (o) => new NotebookCellOutput(o.items.map((i) => new NotebookCellOutputItem(decodeItem(i), i.mime)), stashOutput(o)),
           );
         }
         if (cell.execution !== undefined) {
@@ -90,7 +123,11 @@ class QnbSerializer implements NotebookSerializer {
             timing: start !== undefined && end !== undefined ? { startTime: start, endTime: end } : undefined,
           };
         }
-        const metadata = stash(cell.metadata, cell.extra);
+        let metadata = stash(cell.metadata, cell.extra);
+        if (cell.execution?.extra !== undefined) {
+          const { order, start, extra } = cell.execution;
+          metadata = { ...metadata, [RUN_EXTRA]: { order, start, extra } };
+        }
         if (metadata !== undefined) {
           item.metadata = metadata;
         }
@@ -108,16 +145,19 @@ class QnbSerializer implements NotebookSerializer {
     const cells = data.cells.map((cell): QnbCell => {
       const code = cell.kind === NotebookCellKind.Code;
       const summary = cell.executionSummary;
+      // The run's unknown fields, while the run is still the one they came with.
+      const run = cell.metadata?.[RUN_EXTRA];
+      const runExtra =
+        isJson(run) && isJson(run.extra) && run.order === summary?.executionOrder && run.start === summary?.timing?.startTime
+          ? { extra: run.extra }
+          : {};
       return {
         kind: code ? "code" : "markdown",
         source: cell.value,
         ...(code && cell.languageId !== "q" ? { language: cell.languageId } : {}),
         ...(code && cell.outputs !== undefined
           ? {
-              outputs: cell.outputs.map((o) => ({
-                items: o.items.map((i) => encodeItem(i.mime, i.data)),
-                ...(o.metadata !== undefined ? { metadata: o.metadata } : {}),
-              })),
+              outputs: cell.outputs.map(unstashOutput),
             }
           : {}),
         ...(code && summary !== undefined
@@ -127,6 +167,7 @@ class QnbSerializer implements NotebookSerializer {
                 success: summary.success,
                 start: summary.timing?.startTime,
                 end: summary.timing?.endTime,
+                ...runExtra,
               },
             }
           : {}),

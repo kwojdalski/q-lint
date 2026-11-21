@@ -406,3 +406,22 @@ test("export: a lone / inside a comment is indented, so no q nests a block comme
   ]);
   assert.strictEqual(script, "/\na path:\n /\nthe root\n\\\n\na:1\n/\nnot code\n / \n\\\n\nb:2\n/\n /\n\\\n");
 });
+
+test("fields this extension does not know are kept on an output, an item and a run too", () => {
+  // Saved by a later q-lint, or another tool: the README promises a save of
+  // what was opened writes the same file.
+  const file = {
+    qnb: 1,
+    cells: [
+      { kind: "markdown", source: ["# a"], language: "markdown" },
+      {
+        kind: "code",
+        source: ["1"],
+        execution: { order: 1, success: true, start: 1, end: 2, host: "h" },
+        outputs: [{ items: [{ mime: "text/plain", text: "1", note: "n" }], id: "o1" }],
+      },
+    ],
+  };
+  const text = JSON.stringify(file, null, 1) + "\n";
+  assert.strictEqual(serializeQnb(parseQnb(text)), text);
+});
