@@ -764,7 +764,7 @@ export class Live {
     if (sure !== yes) {
       return;
     }
-    if (this.active?.label === process.label) {
+    if (this.activeLabel() === process.label) {
       await this.disconnect();
     }
     await this.context.secrets.delete(passwordKey(process.label));
@@ -955,6 +955,10 @@ export class Live {
   }
 
   private async disconnect(): Promise<void> {
+    if (this.connection === undefined && this.connecting === undefined) {
+      void window.showInformationMessage("q-lint: not connected to a q process.");
+      return;
+    }
     const connection = this.connection;
     this.connection = undefined;
     // A query running on it was stopped by the user, as Abort stops one.

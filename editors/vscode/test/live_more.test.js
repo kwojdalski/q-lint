@@ -365,3 +365,24 @@ test("renaming or deleting a process carries the files bound to it along", async
   await stub.commands.get("q-lint.deleteProcess")("renamed");
   assert.deepStrictEqual(context.workspaceState.get("q-lint.fileConnections"), { "file:///b.q": "other" });
 });
+
+// Disconnect from the command palette with nothing connected did nothing
+// and said nothing, where Abort, Reveal Process and Insert Label say there
+// is no connection.
+test("Disconnect with nothing connected says so", async (t) => {
+  const q = await fakeQ(() => CLOSE);
+  t.after(() => q.close());
+  const { live } = await setUp(t, [proc("p", q.port)]);
+  stub.messages = [];
+  await stub.commands.get("q-lint.disconnectProcess")();
+  assert.deepStrictEqual(stub.messages, [["info", "q-lint: not connected to a q process."]]);
+  // Deleting a process once connected to, whose connection has closed,
+  // has nothing to disconnect, and says nothing of it.
+  assert.strictEqual(await live.connectTo("p"), true);
+  await live.run("exit 0");
+  stub.messages = [];
+  stub.picks.push("Delete");
+  await stub.commands.get("q-lint.deleteProcess")("p");
+  assert.deepStrictEqual(live.processes(), []);
+  assert.ok(!stub.messages.some(([, text]) => text.includes("not connected")), JSON.stringify(stub.messages));
+});
