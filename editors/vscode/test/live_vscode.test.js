@@ -12,8 +12,9 @@ const { ProcessExplorer } = require("../out/explorerview.js");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /// A q process played by a socket server: it answers the handshake after
-/// `delay` ms, then each message with what `answer` gives for it (a value,
-/// sent as a response), or nothing when it gives undefined.
+/// `delay` ms (or what `delay()` gives then), then each message with what
+/// `answer` gives for it (a value, sent as a response), or nothing when it
+/// gives undefined.
 async function fakeQ(answer = () => null, delay = 0) {
   const sockets = new Set();
   const server = net.createServer((socket) => {
@@ -25,7 +26,7 @@ async function fakeQ(answer = () => null, delay = 0) {
     socket.on("data", (chunk) => {
       if (!shook) {
         shook = true;
-        setTimeout(() => socket.writable && socket.write(Buffer.from([3])), delay);
+        setTimeout(() => socket.writable && socket.write(Buffer.from([3])), typeof delay === "function" ? delay() : delay);
         return;
       }
       buffer = Buffer.concat([buffer, chunk]);
@@ -114,4 +115,64 @@ test("Toggle Auto Refresh turns it over where it is set", async (t) => {
   assert.strictEqual(view.description, "auto refresh");
   await toggle();
   assert.strictEqual(effective(), false);
+});
+
+/// The explorer's call, told apart from a query by what it asks for.
+const isGather = (message) => message.includes("`rows`spaces`more");
+
+// Abort closes the connection and opens another, whose handshake q answers
+// only once it has finished the query it was left with. That reconnect gave
+// up at the connect timeout (10 s), with an error, and left the user
+// disconnected from a process that was only busy.
+test("a reconnect after Abort waits for a process busy past the connect timeout", async (t) => {
+  const qclient = require("../out/qclient.js");
+  const timeout = qclient.CONNECT_TIMEOUT_MS;
+  qclient.CONNECT_TIMEOUT_MS = 200;
+  t.after(() => (qclient.CONNECT_TIMEOUT_MS = timeout));
+  let busyUntil = 0;
+  const a = await fakeQ(
+    (message) => {
+      if (isGather(message)) return GATHERED;
+      busyUntil = Date.now() + 900;
+      return undefined;
+    },
+    () => Math.max(0, busyUntil - Date.now()),
+  );
+  t.after(() => a.close());
+  const { live } = await setUp(t, [proc("a", a.port)]);
+  assert.strictEqual(await live.connectTo("a"), true);
+  await sleep(50);
+  const query = live.runOnActive("slow", (c) => c.call("slow")).catch((e) => e.message);
+  await sleep(50);
+  await live.abort();
+  assert.match(await query, /closed/);
+  for (let i = 0; i < 300 && live.activeLabel() === undefined; i++) await sleep(10);
+  assert.strictEqual(live.activeLabel(), "a");
+  assert.deepStrictEqual(stub.messages.filter(([level]) => level === "error"), []);
+});
+
+// Disconnect while a reconnect after Abort waits for the process: the
+// reconnect went on, and connected once the process was free.
+test("Disconnect stops a reconnect after Abort", async (t) => {
+  let busyUntil = 0;
+  const a = await fakeQ(
+    (message) => {
+      if (isGather(message)) return GATHERED;
+      busyUntil = Date.now() + 500;
+      return undefined;
+    },
+    () => Math.max(0, busyUntil - Date.now()),
+  );
+  t.after(() => a.close());
+  const { live, events } = await setUp(t, [proc("a", a.port)]);
+  assert.strictEqual(await live.connectTo("a"), true);
+  await sleep(50);
+  void live.runOnActive("slow", (c) => c.call("slow")).catch(() => {});
+  await sleep(50);
+  await live.abort();
+  await sleep(100);
+  await stub.commands.get("q-lint.disconnectProcess")();
+  await sleep(800);
+  assert.strictEqual(live.activeLabel(), undefined);
+  assert.strictEqual(events.filter((e) => e === "connected").length, 1);
 });

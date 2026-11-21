@@ -225,7 +225,9 @@ numbers, symbols, temporal literals and strings, and an included query as q.
 
 **Abort Current Query** stops waiting at once. q has no message that cancels
 a query, so the connection is closed and opened again; the process goes on
-running the query, and the new connection is made once it is free.
+running the query, and the new connection is made once it is free, however
+long that takes. **Disconnect**, or connecting to another process, stops
+it waiting.
 
 **Query History** lists each query with its process, time, duration and
 outcome; the buttons on a row run it again on the active connection and

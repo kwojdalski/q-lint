@@ -369,6 +369,9 @@ export class Live {
   private connecting: Promise<boolean> | undefined;
   /// The process `connecting` connects to, as `passwordKey` names it.
   private connectingTo: string | undefined;
+  /// Set by Disconnect, or a connect to another process, to stop a
+  /// reconnect after an abort from trying again.
+  private reconnectStopped = false;
   private running: { code: string; started: number } | undefined;
   /// When the query that timed out started, so its entry says so.
   private timedOut: number | undefined;
@@ -844,14 +847,22 @@ export class Live {
   }
 
   /// Connect to `process`, closing the connection there was. Whether it
-  /// connected.
-  private open(process: Process): Promise<boolean> {
+  /// connected. `untilFree`, after an abort: a process that does not answer
+  /// the handshake is still running the query it was left with, and is
+  /// tried again until it does, or until the user disconnects or connects
+  /// elsewhere.
+  private open(process: Process, untilFree = false): Promise<boolean> {
     if (this.connecting !== undefined) {
       // A connect to another process - a reconnect after an abort, waiting
-      // for that process to be free - is let finish and this one follows:
-      // its result says nothing of this process.
-      return this.connectingTo === passwordKey(process) ? this.connecting : this.connecting.then(() => this.open(process));
+      // for that process to be free - is stopped and this one follows: its
+      // result says nothing of this process.
+      if (this.connectingTo === passwordKey(process)) {
+        return this.connecting;
+      }
+      this.reconnectStopped = true;
+      return this.connecting.then(() => this.open(process));
     }
+    this.reconnectStopped = false;
     this.connectingTo = passwordKey(process);
     this.connecting = (async () => {
       if (this.connection !== undefined) {
@@ -865,14 +876,29 @@ export class Live {
       try {
         const connection = await window.withProgress(
           { location: { viewId: VIEWS.processes }, title: `Connecting to ${process.label}` },
-          () =>
-            QConnection.open({
+          async () => {
+            const target = {
               host: process.host,
               port: process.port,
               ...(process.user ? { user: process.user, password: password ?? "" } : {}),
               ...(process.tls ? { tls: true } : {}),
-            }),
+            };
+            for (;;) {
+              try {
+                return await QConnection.open(target);
+              } catch (error) {
+                const busy = error instanceof Error && error.message.startsWith("no answer from ");
+                if (!untilFree || !busy || this.reconnectStopped) {
+                  throw error;
+                }
+              }
+            }
+          },
         );
+        if (untilFree && this.reconnectStopped) {
+          await connection.close();
+          return false;
+        }
         this.connection = connection;
         this.active = process;
         connection.whenClosed(() => {
@@ -888,6 +914,9 @@ export class Live {
         this.changed.fire("connected");
         return true;
       } catch (error) {
+        if (untilFree && this.reconnectStopped) {
+          return false;
+        }
         void window.showErrorMessage(
           `q-lint: could not connect to ${process.label} (${address(process.host, process.port)}): ${error instanceof Error ? error.message : String(error)}`,
         );
@@ -903,6 +932,7 @@ export class Live {
   }
 
   private async disconnect(): Promise<void> {
+    this.reconnectStopped = true;
     const connection = this.connection;
     this.connection = undefined;
     this.running = undefined;
@@ -1092,7 +1122,7 @@ export class Live {
     // Not awaited: q runs one message at a time, so the new connection's
     // handshake waits until the process has finished the query it was left
     // with, and the command should not wait with it.
-    void this.open(process).then((connected) => {
+    void this.open(process, true).then((connected) => {
       if (connected) {
         void window.showInformationMessage(`q-lint: reconnected to ${process.label}.`);
       }
