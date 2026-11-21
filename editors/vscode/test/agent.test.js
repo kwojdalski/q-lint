@@ -236,3 +236,24 @@ test("a deep backtrace and a wide table are cut, as the rows are", () => {
   // A table within both limits says nothing of either.
   assert.ok(!("columnCount" in shape(ok(grid()))));
 });
+
+test("the labels an error lists are cut, so a large discovery server cannot flood the answer", () => {
+  // A desk's discovery server can list thousands of processes; the error
+  // for an unknown label listed every one (60 KB for 2000).
+  const many = [
+    {
+      server: { label: "desk", url: "http://d" },
+      state: {
+        processes: Array.from({ length: 2000 }, (_, i) => ({ label: `rdb${i}`, host: "h", port: 5000 + i, tags: [] })),
+        problems: [],
+        loading: false,
+        removed: false,
+      },
+    },
+  ];
+  const { error } = resolveProcess("nope", saved, many);
+  assert.ok(error.length < 2000, `${error.length} characters`);
+  assert.match(error, /rdb, hdb, desk\/rdb0, /);
+  assert.match(error, /and 1952 more/);
+  assert.ok(notConnected(saved, many).length < 2000);
+});

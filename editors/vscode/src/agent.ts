@@ -166,9 +166,16 @@ export function knownLabels(saved: Process[], discovered: Discovered[]): string[
   ];
 }
 
+/// The most labels an error lists: a discovery server can list thousands.
+const LABEL_LIMIT = 50;
+
 function listed(saved: Process[], discovered: Discovered[]): string {
   const labels = knownLabels(saved, discovered);
-  return labels.length === 0 ? "No q process is saved in q-lint yet." : `The labels are: ${labels.join(", ")}.`;
+  if (labels.length === 0) {
+    return "No q process is saved in q-lint yet.";
+  }
+  const more = labels.length - LABEL_LIMIT;
+  return `The labels are: ${labels.slice(0, LABEL_LIMIT).join(", ")}${more > 0 ? `, and ${more} more` : ""}.`;
 }
 
 /// The process `label` names: a saved one before a discovered one, as
