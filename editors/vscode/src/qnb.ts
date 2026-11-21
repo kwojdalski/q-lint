@@ -258,7 +258,9 @@ const trimEnd = (line: string): string => line.replace(/\s+$/, "");
 /// open would change the next. An indented first line would continue the
 /// cell above, and is unindented; a block comment the cell leaves open is
 /// closed; a lone `\`, which ends the cell's code, would end the script, and
-/// opens a block comment over the rest of the cell instead.
+/// opens a block comment over the rest of the cell instead. A lone `/`
+/// inside a comment is indented: KDB-X opens a second block comment there,
+/// which the cell's one `\` would leave open.
 function scriptCell(source: string): string[] {
   const out: string[] = [];
   let inBlock = false;
@@ -268,12 +270,12 @@ function scriptCell(source: string): string[] {
     const text = trimEnd(line);
     if (ended) {
       // Commented out, so a lone `\` here must not close the comment.
-      out.push(text === "\\" ? ` ${line}` : line);
+      out.push(text === "\\" || text === "/" ? ` ${line}` : line);
       continue;
     }
     if (inBlock) {
       inBlock = text !== "\\";
-      out.push(line);
+      out.push(text === "/" ? ` ${line}` : line);
       continue;
     }
     if (text === "/") {
@@ -296,10 +298,10 @@ function scriptCell(source: string): string[] {
 }
 
 /// A markdown cell as a block comment: `/` alone, its lines, `\` alone. A
-/// line of the cell that is a lone `\` would close the comment, and is
-/// indented by a space.
+/// line of the cell that is a lone `\` would close the comment, and a lone
+/// `/` open another in KDB-X, so each is indented by a space.
 function commentCell(source: string): string[] {
-  const lines = source.split(/\r?\n/).map((line) => (trimEnd(line) === "\\" ? ` ${line}` : line));
+  const lines = source.split(/\r?\n/).map((line) => (trimEnd(line) === "\\" || trimEnd(line) === "/" ? ` ${line}` : line));
   return ["/", ...lines, "\\"];
 }
 

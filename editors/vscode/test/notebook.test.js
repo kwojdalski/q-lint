@@ -397,3 +397,12 @@ test("a title on a cell whose /@chart a later /@grid replaces does not say it ha
   assert.match(problem, /`\/ @title` is for a chart, and this cell's `\/ @grid` after its `\/ @chart` draws none/);
   assert.match(cellDirective("/ @chart bar\n/ @console\n/ @height 400\nt").problem, /`\/ @console` after its `\/ @chart` draws none/);
 });
+
+test("export: a lone / inside a comment is indented, so no q nests a block comment there", () => {
+  const script = exportScript([
+    { kind: "markdown", source: "a path:\n/\nthe root" },
+    { kind: "code", source: "a:1\n/\nnot code\n/ \n\\" },
+    { kind: "code", source: "b:2\n\\\n/" },
+  ]);
+  assert.strictEqual(script, "/\na path:\n /\nthe root\n\\\n\na:1\n/\nnot code\n / \n\\\n\nb:2\n/\n /\n\\\n");
+});
