@@ -188,6 +188,8 @@ const OUT = [
   "  [0]  f 1",
   "       ^",
   "# rdb-prod - failed: connection refused",
+  "# rdb-uat - timed out after 5 s: the connection closed before the process answered",
+  "`a:b/c",
 ].join("\n");
 
 cases("source.q-console", [
@@ -199,6 +201,11 @@ cases("source.q-console", [
   ["a failure's error in the header", OUT, "'type", "invalid.illegal.error.q-console", 0],
   ["and on its own line", OUT, "'type", "invalid.illegal.error.q-console", 1],
   ["a query that never answered", OUT, "failed: connection refused", "invalid.illegal.error.q-console"],
+  // As live.ts writes a query q-lint.query.timeout stopped.
+  ["a query that timed out", OUT, "timed out after 5 s: the connection closed before the process answered", "invalid.illegal.error.q-console"],
+  ["and its process", OUT, "rdb-uat", "entity.name.tag.process.q-console"],
+  // As q prints it: past a colon a symbol takes slashes.
+  ["a symbol with a slash past its colon", OUT, "`a:b/c", "constant.other.symbol.q-console"],
   ["the prompt of an included query", OUT, "q)", "punctuation.separator.prompt.q-console"],
   ["the query is q", OUT, "select", "keyword.other.qsql.q"],
   ["a table's rule", OUT, "------------------------------------------------------", "comment.line.separator.q-console"],
