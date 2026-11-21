@@ -858,6 +858,8 @@ export class Live {
         const old = this.connection;
         this.connection = undefined;
         await old.close();
+        // Said now, not on connecting: the new one may never come.
+        this.changed.fire("disconnected");
       }
       const password = process.user ? await this.context.secrets.get(passwordKey(process)) : undefined;
       try {
