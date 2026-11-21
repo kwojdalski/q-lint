@@ -971,6 +971,23 @@ fn chained_queries_lint_in_bounded_time() {
         "8000 chained queries took {elapsed:?}"
     );
 }
+/// A long loop body: QV003 asked of each assignment whether a lambda opened
+/// around it by reading from the body's start, and compiled two regexes for
+/// it, so a body took time quadratic in its length - 18 s for this one in a
+/// debug build, against 1.5 s for the same file without the rule.
+#[test]
+fn a_long_loop_body_lints_in_bounded_time() {
+    let body: String = (0..16000).map(|i| format!("  a{i}:a{i},1;\n")).collect();
+    let source = format!("do[3;\n{body}  ]\n");
+    let started = std::time::Instant::now();
+    let found = lint(&source, "t.q", Profile::Uqf);
+    let elapsed = started.elapsed();
+    assert_eq!(found.iter().filter(|f| f.code == "QV003").count(), 16000);
+    assert!(
+        elapsed < std::time::Duration::from_secs(10),
+        "a 16000-line loop body took {elapsed:?}"
+    );
+}
 /// Nested `$[`, `@[` and `.[`: each split its whole contents into slots, the
 /// brackets nested in it included, so a deep nest was quadratic (#710). Past
 /// q's limit of 100, so read as with QE001 deselected.

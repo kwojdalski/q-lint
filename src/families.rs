@@ -1246,22 +1246,18 @@ fn append_in_loop(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) 
         let start = open + 1 + semi + 1;
         // Names the body has given a value not joined from themselves.
         let mut fresh = std::collections::HashSet::new();
+        let mut lambdas = LambdaDepth::new(code, start);
         for a in
             re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]*:[ \t]*").captures_iter(&code[start..close - 1])
         {
             let name = a.get(1).unwrap();
             let at = start + name.start();
-            if !crate::boundary(code, at) || strings.at(at) || in_lambda(code, start, at) {
+            if !crate::boundary(code, at) || strings.at(at) || lambdas.inside(at) {
                 continue;
             }
             // Directly after a `:` is a compound or nested assignment.
             let rhs = &code[start + a.get(0).unwrap().end()..close - 1];
-            let n = regex::escape(name.as_str());
-            let appends = regex::Regex::new(&format!(r"^{n}[ \t]*,[^:'/\\]"))
-                .is_ok_and(|r| r.is_match(rhs))
-                || regex::Regex::new(&format!(r"^raze[ \t]*\([ \t]*{n}[ \t]*;"))
-                    .is_ok_and(|r| r.is_match(rhs));
-            if !appends {
+            if !joins_itself(rhs, name.as_str()) {
                 fresh.insert(name.as_str());
                 continue;
             }
@@ -1283,17 +1279,63 @@ fn append_in_loop(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) 
     }
 }
 
-/// Whether `at` is inside a lambda that opens after `from`: braces outside
-/// strings between the two that do not close again.
-fn in_lambda(code: &str, from: usize, at: usize) -> bool {
-    let mut strings = InString::new(code);
-    let mut depth = 0i32;
-    for (i, b) in code.as_bytes()[from..at].iter().enumerate() {
-        if matches!(b, b'{' | b'}') && !strings.at(from + i) {
-            depth += if *b == b'{' { 1 } else { -1 };
+/// Whether an assignment's right side, `rhs`, joins `name` to more: `name,x`
+/// or `raze(name;x)`, spaces and tabs allowed between the parts. Not
+/// `name,:x`, `name,'x`, `name,/x` or `name,\x`: those are an append in
+/// place or an iterator, not a copy.
+///
+/// Read by hand, where QV003 compiled two regexes for every assignment in
+/// a loop body.
+fn joins_itself(rhs: &str, name: &str) -> bool {
+    fn blanks(s: &str) -> &str {
+        s.trim_start_matches([' ', '\t'])
+    }
+    let joined = rhs.strip_prefix(name).map(blanks).is_some_and(|r| {
+        r.strip_prefix(',')
+            .and_then(|r| r.chars().next())
+            .is_some_and(|c| !matches!(c, ':' | '\'' | '/' | '\\'))
+    });
+    joined
+        || rhs
+            .strip_prefix("raze")
+            .map(blanks)
+            .and_then(|r| r.strip_prefix('(').map(blanks))
+            .and_then(|r| r.strip_prefix(name).map(blanks))
+            .is_some_and(|r| r.starts_with(';'))
+}
+
+/// Whether an offset is inside a lambda that opens after `from`: braces
+/// outside strings between the two that do not close again. Asked in order
+/// of the offset, it reads on from its last answer, where reading from
+/// `from` for each assignment was quadratic in a loop body's length.
+struct LambdaDepth<'a> {
+    code: &'a str,
+    strings: InString<'a>,
+    i: usize,
+    depth: i32,
+}
+
+impl<'a> LambdaDepth<'a> {
+    fn new(code: &'a str, from: usize) -> Self {
+        LambdaDepth {
+            code,
+            strings: InString::new(code),
+            i: from,
+            depth: 0,
         }
     }
-    depth > 0
+
+    fn inside(&mut self, at: usize) -> bool {
+        debug_assert!(at >= self.i, "asked out of order");
+        let b = self.code.as_bytes();
+        while self.i < at {
+            if matches!(b[self.i], b'{' | b'}') && !self.strings.at(self.i) {
+                self.depth += if b[self.i] == b'{' { 1 } else { -1 };
+            }
+            self.i += 1;
+        }
+        self.depth > 0
+    }
 }
 
 /// Where `byte` first occurs in `text` outside every bracket.
