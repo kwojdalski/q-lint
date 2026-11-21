@@ -245,8 +245,9 @@ export class QueryModes {
     }
     const editor = window.activeTextEditor;
     await commands.executeCommand(`${RESULTS.view}.focus`);
+    // No selection: one given would replace every cursor, and scroll to it.
     if (editor !== undefined) {
-      await window.showTextDocument(editor.document, { viewColumn: editor.viewColumn, selection: editor.selection, preserveFocus: false });
+      await window.showTextDocument(editor.document, { viewColumn: editor.viewColumn, preserveFocus: false });
     }
   }
 
