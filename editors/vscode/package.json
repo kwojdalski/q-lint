@@ -690,6 +690,18 @@
             "default": true,
             "order": 707,
             "markdownDescription": "On hovering a q temporal literal (`2024.01.02D03:04:05`, `2024.01.02`, `0D01:00`, `09:30:00.000`, `0Np` ...) or a number of 9 digits or more in a q editor, show it converted: the integer under it, a timestamp, a date, Unix seconds to nanoseconds, ISO 8601. Also offers **q-lint: Convert Temporal Value**. Computed in the editor: nothing is sent."
+          },
+          "q-lint.pasteTable.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 708,
+            "markdownDescription": "Offer **q-lint: Paste Spreadsheet Data as q Table**: CSV or TSV on the clipboard pasted as a `([] ...)` literal, each column's type inferred."
+          },
+          "q-lint.jsonConversion.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 709,
+            "markdownDescription": "Offer **q-lint: Paste JSON as q** (the clipboard's JSON as the value `.j.k` reads from it) and **q-lint: Copy Value as JSON** (an expression's value on the connected process, as `.j.j` writes it)."
           }
         }
       },
@@ -1542,6 +1554,24 @@
         "title": "Convert Temporal Value",
         "category": "q-lint",
         "icon": "$(calendar)"
+      },
+      {
+        "command": "q-lint.pasteAsTable",
+        "title": "Paste Spreadsheet Data as q Table",
+        "category": "q-lint",
+        "icon": "$(table)"
+      },
+      {
+        "command": "q-lint.pasteJsonAsQ",
+        "title": "Paste JSON as q",
+        "category": "q-lint",
+        "icon": "$(json)"
+      },
+      {
+        "command": "q-lint.copyAsJson",
+        "title": "Copy Value as JSON",
+        "category": "q-lint",
+        "icon": "$(json)"
       }
     ],
     "views": {
@@ -2149,6 +2179,21 @@
           "command": "q-lint.convertTemporal",
           "when": "editorLangId == q && config.q-lint.temporalHover.enable",
           "group": "q-lint@32"
+        },
+        {
+          "command": "q-lint.pasteAsTable",
+          "when": "editorLangId == q && config.q-lint.pasteTable.enable",
+          "group": "q-lint@33"
+        },
+        {
+          "command": "q-lint.pasteJsonAsQ",
+          "when": "editorLangId == q && config.q-lint.jsonConversion.enable",
+          "group": "q-lint@34"
+        },
+        {
+          "command": "q-lint.copyAsJson",
+          "when": "editorLangId == q && config.q-lint.jsonConversion.enable",
+          "group": "q-lint@35"
         }
       ],
       "commandPalette": [
@@ -2331,6 +2376,18 @@
         {
           "command": "q-lint.convertTemporal",
           "when": "config.q-lint.temporalHover.enable"
+        },
+        {
+          "command": "q-lint.pasteAsTable",
+          "when": "config.q-lint.pasteTable.enable"
+        },
+        {
+          "command": "q-lint.pasteJsonAsQ",
+          "when": "config.q-lint.jsonConversion.enable"
+        },
+        {
+          "command": "q-lint.copyAsJson",
+          "when": "config.q-lint.jsonConversion.enable"
         }
       ],
       "editor/title": [

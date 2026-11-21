@@ -42,6 +42,7 @@ import { registerAssistTools } from "./assisttools";
 import { registerChat } from "./chat";
 import { registerQsqlDraft } from "./qsqldraft";
 import { registerTemporal } from "./temporalview";
+import { registerPaste } from "./pasteview";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -196,6 +197,7 @@ export async function activate(
   const undefinedNames = registerUndefinedNames(context, live, running);
   const idioms = registerIdioms(context);
   const temporal = registerTemporal(context);
+  registerPaste(context, live);
   // Not awaited: nothing above needs the server, and a slow or hung one
   // would hold up every command of the extension until it answered.
   void serial.run(() => start(context)).then(() => serverChanged());

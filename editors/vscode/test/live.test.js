@@ -49,6 +49,7 @@ const { readAssist, QUERY_FEATURES } = require("../out/assistconfig.js");
 const { DRIFT_COMMANDS } = require("../out/definitions.js");
 const { QSQL_COMMANDS } = require("../out/assist.js");
 const { CONVERT_TEMPORAL } = require("../out/temporal.js");
+const { PASTE } = require("../out/pastetable.js");
 const { CONTROL_COMMANDS, readControls } = require("../out/querycontrols.js");
 const { readProgress } = require("../out/progress.js");
 const { readPlaceholders } = require("../out/placeholders.js");
@@ -315,6 +316,7 @@ test("package.json declares exactly the commands the extension registers", () =>
     ...Object.values(DRIFT_COMMANDS),
     ...Object.values(QSQL_COMMANDS),
     CONVERT_TEMPORAL,
+    ...Object.values(PASTE),
   ].sort();
   assert.deepStrictEqual(declared, registered);
 });

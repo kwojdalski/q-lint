@@ -81,6 +81,23 @@ to a process you add and connect to, and sends only the code you run.
   timestamp outside those years, which KDB-X writes but will not read back
   as a literal, converts to `"p"$` of its long. Nothing is sent to a process
   (`q-lint.temporalHover.enable`).
+- **Paste Spreadsheet Data as q Table**: CSV or TSV on the clipboard - as a
+  spreadsheet copies cells, quotes and all - is pasted as a `([] ...)`
+  literal. Each column is booleans (`true`/`false`), longs, floats, dates,
+  timestamps or times when every filled cell reads as one, an empty cell its
+  type's null; otherwise symbols, or strings once a cell holds a space. The
+  first row is taken for the column names unless it reads as data, and the
+  names are made q names (`x y` becomes `x_y`, `count` becomes `count_`).
+  Each cell is read as q's `0:` reads the same text with the same type
+  letter, so the literal is the table `0:` would load. At most 10,000 rows;
+  the message says what was left out (`q-lint.pasteTable.enable`).
+- **Paste JSON as q** pastes the clipboard's JSON as the q that gives what
+  `.j.k` reads from it: numbers as floats, null as `0n`, an object as a
+  dictionary from symbols, an array of objects with the same keys as a
+  table. **Copy Value as JSON** sends the selection, or the statement at the
+  cursor, to the connected process as `.j.j value "..."` and copies the JSON
+  it answers; it goes as a query does, so the read-only guard holds one that
+  would change a guarded process (`q-lint.jsonConversion.enable`).
 - **Syntax colouring** from a TextMate grammar, plus semantic tokens: a
   function is coloured wherever it is called, even when another `.q` file in
   the workspace defines it, and a parameter wherever its body reads it.
@@ -1389,6 +1406,8 @@ nothing.
 | `q-lint.processExplorer.driftDetection.enable` | `false` | **Check Drift Against Process**: compare the workspace's function definitions with the connected process. Off, the command is hidden and reads nothing. | - |
 | `q-lint.hotReload.enable` | `false` | On saving a q file, send the definitions the save changed to its process, after Redefine's confirmation. Off, nothing listens and nothing is sent. | - |
 | `q-lint.temporalHover.enable` | `true` | Show a temporal literal or an epoch-sized number converted on hover, and offer **Convert Temporal Value**. Nothing is sent. | - |
+| `q-lint.pasteTable.enable` | `true` | **Paste Spreadsheet Data as q Table**: the clipboard's CSV or TSV as a `([] ...)` literal. | - |
+| `q-lint.jsonConversion.enable` | `true` | **Paste JSON as q** and **Copy Value as JSON** (`.j.k` and `.j.j`). Off, both are hidden and nothing is sent. | - |
 
 ### Connection settings
 

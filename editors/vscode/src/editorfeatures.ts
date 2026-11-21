@@ -14,6 +14,8 @@ export const EDITOR_SETTINGS = {
   idiomSnippets: { key: "idiomSnippets.enable", fallback: true, name: "The q idiom snippets" },
   undefinedNames: { key: "undefinedNames.enable", fallback: false, name: "The undefined-name check against the process" },
   temporalHover: { key: "temporalHover.enable", fallback: true, name: "The temporal hover and conversion" },
+  pasteTable: { key: "pasteTable.enable", fallback: true, name: "Pasting spreadsheet data as a q table" },
+  jsonConversion: { key: "jsonConversion.enable", fallback: true, name: "The JSON and q conversion" },
 } as const;
 
 export type EditorFeature = keyof typeof EDITOR_SETTINGS;
