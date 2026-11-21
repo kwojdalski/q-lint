@@ -267,3 +267,14 @@ test("deleting a discovery server, or changing its URL, forgets its processes' p
   await stub.commands.get("q-lint.editDiscoveryServer")("desk", { secret: "Bearer x" });
   assert.strictEqual(secrets.get("q-lint.discoveredPassword.desk/rdb"), "pw");
 });
+
+// A file Export cannot write (a read-only folder, a full disk) rejected the
+// command: VS Code said only that running it failed.
+test("Export Processes says why it could not write the file", async (t) => {
+  const { vscode } = require("./vscode_stub.js");
+  await setUp(t, [proc("a", 1)]);
+  vscode.window.showSaveDialog = async () => vscode.Uri.file("/ro/q-processes.json");
+  vscode.workspace.fs = { writeFile: async () => { throw new Error("EACCES: permission denied, open '/ro/q-processes.json'"); } };
+  await stub.commands.get("q-lint.exportProcesses")();
+  assert.deepStrictEqual(stub.messages.at(-1), ["error", "q-lint: could not write /ro/q-processes.json: EACCES: permission denied, open '/ro/q-processes.json'"]);
+});

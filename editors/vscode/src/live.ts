@@ -823,9 +823,15 @@ export class Live {
     if (file === undefined) {
       return;
     }
-    const text = JSON.stringify({ processes: this.processes() }, null, 2) + "\n";
-    await workspace.fs.writeFile(file, Buffer.from(text, "utf8"));
-    void window.showInformationMessage(`q-lint: exported ${this.processes().length} q process(es) to ${file.fsPath}.`);
+    const processes = this.processes();
+    const text = JSON.stringify({ processes }, null, 2) + "\n";
+    try {
+      await workspace.fs.writeFile(file, Buffer.from(text, "utf8"));
+    } catch (error) {
+      void window.showErrorMessage(`q-lint: could not write ${file.fsPath}: ${error instanceof Error ? error.message : String(error)}`);
+      return;
+    }
+    void window.showInformationMessage(`q-lint: exported ${processes.length} q process(es) to ${file.fsPath}.`);
   }
 
   private insertLabel(): void {
