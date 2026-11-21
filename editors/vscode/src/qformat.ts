@@ -714,3 +714,126 @@ export function gridOf(value: unknown, type: number | undefined, limit: number):
     rank: shown.map((c, i) => ranks(c.values, raw[i].length > 0 ? raw[i] : undefined)),
   };
 }
+
+/// A column of a value decoded with its types, as a grid holds it.
+interface TypedColumn {
+  name: string;
+  q: QValue;
+}
+
+/// The q type a decoded column has: a simple list's, 0 for any other.
+function columnTypeOf(q: QValue): number {
+  return q.kind === "vector" ? q.t : q.kind === "chars" ? 10 : q.kind === "table" ? 98 : q.kind === "dict" ? 99 : 0;
+}
+
+/// The first `n` items of a decoded list.
+function firstOf(q: QValue, n: number): QValue {
+  if (q.kind === "vector" || q.kind === "list") {
+    return { ...q, v: q.v.slice(0, n) } as QValue;
+  }
+  if (q.kind === "chars") {
+    return { ...q, v: q.v.subarray(0, n) };
+  }
+  if (q.kind === "table") {
+    return { ...q, data: q.data.map((c) => firstOf(c, n)) };
+  }
+  return q;
+}
+
+/// The items of a decoded list as values: a table's rows, a list's items.
+function itemsOf(q: QValue): QValue[] {
+  if (q.kind === "vector") {
+    return q.v.map((v) => ({ kind: "atom", t: -q.t, v }));
+  }
+  if (q.kind === "chars") {
+    return [...q.v].map((v) => ({ kind: "atom", t: -10, v }));
+  }
+  if (q.kind === "list") {
+    return q.v;
+  }
+  if (q.kind === "table") {
+    return Array.from({ length: countOf(q) }, (_, r) => ({
+      kind: "dict",
+      sorted: false,
+      k: { kind: "vector", t: 11, attr: 0, v: q.cols },
+      v: { kind: "list", attr: 0, v: q.data.map((c) => itemsOf(c)[r]) },
+    }));
+  }
+  return [q];
+}
+
+/// Each row's place among the distinct values of a simple column sorted
+/// ascending, nulls first, as `GRID` ranks one: equal values share a place,
+/// so a sort either way keeps them in their order.
+function denseRanks(keys: (number | string)[]): number[] {
+  const order = keys.map((_, i) => i).sort((a, b) => {
+    const x = keys[a];
+    const y = keys[b];
+    return x === y ? a - b : x < y ? -1 : 1;
+  });
+  const rank = new Array<number>(keys.length);
+  let place = -1;
+  order.forEach((row, i) => {
+    if (i === 0 || keys[row] !== keys[order[i - 1]]) {
+      place++;
+    }
+    rank[row] = place;
+  });
+  return rank;
+}
+
+/// The rows the result panel shows for a value decoded with its types, as
+/// `GRID` would send them for the same value: a table (keyed: its keys
+/// marked), a dictionary as `key` and `value` columns (keyed by a table, its
+/// key columns and `value`), or a list other than a string as one `value`
+/// column; at most `limit` rows. Undefined for anything else.
+export function gridOfQ(q: QValue, limit: number): GridPayload | undefined {
+  let columns: TypedColumn[];
+  let keys = 0;
+  const tableColumns = (t: QValue & { kind: "table" }): TypedColumn[] => t.cols.map((name, i) => ({ name, q: t.data[i] }));
+  if (q.kind === "table") {
+    columns = tableColumns(q);
+  } else if (q.kind === "dict" && q.k.kind === "table") {
+    keys = q.k.cols.length;
+    columns = [...tableColumns(q.k), ...(q.v.kind === "table" ? tableColumns(q.v) : [{ name: "value", q: q.v }])];
+  } else if (q.kind === "dict") {
+    keys = 1;
+    columns = [
+      { name: "key", q: q.k },
+      { name: "value", q: q.v },
+    ];
+  } else if (q.kind === "vector" || q.kind === "list") {
+    columns = [{ name: "value", q }];
+  } else {
+    return undefined;
+  }
+  const count = columns.length > 0 ? countOf(columns[0].q) : 0;
+  const shown = columns.map((c) => ({ ...c, q: firstOf(c.q, limit) }));
+  const types = shown.map((c) => columnTypeOf(c.q));
+  const cells = shown.map((c) =>
+    c.q.kind === "vector" || c.q.kind === "chars"
+      ? nested(c.q)
+      : itemsOf(c.q).map((x) => {
+          const text = oneLine(x);
+          return text.length > 200 ? `${text.slice(0, 197)}...` : text;
+        }),
+  );
+  // The numbers of a numeric, temporal or guid column, as `GRID` sends them.
+  const raw = shown.map((c, i): unknown[] =>
+    c.q.kind === "vector" && [2, 5, 6, 7, 8, 9, 12, 13, 14, 15, 16, 17, 18, 19].includes(types[i])
+      ? c.q.v.map((x) => (typeof x === "bigint" ? Number(x) : x))
+      : [],
+  );
+  const rank = shown.map((c) => {
+    if (c.q.kind === "chars") {
+      return denseRanks([...c.q.v]);
+    }
+    if (c.q.kind !== "vector") {
+      return [];
+    }
+    return denseRanks(
+      c.q.v.map((x) => (x === null ? (c.q.kind === "vector" && [2, 11].includes(c.q.t) ? "" : -Infinity) : typeof x === "boolean" ? Number(x) : typeof x === "bigint" ? Number(x) : x)),
+    );
+  });
+  return { count, keys, names: shown.map((c) => c.name), types, cells, raw, rank };
+}

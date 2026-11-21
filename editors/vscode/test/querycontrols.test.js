@@ -389,3 +389,31 @@ test("an unwrapped lambda is shown as its text, which the process sends", async 
   // -8!(+): a primitive has no text to show.
   assert.match((await unwrapped("0x010000000a0000006601")).text[0], /function/);
 });
+
+test("an unwrapped grid has each column's own type, its rows' ranks shared by equal values, and a sorted dictionary", async () => {
+  const grid = async (hex) => (await unwrapped(hex, { unlimited: false, limit: 100, size: [25, 80], grid: true })).grid;
+  // -8!([]p:2026.11.20D10:11:12.123456789 0Np;u:10:11 10:11;m:2026.11 -0Wm;g:2#0Ng)
+  const g = toGrid(
+    await grid(
+      "0x01000000770000006200630b0004000000700075006d0067000000040000000c0002000000154d4857506cc60b000000000000008011000200000063020000630200000d000200000042010000010000800200020000000000000000000000000000000000000000000000000000000000000000000000",
+    ),
+    -1,
+  );
+  assert.deepStrictEqual(g.columns.map((c) => c.type), [12, 17, 13, 2]);
+  assert.deepStrictEqual(g.cells, [
+    ["2026.11.20D10:11:12.123456789", ""],
+    ["10:11", "10:11"],
+    ["2026.11", "-0W"],
+    ["00000000-0000-0000-0000-000000000000", "00000000-0000-0000-0000-000000000000"],
+  ]);
+  assert.deepStrictEqual(g.values.slice(1, 3), [[611, 611], [322, null]]);
+  // Equal values share a place, so a descending sort keeps their order.
+  assert.deepStrictEqual(g.rank[1], [0, 0]);
+  // -8!0#([]a:1 2): the columns of a table with no rows.
+  const empty = await grid("0x010000001f0000006200630b00010000006100000001000000070000000000");
+  assert.deepStrictEqual([empty.names, empty.types, empty.count], [["a"], [7], 0]);
+  // -8!`s#`a`b!1 2: a sorted dictionary, not a function.
+  const sorted = await unwrapped("0x01000000290000007f0b01020000006100620007000200000001000000000000000200000000000000", { grid: true });
+  assert.deepStrictEqual(sorted.text, ["a| 1", "b| 2"]);
+  assert.deepStrictEqual(sorted.grid.cells, [["a", "b"], ["1", "2"]]);
+});
