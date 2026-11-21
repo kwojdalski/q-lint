@@ -32,8 +32,16 @@ export const NOTEBOOK = {
   type: "q-lint-notebook",
   controller: "q-lint-notebook-kernel",
   exportCommand: "q-lint.exportNotebook",
+  exportHtmlCommand: "q-lint.exportNotebookHtml",
+  exportIpynbCommand: "q-lint.exportNotebookIpynb",
+  importIpynbCommand: "q-lint.importIpynb",
+  runWithParameters: "q-lint.runNotebookWithParameters",
+  refreshVariables: "q-lint.refreshNotebookVariables",
+  variablesView: "q-lint.notebookVariables",
   /// The renderer that draws a `/ @chart` cell's output.
   renderer: "q-lint.chart",
+  /// The Markdown renderer's extension that shows live values.
+  liveRenderer: "q-lint.liveMarkdown",
 } as const;
 
 export interface QnbItem {

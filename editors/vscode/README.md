@@ -479,6 +479,20 @@ A cell's first lines can choose how its result is shown:
   `/ @title <text>` puts a title above it and `/ @height <px>` makes it
   that many pixels tall (100 to 2000; 300 otherwise).
 
+Two more directives say where a cell runs and what it is for:
+- `/ @process <label>`: the cell runs on that process - a saved one, or a
+  discovered one as `server/label` - connecting to it first as **Connect**
+  does, with its password from VS Code's secret storage or asked for. The
+  connection stays there, so the cells after it run there too, as they do
+  after a file bound to a process switches it. Connecting to a process
+  tagged `prod`, `prd` or `production` asks first; one a query is still
+  running on is not left. A label that names no process fails the cell with
+  the labels there are.
+- `/ @parameters`: the cell holds the notebook's parameters, one
+  `name:value` a line (papermill's convention). It runs as any cell does;
+  **Run Notebook with Parameters** puts the values it is given in a cell
+  right after it.
+
 **Set Notebook Row Limit**, on the notebook's toolbar, picks the row limit
 - 10, 100, 1,000, 10,000, 100,000 or all - and whether it takes the first
 rows or the last, and sets the two settings. The process cuts the table, so
@@ -494,6 +508,90 @@ does know. A qDoc line (`/ @param`, `/ @return`, `/ @eg` and the rest) is
 documentation, not a directive: it ends the directives, so a cell that
 opens with a documented function runs. An error shows q's message and, on kdb+
 3.5 and later, its backtrace.
+
+### Live values in Markdown
+
+`{{q: expr}}` in a Markdown cell shows the value of `expr` on the process:
+``Total {{q: sum t`px}} over {{q: count t}} trades``. The values are read
+when the code cell above the Markdown runs - for Markdown above every code
+cell, when the first one runs - each on its own, so one that fails shows
+its error and the rest still show. A string or a symbol shows as its
+characters, anything else as `-3!` writes it, cut to 200 characters. They
+run only when you run a cell, never on their own; nothing is defined on the
+process but what an expression defines. The cell's source is not changed:
+the values are kept in its metadata, saved with the notebook, and shown
+escaped in place of their expressions. One not read yet shows as written,
+and in a code span or a code block `{{q: ...}}` is text.
+`q-lint.notebook.liveValues.enable` turns them off.
+
+### Notebook Variables
+
+The **Notebook Variables** view, in the q-lint sidebar while a q notebook
+is the active editor, lists the globals in the root namespace of the
+process the notebook's cells last ran on: each one's name, its type, its
+count (a table's rows) and its size, the bytes `-22!` says it takes
+serialized (none for a function or a partitioned table, which would read
+every partition). It is read with one lambda that defines nothing, after a
+cell runs and on **Refresh**, only while the view is open, and never in
+front of a query. It lists what the cells defined and anything else defined
+there; up to 1,000 names.
+
+### Running a notebook with parameters
+
+**Run Notebook with Parameters**, on the notebook's toolbar and a `.qnb`
+file's context menu, runs the whole notebook without its editor: it asks
+for each parameter of the `/ @parameters` cell, offering the notebook's
+value, and writes the run - every cell's output, Markdown's live values -
+to a new file: a `.qnb`, or an HTML page or a Jupyter notebook by the
+name's extension. The given values go in a cell right after the parameters
+cell, marked so a later run replaces it. Cells are numbered from 1; the run
+stops at the first cell that fails and clears what the cells after it
+showed, so nothing stale passes for this run's. Cells run on the active
+connection, and `/ @process` cells as they do in the notebook.
+
+The same run works from a shell, with Node.js, as the script the extension
+ships in `out/qnbrun.js` (in an installed extension,
+`~/.vscode/extensions/wojdalski.q-lint-<version>/out/qnbrun.js`):
+
+```sh
+node out/qnbrun.js report.qnb --process localhost:5001 \
+  -p date 2024.01.02 -p syms '`EURUSD`GBPUSD' -o report-0102.html
+```
+
+A value is q text, so a string is `-p name '"text"'`. `--process` is
+`host:port`, or a label in `--processes FILE`, a list as **Export Process
+List** writes it, which also names the processes `/ @process` cells ask
+for. A password is never an argument: it is read from `QLINT_Q_PASSWORD`,
+or `QLINT_Q_PASSWORD_<LABEL>` for a listed process (its label in capitals,
+anything but a letter or digit as `_`), with `--user` for `host:port`. A
+listed process tagged `prod`, `prd` or `production` is refused unless
+`--allow-production` is given. `--row-limit`, `--rows-from` and
+`--console-size` stand in for the settings. It exits 0 when every cell ran,
+1 when one failed (the file is written, run up to it), and 2 for a usage
+error or a file it cannot read or write; `--help` says the rest. The script
+does not read VS Code's settings.
+
+### Export and import
+
+**Export Notebook as HTML** writes one self-contained page: no script, its
+style inline, a policy that fetches nothing, light and dark from the
+system. Code, outputs and Markdown are escaped; Markdown is rendered
+(headings, paragraphs, lists, quotes, code, emphasis, and links to http,
+https and mailto only) with its live values. An output's `text/plain` view
+is shown, never its `text/html`, which a notebook from elsewhere could fill
+with script; a chart shows as its table; an image is kept.
+
+**Export Notebook as Jupyter Notebook** writes nbformat 4.4, with q's
+kernel spec: a q cell is a code cell, a cell in another language says so as
+VS Code's Jupyter support does (`metadata.vscode.languageId`), outputs keep
+their types, an error is Jupyter's error output.
+
+**Import Jupyter Notebook as q Notebook**, on a `.ipynb` file's context
+menu, writes it as a `.qnb` and opens it. A code cell is q when the cell or
+the notebook says q - or says nothing - and keeps its language otherwise,
+so a Python notebook's cells stay Python; a `%%q` cell (PyKX's magic) is q,
+without the magic line. Markdown, outputs and run numbers are kept; a raw
+cell is a code cell in `raw`.
 
 **Export Notebook as q Script**, on the notebook's toolbar and a `.qnb`
 file's context menu, writes the code cells as a `.q` script q can load,
@@ -643,12 +741,17 @@ reaches the language server.
 
 ### Notebook settings
 
-Read when a cell runs. None reaches the language server.
+Read when a cell runs or a command is used, so a change needs no reload. None reaches the language server.
 
 | Setting | Default | What it does | q-pro |
 | --- | --- | --- | --- |
 | `q-lint.notebook.rowLimit` | `1000` | The most rows of a table a `@grid` or `@chart` cell is sent; `0`: every row. | - |
 | `q-lint.notebook.rowLimitFrom` | `"first"` | Which rows of a larger table a cell shows: `first` or `last`. | - |
+| `q-lint.notebook.variables.enable` | `true` | The **Notebook Variables** view. It reads only after a cell runs or on Refresh, while it is open; off, it is removed and reads nothing. | - |
+| `q-lint.notebook.parameters.enable` | `true` | **Run Notebook with Parameters** and `/ @parameters`. Off, the command is hidden and refuses, and a `/ @parameters` cell is not run. | - |
+| `q-lint.notebook.export.enable` | `true` | **Export Notebook as HTML**, **as Jupyter Notebook** and **Import Jupyter Notebook**. Off, they are hidden and refuse. | - |
+| `q-lint.notebook.liveValues.enable` | `true` | Read `{{q: expr}}` in Markdown cells when the code cell above runs; never on their own. Off, nothing is sent. | - |
+| `q-lint.notebook.processDirective.enable` | `true` | `/ @process <label>`. Off, a cell with it is not run and nothing is sent. | - |
 
 ### Agent settings
 

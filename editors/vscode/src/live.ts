@@ -539,6 +539,12 @@ export class Live {
     return this.connection?.isOpen ? this.active : undefined;
   }
 
+  /// Whether a query is running on the active connection: connecting
+  /// elsewhere now would stop waiting for it.
+  isBusy(): boolean {
+    return this.connection?.isBusy ?? false;
+  }
+
   history(): HistoryEntry[] {
     this.queries ??= this.context.globalState.get<HistoryEntry[]>(HISTORY_KEY, []);
     return this.queries;

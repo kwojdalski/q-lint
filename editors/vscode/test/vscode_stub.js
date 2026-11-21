@@ -124,7 +124,7 @@ const window = new Proxy(
     showWarningMessage: async (text, ...rest) => (stub.messages.push(["warning", text]), take(stub.picks, { message: text, items: rest })),
     showErrorMessage: async (text) => void stub.messages.push(["error", text]),
     createTreeView: (id, options) => {
-      const view = { id, options, message: undefined, description: undefined, badge: undefined, selection: [], dispose() {}, reveal: async () => {} };
+      const view = { id, options, message: undefined, description: undefined, badge: undefined, selection: [], visible: true, disposed: false, dispose() { this.disposed = true; }, reveal: async () => {}, onDidChangeVisibility: () => new Disposable() };
       stub.trees.push(view);
       return view;
     },

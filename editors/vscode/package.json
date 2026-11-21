@@ -109,6 +109,15 @@
           "application/vnd.q-lint.chart+json"
         ],
         "requiresMessaging": "optional"
+      },
+      {
+        "id": "q-lint.liveMarkdown",
+        "displayName": "q-lint live values",
+        "entrypoint": {
+          "extends": "vscode.markdown-it-renderer",
+          "path": "./media/livemarkdown.js"
+        },
+        "requiresMessaging": "optional"
       }
     ],
     "snippets": [
@@ -460,6 +469,36 @@
         }
       },
       {
+        "title": "q-lint: notebook features",
+        "properties": {
+          "q-lint.notebook.variables.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Show the **Notebook Variables** view: the globals on the process a q notebook's cells ran on, read with one lambda that defines nothing, only after a cell runs or on Refresh, and only while the view is open. Off, the view is removed and nothing is read."
+          },
+          "q-lint.notebook.parameters.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Turn on **q-lint: Run Notebook with Parameters** and the `/ @parameters` cell directive. Off, the command is hidden and refuses, and a cell with `/ @parameters` is not run. The shell's `node out/qnbrun.js` does not read VS Code's settings."
+          },
+          "q-lint.notebook.export.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Turn on **Export Notebook as HTML**, **Export Notebook as Jupyter Notebook** and **Import Jupyter Notebook as q Notebook**. Off, they are hidden and refuse. Export Notebook as q Script is not affected."
+          },
+          "q-lint.notebook.liveValues.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Read the `{{q: expr}}` live values of a q notebook's Markdown cells on the process. They are read only when you run the code cell above them, never on their own. Off, no expression is sent; values a run kept before still show."
+          },
+          "q-lint.notebook.processDirective.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Honour the `/ @process <label>` cell directive, which connects to that process before the cell runs (a production process is confirmed first). Off, a cell with it is not run, and nothing is sent."
+          }
+        }
+      },
+      {
         "title": "q-lint: agents",
         "properties": {
           "q-lint.agent.queryTimeout": {
@@ -807,6 +846,35 @@
         "command": "q-lint.newNotebook",
         "title": "New q Notebook",
         "category": "q-lint"
+      },
+      {
+        "command": "q-lint.exportNotebookHtml",
+        "title": "Export Notebook as HTML",
+        "category": "q-lint",
+        "icon": "$(globe)"
+      },
+      {
+        "command": "q-lint.exportNotebookIpynb",
+        "title": "Export Notebook as Jupyter Notebook",
+        "category": "q-lint",
+        "icon": "$(notebook)"
+      },
+      {
+        "command": "q-lint.importIpynb",
+        "title": "Import Jupyter Notebook as q Notebook",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.runNotebookWithParameters",
+        "title": "Run Notebook with Parameters",
+        "category": "q-lint",
+        "icon": "$(run-all-coverage)"
+      },
+      {
+        "command": "q-lint.refreshNotebookVariables",
+        "title": "Refresh Notebook Variables",
+        "category": "q-lint",
+        "icon": "$(refresh)"
       }
     ],
     "views": {
@@ -845,6 +913,13 @@
           "icon": "media/view-help.svg",
           "contextualTitle": "q-lint",
           "visibility": "collapsed"
+        },
+        {
+          "id": "q-lint.notebookVariables",
+          "name": "Notebook Variables",
+          "icon": "media/view-explorer.svg",
+          "contextualTitle": "q-lint",
+          "when": "q-lint.notebookActive && config.q-lint.notebook.variables.enable"
         }
       ],
       "q-lint-results": [
@@ -928,6 +1003,11 @@
           "command": "q-lint.openSettings",
           "when": "view == q-lint.processes",
           "group": "3_settings@1"
+        },
+        {
+          "command": "q-lint.refreshNotebookVariables",
+          "when": "view == q-lint.notebookVariables && config.q-lint.notebook.variables.enable",
+          "group": "navigation"
         }
       ],
       "view/item/context": [
@@ -1099,12 +1179,47 @@
           "command": "q-lint.setNotebookRowLimit",
           "when": "notebookType == q-lint-notebook",
           "group": "navigation"
+        },
+        {
+          "command": "q-lint.runNotebookWithParameters",
+          "when": "notebookType == q-lint-notebook && config.q-lint.notebook.parameters.enable",
+          "group": "navigation"
+        },
+        {
+          "command": "q-lint.exportNotebookHtml",
+          "when": "notebookType == q-lint-notebook && config.q-lint.notebook.export.enable",
+          "group": "export"
+        },
+        {
+          "command": "q-lint.exportNotebookIpynb",
+          "when": "notebookType == q-lint-notebook && config.q-lint.notebook.export.enable",
+          "group": "export"
         }
       ],
       "explorer/context": [
         {
           "command": "q-lint.exportNotebook",
           "when": "resourceExtname =~ /^\\.qnb$/i",
+          "group": "q-lint"
+        },
+        {
+          "command": "q-lint.exportNotebookHtml",
+          "when": "resourceExtname =~ /^\\.qnb$/i && config.q-lint.notebook.export.enable",
+          "group": "q-lint"
+        },
+        {
+          "command": "q-lint.exportNotebookIpynb",
+          "when": "resourceExtname =~ /^\\.qnb$/i && config.q-lint.notebook.export.enable",
+          "group": "q-lint"
+        },
+        {
+          "command": "q-lint.runNotebookWithParameters",
+          "when": "resourceExtname =~ /^\\.qnb$/i && config.q-lint.notebook.parameters.enable",
+          "group": "q-lint"
+        },
+        {
+          "command": "q-lint.importIpynb",
+          "when": "resourceExtname =~ /^\\.ipynb$/i && config.q-lint.notebook.export.enable",
           "group": "q-lint"
         }
       ],
@@ -1148,6 +1263,26 @@
         {
           "command": "q-lint.exportResultsView",
           "when": "false"
+        },
+        {
+          "command": "q-lint.refreshNotebookVariables",
+          "when": "q-lint.notebookActive && config.q-lint.notebook.variables.enable"
+        },
+        {
+          "command": "q-lint.exportNotebookHtml",
+          "when": "config.q-lint.notebook.export.enable"
+        },
+        {
+          "command": "q-lint.exportNotebookIpynb",
+          "when": "config.q-lint.notebook.export.enable"
+        },
+        {
+          "command": "q-lint.importIpynb",
+          "when": "config.q-lint.notebook.export.enable"
+        },
+        {
+          "command": "q-lint.runNotebookWithParameters",
+          "when": "config.q-lint.notebook.parameters.enable"
         }
       ]
     },
@@ -1184,6 +1319,10 @@
       {
         "view": "q-lint.help",
         "contents": "[Get Started](command:q-lint.getStarted) with q-lint, or read the [documentation](https://github.com/kwojdalski/q-lint/blob/master/editors/vscode/README.md) and the [rule reference](https://github.com/kwojdalski/q-lint/blob/master/docs/rules.md).\nFound a problem? [Report a bug](https://github.com/kwojdalski/q-lint/issues/new?labels=bug) or [suggest a feature](https://github.com/kwojdalski/q-lint/issues/new?labels=enhancement)."
+      },
+      {
+        "view": "q-lint.notebookVariables",
+        "contents": "Run a cell of a q notebook to see the globals on its process.\n[Refresh](command:q-lint.refreshNotebookVariables)"
       }
     ],
     "keybindings": [

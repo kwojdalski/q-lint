@@ -264,6 +264,7 @@ test("package.json declares exactly the commands the extension registers", () =>
     ...Object.values(EXPLORER).filter((id) => id !== EXPLORER.view),
     ...Object.values(relations.COMMANDS),
     NOTEBOOK.exportCommand,
+    ...[NOTEBOOK.exportHtmlCommand, NOTEBOOK.exportIpynbCommand, NOTEBOOK.importIpynbCommand, NOTEBOOK.runWithParameters, NOTEBOOK.refreshVariables],
     RESULTS.exportCsv,
     RESULTS.exportViewCsv,
     RESULTS.setRowLimit,
@@ -279,7 +280,7 @@ test("the views live in their own container, and every menu names a declared com
   assert.strictEqual(container.id, VIEWS.container);
   assert.deepStrictEqual(
     pkg.contributes.views[VIEWS.container].map((v) => v.id),
-    [VIEWS.processes, EXPLORER.view, VIEWS.history, ONBOARDING.helpView],
+    [VIEWS.processes, EXPLORER.view, VIEWS.history, ONBOARDING.helpView, NOTEBOOK.variablesView],
   );
   const declared = new Set(pkg.contributes.commands.map((c) => c.command));
   for (const [where, items] of Object.entries(pkg.contributes.menus)) {

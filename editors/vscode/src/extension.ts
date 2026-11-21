@@ -12,13 +12,17 @@ import {
   workspace,
   window,
   type ExtensionContext,
+  type Uri,
   type OutputChannel,
 } from "vscode";
 import { LINTED, launch, needsRestart } from "./settings";
 import { Live } from "./live";
 import { registerAgentTool } from "./agenttool";
 import { registerOnboarding } from "./onboardingview";
-import { registerNotebooks, type RenderedChart } from "./notebook";
+import { registerNotebooks, type RenderedChart, type RenderedLiveValue } from "./notebook";
+import { runWithParameters } from "./notebookrun";
+import { registerNotebookVariables } from "./notebookvarsview";
+import { NOTEBOOK } from "./qnb";
 import { ProcessExplorer } from "./explorerview";
 import { Relations } from "./relate";
 import { Serial } from "./serial";
@@ -78,7 +82,15 @@ function bundledServer(context: ExtensionContext): string | undefined {
 
 export async function activate(
   context: ExtensionContext,
-): Promise<ReturnType<Live["api"]> & { explorer: ProcessExplorer["rows"]; notebookCharts: () => RenderedChart[]; agentConfirmation: ReturnType<typeof registerAgentTool> }> {
+): Promise<
+  ReturnType<Live["api"]> & {
+    explorer: ProcessExplorer["rows"];
+    notebookCharts: () => RenderedChart[];
+    agentConfirmation: ReturnType<typeof registerAgentTool>;
+    notebookLiveValues: () => RenderedLiveValue[];
+    notebookVariables: ReturnType<typeof registerNotebookVariables>;
+  }
+> {
   // Replacing the binary does not restart the server, and a window reload is
   // a blunt way to pick up a new one. This is the small way.
   context.subscriptions.push(commands.registerCommand("q-lint.restartServer", () => restart(context, true)));
@@ -97,13 +109,26 @@ export async function activate(
   const live = new Live(context);
   const agentConfirmation = registerAgentTool(context, live);
   const notebook = registerNotebooks(context, live);
+  const notebookVariables = registerNotebookVariables(context, live, notebook.processOf, notebook.onDidRun);
+  context.subscriptions.push(
+    commands.registerCommand(NOTEBOOK.runWithParameters, (source?: Uri, target?: Uri, overrides?: Record<string, string>) =>
+      runWithParameters(live, source, target, overrides),
+    ),
+  );
   const explorer = new ProcessExplorer(context, live);
   registerOnboarding(context, () => live.processes());
   relations = new Relations(context, () => client);
   // Not awaited: nothing above needs the server, and a slow or hung one
   // would hold up every command of the extension until it answered.
   void serial.run(() => start(context)).then(() => relations?.serverChanged());
-  return { ...live.api(), explorer: () => explorer.rows(), notebookCharts: () => notebook.charts(), agentConfirmation };
+  return {
+    ...live.api(),
+    explorer: () => explorer.rows(),
+    notebookCharts: () => notebook.charts(),
+    agentConfirmation,
+    notebookLiveValues: () => notebook.liveValues(),
+    notebookVariables,
+  };
 }
 
 /// Stop the server and start it again. `asked`: by Restart Server, which
