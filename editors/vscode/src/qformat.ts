@@ -18,7 +18,8 @@
 //   is shown to the microsecond, its last three digits 0.
 // - The infinity of a date, month, datetime or time arrives as an invalid
 //   Date, its sign lost, so a negative one is written as a positive one.
-// - A function arrives as the word "func": its text is not sent.
+// - A lambda arrives with its text, which an unwrapped query shows. Any
+//   other function arrives as the word "func".
 // - An empty table arrives with no columns, so they cannot be shown.
 import type { GridPayload } from "./grid";
 import type { QValue } from "./qdecode";
@@ -555,14 +556,17 @@ function nested(q: QValue): string[] {
 /// (`qdecode.ts`), as `.Q.S` writes them: from the numbers q holds, so a
 /// timestamp keeps its nanoseconds and a negative infinity its sign, and
 /// with each item's own type, so a symbol is told from a string, and a
-/// table keeps its columns when it has no rows. A function is left to
-/// `formatValue`, which writes the codec's `value` of it, of q type `type`.
+/// table keeps its columns when it has no rows. A lambda is its text; any
+/// other function is left to `formatValue`, which writes the codec's
+/// `value` of it, of q type `type`.
 export function formatQ(q: QValue, value: unknown, type?: number): string[] {
   if (q.kind === "atom" || q.kind === "vector" || q.kind === "chars") {
     return [oneLine(q)];
   }
   if (q.kind === "func") {
-    return formatValue(value, type);
+    // A lambda arrives with its text; any other function as no more than
+    // its kind.
+    return q.text !== undefined ? q.text.split("\n") : formatValue(value, type);
   }
   return nested(q);
 }
