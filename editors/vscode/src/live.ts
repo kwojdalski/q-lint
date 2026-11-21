@@ -725,6 +725,10 @@ export class Live {
       const { host, port, user, tls } = active;
       this.active = { label: process.label, host, port, ...(user !== undefined ? { user } : {}), tags: process.tags, ...(tls ? { tls } : {}) };
       this.showStatus();
+      // The explorer keeps what it read under the label it read it for.
+      if (process.label !== old.label && this.activeLabel() !== undefined) {
+        this.changed.fire("connected");
+      }
       const moved = process.host !== host || process.port !== port || process.user !== user || (process.tls === true) !== (tls === true);
       if (moved && this.activeLabel() !== undefined) {
         void window.showInformationMessage(

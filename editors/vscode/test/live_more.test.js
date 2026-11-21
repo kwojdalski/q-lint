@@ -190,3 +190,24 @@ test("editing the connected process's address leaves the connection's as it is",
   assert.ok(status.tooltip.includes(`127.0.0.1:${q.port}.`), status.tooltip);
   assert.ok(stub.messages.some(([, text]) => text.includes(`still connected to p at 127.0.0.1:${q.port}`)), JSON.stringify(stub.messages));
 });
+
+// Renaming the connected process changed the connection's label without a
+// word to the Process Explorer, which keeps what it read under the label
+// it read it for: it went empty, and live completion offered nothing, until
+// something else refreshed it.
+test("renaming the connected process keeps the Process Explorer", async (t) => {
+  const { ProcessExplorer } = require("../out/explorerview.js");
+  const gathered = { rows: [{ ns: ".", name: "x", kind: "variable", type: -7, count: 1, cols: [], keys: [], params: [], partitioned: false }], spaces: [{ ns: ".", total: 1 }], more: 0 };
+  const q = await fakeQ((message) => (message.includes("`rows`spaces`more") ? gathered : OK));
+  t.after(() => q.close());
+  const { context, live } = await setUp(t, [proc("p", q.port)]);
+  const explorer = new ProcessExplorer(context, live);
+  assert.strictEqual(await live.connectTo("p"), true);
+  for (let i = 0; i < 50 && explorer.rows().length === 0; i++) await sleep(10);
+  assert.strictEqual(explorer.rows().length, 1);
+  editAnswers("renamed", "127.0.0.1", q.port);
+  await stub.commands.get("q-lint.editProcess")("p");
+  for (let i = 0; i < 50 && explorer.rows().length === 0; i++) await sleep(10);
+  assert.strictEqual(live.activeLabel(), "renamed");
+  assert.strictEqual(explorer.rows().length, 1);
+});
