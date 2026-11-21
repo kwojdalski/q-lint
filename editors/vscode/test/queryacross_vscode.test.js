@@ -1,0 +1,204 @@
+// Queries across processes through the stand-in `vscode` (vscode_stub.js),
+// against q processes played by socket servers: Query a Tag (#906) and
+// Compare Query (#907). No q and no editor needed.
+const { stub, vscode } = require("./vscode_stub.js");
+const test = require("node:test");
+const assert = require("node:assert");
+const net = require("node:net");
+const { serialize, deserialize } = require("node-q/lib/c.js");
+const { Live } = require("../out/live.js");
+const { QueryAcross } = require("../out/queryacross.js");
+
+/// A q process played by a socket server: each message, decoded, is kept
+/// in `sent` and answered with `answer(message)`.
+async function fakeQ(answer) {
+  const sent = [];
+  const sockets = new Set();
+  const server = net.createServer((socket) => {
+    sockets.add(socket);
+    socket.on("close", () => sockets.delete(socket));
+    socket.on("error", () => {});
+    let shook = false;
+    let buffer = Buffer.alloc(0);
+    socket.on("data", (chunk) => {
+      if (!shook) {
+        shook = true;
+        socket.write(Buffer.from([3]));
+        return;
+      }
+      buffer = Buffer.concat([buffer, chunk]);
+      while (buffer.length >= 8 && buffer.length >= buffer.readUInt32LE(4)) {
+        const message = buffer.subarray(0, buffer.readUInt32LE(4));
+        buffer = buffer.subarray(message.length);
+        const value = deserialize(message);
+        sent.push(value);
+        const out = serialize(answer(value));
+        out.writeUInt8(2, 1);
+        socket.write(out);
+      }
+    });
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  return {
+    port: server.address().port,
+    sent,
+    open: () => sockets.size,
+    close: () => {
+      for (const s of sockets) s.destroy();
+      server.close();
+    },
+  };
+}
+
+/// A process answering every grid query with a one-column table of `values`.
+const table = (values) => () => ({
+  ok: true,
+  type: 98,
+  text: ["v", "-", ...values.map(String)],
+  grid: { count: values.length, keys: 0, names: ["v"], types: [7], cells: [values.map(String)], raw: [values], rank: [values.map((_, i) => i)] },
+});
+
+async function deadPort() {
+  const s = net.createServer().listen(0, "127.0.0.1");
+  await new Promise((r) => s.once("listening", r));
+  const { port } = s.address();
+  await new Promise((r) => s.close(r));
+  return port;
+}
+
+async function setUp(t, processes, config = {}) {
+  stub.reset();
+  Object.assign(stub.config.user, config);
+  const context = stub.newContext();
+  await context.globalState.update("q-lint.processes", processes);
+  const live = new Live(context);
+  const across = new QueryAcross(context, live);
+  t.after(async () => {
+    vscode.window.activeTextEditor = undefined;
+    await stub.commands.get("q-lint.disconnectProcess")?.();
+    for (const d of context.subscriptions) d.dispose?.();
+  });
+  return { live, across };
+}
+
+const proc = (label, port, tags) => ({ label, host: "127.0.0.1", port, tags });
+const queries = (q) => q.sent.filter((m) => Array.isArray(m) && Array.isArray(m[1])).map((m) => m[1].join("\n"));
+
+test("Query a Tag runs the query on every process with the tag and shows one table (#906)", async (t) => {
+  const a = await fakeQ(table([1, 2]));
+  const b = await fakeQ(table([3]));
+  const other = await fakeQ(table([9]));
+  t.after(() => [a, b, other].forEach((q) => q.close()));
+  const dead = await deadPort();
+  const { live, across } = await setUp(t, [proc("a", a.port, ["eu"]), proc("b", b.port, ["EU"]), proc("c", other.port, ["us"]), proc("down", dead, ["eu"])]);
+  await stub.commands.get("q-lint.queryTag")("eu", "select from t");
+  const { tag, payload } = across.state().tag;
+  assert.strictEqual(tag, "eu");
+  assert.deepStrictEqual(payload.names, ["process", "v", "error"]);
+  assert.deepStrictEqual(payload.cells[0], ["a", "a", "b", "down"]);
+  assert.deepStrictEqual(payload.cells[1], ["1", "2", "3", ""]);
+  assert.match(payload.cells[2][3], /ECONNREFUSED|closed|connect/);
+  assert.deepStrictEqual([queries(a), queries(b), queries(other)], [["select from t"], ["select from t"], []]);
+  // Each run is in the history under its process; the active connection
+  // is left alone, and each connection of its own is closed.
+  assert.deepStrictEqual(live.history().map((h) => `${h.process} ${h.outcome}`).sort(), ["a ok", "b ok", "down error"]);
+  assert.strictEqual(live.activeLabel(), undefined);
+  for (let i = 0; i < 50 && a.open() + b.open() > 0; i++) await new Promise((r) => setTimeout(r, 20));
+  assert.strictEqual(a.open() + b.open(), 0);
+});
+
+test("Query a Tag takes a tag row, or asks for a tag, and the code from the editor", async (t) => {
+  const a = await fakeQ(table([1]));
+  t.after(() => a.close());
+  const { across } = await setUp(t, [proc("a", a.port, ["eu", "dev"])]);
+  vscode.window.activeTextEditor = {
+    document: { uri: vscode.Uri.file("/w/a.q"), lineAt: () => ({ text: "count t" }), getText: () => "count t" },
+    selection: { active: { line: 0 }, isEmpty: true },
+  };
+  await stub.commands.get("q-lint.queryTag")({ kind: "tag", tag: "dev" });
+  assert.deepStrictEqual(queries(a), ["count t"]);
+  let offered;
+  stub.picks.push((options) => ((offered = options.items.map((i) => `${i.label} ${i.description}`)), options.items[1]));
+  await stub.commands.get("q-lint.queryTag")();
+  assert.deepStrictEqual(offered, ["dev 1 process", "eu 1 process"]);
+  assert.strictEqual(across.state().tag.tag, "eu");
+  assert.strictEqual(queries(a).length, 2);
+});
+
+test("Query a Tag on guarded processes asks the read-only guard once; declined, nothing is sent", async (t) => {
+  const a = await fakeQ(table([1]));
+  const b = await fakeQ(table([2]));
+  t.after(() => [a, b].forEach((q) => q.close()));
+  await setUp(t, [proc("a", a.port, ["prod"]), proc("b", b.port, ["prod"])]);
+  stub.picks.push(undefined);
+  await stub.commands.get("q-lint.queryTag")("prod", "a:1");
+  assert.deepStrictEqual(stub.messages.filter(([k]) => k === "warning").map(([, m]) => m), ["This code would change 2 read-only processes. Run it anyway?"]);
+  assert.deepStrictEqual([queries(a), queries(b)], [[], []]);
+  await stub.commands.get("q-lint.queryTag")("prod", "count t");
+  assert.deepStrictEqual([queries(a), queries(b)], [["count t"], ["count t"]]);
+});
+
+test("turned off, Query a Tag refuses, says how to turn it on, and sends nothing", async (t) => {
+  const a = await fakeQ(table([1]));
+  t.after(() => a.close());
+  const { across } = await setUp(t, [proc("a", a.port, ["eu"])], { "query.tagQuery.enable": false });
+  await stub.commands.get("q-lint.queryTag")("eu", "count t");
+  assert.deepStrictEqual(stub.messages, [["info", "q-lint: Query a Tag is turned off. Set q-lint.query.tagQuery.enable to true to turn it on."]]);
+  assert.deepStrictEqual(a.sent, []);
+  assert.deepStrictEqual(across.state(), {});
+  // On again, without a reload.
+  stub.config.user["query.tagQuery.enable"] = true;
+  stub.changeConfig("q-lint.query.tagQuery.enable");
+  await stub.commands.get("q-lint.queryTag")("eu", "count t");
+  assert.deepStrictEqual(queries(a), ["count t"]);
+});
+
+test("Compare Query runs one query on two processes and lines up the answers (#907)", async (t) => {
+  const a = await fakeQ(table([1, 2]));
+  const b = await fakeQ(table([1, 3, 4]));
+  t.after(() => [a, b].forEach((q) => q.close()));
+  const { live, across } = await setUp(t, [proc("a", a.port, []), proc("b", b.port, [])]);
+  await stub.commands.get("q-lint.compareQuery")("select from t", "a", "b");
+  const { comparison } = across.state();
+  assert.deepStrictEqual([comparison.left.process, comparison.right.process], ["a", "b"]);
+  assert.deepStrictEqual([comparison.differing, comparison.onlyLeft, comparison.onlyRight, comparison.same], [1, 0, 1, false]);
+  assert.deepStrictEqual([queries(a), queries(b)], [["select from t"], ["select from t"]]);
+  assert.deepStrictEqual(live.history().map((h) => h.process).sort(), ["a", "b"]);
+  assert.strictEqual(live.activeLabel(), undefined);
+  // Picked when not given; the second pick says which is first.
+  let titles = [];
+  stub.picks.push((o) => (titles.push(o.title), o.items.find((i) => i.label === "b")));
+  stub.picks.push((o) => (titles.push(o.title), o.items.find((i) => i.label === "a")));
+  await stub.commands.get("q-lint.compareQuery")("count t");
+  assert.deepStrictEqual(titles, ["Compare Query (1 of 2): run it on which process?", "Compare Query (2 of 2): and compare b with which process?"]);
+  assert.strictEqual(across.state().comparison.left.process, "b");
+  // The same process twice is not a comparison.
+  stub.messages = [];
+  await stub.commands.get("q-lint.compareQuery")("count t", "a", "a");
+  assert.deepStrictEqual(stub.messages, [["info", "q-lint: Compare Query compares two processes; a was chosen twice."]]);
+  assert.strictEqual(queries(a).length, 2);
+});
+
+test("Compare Query asks the read-only guard first; declined, neither process is sent anything", async (t) => {
+  const a = await fakeQ(table([1]));
+  const b = await fakeQ(table([1]));
+  t.after(() => [a, b].forEach((q) => q.close()));
+  const { across } = await setUp(t, [proc("a", a.port, ["dev"]), proc("b", b.port, ["prd"])]);
+  stub.picks.push(undefined);
+  await stub.commands.get("q-lint.compareQuery")("`t upsert 1", "a", "b");
+  assert.deepStrictEqual(stub.messages.filter(([k]) => k === "warning").map(([, m]) => m), ["This code would change b. Run it anyway?"]);
+  assert.deepStrictEqual([queries(a), queries(b), across.state().comparison], [[], [], undefined]);
+});
+
+test("turned off, Compare Query refuses, says how to turn it on, and sends nothing", async (t) => {
+  const a = await fakeQ(table([1]));
+  t.after(() => a.close());
+  await setUp(t, [proc("a", a.port, []), proc("b", a.port, [])], { "query.compare.enable": false });
+  await stub.commands.get("q-lint.compareQuery")("count t", "a", "b");
+  assert.deepStrictEqual(stub.messages, [["info", "q-lint: Compare Query is turned off. Set q-lint.query.compare.enable to true to turn it on."]]);
+  assert.deepStrictEqual(a.sent, []);
+  stub.config.user["query.compare.enable"] = true;
+  stub.changeConfig("q-lint.query.compare.enable");
+  await stub.commands.get("q-lint.compareQuery")("count t", "a", "b");
+  assert.strictEqual(queries(a).length, 2);
+});

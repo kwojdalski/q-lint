@@ -50,6 +50,10 @@ const { HISTORY_COMMANDS, readHistorySearch } = require("../out/historyfilter.js
 const { CONNECT_SCRIPT_COMMANDS } = require("../out/connectscript.js");
 const { ONBOARDING } = require("../out/onboarding.js");
 const { PARAM_CACHE } = require("../out/paramcache.js");
+const { TAG_QUERY, readTagQuery } = require("../out/tagquery.js");
+const { COMPARE, readCompare } = require("../out/compare.js");
+const { SAVED_QUERIES, readSavedQueries } = require("../out/savedqueries.js");
+const { WATCH, readWatch } = require("../out/watch.js");
 
 test("a statement is a line and the indented lines after it", () => {
   assert.deepStrictEqual(statements("a:1\nb:a+1\nb*10"), ["a:1", "b:a+1", "b*10"]);
@@ -287,6 +291,10 @@ test("package.json declares exactly the commands the extension registers", () =>
     ...Object.values(SOURCE_COMMANDS),
     INFO.refreshMonitor,
     INFO.refreshHdb,
+    ...Object.values(TAG_QUERY),
+    ...Object.values(COMPARE),
+    ...Object.values(SAVED_QUERIES).filter((id) => id !== SAVED_QUERIES.view),
+    ...Object.values(WATCH),
   ].sort();
   assert.deepStrictEqual(declared, registered);
 });
@@ -296,7 +304,7 @@ test("the views live in their own container, and every menu names a declared com
   assert.strictEqual(container.id, VIEWS.container);
   assert.deepStrictEqual(
     pkg.contributes.views[VIEWS.container].map((v) => v.id),
-    [VIEWS.processes, EXPLORER.view, VIEWS.history, ONBOARDING.helpView, INFO.monitor, INFO.hdb, NOTEBOOK.variablesView],
+    [VIEWS.processes, EXPLORER.view, VIEWS.history, ONBOARDING.helpView, INFO.monitor, INFO.hdb, NOTEBOOK.variablesView, SAVED_QUERIES.view],
   );
   const declared = new Set(pkg.contributes.commands.map((c) => c.command));
   for (const [where, items] of Object.entries(pkg.contributes.menus)) {
@@ -378,6 +386,10 @@ test("every query setting is read, with the default package.json declares, and n
   const progress = readProgress(get);
   const placeholders = readPlaceholders(get);
   const historySearch = readHistorySearch(get);
+  assert.deepStrictEqual(readTagQuery(get), { enabled: true });
+  assert.deepStrictEqual(readCompare(get), { enabled: true });
+  assert.deepStrictEqual(readSavedQueries(get), { enabled: true });
+  assert.deepStrictEqual(readWatch(get), { enabled: false, interval: 5 });
   readMonitorInterval(get);
   readInsight(get);
   for (const [key, spec] of Object.entries(declared)) {

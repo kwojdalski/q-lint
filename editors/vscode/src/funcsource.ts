@@ -200,12 +200,16 @@ export function editedText(document: string): string {
 /// What the user is asked before Redefine replaces `name` on `target`: a
 /// modal's message and detail, with the production warning the agent's
 /// query carries (`agent.ts`) for a process tagged prod.
-export function redefineConfirmation(name: string, target: Process): { message: string; detail: string } {
-  const warning = isProduction(target)
-    ? `${target.label} is a production process (tagged ${target.tags.join(", ")}). `
-    : "";
+/// `guarded`: the tags the read-only guard (#918) guards it by, when it does.
+export function redefineConfirmation(name: string, target: Process, guarded: string[] = []): { message: string; detail: string } {
+  const warning =
+    guarded.length > 0
+      ? `${target.label} is tagged ${guarded.join(", ")}, which q-lint.processes.readOnlyGuard.tags guards: Redefine assigns ${name} there. `
+      : isProduction(target)
+        ? `${target.label} is a production process (tagged ${target.tags.join(", ")}). `
+        : "";
   return {
-    message: `Redefine ${name} on ${target.label}?`,
+    message: guarded.length > 0 ? `Redefine ${name} on the read-only process ${target.label}?` : `Redefine ${name} on ${target.label}?`,
     detail:
       `${warning}The edited text replaces ${name} on ${target.label} for every caller, parsed in the namespace it was defined in. ` +
       "Nothing is saved to a file: a restart of the process brings back the old definition.",

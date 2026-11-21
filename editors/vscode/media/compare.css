@@ -1,0 +1,103 @@
+/* The Compare Query panel, in the editor's theme. */
+body {
+  margin: 0;
+  padding: 8px 12px;
+  background: var(--vscode-editor-background);
+  color: var(--vscode-foreground);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+}
+
+header .query {
+  display: block;
+  font-family: var(--vscode-editor-font-family);
+  white-space: pre-wrap;
+  margin-bottom: 4px;
+}
+
+.summary {
+  margin: 4px 0 8px;
+  font-weight: 600;
+}
+
+.summary.same {
+  color: var(--vscode-testing-iconPassed, inherit);
+}
+
+.note {
+  margin: 0 0 8px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.scroll {
+  overflow: auto;
+}
+
+table {
+  border-collapse: collapse;
+  font-family: var(--vscode-editor-font-family);
+  font-size: var(--vscode-editor-font-size);
+}
+
+th,
+td {
+  padding: 1px 8px;
+  border: 1px solid var(--vscode-panel-border, transparent);
+  white-space: pre;
+  text-align: left;
+}
+
+th.process {
+  text-align: center;
+}
+
+th.absent {
+  text-decoration: line-through;
+  color: var(--vscode-disabledForeground);
+}
+
+.gap {
+  border: none;
+  width: 12px;
+  padding: 0;
+}
+
+td.changed,
+pre.changed {
+  background: var(--vscode-diffEditor-insertedTextBackground, rgba(155, 185, 85, 0.2));
+  outline: 1px solid var(--vscode-diffEditor-insertedLineBackground, transparent);
+}
+
+td.only {
+  background: var(--vscode-diffEditor-removedTextBackground, rgba(255, 0, 0, 0.2));
+}
+
+td.missing {
+  background: repeating-linear-gradient(45deg, transparent, transparent 4px, var(--vscode-panel-border, rgba(128, 128, 128, 0.2)) 4px, var(--vscode-panel-border, rgba(128, 128, 128, 0.2)) 5px);
+}
+
+.sides {
+  display: flex;
+  gap: 12px;
+}
+
+.side {
+  flex: 1;
+  min-width: 0;
+}
+
+.side h2 {
+  font-size: 1em;
+  margin: 0 0 4px;
+}
+
+.side pre {
+  margin: 0;
+  padding: 4px;
+  overflow: auto;
+  font-family: var(--vscode-editor-font-family);
+}
+
+pre.error {
+  color: var(--vscode-errorForeground);
+}

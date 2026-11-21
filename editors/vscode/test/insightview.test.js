@@ -257,7 +257,23 @@ test("Redefine on a process tagged prod says so in its confirmation", async (t) 
   await stub.commands.get("q-lint.editFunctionSource")(uri);
   await stub.commands.get("q-lint.redefineFunction")();
   assert.strictEqual(asked.options.modal, true);
+  // The read-only guard (#918) guards prod by default: Redefine assigns.
+  assert.strictEqual(asked.text, "Redefine .ns.h on the read-only process p?");
+  assert.match(asked.options.detail, /^p is tagged prod, which q-lint.processes.readOnlyGuard.tags guards: Redefine assigns .ns.h there\./);
+  // Declined, nothing is sent; with the guard off, the production warning.
+  stub.config.user["processes.readOnlyGuard.enable"] = false;
+  await stub.commands.get("q-lint.redefineFunction")();
   assert.match(asked.options.detail, /^p is a production process \(tagged prod\)/);
+});
+
+test("Redefine on a read-only process is not sent when its confirmation is declined (#918)", async (t) => {
+  const { q } = await setUp(t, ["live"], { "processes.readOnlyGuard.tags": ["live"] });
+  const uri = await stub.commands.get("q-lint.openFunctionSource")(".ns.h");
+  await stub.commands.get("q-lint.editFunctionSource")(uri);
+  stub.picks.push(undefined);
+  assert.strictEqual(await stub.commands.get("q-lint.redefineFunction")(), false);
+  assert.ok(stub.messages.some(([, text]) => text === "Redefine .ns.h on the read-only process p?"));
+  assert.deepStrictEqual(calls(q, REDEFINE), []);
 });
 
 test("Open Function Source and Find Callers read the name under the cursor in a q editor", async (t) => {

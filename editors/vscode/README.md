@@ -285,6 +285,87 @@ running the query, and the new connection is made once it is free, however
 long that takes. **Disconnect**, or connecting to another process, stops
 it waiting.
 
+**Query a Tag**, on a tag row in Processes, in a q editor's context menu or
+from the palette, runs one query on every saved and discovered process
+carrying a tag (ignoring case; asked for when none is given), and shows the
+answers as one table in the result panel - as a grid even in console mode -
+with a `process` column first. The code is the selection, or the statement
+at the cursor, placeholders filled in; it also takes a tag as the
+argument of a keybinding. Each process is queried over a connection of
+its own, eight at a time, opened for the query and closed after, so the
+active connection is left as it was; its connect script runs first, and
+the query controls apply (unlimited, unwrapped, the timeout). A
+notification shows the progress, and cancelling it stops waiting. Tables
+are kept as they came under the union of their columns, a column one lacks
+left empty; a value that is not tabular is one row, its text in a `result`
+column; a q error, or a process that could not be reached, one row, its
+message in an `error` column. Each table is cut at `q-lint.query.gridLimit`
+rows, as a grid query is. Every run lands in Query History under its
+process. `q-lint.query.tagQuery.enable` off hides and refuses it.
+
+**Compare Query Across Two Processes**, in a q editor's context menu or
+from the palette, runs the selection, or the statement at the cursor, on
+two processes you pick - the second pick says which the first was - each
+over a connection of its own as **Query a Tag** does, and opens a panel
+beside the editor showing the answers side by side: the first process's
+columns, then the second's, each pair of rows on one line. Two tables are
+lined up as **Compare with Previous Run** lines up two runs: by their key
+when both are keyed by the same columns, otherwise by their place.
+Columns are matched by name (one only a side has is struck through on the
+other), and cells by the text the grid shows, so floats compare to
+`q-lint.query.gridDecimals`. A cell that differs is marked, a row only one
+side has is marked on that side and hatched on the other, and a line above
+says how many cells differ, how many rows only each side has, or that the
+answers are the same. Anything that is not two tables - an atom, a list, a
+q error, a process not reached - is shown as the two texts side by side.
+The first 5000 rows lined up are drawn; the counts are of all of them.
+Both runs land in Query History. `q-lint.query.compare.enable` off hides
+and refuses it.
+
+**Watch Query** is off by default, as it sends code on its own: turn on
+`q-lint.query.watch.enable`. In a q editor's context menu or from the
+palette, it runs the selection, or the statement at the cursor, on the
+active connection now (connecting first if there is none), and again every
+few seconds - `q-lint.query.watch.interval` (5) is offered, 1 to 86400 - as
+a query from the editor runs. A grid or chart is refreshed in place, under
+the same tab, keeping its view, sort, filters and scroll, and **Compare
+with Previous Run** compares it with the run before; in console mode each
+run clears the output first. The status bar shows `watching rdb every 5s
+(12)`; clicking it, or **Stop Watching Query**, stops it, and so do a
+disconnect, a dropped connection, a connect elsewhere and turning the
+setting off. A run due while a query is out is skipped. Only the first run
+lands in Query History. On a process tagged `prod` (or carrying a tag the
+read-only guard guards) it asks before it starts, and code that would
+change a guarded process is asked about once, then. It also takes the code
+and the seconds as arguments.
+
+**Read-only guard.** Code sent to a process tagged `prod`, `prd` or
+`production` (`q-lint.processes.readOnlyGuard.tags`, ignoring case) is read
+first, and when it would change the process, a modal asks before anything
+is sent; Escape sends nothing. A change is: assigning a global (`a:1`,
+`a+:1`, `t[0]:5`, `a::b` - and, inside a lambda, `a::` or a dotted
+`.ns.v:`, as q makes those global; a column named in `select a:x from t` or
+`([] a:1 2)` is not one), `update` or `delete` from a table named by a
+symbol (`` from `t ``), `set`, `upsert`, `insert`, `hdel`, `exit`, `system`,
+`.Q.dpft`, `.Q.dpfts`, `.Q.hdpf`, `.Q.en`, `0:` or `1:` to a file handle,
+`2:`, an amend in place (`` @[`t;i;:;v] ``), `value` or `eval` of a string,
+and a system command other than one that reads a setting (`\c`, `\d`, `\P`
+alone) - `\t` and `\ts` are read for their expression. It holds for every
+path that sends code: a query (line, selection, block, file, a Run lens, a
+rerun, Preview, a saved query, a watched one, asked once when it starts),
+**Query a Tag** and **Compare Query** (asked once, for every guarded
+process they reach), a notebook cell and **Run Notebook with Parameters**,
+**Redefine on Process** (whose confirmation says so, since it always
+assigns) and a connect script, asked at each connect, and skipped, with the
+connection kept, when declined. An agent's query cannot be asked about, so
+one that would change such a process is refused with why, and never offered
+to you. q-lint's own reads - the Process Explorer, Monitor, HDB browser,
+hovers and the heartbeat - define nothing and are not asked about. The
+guard reads the code's text: a function defined earlier that writes, or a
+string built at run time and evaluated, is not seen, so it guards against a
+slip, not a person - a process that must not change needs its own `.z.pg`.
+`q-lint.processes.readOnlyGuard.enable` off sends code unasked, as before.
+
 **Placeholders.** A query from the editor (line, selection, block or entire
 file) that holds `{{name}}` asks for each name's value in an input box, then
 sends the code with the values put in place, as written - so a symbol is
@@ -344,6 +425,23 @@ duration, outcome and error; any other name as JSON,
 `{"queries": [{"process", "at", "millis", "outcome", "error"?, "code"}]}`,
 newest first. `q-lint.queryHistory.search.enable` off hides the filter and
 export, and clears a filter set.
+
+**Saved Queries**, a view in the q-lint panel, keeps named queries for the
+workspace. **Save Query** - on the view's title bar, in a q editor's
+context menu, or on a Query History entry - saves the selection, or the
+statement at the cursor, or that entry's code, as written, under a name you
+give (the first line is offered); placeholders stay in it and are asked for
+each time it runs. On a saved query's row: **Run Saved Query** runs it on
+the active connection as a query from the editor runs (connecting first if
+there is none; the read-only guard applies, and it lands in Query History),
+**Edit Saved Query** - also a click on the row - opens it as a q document of
+its own (`q-lint-saved:/name.q`), linted as any q file, where saving saves
+the query, and **Rename** and **Delete Saved Query**, which asks first.
+Each takes a query's name as an argument for a keybinding. The list is kept
+in the workspace's storage, not in a file, so each workspace has its own and
+nothing is written into the folder. `q-lint.savedQueries.enable` off removes
+the view and its documents and makes the commands refuse; the queries are
+kept for when it is on again.
 
 **Query controls.**
 - **Toggle Unlimited Query**: while on, the console text is not cut at
@@ -932,6 +1030,11 @@ nothing.
 | `q-lint.query.progress.enable` | `true` | Count a running query's time in the status bar, and notify a long one's end. | - |
 | `q-lint.query.notifyAfter` | `10` | Seconds a query must run for its end to be notified while the window is not focused; `0` never. | - |
 | `q-lint.query.placeholders.enable` | `true` | Ask for a value for each `{{name}}` in the code a query sends, and put it in place. | - |
+| `q-lint.query.tagQuery.enable` | `true` | **Query a Tag**: one query on every process with a tag, the answers as one table. | - |
+| `q-lint.query.compare.enable` | `true` | **Compare Query Across Two Processes**: one query on two processes, the answers side by side, differences marked. | - |
+| `q-lint.savedQueries.enable` | `true` | The **Saved Queries** view and its commands. Off, the view is removed and the commands refuse; the queries are kept. | - |
+| `q-lint.query.watch.enable` | `false` | **Watch Query**: re-run a query every few seconds, its result refreshed in place. Off, the command refuses and a watch running stops. | - |
+| `q-lint.query.watch.interval` | `5` | Seconds between a watched query's runs that **Watch Query** offers, 1 to 86400. | - |
 | `q-lint.processExplorer.excludedNamespaces` | `["q","Q","h","j","o","s"]` | Namespaces the Process Explorer and live completion leave out (`q`, or a nested one as `ns.sub`), with those nested in them. | - |
 | `q-lint.processExplorer.previewLimit` | `5` | Rows of a table Preview shows. | - |
 | `q-lint.processExplorer.autoRefresh` | `false` | Read the process again after each query. | - |
@@ -997,6 +1100,8 @@ Read when a cell runs or a command is used, so a change needs no reload. None re
 | Setting | Default | What it does | q-pro |
 | --- | --- | --- | --- |
 | `q-lint.processes.tagColors` | `{}` | A tag's colour in the Processes view, as a theme colour id: `{"eu": "charts.purple"}`. Over the built-in `prod`, `uat` and `dev` colours; a value that is not a colour id is ignored. Changing it recolours the view at once. | - |
+| `q-lint.processes.readOnlyGuard.enable` | `true` | Ask before sending code that would change a process carrying a guarded tag; refuse an agent's. Off, code is sent unasked. | - |
+| `q-lint.processes.readOnlyGuard.tags` | `["prod","prd","production"]` | The tags the read-only guard guards, ignoring case; `[]` guards none. | - |
 
 ### Not here, and why
 
