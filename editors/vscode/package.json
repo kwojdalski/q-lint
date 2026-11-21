@@ -255,6 +255,12 @@
             "order": 27,
             "markdownDescription": "Offer the **q Dependencies** view - the files the active q file depends on and those depending on it - and **q-lint: List Affected Tests**, the test files that reach a q file changed against git HEAD. Both are what `qlinter analyze graph` prints. Off, the server answers neither and the view is hidden."
           },
+          "q-lint.inlayHints.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 28,
+            "markdownDescription": "Show parameter names at the arguments of a bracketed call to a workspace function - `f[a: 1; b: 2]` drawn over `f[1;2]` - for a function whose definitions all declare the same signature. Read from the source, never from a running q. VS Code's own `editor.inlayHints.enabled` hides them too, or shows them only while a key is held. Off, q-lint announces none."
+          },
           "q-lint.workspaceIndex.enable": {
             "type": "boolean",
             "default": true,

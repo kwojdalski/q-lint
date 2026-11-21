@@ -535,6 +535,16 @@ of expressions, so the last parameter stays marked; past the last parameter
 of anything else no parameter is marked, and the signature says the call has
 too many arguments.
 
+`textDocument/inlayHint` draws a parameter's name before each argument of a
+bracketed call to a workspace function in the range asked about: `f[a:1;b:2]`
+over `f[1;2]`, the call written qualified or bare under the `\d` in force. A
+hint is given only when every definition of the name assigns a lambda with a
+signature, and the same one: an implicit `x`, `y` or `z` names nothing a
+reader does not know, and definitions that disagree leave which one is called
+to whichever ran last. An empty slot of a projection, an argument past the
+last parameter and one spelled as the parameter itself get none.
+`inlayHints.enable: false` turns them off.
+
 Completion is off unless `completion.enable` asks for it, because an editor
 told that a server completes stops offering the words already in the buffer,
 and this server's list is narrower than that fallback in one way that matters:
@@ -696,6 +706,7 @@ Every key is optional, and these are the defaults:
  "semanticTokens": {"enable": true}, "navigation": {"enable": true},
  "help": {"enable": true}, "completion": {"enable": false},
  "callHierarchy": {"enable": true}, "graph": {"enable": true},
+ "inlayHints": {"enable": true},
  "workspaceIndex": {"enable": true, "exclude": []}}
 ```
 
@@ -711,7 +722,8 @@ language server already answers those requests. `completion.enable` is the
 one that starts off; `true` announces completion.
 `callHierarchy.enable` set to `false` leaves the call hierarchy unannounced,
 and `graph.enable` does that for `q-lint/graph` and `q-lint/affectedTests`,
-which then answer `null`. `workspaceIndex.exclude`
+which then answer `null`; `inlayHints.enable` does it for inlay hints.
+`workspaceIndex.exclude`
 holds globs relative to each workspace folder that the index does not read.
 The index stops after 20,000 `.q` files or 500,000 directory entries of any
 kind, whichever comes first, so a folder opened at `/` cannot stall the

@@ -55,6 +55,7 @@ export interface InitializationOptions {
   completion: { enable: boolean };
   callHierarchy: { enable: boolean };
   graph: { enable: boolean };
+  inlayHints: { enable: boolean };
   workspaceIndex: { enable: boolean; exclude: string[] };
 }
 
@@ -133,6 +134,7 @@ export function launch(settings: Settings, folder: string | undefined): Launch {
       completion: { enable: settings.get<boolean>("completion.enable", false) },
       callHierarchy: { enable: settings.get<boolean>("callHierarchy.enable", true) },
       graph: { enable: settings.get<boolean>("graph.enable", true) },
+      inlayHints: { enable: settings.get<boolean>("inlayHints.enable", true) },
       workspaceIndex: {
         enable: settings.get<boolean>("workspaceIndex.enable", true),
         exclude: strings(settings, "workspaceIndex.exclude"),
@@ -158,6 +160,7 @@ const RESTARTING = [
   "completion",
   "callHierarchy",
   "graph",
+  "inlayHints",
   "workspaceIndex",
 ];
 

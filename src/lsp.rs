@@ -163,6 +163,7 @@ const REQUEST_FAILED: i64 = -32803;
 /// cancelled before it was run.
 const REQUEST_CANCELLED: i64 = -32800;
 
+mod annotate;
 mod help;
 mod navigate;
 mod relate;
@@ -629,6 +630,8 @@ struct Options {
     /// Answer `q-lint/graph` and `q-lint/affectedTests`, the file-to-file
     /// dependency graph `qlinter analyze graph` prints.
     graph: bool,
+    /// Answer inlay hints: parameter names at a call's arguments.
+    inlay_hints: bool,
     /// A diagnostic severity by code or prefix; the longest that names a
     /// code decides.
     severity: Vec<(String, i64)>,
@@ -648,6 +651,7 @@ impl Default for Options {
             completion: false,
             call_hierarchy: true,
             graph: true,
+            inlay_hints: true,
             severity: vec![],
         }
     }
@@ -679,6 +683,7 @@ impl Options {
                         "completion",
                         "callHierarchy",
                         "graph",
+                        "inlayHints",
                     ]
                     .contains(&key.as_str())
                         && !value.is_object()
@@ -709,6 +714,7 @@ impl Options {
         options.completion = flag("/completion/enable", false);
         options.call_hierarchy = flag("/callHierarchy/enable", true);
         options.graph = flag("/graph/enable", true);
+        options.inlay_hints = flag("/inlayHints/enable", true);
         match init.pointer("/lint/run") {
             None | Some(Value::Null) => {}
             Some(v) if v == "onType" => {}
@@ -1022,6 +1028,7 @@ pub fn serve(
                 help_client = help::Client::read(&params);
                 help::announce(&mut result["capabilities"], opts.help, opts.completion);
                 relate::announce(&mut result["capabilities"], opts.call_hierarchy, opts.graph);
+                annotate::announce(&mut result["capabilities"], opts.inlay_hints);
                 send(writer, json!({"id": id, "result": result}))?;
                 initialized = true;
             }
@@ -1091,6 +1098,7 @@ pub fn serve(
                 | "textDocument/signatureHelp"
                 | "textDocument/completion"
                 | "textDocument/prepareCallHierarchy"
+                | "textDocument/inlayHint"
                 | "q-lint/graph",
                 id,
             ) if !params["textDocument"]["uri"].is_string() => {
@@ -1271,6 +1279,22 @@ pub fn serve(
                     }
                     let sources = navigate::Sources::new(&docs, &idx);
                     help::answer(&method, &params, &sources, help_client)
+                });
+                match answer {
+                    Ok(result) => send(writer, json!({"id": id, "result": result}))?,
+                    Err(panic) => send(writer, internal_error(id, &panic))?,
+                }
+            }
+            ("textDocument/inlayHint", Some(id)) => {
+                // Asked of a server that did not announce it, a request is
+                // answered with nothing rather than refused.
+                let on = opts.inlay_hints;
+                let answer = guarded(|| {
+                    if !on {
+                        return Value::Null;
+                    }
+                    let sources = navigate::Sources::new(&docs, &idx);
+                    annotate::answer(&method, &params, &sources)
                 });
                 match answer {
                     Ok(result) => send(writer, json!({"id": id, "result": result}))?,

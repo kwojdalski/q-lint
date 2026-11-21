@@ -293,6 +293,31 @@ pub struct Call {
     pub argument: usize,
 }
 
+/// A call written as a name and its brackets: the name at byte `at` for
+/// `len` bytes, and each argument as its start and length, blanks trimmed.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct BracketCall {
+    pub at: usize,
+    pub len: usize,
+    pub arguments: Vec<(usize, usize)>,
+}
+
+/// Every call in `source` written as a name and its brackets, in order.
+pub fn bracket_calls(source: &str) -> Vec<BracketCall> {
+    let v = views(source);
+    semantics::help::bracket_calls(&v.code)
+}
+
+/// The paths of the loads in `source` - `\l path`, `system "l path"` and a
+/// file symbol - as start and length, in order.
+pub fn load_paths(source: &str) -> Vec<(usize, usize)> {
+    let v = views(source);
+    semantics::load_paths(&v.code, source)
+        .into_iter()
+        .map(|path| (path.start, path.len()))
+        .collect()
+}
+
 /// What a definition that is no lambda may still be called as: the name at
 /// byte `at` for `len` bytes, itself (`al:add`) or projected (`pr:add[;2;]`).
 /// `given` is `None` for the name itself, and for a projection says of each

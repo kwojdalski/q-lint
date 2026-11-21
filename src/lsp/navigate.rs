@@ -75,7 +75,7 @@ impl<'a> Sources<'a> {
 
     /// The document a request names, when it is an open `.q` file - the only
     /// kind linted, indexed or coloured, and so the only kind navigated.
-    fn document(&self, params: &Value) -> Option<(&'a str, &'a str)> {
+    pub(super) fn document(&self, params: &Value) -> Option<(&'a str, &'a str)> {
         let (uri, text) = self
             .docs
             .get_key_value(params["textDocument"]["uri"].as_str()?)?;

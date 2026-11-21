@@ -42,6 +42,7 @@ test("the defaults start the server as it was started before settings", () => {
     completion: { enable: false },
     callHierarchy: { enable: true },
     graph: { enable: true },
+    inlayHints: { enable: true },
     workspaceIndex: { enable: true, exclude: [] },
   });
 });
@@ -94,6 +95,7 @@ test("every editor-only setting reaches the server's options", () => {
       "completion.enable": true,
       "callHierarchy.enable": false,
       "graph.enable": false,
+      "inlayHints.enable": false,
       "workspaceIndex.enable": false,
       "workspaceIndex.exclude": ["vendor/**"],
     }),
@@ -111,6 +113,7 @@ test("every editor-only setting reaches the server's options", () => {
     completion: { enable: true },
     callHierarchy: { enable: false },
     graph: { enable: false },
+    inlayHints: { enable: false },
     workspaceIndex: { enable: false, exclude: ["vendor/**"] },
   });
 });

@@ -100,6 +100,15 @@ to a process you add and connect to, and sends only the code you run.
   of one - showing the slots it leaves open - or a q function called with
   brackets. Past the last parameter none is marked, and it says the call has
   too many arguments.
+- **Inlay hints** for parameter names: in `rate[px;10 20]`, `qty:` is drawn
+  before `10 20` when the workspace defines `rate:{[px;qty] ...}`, whether
+  the call is qualified or bare under the `\d` in force. Only for a bracketed
+  call to a function whose every definition declares the same signature -
+  not `x`, `y` and `z`, which say nothing, nor two definitions that
+  disagree. Not at an empty slot of a projection, past the last parameter,
+  or where the argument is already the parameter's name.
+  `q-lint.inlayHints.enable` turns them off, and VS Code's
+  `editor.inlayHints.enabled` can show them only while a key is held.
 - **Completion**, when turned on with `q-lint.completion.enable`: a lambda's
   parameters and locals first, then the names the workspace defines, spelled
   as the `\d` context in force reads them, then q's own words. It does not
@@ -581,6 +590,7 @@ q-pro column names the setting of [q-pro](https://marketplace.visualstudio.com/i
 | `q-lint.completion.enable` | `false` | Complete locals, workspace names and q's words. Off by default: an editor told a server completes stops offering the words already in the file. | - |
 | `q-lint.callHierarchy.enable` | `true` | Offer the call hierarchy of a global function. | - |
 | `q-lint.graph.enable` | `true` | Offer the **q Dependencies** view and **q-lint: List Affected Tests**. Off: the view is hidden and the server answers neither. | - |
+| `q-lint.inlayHints.enable` | `true` | Show parameter names at the arguments of a call to a workspace function. | - |
 | `q-lint.workspaceIndex.enable` | `true` | Read every workspace `.q` file at startup for the names it defines, up to 20,000 files or 500,000 directory entries. Off: only open files. | - |
 | `q-lint.workspaceIndex.exclude` | `[]` | Globs, relative to the workspace folder, the index does not read: `["vendor/**"]`. | `q-lang-server.sourceFiles.ignoreGlob` |
 | `q-lint.trace.server` | `off` | Log client-server traffic: `off`, `messages`, `verbose`. | `q-lang-server.trace.server` |
