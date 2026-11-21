@@ -41,6 +41,7 @@ import { Drift } from "./driftview";
 import { registerAssistTools } from "./assisttools";
 import { registerChat } from "./chat";
 import { registerQsqlDraft } from "./qsqldraft";
+import { registerSnapshots } from "./snapshotview";
 import { registerTestStubs } from "./teststubview";
 import { registerBacktraceLinks } from "./backtraceview";
 import { spawnSync } from "node:child_process";
@@ -197,6 +198,7 @@ export async function activate(
   const valueHover = registerValueHover(context, live, running);
   const undefinedNames = registerUndefinedNames(context, live, running);
   const idioms = registerIdioms(context);
+  registerSnapshots(context, live, () => void testExplorer?.discover());
   const testStubs = registerTestStubs(context);
   const backtraceLinks = registerBacktraceLinks(context);
   // Not awaited: nothing above needs the server, and a slow or hung one

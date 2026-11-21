@@ -361,6 +361,19 @@ The process's `\d` is put back after each test. A failure shows q's error
 or the value at the test. `q-lint.testExplorer.enable` turns the
 integration off: the tests leave the view and nothing is read or sent.
 
+**Snapshot tests.** **Record Query Snapshot** (a q editor's context menu)
+runs the query at the cursor and writes its result, as the process prints
+it, to `__snapshots__/<name>.qsnap` beside the file - after showing what
+it will write and asking, a replacement included. The result is printed at
+a 2000 by 2000 console (`\c` is set for the query and put back), so `\P`
+still matters. Each `.qsnap` file is a test in the Testing view: its query
+runs again and passes when the result is the same line for line, trailing
+blanks aside, and a failure is shown as a diff. **Update Snapshot**, on a
+snapshot in the Testing view or an open `.qsnap` file, records the new
+result after asking. The file is plain text: `// q-lint snapshot`, `//
+query`, the query, `// result`, the result. `q-lint.snapshotTests.enable`
+turns them off: the files leave the view and the commands are hidden.
+
 **Generate Test Stub.** On a function's definition, the light bulb (and
 **Generate Test Stub**, in the context menu) writes a test for it in its
 test file's style: `test_<name>.q` or `<name>_test.q` in the workspace, or
@@ -1396,6 +1409,7 @@ nothing.
 | `q-lint.idiomSnippets.enable` | `true` | Offer the idiom snippets (joins, `.z` handlers, a TorQ process) in the completion list. | - |
 | `q-lint.processExplorer.driftDetection.enable` | `false` | **Check Drift Against Process**: compare the workspace's function definitions with the connected process. Off, the command is hidden and reads nothing. | - |
 | `q-lint.hotReload.enable` | `false` | On saving a q file, send the definitions the save changed to its process, after Redefine's confirmation. Off, nothing listens and nothing is sent. | - |
+| `q-lint.snapshotTests.enable` | `true` | **Record Query Snapshot** and **Update Snapshot**, and `.qsnap` files as tests in the Testing view. Off, none is listed and the commands are hidden. | - |
 | `q-lint.testStub.enable` | `true` | Offer **Generate Test Stub** on a function's definition. | - |
 | `q-lint.backtraceLinks.enable` | `true` | Link each backtrace frame in the output and terminals to the line that failed. | - |
 

@@ -673,6 +673,12 @@
             "order": 133,
             "markdownDescription": "Offer the q idiom snippets in a q editor's completion list: `aj`, `aj0`, `wj`, `wj1`, `lj`, `ij`, `uj`, a bucketed `xbar` select, the `.z` handlers (`zpg`, `zps`, `zpo`, `zpc`, `zpw`, `zts`, `zws`, `zexit`) and a TorQ process skeleton (`torq`). Off, they leave the list."
           },
+          "q-lint.snapshotTests.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 136,
+            "markdownDescription": "Snapshot tests: **Record Query Snapshot** writes a query's printed result to `__snapshots__/<name>.qsnap` beside its file, after showing it and asking; the Testing view runs each `.qsnap` file's query again and compares; **Update Snapshot** rewrites one, after asking. Off, the files are not listed and the commands are hidden."
+          },
           "q-lint.testStub.enable": {
             "type": "boolean",
             "default": true,
@@ -1372,6 +1378,18 @@
         "title": "Redefine on Process",
         "category": "q-lint",
         "icon": "$(cloud-upload)",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.recordSnapshot",
+        "title": "Record Query Snapshot",
+        "category": "q-lint",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.updateSnapshot",
+        "title": "Update Snapshot",
+        "category": "q-lint",
         "enablement": "q-lint.connected"
       },
       {
@@ -2151,9 +2169,20 @@
           "group": "q-lint@9"
         },
         {
+          "command": "q-lint.recordSnapshot",
+          "when": "editorLangId == q && q-lint.connected && config.q-lint.snapshotTests.enable",
+          "group": "q-lint@10"
+        },
+        {
           "command": "q-lint.generateTestStub",
           "when": "editorLangId == q && config.q-lint.testStub.enable",
           "group": "q-lint@10"
+        }
+      ],
+      "testing/item/context": [
+        {
+          "command": "q-lint.updateSnapshot",
+          "when": "controllerId == q-lint.tests && testId =~ /\\.qsnap$/ && config.q-lint.snapshotTests.enable"
         }
       ],
       "commandPalette": [
@@ -2332,6 +2361,14 @@
         {
           "command": "q-lint.draftQsql",
           "when": "config.q-lint.chat.englishToQsql.enable"
+        },
+        {
+          "command": "q-lint.recordSnapshot",
+          "when": "config.q-lint.snapshotTests.enable && editorLangId == q"
+        },
+        {
+          "command": "q-lint.updateSnapshot",
+          "when": "config.q-lint.snapshotTests.enable"
         },
         {
           "command": "q-lint.generateTestStub",

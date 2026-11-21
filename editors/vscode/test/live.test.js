@@ -48,6 +48,7 @@ const { CHECK_UNDEFINED } = require("../out/undefinednames.js");
 const { readAssist, QUERY_FEATURES } = require("../out/assistconfig.js");
 const { DRIFT_COMMANDS } = require("../out/definitions.js");
 const { QSQL_COMMANDS } = require("../out/assist.js");
+const { SNAPSHOT_COMMANDS } = require("../out/snapshot.js");
 const { TEST_STUB_COMMAND } = require("../out/teststub.js");
 const { CONTROL_COMMANDS, readControls } = require("../out/querycontrols.js");
 const { readProgress } = require("../out/progress.js");
@@ -314,6 +315,7 @@ test("package.json declares exactly the commands the extension registers", () =>
     CHECK_UNDEFINED,
     ...Object.values(DRIFT_COMMANDS),
     ...Object.values(QSQL_COMMANDS),
+    ...Object.values(SNAPSHOT_COMMANDS),
     TEST_STUB_COMMAND,
   ].sort();
   assert.deepStrictEqual(declared, registered);

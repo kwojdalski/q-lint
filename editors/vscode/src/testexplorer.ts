@@ -14,6 +14,9 @@
 // to when there is none; **Run on q Process...** always asks. A process
 // tagged prod, prd or production is confirmed first. Nothing is read or sent
 // while q-lint.testExplorer.enable is off: the controller is disposed.
+//
+// Snapshot files (`.qsnap`, #981, q-lint.snapshotTests.enable) are tests
+// too: the query is run again and its result compared with the file's.
 import {
   Location,
   Range,
@@ -28,10 +31,14 @@ import {
   type ExtensionContext,
   type TestController,
   type TestItem,
+  type TestRun,
 } from "vscode";
 import { isProduction } from "./agent";
-import { editorFeatureOn, type Server } from "./editorfeatures";
+import { editorFeatureOn, type EditorFeature, type Server } from "./editorfeatures";
 import type { Live } from "./live";
+import { readAnswer } from "./query";
+import { SNAPSHOT_EXTENSION, SNAPSHOT_RUN, parseSnapshot, sameResult, type Snapshot } from "./snapshot";
+import { statements } from "./statements";
 import {
   TEST_RUN,
   failureText,
@@ -61,9 +68,14 @@ export interface TestOutcome {
   message?: string;
 }
 
-type Entry = { kind: "function"; test: ServerTest } | { kind: "k4unit"; rows: K4Row[]; row: K4Row };
+type Entry =
+  | { kind: "function"; test: ServerTest }
+  | { kind: "k4unit"; rows: K4Row[]; row: K4Row }
+  | { kind: "snapshot"; snapshot: Snapshot };
 
-const on = (): boolean => editorFeatureOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), "testExplorer");
+const featureOn = (feature: EditorFeature): boolean =>
+  editorFeatureOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), feature);
+const on = (): boolean => featureOn("testExplorer");
 
 /// Register the integration while q-lint.testExplorer.enable is on.
 /// `server` is the language server while it runs.
@@ -92,7 +104,14 @@ export function registerTestExplorer(
   };
   sync();
   context.subscriptions.push(
-    workspace.onDidChangeConfiguration((event) => event.affectsConfiguration("q-lint.testExplorer") && sync()),
+    workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration("q-lint.testExplorer")) {
+        sync();
+      }
+      if (event.affectsConfiguration("q-lint.snapshotTests")) {
+        void running?.discover();
+      }
+    }),
     { dispose: () => running?.dispose() },
   );
   return {
@@ -131,13 +150,13 @@ class QTests {
       clearTimeout(this.timer);
       this.timer = setTimeout(() => void this.discover(), 500);
     };
-    const watcher = workspace.createFileSystemWatcher("**/*.{q,csv}");
+    const watcher = workspace.createFileSystemWatcher(`**/*.{q,csv,${SNAPSHOT_EXTENSION.slice(1)}}`);
     this.disposables = [
       watcher,
       watcher.onDidCreate(later),
       watcher.onDidDelete(later),
       watcher.onDidChange(later),
-      workspace.onDidSaveTextDocument((document) => /\.(q|csv)$/i.test(document.uri.fsPath) && later()),
+      workspace.onDidSaveTextDocument((document) => /\.(q|csv|qsnap)$/i.test(document.uri.fsPath) && later()),
     ];
   }
 
@@ -208,6 +227,24 @@ class QTests {
         parent.children.add(item);
       }
       items.push(parent);
+    }
+    if (featureOn("snapshotTests")) {
+      for (const uri of await workspace.findFiles(`**/*${SNAPSHOT_EXTENSION}`, "**/node_modules/**", MAX_CSV)) {
+        let snapshot: Snapshot | undefined;
+        try {
+          snapshot = parseSnapshot(Buffer.from(await workspace.fs.readFile(uri)).toString("utf8"));
+        } catch {
+          continue;
+        }
+        if (snapshot === undefined) {
+          continue;
+        }
+        const name = uri.fsPath.split(/[\\/]/).pop() ?? uri.fsPath;
+        const item = this.controller.createTestItem(uri.toString(), `snapshot: ${name.slice(0, -SNAPSHOT_EXTENSION.length)}`, uri);
+        item.range = new Range(0, 0, 0, 0);
+        this.entries.set(item, { kind: "snapshot", snapshot });
+        items.push(item);
+      }
     }
     this.controller.items.replace(items);
   }
@@ -322,6 +359,10 @@ class QTests {
         try {
           let statements: string[];
           let mode: TestMode;
+          if (entry.kind === "snapshot") {
+            await this.runSnapshot(run, item, entry.snapshot, process.label, started, outcome);
+            continue;
+          }
           if (entry.kind === "function") {
             statements = testStatements(entry.test);
             mode = "test";
@@ -375,5 +416,41 @@ class QTests {
     } finally {
       run.end();
     }
+  }
+
+  /// Run a snapshot: its query again, its result compared with the file's.
+  private async runSnapshot(
+    run: TestRun,
+    item: TestItem,
+    snapshot: Snapshot,
+    label: string,
+    started: number,
+    outcome: (item: TestItem, state: TestOutcome["state"], message?: string) => void,
+  ): Promise<void> {
+    const done = await this.live.runOnActive(snapshot.query, async (connection) =>
+      readAnswer(await connection.call(SNAPSHOT_RUN, statements(snapshot.query))),
+    );
+    const at = item.uri !== undefined ? new Location(item.uri, new Range(0, 0, 0, 0)) : undefined;
+    if (done === undefined) {
+      const text = `Not run: no connection to ${label}, or a query is still running there.`;
+      run.errored(item, new TestMessage(text));
+      outcome(item, "errored", text);
+    } else if (!done.value.ok) {
+      const text = `'${done.value.error}`;
+      const message = new TestMessage(text);
+      message.location = at;
+      run.failed(item, message, Date.now() - started);
+      outcome(item, "failed", text);
+    } else if (sameResult(done.value.text.join("\n"), snapshot.result)) {
+      run.passed(item, Date.now() - started);
+      outcome(item, "passed");
+    } else {
+      const text = "the result differs from the snapshot";
+      const message = TestMessage.diff(text, snapshot.result, done.value.text.join("\n"));
+      message.location = at;
+      run.failed(item, message, Date.now() - started);
+      outcome(item, "failed", text);
+    }
+    run.appendOutput(`${item.label}: ${done === undefined ? "not run" : this.outcomes.at(-1)?.state} on ${done?.process ?? label}\r\n`);
   }
 }

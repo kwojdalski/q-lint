@@ -100,6 +100,7 @@ function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir
     "./assisttools": { registerAssistTools: () => ({ registered: () => [] }) },
     "./chat": { registerChat: () => ({ registered: () => false }) },
     "./qsqldraft": { registerQsqlDraft() {} },
+    "./snapshotview": { registerSnapshots() {} },
     "./teststubview": { registerTestStubs: () => ({ registered: () => false }) },
     "./backtraceview": { registerBacktraceLinks: () => ({ registered: () => false }) },
   };
