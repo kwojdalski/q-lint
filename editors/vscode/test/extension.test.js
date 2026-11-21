@@ -141,3 +141,11 @@ test("the error for a serverPath that will not start is about that setting", asy
   await w.extension.deactivate();
 });
 
+test("Restart Server says why it starts nothing when the server is turned off", async () => {
+  const w = load({ settings: { enable: false } });
+  await w.extension.activate(w.context);
+  await w.commands["q-lint.restartServer"]();
+  assert.strictEqual(w.clients.length, 0);
+  assert.match(w.infos.join("\n"), /q-lint\.enable/);
+  await w.extension.deactivate();
+});

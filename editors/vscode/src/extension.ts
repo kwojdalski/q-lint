@@ -81,7 +81,7 @@ export async function activate(
 ): Promise<ReturnType<Live["api"]> & { explorer: ProcessExplorer["rows"]; notebookCharts: () => RenderedChart[]; agentConfirmation: ReturnType<typeof registerAgentTool> }> {
   // Replacing the binary does not restart the server, and a window reload is
   // a blunt way to pick up a new one. This is the small way.
-  context.subscriptions.push(commands.registerCommand("q-lint.restartServer", () => restart(context)));
+  context.subscriptions.push(commands.registerCommand("q-lint.restartServer", () => restart(context, true)));
   // The server reads its settings once, at startup, so a change starts a new
   // one - except the trace level, which the client applies as it runs.
   context.subscriptions.push(
@@ -106,12 +106,17 @@ export async function activate(
   return { ...live.api(), explorer: () => explorer.rows(), notebookCharts: () => notebook.charts(), agentConfirmation };
 }
 
-function restart(context: ExtensionContext): Promise<void> {
+/// Stop the server and start it again. `asked`: by Restart Server, which
+/// says so when the setting leaves it off rather than doing nothing.
+function restart(context: ExtensionContext, asked = false): Promise<void> {
   return serial.run(async () => {
     await client?.stop().catch(() => {});
     client = undefined;
     await start(context);
     relations?.serverChanged();
+    if (asked && client === undefined && workspace.getConfiguration("q-lint").get<unknown>("enable", true) === false) {
+      void window.showInformationMessage("q-lint: the language server is turned off (q-lint.enable), so Restart Server started none.");
+    }
   });
 }
 
