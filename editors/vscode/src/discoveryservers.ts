@@ -17,6 +17,7 @@ import {
 } from "vscode";
 import {
   EMPTY_STATE,
+  downloadedPasswords,
   fetchProcesses,
   parseServers,
   serverDescription,
@@ -333,6 +334,12 @@ export class DiscoveryServers {
     }
     const saved = this.saved.list();
     const { added, skipped } = toDownload(saved, listed);
+    for (const [from, to] of downloadedPasswords(server.label, added)) {
+      const password = await this.context.secrets.get(from);
+      if (password !== undefined) {
+        await this.context.secrets.store(to, password);
+      }
+    }
     await this.saved.save([...saved, ...added]);
     const note = skipped.length ? ` Skipped ${skipped.length} whose label is taken: ${skipped.slice(0, 5).join(", ")}.` : "";
     void window.showInformationMessage(`q-lint: saved ${added.length} process(es) from ${server.label}.${note}`);

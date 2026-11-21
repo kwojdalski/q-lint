@@ -173,8 +173,9 @@ disk. The commands:
   view's menu or the palette - fetch them all. Each is also fetched when it
   is added or edited, and at startup and every
   `q-lint.discovery.refreshInterval` minutes unless that is `0`.
-- **Download Processes**: save a server's processes to the list. One whose
-  label a saved process has is skipped and named, never replaced.
+- **Download Processes**: save a server's processes to the list, with the
+  password given when connecting to any of them. One whose label a saved
+  process has is skipped and named, never replaced.
 - **Remove Processes**: drop a server's processes from the view. The
   periodic fetch leaves it alone until it is reloaded.
 

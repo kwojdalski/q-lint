@@ -391,3 +391,12 @@ test("a server's tooltip shows its label as written", () => {
   assert.strictEqual(serverTooltip({ label: "*eu*_desk", url: "https://x/a_b" }), "**\\*eu\\*\\_desk**\n\nhttps://x/a\\_b");
   assert.strictEqual(serverTooltip({ label: "d", url: "https://x/" }, "10:00:00"), "**d**\n\nhttps://x/\n\nlast fetched 10:00:00");
 });
+
+// Download Processes saved a discovered process with a user, but not the
+// password given when connecting to it: the saved copy sent an empty one,
+// was refused, and was never asked for it - only Edit could set it.
+test("a download takes along the password of each process with a user", () => {
+  const { downloadedPasswords } = require("../out/discovery.js");
+  const added = [{ ...proc("rdb"), user: "u" }, proc("hdb")];
+  assert.deepStrictEqual(downloadedPasswords("desk", added), [["q-lint.discoveredPassword.desk/rdb", "q-lint.password.rdb"]]);
+});

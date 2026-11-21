@@ -2,7 +2,7 @@
 // processes, how one is fetched and read, and how the Processes view shows
 // what each one listed. Nothing here imports `vscode`, so all of it is tested
 // with node - the fetch against a local HTTP server.
-import { grouped, markdownText, parseProcesses, type Process } from "./processes";
+import { grouped, markdownText, parseProcesses, passwordKey, type Process } from "./processes";
 
 export interface DiscoveryServer {
   /// Unique among the discovery servers; names its group in the view and
@@ -352,4 +352,14 @@ export function toDownload(saved: Process[], listed: Process[]): { added: Proces
     added: listed.filter((p) => !taken.has(p.label)),
     skipped: listed.filter((p) => taken.has(p.label)).map((p) => p.label),
   };
+}
+
+/// The passwords Download Processes copies, as [from, to] secret keys: each
+/// downloaded process with a user takes the one given when it was connected
+/// to from `server`, which a saved process would otherwise never be asked
+/// for.
+export function downloadedPasswords(server: string, added: Process[]): [string, string][] {
+  return added
+    .filter((p) => p.user !== undefined)
+    .map((p) => [passwordKey({ label: qualified(server, p.label), server }), passwordKey({ label: p.label })]);
 }
