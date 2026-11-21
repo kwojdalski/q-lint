@@ -79,6 +79,8 @@ export class QConnection {
   private closed = false;
   /// The q type of the last answer, read from the first byte of its body.
   private answerType: number | undefined;
+  /// The last answer, the whole message.
+  private answerMessage: Buffer | undefined;
   private readonly onClose: (() => void)[] = [];
 
   private constructor(private readonly socket: net.Socket) {
@@ -88,27 +90,35 @@ export class QConnection {
     socket.on("error", () => {});
   }
 
-  /// Open a connection, or reject with why not within `timeoutMs`. A
-  /// connect given up is closed, so nothing is left open behind it.
-  static open(target: Target, timeoutMs: number = CONNECT_TIMEOUT_MS): Promise<QConnection> {
+  /// Open a connection, or reject with why not within `timeoutMs` (with no
+  /// limit when it is infinite), or once `signal` aborts. A connect given up
+  /// is closed, so nothing is left open behind it.
+  static open(target: Target, timeoutMs: number = CONNECT_TIMEOUT_MS, signal?: AbortSignal): Promise<QConnection> {
     return new Promise((resolve, reject) => {
       const options = { host: target.host, port: target.port };
       const socket = target.tls
         ? tls.connect({ ...options, servername: net.isIP(target.host) ? undefined : target.host })
         : net.connect(options);
       let settled = false;
+      const cancelled = (): void => fail(new Error(`the connect to ${target.host}:${target.port} was cancelled`));
       const fail = (error: Error): void => {
         if (!settled) {
           settled = true;
           clearTimeout(timer);
+          signal?.removeEventListener("abort", cancelled);
           socket.destroy();
           reject(error);
         }
       };
-      const timer = setTimeout(
-        () => fail(new Error(`no answer from ${target.host}:${target.port} in ${timeoutMs / 1000} s`)),
-        timeoutMs,
-      );
+      // A timer cannot wait for ever: an infinite delay fires at once.
+      const timer = Number.isFinite(timeoutMs)
+        ? setTimeout(() => fail(new Error(`no answer from ${target.host}:${target.port} in ${timeoutMs / 1000} s`)), timeoutMs)
+        : undefined;
+      if (signal?.aborted) {
+        cancelled();
+        return;
+      }
+      signal?.addEventListener("abort", cancelled);
       socket.once("error", fail);
       // A process that refuses the user closes the socket without a byte.
       socket.once("close", () => fail(new Error(`${target.host}:${target.port} closed the connection: the user or password was refused`)));
@@ -122,6 +132,7 @@ export class QConnection {
         }
         settled = true;
         clearTimeout(timer);
+        signal?.removeEventListener("abort", cancelled);
         socket.removeAllListeners();
         const connection = new QConnection(socket);
         // Anything after the capability byte is already a message.
@@ -155,8 +166,9 @@ export class QConnection {
   /// Send `text` as a char vector, as a client that sends a string does,
   /// for the process to evaluate as its `.z.pg` does (`value`, unless it is
   /// set): nothing of ours runs there. Resolves with the value as the codec
-  /// decodes it and its q type; rejects with a `QError` for a q error.
-  async evaluate(text: string): Promise<{ value: unknown; type: number | undefined }> {
+  /// decodes it, its q type and the message it came in; rejects with a
+  /// `QError` for a q error.
+  async evaluate(text: string): Promise<{ value: unknown; type: number | undefined; message?: Buffer }> {
     const body = Buffer.from(text, "utf8");
     // A char vector (type 10, no attribute, its length), built here: the
     // codec sends a string starting with a backtick as a symbol.
@@ -168,7 +180,7 @@ export class QConnection {
     message.writeUInt32LE(body.length, 10);
     body.copy(message, 14);
     const value = await this.send(message);
-    return { value, type: this.answerType };
+    return { value, type: this.answerType, message: this.answerMessage };
   }
 
   /// Send `expression` applied to `args` as a sync message, and resolve with
@@ -236,6 +248,12 @@ export class QConnection {
     this.size += chunk.length;
     while (this.size >= 8) {
       const length = (this.chunks[0].length >= 8 ? this.chunks[0] : this.joined()).readUInt32LE(4);
+      if (length < 8) {
+        // Not a q message - a header is 8 bytes - and nothing after it can
+        // be read: reading on would take the same 8 bytes for ever.
+        this.fail(new Error(`the process sent a message of length ${length}, shorter than its header: is it a q process?`));
+        return;
+      }
       if (this.size < length) {
         return;
       }
@@ -261,6 +279,7 @@ export class QConnection {
         continue;
       }
       this.answerType = typeOf(message);
+      this.answerMessage = message;
       try {
         pending.resolve(deserialize(message, false, true, false, false));
       } catch (error) {
@@ -270,6 +289,14 @@ export class QConnection {
         pending.reject(this.answerType === -128 ? new QError(text) : error instanceof Error ? error : new Error(text));
       }
     }
+  }
+
+  /// Close now, failing a query running with `error`.
+  private fail(error: Error): void {
+    const pending = this.pending;
+    this.pending = undefined;
+    pending?.reject(error);
+    this.abort();
   }
 
   private closedNow(): void {

@@ -15,7 +15,8 @@
 // a gateway that refuses a lambda. The process evaluates each as it
 // evaluates any string a client sends, and the answer is whatever it
 // returns, formatted here.
-import { gridOf, cutLines, formatValue, vectorText } from "./qformat";
+import { consoleLines, gridOf, gridOfQ, cutLines, formatQ, formatValue, vectorText } from "./qformat";
+import { decode, type QValue } from "./qdecode";
 import { TRAP, readAnswer, type Answer } from "./query";
 import type { GridAnswer } from "./grid";
 import { QError } from "./qclient";
@@ -71,21 +72,20 @@ export function limits(
 
 /// `RUN` for an unlimited console query: the same answer, except that a
 /// simple list (types 1 to 19) comes as `value`, with no text, for
-/// `readUnlimited` to write, with its attribute (`-2!`). A temporal list
-/// comes as the numbers q holds it as - timestamps and timespans long
-/// nanoseconds, a datetime float days, the rest ints - since the codec
-/// would make a timestamp a float, exact only to 256 ns, and loses the sign
-/// of a date's infinity. A string is written on the process, each byte
-/// escaped as `-3!` escapes it, which a JavaScript string cannot say. Like
-/// `RUN` it defines nothing on the process.
+/// `readUnlimited` to write. A temporal list comes as the numbers q holds
+/// it as - timestamps and timespans long nanoseconds, a datetime float
+/// days, the rest ints - since the codec would make a timestamp a float,
+/// exact only to 256 ns, and loses the sign of a date's infinity. A string
+/// comes as its bytes, which the codec would read as UTF-8, losing any that
+/// are not. Its attribute comes as `attr`, and the process's `\P` as
+/// `precision`, the digits a float is written to. Like `RUN` it defines
+/// nothing on the process.
 export const UNLIMITED = [
   "{[s;size]",
   ...TRAP,
   " t:type r 1;",
   " $[r 0;",
-  "   $[t=10h;`ok`type`text!(1b;t;enlist $[null a:-2!r 1;\"\";\"`\",string[a],\"#\"],$[1=count r 1;\",\";\"\"],",
-  "       \"\\\"\",raze[({1_-1_-3!x} each \"c\"$til 256)\"i\"$r 1],\"\\\"\");",
-  "     t within 1 19h;`ok`type`text`value`attr!(1b;t;();$[t within 12 19h;\"jiifjiii\"[t-12h]$r 1;r 1];-2!r 1);`ok`type`text!(1b;t;.Q.S[\"j\"$size;0j] r 1)];",
+  "   $[t within 1 19h;`ok`type`text`value`attr`precision!(1b;t;();$[t within 12 19h;\"jiifjiii\"[t-12h]$r 1;t=10h;\"x\"$r 1;r 1];attr r 1;system\"P\");`ok`type`text!(1b;t;.Q.S[\"j\"$size;0j] r 1)];",
   "   `ok`error`trace!(0b;r 1;r 2)]}",
 ].join("\n");
 
@@ -95,16 +95,15 @@ export function readUnlimited(raw: unknown): Answer {
   const answer = readAnswer(raw);
   const r = raw as Record<string, unknown>;
   if (answer.ok && "value" in r && answer.type >= 1 && answer.type <= 19) {
-    // The codec drops a list's attribute; q writes it first: `s#1 2 3.
-    const attr = typeof r.attr === "string" && /^[supg]$/.test(r.attr) ? `\`${r.attr}#` : "";
-    return { ...answer, text: [attr + vectorText(r.value, answer.type)] };
+    const precision = typeof r.precision === "number" ? r.precision : 7;
+    return { ...answer, text: [vectorText(r.value, answer.type, typeof r.attr === "string" ? r.attr : null, precision)] };
   }
   return answer;
 }
 
 /// What `runUnwrapped` needs of a connection.
 export interface Evaluator {
-  evaluate(text: string): Promise<{ value: unknown; type: number | undefined }>;
+  evaluate(text: string): Promise<{ value: unknown; type: number | undefined; message?: Buffer }>;
 }
 
 /// Run `statements` unwrapped: each sent as a plain string, in order,
@@ -118,7 +117,7 @@ export async function runUnwrapped(
   statements: string[],
   options: { size: [number, number]; limit: number; unlimited: boolean; grid: boolean },
 ): Promise<GridAnswer> {
-  let last: { value: unknown; type: number | undefined } = { value: null, type: 101 };
+  let last: { value: unknown; type: number | undefined; message?: Buffer } = { value: null, type: 101 };
   for (const statement of statements) {
     try {
       last = await connection.evaluate(statement);
@@ -129,14 +128,29 @@ export async function runUnwrapped(
       throw error;
     }
   }
-  const lines = formatValue(last.value, last.type);
-  const text = options.unlimited ? lines : cutLines(lines, options.size);
+  // The message read again with its types; what cannot be is written from
+  // the codec's value alone.
+  let typed: QValue | undefined;
+  try {
+    typed = last.message === undefined ? undefined : decode(last.message);
+  } catch {
+    typed = undefined;
+  }
+  let text: string[];
+  if (typed === undefined) {
+    const lines = formatValue(last.value, last.type);
+    text = options.unlimited ? lines : cutLines(lines, options.size);
+  } else {
+    text = options.unlimited ? formatQ(typed, last.value, last.type) : consoleLines(typed, options.size, last.value, last.type);
+  }
   const answer: GridAnswer = { ok: true, type: last.type ?? 0, text };
   if (!options.grid) {
     return answer;
   }
   // A string is shown as text, as `GRID` shows one.
-  const grid = typeof last.value === "string" ? undefined : gridOf(last.value, last.type, options.unlimited ? Infinity : options.limit);
+  const limit = options.unlimited ? Infinity : options.limit;
+  const grid =
+    typed !== undefined ? gridOfQ(typed, limit) : typeof last.value === "string" ? undefined : gridOf(last.value, last.type, limit);
   return grid === undefined ? answer : { ...answer, grid };
 }
 

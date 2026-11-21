@@ -11,14 +11,18 @@
 //   all. Inside a table, a dictionary or a general list the codec gives
 //   plain JavaScript values, and the type is guessed from them: a symbol and
 //   a string are both strings, and a date, a month and a datetime all Dates.
-// - A long and a timespan are exact (the codec gives a Long). A timestamp
-//   arrives as a float of nanoseconds, exact only to 256 ns, so it is shown
-//   to the microsecond, its last three digits 0.
+// - An unwrapped answer is also decoded with its types (`qdecode.ts`), and
+//   an atom or a simple list is written from that: exact, every type.
+// - Otherwise a long and a timespan are exact (the codec gives a Long). A
+//   timestamp arrives as a float of nanoseconds, exact only to 256 ns, so it
+//   is shown to the microsecond, its last three digits 0.
 // - The infinity of a date, month, datetime or time arrives as an invalid
 //   Date, its sign lost, so a negative one is written as a positive one.
-// - A function arrives as the word "func": its text is not sent.
+// - A lambda arrives with its text, which an unwrapped query shows. Any
+//   other function arrives as the word "func".
 // - An empty table arrives with no columns, so they cannot be shown.
 import type { GridPayload } from "./grid";
+import type { QValue } from "./qdecode";
 
 /// q's generic null, `(::)`.
 const NULL_TYPE = 101;
@@ -69,20 +73,29 @@ function hms(d: Date): string {
   return `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}:${pad2(d.getUTCSeconds())}`;
 }
 
-/// A float as q writes it at its default `\P` of 7 significant digits:
-/// C's `%.7g`, an exponent (of two digits at least) from 1e7 up and below
-/// 1e-4, trailing zeros dropped.
-export function floatText(x: number): string {
+/// A float as q writes it at a `\P` of `precision` significant digits (7,
+/// q's default, unless given): C's `%.{P}g`, an exponent (of two digits at
+/// least) from 10^P up and below 1e-4, trailing zeros dropped. `\P 0` is
+/// every digit a float holds, `%.17g`; a real (`real`) at `\P 0` is as few
+/// digits as give it back, as KDB-X writes one.
+export function floatText(x: number, precision = 7, real = false): string {
   if (x === 0 || !Number.isFinite(x)) {
     return String(x);
   }
-  const [mantissa, e] = x.toExponential(6).split("e");
-  const exponent = Number(e);
-  if (exponent < -4 || exponent >= 7) {
-    const digits = mantissa.replace(/\.?0+$/, "");
-    return `${digits}e${exponent < 0 ? "-" : "+"}${String(Math.abs(exponent)).padStart(2, "0")}`;
+  let p = precision > 0 ? Math.min(precision, 17) : 17;
+  if (real && precision <= 0) {
+    p = 1;
+    while (p < 9 && Math.fround(Number(x.toPrecision(p))) !== Math.fround(x)) {
+      p++;
+    }
   }
-  return String(Number(x.toFixed(6 - exponent)));
+  const [mantissa, e] = x.toExponential(p - 1).split("e");
+  const exponent = Number(e);
+  const trim = (digits: string): string => (digits.includes(".") ? digits.replace(/\.?0+$/, "") : digits);
+  if (exponent < -4 || exponent >= p) {
+    return `${trim(mantissa)}e${exponent < 0 ? "-" : "+"}${String(Math.abs(exponent)).padStart(2, "0")}`;
+  }
+  return trim(x.toFixed(p - 1 - exponent));
 }
 
 /// A time of day, or a span, from milliseconds or nanoseconds: `hh:mm`,
@@ -157,7 +170,7 @@ function exactTimestampText(ns: bigint): string {
 /// as - months, days or float days since 2000, minutes, seconds or
 /// milliseconds - which an unlimited query sends; undefined for any other
 /// type.
-function temporalText(x: number | LongLike, t: number): string | undefined {
+function temporalText(x: number | bigint | LongLike, t: number): string | undefined {
   const n = Number(x.toString());
   switch (t) {
     case 13: {
@@ -183,7 +196,7 @@ function temporalText(x: number | LongLike, t: number): string | undefined {
 /// One item of a simple list, or an atom, of q type `t` (positive), without
 /// the suffix a list or an atom ends with. Undefined for a null, which the
 /// caller writes.
-function itemText(x: unknown, t: number): string | undefined {
+function itemText(x: unknown, t: number, precision = 7): string | undefined {
   if (x === null || x === undefined) {
     return undefined;
   }
@@ -204,17 +217,17 @@ function itemText(x: unknown, t: number): string | undefined {
       return String(x);
     case 8:
     case 9:
-      return floatText(Number(x));
+      return floatText(Number(x), precision, t === 8);
     case 10:
       return String(x);
     case 11:
       return String(x);
     case 12:
-      return isLong(x) ? exactTimestampText(BigInt(x.toString())) : timestampText(Number(x));
+      return isLong(x) || typeof x === "bigint" ? exactTimestampText(BigInt(x.toString())) : timestampText(Number(x));
     case 16:
       return spanText(BigInt(String(x)));
   }
-  if (typeof x === "number" || isLong(x)) {
+  if (typeof x === "number" || typeof x === "bigint" || isLong(x)) {
     const n = temporalText(x, t);
     if (n !== undefined) {
       return n;
@@ -255,16 +268,47 @@ const NAMES: Record<number, string> = {
   18: "second", 19: "time",
 };
 
-function quoted(text: string): string {
-  return `"${text.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t")}"`;
+const ESCAPED: Record<number, string> = { 9: "\\t", 10: "\\n", 13: "\\r", 34: '\\"', 92: "\\\\" };
+
+/// Chars as q writes them, in quotes: a byte that is not printable ASCII as
+/// three octal digits (`"caf\303\251"`, `"\001"`), a tab, newline, carriage
+/// return, quote or backslash escaped. A string is its UTF-8 bytes; a char
+/// vector the codec decoded is written as the bytes q sent when they were
+/// UTF-8, which is what it decoded them as.
+function quoted(text: string | Uint8Array | number[]): string {
+  const bytes = typeof text === "string" ? Buffer.from(text, "utf8") : text;
+  let out = "";
+  for (const c of bytes) {
+    out += ESCAPED[c] ?? (c >= 32 && c < 127 ? String.fromCharCode(c) : `\\${c.toString(8).padStart(3, "0")}`);
+  }
+  return `"${out}"`;
+}
+
+/// The attribute a list's header holds (1 to 4) as q writes it before the
+/// list: `` `s# ``.
+export function attrText(attr: number | string | null | undefined): string {
+  const name = typeof attr === "number" ? " supg"[attr]?.trim() : attr;
+  return name ? `\`${name}#` : "";
 }
 
 /// A simple list of q type `t` (1 to 19) as q's console writes it:
-/// `1 2 3i`, `101b`, `` `a`b ``, `"abc"`, `,1` for one item.
-export function vectorText(values: unknown, t: number): string {
+/// `1 2 3i`, `101b`, `` `a`b ``, `"abc"`, `,1` for one item; with its
+/// attribute, when it has one, in front: `` `s#1 2 3 ``; a float or a real
+/// to `precision` digits, the process's `\P`.
+export function vectorText(values: unknown, t: number, attr?: number | string | null, precision = 7): string {
+  return attrText(attr) + listText(values, t, precision);
+}
+
+function listText(values: unknown, t: number, precision: number): string {
   if (t === 10) {
-    const s = typeof values === "string" ? values : Array.isArray(values) ? values.join("") : String(values);
-    return s.length === 1 ? `,${quoted(s)}` : quoted(s);
+    // Bytes from a typed decoding or an unlimited query; a string from the
+    // codec.
+    const s: string | Uint8Array | number[] =
+      values instanceof Uint8Array || (Array.isArray(values) && values.every((c) => typeof c === "number"))
+        ? (values as Uint8Array | number[])
+        : typeof values === "string" ? values : Array.isArray(values) ? values.join("") : String(values);
+    const one = typeof s === "string" ? Buffer.byteLength(s, "utf8") === 1 : s.length === 1;
+    return one ? `,${quoted(s)}` : quoted(s);
   }
   const items = Array.isArray(values) ? values : [values];
   if (items.length === 0) {
@@ -274,7 +318,7 @@ export function vectorText(values: unknown, t: number): string {
   if (t === 11) {
     return one + items.map((s) => `\`${s ?? ""}`).join("");
   }
-  const texts = items.map((x) => itemText(x, t) ?? nullText(t));
+  const texts = items.map((x) => itemText(x, t, precision) ?? nullText(t));
   if (t === 1) {
     return `${one}${texts.join("")}b`;
   }
@@ -292,7 +336,7 @@ export function vectorText(values: unknown, t: number): string {
 export function atomText(x: unknown, t: number): string {
   const p = -t;
   if (p === 10) {
-    return quoted(x === null ? " " : String(x));
+    return quoted(x === null ? " " : typeof x === "number" ? [x] : String(x));
   }
   if (p === 11) {
     return `\`${x ?? ""}`;
@@ -371,7 +415,9 @@ function tableLines(rows: Record<string, unknown>[], keys = 0): string[] {
   }
   const names = Object.keys(rows[0]);
   const cells = names.map((n) => rows.map((r) => cellText(r[n])));
-  const widths = names.map((n, i) => Math.max(n.length, ...cells[i].map((c) => c.length)));
+  // A loop, not `Math.max(...)`: a large table has more rows than a call
+  // takes arguments.
+  const widths = names.map((n, i) => cells[i].reduce((w, c) => Math.max(w, c.length), n.length));
   const line = (texts: string[], fill = " "): string => {
     const parts = texts.map((t, i) => t.padEnd(widths[i], fill));
     return keys > 0 ? `${parts.slice(0, keys).join(" ")}| ${parts.slice(keys).join(" ")}` : parts.join(" ");
@@ -411,7 +457,7 @@ export function formatValue(value: unknown, type?: number): string[] {
   }
   if (isRow(value)) {
     const entries = Object.entries(value);
-    const width = Math.max(0, ...entries.map(([k]) => k.length));
+    const width = entries.reduce((w, [k]) => Math.max(w, k.length), 0);
     return entries.map(([k, v]) => `${k.padEnd(width)}| ${cellText(v)}`);
   }
   if (Array.isArray(value)) {
@@ -424,6 +470,142 @@ export function formatValue(value: unknown, type?: number): string[] {
     return [type === undefined && value === "func" ? "<a function: the process sends no text for one>" : quoted(value)];
   }
   return [cellText(value)];
+}
+
+/// A value decoded with its types on one line, as q's `-3!` writes it:
+/// `` `a`b!1 2 ``, `(1;`a)`, `,1 2`.
+function oneLine(q: QValue): string {
+  switch (q.kind) {
+    case "atom":
+      return atomText(q.v, q.t);
+    case "vector":
+      return vectorText(q.v, q.t, q.attr);
+    case "chars":
+      return vectorText(q.v, 10, q.attr);
+    case "list":
+      return q.v.length === 1 ? `,${oneLine(q.v[0])}` : `(${q.v.map(oneLine).join(";")})`;
+    case "dict": {
+      // A key of one item, a table or a dictionary is put in parentheses.
+      const k = oneLine(q.k);
+      const one = (q.k.kind === "list" || q.k.kind === "vector") && q.k.v.length === 1;
+      return `${attrText(q.sorted ? 1 : 0)}${one || q.k.kind === "table" || q.k.kind === "dict" ? `(${k})` : k}!${oneLine(q.v)}`;
+    }
+    case "table":
+      return `+${oneLine({ kind: "dict", sorted: false, k: { kind: "vector", t: 11, attr: 0, v: q.cols }, v: { kind: "list", attr: 0, v: q.data } })}`;
+    case "func":
+      return q.text ?? (q.t === 101 ? "::" : "func");
+  }
+}
+
+/// How many items a decoded list has; 1 for anything else.
+function countOf(q: QValue): number {
+  return q.kind === "vector" || q.kind === "list" || q.kind === "chars" ? q.v.length : q.kind === "table" ? (q.data[0] ? countOf(q.data[0]) : 0) : 1;
+}
+
+/// Rows of cells laid out as q's `.Q.tab` lays them: each cell padded to its
+/// place's widest, joined by spaces.
+function tabulate(rows: string[][]): string[] {
+  const widths: number[] = [];
+  for (const row of rows) {
+    row.forEach((cell, i) => {
+      widths[i] = Math.max(widths[i] ?? 0, cell.length);
+    });
+  }
+  return rows.map((row) => row.map((cell, i) => cell.padEnd(widths[i])).join(" "));
+}
+
+/// `y` with a blank and a dashed line in front when it has fewer lines than
+/// `n`, as q's `.Q.t0` lines up a dictionary's keys with a table's values.
+function lineUp(n: number, y: string[]): string[] {
+  return n > y.length && y.length > 0 ? [" ".repeat(y[0].length), "-".repeat(y[0].length), ...y] : y;
+}
+
+/// The lines of a value inside the console's text, as q's `.Q.s2` writes
+/// them: a simple list's items as `string` writes them (no suffixes, nulls
+/// blank); a general list's with `-3!`, or as rows lined up when every item
+/// is a list of the same count; a table's names, a rule and its rows; a
+/// dictionary's keys and values with `| ` between.
+function nested(q: QValue): string[] {
+  switch (q.kind) {
+    case "atom":
+    case "func":
+      return [oneLine(q)];
+    case "vector":
+      return q.v.map((x) => (q.t === 11 ? (x === null ? "" : String(x)) : (itemText(x, q.t) ?? (q.t === 2 ? NULL_GUID : ""))));
+    case "chars":
+      return [...q.v].map((c) => String.fromCharCode(c));
+    case "dict": {
+      const d = nested(q.v);
+      const k = lineUp(d.length, nested(q.k));
+      const v = lineUp(k.length, d);
+      const width = k.reduce((w, line) => Math.max(w, line.length), 0);
+      return k.map((line, i) => `${line.padEnd(width)}| ${v[i] ?? ""}`);
+    }
+    case "table": {
+      const columns = q.data.map(nested);
+      const rows = Array.from({ length: columns[0]?.length ?? 0 }, (_, r) => columns.map((c) => c[r] ?? ""));
+      // The rule is as wide as the padded names; no line keeps the spaces
+      // that pad its last column.
+      const [header, ...body] = tabulate([q.cols, ...rows]);
+      return [header.trimEnd(), "-".repeat(header.length), ...body.map((line) => line.trimEnd())];
+    }
+    case "list": {
+      const items = q.v;
+      if (items.length === 0) {
+        return [];
+      }
+      const types = new Set(items.map((x) => (x.kind === "vector" ? x.t : x.kind === "chars" ? 10 : x.kind === "list" ? 0 : -1)));
+      const atomic = items.some((x) => x.kind === "atom" || x.kind === "func" || x.kind === "dict" || x.kind === "table");
+      const counts = new Set(items.map(countOf));
+      const same = types.size === 1 && [1, 4, 10].includes([...types][0]);
+      if (atomic || counts.size > 1 || same) {
+        return items.map(oneLine);
+      }
+      return tabulate(items.map(nested)).map((line) => line.trimEnd());
+    }
+  }
+}
+
+/// The lines q's console would show for a value decoded with its types
+/// (`qdecode.ts`), as `.Q.S` writes them: from the numbers q holds, so a
+/// timestamp keeps its nanoseconds and a negative infinity its sign, and
+/// with each item's own type, so a symbol is told from a string, and a
+/// table keeps its columns when it has no rows. A lambda is its text; any
+/// other function is left to `formatValue`, which writes the codec's
+/// `value` of it, of q type `type`.
+export function formatQ(q: QValue, value: unknown, type?: number): string[] {
+  if (q.kind === "atom" || q.kind === "vector" || q.kind === "chars") {
+    return [oneLine(q)];
+  }
+  if (q.kind === "func") {
+    // A lambda arrives with its text; any other function as no more than
+    // its kind.
+    return q.text !== undefined ? q.text.split("\n") : formatValue(value, type);
+  }
+  return nested(q);
+}
+
+/// The lines q's console of `size` (height, width) shows for a value
+/// decoded with its types, cut as `.Q.S` cuts them: a table, keyed or not,
+/// or a dictionary, or a list, to the rows that fit - so its columns are as
+/// wide as the rows shown, not as rows cut off - then `..`, and each line
+/// at the width. `value` and `type` are as `formatQ` takes them.
+export function consoleLines(q: QValue, size: [number, number], value?: unknown, type?: number): string[] {
+  const [height, width] = size;
+  let shown = q;
+  let more = false;
+  if (q.kind === "table" || q.kind === "dict" || q.kind === "list") {
+    // A table's two header lines count against the height.
+    const tabular = q.kind === "table" || (q.kind === "dict" && q.k.kind === "table" && q.v.kind === "table");
+    const n = Math.max(0, height - (tabular ? 2 : 0));
+    const count = q.kind === "dict" ? countOf(q.k) : countOf(q);
+    more = count > n;
+    if (more) {
+      shown = q.kind === "dict" ? { ...q, k: firstOf(q.k, n - 1), v: firstOf(q.v, n - 1) } : firstOf(q, n - 1);
+    }
+  }
+  const lines = formatQ(shown, value, type);
+  return cutLines(more ? [...lines, ".."] : lines, [Infinity, width]);
 }
 
 /// `lines` cut to a console of `size` (height, width) as `.Q.S` cuts: a
@@ -568,4 +750,127 @@ export function gridOf(value: unknown, type: number | undefined, limit: number):
     raw,
     rank: shown.map((c, i) => ranks(c.values, raw[i].length > 0 ? raw[i] : undefined)),
   };
+}
+
+/// A column of a value decoded with its types, as a grid holds it.
+interface TypedColumn {
+  name: string;
+  q: QValue;
+}
+
+/// The q type a decoded column has: a simple list's, 0 for any other.
+function columnTypeOf(q: QValue): number {
+  return q.kind === "vector" ? q.t : q.kind === "chars" ? 10 : q.kind === "table" ? 98 : q.kind === "dict" ? 99 : 0;
+}
+
+/// The first `n` items of a decoded list.
+function firstOf(q: QValue, n: number): QValue {
+  if (q.kind === "vector" || q.kind === "list") {
+    return { ...q, v: q.v.slice(0, n) } as QValue;
+  }
+  if (q.kind === "chars") {
+    return { ...q, v: q.v.subarray(0, n) };
+  }
+  if (q.kind === "table") {
+    return { ...q, data: q.data.map((c) => firstOf(c, n)) };
+  }
+  return q;
+}
+
+/// The items of a decoded list as values: a table's rows, a list's items.
+function itemsOf(q: QValue): QValue[] {
+  if (q.kind === "vector") {
+    return q.v.map((v) => ({ kind: "atom", t: -q.t, v }));
+  }
+  if (q.kind === "chars") {
+    return [...q.v].map((v) => ({ kind: "atom", t: -10, v }));
+  }
+  if (q.kind === "list") {
+    return q.v;
+  }
+  if (q.kind === "table") {
+    return Array.from({ length: countOf(q) }, (_, r) => ({
+      kind: "dict",
+      sorted: false,
+      k: { kind: "vector", t: 11, attr: 0, v: q.cols },
+      v: { kind: "list", attr: 0, v: q.data.map((c) => itemsOf(c)[r]) },
+    }));
+  }
+  return [q];
+}
+
+/// Each row's place among the distinct values of a simple column sorted
+/// ascending, nulls first, as `GRID` ranks one: equal values share a place,
+/// so a sort either way keeps them in their order.
+function denseRanks(keys: (number | string)[]): number[] {
+  const order = keys.map((_, i) => i).sort((a, b) => {
+    const x = keys[a];
+    const y = keys[b];
+    return x === y ? a - b : x < y ? -1 : 1;
+  });
+  const rank = new Array<number>(keys.length);
+  let place = -1;
+  order.forEach((row, i) => {
+    if (i === 0 || keys[row] !== keys[order[i - 1]]) {
+      place++;
+    }
+    rank[row] = place;
+  });
+  return rank;
+}
+
+/// The rows the result panel shows for a value decoded with its types, as
+/// `GRID` would send them for the same value: a table (keyed: its keys
+/// marked), a dictionary as `key` and `value` columns (keyed by a table, its
+/// key columns and `value`), or a list other than a string as one `value`
+/// column; at most `limit` rows. Undefined for anything else.
+export function gridOfQ(q: QValue, limit: number): GridPayload | undefined {
+  let columns: TypedColumn[];
+  let keys = 0;
+  const tableColumns = (t: QValue & { kind: "table" }): TypedColumn[] => t.cols.map((name, i) => ({ name, q: t.data[i] }));
+  if (q.kind === "table") {
+    columns = tableColumns(q);
+  } else if (q.kind === "dict" && q.k.kind === "table") {
+    keys = q.k.cols.length;
+    columns = [...tableColumns(q.k), ...(q.v.kind === "table" ? tableColumns(q.v) : [{ name: "value", q: q.v }])];
+  } else if (q.kind === "dict") {
+    keys = 1;
+    columns = [
+      { name: "key", q: q.k },
+      { name: "value", q: q.v },
+    ];
+  } else if (q.kind === "vector" || q.kind === "list") {
+    columns = [{ name: "value", q }];
+  } else {
+    return undefined;
+  }
+  const count = columns.length > 0 ? countOf(columns[0].q) : 0;
+  const shown = columns.map((c) => ({ ...c, q: firstOf(c.q, limit) }));
+  const types = shown.map((c) => columnTypeOf(c.q));
+  const cells = shown.map((c) =>
+    c.q.kind === "vector" || c.q.kind === "chars"
+      ? nested(c.q)
+      : itemsOf(c.q).map((x) => {
+          const text = oneLine(x);
+          return text.length > 200 ? `${text.slice(0, 197)}...` : text;
+        }),
+  );
+  // The numbers of a numeric, temporal or guid column, as `GRID` sends them.
+  const raw = shown.map((c, i): unknown[] =>
+    c.q.kind === "vector" && [2, 5, 6, 7, 8, 9, 12, 13, 14, 15, 16, 17, 18, 19].includes(types[i])
+      ? c.q.v.map((x) => (typeof x === "bigint" ? Number(x) : x))
+      : [],
+  );
+  const rank = shown.map((c) => {
+    if (c.q.kind === "chars") {
+      return denseRanks([...c.q.v]);
+    }
+    if (c.q.kind !== "vector") {
+      return [];
+    }
+    return denseRanks(
+      c.q.v.map((x) => (x === null ? (c.q.kind === "vector" && [2, 11].includes(c.q.t) ? "" : -Infinity) : typeof x === "boolean" ? Number(x) : typeof x === "bigint" ? Number(x) : x)),
+    );
+  });
+  return { count, keys, names: shown.map((c) => c.name), types, cells, raw, rank };
 }

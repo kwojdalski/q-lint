@@ -212,7 +212,8 @@ changed.
 
 The code is cut into statements by q's own script rules: a line starting
 with a space or tab continues the one above, `/` lines and block comments
-are skipped, and a `\` line is a system command. A closing `}` at column 0
+are skipped, as is a first line starting `#!`, and a `\` line is a system
+command. A closing `}` at column 0
 starts a new statement, which q refuses, here as when it loads the file.
 The statements run in order on the process, in its current `\d`, as its
 console would run them, and nothing is defined on the process but what
@@ -254,11 +255,11 @@ outcome; the buttons on a row run it again on the active connection and
   only for its own statement. The answer is whatever the process returns,
   formatted by q-lint: tables, keyed tables, dictionaries, lists and atoms
   as q's console writes them, and a table, dictionary or list reaches the
-  grid and chart too. q-lint knows less than q does, so it is close but not
-  exact: inside a table or a general list a symbol and a string are both
-  shown as text, a timestamp is shown to the microsecond, and a function's
-  text is not sent. Errors still come back as q errors, without a trace.
-  The status bar shows `unwrapped`.
+  grid and chart too. A lambda is shown as its text; any other function
+  (a primitive, a projection, a composition) is only said to be one, and a
+  float is written at q's default `\P` of 7 digits, since q-lint asks the
+  process nothing of its own. Errors still come back as q errors, without
+  a trace. The status bar shows `unwrapped`.
 - **Query timeout**, `q-lint.query.timeout` seconds (`0`, the default, is
   none): a query still running then is aborted exactly as **Abort Current
   Query** aborts it, and the history records it as timed out.

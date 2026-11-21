@@ -167,8 +167,8 @@ test("unlimited, unwrapped and timed-out queries against a real q process", { sk
     const dict = await runUnwrapped(connection, ["`a`b!1 2"], options);
     assert.deepStrictEqual(dict.text, ["a| 1", "b| 2"]);
     const atoms = await runUnwrapped(connection, ["(1.5;2026.11.20;`s)"], options);
-    // A symbol inside a general list arrives as a string, and is shown as one.
-    assert.deepStrictEqual(atoms.text, ["1.5", "2026.11.20", '"s"']);
+    // A symbol inside a general list is shown as a symbol.
+    assert.deepStrictEqual(atoms.text, ["1.5", "2026.11.20", "`s"]);
     assert.deepStrictEqual((await runUnwrapped(connection, ["2026.11.20D10:11:12.5"], options)).text, ["2026.11.20D10:11:12.500000000"]);
     assert.deepStrictEqual((await runUnwrapped(connection, ['"abc"'], options)).text, ['"abc"']);
     assert.deepStrictEqual((await runUnwrapped(connection, ["a:1;"], options)).type, 101);
