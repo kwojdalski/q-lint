@@ -43,6 +43,7 @@ const { AGENT } = require("../out/agent.js");
 const { SOURCE_COMMANDS } = require("../out/funcsource.js");
 const { INFO, readMonitorInterval } = require("../out/monitor.js");
 const { readInsight } = require("../out/insightconfig.js");
+const { EDITOR_SETTINGS, editorFeatureOn } = require("../out/editorfeatures.js");
 const { CONTROL_COMMANDS, readControls } = require("../out/querycontrols.js");
 const { readProgress } = require("../out/progress.js");
 const { readPlaceholders } = require("../out/placeholders.js");
@@ -380,6 +381,10 @@ test("every query setting is read, with the default package.json declares, and n
   const historySearch = readHistorySearch(get);
   readMonitorInterval(get);
   readInsight(get);
+  // Each editor feature's switch that is declared here (#939, #940, #944, #945).
+  for (const [feature, { key }] of Object.entries(EDITOR_SETTINGS)) {
+    if (`q-lint.${key}` in declared) editorFeatureOn(get, feature);
+  }
   for (const [key, spec] of Object.entries(declared)) {
     const short = key.replace(/^q-lint\./, "");
     assert.ok(read.has(short), `${key} is declared but never read`);

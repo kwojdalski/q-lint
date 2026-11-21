@@ -29,6 +29,7 @@ import { Serial } from "./serial";
 import { FunctionSources } from "./funcsourceview";
 import { registerInfoViews } from "./infoview";
 import type { InfoNode } from "./monitor";
+import { registerTestExplorer } from "./testexplorer";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -57,6 +58,18 @@ let channel: OutputChannel | undefined;
 /// The dependencies view and the affected-tests list, which ask whichever
 /// `client` is running and are told when it changes.
 let relations: Relations | undefined;
+/// The Test Explorer integration, which asks the running `client` for the
+/// tests and is told when it changes.
+let testExplorer: ReturnType<typeof registerTestExplorer> | undefined;
+
+/// The server's requests, while one runs.
+const running = () => (client?.isRunning() ? client : undefined);
+
+/// Tell what asks the server that it changed.
+function serverChanged(): void {
+  relations?.serverChanged();
+  testExplorer?.serverChanged();
+}
 
 /// The server this extension was packaged with, if it was packaged with one.
 ///
@@ -97,6 +110,7 @@ export async function activate(
     processMonitor: () => InfoNode[];
     hdbBrowser: () => InfoNode[];
     functionSources: FunctionSources["state"];
+    testExplorer: Omit<ReturnType<typeof registerTestExplorer>, "serverChanged">;
   }
 > {
   // Replacing the binary does not restart the server, and a window reload is
@@ -142,9 +156,10 @@ export async function activate(
   const infoViews = registerInfoViews(context, live);
   registerOnboarding(context, () => live.processes());
   relations = new Relations(context, () => client);
+  testExplorer = registerTestExplorer(context, live, running);
   // Not awaited: nothing above needs the server, and a slow or hung one
   // would hold up every command of the extension until it answered.
-  void serial.run(() => start(context)).then(() => relations?.serverChanged());
+  void serial.run(() => start(context)).then(() => serverChanged());
   return {
     ...live.api(),
     explorer: () => explorer.rows(),
@@ -155,6 +170,7 @@ export async function activate(
     processMonitor: infoViews.monitor,
     hdbBrowser: infoViews.hdb,
     functionSources: () => sources.state(),
+    testExplorer: { discover: testExplorer.discover, items: testExplorer.items, results: testExplorer.results, run: testExplorer.run },
   };
 }
 
@@ -165,7 +181,7 @@ function restart(context: ExtensionContext, asked = false): Promise<void> {
     await client?.stop().catch(() => {});
     client = undefined;
     await start(context);
-    relations?.serverChanged();
+    serverChanged();
     if (asked && client === undefined && workspace.getConfiguration("q-lint").get<unknown>("enable", true) === false) {
       void window.showInformationMessage("q-lint: the language server is turned off (q-lint.enable), so Restart Server started none.");
     }
@@ -181,7 +197,7 @@ function stop(): Promise<void> {
   return serial.run(async () => {
     await client?.stop().catch(() => {});
     client = undefined;
-    relations?.serverChanged();
+    serverChanged();
   });
 }
 

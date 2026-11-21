@@ -275,6 +275,27 @@ changed.
   commands above do, and lands in the history. `q-lint.codeLens.enable`
   turns them off.
 
+**Testing view.** The tests a **Run test** lens is drawn over - a
+`test_*` or qUnit `testName` function a statement at column 0 defines,
+`.qt.*` suites included - are listed in VS Code's Testing view, by file,
+from the language server's reading of the workspace; so are k4unit suites,
+CSV files with k4unit's `action,ms,bytes,lang,code,...` header, one test
+per `true`, `fail` or `run` row. The list follows saves and files created
+or deleted, and the view's refresh reads it again. **Run** runs the chosen
+tests on the active connection, or asks which process to connect to when
+there is none; **Run on q Process...** (the run button's menu) always asks.
+A process tagged `prod`, `prd` or `production` is confirmed first. A
+function test runs as its lens does - its definition under its `\d`, then
+the call - and passes when nothing signals and it does not answer false
+(`0b`, or a boolean list with a `0b`); the rest of its file is not loaded
+first, so load what it needs (**Execute Entire File**) before. A k4unit
+`true` row passes on `1b`, a `fail` row on an error, a `run` row on
+anything but one; the file's `before` rows run once before its first test
+and its `after` rows once after its last, and `k` rows go through `k)`.
+The process's `\d` is put back after each test. A failure shows q's error
+or the value at the test. `q-lint.testExplorer.enable` turns the
+integration off: the tests leave the view and nothing is read or sent.
+
 The code is cut into statements by q's own script rules: a line starting
 with a space or tab continues the one above, `/` lines and block comments
 are skipped, as is a first line starting `#!`, and a `\` line is a system
@@ -956,6 +977,7 @@ nothing.
 | `q-lint.processMonitor.enable` | `true` | The Process Monitor view. | - |
 | `q-lint.processMonitor.refreshInterval` | `0` | Seconds between the Monitor's reads while it is shown; `0` none. | - |
 | `q-lint.hdbBrowser.enable` | `true` | The HDB Browser view. | - |
+| `q-lint.testExplorer.enable` | `true` | List q tests (`test_*`, qUnit `testName`, k4unit CSV suites) in the Testing view and run them on a q process. Off, none is listed, read or sent. | - |
 
 ### Connection settings
 

@@ -557,6 +557,12 @@
             "default": true,
             "order": 129,
             "markdownDescription": "The **HDB Browser** view. Off, it is hidden and reads nothing."
+          },
+          "q-lint.testExplorer.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 130,
+            "markdownDescription": "List q tests in the Testing view - the `test_*` and qUnit `testName` functions a **Run test** lens is drawn over, and k4unit CSV suites - and run them on the active connection, or a process you choose. A production process is confirmed first. Off, no test is listed, read or sent."
           }
         }
       },
