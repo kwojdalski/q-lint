@@ -544,8 +544,10 @@ function nested(q: QValue): string[] {
     case "table": {
       const columns = q.data.map(nested);
       const rows = Array.from({ length: columns[0]?.length ?? 0 }, (_, r) => columns.map((c) => c[r] ?? ""));
+      // The rule is as wide as the padded names; no line keeps the spaces
+      // that pad its last column.
       const [header, ...body] = tabulate([q.cols, ...rows]);
-      return [header, "-".repeat(header.length), ...body];
+      return [header.trimEnd(), "-".repeat(header.length), ...body.map((line) => line.trimEnd())];
     }
     case "list": {
       const items = q.v;
@@ -559,7 +561,7 @@ function nested(q: QValue): string[] {
       if (atomic || counts.size > 1 || same) {
         return items.map(oneLine);
       }
-      return tabulate(items.map(nested));
+      return tabulate(items.map(nested)).map((line) => line.trimEnd());
     }
   }
 }
