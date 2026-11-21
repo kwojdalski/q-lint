@@ -386,3 +386,27 @@ test("Disconnect with nothing connected says so", async (t) => {
   assert.deepStrictEqual(live.processes(), []);
   assert.ok(!stub.messages.some(([, text]) => text.includes("not connected")), JSON.stringify(stub.messages));
 });
+
+// Deleting a discovery server forgot the passwords given for the processes
+// it listed - those it listed at its last fetch, held in memory. After a
+// window reload, before its first fetch (an interval of 0, a server that
+// does not answer), it had listed none, so deleting it (or changing its URL
+// or label) left every such password in secret storage, for a later server
+// of the same label to be given.
+test("deleting a discovery server after a reload forgets its processes' passwords", async (t) => {
+  const q = await fakeQ(() => OK);
+  t.after(() => q.close());
+  const { context, live } = await setUp(t, []);
+  stub.config.user["discovery.refreshInterval"] = 0;
+  await context.globalState.update("q-lint.discoveryServers", [{ label: "desk", url: "http://127.0.0.1:9/" }]);
+  stub.inputs.push("secret");
+  const row = { kind: "discovered", server: "desk", process: { label: "rdb", host: "127.0.0.1", port: q.port, user: "u", tags: [] } };
+  assert.strictEqual(await live.connectTo(row), true);
+  await stub.commands.get("q-lint.disconnectProcess")();
+  assert.deepStrictEqual([...context.secrets.all.keys()].filter((k) => k.includes("rdb")), ["q-lint.discoveredPassword.desk/rdb"]);
+  // A window reload: a new Live over what was kept, with nothing fetched.
+  new Live(context);
+  stub.picks.push("Delete");
+  await stub.commands.get("q-lint.deleteDiscoveryServer")("desk");
+  assert.deepStrictEqual([...context.secrets.all.keys()].filter((k) => k.includes("rdb")), []);
+});

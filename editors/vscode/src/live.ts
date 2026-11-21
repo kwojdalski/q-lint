@@ -939,12 +939,15 @@ export class Live {
         return false;
       }
       await this.context.secrets.store(passwordKey(process), password);
+      // Kept, so deleting the server forgets it even after a reload.
+      await this.discovery.passwordGiven(process.server!, process.label.slice(process.server!.length + 1));
     }
     const connected = await this.open(process);
     // A discovered process cannot be edited, so a password that did not
     // connect is forgotten: the next connect asks for it again.
     if (!connected && !saved && process.user) {
       await this.context.secrets.delete(passwordKey(process));
+      await this.discovery.passwordGiven(process.server!, process.label.slice(process.server!.length + 1), false);
     }
     return connected;
   }
