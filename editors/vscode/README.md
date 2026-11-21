@@ -78,9 +78,18 @@ to a process you add and connect to, and sends only the code you run.
   Definition on the path in `\l path/file.q` opens that file. What only
   running the code would tell - a name built at run time, `value "..."`,
   another process - is not found.
-- **Rename** for a lambda's parameters and locals. A global is refused with
-  the reason: it can be reached from a string, a symbol or another process,
-  and a rename that misses one of those breaks the program quietly.
+- **Rename Symbol** (F2) for a lambda's parameters and locals, and for a
+  global across the workspace: every place Find All References lists, under
+  the `\d` context each file is in, is rewritten - `add` under `\d .lib` and
+  `.lib.add` elsewhere both become `plus`. Only the last part of a name is
+  renamed (type `plus` or `.lib.plus`, not a name in another namespace).
+  It is refused, with the reason, for a name q reserves or one in a
+  one-letter namespace (`.z.pg`, `.q.f`), a name no workspace file assigns,
+  a new name that is not one q takes, is already assigned, or is a
+  parameter or local of a lambda that reads the global bare. A name reached
+  through a string (`value "f[]"`), a bare symbol (`` `f ``) or another
+  process is not seen and keeps its old name: preview the rename
+  (Shift+Enter) when that matters.
 - **Hover** on a name the workspace defines shows its parameters, the
   comment written above its definition and the file it is in; on a word of
   q itself - `ssr`, `select`, `.z.p`, `.Q.s`, `.h.hy`, or a glyph such as
@@ -567,7 +576,7 @@ q-pro column names the setting of [q-pro](https://marketplace.visualstudio.com/i
 | `q-lint.fixes.unsafe` | `true` | Offer the editor-only Quick Fixes (`--unsafe-fixes`) as well as those `--fix` applies. | - |
 | `q-lint.format.enable` | `true` | Register **Format Document** (the safe fixes). | - |
 | `q-lint.semanticTokens.enable` | `true` | Colour calls and parameter reads on top of the grammar. | - |
-| `q-lint.navigation.enable` | `true` | Offer the outline, workspace symbols, definitions, references, highlights and local rename. Off when another q extension already navigates. | - |
+| `q-lint.navigation.enable` | `true` | Offer the outline, workspace symbols, definitions, references, highlights and rename. Off when another q extension already navigates. | - |
 | `q-lint.help.enable` | `true` | Show hovers and signature help, from the source and the built-in catalogue of q's words. | - |
 | `q-lint.completion.enable` | `false` | Complete locals, workspace names and q's words. Off by default: an editor told a server completes stops offering the words already in the file. | - |
 | `q-lint.callHierarchy.enable` | `true` | Offer the call hierarchy of a global function. | - |

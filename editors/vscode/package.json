@@ -229,7 +229,7 @@
             "type": "boolean",
             "default": true,
             "order": 23,
-            "markdownDescription": "Offer the outline, workspace symbols, **Go to Definition**, **Find All References**, occurrence highlights and renaming a lambda's parameter or local - all read from the source, never by running it. Off, q-lint announces none of them: turn it off when another q extension already navigates and both would answer."
+            "markdownDescription": "Offer the outline, workspace symbols, **Go to Definition**, **Find All References**, occurrence highlights, **Rename Symbol** for a local or a global across the workspace - all read from the source, never by running it. Off, q-lint announces none of them: turn it off when another q extension already navigates and both would answer."
           },
           "q-lint.help.enable": {
             "type": "boolean",

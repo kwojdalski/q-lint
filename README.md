@@ -487,11 +487,24 @@ running the code would tell is not found: a name built at run time, a
 `value "..."` string, a definition another process sends. A column in a qSQL
 phrase reads like a global of that name and is listed with it.
 
-Rename is for a lambda's parameters and locals only. A global is refused, with
-the reason in the error, because it can be reached by name from a string, a
-symbol or another process, and no reading of the source finds those. So are an
-implicit `x`, `y` or `z`, a local a qSQL phrase reads (it may be a column),
-and a new name that is a q builtin or that the lambda already uses.
+Rename takes a lambda's parameter or local, within its lambda, and a global
+across the workspace. A local is refused, with the reason in the error, when
+it is an implicit `x`, `y` or `z`, when a qSQL phrase reads it (it may be a
+column), and when the new name is a q builtin or one the lambda already uses.
+
+A global is renamed in every place Find All References lists - each indexed
+file that names it, under the `\d` in force and the context the file is
+loaded in - and only its last part changes: `.lib.add` and `add` under
+`\d .lib` both become `plus`, given as `plus` or as `.lib.plus`, and a name
+in another namespace is refused. `prepareRename` answers with the range of
+that last part. The rename is refused for a name in a one-letter namespace
+(`.z.pg`, `.q.f`, which q keeps for itself), a name no indexed file assigns
+(q's own, or defined where the server cannot read), a new name that is not
+one q takes, is reserved or is already assigned, and one that is a
+parameter or local of a lambda reading the global without its namespace,
+where it would hide the renamed global. What reading cannot find keeps the
+old name: a string handed to `value`, a bare symbol (`` `f ``), a name another
+process sends.
 
 Hover, signature help and completion answer from two places and never from a
 running q: the workspace's own source, and a catalogue of q's words that ships

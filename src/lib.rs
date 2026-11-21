@@ -276,6 +276,14 @@ pub fn rename(source: &str, offset: usize, new: &str) -> Result<Vec<(usize, usiz
     semantics::navigate::rename(&v.code, source, offset, new)
 }
 
+/// The first of `offsets` in `source` that is inside a lambda with a
+/// parameter or local called `name`: where a global renamed to `name` would
+/// be hidden by the local.
+pub fn shadowing(source: &str, name: &str, offsets: &[usize]) -> Option<usize> {
+    let v = views(source);
+    semantics::navigate::shadowing(&v.code, source, name, offsets)
+}
+
 /// A bracketed call around a cursor: the name called, at byte `at` for `len`
 /// bytes, and which argument the cursor is in, from 0.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -387,6 +395,11 @@ pub fn rule_url(code: &str) -> Option<String> {
 }
 pub(crate) static RESERVED: LazyLock<Vec<String>> =
     LazyLock::new(|| serde_json::from_str(include_str!("reserved.json")).unwrap());
+
+/// Whether q reserves `word`, as `reserved.json` lists the words.
+pub fn is_reserved(word: &str) -> bool {
+    RESERVED.iter().any(|reserved| reserved == word)
+}
 
 /// What a name q defines is, as far as an editor shows it differently.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize)]
