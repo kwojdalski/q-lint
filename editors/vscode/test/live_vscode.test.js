@@ -99,3 +99,19 @@ test("switching to a process that cannot be reached empties the explorer", async
   assert.deepStrictEqual(events, ["connected", "disconnected"]);
   assert.ok(treeChanges() > before, "the explorer's tree was not told to redraw");
 });
+
+// Toggle wrote the user setting, and the workspace's, when it has one, wins
+// over it: the toggle did nothing, every time.
+test("Toggle Auto Refresh turns it over where it is set", async (t) => {
+  const { view } = await setUp(t, []);
+  const toggle = () => stub.commands.get("q-lint.toggleProcessExplorerAutoRefresh")();
+  const effective = () => require("vscode").workspace.getConfiguration("q-lint").get("processExplorer.autoRefresh", false);
+  await toggle();
+  assert.deepStrictEqual([effective(), stub.updates.at(-1).target], [true, "user"]);
+  stub.config.workspace["processExplorer.autoRefresh"] = false;
+  await toggle();
+  assert.deepStrictEqual([effective(), stub.updates.at(-1).target], [true, "workspace"]);
+  assert.strictEqual(view.description, "auto refresh");
+  await toggle();
+  assert.strictEqual(effective(), false);
+});
