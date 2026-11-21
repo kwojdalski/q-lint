@@ -15,7 +15,8 @@
   ],
   "activationEvents": [
     "onLanguage:q",
-    "onNotebook:q-lint-notebook"
+    "onNotebook:q-lint-notebook",
+    "onTaskType:q"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -960,7 +961,7 @@
             "type": "boolean",
             "default": true,
             "order": 213,
-            "markdownDescription": "Give the variables of the workspace folder's `q-lint.env.file` to every q the extension starts on this machine: the q terminals and REPL, and processes started from the Processes view. They go in the environment, never on a command line, and no value is ever shown or logged. Off, the file is not read."
+            "markdownDescription": "Give the variables of the workspace folder's `q-lint.env.file` to every q the extension starts on this machine: the q terminals and REPL, processes started from the Processes view, and q tasks. They go in the environment, never on a command line, and no value is ever shown or logged. Off, the file is not read."
           },
           "q-lint.env.file": {
             "type": "string",
@@ -968,6 +969,12 @@
             "order": 214,
             "scope": "resource",
             "markdownDescription": "The `.env` file `q-lint.env.enable` reads: `NAME=value` lines, `#` comments, an optional `export `, quotes dropped and nothing expanded, as `q-lint.terminal.envPath` reads its file. Relative to the workspace folder; a leading `~` is your home directory. A missing file is no file."
+          },
+          "q-lint.tasks.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 216,
+            "markdownDescription": "The `q` task type: **run current file** and a **test** task per test runner script (`run_tests.q` and the like) under **Run Task**, and `q` tasks in `tasks.json`. Each runs `q-lint.terminal.qBinary` on its script, which exits when the script ends; the `$q` problem matcher puts q's error, with its file and line, in Problems. Off, the provider is unregistered and no task runs."
           }
         }
       }
@@ -2668,6 +2675,51 @@
           {
             "name": "error",
             "description": "Explain the last failed query, or the q error typed"
+          }
+        ]
+      }
+    ],
+    "taskDefinitions": [
+      {
+        "type": "q",
+        "required": [
+          "script"
+        ],
+        "when": "config.q-lint.tasks.enable",
+        "properties": {
+          "script": {
+            "type": "string",
+            "description": "The q script to run, relative to the workspace folder; `${file}` is the current file."
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Arguments after the script, as q reads them: `-p 5001`."
+          }
+        }
+      }
+    ],
+    "problemMatchers": [
+      {
+        "name": "q",
+        "owner": "q-lint",
+        "source": "q",
+        "fileLocation": [
+          "autoDetect",
+          "${workspaceFolder}"
+        ],
+        "severity": "error",
+        "pattern": [
+          {
+            "regexp": "^'(?:\\d{4}\\.\\d{2}\\.\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d+ )?(.+?)\\r?$",
+            "message": 1
+          },
+          {
+            "regexp": "^\\s+\\[\\d+\\]\\s+(.+?):(\\d+):(?: .*)?\\r?$",
+            "file": 1,
+            "line": 2
           }
         ]
       }

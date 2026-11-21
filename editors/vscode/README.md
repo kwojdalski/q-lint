@@ -1257,7 +1257,7 @@ once. Opening the picker starts each once with `-q`, to print its version
 and exit, so each shows as `q 4.1 2024.10.16`; one that does not answer
 says so. **Enter a q binary's path...** takes any other. The one picked
 becomes the workspace's `q-lint.terminal.qBinary`: what the q terminals,
-and **Start Process** start. A binary inside a kdb+ install
+**Start Process** and the q tasks start. A binary inside a kdb+ install
 (`<home>/m64/q` beside `<home>/q.k`) is started with `QHOME=<home>`, and one
 inside a KDB-X install (`<home>/bin/q` with `<home>/q/` and a licence) with
 `QHOME=<home>/q` and `QLIC=<home>`, so a `QHOME` your shell sets for another
@@ -1281,7 +1281,7 @@ again.
 
 **`.env` files.** The variables of the workspace folder's `.env`
 (`q-lint.env.file`) go to every q the extension starts here: the q
-terminals and **Start q REPL**, and **Start Process**. The
+terminals and **Start q REPL**, **Start Process**, and the q tasks. The
 file is read as `q-lint.terminal.envPath` reads its file - `NAME=value`
 lines, `#` comments, quotes dropped, nothing expanded - each time one of
 them starts. Its values may be secrets, so they go in the environment and
@@ -1292,6 +1292,24 @@ shell's startup files export wins over the `.env` file's; put that one in
 `q-lint.terminal.envPath` instead, whose variables go on the command line.
 A launched process gets the `.env` file's variables under its definition's
 own `env`. A missing file is no file.
+
+**q tasks.** **Terminal > Run Task > q** offers **run current file** and,
+for each test runner script in the workspace (`run_tests.q`, `runtests.q`,
+`run_all_tests.q`, `run_test.q`, `test_runner.q`, `testrunner.q`), a
+**test** task in the Test group. A `tasks.json` task can name any script:
+
+```json
+{ "type": "q", "script": "tests/run.q", "args": ["-quiet"], "label": "q tests" }
+```
+
+Each runs `q-lint.terminal.qBinary` on the script in the workspace folder,
+with the variables above and nothing on its input, so q exits when the
+script ends: 0 when it loaded, 1 at its first error. The `$q` problem
+matcher puts that error in Problems at its file and line - the innermost
+frame, so the loaded file of a `\l` - as KDB-X prints it
+(`'2026.11.21T19:31:44.874 type` then ``[2]  /w/e.q:3: c:a+`x``) and as
+PeachQ does (`'type`). Add `"problemMatcher": "$q"` to a task of your own
+that runs q to use it there.
 
 ## Requirements
 
@@ -1463,8 +1481,9 @@ Read when they are used, so a change needs no reload. None reaches the language 
 | `q-lint.interpreter.enable` | `true` | **Select q Interpreter** and its status bar item. Off, both are hidden, and no q is started to ask its version; a binary's install no longer sets `QHOME`. | - |
 | `q-lint.licence.expiryWarning.enable` | `true` | The licence expiry warning and **Check q Licence Expiry**. The date is the one q reports in `.z.l`, kept on this machine; the licence file is never read. Off, nothing warns and the command is hidden and refuses. | - |
 | `q-lint.licence.warningDays` | `30` | Days before the expiry date the warning starts, 0 to 365. | - |
-| `q-lint.env.enable` | `true` | Give the `.env` file's variables to the q terminals and launched processes, in their environment, never shown. Off, the file is not read. | - |
+| `q-lint.env.enable` | `true` | Give the `.env` file's variables to the q terminals, launched processes and q tasks, in their environment, never shown. Off, the file is not read. | - |
 | `q-lint.env.file` | `".env"` | The `.env` file: relative to the workspace folder, which may set its own; a leading `~` is your home directory. | - |
+| `q-lint.tasks.enable` | `true` | The `q` task type: detected **run current file** and **test** tasks, and `q` tasks in `tasks.json`. Off, the provider is unregistered and no q task runs. The `$q` problem matcher stays, inert unless a task names it. | - |
 
 ### Discovery settings
 
