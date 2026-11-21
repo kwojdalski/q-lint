@@ -59,6 +59,20 @@ import { QueryControls } from "./controls";
 import { ParameterCache } from "./paramcachecontrol";
 import { CONTROL_COMMANDS, FILE_CONNECTIONS_KEY, UNLIMITED, armTimeout, limits, readUnlimited, runUnwrapped, timedOutError, withBinding } from "./querycontrols";
 import { elapsedText, finishedText, readProgress, shouldNotify } from "./progress";
+import {
+  HISTORY_COMMANDS,
+  HISTORY_FILTERED,
+  OUTCOME_CHOICES,
+  exportFormat,
+  filterDescription,
+  filtered,
+  historyJson,
+  historyProcesses,
+  historyScript,
+  isFiltering,
+  normalised,
+  type HistoryFilter,
+} from "./historyfilter";
 import { PLACEHOLDER_VALUES_KEY, lastValue, placeholderNames, readPlaceholders, remembered, substitute } from "./placeholders";
 
 const PROCESSES_KEY = "q-lint.processes";
@@ -222,7 +236,7 @@ class HistoryView implements TreeDataProvider<HistoryEntry> {
   }
 
   getChildren(entry?: HistoryEntry): HistoryEntry[] {
-    return entry === undefined ? this.live.history() : [];
+    return entry === undefined ? this.live.shownHistory() : [];
   }
 
   getTreeItem(entry: HistoryEntry): TreeItem {
@@ -422,6 +436,10 @@ export class Live {
   /// The Processes view, whose badge shows a live connection.
   private readonly processesTree: TreeView<Row>;
   private readonly historyView: HistoryView;
+  /// The Query History view, whose description shows its filter.
+  private readonly historyTree: TreeView<HistoryEntry>;
+  /// What the Query History view is filtered by (#913), for this window.
+  private historyFilter: HistoryFilter = {};
   private readonly modes: QueryModes;
   readonly discovery: DiscoveryServers;
 
@@ -433,6 +451,7 @@ export class Live {
     this.processesView = new ProcessesView(this);
     this.historyView = new HistoryView(this);
     this.processesTree = window.createTreeView(VIEWS.processes, { treeDataProvider: this.processesView });
+    this.historyTree = window.createTreeView(VIEWS.history, { treeDataProvider: this.historyView });
     this.discovery = new DiscoveryServers(context, { list: () => this.processes(), save: (processes) => this.save(processes) });
     const terminals = new QTerminals(context);
     this.modes = new QueryModes(context);
@@ -446,7 +465,7 @@ export class Live {
       this.output,
       this.status,
       this.processesTree,
-      window.registerTreeDataProvider(VIEWS.history, this.historyView),
+      this.historyTree,
       c(COMMANDS.add, () => this.add()),
       c(COMMANDS.edit, (row?: ProcessArg) => this.edit(row)),
       c(COMMANDS.remove, (row?: ProcessArg) => this.remove(row)),
@@ -471,6 +490,9 @@ export class Live {
       c(CONTROL_COMMANDS.startRepl, () => terminals.repl()),
       c(CONTROL_COMMANDS.copyQuery, (entry?: HistoryEntry) => this.copyQuery(entry)),
       c(CONTROL_COMMANDS.revealProcess, () => this.revealProcess()),
+      c(HISTORY_COMMANDS.filter, (filter?: HistoryFilter) => this.filterHistory(filter)),
+      c(HISTORY_COMMANDS.clearFilter, () => this.setHistoryFilter({})),
+      c(HISTORY_COMMANDS.export, (file?: Uri) => this.exportHistory(file)),
       this.changed,
       this.discovery.onDidChange(() => this.processesView.refresh()),
       workspace.onDidChangeConfiguration((event) => {
@@ -498,6 +520,8 @@ export class Live {
     processes: () => Process[];
     activeLabel: () => string | undefined;
     history: () => HistoryEntry[];
+    /// The entries the Query History view shows, through its filter (#913).
+    shownHistory: () => HistoryEntry[];
     /// What the result panel last drew.
     result: () => Rendered | undefined;
     /// Each discovery server, what it last listed, and why it failed.
@@ -513,6 +537,7 @@ export class Live {
       processes: () => this.processes(),
       activeLabel: () => this.activeLabel(),
       history: () => this.history(),
+      shownHistory: () => this.shownHistory(),
       result: () => this.modes.lastRendered(),
       discovered: () =>
         this.discovery.discovered().map(({ server, state }) => ({
@@ -548,6 +573,11 @@ export class Live {
   history(): HistoryEntry[] {
     this.queries ??= this.context.globalState.get<HistoryEntry[]>(HISTORY_KEY, []);
     return this.queries;
+  }
+
+  /// The history through the Query History view's filter.
+  shownHistory(): HistoryEntry[] {
+    return filtered(this.history(), this.historyFilter);
   }
 
   /// Run `use` on the active connection now, if there is one and no query
@@ -1326,7 +1356,7 @@ export class Live {
 
   async record(entry: HistoryEntry): Promise<void> {
     this.queries = [entry, ...this.history()].slice(0, HISTORY_LIMIT);
-    this.historyView.refresh();
+    this.refreshHistory();
     await this.context.globalState.update(HISTORY_KEY, this.queries);
   }
 
@@ -1369,7 +1399,101 @@ export class Live {
 
   private async clearHistory(): Promise<void> {
     this.queries = [];
-    this.historyView.refresh();
+    this.refreshHistory();
     await this.context.globalState.update(HISTORY_KEY, this.queries);
+  }
+
+  /// Redraw the Query History view, saying what it is filtered by and when
+  /// the filter hides every query.
+  private refreshHistory(): void {
+    this.historyView.refresh();
+    const on = isFiltering(this.historyFilter);
+    this.historyTree.description = on ? `filtered: ${filterDescription(this.historyFilter)}` : undefined;
+    this.historyTree.message =
+      on && this.history().length > 0 && this.shownHistory().length === 0 ? "No query in the history matches the filter." : undefined;
+  }
+
+  private setHistoryFilter(filter: HistoryFilter): void {
+    this.historyFilter = normalised(filter);
+    void commands.executeCommand("setContext", HISTORY_FILTERED, isFiltering(this.historyFilter));
+    this.refreshHistory();
+  }
+
+  /// Filter the Query History view by process, outcome and text, asked for
+  /// in turn starting from the current filter, or set to `given` (from a
+  /// keybinding's `args`). Escape leaves the filter as it was.
+  private async filterHistory(given?: HistoryFilter): Promise<void> {
+    if (typeof given === "object" && given !== null) {
+      this.setHistoryFilter({
+        ...(typeof given.process === "string" ? { process: given.process } : {}),
+        ...(OUTCOME_CHOICES.some((c) => c.outcome !== undefined && c.outcome === given.outcome) ? { outcome: given.outcome } : {}),
+        ...(typeof given.text === "string" ? { text: given.text } : {}),
+      });
+      return;
+    }
+    const now = this.historyFilter;
+    const anyProcess = "Any process";
+    const processes = historyProcesses(this.history());
+    if (now.process !== undefined && !processes.includes(now.process)) {
+      processes.push(now.process);
+    }
+    const process = await window.showQuickPick(
+      [anyProcess, ...processes].map((p) => ({
+        label: iconsEscaped(p),
+        name: p === anyProcess ? undefined : p,
+        ...((p === anyProcess ? now.process === undefined : now.process === p) ? { description: "current" } : {}),
+      })),
+      { title: "Filter Query History (1 of 3): process", placeHolder: "Show the queries run on which process?" },
+    );
+    if (process === undefined) {
+      return;
+    }
+    const outcome = await window.showQuickPick(
+      OUTCOME_CHOICES.map((c) => ({ ...c, ...(c.outcome === now.outcome ? { description: "current" } : {}) })),
+      { title: "Filter Query History (2 of 3): outcome", placeHolder: "Show the queries with which outcome?" },
+    );
+    if (outcome === undefined) {
+      return;
+    }
+    const text = await window.showInputBox({
+      title: "Filter Query History (3 of 3): text",
+      value: now.text ?? "",
+      prompt: "Text found in the query's code or q's error, ignoring case. Empty for any.",
+    });
+    if (text === undefined) {
+      return;
+    }
+    this.setHistoryFilter({ process: process.name, outcome: outcome.outcome, text });
+  }
+
+  /// Write the queries the Query History view shows, through its filter, to
+  /// `file` or one the user picks: a `.q` file as a q script, else JSON.
+  private async exportHistory(file?: Uri): Promise<void> {
+    const entries = this.shownHistory();
+    if (entries.length === 0) {
+      void window.showInformationMessage(
+        isFiltering(this.historyFilter) ? "q-lint: no query in the history matches the filter." : "q-lint: the query history is empty.",
+      );
+      return;
+    }
+    const target =
+      file instanceof Uri
+        ? file
+        : await window.showSaveDialog({
+            title: `Export ${entries.length} quer${entries.length === 1 ? "y" : "ies"} from the history`,
+            filters: { JSON: ["json"], "q script": ["q"] },
+            defaultUri: workspace.workspaceFolders?.[0] ? Uri.joinPath(workspace.workspaceFolders[0].uri, "q-history.json") : undefined,
+          });
+    if (target === undefined) {
+      return;
+    }
+    const text = exportFormat(target.fsPath) === "q" ? historyScript(entries) : historyJson(entries);
+    try {
+      await workspace.fs.writeFile(target, Buffer.from(text, "utf8"));
+    } catch (error) {
+      void window.showErrorMessage(`q-lint: could not write ${target.fsPath}: ${error instanceof Error ? error.message : String(error)}`);
+      return;
+    }
+    void window.showInformationMessage(`q-lint: exported ${entries.length} quer${entries.length === 1 ? "y" : "ies"} to ${target.fsPath}.`);
   }
 }

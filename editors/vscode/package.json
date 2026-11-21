@@ -821,6 +821,24 @@
         "command": "q-lint.newNotebook",
         "title": "New q Notebook",
         "category": "q-lint"
+      },
+      {
+        "command": "q-lint.filterQueryHistory",
+        "title": "Filter Query History",
+        "category": "q-lint",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "q-lint.clearQueryHistoryFilter",
+        "title": "Clear Query History Filter",
+        "category": "q-lint",
+        "icon": "$(clear-filter)"
+      },
+      {
+        "command": "q-lint.exportQueryHistory",
+        "title": "Export Query History",
+        "category": "q-lint",
+        "icon": "$(save-as)"
       }
     ],
     "views": {
@@ -942,6 +960,26 @@
           "command": "q-lint.openSettings",
           "when": "view == q-lint.processes",
           "group": "3_settings@1"
+        },
+        {
+          "command": "q-lint.filterQueryHistory",
+          "when": "view == q-lint.queryHistory && !q-lint.queryHistoryFiltered",
+          "group": "navigation@1"
+        },
+        {
+          "command": "q-lint.clearQueryHistoryFilter",
+          "when": "view == q-lint.queryHistory && q-lint.queryHistoryFiltered",
+          "group": "navigation@1"
+        },
+        {
+          "command": "q-lint.filterQueryHistory",
+          "when": "view == q-lint.queryHistory && q-lint.queryHistoryFiltered",
+          "group": "1_history@1"
+        },
+        {
+          "command": "q-lint.exportQueryHistory",
+          "when": "view == q-lint.queryHistory",
+          "group": "1_history@2"
         }
       ],
       "view/item/context": [

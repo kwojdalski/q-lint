@@ -258,6 +258,20 @@ out. One you aborted is not announced.
 outcome; the buttons on a row run it again on the active connection and
 **Copy Query** copies its code, and **Clear Query History** empties it.
 
+**Filter Query History**, on the view's title bar, narrows it by process,
+outcome (succeeded; failed, which is any of error, timed out and aborted; or
+each of those) and text found in the code or q's error, ignoring case. It
+asks for each in turn, starting from the current filter, and takes
+`{"process", "outcome", "text"}` as an argument for a keybinding. The view's
+title says what it is filtered by, and **Clear Query History Filter**, in
+place of the filter button, shows every query again. The filter lasts for
+the window. **Export Query History** writes the queries the view shows
+(through the filter, if one is set) to a file: a `.q` file as a q script,
+oldest first, each query after a `/` comment naming its process, time,
+duration, outcome and error; any other name as JSON,
+`{"queries": [{"process", "at", "millis", "outcome", "error"?, "code"}]}`,
+newest first.
+
 **Query controls.**
 - **Toggle Unlimited Query**: while on, the console text is not cut at
   `q-lint.output.consoleSize`, and a grid or chart is sent every row, not
