@@ -33,6 +33,9 @@ import { QueryAcross } from "./queryacross";
 import { SavedQueries } from "./savedqueriesview";
 import { TableStreams } from "./streamview";
 import { Launcher } from "./launcherview";
+import { NewQuery } from "./newqueryview";
+import { RunWithArguments } from "./runargsview";
+import { LogViewer } from "./logview";
 import type { InfoNode } from "./monitor";
 import { registerTestExplorer } from "./testexplorer";
 import { registerValueHover } from "./valuehoverview";
@@ -152,6 +155,9 @@ export async function activate(
     savedQueries: SavedQueries["queries"];
     tableStreams: TableStreams["state"];
     launchedProcesses: Launcher["running"];
+    newQueryForProcess: (label?: string) => ReturnType<NewQuery["open"]>;
+    runFileWithArguments: () => ReturnType<RunWithArguments["pick"]>;
+    logViewer: () => ReturnType<LogViewer["state"]>;
     testExplorer: Omit<ReturnType<typeof registerTestExplorer>, "serverChanged">;
     valueHover: ReturnType<typeof registerValueHover>;
     undefinedNames: ReturnType<typeof registerUndefinedNames>;
@@ -258,6 +264,9 @@ export async function activate(
   registerOnboarding(context, () => live.processes());
   const streams = new TableStreams(context, live);
   const launcher = new Launcher(context, live);
+  const newQuery = new NewQuery(context, live);
+  const runWithArguments = new RunWithArguments(context, live.runFileWith);
+  const logViewer = new LogViewer(context);
   relations = new Relations(context, () => client);
   testExplorer = registerTestExplorer(context, live, running);
   const valueHover = registerValueHover(context, live, running);
@@ -308,6 +317,9 @@ export async function activate(
     savedQueries: () => saved.queries(),
     tableStreams: () => streams.state(),
     launchedProcesses: () => launcher.running(),
+    newQueryForProcess: (label?: string) => newQuery.open(label),
+    runFileWithArguments: () => runWithArguments.pick(),
+    logViewer: () => logViewer.state(),
     testExplorer: {
       discover: testExplorer.discover,
       items: testExplorer.items,

@@ -68,6 +68,7 @@ export interface InitializationOptions {
   organiseLoads: { enable: boolean };
   performanceLints: { enable: boolean };
   formatChangedLines: { enable: boolean };
+  qsqlLayout: { enable: boolean; onFormat: boolean; lineLength: number };
   workspaceIndex: { enable: boolean; exclude: string[] };
 }
 
@@ -99,6 +100,12 @@ function strings(settings: Settings, key: string): string[] {
   return Array.isArray(value)
     ? value.filter((v): v is string => typeof v === "string" && v.trim() !== "").map((v) => v.trim())
     : [];
+}
+
+/// `q-lint.qsqlLayout.lineLength`: a whole number from 20 to 400, else 80,
+/// so the server is never sent one it would refuse.
+function lineLength(value: unknown): number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 20 && value <= 400 ? value : 80;
 }
 
 /// `settings` as a launch. `folder` is the first workspace folder, which a
@@ -159,6 +166,11 @@ export function launch(settings: Settings, folder: string | undefined): Launch {
       organiseLoads: { enable: settings.get<boolean>("organiseLoads.enable", true) },
       performanceLints: { enable: settings.get<boolean>("performanceLints.enable", true) },
       formatChangedLines: { enable: settings.get<boolean>("formatChangedLines.enable", false) },
+      qsqlLayout: {
+        enable: settings.get<boolean>("qsqlLayout.enable", true),
+        onFormat: settings.get<boolean>("qsqlLayout.onFormat", false),
+        lineLength: lineLength(settings.get<unknown>("qsqlLayout.lineLength", 80)),
+      },
       workspaceIndex: {
         enable: settings.get<boolean>("workspaceIndex.enable", true),
         exclude: strings(settings, "workspaceIndex.exclude"),
@@ -197,6 +209,7 @@ const RESTARTING = [
   "organiseLoads",
   "performanceLints",
   "formatChangedLines",
+  "qsqlLayout",
   "workspaceIndex",
 ];
 

@@ -296,6 +296,26 @@ pub fn extract(source: &str, from: usize, to: usize) -> Result<Extraction, Strin
     semantics::extract::extract(&v.code, &v.comments, source, from, to)
 }
 
+pub use semantics::layout::Layout as QsqlLayout;
+
+/// Every qSQL query in `source` whose one-line form is longer than `width`
+/// characters, laid out on aligned lines - a clause per line, a part's
+/// items one per line where they do not fit - as replacements in order.
+/// Only blanks change, and only where q reads the result as it read the
+/// original (see `semantics::layout`).
+pub fn qsql_layouts(source: &str, width: usize) -> Vec<QsqlLayout> {
+    let v = views(source);
+    semantics::layout::layouts(&v.code, &v.comments, source, width)
+}
+
+/// The qSQL query around byte `at` laid out with every clause on its own
+/// line, however short it is; `None` where there is none, it cannot be laid
+/// out safely, or it is laid out so already.
+pub fn qsql_layout_at(source: &str, at: usize, width: usize) -> Option<QsqlLayout> {
+    let v = views(source);
+    semantics::layout::layout_at(&v.code, &v.comments, source, at, width)
+}
+
 /// For each of `offsets` in `source`, the qSQL clause it is written in -
 /// `select`, `by`, `from`, `where` and so on - or `None` outside a query,
 /// where a name is no column.
@@ -683,7 +703,7 @@ fn continues_after(comments: &str, raw: &str, at: usize) -> bool {
 const QUERY_WORDS: [&str; 7] = ["select", "exec", "update", "delete", "by", "from", "where"];
 
 /// The qSQL word at `at` in the masked code, if one starts there.
-fn query_word(code: &str, at: usize) -> Option<&'static str> {
+pub(crate) fn query_word(code: &str, at: usize) -> Option<&'static str> {
     // Part of a longer name - `.req.delete`, `clust.dbscan.update` - or a
     // symbol, `` `update ``, is not the keyword; after a drop, `1_select`,
     // it is (#340). `boundary` also refuses an offset inside a multi-byte

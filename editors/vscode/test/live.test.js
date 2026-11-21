@@ -67,6 +67,9 @@ const { TUNNEL_COMMANDS } = require("../out/tunnel.js");
 const { GATEWAY_COMMANDS } = require("../out/gateway.js");
 const { STREAM_COMMANDS } = require("../out/stream.js");
 const { LAUNCH_COMMANDS } = require("../out/launcher.js");
+const { NEW_QUERY_COMMAND } = require("../out/newquery.js");
+const { RUN_ARGS_COMMAND } = require("../out/runargs.js");
+const { LOG_COMMANDS } = require("../out/logparse.js");
 const { SHARED_COMMANDS } = require("../out/shared.js");
 const { DATA_FILES, readDataFiles } = require("../out/datafile.js");
 const { SCHEMA_COMMANDS, readSchemaTools } = require("../out/schema.js");
@@ -343,6 +346,9 @@ test("package.json declares exactly the commands the extension registers", () =>
     ...Object.values(LOGPOINT_COMMANDS),
     CAPTURE_LOCALS,
     ...Object.values(TOOLING_COMMANDS),
+    NEW_QUERY_COMMAND,
+    RUN_ARGS_COMMAND,
+    ...Object.values(LOG_COMMANDS),
   ].sort();
   assert.deepStrictEqual(declared, registered);
 });
