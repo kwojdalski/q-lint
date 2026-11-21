@@ -21,6 +21,7 @@ import {
   parseServers,
   serverDescription,
   serverLabelProblem,
+  serverTooltip,
   toDownload,
   urlProblem,
   type Discovered,
@@ -362,13 +363,9 @@ export function discoveryItem(row: Row): TreeItem {
     item.iconPath = state.loading
       ? new ThemeIcon("sync~spin")
       : new ThemeIcon("cloud", state.error !== undefined ? new ThemeColor("errorForeground") : undefined);
-    const tooltip = new MarkdownString();
-    tooltip.appendMarkdown(`**${server.label}**\n\n`);
-    tooltip.appendText(server.url);
-    if (state.fetchedAt !== undefined) {
-      tooltip.appendMarkdown(`\n\nlast fetched ${new Date(state.fetchedAt).toLocaleTimeString()}`);
-    }
-    item.tooltip = tooltip;
+    item.tooltip = new MarkdownString(
+      serverTooltip(server, state.fetchedAt === undefined ? undefined : new Date(state.fetchedAt).toLocaleTimeString()),
+    );
     item.contextValue = "discoveryServer";
     return item;
   }

@@ -2,7 +2,7 @@
 // processes, how one is fetched and read, and how the Processes view shows
 // what each one listed. Nothing here imports `vscode`, so all of it is tested
 // with node - the fetch against a local HTTP server.
-import { grouped, parseProcesses, type Process } from "./processes";
+import { grouped, markdownText, parseProcesses, type Process } from "./processes";
 
 export interface DiscoveryServer {
   /// Unique among the discovery servers; names its group in the view and
@@ -305,6 +305,12 @@ function serverChildren(server: DiscoveryServer, state: ServerState): Row[] {
       .sort((a, b) => a.label.localeCompare(b.label))
       .map((process): Row => ({ kind: "discovered", server: server.label, process })),
   ];
+}
+
+/// A server row's tooltip, as Markdown: its label and URL as written, and
+/// `fetched`, when it was last fetched, as the caller words it.
+export function serverTooltip(server: DiscoveryServer, fetched?: string): string {
+  return [`**${markdownText(server.label)}**`, markdownText(server.url), ...(fetched === undefined ? [] : [`last fetched ${fetched}`])].join("\n\n");
 }
 
 /// What a server's row says beside its label.

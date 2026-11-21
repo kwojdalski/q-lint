@@ -384,3 +384,10 @@ test("an auth header that cannot be sent is refused without showing it", async (
     }
   });
 });
+
+// The server row's tooltip read its label as Markdown.
+test("a server's tooltip shows its label as written", () => {
+  const { serverTooltip } = require("../out/discovery.js");
+  assert.strictEqual(serverTooltip({ label: "*eu*_desk", url: "https://x/a_b" }), "**\\*eu\\*\\_desk**\n\nhttps://x/a\\_b");
+  assert.strictEqual(serverTooltip({ label: "d", url: "https://x/" }, "10:00:00"), "**d**\n\nhttps://x/\n\nlast fetched 10:00:00");
+});

@@ -48,3 +48,17 @@ test("a host is refused when it holds a port, a space or a slash", () => {
   assert.strictEqual(hostProblem("a b"), "A host has no spaces or slashes.");
   assert.strictEqual(hostProblem("tcp://h"), "A host only: the port is asked for next.");
 });
+
+// Tooltips are Markdown: a label, host, user or tag was read as Markdown,
+// so `*prod*` showed as italic prod, `a_b_c` lost its underscores and a user
+// with a backtick broke out of its code span.
+test("a process's tooltip shows its label, host, user and tags as written", () => {
+  const { processTooltip, markdownText } = require("../out/processes.js");
+  assert.strictEqual(markdownText("*prod* a_b [x](command:y) <b>"), "\\*prod\\* a\\_b \\[x\\]\\(command:y\\) \\<b\\>");
+  const tip = processTooltip({ label: "*eu*_rdb", host: "h_1", port: 5000, user: "a`b", tags: ["x_y"] });
+  assert.strictEqual(tip, "**\\*eu\\*\\_rdb**\n\nh\\_1:5000\n\nuser a\\`b\n\ntags: x\\_y");
+  assert.strictEqual(
+    processTooltip({ label: "r", host: "::1", port: 1, tags: [], tls: true }, "desk_1"),
+    "**r**\n\n\\[::1\\]:1 (TLS)\n\nno user\n\nno tags\n\nlisted by desk\\_1, connected to as desk\\_1/r",
+  );
+});

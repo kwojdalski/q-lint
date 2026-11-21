@@ -50,6 +50,24 @@ export function address(host: string, port: number): string {
   return host.includes(":") ? `[${host}]:${port}` : `${host}:${port}`;
 }
 
+/// `text` as Markdown that shows it as written: every character Markdown
+/// could read as syntax is escaped.
+export function markdownText(text: string): string {
+  return text.replace(/[\\`*_{}[\]()#+\-.!|~<>&]/g, (c) => `\\${c}`);
+}
+
+/// A process row's tooltip, as Markdown: its label, address, user and tags
+/// as written. `from` is the discovery server that listed it.
+export function processTooltip(process: Process, from?: string): string {
+  return [
+    `**${markdownText(process.label)}**`,
+    `${markdownText(address(process.host, process.port))}${process.tls ? " (TLS)" : ""}`,
+    process.user ? `user ${markdownText(process.user)}` : "no user",
+    process.tags.length ? `tags: ${markdownText(process.tags.join(", "))}` : "no tags",
+    ...(from === undefined ? [] : [`listed by ${markdownText(from)}, connected to as ${markdownText(`${from}/${process.label}`)}`]),
+  ].join("\n\n");
+}
+
 /// Tags as written in an input box: comma or space separated, lower case,
 /// each once.
 export function parseTags(text: string): string[] {

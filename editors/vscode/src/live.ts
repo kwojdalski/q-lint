@@ -40,6 +40,7 @@ import {
   parseTags,
   portProblem,
   processThemeColour,
+  processTooltip,
   readProcessFile,
   tlsChoices,
   type Process,
@@ -190,15 +191,7 @@ class ProcessesView implements TreeDataProvider<Row> {
     const item = new TreeItem(process.label, TreeItemCollapsibleState.None);
     item.description = `${address(process.host, process.port)}${active ? " - connected" : ""}`;
     item.iconPath = new ThemeIcon(active ? "vm-active" : "server-process", colourOf(process.tags));
-    item.tooltip = new MarkdownString(
-      [
-        `**${process.label}**`,
-        `${address(process.host, process.port)}${process.tls ? " (TLS)" : ""}`,
-        process.user ? `user \`${process.user}\`` : "no user",
-        process.tags.length ? `tags: ${process.tags.join(", ")}` : "no tags",
-        ...(from === undefined ? [] : [`listed by ${from}, connected to as \`${qualified(from, process.label)}\``]),
-      ].join("\n\n"),
-    );
+    item.tooltip = new MarkdownString(processTooltip(process, from));
     const kind = from === undefined ? "process" : "discovered";
     item.contextValue = active ? `${kind}.connected` : kind;
     // A click connects: the row is the process, and connecting is what it is for.
