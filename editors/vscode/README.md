@@ -232,6 +232,12 @@ running the query, and the new connection is made once it is free, however
 long that takes. **Disconnect**, or connecting to another process, stops
 it waiting.
 
+**A long query.** While a query runs, the status bar spins and counts its
+time (`q: rdb 1m 05s`). When one that ran at least `q-lint.query.notifyAfter`
+seconds (10 by default; `0` never) ends while the VS Code window is not
+focused, a notification says so: finished, failed with q's error, or timed
+out. One you aborted is not announced.
+
 **Query History** lists each query with its process, time, duration and
 outcome; the buttons on a row run it again on the active connection and
 **Copy Query** copies its code, and **Clear Query History** empties it.
@@ -621,6 +627,7 @@ nothing.
 | `q-lint.query.resultsLocation` | `"editor"` | Where a grid or chart opens: `editor`, beside it, or `panel`, the **q Results** view in the bottom panel. | - |
 | `q-lint.query.unwrapped` | `false` | Send code as plain strings, for a gateway that refuses a lambda, and format the result in q-lint. **Toggle Unwrapped Query** changes it. | - |
 | `q-lint.query.timeout` | `0` | Seconds a query may run before it is aborted, as Abort does; `0` none. | - |
+| `q-lint.query.notifyAfter` | `10` | Seconds a query must run for its end to be notified while the window is not focused; `0` never. | - |
 | `q-lint.processExplorer.excludedNamespaces` | `["q","Q","h","j","o","s"]` | Namespaces the Process Explorer and live completion leave out (`q`, or a nested one as `ns.sub`), with those nested in them. | - |
 | `q-lint.processExplorer.previewLimit` | `5` | Rows of a table Preview shows. | - |
 | `q-lint.processExplorer.autoRefresh` | `false` | Read the process again after each query. | - |

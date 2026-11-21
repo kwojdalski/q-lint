@@ -370,6 +370,14 @@
             "order": 115,
             "markdownDescription": "Seconds a query may run before it is aborted, as **q-lint: Abort Current Query** aborts it; the history records it as timed out. `0`: no limit."
           },
+          "q-lint.query.notifyAfter": {
+            "type": "number",
+            "default": 10,
+            "minimum": 0,
+            "maximum": 86400,
+            "order": 116,
+            "markdownDescription": "Seconds a query must run for VS Code to notify you when it ends while its window is not focused. The status bar counts a running query's time whatever this is. `0`: never notify."
+          },
           "q-lint.processExplorer.excludedNamespaces": {
             "type": "array",
             "items": {

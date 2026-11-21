@@ -58,6 +58,7 @@ import { commandLine, expandHome, parseEnv, replLines, shellKind } from "./termi
 import { QueryControls } from "./controls";
 import { ParameterCache } from "./paramcachecontrol";
 import { CONTROL_COMMANDS, FILE_CONNECTIONS_KEY, UNLIMITED, armTimeout, limits, readUnlimited, runUnwrapped, timedOutError, withBinding } from "./querycontrols";
+import { elapsedText, finishedText, readProgress, shouldNotify } from "./progress";
 
 const PROCESSES_KEY = "q-lint.processes";
 const HISTORY_KEY = "q-lint.queryHistory";
@@ -394,6 +395,9 @@ export class Live {
   /// reconnect after an abort from trying again.
   private reconnectStopped = false;
   private running: { code: string; started: number } | undefined;
+  /// Redraws the status bar each second while a query runs, so its time
+  /// counts up (#910).
+  private ticker: ReturnType<typeof setInterval> | undefined;
   /// When the query that timed out started, so its entry says so.
   private timedOut: number | undefined;
   /// When the query Abort, Disconnect or a connect elsewhere stopped waiting
@@ -476,6 +480,7 @@ export class Live {
       {
         dispose: () => {
           this.disposed = true;
+          clearInterval(this.ticker);
           // A reconnect after an abort stops trying.
           this.reconnectStopped = true;
           void this.connection?.close();
@@ -570,9 +575,16 @@ export class Live {
 
   private showStatus(): void {
     const label = this.activeLabel();
+    const running = this.running !== undefined && label !== undefined;
+    if (running && this.ticker === undefined && !this.disposed) {
+      this.ticker = setInterval(() => this.showStatus(), 1000);
+    } else if (!running && this.ticker !== undefined) {
+      clearInterval(this.ticker);
+      this.ticker = undefined;
+    }
     if (this.running !== undefined && label !== undefined) {
-      this.status.text = `$(sync~spin) q: ${iconsEscaped(label)}`;
-      this.status.tooltip = "A query is running. q-lint: Abort Current Query stops waiting for it.";
+      this.status.text = `$(sync~spin) q: ${iconsEscaped(label)} ${elapsedText(Date.now() - this.running.started)}`;
+      this.status.tooltip = `A query has been running on ${label} for ${elapsedText(Date.now() - this.running.started)}. q-lint: Abort Current Query stops waiting for it.`;
     } else if (label !== undefined) {
       this.status.text = `$(plug) q: ${iconsEscaped(label)}`;
       this.status.tooltip = `Connected to ${this.active === undefined ? "" : address(this.active.host, this.active.port)}. Click to switch.`;
@@ -1219,7 +1231,24 @@ export class Live {
       this.showStatus();
     }
     this.changed.fire("queried");
+    this.notifyFinished(entry);
     await this.record(entry);
+  }
+
+  /// Say a long query has ended, when the window is not focused: the user
+  /// has gone elsewhere while it ran (#910).
+  private notifyFinished(entry: HistoryEntry): void {
+    const configuration = workspace.getConfiguration("q-lint");
+    const settings = readProgress((key, fallback) => configuration.get(key, fallback));
+    if (!shouldNotify(entry.millis, window.state.focused, entry.outcome, settings)) {
+      return;
+    }
+    const text = finishedText(entry.process, entry.millis, entry.outcome, entry.error);
+    if (entry.outcome === "ok") {
+      void window.showInformationMessage(text);
+    } else {
+      void window.showWarningMessage(text);
+    }
   }
 
   private show(lines: string[], clear: boolean): void {
