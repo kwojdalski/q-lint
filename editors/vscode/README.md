@@ -417,12 +417,13 @@ defined on the process but what the query defines. The agent gets:
 - a table, keyed table, dictionary or list: `{columns, types, rowCount,
   data}`, `data` being the first 200 rows as arrays of values, with
   `truncated: true` when there were more and `keyColumns` for a keyed
-  table. Booleans and numbers are JSON values and nulls `null`; a
+  table; a table of more than 100 columns gives its first 100, with
+  `columnCount` and `truncated: true`. Booleans and numbers are JSON values and nulls `null`; a
   temporal, a symbol, a guid or a nested value is q's text, and so are a
   long above 2^53 and an infinity, so a timestamp keeps its nanoseconds;
 - any other value: `{output}`, the process's text of it at
   `q-lint.output.consoleSize`;
-- a failure: `{error, trace?}`.
+- a failure: `{error, trace?}`, the backtrace cut at 40 lines.
 
 A query running longer than `q-lint.agent.queryTimeout` seconds, or one the
 agent cancels, is aborted as **Abort Current Query** aborts one, and the

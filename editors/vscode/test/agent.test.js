@@ -209,3 +209,30 @@ test("every agent setting is read, with the default package.json declares, and n
   assert.strictEqual(set(2147483), 2147483);
   assert.strictEqual(set(3000000), 2147483);
 });
+
+test("a deep backtrace and a wide table are cut, as the rows are", () => {
+  // A recursion 1000 deep fails with a backtrace of 2000 lines (54 KB on
+  // KDB-X), and a 3000-column table gave 2 MB of JSON: either fills an
+  // agent's context, which the 200-row cap is there to prevent.
+  const trace = Array.from({ length: 1000 }, (_, i) => `  [${1000 - i}]  {$[x=0;x+\`a;f x-1]}\n                   ^`).join("\n");
+  const failed = shape({ ok: false, error: "type", trace });
+  assert.ok(failed.trace.split("\n").length <= 41, `${failed.trace.split("\n").length} lines`);
+  assert.match(failed.trace, /1960 more lines/);
+  assert.ok(failed.trace.startsWith("  [1000]"), "the innermost frames are the ones kept");
+  const n = 3000;
+  const wide = grid({
+    names: Array.from({ length: n }, (_, i) => `c${i}`),
+    types: Array(n).fill(7),
+    cells: Array.from({ length: n }, () => ["1", "2"]),
+    raw: Array.from({ length: n }, () => [1, 2]),
+    rank: Array.from({ length: n }, () => []),
+  });
+  const shaped = shape(ok(wide));
+  assert.strictEqual(shaped.columns.length, 100);
+  assert.strictEqual(shaped.types.length, 100);
+  assert.ok(shaped.data.every((row) => row.length === 100));
+  assert.strictEqual(shaped.columnCount, n);
+  assert.strictEqual(shaped.truncated, true);
+  // A table within both limits says nothing of either.
+  assert.ok(!("columnCount" in shape(ok(grid()))));
+});
