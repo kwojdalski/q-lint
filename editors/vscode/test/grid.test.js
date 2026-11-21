@@ -469,3 +469,11 @@ test("a grid of more rows than a page can be tall still scrolls to its last row"
   assert.deepStrictEqual(panel.span(220, view, 1000), { start: 0, end: 68, before: 0, after: (1000 - 68) * 22 });
   assert.deepStrictEqual(panel.span(22000, view, 1000), { start: 980, end: 1000, before: 980 * 22, after: 0 });
 });
+
+test("a scatter against the row puts each point at its row, filtered or sorted", () => {
+  // x a symbol, so the axis is "row". Filtered to rows 3 and 1, the points
+  // were drawn at rows 0 and 1: their places in the list shown.
+  const grid = toGrid({ count: 4, keys: 0, names: ["s", "y"], types: [11, 9], cells: [["a", "b", "c", "d"], ["1", "2", "3", "4"]], raw: [[], [1, 2, 3, 4]], rank: [[0, 1, 2, 3], [0, 1, 2, 3]] }, -1);
+  const scatter = charts.chartData(grid, [3, 1], "scatter", [1], 10);
+  assert.deepStrictEqual(scatter.datasets[0].data.map((p) => [p.x, p.y]), [[3, 4], [1, 2]]);
+});

@@ -165,8 +165,8 @@
         type: "scatter",
         datasets: columns.map(function (c) {
           const data = [];
-          rows.forEach(function (r, i) {
-            const x = xs ? xs[r] : byRow(grid) ? r : i;
+          rows.forEach(function (r) {
+            const x = xs ? xs[r] : r;
             const y = grid.values[c][r];
             if (x !== null && y !== null) {
               data.push({ x: x, y: y, row: r });
