@@ -11,6 +11,7 @@ function fakeVscode(config = {}) {
   const pages = [];
   const listeners = { config: [] };
   const clipboard = { text: undefined };
+  const written = {};
   const disposable = { dispose() {} };
   class Uri {
     constructor(path) {
@@ -57,7 +58,10 @@ function fakeVscode(config = {}) {
     env: { clipboard: { writeText: async (t) => (clipboard.text = t) } },
     window: {
       createStatusBarItem: () => ({ show() {}, dispose() {} }),
-      registerWebviewViewProvider: () => disposable,
+      registerWebviewViewProvider: (id, provider) => {
+        vscode.window.viewProvider = provider;
+        return disposable;
+      },
       createWebviewPanel: () => {
         const panel = { webview: makeWebview(), reveal() {}, dispose() {}, onDidDispose: () => disposable };
         pages.push(panel.webview);
@@ -79,10 +83,10 @@ function fakeVscode(config = {}) {
         return disposable;
       },
       workspaceFolders: undefined,
-      fs: { writeFile: async () => {} },
+      fs: { writeFile: async (uri, bytes) => (written[uri.path] = Buffer.from(bytes).toString("utf8")) },
     },
   };
-  return { vscode, pages, listeners, clipboard, config };
+  return { vscode, pages, listeners, clipboard, config, written };
 }
 
 /// `src/resultpanel.ts`'s QueryModes, loaded against `fake`.
@@ -205,4 +209,26 @@ test("a query setting other than the decimals does not redraw the result on show
   assert.strictEqual(page.posted.length, sent);
   change("q-lint.query.gridDecimals");
   assert.strictEqual(page.posted.length, sent + 1);
+});
+
+test("the q Results view's Export button writes the view's rows, though the editor's panel is open too", async () => {
+  // resultsLocation is `editor`, and the view was opened before: both
+  // pages show the result, each with its own filter and sort.
+  const fake = fakeVscode({ "query.resultsLocation": "editor" });
+  const modes = loadModes(fake);
+  const view = { webview: fake.pages.length, show() {}, onDidDispose: () => ({ dispose() {} }) };
+  modes.show(result([10, 20, 30]), live());
+  const panel = fake.pages[0];
+  const webview = { posted: [], options: {}, html: "", cspSource: "", asWebviewUri: (u) => u, postMessage: async () => true, onDidReceiveMessage(f) { webview.receive = f; return { dispose() {} }; } };
+  view.webview = webview;
+  fake.vscode.window.viewProvider.resolveWebviewView(view);
+  const id = panel.posted.at(-1).id;
+  const drawn = (rows) => ({ view: "grid", rows: rows.length, held: 3, total: 3, columns: ["c"], first: [] });
+  panel.receive({ type: "rendered", id, rows: [2, 1, 0], rendered: drawn([2, 1, 0]) });
+  webview.receive({ type: "rendered", id, rows: [0], rendered: drawn([0]) });
+  const { RESULTS } = require("../out/liveconfig.js");
+  await fake.vscode.commands[RESULTS.exportViewCsv](new fake.vscode.Uri("/view.csv"));
+  await fake.vscode.commands[RESULTS.exportCsv](new fake.vscode.Uri("/editor.csv"));
+  assert.strictEqual(fake.written["/view.csv"], "c\n10\n");
+  assert.strictEqual(fake.written["/editor.csv"], "c\n30\n20\n10\n");
 });

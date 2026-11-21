@@ -255,6 +255,7 @@ test("package.json declares exactly the commands the extension registers", () =>
     ...Object.values(relations.COMMANDS),
     NOTEBOOK.exportCommand,
     RESULTS.exportCsv,
+    RESULTS.exportViewCsv,
     RESULTS.setRowLimit,
     AGENT.copyLabel,
     ...[ONBOARDING.getStarted, ONBOARDING.openHelpLink, ONBOARDING.editTagColor, ONBOARDING.newNotebook],
@@ -392,7 +393,7 @@ test("the q Results view is a webview in its own container in the bottom panel (
   assert.strictEqual(view.type, "webview");
   // Export Results to CSV is on the view's title bar; the row limit on a
   // notebook's toolbar.
-  assert.ok(pkg.contributes.menus["view/title"].some((m) => m.command === RESULTS.exportCsv && m.when === `view == ${RESULTS.view}`));
+  assert.ok(pkg.contributes.menus["view/title"].some((m) => m.command === RESULTS.exportViewCsv && m.when === `view == ${RESULTS.view}`));
   assert.ok(pkg.contributes.menus["notebook/toolbar"].some((m) => m.command === RESULTS.setRowLimit));
 });
 

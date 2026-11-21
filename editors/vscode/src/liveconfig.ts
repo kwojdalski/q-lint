@@ -50,6 +50,8 @@ export const RESULTS = {
   container: "q-lint-results",
   view: "q-lint.results",
   exportCsv: "q-lint.exportResults",
+  /// The q Results view's own Export: its rows, whatever resultsLocation says.
+  exportViewCsv: "q-lint.exportResultsView",
   setRowLimit: "q-lint.setNotebookRowLimit",
 } as const;
 

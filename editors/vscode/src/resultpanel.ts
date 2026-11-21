@@ -115,8 +115,9 @@ export class QueryModes {
   private view: WebviewView | undefined;
   private shown: Shown | undefined;
   private rendered: Rendered | undefined;
-  /// The rows the page last showed, after its filters and sort, in order.
-  private order: number[] | undefined;
+  /// The rows each page last showed, after its filters and sort, in order:
+  /// the editor's panel and the q Results view can both be open.
+  private readonly order: Partial<Record<ResultsLocation, number[]>> = {};
   private readonly status: StatusBarItem;
   private readonly media: Uri;
   private readonly session = randomBytes(6).toString("hex");
@@ -130,7 +131,8 @@ export class QueryModes {
     context.subscriptions.push(
       this.status,
       commands.registerCommand(COMMANDS.switchMode, (mode?: string) => this.switchMode(mode)),
-      commands.registerCommand(RESULTS.exportCsv, (target?: Uri) => this.exportCsv(target, this.order)),
+      commands.registerCommand(RESULTS.exportCsv, (target?: Uri) => this.exportCsv(target, this.order[settings().resultsLocation])),
+      commands.registerCommand(RESULTS.exportViewCsv, (target?: Uri) => this.exportCsv(target, this.order.panel)),
       window.registerWebviewViewProvider(RESULTS.view, { resolveWebviewView: (view) => this.resolveView(view) }),
       workspace.onDidChangeConfiguration((event) => {
         if (event.affectsConfiguration("q-lint.query")) {
@@ -176,7 +178,8 @@ export class QueryModes {
       limit: live.gridLimit,
       id: `${this.session}.${++this.results}`,
     };
-    this.order = undefined;
+    this.order.editor = undefined;
+    this.order.panel = undefined;
     if (live.resultsLocation === "panel") {
       void this.revealView();
     } else {
@@ -280,8 +283,8 @@ export class QueryModes {
       // one results now go to.
       if (location === settings().resultsLocation) {
         this.rendered = { location, ...message.rendered };
-        this.order = Array.isArray(message.rows) ? message.rows : undefined;
       }
+      this.order[location] = Array.isArray(message.rows) ? message.rows : undefined;
     } else if (message.type === "copy") {
       void this.copy(message.rows);
     } else if (message.type === "export") {
