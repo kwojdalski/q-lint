@@ -25,6 +25,15 @@
 //   rank   each row's value's place among the column's distinct values,
 //          sorted by q (`iasc`), so equal values share one; `()` where q
 //          cannot sort it
+//   tree   for a dictionary (not keyed by a table) or a general list, the
+//          value as nested nodes, `(key;text;type;count;children)`: a
+//          dictionary's children are its entries, a list's its items, and
+//          a simple list other than a string is opened into its atoms. At
+//          most `TREE_NODES` nodes in all, each node's share divided among
+//          its children, so a wide value is cut at every level rather than
+//          drawn whole at the first. `text` is `-3!` of a leaf (a string
+//          escaped as a cell is), and "" for a node with children. `()`
+//          for any other value
 //
 // Why this shape. The text is the process's own, so a timestamp keeps its
 // nanoseconds and a long above 2^53 its last digits - a JavaScript number
@@ -45,7 +54,14 @@
 // string in `grid`, and the result is shown in the output instead.
 import { TRAP, readAnswer, type Answer } from "./query";
 
-export const GRID = [
+/// The most nodes `GRID` sends of a dictionary or a nested list's tree.
+export const TREE_NODES = 2000;
+
+/// `GRID`, with the tree (`tree`) or without it (`()`): a tree is asked for
+/// only by the result panel, and only while `q-lint.results.tree.enable` is
+/// on, so nothing else sends its code.
+export function gridLambda(tree: boolean): string {
+  const lines = [
   "{[s;size;limit]",
   ...TRAP,
   " $[r 0;",
@@ -58,18 +74,31 @@ export const GRID = [
   "         flip(cols[key v],`value)!value[flip key v],enlist value v];",
   "       (10h=type v)|not type[v] within 0 97h;();",
   "       flip(enlist`value)!enlist v];",
+  ...(!tree ? [] : [
+  "     g:{[g;e;b;k;v]u:type v;d:$[99h=u;98h<>type key v;0b];x:d|(0h=u)|(u within 1 76h)&u<>10h;",
+  "       m:$[x;count[v]&0|b-1;0];c:$[m;(b-1) div m;0];f:{$[200<count x;(197#x),\"...\";x]};",
+  "       l:$[d;{[f;x]$[-11h=type x;string x;f -3!x]}[f] each m#key v;string til m];",
+  "       s:$[x|u in 98 99h;\"\";10h=u;$[1=count v;\",\";\"\"],\"\\\"\",raze[e\"i\"$200 sublist v],\"\\\"\",$[200<count v;\"...\";\"\"];f -3!v];",
+  "       (k;s;u;count v;$[m;g[g;e;c]'[l;$[d;m#value v;m#v]];()])};"]),
   "     $[98h<>type t;t;",
   "       [m:count t;",
   "        t:$[1b~.Q.qp t;[j:$[n<0;(m+n)|0;0]+til m&abs n;$[count j;.Q.ind[t;j];select from t where i<0]];n sublist t];",
   "        c:$[count[cols t]=count distinct cols t;t cols t;value flip t];",
-  "        `count`keys`names`types`cells`raw`rank!(\"f\"$m;\"i\"$k;cols t;type each c;",
+  "        `count`keys`names`types`cells`raw`rank`tree!(\"f\"$m;\"i\"$k;cols t;type each c;",
   "          {[e;x]$[type[x] within 1 76h;string x;{$[200<count x;(197#x),\"...\";x]} each",
   "            {[e;x]$[10h=type x;$[1=count x;\",\";\"\"],\"\\\"\",raze[e\"i\"$200 sublist x],\"\\\"\";-3!x]}[e] each x]}[e] each c;",
   "          {[c]u:type c;$[u in 12 16h;\"j\"$c;u in 13 14 17 18 19h;\"i\"$c;u=15h;\"f\"$c;u in 2 5 6 7 8 9h;c;()]} each c;",
-  "          {@[{i:iasc x;\"i\"$@[count[x]#0;i;:;-1+sums differ x i]};x;{[e]()}]} each c)]]};",
+  "          {@[{i:iasc x;\"i\"$@[count[x]#0;i;:;-1+sums differ x i]};x;{[e]()}]} each c;",
+  tree ? `          $[(0h=type v)|$[99h=type v;98h<>type key v;0b];g[g;e;${TREE_NODES};"";v];()])]]};` : "          ())]]};",
   "     (r 1;\"j\"$limit);{[e]e}]);",
   "   `ok`error`trace!(0b;r 1;r 2)]}",
-].join("\n");
+  ];
+  return lines.join("\n");
+}
+
+export const GRID = gridLambda(false);
+/// `GRID` with a dictionary's or a nested list's tree.
+export const GRID_TREE = gridLambda(true);
 
 /// What `GRID`'s `grid` holds, as the IPC client decodes it.
 export interface GridPayload {
@@ -80,6 +109,34 @@ export interface GridPayload {
   cells: string[][];
   raw: unknown[][];
   rank: number[][];
+  /// A dictionary or a general list as a tree, when it was one.
+  tree?: TreeNode;
+}
+
+/// One node of a value's tree: its key in its parent (a dictionary's key,
+/// a list's index), q's text of it when it is a leaf, its type and count,
+/// and the children sent - fewer than `count` when the tree was cut.
+export interface TreeNode {
+  key: string;
+  text: string;
+  type: number;
+  count: number;
+  children: TreeNode[];
+}
+
+/// A node as `GRID` sends it, `(key;text;type;count;children)`, or
+/// undefined when it is not one.
+export function readTree(raw: unknown, depth = 0): TreeNode | undefined {
+  if (!Array.isArray(raw) || raw.length !== 5 || depth > 64) {
+    return undefined;
+  }
+  const [key, text, type, count, children] = raw;
+  const kids = Array.isArray(children) ? children.map((c) => readTree(c, depth + 1)) : [];
+  if (kids.some((k) => k === undefined)) {
+    return undefined;
+  }
+  const str = (x: unknown): string => (typeof x === "string" ? x : Array.isArray(x) && x.length === 0 ? "" : String(x ?? ""));
+  return { key: str(key), text: str(text), type: Number(type), count: Number(count), children: kids as TreeNode[] };
 }
 
 export type GridAnswer = Answer & {
@@ -117,6 +174,7 @@ export function readGridAnswer(raw: unknown): GridAnswer {
     return answer;
   }
   // One list per column, empty where the process sent none.
+  const tree = readTree(g.tree);
   const perColumn = (x: unknown): unknown[][] => names.map((_, i) => (Array.isArray(x) && Array.isArray(x[i]) ? x[i] : []));
   return {
     ...answer,
@@ -128,6 +186,7 @@ export function readGridAnswer(raw: unknown): GridAnswer {
       cells: (cells as unknown[][]).map((c) => c.map((x) => (typeof x === "string" ? x : String(x)))),
       raw: perColumn(g.raw),
       rank: perColumn(g.rank) as number[][],
+      ...(tree !== undefined ? { tree } : {}),
     },
   };
   return answer;
