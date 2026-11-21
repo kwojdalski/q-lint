@@ -110,6 +110,17 @@ test("unlimited, unwrapped and timed-out queries against a real q process", { sk
     }
   });
 
+  await t.test("unlimited: a string is written as q writes it, UTF-8 and control bytes escaped", async () => {
+    for (const s of ['"caf\\303\\251"', 'enlist "\\303\\251"', '"a\\001b\\"\\\\"', 'enlist "x"', '""', '`s#"abc"']) {
+      const own = await connection.query([s], SIZE);
+      const whole = readUnlimited(await connection.call(UNLIMITED, [s], UNLIMITED_SIZE));
+      assert.deepStrictEqual(whole.text, own.text, s);
+    }
+    // And whole, where a query cuts it at \c.
+    const long = readUnlimited(await connection.call(UNLIMITED, ["300#\"ab\""], UNLIMITED_SIZE));
+    assert.deepStrictEqual(long.text, [`"${"ab".repeat(150)}"`]);
+  });
+
   await t.test("unlimited: a table is every row, formatted by the process", async () => {
     const cut = await connection.query(["big"], SIZE);
     assert.ok(cut.text.length <= SIZE[0]);

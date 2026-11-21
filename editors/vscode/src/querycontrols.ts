@@ -71,17 +71,21 @@ export function limits(
 
 /// `RUN` for an unlimited console query: the same answer, except that a
 /// simple list (types 1 to 19) comes as `value`, with no text, for
-/// `readUnlimited` to write, with its attribute (`-2!`). A temporal list comes as the numbers q holds
-/// it as - timestamps and timespans long nanoseconds, a datetime float
-/// days, the rest ints - since the codec would make a timestamp a float,
-/// exact only to 256 ns, and loses the sign of a date's infinity. Like `RUN`
-/// it defines nothing on the process.
+/// `readUnlimited` to write, with its attribute (`-2!`). A temporal list
+/// comes as the numbers q holds it as - timestamps and timespans long
+/// nanoseconds, a datetime float days, the rest ints - since the codec
+/// would make a timestamp a float, exact only to 256 ns, and loses the sign
+/// of a date's infinity. A string is written on the process, each byte
+/// escaped as `-3!` escapes it, which a JavaScript string cannot say. Like
+/// `RUN` it defines nothing on the process.
 export const UNLIMITED = [
   "{[s;size]",
   ...TRAP,
   " t:type r 1;",
   " $[r 0;",
-  "   $[t within 1 19h;`ok`type`text`value`attr!(1b;t;();$[t within 12 19h;\"jiifjiii\"[t-12h]$r 1;r 1];-2!r 1);`ok`type`text!(1b;t;.Q.S[\"j\"$size;0j] r 1)];",
+  "   $[t=10h;`ok`type`text!(1b;t;enlist $[null a:-2!r 1;\"\";\"`\",string[a],\"#\"],$[1=count r 1;\",\";\"\"],",
+  "       \"\\\"\",raze[({1_-1_-3!x} each \"c\"$til 256)\"i\"$r 1],\"\\\"\");",
+  "     t within 1 19h;`ok`type`text`value`attr!(1b;t;();$[t within 12 19h;\"jiifjiii\"[t-12h]$r 1;r 1];-2!r 1);`ok`type`text!(1b;t;.Q.S[\"j\"$size;0j] r 1)];",
   "   `ok`error`trace!(0b;r 1;r 2)]}",
 ].join("\n");
 
