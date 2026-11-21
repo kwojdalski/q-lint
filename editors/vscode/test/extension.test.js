@@ -127,6 +127,11 @@ function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir
     "./logpointview": { registerLogpoints: () => ({ logged: () => ({}), marked: () => [] }) },
     "./localsview": { registerLocalsAtError: () => ({ last: () => undefined, failure: () => undefined }) },
     "./editorassistview": { registerArgumentSlot: () => ({ registered: () => true }), registerProcessSymbols: () => ({ registered: () => false }) },
+    "./linetimingsview": { registerLineTimings: () => ({ registered: () => false }) },
+    "./profileview": { registerFunctionProfile: () => ({ panelOpen: () => false }) },
+    "./formatchangedview": { registerFormatChanged: () => ({ registered: () => false }) },
+    "./organiseloads": { registerOrganiseLoads() {} },
+    "./problemsview": { registerProblemsDashboard: () => ({ panelOpen: () => false }) },
   };
   const file = require.resolve("../out/extension.js");
   delete require.cache[file];

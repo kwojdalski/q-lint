@@ -1,0 +1,84 @@
+/* The function profile panel, in the editor's theme. */
+body {
+  margin: 0;
+  padding: 8px 12px;
+  background: var(--vscode-editor-background);
+  color: var(--vscode-foreground);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+}
+
+header .query {
+  display: block;
+  font-family: var(--vscode-editor-font-family);
+  white-space: pre-wrap;
+  margin-bottom: 4px;
+}
+
+.summary {
+  margin: 4px 0;
+  font-weight: 600;
+}
+
+.note {
+  margin: 0 0 6px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.failed {
+  color: var(--vscode-errorForeground);
+}
+
+h2 {
+  font-size: 1.05em;
+  margin: 12px 0 6px;
+}
+
+table {
+  border-collapse: collapse;
+  font-family: var(--vscode-editor-font-family);
+  font-size: var(--vscode-editor-font-size);
+}
+
+th,
+td {
+  padding: 2px 10px;
+  border-bottom: 1px solid var(--vscode-editorWidget-border, transparent);
+  text-align: left;
+}
+
+th {
+  cursor: pointer;
+  user-select: none;
+}
+
+th.sorted {
+  color: var(--vscode-textLink-foreground);
+}
+
+td.number {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.flame {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+}
+
+.frame {
+  position: absolute;
+  height: 18px;
+  line-height: 18px;
+  box-sizing: border-box;
+  padding: 0 4px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: var(--vscode-editor-font-family);
+  font-size: 0.9em;
+  background: var(--vscode-charts-orange, #d18616);
+  color: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-editor-background);
+}

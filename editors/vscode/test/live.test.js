@@ -76,6 +76,7 @@ const { TAG_QUERY, readTagQuery } = require("../out/tagquery.js");
 const { COMPARE, readCompare } = require("../out/compare.js");
 const { SAVED_QUERIES, readSavedQueries } = require("../out/savedqueries.js");
 const { WATCH, readWatch } = require("../out/watch.js");
+const { TOOLING_SETTINGS, TOOLING_COMMANDS, toolingOn } = require("../out/toolingfeatures.js");
 
 test("a statement is a line and the indented lines after it", () => {
   assert.deepStrictEqual(statements("a:1\nb:a+1\nb*10"), ["a:1", "b:a+1", "b*10"]);
@@ -341,6 +342,7 @@ test("package.json declares exactly the commands the extension registers", () =>
     TEST_STUB_COMMAND,
     ...Object.values(LOGPOINT_COMMANDS),
     CAPTURE_LOCALS,
+    ...Object.values(TOOLING_COMMANDS),
   ].sort();
   assert.deepStrictEqual(declared, registered);
 });
@@ -445,6 +447,10 @@ test("every query setting is read, with the default package.json declares, and n
   readAssist(get, QUERY_FEATURES);
   assert.deepStrictEqual(readDataFiles(get), { open: true, loadWizard: true });
   assert.deepStrictEqual(readSchemaTools(get), { templates: true, diagram: true });
+  // The profiling and code-quality switches declared here (#986-#992).
+  for (const [feature, { key }] of Object.entries(TOOLING_SETTINGS)) {
+    if (`q-lint.${key}` in declared) toolingOn(get, feature);
+  }
   for (const [key, spec] of Object.entries(declared)) {
     const short = key.replace(/^q-lint\./, "");
     assert.ok(read.has(short), `${key} is declared but never read`);

@@ -51,6 +51,10 @@ test("the defaults start the server as it was started before settings", () => {
     autoLoad: { enable: false },
     referenceLens: { enable: true },
     inferredTypes: { enable: true },
+    suppressions: { enable: true },
+    organiseLoads: { enable: true },
+    performanceLints: { enable: true },
+    formatChangedLines: { enable: false },
     workspaceIndex: { enable: true, exclude: [] },
   });
 });
@@ -112,6 +116,10 @@ test("every editor-only setting reaches the server's options", () => {
       "autoLoad.enable": true,
       "referenceLens.enable": false,
       "inferredTypes.enable": false,
+      "suppressions.enable": false,
+      "organiseLoads.enable": false,
+      "performanceLints.enable": false,
+      "formatChangedLines.enable": true,
       "workspaceIndex.enable": false,
       "workspaceIndex.exclude": ["vendor/**"],
     }),
@@ -138,6 +146,10 @@ test("every editor-only setting reaches the server's options", () => {
     autoLoad: { enable: true },
     referenceLens: { enable: false },
     inferredTypes: { enable: false },
+    suppressions: { enable: false },
+    organiseLoads: { enable: false },
+    performanceLints: { enable: false },
+    formatChangedLines: { enable: true },
     workspaceIndex: { enable: false, exclude: ["vendor/**"] },
   });
 });

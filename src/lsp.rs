@@ -68,8 +68,12 @@
 //! only where the linter would read that comment (`suppression_for`);
 //! textDocument/codeAction also answers `source.fixAll.q-lint` with the
 //! formatting edit, for `editor.codeActionsOnSave` in an editor where this
-//! server is not the formatter; and textDocument/foldingRange folds the
-//! brackets and block comments that span lines.
+//! server is not the formatter, and `source.organizeImports.q-lint` with
+//! the `\l` lines of each run sorted, deduped and grouped; a finding can be
+//! accepted for its whole file with `/ qlinter: noqa: CODE`;
+//! `q-lint/formatChangedLines` formats only the lines a client says changed;
+//! and textDocument/foldingRange folds the brackets and block comments that
+//! span lines.
 //!
 //! A workspace index: every `.q` file under the workspace folders is read at
 //! startup - never run - for the global names it defines and reads, and
@@ -142,8 +146,9 @@ use crate::config::{FILES, Layer, Policy, selector};
 use crate::jsonrpc::{INVALID_REQUEST, Malformed, receive, send};
 use q_lint_rs::graph::Placement;
 use q_lint_rs::{
-    FileIndex, Finding, Fix, References, TokenKind, Workspace, balanced, broken_statement, fix_all,
-    fix_for, folds, rule_url, semantic_tokens_in, suppressions_for, whole_edit,
+    FileIndex, Finding, Fix, References, TokenKind, Workspace, balanced, broken_statement,
+    file_suppression_for, fix_all, fix_for, fix_lines, folds, organise_loads, rule_url,
+    semantic_tokens_in, suppressions_for, whole_edit,
 };
 use serde_json::{Value, json};
 use std::{
@@ -604,6 +609,8 @@ fn workspace_folders(params: &Value) -> Vec<(String, String)> {
 ///  "callHierarchy": {"enable": true}, "graph": {"enable": true},
 ///  "autoLoad": {"enable": false}, "referenceLens": {"enable": false},
 ///  "inferredTypes": {"enable": true},
+///  "suppressions": {"enable": true}, "organiseLoads": {"enable": true},
+///  "performanceLints": {"enable": true}, "formatChangedLines": {"enable": false},
 ///  "workspaceIndex": {"enable": true, "exclude": []}}
 /// ```
 ///
@@ -667,6 +674,19 @@ struct Options {
     /// Show the type a local's assignments settle, on hover and as an
     /// inlay hint (`q_lint_rs::typed_locals`).
     inferred_types: bool,
+    /// Offer the Quick Fixes that accept a finding: `/ noqa: CODE` on its
+    /// line, and `/ qlinter: noqa: CODE` for its file.
+    suppressions: bool,
+    /// Answer `source.organizeImports` with the edit that sorts, dedupes and
+    /// groups each run of `\l` lines (`organise_loads`).
+    organise_loads: bool,
+    /// Report the performance rules, QV. Off, they are ignored as
+    /// `lint.ignore` would.
+    performance_lints: bool,
+    /// Answer `q-lint/formatChangedLines`: the safe fixes, for findings on
+    /// the lines a client says changed. Off unless asked for, since only a
+    /// client that asks git for those lines can use it.
+    format_changed_lines: bool,
     /// Whether the client shows an action it cannot take with the reason
     /// (`codeAction.disabledSupport`): a capability, not a setting.
     disabled_actions: bool,
@@ -698,6 +718,10 @@ impl Default for Options {
             auto_load: false,
             reference_lens: false,
             inferred_types: true,
+            suppressions: true,
+            organise_loads: true,
+            performance_lints: true,
+            format_changed_lines: false,
             disabled_actions: false,
             severity: vec![],
         }
@@ -739,6 +763,10 @@ impl Options {
                         "autoLoad",
                         "referenceLens",
                         "inferredTypes",
+                        "suppressions",
+                        "organiseLoads",
+                        "performanceLints",
+                        "formatChangedLines",
                     ]
                     .contains(&key.as_str())
                         && !value.is_object()
@@ -778,6 +806,10 @@ impl Options {
         options.auto_load = flag("/autoLoad/enable", false);
         options.reference_lens = flag("/referenceLens/enable", false);
         options.inferred_types = flag("/inferredTypes/enable", true);
+        options.suppressions = flag("/suppressions/enable", true);
+        options.organise_loads = flag("/organiseLoads/enable", true);
+        options.performance_lints = flag("/performanceLints/enable", true);
+        options.format_changed_lines = flag("/formatChangedLines/enable", false);
         options.disabled_actions = params
             .pointer("/capabilities/textDocument/codeAction/disabledSupport")
             .and_then(Value::as_bool)
@@ -820,7 +852,10 @@ impl Options {
                 .collect()
         };
         let select = codes("/lint/select", select);
-        let ignore = codes("/lint/ignore", ignore);
+        let mut ignore = codes("/lint/ignore", ignore);
+        if !options.performance_lints {
+            ignore.push("QV".to_string());
+        }
         for text in exclude {
             match crate::config::pattern(&text) {
                 Ok(p) => options.index_exclude.push(p),
@@ -1178,7 +1213,8 @@ pub fn serve(
                 | "q-lint/graph"
                 | "q-lint/globalAt"
                 | "q-lint/unresolvedNames"
-                | "q-lint/argumentSlot",
+                | "q-lint/argumentSlot"
+                | "q-lint/formatChangedLines",
                 id,
             ) if !params["textDocument"]["uri"].is_string() => {
                 let message = format!("{method}: params.textDocument.uri must be a string");
@@ -1296,6 +1332,17 @@ pub fn serve(
             ("textDocument/codeAction", Some(id)) => {
                 match guarded(|| code_actions(&params, &docs, &idx.ws, policy, &opts)) {
                     Ok(actions) => send(writer, json!({"id": id, "result": actions}))?,
+                    Err(panic) => send(writer, internal_error(id, &panic))?,
+                }
+            }
+            ("q-lint/formatChangedLines", Some(id)) => {
+                let edits = if opts.format_changed_lines {
+                    guarded(|| format_changed_lines(&params, &docs, &idx.ws, policy))
+                } else {
+                    Ok(vec![])
+                };
+                match edits {
+                    Ok(edits) => send(writer, json!({"id": id, "result": edits}))?,
                     Err(panic) => send(writer, internal_error(id, &panic))?,
                 }
             }
@@ -1575,6 +1622,9 @@ fn capabilities(opts: &Options, code_action_literals: bool) -> Value {
         if opts.extract_function {
             kinds.push(EXTRACT);
         }
+        if opts.organise_loads {
+            kinds.push(ORGANISE);
+        }
         capabilities["codeActionProvider"] = json!({ "codeActionKinds": kinds });
     }
     capabilities["foldingRangeProvider"] = json!(true);
@@ -1799,6 +1849,10 @@ const FIX_ALL: &str = "source.fixAll.q-lint";
 const REWRITE: &str = "refactor.rewrite";
 /// The kind of Extract Function.
 const EXTRACT: &str = "refactor.extract.function";
+/// The kind of the action that organises a file's `\l` lines: what VS Code's
+/// Organize Imports and `editor.codeActionsOnSave` ask for as
+/// `source.organizeImports`.
+const ORGANISE: &str = "source.organizeImports.q-lint";
 
 /// Whether a kind the client asks for (`context.only`) takes in `kind`. Kinds
 /// are hierarchical, a dot at a time: `source` and `source.fixAll` each ask
@@ -1837,7 +1891,14 @@ fn code_actions(
         only.iter()
             .any(|kind| *kind == QUICK_FIX || kind.starts_with("quickfix."))
     }) {
-        actions.extend(quick_fixes(params, docs, ws, policy, unsafe_fixes));
+        actions.extend(quick_fixes(
+            params,
+            docs,
+            ws,
+            policy,
+            unsafe_fixes,
+            opts.suppressions,
+        ));
     }
     if opts.generate_qdoc
         && only
@@ -1868,7 +1929,83 @@ fn code_actions(
     {
         actions.extend(fix_all_action(params, docs, ws, policy));
     }
+    // Only by kind, as the fix-all: it reorders, and is asked for by name.
+    if opts.organise_loads
+        && only
+            .as_ref()
+            .is_some_and(|only| only.iter().any(|kind| asks_for(kind, ORGANISE)))
+    {
+        actions.extend(organise_action(params, docs));
+    }
     actions
+}
+
+/// The `\l` lines of an open q document sorted, deduped and grouped
+/// (`organise_loads`), as one action of kind `source.organizeImports.q-lint`;
+/// none when nothing would change.
+fn organise_action(params: &Value, docs: &Documents) -> Option<Value> {
+    let uri = uri_of(&params["textDocument"]);
+    let source = docs.get(&uri).filter(|_| is_q_uri(&uri))?;
+    let fix = organise_loads(source)?;
+    let lines = Lines::new(source);
+    let mut changes = serde_json::Map::new();
+    changes.insert(
+        uri.clone(),
+        json!([{
+            "range": {"start": lines.json(fix.start), "end": lines.json(fix.end)},
+            "newText": fix.replacement,
+        }]),
+    );
+    Some(json!({
+        "title": fix.title,
+        "kind": ORGANISE,
+        "edit": {"changes": changes},
+    }))
+}
+
+/// The edits for `q-lint/formatChangedLines`: what Format Document makes,
+/// for only the findings on `params.lines` - pairs of 0-based first and
+/// last lines, inclusive - which the client works out from git, as this
+/// server starts no process. None for no lines at all, and in every case
+/// `format` gives none.
+fn format_changed_lines(
+    params: &Value,
+    docs: &Documents,
+    ws: &Workspace,
+    policy: &Policy,
+) -> Vec<Value> {
+    let uri = uri_of(&params["textDocument"]);
+    let path = path_of(&uri);
+    let Some(source) = docs
+        .get(&uri)
+        .filter(|source| is_q_uri(&uri) && balanced(source))
+    else {
+        return vec![];
+    };
+    let lines: Vec<(usize, usize)> = params["lines"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|pair| {
+            let first = pair.get(0)?.as_u64()? as usize;
+            let last = pair.get(1)?.as_u64()? as usize;
+            (first <= last).then_some((first + 1, last + 1))
+        })
+        .collect();
+    if lines.is_empty() {
+        return vec![];
+    }
+    let Ok(fixed) = fix_lines(source, &lines, |text| policy.lint(text, &path, ws)) else {
+        return vec![];
+    };
+    let Some(edit) = whole_edit(source, &fixed.text) else {
+        return vec![];
+    };
+    let lines = Lines::new(source);
+    vec![json!({
+        "range": {"start": lines.json(edit.start), "end": lines.json(edit.end)},
+        "newText": edit.replacement,
+    })]
 }
 
 /// The fixes for the diagnostics a request carries, and after them, for each
@@ -1880,12 +2017,17 @@ fn code_actions(
 /// something else. Once for a line and a code, however many of the
 /// diagnostics are that code on that line: one comment accepts them all, and
 /// the action says so by listing them.
+///
+/// Last, once a code, the edit that accepts it in the whole file: the code
+/// added to the file's `/ qlinter: noqa:` line, or that line written at the
+/// top (`file_suppression_for`). Neither is offered with `suppressions` off.
 fn quick_fixes(
     params: &Value,
     docs: &Documents,
     ws: &Workspace,
     policy: &Policy,
     unsafe_fixes: bool,
+    suppress: bool,
 ) -> Vec<Value> {
     let uri = uri_of(&params["textDocument"]);
     let Some(source) = docs.get(&uri) else {
@@ -1920,7 +2062,12 @@ fn quick_fixes(
         .collect();
     // For them all at once: a selection of the whole of a long file asks
     // about every finding in it, and each would mask the file again.
-    let accepted = suppressions_for(asked_about.iter().map(|(finding, _)| finding), source);
+    let accepted = if suppress {
+        suppressions_for(asked_about.iter().map(|(finding, _)| finding), source)
+    } else {
+        asked_about.iter().map(|_| None).collect()
+    };
+    let mut in_file: Vec<(String, Option<Value>)> = vec![];
     for ((finding, client_diagnostic), suppression) in asked_about.iter().zip(accepted) {
         // The edit's range comes from the fix, not from the diagnostic. The
         // two coincide for an operator swapped in place, but `f x` becomes
@@ -1960,8 +2107,23 @@ fn quick_fixes(
                 None => suppressions.push(suppression),
             }
         }
+        // One edit a code, and each asked for once: it masks the file.
+        if suppress {
+            match in_file.iter_mut().find(|(code, _)| *code == finding.code) {
+                Some((_, Some(same))) => same["diagnostics"]
+                    .as_array_mut()
+                    .expect("made above")
+                    .push((*client_diagnostic).clone()),
+                Some((_, None)) => {}
+                None => in_file.push((
+                    finding.code.clone(),
+                    file_suppression_for(finding, source).map(action),
+                )),
+            }
+        }
     }
     actions.extend(suppressions);
+    actions.extend(in_file.into_iter().filter_map(|(_, action)| action));
     actions
 }
 

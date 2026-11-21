@@ -1,6 +1,6 @@
 # Rules
 
-All 123 rules, generated from `src/taxonomy.json` - the same data
+All 126 rules, generated from `src/taxonomy.json` - the same data
 `qlinter --rules` and `qlinter --explain <CODE>` print from. Regenerate with
 `python3 scripts/rules_doc.py > docs/rules.md`; a test fails when this is stale.
 
@@ -186,6 +186,14 @@ it, or `ALL`.
 | <a id="qr002"></a>`QR002` | identity-each | {x} each returns its argument unchanged | `style` and above |
 | <a id="qr003"></a>`QR003` | distinct-sorted-distinct | distinct asc distinct x is asc distinct x | `style` and above |
 | <a id="qr004"></a>`QR004` | atomic-each | each over one arithmetic operation, which is already atomic | `style` and above |
+
+## Performance - q that gives the right answer slower than it has to
+
+| code | name | summary | on in |
+|---|---|---|---|
+| <a id="qv001"></a>`QV001` | partition-filter-late | A where phrase constrains date, month, year or int after another column: on a partitioned table q reads every partition for the earlier constraint | `style` and above |
+| <a id="qv002"></a>`QV002` | atomic-builtin-each | each over an atomic builtin - abs, neg, sqrt, exp, log, floor, ceiling, not, null, signum, reciprocal - which already applies to every item in one call | `style` and above |
+| <a id="qv003"></a>`QV003` | append-in-loop | r:r,x or r:raze(r;x) in a do or while body copies r on every pass, so the loop is quadratic; r,:x appends in place | `style` and above |
 
 ## Leftovers - things left in q that were never meant to ship
 

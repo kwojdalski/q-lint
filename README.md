@@ -336,7 +336,10 @@ One finding on one line is accepted with a trailing comment naming its code:
 are separated by commas or spaces, and text after them is a reason. It drops
 only findings reported on that line, from the output, `--fix` and the
 language server alike; a bare `/ noqa` names nothing and suppresses nothing.
-The built-in rules honour it; findings from qls do not.
+A comment line at the left margin, `/ qlinter: noqa: QS001, QF016 reason`,
+accepts those codes on every line of its file, as Ruff's `# ruff: noqa:` does;
+inside a block comment or after the line that ends the script it is not read.
+The built-in rules honour both; findings from qls do not.
 
 Diagnostics carry a
 code and a category; `qlinter --rules` lists them all and `qlinter --explain
@@ -395,7 +398,9 @@ Around those:
   still run the same line: not on a line that ends inside a string, a system
   command, a `k)` or `p)` line, a block comment or the bare `/` that opens
   one, nor in a file whose brackets or strings do not close. It is never the
-  preferred fix.
+  preferred fix. Beside it, "Suppress CODE in this file" adds the code to the
+  file's `/ qlinter: noqa:` line, or writes one at the top of the file (after
+  a `#!` line). `suppressions.enable: false` withdraws both.
 - `textDocument/codeAction` answers the kind `source.fixAll.q-lint` - asked
   for by that name, or as `source.fixAll` or `source` - with the edit Format
   Document makes. That is how an editor applies the safe fixes on save where
@@ -611,6 +616,27 @@ reads more than 8 locals is refused; to a client with
 disabled with the reason. `extractFunction.enable: false` withdraws it and
 its kind.
 
+A code action of kind `source.organizeImports.q-lint`, **Organise loads**, is
+returned only to a request that asks for it by kind - `source.organizeImports`,
+which VS Code's Organize Imports and `editor.codeActionsOnSave` send. In each
+run of consecutive `\l` lines it loads a path once, at its first place, and
+sorts the rest: absolute paths (`/`, `~`, `$`, a drive) first, then relative
+ones, each by path without regard to case, with a blank line between the two
+groups. Load order is meaning in q - a file can read what an earlier one
+defined - so it is never a fix and `--fix` never makes it, and it leaves alone
+a run with a load that is not a `.q` or `.k` file (`\l db` loads a database
+and changes directory, which the relative loads after it depend on), runs a
+blank line or anything else separates, loads in a block comment or after the
+end of the script, and a file whose brackets do not close.
+
+`q-lint/formatChangedLines`, a request of this server's own, takes a
+document and `lines`, pairs of 0-based first and last lines, and answers the
+edits Format Document would make for the findings on those lines only - the
+lines moving with the edits as they are made. It is how an editor formats
+only what changed on save: which lines changed is git's to say and the
+client's to ask, so the server is given them. It answers `[]` unless
+`formatChangedLines.enable` is `true`.
+
 Completion is off unless `completion.enable` asks for it, because an editor
 told that a server completes stops offering the words already in the buffer,
 and this server's list is narrower than that fallback in one way that matters:
@@ -823,6 +849,9 @@ Every key is optional, and these are the defaults:
  "documentLinks": {"enable": true}, "generateQdoc": {"enable": true},
  "extractFunction": {"enable": true}, "autoLoad": {"enable": false},
  "referenceLens": {"enable": false}, "inferredTypes": {"enable": true},
+ "suppressions": {"enable": true},
+ "organiseLoads": {"enable": true}, "performanceLints": {"enable": true},
+ "formatChangedLines": {"enable": false},
  "workspaceIndex": {"enable": true, "exclude": []}}
 ```
 
@@ -842,6 +871,10 @@ which then answer `null`; `inlayHints.enable` and `inferredTypes.enable` do
 it for inlay hints when both are `false`, and `codeLens.enable: true` or
 `referenceLens.enable: true` announces code lenses. `autoLoad.enable: true`
 adds loads to completions, when completion is on.
+`suppressions.enable: false` withdraws both "Suppress CODE" Quick Fixes,
+`organiseLoads.enable: false` Organise loads and its kind, and
+`performanceLints.enable: false` ignores the QV rules as `lint.ignore`
+would. `formatChangedLines.enable: true` answers `q-lint/formatChangedLines`.
 `workspaceIndex.exclude`
 holds globs relative to each workspace folder that the index does not read.
 The index stops after 20,000 `.q` files or 500,000 directory entries of any
@@ -914,7 +947,7 @@ language server driven over real LSP framing as a real process.
 
 ### Rule and multiline regression corpus
 
-The taxonomy contains 123 codes. Ten literal-call rules cover excess builtin
+The taxonomy contains 126 codes. Ten literal-call rules cover excess builtin
 arguments (QA010), invalid literal types/shapes (QT008–QT014), and negative
 `til`/`where` counts (QD001–QD002). These checks leave unknown expressions
 unresolved and account for projections, seeded scans and variadic `enlist`.
@@ -923,7 +956,7 @@ unresolved and account for projections, seeded scans and variadic `enlist`.
 `tests/showcase.rs` checks exact code/line pairs under every profile, including
 silence in the clean section. Together with the three companion examples -
 `syntax-error.q`, `byte-order-mark.q` and `query-injection.q`, each holding
-a rule that would hide or stop the others - it covers all 121 rules available
+a rule that would hide or stop the others - it covers all 124 rules available
 in this build; QF006 and QLS001 are excluded.
 
 Multiline fixtures cover nested lambdas, split argument lists, comments,

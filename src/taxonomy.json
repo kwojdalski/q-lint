@@ -847,6 +847,27 @@
     "scope": "style"
   },
   {
+    "code": "QV001",
+    "name": "partition-filter-late",
+    "category": "performance",
+    "summary": "A where phrase constrains date, month, year or int after another column: on a partitioned table q reads every partition for the earlier constraint",
+    "scope": "style"
+  },
+  {
+    "code": "QV002",
+    "name": "atomic-builtin-each",
+    "category": "performance",
+    "summary": "each over an atomic builtin - abs, neg, sqrt, exp, log, floor, ceiling, not, null, signum, reciprocal - which already applies to every item in one call",
+    "scope": "style"
+  },
+  {
+    "code": "QV003",
+    "name": "append-in-loop",
+    "category": "performance",
+    "summary": "r:r,x or r:raze(r;x) in a do or while body copies r on every pass, so the loop is quadratic; r,:x appends in place",
+    "scope": "style"
+  },
+  {
     "code": "QL001",
     "name": "unfinished-marker",
     "category": "leftovers",

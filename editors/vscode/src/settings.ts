@@ -64,6 +64,10 @@ export interface InitializationOptions {
   autoLoad: { enable: boolean };
   referenceLens: { enable: boolean };
   inferredTypes: { enable: boolean };
+  suppressions: { enable: boolean };
+  organiseLoads: { enable: boolean };
+  performanceLints: { enable: boolean };
+  formatChangedLines: { enable: boolean };
   workspaceIndex: { enable: boolean; exclude: string[] };
 }
 
@@ -151,6 +155,10 @@ export function launch(settings: Settings, folder: string | undefined): Launch {
       autoLoad: { enable: settings.get<boolean>("autoLoad.enable", false) },
       referenceLens: { enable: settings.get<boolean>("referenceLens.enable", true) },
       inferredTypes: { enable: settings.get<boolean>("inferredTypes.enable", true) },
+      suppressions: { enable: settings.get<boolean>("suppressions.enable", true) },
+      organiseLoads: { enable: settings.get<boolean>("organiseLoads.enable", true) },
+      performanceLints: { enable: settings.get<boolean>("performanceLints.enable", true) },
+      formatChangedLines: { enable: settings.get<boolean>("formatChangedLines.enable", false) },
       workspaceIndex: {
         enable: settings.get<boolean>("workspaceIndex.enable", true),
         exclude: strings(settings, "workspaceIndex.exclude"),
@@ -185,6 +193,10 @@ const RESTARTING = [
   "autoLoad",
   "referenceLens",
   "inferredTypes",
+  "suppressions",
+  "organiseLoads",
+  "performanceLints",
+  "formatChangedLines",
   "workspaceIndex",
 ];
 
