@@ -219,7 +219,11 @@ impl<'a> Sources<'a> {
     /// Each indexed file `from` loads, directly or through another, by its
     /// key. `edges` keeps where each file's loads lead, so one request
     /// follows a file's loads once however many files it asks about.
-    fn reached(&self, from: &str, edges: &mut HashMap<String, Vec<String>>) -> HashSet<String> {
+    pub(super) fn reached(
+        &self,
+        from: &str,
+        edges: &mut HashMap<String, Vec<String>>,
+    ) -> HashSet<String> {
         let mut seen = HashSet::new();
         let mut pending = vec![from.to_string()];
         while let Some(file) = pending.pop() {

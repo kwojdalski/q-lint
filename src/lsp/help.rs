@@ -7,9 +7,9 @@
 //! and the comment directly above it, read from the file that defines it
 //! when the request is made, as navigation reads them. For a name q defines:
 //! its entry in the catalogue the binary carries (`builtins.json`). Nothing
-//! is evaluated, so no type and no value is ever shown - only what the
-//! source says, which is also why a local gets no hover: all there is to
-//! say about one is on the screen already.
+//! is evaluated, so no value is ever shown - only what the source says. A
+//! local gets a hover only when its assignments settle its type, which the
+//! source alone then says (`q_lint_rs::typed_locals`).
 //!
 //! WHY COMPLETION IS OFF UNLESS ASKED FOR
 //!
@@ -99,11 +99,25 @@ pub(super) fn announce(capabilities: &mut Value, help: bool, completion: bool) {
     }
 }
 
-pub(super) fn answer(method: &str, params: &Value, sources: &Sources, client: Client) -> Value {
+/// What the settings add to help: a local's inferred type on hover, and the
+/// load a completed name needs.
+#[derive(Clone, Copy, Default)]
+pub(super) struct More {
+    pub(super) inferred_types: bool,
+    pub(super) auto_load: bool,
+}
+
+pub(super) fn answer(
+    method: &str,
+    params: &Value,
+    sources: &Sources,
+    client: Client,
+    more: More,
+) -> Value {
     match method {
-        "textDocument/hover" => hover(params, sources, client),
+        "textDocument/hover" => hover(params, sources, client, more),
         "textDocument/signatureHelp" => signature_help(params, sources, client),
-        "textDocument/completion" => completion(params, sources, client),
+        "textDocument/completion" => completion(params, sources, client, more),
         _ => Value::Null,
     }
 }
@@ -287,8 +301,9 @@ fn builtin_described(builtin: &Builtin, markdown: bool) -> String {
 /// it - a function as its name and parameters, anything else as the line
 /// that assigns it - with the comment above, the best first; for a name q
 /// defines, its catalogue entry; for the path of a load, the file it loads.
-/// Nothing for a local, and nothing for a name nobody defines.
-fn hover(params: &Value, sources: &Sources, client: Client) -> Value {
+/// For a local, the type its assignments settle, when they settle one
+/// (`More::inferred_types`); nothing for a name nobody defines.
+fn hover(params: &Value, sources: &Sources, client: Client, more: More) -> Value {
     let Some(cursor) = sources.cursor(params) else {
         return Value::Null;
     };
@@ -307,7 +322,13 @@ fn hover(params: &Value, sources: &Sources, client: Client) -> Value {
         (at, len, vec![section])
     } else {
         match name_at(cursor.text, cursor.offset) {
-            Some(Name::Local(_)) => return Value::Null,
+            Some(Name::Local(local)) => {
+                return if more.inferred_types {
+                    local_type(&cursor, &local, markdown)
+                } else {
+                    Value::Null
+                };
+            }
             Some(Name::Global { at, len, .. }) => {
                 let sections: Vec<String> =
                     defined(sources, &sources.targets(&cursor, at), &cursor.key)
@@ -340,6 +361,43 @@ fn hover(params: &Value, sources: &Sources, client: Client) -> Value {
             "value": sections.join(if markdown { "\n\n---\n\n" } else { "\n\n" }),
         },
         "range": range(&lines, at, len),
+    })
+}
+
+/// The hover on a local whose assignments settle its type: the type, as
+/// q's `type` names it. Not at a place in a qSQL phrase, where the name may
+/// be a column of the table.
+fn local_type(cursor: &Cursor, local: &q_lint_rs::Local, markdown: bool) -> Value {
+    let Some(place) = local
+        .places
+        .iter()
+        .find(|p| p.at <= cursor.offset && cursor.offset <= p.at + p.len)
+        .filter(|p| !p.column)
+    else {
+        return Value::Null;
+    };
+    let Some(typed) = q_lint_rs::typed_locals(cursor.text)
+        .into_iter()
+        .find(|t| t.local.places.iter().any(|p| p.at == place.at))
+    else {
+        return Value::Null;
+    };
+    let name = super::annotate::type_name(typed.kind);
+    let value = if markdown {
+        format!(
+            "{}\n\n{name}, type `{}h`: every assignment of it in this lambda is one.",
+            fenced(&format!("{}: {name}", local.name)),
+            typed.kind
+        )
+    } else {
+        format!(
+            "{}: {name}\n\n{name}, type {}h: every assignment of it in this lambda is one.",
+            local.name, typed.kind
+        )
+    };
+    json!({
+        "contents": {"kind": if markdown { "markdown" } else { "plaintext" }, "value": value},
+        "range": range(&Lines::new(cursor.text), place.at, place.len),
     })
 }
 
@@ -404,6 +462,26 @@ fn signatures(sources: &Sources, cursor: &Cursor, at: usize, len: usize) -> Vec<
             .collect();
     }
     found
+}
+
+/// The name of the parameter argument `index` of the call to the name at
+/// `at..at + len` is passed as: in the first signature that has that many,
+/// or the last of one that takes any number more. None where no signature
+/// is known or every one is shorter.
+pub(super) fn parameter(
+    sources: &Sources,
+    cursor: &Cursor,
+    at: usize,
+    len: usize,
+    index: usize,
+) -> Option<String> {
+    signatures(sources, cursor, at, len)
+        .into_iter()
+        .find_map(|s| match s.params.get(index) {
+            Some(p) => Some(p.clone()),
+            None if s.open => s.params.last().cloned(),
+            None => None,
+        })
 }
 
 /// q's own signature for `name`, when it is called with arguments.
@@ -599,7 +677,7 @@ fn fuzzy(typed: &str, name: &str) -> bool {
 /// spelled from here, and q's own - narrowed by what is typed so far. In
 /// that order, since the nearer a name is defined the likelier it is meant.
 /// After a dot, only names that continue the qualified name being written.
-fn completion(params: &Value, sources: &Sources, client: Client) -> Value {
+fn completion(params: &Value, sources: &Sources, client: Client, more: More) -> Value {
     let nothing = json!({"isIncomplete": false, "items": []});
     let Some(cursor) = sources.cursor(params) else {
         return nothing;
@@ -679,6 +757,14 @@ fn completion(params: &Value, sources: &Sources, client: Client) -> Value {
         let group = if b.name.starts_with('.') { 3 } else { 2 };
         offer(group, &b.name, kind, Some(b));
     }
+    if more.auto_load {
+        let loads = Loads::new(sources, &cursor);
+        for (spelling, (group, item)) in items.iter_mut() {
+            if *group == 1 || *group == 3 {
+                loads.offer(sources, &cursor, &contexts, root, spelling, item);
+            }
+        }
+    }
     let mut ranked: Vec<(u8, String, Value)> = items
         .into_iter()
         .map(|(spelling, (group, item))| (group, spelling, item))
@@ -690,4 +776,176 @@ fn completion(params: &Value, sources: &Sources, client: Client) -> Value {
         "isIncomplete": incomplete,
         "items": ranked.into_iter().map(|(_, _, item)| item).collect::<Vec<_>>(),
     })
+}
+
+/// The loads a completion in one file may add (`More::auto_load`): which
+/// files already reach it, and where a new `\l` line goes.
+struct Loads {
+    /// The files whose definitions this file can already see: itself, each
+    /// file it loads, directly or through another, and each file loaded by
+    /// a file that loads it - a sibling its loader brings in.
+    seen: HashSet<String>,
+    /// Each name the workspace defines, by the files that define it.
+    definers: std::collections::HashMap<String, Vec<String>>,
+    /// Where the new line goes, as a byte offset of the document, and
+    /// whether it needs a newline before it - after the last line that
+    /// already ends the file without one.
+    at: Option<(usize, bool)>,
+}
+
+impl Loads {
+    fn new(sources: &Sources, cursor: &Cursor) -> Self {
+        let mut edges = std::collections::HashMap::new();
+        let mut seen = sources.reached(&cursor.key, &mut edges);
+        seen.insert(cursor.key.clone());
+        for key in sources.keys() {
+            if key != cursor.key && sources.reached(key, &mut edges).contains(&cursor.key) {
+                seen.insert(key.to_string());
+                seen.extend(sources.reached(key, &mut edges));
+            }
+        }
+        let mut definers: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        for key in sources.keys() {
+            for name in &sources.idx.files[key].placed.defined {
+                definers
+                    .entry(name.clone())
+                    .or_default()
+                    .push(key.to_string());
+            }
+        }
+        Loads {
+            seen,
+            definers,
+            at: load_line(cursor.text, cursor.offset),
+        }
+    }
+
+    /// Give `item`, the completion of `spelling`, the edit that loads the
+    /// one file defining it, when nothing this file can see defines it, and
+    /// say so in its detail. Nothing when several files define it, since
+    /// which to load is the reader's call, or when no path written from
+    /// here reaches the file.
+    fn offer(
+        &self,
+        sources: &Sources,
+        cursor: &Cursor,
+        contexts: &[&str],
+        root: bool,
+        spelling: &str,
+        item: &mut Value,
+    ) {
+        let Some(at) = self.at else {
+            return;
+        };
+        // The names the spelling may be, as it would resolve from here.
+        let mut names: Vec<String> = vec![];
+        if spelling.starts_with('.') {
+            names.push(spelling.to_string());
+        } else {
+            names.extend(contexts.iter().map(|c| format!("{c}.{spelling}")));
+            if root {
+                names.push(spelling.to_string());
+            }
+        }
+        let mut files: Vec<&String> = names
+            .iter()
+            .filter_map(|n| self.definers.get(n))
+            .flatten()
+            .collect();
+        files.sort_unstable();
+        files.dedup();
+        if files.is_empty() || files.iter().any(|f| self.seen.contains(*f)) {
+            return;
+        }
+        let [file] = files[..] else {
+            return;
+        };
+        let Some(path) = load_path(sources, &cursor.key, file) else {
+            return;
+        };
+        let lines = Lines::new(cursor.text);
+        let (offset, newline) = at;
+        let text = if newline {
+            format!("\n\\l {path}")
+        } else {
+            format!("\\l {path}\n")
+        };
+        item["additionalTextEdits"] = json!([{
+            "range": {"start": lines.json(offset), "end": lines.json(offset)},
+            "newText": text,
+        }]);
+        item["detail"] = json!(format!("adds \\l {path}"));
+    }
+}
+
+/// How the file `from` names `file` in a `\l` that loads it: by its path
+/// under the first workspace folder, which is where a process over the tree
+/// is most likely started, or else by its path from `from`'s own directory:
+/// whichever the dependency graph follows to that file. Nothing for a path
+/// with a blank in it, which `\l` would cut.
+fn load_path(sources: &Sources, from: &str, file: &str) -> Option<String> {
+    let file_path = std::path::Path::new(file);
+    let mut candidates = vec![];
+    if let Some(root) = sources.idx.roots.first()
+        && let Ok(under) = file_path.strip_prefix(file_key(root))
+    {
+        candidates.push(under.to_path_buf());
+    }
+    if let Some(dir) = std::path::Path::new(from).parent()
+        && let Ok(under) = file_path.strip_prefix(dir)
+    {
+        candidates.push(under.to_path_buf());
+    }
+    candidates.into_iter().find_map(|path| {
+        let path = path.to_str()?.replace('\\', "/");
+        (!path.is_empty()
+            && !path.contains(char::is_whitespace)
+            && sources.loaded(from, &path, false) == [file.to_string()])
+        .then_some(path)
+    })
+}
+
+/// Where a load added for a completion at `offset` of `text` goes: after
+/// the last `\l` line before both the cursor's line and the file's first
+/// `\d`, so the loads already there keep their order and the new one is
+/// read in the root context before the line that needs it; with none, at
+/// the start, past a leading `#!` line and comment block. As a byte offset,
+/// and whether the line before ends the file with no newline. Nothing when
+/// that place is not before the cursor's line.
+fn load_line(text: &str, offset: usize) -> Option<(usize, bool)> {
+    let cursor_line = text[..offset.min(text.len())]
+        .rfind('\n')
+        .map_or(0, |i| i + 1);
+    let mut after_header = 0;
+    let mut header = true;
+    let mut last_load: Option<usize> = None;
+    let mut start = 0;
+    for line in text.split_inclusive('\n') {
+        let end = start + line.len();
+        if start >= cursor_line {
+            break;
+        }
+        let trimmed = line.trim_end();
+        if trimmed.starts_with("\\d") {
+            break;
+        }
+        if header && (trimmed.starts_with('/') || trimmed.starts_with("#!") || trimmed.is_empty()) {
+            if !trimmed.is_empty() {
+                after_header = end;
+            }
+        } else {
+            header = false;
+        }
+        if trimmed.starts_with("\\l ") {
+            last_load = Some(end);
+        }
+        start = end;
+    }
+    let at = last_load.unwrap_or(after_header);
+    if at > cursor_line {
+        return None;
+    }
+    let newline = at > 0 && !text[..at].ends_with('\n');
+    Some((at, newline))
 }

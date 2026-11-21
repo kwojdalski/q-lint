@@ -358,6 +358,13 @@ pub fn completing(
 /// an empty slot, as in a projection, has no length. Nothing in a string, a
 /// comment or a system command, which the code view blanks.
 pub fn bracket_calls(code: &str) -> Vec<BracketCall> {
+    bracket_calls_in(code, code)
+}
+
+/// `bracket_calls`, with each argument trimmed of the blanks around it in
+/// `shown` - a view of the same text with more of it kept, such as its
+/// strings, so a string argument is its quotes and not a blank.
+pub fn bracket_calls_in(code: &str, shown: &str) -> Vec<BracketCall> {
     let mut out = vec![];
     for m in re!(NAME).find_iter(code) {
         if !boundary(code, m.start()) {
@@ -376,6 +383,7 @@ pub fn bracket_calls(code: &str) -> Vec<BracketCall> {
             .into_iter()
             .map(|slot| {
                 let start = slot.as_ptr() as usize - code.as_ptr() as usize;
+                let slot = &shown[start..start + slot.len()];
                 let trimmed = slot.trim_start();
                 let lead = slot.len() - trimmed.len();
                 (start + lead, trimmed.trim_end().len())

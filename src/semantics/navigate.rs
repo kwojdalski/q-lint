@@ -246,6 +246,11 @@ fn local(code: &str, raw: &str, scopes: &[Scope], s: usize, name: &str) -> Local
     }
 }
 
+/// `local`, for the type a local's assignments give it (`infer`).
+pub(super) fn local_of(code: &str, raw: &str, scopes: &[Scope], s: usize, name: &str) -> Local {
+    local(code, raw, scopes, s, name)
+}
+
 /// The lambda around `offset` and the local of it written there, when the
 /// name at `offset` is one.
 fn local_at<'a>(code: &'a str, scopes: &[Scope], offset: usize) -> Option<(usize, &'a str)> {

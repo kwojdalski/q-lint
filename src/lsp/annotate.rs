@@ -1,5 +1,6 @@
 //! What the server draws over the text of a document: parameter names at the
-//! arguments of a call (inlay hints), a Run lens above each function
+//! arguments of a call and the type a local's assignments settle (inlay
+//! hints), a Run lens and a count of references above each function
 //! definition (code lenses), and each load's path as a link to the file it
 //! loads (document links).
 //!
@@ -9,12 +10,16 @@
 //! on the path goes.
 use super::navigate::{Sources, range};
 use super::{Lines, file_key, path_of};
-use q_lint_rs::{Mention, bracket_calls, completing, load_paths, mentions};
+use q_lint_rs::{Mention, bracket_calls, completing, load_paths, mentions, typed_locals};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 
-/// LSP's `InlayHintKind` for a parameter.
+/// LSP's `InlayHintKind`s: a type, and a parameter.
+const TYPE: u8 = 1;
 const PARAMETER: u8 = 2;
+/// The command a reference count runs: the client's, which shows the
+/// references to the name at the position it is given.
+const REFERENCES_COMMAND: &str = "q-lint.showReferences";
 /// The command a lens runs: the client's, which sends the code it is given
 /// to the connected q process as a query from the editor would be sent.
 /// Only an editor that registers it is offered lenses (`codeLens.enable`).
@@ -33,13 +38,117 @@ pub(super) fn announce(capabilities: &mut Value, hints: bool, lenses: bool, link
     }
 }
 
-pub(super) fn answer(method: &str, params: &Value, sources: &Sources) -> Value {
+/// Which of the hints and lenses are on, each by its own setting.
+#[derive(Clone, Copy)]
+pub(super) struct Shown {
+    pub(super) parameter_hints: bool,
+    pub(super) type_hints: bool,
+    pub(super) run_lenses: bool,
+    pub(super) reference_lenses: bool,
+}
+
+pub(super) fn answer(method: &str, params: &Value, sources: &Sources, shown: Shown) -> Value {
     match method {
-        "textDocument/inlayHint" => inlay_hints(params, sources),
-        "textDocument/codeLens" => code_lenses(params, sources),
+        "textDocument/inlayHint" => {
+            let mut hints = vec![];
+            if shown.parameter_hints {
+                hints.extend(
+                    inlay_hints(params, sources)
+                        .as_array()
+                        .cloned()
+                        .into_iter()
+                        .flatten(),
+                );
+            }
+            if shown.type_hints {
+                hints.extend(type_hints(params, sources));
+            }
+            json!(hints)
+        }
+        "textDocument/codeLens" => {
+            let mut lenses = vec![];
+            if shown.run_lenses {
+                lenses.extend(
+                    code_lenses(params, sources)
+                        .as_array()
+                        .cloned()
+                        .into_iter()
+                        .flatten(),
+                );
+            }
+            if shown.reference_lenses {
+                lenses.extend(reference_lenses(params, sources));
+            }
+            json!(lenses)
+        }
         "textDocument/documentLink" => document_links(params, sources),
         _ => Value::Null,
     }
+}
+
+/// What a q type is called, by the number `type` gives it: an atom by its
+/// own name, a vector as a list of them.
+pub(super) fn type_name(kind: i16) -> String {
+    let atom = match kind.abs() {
+        0 => return "list".into(),
+        1 => "boolean",
+        4 => "byte",
+        5 => "short",
+        6 => "int",
+        7 => "long",
+        8 => "real",
+        9 => "float",
+        10 if kind > 0 => return "string".into(),
+        10 => "char",
+        11 => "symbol",
+        12 => "timestamp",
+        13 => "month",
+        14 => "date",
+        16 => "timespan",
+        17 => "minute",
+        18 => "second",
+        19 => "time",
+        100 => return "lambda".into(),
+        _ => return format!("type {kind}h"),
+    };
+    if kind < 0 {
+        atom.into()
+    } else {
+        format!("{atom} list")
+    }
+}
+
+/// The inlay hints for types: after the value of a local's first
+/// assignment in the range, the type every assignment of it settles -
+/// `a:1 2 3` drawn as `a:1 2 3 long list`. None for a local whose type
+/// reading cannot settle (`q_lint_rs::typed_locals`).
+fn type_hints(params: &Value, sources: &Sources) -> Vec<Value> {
+    let Some((_, text)) = sources.document(params) else {
+        return vec![];
+    };
+    let lines = Lines::new(text);
+    let offset = |position: &Value| {
+        Some(lines.offset(
+            position["line"].as_u64()? as usize,
+            position["character"].as_u64()? as usize,
+        ))
+    };
+    let from = offset(&params["range"]["start"]).unwrap_or(0);
+    let to = offset(&params["range"]["end"]).unwrap_or(text.len());
+    typed_locals(text)
+        .into_iter()
+        .filter(|t| from <= t.end && t.end <= to)
+        .map(|t| {
+            let name = type_name(t.kind);
+            json!({
+                "position": lines.json(t.end),
+                "label": name,
+                "kind": TYPE,
+                "paddingLeft": true,
+                "tooltip": format!("{}: {name}, type {}h, from its assignments", t.local.name, t.kind),
+            })
+        })
+        .collect()
 }
 
 /// `textDocument/inlayHint`: at each argument of a bracketed call to a
@@ -231,6 +340,79 @@ fn code_lenses(params: &Value, sources: &Sources) -> Value {
         }
     }
     json!(lenses)
+}
+
+/// `textDocument/codeLens`, the reference counts: above each function a
+/// statement at column 0 defines, how many places the indexed files read it
+/// (what Find All References lists without the assignments), which opens
+/// those references when clicked.
+///
+/// One pass over the workspace answers every function of the document: a
+/// file is read only when it spells one of their names.
+fn reference_lenses(params: &Value, sources: &Sources) -> Vec<Value> {
+    let Some((uri, text)) = sources.document(params) else {
+        return vec![];
+    };
+    let key = file_key(&path_of(uri));
+    let placement = sources.placement(&key);
+    let lines = Lines::new(text);
+    let mut defined: Vec<(usize, usize, HashSet<String>)> = vec![];
+    let mut seen = HashSet::new();
+    for m in &mentions(text) {
+        let Some(definition) = &m.definition else {
+            continue;
+        };
+        if !definition.function
+            || m.at != definition.start
+            || !(m.at == 0 || text[..m.at].ends_with('\n'))
+            || !seen.insert(m.at)
+        {
+            continue;
+        }
+        let names: HashSet<String> = sources.names(text, m, &placement).into_iter().collect();
+        if !names.is_empty() {
+            defined.push((m.at, m.len, names));
+        }
+    }
+    if defined.is_empty() {
+        return vec![];
+    }
+    let leaves: HashSet<&str> = defined
+        .iter()
+        .flat_map(|(_, _, names)| names.iter().filter_map(|n| n.rsplit('.').next()))
+        .collect();
+    let mut counts = vec![0usize; defined.len()];
+    for file in sources.keys() {
+        let Some((_, other)) = sources.text(file) else {
+            continue;
+        };
+        if !leaves.iter().any(|leaf| other.contains(leaf)) {
+            continue;
+        }
+        let placement = sources.placement(file);
+        for m in mentions(&other).iter().filter(|m| m.definition.is_none()) {
+            let names = sources.names(&other, m, &placement);
+            for (i, (_, _, wanted)) in defined.iter().enumerate() {
+                if names.iter().any(|name| wanted.contains(name)) {
+                    counts[i] += 1;
+                }
+            }
+        }
+    }
+    defined
+        .iter()
+        .zip(counts)
+        .map(|((at, len, _), n)| {
+            let title = if n == 1 {
+                "1 reference".to_string()
+            } else {
+                format!("{n} references")
+            };
+            json!({"range": range(&lines, *at, *len), "command": {
+                "title": title, "command": REFERENCES_COMMAND,
+                "arguments": [uri, lines.json(*at)]}})
+        })
+        .collect()
 }
 
 /// `textDocument/documentLink`: the path of each load - `\l path`,

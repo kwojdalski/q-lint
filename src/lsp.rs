@@ -58,7 +58,9 @@
 //! under `experimental`: `q-lint/tests`, the test functions to run,
 //! `q-lint/globalAt`, the global a position names, and
 //! `q-lint/unresolvedNames`, the globals a document reads that no workspace
-//! file defines. The client runs and asks; this server reads.
+//! file defines, `q-lint/defined`, which of some names the workspace
+//! defines, and `q-lint/argumentSlot`, the argument of a call the cursor is
+//! in. The client runs and asks; this server reads.
 //!
 //! Around those: each diagnostic links its code to that rule's row in the
 //! reference (`codeDescription`); beside its fix, or without one, a finding
@@ -600,6 +602,8 @@ fn workspace_folders(params: &Value) -> Vec<(String, String)> {
 ///  "semanticTokens": {"enable": true}, "navigation": {"enable": true},
 ///  "help": {"enable": true}, "completion": {"enable": false},
 ///  "callHierarchy": {"enable": true}, "graph": {"enable": true},
+///  "autoLoad": {"enable": false}, "referenceLens": {"enable": false},
+///  "inferredTypes": {"enable": true},
 ///  "workspaceIndex": {"enable": true, "exclude": []}}
 /// ```
 ///
@@ -651,6 +655,18 @@ struct Options {
     generate_qdoc: bool,
     /// Offer Extract Function on a selection.
     extract_function: bool,
+    /// Give a completed name another file defines the `\l` that loads it,
+    /// when nothing this file loads or is loaded with defines it. Off
+    /// unless asked for: accepting the name then writes a line elsewhere in
+    /// the file.
+    auto_load: bool,
+    /// Answer code lenses with the number of references above each
+    /// function. Off unless asked for, as Run is: the lens opens them with
+    /// the client's command (`q-lint.showReferences`).
+    reference_lens: bool,
+    /// Show the type a local's assignments settle, on hover and as an
+    /// inlay hint (`q_lint_rs::typed_locals`).
+    inferred_types: bool,
     /// Whether the client shows an action it cannot take with the reason
     /// (`codeAction.disabledSupport`): a capability, not a setting.
     disabled_actions: bool,
@@ -679,6 +695,9 @@ impl Default for Options {
             document_links: true,
             generate_qdoc: true,
             extract_function: true,
+            auto_load: false,
+            reference_lens: false,
+            inferred_types: true,
             disabled_actions: false,
             severity: vec![],
         }
@@ -717,6 +736,9 @@ impl Options {
                         "documentLinks",
                         "generateQdoc",
                         "extractFunction",
+                        "autoLoad",
+                        "referenceLens",
+                        "inferredTypes",
                     ]
                     .contains(&key.as_str())
                         && !value.is_object()
@@ -753,6 +775,9 @@ impl Options {
         options.document_links = flag("/documentLinks/enable", true);
         options.generate_qdoc = flag("/generateQdoc/enable", true);
         options.extract_function = flag("/extractFunction/enable", true);
+        options.auto_load = flag("/autoLoad/enable", false);
+        options.reference_lens = flag("/referenceLens/enable", false);
+        options.inferred_types = flag("/inferredTypes/enable", true);
         options.disabled_actions = params
             .pointer("/capabilities/textDocument/codeAction/disabledSupport")
             .and_then(Value::as_bool)
@@ -1074,8 +1099,8 @@ pub fn serve(
                 live::announce(&mut result["capabilities"]);
                 annotate::announce(
                     &mut result["capabilities"],
-                    opts.inlay_hints,
-                    opts.code_lens,
+                    opts.inlay_hints || opts.inferred_types,
+                    opts.code_lens || opts.reference_lens,
                     opts.document_links,
                 );
                 send(writer, json!({"id": id, "result": result}))?;
@@ -1152,7 +1177,8 @@ pub fn serve(
                 | "textDocument/documentLink"
                 | "q-lint/graph"
                 | "q-lint/globalAt"
-                | "q-lint/unresolvedNames",
+                | "q-lint/unresolvedNames"
+                | "q-lint/argumentSlot",
                 id,
             ) if !params["textDocument"]["uri"].is_string() => {
                 let message = format!("{method}: params.textDocument.uri must be a string");
@@ -1332,7 +1358,11 @@ pub fn serve(
                         return Value::Null;
                     }
                     let sources = navigate::Sources::new(&docs, &idx);
-                    help::answer(&method, &params, &sources, help_client)
+                    let more = help::More {
+                        inferred_types: opts.inferred_types,
+                        auto_load: opts.auto_load,
+                    };
+                    help::answer(&method, &params, &sources, help_client, more)
                 });
                 match answer {
                     Ok(result) => send(writer, json!({"id": id, "result": result}))?,
@@ -1345,27 +1375,40 @@ pub fn serve(
             ) => {
                 // Asked of a server that did not announce it, a request is
                 // answered with nothing rather than refused.
+                let shown = annotate::Shown {
+                    parameter_hints: opts.inlay_hints,
+                    type_hints: opts.inferred_types,
+                    run_lenses: opts.code_lens,
+                    reference_lenses: opts.reference_lens,
+                };
                 let on = match method.as_str() {
-                    "textDocument/codeLens" => opts.code_lens,
+                    "textDocument/codeLens" => opts.code_lens || opts.reference_lens,
                     "textDocument/documentLink" => opts.document_links,
-                    _ => opts.inlay_hints,
+                    _ => opts.inlay_hints || opts.inferred_types,
                 };
                 let answer = guarded(|| {
                     if !on {
                         return Value::Null;
                     }
                     let sources = navigate::Sources::new(&docs, &idx);
-                    annotate::answer(&method, &params, &sources)
+                    annotate::answer(&method, &params, &sources, shown)
                 });
                 match answer {
                     Ok(result) => send(writer, json!({"id": id, "result": result}))?,
                     Err(panic) => send(writer, internal_error(id, &panic))?,
                 }
             }
-            ("q-lint/tests" | "q-lint/globalAt" | "q-lint/unresolvedNames", Some(id)) => {
+            (
+                "q-lint/tests"
+                | "q-lint/globalAt"
+                | "q-lint/unresolvedNames"
+                | "q-lint/argumentSlot"
+                | "q-lint/defined",
+                Some(id),
+            ) => {
                 let answer = guarded(|| {
                     let sources = navigate::Sources::new(&docs, &idx);
-                    live::answer(&method, &params, &sources)
+                    live::answer(&method, &params, &sources, opts.inlay_hints)
                 });
                 match answer {
                     Ok(result) => send(writer, json!({"id": id, "result": result}))?,
