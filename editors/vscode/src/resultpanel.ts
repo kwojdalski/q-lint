@@ -84,7 +84,8 @@ function settings(): LiveSettings {
 
 /// The page the result panel and the q Results view load: the extension's
 /// own files, a fresh nonce on every script, nothing inline, no network.
-function resultHtml(webview: Webview, media: Uri): string {
+/// The view's body is marked, to take the bottom panel's background.
+function resultHtml(webview: Webview, media: Uri, location: ResultsLocation): string {
   const nonce = randomBytes(16).toString("base64");
   const file = (...path: string[]): string => webview.asWebviewUri(Uri.joinPath(media, ...path)).toString();
   return [
@@ -93,7 +94,7 @@ function resultHtml(webview: Webview, media: Uri): string {
     `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}'; img-src ${webview.cspSource} data:;">`,
     '<meta name="viewport" content="width=device-width, initial-scale=1.0">',
     `<link rel="stylesheet" href="${file("result.css")}">`,
-    "<title>q-lint: result</title></head><body>",
+    `<title>q-lint: result</title></head><body${location === "panel" ? ' data-location="panel"' : ""}>`,
     `<script nonce="${nonce}" src="${file("vendor", "chart.umd.min.js")}"></script>`,
     `<script nonce="${nonce}" src="${file("chartspec.js")}"></script>`,
     `<script nonce="${nonce}" src="${file("result.js")}"></script>`,
@@ -233,7 +234,7 @@ export class QueryModes {
       { enableScripts: true, localResourceRoots: [this.media] },
     );
     this.panel = panel;
-    panel.webview.html = resultHtml(panel.webview, this.media);
+    panel.webview.html = resultHtml(panel.webview, this.media, "editor");
     panel.onDidDispose(() => {
       if (this.panel === panel) {
         this.panel = undefined;
@@ -260,7 +261,7 @@ export class QueryModes {
   private resolveView(view: WebviewView): void {
     this.view = view;
     view.webview.options = { enableScripts: true, localResourceRoots: [this.media] };
-    view.webview.html = resultHtml(view.webview, this.media);
+    view.webview.html = resultHtml(view.webview, this.media, "panel");
     view.onDidDispose(() => {
       if (this.view === view) {
         this.view = undefined;

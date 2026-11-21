@@ -15,6 +15,11 @@ body {
   font-size: var(--vscode-font-size);
 }
 
+/* The q Results view, in the bottom panel: the panel's background. */
+body[data-location="panel"] {
+  background: var(--vscode-panel-background, var(--vscode-editor-background));
+}
+
 [hidden] {
   display: none !important;
 }

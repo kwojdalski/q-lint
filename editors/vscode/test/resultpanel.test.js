@@ -232,3 +232,19 @@ test("the q Results view's Export button writes the view's rows, though the edit
   assert.strictEqual(fake.written["/view.csv"], "c\n10\n");
   assert.strictEqual(fake.written["/editor.csv"], "c\n30\n20\n10\n");
 });
+
+test("the q Results view's page is drawn on the panel's background, the editor's on the editor's", () => {
+  // result.css painted every page with editor.background, so the view in
+  // the bottom panel stood out as a block of the editor's colour where
+  // the panel's differs (Dark Modern: #1f1f1f in #181818).
+  const fake = fakeVscode();
+  const modes = loadModes(fake);
+  modes.show(result([1]), live());
+  const view = { webview: { options: {}, html: "", cspSource: "", asWebviewUri: (u) => u, postMessage: async () => true, onDidReceiveMessage: () => ({ dispose() {} }) }, show() {}, onDidDispose: () => ({ dispose() {} }) };
+  fake.vscode.window.viewProvider.resolveWebviewView(view);
+  const bodyClass = (html) => /<body([^>]*)>/.exec(html)[1];
+  assert.match(bodyClass(view.webview.html), /data-location="panel"/);
+  assert.doesNotMatch(bodyClass(fake.pages[0].html), /panel/);
+  const css = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "media", "result.css"), "utf8");
+  assert.match(css, /body\[data-location="panel"\]\s*\{[^}]*background:\s*var\(--vscode-panel-background/);
+});
