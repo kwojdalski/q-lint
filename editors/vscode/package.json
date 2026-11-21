@@ -408,13 +408,15 @@
             "type": "string",
             "default": "q",
             "order": 200,
-            "markdownDescription": "The q binary **Run Code from Terminal** and **Send ... to Terminal** start: a name on `PATH` or a path. It is quoted for the terminal's shell, so it is one program, not a command line with arguments."
+            "scope": "resource",
+            "markdownDescription": "The q binary **Run Code from Terminal**, **Start q REPL** and **Send ... to Terminal** start: a name on `PATH` or a path, where a leading `~` is your home directory. It is quoted for the terminal's shell, so it is one program, not a command line with arguments. Read for the file's workspace folder."
           },
           "q-lint.terminal.envPath": {
             "type": "string",
             "default": "",
             "order": 201,
-            "markdownDescription": "A file of `NAME=value` lines set for q in a q terminal, such as `QHOME` and `QLIC`, on the command line that starts it, so they win over the shell's startup files. Relative to the workspace folder. Values are taken as written: `$HOME` is not expanded."
+            "scope": "resource",
+            "markdownDescription": "A file of `NAME=value` lines set for q in a q terminal (**Run Code from Terminal**, **Start q REPL**, **Send ... to Terminal**), such as `QHOME` and `QLIC`, on the command line that starts it, so they win over the shell's startup files. Relative to the workspace folder, which may set its own; a leading `~` is your home directory. Values are taken as written: `$HOME` is not expanded."
           }
         }
       },

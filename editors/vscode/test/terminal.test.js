@@ -199,3 +199,14 @@ test("a terminal setting of the wrong type, as settings.json allows, is its defa
   assert.deepStrictEqual(read({ "terminal.qBinary": null, "terminal.envPath": 7 })(), { qBinary: "q", envPath: "" });
   assert.deepStrictEqual(read({ "terminal.qBinary": ["q"], "terminal.envPath": null })(), { qBinary: "q", envPath: "" });
 });
+
+test("the terminal settings are read per workspace folder, so they are declared for one", () => {
+  // `start` reads them for the file's folder; a setting of the default
+  // "window" scope is ignored in a folder's settings of a multi-root workspace.
+  const props = Object.assign({}, ...pkg.contributes.configuration.map((c) => c.properties));
+  for (const key of ["q-lint.terminal.qBinary", "q-lint.terminal.envPath"]) {
+    assert.strictEqual(props[key].scope, "resource", key);
+    assert.match(props[key].markdownDescription, /Start q REPL/, key);
+    assert.match(props[key].markdownDescription, /`~`/, key);
+  }
+});
