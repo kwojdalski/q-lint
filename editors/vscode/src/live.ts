@@ -47,6 +47,7 @@ import {
   processTooltip,
   readProcessFile,
   sshDestination,
+  serverTypes,
   tlsChoices,
   withExtras,
   type Process,
@@ -54,6 +55,7 @@ import {
 import { COMMANDS, CONNECTED, VIEWS, readLive, readProcessSettings, readTerminal } from "./liveconfig";
 import { QConnection, QError, type Target } from "./qclient";
 import { SshTunnel, TUNNEL_COMMANDS, readTunnel } from "./tunnel";
+import { GATEWAY_COMMANDS, fileServerTypes, gatewayStatement, isGatewayCall, readGateway } from "./gateway";
 import { HEARTBEAT, UNANSWERED_MS, backoffDelay, latencyText, readHealth } from "./health";
 import { historyHeading, historyLabel, iconsEscaped } from "./history";
 import { render } from "./query";
@@ -519,6 +521,8 @@ export class Live {
       c(CONTROL_COMMANDS.revealProcess, () => this.revealProcess()),
       c(CONNECT_SCRIPT_COMMANDS.set, (row?: ProcessArg, script?: ConnectScript | null) => this.setConnectScript(row, script)),
       c(TUNNEL_COMMANDS.set, (row?: ProcessArg, destination?: string | null) => this.setSshTunnel(row, destination)),
+      c(GATEWAY_COMMANDS.set, (row?: ProcessArg, types?: string | string[] | null) => this.setGateway(row, types)),
+      c(GATEWAY_COMMANDS.queryWith, (types?: string | string[]) => this.queryGatewayWith(types)),
       c(HISTORY_COMMANDS.filter, (filter?: HistoryFilter) => this.filterHistory(filter)),
       c(HISTORY_COMMANDS.clearFilter, () => this.setHistoryFilter({})),
       c(HISTORY_COMMANDS.export, (file?: Uri) => this.exportHistory(file)),
@@ -1551,7 +1555,7 @@ export class Live {
 
   // --- queries
 
-  private async queryFrom(from: From): Promise<void> {
+  private async queryFrom(from: From, serverTypes?: string[]): Promise<void> {
     const editor = window.activeTextEditor;
     if (editor === undefined) {
       noEditor();
@@ -1566,13 +1570,13 @@ export class Live {
     if (code === undefined) {
       return;
     }
-    await this.queryCode(code, editor.document.uri);
+    await this.queryCode(code, editor.document.uri, serverTypes);
   }
 
   /// Run `code` from the document `uri` as a query from the editor is run:
   /// on the process the file is bound to, when it has one. A Run code lens
   /// sends its definition here.
-  async queryCode(code: string, uri: Uri): Promise<void> {
+  async queryCode(code: string, uri: Uri, serverTypes?: string[]): Promise<void> {
     // A file with a process of its own switches the connection to it.
     const bound = this.controls.binding(uri);
     if (bound !== undefined && bound !== this.activeLabel()) {
@@ -1586,7 +1590,97 @@ export class Live {
         return;
       }
     }
-    await this.run(code);
+    // A file can name the server types its queries go to on a gateway.
+    const document = window.activeTextEditor?.document;
+    const named = document !== undefined && document.uri.toString() === uri.toString() ? fileServerTypes(document.getText()) : undefined;
+    await this.run(code, serverTypes ?? named);
+  }
+
+  /// `code` as it goes to `process`: through `.gw.syncexec` on a TorQ gateway
+  /// (#909), to `serverTypes` or else the process's own; as written to any
+  /// other process, or with q-lint.connection.torqGateway.enable off.
+  private throughGateway(code: string, process: Process, serverTypes?: string[]): string {
+    const types = serverTypes ?? process.gateway;
+    if (process.gateway === undefined || types === undefined || isGatewayCall(code) || !this.setting(readGateway).enabled) {
+      return code;
+    }
+    const cut = statements(code);
+    return cut.length === 0 ? code : gatewayStatement(cut, types);
+  }
+
+  /// Mark a saved process as a TorQ gateway with the server types its
+  /// queries go to, or unmark it. `types` (from a keybinding or a test) sets
+  /// them without asking; `""`, `[]` or `null` unmarks it.
+  private async setGateway(row?: ProcessArg, types?: string | string[] | null): Promise<void> {
+    if (!this.featureOn(this.setting(readGateway).enabled, "TorQ gateways", "q-lint.connection.torqGateway.enable")) {
+      return;
+    }
+    const process = await this.chosen(row, "Mark which q process as a TorQ gateway?");
+    if (process === undefined) {
+      return;
+    }
+    let given: string | string[] | undefined = types === null ? "" : types;
+    if (given === undefined) {
+      given = await window.showInputBox({
+        title: `TorQ gateway: server types of ${process.label}`,
+        value: (process.gateway ?? []).join(" "),
+        prompt: "The server types a query goes to through .gw.syncexec, unless the file or the query names others: rdb hdb. Empty: not a gateway.",
+        validateInput: (v) => (v.trim() === "" || serverTypes(v) !== undefined ? undefined : "Server types are q names: rdb hdb."),
+        ignoreFocusOut: true,
+      });
+      if (given === undefined) {
+        return;
+      }
+    }
+    const gateway = serverTypes(given);
+    const now = this.processes();
+    if (!now.some((p) => p.label === process.label)) {
+      void window.showErrorMessage(`q-lint: "${process.label}" was deleted meanwhile; it was not changed.`);
+      return;
+    }
+    await this.save(now.map((p) => (p.label === process.label ? withExtras(p, { ...p, gateway }) : p)));
+    if (this.active?.label === process.label && this.active.server === undefined) {
+      this.active = withExtras(this.active, { ...this.active, gateway });
+    }
+    void window.showInformationMessage(
+      gateway === undefined
+        ? `q-lint: ${process.label} is no TorQ gateway; its queries go as written.`
+        : `q-lint: queries to ${process.label} go through .gw.syncexec to ${gateway.join(", ")}.`,
+    );
+  }
+
+  /// Query the selection, or the current line, on the connected gateway with
+  /// server types asked for (or `types`, from a keybinding).
+  private async queryGatewayWith(types?: string | string[]): Promise<void> {
+    if (!this.featureOn(this.setting(readGateway).enabled, "TorQ gateways", "q-lint.connection.torqGateway.enable")) {
+      return;
+    }
+    const process = this.activeProcess();
+    if (process?.gateway === undefined) {
+      void window.showInformationMessage(
+        `q-lint: ${process === undefined ? "not connected to a q process" : `${process.label} is not marked as a TorQ gateway`}. Set Gateway Server Types marks one.`,
+      );
+      return;
+    }
+    let given = types;
+    if (given === undefined) {
+      const document = window.activeTextEditor?.document;
+      given = await window.showInputBox({
+        title: `Query ${process.label} on server types`,
+        value: ((document !== undefined ? fileServerTypes(document.getText()) : undefined) ?? process.gateway).join(" "),
+        prompt: "The server types this query goes to through .gw.syncexec: rdb hdb.",
+        validateInput: (v) => (serverTypes(v) !== undefined ? undefined : "Server types are q names: rdb hdb."),
+      });
+      if (given === undefined) {
+        return;
+      }
+    }
+    const chosen = serverTypes(given);
+    if (chosen === undefined) {
+      void window.showErrorMessage("q-lint: no server types given; nothing was run.");
+      return;
+    }
+    await this.queryFrom("selection", chosen);
   }
 
   /// `code` with its `{{name}}` placeholders given the values the user
@@ -1677,12 +1771,13 @@ export class Live {
 
   /// Run `code` on the active connection, connecting first if there is none.
   /// The process explorer's Preview runs here too.
-  async run(code: string): Promise<void> {
+  async run(written: string, serverTypes?: string[]): Promise<void> {
     const ready = await this.ready();
     if (ready === undefined) {
       return;
     }
     const { connection, process } = ready;
+    const code = this.throughGateway(written, process, serverTypes);
     const configuration = workspace.getConfiguration("q-lint");
     const settings = readLive((key, fallback) => configuration.get(key, fallback));
     const controls = this.controls.settings();

@@ -210,6 +210,9 @@ and clicking it switches. The commands:
   never brings one. `q-lint.connection.sshTunnel.enable` off hides the
   command, closes a connection through a tunnel, and refuses to connect to
   such a process rather than trying its host directly.
+- **Set Gateway Server Types**, on a process row: marks the process as a
+  TorQ gateway, with the server types its queries go to (`rdb hdb`); empty
+  unmarks it. See **TorQ gateways** below.
 - **Insert Active Connection Label**, at the cursor.
 - **Copy Label for Agent Query**, on a process row: the label an agent's
   query names the process by (`server/label` for a discovered one).
@@ -292,6 +295,21 @@ connect to first. The output is coloured from the editor's theme: each
 answer's `# process (n ms)` header, the error and its backtrace (each frame,
 where it is and the caret under it), a table's rule and a keyed table's `|`,
 numbers, symbols, temporal literals and strings, and an included query as q.
+
+**TorQ gateways.** A query from the editor to a process marked as a TorQ
+gateway goes as `.gw.syncexec[query;servertypes]`, so the gateway runs it on
+a server of each type and joins what they answer. The server types are, in
+order: those **Query Gateway on Server Types...** (editor menu and palette)
+asks for, for the selection or the current line; those a line at column 0
+of the file names, `/ @servertypes hdb`; else the process's own. One
+statement goes as a string, `.gw.syncexec["select from trade";\`rdb\`hdb]`;
+several go as `({last value each x};("s1";"s2"))`, which each server runs in
+order, answering with the last value, since q's `value` of one string takes
+neither a newline nor a trailing comment as the end of a statement. The
+history keeps the call as it was sent, and running it again does not wrap
+it twice. A query from a notebook, the Process Explorer or an agent goes to
+the gateway as written. `q-lint.connection.torqGateway.enable` off sends
+every query as written and hides both commands.
 
 **Abort Current Query** stops waiting at once. q has no message that cancels
 a query, so the connection is closed and opened again; the process goes on
@@ -977,6 +995,7 @@ Each applies at once, without a reload. None reaches the language server.
 | Setting | Default | What it does | q-pro |
 | --- | --- | --- | --- |
 | `q-lint.connection.sshTunnel.enable` | `true` | Reach a process that names a jump host through `ssh -N -L`; off, **Set SSH Tunnel** is hidden and such a process is not connected to. | - |
+| `q-lint.connection.torqGateway.enable` | `true` | Send a TorQ gateway's queries through `.gw.syncexec`; off, they go as written and **Set Gateway Server Types** and **Query Gateway on Server Types...** are hidden. | - |
 
 ### Terminal settings
 

@@ -724,6 +724,12 @@
             "default": true,
             "order": 700,
             "markdownDescription": "Reach a process that names an SSH jump host (**Set SSH Tunnel**) through a tunnel the system `ssh` opens (`ssh -N -L`), with your agent and `~/.ssh/config`; it never asks for or keeps a password. Off: **Set SSH Tunnel** is hidden, a connection through a tunnel closes, and such a process is not connected to; the jump hosts stay in the process list."
+          },
+          "q-lint.connection.torqGateway.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 701,
+            "markdownDescription": "Send a query to a process marked as a TorQ gateway (**Set Gateway Server Types**) as `.gw.syncexec[query;servertypes]`: to the server types a `/ @servertypes rdb hdb` line in the file names, else the process's own; **Query Gateway on Server Types...** asks for them. Off: queries go to a gateway as written, and both commands are hidden."
           }
         }
       }
@@ -1175,6 +1181,17 @@
         "title": "Set SSH Tunnel",
         "category": "q-lint",
         "icon": "$(remote)"
+      },
+      {
+        "command": "q-lint.setGatewayServerTypes",
+        "title": "Set Gateway Server Types",
+        "category": "q-lint",
+        "icon": "$(server-environment)"
+      },
+      {
+        "command": "q-lint.queryGatewayWithServerTypes",
+        "title": "Query Gateway on Server Types...",
+        "category": "q-lint"
       }
     ],
     "views": {
@@ -1521,6 +1538,11 @@
           "command": "q-lint.setSshTunnel",
           "when": "view == q-lint.processes && viewItem =~ /^process/ && config.q-lint.connection.sshTunnel.enable",
           "group": "2_edit@5"
+        },
+        {
+          "command": "q-lint.setGatewayServerTypes",
+          "when": "view == q-lint.processes && viewItem =~ /^process/ && config.q-lint.connection.torqGateway.enable",
+          "group": "2_edit@6"
         }
       ],
       "editor/title/run": [
@@ -1639,6 +1661,11 @@
           "command": "q-lint.findCallers",
           "when": "editorLangId == q && q-lint.connected && config.q-lint.processExplorer.findCallers.enable",
           "group": "q-lint@8"
+        },
+        {
+          "command": "q-lint.queryGatewayWithServerTypes",
+          "when": "editorLangId == q && q-lint.connected && config.q-lint.connection.torqGateway.enable",
+          "group": "q-lint@9"
         }
       ],
       "commandPalette": [
@@ -1717,6 +1744,14 @@
         {
           "command": "q-lint.setSshTunnel",
           "when": "config.q-lint.connection.sshTunnel.enable"
+        },
+        {
+          "command": "q-lint.setGatewayServerTypes",
+          "when": "config.q-lint.connection.torqGateway.enable"
+        },
+        {
+          "command": "q-lint.queryGatewayWithServerTypes",
+          "when": "editorLangId == q && q-lint.connected && config.q-lint.connection.torqGateway.enable"
         }
       ],
       "editor/title": [
