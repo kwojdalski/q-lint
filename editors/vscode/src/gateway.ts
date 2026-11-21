@@ -7,6 +7,7 @@
 // as its `.z.pg` values any sync message: q's `value` of one string does not
 // take a newline or a trailing comment as the end of a statement, so they are
 // not joined into one.
+import { qString } from "./qliteral";
 
 export const GATEWAY_COMMANDS = {
   set: "q-lint.setGatewayServerTypes",
@@ -17,28 +18,6 @@ export const GATEWAY_COMMANDS = {
 /// through `.gw.syncexec`, and its commands are offered.
 export function readGateway(get: <T>(key: string, fallback: T) => T): { enabled: boolean } {
   return { enabled: get<unknown>("connection.torqGateway.enable", true) !== false };
-}
-
-/// `text` as a q string literal, a one-character one enlisted so it is a
-/// string and not a char.
-export function qString(text: string): string {
-  const body = text.replace(/[\\"\x00-\x1f\x7f]/g, (c) => {
-    switch (c) {
-      case "\\":
-        return "\\\\";
-      case '"':
-        return '\\"';
-      case "\n":
-        return "\\n";
-      case "\r":
-        return "\\r";
-      case "\t":
-        return "\\t";
-      default:
-        return `\\${c.charCodeAt(0).toString(8).padStart(3, "0")}`;
-    }
-  });
-  return Buffer.byteLength(text, "utf8") === 1 ? `enlist "${body}"` : `"${body}"`;
 }
 
 /// Server types as a q symbol list: one is enlisted.

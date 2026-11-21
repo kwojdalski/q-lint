@@ -19,7 +19,7 @@
 // or an enumerated column with `=`, as an enumeration does not match its
 // symbol under `~`. Every row with those values is changed.
 import type { GridPayload } from "./grid";
-import { atomLiteral, plainName, rawColumn, symbolLiteral } from "./qliteral";
+import { atomLiteral, plainName, rawColumn, readable, symbolLiteral } from "./qliteral";
 import { statements } from "./statements";
 
 export const FILTER_OPS = ["=", "<>", "<", ">", "<=", ">=", "like", "in", "null", "not null"] as const;
@@ -83,7 +83,7 @@ export function stepCode(step: Step, x: string): string {
   const c = step.column;
   switch (step.kind) {
     case "filter": {
-      const v = enlisted(step.value.trim());
+      const v = readable(step.value.trim());
       const test =
         step.op === "null" ? `null ${c}` : step.op === "not null" ? `not null ${c}` : step.op === "in" ? `${c} in ${v}` : `${c}${step.op === "like" ? " like " : step.op}${v}`;
       return `select from ${x} where ${test}`;
@@ -201,46 +201,13 @@ export function editStatement(payload: GridPayload, column: number, row: number,
       return { error: `the cell in ${names[i]} was cut at 200 characters, so the row cannot be found by it` };
     }
     const enumerated = type === 11 || (type >= 20 && type <= 76);
-    tests.push(enumerated ? `(${names[i]}=${atom.literal})` : `(${names[i]}~\\:(${enlisted(atom.literal)}))`);
+    tests.push(enumerated ? `(${names[i]}=${atom.literal})` : `(${names[i]}~\\:(${readable(atom.literal)}))`);
   }
   const c = names[column];
   // A general column takes a list as long as the rows found.
-  const v = enlisted(value.trim());
+  const v = readable(value.trim());
   const set = payload.types[column] === 0 ? `(count i)#enlist ${v}` : `(${v})`;
   return { code: `update ${c}:${set} from ${symbolLiteral(table)} where ${tests.join(",")}`, matchedBy: by.map((i) => names[i]) };
-}
-
-/// `code` with each monadic `,` - at its start, or after `(` or `;`,
-/// outside a string - written `enlist `: q-sql splits a clause at a `,`
-/// right after a `(` (`where c~\:(,"z")` is refused, on kdb+ and PeachQ).
-export function enlisted(code: string): string {
-  let out = "";
-  let inString = false;
-  let last = "";
-  for (let i = 0; i < code.length; i++) {
-    const ch = code[i];
-    if (inString) {
-      out += ch;
-      if (ch === "\\") {
-        out += code[++i] ?? "";
-      } else if (ch === '"') {
-        inString = false;
-      }
-      continue;
-    }
-    if (ch === '"') {
-      inString = true;
-    } else if (ch === "," && (last === "" || last === "(" || last === ";")) {
-      out += "enlist ";
-      last = " ";
-      continue;
-    }
-    out += ch;
-    if (!/\s/.test(ch)) {
-      last = ch;
-    }
-  }
-  return out;
 }
 
 /// The cell at `column`, `row` as the literal an edit starts from.

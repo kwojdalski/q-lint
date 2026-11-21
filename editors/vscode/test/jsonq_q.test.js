@@ -11,7 +11,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { jsonToQ, toJsonQuery } = require("../out/jsonq.js");
-const { qString } = require("../out/pastetable.js");
+const { qString } = require("../out/qliteral.js");
 
 const Q = process.env.QLINT_TEST_Q;
 const skip = Q ? false : "QLINT_TEST_Q names no q binary";

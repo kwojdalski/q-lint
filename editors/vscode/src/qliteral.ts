@@ -6,10 +6,16 @@
 // cut to `\P`), and a null or an infinity keeps its type: `0Nh`, `-0Wd`.
 // What `string` writes is a literal already for most types - a date, a
 // time, a timestamp - and needs only a suffix for the rest: `1b`, `12h`,
-// `2024.01m`. A symbol is `` `a `` or, holding what a bare symbol cannot,
-// `` `$"a b" ``; a guid `"G"$"..."`. An item of a general list is `-3!` of
-// it, which is q already, unless it was cut at 200 characters - `cut` says
-// so. An enumerated column is written as its symbols, without its domain.
+// `2024.01m`. A symbol is `` `a `` or, holding what a bare symbol cannot
+// (a space, or a leading `_`), `` `$"a b" ``; a guid `"G"$"..."`. An item
+// of a general list is `-3!` of it made readable (`readable`): `-3!` writes
+// a one-item list `,x`, which q refuses, and a symbol starting with `_` bare.
+// An item cut at 200 characters is not its value - `cut` says so. An
+// enumerated column is written as its symbols, without its domain.
+//
+// These are the extension's one writer of q strings and symbols: Paste as q
+// Table, the JSON conversion, the gateway's statements and the grid's cell
+// edits all use `qString` and `symbolLiteral`.
 import type { GridPayload } from "./grid";
 
 const NULL_GUID = "00000000-0000-0000-0000-000000000000";
@@ -71,9 +77,62 @@ export function stringLiteral(text: string): string {
   return `"${out}"`;
 }
 
-/// A symbol's literal: bare when q reads it back as written.
+/// A string's literal as a list: q holds it as UTF-8 bytes, so one byte
+/// is a char to `enlist` and `"é"` is two already. Not `,"x"`: q refuses
+/// that as a list item, `("ab";,"x")`.
+export function qString(text: string): string {
+  const s = stringLiteral(text);
+  return new TextEncoder().encode(text).length === 1 ? `enlist ${s}` : s;
+}
+
+/// A symbol's literal: bare when q reads it back as written, which a name
+/// starting with `_` it does not (`` `_y `` is `` ` `` and `_y`).
 export function symbolLiteral(name: string): string {
-  return /^[A-Za-z0-9_.]*$/.test(name) ? `\`${name}` : `\`$${stringLiteral(name)}`;
+  return /^(?:[A-Za-z0-9.][A-Za-z0-9_.]*)?$/.test(name) ? `\`${name}` : `\`$${stringLiteral(name)}`;
+}
+
+/// `code` with what q writes but will not read back rewritten, outside
+/// strings: each monadic `,` - at the start, or after `(`, `;`, `[`, `{`,
+/// `!` or another `,` - as `enlist ` (q refuses `,"x"`, and q-sql splits a
+/// clause at a `,` after `(`: `where c~\:(,"z")`), and a run of symbols
+/// whose first starts with `_` (`` `_y ``, `` `_y`a ``) through `` `$ ``.
+/// `-3!` writes both, so a general list's item needs it, and a grid cell
+/// edit's value too.
+export function readable(code: string): string {
+  let out = "";
+  let inString = false;
+  let last = "";
+  for (let i = 0; i < code.length; i++) {
+    const ch = code[i];
+    if (inString) {
+      out += ch;
+      if (ch === "\\") {
+        out += code[++i] ?? "";
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === "," && (last === "" || "(;[{!,".includes(last))) {
+      out += "enlist ";
+      last = "";
+      continue;
+    } else if (ch === "`" && code[i + 1] === "_" && !/[A-Za-z0-9_.`]/.test(code[i - 1] ?? "")) {
+      const run = /^(?:`[A-Za-z0-9_.]*)+/.exec(code.slice(i))?.[0] ?? "`";
+      const names = run.slice(1).split("`");
+      out += names.length === 1 ? symbolLiteral(names[0]) : `\`$(${names.map(qString).join(";")})`;
+      i += run.length - 1;
+      last = ")";
+      continue;
+    }
+    out += ch;
+    if (!/\s/.test(ch)) {
+      last = ch;
+    }
+  }
+  return out;
 }
 
 /// Whether `name` can be a column name in `([] ...)` as written.
@@ -128,8 +187,9 @@ export function atomLiteral(type: number, text: string, raw: unknown): { literal
       if (type >= 20 && type <= 76) {
         return ok(symbolLiteral(text));
       }
-      // A general list's item: `-3!` of it, or a string written as one.
-      return { literal: text === "" ? "()" : text, cut: text.length >= 200 && text.endsWith("...") };
+      // A general list's item: `-3!` of it, or a string written as one,
+      // made readable.
+      return { literal: text === "" ? "()" : readable(text), cut: text.length >= 200 && text.endsWith("...") };
   }
 }
 

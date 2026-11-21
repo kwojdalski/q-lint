@@ -3,6 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const w = require("../out/wrangle.js");
+const { readable } = require("../out/qliteral.js");
 
 const payload = (over = {}) => ({
   count: 2,
@@ -73,10 +74,17 @@ test("a cell edit is an update of the table, its rows found by the row's values,
   const cut = payload({ cells: [["a", "b"], ["1.5", ""], [`"${"x".repeat(196)}...`, ',"z"'], ["a", "b"]] });
   assert.match(w.editStatement(cut, 1, 0, "t", "1").error, /cut at 200 characters/);
   assert.strictEqual(w.cellLiteral(payload(), 1, 1), "0n");
+  // A one-character string starts as q reads it, and a row is found by a
+  // symbol starting with _ written through `$ (the 0.29.0 literal bug).
+  assert.strictEqual(w.cellLiteral(payload(), 2, 1), 'enlist "z"');
+  assert.deepStrictEqual(w.editStatement(payload({ keys: 1, cells: [["_y", "b"], ["1.5", ""], ['"x y"', ',"z"'], ["a", "b"]] }), 1, 0, "kt", "2"), {
+    code: 'update px:(2) from `kt where (sym=`$"_y")',
+    matchedBy: ["sym"],
+  });
   // A monadic , becomes enlist, outside strings only.
-  assert.strictEqual(w.enlisted(',"a,(,b"'), 'enlist "a,(,b"');
-  assert.strictEqual(w.enlisted("(,1;,`a)"), "(enlist 1;enlist `a)");
-  assert.strictEqual(w.enlisted("1,2"), "1,2");
+  assert.strictEqual(readable(',"a,(,b"'), 'enlist "a,(,b"');
+  assert.strictEqual(readable("(,1;,`a)"), "(enlist 1;enlist `a)");
+  assert.strictEqual(readable("1,2"), "1,2");
   assert.strictEqual(w.guessTable("trade"), "trade");
   assert.strictEqual(w.guessTable("select from .ns.trade where sym=`a"), ".ns.trade");
   assert.strictEqual(w.guessTable("select sum px by sym from trade"), "trade");

@@ -63,6 +63,18 @@ test("a cell's q literal keeps its type: suffixes, typed nulls and infinities, s
   assert.strictEqual(atomLiteral(0, `"${"x".repeat(196)}...`, undefined).cut, true);
   assert.strictEqual(stringLiteral("a\nb\t\u0001"), '"a\\nb\\t\\001"');
   assert.strictEqual(symbolLiteral("x.y_1"), "`x.y_1");
+  // What `-3!` writes and q will not read back (the 0.29.0 bug; real q in
+  // grid_q.test.js): a one-item list's `,`, and a symbol starting with _.
+  assert.strictEqual(atomLiteral(0, ',"x"', undefined).literal, 'enlist "x"');
+  assert.strictEqual(atomLiteral(0, ',,"x"', undefined).literal, 'enlist enlist "x"');
+  assert.strictEqual(atomLiteral(0, '(,`a)!,1', undefined).literal, "(enlist `a)!enlist 1");
+  assert.strictEqual(atomLiteral(0, '",x","y"', undefined).literal, '",x","y"');
+  assert.strictEqual(atomLiteral(0, "`_z", undefined).literal, '`$"_z"');
+  assert.strictEqual(atomLiteral(0, "`_v`u", undefined).literal, '`$("_v";enlist "u")');
+  assert.strictEqual(atomLiteral(0, "`a`_y", undefined).literal, "`a`_y");
+  assert.strictEqual(symbolLiteral("_y"), '`$"_y"');
+  assert.strictEqual(symbolLiteral(""), "`");
+  assert.strictEqual(lit(11, "_y"), '`$"_y"');
 });
 
 test("a table's q literal: ([k:...] v:...) for plain names, n!flip for a reserved or odd one, enlist for one row", () => {

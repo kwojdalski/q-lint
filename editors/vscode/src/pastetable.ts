@@ -8,9 +8,9 @@
 // cell being that type's null; else symbols, or strings once a cell holds a
 // space or is long. Each cell is read as q's `0:` reads the same text with
 // the same type letter, so the literal is the table `("JF..";",") 0:` would
-// load (test/pastetable_q.test.js checks it). The literal itself is
-// qliteral.ts's, which writes a grid result as q.
-import { columnLiteral, numberText, plainName, stringLiteral } from "./qliteral";
+// load (test/pastetable_q.test.js checks it). The literal itself, and each
+// string and symbol in it, is qliteral.ts's, which writes a grid result as q.
+import { columnLiteral, numberText, plainName, qString, symbolLiteral } from "./qliteral";
 import { format, parse } from "./temporal";
 
 /// The commands of the paste and JSON features (`pasteview.ts`).
@@ -145,26 +145,10 @@ export function cellLiteral(kind: ColumnKind, cell: string): string | undefined 
       return `${m[1]}:${m[2]}:${m[3] ?? "00"}.${(m[4] ?? "").padEnd(3, "0")}`;
     }
     case "symbol":
-      return symbolText(text);
-    case "string": {
-      const s = stringLiteral(cell);
+      return symbolLiteral(text);
+    case "string":
       return qString(cell);
-    }
   }
-}
-
-/// A symbol's literal: bare when q reads it back as written, which a name
-/// starting with `_` it does not (`` `_y `` is `` ` `` and `_y`).
-export function symbolText(name: string): string {
-  return /^(?:[A-Za-z0-9.][A-Za-z0-9_.]*)?$/.test(name) ? `\`${name}` : `\`$${stringLiteral(name)}`;
-}
-
-/// A string's literal as a list: q holds it as UTF-8 bytes, so one byte
-/// is a char to `enlist` and `"é"` is two already. Not `,"x"`: q refuses
-/// that as a list item, `("ab";,"x")`.
-export function qString(text: string): string {
-  const s = stringLiteral(text);
-  return new TextEncoder().encode(text).length === 1 ? `enlist ${s}` : s;
 }
 
 /// A float's literal that reads back as the same double, and as a float

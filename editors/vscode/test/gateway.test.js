@@ -11,7 +11,8 @@ const path = require("node:path");
 const net = require("node:net");
 const { spawn } = require("node:child_process");
 const pkg = require("../package.json");
-const { GATEWAY_COMMANDS, fileServerTypes, gatewayStatement, isGatewayCall, qString, readGateway, symbols } = require("../out/gateway.js");
+const { GATEWAY_COMMANDS, fileServerTypes, gatewayStatement, isGatewayCall, readGateway, symbols } = require("../out/gateway.js");
+const { qString } = require("../out/qliteral.js");
 const { parseProcesses, serverTypes } = require("../out/processes.js");
 const { Live } = require("../out/live.js");
 

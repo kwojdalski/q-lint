@@ -9,8 +9,8 @@
 // vector, of objects with the same keys in the same order a table, and any
 // other array a general list. A JSON number is read as JavaScript reads it,
 // the double nearest, and written so q reads the same double back.
-import { plainName, stringLiteral } from "./qliteral";
-import { floatText, qString, symbolText } from "./pastetable";
+import { plainName, qString, stringLiteral, symbolLiteral } from "./qliteral";
+import { floatText } from "./pastetable";
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 
@@ -24,7 +24,7 @@ function symbols(keys: string[]): string {
   if (keys.length === 0) {
     return "`$()";
   }
-  const bare = keys.map(symbolText);
+  const bare = keys.map(symbolLiteral);
   if (bare.every((s) => /^`[A-Za-z0-9_.]*$/.test(s))) {
     return keys.length === 1 ? `enlist ${bare[0]}` : bare.join("");
   }
