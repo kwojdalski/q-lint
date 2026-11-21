@@ -556,6 +556,9 @@ export class Live {
     history: () => HistoryEntry[];
     /// The entries the Query History view shows, through its filter (#913).
     shownHistory: () => HistoryEntry[];
+    /// What the connection's status bar item says: the running time, the
+    /// heartbeat's latency, a reconnect (#910, #917).
+    statusText: () => string;
     /// What the result panel last drew.
     result: () => Rendered | undefined;
     /// Each discovery server, what it last listed, and why it failed.
@@ -572,6 +575,7 @@ export class Live {
       activeLabel: () => this.activeLabel(),
       history: () => this.history(),
       shownHistory: () => this.shownHistory(),
+      statusText: () => this.status.text,
       result: () => this.modes.lastRendered(),
       discovered: () =>
         this.discovery.discovered().map(({ server, state }) => ({
