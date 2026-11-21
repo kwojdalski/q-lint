@@ -315,3 +315,17 @@ test("an unwrapped atom or simple list keeps nanoseconds, a negative infinity's 
   // -8!-00:00:01.000
   assert.deepStrictEqual((await unwrapped("0x010000000d000000ed18fcffff")).text, ["-00:00:01.000"]);
 });
+
+test("a string is written with q's escapes, unwrapped and unlimited", async () => {
+  // -8!"caf\303\251\001\377"
+  assert.deepStrictEqual((await unwrapped("0x01000000150000000a0007000000636166c3a901ff")).text, ['"caf\\303\\251\\001\\377"']);
+  // -8!"\t"
+  assert.deepStrictEqual((await unwrapped("0x010000000f0000000a000100000009")).text, [',"\\t"']);
+  // -8!"\001"
+  assert.deepStrictEqual((await unwrapped("0x010000000a000000f601")).text, ['"\\001"']);
+  // An unlimited string comes as its bytes.
+  const bytes = [...Buffer.from("café", "utf8"), 255];
+  assert.deepStrictEqual(readUnlimited({ ok: true, type: 10, text: [], value: bytes }).text, ['"caf\\303\\251\\377"']);
+  assert.ok(UNLIMITED.includes('t=10h;"x"$r 1'));
+  assert.deepStrictEqual(readUnlimited({ ok: true, type: 10, text: [], value: "é\u0001" }).text, ['"\\303\\251\\001"']);
+});

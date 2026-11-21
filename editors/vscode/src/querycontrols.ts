@@ -75,14 +75,15 @@ export function limits(
 /// `readUnlimited` to write. A temporal list comes as the numbers q holds
 /// it as - timestamps and timespans long nanoseconds, a datetime float
 /// days, the rest ints - since the codec would make a timestamp a float,
-/// exact only to 256 ns, and loses the sign of a date's infinity. Like `RUN`
-/// it defines nothing on the process.
+/// exact only to 256 ns, and loses the sign of a date's infinity. A string
+/// comes as its bytes, which the codec would read as UTF-8, losing any that
+/// are not. Like `RUN` it defines nothing on the process.
 export const UNLIMITED = [
   "{[s;size]",
   ...TRAP,
   " t:type r 1;",
   " $[r 0;",
-  "   $[t within 1 19h;`ok`type`text`value!(1b;t;();$[t within 12 19h;\"jiifjiii\"[t-12h]$r 1;r 1]);`ok`type`text!(1b;t;.Q.S[\"j\"$size;0j] r 1)];",
+  "   $[t within 1 19h;`ok`type`text`value!(1b;t;();$[t within 12 19h;\"jiifjiii\"[t-12h]$r 1;t=10h;\"x\"$r 1;r 1]);`ok`type`text!(1b;t;.Q.S[\"j\"$size;0j] r 1)];",
   "   `ok`error`trace!(0b;r 1;r 2)]}",
 ].join("\n");
 

@@ -258,16 +258,34 @@ const NAMES: Record<number, string> = {
   18: "second", 19: "time",
 };
 
-function quoted(text: string): string {
-  return `"${text.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t")}"`;
+const ESCAPED: Record<number, string> = { 9: "\\t", 10: "\\n", 13: "\\r", 34: '\\"', 92: "\\\\" };
+
+/// Chars as q writes them, in quotes: a byte that is not printable ASCII as
+/// three octal digits (`"caf\303\251"`, `"\001"`), a tab, newline, carriage
+/// return, quote or backslash escaped. A string is its UTF-8 bytes; a char
+/// vector the codec decoded is written as the bytes q sent when they were
+/// UTF-8, which is what it decoded them as.
+function quoted(text: string | Uint8Array | number[]): string {
+  const bytes = typeof text === "string" ? Buffer.from(text, "utf8") : text;
+  let out = "";
+  for (const c of bytes) {
+    out += ESCAPED[c] ?? (c >= 32 && c < 127 ? String.fromCharCode(c) : `\\${c.toString(8).padStart(3, "0")}`);
+  }
+  return `"${out}"`;
 }
 
 /// A simple list of q type `t` (1 to 19) as q's console writes it:
 /// `1 2 3i`, `101b`, `` `a`b ``, `"abc"`, `,1` for one item.
 export function vectorText(values: unknown, t: number): string {
   if (t === 10) {
-    const s = typeof values === "string" ? values : Array.isArray(values) ? values.join("") : String(values);
-    return s.length === 1 ? `,${quoted(s)}` : quoted(s);
+    // Bytes from a typed decoding or an unlimited query; a string from the
+    // codec.
+    const s: string | Uint8Array | number[] =
+      values instanceof Uint8Array || (Array.isArray(values) && values.every((c) => typeof c === "number"))
+        ? (values as Uint8Array | number[])
+        : typeof values === "string" ? values : Array.isArray(values) ? values.join("") : String(values);
+    const one = typeof s === "string" ? Buffer.byteLength(s, "utf8") === 1 : s.length === 1;
+    return one ? `,${quoted(s)}` : quoted(s);
   }
   const items = Array.isArray(values) ? values : [values];
   if (items.length === 0) {
@@ -295,7 +313,7 @@ export function vectorText(values: unknown, t: number): string {
 export function atomText(x: unknown, t: number): string {
   const p = -t;
   if (p === 10) {
-    return quoted(x === null ? " " : String(x));
+    return quoted(x === null ? " " : typeof x === "number" ? [x] : String(x));
   }
   if (p === 11) {
     return `\`${x ?? ""}`;
@@ -436,10 +454,13 @@ export function formatValue(value: unknown, type?: number): string[] {
 /// it, of q type `type`.
 export function formatQ(q: QValue, value: unknown, type?: number): string[] {
   if (q.kind === "atom") {
-    return [atomText(q.t === -10 && typeof q.v === "number" ? String.fromCharCode(q.v) : q.v, q.t)];
+    return [atomText(q.v, q.t)];
   }
   if (q.kind === "vector") {
     return [vectorText(q.v, q.t)];
+  }
+  if (q.kind === "chars") {
+    return [vectorText(q.v, 10)];
   }
   return formatValue(value, type);
 }
