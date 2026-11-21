@@ -5,7 +5,8 @@
 //
 // Like a query (`query.ts`), the call is one lambda sent with its arguments,
 // and nothing is defined on the process. It walks the namespaces breadth
-// first from the root and `key \``, skipping the excluded ones and any
+// first from the root and `key \``, skipping the excluded ones (a root
+// namespace, or a nested one as `ns.sub`) and any
 // dotted root name that is not a dictionary of names (kdb+ lists `.cfg:42`
 // in `key \``), and answers
 //
@@ -38,6 +39,7 @@ export const GATHER = [
   "{[ex;lim]",
   " n:\"j\"$lim 0;m:\"j\"$lim 1;",
   " todo:`.,` sv'`,'asc(key`)except(`$\" \" vs ex),`;",
+  " ex:` sv'`,'`$\" \" vs ex;",
   " todo:todo where{$[99h=type d:@[get;x;0];11h=type key d;0b]}each todo;",
   " seen:`$();rows:();spaces:();",
   " while[(count todo)&m>count seen;",
@@ -45,7 +47,7 @@ export const GATHER = [
   "  d:@[get;ns;{()!()}];",
   "  k:asc(key d)except`;",
   "  kids:$[ns~`.;`$();k where{(99h=type x)&(::)~first x}each d k];",
-  "  todo,:` sv'ns,'kids;",
+  "  todo,:(` sv'ns,'kids)except ex;",
   "  k:k except kids;",
   "  spaces,:enlist`ns`total!(ns;\"f\"$count k);",
   "  rows,:{[ns;n;nm;x]",
@@ -247,7 +249,9 @@ function variableNode(e: Entry): Node {
   return { kind: "variable", label: e.name, description: `${t}${count}`, tooltip: `${fullName(e)}: ${t}${count}`, name: fullName(e) };
 }
 
-const excludedBy = (ns: string, excluded: string[]): boolean => ns !== "." && excluded.includes(ns.split(".")[1]);
+/// Whether `ns` is an excluded namespace (`q`, `ns.sub`) or nested in one.
+const excludedBy = (ns: string, excluded: string[]): boolean =>
+  excluded.some((e) => ns === `.${e}` || ns.startsWith(`.${e}.`));
 
 /// The explorer's tree from what `GATHER` answered: a row per namespace,
 /// sorted, the root first; under each, Tables, Functions and Variables, each
