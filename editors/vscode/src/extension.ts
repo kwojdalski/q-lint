@@ -9,6 +9,7 @@
 // file is knowledge those editors would have to reimplement.
 import {
   commands,
+  Position,
   Uri,
   workspace,
   window,
@@ -60,6 +61,8 @@ import { registerTestStubs } from "./teststubview";
 import { registerBacktraceLinks } from "./backtraceview";
 import { registerLogpoints } from "./logpointview";
 import { registerLocalsAtError } from "./localsview";
+import { SHOW_REFERENCES, lensTarget } from "./editorassist";
+import { registerArgumentSlot, registerProcessSymbols } from "./editorassistview";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -147,6 +150,8 @@ export async function activate(
     testExplorer: Omit<ReturnType<typeof registerTestExplorer>, "serverChanged">;
     valueHover: ReturnType<typeof registerValueHover>;
     undefinedNames: ReturnType<typeof registerUndefinedNames>;
+    argumentSlot: ReturnType<typeof registerArgumentSlot>;
+    processSymbols: ReturnType<typeof registerProcessSymbols>;
     idioms: ReturnType<typeof registerIdioms>;
     hotReload: Drift["hotReloadState"];
     assistTools: () => string[];
@@ -197,6 +202,26 @@ export async function activate(
       return typeof code === "string" && typeof uri === "string" ? live.queryCode(code, Uri.parse(uri)) : undefined;
     }),
   );
+  // A reference count lens hands over the document and the name's position;
+  // the references are VS Code's own list of them, from the server.
+  context.subscriptions.push(
+    commands.registerCommand(SHOW_REFERENCES, async (uri?: unknown, position?: unknown) => {
+      if (workspace.getConfiguration("q-lint").get<unknown>("referenceLens.enable", true) === false) {
+        void window.showInformationMessage(
+          "q-lint: the reference count lenses are turned off (q-lint.referenceLens.enable); turn the setting on to open references from a lens.",
+        );
+        return undefined;
+      }
+      const target = lensTarget(uri, position);
+      if (target === undefined) {
+        return undefined;
+      }
+      const at = Uri.parse(target.uri);
+      const where = new Position(target.position.line, target.position.character);
+      const locations = await commands.executeCommand("vscode.executeReferenceProvider", at, where);
+      return commands.executeCommand("editor.action.showReferences", at, where, Array.isArray(locations) ? locations : []);
+    }),
+  );
   const agentConfirmation = registerAgentTool(context, live);
   const notebook = registerNotebooks(context, live);
   const notebookVariables = registerNotebookVariables(context, live, notebook.processOf, notebook.onDidRun);
@@ -228,6 +253,8 @@ export async function activate(
   testExplorer = registerTestExplorer(context, live, running);
   const valueHover = registerValueHover(context, live, running);
   const undefinedNames = registerUndefinedNames(context, live, running);
+  const argumentSlot = registerArgumentSlot(context, running);
+  const processSymbols = registerProcessSymbols(context, live, running);
   const idioms = registerIdioms(context);
   const interpreters = new Interpreters(context);
   const qTasks = registerTasks(context);
@@ -271,6 +298,8 @@ export async function activate(
     },
     valueHover,
     undefinedNames,
+    argumentSlot,
+    processSymbols,
     idioms,
     hotReload: () => drift.hotReloadState(),
     assistTools: assistTools.registered,

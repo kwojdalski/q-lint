@@ -331,6 +331,13 @@ pub fn bracket_calls(source: &str) -> Vec<BracketCall> {
     semantics::help::bracket_calls(&v.code)
 }
 
+/// `bracket_calls`, with a string argument spanning its quotes rather than
+/// trimmed away as a blank: the slots as an editor highlights them.
+pub fn argument_slots(source: &str) -> Vec<BracketCall> {
+    let v = views(source);
+    semantics::help::bracket_calls_in(&v.code, &v.comments)
+}
+
 /// The paths of the loads in `source` - `\l path`, `system "l path"` and a
 /// file symbol - as start and length, in order.
 pub fn load_paths(source: &str) -> Vec<(usize, usize)> {
@@ -394,6 +401,17 @@ pub fn glyph_at(source: &str, offset: usize) -> Option<(usize, usize)> {
 pub fn word_at(source: &str, offset: usize) -> Option<(usize, usize)> {
     let v = views(source);
     semantics::help::word_at(&v.code, source, offset)
+}
+
+/// A local whose assignments settle its type, and that type as `type`
+/// returns it: see `semantics::infer`.
+pub use semantics::infer::{Typed, literal_type};
+
+/// Each local of each lambda in `source` whose every assignment is a plain
+/// one of a literal of the same type, in order of where it is first named.
+pub fn typed_locals(source: &str) -> Vec<Typed> {
+    let v = views(source);
+    semantics::infer::typed_locals(&v.code, source, &v.comments)
 }
 
 /// What is being typed at byte `offset`, or `None` where no name is - in a

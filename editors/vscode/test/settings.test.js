@@ -48,6 +48,9 @@ test("the defaults start the server as it was started before settings", () => {
     documentLinks: { enable: true },
     generateQdoc: { enable: true },
     extractFunction: { enable: true },
+    autoLoad: { enable: false },
+    referenceLens: { enable: true },
+    inferredTypes: { enable: true },
     workspaceIndex: { enable: true, exclude: [] },
   });
 });
@@ -106,6 +109,9 @@ test("every editor-only setting reaches the server's options", () => {
       "documentLinks.enable": false,
       "generateQdoc.enable": false,
       "extractFunction.enable": false,
+      "autoLoad.enable": true,
+      "referenceLens.enable": false,
+      "inferredTypes.enable": false,
       "workspaceIndex.enable": false,
       "workspaceIndex.exclude": ["vendor/**"],
     }),
@@ -129,6 +135,9 @@ test("every editor-only setting reaches the server's options", () => {
     documentLinks: { enable: false },
     generateQdoc: { enable: false },
     extractFunction: { enable: false },
+    autoLoad: { enable: true },
+    referenceLens: { enable: false },
+    inferredTypes: { enable: false },
     workspaceIndex: { enable: false, exclude: ["vendor/**"] },
   });
 });

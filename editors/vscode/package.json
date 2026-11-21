@@ -301,6 +301,24 @@
             "order": 29,
             "markdownDescription": "Offer **Extract function** in the lightbulb and **Refactor...** menu over a selection: it becomes a lambda defined above the top-level statement it is in, taking the parameters and locals it reads, and the selection a call to it. Only a selection q reads as one value is rewritten; **Refactor...** says why another is refused. Off, q-lint offers no such action."
           },
+          "q-lint.autoLoad.enable": {
+            "type": "boolean",
+            "default": false,
+            "order": 32,
+            "markdownDescription": "When completing a name that one other workspace file defines, and nothing this file loads or is loaded with defines, accepting it also writes the `\\l` that loads that file: after the file's last load above the cursor, keeping their order. Never a second load of a file already reached, and nothing for a name two files define. Needs `#q-lint.completion.enable#`. Off by default: accepting a name then writes a line elsewhere in the file."
+          },
+          "q-lint.referenceLens.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 34,
+            "markdownDescription": "Show **N references** above each function a statement at column 0 defines: the places the workspace's `.q` files read it, as **Find All References** lists them without the assignments. Click it to see them. Read from the source, never from a running q. Off, q-lint shows no such lens."
+          },
+          "q-lint.inferredTypes.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 33,
+            "markdownDescription": "Show a lambda local's type on hover and as an inlay hint after its value (`a:1 2 3 long list`), only where every assignment of it is a literal of the same type, so the type is the one q's `type` gives. An expression, a parameter or an amend shows nothing rather than a guess. Off, q-lint shows neither."
+          },
           "q-lint.workspaceIndex.enable": {
             "type": "boolean",
             "default": true,
@@ -703,6 +721,18 @@
             "default": false,
             "order": 132,
             "markdownDescription": "Warn on each global a q file reads that neither the workspace nor the connected process defines. The process is asked, by each name's namespace and without evaluating anything, when the file is opened, saved or brought to the front, on connect and after a query; a production process only by **Check Undefined Names on Process**. Off by default: it queries the process on its own."
+          },
+          "q-lint.argumentSlot.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 145,
+            "markdownDescription": "In `f[a;b;c]`, highlight the argument the cursor is in and name the parameter it is passed as, beside it, where no parameter inlay hint already does. Asks the language server only, never a process. Off, nothing listens and nothing is drawn."
+          },
+          "q-lint.processSymbols.enable": {
+            "type": "boolean",
+            "default": false,
+            "order": 146,
+            "markdownDescription": "Include the names defined only on the connected process in **Go to Symbol in Workspace** (Ctrl/Cmd+T). The process is asked, by one fixed read-only lambda that lists its namespaces' names without evaluating any, only while you search, and not at all when it is tagged production. Off by default: a search then queries the process."
           },
           "q-lint.idiomSnippets.enable": {
             "type": "boolean",
@@ -1173,6 +1203,11 @@
       {
         "command": "q-lint.runDefinition",
         "title": "Run Definition",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.showReferences",
+        "title": "Show References",
         "category": "q-lint"
       },
       {
@@ -2757,6 +2792,10 @@
         },
         {
           "command": "q-lint.runDefinition",
+          "when": "false"
+        },
+        {
+          "command": "q-lint.showReferences",
           "when": "false"
         },
         {

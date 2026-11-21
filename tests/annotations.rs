@@ -231,10 +231,18 @@ fn inlay_hints_are_announced_and_can_be_turned_off() {
     let dir = tempfile::tempdir().unwrap();
     let (_, reply) = Server::over(dir.path(), &[], client(), Value::Null);
     assert_eq!(reply["result"]["capabilities"]["inlayHintProvider"], true);
+    // The inferred types (`tests/assist.rs`) are inlay hints too: with
+    // them on, parameter names alone off leaves the provider and no name.
     let options = json!({"inlayHints": {"enable": false}});
     let (mut server, reply) = Server::over(dir.path(), &[("lib.q", LIB)], client(), options);
-    assert!(reply["result"]["capabilities"]["inlayHintProvider"].is_null());
+    assert_eq!(reply["result"]["capabilities"]["inlayHintProvider"], true);
     let main = "t:.lib.add[1;2]\n";
+    let uri = server.open(dir.path(), "main.q", main);
+    let reply = server.whole("textDocument/inlayHint", &uri, everything());
+    assert_eq!(reply["result"], json!([]), "{reply}");
+    let options = json!({"inlayHints": {"enable": false}, "inferredTypes": {"enable": false}});
+    let (mut server, reply) = Server::over(dir.path(), &[("lib.q", LIB)], client(), options);
+    assert!(reply["result"]["capabilities"]["inlayHintProvider"].is_null());
     let uri = server.open(dir.path(), "main.q", main);
     let reply = server.whole("textDocument/inlayHint", &uri, everything());
     assert_eq!(reply["result"], Value::Null, "{reply}");

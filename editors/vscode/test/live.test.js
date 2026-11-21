@@ -315,6 +315,7 @@ test("package.json declares exactly the commands the extension registers", () =>
     ...[ONBOARDING.getStarted, ONBOARDING.openHelpLink, ONBOARDING.editTagColor, ONBOARDING.newNotebook],
     "q-lint.restartServer",
     "q-lint.runDefinition",
+    "q-lint.showReferences",
     ...Object.values(SOURCE_COMMANDS),
     INFO.refreshMonitor,
     INFO.refreshHdb,
