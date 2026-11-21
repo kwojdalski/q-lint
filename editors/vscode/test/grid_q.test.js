@@ -121,4 +121,52 @@ test("the grid lambda against a real q process", { skip }, async (t) => {
       assert.strictEqual((await connection.queryGrid(statements(plain), SIZE, 10, true)).grid.tree, undefined, plain);
     }
   });
+  await t.test("a cut result held for paging is sent page by page, ranked as q ranks the whole (#922)", async () => {
+    const { gridLambda, PAGE, readPage, appendPage, readGridAnswer } = require("../out/grid.js");
+    const code = "([k:til 23] v:23#3 1 2 0n 5f; s:23#`c`a`b)";
+    const full = (await connection.queryGrid(statements(code), SIZE, 100)).grid;
+    let grid = readGridAnswer(await connection.call(gridLambda(false, true), statements(code), SIZE, 10)).grid;
+    assert.strictEqual(grid.cells[0].length, 10);
+    while (grid.cells[0].length < grid.count) {
+      const page = readPage(await connection.call(PAGE, grid.cells[0].length, 10));
+      assert.notStrictEqual(typeof page, "string", page);
+      grid = appendPage(grid, page);
+    }
+    assert.deepStrictEqual(grid.cells, full.cells);
+    assert.deepStrictEqual(grid.rank, full.rank);
+    // Past the end: no rows; a result not cut empties what was held.
+    assert.strictEqual(readPage(await connection.call(PAGE, 23, 10)).cells[0].length, 0);
+    await connection.call(gridLambda(false, true), statements("([] a:1 2)"), SIZE, 10);
+    assert.strictEqual(readPage(await connection.call(PAGE, 0, 10)), "held");
+    // A partitioned table is held by reference and read with .Q.ind.
+    grid = readGridAnswer(await connection.call(gridLambda(false, true), statements("p"), SIZE, 4)).grid;
+    grid = appendPage(grid, readPage(await connection.call(PAGE, 4, 4)));
+    assert.deepStrictEqual(grid.cells[1], ["a", "b", "c", "a", "b", "c"]);
+    assert.deepStrictEqual(grid.cells[0].slice(3), ["2026.01.02", "2026.01.02", "2026.01.02"]);
+    // Asked without hold, nothing is defined.
+    const before = (await connection.query(statements("key `.qlint"), SIZE)).text.join("");
+    await connection.queryGrid(statements("([] a:til 50)"), SIZE, 10);
+    assert.strictEqual((await connection.query(statements("key `.qlint"), SIZE)).text.join(""), before);
+  });
+
+  await t.test("an exported q literal rebuilds the table exactly, and a drill-down's value runs as written (#921, #927)", async () => {
+    const { tableLiteral } = require("../out/qliteral.js");
+    const { fillDrilldown } = require("../out/drilldown.js");
+    const code =
+      '([k:(`a;`b;`$"c d")] b:101b; x:0x0a00ff; h:1 0N 0Wh; i:1 0N -0Wi; j:9007199254740993 0N 0W; e:(1.5e;0Ne;0we); f:3.14159265358979 0n -0w; c:"x y"; ' +
+      "p:(2024.01.02D03:04:05.123456789;0Np;0Wp); m:(2024.01m;0Nm;2023.12m); d:(2024.01.31;0Nd;1999.12.31); z:(2024.01.02T03:04:05.123;0Nz;0wz); " +
+      'n:(0D01:02:03.000000004;0Nn;-0D00:00:01); u:(10:30;0Nu;23:59); v:(10:30:01;0Nv;00:00:00); t:(10:30:01.002;0Nt;23:59:59.999); ' +
+      'g:("G"$"8c680a01-5a49-5aab-5a65-d4bfddb6a661";0Ng;"G"$"00000000-0000-0000-0000-000000000001"); l:("abc";`x`y;1 2 3); q:("say \\"hi\\"|x";"";"tab\\there"))';
+    const grid = (await connection.queryGrid(statements(code), SIZE, 100)).grid;
+    const literal = tableLiteral(grid).code;
+    const same = await connection.query(statements(`(${code})~${literal}`), SIZE);
+    assert.deepStrictEqual(same.text, ["1b"], literal);
+    // Each cell drills down to a query that finds its own row.
+    for (const [column, row] of [[0, 2], [6, 0], [10, 1], [18, 0]]) {
+      const filled = fillDrilldown(`exec i from 0!(${code}) where {{column}}={{value}}`, grid, column, row);
+      assert.ok("code" in filled, filled.error);
+    }
+    const filled = fillDrilldown(`exec i from 0!(${code}) where k={{value}}, d={{row.d}}`, grid, 0, 2);
+    assert.deepStrictEqual((await connection.query(statements(filled.code), SIZE)).text, [",2"]);
+  });
 });

@@ -33,6 +33,9 @@ class Element {
   setAttribute(name, value) {
     (this.attributes ??= {})[name] = String(value);
   }
+  getAttribute(name) {
+    return this.attributes?.[name] ?? null;
+  }
   focus() {
     Element.focused = this;
   }
@@ -311,4 +314,113 @@ test("statistics and the heatmap turned off: no Stats view or Heatmap button, an
   // On: both offered.
   page.send({ ...result("s.1", 3), features: { statistics: true, heatmap: true } });
   assert.ok(button(page, "Stats") && button(page, "Heatmap"));
+});
+
+// --- wave two: export formats (#921), paging (#922), pivot (#925), charts
+// (#926) and drill-down (#927)
+
+/// A result of a symbol column `s` and a long column `n`, for a pivot.
+function symbols(id) {
+  const s = ["b", "a", "b", "a"];
+  const n = ["1", "2", "3", "4"];
+  return {
+    ...result(id, 4),
+    grid: {
+      columns: [
+        { name: "s", type: 11, typeName: "symbol (s)", key: false, numeric: false, temporal: false },
+        { name: "n", type: 7, typeName: "long (j)", key: false, numeric: true, temporal: false },
+      ],
+      cells: [s, n],
+      rank: [[1, 0, 1, 0], [0, 1, 2, 3]],
+      values: [null, n.map(Number)],
+      total: 4,
+    },
+  };
+}
+
+test("Pivot sums a numeric column by the first other one, and its controls change it (#925)", () => {
+  const page = loadPage(undefined);
+  page.send({ ...symbols("s.1"), control: { key: "k.1", action: "view", view: "pivot" } });
+  const pivot = lastRendered(page).rendered.pivot;
+  assert.deepStrictEqual(pivot, { rows: 2, columns: ["s", "sum"], first: ["a", "6"] });
+  // Its aggregation, from its select: the last of the four.
+  const selects = page.body.all((e) => e.tagName === "SELECT");
+  const as = selects[3];
+  as.value = "count";
+  as.fire("change");
+  assert.deepStrictEqual(lastRendered(page).rendered.pivot.first, ["a", "2"]);
+  button(page, "Copy Pivot").fire("click");
+  assert.deepStrictEqual(page.posted.at(-1), { type: "copyText", id: "s.1", text: "s,count\na,2\nb,2\n" });
+  // Turned off: no Pivot view, and a request for it shows the grid.
+  page.send({ ...symbols("s.2"), features: { pivot: false }, control: { key: "k.2", action: "view", view: "pivot" } });
+  assert.strictEqual(button(page, "Pivot"), undefined);
+  assert.strictEqual(lastRendered(page).rendered.view, "grid");
+});
+
+test("Export as... asks the extension for the rows shown, and is gone with export turned off (#921)", () => {
+  const page = loadPage(undefined);
+  page.send(result("s.1", 3));
+  button(page, "Export as...").fire("click");
+  assert.deepStrictEqual(page.posted.at(-1), { type: "exportAs", id: "s.1", rows: [0, 1, 2] });
+  page.send({ ...result("s.1", 3), features: { export: false } });
+  assert.strictEqual(button(page, "Export as..."), undefined);
+  assert.ok(button(page, "Export to CSV"));
+});
+
+test("a grid the process holds more of asks for the next page once, as it reaches the end (#922)", () => {
+  const page = loadPage(undefined);
+  page.send({ ...result("s.1", 5), more: true, grid: { ...result("s.1", 5).grid, total: 50 } });
+  const asked = page.posted.filter((m) => m.type === "more");
+  assert.deepStrictEqual(asked, [{ type: "more", id: "s.1" }]);
+  assert.ok(button(page, "Load more"));
+  assert.match(page.body.all((e) => e.className === "info")[0].textContent, /5 of 50 rows: more as the grid scrolls/);
+  // Scrolling again before the page comes asks nothing more.
+  page.scroller().fire("scroll");
+  assert.strictEqual(page.posted.filter((m) => m.type === "more").length, 1);
+  // Without it, nothing is asked, and the cut is said as before.
+  const plain = loadPage(undefined);
+  plain.send({ ...result("s.1", 5), grid: { ...result("s.1", 5).grid, total: 50 } });
+  assert.strictEqual(plain.posted.filter((m) => m.type === "more").length, 0);
+  assert.strictEqual(button(plain, "Load more"), undefined);
+});
+
+test("a double-clicked cell asks to drill down from it, and carries its menu context; off, neither (#927)", () => {
+  const page = loadPage(undefined);
+  page.send(result("s.1", 3));
+  const cell = page.rows()[2].children[0];
+  assert.deepStrictEqual(JSON.parse(cell.attributes["data-vscode-context"]), { webviewSection: "cell", column: 0, row: 2, preventDefaultContextMenuItems: false });
+  const body = page.body.all((e) => e.tagName === "TBODY")[0];
+  body.fire("dblclick", { target: cell });
+  assert.deepStrictEqual(page.posted.at(-1), { type: "drill", id: "s.1", column: 0, row: 2 });
+  page.send({ ...result("s.2", 3), features: { drilldown: false } });
+  const off = page.rows()[0].children[0];
+  assert.strictEqual(off.attributes, undefined);
+  assert.strictEqual((page.body.all((e) => e.tagName === "TBODY")[0].listeners.dblclick ?? []).length, 0);
+});
+
+test("the chart offers area, step and candles, a right axis and image buttons only while charts are on (#926)", () => {
+  const page = loadPage(undefined);
+  const twoSeries = {
+    ...result("s.1", 3),
+    view: "chart",
+    grid: {
+      columns: ["t", "a", "b"].map((name) => ({ name, type: 7, typeName: "long (j)", key: false, numeric: true, temporal: false })),
+      cells: [["1", "2", "3"], ["4", "5", "6"], ["7", "8", "9"]],
+      rank: [[0, 1, 2], [0, 1, 2], [0, 1, 2]],
+      values: [[1, 2, 3], [4, 5, 6], [7, 8, 9]],
+      total: 3,
+    },
+  };
+  page.send(twoSeries);
+  const options = () => page.body.all((e) => e.tagName === "SELECT")[0].children.map((o) => o.value);
+  assert.deepStrictEqual(options(), ["line", "bar", "scatter", "histogram", "area", "step", "candlestick"]);
+  assert.ok(button(page, "Save PNG") && button(page, "Save SVG"));
+  assert.strictEqual(page.body.all((e) => e.tagName === "SELECT").length, 2);
+  // A request for an image, with no chart drawn here (no Chart.js), answers empty.
+  page.send({ ...twoSeries, control: { key: "k.1", action: "image", format: "svg" } });
+  assert.deepStrictEqual(page.posted.at(-1), { type: "image", id: "s.1", format: "svg", data: "", key: "k.1" });
+  page.send({ ...twoSeries, features: { charts: false } });
+  assert.deepStrictEqual(options(), ["line", "bar", "scatter", "histogram"]);
+  assert.strictEqual(button(page, "Save PNG"), undefined);
+  assert.strictEqual(page.body.all((e) => e.tagName === "SELECT").length, 1);
 });

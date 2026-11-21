@@ -433,6 +433,65 @@
             "order": 122,
             "markdownDescription": "Offer the result panel's **Tree** view of a dictionary or a nested list, and **q-lint: Show Result as Tree**. Off, the process is not asked for the tree."
           },
+          "q-lint.results.export.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 123,
+            "markdownDescription": "Offer **Export as...** in the result panel, **q-lint: Export Results As...** and **q-lint: Copy Results As...**: the rows shown as Excel, Parquet, JSON, a Markdown table or a q expression that rebuilds the table. Export to CSV is always offered."
+          },
+          "q-lint.results.paging.enable": {
+            "type": "boolean",
+            "default": false,
+            "order": 124,
+            "markdownDescription": "Page through a result cut at `q-lint.query.gridLimit`: the process keeps the whole result as `.qlint.held`, and the grid asks it for the next `gridLimit` rows as it scrolls to the end, up to 1,000,000 rows. Off by default, because it defines `.qlint.held` on the process and holds the result there until the next grid query while paging is on (`.qlint.held:()` frees it). Never on a process tagged `prod`, and never in unwrapped mode."
+          },
+          "q-lint.results.pivot.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 125,
+            "markdownDescription": "Offer the result panel's **Pivot** view, and **q-lint: Show Result as Pivot**: rows by one column, columns by another, and the count, sum, average, min or max of a third."
+          },
+          "q-lint.results.charts.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 126,
+            "markdownDescription": "Offer the area, step and candle charts, a second y axis, the chart's **Save PNG** and **Save SVG** buttons, and **q-lint: Save Result Chart as Image**. Off, the chart offers line, bar, scatter and histogram."
+          },
+          "q-lint.results.drilldown.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 127,
+            "markdownDescription": "Offer the drill-down queries of `q-lint.results.drilldownTemplates` on a grid cell: double-click it, or right-click it and choose **Drill Down from Cell**. The query picked runs on the process the result came from, after a confirmation on a production one."
+          },
+          "q-lint.results.drilldownTemplates": {
+            "type": "array",
+            "default": [],
+            "order": 128,
+            "items": {
+              "type": "object",
+              "required": [
+                "query"
+              ],
+              "properties": {
+                "label": {
+                  "type": "string",
+                  "description": "What the pick shows. The query, when there is no label."
+                },
+                "query": {
+                  "type": "string",
+                  "description": "The q to run. {{value}} is the cell's value as q, {{column}} its column's name as a symbol, {{row.name}} the value of column name in the same row."
+                },
+                "columns": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "The columns it is offered for. Every column when left out."
+                }
+              }
+            },
+            "markdownDescription": "Follow-up queries a grid cell offers. In `query`, `{{value}}` is the cell's value as a q literal (`` `AAPL ``, `2024.01.02`, `0Nj`), `{{column}}` its column's name as a symbol, and `{{row.name}}` the value of column `name` in the same row. For example `{\"label\": \"Trades\", \"query\": \"select from trade where date={{row.date}}, sym={{value}}\", \"columns\": [\"sym\"]}`."
+          },
           "q-lint.query.gridHeatmap": {
             "type": "boolean",
             "default": false,
@@ -957,6 +1016,42 @@
         "icon": "$(history)"
       },
       {
+        "command": "q-lint.exportResultsAs",
+        "title": "Export Results As...",
+        "category": "q-lint",
+        "icon": "$(export)"
+      },
+      {
+        "command": "q-lint.copyResultsAs",
+        "title": "Copy Results As...",
+        "category": "q-lint",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "q-lint.loadMoreResultRows",
+        "title": "Load More Result Rows",
+        "category": "q-lint",
+        "icon": "$(fold-down)"
+      },
+      {
+        "command": "q-lint.showResultPivot",
+        "title": "Show Result as Pivot",
+        "category": "q-lint",
+        "icon": "$(table)"
+      },
+      {
+        "command": "q-lint.saveResultChart",
+        "title": "Save Result Chart as Image",
+        "category": "q-lint",
+        "icon": "$(file-media)"
+      },
+      {
+        "command": "q-lint.drillDownResultCell",
+        "title": "Drill Down from Cell",
+        "category": "q-lint",
+        "icon": "$(search)"
+      },
+      {
         "command": "q-lint.runInTerminal",
         "title": "Run Code from Terminal",
         "category": "q-lint",
@@ -1232,6 +1327,12 @@
       ]
     },
     "menus": {
+      "webview/context": [
+        {
+          "command": "q-lint.drillDownResultCell",
+          "when": "(webviewId == 'q-lint.result' || webviewId == 'q-lint.results') && webviewSection == 'cell' && config.q-lint.results.drilldown.enable"
+        }
+      ],
       "view/title": [
         {
           "command": "q-lint.refreshDependencies",
@@ -1297,6 +1398,11 @@
           "command": "q-lint.showResultFromHistory",
           "when": "view == q-lint.results && q-lint.result.shown && config.q-lint.results.history.enable",
           "group": "navigation@1"
+        },
+        {
+          "command": "q-lint.exportResultsAs",
+          "when": "view == q-lint.results && q-lint.result.shown && config.q-lint.results.export.enable",
+          "group": "navigation@2"
         },
         {
           "command": "q-lint.revealProcess",
@@ -1651,6 +1757,30 @@
         {
           "command": "q-lint.toggleResultHeatmap",
           "when": "config.q-lint.results.heatmap.enable"
+        },
+        {
+          "command": "q-lint.exportResultsAs",
+          "when": "q-lint.result.shown && config.q-lint.results.export.enable"
+        },
+        {
+          "command": "q-lint.copyResultsAs",
+          "when": "q-lint.result.shown && config.q-lint.results.export.enable"
+        },
+        {
+          "command": "q-lint.loadMoreResultRows",
+          "when": "q-lint.result.hasMore && config.q-lint.results.paging.enable"
+        },
+        {
+          "command": "q-lint.showResultPivot",
+          "when": "q-lint.result.shown && config.q-lint.results.pivot.enable"
+        },
+        {
+          "command": "q-lint.saveResultChart",
+          "when": "q-lint.result.shown && config.q-lint.results.charts.enable"
+        },
+        {
+          "command": "q-lint.drillDownResultCell",
+          "when": "false"
         },
         {
           "command": "q-lint.filterQueryHistory",

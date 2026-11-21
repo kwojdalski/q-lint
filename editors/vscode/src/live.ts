@@ -77,6 +77,7 @@ import {
 } from "./historyfilter";
 import { CONNECT_SCRIPT_COMMANDS, readConnectScript, scriptOf, scriptPath, scriptsBrought, scriptSummary, withScript, type ConnectScript } from "./connectscript";
 import { isProduction } from "./agent";
+import { PAGE, readPage, type GridPage } from "./grid";
 import { PLACEHOLDER_VALUES_KEY, lastValue, placeholderNames, readPlaceholders, remembered, substitute } from "./placeholders";
 
 const PROCESSES_KEY = "q-lint.processes";
@@ -468,6 +469,8 @@ export class Live {
     this.discovery = new DiscoveryServers(context, { list: () => this.processes(), save: (processes) => this.save(processes) });
     const terminals = new QTerminals(context);
     this.modes = new QueryModes(context);
+    this.modes.setPager((label, offset, count) => this.pageHeld(label, offset, count));
+    this.modes.setRunner((code, label) => this.runDrilldown(code, label));
     this.controls = new QueryControls(context, {
       activeLabel: () => this.activeLabel(),
       pick: async (title) => (await this.chosen(undefined, title, true))?.label,
@@ -1607,10 +1610,13 @@ export class Live {
       // Grid and chart modes ask for the rows too; a value that is not
       // tabular comes back as console mode's text.
       const cut = statements(code);
+      // Paging (#922) leaves a cut result on the process: never in
+      // unwrapped mode, which sends nothing of ours, nor on production.
+      const hold = !controls.unwrapped && settings.mode !== "console" && this.modes.wantsHold(isProduction(process));
       const answer = controls.unwrapped
         ? await runUnwrapped(connection, cut, { size: consoleSize, limit: gridLimit, unlimited, grid: settings.mode !== "console" })
         : settings.mode !== "console"
-          ? await connection.queryGrid(cut, consoleSize, gridLimit, this.modes.wantsTree())
+          ? await connection.queryGrid(cut, consoleSize, gridLimit, this.modes.wantsTree(), hold)
           : unlimited
             ? readUnlimited(await connection.call(UNLIMITED, cut, consoleSize))
             : await connection.query(cut, consoleSize);
@@ -1623,7 +1629,7 @@ export class Live {
         outcome: answer.ok ? "ok" : "error",
         ...(answer.ok ? {} : { error: answer.error }),
       };
-      if (!this.modes.show({ process: process.label, code, answer, millis }, settings)) {
+      if (!this.modes.show({ process: process.label, code, answer, millis, held: hold }, settings)) {
         this.show(render({ process: process.label, code, answer, millis }, settings), settings.autoClear);
       }
     } catch (error) {
@@ -1655,6 +1661,47 @@ export class Live {
     this.changed.fire("queried");
     this.notifyFinished(entry);
     await this.record(entry);
+  }
+
+  /// Rows `offset` on of the result `label`'s process holds for paging, or
+  /// why they could not be fetched. Only on the connection the result came
+  /// from, and only when no query is running on it.
+  private async pageHeld(label: string, offset: number, count: number): Promise<GridPage | string> {
+    const connection = this.connection;
+    if (connection === undefined || this.activeLabel() !== label) {
+      return `it is no longer the connected process; run the query again to page through it`;
+    }
+    if (connection.isBusy) {
+      return "a query is running on it; scroll again once it ends";
+    }
+    return readPage(await connection.call(PAGE, offset, count));
+  }
+
+  /// Run a drill-down query on the process the result came from, as a
+  /// query from the editor is run, after asking when it is a production one.
+  private async runDrilldown(code: string, label: string): Promise<void> {
+    const process = this.processes().find((p) => p.label === label) ?? (this.active?.label === label ? this.active : undefined);
+    if (process !== undefined && isProduction(process)) {
+      const yes = "Run";
+      const sure = await window.showWarningMessage(
+        `${process.label} is a production process (tagged ${process.tags.join(", ")}). Run this drill-down query there?\n\n${code}`,
+        { modal: true },
+        yes,
+      );
+      if (sure !== yes) {
+        return;
+      }
+    }
+    if (this.activeLabel() !== label) {
+      if (this.connection?.isBusy) {
+        void window.showInformationMessage(`q-lint: a query is still running on ${this.active?.label}; the drill-down query goes to ${label}.`);
+        return;
+      }
+      if (!(await this.connectTo(label))) {
+        return;
+      }
+    }
+    await this.run(code);
   }
 
   /// Say a long query has ended, when the window is not focused: the user

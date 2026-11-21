@@ -24,6 +24,13 @@
 // also keeps the previous run of the same code, so the page can mark what
 // changed since (`resultdiff.ts`). A dictionary or a nested list comes with
 // its tree (`grid.ts`'s `tree`), which the page opens level by level.
+//
+// A result can also be exported as Excel, Parquet, JSON, Markdown or q
+// (`resultexport.ts`), pivoted, and charted as an area, a step line or
+// candles, on two axes, and saved as PNG or SVG. With paging on, a result
+// cut at gridLimit stays on the process (`grid.ts`'s `HELD`) and the grid
+// asks for more of it as it scrolls. A cell's drill-down templates run a
+// follow-up query with its value put in (`drilldown.ts`).
 import { randomBytes } from "node:crypto";
 import {
   commands,
@@ -54,8 +61,10 @@ import {
   type ResultViewSettings,
   type ResultsLocation,
 } from "./liveconfig";
-import { rowCount, toCsv, toGrid, type GridAnswer, type GridPayload } from "./grid";
+import { appendPage, rowCount, toCsv, toGrid, type GridAnswer, type GridPage, type GridPayload } from "./grid";
 import { diffGrids, type GridDiff } from "./resultdiff";
+import { fillDrilldown, templatesFor } from "./drilldown";
+import { EXPORT_FORMATS, exportResult, FORMAT_INFO, type ExportFormat } from "./resultexport";
 
 const MODE_ICONS: Record<QueryMode, string> = { console: "output", grid: "table", chart: "graph-line" };
 const MODE_DETAILS: Record<QueryMode, string> = {
@@ -69,7 +78,7 @@ const MODE_DETAILS: Record<QueryMode, string> = {
 export interface Rendered {
   /// Where it was drawn: the editor-area panel, or the q Results view.
   location: ResultsLocation;
-  view: "grid" | "chart" | "stats" | "tree";
+  view: "grid" | "chart" | "stats" | "tree" | "pivot";
   /// Rows shown after the filters, and rows the panel holds.
   rows: number;
   held: number;
@@ -89,15 +98,22 @@ export interface Rendered {
   stats?: { name: string; count: number; nulls: number; distinct: number; min: string; max: string; mean: string }[];
   /// The tree view: the nodes drawn, and how many are open.
   tree?: { drawn: number; open: number; labels: string[] };
+  /// The pivot view: its row and column values, and its first row's cells.
+  pivot?: { rows: number; columns: string[]; first: string[]; note?: string };
 }
 
 /// What a page is asked to do by a command, once: `key` tells a request
 /// from the same one sent again with the next result.
 interface Control {
   key: string;
-  action: "view" | "compare";
-  view?: "stats" | "tree";
+  action: "view" | "compare" | "image";
+  view?: "stats" | "tree" | "pivot";
+  /// "image": the format to save the chart in.
+  format?: "png" | "svg";
 }
+
+/// Rows the grid may hold after pages are added to it.
+const MAX_PAGED_ROWS = 1000000;
 
 /// How many results the previous run of each query is kept for.
 const PREVIOUS_RUNS = 20;
@@ -120,6 +136,8 @@ interface Shown {
   at: number;
   /// The previous run of the same code, when there was one.
   before?: { payload: GridPayload; process: string; at: number };
+  /// The process holds the rest of it, for the grid to page through.
+  held?: boolean;
 }
 
 /// A query's code on one line, for a tab or a pick: its first line, cut.
@@ -163,6 +181,24 @@ interface PageMessage {
   id?: string;
   rows?: number[];
   rendered?: Omit<Rendered, "location">;
+  /// "exportAs", "copyAs": the format, when the page chose one.
+  format?: string;
+  /// "image": the chart, as a PNG data URL or SVG text.
+  data?: string;
+  /// "image": the command's request it answers, if any.
+  key?: string;
+  /// "drill": the cell, by column and row of the grid.
+  column?: number;
+  row?: number;
+  /// "copyText": text to put on the clipboard.
+  text?: string;
+}
+
+/// What a webview's context menu passes its command: the cell's
+/// `data-vscode-context`.
+interface CellContext {
+  column?: unknown;
+  row?: unknown;
 }
 
 export class QueryModes {
@@ -183,6 +219,14 @@ export class QueryModes {
   private readonly previous = new Map<string, Shown>();
   private control: Control | undefined;
   private controls = 0;
+  /// Fetches rows of a result the process holds; set by the live half.
+  private pager: ((process: string, offset: number, count: number) => Promise<GridPage | string>) | undefined;
+  /// Runs a drill-down query on a process; set by the live half.
+  private runner: ((code: string, process: string) => Promise<void>) | undefined;
+  /// A page fetch under way, so a second is not sent behind it.
+  private paging = false;
+  /// Save Result Chart's request, until the page sends the image.
+  private image: { key: string; target?: Uri; resolve: () => void } | undefined;
 
   constructor(private readonly context: ExtensionContext) {
     this.media = Uri.joinPath(context.extensionUri, "media");
@@ -199,6 +243,12 @@ export class QueryModes {
       commands.registerCommand(RESULT_VIEW.compare, () => this.enabled("diff") && this.ask({ action: "compare" })),
       commands.registerCommand(RESULT_VIEW.heatmap, () => this.enabled("heatmap") && this.toggleHeatmap()),
       commands.registerCommand(RESULT_VIEW.history, (id?: string) => this.enabled("history") && this.pickFromHistory(id)),
+      commands.registerCommand(RESULT_VIEW.exportAs, (format?: string, target?: Uri) => this.enabled("export") && this.exportAs(format, target, this.order[settings().resultsLocation])),
+      commands.registerCommand(RESULT_VIEW.copyAs, (format?: string) => this.enabled("export") && this.copyAs(format, this.order[settings().resultsLocation])),
+      commands.registerCommand(RESULT_VIEW.loadMore, () => this.enabled("paging") && this.loadMore(true)),
+      commands.registerCommand(RESULT_VIEW.pivot, () => this.enabled("pivot") && this.ask({ action: "view", view: "pivot" })),
+      commands.registerCommand(RESULT_VIEW.saveChart, (format?: string, target?: Uri) => this.enabled("charts") && this.saveChart(format, target)),
+      commands.registerCommand(RESULT_VIEW.drillDown, (cell?: CellContext) => this.enabled("drilldown") && this.drill(cell?.column, cell?.row)),
       window.registerWebviewViewProvider(RESULTS.view, { resolveWebviewView: (view) => this.resolveView(view) }),
       workspace.onDidChangeConfiguration((event) => {
         if (event.affectsConfiguration("q-lint.query")) {
@@ -228,9 +278,27 @@ export class QueryModes {
     return this.rendered;
   }
 
+  /// Where the live half fetches pages of a held result from.
+  setPager(pager: (process: string, offset: number, count: number) => Promise<GridPage | string>): void {
+    this.pager = pager;
+  }
+
+  /// Where the live half runs a drill-down query.
+  setRunner(runner: (code: string, process: string) => Promise<void>): void {
+    this.runner = runner;
+  }
+
+  /// Whether a grid query should leave a cut result on the process for
+  /// paging: only while paging is on, and never on a production process.
+  wantsHold(production: boolean): boolean {
+    return this.viewSettings().enable.paging && !production;
+  }
+
   /// Show a query's answer in the panel when the mode is grid or chart and
   /// the value was tabular. False when it belongs in the output instead.
-  show(result: { process: string; code: string; millis: number; answer: GridAnswer }, live: LiveSettings): boolean {
+  /// `held`: it was asked for with `wantsHold`, so the process holds a
+  /// result cut at the limit.
+  show(result: { process: string; code: string; millis: number; answer: GridAnswer; held?: boolean }, live: LiveSettings): boolean {
     const { answer } = result;
     if (live.mode === "console" || !answer.ok) {
       return false;
@@ -255,6 +323,15 @@ export class QueryModes {
       at: Date.now(),
       ...(last !== undefined ? { before: { payload: last.payload, process: last.process, at: last.at } } : {}),
     };
+    if (result.held === true) {
+      // The process holds one result: this one replaced any before it.
+      for (const h of this.history) {
+        if (h.process === result.process) {
+          h.held = false;
+        }
+      }
+      shown.held = answer.grid.count > (answer.grid.cells[0]?.length ?? 0);
+    }
     // Kept by code, most recent last, so the oldest is the one dropped.
     this.previous.delete(result.code);
     this.previous.set(result.code, shown);
@@ -304,6 +381,56 @@ export class QueryModes {
     }
     if (!features.enable.diff) {
       this.previous.clear();
+    }
+  }
+
+  /// Whether the grid can ask the process for more of the result on show.
+  private canPage(): boolean {
+    const shown = this.shown;
+    return shown !== undefined && shown.held === true && this.viewSettings().enable.paging && this.pager !== undefined;
+  }
+
+  /// Ask the process for the next page of the result on show, and add it
+  /// to the grid. `asked`: from the command, which says why it cannot.
+  private async loadMore(asked: boolean): Promise<void> {
+    const shown = this.shown;
+    if (shown === undefined || !this.canPage() || this.pager === undefined) {
+      if (asked) {
+        void window.showInformationMessage(
+          shown === undefined
+            ? "q-lint: no result yet. Run a query in grid or chart mode first."
+            : "q-lint: the process holds no more of the result on show. A result is held only when it was cut at q-lint.query.gridLimit, and only until the next grid query replaces it.",
+        );
+      }
+      return;
+    }
+    if (this.paging) {
+      return;
+    }
+    const have = shown.payload.cells[0]?.length ?? 0;
+    if (have >= MAX_PAGED_ROWS) {
+      void window.showInformationMessage(`q-lint: the grid holds ${MAX_PAGED_ROWS.toLocaleString("en-US")} rows, the most it pages to. Narrow the query to see the rest.`);
+      return;
+    }
+    this.paging = true;
+    try {
+      const page = await this.pager(shown.process, have, Math.min(shown.limit, MAX_PAGED_ROWS - have));
+      if (typeof page === "string") {
+        shown.held = false;
+        void window.showWarningMessage(`q-lint: could not fetch more rows from ${shown.process}: ${page}`);
+      } else {
+        shown.payload = appendPage(shown.payload, page);
+        const now = shown.payload.cells[0]?.length ?? 0;
+        shown.held = now < shown.payload.count && now > have;
+      }
+    } catch (error) {
+      shown.held = false;
+      void window.showWarningMessage(`q-lint: could not fetch more rows from ${shown.process}: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      this.paging = false;
+    }
+    if (shown === this.shown) {
+      this.post();
     }
   }
 
@@ -487,7 +614,229 @@ export class QueryModes {
       void this.copy(message.rows);
     } else if (message.type === "export") {
       void this.exportCsv(undefined, message.rows);
+    } else if (message.type === "exportAs") {
+      if (this.enabled("export")) {
+        void this.exportAs(message.format, undefined, message.rows);
+      }
+    } else if (message.type === "copyAs") {
+      if (this.enabled("export")) {
+        void this.copyAs(message.format, message.rows);
+      }
+    } else if (message.type === "copyText" && typeof message.text === "string") {
+      void env.clipboard.writeText(message.text);
+    } else if (message.type === "more") {
+      void this.loadMore(false);
+    } else if (message.type === "image") {
+      if (this.viewSettings().enable.charts) {
+        void this.saveImage(message);
+      }
+    } else if (message.type === "drill") {
+      if (this.enabled("drilldown")) {
+        void this.drill(message.column, message.row);
+      }
     }
+  }
+
+  /// The format `format` names, or one the user picks of `formats`.
+  private async pickFormat(format: string | undefined, formats: readonly ExportFormat[], title: string): Promise<ExportFormat | undefined> {
+    const named = formats.find((f) => f === format);
+    if (named !== undefined) {
+      return named;
+    }
+    const picked = await window.showQuickPick(
+      formats.map((f) => ({ label: FORMAT_INFO[f].label, description: `.${FORMAT_INFO[f].extension}`, detail: FORMAT_INFO[f].detail, format: f })),
+      { title },
+    );
+    return picked?.format;
+  }
+
+  /// The rows of the result on show to write: `rows` when they are rows
+  /// of it, and otherwise all of them.
+  private rowsOf(rows: number[] | undefined): number[] | undefined {
+    const held = this.shown?.payload.cells[0]?.length ?? 0;
+    return Array.isArray(rows) ? rows.filter((r) => Number.isInteger(r) && r >= 0 && r < held) : undefined;
+  }
+
+  /// Write the rows shown in `format` (or one picked) to `target`, or to a
+  /// file the user picks.
+  private async exportAs(format: string | undefined, target: Uri | undefined, rows: number[] | undefined): Promise<void> {
+    const shown = this.shown;
+    if (shown === undefined) {
+      void window.showInformationMessage("q-lint: no result to export. Run a query in grid or chart mode first.");
+      return;
+    }
+    const chosen = await this.pickFormat(format, EXPORT_FORMATS, "q-lint: export the result as");
+    if (chosen === undefined) {
+      return;
+    }
+    const info = FORMAT_INFO[chosen];
+    const folder = workspace.workspaceFolders?.[0]?.uri;
+    const to =
+      target instanceof Uri
+        ? target
+        : await window.showSaveDialog({
+            title: `Export the result as ${info.label}`,
+            defaultUri: folder === undefined ? undefined : Uri.joinPath(folder, `result.${info.extension}`),
+            filters: { [info.label]: [info.extension] },
+          });
+    if (to === undefined) {
+      return;
+    }
+    let out;
+    try {
+      out = exportResult(chosen, shown.payload, settings().gridDecimals, this.rowsOf(rows));
+      await workspace.fs.writeFile(to, out.data);
+    } catch (error) {
+      void window.showErrorMessage(`q-lint: could not write ${to.fsPath}: ${error instanceof Error ? error.message : String(error)}`);
+      return;
+    }
+    const notes = out.notes.length > 0 ? ` Note: ${out.notes.join("; ")}.` : "";
+    if (!(target instanceof Uri) || notes !== "") {
+      void window.showInformationMessage(`q-lint: exported ${out.rows} row(s) as ${info.label} to ${to.fsPath}.${notes}`);
+    }
+  }
+
+  /// Copy the rows shown as JSON, Markdown or q (or a format picked).
+  private async copyAs(format: string | undefined, rows: number[] | undefined): Promise<void> {
+    const shown = this.shown;
+    if (shown === undefined) {
+      void window.showInformationMessage("q-lint: no result to copy. Run a query in grid or chart mode first.");
+      return;
+    }
+    const chosen = await this.pickFormat(format, EXPORT_FORMATS.filter((f) => FORMAT_INFO[f].text), "q-lint: copy the result as");
+    if (chosen === undefined) {
+      return;
+    }
+    const out = exportResult(chosen, shown.payload, settings().gridDecimals, this.rowsOf(rows));
+    await env.clipboard.writeText(out.data.toString("utf8"));
+    const notes = out.notes.length > 0 ? ` Note: ${out.notes.join("; ")}.` : "";
+    void window.showInformationMessage(`q-lint: copied ${out.rows} row(s) as ${FORMAT_INFO[chosen].label}.${notes}`);
+  }
+
+  /// Ask the page for the chart as `format` (or one picked), and save it
+  /// to `target` or a file the user picks once it arrives.
+  private async saveChart(format: string | undefined, target: Uri | undefined): Promise<void> {
+    let chosen: "png" | "svg" | undefined = format === "png" || format === "svg" ? format : undefined;
+    if (chosen === undefined && this.shown !== undefined) {
+      const picked = await window.showQuickPick(
+        [
+          { label: "PNG", detail: "The chart as drawn, on the editor's background", format: "png" as const },
+          { label: "SVG", detail: "The chart as vector graphics, for a document or a slide", format: "svg" as const },
+        ],
+        { title: "q-lint: save the chart as" },
+      );
+      chosen = picked?.format;
+      if (chosen === undefined) {
+        return;
+      }
+    }
+    const before = this.controls;
+    await new Promise<void>((resolve) => {
+      this.ask({ action: "image", format: chosen ?? "png" });
+      if (this.controls === before) {
+        // Refused: there is no chart to save.
+        resolve();
+        return;
+      }
+      this.image = { key: `${this.session}.${this.controls}`, target, resolve };
+      // A page that never answers (closed) does not keep the command waiting.
+      setTimeout(() => {
+        if (this.image?.resolve === resolve) {
+          this.image = undefined;
+          resolve();
+        }
+      }, 10000);
+    });
+  }
+
+  /// Save the chart a page sent: to the target Save Result Chart was given,
+  /// or to a file the user picks.
+  private async saveImage(message: PageMessage): Promise<void> {
+    const format = message.format === "svg" ? "svg" : message.format === "png" ? "png" : undefined;
+    const data = message.data ?? "";
+    const prefix = "data:image/png;base64,";
+    const bytes =
+      format === "png" && data.startsWith(prefix)
+        ? Buffer.from(data.slice(prefix.length), "base64")
+        : format === "svg" && data.startsWith("<svg")
+          ? Buffer.from(data, "utf8")
+          : undefined;
+    const request = message.key !== undefined && this.image?.key === message.key ? this.image : undefined;
+    if (request !== undefined) {
+      this.image = undefined;
+    }
+    try {
+      if (format === undefined || bytes === undefined) {
+        if (request !== undefined) {
+          void window.showInformationMessage("q-lint: the result on show draws no chart, so there is nothing to save. Its Chart view says why.");
+        }
+        return;
+      }
+      const folder = workspace.workspaceFolders?.[0]?.uri;
+      const to =
+        request?.target instanceof Uri
+          ? request.target
+          : await window.showSaveDialog({
+              title: `Save the chart as ${format.toUpperCase()}`,
+              defaultUri: folder === undefined ? undefined : Uri.joinPath(folder, `chart.${format}`),
+              filters: { [format.toUpperCase()]: [format] },
+            });
+      if (to === undefined) {
+        return;
+      }
+      try {
+        await workspace.fs.writeFile(to, bytes);
+      } catch (error) {
+        void window.showErrorMessage(`q-lint: could not write ${to.fsPath}: ${error instanceof Error ? error.message : String(error)}`);
+        return;
+      }
+      if (!(request?.target instanceof Uri)) {
+        void window.showInformationMessage(`q-lint: saved the chart to ${to.fsPath}.`);
+      }
+    } finally {
+      request?.resolve();
+    }
+  }
+
+  /// Offer the drill-down templates for the cell at `column`, `row` of the
+  /// result on show, and run the one picked on the process it came from.
+  private async drill(column: unknown, row: unknown): Promise<void> {
+    const shown = this.shown;
+    if (shown === undefined || typeof column !== "number" || typeof row !== "number") {
+      void window.showInformationMessage("q-lint: double-click a cell of the result grid, or right-click it, to drill down from it.");
+      return;
+    }
+    const name = shown.payload.names[column];
+    if (name === undefined) {
+      return;
+    }
+    const templates = templatesFor(this.viewSettings().drilldown, name);
+    if (templates.length === 0) {
+      const open = await window.showInformationMessage(
+        `q-lint: no drill-down query for column ${name}. Add one to q-lint.results.drilldownTemplates, with {{value}} where the cell's value goes.`,
+        "Open Settings",
+      );
+      if (open === "Open Settings") {
+        void commands.executeCommand("workbench.action.openSettings", "q-lint.results.drilldownTemplates");
+      }
+      return;
+    }
+    const items = templates.map((t) => {
+      const filled = fillDrilldown(t.query, shown.payload, column, row);
+      return { label: t.label, detail: "code" in filled ? filled.code : `Cannot run: ${filled.error}`, filled };
+    });
+    const picked = await window.showQuickPick(items, { title: `q-lint: drill down from ${name} on ${shown.process}`, matchOnDetail: true });
+    if (picked === undefined) {
+      return;
+    }
+    if ("error" in picked.filled) {
+      void window.showWarningMessage(`q-lint: ${picked.label} cannot run: ${picked.filled.error}.`);
+      return;
+    }
+    if (this.runner === undefined) {
+      return;
+    }
+    await this.runner(picked.filled.code, shown.process);
   }
 
   /// Send what is shown to `only`, or to every open page. A page still
@@ -518,13 +867,23 @@ export class QueryModes {
       tree,
       diff,
       heatmap: features.heatmap,
-      features: { statistics: features.enable.statistics, heatmap: features.enable.heatmap },
+      features: {
+        statistics: features.enable.statistics,
+        heatmap: features.enable.heatmap,
+        export: features.enable.export,
+        pivot: features.enable.pivot,
+        charts: features.enable.charts,
+        drilldown: features.enable.drilldown,
+      },
+      // Whether the grid can ask for more rows as it scrolls.
+      more: this.canPage(),
       history: (features.enable.history ? this.history : [this.shown]).map((h) => ({ id: h.id, process: h.process, code: oneLine(h.code), at: h.at, rows: h.payload.count })),
       control: this.control,
     };
     void commands.executeCommand("setContext", RESULT_CONTEXT.shown, true);
     void commands.executeCommand("setContext", RESULT_CONTEXT.hasPrevious, before !== undefined);
     void commands.executeCommand("setContext", RESULT_CONTEXT.hasTree, tree !== undefined);
+    void commands.executeCommand("setContext", RESULT_CONTEXT.hasMore, this.canPage());
     const pages = only !== undefined ? [only] : [this.panel?.webview, this.view?.webview];
     for (const page of pages) {
       void page?.postMessage(message);

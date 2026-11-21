@@ -402,7 +402,8 @@ test("every query setting is read, with the default package.json declares, and n
   assert.deepStrictEqual(resultView, {
     history: 10,
     heatmap: false,
-    enable: { history: true, diff: true, statistics: true, heatmap: true, tree: true },
+    enable: { history: true, diff: true, statistics: true, heatmap: true, tree: true, export: true, paging: false, pivot: true, charts: true, drilldown: true },
+    drilldown: [],
   });
   const view = (values) => readResultView((key, fallback) => (key in values ? values[key] : fallback));
   assert.strictEqual(view({ "query.resultHistory": 0 }).history, 1);

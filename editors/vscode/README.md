@@ -481,10 +481,94 @@ results are keyed by the same columns, and by their place otherwise; cells
 are compared by the text the grid shows, so `q-lint.query.gridDecimals`
 applies. The previous run can be on another process, which the bar names.
 
-Each of these - the history, Compare, Stats, the heatmap and the tree - has
-its own `q-lint.results.<feature>.enable` setting, on by default. Turned
-off, its button and command are gone (the command, run anyway, says which
-setting turns it back on), and a change applies at once, without a reload.
+**Export as...** in the bar (or **Export Results As...**) saves the rows
+shown, in the order shown, as Excel (`.xlsx`), Parquet, JSON, a Markdown
+table or q; **Copy Results As...** puts JSON, Markdown or q on the
+clipboard. Both take the format (`xlsx`, `parquet`, `json`, `markdown`,
+`q`) as an argument, and Export the file's `Uri` too. Markdown shows the
+cells as the grid does. The others write what the process sent rather than
+what the grid shows: a float's every digit, a long past 2^53 exactly, a null
+as a null.
+- **Excel**: one sheet, its header bold and frozen. Numbers and booleans are
+  Excel's own, and so are temporals: a date, month, timestamp or datetime
+  as a date, a timespan, minute, second or time as a duration, so a sheet
+  computes with them. What Excel cannot show - a date before 1900-03-01, a
+  negative duration, an infinity, a long it would round - is q's text. Cut
+  at Excel's 1,048,576 rows, and the message says so.
+- **Parquet**: one row group of typed columns - booleans, 8- to 64-bit
+  integers, floats, dates, timestamps (to the nanosecond, not adjusted to
+  UTC) - with q's nulls as Parquet's. A symbol, guid, char, month,
+  timespan, minute, second, time or general list is a string, as q writes
+  it. An infinite date or timestamp, which Parquet's types cannot hold, is
+  a null, and the message counts them.
+- **JSON**: an array of row objects; a number (a byte too) is a number, a
+  boolean a boolean, a null `null`, and the rest - temporals, symbols, an
+  infinity, which JSON has no number for - q's text.
+- **q**: an expression that rebuilds the table, keyed as it was:
+  `([sym:`a`b] px:(1.5f;0n))`, or `flip` of a dictionary when a column's
+  name is one q reserves (`count`, a dictionary's `key` and `value`). A
+  dictionary or a list is written as the table the grid shows; an
+  enumeration as its symbols; a cell cut at 200 characters is not its
+  whole value, and the message says how many were.
+
+Both files are written by q-lint itself, with no library: the xlsx is a zip
+of the XML parts Excel needs, the Parquet file one uncompressed page per
+column with its footer in Thrift's compact protocol. The extension's tests
+read them back with openpyxl, pyarrow and DuckDB when `QLINT_TEST_READBACK`
+names a Python that has them.
+
+**Pivot** (or **Show Result as Pivot**) turns the rows shown into a table:
+one row per value of one column, one column per value of another (or none),
+and in each cell the count, sum, average, min or max of a third, chosen
+above it. Values are in q's order, as the grid sorts them; a count counts
+the non-null values (or the rows), and the others a numeric column's values
+without its nulls and infinities. At most 100 column values are shown, and
+**Copy Pivot** copies it as CSV.
+
+The chart also draws an **area**, a **step** line and **candles**: open,
+high, low and close columns found by name (`open` or `o`, and so on, any
+case), or else the first four it can plot, a candle green when it closed at
+or above its open and red below. With two series or more, **right axis**
+puts one on a second y axis. **Save PNG** and **Save SVG** (or **Save
+Result Chart as Image**, which takes `png` or `svg` and a `Uri`) save the
+chart: the PNG as drawn, on the editor's background, and the SVG as vector
+graphics drawn by q-lint from the same data, for a document or a slide.
+
+**Drill down.** `q-lint.results.drilldownTemplates` holds follow-up queries a
+grid cell offers: double-click a cell, or right-click it and choose **Drill
+Down from Cell**, pick one, and it runs on the process the result came
+from, as a query from the editor would, its result shown as any other. In a
+template's `query`, `{{value}}` is the cell's value as q - `` `AAPL ``,
+`2024.01.02`, `0Nj` - `{{column}}` its column's name as a symbol, and
+`{{row.name}}` the value of column `name` in the same row; `columns` limits
+it to some columns.
+
+```json
+"q-lint.results.drilldownTemplates": [
+  { "label": "Trades", "query": "select from trade where date={{row.date}}, sym={{value}}", "columns": ["sym"] }
+]
+```
+
+The pick shows each query as it will run. A production process (tagged
+`prod`) asks first.
+
+**Paging**, off by default (`q-lint.results.paging.enable`): a result cut at
+`q-lint.query.gridLimit` stays on the process, as `.qlint.held`, and the
+grid asks it for the next `gridLimit` rows as it scrolls to the end (or on
+**Load more**, or **Load More Result Rows**), up to 1,000,000. Sorting,
+filters, Stats and the pivot apply to the rows fetched so far; the rows are
+ranked again over all of them, so a sort is still q's order. The process
+holds one result, replaced by the next grid query while paging is on
+(emptied when that one is not cut). Nothing is held on a production process
+or in unwrapped mode. Turning paging off stops holding new results; one
+already held stays until the process restarts or `.qlint.held:()` frees it.
+
+Each of these - the history, Compare, Stats, the heatmap, the tree, export,
+paging, the pivot, the new charts and drill-down - has its own
+`q-lint.results.<feature>.enable` setting, on by default but for paging.
+Turned off, its button and command are gone (the command, run anyway, says
+which setting turns it back on), and a change applies at once, without a
+reload.
 
 The panel opens beside the editor. With `q-lint.query.resultsLocation` set
 to `panel`, results go instead to the **q Results** view in the bottom
@@ -497,7 +581,8 @@ The process sends at most `q-lint.query.gridLimit` rows, and the panel says
 when a result was cut and how many rows it had. Anything that is not
 tabular - an atom, a string, a function - and every error still goes to the
 output. As in console mode, nothing is defined on the process: the rows are
-shaped by the lambda sent with the query. The panel loads only the
+shaped by the lambda sent with the query. Paging, when it is on, is the one
+exception: it holds the result as `.qlint.held`. The panel loads only the
 extension's own files, under a Content-Security-Policy that allows no
 inline script and no network. Its charts are drawn by
 [Chart.js](https://www.chartjs.org) 4.5.1 (MIT), shipped in
@@ -929,6 +1014,12 @@ nothing.
 | `q-lint.results.statistics.enable` | `true` | Offer the **Stats** view and **Show Column Statistics**. | - |
 | `q-lint.results.heatmap.enable` | `true` | Offer the **Heatmap** button and **Toggle Result Heatmap**. Off, nothing is coloured, whatever `q-lint.query.gridHeatmap` says. | - |
 | `q-lint.results.tree.enable` | `true` | Offer the **Tree** view and **Show Result as Tree**. Off, the process is not asked for the tree. | - |
+| `q-lint.results.export.enable` | `true` | Offer **Export as...**, **Export Results As...** and **Copy Results As...**: Excel, Parquet, JSON, Markdown and q. CSV is always offered. | - |
+| `q-lint.results.paging.enable` | `false` | Hold a result cut at `gridLimit` on the process as `.qlint.held`, and fetch more of it as the grid scrolls. Never on a production process. | - |
+| `q-lint.results.pivot.enable` | `true` | Offer the **Pivot** view and **Show Result as Pivot**. | - |
+| `q-lint.results.charts.enable` | `true` | Offer area, step and candle charts, a right axis, **Save PNG**, **Save SVG** and **Save Result Chart as Image**. | - |
+| `q-lint.results.drilldown.enable` | `true` | Offer a grid cell's drill-down queries, on a double-click or **Drill Down from Cell**. | - |
+| `q-lint.results.drilldownTemplates` | `[]` | The drill-down queries: `label`, `query` with `{{value}}`, `{{column}}` and `{{row.name}}`, and the `columns` each is offered for. | - |
 | `q-lint.query.progress.enable` | `true` | Count a running query's time in the status bar, and notify a long one's end. | - |
 | `q-lint.query.notifyAfter` | `10` | Seconds a query must run for its end to be notified while the window is not focused; `0` never. | - |
 | `q-lint.query.placeholders.enable` | `true` | Ask for a value for each `{{name}}` in the code a query sends, and put it in place. | - |
