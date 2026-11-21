@@ -174,3 +174,13 @@ test("a setting of the wrong type is its default, not a crash or a junk argument
   assert.strictEqual(l.enabled, true);
   assert.ok(l.args.every((a) => typeof a === "string"));
 });
+
+test("the server settings' descriptions say what the code does", () => {
+  const props = Object.assign({}, ...require("../package.json").contributes.configuration.map((c) => c.properties));
+  // A leading ~ is expanded, and a bundled binary that will not run falls back to PATH.
+  assert.match(props["q-lint.serverPath"].markdownDescription, /`~`/);
+  assert.match(props["q-lint.serverPath"].markdownDescription, /will not run/);
+  assert.match(props["q-lint.configFile"].markdownDescription, /`~`/);
+  // Off, more than the colouring stays: processes, queries, notebooks.
+  assert.match(props["q-lint.enable"].markdownDescription, /queries/);
+});

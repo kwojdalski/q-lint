@@ -125,12 +125,12 @@
             "type": "boolean",
             "default": true,
             "order": 0,
-            "markdownDescription": "Run the q-lint language server. Off, the extension keeps the syntax colouring and starts no server: no diagnostics, Quick Fixes, formatting or semantic colouring."
+            "markdownDescription": "Run the q-lint language server. Off, it starts no server: no diagnostics, Quick Fixes, formatting, navigation or semantic colouring. The grammar's colouring, processes, queries, the Process Explorer, notebooks and the agent tool stay."
           },
           "q-lint.serverPath": {
             "type": "string",
             "default": "",
-            "markdownDescription": "Path to the `qlinter` binary. Left empty, the extension uses the server it was packaged with, and falls back to looking up `qlinter` on `PATH` when it was packaged without one.",
+            "markdownDescription": "Path to the `qlinter` binary; a leading `~` is your home directory. Left empty, the extension uses the server it was packaged with, and falls back to `qlinter` on `PATH` when it was packaged without one or that one will not run. Set, it always wins.",
             "order": 1
           },
           "q-lint.serverArgs": {
@@ -158,7 +158,7 @@
             "type": "string",
             "default": "",
             "order": 4,
-            "markdownDescription": "A configuration file to use for every document instead of the nearest `.qlinter.toml`, `qlinter.toml` or `pyproject.toml` `[tool.qlinter]` (the server's `--config`). Relative to the first workspace folder. Empty: the nearest one governs each file, as on the command line and in CI."
+            "markdownDescription": "A configuration file to use for every document instead of the nearest `.qlinter.toml`, `qlinter.toml` or `pyproject.toml` `[tool.qlinter]` (the server's `--config`). Relative to the first workspace folder; a leading `~` is your home directory. Empty: the nearest one governs each file, as on the command line and in CI."
           },
           "q-lint.lint.select": {
             "type": "array",
