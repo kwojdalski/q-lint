@@ -140,10 +140,40 @@ to a process you add and connect to, and sends only the code you run.
   or where the argument is already the parameter's name.
   `q-lint.inlayHints.enable` turns them off, and VS Code's
   `editor.inlayHints.enabled` can show them only while a key is held.
+- **Inferred types** of a lambda's locals, on hover and as an inlay hint
+  after the value of the first assignment: `a:1 2 3 long list`, and a hover
+  on `a` says `long list`, type `7h`. Only where every assignment of the
+  local is a literal - a number or vector of them, a boolean, a byte, a
+  string, symbols, a date or time, a lambda, `()` - and all give the same
+  type, so the type is the one q's `type` gives (each is checked against
+  KDB-X in the tests). An expression (even `1+2`), a parameter, an amend
+  (`a+:1`) or two literals of different types show nothing rather than a
+  guess. `q-lint.inferredTypes.enable` turns both off.
+- **Argument slot highlight**: inside `f[a;b;c]`, the argument the cursor is
+  in is highlighted, and the parameter it is passed as is drawn before it -
+  `b:` - for a workspace function or a q one, unless a parameter inlay hint
+  already draws it there (signature help still marks it too). Only the
+  language server is asked. `q-lint.argumentSlot.enable` turns it off.
+- **Reference counts** above each top-level function: `3 references`, the
+  places the workspace's `.q` files read it, as Find All References lists
+  them without the assignments. Click it to see them in place.
+  `q-lint.referenceLens.enable` turns them off.
 - **Completion**, when turned on with `q-lint.completion.enable`: a lambda's
   parameters and locals first, then the names the workspace defines, spelled
   as the `\d` context in force reads them, then q's own words. It does not
   know a table's columns or anything only a running process holds.
+- **Auto-load on completion**, with `q-lint.autoLoad.enable` on as well (off
+  by default): completing a name that one other workspace file defines, and
+  that nothing the file can already see defines, also writes the `\l` that
+  loads that file when the item is accepted - the item says `adds \l
+  lib/util.q`. "Can already see" is the file, what it loads, directly or
+  through another, and what a file that loads it also loads, so a load
+  already there is never added twice. The line goes after the last `\l`
+  above the cursor and above the first `\d`, so the loads keep their
+  order; with none, after a leading comment block. The path is written
+  from the workspace folder, or from the file's own directory, whichever
+  reaches the file. A name two files define gets no load: which to load is
+  your call.
 - **Call hierarchy** (**Show Call Hierarchy**, **Peek Call Hierarchy**) on a
   global function: the definitions and files that name it, and the workspace
   functions its own definition names. It is read from the names, so a
@@ -887,6 +917,19 @@ partitioned table is not printed, and a process tagged `prod`, `prd` or
 `production` is not asked. The read waits up to a second for a query to
 finish, and shows nothing if it does not.
 
+**Process names in symbol search.** With `q-lint.processSymbols.enable`
+on (off by default, since a search then asks the process), **Go to Symbol
+in Workspace** (Ctrl/Cmd+T) also lists the functions, variables, tables
+and views the connected process defines and no workspace file does, each
+marked with the process it is on. They are read only while you search, by
+one fixed lambda that lists the root's and each namespace's names with
+`\f`, `\v`, `\a` and `\b` (no value is evaluated, so a view is never run),
+through the same free-connection path as the Process Explorer, so a busy
+process adds nothing; the names are kept five seconds between keystrokes.
+One-letter namespaces (`.q`, `.z`, ...) are left out, and a process tagged
+`prod`, `prd` or `production` is not asked. Choosing one opens a short note
+on what it is; **Open Function Source** reads a function's text.
+
 **Undefined names.** With `q-lint.undefinedNames.enable` on (off by
 default, since it asks the process on its own), a q file gets a warning on
 each global it reads that neither the workspace nor the connected process
@@ -1277,10 +1320,13 @@ q-pro column names the setting of [q-pro](https://marketplace.visualstudio.com/i
 | `q-lint.rename.enable` | `true` | Offer **Rename Symbol** for a local, and for a global across the workspace. Needs `q-lint.navigation.enable`. | - |
 | `q-lint.help.enable` | `true` | Show hovers and signature help, from the source and the built-in catalogue of q's words. | - |
 | `q-lint.completion.enable` | `false` | Complete locals, workspace names and q's words. Off by default: an editor told a server completes stops offering the words already in the file. | - |
+| `q-lint.autoLoad.enable` | `false` | Completing a name one other workspace file defines also writes the `\l` that loads it, when nothing the file sees defines it. Needs `q-lint.completion.enable`. Off by default: accepting a name then writes another line. | - |
 | `q-lint.callHierarchy.enable` | `true` | Offer the call hierarchy of a global function. | - |
 | `q-lint.graph.enable` | `true` | Offer the **q Dependencies** view and **q-lint: List Affected Tests**. Off: the view is hidden and the server answers neither. | - |
 | `q-lint.inlayHints.enable` | `true` | Show parameter names at the arguments of a call to a workspace function. | - |
+| `q-lint.inferredTypes.enable` | `true` | Show a local's type on hover and as an inlay hint, only where every assignment is a literal of one type. | - |
 | `q-lint.codeLens.enable` | `true` | Show **Run** above each top-level function definition and **Run test** above a `test_*` one. | - |
+| `q-lint.referenceLens.enable` | `true` | Show **N references** above each top-level function definition; click it to see them. | - |
 | `q-lint.documentLinks.enable` | `true` | Make each `\l`, `system "l ..."` and `` `:file.q `` path a link to the file it loads. | - |
 | `q-lint.generateQdoc.enable` | `true` | Offer **Generate qDoc** above a top-level function. | - |
 | `q-lint.extractFunction.enable` | `true` | Offer **Extract Function** over a selection q reads as one value. | - |
@@ -1369,6 +1415,8 @@ nothing.
 | `q-lint.liveValueHover.enable` | `false` | Show a global's value on the connected process when hovering it in a q editor. Off, no hover is registered and nothing is sent. | - |
 | `q-lint.undefinedNames.enable` | `false` | Warn on globals a q file reads that neither the workspace nor the connected process defines, and offer **Check Undefined Names on Process**. Off, nothing is sent and the command is hidden. | - |
 | `q-lint.idiomSnippets.enable` | `true` | Offer the idiom snippets (joins, `.z` handlers, a TorQ process) in the completion list. | - |
+| `q-lint.argumentSlot.enable` | `true` | Highlight the argument of `f[a;b;c]` the cursor is in and name its parameter. Asks the language server only. Off, nothing listens or is drawn. | - |
+| `q-lint.processSymbols.enable` | `false` | List the names only the connected process defines in **Go to Symbol in Workspace**, read while you search. Off, no provider is registered and nothing is sent. | - |
 | `q-lint.processExplorer.driftDetection.enable` | `false` | **Check Drift Against Process**: compare the workspace's function definitions with the connected process. Off, the command is hidden and reads nothing. | - |
 | `q-lint.hotReload.enable` | `false` | On saving a q file, send the definitions the save changed to its process, after Redefine's confirmation. Off, nothing listens and nothing is sent. | - |
 
