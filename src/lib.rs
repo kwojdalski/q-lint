@@ -296,6 +296,26 @@ pub fn extract(source: &str, from: usize, to: usize) -> Result<Extraction, Strin
     semantics::extract::extract(&v.code, &v.comments, source, from, to)
 }
 
+pub use semantics::layout::Layout as QsqlLayout;
+
+/// Every qSQL query in `source` whose one-line form is longer than `width`
+/// characters, laid out on aligned lines - a clause per line, a part's
+/// items one per line where they do not fit - as replacements in order.
+/// Only blanks change, and only where q reads the result as it read the
+/// original (see `semantics::layout`).
+pub fn qsql_layouts(source: &str, width: usize) -> Vec<QsqlLayout> {
+    let v = views(source);
+    semantics::layout::layouts(&v.code, &v.comments, source, width)
+}
+
+/// The qSQL query around byte `at` laid out with every clause on its own
+/// line, however short it is; `None` where there is none, it cannot be laid
+/// out safely, or it is laid out so already.
+pub fn qsql_layout_at(source: &str, at: usize, width: usize) -> Option<QsqlLayout> {
+    let v = views(source);
+    semantics::layout::layout_at(&v.code, &v.comments, source, at, width)
+}
+
 /// For each of `offsets` in `source`, the qSQL clause it is written in -
 /// `select`, `by`, `from`, `where` and so on - or `None` outside a query,
 /// where a name is no column.
@@ -329,6 +349,13 @@ pub struct BracketCall {
 pub fn bracket_calls(source: &str) -> Vec<BracketCall> {
     let v = views(source);
     semantics::help::bracket_calls(&v.code)
+}
+
+/// `bracket_calls`, with a string argument spanning its quotes rather than
+/// trimmed away as a blank: the slots as an editor highlights them.
+pub fn argument_slots(source: &str) -> Vec<BracketCall> {
+    let v = views(source);
+    semantics::help::bracket_calls_in(&v.code, &v.comments)
 }
 
 /// The paths of the loads in `source` - `\l path`, `system "l path"` and a
@@ -394,6 +421,17 @@ pub fn glyph_at(source: &str, offset: usize) -> Option<(usize, usize)> {
 pub fn word_at(source: &str, offset: usize) -> Option<(usize, usize)> {
     let v = views(source);
     semantics::help::word_at(&v.code, source, offset)
+}
+
+/// A local whose assignments settle its type, and that type as `type`
+/// returns it: see `semantics::infer`.
+pub use semantics::infer::{Typed, literal_type};
+
+/// Each local of each lambda in `source` whose every assignment is a plain
+/// one of a literal of the same type, in order of where it is first named.
+pub fn typed_locals(source: &str) -> Vec<Typed> {
+    let v = views(source);
+    semantics::infer::typed_locals(&v.code, source, &v.comments)
 }
 
 /// What is being typed at byte `offset`, or `None` where no name is - in a
@@ -665,7 +703,7 @@ fn continues_after(comments: &str, raw: &str, at: usize) -> bool {
 const QUERY_WORDS: [&str; 7] = ["select", "exec", "update", "delete", "by", "from", "where"];
 
 /// The qSQL word at `at` in the masked code, if one starts there.
-fn query_word(code: &str, at: usize) -> Option<&'static str> {
+pub(crate) fn query_word(code: &str, at: usize) -> Option<&'static str> {
     // Part of a longer name - `.req.delete`, `clust.dbscan.update` - or a
     // symbol, `` `update ``, is not the keyword; after a drop, `1_select`,
     // it is (#340). `boundary` also refuses an offset inside a multi-byte
@@ -1067,13 +1105,41 @@ pub struct Fixed {
 pub fn fix_all<E>(
     source: &str,
     unsafe_fixes: bool,
+    lint: impl FnMut(&str) -> Result<Vec<Finding>, E>,
+) -> Result<Fixed, E> {
+    fix_loop(source, unsafe_fixes, None, lint)
+}
+
+/// `fix_all`, for only the findings reported on `lines` - 1-based and
+/// inclusive, in `source` - as an editor asks to format the lines a change
+/// touched and leave the rest alone. The lines move with the edits: one a
+/// fix inserts or removes shifts those below it, and a fix on one of them
+/// keeps the lines it rewrote. A finding whose fix reaches outside its
+/// line is still fixed, since the finding is on a line that was asked for.
+pub fn fix_lines<E>(
+    source: &str,
+    lines: &[(usize, usize)],
+    lint: impl FnMut(&str) -> Result<Vec<Finding>, E>,
+) -> Result<Fixed, E> {
+    let mut lines = lines.to_vec();
+    fix_loop(source, false, Some(&mut lines), lint)
+}
+
+fn fix_loop<E>(
+    source: &str,
+    unsafe_fixes: bool,
+    mut within: Option<&mut Vec<(usize, usize)>>,
     mut lint: impl FnMut(&str) -> Result<Vec<Finding>, E>,
 ) -> Result<Fixed, E> {
     let mut updated = source.to_string();
     let mut count = 0;
     let (mut passes, mut first) = (0, vec![]);
     for _ in 0..100 {
-        let mut edits: Vec<_> = fixes_for(&lint(&updated)?, &updated)
+        let mut found = lint(&updated)?;
+        if let Some(lines) = within.as_deref() {
+            found.retain(|f| lines.iter().any(|&(a, b)| (a..=b).contains(&f.line)));
+        }
+        let mut edits: Vec<_> = fixes_for(&found, &updated)
             .into_iter()
             .filter(|fix| fix.batch_safe || unsafe_fixes)
             .collect();
@@ -1092,6 +1158,22 @@ pub fn fix_all<E>(
         }
         let before = updated.clone();
         for edit in selected.iter().rev() {
+            if let Some(lines) = within.as_deref_mut() {
+                // From the last edit back, so each one's lines are still
+                // those of `before`.
+                let line = |at: usize| 1 + before[..at].matches('\n').count();
+                let (first, last) = (line(edit.start), line(edit.end));
+                let delta = edit.replacement.matches('\n').count() as isize
+                    - before[edit.start..edit.end].matches('\n').count() as isize;
+                for (a, b) in lines.iter_mut() {
+                    let shift = |n: usize| (n as isize + delta).max(1) as usize;
+                    if *a > last {
+                        (*a, *b) = (shift(*a), shift(*b));
+                    } else if *b >= first {
+                        *b = shift((*b).max(last)).max(*a);
+                    }
+                }
+            }
             updated.replace_range(edit.start..edit.end, &edit.replacement);
         }
         if updated == before {
@@ -1340,6 +1422,48 @@ fn fix_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
                 &source[start..start + m.end()],
                 gap.into(),
                 "Remove the identity `{x} each`".into(),
+                false,
+            )
+        }
+        // `abs each x` is `abs x` on every value but the empty list, where
+        // `each` gives `()` and the builtin a typed empty list - so only in
+        // the editor.
+        "QV002" => {
+            let m = re!(concat!(
+                r"^(?:abs|neg|sqrt|exp|log|floor|ceiling|not|null|signum|reciprocal)",
+                r"(?:([ \t]+each\b)|'\[)"
+            ))
+            .captures(source.get(start..)?)?;
+            let whole = m.get(0)?.as_str();
+            let name = whole.trim_end_matches('[').trim_end_matches('\'');
+            let name = name.split([' ', '\t']).next()?;
+            // `abs'[x]` keeps its bracket: `abs[x]`.
+            let old = if m.get(1).is_some() {
+                whole
+            } else {
+                &whole[..whole.len() - 1]
+            };
+            (
+                old,
+                name.to_string().into(),
+                format!("Remove `each`: `{name}` is atomic").into(),
+                false,
+            )
+        }
+        // `r:r,x` is `r,:x`, the same value, appended in place. Only in the
+        // editor: it is the loop's to decide, and a name another reference
+        // shares is copied either way.
+        "QV003" => {
+            let m =
+                re!(r"^(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]*:[ \t]*(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]*,")
+                    .captures(source.get(start..)?)?;
+            if m[1] != m[2] {
+                return None;
+            }
+            (
+                m.get(0)?.as_str(),
+                format!("{},:", &m[1]).into(),
+                format!("Append in place with `{},:`", &m[1]).into(),
                 false,
             )
         }
@@ -3348,6 +3472,19 @@ struct Views {
     /// comment, or `\\` - begins. q reads nothing after it.
     script_end: Option<usize>,
 }
+impl Views {
+    /// Whether `at` is in a block comment: one that closes, from its `/`
+    /// line to its `\` line, or the one nothing closes. `blocks` is in
+    /// order and holds only the outermost, so they never overlap and a
+    /// binary search finds the one that could hold `at`. Asked for each line
+    /// of a file, a walk over every block was quadratic in a file of them.
+    fn in_block(&self, at: usize) -> bool {
+        self.open_block.is_some_and(|open| at >= open)
+            || self.blocks[..self.blocks.partition_point(|&(open, _)| open <= at)]
+                .last()
+                .is_some_and(|&(_, close)| at <= close)
+    }
+}
 /// How much of a source line is a `\t` or `\ts` command, with any `q)`
 /// before it, 0 on any other line: these run their argument as q, so after
 /// the prefix the line is q (#222).
@@ -4775,7 +4912,19 @@ impl Profile {
 /// blanked as one, so a `noqa` inside a string literal is text, not a
 /// directive - and only the codes it names: a bare `/ noqa` suppresses
 /// nothing. Anything after the codes is a free-text reason.
-fn suppress(out: &mut Vec<Finding>, source: &str, comments: &str) {
+///
+/// And each finding whose code a file directive names: a comment line
+/// `/ qlinter: noqa: CODE[, CODE...]` at the left margin, anywhere in the
+/// file, as Ruff's `# ruff: noqa: CODE` (`file_noqa`).
+fn suppress(out: &mut Vec<Finding>, source: &str, v: &Views) {
+    let comments = v.comments.as_str();
+    let file: Vec<&str> = file_noqa(source, v)
+        .into_iter()
+        .flat_map(|codes| codes_in(&source[codes]))
+        .collect();
+    if !file.is_empty() {
+        out.retain(|f| !file.contains(&f.code.as_str()));
+    }
     let mut noqa: std::collections::HashMap<usize, Vec<&str>> = Default::default();
     let mut offset = 0;
     for (n, line) in source.split_inclusive('\n').enumerate() {
@@ -4827,6 +4976,115 @@ fn noqa_codes(
 /// Each code of a `noqa` comment's list.
 fn codes_in(list: &str) -> impl Iterator<Item = &str> {
     list.split([',', ' ', '\t']).filter(|c| !c.is_empty())
+}
+
+/// The code lists of the file's `/ qlinter: noqa: CODE` directives, each as
+/// the span of the source that lists them. Only a whole comment line at the
+/// left margin, with a blank after its `/` - a bare `/` opens a block - and
+/// never one inside a block comment or after the line that ends the script,
+/// which q does not read as a line at all.
+fn file_noqa(source: &str, v: &Views) -> Vec<std::ops::Range<usize>> {
+    let (raw, blanked) = (source.as_bytes(), v.comments.as_bytes());
+    let mut out = vec![];
+    let mut offset = 0;
+    for line in source.split_inclusive('\n') {
+        let start = offset;
+        offset += line.len();
+        // `views` reads `<BOM>/ note` as a comment line (#221).
+        let at = if start == 0 && source.starts_with('\u{feff}') {
+            3
+        } else {
+            start
+        };
+        if raw.get(at) != Some(&b'/') || blanked.get(at) != Some(&b' ') {
+            continue;
+        }
+        if v.in_block(at) || v.script_end.is_some_and(|end| at >= end) {
+            continue;
+        }
+        if let Some(codes) = re!(
+            r"^/+[ \t]+(?i:qlinter)[ \t]*:[ \t]*(?i:noqa)[ \t]*:[ \t]*([A-Z]+[0-9]+\b(?:[ \t]*,[ \t]*[A-Z]+[0-9]+\b|[ \t]+[A-Z]+[0-9]+\b)*)"
+        )
+        .captures(&source[at..offset])
+        .and_then(|c| c.get(1))
+        {
+            out.push(at + codes.start()..at + codes.end());
+        }
+    }
+    out
+}
+
+/// The edit that accepts `finding` everywhere in its file: its code added to
+/// the file's `/ qlinter: noqa:` directive, or a new directive line at the
+/// top of the file - after a `#!` line, which must stay first, and after a
+/// byte-order mark. `None` where the code is not one a directive can name,
+/// the file's brackets or strings do not close (as `suppression_for`), or
+/// the edit would be read as anything but that directive: the edited source
+/// must mask exactly as the original does, the new text blank in both views,
+/// and its directive must name the code. Never batch-safe.
+pub fn file_suppression_for(finding: &Finding, source: &str) -> Option<Fix> {
+    let code = finding.code.as_str();
+    if !re!(r"^[A-Z]+[0-9]+$").is_match(code) {
+        return None;
+    }
+    let v = views(source);
+    if !problems(source, &v).is_empty() {
+        return None;
+    }
+    let directives = file_noqa(source, &v);
+    if directives
+        .iter()
+        .any(|codes| codes_in(&source[codes.clone()]).any(|c| c == code))
+    {
+        return None;
+    }
+    let (at, replacement) = match directives.first() {
+        Some(codes) => (codes.end, format!(", {code}")),
+        None => {
+            let bom = if source.starts_with('\u{feff}') { 3 } else { 0 };
+            let first = &source[bom..];
+            let at = if first.starts_with("#!") {
+                first.find('\n').map_or(source.len(), |n| bom + n + 1)
+            } else {
+                bom
+            };
+            let newline = if source.contains("\r\n") {
+                "\r\n"
+            } else {
+                "\n"
+            };
+            // A shebang with no newline after it ends the file.
+            let lead = if at == source.len() && at > bom {
+                newline
+            } else {
+                ""
+            };
+            (at, format!("{lead}/ qlinter: noqa: {code}{newline}"))
+        }
+    };
+    let mut edited = source.to_string();
+    edited.insert_str(at, &replacement);
+    let after = views(&edited);
+    let added = at + replacement.len();
+    let comment_only = |before: &str, after: &str| {
+        let (before, after) = (before.as_bytes(), after.as_bytes());
+        before[..at] == after[..at]
+            && after[at..added]
+                .iter()
+                .all(|&b| b == b' ' || b == b'\n' || b == b'\r')
+            && before[at..] == after[added..]
+    };
+    let named = file_noqa(&edited, &after)
+        .into_iter()
+        .any(|codes| codes_in(&edited[codes]).any(|c| c == code));
+    (named && comment_only(&v.code, &after.code) && comment_only(&v.comments, &after.comments))
+        .then(|| Fix {
+            start: at,
+            end: at,
+            replacement: replacement.into(),
+            title: format!("Suppress {code} in this file").into(),
+            batch_safe: false,
+        })
 }
 
 /// The edit that accepts `finding` where it is reported: ` / noqa: CODE`
@@ -4889,10 +5147,7 @@ fn suppression_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
     let line = source[start..].split_inclusive('\n').next()?;
     let text = line.strip_suffix('\n').unwrap_or(line);
     let text = text.strip_suffix('\r').unwrap_or(text);
-    let in_block = v.open_block.is_some_and(|open| start >= open)
-        || v.blocks
-            .iter()
-            .any(|&(open, close)| (open..=close).contains(&start));
+    let in_block = v.in_block(start);
     if text.trim().is_empty()
         || in_block
         || system_command(line)
@@ -4933,6 +5188,99 @@ fn suppression_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
             title: format!("Suppress {code} on this line").into(),
             batch_safe: false,
         })
+}
+
+/// The edit that organises a file's loads, as isort does a Python file's
+/// imports: in each run of consecutive `\l` lines, a path loaded twice is
+/// loaded once, at its first place, and the rest are sorted - absolute paths
+/// (`/`, `~`, `$`, a drive) first and relative ones after, each group by
+/// path without regard to case, with a blank line between the two. `None`
+/// when nothing would change.
+///
+/// Loads run in order, and a later file can read what an earlier one
+/// defined, so this is a person's decision, made where they ask for it - it
+/// is not a fix, and `--fix` never makes it. What it leaves alone, so as not
+/// to change more than order: a run with a load that is not a `.q` or `.k`
+/// file - `\l db` loads a database and changes directory, which every
+/// relative load after it depends on - lines separated by anything at all,
+/// a blank line included, which keeps a person's grouping; a load in a block
+/// comment or after the line that ends the script; and a file whose
+/// brackets or strings do not close.
+pub fn organise_loads(source: &str) -> Option<Fix> {
+    let v = views(source);
+    if !problems(source, &v).is_empty() {
+        return None;
+    }
+    let skipped = |at: usize| v.in_block(at) || v.script_end.is_some_and(|end| at >= end);
+    // Each line: where it starts, its text, its line ending, and its path
+    // when it is a load.
+    let mut lines: Vec<(usize, &str, &str, Option<&str>)> = vec![];
+    let mut offset = 0;
+    for line in source.split_inclusive('\n') {
+        let body = line.trim_end_matches(['\n', '\r']);
+        let ending = &line[body.len()..];
+        let path = re!(r"^\\l[ \t]+(\S(?:.*\S)?)[ \t]*$")
+            .captures(body)
+            .and_then(|c| c.get(1))
+            .map(|m| m.as_str())
+            .filter(|_| !skipped(offset));
+        lines.push((offset, body, ending, path));
+        offset += line.len();
+    }
+    let mut edited = String::with_capacity(source.len());
+    let mut i = 0;
+    while i < lines.len() {
+        let (start, body, ending, path) = lines[i];
+        if path.is_none() {
+            edited.push_str(&source[start..start + body.len() + ending.len()]);
+            i += 1;
+            continue;
+        }
+        let run_end = (i..lines.len())
+            .find(|&j| lines[j].3.is_none())
+            .unwrap_or(lines.len());
+        let run = &lines[i..run_end];
+        let paths: Vec<&str> = run.iter().filter_map(|l| l.3).collect();
+        let files = paths
+            .iter()
+            .all(|p| re!(r"(?i)\.[qk]$").is_match(p) && !p.contains(char::is_whitespace));
+        let text =
+            |l: &(usize, &str, &str, Option<&str>)| &source[l.0..l.0 + l.1.len() + l.2.len()];
+        if !files {
+            run.iter().for_each(|l| edited.push_str(text(l)));
+            i = run_end;
+            continue;
+        }
+        let newline = run
+            .iter()
+            .map(|l| l.2)
+            .find(|e| !e.is_empty())
+            .unwrap_or("\n");
+        let last_ending = run.last().map_or("", |l| l.2);
+        let mut seen = std::collections::HashSet::new();
+        let mut kept: Vec<(&str, &str)> = run
+            .iter()
+            .filter(|l| seen.insert(l.3.unwrap()))
+            .map(|l| (l.3.unwrap(), l.1))
+            .collect();
+        let absolute =
+            |p: &str| p.starts_with(['/', '~', '$', '\\']) || re!(r"^[A-Za-z]:[\\/]").is_match(p);
+        kept.sort_by_key(|&(p, _)| (!absolute(p), p.to_lowercase(), p.to_string()));
+        let mut out: Vec<&str> = vec![];
+        for (n, &(p, line)) in kept.iter().enumerate() {
+            if n > 0 && absolute(kept[n - 1].0) && !absolute(p) {
+                out.push("");
+            }
+            out.push(line);
+        }
+        edited.push_str(&out.join(newline));
+        edited.push_str(last_ending);
+        i = run_end;
+    }
+    let mut fix = whole_edit(source, &edited)?;
+    fix.title = "Organise loads".into();
+    fix.batch_safe = false;
+    Some(fix)
 }
 
 pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
@@ -4987,7 +5335,7 @@ fn lint_rules(
     let mut v = views(source);
     if structure_selected {
         let mut out = structure(path, source, &v);
-        suppress(&mut out, source, &v.comments);
+        suppress(&mut out, source, &v);
         if !out.is_empty() {
             out.truncate(1);
             return out;
@@ -8882,7 +9230,7 @@ fn lint_rules(
             .find(|r| r.code == f.code)
             .is_none_or(|r| profile.allows(&r.scope) || opt_in && r.scope == "opt-in")
     });
-    suppress(&mut out, source, &v.comments);
+    suppress(&mut out, source, &v);
     out.sort_by(|a, b| {
         (&a.path, a.line, &a.rule, &a.detail).cmp(&(&b.path, b.line, &b.rule, &b.detail))
     });

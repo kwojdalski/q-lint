@@ -555,6 +555,23 @@ uniq2:{[p] asc distinct p}
 bumped:{[p] {x+1} each p}
 joined2:{[p] {x,1} each p}
 
+/ QV001: on a date-partitioned table the first where constraint runs in
+/ every partition; date first narrows them before anything else is read.
+/ expect-next: QV001
+late:{[s;d] select from trade where sym=s, date=d}
+early:{[s;d] select from trade where date=d, sym=s}
+
+/ QV002: abs is atomic, so each makes a call per item where one would do.
+/ expect-next: QV002
+mags:{[p] abs each p}
+mags2:{[p] abs p}
+
+/ QV003: joining to itself in a loop copies everything gathered so far on
+/ every pass; ,: appends in place.
+/ expect-next: QV003
+gather:{[n] r:(); do[n; r:r,til 10]; r}
+gather2:{[n] r:(); do[n; r,:til 10]; r}
+
 / QL001: a marker of unfinished work; taste, so styleq and above only.
 / expect-next: QL001
 done:1 / TODO check the empty case

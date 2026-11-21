@@ -43,6 +43,7 @@ it differs.
 | `F823` local referenced before assignment | **QF014** - in q the assignment makes the name local for the whole lambda, so the read above it finds nothing |
 | `F821` undefined name | **QF018** - a warning rather than an error, and the difference is the language's: Python resolves a global within the module, while q takes them from `\l`, from IPC and from whatever loaded first, so an absent definition here is a suspicion and not a proof |
 | `PERF401` manual list building | **QR004** - `{x+1} each a` for `a+1`; the two differ on an empty typed list, where `each` returns a general `()` |
+| `PERF` performance anti-patterns | **QV001** - a where phrase constraining the partition column after another, which on a partitioned table runs the first constraint in every partition (85 ms against 5 ms over 20 partitions, KDB-X); **QV002** - `abs each x` for `abs x`, an atomic builtin called once an item (63 ms against under 1 ms on a million items); **QV003** - `r:r,x` in a `do` or `while`, quadratic in the loop's count where `r,:x` is linear |
 | `C413` unnecessary call around `sorted` | **QR001** - `reverse asc x` for `desc x`; on a dictionary with tied values the keys come out in a different order |
 | `C414` nested redundant call | **QR003** - `distinct asc distinct x` for `asc distinct x` |
 | `PIE807` useless lambda | **QR002** - `{x} each x` for `x`; the two differ on an empty typed list, and `each` drops a `` `s# `` or `` `g# `` attribute |

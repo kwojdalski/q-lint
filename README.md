@@ -336,7 +336,10 @@ One finding on one line is accepted with a trailing comment naming its code:
 are separated by commas or spaces, and text after them is a reason. It drops
 only findings reported on that line, from the output, `--fix` and the
 language server alike; a bare `/ noqa` names nothing and suppresses nothing.
-The built-in rules honour it; findings from qls do not.
+A comment line at the left margin, `/ qlinter: noqa: QS001, QF016 reason`,
+accepts those codes on every line of its file, as Ruff's `# ruff: noqa:` does;
+inside a block comment or after the line that ends the script it is not read.
+The built-in rules honour both; findings from qls do not.
 
 Diagnostics carry a
 code and a category; `qlinter --rules` lists them all and `qlinter --explain
@@ -395,7 +398,9 @@ Around those:
   still run the same line: not on a line that ends inside a string, a system
   command, a `k)` or `p)` line, a block comment or the bare `/` that opens
   one, nor in a file whose brackets or strings do not close. It is never the
-  preferred fix.
+  preferred fix. Beside it, "Suppress CODE in this file" adds the code to the
+  file's `/ qlinter: noqa:` line, or writes one at the top of the file (after
+  a `#!` line). `suppressions.enable: false` withdraws both.
 - `textDocument/codeAction` answers the kind `source.fixAll.q-lint` - asked
   for by that name, or as `source.fixAll` or `source` - with the edit Format
   Document makes. That is how an editor applies the safe fixes on save where
@@ -526,7 +531,8 @@ five, ranked and narrowed as Go to Definition is; signature help lists them in
 the same order. A word of q shows how it is written, a line on what it gives, and a link
 to its page on code.kx.com, and so does a glyph - `+`, `#`, `/:` - outside a
 name, a number, a string and a comment. A lambda's own parameter or local
-shows nothing: its definition is on screen.
+shows the type its assignments settle, when they settle one (below), and
+nothing otherwise: its definition is on screen.
 
 Signature help answers inside the brackets of a call written as a name -
 `.lib.add[1;`, or `.lib.add [1;`, which q reads the same - with the
@@ -550,6 +556,19 @@ to whichever ran last. An empty slot of a projection, an argument past the
 last parameter and one spelled as the parameter itself get none.
 `inlayHints.enable: false` turns them off.
 
+A local's type is inferred only where reading settles it: every assignment of
+the local in its lambda is a plain `a:` of a literal - a number or a vector
+of them, a boolean, a byte, a string, a symbol or several, a date or a time,
+a lambda, or `()` - and all of them give the same type. Then an inlay hint
+after the value of its first assignment names the type (`a:1 2 3 long
+list`), and a hover on the local says it and the number `type` gives
+(`7h`). Anything else shows nothing: an expression, even `1+2`; a
+parameter; an amend (`a+:1`, `a[i]:2`); `(a;b):`; two literals of different
+types; a literal q refuses (`2024.02.30`); a name in a qSQL phrase, which may
+be a column. Each type is the one KDB-X's `type` gives for the same text,
+and `tests/assist.rs` checks the table against a running q.
+`inferredTypes.enable: false` turns both off.
+
 `textDocument/codeLens`, when `codeLens.enable` asks for it, puts a **Run**
 lens on the name of each function a statement at column 0 defines, and a
 **Run test** lens too when its name starts `test_`, or `test` and a capital
@@ -560,6 +579,14 @@ when it is written under `\d .ns`; Run test's is that, then a call of the
 function by its full name with no argument (`.ns.test_x[]`). It is off by
 default because only a client that registers that command - the VS Code
 extension, which sends the code to the connected q process - can run it.
+
+With `referenceLens.enable`, the same functions get a lens counting the
+places the indexed files read them - what Find All References lists without
+the assignments: `1 reference`, `3 references`, `0 references`. It runs the
+command `q-lint.showReferences` with the document's URI and the name's
+position, which the VS Code extension opens as the references list. It is
+off by default for the same reason as Run. One request reads each workspace
+file that spells one of the document's function names, once.
 
 A code action of kind `refactor.rewrite`, **Generate qDoc for f**, is offered
 inside a function a statement at column 0 defines, with no `context.only` or
@@ -589,6 +616,41 @@ reads more than 8 locals is refused; to a client with
 disabled with the reason. `extractFunction.enable: false` withdraws it and
 its kind.
 
+A code action of kind `source.organizeImports.q-lint`, **Organise loads**, is
+returned only to a request that asks for it by kind - `source.organizeImports`,
+which VS Code's Organize Imports and `editor.codeActionsOnSave` send. In each
+run of consecutive `\l` lines it loads a path once, at its first place, and
+sorts the rest: absolute paths (`/`, `~`, `$`, a drive) first, then relative
+ones, each by path without regard to case, with a blank line between the two
+groups. Load order is meaning in q - a file can read what an earlier one
+defined - so it is never a fix and `--fix` never makes it, and it leaves alone
+a run with a load that is not a `.q` or `.k` file (`\l db` loads a database
+and changes directory, which the relative loads after it depend on), runs a
+blank line or anything else separates, loads in a block comment or after the
+end of the script, and a file whose brackets do not close.
+
+`q-lint/formatChangedLines`, a request of this server's own, takes a
+document and `lines`, pairs of 0-based first and last lines, and answers the
+edits Format Document would make for the findings on those lines only - the
+lines moving with the edits as they are made. It is how an editor formats
+only what changed on save: which lines changed is git's to say and the
+client's to ask, so the server is given them. It answers `[]` unless
+`formatChangedLines.enable` is `true`.
+
+A code action of kind `refactor.rewrite`, **Lay out qSQL query on aligned
+lines**, is offered inside a `select`, `exec`, `update` or `delete` - with no
+`context.only` and no diagnostics in the request, or with a `context.only`
+naming `refactor`. It puts each clause on its own line, `by`, `from` and the
+`where` after `from` right-aligned under the first word, and a clause's
+columns or constraints one per line when they do not fit in
+`qsqlLayout.lineLength`. It replaces only blanks - before those words, and
+after a comma that separates two items - and is not offered in a query where
+a newline there could change what q reads: one with a comment in it, one
+broken over lines somewhere else, one with another query word at its own
+depth, or one on a `\t` line. With `qsqlLayout.onFormat`, formatting lays
+out every query longer than `qsqlLayout.lineLength` after the safe fixes;
+the fix-all action never does. `qsqlLayout.enable: false` withdraws both.
+
 Completion is off unless `completion.enable` asks for it, because an editor
 told that a server completes stops offering the words already in the buffer,
 and this server's list is narrower than that fallback in one way that matters:
@@ -598,6 +660,20 @@ the lambda being written; the names the workspace defines, spelled as the
 `\d` context in force reads them; q's words; and every name by its full
 path. Nothing is offered in a string, a comment, a symbol, a number or a
 system command.
+
+With `autoLoad.enable` too, a workspace name that one other file defines,
+and that nothing the document can already see defines, comes with the `\l`
+that loads that file as an `additionalTextEdits` entry, so the line is
+written only when the item is accepted; its `detail` says `adds \l
+lib/util.q`. "Can already see" is the document itself, every file it loads
+directly or through another, and every file loaded by a file that loads it -
+a sibling its loader brings in - so a load already there is never added
+twice. The path is written from the first workspace folder, or else from the
+document's own directory, whichever the dependency graph follows to that
+file. The line goes after the last `\l` line above the cursor and above the
+file's first `\d`, keeping the loads' order; with none, after a leading
+`#!` line and comment block. A name two files define gets no edit: which to
+load is the reader's call.
 
 **How files and functions relate** is read the same way, and comes in three
 requests.
@@ -653,8 +729,8 @@ from what the index already holds - about a quarter of a second over 3,665
 files - so a client should ask when a view is shown or a file saved, not on
 every keystroke.
 
-Three more of its own, also under `capabilities.experimental`, are what a
-client asks before it talks to a q process. The server runs nothing and
+Five more of its own, also under `capabilities.experimental`, are what a
+client asks before it talks to a q process, or as the cursor moves. The server runs nothing and
 connects to nothing: it reads, and the client runs the tests, reads the
 value or asks the process which names it defines.
 
@@ -666,6 +742,11 @@ q-lint/globalAt         {"textDocument": {"uri": U}, "position": P}
                      -> {"names": [name q may resolve it to], "range": R}, or null
 q-lint/unresolvedNames  {"textDocument": {"uri": U}}
                      -> [{"names": [name], "written": as written, "range": R}]
+q-lint/argumentSlot     {"textDocument": {"uri": U}, "position": P}
+                     -> {"range": R, "index": n, "callee": as written,
+                         "parameter": name or null, "hinted": bool}, or null
+q-lint/defined          {"names": [name]}
+                     -> [bool]
 ```
 
 `tests` lists the functions a **Run test** lens is drawn over, in every
@@ -675,6 +756,11 @@ a position, and is null on a local, a word of q's or nothing. `unresolvedNames`
 lists the globals a document reads that no indexed file defines - not q's
 words, a one-letter namespace's names, a system command's, or one in a qSQL
 phrase other than the table after `from`, which may be a column.
+`argumentSlot` is the argument of a bracketed call the cursor is in: its
+range as written (empty for an empty slot), its index, and the parameter it
+is passed as, from the definition or q's catalogue; `hinted` says whether a
+parameter inlay hint already writes that name before it. `defined` says,
+for each name, whether an indexed file defines it.
 
 Every answer names a file the way the client knows it: an open document by
 the URI it was opened with, and a file under a workspace folder by that
@@ -775,7 +861,12 @@ Every key is optional, and these are the defaults:
  "callHierarchy": {"enable": true}, "graph": {"enable": true},
  "rename": {"enable": true}, "inlayHints": {"enable": true}, "codeLens": {"enable": false},
  "documentLinks": {"enable": true}, "generateQdoc": {"enable": true},
- "extractFunction": {"enable": true},
+ "extractFunction": {"enable": true}, "autoLoad": {"enable": false},
+ "referenceLens": {"enable": false}, "inferredTypes": {"enable": true},
+ "suppressions": {"enable": true},
+ "organiseLoads": {"enable": true}, "performanceLints": {"enable": true},
+ "formatChangedLines": {"enable": false},
+ "qsqlLayout": {"enable": true, "onFormat": false, "lineLength": 80},
  "workspaceIndex": {"enable": true, "exclude": []}}
 ```
 
@@ -791,8 +882,14 @@ language server already answers those requests. `completion.enable` is the
 one that starts off; `true` announces completion.
 `callHierarchy.enable` set to `false` leaves the call hierarchy unannounced,
 and `graph.enable` does that for `q-lint/graph` and `q-lint/affectedTests`,
-which then answer `null`; `inlayHints.enable` does it for inlay hints, and `codeLens.enable: true`
-announces the Run lenses.
+which then answer `null`; `inlayHints.enable` and `inferredTypes.enable` do
+it for inlay hints when both are `false`, and `codeLens.enable: true` or
+`referenceLens.enable: true` announces code lenses. `autoLoad.enable: true`
+adds loads to completions, when completion is on.
+`suppressions.enable: false` withdraws both "Suppress CODE" Quick Fixes,
+`organiseLoads.enable: false` Organise loads and its kind, and
+`performanceLints.enable: false` ignores the QV rules as `lint.ignore`
+would. `formatChangedLines.enable: true` answers `q-lint/formatChangedLines`.
 `workspaceIndex.exclude`
 holds globs relative to each workspace folder that the index does not read.
 The index stops after 20,000 `.q` files or 500,000 directory entries of any
@@ -865,7 +962,7 @@ language server driven over real LSP framing as a real process.
 
 ### Rule and multiline regression corpus
 
-The taxonomy contains 123 codes. Ten literal-call rules cover excess builtin
+The taxonomy contains 126 codes. Ten literal-call rules cover excess builtin
 arguments (QA010), invalid literal types/shapes (QT008–QT014), and negative
 `til`/`where` counts (QD001–QD002). These checks leave unknown expressions
 unresolved and account for projections, seeded scans and variadic `enlist`.
@@ -874,7 +971,7 @@ unresolved and account for projections, seeded scans and variadic `enlist`.
 `tests/showcase.rs` checks exact code/line pairs under every profile, including
 silence in the clean section. Together with the three companion examples -
 `syntax-error.q`, `byte-order-mark.q` and `query-injection.q`, each holding
-a rule that would hide or stop the others - it covers all 121 rules available
+a rule that would hide or stop the others - it covers all 124 rules available
 in this build; QF006 and QLS001 are excluded.
 
 Multiline fixtures cover nested lambdas, split argument lists, comments,

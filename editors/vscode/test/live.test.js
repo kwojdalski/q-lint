@@ -67,6 +67,9 @@ const { TUNNEL_COMMANDS } = require("../out/tunnel.js");
 const { GATEWAY_COMMANDS } = require("../out/gateway.js");
 const { STREAM_COMMANDS } = require("../out/stream.js");
 const { LAUNCH_COMMANDS } = require("../out/launcher.js");
+const { NEW_QUERY_COMMAND } = require("../out/newquery.js");
+const { RUN_ARGS_COMMAND } = require("../out/runargs.js");
+const { LOG_COMMANDS } = require("../out/logparse.js");
 const { SHARED_COMMANDS } = require("../out/shared.js");
 const { DATA_FILES, readDataFiles } = require("../out/datafile.js");
 const { SCHEMA_COMMANDS, readSchemaTools } = require("../out/schema.js");
@@ -76,6 +79,7 @@ const { TAG_QUERY, readTagQuery } = require("../out/tagquery.js");
 const { COMPARE, readCompare } = require("../out/compare.js");
 const { SAVED_QUERIES, readSavedQueries } = require("../out/savedqueries.js");
 const { WATCH, readWatch } = require("../out/watch.js");
+const { TOOLING_SETTINGS, TOOLING_COMMANDS, toolingOn } = require("../out/toolingfeatures.js");
 
 test("a statement is a line and the indented lines after it", () => {
   assert.deepStrictEqual(statements("a:1\nb:a+1\nb*10"), ["a:1", "b:a+1", "b*10"]);
@@ -307,6 +311,7 @@ test("package.json declares exactly the commands the extension registers", () =>
     ...Object.values(relations.COMMANDS),
     NOTEBOOK.exportCommand,
     ...[NOTEBOOK.exportHtmlCommand, NOTEBOOK.exportIpynbCommand, NOTEBOOK.importIpynbCommand, NOTEBOOK.runWithParameters, NOTEBOOK.refreshVariables],
+    ...[NOTEBOOK.diffCommand, NOTEBOOK.stripCommand, NOTEBOOK.stripFilterCommand, NOTEBOOK.restartRunAll],
     RESULTS.exportCsv,
     RESULTS.exportViewCsv,
     RESULTS.setRowLimit,
@@ -315,6 +320,7 @@ test("package.json declares exactly the commands the extension registers", () =>
     ...[ONBOARDING.getStarted, ONBOARDING.openHelpLink, ONBOARDING.editTagColor, ONBOARDING.newNotebook],
     "q-lint.restartServer",
     "q-lint.runDefinition",
+    "q-lint.showReferences",
     ...Object.values(SOURCE_COMMANDS),
     INFO.refreshMonitor,
     INFO.refreshHdb,
@@ -340,6 +346,10 @@ test("package.json declares exactly the commands the extension registers", () =>
     TEST_STUB_COMMAND,
     ...Object.values(LOGPOINT_COMMANDS),
     CAPTURE_LOCALS,
+    ...Object.values(TOOLING_COMMANDS),
+    NEW_QUERY_COMMAND,
+    RUN_ARGS_COMMAND,
+    ...Object.values(LOG_COMMANDS),
   ].sort();
   assert.deepStrictEqual(declared, registered);
 });
@@ -444,6 +454,10 @@ test("every query setting is read, with the default package.json declares, and n
   readAssist(get, QUERY_FEATURES);
   assert.deepStrictEqual(readDataFiles(get), { open: true, loadWizard: true });
   assert.deepStrictEqual(readSchemaTools(get), { templates: true, diagram: true });
+  // The profiling and code-quality switches declared here (#986-#992).
+  for (const [feature, { key }] of Object.entries(TOOLING_SETTINGS)) {
+    if (`q-lint.${key}` in declared) toolingOn(get, feature);
+  }
   for (const [key, spec] of Object.entries(declared)) {
     const short = key.replace(/^q-lint\./, "");
     assert.ok(read.has(short), `${key} is declared but never read`);
@@ -571,6 +585,19 @@ test("Execute Entire File is bound to a key no VS Code default takes, and is in 
   // Copy Query is on a history row, inline and in its menu.
   const rows = pkg.contributes.menus["view/item/context"].filter((m) => m.command === CONTROL_COMMANDS.copyQuery);
   assert.deepStrictEqual(rows.map((m) => m.group).sort(), ["1_history@2", "inline"]);
+});
+
+test("every editor title entry has a group; the notebook commands' palette entries are in the palette", () => {
+  // An editor/title entry without a group goes in the overflow menu of every
+  // editor its `when` allows: the notebook commands' palette entries once
+  // sat there, shown in any text editor's title menu.
+  for (const entry of pkg.contributes.menus["editor/title"]) {
+    assert.ok(entry.group, `editor/title entry without a group: ${entry.command}`);
+  }
+  const palette = new Set(pkg.contributes.menus.commandPalette.map((m) => m.command));
+  for (const command of ["q-lint.exportNotebookHtml", "q-lint.runNotebookWithParameters", "q-lint.diffNotebook", "q-lint.restartNotebookAndRunAll"]) {
+    assert.ok(palette.has(command), command);
+  }
 });
 
 test("Toggle Parameter Cache is bound to a key no VS Code default takes (#892)", () => {

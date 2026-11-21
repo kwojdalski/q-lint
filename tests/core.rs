@@ -865,6 +865,8 @@ fn deeply_nested_lambdas_lint_in_bounded_time() {
 /// start for each: a file of block comments, each a QP001 finding built and
 /// dropped later, took time quadratic in their number (#706). About 1 s in a
 /// debug build after the fix.
+/// File-level `noqa` (0.31) asked whether each `/` line sat in a block
+/// comment by walking every block, quadratic again in their number.
 #[test]
 fn many_findings_lint_in_bounded_time() {
     let source = "/\nsome text here {[ ( \"\n\\\n".repeat(20000);
@@ -957,6 +959,7 @@ fn a_long_lambda_body_lints_in_bounded_time() {
 }
 /// Chained qSQL keywords: each one scanned on to the statement's end, more
 /// than once over, so a chain took time quadratic in its length (#709).
+/// QV001 (0.31) did it again, reading each query's phrase to its end.
 #[test]
 fn chained_queries_lint_in_bounded_time() {
     let source = format!("r:{}t\n", "select from ".repeat(8000));
@@ -966,6 +969,23 @@ fn chained_queries_lint_in_bounded_time() {
     assert!(
         elapsed < std::time::Duration::from_secs(10),
         "8000 chained queries took {elapsed:?}"
+    );
+}
+/// A long loop body: QV003 asked of each assignment whether a lambda opened
+/// around it by reading from the body's start, and compiled two regexes for
+/// it, so a body took time quadratic in its length - 18 s for this one in a
+/// debug build, against 1.5 s for the same file without the rule.
+#[test]
+fn a_long_loop_body_lints_in_bounded_time() {
+    let body: String = (0..16000).map(|i| format!("  a{i}:a{i},1;\n")).collect();
+    let source = format!("do[3;\n{body}  ]\n");
+    let started = std::time::Instant::now();
+    let found = lint(&source, "t.q", Profile::Uqf);
+    let elapsed = started.elapsed();
+    assert_eq!(found.iter().filter(|f| f.code == "QV003").count(), 16000);
+    assert!(
+        elapsed < std::time::Duration::from_secs(10),
+        "a 16000-line loop body took {elapsed:?}"
     );
 }
 /// Nested `$[`, `@[` and `.[`: each split its whole contents into slots, the

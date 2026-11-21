@@ -110,6 +110,32 @@ test("the q REPL gets the workspace's .env in its environment; the command line 
   assert.doesNotMatch(fake.messages.join("\n"), /s3cr3t/, "no value in any message");
 });
 
+test("Run File with Arguments starts its q with the .env file's variables and the picked interpreter's layout", async (t) => {
+  // A KDB-X layout, as Select q Interpreter writes it to q-lint.terminal.qBinary.
+  const kx = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-kx-"));
+  t.after(() => fs.rmSync(kx, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(kx, "bin"));
+  fs.mkdirSync(path.join(kx, "q"));
+  fs.writeFileSync(path.join(kx, "bin", "q"), "");
+  fs.writeFileSync(path.join(kx, "kc.lic"), "");
+  const binary = path.join(kx, "bin", "q");
+  const fake = fakeVscode({ "terminal.qBinary": binary }, { "/ws/.env": "API_TOKEN=s3cr3t\nFEED=live\n" });
+  await loadTerminals(fake).runFile({ args: ["-p", "5001", "two words"], input: ["show .z.x"] });
+  assert.strictEqual(fake.terminals.length, 1);
+  const [terminal] = fake.terminals;
+  assert.deepStrictEqual(terminal.options.env, { API_TOKEN: "s3cr3t", FEED: "live" }, "the .env goes in the environment");
+  const [line, ...typed] = terminal.sent;
+  assert.ok(line.includes(`QHOME=${path.join(kx, "q")}`) && line.includes(`QLIC=${kx}`), line);
+  assert.ok(line.endsWith(`${binary} a.q -p 5001 'two words'`), line);
+  assert.doesNotMatch(line, /s3cr3t|FEED/, "no .env value on the command line");
+  assert.deepStrictEqual(typed, ["show .z.x"]);
+  // The interpreter switch off: the picked binary still runs, without the layout.
+  const off = fakeVscode({ "terminal.qBinary": binary, "interpreter.enable": false }, { "/ws/.env": "FEED=live\n" });
+  await loadTerminals(off).runFile({ args: ["x"], input: [] });
+  assert.deepStrictEqual(off.terminals[0].options.env, { FEED: "live" });
+  assert.strictEqual(off.terminals[0].sent[0], `${binary} a.q x`);
+});
+
 test("another file, and none: a missing .env is no .env and says nothing", async () => {
   const fake = fakeVscode({ "env.file": "config/q.env" }, { "/ws/config/q.env": "QLIC=/lic\n" });
   await loadTerminals(fake).repl();

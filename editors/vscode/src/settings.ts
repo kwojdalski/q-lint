@@ -61,6 +61,14 @@ export interface InitializationOptions {
   documentLinks: { enable: boolean };
   generateQdoc: { enable: boolean };
   extractFunction: { enable: boolean };
+  autoLoad: { enable: boolean };
+  referenceLens: { enable: boolean };
+  inferredTypes: { enable: boolean };
+  suppressions: { enable: boolean };
+  organiseLoads: { enable: boolean };
+  performanceLints: { enable: boolean };
+  formatChangedLines: { enable: boolean };
+  qsqlLayout: { enable: boolean; onFormat: boolean; lineLength: number };
   workspaceIndex: { enable: boolean; exclude: string[] };
 }
 
@@ -92,6 +100,12 @@ function strings(settings: Settings, key: string): string[] {
   return Array.isArray(value)
     ? value.filter((v): v is string => typeof v === "string" && v.trim() !== "").map((v) => v.trim())
     : [];
+}
+
+/// `q-lint.qsqlLayout.lineLength`: a whole number from 20 to 400, else 80,
+/// so the server is never sent one it would refuse.
+function lineLength(value: unknown): number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 20 && value <= 400 ? value : 80;
 }
 
 /// `settings` as a launch. `folder` is the first workspace folder, which a
@@ -145,6 +159,18 @@ export function launch(settings: Settings, folder: string | undefined): Launch {
       documentLinks: { enable: settings.get<boolean>("documentLinks.enable", true) },
       generateQdoc: { enable: settings.get<boolean>("generateQdoc.enable", true) },
       extractFunction: { enable: settings.get<boolean>("extractFunction.enable", true) },
+      autoLoad: { enable: settings.get<boolean>("autoLoad.enable", false) },
+      referenceLens: { enable: settings.get<boolean>("referenceLens.enable", true) },
+      inferredTypes: { enable: settings.get<boolean>("inferredTypes.enable", true) },
+      suppressions: { enable: settings.get<boolean>("suppressions.enable", true) },
+      organiseLoads: { enable: settings.get<boolean>("organiseLoads.enable", true) },
+      performanceLints: { enable: settings.get<boolean>("performanceLints.enable", true) },
+      formatChangedLines: { enable: settings.get<boolean>("formatChangedLines.enable", false) },
+      qsqlLayout: {
+        enable: settings.get<boolean>("qsqlLayout.enable", true),
+        onFormat: settings.get<boolean>("qsqlLayout.onFormat", false),
+        lineLength: lineLength(settings.get<unknown>("qsqlLayout.lineLength", 80)),
+      },
       workspaceIndex: {
         enable: settings.get<boolean>("workspaceIndex.enable", true),
         exclude: strings(settings, "workspaceIndex.exclude"),
@@ -176,6 +202,14 @@ const RESTARTING = [
   "documentLinks",
   "generateQdoc",
   "extractFunction",
+  "autoLoad",
+  "referenceLens",
+  "inferredTypes",
+  "suppressions",
+  "organiseLoads",
+  "performanceLints",
+  "formatChangedLines",
+  "qsqlLayout",
   "workspaceIndex",
 ];
 

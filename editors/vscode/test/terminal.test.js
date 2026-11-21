@@ -169,6 +169,11 @@ test("every terminal setting is read, with the default package.json declares, an
     read.set(key, fallback);
     return fallback;
   });
+  // Run File with Arguments reads its own switch (#1005).
+  require("../out/runargs.js").readRunArgs((key, fallback) => {
+    read.set(key, fallback);
+    return fallback;
+  });
   for (const [key, spec] of Object.entries(declared)) {
     const short = key.replace(/^q-lint\./, "");
     assert.ok(read.has(short), `${key} is declared but never read`);

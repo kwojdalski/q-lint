@@ -3,7 +3,7 @@
   "displayName": "q-lint",
   "description": "q/kdb+ for VS Code: linting, Quick Fixes, navigation and help from the source, and connections to q processes to run code on.",
   "icon": "icon.png",
-  "version": "0.30.0",
+  "version": "0.31.0",
   "publisher": "wojdalski",
   "license": "MIT",
   "engines": {
@@ -300,6 +300,68 @@
             "default": true,
             "order": 29,
             "markdownDescription": "Offer **Extract function** in the lightbulb and **Refactor...** menu over a selection: it becomes a lambda defined above the top-level statement it is in, taking the parameters and locals it reads, and the selection a call to it. Only a selection q reads as one value is rewritten; **Refactor...** says why another is refused. Off, q-lint offers no such action."
+          },
+          "q-lint.autoLoad.enable": {
+            "type": "boolean",
+            "default": false,
+            "order": 32,
+            "markdownDescription": "When completing a name that one other workspace file defines, and nothing this file loads or is loaded with defines, accepting it also writes the `\\l` that loads that file: after the file's last load above the cursor, keeping their order. Never a second load of a file already reached, and nothing for a name two files define. Needs `#q-lint.completion.enable#`. Off by default: accepting a name then writes a line elsewhere in the file."
+          },
+          "q-lint.referenceLens.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 34,
+            "markdownDescription": "Show **N references** above each function a statement at column 0 defines: the places the workspace's `.q` files read it, as **Find All References** lists them without the assignments. Click it to see them. Read from the source, never from a running q. Off, q-lint shows no such lens."
+          },
+          "q-lint.inferredTypes.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 33,
+            "markdownDescription": "Show a lambda local's type on hover and as an inlay hint after its value (`a:1 2 3 long list`), only where every assignment of it is a literal of the same type, so the type is the one q's `type` gives. An expression, a parameter or an amend shows nothing rather than a guess. Off, q-lint shows neither."
+          },
+          "q-lint.suppressions.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 35,
+            "markdownDescription": "Offer the Quick Fixes that accept a finding instead of fixing it: **Suppress CODE on this line**, which writes `/ noqa: CODE` after its line, and **Suppress CODE in this file**, which writes `/ qlinter: noqa: CODE` at the top of the file or adds the code to the one there. Off, q-lint offers neither."
+          },
+          "q-lint.organiseLoads.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 36,
+            "markdownDescription": "Answer **Organize Imports** (and `source.organizeImports` in `editor.codeActionsOnSave`) with **Organise loads**: in each run of consecutive `\\l` lines, a path loaded twice is loaded once and the rest are sorted, absolute paths first, then relative ones. A run that loads anything but a `.q` or `.k` file is left alone. Off, q-lint offers no such action and **q-lint: Organise Loads** is hidden."
+          },
+          "q-lint.performanceLints.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 37,
+            "markdownDescription": "Report the performance rules, `QV`: a where phrase that constrains the partition column after another, `each` over an atomic builtin such as `abs`, and `r:r,x` in a loop. Off, they are hidden as `#q-lint.lint.ignore#` would hide them."
+          },
+          "q-lint.formatChangedLines.enable": {
+            "type": "boolean",
+            "default": false,
+            "order": 38,
+            "markdownDescription": "On saving a q file in a git repository, apply the safe fixes **Format Document** makes, for the findings on the lines changed against `HEAD` only. Outside git nothing is changed. Off by default: it edits the file at every save. Off, nothing listens and **q-lint: Format Changed Lines** is hidden."
+          },
+          "q-lint.qsqlLayout.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 39,
+            "markdownDescription": "Offer **Lay out qSQL query on aligned lines** in the lightbulb and **Refactor...** menu inside a `select`, `exec`, `update` or `delete`: each clause on its own line, `by`, `from` and `where` right-aligned under the first word, and the columns or constraints one per line where they do not fit in `#q-lint.qsqlLayout.lineLength#`. Only blanks change, and a query where a new line could change what q reads (a comment in it, say) is left alone. Off, q-lint offers no such action, and Format Document does not lay queries out."
+          },
+          "q-lint.qsqlLayout.onFormat": {
+            "type": "boolean",
+            "default": false,
+            "order": 41,
+            "markdownDescription": "Have **Format Document** also lay out every qSQL query longer than `#q-lint.qsqlLayout.lineLength#`, after the safe fixes. Off by default, so formatting (and a format on save) keeps to the safe fixes. Needs `#q-lint.qsqlLayout.enable#`."
+          },
+          "q-lint.qsqlLayout.lineLength": {
+            "type": "integer",
+            "default": 80,
+            "minimum": 20,
+            "maximum": 400,
+            "order": 42,
+            "markdownDescription": "The line length a qSQL query is laid out to: Format Document lays out a query longer than this, and a clause's columns or constraints go one per line when they would not fit."
           },
           "q-lint.workspaceIndex.enable": {
             "type": "boolean",
@@ -704,6 +766,18 @@
             "order": 132,
             "markdownDescription": "Warn on each global a q file reads that neither the workspace nor the connected process defines. The process is asked, by each name's namespace and without evaluating anything, when the file is opened, saved or brought to the front, on connect and after a query; a production process only by **Check Undefined Names on Process**. Off by default: it queries the process on its own."
           },
+          "q-lint.argumentSlot.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 145,
+            "markdownDescription": "In `f[a;b;c]`, highlight the argument the cursor is in and name the parameter it is passed as, beside it, where no parameter inlay hint already does. Asks the language server only, never a process. Off, nothing listens and nothing is drawn."
+          },
+          "q-lint.processSymbols.enable": {
+            "type": "boolean",
+            "default": false,
+            "order": 146,
+            "markdownDescription": "Include the names defined only on the connected process in **Go to Symbol in Workspace** (Ctrl/Cmd+T). The process is asked, by one fixed read-only lambda that lists its namespaces' names without evaluating any, only while you search, and not at all when it is tagged production. Off by default: a search then queries the process."
+          },
           "q-lint.idiomSnippets.enable": {
             "type": "boolean",
             "default": true,
@@ -805,6 +879,24 @@
             "default": true,
             "order": 712,
             "markdownDescription": "Show the **q Cheat Sheet** view: iterators, joins, temporal casts and attributes, each inserted at the cursor in one click."
+          },
+          "q-lint.query.lineTimings.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 148,
+            "markdownDescription": "**Time Lines on Process**: run the selection, or the file, one statement at a time on the connected process, and show each statement's time (by `.z.p`) and memory (by `\\ts`) after its last line. Sends code only when the command is run, through the read-only guard. Off, the command is hidden and refuses, and the timings are cleared."
+          },
+          "q-lint.query.functionProfile.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 149,
+            "markdownDescription": "**Profile Functions on Process**: run the selection, or the statement at the cursor, with every function of a namespace timed, and show them as a sortable table and a flame chart. The functions are replaced by timing wrappers for the run and put back after; the read-only guard asks first on a guarded process. Off, the command is hidden and refuses."
+          },
+          "q-lint.problemsDashboard.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 147,
+            "markdownDescription": "**Show Problems Dashboard**: a workspace folder's findings, as `qlinter` reports them, by rule and by folder, with their count over commits. Nothing is sent to a q process. Off, the commands are hidden and refuse, and the dashboard closes."
           }
         }
       },
@@ -824,6 +916,12 @@
             "order": 201,
             "scope": "resource",
             "markdownDescription": "A file of `NAME=value` lines set for q in a q terminal (**Run Code from Terminal**, **Start q REPL**, **Send ... to Terminal**), such as `QHOME` and `QLIC`, on the command line that starts it, so they win over the shell's startup files. Relative to the workspace folder, which may set its own; a leading `~` is your home directory. Values are taken as written: `$HOME` is not expanded."
+          },
+          "q-lint.terminal.runWithArguments.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 202,
+            "markdownDescription": "Offer **Run File with Arguments...**: pick an argument set saved for the file, or type a new one - the words after the file, which q reads as `.z.x`, and lines typed into q's console once it starts - and the file runs in its q terminal as **Run Code from Terminal** runs it. Sets are kept per workspace, the last ten for each file. Off: the command is hidden and refuses."
           }
         }
       },
@@ -893,6 +991,21 @@
             "type": "boolean",
             "default": true,
             "markdownDescription": "Honour the `/ @process <label>` cell directive, which connects to that process before the cell runs (a production process is confirmed first). Off, a cell with it is not run, and nothing is sent."
+          },
+          "q-lint.notebook.diff.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Turn on **q-lint: Compare Notebook Cells**, a diff of a q notebook's cells against the last commit or another notebook that leaves outputs, run numbers and metadata out. It sends nothing to any process. Off, the command is hidden and refuses."
+          },
+          "q-lint.notebook.restartRunAll.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Turn on **q-lint: Restart Notebook Process and Run All**: the process a q notebook's cells ran on is restarted, when q-lint started it, and every q cell runs on it from 1. It acts only when you run it, and asks first; a process q-lint did not start is never restarted. Off, the command is hidden and refuses, and nothing is sent or restarted."
+          },
+          "q-lint.notebook.stripOutputs.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Turn on **q-lint: Clear Notebook Outputs** and **q-lint: Set Up Git to Strip Notebook Outputs**, which installs a git clean filter for `*.qnb` in one repository after showing what it writes. Each acts only when you run it and asks first. Off, both are hidden and refuse; a filter already set up keeps working, since git runs it, not VS Code."
           }
         }
       },
@@ -1051,6 +1164,26 @@
             "default": true,
             "order": 705,
             "markdownDescription": "Read and watch the workspace's `.qlint/processes.json`, a process list committed with the code, and list its processes beside the saved ones; **Add to Shared Process List** writes a saved process there, never its password. A password or secret in the file is ignored and said. Connect scripts, SSH jump hosts and launch definitions in it are read only in a trusted workspace. Off: the file is not read, its group is removed, and the command is hidden."
+          },
+          "q-lint.processes.newQuery.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 706,
+            "markdownDescription": "Offer **New Query for Process**, in the palette and on a process in the Processes view: an untitled q editor whose queries go to that process, whatever is connected (as **Choose Connection for File** binds a file). Nothing is sent until you run a query from it. Off: the command is hidden and refuses."
+          },
+          "q-lint.processes.logViewer.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 707,
+            "markdownDescription": "Offer **Open Log File...** (palette, and on a `.log` file in the Explorer): a q or TorQ log in a read-only editor, coloured by level, filtered by level, process, time and text, and followed as the file grows. TorQ's `time|host|proctype|proc|LEVEL|id|message` lines, its `-jsonlogs` and usage logs, and plain q output (`'type` errors and their backtraces, a timestamp and a level word near the start of a line) are read. Files are read a piece at a time, never whole, and nothing is sent to any process. Off: the commands are hidden and refuse, and open views stop following."
+          },
+          "q-lint.processes.logViewer.maxLines": {
+            "type": "integer",
+            "default": 10000,
+            "minimum": 100,
+            "maximum": 1000000,
+            "order": 708,
+            "markdownDescription": "The most entries a log view keeps: the last ones that pass its filter. A new filter reads the files again, so an older entry it lets through is found."
           }
         }
       },
@@ -1173,6 +1306,11 @@
       {
         "command": "q-lint.runDefinition",
         "title": "Run Definition",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.showReferences",
+        "title": "Show References",
         "category": "q-lint"
       },
       {
@@ -1750,6 +1888,29 @@
         "icon": "$(run-all-coverage)"
       },
       {
+        "command": "q-lint.diffNotebook",
+        "title": "Compare Notebook Cells...",
+        "category": "q-lint",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "q-lint.stripNotebookOutputs",
+        "title": "Clear Notebook Outputs in File",
+        "category": "q-lint",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "q-lint.setUpNotebookStripFilter",
+        "title": "Set Up Git to Strip Notebook Outputs...",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.restartNotebookAndRunAll",
+        "title": "Restart Notebook Process and Run All",
+        "category": "q-lint",
+        "icon": "$(debug-restart)"
+      },
+      {
         "command": "q-lint.refreshNotebookVariables",
         "title": "Refresh Notebook Variables",
         "category": "q-lint",
@@ -2020,6 +2181,100 @@
         "title": "Clear Plots",
         "category": "q-lint",
         "icon": "$(clear-all)"
+      },
+      {
+        "command": "q-lint.timeLines",
+        "title": "Time Lines on Process",
+        "category": "q-lint",
+        "icon": "$(watch)",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.clearLineTimings",
+        "title": "Clear Line Timings",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.profileFunctions",
+        "title": "Profile Functions on Process",
+        "category": "q-lint",
+        "icon": "$(flame)",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.formatChangedLines",
+        "title": "Format Changed Lines",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.organiseLoads",
+        "title": "Organise Loads",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.showProblemsDashboard",
+        "title": "Show Problems Dashboard",
+        "category": "q-lint",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "q-lint.problemsDashboard.lintHistory",
+        "title": "Problems Dashboard: Lint Earlier Commits",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.newQueryForProcess",
+        "title": "New Query for Process",
+        "category": "q-lint",
+        "icon": "$(new-file)"
+      },
+      {
+        "command": "q-lint.runFileWithArguments",
+        "title": "Run File with Arguments...",
+        "category": "q-lint",
+        "icon": "$(debug-alt)"
+      },
+      {
+        "command": "q-lint.openLog",
+        "title": "Open Log File...",
+        "category": "q-lint",
+        "icon": "$(output)"
+      },
+      {
+        "command": "q-lint.filterLogLevels",
+        "title": "Filter Log by Level...",
+        "category": "q-lint",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "q-lint.filterLogProcesses",
+        "title": "Filter Log by Process...",
+        "category": "q-lint",
+        "icon": "$(server-process)"
+      },
+      {
+        "command": "q-lint.filterLogTime",
+        "title": "Filter Log by Time...",
+        "category": "q-lint",
+        "icon": "$(clock)"
+      },
+      {
+        "command": "q-lint.filterLogText",
+        "title": "Filter Log by Text...",
+        "category": "q-lint",
+        "icon": "$(search)"
+      },
+      {
+        "command": "q-lint.clearLogFilters",
+        "title": "Clear Log Filters",
+        "category": "q-lint",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "q-lint.toggleLogFollow",
+        "title": "Follow or Pause Log",
+        "category": "q-lint",
+        "icon": "$(debug-pause)"
       }
     ],
     "views": {
@@ -2525,6 +2780,11 @@
           "command": "q-lint.tableTemplates",
           "when": "view == q-lint.processExplorer && viewItem == explorer.table && config.q-lint.processExplorer.tableTemplates.enable",
           "group": "1_preview@2"
+        },
+        {
+          "command": "q-lint.newQueryForProcess",
+          "when": "view == q-lint.processes && viewItem =~ /^(process|discovered)/ && config.q-lint.processes.newQuery.enable",
+          "group": "1_connect@4"
         }
       ],
       "editor/title/run": [
@@ -2547,6 +2807,11 @@
           "command": "q-lint.queryEntireFile",
           "when": "editorLangId == q",
           "group": "navigation@4"
+        },
+        {
+          "command": "q-lint.runFileWithArguments",
+          "when": "editorLangId == q && resourceScheme == file && config.q-lint.terminal.runWithArguments.enable",
+          "group": "navigation@5"
         }
       ],
       "notebook/toolbar": [
@@ -2566,6 +2831,11 @@
           "group": "navigation"
         },
         {
+          "command": "q-lint.restartNotebookAndRunAll",
+          "when": "notebookType == q-lint-notebook && config.q-lint.notebook.restartRunAll.enable",
+          "group": "navigation"
+        },
+        {
           "command": "q-lint.exportNotebookHtml",
           "when": "notebookType == q-lint-notebook && config.q-lint.notebook.export.enable",
           "group": "export"
@@ -2574,6 +2844,23 @@
           "command": "q-lint.exportNotebookIpynb",
           "when": "notebookType == q-lint-notebook && config.q-lint.notebook.export.enable",
           "group": "export"
+        },
+        {
+          "command": "q-lint.diffNotebook",
+          "when": "notebookType == q-lint-notebook && config.q-lint.notebook.diff.enable",
+          "group": "git"
+        },
+        {
+          "command": "q-lint.setUpNotebookStripFilter",
+          "when": "notebookType == q-lint-notebook && config.q-lint.notebook.stripOutputs.enable",
+          "group": "git"
+        }
+      ],
+      "scm/resourceState/context": [
+        {
+          "command": "q-lint.diffNotebook",
+          "when": "resourceExtname =~ /^\\.qnb$/i && config.q-lint.notebook.diff.enable",
+          "group": "q-lint"
         }
       ],
       "explorer/context": [
@@ -2610,6 +2897,21 @@
         {
           "command": "q-lint.loadCsvWizard",
           "when": "resourceExtname =~ /^\\.(csv|tsv|tab|psv|txt)$/i && config.q-lint.dataFiles.loadWizard.enable",
+          "group": "q-lint"
+        },
+        {
+          "command": "q-lint.openLog",
+          "when": "resourceScheme == file && resourceExtname =~ /^\\.(log|out|err)$/i && config.q-lint.processes.logViewer.enable",
+          "group": "q-lint"
+        },
+        {
+          "command": "q-lint.diffNotebook",
+          "when": "resourceExtname =~ /^\\.qnb$/i && config.q-lint.notebook.diff.enable",
+          "group": "q-lint"
+        },
+        {
+          "command": "q-lint.stripNotebookOutputs",
+          "when": "resourceExtname =~ /^\\.qnb$/i && config.q-lint.notebook.stripOutputs.enable",
           "group": "q-lint"
         }
       ],
@@ -2738,6 +3040,21 @@
           "command": "q-lint.generateTestStub",
           "when": "editorLangId == q && config.q-lint.testStub.enable",
           "group": "q-lint@10"
+        },
+        {
+          "command": "q-lint.timeLines",
+          "when": "editorLangId == q && config.q-lint.query.lineTimings.enable",
+          "group": "q-lint@40"
+        },
+        {
+          "command": "q-lint.profileFunctions",
+          "when": "editorLangId == q && config.q-lint.query.functionProfile.enable",
+          "group": "q-lint@41"
+        },
+        {
+          "command": "q-lint.runFileWithArguments",
+          "when": "editorLangId == q && resourceScheme == file && config.q-lint.terminal.runWithArguments.enable",
+          "group": "q-lint@11"
         }
       ],
       "testing/item/context": [
@@ -2757,6 +3074,10 @@
         },
         {
           "command": "q-lint.runDefinition",
+          "when": "false"
+        },
+        {
+          "command": "q-lint.showReferences",
           "when": "false"
         },
         {
@@ -3098,18 +3419,70 @@
         {
           "command": "q-lint.captureLocals",
           "when": "config.q-lint.localsAtError.enable"
-        }
-      ],
-      "editor/title": [
-        {
-          "command": "q-lint.editFunctionSource",
-          "when": "resourceScheme == q-lint-source && config.q-lint.processExplorer.functionSource.enable",
-          "group": "navigation"
         },
         {
-          "command": "q-lint.redefineFunction",
-          "when": "q-lint.redefinable && config.q-lint.processExplorer.functionSource.enable",
-          "group": "navigation"
+          "command": "q-lint.timeLines",
+          "when": "config.q-lint.query.lineTimings.enable && editorLangId == q"
+        },
+        {
+          "command": "q-lint.clearLineTimings",
+          "when": "config.q-lint.query.lineTimings.enable"
+        },
+        {
+          "command": "q-lint.profileFunctions",
+          "when": "config.q-lint.query.functionProfile.enable && editorLangId == q"
+        },
+        {
+          "command": "q-lint.formatChangedLines",
+          "when": "config.q-lint.formatChangedLines.enable && editorLangId == q"
+        },
+        {
+          "command": "q-lint.organiseLoads",
+          "when": "config.q-lint.organiseLoads.enable && editorLangId == q"
+        },
+        {
+          "command": "q-lint.showProblemsDashboard",
+          "when": "config.q-lint.problemsDashboard.enable"
+        },
+        {
+          "command": "q-lint.problemsDashboard.lintHistory",
+          "when": "config.q-lint.problemsDashboard.enable"
+        },
+        {
+          "command": "q-lint.newQueryForProcess",
+          "when": "config.q-lint.processes.newQuery.enable"
+        },
+        {
+          "command": "q-lint.runFileWithArguments",
+          "when": "editorLangId == q && resourceScheme == file && config.q-lint.terminal.runWithArguments.enable"
+        },
+        {
+          "command": "q-lint.openLog",
+          "when": "config.q-lint.processes.logViewer.enable"
+        },
+        {
+          "command": "q-lint.filterLogLevels",
+          "when": "resourceScheme == q-log && config.q-lint.processes.logViewer.enable"
+        },
+        {
+          "command": "q-lint.filterLogProcesses",
+          "when": "resourceScheme == q-log && config.q-lint.processes.logViewer.enable"
+        },
+        {
+          "command": "q-lint.filterLogTime",
+          "when": "resourceScheme == q-log && config.q-lint.processes.logViewer.enable"
+        },
+        {
+          "command": "q-lint.filterLogText",
+          "when": "resourceScheme == q-log && config.q-lint.processes.logViewer.enable"
+        },
+        {
+          "command": "q-lint.clearLogFilters",
+          "when": "resourceScheme == q-log && config.q-lint.processes.logViewer.enable"
+        },
+        {
+          "command": "q-lint.toggleLogFollow",
+          "when": "resourceScheme == q-log && config.q-lint.processes.logViewer.enable"
         },
         {
           "command": "q-lint.refreshNotebookVariables",
@@ -3132,6 +3505,34 @@
           "when": "config.q-lint.notebook.parameters.enable"
         },
         {
+          "command": "q-lint.diffNotebook",
+          "when": "config.q-lint.notebook.diff.enable"
+        },
+        {
+          "command": "q-lint.stripNotebookOutputs",
+          "when": "config.q-lint.notebook.stripOutputs.enable"
+        },
+        {
+          "command": "q-lint.setUpNotebookStripFilter",
+          "when": "config.q-lint.notebook.stripOutputs.enable"
+        },
+        {
+          "command": "q-lint.restartNotebookAndRunAll",
+          "when": "q-lint.notebookActive && config.q-lint.notebook.restartRunAll.enable"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "q-lint.editFunctionSource",
+          "when": "resourceScheme == q-lint-source && config.q-lint.processExplorer.functionSource.enable",
+          "group": "navigation"
+        },
+        {
+          "command": "q-lint.redefineFunction",
+          "when": "q-lint.redefinable && config.q-lint.processExplorer.functionSource.enable",
+          "group": "navigation"
+        },
+        {
           "command": "q-lint.saveSchemaDiagram",
           "when": "activeWebviewPanelId == 'q-lint.schema' && config.q-lint.processExplorer.schemaDiagram.enable",
           "group": "navigation@1"
@@ -3140,6 +3541,36 @@
           "command": "q-lint.copySchemaMermaid",
           "when": "activeWebviewPanelId == 'q-lint.schema' && config.q-lint.processExplorer.schemaDiagram.enable",
           "group": "navigation@2"
+        },
+        {
+          "command": "q-lint.filterLogLevels",
+          "when": "resourceScheme == q-log && config.q-lint.processes.logViewer.enable",
+          "group": "navigation@4"
+        },
+        {
+          "command": "q-lint.filterLogProcesses",
+          "when": "resourceScheme == q-log && config.q-lint.processes.logViewer.enable",
+          "group": "navigation@5"
+        },
+        {
+          "command": "q-lint.toggleLogFollow",
+          "when": "resourceScheme == q-log && config.q-lint.processes.logViewer.enable",
+          "group": "navigation@6"
+        },
+        {
+          "command": "q-lint.filterLogTime",
+          "when": "resourceScheme == q-log && config.q-lint.processes.logViewer.enable",
+          "group": "1_qlog@1"
+        },
+        {
+          "command": "q-lint.filterLogText",
+          "when": "resourceScheme == q-log && config.q-lint.processes.logViewer.enable",
+          "group": "1_qlog@2"
+        },
+        {
+          "command": "q-lint.clearLogFilters",
+          "when": "resourceScheme == q-log && config.q-lint.processes.logViewer.enable",
+          "group": "1_qlog@3"
         }
       ]
     },

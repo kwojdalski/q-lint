@@ -1064,13 +1064,13 @@
   "quintanar401/Qute": [
    {
     "code": "QE001",
-    "detail": "Expected ']', got '}'",
+    "detail": "Unclosed delimiter; expected ']' before the '}' on line 73",
     "path": "modules/gw/gw.q",
-    "text": "};"
+    "text": "$[`gwReqId in key c:c`reqContext;"
    },
    {
     "code": "QE001",
-    "detail": "Expected ']', got '}'",
+    "detail": "Unclosed delimiter; expected ']' before the '}' on line 240",
     "path": "modules/ipc/ipc.q",
     "text": ".ipc.getColumn:{[cfg;c] $[`handle in key cfg;.ipc.inbound[cfg`handle]c;.ipc.outbound[cfg`name;c]};"
    },

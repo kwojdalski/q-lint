@@ -1,13 +1,14 @@
 // The switches for the editor features that work with a q process or add to
-// the editor's lists (#939, #940, #944, #945), and the test and debugging
-// tools built on them (#979-#985): each has its own `enable`
+// the editor's lists (#939, #940, #944, #945, #996, #997), and the test and
+// debugging tools built on them (#979-#985): each has its own `enable`
 // setting. Free of any `vscode` import, so node tests it. A feature turned
 // off has its commands hidden (package.json's `when`) and refusing, its
 // providers and listeners unregistered, and sends nothing.
 //
-// The live value hover and the undefined-name check are off unless asked
-// for: each would ask the connected process on its own, the first whenever
-// the mouse rests on a name.
+// The live value hover, the undefined-name check and the process names in
+// symbol search are off unless asked for: each would ask the connected
+// process on its own, the first whenever the mouse rests on a name, the last
+// whenever a workspace symbol search is typed.
 
 export const EDITOR_SETTINGS = {
   testExplorer: { key: "testExplorer.enable", fallback: true, name: "The Test Explorer integration" },
@@ -27,6 +28,8 @@ export const EDITOR_SETTINGS = {
   backtraceLinks: { key: "backtraceLinks.enable", fallback: true, name: "Clickable q backtraces" },
   logpoints: { key: "logpoints.enable", fallback: true, name: "Logpoints" },
   localsAtError: { key: "localsAtError.enable", fallback: true, name: "Capture Locals at Last Error" },
+  argumentSlot: { key: "argumentSlot.enable", fallback: true, name: "The argument slot highlight" },
+  processSymbols: { key: "processSymbols.enable", fallback: false, name: "Process names in workspace symbol search" },
 } as const;
 
 export type EditorFeature = keyof typeof EDITOR_SETTINGS;

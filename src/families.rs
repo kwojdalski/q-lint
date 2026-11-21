@@ -19,6 +19,7 @@ pub fn check(
     duplicate_columns(path, source, code, &mut out);
     select_by_duplicate(path, source, code, &mut out);
     unreachable(path, source, code, comments, &mut out);
+    performance(path, source, code, comments, &mut out);
     out
 }
 
@@ -997,6 +998,357 @@ fn unreachable(path: &str, source: &str, code: &str, comments: &str, out: &mut V
                 ));
         }
     }
+}
+
+/// The columns a kdb+ database is partitioned by: `.Q.pf` is one of these.
+const PARTITION_COLUMNS: [&str; 4] = ["date", "month", "year", "int"];
+
+/// The atomic monadic builtins: each applies item by item to a list, a
+/// dictionary or a table, so `f each x` gives what `f x` gives - one call
+/// per item where one would do. Measured in KDB-X over a million items:
+/// `abs each` 63 ms against `abs` under 1 ms, `sqrt each` 52 ms against
+/// 0.7 ms, `not each` 124 ms against under 1 ms. Every value matches but
+/// the empty list's type: `null each 0#0f` is `()`, `null 0#0f` is
+/// `` `boolean$() ``.
+const ATOMIC_MONADS: [&str; 11] = [
+    "abs",
+    "neg",
+    "sqrt",
+    "exp",
+    "log",
+    "floor",
+    "ceiling",
+    "not",
+    "null",
+    "signum",
+    "reciprocal",
+];
+
+/// The performance rules, after Ruff's PERF: q that gives the right answer
+/// slower than it has to, by a measured margin, and only where the shape
+/// says so from the text alone.
+fn performance(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<Finding>) {
+    partition_filter_late(path, source, code, comments, out);
+    atomic_each(path, source, code, out);
+    append_in_loop(path, source, code, out);
+}
+
+/// QV001. A where phrase whose first constraint is not on the partition
+/// column, with a later one that is. q applies the constraints in order, and
+/// only one on the partition column first narrows the partitions it reads:
+/// over 20 date partitions of 2M rows, measured in KDB-X, `where
+/// date=d, sym=s` took 5 ms and `where sym=s, date=d` 85 ms, every partition
+/// read for the sym; `date within` after `size>500` 56 ms against 12 ms.
+/// The answers are the same.
+///
+/// Only when what comes before is a plain comparison of a column with a
+/// literal or a name - `sym=`a`, `size>500`, `sym in s`. Moving a constraint
+/// past one that aggregates (`price>avg price`) would change the rows it
+/// aggregates over, and so the answer.
+///
+/// Never for `update` or `delete`: q refuses both on a partitioned table
+/// (`'par` in KDB-X), so the table they filter is in memory and the order
+/// costs nothing the rule claims.
+fn partition_filter_late(
+    path: &str,
+    source: &str,
+    code: &str,
+    comments: &str,
+    out: &mut Vec<Finding>,
+) {
+    let mut strings = InString::new(code);
+    // `select ... from select ... where` finds the inner where from both.
+    let mut reported = std::collections::HashSet::new();
+    let mut froms = vec![];
+    for q in re!(r"(?:select|exec|update|delete)\b").find_iter(code) {
+        if !crate::boundary(code, q.start())
+            || strings.at(q.start())
+            || matches!(q.as_str(), "update" | "delete")
+        {
+            continue;
+        }
+        let rest = &code[q.end()..];
+        let Some(from) = top_level_word(rest, re!(r"\bfrom\b")) else {
+            continue;
+        };
+        froms.push(q.end() + from.end());
+    }
+    // Each query's phrase ends where `crate::phrase_end` says, and its where
+    // is the first at its own level before then, as `top_level_word` would
+    // find it. Both are read for every query in one pass from the end: in
+    // `select from select from ... t` each phrase runs on to the statement's
+    // end, so reading each in turn was quadratic in the chain (#709).
+    let ends = first_at_level(code, &froms, |i| {
+        matches!(code.as_bytes()[i], b')' | b']' | b'}' | b';')
+    });
+    let wheres: std::collections::HashSet<usize> = re!(r"\bwhere\b")
+        .find_iter(code)
+        .map(|m| m.start())
+        .collect();
+    let first_wheres = first_at_level(code, &froms, |i| wheres.contains(&i));
+    for (&end, &w) in ends.iter().zip(&first_wheres) {
+        if w >= end {
+            continue;
+        }
+        let phrase_start = w + "where".len();
+        // An unindented line ends the statement before the phrase does.
+        let phrase = &code[phrase_start..end];
+        let phrase = match re!(r"\n\S").find(phrase) {
+            Some(m) => &phrase[..m.start()],
+            None => phrase,
+        };
+        let constraints = items(phrase);
+        fn tests_partition(c: &str) -> Option<&str> {
+            re!(r"^\s*(date|month|year|int)\s*(?:=|<>|<=|>=|<|>|\bwithin\b|\bin\b)")
+                .captures(c)
+                .map(|m| m.get(1).unwrap().as_str())
+        }
+        let Some((late, column)) = constraints
+            .iter()
+            .enumerate()
+            .skip(1)
+            .find_map(|(i, c)| tests_partition(c).map(|col| (i, col)))
+        else {
+            continue;
+        };
+        let offset = |c: &str| c.as_ptr() as usize - code.as_ptr() as usize;
+        let plain = constraints[..late].iter().all(|c| {
+            let at = offset(c);
+            let kept = &comments[at..at + c.len()];
+            !PARTITION_COLUMNS.iter().any(|p| {
+                re!(r"[A-Za-z0-9_.]+")
+                    .find_iter(c)
+                    .any(|m| m.as_str() == *p)
+            }) && plain_comparison(kept)
+        });
+        if !plain || !reported.insert(offset(constraints[late])) {
+            continue;
+        }
+        let first = constraints[0].trim();
+        out.push(Finding::at(
+            path,
+            source,
+            offset(constraints[late]),
+            "QV001",
+            format!(
+                "`{column}` is constrained after `{first}`: on a table partitioned by {column} \
+                 q applies `{first}` in every partition before it narrows them - put the \
+                 `{column}` constraint first"
+            ),
+        ));
+    }
+}
+
+/// For each offset of `from`, the first offset at or after it that `hit`
+/// accepts at the bracket depth `from` starts at, or `code.len()` when there
+/// is none. Nothing after `from` sits shallower than it until a closer at its
+/// depth, so this is what reading on from `from` and counting brackets
+/// finds - for all of them in two passes over `code`, where reading each in
+/// turn is quadratic when they share a long tail.
+fn first_at_level(code: &str, from: &[usize], hit: impl Fn(usize) -> bool) -> Vec<usize> {
+    let b = code.as_bytes();
+    let step = |c: u8| match c {
+        b'(' | b'[' | b'{' => 1,
+        b')' | b']' | b'}' => -1,
+        _ => 0,
+    };
+    // Not in order: in `select (select a from t) from u` the inner query's
+    // `from` comes first. Answered from the last back, as the pass meets them.
+    let mut order: Vec<usize> = (0..from.len()).collect();
+    order.sort_by_key(|&k| from[k]);
+    // The depth before each byte, rebuilt backwards from the depth at the end.
+    let mut depth: i32 = b.iter().map(|&c| step(c)).sum();
+    let mut next = std::collections::HashMap::new();
+    let mut out = vec![code.len(); from.len()];
+    for i in (0..b.len()).rev() {
+        depth -= step(b[i]);
+        if hit(i) {
+            next.insert(depth, i);
+        }
+        while let Some(&k) = order.last().filter(|&&k| from[k] >= i) {
+            order.pop();
+            if from[k] == i {
+                out[k] = next.get(&depth).copied().unwrap_or(code.len());
+            }
+        }
+    }
+    out
+}
+
+/// Whether a where constraint compares a column with a literal or a name
+/// and nothing more: `sym=`a`, `size>500`, `sym in `a`b`, `px within 1 2`,
+/// `name like "a*"`.
+fn plain_comparison(c: &str) -> bool {
+    re!(concat!(
+        r"^\s*[A-Za-z][A-Za-z0-9_]*\s*(?:=|<>|<=|>=|<|>|~|\blike\b|\bin\b|\bwithin\b)\s*",
+        r#"(?:`[A-Za-z0-9_.:/`]*|"(?:[^"\\]|\\.)*"|-?[0-9][0-9A-Za-z.:]*(?:\s+-?[0-9][0-9A-Za-z.:]*)*"#,
+        r"|\.?[A-Za-z][A-Za-z0-9_.]*|\([^()]*\))\s*$"
+    ))
+    .is_match(c)
+}
+
+/// QV002. `abs each x` is `abs x`, one call per item where one call does:
+/// see `ATOMIC_MONADS` for what was measured. `count each`, `string each`
+/// and the rest that are not atomic are not reported.
+fn atomic_each(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
+    for m in re!(concat!(
+        r"\b(abs|neg|sqrt|exp|log|floor|ceiling|not|null|signum|reciprocal)",
+        blank!(),
+        r"*(?:each\b|'\[)"
+    ))
+    .captures_iter(code)
+    {
+        let name = m.get(1).unwrap();
+        if !crate::boundary(code, name.start()) {
+            continue;
+        }
+        debug_assert!(ATOMIC_MONADS.contains(&name.as_str()));
+        out.push(Finding::at(
+            path,
+            source,
+            name.start(),
+            "QV002",
+            format!(
+                "`{0}` is atomic: `{0} x` applies it to every item in one call, where `each` \
+                 makes one call per item",
+                name.as_str()
+            ),
+        ));
+    }
+}
+
+/// QV003. `r:r,x` or `r:raze(r;x)` in the body of a `do` or `while` copies
+/// all of `r` on every pass, so the loop takes time quadratic in its count.
+/// Measured in KDB-X, 10, 20 and 40 thousand passes of `r:r,til 10`: 52,
+/// 205 and 818 ms, against 2.5, 5.5 and 11 ms for `r,:til 10`, which
+/// appends in place, and for `raze f each`.
+///
+/// Not when the body gives `r` a fresh value before the join (`r:g x;
+/// r:r,y`): each pass then joins to that, not to every pass before it. Nor
+/// inside a lambda in the body, whose `r` is its own local.
+fn append_in_loop(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
+    let mut strings = InString::new(code);
+    // A loop inside a loop has its assignments in both bodies: once each.
+    let mut reported = std::collections::HashSet::new();
+    for l in re!(r"\b(?:do|while)\s*\[").find_iter(code) {
+        if !crate::boundary(code, l.start()) || strings.at(l.start()) {
+            continue;
+        }
+        let open = l.end() - 1;
+        let Some(close) = matching(code, open, b'[', b']') else {
+            continue;
+        };
+        let body = &code[open + 1..close - 1];
+        // The count or condition comes first, then the body.
+        let Some(semi) = first_at_depth_zero(body, b';') else {
+            continue;
+        };
+        let start = open + 1 + semi + 1;
+        // Names the body has given a value not joined from themselves.
+        let mut fresh = std::collections::HashSet::new();
+        let mut lambdas = LambdaDepth::new(code, start);
+        for a in
+            re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]*:[ \t]*").captures_iter(&code[start..close - 1])
+        {
+            let name = a.get(1).unwrap();
+            let at = start + name.start();
+            if !crate::boundary(code, at) || strings.at(at) || lambdas.inside(at) {
+                continue;
+            }
+            // Directly after a `:` is a compound or nested assignment.
+            let rhs = &code[start + a.get(0).unwrap().end()..close - 1];
+            if !joins_itself(rhs, name.as_str()) {
+                fresh.insert(name.as_str());
+                continue;
+            }
+            if !fresh.contains(name.as_str()) && reported.insert(at) {
+                out.push(Finding::at(
+                    path,
+                    source,
+                    at,
+                    "QV003",
+                    format!(
+                        "Assigning `{0}` from `{0}` joined to more copies all of `{0}` on every \
+                         pass of the loop, so it takes time quadratic in its count: `{0},:` \
+                         appends in place",
+                        name.as_str()
+                    ),
+                ));
+            }
+        }
+    }
+}
+
+/// Whether an assignment's right side, `rhs`, joins `name` to more: `name,x`
+/// or `raze(name;x)`, spaces and tabs allowed between the parts. Not
+/// `name,:x`, `name,'x`, `name,/x` or `name,\x`: those are an append in
+/// place or an iterator, not a copy.
+///
+/// Read by hand, where QV003 compiled two regexes for every assignment in
+/// a loop body.
+fn joins_itself(rhs: &str, name: &str) -> bool {
+    fn blanks(s: &str) -> &str {
+        s.trim_start_matches([' ', '\t'])
+    }
+    let joined = rhs.strip_prefix(name).map(blanks).is_some_and(|r| {
+        r.strip_prefix(',')
+            .and_then(|r| r.chars().next())
+            .is_some_and(|c| !matches!(c, ':' | '\'' | '/' | '\\'))
+    });
+    joined
+        || rhs
+            .strip_prefix("raze")
+            .map(blanks)
+            .and_then(|r| r.strip_prefix('(').map(blanks))
+            .and_then(|r| r.strip_prefix(name).map(blanks))
+            .is_some_and(|r| r.starts_with(';'))
+}
+
+/// Whether an offset is inside a lambda that opens after `from`: braces
+/// outside strings between the two that do not close again. Asked in order
+/// of the offset, it reads on from its last answer, where reading from
+/// `from` for each assignment was quadratic in a loop body's length.
+struct LambdaDepth<'a> {
+    code: &'a str,
+    strings: InString<'a>,
+    i: usize,
+    depth: i32,
+}
+
+impl<'a> LambdaDepth<'a> {
+    fn new(code: &'a str, from: usize) -> Self {
+        LambdaDepth {
+            code,
+            strings: InString::new(code),
+            i: from,
+            depth: 0,
+        }
+    }
+
+    fn inside(&mut self, at: usize) -> bool {
+        debug_assert!(at >= self.i, "asked out of order");
+        let b = self.code.as_bytes();
+        while self.i < at {
+            if matches!(b[self.i], b'{' | b'}') && !self.strings.at(self.i) {
+                self.depth += if b[self.i] == b'{' { 1 } else { -1 };
+            }
+            self.i += 1;
+        }
+        self.depth > 0
+    }
+}
+
+/// Where `byte` first occurs in `text` outside every bracket.
+fn first_at_depth_zero(text: &str, byte: u8) -> Option<usize> {
+    let mut depth = 0i32;
+    text.bytes().position(|b| {
+        match b {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            _ => {}
+        }
+        b == byte && depth == 0
+    })
 }
 
 /// A start and end, standing in for a regex match where a rule gathers

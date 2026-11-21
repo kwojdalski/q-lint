@@ -10,7 +10,7 @@ import { readTerminal } from "./liveconfig";
 import { mergeEnv } from "./qenv";
 import { dotenvFor, layoutEnvFor } from "./qenvironment";
 import type { Live, ProcessArg } from "./live";
-import { launchOf, splitArgs, withExtras, type Launch } from "./processes";
+import { launchOf, splitArgs, withExtras, type Launch, type Process } from "./processes";
 
 /// How long a process has to end after SIGTERM before it is killed.
 const STOP_GRACE_MS = 3000;
@@ -90,17 +90,57 @@ export class Launcher {
       void window.showInformationMessage(`q-lint: ${process.label} is already running from here.`);
       return;
     }
+    const problem = await this.launch(process);
+    if (problem !== undefined) {
+      void window.showErrorMessage(`q-lint: ${problem}`);
+      return;
+    }
+    void window.showInformationMessage(`q-lint: started ${process.label} (pid ${this.started.get(process.label)?.child.pid ?? "?"}) on port ${process.port}.`);
+  }
+
+  /// Stop `label`, which was started from here, start it again from its
+  /// launch definition, and wait until it listens on its port: for Restart
+  /// Notebook Process and Run All (#1000). Why it could not, or undefined
+  /// once it listens.
+  async restart(label: string, timeoutMs = 15_000): Promise<string | undefined> {
+    if (!this.enabled()) {
+      return "the process launcher is turned off (q-lint.processes.launcher.enable).";
+    }
+    const process = this.live.processes().find((p) => p.label === label);
+    if (!this.started.has(label) || process === undefined) {
+      return `${label} was not started from here, so it is not restarted from here.`;
+    }
+    await this.end(label);
+    const problem = await this.launch(process);
+    if (problem !== undefined) {
+      return problem;
+    }
+    const child = this.started.get(label)?.child;
+    const until = Date.now() + timeoutMs;
+    while (!(await listening(process.port))) {
+      if (child === undefined || child.exitCode !== null || child.signalCode !== null || this.started.get(label)?.child !== child) {
+        return `${label} ended before it listened on port ${process.port}: its output is in the "q: ${label}" output channel.`;
+      }
+      if (Date.now() > until) {
+        return `${label} did not listen on port ${process.port} within ${timeoutMs / 1000} s.`;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    return undefined;
+  }
+
+  /// Start `process` from its launch definition. Why it could not, or
+  /// undefined once it is spawned.
+  private async launch(process: Process): Promise<string | undefined> {
     const configuration = workspace.getConfiguration("q-lint");
     const { qBinary } = readTerminal((key, fallback) => configuration.get(key, fallback));
     const plan = launchPlan(process, qBinary, workspace.workspaceFolders?.[0]?.uri.fsPath);
     if ("error" in plan) {
-      void window.showErrorMessage(`q-lint: ${plan.error}`);
-      return;
+      return plan.error;
     }
     // A process already on the port would make this one fail to listen.
     if (await listening(process.port)) {
-      void window.showErrorMessage(`q-lint: something already listens on port ${process.port}; ${process.label} was not started.`);
-      return;
+      return `something already listens on port ${process.port}; ${process.label} was not started.`;
     }
     // The binary's layout's variables, then the workspace's .env file's,
     // then the definition's own; the output shows none of their values.
@@ -120,8 +160,7 @@ export class Launcher {
       });
     } catch (error) {
       channel.appendLine(`could not start: ${error instanceof Error ? error.message : String(error)}`);
-      void window.showErrorMessage(`q-lint: could not start ${process.label}: ${error instanceof Error ? error.message : String(error)}`);
-      return;
+      return `could not start ${process.label}: ${error instanceof Error ? error.message : String(error)}`;
     }
     const started: Started = { child, channel, port: process.port };
     this.started.set(process.label, started);
@@ -141,7 +180,7 @@ export class Launcher {
       this.live.refreshProcesses();
     });
     this.live.refreshProcesses();
-    void window.showInformationMessage(`q-lint: started ${process.label} (pid ${child.pid ?? "?"}) on port ${process.port}.`);
+    return undefined;
   }
 
   private async stop(row?: ProcessArg): Promise<void> {

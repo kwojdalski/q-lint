@@ -9,6 +9,7 @@
 // file is knowledge those editors would have to reimplement.
 import {
   commands,
+  Position,
   Uri,
   workspace,
   window,
@@ -32,6 +33,11 @@ import { QueryAcross } from "./queryacross";
 import { SavedQueries } from "./savedqueriesview";
 import { TableStreams } from "./streamview";
 import { Launcher } from "./launcherview";
+import { NewQuery } from "./newqueryview";
+import { RunWithArguments } from "./runargsview";
+import { LogViewer } from "./logview";
+import { registerNotebookGit, type NotebookDiff, type NotebookStrip } from "./notebookgit";
+import { NotebookRestart } from "./notebookrestart";
 import type { InfoNode } from "./monitor";
 import { registerTestExplorer } from "./testexplorer";
 import { registerValueHover } from "./valuehoverview";
@@ -60,6 +66,13 @@ import { registerTestStubs } from "./teststubview";
 import { registerBacktraceLinks } from "./backtraceview";
 import { registerLogpoints } from "./logpointview";
 import { registerLocalsAtError } from "./localsview";
+import { SHOW_REFERENCES, lensTarget } from "./editorassist";
+import { registerArgumentSlot, registerProcessSymbols } from "./editorassistview";
+import { registerLineTimings } from "./linetimingsview";
+import { registerFunctionProfile } from "./profileview";
+import { registerFormatChanged } from "./formatchangedview";
+import { registerOrganiseLoads } from "./organiseloads";
+import { registerProblemsDashboard } from "./problemsview";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -137,6 +150,9 @@ export async function activate(
     agentConfirmation: ReturnType<typeof registerAgentTool>;
     notebookLiveValues: () => RenderedLiveValue[];
     notebookVariables: ReturnType<typeof registerNotebookVariables>;
+    notebookDiff: NotebookDiff;
+    notebookStrip: NotebookStrip;
+    notebookRestart: NotebookRestart;
     processMonitor: () => InfoNode[];
     hdbBrowser: () => InfoNode[];
     functionSources: FunctionSources["state"];
@@ -144,9 +160,14 @@ export async function activate(
     savedQueries: SavedQueries["queries"];
     tableStreams: TableStreams["state"];
     launchedProcesses: Launcher["running"];
+    newQueryForProcess: (label?: string) => ReturnType<NewQuery["open"]>;
+    runFileWithArguments: () => ReturnType<RunWithArguments["pick"]>;
+    logViewer: () => ReturnType<LogViewer["state"]>;
     testExplorer: Omit<ReturnType<typeof registerTestExplorer>, "serverChanged">;
     valueHover: ReturnType<typeof registerValueHover>;
     undefinedNames: ReturnType<typeof registerUndefinedNames>;
+    argumentSlot: ReturnType<typeof registerArgumentSlot>;
+    processSymbols: ReturnType<typeof registerProcessSymbols>;
     idioms: ReturnType<typeof registerIdioms>;
     hotReload: Drift["hotReloadState"];
     assistTools: () => string[];
@@ -165,6 +186,10 @@ export async function activate(
     backtraceLinks: ReturnType<typeof registerBacktraceLinks>;
     logpoints: ReturnType<typeof registerLogpoints>;
     localsAtError: ReturnType<typeof registerLocalsAtError>;
+    lineTimings: ReturnType<typeof registerLineTimings>;
+    functionProfile: ReturnType<typeof registerFunctionProfile>;
+    formatChanged: ReturnType<typeof registerFormatChanged>;
+    problemsDashboard: ReturnType<typeof registerProblemsDashboard>;
   }
 > {
   // Replacing the binary does not restart the server, and a window reload is
@@ -197,9 +222,30 @@ export async function activate(
       return typeof code === "string" && typeof uri === "string" ? live.queryCode(code, Uri.parse(uri)) : undefined;
     }),
   );
+  // A reference count lens hands over the document and the name's position;
+  // the references are VS Code's own list of them, from the server.
+  context.subscriptions.push(
+    commands.registerCommand(SHOW_REFERENCES, async (uri?: unknown, position?: unknown) => {
+      if (workspace.getConfiguration("q-lint").get<unknown>("referenceLens.enable", true) === false) {
+        void window.showInformationMessage(
+          "q-lint: the reference count lenses are turned off (q-lint.referenceLens.enable); turn the setting on to open references from a lens.",
+        );
+        return undefined;
+      }
+      const target = lensTarget(uri, position);
+      if (target === undefined) {
+        return undefined;
+      }
+      const at = Uri.parse(target.uri);
+      const where = new Position(target.position.line, target.position.character);
+      const locations = await commands.executeCommand("vscode.executeReferenceProvider", at, where);
+      return commands.executeCommand("editor.action.showReferences", at, where, Array.isArray(locations) ? locations : []);
+    }),
+  );
   const agentConfirmation = registerAgentTool(context, live);
   const notebook = registerNotebooks(context, live);
   const notebookVariables = registerNotebookVariables(context, live, notebook.processOf, notebook.onDidRun);
+  const notebookGit = registerNotebookGit(context);
   context.subscriptions.push(
     commands.registerCommand(NOTEBOOK.runWithParameters, (source?: Uri, target?: Uri, overrides?: Record<string, string>) =>
       runWithParameters(live, source, target, overrides),
@@ -224,10 +270,16 @@ export async function activate(
   registerOnboarding(context, () => live.processes());
   const streams = new TableStreams(context, live);
   const launcher = new Launcher(context, live);
+  const newQuery = new NewQuery(context, live);
+  const runWithArguments = new RunWithArguments(context, live.runFileWith);
+  const logViewer = new LogViewer(context);
+  const notebookRestart = new NotebookRestart(context, live, launcher, notebook);
   relations = new Relations(context, () => client);
   testExplorer = registerTestExplorer(context, live, running);
   const valueHover = registerValueHover(context, live, running);
   const undefinedNames = registerUndefinedNames(context, live, running);
+  const argumentSlot = registerArgumentSlot(context, running);
+  const processSymbols = registerProcessSymbols(context, live, running);
   const idioms = registerIdioms(context);
   const interpreters = new Interpreters(context);
   const qTasks = registerTasks(context);
@@ -244,6 +296,17 @@ export async function activate(
   const backtraceLinks = registerBacktraceLinks(context);
   const logpoints = registerLogpoints(context, live);
   const localsAtError = registerLocalsAtError(context, live);
+  const lineTimings = registerLineTimings(context, live);
+  const functionProfile = registerFunctionProfile(context, live);
+  const formatChanged = registerFormatChanged(context, running);
+  registerOrganiseLoads(context);
+  // The dashboard's qlinter is the one the server is started from, with the
+  // profile and configuration file the settings give it.
+  const problemsDashboard = registerProblemsDashboard(context, () => {
+    const settings = launch(workspace.getConfiguration("q-lint"), workspace.workspaceFolders?.[0]?.uri.fsPath);
+    const command = settings.serverPath || bundledServer(context) || "qlinter";
+    return { command, args: settings.args.filter((a) => a !== "--lsp") };
+  });
   // Not awaited: nothing above needs the server, and a slow or hung one
   // would hold up every command of the extension until it answered.
   void serial.run(() => start(context)).then(() => serverChanged());
@@ -254,6 +317,9 @@ export async function activate(
     agentConfirmation,
     notebookLiveValues: () => notebook.liveValues(),
     notebookVariables,
+    notebookDiff: notebookGit.diff,
+    notebookStrip: notebookGit.strip,
+    notebookRestart,
     processMonitor: infoViews.monitor,
     hdbBrowser: infoViews.hdb,
     functionSources: () => sources.state(),
@@ -261,6 +327,9 @@ export async function activate(
     savedQueries: () => saved.queries(),
     tableStreams: () => streams.state(),
     launchedProcesses: () => launcher.running(),
+    newQueryForProcess: (label?: string) => newQuery.open(label),
+    runFileWithArguments: () => runWithArguments.pick(),
+    logViewer: () => logViewer.state(),
     testExplorer: {
       discover: testExplorer.discover,
       items: testExplorer.items,
@@ -271,6 +340,8 @@ export async function activate(
     },
     valueHover,
     undefinedNames,
+    argumentSlot,
+    processSymbols,
     idioms,
     hotReload: () => drift.hotReloadState(),
     assistTools: assistTools.registered,
@@ -289,6 +360,10 @@ export async function activate(
     backtraceLinks,
     logpoints,
     localsAtError,
+    lineTimings,
+    functionProfile,
+    formatChanged,
+    problemsDashboard,
   };
 }
 

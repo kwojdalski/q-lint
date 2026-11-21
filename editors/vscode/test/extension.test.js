@@ -17,7 +17,7 @@ const within = (promise, ms) => Promise.race([promise, sleep(ms).then(() => "sti
 /// what the server named `command` does when started: "ok", "fail" or
 /// "hang" (it never answers `initialize`).
 function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir() } = {}) {
-  const world = { clients: [], errors: [], infos: [], commands: {}, started: [], queried: [] };
+  const world = { clients: [], errors: [], infos: [], commands: {}, started: [], queried: [], executed: [] };
   class LanguageClient {
     constructor(id, name, server, options) {
       this.command = server.run.command;
@@ -51,10 +51,20 @@ function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir
   }
   const vscode = {
     Uri: { parse: (text) => ({ parsed: text }) },
+    Position: class {
+      constructor(line, character) {
+        this.line = line;
+        this.character = character;
+      }
+    },
     commands: {
       registerCommand: (name, run) => {
         world.commands[name] = run;
         return { dispose() {} };
+      },
+      executeCommand: (name, ...args) => {
+        world.executed.push([name, ...args]);
+        return Promise.resolve(name === "vscode.executeReferenceProvider" ? [{ ref: 1 }] : undefined);
       },
     },
     workspace: {
@@ -86,6 +96,8 @@ function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir
     "./notebook": { registerNotebooks: () => ({ charts: () => [] }) },
     "./notebookvarsview": { registerNotebookVariables: () => ({ variables: () => [] }) },
     "./notebookrun": { runWithParameters: async () => undefined },
+    "./notebookgit": { registerNotebookGit: () => ({ diff: {}, strip: {} }) },
+    "./notebookrestart": { NotebookRestart: class {} },
     "./explorerview": { ProcessExplorer: class { rows() { return []; } } },
     "./relate": { Relations: class { serverChanged() {} } },
     "./funcsourceview": { FunctionSources: class { state() { return {}; } } },
@@ -116,6 +128,13 @@ function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir
     "./backtraceview": { registerBacktraceLinks: () => ({ registered: () => false }) },
     "./logpointview": { registerLogpoints: () => ({ logged: () => ({}), marked: () => [] }) },
     "./localsview": { registerLocalsAtError: () => ({ last: () => undefined, failure: () => undefined }) },
+    "./editorassistview": { registerArgumentSlot: () => ({ registered: () => true }), registerProcessSymbols: () => ({ registered: () => false }) },
+    "./linetimingsview": { registerLineTimings: () => ({ registered: () => false }) },
+    "./profileview": { registerFunctionProfile: () => ({ panelOpen: () => false }) },
+    "./formatchangedview": { registerFormatChanged: () => ({ registered: () => false }) },
+    "./organiseloads": { registerOrganiseLoads() {} },
+    "./problemsview": { registerProblemsDashboard: () => ({ panelOpen: () => false }) },
+    "./logview": { LogViewer: class { state() { return undefined; } } },
   };
   const file = require.resolve("../out/extension.js");
   delete require.cache[file];
@@ -208,5 +227,29 @@ test("with code lenses turned off, a lens's command says so and sends nothing", 
   await w.commands[w.extension.RUN_DEFINITION]("f:{x}", "file:///ws/a.q");
   assert.deepStrictEqual(w.queried, []);
   assert.match(w.infos.join("\n"), /turned off \(q-lint\.codeLens\.enable\)/);
+  await w.extension.deactivate();
+});
+
+test("a reference count lens's command opens the references at its position", async () => {
+  const w = load();
+  await w.extension.activate(w.context);
+  await w.commands["q-lint.showReferences"]("file:///ws/lib.q", { line: 3, character: 0 });
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(w.executed)), [
+    ["vscode.executeReferenceProvider", { parsed: "file:///ws/lib.q" }, { line: 3, character: 0 }],
+    ["editor.action.showReferences", { parsed: "file:///ws/lib.q" }, { line: 3, character: 0 }, [{ ref: 1 }]],
+  ]);
+  // Anything else is nothing to open.
+  await w.commands["q-lint.showReferences"]();
+  await w.commands["q-lint.showReferences"]("file:///ws/lib.q", { line: -1, character: 0 });
+  assert.strictEqual(w.executed.length, 2);
+  await w.extension.deactivate();
+});
+
+test("with reference lenses turned off, a lens's command says so and opens nothing", async () => {
+  const w = load({ settings: { "referenceLens.enable": false } });
+  await w.extension.activate(w.context);
+  await w.commands["q-lint.showReferences"]("file:///ws/lib.q", { line: 3, character: 0 });
+  assert.deepStrictEqual(w.executed, []);
+  assert.match(w.infos.join("\n"), /turned off \(q-lint\.referenceLens\.enable\)/);
   await w.extension.deactivate();
 });

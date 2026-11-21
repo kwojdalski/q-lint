@@ -223,12 +223,21 @@ fn is_suppression(action: &Value) -> bool {
         .is_some_and(|title| title.starts_with("Suppress "))
 }
 
+/// Whether a code action is the `/ noqa` one for the finding's line, not the
+/// `/ qlinter: noqa:` one for its file.
+fn is_line_suppression(action: &Value) -> bool {
+    is_suppression(action)
+        && action["title"]
+            .as_str()
+            .is_some_and(|title| title.ends_with(" on this line"))
+}
+
 /// What a server that offers quick fixes says it offers: the kinds, so an
 /// editor knows there is a `source.fixAll` to ask for on save - and the
 /// rewrite that writes a qDoc block, and Extract Function.
 fn code_action_provider() -> Value {
     json!({"codeActionKinds": ["quickfix", "source.fixAll.q-lint", "refactor.rewrite",
-                               "refactor.extract.function"]})
+                               "refactor.extract.function", "source.organizeImports.q-lint"]})
 }
 
 /// What VS Code declares, as far as this server reads it: Quick Fixes come
@@ -1604,8 +1613,9 @@ fn the_precedence_fix_is_a_quick_fix_for_the_trap_and_for_the_routine_mix() {
         (&diagnostics[1], (1, 12, 22), "(step*til n)"),
     ] {
         let actions = server.code_actions(uri, std::slice::from_ref(diagnostic));
-        // The fix, then the `/ noqa` suppression every finding is offered.
-        assert_eq!(actions.len(), 2, "{actions:?}");
+        // The fix, then the `/ noqa` suppressions every finding is offered:
+        // for its line, and for its file.
+        assert_eq!(actions.len(), 3, "{actions:?}");
         assert_eq!(
             actions[0]["title"],
             "Parenthesise to show the order q evaluates in"
@@ -1659,7 +1669,7 @@ fn the_reverse_precedence_fix_is_a_quick_fix_that_removes_the_pair() {
     let diagnostics = server.diagnostics_for(uri);
     assert_eq!(codes_of(&diagnostics), ["QP008", "QP008", "QP008"]);
     let actions = server.code_actions(uri, std::slice::from_ref(&diagnostics[0]));
-    assert_eq!(actions.len(), 2, "{actions:?}");
+    assert_eq!(actions.len(), 3, "{actions:?}");
     assert_eq!(
         actions[0]["title"],
         "Remove the parentheses q's order already implies"
@@ -2478,7 +2488,7 @@ fn suppressing_a_finding_writes_a_noqa_the_linter_honours() {
             .find(|d| d["code"] == "QE004")
             .unwrap_or_else(|| panic!("{before:?}: {diagnostics:?}"));
         let actions = server.code_actions(uri, std::slice::from_ref(target));
-        let suppressions: Vec<&Value> = actions.iter().filter(|a| is_suppression(a)).collect();
+        let suppressions: Vec<&Value> = actions.iter().filter(|a| is_line_suppression(a)).collect();
         assert_eq!(suppressions.len(), 1, "{before:?}: {actions:?}");
         let action = suppressions[0];
         assert_eq!(action["title"], "Suppress QE004 on this line");
@@ -2521,7 +2531,7 @@ fn suppressions_are_one_to_a_line_and_code() {
         "{diagnostics:?}"
     );
     let actions = server.code_actions(uri, &diagnostics);
-    let suppressions: Vec<&Value> = actions.iter().filter(|a| is_suppression(a)).collect();
+    let suppressions: Vec<&Value> = actions.iter().filter(|a| is_line_suppression(a)).collect();
     assert_eq!(
         suppressions
             .iter()
@@ -2616,8 +2626,10 @@ fn no_suppression_is_offered_where_a_noqa_would_not_be_one() {
             .collect();
         assert_eq!(target.len(), 1, "{text:?} {code}: {diagnostics:?}");
         let actions = server.code_actions(uri, &target);
+        // The file's directive can still accept it, but for a file whose
+        // brackets do not close (`file_suppression_for`).
         assert!(
-            !actions.iter().any(is_suppression),
+            !actions.iter().any(is_line_suppression),
             "{text:?} ({why}): {actions:?}"
         );
         assert_eq!(server.shutdown_and_exit(), 0);
@@ -3075,5 +3087,175 @@ fn a_request_cancelled_while_it_waits_is_answered_cancelled() {
     let answered = server.until(|m| m["id"] == 61);
     assert_eq!(answered["result"].as_array().map(Vec::len), Some(1000));
     server.send(json!({"jsonrpc":"2.0","method":"$/cancelRequest","params":{"id":61}}));
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+/// "Suppress CODE in this file": once a code, however many findings of it
+/// the request carries, after every line suppression; it writes the file's
+/// directive, and the findings of that code go.
+#[test]
+fn suppressing_a_code_in_the_file_writes_the_directive() {
+    let mut server = Server::start();
+    server.initialize();
+    let uri = "file:///tmp/suppress-file.q";
+    let text = "a:1==1\nb:2==2\nf:{[desc] desc}\n";
+    server.open(uri, text);
+    let diagnostics = server.diagnostics_for(uri);
+    assert_eq!(codes_of(&diagnostics), ["QE004", "QE004", "QF001"]);
+    let actions = server.code_actions(uri, &diagnostics);
+    let in_file: Vec<&Value> = actions
+        .iter()
+        .filter(|a| is_suppression(a) && !is_line_suppression(a))
+        .collect();
+    assert_eq!(
+        in_file
+            .iter()
+            .map(|a| (
+                a["title"].as_str().unwrap(),
+                a["diagnostics"].as_array().unwrap().len()
+            ))
+            .collect::<Vec<_>>(),
+        [
+            ("Suppress QE004 in this file", 2),
+            ("Suppress QF001 in this file", 1)
+        ]
+    );
+    let last_line = actions.iter().rposition(is_line_suppression).unwrap();
+    let first_file = actions
+        .iter()
+        .position(|a| is_suppression(a) && !is_line_suppression(a))
+        .unwrap();
+    assert!(last_line < first_file, "{actions:?}");
+    let edited = apply_edits(text, in_file[0]["edit"]["changes"][uri].as_array().unwrap());
+    assert_eq!(edited, format!("/ qlinter: noqa: QE004\n{text}"));
+    server.change(uri, 2, &edited);
+    assert_eq!(codes_of(&server.diagnostics_for(uri)), ["QF001"]);
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+/// `suppressions.enable: false` withdraws both suppressions, and leaves the
+/// fixes.
+#[test]
+fn suppressions_can_be_turned_off() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut server, _) = start_with_options(
+        dir.path(),
+        &["--lsp", "--profile", "uqf"],
+        json!({"suppressions": {"enable": false}}),
+        None,
+    );
+    let uri = "file:///tmp/no-suppressions.q";
+    server.open(uri, "a:1==1\n");
+    let diagnostics = server.diagnostics_for(uri);
+    let actions = server.code_actions(uri, &diagnostics);
+    assert!(!actions.is_empty(), "the fix is still offered");
+    assert!(!actions.iter().any(is_suppression), "{actions:?}");
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+/// Organize Imports asks for `source.organizeImports`: the loads sorted,
+/// deduped and grouped. Never unasked, and not at all with the setting off.
+#[test]
+fn organise_loads_answers_organize_imports_and_only_that() {
+    let text = "\\l src/b.q\n\\l /opt/a.q\n\\l src/b.q\n\\l lib/c.q\nx:1\n";
+    let mut server = Server::start();
+    server.initialize();
+    let uri = "file:///tmp/organise.q";
+    server.open(uri, text);
+    server.diagnostics_for(uri);
+    let actions = server.code_actions_only(uri, &["source.organizeImports"]);
+    assert_eq!(actions.len(), 1, "{actions:?}");
+    assert_eq!(actions[0]["title"], "Organise loads");
+    assert_eq!(actions[0]["kind"], "source.organizeImports.q-lint");
+    assert_eq!(
+        apply_edits(text, actions[0]["edit"]["changes"][uri].as_array().unwrap()),
+        "\\l /opt/a.q\n\n\\l lib/c.q\n\\l src/b.q\nx:1\n"
+    );
+    assert!(server.code_actions_only(uri, &["source.fixAll"]).is_empty());
+    assert_eq!(server.shutdown_and_exit(), 0);
+
+    let dir = tempfile::tempdir().unwrap();
+    let (mut server, reply) = start_with_options(
+        dir.path(),
+        &["--lsp"],
+        json!({"organiseLoads": {"enable": false}}),
+        None,
+    );
+    let kinds = &reply["result"]["capabilities"]["codeActionProvider"]["codeActionKinds"];
+    assert!(
+        !kinds
+            .as_array()
+            .unwrap()
+            .contains(&json!("source.organizeImports.q-lint")),
+        "{kinds}"
+    );
+    server.open(uri, text);
+    assert!(
+        server
+            .code_actions_only(uri, &["source.organizeImports"])
+            .is_empty()
+    );
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+/// `performanceLints.enable: false` hides the QV rules as `lint.ignore`
+/// would, and leaves the rest.
+#[test]
+fn performance_lints_can_be_turned_off() {
+    let text = "r:abs each x\na:1==1\n";
+    let dir = tempfile::tempdir().unwrap();
+    let uri = file_uri(&dir.path().join("perf.q"));
+    let (mut server, _) = start_with_options(dir.path(), &["--lsp"], json!({}), None);
+    server.open(&uri, text);
+    assert_eq!(codes_of(&server.diagnostics_for(&uri)), ["QV002", "QE004"]);
+    assert_eq!(server.shutdown_and_exit(), 0);
+    let (mut server, _) = start_with_options(
+        dir.path(),
+        &["--lsp"],
+        json!({"performanceLints": {"enable": false}}),
+        None,
+    );
+    server.open(&uri, text);
+    assert_eq!(codes_of(&server.diagnostics_for(&uri)), ["QE004"]);
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+/// `q-lint/formatChangedLines` makes the safe fixes for the findings on the
+/// lines it is given and no others; with the setting off, or no lines, it
+/// makes none.
+#[test]
+fn format_changed_lines_fixes_only_those_lines() {
+    let text = "a:1==1\nb:2==2\nc:3==3\n";
+    let ask = |server: &mut Server, lines: Value| {
+        server.send(
+            json!({"jsonrpc":"2.0","id":31,"method":"q-lint/formatChangedLines",
+            "params":{"textDocument":{"uri":"file:///tmp/changed.q"},"lines":lines}}),
+        );
+        server.until(|m| m["id"] == 31)["result"].clone()
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let (mut server, _) = start_with_options(
+        dir.path(),
+        &["--lsp"],
+        json!({"formatChangedLines": {"enable": true}}),
+        None,
+    );
+    server.open("file:///tmp/changed.q", text);
+    let edits = ask(&mut server, json!([[1, 1]]));
+    assert_eq!(
+        apply_edits(text, edits.as_array().unwrap()),
+        "a:1==1\nb:2=2\nc:3==3\n"
+    );
+    let edits = ask(&mut server, json!([[0, 0], [2, 2]]));
+    assert_eq!(
+        apply_edits(text, edits.as_array().unwrap()),
+        "a:1=1\nb:2==2\nc:3=3\n"
+    );
+    assert_eq!(ask(&mut server, json!([])), json!([]));
+    assert_eq!(server.shutdown_and_exit(), 0);
+
+    let (mut server, _) = start_with_options(dir.path(), &["--lsp"], json!({}), None);
+    server.open("file:///tmp/changed.q", text);
+    assert_eq!(ask(&mut server, json!([[0, 2]])), json!([]));
     assert_eq!(server.shutdown_and_exit(), 0);
 }

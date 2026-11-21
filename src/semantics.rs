@@ -4,6 +4,8 @@ use std::ops::Range;
 
 pub(crate) mod extract;
 pub(crate) mod help;
+pub(crate) mod infer;
+pub(crate) mod layout;
 pub(crate) mod navigate;
 
 struct Scope {

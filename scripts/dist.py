@@ -5,7 +5,7 @@
     python3 scripts/dist.py download 0.14.9    # a GitHub release, all platforms
     python3 scripts/dist.py install            # build, then install it here
     python3 scripts/dist.py install 0.14.9     # install a release (downloads it if needed)
-    python3 scripts/dist.py bump 0.15.0        # set the version everywhere it is declared
+    python3 scripts/dist.py bump 0.15.0        # set the version everywhere it is declared, the Jupyter kernel too
 
 Artifacts go to `dist/vX.Y.Z/`, named exactly as the GitHub release names them
 (`qlinter-vX.Y.Z-aarch64-apple-darwin.tar.gz`, `qlinter-vX.Y.Z-darwin-arm64.vsix`,
@@ -34,6 +34,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "dist"
 EXTENSION = ROOT / "editors" / "vscode"
+# The Jupyter kernel, a Python package of its own, released with the rest.
+KERNEL = ROOT / "editors" / "jupyter"
 REPO = "kwojdalski/q-lint"
 # The Rust target each VS Code platform build carries, as the release does.
 VSCODE = {
@@ -184,23 +186,41 @@ def install(args) -> None:
         print("VS Code extension not installed: no package for this platform, or no `code` on PATH")
 
 
+def declared_versions() -> dict:
+    """Each file that declares the release's version, and what it says. The
+    release workflow refuses a tag that any of them disagrees with."""
+    found = {}
+    for path, pattern in [
+        (ROOT / "Cargo.toml", r'(?m)^version = "([^"]+)"'),
+        (ROOT / "pyproject.toml", r'(?m)^version = "([^"]+)"'),
+        (EXTENSION / "package.json", r'(?m)^  "version": "([^"]+)",'),
+        (KERNEL / "pyproject.toml", r'(?m)^version = "([^"]+)"'),
+        (KERNEL / "qlint_kernel" / "__init__.py", r'(?m)^__version__ = "([^"]+)"'),
+    ]:
+        m = re.search(pattern, path.read_text())
+        found[str(path.relative_to(ROOT))] = m.group(1) if m else None
+    return found
+
+
 def bump(args) -> None:
     new = args.version.removeprefix("v")
     if not re.fullmatch(r"\d+\.\d+\.\d+", new):
         sys.exit(f"not a version: {args.version}")
     old = version()
-    for name, pattern in [
-        ("Cargo.toml", r'(?m)^version = "[^"]+"'),
-        ("pyproject.toml", r'(?m)^version = "[^"]+"'),
+    for path, pattern, line in [
+        (ROOT / "Cargo.toml", r'(?m)^version = "[^"]+"', f'version = "{new}"'),
+        (ROOT / "pyproject.toml", r'(?m)^version = "[^"]+"', f'version = "{new}"'),
+        (KERNEL / "pyproject.toml", r'(?m)^version = "[^"]+"', f'version = "{new}"'),
+        (KERNEL / "qlint_kernel" / "__init__.py", r'(?m)^__version__ = "[^"]+"', f'__version__ = "{new}"'),
     ]:
-        path = ROOT / name
-        path.write_text(re.sub(pattern, f'version = "{new}"', path.read_text(), count=1))
+        path.write_text(re.sub(pattern, line, path.read_text(), count=1))
     package = EXTENSION / "package.json"
     data = package.read_text()
     package.write_text(re.sub(r'"version": "[^"]+"', f'"version": "{new}"', data, count=1))
     # Cargo.lock follows the build.
     run("cargo", "build", "--release")
-    print(f"{old} -> {new}: Cargo.toml, Cargo.lock, pyproject.toml, editors/vscode/package.json. "
+    print(f"{old} -> {new}: Cargo.toml, Cargo.lock, pyproject.toml, editors/vscode/package.json, "
+          "editors/jupyter/pyproject.toml, editors/jupyter/qlint_kernel/__init__.py. "
           "Commit, tag v" + new + " and push to release.")
 
 

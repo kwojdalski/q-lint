@@ -40,6 +40,38 @@ to a process you add and connect to, and sends only the code you run.
   there. It is missing where no such comment would be read as one - a line
   that ends inside a string, a system command, a block comment, a file whose
   brackets do not close - and it is never the preferred fix.
+  **Suppress CODE in this file** beside it writes `/ qlinter: noqa: CODE` at
+  the top of the file (after a `#!` line), or adds the code to the
+  `qlinter: noqa:` line already there; the linter reads that line anywhere
+  in the file, at the left margin, and accepts the code on every line.
+  `q-lint.suppressions.enable` turns both off.
+- **Performance lints**, three rules after Ruff's `PERF`, each checked by
+  timing both forms on KDB-X: a where phrase that constrains the partition
+  column after another (`where sym=s, date=d` read 85 ms against 5 ms with
+  the date first, over 20 date partitions) - **QV001**; `each` over an
+  atomic builtin (`abs each x`, 63 ms against under 1 ms on a million
+  items) - **QV002**, with a Quick Fix; and `r:r,x` or `r:raze(r;x)` in a
+  `do` or `while` body, which copies `r` on every pass and makes the loop
+  quadratic where `r,:x` is linear - **QV003**, with a Quick Fix for the
+  first form. `q-lint.performanceLints.enable` hides them.
+- **Organise Loads** (VS Code's **Organize Imports**, Shift+Alt+O, or
+  **q-lint: Organise Loads**): in each run of consecutive `\l` lines, a path
+  loaded twice is loaded once, at its first place, and the rest are sorted,
+  absolute paths first, then relative ones, with a blank line between. Load
+  order is meaning in q - a file can read what an earlier one defined - so
+  it runs only when asked, never as a fix, and a run that loads anything but
+  a `.q` or `.k` file (`\l db` changes directory) is left alone, as are
+  loads a blank line or anything else separates. `source.organizeImports` in
+  `editor.codeActionsOnSave` runs it on save (`q-lint.organiseLoads.enable`).
+- **Problems dashboard** (**q-lint: Show Problems Dashboard**): a workspace
+  folder's findings, as `qlinter --format json` reports them under the
+  repository's configuration, counted by rule and by folder, and their count
+  over commits. A refresh on a commit whose q files are unchanged adds that
+  commit to the trend, kept in the workspace's state; **Lint Earlier
+  Commits...** adds the last 5 to 50 from git, each exported with `git
+  archive` to a temporary directory and linted there - nothing is checked
+  out. It reads files and sends nothing to a q process
+  (`q-lint.problemsDashboard.enable`).
 - **Format Document** applies the fixes `qlinter --fix` makes - those that
   cannot change a working program - and nothing else: it is not a
   whitespace or layout formatter, and it never applies an editor-only fix.
@@ -172,6 +204,30 @@ to a process you add and connect to, and sends only the code you run.
   is not). One that assigns, returns, names `.z.s`, sits in a qSQL phrase
   or cuts a name, string or list is refused, and **Refactor...** says why.
   `q-lint.extractFunction.enable` turns it off.
+- **Lay out qSQL query on aligned lines**, in the lightbulb and
+  **Refactor...** menu inside a `select`, `exec`, `update` or `delete`:
+  each clause goes on its own line, with `by`, `from` and `where`
+  right-aligned under the first word, and a clause's columns or
+  constraints one per line when they do not fit in
+  `q-lint.qsqlLayout.lineLength` (80):
+
+  ```q
+  r:select n:count i, px:avg px
+        by sym
+      from trade
+     where date=.z.d,
+           size>100
+  ```
+
+  Only blanks change: a newline goes before `by`, `from` and the `where`
+  after `from`, and after a comma that separates two items. A query where
+  that could change what q reads is left as it is: one with a comment in
+  it, one already broken somewhere else, a `where` phrase holding another
+  query unbracketed, or a `\t` line. Every case in the tests was loaded
+  before and after into KDB-X and PeachQ and gave the same result. Format
+  Document lays out every query longer than the line length too, but only
+  with `q-lint.qsqlLayout.onFormat` on (see [Formatting](#formatting)).
+  `q-lint.qsqlLayout.enable` turns it off.
 - **Hover** on a name the workspace defines shows its parameters, the
   comment written above its definition and the file it is in; on a word of
   q itself - `ssr`, `select`, `.z.p`, `.Q.s`, `.h.hy`, or a glyph such as
@@ -191,10 +247,40 @@ to a process you add and connect to, and sends only the code you run.
   or where the argument is already the parameter's name.
   `q-lint.inlayHints.enable` turns them off, and VS Code's
   `editor.inlayHints.enabled` can show them only while a key is held.
+- **Inferred types** of a lambda's locals, on hover and as an inlay hint
+  after the value of the first assignment: `a:1 2 3 long list`, and a hover
+  on `a` says `long list`, type `7h`. Only where every assignment of the
+  local is a literal - a number or vector of them, a boolean, a byte, a
+  string, symbols, a date or time, a lambda, `()` - and all give the same
+  type, so the type is the one q's `type` gives (each is checked against
+  KDB-X in the tests). An expression (even `1+2`), a parameter, an amend
+  (`a+:1`) or two literals of different types show nothing rather than a
+  guess. `q-lint.inferredTypes.enable` turns both off.
+- **Argument slot highlight**: inside `f[a;b;c]`, the argument the cursor is
+  in is highlighted, and the parameter it is passed as is drawn before it -
+  `b:` - for a workspace function or a q one, unless a parameter inlay hint
+  already draws it there (signature help still marks it too). Only the
+  language server is asked. `q-lint.argumentSlot.enable` turns it off.
+- **Reference counts** above each top-level function: `3 references`, the
+  places the workspace's `.q` files read it, as Find All References lists
+  them without the assignments. Click it to see them in place.
+  `q-lint.referenceLens.enable` turns them off.
 - **Completion**, when turned on with `q-lint.completion.enable`: a lambda's
   parameters and locals first, then the names the workspace defines, spelled
   as the `\d` context in force reads them, then q's own words. It does not
   know a table's columns or anything only a running process holds.
+- **Auto-load on completion**, with `q-lint.autoLoad.enable` on as well (off
+  by default): completing a name that one other workspace file defines, and
+  that nothing the file can already see defines, also writes the `\l` that
+  loads that file when the item is accepted - the item says `adds \l
+  lib/util.q`. "Can already see" is the file, what it loads, directly or
+  through another, and what a file that loads it also loads, so a load
+  already there is never added twice. The line goes after the last `\l`
+  above the cursor and above the first `\d`, so the loads keep their
+  order; with none, after a leading comment block. The path is written
+  from the workspace folder, or from the file's own directory, whichever
+  reaches the file. A name two files define gets no load: which to load is
+  your call.
 - **Call hierarchy** (**Show Call Hierarchy**, **Peek Call Hierarchy**) on a
   global function: the definitions and files that name it, and the workspace
   functions its own definition names. It is read from the names, so a
@@ -303,6 +389,34 @@ and clicking it switches. The commands:
   {"KDBCODE": "code", "KDBCONFIG": "config"}}}`. A discovery server's list
   never brings one. `q-lint.processes.launcher.enable` off hides the three
   commands and stops what was started.
+- **Open Log File...**, in the palette and on a `.log`, `.out` or `.err`
+  file in the Explorer: one or more q or TorQ logs on this machine in a
+  read-only editor, each entry coloured by its level - ERROR and WARN lines
+  whole, INFO's level word, DEBUG dimmed - and followed as the file grows
+  (**Follow or Pause Log**, in the editor's title bar). It reads TorQ's
+  lines as `.lg.format` writes them
+  (`time|host|proctype|proc|LEVEL|id|message`), its `-jsonlogs` lines and
+  its usage logs (a call whose status is `e` is an error), and plain q
+  output: q's own errors (`'type`, with KDB-X's timestamp or without) with
+  the indented backtrace after them, and a timestamp and a level word
+  (`ERROR`, `WARN`, `INFO`, `DEBUG` and their short forms, in capitals or
+  as `[error]` or `level=error`) near the start of a line. An indented line
+  continues the entry above it. **Filter Log by Level...**, **by
+  Process...**, **by Time...** (a time of day, which applies to every day
+  in the log, or a date and time) and **by Text...** narrow the view, and
+  **Clear Log Filters** undoes them; the status bar shows the filter. A
+  keybinding can give a filter command its value as the argument:
+  `["ERROR", "WARN"]`, `["rdb1"]`, `{"from": "09:30", "to": "16:00"}` or the
+  text. Files
+  are read a piece at a time - a 97 MB TorQ usage log takes about a third
+  of a second - and only the last `q-lint.processes.logViewer.maxLines`
+  entries that pass the filter are kept, so a new filter reads the files
+  again. Several files open as one view, merged by time, with a line that
+  names no process marked with its file's (`out_rdb1_..._.log` is `rdb1`).
+  A line shows once it ends, and a file truncated or rotated is read again
+  from its start. Nothing is sent to any process.
+  `q-lint.processes.logViewer.enable` off hides the commands and stops
+  following.
 - **Insert Active Connection Label**, at the cursor.
 - **Copy Label for Agent Query**, on a process row: the label an agent's
   query names the process by (`server/label` for a discovered one).
@@ -656,6 +770,43 @@ chart mode the query's own result follows it into the panel, as another
 tab. `q-lint.view.enable` off stops listening, so a call opens nothing,
 and hides and refuses the command.
 
+**Time Lines on Process**, in a q editor's context menu or the palette, runs
+the selection - or the whole file when nothing is selected - one statement
+at a time on the active connection, as a query would (assignments are
+global, a `\d` holds for the statements after it), and draws each
+statement's time and memory after its last line: `⏱ 2.34 ms · 8.0 MB`.
+Time is q's own clock, `.z.p` before and after; memory is what `\ts`
+reports allocating (a system command has none). It stops at the first
+statement that fails, marked `✗` with q's error. Nothing of q-lint's is
+defined on the process: the statements go with one lambda. The timing costs
+something itself, and is measured each run - `::` through the same path a
+hundred times - and said in the message and the hover: about 0.9 µs a
+statement on KDB-X and 1.8 µs on PeachQ here, and `.z.p` advances in
+microseconds on macOS, so a statement faster than that reads 0. Editing the
+file, or **Clear Line Timings**, clears them. The read-only guard reads the
+statements as it reads a query (`q-lint.query.lineTimings.enable`).
+
+**Profile Functions on Process**, in a q editor's context menu or the
+palette, runs the selection, or the statement at the cursor, with every
+function of a namespace you name (`.lib`; the first one the code names is
+offered) timed, as cProfile times a Python program. Each lambda directly in
+the namespace is replaced for the run by a wrapper of the same rank that
+notes, by `.z.p`, when it is entered and left - through an error too - and
+the very objects that were there are put back after, whether the run
+succeeded or failed; a second message follows to make sure of it, and the
+working state in `.qlint.prof` is deleted. The panel shows the functions as
+a table - calls, total, self (less the calls it made), per call, longest -
+sortable by any column, and the calls as a flame chart, merged by their
+path of callers. The wrapper costs time on every call: it is measured on
+the process before each run (a thousand calls of `{x}` through a wrapper
+against a thousand direct ones; about 1.7 µs a call on KDB-X and 4.8 µs on
+PeachQ here) and the panel says how much it adds in all. Only functions
+called by name are seen: one stored in a dictionary or set as a callback
+before the run keeps the original, projections and compositions are not
+wrapped, and at most the first 100,000 calls are recorded. Since a run
+replaces the namespace's functions, the read-only guard asks first on a
+guarded process, whatever the query (`q-lint.query.functionProfile.enable`).
+
 **Read-only guard.** Code sent to a process tagged `prod`, `prd` or
 `production` (`q-lint.processes.readOnlyGuard.tags`, ignoring case) is read
 first, and when it would change the process, a modal asks before anything
@@ -680,8 +831,10 @@ Data Wrangler step, a cell edit, a data file opened in the grid and a CSV
 load statement, a run from the Testing view (each test's definition), and a query to a TorQ
 gateway, read as written - and a `.gw.syncexec` or `.gw.asyncexec` call,
 such as one rerun from the history, is read inside its strings. A guarded
-process holds no result for paging, since holding assigns `.qlint.held`,
-and streaming its table asks first, since `.u.sub` adds a subscriber. An agent's query cannot be asked about, so
+process holds no result for paging, since holding assigns `.qlint.held`;
+**Profile Functions on Process** asks first whatever the query, as it
+replaces the namespace's functions for the run; **Time Lines on Process**
+reads its statements as a query's; and streaming its table asks first, since `.u.sub` adds a subscriber. An agent's query cannot be asked about, so
 one that would change such a process is refused with why, and never offered
 to you. q-lint's own reads - the Process Explorer, Monitor, HDB browser,
 table templates' and the schema diagram's `meta`, hovers and the
@@ -808,6 +961,14 @@ kept for when it is on again.
   shows `file: <label>`. **Clear Connection for File** removes the binding.
   Renaming the process (**Edit Process**) carries its files along, and
   deleting it removes their bindings.
+- **New Query for Process**, in the palette and on a process in the
+  **Processes** view, opens an untitled q editor already bound to that
+  process, as **Choose Connection for File** would bind it: what you run
+  from it goes there, whatever is connected, with the read-only guard and
+  the production confirmation as for any query. Nothing is sent until you
+  run something. The binding lasts as long as the editor: saved as a
+  file, it is a new file, which **Choose Connection for File** binds.
+  `q-lint.processes.newQuery.enable` off hides the command.
 - **Reveal Process** selects the connected process in the **Processes**
   view, and shows the view. **Open q-lint Settings** opens Settings at
   q-lint's.
@@ -1127,6 +1288,18 @@ inline script and no network. Its charts are drawn by
   starts `q-lint.terminal.qBinary` on it in a terminal named after the
   file, in the workspace folder. Running it again closes that terminal and
   starts a fresh q.
+- **Run File with Arguments...**, in the editor's run menu and context
+  menu: the same run, with words after the file and input for q. A quick
+  pick lists the argument sets saved for the file, newest first, and **New
+  arguments...** asks for the words (which q reads as `.z.x`; double quotes
+  keep spaces together, and q takes its own options, such as `-p` or `-c`,
+  from anywhere on the line and leaves them out of `.z.x`), then for lines
+  to type into q's console once it starts, one at a time until an empty
+  one. The set is saved for the file in the workspace, the last ten kept;
+  **Forget saved arguments...** removes one. Nothing runs but on the pick,
+  or on a set given as the command's argument by a keybinding:
+  `{"args": "-p 5001", "input": ["show .z.x"]}`.
+  `q-lint.terminal.runWithArguments.enable` off hides it.
 - **Send Current Line to Terminal**, `ctrl+shift+q`.
 - **Send Current Selection to Terminal**, `ctrl+shift+r`: the current line
   when nothing is selected.
@@ -1218,6 +1391,19 @@ namespace's `key`, never by evaluating it; a view is named and not run, a
 partitioned table is not printed, and a process tagged `prod`, `prd` or
 `production` is not asked. The read waits up to a second for a query to
 finish, and shows nothing if it does not.
+
+**Process names in symbol search.** With `q-lint.processSymbols.enable`
+on (off by default, since a search then asks the process), **Go to Symbol
+in Workspace** (Ctrl/Cmd+T) also lists the functions, variables, tables
+and views the connected process defines and no workspace file does, each
+marked with the process it is on. They are read only while you search, by
+one fixed lambda that lists the root's and each namespace's names with
+`\f`, `\v`, `\a` and `\b` (no value is evaluated, so a view is never run),
+through the same free-connection path as the Process Explorer, so a busy
+process adds nothing; the names are kept five seconds between keystrokes.
+One-letter namespaces (`.q`, `.z`, ...) are left out, and a process tagged
+`prod`, `prd` or `production` is not asked. Choosing one opens a short note
+on what it is; **Open Function Source** reads a function's text.
 
 **Undefined names.** With `q-lint.undefinedNames.enable` on (off by
 default, since it asks the process on its own), a q file gets a warning on
@@ -1449,6 +1635,23 @@ documentation, not a directive: it ends the directives, so a cell that
 opens with a documented function runs. An error shows q's message and, on kdb+
 3.5 and later, its backtrace.
 
+### Restart and run all
+
+**Restart Notebook Process and Run All**, on the notebook's toolbar, is
+Jupyter's Restart & Run All. The process is the one the notebook's cells
+last ran on (the active connection before any has run). When q-lint
+started it - **Start Process**, from its launch definition - it asks, then
+stops it, starts it again from the same definition, waits until it
+listens, connects to it, and runs every q cell in order. When q-lint did
+not start it, it is never restarted: q-lint says so and asks you to
+restart it yourself, or offers to run every cell on it as it is. Either
+way the run is a fresh one: cells are numbered from 1, the run stops at the
+first cell that fails, and the cells after it lose their old outputs, so
+nothing stale passes for this run's. The cells run as any cell does, so the
+read-only guard asks before one that would change a guarded process, and
+`/ @process` cells switch the connection. It refuses while a query is still
+running. `q-lint.notebook.restartRunAll.enable` turns it off.
+
 ### Live values in Markdown
 
 `{{q: expr}}` in a Markdown cell shows the value of `expr` on the process:
@@ -1578,6 +1781,81 @@ back, and saving a notebook that was opened unchanged writes the same file. A fi
 that is not a notebook does not open: the editor says what is wrong with
 it, and the file is left as it was. An empty file is a new notebook.
 
+### Notebooks in git
+
+**Compare Notebook Cells...**, on the notebook's toolbar, a `.qnb` file's
+context menu and a changed `.qnb` in Source Control, opens a diff of the
+notebook's cells against the last commit (`HEAD`) or another notebook you
+pick. Each side shows only the cells - a `%% markdown`, `%% code` or
+`%% code <language>` line, then the source - so a run that changed every
+output and run number shows no change, and an edited cell is the lines
+that changed in it. An open notebook is compared as it is, unsaved edits
+and all. A message says how many cells changed, were added, were removed
+and stayed the same; cells are matched as a diff matches lines, so a cell
+added at the top is one added cell. Nothing is sent to any process.
+`q-lint.notebook.diff.enable` turns it off.
+
+`git diff` and `git log -p` can show the same text, with the script the
+extension ships in `out/qnbgit.js` as git's `textconv` for `*.qnb`:
+
+```sh
+git config diff.qnb.textconv "node ~/.vscode/extensions/wojdalski.q-lint-<version>/out/qnbgit.js --text"
+echo '*.qnb diff=qnb' >> .gitattributes
+```
+
+The script needs only Node.js; a file that is not a notebook is shown as it
+is.
+
+Outputs need not be committed, as nbstripout arranges for Jupyter:
+
+- **Clear Notebook Outputs in File**, on a `.qnb` file's context menu (several
+  can be picked), asks, then removes each cell's outputs, run number and
+  times and the live values of Markdown cells from the file, keeping the
+  cells and everything else. A notebook open with unsaved edits is left
+  alone. VS Code's own **Clear All Outputs** clears an open notebook.
+- **Set Up Git to Strip Notebook Outputs...**, on the notebook's toolbar,
+  installs `qnbgit.js --strip` as a git clean filter for `*.qnb` in the
+  repository of the active notebook, or of the first workspace folder. It
+  asks whether the `*.qnb filter=qnb-strip` line goes in this clone's
+  `.git/info/attributes` or in `.gitattributes`, committed for everyone
+  (each clone sets the filter up for itself; one that has not commits
+  notebooks as they are), then shows what it will write - a copy of the
+  script in `.git/q-lint/`, `git config --local filter.qnb-strip.clean`,
+  and the attributes line, appended - and writes it only on **Write**. A
+  `filter.qnb-strip.clean` set to anything else is never changed, a copy of
+  the script from another version is replaced only on that **Write**, and
+  no hook is written. From then on git commits notebooks without their
+  outputs, the files keep them, and an output-only change does not show as
+  a change. The filter needs `node` on `PATH`; without it git commits
+  notebooks as they are. To undo it, remove the attributes line and run
+  `git config --unset filter.qnb-strip.clean`.
+
+`q-lint.notebook.stripOutputs.enable` turns both commands off; a filter set
+up before keeps working, since git runs it, not VS Code.
+
+### A Jupyter kernel for q
+
+`.ipynb` q notebooks - **Export Notebook as Jupyter Notebook**'s, or
+anyone's - run in Jupyter and other Jupyter frontends with the kernel in
+this repository's [`editors/jupyter`](https://github.com/kwojdalski/q-lint/tree/master/editors/jupyter), a separate
+Python package that needs only pyzmq:
+
+```sh
+pip install "git+https://github.com/kwojdalski/q-lint#subdirectory=editors/jupyter"
+python -m qlint_kernel install --q q                      # each kernel starts its own q
+python -m qlint_kernel install --connect localhost:5001   # or runs on a process already running
+```
+
+It cuts a cell into statements and runs them with the extension's query
+lambda, so a cell shows what it shows in a q notebook here; it completes
+names on the process, shows a name's value, and interrupts a cell. Restart
+starts a fresh q when the kernel started one. An exported notebook names
+jupyterq's kernel (`qpk`); pick **q (q-lint)** in the frontend, or install
+this one under that name with `--name qpk` where jupyterq is not installed.
+The extension does not run the kernel and has no setting for it: it is used
+only once installed. The read-only guard is the extension's, so it does not
+apply to cells the kernel runs.
+
 ## The local q
 
 **q interpreter.** **Select q Interpreter**, or the status bar item beside
@@ -1690,13 +1968,23 @@ q-pro column names the setting of [q-pro](https://marketplace.visualstudio.com/i
 | `q-lint.rename.enable` | `true` | Offer **Rename Symbol** for a local, and for a global across the workspace. Needs `q-lint.navigation.enable`. | - |
 | `q-lint.help.enable` | `true` | Show hovers and signature help, from the source and the built-in catalogue of q's words. | - |
 | `q-lint.completion.enable` | `false` | Complete locals, workspace names and q's words. Off by default: an editor told a server completes stops offering the words already in the file. | - |
+| `q-lint.autoLoad.enable` | `false` | Completing a name one other workspace file defines also writes the `\l` that loads it, when nothing the file sees defines it. Needs `q-lint.completion.enable`. Off by default: accepting a name then writes another line. | - |
 | `q-lint.callHierarchy.enable` | `true` | Offer the call hierarchy of a global function. | - |
 | `q-lint.graph.enable` | `true` | Offer the **q Dependencies** view and **q-lint: List Affected Tests**. Off: the view is hidden and the server answers neither. | - |
 | `q-lint.inlayHints.enable` | `true` | Show parameter names at the arguments of a call to a workspace function. | - |
+| `q-lint.inferredTypes.enable` | `true` | Show a local's type on hover and as an inlay hint, only where every assignment is a literal of one type. | - |
 | `q-lint.codeLens.enable` | `true` | Show **Run** above each top-level function definition and **Run test** above a `test_*` one. | - |
+| `q-lint.referenceLens.enable` | `true` | Show **N references** above each top-level function definition; click it to see them. | - |
 | `q-lint.documentLinks.enable` | `true` | Make each `\l`, `system "l ..."` and `` `:file.q `` path a link to the file it loads. | - |
 | `q-lint.generateQdoc.enable` | `true` | Offer **Generate qDoc** above a top-level function. | - |
 | `q-lint.extractFunction.enable` | `true` | Offer **Extract Function** over a selection q reads as one value. | - |
+| `q-lint.suppressions.enable` | `true` | Offer **Suppress CODE on this line** and **Suppress CODE in this file**. | - |
+| `q-lint.organiseLoads.enable` | `true` | Answer **Organize Imports** with **Organise loads**, and offer **q-lint: Organise Loads**. | - |
+| `q-lint.performanceLints.enable` | `true` | Report the performance rules, `QV`. Off, they are hidden as `q-lint.lint.ignore` would. | - |
+| `q-lint.formatChangedLines.enable` | `false` | On saving a q file in a git repository, apply the safe fixes for the findings on the lines changed against `HEAD` only, and offer **q-lint: Format Changed Lines**. Off by default: it edits the file at every save. | - |
+| `q-lint.qsqlLayout.enable` | `true` | Offer **Lay out qSQL query on aligned lines** inside a query. Off: no action, and Format Document lays nothing out. | - |
+| `q-lint.qsqlLayout.onFormat` | `false` | Have **Format Document** lay out every qSQL query longer than the line length, after the safe fixes. | - |
+| `q-lint.qsqlLayout.lineLength` | `80` | The line length a query is laid out to, 20 to 400. | - |
 | `q-lint.workspaceIndex.enable` | `true` | Read every workspace `.q` file at startup for the names it defines, up to 20,000 files or 500,000 directory entries. Off: only open files. | - |
 | `q-lint.workspaceIndex.exclude` | `[]` | Globs, relative to the workspace folder, the index does not read: `["vendor/**"]`. | `q-lang-server.sourceFiles.ignoreGlob` |
 | `q-lint.trace.server` | `off` | Log client-server traffic: `off`, `messages`, `verbose`. | `q-lang-server.trace.server` |
@@ -1788,7 +2076,12 @@ nothing.
 | `q-lint.liveValueHover.enable` | `false` | Show a global's value on the connected process when hovering it in a q editor. Off, no hover is registered and nothing is sent. | - |
 | `q-lint.undefinedNames.enable` | `false` | Warn on globals a q file reads that neither the workspace nor the connected process defines, and offer **Check Undefined Names on Process**. Off, nothing is sent and the command is hidden. | - |
 | `q-lint.idiomSnippets.enable` | `true` | Offer the idiom snippets (joins, `.z` handlers, a TorQ process) in the completion list. | - |
+| `q-lint.argumentSlot.enable` | `true` | Highlight the argument of `f[a;b;c]` the cursor is in and name its parameter. Asks the language server only. Off, nothing listens or is drawn. | - |
+| `q-lint.processSymbols.enable` | `false` | List the names only the connected process defines in **Go to Symbol in Workspace**, read while you search. Off, no provider is registered and nothing is sent. | - |
 | `q-lint.processExplorer.driftDetection.enable` | `false` | **Check Drift Against Process**: compare the workspace's function definitions with the connected process. Off, the command is hidden and reads nothing. | - |
+| `q-lint.query.lineTimings.enable` | `true` | **Time Lines on Process** and **Clear Line Timings**. Off, the commands are hidden and refuse, and the timings drawn are cleared. | - |
+| `q-lint.query.functionProfile.enable` | `true` | **Profile Functions on Process**. Off, the command is hidden and refuses, and the panel closes. | - |
+| `q-lint.problemsDashboard.enable` | `true` | **Show Problems Dashboard** and **Lint Earlier Commits**. Off, the commands are hidden and refuse, and the dashboard closes. | - |
 | `q-lint.hotReload.enable` | `false` | On saving a q file, send the definitions the save changed to its process, after Redefine's confirmation. Off, nothing listens and nothing is sent. | - |
 | `q-lint.results.plots.enable` | `true` | Keep every chart the result panel draws in the **q Plots** view, to step through and save as SVG or PNG. Off, the view is hidden and its plots dropped. | - |
 | `q-lint.temporalHover.enable` | `true` | Show a temporal literal or an epoch-sized number converted on hover, and offer **Convert Temporal Value**. Nothing is sent. | - |
@@ -1842,6 +2135,9 @@ Each applies at once, without a reload. None reaches the language server.
 | `q-lint.tickerplant.stream.enable` | `false` | **Stream Tickerplant Table**: subscribe with `.u.sub` and show a table's updates live. Off, the command is hidden and refuses, and open streams close. | - |
 | `q-lint.tickerplant.stream.rows` | `1000` | The newest rows a stream keeps, 1 to 10,000. | - |
 | `q-lint.processes.launcher.enable` | `true` | **Start Process**, **Stop Process** and **Set Launch Definition**. Off, they are hidden and refuse, and what was started is stopped. | - |
+| `q-lint.processes.newQuery.enable` | `true` | **New Query for Process**: an untitled q editor bound to a process. Off, the command is hidden and refuses. | - |
+| `q-lint.processes.logViewer.enable` | `true` | **Open Log File...** and its filters: q and TorQ logs on this machine, coloured by level and followed as they grow. Off, the commands are hidden and refuse, and open views stop following. | - |
+| `q-lint.processes.logViewer.maxLines` | `10000` | The most entries a log view keeps, the last that pass its filter; 100 to 1,000,000. | - |
 | `q-lint.processes.shared.enable` | `true` | Read, watch and list `.qlint/processes.json`, and offer **Add to Shared Process List**. Off, the file is not read and the group is removed. | - |
 
 ### Terminal settings
@@ -1853,6 +2149,7 @@ reaches the language server.
 | --- | --- | --- | --- |
 | `q-lint.terminal.qBinary` | `"q"` | The q binary a terminal starts: a name on `PATH` or a path, where a leading `~` is your home directory. It is quoted for the terminal's shell (POSIX, PowerShell or cmd), so it names one program, not a command with arguments. | `q-terminal.cfg.qBinary` |
 | `q-lint.terminal.envPath` | `""` | A file of `NAME=value` lines set for q, such as `QHOME` and `QLIC`. They go on the command line that starts q (`NAME=value q`, `$env:NAME=` in PowerShell, `set` in cmd), so they win over what your shell's startup files set, and show there. Relative to the workspace folder; a leading `~` is your home directory. It is read, not run as a shell script as q-pro's is: `#` lines are comments, `export ` is allowed, quotes around a value are dropped, and nothing is expanded: `$HOME` stays `$HOME`. | `q-terminal.cfg.envPath` |
+| `q-lint.terminal.runWithArguments.enable` | `true` | **Run File with Arguments...**: run the file in its q terminal with a saved or new set of `.z.x` words and console input. The sets are kept per workspace, never in settings. Off, the command is hidden and refuses. | - |
 
 ### q environment settings
 
@@ -1887,6 +2184,9 @@ Read when a cell runs or a command is used, so a change needs no reload. None re
 | `q-lint.notebook.export.enable` | `true` | **Export Notebook as HTML**, **as Jupyter Notebook** and **Import Jupyter Notebook**. Off, they are hidden and refuse. | - |
 | `q-lint.notebook.liveValues.enable` | `true` | Read `{{q: expr}}` in Markdown cells when the code cell above runs; never on their own. Off, nothing is sent. | - |
 | `q-lint.notebook.processDirective.enable` | `true` | `/ @process <label>`. Off, a cell with it is not run and nothing is sent. | - |
+| `q-lint.notebook.diff.enable` | `true` | **Compare Notebook Cells**: a diff of a notebook's cells against `HEAD` or another notebook, outputs and metadata left out. Sends nothing. Off, the command is hidden and refuses. | - |
+| `q-lint.notebook.stripOutputs.enable` | `true` | **Clear Notebook Outputs in File** and **Set Up Git to Strip Notebook Outputs**, each only when run, asking first. Off, both are hidden and refuse. | - |
+| `q-lint.notebook.restartRunAll.enable` | `true` | **Restart Notebook Process and Run All**: restarts the notebook's process only when q-lint started it, and only after asking, then runs every q cell from 1. Off, the command is hidden and refuses, and nothing is sent or restarted. | - |
 
 ### Agent settings
 
@@ -1937,6 +2237,22 @@ action instead:
 `"source.fixAll": "explicit"` runs it too, with every other extension's.
 `q-lint.format.enable` does not turn this off: it says whether q-lint is a
 formatter, and this runs only where you list it.
+
+To fix only what you changed - Black's and Ruff's format-modified - turn on
+`q-lint.formatChangedLines.enable` instead of `editor.formatOnSave`: on each
+save of a q file, the lines it changed against git `HEAD` are worked out
+(a file git does not track, or a repository with no commit, is all new),
+and the same safe fixes are made for the findings on those lines only. A
+finding on an unchanged line is left as it is. Outside a git repository
+the save changes nothing. **q-lint: Format Changed Lines** makes the same
+edit without saving.
+
+Format Document changes no layout unless you ask it to. With
+`q-lint.qsqlLayout.onFormat` on, it also splits each qSQL query longer than
+`q-lint.qsqlLayout.lineLength` a clause to a line, as **Lay out qSQL query
+on aligned lines** does; a query already laid out, or short enough, is left
+as it is, so formatting twice changes nothing. The fix-all action never
+lays a query out.
 
 ## Folding
 
