@@ -715,6 +715,17 @@
             "markdownDescription": "How many times `#q-lint.connection.autoReconnect.enable#` tries before it gives up."
           }
         }
+      },
+      {
+        "title": "q-lint: process connections",
+        "properties": {
+          "q-lint.connection.sshTunnel.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 700,
+            "markdownDescription": "Reach a process that names an SSH jump host (**Set SSH Tunnel**) through a tunnel the system `ssh` opens (`ssh -N -L`), with your agent and `~/.ssh/config`; it never asks for or keeps a password. Off: **Set SSH Tunnel** is hidden, a connection through a tunnel closes, and such a process is not connected to; the jump hosts stay in the process list."
+          }
+        }
       }
     ],
     "commands": [
@@ -1158,6 +1169,12 @@
         "title": "Refresh Notebook Variables",
         "category": "q-lint",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "q-lint.setSshTunnel",
+        "title": "Set SSH Tunnel",
+        "category": "q-lint",
+        "icon": "$(remote)"
       }
     ],
     "views": {
@@ -1499,6 +1516,11 @@
           "command": "q-lint.findCallers",
           "when": "view == q-lint.processExplorer && viewItem == explorer.function && config.q-lint.processExplorer.findCallers.enable",
           "group": "1_source@2"
+        },
+        {
+          "command": "q-lint.setSshTunnel",
+          "when": "view == q-lint.processes && viewItem =~ /^process/ && config.q-lint.connection.sshTunnel.enable",
+          "group": "2_edit@5"
         }
       ],
       "editor/title/run": [
@@ -1691,6 +1713,10 @@
         {
           "command": "q-lint.refreshHdbBrowser",
           "when": "config.q-lint.hdbBrowser.enable"
+        },
+        {
+          "command": "q-lint.setSshTunnel",
+          "when": "config.q-lint.connection.sshTunnel.enable"
         }
       ],
       "editor/title": [

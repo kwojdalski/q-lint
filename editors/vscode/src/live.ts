@@ -8,6 +8,7 @@
 // `processes.ts`'s; discovery servers, `discoveryservers.ts`'s; what a
 // terminal is sent, `terminal.ts`'s. This file is the VS Code around them.
 import * as os from "os";
+import * as net from "net";
 import * as path from "path";
 import {
   commands,
@@ -45,11 +46,14 @@ import {
   processThemeColour,
   processTooltip,
   readProcessFile,
+  sshDestination,
   tlsChoices,
+  withExtras,
   type Process,
 } from "./processes";
 import { COMMANDS, CONNECTED, VIEWS, readLive, readProcessSettings, readTerminal } from "./liveconfig";
-import { QConnection, QError } from "./qclient";
+import { QConnection, QError, type Target } from "./qclient";
+import { SshTunnel, TUNNEL_COMMANDS, readTunnel } from "./tunnel";
 import { HEARTBEAT, UNANSWERED_MS, backoffDelay, latencyText, readHealth } from "./health";
 import { historyHeading, historyLabel, iconsEscaped } from "./history";
 import { render } from "./query";
@@ -397,6 +401,16 @@ export class QTerminals {
   }
 }
 
+/// Where `process` is connected to, with `password` for its user.
+function targetOf(process: Process, password: string | undefined): Target {
+  return {
+    host: process.host,
+    port: process.port,
+    ...(process.user ? { user: process.user, password: password ?? "" } : {}),
+    ...(process.tls ? { tls: true } : {}),
+  };
+}
+
 export class Live {
   private connection: QConnection | undefined;
   /// The query history, newest first. Kept here and written through to
@@ -504,6 +518,7 @@ export class Live {
       c(CONTROL_COMMANDS.copyQuery, (entry?: HistoryEntry) => this.copyQuery(entry)),
       c(CONTROL_COMMANDS.revealProcess, () => this.revealProcess()),
       c(CONNECT_SCRIPT_COMMANDS.set, (row?: ProcessArg, script?: ConnectScript | null) => this.setConnectScript(row, script)),
+      c(TUNNEL_COMMANDS.set, (row?: ProcessArg, destination?: string | null) => this.setSshTunnel(row, destination)),
       c(HISTORY_COMMANDS.filter, (filter?: HistoryFilter) => this.filterHistory(filter)),
       c(HISTORY_COMMANDS.clearFilter, () => this.setHistoryFilter({})),
       c(HISTORY_COMMANDS.export, (file?: Uri) => this.exportHistory(file)),
@@ -525,6 +540,10 @@ export class Live {
         }
         if (event.affectsConfiguration("q-lint.query.progress")) {
           this.showStatus();
+        }
+        // Turned off, a connection through a tunnel closes with its tunnel.
+        if (event.affectsConfiguration("q-lint.connection.sshTunnel") && !this.setting(readTunnel).enabled && this.active?.ssh !== undefined && this.connection !== undefined) {
+          void this.disconnect();
         }
       }),
       this.changed.event((what) => {
@@ -868,7 +887,7 @@ export class Live {
       return;
     }
     // The boxes do not ask for the connect script: it is kept.
-    const process = withScript(answer.process, scriptOf(old));
+    const process = withExtras(withScript(answer.process, scriptOf(old)), old);
     // Read again: the list may have changed while the boxes were open.
     const now = this.processes();
     const problem = !now.some((p) => p.label === old.label)
@@ -902,9 +921,13 @@ export class Live {
       // The connection is still to where it was opened: it takes the new
       // label and tags, and keeps its address until connected again.
       const { host, port, user, tls } = active;
-      this.active = withScript(
-        { label: process.label, host, port, ...(user !== undefined ? { user } : {}), tags: process.tags, ...(tls ? { tls } : {}) },
-        scriptOf(process),
+      this.active = withExtras(
+        withScript(
+          { label: process.label, host, port, ...(user !== undefined ? { user } : {}), tags: process.tags, ...(tls ? { tls } : {}) },
+          scriptOf(process),
+        ),
+        // The tunnel it was opened through stays until connected again.
+        { ...process, ssh: active.ssh },
       );
       this.showStatus();
       // The explorer keeps what it read under the label it read it for.
@@ -1273,15 +1296,10 @@ export class Live {
         const connection = await window.withProgress(
           { location: { viewId: VIEWS.processes }, title: `Connecting to ${process.label}` },
           async () => {
-            const target = {
-              host: process.host,
-              port: process.port,
-              ...(process.user ? { user: process.user, password: password ?? "" } : {}),
-              ...(process.tls ? { tls: true } : {}),
-            };
+            const target = targetOf(process, password);
             for (;;) {
               try {
-                return await QConnection.open(target);
+                return await this.dial(process, target);
               } catch (error) {
                 const busy = error instanceof Error && error.message.startsWith("no answer from ");
                 if (!untilFree || !busy || this.reconnectStopped) {
@@ -1333,6 +1351,84 @@ export class Live {
       this.connecting = undefined;
     });
     return this.connecting;
+  }
+
+  /// Open a connection to `process` at `target`, through the SSH tunnel it
+  /// names, if it names one (#908): the tunnel closes with the connection,
+  /// and the connection with the tunnel.
+  private async dial(process: Process, target: Target): Promise<QConnection> {
+    if (process.ssh === undefined) {
+      return QConnection.open(target);
+    }
+    if (!this.setting(readTunnel).enabled) {
+      throw new Error(
+        `it is reached through an SSH tunnel via ${process.ssh}, and SSH tunnels are turned off. Set q-lint.connection.sshTunnel.enable to true to turn them on`,
+      );
+    }
+    const tunnel = await SshTunnel.open({ destination: process.ssh, host: target.host, port: target.port });
+    try {
+      const connection = await QConnection.open({
+        ...target,
+        host: "127.0.0.1",
+        port: tunnel.localPort,
+        ...(target.tls ? { servername: net.isIP(target.host) ? undefined : target.host } : {}),
+      });
+      connection.whenClosed(() => tunnel.close());
+      tunnel.whenClosed(() => connection.abort());
+      return connection;
+    } catch (error) {
+      tunnel.close();
+      throw error;
+    }
+  }
+
+  /// A connection of its own to `process`, apart from the active one, with
+  /// its stored password and through its tunnel; the caller closes it.
+  async openSeparate(process: Process): Promise<QConnection> {
+    const password = process.user ? await this.context.secrets.get(passwordKey(process)) : undefined;
+    return this.dial(process, targetOf(process, password));
+  }
+
+  /// Set the SSH destination a saved process is reached through (#908), or
+  /// clear it. `destination` (from a keybinding or a test) sets it without
+  /// asking; `""` or `null` clears it.
+  private async setSshTunnel(row?: ProcessArg, destination?: string | null): Promise<void> {
+    if (!this.featureOn(this.setting(readTunnel).enabled, "SSH tunnels", "q-lint.connection.sshTunnel.enable")) {
+      return;
+    }
+    const process = await this.chosen(row, "Reach which q process through an SSH tunnel?");
+    if (process === undefined) {
+      return;
+    }
+    let given = destination === null ? "" : destination;
+    if (typeof given !== "string") {
+      given = await window.showInputBox({
+        title: `SSH tunnel of ${process.label}`,
+        value: process.ssh ?? "",
+        prompt: `The jump host q-lint runs \`ssh -N -L\` through to reach ${address(process.host, process.port)}, as you would type it: bastion, me@bastion or me@bastion:2222. ssh uses your agent and ~/.ssh/config, and never asks for a password. Empty: connect directly.`,
+        validateInput: (v) => (v.trim() === "" || sshDestination(v) !== undefined ? undefined : "A destination ssh takes: no spaces or quotes, and not starting with -."),
+        ignoreFocusOut: true,
+      });
+      if (given === undefined) {
+        return;
+      }
+    }
+    const ssh = given.trim() === "" ? undefined : sshDestination(given);
+    if (given.trim() !== "" && ssh === undefined) {
+      void window.showErrorMessage(`q-lint: "${given}" is not an SSH destination; the tunnel was not set.`);
+      return;
+    }
+    const now = this.processes();
+    if (!now.some((p) => p.label === process.label)) {
+      void window.showErrorMessage(`q-lint: "${process.label}" was deleted meanwhile; its tunnel was not set.`);
+      return;
+    }
+    await this.save(now.map((p) => (p.label === process.label ? withExtras(p, { ...p, ssh }) : p)));
+    void window.showInformationMessage(
+      ssh === undefined
+        ? `q-lint: ${process.label} is connected to directly from the next connect.`
+        : `q-lint: ${process.label} is reached through an SSH tunnel via ${ssh} from the next connect.`,
+    );
   }
 
   /// Reconnect to `process`, whose connection dropped, waiting longer before

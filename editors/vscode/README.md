@@ -196,6 +196,20 @@ and clicking it switches. The commands:
   and a discovery server's list never brings one.
   `q-lint.connection.connectScript.enable` off runs no script and hides
   the command; the scripts stay in the list.
+- **Set SSH Tunnel**, on a process row: a jump host the process is
+  reached through, as you would type it for ssh (`bastion`, `me@bastion`,
+  `me@bastion:2222`). Each connect starts the system `ssh` as
+  `ssh -N -L 127.0.0.1:<free port>:<host>:<port> -- <jump host>` and
+  connects to that local port; the host and port are the process's as the
+  jump host sees them. ssh runs in batch mode, so it never asks for a
+  password or a passphrase: it uses your agent and `~/.ssh/config`
+  (`ProxyJump`, `IdentityFile`, a host alias), and q-lint keeps nothing.
+  When ssh cannot open the tunnel, the error says what ssh said. The tunnel
+  closes when the connection does, and the connection when ssh exits. It is
+  kept in the process list and exported as `ssh`; a discovery server's list
+  never brings one. `q-lint.connection.sshTunnel.enable` off hides the
+  command, closes a connection through a tunnel, and refuses to connect to
+  such a process rather than trying its host directly.
 - **Insert Active Connection Label**, at the cursor.
 - **Copy Label for Agent Query**, on a process row: the label an agent's
   query names the process by (`server/label` for a discovered one).
@@ -955,6 +969,14 @@ Each applies at once, without a reload. None reaches the language server.
 | `q-lint.connection.heartbeatInterval` | `30` | Seconds between heartbeats. | - |
 | `q-lint.connection.autoReconnect.enable` | `false` | Reconnect a connection the process or the network dropped, with backoff. | - |
 | `q-lint.connection.reconnectAttempts` | `5` | Tries before a reconnect gives up. | - |
+
+### Process connection settings
+
+Each applies at once, without a reload. None reaches the language server.
+
+| Setting | Default | What it does | q-pro |
+| --- | --- | --- | --- |
+| `q-lint.connection.sshTunnel.enable` | `true` | Reach a process that names a jump host through `ssh -N -L`; off, **Set SSH Tunnel** is hidden and such a process is not connected to. | - |
 
 ### Terminal settings
 

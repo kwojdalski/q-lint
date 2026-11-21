@@ -27,6 +27,9 @@ export interface Target {
   user?: string;
   password?: string;
   tls?: boolean;
+  /// The name a TLS certificate is checked against, when `host` is not it:
+  /// a tunnel's loopback end (#908).
+  servername?: string;
 }
 
 /// How long a connect may take before it is given up.
@@ -97,7 +100,7 @@ export class QConnection {
     return new Promise((resolve, reject) => {
       const options = { host: target.host, port: target.port };
       const socket = target.tls
-        ? tls.connect({ ...options, servername: net.isIP(target.host) ? undefined : target.host })
+        ? tls.connect({ ...options, servername: target.servername ?? (net.isIP(target.host) ? undefined : target.host) })
         : net.connect(options);
       let settled = false;
       const cancelled = (): void => fail(new Error(`the connect to ${target.host}:${target.port} was cancelled`));
