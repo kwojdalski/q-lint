@@ -251,3 +251,29 @@ test("live completion inserts a name q cannot parse by its symbol", async (t) =>
     ".ns.é": 'get`$".ns.é"',
   });
 });
+
+// From the command palette with no editor open (or the Output panel
+// focused), the query, send and insert-label commands did nothing at all:
+// no query, no message.
+test("a query, send or Insert Label with no editor open says what it needs", async (t) => {
+  const q = await fakeQ(() => OK);
+  t.after(() => q.close());
+  const { live } = await setUp(t, [proc("p", q.port)]);
+  assert.strictEqual(await live.connectTo("p"), true);
+  vscode.window.activeTextEditor = undefined;
+  const commands = [
+    "q-lint.queryCurrentLine",
+    "q-lint.querySelection",
+    "q-lint.queryBlock",
+    "q-lint.queryEntireFile",
+    "q-lint.sendCurrentLineToTerminal",
+    "q-lint.sendSelectionToTerminal",
+    "q-lint.sendBlockToTerminal",
+    "q-lint.insertActiveConnectionLabel",
+  ];
+  for (const name of commands) {
+    stub.messages = [];
+    await stub.commands.get(name)();
+    assert.deepStrictEqual(stub.messages, [["info", "q-lint: open a q file first: there is no active editor."]], name);
+  }
+});

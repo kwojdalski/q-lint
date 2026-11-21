@@ -99,6 +99,11 @@ function codeAt(editor: TextEditor, from: From): string | undefined {
   return document.lineAt(line).text;
 }
 
+/// What a command that reads the active editor says when there is none.
+function noEditor(): void {
+  void window.showInformationMessage("q-lint: open a q file first: there is no active editor.");
+}
+
 function nothingThere(from: From): void {
   void window.showInformationMessage(
     from === "block"
@@ -290,6 +295,7 @@ class QTerminals {
   async send(from: From): Promise<void> {
     const editor = window.activeTextEditor;
     if (editor === undefined) {
+      noEditor();
       return;
     }
     const lines = replLines(codeAt(editor, from) ?? "");
@@ -818,6 +824,7 @@ export class Live {
       return;
     }
     if (editor === undefined) {
+      noEditor();
       return;
     }
     void editor.edit((edit) => {
@@ -931,6 +938,7 @@ export class Live {
   private async queryFrom(from: From): Promise<void> {
     const editor = window.activeTextEditor;
     if (editor === undefined) {
+      noEditor();
       return;
     }
     const code = codeAt(editor, from);
