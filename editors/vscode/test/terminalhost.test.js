@@ -122,3 +122,39 @@ test("a q binary and an env file under ~ are read from the home directory", asyn
   assert.strictEqual(fake.terminals.length, 1);
   assert.strictEqual(fake.terminals[0].sent[0], `QHOME=/opt/q ${path.join(home, "q/m64/q")}`);
 });
+
+test("with the last q terminal closed, code goes to a q terminal still open, not a new one", async () => {
+  const fake = fakeVscode();
+  const terminals = load(fake);
+  fake.vscode.window.activeTextEditor = { document: fake.document("/ws/a.q", "1+1"), selection: { active: { line: 0 }, isEmpty: true } };
+  await terminals.repl();
+  await terminals.runFile();
+  assert.deepStrictEqual(fake.terminals.map((t) => t.name), ["q", "a.q"]);
+  fake.close(fake.terminals[1]);
+  await tick();
+  await terminals.send("line");
+  assert.strictEqual(fake.terminals.length, 2, "no third terminal is started");
+  assert.deepStrictEqual(fake.terminals[0].sent.slice(1), ["1+1"]);
+});
+
+test("Run Code from Terminal keeps the file's running terminal when the new one cannot start", async () => {
+  const files = { "/ws/.env": "QHOME=/opt/q\n" };
+  const fake = fakeVscode({ "terminal.envPath": ".env" }, files);
+  const terminals = load(fake);
+  fake.vscode.window.activeTextEditor = { document: fake.document("/ws/a.q", "1+1") };
+  await terminals.runFile();
+  delete files["/ws/.env"];
+  await terminals.runFile();
+  assert.match(fake.messages.join("\n"), /could not read the env file/);
+  assert.strictEqual(fake.terminals.length, 1);
+  assert.strictEqual(fake.terminals[0].disposed, false);
+});
+
+test("two sends at once with no q terminal start one, and both reach it", async () => {
+  const fake = fakeVscode({ "terminal.envPath": ".env" }, { "/ws/.env": "QHOME=/opt/q\n" });
+  const terminals = load(fake);
+  fake.vscode.window.activeTextEditor = { document: fake.document("/ws/a.q", "1+1"), selection: { active: { line: 0 }, isEmpty: true } };
+  await Promise.all([terminals.send("line"), terminals.send("line")]);
+  assert.strictEqual(fake.terminals.length, 1);
+  assert.deepStrictEqual(fake.terminals[0].sent.slice(1), ["1+1", "1+1"]);
+});
