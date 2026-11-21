@@ -721,6 +721,48 @@
             "default": false,
             "order": 131,
             "markdownDescription": "On saving a q file, send the function definitions the save changed to its process (the file's bound one, or the active connection), after Redefine's confirmation. Only a function the process holds as the file had it before the edit is replaced. Off by default: it sends code to a process on save. Off, nothing listens and nothing is sent."
+          },
+          "q-lint.results.plots.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 706,
+            "markdownDescription": "Keep every chart the result panel draws in the **q Plots** view, beside q Results, to step back through and save as SVG or PNG. Off, the view is hidden, the plots kept are dropped and no more are kept."
+          },
+          "q-lint.temporalHover.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 707,
+            "markdownDescription": "On hovering a q temporal literal (`2024.01.02D03:04:05`, `2024.01.02`, `0D01:00`, `09:30:00.000`, `0Np` ...) or a number of 9 digits or more in a q editor, show it converted: the integer under it, a timestamp, a date, Unix seconds to nanoseconds, ISO 8601. Also offers **q-lint: Convert Temporal Value**. Computed in the editor: nothing is sent."
+          },
+          "q-lint.pasteTable.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 708,
+            "markdownDescription": "Offer **q-lint: Paste Spreadsheet Data as q Table**: CSV or TSV on the clipboard pasted as a `([] ...)` literal, each column's type inferred."
+          },
+          "q-lint.jsonConversion.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 709,
+            "markdownDescription": "Offer **q-lint: Paste JSON as q** (the clipboard's JSON as the value `.j.k` reads from it) and **q-lint: Copy Value as JSON** (an expression's value on the connected process, as `.j.j` writes it)."
+          },
+          "q-lint.helpPages.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 710,
+            "markdownDescription": "Offer **q-lint: Show Help for q Builtin**: a page for one of q's builtins with its syntax, examples and related builtins. Works offline."
+          },
+          "q-lint.tryExamples.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 711,
+            "markdownDescription": "Show a builtin's examples in its hover, each with a **Try it** link that runs it on the connected process, and offer Try it on its help page. An example is sent only when Try it is clicked."
+          },
+          "q-lint.cheatSheet.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 712,
+            "markdownDescription": "Show the **q Cheat Sheet** view: iterators, joins, temporal casts and attributes, each inserted at the cursor in one click."
           }
         }
       },
@@ -1799,6 +1841,90 @@
         "title": "Define .qlint.view and .qlint.plot on Process",
         "category": "q-lint",
         "icon": "$(eye)"
+      },
+      {
+        "command": "q-lint.convertTemporal",
+        "title": "Convert Temporal Value",
+        "category": "q-lint",
+        "icon": "$(calendar)"
+      },
+      {
+        "command": "q-lint.pasteAsTable",
+        "title": "Paste Spreadsheet Data as q Table",
+        "category": "q-lint",
+        "icon": "$(table)"
+      },
+      {
+        "command": "q-lint.pasteJsonAsQ",
+        "title": "Paste JSON as q",
+        "category": "q-lint",
+        "icon": "$(json)"
+      },
+      {
+        "command": "q-lint.copyAsJson",
+        "title": "Copy Value as JSON",
+        "category": "q-lint",
+        "icon": "$(json)"
+      },
+      {
+        "command": "q-lint.showHelp",
+        "title": "Show Help for q Builtin",
+        "category": "q-lint",
+        "icon": "$(book)"
+      },
+      {
+        "command": "q-lint.tryExample",
+        "title": "Try Example on Process",
+        "category": "q-lint",
+        "icon": "$(play)"
+      },
+      {
+        "command": "q-lint.showCheatSheet",
+        "title": "Show Cheat Sheet",
+        "category": "q-lint",
+        "icon": "$(notebook)"
+      },
+      {
+        "command": "q-lint.insertCheatSheetEntry",
+        "title": "Insert Cheat Sheet Entry",
+        "category": "q-lint",
+        "icon": "$(insert)"
+      },
+      {
+        "command": "q-lint.showPlots",
+        "title": "Show Plots",
+        "category": "q-lint",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "q-lint.previousPlot",
+        "title": "Previous Plot",
+        "category": "q-lint",
+        "icon": "$(arrow-left)"
+      },
+      {
+        "command": "q-lint.nextPlot",
+        "title": "Next Plot",
+        "category": "q-lint",
+        "icon": "$(arrow-right)"
+      },
+      {
+        "command": "q-lint.savePlot",
+        "title": "Save Plot As...",
+        "category": "q-lint",
+        "icon": "$(save)"
+      },
+      {
+        "command": "q-lint.removePlot",
+        "title": "Remove Plot",
+        "category": "q-lint",
+        "icon": "$(close)"
+      },
+      {
+        "command": "q-lint.clearPlots",
+        "title": "Clear Plots",
+        "category": "q-lint",
+        "icon": "$(clear-all)"
       }
     ],
     "views": {
@@ -1867,6 +1993,12 @@
           "icon": "media/view-history.svg",
           "contextualTitle": "q-lint",
           "when": "config.q-lint.savedQueries.enable"
+        },
+        {
+          "id": "q-lint.cheatSheet",
+          "name": "q Cheat Sheet",
+          "when": "config.q-lint.cheatSheet.enable",
+          "icon": "media/view-cheatsheet.svg"
         }
       ],
       "q-lint-results": [
@@ -1876,6 +2008,13 @@
           "name": "q Results",
           "icon": "media/view-results.svg",
           "contextualTitle": "q-lint"
+        },
+        {
+          "type": "webview",
+          "id": "q-lint.plots",
+          "name": "q Plots",
+          "when": "config.q-lint.results.plots.enable",
+          "icon": "media/view-plots.svg"
         }
       ]
     },
@@ -2029,6 +2168,26 @@
           "command": "q-lint.wrangleResult",
           "when": "view == q-lint.results && q-lint.result.shown && config.q-lint.results.wrangler.enable",
           "group": "navigation"
+        },
+        {
+          "command": "q-lint.previousPlot",
+          "when": "view == q-lint.plots && config.q-lint.results.plots.enable",
+          "group": "navigation@1"
+        },
+        {
+          "command": "q-lint.nextPlot",
+          "when": "view == q-lint.plots && config.q-lint.results.plots.enable",
+          "group": "navigation@2"
+        },
+        {
+          "command": "q-lint.savePlot",
+          "when": "view == q-lint.plots && config.q-lint.results.plots.enable",
+          "group": "navigation@3"
+        },
+        {
+          "command": "q-lint.clearPlots",
+          "when": "view == q-lint.plots && config.q-lint.results.plots.enable",
+          "group": "navigation@4"
         }
       ],
       "view/item/context": [
@@ -2444,6 +2603,31 @@
           "command": "q-lint.smartSend",
           "when": "editorLangId == q && config.q-lint.smartSend.enable",
           "group": "q-lint@31"
+        },
+        {
+          "command": "q-lint.showHelp",
+          "when": "editorLangId == q && config.q-lint.helpPages.enable",
+          "group": "q-lint@32"
+        },
+        {
+          "command": "q-lint.convertTemporal",
+          "when": "editorLangId == q && config.q-lint.temporalHover.enable",
+          "group": "q-lint@33"
+        },
+        {
+          "command": "q-lint.pasteAsTable",
+          "when": "editorLangId == q && config.q-lint.pasteTable.enable",
+          "group": "q-lint@34"
+        },
+        {
+          "command": "q-lint.pasteJsonAsQ",
+          "when": "editorLangId == q && config.q-lint.jsonConversion.enable",
+          "group": "q-lint@35"
+        },
+        {
+          "command": "q-lint.copyAsJson",
+          "when": "editorLangId == q && config.q-lint.jsonConversion.enable",
+          "group": "q-lint@36"
         }
       ],
       "commandPalette": [
@@ -2706,6 +2890,62 @@
         {
           "command": "q-lint.copySchemaMermaid",
           "when": "activeWebviewPanelId == 'q-lint.schema' && config.q-lint.processExplorer.schemaDiagram.enable"
+        },
+        {
+          "command": "q-lint.convertTemporal",
+          "when": "config.q-lint.temporalHover.enable"
+        },
+        {
+          "command": "q-lint.pasteAsTable",
+          "when": "config.q-lint.pasteTable.enable"
+        },
+        {
+          "command": "q-lint.pasteJsonAsQ",
+          "when": "config.q-lint.jsonConversion.enable"
+        },
+        {
+          "command": "q-lint.copyAsJson",
+          "when": "config.q-lint.jsonConversion.enable"
+        },
+        {
+          "command": "q-lint.showHelp",
+          "when": "config.q-lint.helpPages.enable"
+        },
+        {
+          "command": "q-lint.tryExample",
+          "when": "false"
+        },
+        {
+          "command": "q-lint.showCheatSheet",
+          "when": "config.q-lint.cheatSheet.enable"
+        },
+        {
+          "command": "q-lint.insertCheatSheetEntry",
+          "when": "false"
+        },
+        {
+          "command": "q-lint.showPlots",
+          "when": "config.q-lint.results.plots.enable"
+        },
+        {
+          "command": "q-lint.previousPlot",
+          "when": "config.q-lint.results.plots.enable"
+        },
+        {
+          "command": "q-lint.nextPlot",
+          "when": "config.q-lint.results.plots.enable"
+        },
+        {
+          "command": "q-lint.savePlot",
+          "when": "config.q-lint.results.plots.enable"
+        },
+        {
+          "command": "q-lint.removePlot",
+          "when": "config.q-lint.results.plots.enable"
+        },
+        {
+          "command": "q-lint.clearPlots",
+          "when": "config.q-lint.results.plots.enable"
         }
       ],
       "editor/title": [
@@ -2802,6 +3042,10 @@
       {
         "view": "q-lint.savedQueries",
         "contents": "No saved queries in this workspace.\n[Save Query](command:q-lint.saveQuery) saves the selection, or the statement at the cursor, under a name; Save Query on a Query History entry saves that one."
+      },
+      {
+        "view": "q-lint.cheatSheet",
+        "contents": "Iterators, joins, temporal casts and attributes, each inserted at the cursor when chosen.\n[Show Help for q Builtin](command:q-lint.showHelp)"
       }
     ],
     "keybindings": [

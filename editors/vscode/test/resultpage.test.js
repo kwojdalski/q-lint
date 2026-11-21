@@ -63,7 +63,7 @@ class Element {
 
 /// A page loaded with `saved` as its webview state: its body, what it
 /// posted, its state, and `send` to deliver a message to it.
-function loadPage(saved) {
+function loadPage(saved, globals = {}) {
   const posted = [];
   const page = { posted, state: saved };
   const windowListeners = {};
@@ -81,6 +81,7 @@ function loadPage(saved) {
       postMessage: (m) => posted.push(JSON.parse(JSON.stringify(m))),
     }),
   };
+  Object.assign(sandbox, globals);
   sandbox.self = sandbox;
   sandbox.window = { addEventListener: (type, f) => (windowListeners[type] ??= []).push(f) };
   vm.createContext(sandbox);
@@ -437,4 +438,33 @@ test("the chart offers area, step and candles, a right axis and image buttons on
   assert.deepStrictEqual(options(), ["line", "bar", "scatter", "histogram"]);
   assert.strictEqual(button(page, "Save PNG"), undefined);
   assert.strictEqual(page.body.all((e) => e.tagName === "SELECT").length, 1);
+});
+
+test("a chart drawn is sent to the q Plots view as SVG while plots are on; off, it is not (#970)", () => {
+  // A stand-in Chart.js, so the page draws.
+  class Chart {
+    constructor() {}
+    destroy() {}
+  }
+  Chart.defaults = { font: {} };
+  const page = loadPage(undefined, { Chart });
+  const chart = {
+    ...result("p.1", 3),
+    view: "chart",
+    grid: {
+      columns: ["t", "a"].map((name) => ({ name, type: 7, typeName: "long (j)", key: false, numeric: true, temporal: false })),
+      cells: [["1", "2", "3"], ["4", "5", "6"]],
+      rank: [[0, 1, 2], [0, 1, 2]],
+      values: [[1, 2, 3], [4, 5, 6]],
+      total: 3,
+    },
+  };
+  page.send(chart);
+  const plotted = page.posted.filter((m) => m.type === "plotted");
+  assert.strictEqual(plotted.length, 1);
+  assert.strictEqual(plotted[0].id, "p.1");
+  assert.strictEqual(plotted[0].format, "line");
+  assert.match(plotted[0].data, /^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg"[^]*<\/svg>$/);
+  page.send({ ...chart, id: "p.2", features: { plots: false } });
+  assert.strictEqual(page.posted.filter((m) => m.type === "plotted").length, 1);
 });

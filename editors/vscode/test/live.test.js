@@ -49,6 +49,10 @@ const { readAssist, QUERY_FEATURES } = require("../out/assistconfig.js");
 const { DRIFT_COMMANDS } = require("../out/definitions.js");
 const { QSQL_COMMANDS } = require("../out/assist.js");
 const { INTERACTIVE_COMMANDS } = require("../out/interactiveconfig.js");
+const { CONVERT_TEMPORAL } = require("../out/temporal.js");
+const { PASTE } = require("../out/pastetable.js");
+const { HELP, CHEAT_SHEET } = require("../out/helpcatalog.js");
+const { PLOT_COMMANDS } = require("../out/plots.js");
 const { CONTROL_COMMANDS, readControls } = require("../out/querycontrols.js");
 const { readProgress } = require("../out/progress.js");
 const { readPlaceholders } = require("../out/placeholders.js");
@@ -321,6 +325,11 @@ test("package.json declares exactly the commands the extension registers", () =>
     ...Object.values(INTERACTIVE_COMMANDS),
     ...Object.values(DATA_FILES),
     ...Object.values(SCHEMA_COMMANDS),
+    CONVERT_TEMPORAL,
+    ...Object.values(PASTE),
+    ...Object.values(HELP),
+    ...Object.values(CHEAT_SHEET).filter((id) => id !== CHEAT_SHEET.view),
+    ...Object.values(PLOT_COMMANDS).filter((id) => id !== PLOT_COMMANDS.view),
   ].sort();
   assert.deepStrictEqual(declared, registered);
 });
@@ -330,7 +339,7 @@ test("the views live in their own container, and every menu names a declared com
   assert.strictEqual(container.id, VIEWS.container);
   assert.deepStrictEqual(
     pkg.contributes.views[VIEWS.container].map((v) => v.id),
-    [VIEWS.processes, EXPLORER.view, VIEWS.history, ONBOARDING.helpView, INFO.monitor, INFO.hdb, NOTEBOOK.variablesView, SAVED_QUERIES.view],
+    [VIEWS.processes, EXPLORER.view, VIEWS.history, ONBOARDING.helpView, INFO.monitor, INFO.hdb, NOTEBOOK.variablesView, SAVED_QUERIES.view, CHEAT_SHEET.view],
   );
   const declared = new Set(pkg.contributes.commands.map((c) => c.command));
   for (const [where, items] of Object.entries(pkg.contributes.menus)) {
@@ -447,7 +456,7 @@ test("every query setting is read, with the default package.json declares, and n
   assert.deepStrictEqual(resultView, {
     history: 10,
     heatmap: false,
-    enable: { history: true, diff: true, statistics: true, heatmap: true, tree: true, export: true, paging: false, pivot: true, charts: true, drilldown: true, wrangler: true, editCells: true },
+    enable: { history: true, diff: true, statistics: true, heatmap: true, tree: true, export: true, paging: false, pivot: true, charts: true, drilldown: true, wrangler: true, editCells: true, plots: true },
     drilldown: [],
   });
   const view = (values) => readResultView((key, fallback) => (key in values ? values[key] : fallback));

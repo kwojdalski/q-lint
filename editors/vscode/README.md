@@ -64,6 +64,57 @@ to a process you add and connect to, and sends only the code you run.
   inserted over tables of the names they default to. They come from a
   completion provider rather than a contributed snippet file, so
   `q-lint.idiomSnippets.enable` can take them out of the list.
+- **Temporal hover**: hovering a temporal literal - `2024.01.02D03:04:05`,
+  `2024.01.02`, `2024.01m`, `0D01:00`, `09:30:00.000`, `09:30`, a legacy
+  `2024.01.02T03:04:05.123`, a null or infinity such as `0Np` or `-0Wd` -
+  shows what it converts to: the long or int q holds under it, the
+  timestamp, date or month, Unix seconds, milliseconds, microseconds and
+  nanoseconds, and ISO 8601 in UTC. A number of 9 digits or more shows it as
+  a timestamp of that many nanoseconds since 2000.01.01 (`"p"$`) and as the
+  Unix epoch its size suggests (10 digits seconds, 13 milliseconds, and so
+  on). **q-lint: Convert Temporal Value** replaces the selection, or the
+  literal under the cursor, with the conversion picked. Every value is
+  counted in integers, so a conversion read back gives the value it came
+  from, to the nanosecond; nulls and infinities convert as q's casts do. A
+  datetime is a float in q, so its conversions name its millisecond (KDB-X's
+  own `"p"$` can be microseconds off), and only between 1709 and 2290. A
+  timestamp outside those years, which KDB-X writes but will not read back
+  as a literal, converts to `"p"$` of its long. Nothing is sent to a process
+  (`q-lint.temporalHover.enable`).
+- **Paste Spreadsheet Data as q Table**: CSV or TSV on the clipboard - as a
+  spreadsheet copies cells, quotes and all - is pasted as a `([] ...)`
+  literal. Each column is booleans (`true`/`false`), longs, floats, dates,
+  timestamps or times when every filled cell reads as one, an empty cell its
+  type's null; otherwise symbols, or strings once a cell holds a space. The
+  first row is taken for the column names unless it reads as data, and the
+  names are made q names (`x y` becomes `x_y`, `count` becomes `count_`).
+  Each cell is read as q's `0:` reads the same text with the same type
+  letter, so the literal is the table `0:` would load. At most 10,000 rows;
+  the message says what was left out (`q-lint.pasteTable.enable`).
+- **Paste JSON as q** pastes the clipboard's JSON as the q that gives what
+  `.j.k` reads from it: numbers as floats, null as `0n`, an object as a
+  dictionary from symbols, an array of objects with the same keys as a
+  table. **Copy Value as JSON** sends the selection, or the statement at the
+  cursor, to the connected process as `.j.j value "..."` and copies the JSON
+  it answers; it goes as a query does, so the read-only guard holds one that
+  would change a guarded process (`q-lint.jsonConversion.enable`).
+- **Show Help for q Builtin** opens a page beside the editor for the
+  builtin under the cursor, or one picked from the list: its syntax, what it
+  gives, examples with their results, related builtins as links to their own
+  pages, and its page in the KX reference. It works offline. The syntax and
+  summary are the language server's hover; the examples and the cheat sheet
+  below are written for q-lint, and the tests run every one on a real q
+  (`q-lint.helpPages.enable`).
+- **Runnable examples**: hovering a builtin that has examples adds them to
+  the hover, each with **Try it**, which runs it on the connected process as
+  a query from the editor - the result where a query's goes, the read-only
+  guard asking first if an example would change a guarded process. Nothing
+  is sent until Try it is clicked. The help page has the same links
+  (`q-lint.tryExamples.enable`).
+- **q Cheat Sheet**, a view in the q-lint panel: iterators, joins, temporal
+  casts and attributes, each a row that inserts its form at the cursor when
+  chosen, its tooltip an example and what it gives
+  (`q-lint.cheatSheet.enable`).
 - **Syntax colouring** from a TextMate grammar, plus semantic tokens: a
   function is coloured wherever it is called, even when another `.q` file in
   the workspace defines it, and a parameter wherever its body reads it.
@@ -840,6 +891,18 @@ Result Chart as Image**, which takes `png` or `svg` and a `Uri`) save the
 chart: the PNG as drawn, on the editor's background, and the SVG as vector
 graphics drawn by q-lint from the same data, for a document or a slide.
 
+**q Plots.** Every chart the panel draws is kept in the **q Plots** view,
+beside q Results in the bottom panel (**q-lint: Show Plots**): one plot for
+each result and chart kind - ticking a column redraws it rather than adding
+another - with the query and process it came from, the newest 50. The
+arrows, or **Previous Plot** and **Next Plot**, step through them; **Save
+Plot As...** writes the one on show as SVG or as PNG on the editor's
+background (it also takes `svg` or `png` and a `Uri`); **Remove Plot** and
+**Clear Plots** forget them. Plots are kept for the window, not across a
+reload, and a notebook's charts are not among them
+(`q-lint.results.plots.enable`; off, the view goes and what it held is
+dropped).
+
 **Drill down.** `q-lint.results.drilldownTemplates` holds follow-up queries a
 grid cell offers: double-click a cell, or right-click it and choose **Drill
 Down from Cell**, pick one, and it runs on the process the result came
@@ -940,8 +1003,8 @@ guard, as it assigns a global. The process reads the file by its path, so it
 must run on this machine, or the path be changed in the editor first.
 
 Each of these - the history, Compare, Stats, the heatmap, the tree, export,
-paging, the pivot, the new charts, drill-down, the Data Wrangler and cell
-edits - has its own `q-lint.results.<feature>.enable` setting, on by
+paging, the pivot, the new charts, drill-down, the Data Wrangler, cell edits
+and the plots - has its own `q-lint.results.<feature>.enable` setting, on by
 default but for paging.
 Turned off, its button and command are gone (the command, run anyway, says
 which setting turns it back on), and a change applies at once, without a
@@ -1633,6 +1696,13 @@ nothing.
 | `q-lint.idiomSnippets.enable` | `true` | Offer the idiom snippets (joins, `.z` handlers, a TorQ process) in the completion list. | - |
 | `q-lint.processExplorer.driftDetection.enable` | `false` | **Check Drift Against Process**: compare the workspace's function definitions with the connected process. Off, the command is hidden and reads nothing. | - |
 | `q-lint.hotReload.enable` | `false` | On saving a q file, send the definitions the save changed to its process, after Redefine's confirmation. Off, nothing listens and nothing is sent. | - |
+| `q-lint.results.plots.enable` | `true` | Keep every chart the result panel draws in the **q Plots** view, to step through and save as SVG or PNG. Off, the view is hidden and its plots dropped. | - |
+| `q-lint.temporalHover.enable` | `true` | Show a temporal literal or an epoch-sized number converted on hover, and offer **Convert Temporal Value**. Nothing is sent. | - |
+| `q-lint.pasteTable.enable` | `true` | **Paste Spreadsheet Data as q Table**: the clipboard's CSV or TSV as a `([] ...)` literal. | - |
+| `q-lint.jsonConversion.enable` | `true` | **Paste JSON as q** and **Copy Value as JSON** (`.j.k` and `.j.j`). Off, both are hidden and nothing is sent. | - |
+| `q-lint.helpPages.enable` | `true` | **Show Help for q Builtin**: a page with a builtin's syntax, examples and related builtins. | - |
+| `q-lint.tryExamples.enable` | `true` | A builtin's examples in its hover, each with **Try it** to run it on the connected process; sent only when clicked. Off, no hover is registered and nothing is sent. | - |
+| `q-lint.cheatSheet.enable` | `true` | The **q Cheat Sheet** view: iterators, joins, temporal casts and attributes, each inserted in one click. | - |
 
 ### Interactive settings
 

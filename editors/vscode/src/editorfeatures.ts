@@ -13,6 +13,12 @@ export const EDITOR_SETTINGS = {
   liveValueHover: { key: "liveValueHover.enable", fallback: false, name: "The live value hover" },
   idiomSnippets: { key: "idiomSnippets.enable", fallback: true, name: "The q idiom snippets" },
   undefinedNames: { key: "undefinedNames.enable", fallback: false, name: "The undefined-name check against the process" },
+  temporalHover: { key: "temporalHover.enable", fallback: true, name: "The temporal hover and conversion" },
+  pasteTable: { key: "pasteTable.enable", fallback: true, name: "Pasting spreadsheet data as a q table" },
+  jsonConversion: { key: "jsonConversion.enable", fallback: true, name: "The JSON and q conversion" },
+  helpPages: { key: "helpPages.enable", fallback: true, name: "The help pages for q's builtins" },
+  tryExamples: { key: "tryExamples.enable", fallback: true, name: "Runnable examples in hovers" },
+  cheatSheet: { key: "cheatSheet.enable", fallback: true, name: "The q cheat sheet" },
 } as const;
 
 export type EditorFeature = keyof typeof EDITOR_SETTINGS;
