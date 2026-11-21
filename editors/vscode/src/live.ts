@@ -78,6 +78,7 @@ import {
 import { CONNECT_SCRIPT_COMMANDS, readConnectScript, scriptOf, scriptPath, scriptsBrought, scriptSummary, withScript, type ConnectScript } from "./connectscript";
 import { isProduction } from "./agent";
 import { PLACEHOLDER_VALUES_KEY, lastValue, placeholderNames, readPlaceholders, remembered, substitute } from "./placeholders";
+import { guardCheck, guardQuestion, guardRefusal, readGuard } from "./guard";
 
 const PROCESSES_KEY = "q-lint.processes";
 const HISTORY_KEY = "q-lint.queryHistory";
@@ -663,6 +664,26 @@ export class Live {
     return enabled;
   }
 
+  /// Whether `code` may be sent to `targets`: when the read-only guard
+  /// (#918) finds it would change a guarded one, the user is asked first.
+  /// `what` names the code in the question, when it is not a query.
+  async guardAllows(code: string, targets: Process[], what?: string): Promise<boolean> {
+    const check = guardCheck(code, targets, this.setting(readGuard));
+    if (check === undefined) {
+      return true;
+    }
+    const { message, detail } = guardQuestion(check);
+    const yes = "Run Anyway";
+    return (await window.showWarningMessage(what === undefined ? message : `${what}: ${message}`, { modal: true, detail }, yes)) === yes;
+  }
+
+  /// Why `code` is refused on `targets` to a caller that cannot ask the
+  /// user, an agent; undefined when the guard lets it be sent.
+  guardRefuses(code: string, targets: Process[]): string | undefined {
+    const check = guardCheck(code, targets, this.setting(readGuard));
+    return check === undefined ? undefined : guardRefusal(check);
+  }
+
   private showStatus(): void {
     const label = this.activeLabel();
     // The time counts only with q-lint.query.progress.enable on (#910).
@@ -1184,6 +1205,10 @@ export class Live {
     if (cut.length === 0) {
       return;
     }
+    if (!(await this.guardAllows(code, [process], `The connect script of ${process.label}`))) {
+      this.show([`# ${process.label} - connect script not run: changing a read-only process was not confirmed`], false);
+      return;
+    }
     const configuration = workspace.getConfiguration("q-lint");
     const { consoleSize } = readLive((key, fallback) => configuration.get(key, fallback));
     const started = Date.now();
@@ -1558,11 +1583,31 @@ export class Live {
   /// Run `query` on the active connection, connecting first if there is
   /// none, for a caller that shows its own result - a notebook cell. The
   /// status bar shows it running, and `abort` stops waiting for it.
-  /// Undefined when nothing was run; throws what `query` throws.
-  async runOnActive<T>(code: string, query: (connection: QConnection) => Promise<T>): Promise<{ process: string; value: T } | undefined> {
-    const ready = await this.ready();
+  /// Undefined when nothing was run; throws what `query` throws, and why
+  /// the read-only guard did not let `code` be sent: asked and declined, or
+  /// refused outright for a caller that cannot ask (`guard` "refuse").
+  async runOnActive<T>(
+    code: string,
+    query: (connection: QConnection) => Promise<T>,
+    guard: "ask" | "refuse" = "ask",
+  ): Promise<{ process: string; value: T } | undefined> {
+    let ready = await this.ready();
     if (ready === undefined) {
       return undefined;
+    }
+    const refused = this.guardRefuses(code, [ready.process]);
+    if (refused !== undefined) {
+      if (guard === "refuse") {
+        throw new Error(refused);
+      }
+      if (!(await this.guardAllows(code, [ready.process]))) {
+        throw new Error(`Not run: changing the read-only process ${ready.process.label} was not confirmed.`);
+      }
+      // The connection can have changed while the question was open.
+      ready = this.stillReady(ready);
+      if (ready === undefined) {
+        return undefined;
+      }
     }
     const started = Date.now();
     this.running = { code, started };
@@ -1579,12 +1624,35 @@ export class Live {
     }
   }
 
+  /// `ready`, when its connection is still the active one and free: a
+  /// question asked since can have taken a while. Says why not.
+  private stillReady(ready: { connection: QConnection; process: Process }): { connection: QConnection; process: Process } | undefined {
+    if (ready.connection !== this.connection || !ready.connection.isOpen) {
+      void window.showInformationMessage(`q-lint: the connection to ${ready.process.label} closed while you were asked; nothing was run.`);
+      return undefined;
+    }
+    if (ready.connection.isBusy) {
+      void window.showInformationMessage(`q-lint: a query started on ${ready.process.label} while you were asked; nothing was run.`);
+      return undefined;
+    }
+    return ready;
+  }
+
   /// Run `code` on the active connection, connecting first if there is none.
   /// The process explorer's Preview runs here too.
   async run(code: string): Promise<void> {
-    const ready = await this.ready();
+    let ready = await this.ready();
     if (ready === undefined) {
       return;
+    }
+    if (this.guardRefuses(code, [ready.process]) !== undefined) {
+      if (!(await this.guardAllows(code, [ready.process]))) {
+        return;
+      }
+      ready = this.stillReady(ready);
+      if (ready === undefined) {
+        return;
+      }
     }
     const { connection, process } = ready;
     const configuration = workspace.getConfiguration("q-lint");

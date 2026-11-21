@@ -285,6 +285,31 @@ running the query, and the new connection is made once it is free, however
 long that takes. **Disconnect**, or connecting to another process, stops
 it waiting.
 
+**Read-only guard.** Code sent to a process tagged `prod`, `prd` or
+`production` (`q-lint.processes.readOnlyGuard.tags`, ignoring case) is read
+first, and when it would change the process, a modal asks before anything
+is sent; Escape sends nothing. A change is: assigning a global (`a:1`,
+`a+:1`, `t[0]:5`, `a::b` - and, inside a lambda, `a::` or a dotted
+`.ns.v:`, as q makes those global; a column named in `select a:x from t` or
+`([] a:1 2)` is not one), `update` or `delete` from a table named by a
+symbol (`` from `t ``), `set`, `upsert`, `insert`, `hdel`, `exit`, `system`,
+`.Q.dpft`, `.Q.dpfts`, `.Q.hdpf`, `.Q.en`, `0:` or `1:` to a file handle,
+`2:`, an amend in place (`` @[`t;i;:;v] ``), `value` or `eval` of a string,
+and a system command other than one that reads a setting (`\c`, `\d`, `\P`
+alone) - `\t` and `\ts` are read for their expression. It holds for every
+path that sends code: a query (line, selection, block, file, a Run lens, a
+rerun, Preview), a notebook cell and **Run Notebook with Parameters**,
+**Redefine on Process** (whose confirmation says so, since it always
+assigns) and a connect script, asked at each connect, and skipped, with the
+connection kept, when declined. An agent's query cannot be asked about, so
+one that would change such a process is refused with why, and never offered
+to you. q-lint's own reads - the Process Explorer, Monitor, HDB browser,
+hovers and the heartbeat - define nothing and are not asked about. The
+guard reads the code's text: a function defined earlier that writes, or a
+string built at run time and evaluated, is not seen, so it guards against a
+slip, not a person - a process that must not change needs its own `.z.pg`.
+`q-lint.processes.readOnlyGuard.enable` off sends code unasked, as before.
+
 **Placeholders.** A query from the editor (line, selection, block or entire
 file) that holds `{{name}}` asks for each name's value in an input box, then
 sends the code with the values put in place, as written - so a symbol is
@@ -997,6 +1022,8 @@ Read when a cell runs or a command is used, so a change needs no reload. None re
 | Setting | Default | What it does | q-pro |
 | --- | --- | --- | --- |
 | `q-lint.processes.tagColors` | `{}` | A tag's colour in the Processes view, as a theme colour id: `{"eu": "charts.purple"}`. Over the built-in `prod`, `uat` and `dev` colours; a value that is not a colour id is ignored. Changing it recolours the view at once. | - |
+| `q-lint.processes.readOnlyGuard.enable` | `true` | Ask before sending code that would change a process carrying a guarded tag; refuse an agent's. Off, code is sent unasked. | - |
+| `q-lint.processes.readOnlyGuard.tags` | `["prod","prd","production"]` | The tags the read-only guard guards, ignoring case; `[]` guards none. | - |
 
 ### Not here, and why
 

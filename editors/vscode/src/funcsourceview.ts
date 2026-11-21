@@ -45,6 +45,7 @@ import {
 import { borrowWhenFree } from "./infoview";
 import { readInsight, turnedOff, type InsightFeature } from "./insightconfig";
 import type { Live } from "./live";
+import { guardedBy, readGuard } from "./guard";
 
 export const SCHEME = "q-lint-source";
 /// Set while the active editor holds a copy Redefine can send.
@@ -226,7 +227,7 @@ export class FunctionSources implements TextDocumentContentProvider {
       return false;
     }
     const text = editedText(document.getText());
-    const asked = redefineConfirmation(copy.name, process);
+    const asked = redefineConfirmation(copy.name, process, guardedBy(process, readGuard((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback))));
     const yes = "Redefine";
     if ((await window.showWarningMessage(asked.message, { modal: true, detail: asked.detail }, yes)) !== yes) {
       return false;

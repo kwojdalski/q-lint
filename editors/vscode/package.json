@@ -674,6 +674,23 @@
               ]
             },
             "markdownDescription": "The colour of each tag in the Processes view, as a theme colour id: `{\"eu\": \"charts.purple\"}`. Over the built-in colours (`prod` red, `uat` blue, `dev` green); a process takes its most cautious tag's colour. **Edit Tag Color** on a tag row writes it."
+          },
+          "q-lint.processes.readOnlyGuard.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Before code is sent to a process carrying a tag `#q-lint.processes.readOnlyGuard.tags#` names, read it, and when it would assign a global, delete or update a table in place, write a file or run a system command, ask first. It holds for queries, Query a Tag, Compare Query, saved and watched queries, notebook cells, Redefine on Process and connect scripts; an agent's query that would change such a process is refused. It reads the code's text, so it is a check against a slip, not a permission system."
+          },
+          "q-lint.processes.readOnlyGuard.tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [
+              "prod",
+              "prd",
+              "production"
+            ],
+            "markdownDescription": "The tags whose processes `#q-lint.processes.readOnlyGuard.enable#` guards, ignoring case. An empty list guards none."
           }
         }
       },

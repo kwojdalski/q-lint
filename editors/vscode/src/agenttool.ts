@@ -81,6 +81,10 @@ class RunQueryTool implements LanguageModelTool<AgentInput> {
     if ("error" in target || typeof input.query !== "string") {
       return undefined;
     }
+    // A query the read-only guard refuses is not offered to the user.
+    if (this.live.guardRefuses(input.query, [target.process]) !== undefined) {
+      return undefined;
+    }
     const active = this.live.activeLabel();
     const asked = confirmation(input.query, target.process, {
       connects: target.connects,
@@ -130,6 +134,12 @@ class RunQueryTool implements LanguageModelTool<AgentInput> {
       return target;
     }
     const { process } = target;
+    // The read-only guard (#918): an agent cannot be asked, so code that
+    // would change a guarded process is refused.
+    const refused = this.live.guardRefuses(code, [process]);
+    if (refused !== undefined) {
+      return { error: refused };
+    }
     if (shown === null) {
       return { error: `Nothing was run: when the call was made it had no q process to run on, so the user was not asked to run it on ${process.label}. Ask again.` };
     }
@@ -182,7 +192,7 @@ class RunQueryTool implements LanguageModelTool<AgentInput> {
         }
         running = true;
         return runAgentQuery(connection, code, settings.consoleSize);
-      });
+      }, "refuse");
       if (ran === undefined) {
         return { error: `Nothing was run: a query is still running on ${process.label}, or the connection closed. Try again once it is free.` };
       }
