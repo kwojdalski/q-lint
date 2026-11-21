@@ -98,6 +98,23 @@ to a process you add and connect to, and sends only the code you run.
   cursor, to the connected process as `.j.j value "..."` and copies the JSON
   it answers; it goes as a query does, so the read-only guard holds one that
   would change a guarded process (`q-lint.jsonConversion.enable`).
+- **Show Help for q Builtin** opens a page beside the editor for the
+  builtin under the cursor, or one picked from the list: its syntax, what it
+  gives, examples with their results, related builtins as links to their own
+  pages, and its page in the KX reference. It works offline. The syntax and
+  summary are the language server's hover; the examples and the cheat sheet
+  below are written for q-lint, and the tests run every one on a real q
+  (`q-lint.helpPages.enable`).
+- **Runnable examples**: hovering a builtin that has examples adds them to
+  the hover, each with **Try it**, which runs it on the connected process as
+  a query from the editor - the result where a query's goes, the read-only
+  guard asking first if an example would change a guarded process. Nothing
+  is sent until Try it is clicked. The help page has the same links
+  (`q-lint.tryExamples.enable`).
+- **q Cheat Sheet**, a view in the q-lint panel: iterators, joins, temporal
+  casts and attributes, each a row that inserts its form at the cursor when
+  chosen, its tooltip an example and what it gives
+  (`q-lint.cheatSheet.enable`).
 - **Syntax colouring** from a TextMate grammar, plus semantic tokens: a
   function is coloured wherever it is called, even when another `.q` file in
   the workspace defines it, and a parameter wherever its body reads it.
@@ -1408,6 +1425,9 @@ nothing.
 | `q-lint.temporalHover.enable` | `true` | Show a temporal literal or an epoch-sized number converted on hover, and offer **Convert Temporal Value**. Nothing is sent. | - |
 | `q-lint.pasteTable.enable` | `true` | **Paste Spreadsheet Data as q Table**: the clipboard's CSV or TSV as a `([] ...)` literal. | - |
 | `q-lint.jsonConversion.enable` | `true` | **Paste JSON as q** and **Copy Value as JSON** (`.j.k` and `.j.j`). Off, both are hidden and nothing is sent. | - |
+| `q-lint.helpPages.enable` | `true` | **Show Help for q Builtin**: a page with a builtin's syntax, examples and related builtins. | - |
+| `q-lint.tryExamples.enable` | `true` | A builtin's examples in its hover, each with **Try it** to run it on the connected process; sent only when clicked. Off, no hover is registered and nothing is sent. | - |
+| `q-lint.cheatSheet.enable` | `true` | The **q Cheat Sheet** view: iterators, joins, temporal casts and attributes, each inserted in one click. | - |
 
 ### Connection settings
 

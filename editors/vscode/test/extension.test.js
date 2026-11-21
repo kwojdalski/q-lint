@@ -102,6 +102,8 @@ function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir
     "./qsqldraft": { registerQsqlDraft() {} },
     "./temporalview": { registerTemporal: () => ({ registered: () => false }) },
     "./pasteview": { registerPaste() {} },
+    "./helpview": { registerHelp: () => ({ hoverRegistered: () => false }) },
+    "./cheatsheetview": { registerCheatSheet: () => ({ view: () => undefined }) },
   };
   const file = require.resolve("../out/extension.js");
   delete require.cache[file];

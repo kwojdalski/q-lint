@@ -43,6 +43,8 @@ import { registerChat } from "./chat";
 import { registerQsqlDraft } from "./qsqldraft";
 import { registerTemporal } from "./temporalview";
 import { registerPaste } from "./pasteview";
+import { registerHelp } from "./helpview";
+import { registerCheatSheet } from "./cheatsheetview";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -135,6 +137,8 @@ export async function activate(
     assistTools: () => string[];
     chatParticipant: () => boolean;
     temporal: ReturnType<typeof registerTemporal>;
+    help: ReturnType<typeof registerHelp>;
+    cheatSheet: ReturnType<typeof registerCheatSheet>;
   }
 > {
   // Replacing the binary does not restart the server, and a window reload is
@@ -198,6 +202,8 @@ export async function activate(
   const idioms = registerIdioms(context);
   const temporal = registerTemporal(context);
   registerPaste(context, live);
+  const help = registerHelp(context, live);
+  const cheatSheet = registerCheatSheet(context);
   // Not awaited: nothing above needs the server, and a slow or hung one
   // would hold up every command of the extension until it answered.
   void serial.run(() => start(context)).then(() => serverChanged());
@@ -223,6 +229,8 @@ export async function activate(
     assistTools: assistTools.registered,
     chatParticipant: chatParticipant.registered,
     temporal,
+    help,
+    cheatSheet,
   };
 }
 

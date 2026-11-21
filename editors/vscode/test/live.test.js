@@ -50,6 +50,7 @@ const { DRIFT_COMMANDS } = require("../out/definitions.js");
 const { QSQL_COMMANDS } = require("../out/assist.js");
 const { CONVERT_TEMPORAL } = require("../out/temporal.js");
 const { PASTE } = require("../out/pastetable.js");
+const { HELP, CHEAT_SHEET } = require("../out/helpcatalog.js");
 const { CONTROL_COMMANDS, readControls } = require("../out/querycontrols.js");
 const { readProgress } = require("../out/progress.js");
 const { readPlaceholders } = require("../out/placeholders.js");
@@ -317,6 +318,8 @@ test("package.json declares exactly the commands the extension registers", () =>
     ...Object.values(QSQL_COMMANDS),
     CONVERT_TEMPORAL,
     ...Object.values(PASTE),
+    ...Object.values(HELP),
+    ...Object.values(CHEAT_SHEET).filter((id) => id !== CHEAT_SHEET.view),
   ].sort();
   assert.deepStrictEqual(declared, registered);
 });
@@ -326,7 +329,7 @@ test("the views live in their own container, and every menu names a declared com
   assert.strictEqual(container.id, VIEWS.container);
   assert.deepStrictEqual(
     pkg.contributes.views[VIEWS.container].map((v) => v.id),
-    [VIEWS.processes, EXPLORER.view, VIEWS.history, ONBOARDING.helpView, INFO.monitor, INFO.hdb, NOTEBOOK.variablesView, SAVED_QUERIES.view],
+    [VIEWS.processes, EXPLORER.view, VIEWS.history, ONBOARDING.helpView, INFO.monitor, INFO.hdb, NOTEBOOK.variablesView, SAVED_QUERIES.view, CHEAT_SHEET.view],
   );
   const declared = new Set(pkg.contributes.commands.map((c) => c.command));
   for (const [where, items] of Object.entries(pkg.contributes.menus)) {

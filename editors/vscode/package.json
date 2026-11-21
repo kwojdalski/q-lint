@@ -702,6 +702,24 @@
             "default": true,
             "order": 709,
             "markdownDescription": "Offer **q-lint: Paste JSON as q** (the clipboard's JSON as the value `.j.k` reads from it) and **q-lint: Copy Value as JSON** (an expression's value on the connected process, as `.j.j` writes it)."
+          },
+          "q-lint.helpPages.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 710,
+            "markdownDescription": "Offer **q-lint: Show Help for q Builtin**: a page for one of q's builtins with its syntax, examples and related builtins. Works offline."
+          },
+          "q-lint.tryExamples.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 711,
+            "markdownDescription": "Show a builtin's examples in its hover, each with a **Try it** link that runs it on the connected process, and offer Try it on its help page. An example is sent only when Try it is clicked."
+          },
+          "q-lint.cheatSheet.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 712,
+            "markdownDescription": "Show the **q Cheat Sheet** view: iterators, joins, temporal casts and attributes, each inserted at the cursor in one click."
           }
         }
       },
@@ -1572,6 +1590,30 @@
         "title": "Copy Value as JSON",
         "category": "q-lint",
         "icon": "$(json)"
+      },
+      {
+        "command": "q-lint.showHelp",
+        "title": "Show Help for q Builtin",
+        "category": "q-lint",
+        "icon": "$(book)"
+      },
+      {
+        "command": "q-lint.tryExample",
+        "title": "Try Example on Process",
+        "category": "q-lint",
+        "icon": "$(play)"
+      },
+      {
+        "command": "q-lint.showCheatSheet",
+        "title": "Show Cheat Sheet",
+        "category": "q-lint",
+        "icon": "$(notebook)"
+      },
+      {
+        "command": "q-lint.insertCheatSheetEntry",
+        "title": "Insert Cheat Sheet Entry",
+        "category": "q-lint",
+        "icon": "$(insert)"
       }
     ],
     "views": {
@@ -1640,6 +1682,12 @@
           "icon": "media/view-history.svg",
           "contextualTitle": "q-lint",
           "when": "config.q-lint.savedQueries.enable"
+        },
+        {
+          "id": "q-lint.cheatSheet",
+          "name": "q Cheat Sheet",
+          "when": "config.q-lint.cheatSheet.enable",
+          "icon": "media/view-cheatsheet.svg"
         }
       ],
       "q-lint-results": [
@@ -2176,6 +2224,11 @@
           "group": "q-lint@9"
         },
         {
+          "command": "q-lint.showHelp",
+          "when": "editorLangId == q && config.q-lint.helpPages.enable",
+          "group": "q-lint@31"
+        },
+        {
           "command": "q-lint.convertTemporal",
           "when": "editorLangId == q && config.q-lint.temporalHover.enable",
           "group": "q-lint@32"
@@ -2388,6 +2441,22 @@
         {
           "command": "q-lint.copyAsJson",
           "when": "config.q-lint.jsonConversion.enable"
+        },
+        {
+          "command": "q-lint.showHelp",
+          "when": "config.q-lint.helpPages.enable"
+        },
+        {
+          "command": "q-lint.tryExample",
+          "when": "false"
+        },
+        {
+          "command": "q-lint.showCheatSheet",
+          "when": "config.q-lint.cheatSheet.enable"
+        },
+        {
+          "command": "q-lint.insertCheatSheetEntry",
+          "when": "false"
         }
       ],
       "editor/title": [
@@ -2474,6 +2543,10 @@
       {
         "view": "q-lint.savedQueries",
         "contents": "No saved queries in this workspace.\n[Save Query](command:q-lint.saveQuery) saves the selection, or the statement at the cursor, under a name; Save Query on a Query History entry saves that one."
+      },
+      {
+        "view": "q-lint.cheatSheet",
+        "contents": "Iterators, joins, temporal casts and attributes, each inserted at the cursor when chosen.\n[Show Help for q Builtin](command:q-lint.showHelp)"
       }
     ],
     "keybindings": [
