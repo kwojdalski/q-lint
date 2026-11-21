@@ -247,23 +247,27 @@ tr.added td:first-child {
 }
 
 .stats-view,
-.tree-view {
+.tree-view,
+.pivot-view {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
 }
 
-table.stats {
+table.stats,
+table.pivot {
   width: auto;
   table-layout: auto;
 }
 
-table.stats td {
+table.stats td,
+table.pivot td {
   max-width: 40ch;
 }
 
-table.stats thead th {
+table.stats thead th,
+table.pivot thead th {
   cursor: default;
 }
 

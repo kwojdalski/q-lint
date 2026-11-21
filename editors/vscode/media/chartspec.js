@@ -7,6 +7,14 @@
 // Chart.js itself: the theme arrives as values, read by the caller, and
 // test/grid.test.js runs it under node. In a page it sets `qlintChart` on
 // the global object.
+//
+// Beyond line, bar, scatter and histogram, the result panel draws an area,
+// a step line and candles (#926): open, high, low and close columns found
+// by name, or the first four it can plot. Candles are Chart.js's floating
+// bars, a thin one from low to high under a wide one from open to close,
+// so no financial plugin is needed. A series can go on a second y axis, on
+// the right. `chartSvg` draws the same data as SVG, by hand, for a chart
+// saved as a vector image.
 (function (root) {
   "use strict";
 
@@ -17,6 +25,26 @@
   /// its column is a series, not the x axis.
   function byRow(grid) {
     return grid.columns.length === 1;
+  }
+
+  /// The kinds drawn as a line: an area fills under it, a step holds each
+  /// value until the next.
+  const LINES = ["line", "area", "step"];
+
+  /// The columns a candle chart draws, [open, high, low, close]: by name
+  /// (open/o, high/h, low/l, close/c, any case), or else the first four
+  /// columns it can plot, in order. Null when there are not four.
+  function ohlcColumns(grid) {
+    const can = chartable(grid, "candlestick");
+    const names = [["open", "o"], ["high", "h"], ["low", "l"], ["close", "c"]];
+    const found = names.map(function (alias) {
+      const at = can.filter(function (c) { return alias.indexOf(grid.columns[c].name.toLowerCase()) >= 0; });
+      return at.length ? at[0] : -1;
+    });
+    if (found.every(function (c) { return c >= 0; })) {
+      return found;
+    }
+    return can.length >= 4 ? can.slice(0, 4) : null;
   }
 
   /// The columns a chart can plot: the numeric ones, and for every kind but
@@ -147,7 +175,7 @@
   /// {type, labels?, datasets: [{label, data}], note?}. `columns` are the
   /// y columns, as chartable() gives them; `bins` is for a histogram.
   function chartData(grid, rows, kind, columns, bins) {
-    if (columns.length === 0) {
+    if (columns.length === 0 && kind !== "candlestick") {
       return { type: "bar", datasets: [], note: "No numeric column to chart" + (kind === "histogram" ? "." : " against the first.") };
     }
     const values = function (c) {
@@ -162,6 +190,25 @@
         type: "bar",
         labels: labels,
         datasets: columns.map(function (c, i) { return { label: name(c), column: c, data: h.counts[i] }; }),
+      };
+    }
+    if (kind === "candlestick") {
+      const ohlc = ohlcColumns(grid);
+      if (!ohlc) {
+        return { type: "bar", datasets: [], note: "A candle chart needs open, high, low and close columns: four numeric columns after the first." };
+      }
+      const v = function (c, r) { return grid.values[c][r]; };
+      // A row missing any of the four draws no candle.
+      const whole = function (r) { return ohlc.every(function (c) { return v(c, r) !== null; }); };
+      const name = function (c) { return grid.columns[c].name; };
+      return {
+        type: "bar",
+        labels: rows.map(function (r) { return byRow(grid) ? String(r) : grid.cells[0][r]; }),
+        ohlc: ohlc,
+        datasets: [
+          { label: name(ohlc[2]) + " - " + name(ohlc[1]), column: ohlc[1], wick: true, data: rows.map(function (r) { return whole(r) ? [v(ohlc[2], r), v(ohlc[1], r)] : null; }) },
+          { label: name(ohlc[0]) + " - " + name(ohlc[3]), column: ohlc[3], data: rows.map(function (r) { return whole(r) ? [v(ohlc[0], r), v(ohlc[3], r)] : null; }) },
+        ],
       };
     }
     if (kind === "scatter") {
@@ -199,6 +246,9 @@
       foreground: cssVar("--vscode-foreground", "#ccc"),
       border: cssVar("--vscode-panel-border", "rgba(128,128,128,0.35)"),
       font: cssVar("--vscode-font-family", "sans-serif"),
+      // A candle that closed up, and one that closed down.
+      up: cssVar("--vscode-charts-green", "#89d185"),
+      down: cssVar("--vscode-charts-red", "#f14c4c"),
     };
   }
 
@@ -212,8 +262,15 @@
 
   /// The Chart.js configuration for `data`, a chartData() of `kind` over
   /// `rows` of the grid, coloured from `look`, a theme(), with `title` above
-  /// it when given.
-  function chartConfig(grid, rows, kind, data, look, title) {
+  /// it when given. `options.y2`: the column drawn on a second y axis, on
+  /// the right.
+  function chartConfig(grid, rows, kind, data, look, title, options) {
+    if (kind === "candlestick") {
+      return candleConfig(grid, rows, data, look, title);
+    }
+    const y2 = options && Number.isInteger(options.y2) && kind !== "histogram" ? options.y2 : -1;
+    const second = y2 >= 0 && data.datasets.some(function (d) { return d.column === y2; });
+    const line = LINES.indexOf(kind) >= 0;
     const x = grid.columns[0];
     // The x axis is the rows' numbers: a list's, or a scatter's whose first
     // column has no values to plot.
@@ -234,11 +291,11 @@
           const colour = look.colours[i % look.colours.length];
           return Object.assign({}, d, {
             borderColor: colour,
-            backgroundColor: kind === "line" ? colour : translucent(colour),
-            pointRadius: kind === "line" ? (rows.length > 200 ? isolated : 2) : 3,
+            backgroundColor: kind === "line" || kind === "step" ? colour : translucent(colour),
+            pointRadius: line ? (rows.length > 200 ? isolated : 2) : 3,
             borderWidth: kind === "bar" || kind === "histogram" ? 0 : 1.5,
             spanGaps: false,
-          });
+          }, kind === "area" ? { fill: "origin" } : {}, kind === "step" ? { stepped: true } : {}, second && d.column === y2 ? { yAxisID: "y2" } : {});
         }),
       },
       options: {
@@ -260,7 +317,8 @@
                 : { autoSkip: true, maxRotation: 0 },
           },
           // And a count.
-          y: Object.assign({ title: { display: kind === "histogram", text: "count" } }, kind === "histogram" ? { ticks: { precision: 0 } } : {}),
+          y: Object.assign({ title: { display: kind === "histogram" || second, text: kind === "histogram" ? "count" : data.datasets.filter(function (d) { return d.column !== y2; }).map(function (d) { return d.label; }).join(", ") } }, kind === "histogram" ? { ticks: { precision: 0 } } : {}),
+          y2: second ? { position: "right", grid: { drawOnChartArea: false }, title: { display: true, text: grid.columns[y2].name } } : { display: false },
         },
         plugins: {
           title: { display: Boolean(title), text: title || "" },
@@ -274,6 +332,279 @@
         },
       },
     };
+  }
+
+  /// Candles as Chart.js floating bars: each row's wick from low to high,
+  /// thin, and its body from open to close, wide, over it; green where it
+  /// closed at or above its open, red below. A tooltip gives the four cells.
+  function candleConfig(grid, rows, data, look, title) {
+    const ohlc = data.ohlc;
+    const up = look.up || "#89d185";
+    const down = look.down || "#f14c4c";
+    const colours = rows.map(function (r) {
+      const o = grid.values[ohlc[0]][r];
+      const c = grid.values[ohlc[3]][r];
+      return o !== null && c !== null && c < o ? down : up;
+    });
+    return {
+      type: "bar",
+      data: {
+        labels: data.labels,
+        datasets: data.datasets.map(function (d) {
+          return Object.assign({}, d, {
+            backgroundColor: colours,
+            borderColor: colours,
+            borderWidth: 0,
+            grouped: false,
+            barPercentage: d.wick ? 0.12 : 0.7,
+            categoryPercentage: 1,
+            order: d.wick ? 2 : 1,
+          });
+        }),
+      },
+      options: {
+        animation: false,
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: "index", intersect: false },
+        scales: {
+          x: { title: { display: true, text: byRow(grid) ? "row" : grid.columns[0].name }, ticks: { autoSkip: true, maxRotation: 0 } },
+          // Prices: the axis spans the candles, not down to zero as bars'.
+          y: { beginAtZero: false, title: { display: false } },
+        },
+        plugins: {
+          title: { display: Boolean(title), text: title || "" },
+          legend: { display: false },
+          tooltip: {
+            filter: function (item) { return !item.dataset.wick; },
+            callbacks: {
+              label: function (ctx) {
+                const r = rows[ctx.dataIndex];
+                return ["open", "high", "low", "close"].map(function (k, i) { return k + " " + grid.cells[ohlc[i]][r]; }).join("  ");
+              },
+            },
+          },
+        },
+      },
+    };
+  }
+
+  /// Text as SVG character data.
+  function xml(text) {
+    return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+
+  /// About five round steps from `lo` to `hi`: the ticks of an axis.
+  function ticks(lo, hi) {
+    if (!(hi > lo)) {
+      const d = Math.abs(lo) || 1;
+      lo -= d / 2;
+      hi += d / 2;
+    }
+    const raw = (hi - lo) / 5;
+    const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    const step = [1, 2, 5, 10].map(function (m) { return m * mag; }).filter(function (s) { return s >= raw; })[0];
+    const out = [];
+    for (let v = Math.floor(lo / step) * step; v <= hi + step / 2; v += step) {
+      out.push(+v.toPrecision(12));
+    }
+    return { values: out, step: step };
+  }
+
+  /// The chart chartData() describes as an SVG document, drawn here rather
+  /// than by Chart.js, so it is vector graphics: axes with round ticks, each
+  /// series as a line (filled for an area, stepped for a step), bars,
+  /// points or candles, a legend, and `opts.title`. `opts`: {width, height,
+  /// background, y2, title}. A null value leaves a gap.
+  function chartSvg(grid, rows, kind, data, look, opts) {
+    opts = opts || {};
+    const W = opts.width || 800;
+    const H = opts.height || 450;
+    const font = xml(look.font || "sans-serif");
+    const fg = look.foreground || "#333";
+    const border = look.border || "#ccc";
+    const y2 = Number.isInteger(opts.y2) && kind !== "histogram" && kind !== "candlestick" && data.datasets.some(function (d) { return d.column === opts.y2; }) ? opts.y2 : -1;
+    const left = 64;
+    const right = y2 >= 0 ? 64 : 20;
+    const top = opts.title ? 40 : 16;
+    const bottom = 64;
+    const pw = W - left - right;
+    const ph = H - top - bottom;
+    const out = [
+      '<svg xmlns="http://www.w3.org/2000/svg" width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + " " + H + '" font-family="' + font + '" font-size="11">',
+    ];
+    if (opts.background) {
+      out.push('<rect width="100%" height="100%" fill="' + xml(opts.background) + '"/>');
+    }
+    if (opts.title) {
+      out.push('<text x="' + W / 2 + '" y="22" text-anchor="middle" font-size="14" fill="' + xml(fg) + '">' + xml(opts.title) + "</text>");
+    }
+    if (data.note || data.datasets.length === 0) {
+      out.push('<text x="' + W / 2 + '" y="' + H / 2 + '" text-anchor="middle" fill="' + xml(fg) + '">' + xml(data.note || "Nothing to chart.") + "</text></svg>");
+      return out.join("\n");
+    }
+    // Every value a y axis spans: a candle's and a floating bar's both ends.
+    const span = function (sets) {
+      let lo = Infinity;
+      let hi = -Infinity;
+      sets.forEach(function (d) {
+        d.data.forEach(function (p) {
+          const vs = p === null ? [] : Array.isArray(p) ? p : typeof p === "object" ? [p.y] : [p];
+          vs.forEach(function (v) {
+            if (v !== null && isFinite(v)) {
+              lo = Math.min(lo, v);
+              hi = Math.max(hi, v);
+            }
+          });
+        });
+      });
+      if (kind === "bar" || kind === "histogram" || kind === "area") {
+        lo = Math.min(lo, 0);
+        hi = Math.max(hi, 0);
+      }
+      return lo > hi ? { lo: 0, hi: 1 } : { lo: lo, hi: hi };
+    };
+    const axis = function (sets) {
+      const s = span(sets);
+      const t = ticks(s.lo, s.hi);
+      const lo = Math.min(s.lo, t.values[0]);
+      const hi = Math.max(s.hi, t.values[t.values.length - 1]);
+      return { ticks: t, y: function (v) { return top + ph - (hi === lo ? ph / 2 : ((v - lo) / (hi - lo)) * ph); } };
+    };
+    const main = axis(data.datasets.filter(function (d) { return d.column !== y2; }));
+    const alt = y2 >= 0 ? axis(data.datasets.filter(function (d) { return d.column === y2; })) : null;
+    const yOf = function (d) { return d.column === y2 && alt ? alt.y : main.y; };
+    // Gridlines and the left axis's labels; the right axis's labels.
+    main.ticks.values.forEach(function (v) {
+      const y = main.y(v).toFixed(1);
+      out.push('<line x1="' + left + '" x2="' + (left + pw) + '" y1="' + y + '" y2="' + y + '" stroke="' + xml(border) + '" stroke-width="0.5"/>');
+      out.push('<text x="' + (left - 6) + '" y="' + y + '" dy="0.32em" text-anchor="end" fill="' + xml(fg) + '">' + xml(short(v, main.ticks.step)) + "</text>");
+    });
+    if (alt) {
+      alt.ticks.values.forEach(function (v) {
+        out.push('<text x="' + (left + pw + 6) + '" y="' + alt.y(v).toFixed(1) + '" dy="0.32em" fill="' + xml(fg) + '">' + xml(short(v, alt.ticks.step)) + "</text>");
+      });
+    }
+    out.push('<rect x="' + left + '" y="' + top + '" width="' + pw + '" height="' + ph + '" fill="none" stroke="' + xml(border) + '"/>');
+    // The x axis: categories (labels) or, for a scatter, numbers.
+    let xOf;
+    const n = data.labels ? data.labels.length : 0;
+    if (kind === "scatter") {
+      let lo = Infinity;
+      let hi = -Infinity;
+      data.datasets.forEach(function (d) { d.data.forEach(function (p) { lo = Math.min(lo, p.x); hi = Math.max(hi, p.x); }); });
+      if (lo > hi) {
+        lo = 0;
+        hi = 1;
+      }
+      const t = ticks(lo, hi);
+      const a = Math.min(lo, t.values[0]);
+      const b = Math.max(hi, t.values[t.values.length - 1]);
+      xOf = function (x) { return left + (b === a ? pw / 2 : ((x - a) / (b - a)) * pw); };
+      const x0 = grid.columns[0];
+      t.values.forEach(function (v) {
+        const label = x0 && x0.temporal && grid.columns.length > 1 ? temporalLabel(x0.type, v, t.step) : short(v, t.step);
+        out.push('<text x="' + xOf(v).toFixed(1) + '" y="' + (top + ph + 16) + '" text-anchor="middle" fill="' + xml(fg) + '">' + xml(label) + "</text>");
+      });
+    } else {
+      const band = n > 0 ? pw / n : pw;
+      xOf = function (i) { return left + band * (i + 0.5); };
+      const every = Math.max(1, Math.ceil(n / Math.max(1, Math.floor(pw / 90))));
+      for (let i = 0; i < n; i += every) {
+        out.push('<text x="' + xOf(i).toFixed(1) + '" y="' + (top + ph + 16) + '" text-anchor="middle" fill="' + xml(fg) + '">' + xml(data.labels[i]) + "</text>");
+      }
+    }
+    const colour = function (i) { return look.colours[i % look.colours.length]; };
+    const band = n > 0 ? pw / n : pw;
+    if (kind === "candlestick") {
+      const ohlc = data.ohlc;
+      rows.forEach(function (r, i) {
+        const o = grid.values[ohlc[0]][r];
+        const h = grid.values[ohlc[1]][r];
+        const l = grid.values[ohlc[2]][r];
+        const c = grid.values[ohlc[3]][r];
+        if ([o, h, l, c].some(function (v) { return v === null; })) {
+          return;
+        }
+        const fill = xml(c < o ? look.down || "#f14c4c" : look.up || "#89d185");
+        const x = xOf(i);
+        const w = Math.max(1, band * 0.7);
+        out.push('<line x1="' + x.toFixed(1) + '" x2="' + x.toFixed(1) + '" y1="' + main.y(h).toFixed(1) + '" y2="' + main.y(l).toFixed(1) + '" stroke="' + fill + '"/>');
+        const yt = main.y(Math.max(o, c));
+        out.push('<rect x="' + (x - w / 2).toFixed(1) + '" y="' + yt.toFixed(1) + '" width="' + w.toFixed(1) + '" height="' + Math.max(1, main.y(Math.min(o, c)) - yt).toFixed(1) + '" fill="' + fill + '"/>');
+      });
+    } else if (kind === "bar" || kind === "histogram") {
+      const k = data.datasets.length;
+      const w = (band * 0.8) / k;
+      data.datasets.forEach(function (d, j) {
+        const y = yOf(d);
+        d.data.forEach(function (v, i) {
+          if (v === null || !isFinite(v)) {
+            return;
+          }
+          const x = left + band * i + band * 0.1 + w * j;
+          const a = y(Math.max(v, 0));
+          out.push('<rect x="' + x.toFixed(1) + '" y="' + a.toFixed(1) + '" width="' + Math.max(0.5, w).toFixed(1) + '" height="' + Math.max(0, y(Math.min(v, 0)) - a).toFixed(1) + '" fill="' + xml(colour(j)) + '"/>');
+        });
+      });
+    } else if (kind === "scatter") {
+      data.datasets.forEach(function (d, j) {
+        const y = yOf(d);
+        d.data.forEach(function (p) {
+          out.push('<circle cx="' + xOf(p.x).toFixed(1) + '" cy="' + y(p.y).toFixed(1) + '" r="2.5" fill="' + xml(colour(j)) + '"/>');
+        });
+      });
+    } else {
+      data.datasets.forEach(function (d, j) {
+        const y = yOf(d);
+        // Runs of values between nulls, each its own path.
+        const runs = [];
+        let run = [];
+        d.data.forEach(function (v, i) {
+          if (v === null || !isFinite(v)) {
+            if (run.length) {
+              runs.push(run);
+            }
+            run = [];
+          } else {
+            run.push([xOf(i), y(v)]);
+          }
+        });
+        if (run.length) {
+          runs.push(run);
+        }
+        runs.forEach(function (pts) {
+          let path = "M" + pts[0][0].toFixed(1) + " " + pts[0][1].toFixed(1);
+          for (let i = 1; i < pts.length; i++) {
+            path += kind === "step" ? " H" + pts[i][0].toFixed(1) + " V" + pts[i][1].toFixed(1) : " L" + pts[i][0].toFixed(1) + " " + pts[i][1].toFixed(1);
+          }
+          if (kind === "area") {
+            const base = y(0).toFixed(1);
+            out.push('<path d="' + path + " L" + pts[pts.length - 1][0].toFixed(1) + " " + base + " L" + pts[0][0].toFixed(1) + " " + base + ' Z" fill="' + xml(colour(j)) + '" fill-opacity="0.35" stroke="none"/>');
+          }
+          out.push('<path d="' + path + '" fill="none" stroke="' + xml(colour(j)) + '" stroke-width="1.5"/>');
+          if (pts.length === 1) {
+            out.push('<circle cx="' + pts[0][0].toFixed(1) + '" cy="' + pts[0][1].toFixed(1) + '" r="2" fill="' + xml(colour(j)) + '"/>');
+          }
+        });
+      });
+    }
+    // The x axis's title and the legend, under it.
+    const xTitle = kind === "histogram" ? "" : byRow(grid) || (kind === "scatter" && !grid.values[0]) ? "row" : grid.columns[0].name;
+    if (xTitle) {
+      out.push('<text x="' + (left + pw / 2) + '" y="' + (top + ph + 34) + '" text-anchor="middle" fill="' + xml(fg) + '">' + xml(xTitle) + "</text>");
+    }
+    if (kind !== "candlestick") {
+      let lx = left;
+      data.datasets.forEach(function (d, j) {
+        const label = d.label + (d.column === y2 ? " (right)" : "");
+        out.push('<rect x="' + lx + '" y="' + (H - 16) + '" width="10" height="10" fill="' + xml(colour(j)) + '"/>');
+        out.push('<text x="' + (lx + 14) + '" y="' + (H - 7) + '" fill="' + xml(fg) + '">' + xml(label) + "</text>");
+        lx += 24 + label.length * 6.5;
+      });
+    }
+    out.push("</svg>");
+    return out.join("\n");
   }
 
   /// What a chart drew, for the extension to read back: its kind, each
@@ -299,6 +630,9 @@
     applyTheme: applyTheme,
     chartConfig: chartConfig,
     summary: summary,
+    ohlcColumns: ohlcColumns,
+    chartSvg: chartSvg,
+    ticks: ticks,
   };
   if (typeof module !== "undefined" && module.exports) {
     module.exports = helpers;

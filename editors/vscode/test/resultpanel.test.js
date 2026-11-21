@@ -83,7 +83,12 @@ function fakeVscode(config = {}) {
         return disposable;
       },
       workspaceFolders: undefined,
-      fs: { writeFile: async (uri, bytes) => (written[uri.path] = Buffer.from(bytes).toString("utf8")) },
+      fs: {
+        writeFile: async (uri, bytes) => {
+          written[uri.path] = Buffer.from(bytes).toString("utf8");
+          written.bytes = { ...written.bytes, [uri.path]: Buffer.from(bytes) };
+        },
+      },
     },
   };
   return { vscode, pages, listeners, clipboard, config, written };
@@ -369,7 +374,7 @@ test("each result feature turned off: its command refuses, the page is sent noth
   assert.strictEqual(m.tree, undefined);
   assert.strictEqual(m.diff, undefined);
   assert.strictEqual(m.heatmap, false);
-  assert.deepStrictEqual(m.features, { statistics: false, heatmap: false });
+  assert.deepStrictEqual(m.features, { statistics: false, heatmap: false, export: true, pivot: true, charts: true, drilldown: true });
   assert.strictEqual(m.history.length, 1);
   const { RESULT_VIEW } = require("../out/liveconfig.js");
   const features = { statistics: "statistics", tree: "tree", compare: "diff", heatmap: "heatmap", history: "history" };
@@ -394,7 +399,7 @@ test("each result feature turned off: its command refuses, the page is sent noth
   }
   const on = page.posted.at(-1);
   assert.deepStrictEqual(on.tree, tree);
-  assert.deepStrictEqual(on.features, { statistics: true, heatmap: true });
+  assert.deepStrictEqual(on.features, { statistics: true, heatmap: true, export: true, pivot: true, charts: true, drilldown: true });
   assert.strictEqual(on.heatmap, true);
   assert.strictEqual(on.diff, undefined);
   assert.strictEqual(modes.wantsTree(), true);
@@ -426,4 +431,184 @@ test("a watched query's next run replaces its result in place: the same id, no n
   assert.notStrictEqual(page.posted.at(-1).id, first.id);
   assert.strictEqual(page.posted.at(-1).history.length, 3);
   assert.strictEqual(fake.pages.length, 1);
+});
+
+// --- wave two: export formats (#921), paging (#922), pivot (#925), charts
+// (#926) and drill-down (#927)
+
+test("Export Results As writes the format named to the file given, and Copy Results As puts text on the clipboard (#921)", async () => {
+  const fake = fakeVscode();
+  const modes = loadModes(fake);
+  const { RESULT_VIEW } = require("../out/liveconfig.js");
+  modes.show(result([1, 2]), live());
+  await fake.vscode.commands[RESULT_VIEW.exportAs]("json", new fake.vscode.Uri("/r.json"));
+  assert.deepStrictEqual(JSON.parse(fake.written["/r.json"]), [{ c: 1 }, { c: 2 }]);
+  await fake.vscode.commands[RESULT_VIEW.exportAs]("xlsx", new fake.vscode.Uri("/r.xlsx"));
+  assert.strictEqual(fake.written.bytes["/r.xlsx"].toString("latin1", 0, 2), "PK");
+  await fake.vscode.commands[RESULT_VIEW.exportAs]("parquet", new fake.vscode.Uri("/r.parquet"));
+  assert.strictEqual(fake.written.bytes["/r.parquet"].toString("latin1", 0, 4), "PAR1");
+  // The rows the page shows, in its order.
+  const page = fake.pages[0];
+  page.receive({ type: "rendered", id: page.posted.at(-1).id, rows: [1], rendered: { view: "grid", rows: 1, held: 2, total: 2, columns: ["c"], first: ["2"] } });
+  await fake.vscode.commands[RESULT_VIEW.copyAs]("q");
+  assert.strictEqual(fake.clipboard.text, "([] c:enlist 2)\n");
+  await fake.vscode.commands[RESULT_VIEW.copyAs]("markdown");
+  assert.strictEqual(fake.clipboard.text, "| c |\n| ---: |\n| 2 |\n");
+  // A format picked: the page's button sends no format.
+  fake.vscode.window.showQuickPick = async (items) => items.find((i) => i.format === "json");
+  page.receive({ type: "copyAs", id: page.posted.at(-1).id, rows: [0, 1] });
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(fake.clipboard.text, '[\n  {"c": 1},\n  {"c": 2}\n]\n');
+  assert.strictEqual(page.posted.at(-1).features.export, true);
+});
+
+test("paging is off by default; on, a cut result the process holds is fetched page by page as the page asks (#922)", async () => {
+  const fake = fakeVscode({ "results.paging.enable": true });
+  const modes = loadModes(fake);
+  const calls = [];
+  modes.setPager(async (process, offset, count) => {
+    calls.push([process, offset, count]);
+    return { count: 5, names: ["c"], types: [7], cells: [["3", "4", "5"]], raw: [[3, 4, 5]], rank: [[0, 1, 2]] };
+  });
+  assert.strictEqual(modes.wantsHold(false), true);
+  // Never on a production process.
+  assert.strictEqual(modes.wantsHold(true), false);
+  modes.show({ ...result([1, 2], 5), held: true }, live({ gridLimit: 2 }));
+  const page = fake.pages[0];
+  assert.strictEqual(page.posted.at(-1).more, true);
+  page.receive({ type: "more", id: page.posted.at(-1).id });
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(calls, [["p", 2, 2]]);
+  const after = page.posted.at(-1);
+  assert.deepStrictEqual(after.grid.cells, [["1", "2", "3", "4", "5"]]);
+  assert.strictEqual(after.more, false);
+  // A result not asked for with wantsHold is not paged.
+  modes.show(result([1, 2], 5), live({ gridLimit: 2 }));
+  assert.strictEqual(page.posted.at(-1).more, false);
+  // An error from the process: said, and paging stops for that result.
+  const warned = [];
+  fake.vscode.window.showWarningMessage = async (m) => warned.push(m);
+  modes.setPager(async () => "held");
+  modes.show({ ...result([1, 2], 5), held: true }, live({ gridLimit: 2 }));
+  page.receive({ type: "more", id: page.posted.at(-1).id });
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.match(warned.at(-1), /could not fetch more rows from p: held/);
+  assert.strictEqual(page.posted.at(-1).more, false);
+  // Off by default.
+  const plain = loadModes(fakeVscode());
+  assert.strictEqual(plain.wantsHold(false), false);
+});
+
+test("a double-clicked cell offers its drill-down templates, filled in, and runs the one picked on its process (#927)", async () => {
+  const fake = fakeVscode({ "results.drilldownTemplates": [{ label: "next", query: "select from t where c>{{value}}" }, { query: "x", columns: ["other"] }] });
+  const modes = loadModes(fake);
+  const ran = [];
+  modes.setRunner(async (code, process) => ran.push([code, process]));
+  let offered;
+  fake.vscode.window.showQuickPick = async (items) => {
+    offered = items;
+    return items[0];
+  };
+  modes.show(result([10, 20]), live());
+  const page = fake.pages[0];
+  page.receive({ type: "drill", id: page.posted.at(-1).id, column: 0, row: 1 });
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(offered.map((i) => [i.label, i.detail]), [["next", "select from t where c>20"]]);
+  assert.deepStrictEqual(ran, [["select from t where c>20", "p"]]);
+  // From the editor's context menu, with the cell's data-vscode-context.
+  const { RESULT_VIEW } = require("../out/liveconfig.js");
+  await fake.vscode.commands[RESULT_VIEW.drillDown]({ webviewSection: "cell", column: 0, row: 0 });
+  assert.deepStrictEqual(ran.at(-1), ["select from t where c>10", "p"]);
+  // No template: it says where to add one.
+  const none = fakeVscode();
+  const info = [];
+  none.vscode.window.showInformationMessage = async (m) => info.push(m);
+  const bare = loadModes(none);
+  bare.setRunner(async (code) => ran.push([code]));
+  bare.show(result([1]), live());
+  await none.vscode.commands[RESULT_VIEW.drillDown]({ column: 0, row: 0 });
+  assert.match(info.at(-1), /no drill-down query for column c\. Add one to q-lint\.results\.drilldownTemplates/);
+  assert.strictEqual(ran.length, 2);
+});
+
+test("Save Result Chart asks the page for the chart and writes the image it sends to the file given (#926)", async () => {
+  const fake = fakeVscode();
+  const modes = loadModes(fake);
+  const { RESULT_VIEW } = require("../out/liveconfig.js");
+  modes.show(result([1, 2]), live({ mode: "chart" }));
+  const page = fake.pages[0];
+  const saving = fake.vscode.commands[RESULT_VIEW.saveChart]("svg", new fake.vscode.Uri("/c.svg"));
+  const asked = page.posted.at(-1).control;
+  assert.strictEqual(asked.action, "image");
+  assert.strictEqual(asked.format, "svg");
+  page.receive({ type: "image", id: page.posted.at(-1).id, format: "svg", data: "<svg></svg>", key: asked.key });
+  await saving;
+  assert.strictEqual(fake.written["/c.svg"], "<svg></svg>");
+  // A PNG arrives as a data URL; anything else is not written.
+  const png = fake.vscode.commands[RESULT_VIEW.saveChart]("png", new fake.vscode.Uri("/c.png"));
+  const key = page.posted.at(-1).control.key;
+  page.receive({ type: "image", id: page.posted.at(-1).id, format: "png", data: "data:image/png;base64,iVBORw0KGgo=", key });
+  await png;
+  assert.deepStrictEqual([...fake.written.bytes["/c.png"].subarray(0, 4)], [0x89, 0x50, 0x4e, 0x47]);
+  const bad = fake.vscode.commands[RESULT_VIEW.saveChart]("svg", new fake.vscode.Uri("/x.svg"));
+  page.receive({ type: "image", id: page.posted.at(-1).id, format: "svg", data: "<script>", key: page.posted.at(-1).control.key });
+  await bad;
+  assert.strictEqual(fake.written["/x.svg"], undefined);
+});
+
+test("export, paging, pivot, charts and drill-down turned off: each command refuses, the page is offered none, and nothing is sent", async () => {
+  const off = {
+    "results.export.enable": false,
+    "results.pivot.enable": false,
+    "results.charts.enable": false,
+    "results.drilldown.enable": false,
+    "results.drilldownTemplates": [{ query: "x {{value}}" }],
+  };
+  const fake = fakeVscode({ ...off });
+  const info = [];
+  fake.vscode.window.showInformationMessage = async (m) => info.push(m);
+  fake.vscode.window.showQuickPick = async (items) => items[0];
+  const modes = loadModes(fake);
+  const pages = [];
+  const ran = [];
+  modes.setPager(async () => {
+    pages.push(1);
+    return "held";
+  });
+  modes.setRunner(async (code) => ran.push(code));
+  assert.strictEqual(modes.wantsHold(false), false);
+  modes.show({ ...result([1, 2], 5), held: true }, live());
+  const page = fake.pages[0];
+  const m = page.posted.at(-1);
+  assert.deepStrictEqual(m.features, { statistics: true, heatmap: true, export: false, pivot: false, charts: false, drilldown: false });
+  assert.strictEqual(m.more, false);
+  const { RESULT_VIEW } = require("../out/liveconfig.js");
+  const features = { exportAs: "export", copyAs: "export", loadMore: "paging", pivot: "pivot", saveChart: "charts", drillDown: "drilldown" };
+  for (const [command, feature] of Object.entries(features)) {
+    const sent = page.posted.length;
+    await fake.vscode.commands[RESULT_VIEW[command]]("json", new fake.vscode.Uri("/off"));
+    assert.match(info.at(-1), new RegExp(`turned off\\. Turn it on with the setting q-lint\\.results\\.${feature}\\.enable`), command);
+    assert.strictEqual(page.posted.length, sent, command);
+  }
+  // What the page sends for them is refused too.
+  for (const type of ["exportAs", "copyAs", "drill", "more", "image"]) {
+    page.receive({ type, id: m.id, format: "svg", data: "<svg/>", column: 0, row: 0, rows: [0] });
+  }
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(Object.keys(fake.written), []);
+  assert.deepStrictEqual(pages, []);
+  assert.deepStrictEqual(ran, []);
+  assert.strictEqual(fake.clipboard.text, undefined);
+  // Turned on again, without a reload.
+  for (const key of Object.keys(off)) {
+    if (key.endsWith(".enable")) {
+      delete fake.config[key];
+    }
+  }
+  for (const f of fake.listeners.config) {
+    f({ affectsConfiguration: (k) => k === "q-lint.results" || k === "q-lint" });
+  }
+  assert.deepStrictEqual(page.posted.at(-1).features, { statistics: true, heatmap: true, export: true, pivot: true, charts: true, drilldown: true });
 });
