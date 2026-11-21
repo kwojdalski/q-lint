@@ -551,6 +551,12 @@
             "default": true,
             "order": 129,
             "markdownDescription": "The **HDB Browser** view. Off, it is hidden and reads nothing."
+          },
+          "q-lint.query.tagQuery.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 140,
+            "markdownDescription": "**Query a Tag**: run one query on every saved and discovered process carrying a tag, each over a connection of its own, and show the answers as one table with a `process` column first; a process that fails is a row with its error."
           }
         }
       },
@@ -1175,6 +1181,12 @@
         "title": "Refresh Notebook Variables",
         "category": "q-lint",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "q-lint.queryTag",
+        "title": "Query a Tag",
+        "category": "q-lint",
+        "icon": "$(run-all)"
       }
     ],
     "views": {
@@ -1516,6 +1528,16 @@
           "command": "q-lint.findCallers",
           "when": "view == q-lint.processExplorer && viewItem == explorer.function && config.q-lint.processExplorer.findCallers.enable",
           "group": "1_source@2"
+        },
+        {
+          "command": "q-lint.queryTag",
+          "when": "view == q-lint.processes && viewItem == tag && config.q-lint.query.tagQuery.enable",
+          "group": "inline"
+        },
+        {
+          "command": "q-lint.queryTag",
+          "when": "view == q-lint.processes && viewItem == tag && config.q-lint.query.tagQuery.enable",
+          "group": "1_query@1"
         }
       ],
       "editor/title/run": [
@@ -1634,6 +1656,11 @@
           "command": "q-lint.findCallers",
           "when": "editorLangId == q && q-lint.connected && config.q-lint.processExplorer.findCallers.enable",
           "group": "q-lint@8"
+        },
+        {
+          "command": "q-lint.queryTag",
+          "when": "editorLangId == q && config.q-lint.query.tagQuery.enable",
+          "group": "q-lint@21"
         }
       ],
       "commandPalette": [
@@ -1708,6 +1735,10 @@
         {
           "command": "q-lint.refreshHdbBrowser",
           "when": "config.q-lint.hdbBrowser.enable"
+        },
+        {
+          "command": "q-lint.queryTag",
+          "when": "config.q-lint.query.tagQuery.enable"
         }
       ],
       "editor/title": [

@@ -285,6 +285,24 @@ running the query, and the new connection is made once it is free, however
 long that takes. **Disconnect**, or connecting to another process, stops
 it waiting.
 
+**Query a Tag**, on a tag row in Processes, in a q editor's context menu or
+from the palette, runs one query on every saved and discovered process
+carrying a tag (ignoring case; asked for when none is given), and shows the
+answers as one table in the result panel - as a grid even in console mode -
+with a `process` column first. The code is the selection, or the statement
+at the cursor, placeholders filled in; it also takes the tag and the code
+as arguments for a keybinding. Each process is queried over a connection of
+its own, eight at a time, opened for the query and closed after, so the
+active connection is left as it was; its connect script runs first, and
+the query controls apply (unlimited, unwrapped, the timeout). A
+notification shows the progress, and cancelling it stops waiting. Tables
+are kept as they came under the union of their columns, a column one lacks
+left empty; a value that is not tabular is one row, its text in a `result`
+column; a q error, or a process that could not be reached, one row, its
+message in an `error` column. Each table is cut at `q-lint.query.gridLimit`
+rows, as a grid query is. Every run lands in Query History under its
+process. `q-lint.query.tagQuery.enable` off hides and refuses it.
+
 **Read-only guard.** Code sent to a process tagged `prod`, `prd` or
 `production` (`q-lint.processes.readOnlyGuard.tags`, ignoring case) is read
 first, and when it would change the process, a modal asks before anything
@@ -298,7 +316,8 @@ symbol (`` from `t ``), `set`, `upsert`, `insert`, `hdel`, `exit`, `system`,
 and a system command other than one that reads a setting (`\c`, `\d`, `\P`
 alone) - `\t` and `\ts` are read for their expression. It holds for every
 path that sends code: a query (line, selection, block, file, a Run lens, a
-rerun, Preview), a notebook cell and **Run Notebook with Parameters**,
+rerun, Preview), **Query a Tag** (asked once, for every guarded process it
+reaches), a notebook cell and **Run Notebook with Parameters**,
 **Redefine on Process** (whose confirmation says so, since it always
 assigns) and a connect script, asked at each connect, and skipped, with the
 connection kept, when declined. An agent's query cannot be asked about, so
@@ -957,6 +976,7 @@ nothing.
 | `q-lint.query.progress.enable` | `true` | Count a running query's time in the status bar, and notify a long one's end. | - |
 | `q-lint.query.notifyAfter` | `10` | Seconds a query must run for its end to be notified while the window is not focused; `0` never. | - |
 | `q-lint.query.placeholders.enable` | `true` | Ask for a value for each `{{name}}` in the code a query sends, and put it in place. | - |
+| `q-lint.query.tagQuery.enable` | `true` | **Query a Tag**: one query on every process with a tag, the answers as one table. | - |
 | `q-lint.processExplorer.excludedNamespaces` | `["q","Q","h","j","o","s"]` | Namespaces the Process Explorer and live completion leave out (`q`, or a nested one as `ns.sub`), with those nested in them. | - |
 | `q-lint.processExplorer.previewLimit` | `5` | Rows of a table Preview shows. | - |
 | `q-lint.processExplorer.autoRefresh` | `false` | Read the process again after each query. | - |

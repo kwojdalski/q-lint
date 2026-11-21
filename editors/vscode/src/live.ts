@@ -79,6 +79,7 @@ import { CONNECT_SCRIPT_COMMANDS, readConnectScript, scriptOf, scriptPath, scrip
 import { isProduction } from "./agent";
 import { PLACEHOLDER_VALUES_KEY, lastValue, placeholderNames, readPlaceholders, remembered, substitute } from "./placeholders";
 import { guardCheck, guardQuestion, guardRefusal, readGuard } from "./guard";
+import type { GridAnswer, GridPayload } from "./grid";
 
 const PROCESSES_KEY = "q-lint.processes";
 const HISTORY_KEY = "q-lint.queryHistory";
@@ -1636,6 +1637,90 @@ export class Live {
       return undefined;
     }
     return ready;
+  }
+
+  /// The code a command takes from the active editor: the selection, or the
+  /// statement the cursor is in, its `{{name}}` placeholders filled in.
+  /// Undefined, having said why, when there is none or the user pressed
+  /// Escape.
+  async codeFromEditor(): Promise<string | undefined> {
+    const editor = window.activeTextEditor;
+    if (editor === undefined) {
+      noEditor();
+      return undefined;
+    }
+    const from: From = editor.selection.isEmpty ? "block" : "selection";
+    const written = codeAt(editor, from);
+    if (written === undefined || statements(written).length === 0) {
+      nothingThere(from);
+      return undefined;
+    }
+    return this.filledIn(written);
+  }
+
+  /// The process `row` names, or one the user picks, saved or discovered.
+  choose(row: ProcessArg, title: string): Promise<Process | undefined> {
+    return this.chosen(row, title, true);
+  }
+
+  /// Run `code` on `process` over a connection of its own, opened for it
+  /// and closed after, so the active connection and its status are left
+  /// alone: Query a Tag and Compare Query run here (#906, #907). Its
+  /// connect script runs first. The answer is asked for as a grid-mode
+  /// query asks, within the query controls (unlimited, unwrapped, the
+  /// timeout); `signal` stops waiting. Throws why there is no answer. The
+  /// caller asks the read-only guard first.
+  async runApart(process: Process, code: string, signal?: AbortSignal): Promise<GridAnswer> {
+    const password = process.user ? await this.context.secrets.get(passwordKey(process)) : undefined;
+    if (process.user && password === undefined && process.server !== undefined) {
+      throw new Error(`no password is stored for ${process.user}: connect to ${process.label} once to give it`);
+    }
+    const connection = await QConnection.open(
+      {
+        host: process.host,
+        port: process.port,
+        ...(process.user ? { user: process.user, password: password ?? "" } : {}),
+        ...(process.tls ? { tls: true } : {}),
+      },
+      undefined,
+      signal,
+    );
+    const stop = (): void => connection.abort();
+    signal?.addEventListener("abort", stop);
+    const controls = this.controls.settings();
+    let timedOut = false;
+    const disarm = armTimeout(controls.timeout, () => {
+      timedOut = true;
+      connection.abort();
+    });
+    try {
+      await this.runConnectScript(connection, process);
+      const configuration = workspace.getConfiguration("q-lint");
+      const settings = readLive((key, fallback) => configuration.get(key, fallback));
+      const unlimited = this.controls.unlimited;
+      const { consoleSize, gridLimit } = limits(settings, unlimited);
+      const cut = statements(code);
+      return controls.unwrapped
+        ? await runUnwrapped(connection, cut, { size: consoleSize, limit: gridLimit, unlimited, grid: true })
+        : await connection.queryGrid(cut, consoleSize, gridLimit);
+    } catch (error) {
+      throw timedOut ? new Error(timedOutError(controls.timeout)) : signal?.aborted ? new Error("cancelled") : error;
+    } finally {
+      disarm();
+      signal?.removeEventListener("abort", stop);
+      void connection.close();
+    }
+  }
+
+  /// Show `payload` in the result panel, as a grid when the query mode is
+  /// the console, under `label`: Query a Tag's merged table.
+  showGrid(label: string, code: string, payload: GridPayload, millis: number): void {
+    const configuration = workspace.getConfiguration("q-lint");
+    const settings = readLive((key, fallback) => configuration.get(key, fallback));
+    this.modes.show(
+      { process: label, code, millis, answer: { ok: true, type: 98, text: [], grid: payload } },
+      { ...settings, mode: settings.mode === "console" ? "grid" : settings.mode },
+    );
   }
 
   /// Run `code` on the active connection, connecting first if there is none.

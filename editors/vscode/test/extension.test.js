@@ -90,6 +90,7 @@ function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir
     "./relate": { Relations: class { serverChanged() {} } },
     "./funcsourceview": { FunctionSources: class { state() { return {}; } } },
     "./infoview": { registerInfoViews: () => ({ monitor: () => [], hdb: () => [] }) },
+    "./queryacross": { QueryAcross: class { state() { return {}; } } },
   };
   const file = require.resolve("../out/extension.js");
   delete require.cache[file];

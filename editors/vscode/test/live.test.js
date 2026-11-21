@@ -50,6 +50,7 @@ const { HISTORY_COMMANDS, readHistorySearch } = require("../out/historyfilter.js
 const { CONNECT_SCRIPT_COMMANDS } = require("../out/connectscript.js");
 const { ONBOARDING } = require("../out/onboarding.js");
 const { PARAM_CACHE } = require("../out/paramcache.js");
+const { TAG_QUERY, readTagQuery } = require("../out/tagquery.js");
 
 test("a statement is a line and the indented lines after it", () => {
   assert.deepStrictEqual(statements("a:1\nb:a+1\nb*10"), ["a:1", "b:a+1", "b*10"]);
@@ -287,6 +288,7 @@ test("package.json declares exactly the commands the extension registers", () =>
     ...Object.values(SOURCE_COMMANDS),
     INFO.refreshMonitor,
     INFO.refreshHdb,
+    ...Object.values(TAG_QUERY),
   ].sort();
   assert.deepStrictEqual(declared, registered);
 });
@@ -378,6 +380,7 @@ test("every query setting is read, with the default package.json declares, and n
   const progress = readProgress(get);
   const placeholders = readPlaceholders(get);
   const historySearch = readHistorySearch(get);
+  assert.deepStrictEqual(readTagQuery(get), { enabled: true });
   readMonitorInterval(get);
   readInsight(get);
   for (const [key, spec] of Object.entries(declared)) {
