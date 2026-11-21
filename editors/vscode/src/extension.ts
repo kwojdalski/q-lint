@@ -29,6 +29,7 @@ import { Serial } from "./serial";
 import { FunctionSources } from "./funcsourceview";
 import { registerInfoViews } from "./infoview";
 import { TableStreams } from "./streamview";
+import { Launcher } from "./launcherview";
 import type { InfoNode } from "./monitor";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, statSync } from "node:fs";
@@ -99,6 +100,7 @@ export async function activate(
     hdbBrowser: () => InfoNode[];
     functionSources: FunctionSources["state"];
     tableStreams: TableStreams["state"];
+    launchedProcesses: Launcher["running"];
   }
 > {
   // Replacing the binary does not restart the server, and a window reload is
@@ -144,6 +146,7 @@ export async function activate(
   const infoViews = registerInfoViews(context, live);
   registerOnboarding(context, () => live.processes());
   const streams = new TableStreams(context, live);
+  const launcher = new Launcher(context, live);
   relations = new Relations(context, () => client);
   // Not awaited: nothing above needs the server, and a slow or hung one
   // would hold up every command of the extension until it answered.
@@ -159,6 +162,7 @@ export async function activate(
     hdbBrowser: infoViews.hdb,
     functionSources: () => sources.state(),
     tableStreams: () => streams.state(),
+    launchedProcesses: () => launcher.running(),
   };
 }
 

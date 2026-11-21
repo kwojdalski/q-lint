@@ -744,6 +744,12 @@
             "maximum": 10000,
             "order": 703,
             "markdownDescription": "The newest rows a stream's grid keeps, with `#q-lint.tickerplant.stream.enable#` on. Read when a stream starts."
+          },
+          "q-lint.processes.launcher.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 704,
+            "markdownDescription": "Offer **Start Process**, **Stop Process** and **Set Launch Definition**: start a local q or TorQ process from its launch definition (program, script, arguments; `-p` is the process's port), with its output in an output channel of its own. Only a process you gave a definition and asked to start is started, and what was started is stopped when VS Code closes. Off: the commands are hidden and refuse, and what was started is stopped."
           }
         }
       }
@@ -1212,6 +1218,24 @@
         "title": "Stream Tickerplant Table",
         "category": "q-lint",
         "icon": "$(pulse)"
+      },
+      {
+        "command": "q-lint.startProcess",
+        "title": "Start Process",
+        "category": "q-lint",
+        "icon": "$(play)"
+      },
+      {
+        "command": "q-lint.stopProcess",
+        "title": "Stop Process",
+        "category": "q-lint",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "q-lint.setLaunchDefinition",
+        "title": "Set Launch Definition",
+        "category": "q-lint",
+        "icon": "$(rocket)"
       }
     ],
     "views": {
@@ -1568,6 +1592,21 @@
           "command": "q-lint.streamTable",
           "when": "view == q-lint.processes && viewItem =~ /^(process|discovered)/ && config.q-lint.tickerplant.stream.enable",
           "group": "1_connect@3"
+        },
+        {
+          "command": "q-lint.startProcess",
+          "when": "view == q-lint.processes && viewItem =~ /^(process|discovered)/ && config.q-lint.processes.launcher.enable",
+          "group": "4_launch@1"
+        },
+        {
+          "command": "q-lint.stopProcess",
+          "when": "view == q-lint.processes && viewItem =~ /^(process|discovered)/ && config.q-lint.processes.launcher.enable",
+          "group": "4_launch@2"
+        },
+        {
+          "command": "q-lint.setLaunchDefinition",
+          "when": "view == q-lint.processes && viewItem =~ /^process/ && config.q-lint.processes.launcher.enable",
+          "group": "4_launch@3"
         }
       ],
       "editor/title/run": [
@@ -1781,6 +1820,18 @@
         {
           "command": "q-lint.streamTable",
           "when": "config.q-lint.tickerplant.stream.enable"
+        },
+        {
+          "command": "q-lint.startProcess",
+          "when": "config.q-lint.processes.launcher.enable"
+        },
+        {
+          "command": "q-lint.stopProcess",
+          "when": "config.q-lint.processes.launcher.enable"
+        },
+        {
+          "command": "q-lint.setLaunchDefinition",
+          "when": "config.q-lint.processes.launcher.enable"
         }
       ],
       "editor/title": [

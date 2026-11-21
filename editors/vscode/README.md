@@ -213,6 +213,24 @@ and clicking it switches. The commands:
 - **Set Gateway Server Types**, on a process row: marks the process as a
   TorQ gateway, with the server types its queries go to (`rdb hdb`); empty
   unmarks it. See **TorQ gateways** below.
+- **Start Process** and **Stop Process**, on a process row, and **Set
+  Launch Definition**: start a q or TorQ process on this machine from its
+  launch definition - a program (empty: `q-lint.terminal.qBinary`), a script
+  and arguments, asked for in turn - run as
+  `<program> <script> -p <port> <arguments>` in the workspace folder, with
+  `-p` left out when the arguments set it. Its output goes to an output
+  channel of its own, `q: <label>`, which shows the command line first and
+  how it ended last; the row says `running` while it is. Only a process
+  whose host is this machine is started, never one whose port something
+  already listens on, and **Stop Process** stops only what was started from
+  here: SIGTERM, then SIGKILL after 3 seconds. Everything started is stopped
+  when VS Code closes. In a process file a definition is `launch`, with
+  `cwd` and `env` too; a TorQ process, for instance:
+  `{"launch": {"script": "torq.q", "args": ["-proctype", "rdb", "-procname",
+  "rdb1", "-load", "code/processes/rdb.q"], "cwd": "~/torq", "env":
+  {"KDBCODE": "code", "KDBCONFIG": "config"}}}`. A discovery server's list
+  never brings one. `q-lint.processes.launcher.enable` off hides the three
+  commands and stops what was started.
 - **Insert Active Connection Label**, at the cursor.
 - **Copy Label for Agent Query**, on a process row: the label an agent's
   query names the process by (`server/label` for a discovered one).
@@ -1014,6 +1032,7 @@ Each applies at once, without a reload. None reaches the language server.
 | `q-lint.connection.torqGateway.enable` | `true` | Send a TorQ gateway's queries through `.gw.syncexec`; off, they go as written and **Set Gateway Server Types** and **Query Gateway on Server Types...** are hidden. | - |
 | `q-lint.tickerplant.stream.enable` | `false` | **Stream Tickerplant Table**: subscribe with `.u.sub` and show a table's updates live. Off, the command is hidden and refuses, and open streams close. | - |
 | `q-lint.tickerplant.stream.rows` | `1000` | The newest rows a stream keeps, 1 to 10,000. | - |
+| `q-lint.processes.launcher.enable` | `true` | **Start Process**, **Stop Process** and **Set Launch Definition**. Off, they are hidden and refuse, and what was started is stopped. | - |
 
 ### Terminal settings
 

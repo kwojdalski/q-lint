@@ -224,7 +224,8 @@ class ProcessesView implements TreeDataProvider<Row> {
     const connected = this.live.activeProcess();
     const active = connected?.server === from && connected?.label === (from === undefined ? process.label : qualified(from, process.label));
     const item = new TreeItem(process.label, TreeItemCollapsibleState.None);
-    item.description = `${address(process.host, process.port)}${active ? " - connected" : ""}`;
+    const running = from === undefined && this.live.launched(process.label);
+    item.description = `${address(process.host, process.port)}${active ? " - connected" : ""}${running ? " - running" : ""}`;
     item.iconPath = new ThemeIcon(active ? "vm-active" : "server-process", colourOf(process.tags));
     item.tooltip = new MarkdownString(processTooltip(process, from));
     const kind = from === undefined ? "process" : "discovered";
@@ -669,6 +670,20 @@ export class Live {
     });
     this.borrowed = settled;
     return call;
+  }
+
+  /// Whether a process of this label was started from the Processes view
+  /// and still runs (#954): the launcher sets it.
+  launched: (label: string) => boolean = () => false;
+
+  /// Redraw the Processes view.
+  refreshProcesses(): void {
+    this.processesView.refresh();
+  }
+
+  /// Save `processes` as the list, for the views around this one.
+  saveProcesses(processes: Process[]): Promise<void> {
+    return this.save(processes);
   }
 
   private async save(processes: Process[]): Promise<void> {
