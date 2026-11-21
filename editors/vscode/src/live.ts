@@ -43,6 +43,7 @@ import {
 } from "./processes";
 import { COMMANDS, CONNECTED, VIEWS, readLive, readProcessSettings, readTerminal } from "./liveconfig";
 import { QConnection } from "./qclient";
+import { historyHeading } from "./history";
 import { render } from "./query";
 import { QueryModes, type Rendered } from "./resultpanel";
 import { blockAt, statements } from "./statements";
@@ -228,10 +229,7 @@ class HistoryView implements TreeDataProvider<HistoryEntry> {
       new ThemeColor(entry.outcome === "ok" ? "testing.iconPassed" : entry.outcome === "error" ? "errorForeground" : "disabledForeground"),
     );
     const tooltip = new MarkdownString();
-    tooltip.appendMarkdown(`${entry.process}, ${when.toLocaleString()}, ${entry.millis} ms${entry.agent ? ", run by an agent" : ""}`);
-    if (entry.error !== undefined) {
-      tooltip.appendMarkdown(`\n\n'${entry.error}`);
-    }
+    tooltip.appendMarkdown(historyHeading(entry, when.toLocaleString()));
     tooltip.appendCodeblock(entry.code, "q");
     item.tooltip = tooltip;
     item.contextValue = "history";
