@@ -346,8 +346,8 @@ The panel opens beside the editor. With `q-lint.query.resultsLocation` set
 to `panel`, results go instead to the **q Results** view in the bottom
 panel, beside the terminal and the output, and the editor keeps the focus.
 It is the same page as the editor's - the same grid, chart and buttons -
-and keeps its view, sort and filters when the panel is hidden and shown
-again.
+and keeps its view, sort, filters and scroll when the panel is hidden and
+shown again, as the editor's page does when its tab is.
 
 The process sends at most `q-lint.query.gridLimit` rows, and the panel says
 when a result was cut and how many rows it had. Anything that is not

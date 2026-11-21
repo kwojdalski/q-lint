@@ -127,3 +127,20 @@ test("scrolling within the rows drawn keeps them, so a selection in the grid is 
   assert.notStrictEqual(page.rows()[0], before[0]);
   assert.strictEqual(page.rows()[0].children[0].textContent, String(500 - 20));
 });
+
+test("a page hidden and shown again, which reloads it, is back where its grid was scrolled to", () => {
+  // A result tab put behind another, or the q Results view hidden, loses
+  // its page; shown again, it reloads from its saved state.
+  const first = loadPage(undefined);
+  first.send(result("s.1", 1000));
+  first.scroller().scrollTop = 500 * ROW;
+  first.scroller().fire("scroll");
+  const again = loadPage(first.state);
+  again.send(result("s.1", 1000));
+  assert.strictEqual(again.scroller().scrollTop, 500 * ROW);
+  assert.strictEqual(again.rows()[0].children[0].textContent, String(500 - 20));
+  // A new result starts at its top.
+  const next = loadPage(again.state);
+  next.send(result("s.2", 1000));
+  assert.strictEqual(next.scroller().scrollTop, 0);
+});

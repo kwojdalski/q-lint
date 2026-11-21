@@ -109,7 +109,7 @@
   const vscode = acquireVsCodeApi();
   const C = root.qlintChart;
   const KINDS = ["line", "bar", "scatter", "histogram"];
-  const state = Object.assign({ id: 0, view: "grid", sort: null, filters: [], kind: "line", columns: null, bins: C.BINS }, vscode.getState() || {});
+  const state = Object.assign({ id: 0, view: "grid", sort: null, filters: [], kind: "line", columns: null, bins: C.BINS, top: 0 }, vscode.getState() || {});
   let result = null;
   let rows = [];
   let chart = null;
@@ -229,6 +229,7 @@
       th.addEventListener("click", function () {
         const s = state.sort;
         state.sort = !s || s.column !== i ? { column: i, descending: false } : s.descending ? null : { column: i, descending: true };
+        state.top = 0;
         save();
         rows = visibleRows(grid, state.filters, state.sort);
         drawGrid();
@@ -243,6 +244,7 @@
       input.value = state.filters[i] || "";
       input.addEventListener("input", function () {
         state.filters[i] = input.value;
+        state.top = 0;
         save();
         rows = visibleRows(grid, state.filters, state.sort);
         scroller.scrollTop = 0;
@@ -259,8 +261,17 @@
     table.append(cols, head, body);
     scroller.append(table);
     gridView.append(scroller);
-    scroller.addEventListener("scroll", paint);
+    scroller.addEventListener("scroll", function () {
+      // Kept, so a page reloaded - hidden and shown again - is back here.
+      state.top = scroller.scrollTop;
+      save();
+      paint();
+    });
     paint();
+    if (state.top > 0) {
+      scroller.scrollTop = state.top;
+      paint();
+    }
   }
 
   /// Draw the rows in view, and spacers for the rest: a grid holds up to
@@ -414,6 +425,7 @@
       }
       state.view = m.view;
       state.id = m.id;
+      state.top = 0;
       state.names = names;
     }
     result = m;
