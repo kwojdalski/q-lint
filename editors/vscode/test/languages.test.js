@@ -111,6 +111,12 @@ test("source.k: 0Ns, 0Ws and 0Wg are not nulls, since q refuses them", async () 
   assert.deepStrictEqual(await innermost("source.k", "x:0Ng", "0Ng"), ["constant.language.null.k"]);
 });
 
+test("source.k: x is implicit only in a lambda that declares no parameters, over however many lines", async () => {
+  assert.deepStrictEqual(await innermost("source.k", "f:{[a] x+a}", "x"), ["variable.other.k"]);
+  assert.deepStrictEqual(await innermost("source.k", "f:{x+1}", "x"), ["variable.language.implicit.k"]);
+  assert.deepStrictEqual(await innermost("source.k", "f:{[a;\n b] a+b}", "b"), ["variable.parameter.k", "variable.other.k"]);
+});
+
 test("source.k: a lone backslash ends the script inside an open lambda too", async () => {
   // The loader reads a lone backslash line by line, whatever is open -
   // as the q grammar has it.
