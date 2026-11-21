@@ -118,6 +118,12 @@ test("the processes setting is read, with the default package.json declares, and
     read.set(key, fallback);
     return fallback;
   });
+  // The read-only guard's (#918), read at each send.
+  const guard = require("../out/guard.js").readGuard((key, fallback) => {
+    read.set(key, fallback);
+    return fallback;
+  });
+  assert.deepStrictEqual(guard, { enabled: true, tags: ["prod", "prd", "production"] });
   for (const [key, spec] of Object.entries(declared)) {
     const short = key.replace(/^q-lint\./, "");
     assert.ok(read.has(short), `${key} is declared but never read`);

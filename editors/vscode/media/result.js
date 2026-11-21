@@ -223,8 +223,107 @@
     return node.children.length > 0 || (node.text === "" && node.count > 0 && node.type >= 0 && node.type < 98);
   }
 
+  const AGGREGATIONS = ["count", "sum", "avg", "min", "max"];
+
+  /// A pivot of `rows` (#925): one row per distinct value of column
+  /// `spec.row`, one column per distinct value of `spec.column` (-1: one
+  /// column), each cell `spec.agg` of column `spec.value` over the rows
+  /// with both. `count` counts the non-null values (every row, with
+  /// `spec.value` -1); the others take a numeric column's values, nulls and
+  /// infinities left out. Values are ordered as q sorts them (the ranks),
+  /// or by text where q could not. At most `maxColumns` column values; the
+  /// note says how many more there were. {rows: [text], columns: [text],
+  /// cells: [[text]], note?}.
+  function pivot(grid, rows, spec, maxColumns) {
+    const most = maxColumns || 100;
+    const agg = AGGREGATIONS.indexOf(spec.agg) >= 0 ? spec.agg : "count";
+    const valueColumn = spec.value >= 0 && spec.value < grid.columns.length ? spec.value : -1;
+    const numbers = valueColumn >= 0 && grid.columns[valueColumn].numeric ? grid.values[valueColumn] : null;
+    if (agg !== "count" && !numbers) {
+      return { rows: [], columns: [], cells: [], note: "Choose a numeric column to take the " + agg + " of, or count." };
+    }
+    const keys = function (c) {
+      if (c < 0 || c >= grid.columns.length) {
+        return { of: function () { return ""; }, order: [""] };
+      }
+      const cells = grid.cells[c];
+      const rank = grid.rank[c];
+      const first = new Map();
+      rows.forEach(function (r) {
+        if (!first.has(cells[r])) {
+          first.set(cells[r], r);
+        }
+      });
+      const order = Array.from(first.keys());
+      order.sort(function (a, b) {
+        if (rank) {
+          return rank[first.get(a)] - rank[first.get(b)];
+        }
+        return a < b ? -1 : a > b ? 1 : 0;
+      });
+      return { of: function (r) { return cells[r]; }, order: order };
+    };
+    const across = keys(spec.row);
+    const down = keys(spec.column);
+    const shown = down.order.slice(0, most);
+    const at = new Map();
+    shown.forEach(function (k, i) { at.set(k, i); });
+    const acc = new Map();
+    rows.forEach(function (r) {
+      const j = at.get(down.of(r));
+      if (j === undefined) {
+        return;
+      }
+      const k = across.of(r);
+      if (!acc.has(k)) {
+        acc.set(k, shown.map(function () { return { n: 0, sum: 0, min: Infinity, max: -Infinity }; }));
+      }
+      const a = acc.get(k)[j];
+      if (agg === "count") {
+        if (valueColumn < 0 || !isNull(grid.columns[valueColumn].type, grid.cells[valueColumn][r])) {
+          a.n++;
+        }
+        return;
+      }
+      const v = numbers[r];
+      if (v !== null) {
+        a.n++;
+        a.sum += v;
+        a.min = Math.min(a.min, v);
+        a.max = Math.max(a.max, v);
+      }
+    });
+    const text = function (a) {
+      if (agg === "count") {
+        return String(a.n);
+      }
+      if (a.n === 0) {
+        return "";
+      }
+      return meanText(agg === "sum" ? a.sum : agg === "avg" ? a.sum / a.n : agg === "min" ? a.min : a.max);
+    };
+    const out = { rows: across.order, columns: spec.column >= 0 ? shown : [agg], cells: across.order.map(function (k) { return (acc.get(k) || shown.map(function () { return { n: 0, sum: 0, min: Infinity, max: -Infinity }; })).map(text); }) };
+    if (down.order.length > shown.length) {
+      out.note = "The first " + shown.length + " of " + down.order.length + " values of " + grid.columns[spec.column].name + " are shown as columns.";
+    }
+    return out;
+  }
+
+  /// The pivot a result starts with: rows by its first column that is not
+  /// numeric (or its first), and the sum of its first numeric column
+  /// other than that, or a count.
+  function defaultPivot(grid) {
+    let row = grid.columns.findIndex(function (c) { return !c.numeric; });
+    row = row < 0 ? 0 : row;
+    const value = grid.columns.findIndex(function (c, i) { return c.numeric && i !== row; });
+    return { row: row, column: -1, value: value, agg: value >= 0 ? "sum" : "count" };
+  }
+
   const helpers = {
     rowCount: rowCount,
+    pivot: pivot,
+    defaultPivot: defaultPivot,
+    AGGREGATIONS: AGGREGATIONS,
     visibleRows: visibleRows,
     chartColumns: chartColumns,
     binsFrom: binsFrom,
@@ -248,10 +347,12 @@
 
   const vscode = acquireVsCodeApi();
   const C = root.qlintChart;
-  const KINDS = ["line", "bar", "scatter", "histogram"];
-  const VIEWS = { grid: "Grid", chart: "Chart", stats: "Stats", tree: "Tree" };
+  const BASE_KINDS = ["line", "bar", "scatter", "histogram"];
+  /// The kinds q-lint.results.charts.enable adds.
+  const MORE_KINDS = ["area", "step", "candlestick"];
+  const VIEWS = { grid: "Grid", chart: "Chart", stats: "Stats", tree: "Tree", pivot: "Pivot" };
   const state = Object.assign(
-    { id: 0, view: "grid", sort: null, filters: [], kind: "line", columns: null, bins: C.BINS, top: 0, compare: false, open: [""], saved: {}, control: null },
+    { id: 0, view: "grid", sort: null, filters: [], kind: "line", columns: null, bins: C.BINS, top: 0, compare: false, open: [""], saved: {}, control: null, pivot: null, y2: -1 },
     vscode.getState() || {},
   );
   let result = null;
@@ -260,6 +361,10 @@
   /// The result's diff as lookups, and each column's heatmap levels.
   let marks = null;
   let heat = [];
+  /// More rows were asked for, and have not come yet.
+  let moreAsked = false;
+  /// What the chart last drew: its data and theme, for an image of it.
+  let drawnChart = null;
 
   const el = function (tag, cls, text) {
     const e = document.createElement(tag);
@@ -280,7 +385,8 @@
   const chartView = el("main", "chart-view");
   const statsView = el("main", "stats-view");
   const treeView = el("main", "tree-view");
-  document.body.append(tabs, bar, gridView, chartView, statsView, treeView);
+  const pivotView = el("main", "pivot-view");
+  document.body.append(tabs, bar, gridView, chartView, statsView, treeView, pivotView);
   // Until a result arrives: what fills the page, as a view's welcome would.
   gridView.append(el("p", "note", "No result yet. Run a query in grid or chart mode (q-lint: Switch Query Mode) to show it here."));
 
@@ -334,7 +440,12 @@
 
   /// Whether the page offers view `v` for the result on show.
   function offered(v) {
-    return v === "tree" ? !!result.tree : v === "stats" ? feature("statistics") : true;
+    return v === "tree" ? !!result.tree : v === "stats" ? feature("statistics") : v === "pivot" ? feature("pivot") : true;
+  }
+
+  /// The chart kinds offered: the extra ones only while charts are on.
+  function kinds() {
+    return feature("charts") ? BASE_KINDS.concat(MORE_KINDS) : BASE_KINDS;
   }
 
   /// Whether Compare with Previous Run is on, for a result that has one.
@@ -379,7 +490,9 @@
     const fmt = function (n) { return n.toLocaleString("en-US"); };
     let count = fmt(held) + " row" + (held === 1 ? "" : "s");
     if (grid.total > held) {
-      count = fmt(held) + " of " + fmt(grid.total) + " rows: cut at q-lint.query.gridLimit (" + fmt(result.limit) + ")";
+      count = result.more
+        ? fmt(held) + " of " + fmt(grid.total) + " rows: more as the grid scrolls"
+        : fmt(held) + " of " + fmt(grid.total) + " rows: cut at q-lint.query.gridLimit (" + fmt(result.limit) + ")";
     }
     if (rows.length !== held) {
       count = fmt(rows.length) + " shown, " + count;
@@ -398,6 +511,15 @@
       vscode.postMessage({ type: "export", id: result.id, rows: rows });
     });
     const extras = [];
+    if (result.more) {
+      const more = el("button", "", "Load more");
+      more.title = "Fetch the next " + fmt(result.limit) + " rows from the process, which holds the result";
+      more.addEventListener("click", function () {
+        moreAsked = true;
+        vscode.postMessage({ type: "more", id: result.id });
+      });
+      extras.push(more);
+    }
     if (result.diff) {
       const compare = el("button", state.compare ? "on" : "", "Compare");
       compare.title = "Mark what changed since the previous run of this query, on " + result.diff.process + " at " + new Date(result.diff.at).toLocaleTimeString();
@@ -418,7 +540,16 @@
       });
       extras.push(heatmap);
     }
-    bar.append.apply(bar, [views, info].concat(extras, [meta, copy, exporter]));
+    const tail = [meta, copy, exporter];
+    if (feature("export")) {
+      const as = el("button", "", "Export as...");
+      as.title = "Save the rows shown as Excel, Parquet, JSON, Markdown or q";
+      as.addEventListener("click", function () {
+        vscode.postMessage({ type: "exportAs", id: result.id, rows: rows });
+      });
+      tail.push(as);
+    }
+    bar.append.apply(bar, [views, info].concat(extras, tail));
     if (comparing()) {
       const d = result.diff;
       const parts = [d.changed + " changed", d.addedRows.length + " added", d.removed.count + " removed"];
@@ -510,6 +641,15 @@
     });
     head.append(names, filters);
     body = el("tbody");
+    if (feature("drilldown")) {
+      body.addEventListener("dblclick", function (event) {
+        const td = event.target && event.target.closest ? event.target.closest("td[data-r]") : event.target;
+        const r = td && td.getAttribute ? td.getAttribute("data-r") : null;
+        if (r !== null) {
+          vscode.postMessage({ type: "drill", id: result.id, column: Number(td.getAttribute("data-c")), row: Number(r) });
+        }
+      });
+    }
     painted = null;
     table.append(cols, head, body);
     scroller.append(table);
@@ -694,6 +834,7 @@
       return tr;
     };
     const out = [];
+    const drill = feature("drilldown");
     if (at.before > 0) {
       out.push(spacer(at.before));
     }
@@ -715,6 +856,12 @@
         }
         const td = el("td", cls, text);
         td.title = was !== undefined ? text + "\nwas: " + (was === "" ? "(null)" : was) : text;
+        if (drill) {
+          // Double-click, or right-click for the editor's menu, to drill down.
+          td.setAttribute("data-c", ci);
+          td.setAttribute("data-r", r);
+          td.setAttribute("data-vscode-context", JSON.stringify({ webviewSection: "cell", column: ci, row: r, preventDefaultContextMenuItems: false }));
+        }
         // A cell the diff marks keeps the diff's colour.
         const level = heat[ci] && was === undefined && !added ? heat[ci][r] : null;
         if (level !== null && level !== undefined) {
@@ -728,6 +875,80 @@
       out.push(spacer(at.after));
     }
     body.replaceChildren.apply(body, out);
+    // Near the end of the rows held: ask the process for the next page.
+    if (result.more && !moreAsked && rows.length > 0 && end >= rows.length - 10) {
+      moreAsked = true;
+      vscode.postMessage({ type: "more", id: result.id });
+    }
+  }
+
+  // --- pivot
+
+  function drawPivot() {
+    const grid = result.grid;
+    pivotView.replaceChildren();
+    if (!state.pivot) {
+      state.pivot = defaultPivot(grid);
+    }
+    const spec = state.pivot;
+    const controls = el("div", "controls");
+    const choose = function (label, key, options) {
+      const box = el("label", "", label + " ");
+      const select = el("select");
+      options.forEach(function (o) {
+        const opt = el("option", "", o[1]);
+        opt.value = String(o[0]);
+        opt.selected = String(o[0]) === String(spec[key]);
+        select.append(opt);
+      });
+      select.addEventListener("change", function () {
+        spec[key] = key === "agg" ? select.value : Number(select.value);
+        save();
+        drawPivot();
+      });
+      box.append(select);
+      controls.append(box);
+    };
+    const named = grid.columns.map(function (c, i) { return [i, c.name]; });
+    choose("rows", "row", named);
+    choose("columns", "column", [[-1, "(none)"]].concat(named));
+    choose("values", "value", [[-1, "(rows)"]].concat(named));
+    choose("as", "agg", AGGREGATIONS.map(function (a) { return [a, a]; }));
+    const p = pivot(grid, rows, spec);
+    const copy = el("button", "", "Copy Pivot");
+    copy.title = "The pivot as CSV";
+    const head = [grid.columns[spec.row] ? grid.columns[spec.row].name : ""].concat(p.columns);
+    const csv = function (t) { return /[",\r\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; };
+    copy.addEventListener("click", function () {
+      const lines = [head.map(csv).join(",")].concat(p.rows.map(function (k, i) { return [k].concat(p.cells[i]).map(csv).join(","); }));
+      vscode.postMessage({ type: "copyText", id: result.id, text: lines.join("\n") + "\n" });
+    });
+    controls.append(copy);
+    pivotView.append(controls);
+    let note = "Over the " + rows.length.toLocaleString("en-US") + " row" + (rows.length === 1 ? "" : "s") + " shown";
+    if (grid.total > rowCount(grid)) {
+      note += " of the result's " + grid.total.toLocaleString("en-US");
+    }
+    pivotView.append(el("p", "note", note + "." + (p.note ? " " + p.note : "")));
+    const scroll = el("div", "scroller");
+    const table = el("table", "pivot");
+    const tr = el("tr");
+    head.forEach(function (h, i) { tr.append(el("th", i === 0 ? "key" : "num", h)); });
+    const thead = el("thead");
+    thead.append(tr);
+    const tbody = el("tbody");
+    p.rows.forEach(function (k, i) {
+      const line = el("tr");
+      const key = el("td", "key", k);
+      key.title = k;
+      line.append(key);
+      p.cells[i].forEach(function (v) { line.append(el("td", "num", v)); });
+      tbody.append(line);
+    });
+    table.append(thead, tbody);
+    scroll.append(table);
+    pivotView.append(scroll);
+    rendered({ pivot: { rows: p.rows.length, columns: head, first: p.rows.length ? [p.rows[0]].concat(p.cells[0]) : [], note: p.note } });
   }
 
   // --- chart
@@ -741,6 +962,10 @@
     }
     const controls = el("div", "controls");
     const kind = el("select");
+    const KINDS = kinds();
+    if (KINDS.indexOf(state.kind) < 0) {
+      state.kind = "line";
+    }
     KINDS.forEach(function (k) {
       const o = el("option", "", k[0].toUpperCase() + k.slice(1));
       o.value = k;
@@ -756,7 +981,8 @@
     const can = C.chartable(grid, state.kind);
     const chosen = chartColumns(can, state.columns);
     const picked = chosen.columns;
-    can.forEach(function (c) {
+    // A candle chart's columns are its open, high, low and close.
+    (state.kind === "candlestick" ? [] : can).forEach(function (c) {
       const label = el("label");
       const box = el("input");
       box.type = "checkbox";
@@ -785,9 +1011,40 @@
       label.append(bins);
       controls.append(label);
     }
+    const second = feature("charts") && state.kind !== "histogram" && state.kind !== "candlestick" && picked.length >= 2;
+    if (second) {
+      const label = el("label", "", "right axis ");
+      const y2 = el("select");
+      [[-1, "(none)"]].concat(picked.map(function (c) { return [c, grid.columns[c].name]; })).forEach(function (o) {
+        const opt = el("option", "", o[1]);
+        opt.value = String(o[0]);
+        opt.selected = o[0] === state.y2;
+        y2.append(opt);
+      });
+      y2.addEventListener("change", function () {
+        state.y2 = Number(y2.value);
+        save();
+        drawChart();
+      });
+      label.append(y2);
+      controls.append(label);
+    }
+    if (feature("charts")) {
+      ["png", "svg"].forEach(function (format) {
+        const b = el("button", "", "Save " + format.toUpperCase());
+        b.title = "Save the chart as a " + format.toUpperCase() + " file";
+        b.addEventListener("click", function () { sendImage(format); });
+        controls.append(b);
+      });
+    }
     chartView.append(controls);
-    const data = chosen.note ? { type: "bar", datasets: [], note: chosen.note } : C.chartData(grid, rows, state.kind, picked, state.bins);
+    const data = chosen.note && state.kind !== "candlestick" ? { type: "bar", datasets: [], note: chosen.note } : C.chartData(grid, rows, state.kind, picked, state.bins);
     const summary = C.summary(state.kind, data);
+    const y2 = second && picked.indexOf(state.y2) >= 0 ? state.y2 : -1;
+    if (y2 >= 0) {
+      summary.y2 = grid.columns[y2].name;
+    }
+    drawnChart = null;
     if (data.note || typeof Chart !== "function") {
       const note = data.note || "The chart library did not load.";
       chartView.append(el("p", "note", note));
@@ -801,8 +1058,39 @@
     chartView.append(box);
     const look = C.theme(cssVar);
     C.applyTheme(Chart, look);
-    chart = new Chart(canvas, C.chartConfig(grid, rows, state.kind, data, look));
+    chart = new Chart(canvas, C.chartConfig(grid, rows, state.kind, data, look, undefined, { y2: y2 }));
+    drawnChart = { data: data, look: look, y2: y2, canvas: canvas };
     rendered({ chart: summary });
+  }
+
+  /// Send the chart drawn as `format` to the extension to save: a PNG of
+  /// the canvas on the editor's background, or chartSvg's SVG of the same
+  /// data. An empty image when no chart is drawn. `key`: the command's
+  /// request it answers.
+  function sendImage(format, key) {
+    let data = "";
+    if (drawnChart) {
+      const background = cssVar("--vscode-editor-background", "#ffffff");
+      const canvas = drawnChart.canvas;
+      if (format === "png") {
+        const out = document.createElement("canvas");
+        out.width = canvas.width;
+        out.height = canvas.height;
+        const ctx = out.getContext("2d");
+        ctx.fillStyle = background;
+        ctx.fillRect(0, 0, out.width, out.height);
+        ctx.drawImage(canvas, 0, 0);
+        data = out.toDataURL("image/png");
+      } else {
+        data = C.chartSvg(result.grid, rows, state.kind, drawnChart.data, drawnChart.look, {
+          width: Math.round(canvas.clientWidth || 800),
+          height: Math.round(canvas.clientHeight || 450),
+          background: background,
+          y2: drawnChart.y2,
+        });
+      }
+    }
+    vscode.postMessage({ type: "image", id: result.id, format: format, data: data, key: key });
   }
 
   function draw() {
@@ -819,6 +1107,7 @@
     chartView.hidden = state.view !== "chart";
     statsView.hidden = state.view !== "stats";
     treeView.hidden = state.view !== "tree";
+    pivotView.hidden = state.view !== "pivot";
     if (state.view === "grid") {
       drawGrid();
       rendered();
@@ -826,13 +1115,15 @@
       drawStats();
     } else if (state.view === "tree") {
       drawTree();
+    } else if (state.view === "pivot") {
+      drawPivot();
     } else {
       drawChart();
     }
   }
 
   /// What is kept of a result's page when another is chosen from the tabs.
-  const PER_RESULT = ["view", "sort", "filters", "columns", "top", "open", "names"];
+  const PER_RESULT = ["view", "sort", "filters", "columns", "top", "open", "names", "pivot", "y2"];
 
   window.addEventListener("message", function (event) {
     const m = event.data;
@@ -858,6 +1149,10 @@
           state.filters = [];
           state.columns = null;
         }
+        if (names !== state.names) {
+          state.pivot = null;
+          state.y2 = -1;
+        }
         state.view = m.view;
         state.top = 0;
         state.open = [""];
@@ -871,10 +1166,14 @@
       }
     });
     // A command's request, once: Show Column Statistics, Show as Tree,
-    // Compare with Previous Run.
+    // Compare with Previous Run, Show as Pivot, Save Result Chart.
+    let image = null;
     if (m.control && m.control.key !== state.control) {
       state.control = m.control.key;
-      if (m.control.action === "view") {
+      if (m.control.action === "image") {
+        state.view = "chart";
+        image = m.control;
+      } else if (m.control.action === "view") {
         state.view = m.control.view;
       } else if (m.control.action === "compare") {
         state.compare = true;
@@ -885,9 +1184,13 @@
       ? m.grid.columns.map(function (c, i) { return c.numeric && !c.key ? heatLevels(m.grid.values[i]) : null; })
       : [];
     result = m;
+    moreAsked = false;
     rows = visibleRows(m.grid, state.filters, state.sort);
     save();
     draw();
+    if (image) {
+      sendImage(image.format, image.key);
+    }
   });
   window.addEventListener("resize", paint);
   // The editor marks a new theme on the body's class, and the chart's

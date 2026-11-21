@@ -8,11 +8,13 @@
 // `processes.ts`'s; discovery servers, `discoveryservers.ts`'s; what a
 // terminal is sent, `terminal.ts`'s. This file is the VS Code around them.
 import * as os from "os";
+import * as net from "net";
 import * as path from "path";
 import {
   commands,
   EventEmitter,
   MarkdownString,
+  RelativePattern,
   StatusBarAlignment,
   env,
   ThemeColor,
@@ -22,6 +24,7 @@ import {
   Uri,
   window,
   workspace,
+  type Disposable,
   type ExtensionContext,
   type OutputChannel,
   type StatusBarItem,
@@ -30,11 +33,13 @@ import {
   type TreeDataProvider,
   type TreeView,
 } from "vscode";
-import { children, findDiscovered, qualified, type Row } from "./discovery";
+import { children, findDiscovered, qualified, type Discovered, type Row } from "./discovery";
+import { SHARED_COMMANDS, SHARED_FILE, SHARED_SOURCE, readShared, readSharedFile, secretsWarning, withShared } from "./shared";
 import { DiscoveryServers, discoveryItem } from "./discoveryservers";
 import {
   address,
   hostProblem,
+  markdownText,
   merge,
   parseProcesses,
   plainHost,
@@ -45,11 +50,16 @@ import {
   processThemeColour,
   processTooltip,
   readProcessFile,
+  sshDestination,
+  serverTypes,
   tlsChoices,
+  withExtras,
   type Process,
 } from "./processes";
 import { COMMANDS, CONNECTED, VIEWS, readLive, readProcessSettings, readTerminal } from "./liveconfig";
-import { QConnection, QError } from "./qclient";
+import { QConnection, QError, type Target } from "./qclient";
+import { SshTunnel, TUNNEL_COMMANDS, readTunnel } from "./tunnel";
+import { GATEWAY_COMMANDS, fileServerTypes, gatewayStatement, isGatewayCall, readGateway } from "./gateway";
 import { HEARTBEAT, UNANSWERED_MS, backoffDelay, latencyText, readHealth } from "./health";
 import { historyHeading, historyLabel, iconsEscaped } from "./history";
 import { render } from "./query";
@@ -77,9 +87,16 @@ import {
 } from "./historyfilter";
 import { CONNECT_SCRIPT_COMMANDS, readConnectScript, scriptOf, scriptPath, scriptsBrought, scriptSummary, withScript, type ConnectScript } from "./connectscript";
 import { isProduction } from "./agent";
+import { PAGE, readPage, type GridPage } from "./grid";
 import { PLACEHOLDER_VALUES_KEY, lastValue, placeholderNames, readPlaceholders, remembered, substitute } from "./placeholders";
+import { guardCheck, guardQuestion, guardRefusal, readGuard } from "./guard";
+import type { GridAnswer, GridPayload } from "./grid";
+import { WATCH, WATCHING, intervalProblem, readWatch, watchText } from "./watch";
+import { guardedBy } from "./guard";
 
 const PROCESSES_KEY = "q-lint.processes";
+/// The address of each process the shared list held when last read (#955).
+const SHARED_SEEN_KEY = "q-lint.sharedProcessesSeen";
 const HISTORY_KEY = "q-lint.queryHistory";
 /// How many queries the history keeps.
 const HISTORY_LIMIT = 200;
@@ -89,7 +106,7 @@ const HISTORY_LIMIT = 200;
 /// What a process command is given: a view row, a process's label (from a
 /// keybinding's `args`, or another extension), or nothing - then the user
 /// picks one. A discovered process is named `server/label`.
-type ProcessArg = Row | string | undefined;
+export type ProcessArg = Row | string | undefined;
 
 export interface HistoryEntry {
   process: string;
@@ -168,7 +185,7 @@ class ProcessesView implements TreeDataProvider<Row> {
   getChildren(row?: Row): Row[] {
     let rows = this.given.get(row);
     if (rows === undefined) {
-      rows = children(this.live.processes(), this.live.discovery.discovered(), row);
+      rows = children(this.live.processes(), this.live.discovery.discovered(), row, this.live.sharedList()[0]);
       this.given.set(row, rows);
       for (const child of rows) {
         this.parents.set(child, row);
@@ -191,7 +208,7 @@ class ProcessesView implements TreeDataProvider<Row> {
       if (row.kind === "discovered" && row.server === process.server && qualified(row.server, row.process.label) === process.label) {
         return row;
       }
-      if (row.kind === "tag" || row.kind === "servers" || row.kind === "server") {
+      if (row.kind === "tag" || row.kind === "servers" || row.kind === "server" || row.kind === "shared") {
         const found = this.find(process, row);
         if (found !== undefined) {
           return found;
@@ -202,6 +219,17 @@ class ProcessesView implements TreeDataProvider<Row> {
   }
 
   getTreeItem(row: Row): TreeItem {
+    if (row.kind === "shared") {
+      const item = new TreeItem(`Workspace: ${SHARED_FILE}`, TreeItemCollapsibleState.Expanded);
+      const n = row.state.processes.length;
+      item.description = row.state.error !== undefined ? "failed" : `${n} process${n === 1 ? "" : "es"}`;
+      item.iconPath = new ThemeIcon("repo", row.state.error !== undefined ? new ThemeColor("errorForeground") : undefined);
+      item.tooltip = new MarkdownString(
+        `The processes ${markdownText(row.file)} lists, shared with the repository. Once connected, one is \`${SHARED_SOURCE}/label\`.`,
+      );
+      item.contextValue = "sharedProcesses";
+      return item;
+    }
     if (row.kind !== "tag" && row.kind !== "process" && row.kind !== "discovered") {
       return discoveryItem(row);
     }
@@ -218,7 +246,8 @@ class ProcessesView implements TreeDataProvider<Row> {
     const connected = this.live.activeProcess();
     const active = connected?.server === from && connected?.label === (from === undefined ? process.label : qualified(from, process.label));
     const item = new TreeItem(process.label, TreeItemCollapsibleState.None);
-    item.description = `${address(process.host, process.port)}${active ? " - connected" : ""}`;
+    const running = from === undefined && this.live.launched(process.label);
+    item.description = `${address(process.host, process.port)}${active ? " - connected" : ""}${running ? " - running" : ""}`;
     item.iconPath = new ThemeIcon(active ? "vm-active" : "server-process", colourOf(process.tags));
     item.tooltip = new MarkdownString(processTooltip(process, from));
     const kind = from === undefined ? "process" : "discovered";
@@ -397,6 +426,16 @@ export class QTerminals {
   }
 }
 
+/// Where `process` is connected to, with `password` for its user.
+function targetOf(process: Process, password: string | undefined): Target {
+  return {
+    host: process.host,
+    port: process.port,
+    ...(process.user ? { user: process.user, password: password ?? "" } : {}),
+    ...(process.tls ? { tls: true } : {}),
+  };
+}
+
 export class Live {
   private connection: QConnection | undefined;
   /// The query history, newest first. Kept here and written through to
@@ -455,6 +494,18 @@ export class Live {
   private historyFilter: HistoryFilter = {};
   private readonly modes: QueryModes;
   readonly discovery: DiscoveryServers;
+  /// The query being watched (#914): its code, the process it runs on, how
+  /// often, how many runs so far, its timer and status bar item, and
+  /// whether a run is out.
+  private watching:
+    | { code: string; label: string; every: number; runs: number; timer: ReturnType<typeof setInterval>; status: StatusBarItem; running: boolean }
+    | undefined;
+  /// The workspace's shared process list as last read (#955), when it is
+  /// on and the file is there, and the watcher on the file.
+  private shared: Discovered | undefined;
+  private sharedWatcher: Disposable | undefined;
+  /// Bumped by each read, so a slow one does not overwrite a later one.
+  private sharedRead = 0;
 
   constructor(private readonly context: ExtensionContext) {
     this.output = window.createOutputChannel("q-lint: query", "q-console");
@@ -468,6 +519,8 @@ export class Live {
     this.discovery = new DiscoveryServers(context, { list: () => this.processes(), save: (processes) => this.save(processes) });
     const terminals = new QTerminals(context);
     this.modes = new QueryModes(context);
+    this.modes.setPager((label, offset, count) => this.pageHeld(label, offset, count));
+    this.modes.setRunner((code, label) => this.runDrilldown(code, label));
     this.controls = new QueryControls(context, {
       activeLabel: () => this.activeLabel(),
       pick: async (title) => (await this.chosen(undefined, title, true))?.label,
@@ -504,9 +557,15 @@ export class Live {
       c(CONTROL_COMMANDS.copyQuery, (entry?: HistoryEntry) => this.copyQuery(entry)),
       c(CONTROL_COMMANDS.revealProcess, () => this.revealProcess()),
       c(CONNECT_SCRIPT_COMMANDS.set, (row?: ProcessArg, script?: ConnectScript | null) => this.setConnectScript(row, script)),
+      c(TUNNEL_COMMANDS.set, (row?: ProcessArg, destination?: string | null) => this.setSshTunnel(row, destination)),
+      c(SHARED_COMMANDS.add, (row?: ProcessArg) => this.addToShared(row)),
+      c(GATEWAY_COMMANDS.set, (row?: ProcessArg, types?: string | string[] | null) => this.setGateway(row, types)),
+      c(GATEWAY_COMMANDS.queryWith, (types?: string | string[]) => this.queryGatewayWith(types)),
       c(HISTORY_COMMANDS.filter, (filter?: HistoryFilter) => this.filterHistory(filter)),
       c(HISTORY_COMMANDS.clearFilter, () => this.setHistoryFilter({})),
       c(HISTORY_COMMANDS.export, (file?: Uri) => this.exportHistory(file)),
+      c(WATCH.start, (code?: string, every?: number) => this.watch(code, every)),
+      c(WATCH.stop, () => this.stopWatching()),
       this.changed,
       this.discovery.onDidChange(() => this.processesView.refresh()),
       workspace.onDidChangeConfiguration((event) => {
@@ -526,26 +585,160 @@ export class Live {
         if (event.affectsConfiguration("q-lint.query.progress")) {
           this.showStatus();
         }
+        if (event.affectsConfiguration("q-lint.query.watch") && !this.setting(readWatch).enabled) {
+          this.stopWatching("q-lint.query.watch.enable was turned off");
+        }
+        if (event.affectsConfiguration("q-lint.processes.shared")) {
+          this.watchShared();
+        }
+        // Turned off, a connection through a tunnel closes with its tunnel.
+        if (event.affectsConfiguration("q-lint.connection.sshTunnel") && !this.setting(readTunnel).enabled && this.active?.ssh !== undefined && this.connection !== undefined) {
+          void this.disconnect();
+        }
       }),
       this.changed.event((what) => {
         if (what !== "queried") {
           this.restartHeartbeat();
         }
+        // A watch stops on disconnect, and on a connect elsewhere, which
+        // closes the connection it ran on first.
+        if (what === "disconnected" && this.watching !== undefined) {
+          this.stopWatching(`the connection to ${this.watching.label} closed`);
+        }
       }),
       {
         dispose: () => {
           this.disposed = true;
+          this.stopWatching();
           clearInterval(this.ticker);
           clearInterval(this.heartbeat);
           this.reconnectRun++;
           // A reconnect after an abort stops trying.
           this.reconnectStopped = true;
           void this.connection?.close();
+          this.sharedWatcher?.dispose();
         },
       },
+      workspace.onDidGrantWorkspaceTrust(() => void this.loadShared()),
     );
     this.showStatus();
     this.status.show();
+    this.watchShared();
+  }
+
+  /// The workspace's shared process list, as a discovery server's list is
+  /// given: empty while it is off or there is no file.
+  sharedList(): Discovered[] {
+    return this.shared === undefined ? [] : [this.shared];
+  }
+
+  /// Watch and read the shared list while `q-lint.processes.shared.enable`
+  /// is on; turned off, stop, forget what it listed, and close a connection
+  /// to one of its processes.
+  private watchShared(): void {
+    this.sharedWatcher?.dispose();
+    this.sharedWatcher = undefined;
+    const folder = workspace.workspaceFolders?.[0];
+    if (!this.setting(readShared).enabled || folder === undefined) {
+      this.sharedRead++;
+      const had = this.shared !== undefined;
+      this.shared = undefined;
+      if (had) {
+        this.processesView.refresh();
+      }
+      if (this.active?.server === SHARED_SOURCE && this.connection !== undefined) {
+        void this.disconnect();
+      }
+      return;
+    }
+    const watcher = workspace.createFileSystemWatcher(new RelativePattern(folder, SHARED_FILE));
+    const reload = (): void => void this.loadShared();
+    this.sharedWatcher = { dispose: () => watcher.dispose() };
+    watcher.onDidCreate(reload);
+    watcher.onDidChange(reload);
+    watcher.onDidDelete(reload);
+    void this.loadShared();
+  }
+
+  /// Write a saved process into the shared list, creating it if need be
+  /// (#955): its address, user, tags and settings, never a password.
+  private async addToShared(row?: ProcessArg): Promise<void> {
+    if (!this.featureOn(this.setting(readShared).enabled, "The shared process list", "q-lint.processes.shared.enable")) {
+      return;
+    }
+    const folder = workspace.workspaceFolders?.[0];
+    if (folder === undefined) {
+      void window.showInformationMessage(`q-lint: open a folder first: the shared process list is its ${SHARED_FILE}.`);
+      return;
+    }
+    const process = await this.chosen(row, "Share which q process with the repository?");
+    if (process === undefined) {
+      return;
+    }
+    const file = Uri.joinPath(folder.uri, SHARED_FILE);
+    let text: string | undefined;
+    try {
+      text = Buffer.from(await workspace.fs.readFile(file)).toString("utf8");
+    } catch {
+      text = undefined;
+    }
+    try {
+      await workspace.fs.writeFile(file, Buffer.from(withShared(text, process), "utf8"));
+    } catch (error) {
+      void window.showErrorMessage(`q-lint: could not write ${file.fsPath}: ${error instanceof Error ? error.message : String(error)}`);
+      return;
+    }
+    await this.loadShared();
+    void window.showInformationMessage(
+      `q-lint: ${process.label} is in ${SHARED_FILE}, without its password${process.user !== undefined ? `: each user is asked for ${process.user}'s on connect` : ""}.`,
+    );
+  }
+
+  /// Read the shared list again. A process whose host, port or user changed
+  /// since it was last read forgets the password given for it.
+  private async loadShared(): Promise<void> {
+    const folder = workspace.workspaceFolders?.[0];
+    const run = ++this.sharedRead;
+    if (!this.setting(readShared).enabled || folder === undefined) {
+      return;
+    }
+    const file = Uri.joinPath(folder.uri, SHARED_FILE);
+    let text: string | undefined;
+    try {
+      text = Buffer.from(await workspace.fs.readFile(file)).toString("utf8");
+    } catch {
+      text = undefined;
+    }
+    if (run !== this.sharedRead) {
+      return;
+    }
+    const server = { label: SHARED_SOURCE, url: file.fsPath };
+    if (text === undefined) {
+      this.shared = undefined;
+    } else {
+      try {
+        const read = readSharedFile(text, workspace.isTrusted === true);
+        const before = this.context.workspaceState.get<unknown>(SHARED_SEEN_KEY);
+        const seen = parseProcesses(Array.isArray(before) ? before : [], true).processes;
+        for (const label of passwordsToForget(seen, read.processes)) {
+          await this.context.secrets.delete(passwordKey({ label: qualified(SHARED_SOURCE, label), server: SHARED_SOURCE }));
+        }
+        await this.context.workspaceState.update(
+          SHARED_SEEN_KEY,
+          read.processes.map(({ label, host, port, user }) => ({ label, host, port, ...(user !== undefined ? { user } : {}) })),
+        );
+        if (run !== this.sharedRead) {
+          return;
+        }
+        this.shared = { server, state: { processes: read.processes, problems: read.problems, loading: false, removed: false, fetchedAt: Date.now() } };
+        if (read.secrets.length > 0) {
+          void window.showWarningMessage(secretsWarning(read.secrets));
+        }
+      } catch (error) {
+        this.shared = { server, state: { processes: [], problems: [], loading: false, removed: false, error: `not JSON: ${error instanceof Error ? error.message : String(error)}` } };
+      }
+    }
+    this.processesView.refresh();
   }
 
   /// What the extension returns from `activate`: a read-only view for tests
@@ -569,6 +762,10 @@ export class Live {
     unlimited: () => boolean;
     /// How many lambdas in the active file cache their parameters (#892).
     cachedLambdas: () => number;
+    /// The query being watched, and how many times it has run (#914).
+    watching: () => { code: string; label: string; every: number; runs: number } | undefined;
+    /// The workspace's shared process list (#955), when it is shown.
+    sharedProcesses: () => { file: string; processes: Process[]; problems: string[]; error?: string } | undefined;
   } {
     return {
       processes: () => this.processes(),
@@ -592,7 +789,25 @@ export class Live {
       },
       unlimited: () => this.controls.unlimited,
       cachedLambdas: () => this.parameterCache.cached(),
+      watching: () => {
+        const w = this.watching;
+        return w === undefined ? undefined : { code: w.code, label: w.label, every: w.every, runs: w.runs };
+      },
+      sharedProcesses: () =>
+        this.shared === undefined
+          ? undefined
+          : {
+              file: this.shared.server.url,
+              processes: this.shared.state.processes,
+              problems: this.shared.state.problems,
+              ...(this.shared.state.error !== undefined ? { error: this.shared.state.error } : {}),
+            },
     };
+  }
+
+  /// Where the extension's own files are, for a webview of another view.
+  get extensionUri(): Uri {
+    return this.context.extensionUri;
   }
 
   processes(): Process[] {
@@ -606,6 +821,12 @@ export class Live {
   /// The connected process, as connected to: a discovered one's label qualified.
   activeProcess(): Process | undefined {
     return this.connection?.isOpen ? this.active : undefined;
+  }
+
+  /// The process the file `uri` is bound to by Choose Connection for File,
+  /// if any: where hot reload on save (#934) sends its definitions.
+  fileBinding(uri: Uri): string | undefined {
+    return this.controls.binding(uri);
   }
 
   /// Whether a query is running on the active connection: connecting
@@ -643,6 +864,20 @@ export class Live {
     return call;
   }
 
+  /// Whether a process of this label was started from the Processes view
+  /// and still runs (#954): the launcher sets it.
+  launched: (label: string) => boolean = () => false;
+
+  /// Redraw the Processes view.
+  refreshProcesses(): void {
+    this.processesView.refresh();
+  }
+
+  /// Save `processes` as the list, for the views around this one.
+  saveProcesses(processes: Process[]): Promise<void> {
+    return this.save(processes);
+  }
+
   private async save(processes: Process[]): Promise<void> {
     await this.context.globalState.update(PROCESSES_KEY, processes);
     this.processesView.refresh();
@@ -661,6 +896,26 @@ export class Live {
       void window.showInformationMessage(`q-lint: ${feature} is turned off. Set ${key} to true to turn it on.`);
     }
     return enabled;
+  }
+
+  /// Whether `code` may be sent to `targets`: when the read-only guard
+  /// (#918) finds it would change a guarded one, the user is asked first.
+  /// `what` names the code in the question, when it is not a query.
+  async guardAllows(code: string, targets: Process[], what?: string): Promise<boolean> {
+    const check = guardCheck(code, targets, this.setting(readGuard));
+    if (check === undefined) {
+      return true;
+    }
+    const { message, detail } = guardQuestion(check);
+    const yes = "Run Anyway";
+    return (await window.showWarningMessage(what === undefined ? message : `${what}: ${message}`, { modal: true, detail }, yes)) === yes;
+  }
+
+  /// Why `code` is refused on `targets` to a caller that cannot ask the
+  /// user, an agent; undefined when the guard lets it be sent.
+  guardRefuses(code: string, targets: Process[]): string | undefined {
+    const check = guardCheck(code, targets, this.setting(readGuard));
+    return check === undefined ? undefined : guardRefusal(check);
   }
 
   private showStatus(): void {
@@ -815,7 +1070,7 @@ export class Live {
   /// A discovered process only when `discovered`, with its label qualified;
   /// a label names a saved process before a discovered one.
   private async chosen(row: ProcessArg, title: string, discovered = false): Promise<Process | undefined> {
-    const listed = discovered ? this.discovery.discovered() : [];
+    const listed = discovered ? [...this.discovery.discovered(), ...this.sharedList()] : [];
     if (typeof row === "string") {
       const named = this.processes().find((p) => p.label === row) ?? findDiscovered(listed, row);
       if (named === undefined) {
@@ -856,6 +1111,12 @@ export class Live {
     return picked?.process;
   }
 
+  /// The process a command was given, or one the user picks, a discovered
+  /// one with its label qualified: for the views around this one.
+  pick(row: ProcessArg, title: string): Promise<Process | undefined> {
+    return this.chosen(row, title, true);
+  }
+
   private async edit(row?: ProcessArg): Promise<void> {
     const old = await this.chosen(row, "Edit which q process?");
     if (old === undefined) {
@@ -868,7 +1129,7 @@ export class Live {
       return;
     }
     // The boxes do not ask for the connect script: it is kept.
-    const process = withScript(answer.process, scriptOf(old));
+    const process = withExtras(withScript(answer.process, scriptOf(old)), old);
     // Read again: the list may have changed while the boxes were open.
     const now = this.processes();
     const problem = !now.some((p) => p.label === old.label)
@@ -902,9 +1163,13 @@ export class Live {
       // The connection is still to where it was opened: it takes the new
       // label and tags, and keeps its address until connected again.
       const { host, port, user, tls } = active;
-      this.active = withScript(
-        { label: process.label, host, port, ...(user !== undefined ? { user } : {}), tags: process.tags, ...(tls ? { tls } : {}) },
-        scriptOf(process),
+      this.active = withExtras(
+        withScript(
+          { label: process.label, host, port, ...(user !== undefined ? { user } : {}), tags: process.tags, ...(tls ? { tls } : {}) },
+          scriptOf(process),
+        ),
+        // The tunnel it was opened through stays until connected again.
+        { ...process, ssh: active.ssh },
       );
       this.showStatus();
       // The explorer keeps what it read under the label it read it for.
@@ -1184,6 +1449,10 @@ export class Live {
     if (cut.length === 0) {
       return;
     }
+    if (!(await this.guardAllows(code, [process], `The connect script of ${process.label}`))) {
+      this.show([`# ${process.label} - connect script not run: changing a read-only process was not confirmed`], false);
+      return;
+    }
     const configuration = workspace.getConfiguration("q-lint");
     const { consoleSize } = readLive((key, fallback) => configuration.get(key, fallback));
     const started = Date.now();
@@ -1273,15 +1542,10 @@ export class Live {
         const connection = await window.withProgress(
           { location: { viewId: VIEWS.processes }, title: `Connecting to ${process.label}` },
           async () => {
-            const target = {
-              host: process.host,
-              port: process.port,
-              ...(process.user ? { user: process.user, password: password ?? "" } : {}),
-              ...(process.tls ? { tls: true } : {}),
-            };
+            const target = targetOf(process, password);
             for (;;) {
               try {
-                return await QConnection.open(target);
+                return await this.dial(process, target);
               } catch (error) {
                 const busy = error instanceof Error && error.message.startsWith("no answer from ");
                 if (!untilFree || !busy || this.reconnectStopped) {
@@ -1333,6 +1597,84 @@ export class Live {
       this.connecting = undefined;
     });
     return this.connecting;
+  }
+
+  /// Open a connection to `process` at `target`, through the SSH tunnel it
+  /// names, if it names one (#908): the tunnel closes with the connection,
+  /// and the connection with the tunnel.
+  private async dial(process: Process, target: Target): Promise<QConnection> {
+    if (process.ssh === undefined) {
+      return QConnection.open(target);
+    }
+    if (!this.setting(readTunnel).enabled) {
+      throw new Error(
+        `it is reached through an SSH tunnel via ${process.ssh}, and SSH tunnels are turned off. Set q-lint.connection.sshTunnel.enable to true to turn them on`,
+      );
+    }
+    const tunnel = await SshTunnel.open({ destination: process.ssh, host: target.host, port: target.port });
+    try {
+      const connection = await QConnection.open({
+        ...target,
+        host: "127.0.0.1",
+        port: tunnel.localPort,
+        ...(target.tls ? { servername: net.isIP(target.host) ? undefined : target.host } : {}),
+      });
+      connection.whenClosed(() => tunnel.close());
+      tunnel.whenClosed(() => connection.abort());
+      return connection;
+    } catch (error) {
+      tunnel.close();
+      throw error;
+    }
+  }
+
+  /// A connection of its own to `process`, apart from the active one, with
+  /// its stored password and through its tunnel; the caller closes it.
+  async openSeparate(process: Process): Promise<QConnection> {
+    const password = process.user ? await this.context.secrets.get(passwordKey(process)) : undefined;
+    return this.dial(process, targetOf(process, password));
+  }
+
+  /// Set the SSH destination a saved process is reached through (#908), or
+  /// clear it. `destination` (from a keybinding or a test) sets it without
+  /// asking; `""` or `null` clears it.
+  private async setSshTunnel(row?: ProcessArg, destination?: string | null): Promise<void> {
+    if (!this.featureOn(this.setting(readTunnel).enabled, "SSH tunnels", "q-lint.connection.sshTunnel.enable")) {
+      return;
+    }
+    const process = await this.chosen(row, "Reach which q process through an SSH tunnel?");
+    if (process === undefined) {
+      return;
+    }
+    let given = destination === null ? "" : destination;
+    if (typeof given !== "string") {
+      given = await window.showInputBox({
+        title: `SSH tunnel of ${process.label}`,
+        value: process.ssh ?? "",
+        prompt: `The jump host q-lint runs \`ssh -N -L\` through to reach ${address(process.host, process.port)}, as you would type it: bastion, me@bastion or me@bastion:2222. ssh uses your agent and ~/.ssh/config, and never asks for a password. Empty: connect directly.`,
+        validateInput: (v) => (v.trim() === "" || sshDestination(v) !== undefined ? undefined : "A destination ssh takes: no spaces or quotes, and not starting with -."),
+        ignoreFocusOut: true,
+      });
+      if (given === undefined) {
+        return;
+      }
+    }
+    const ssh = given.trim() === "" ? undefined : sshDestination(given);
+    if (given.trim() !== "" && ssh === undefined) {
+      void window.showErrorMessage(`q-lint: "${given}" is not an SSH destination; the tunnel was not set.`);
+      return;
+    }
+    const now = this.processes();
+    if (!now.some((p) => p.label === process.label)) {
+      void window.showErrorMessage(`q-lint: "${process.label}" was deleted meanwhile; its tunnel was not set.`);
+      return;
+    }
+    await this.save(now.map((p) => (p.label === process.label ? withExtras(p, { ...p, ssh }) : p)));
+    void window.showInformationMessage(
+      ssh === undefined
+        ? `q-lint: ${process.label} is connected to directly from the next connect.`
+        : `q-lint: ${process.label} is reached through an SSH tunnel via ${ssh} from the next connect.`,
+    );
   }
 
   /// Reconnect to `process`, whose connection dropped, waiting longer before
@@ -1455,7 +1797,7 @@ export class Live {
 
   // --- queries
 
-  private async queryFrom(from: From): Promise<void> {
+  private async queryFrom(from: From, serverTypes?: string[]): Promise<void> {
     const editor = window.activeTextEditor;
     if (editor === undefined) {
       noEditor();
@@ -1470,13 +1812,13 @@ export class Live {
     if (code === undefined) {
       return;
     }
-    await this.queryCode(code, editor.document.uri);
+    await this.queryCode(code, editor.document.uri, serverTypes);
   }
 
   /// Run `code` from the document `uri` as a query from the editor is run:
   /// on the process the file is bound to, when it has one. A Run code lens
   /// sends its definition here.
-  async queryCode(code: string, uri: Uri): Promise<void> {
+  async queryCode(code: string, uri: Uri, serverTypes?: string[]): Promise<void> {
     // A file with a process of its own switches the connection to it.
     const bound = this.controls.binding(uri);
     if (bound !== undefined && bound !== this.activeLabel()) {
@@ -1490,7 +1832,97 @@ export class Live {
         return;
       }
     }
-    await this.run(code);
+    // A file can name the server types its queries go to on a gateway.
+    const document = window.activeTextEditor?.document;
+    const named = document !== undefined && document.uri.toString() === uri.toString() ? fileServerTypes(document.getText()) : undefined;
+    await this.run(code, undefined, serverTypes ?? named);
+  }
+
+  /// `code` as it goes to `process`: through `.gw.syncexec` on a TorQ gateway
+  /// (#909), to `serverTypes` or else the process's own; as written to any
+  /// other process, or with q-lint.connection.torqGateway.enable off.
+  private throughGateway(code: string, process: Process, serverTypes?: string[]): string {
+    const types = serverTypes ?? process.gateway;
+    if (process.gateway === undefined || types === undefined || isGatewayCall(code) || !this.setting(readGateway).enabled) {
+      return code;
+    }
+    const cut = statements(code);
+    return cut.length === 0 ? code : gatewayStatement(cut, types);
+  }
+
+  /// Mark a saved process as a TorQ gateway with the server types its
+  /// queries go to, or unmark it. `types` (from a keybinding or a test) sets
+  /// them without asking; `""`, `[]` or `null` unmarks it.
+  private async setGateway(row?: ProcessArg, types?: string | string[] | null): Promise<void> {
+    if (!this.featureOn(this.setting(readGateway).enabled, "TorQ gateways", "q-lint.connection.torqGateway.enable")) {
+      return;
+    }
+    const process = await this.chosen(row, "Mark which q process as a TorQ gateway?");
+    if (process === undefined) {
+      return;
+    }
+    let given: string | string[] | undefined = types === null ? "" : types;
+    if (given === undefined) {
+      given = await window.showInputBox({
+        title: `TorQ gateway: server types of ${process.label}`,
+        value: (process.gateway ?? []).join(" "),
+        prompt: "The server types a query goes to through .gw.syncexec, unless the file or the query names others: rdb hdb. Empty: not a gateway.",
+        validateInput: (v) => (v.trim() === "" || serverTypes(v) !== undefined ? undefined : "Server types are q names: rdb hdb."),
+        ignoreFocusOut: true,
+      });
+      if (given === undefined) {
+        return;
+      }
+    }
+    const gateway = serverTypes(given);
+    const now = this.processes();
+    if (!now.some((p) => p.label === process.label)) {
+      void window.showErrorMessage(`q-lint: "${process.label}" was deleted meanwhile; it was not changed.`);
+      return;
+    }
+    await this.save(now.map((p) => (p.label === process.label ? withExtras(p, { ...p, gateway }) : p)));
+    if (this.active?.label === process.label && this.active.server === undefined) {
+      this.active = withExtras(this.active, { ...this.active, gateway });
+    }
+    void window.showInformationMessage(
+      gateway === undefined
+        ? `q-lint: ${process.label} is no TorQ gateway; its queries go as written.`
+        : `q-lint: queries to ${process.label} go through .gw.syncexec to ${gateway.join(", ")}.`,
+    );
+  }
+
+  /// Query the selection, or the current line, on the connected gateway with
+  /// server types asked for (or `types`, from a keybinding).
+  private async queryGatewayWith(types?: string | string[]): Promise<void> {
+    if (!this.featureOn(this.setting(readGateway).enabled, "TorQ gateways", "q-lint.connection.torqGateway.enable")) {
+      return;
+    }
+    const process = this.activeProcess();
+    if (process?.gateway === undefined) {
+      void window.showInformationMessage(
+        `q-lint: ${process === undefined ? "not connected to a q process" : `${process.label} is not marked as a TorQ gateway`}. Set Gateway Server Types marks one.`,
+      );
+      return;
+    }
+    let given = types;
+    if (given === undefined) {
+      const document = window.activeTextEditor?.document;
+      given = await window.showInputBox({
+        title: `Query ${process.label} on server types`,
+        value: ((document !== undefined ? fileServerTypes(document.getText()) : undefined) ?? process.gateway).join(" "),
+        prompt: "The server types this query goes to through .gw.syncexec: rdb hdb.",
+        validateInput: (v) => (serverTypes(v) !== undefined ? undefined : "Server types are q names: rdb hdb."),
+      });
+      if (given === undefined) {
+        return;
+      }
+    }
+    const chosen = serverTypes(given);
+    if (chosen === undefined) {
+      void window.showErrorMessage("q-lint: no server types given; nothing was run.");
+      return;
+    }
+    await this.queryFrom("selection", chosen);
   }
 
   /// `code` with its `{{name}}` placeholders given the values the user
@@ -1558,11 +1990,31 @@ export class Live {
   /// Run `query` on the active connection, connecting first if there is
   /// none, for a caller that shows its own result - a notebook cell. The
   /// status bar shows it running, and `abort` stops waiting for it.
-  /// Undefined when nothing was run; throws what `query` throws.
-  async runOnActive<T>(code: string, query: (connection: QConnection) => Promise<T>): Promise<{ process: string; value: T } | undefined> {
-    const ready = await this.ready();
+  /// Undefined when nothing was run; throws what `query` throws, and why
+  /// the read-only guard did not let `code` be sent: asked and declined, or
+  /// refused outright for a caller that cannot ask (`guard` "refuse").
+  async runOnActive<T>(
+    code: string,
+    query: (connection: QConnection) => Promise<T>,
+    guard: "ask" | "refuse" = "ask",
+  ): Promise<{ process: string; value: T } | undefined> {
+    let ready = await this.ready();
     if (ready === undefined) {
       return undefined;
+    }
+    const refused = this.guardRefuses(code, [ready.process]);
+    if (refused !== undefined) {
+      if (guard === "refuse") {
+        throw new Error(refused);
+      }
+      if (!(await this.guardAllows(code, [ready.process]))) {
+        throw new Error(`Not run: changing the read-only process ${ready.process.label} was not confirmed.`);
+      }
+      // The connection can have changed while the question was open.
+      ready = this.stillReady(ready);
+      if (ready === undefined) {
+        return undefined;
+      }
     }
     const started = Date.now();
     this.running = { code, started };
@@ -1579,14 +2031,255 @@ export class Live {
     }
   }
 
-  /// Run `code` on the active connection, connecting first if there is none.
-  /// The process explorer's Preview runs here too.
-  async run(code: string): Promise<void> {
+  /// `ready`, when its connection is still the active one and free: a
+  /// question asked since can have taken a while. Says why not.
+  private stillReady(ready: { connection: QConnection; process: Process }): { connection: QConnection; process: Process } | undefined {
+    if (ready.connection !== this.connection || !ready.connection.isOpen) {
+      void window.showInformationMessage(`q-lint: the connection to ${ready.process.label} closed while you were asked; nothing was run.`);
+      return undefined;
+    }
+    if (ready.connection.isBusy) {
+      void window.showInformationMessage(`q-lint: a query started on ${ready.process.label} while you were asked; nothing was run.`);
+      return undefined;
+    }
+    return ready;
+  }
+
+  /// The code a command takes from the active editor: the selection, or the
+  /// statement the cursor is in, its `{{name}}` placeholders filled in
+  /// unless `fill` is false. Undefined, having said why, when there is none
+  /// or the user pressed Escape.
+  async codeFromEditor(fill = true): Promise<string | undefined> {
+    const editor = window.activeTextEditor;
+    if (editor === undefined) {
+      noEditor();
+      return undefined;
+    }
+    const from: From = editor.selection.isEmpty ? "block" : "selection";
+    const written = codeAt(editor, from);
+    if (written === undefined || statements(written).length === 0) {
+      nothingThere(from);
+      return undefined;
+    }
+    return fill ? this.filledIn(written) : written;
+  }
+
+  /// Run `code` as a query from the editor is run, its placeholders asked
+  /// for first: a saved query (#912).
+  async runFilledIn(code: string): Promise<void> {
+    const filled = await this.filledIn(code);
+    if (filled !== undefined) {
+      await this.run(filled);
+    }
+  }
+
+  /// The process `row` names, or one the user picks, saved or discovered.
+  choose(row: ProcessArg, title: string): Promise<Process | undefined> {
+    return this.chosen(row, title, true);
+  }
+
+  /// Run `code` on `process` over a connection of its own, opened for it
+  /// and closed after, so the active connection and its status are left
+  /// alone: Query a Tag and Compare Query run here (#906, #907). Its
+  /// connect script runs first. The answer is asked for as a grid-mode
+  /// query asks, within the query controls (unlimited, unwrapped, the
+  /// timeout); `signal` stops waiting. Throws why there is no answer. The
+  /// caller asks the read-only guard first.
+  async runApart(process: Process, code: string, signal?: AbortSignal): Promise<GridAnswer> {
+    const password = process.user ? await this.context.secrets.get(passwordKey(process)) : undefined;
+    if (process.user && password === undefined && process.server !== undefined) {
+      throw new Error(`no password is stored for ${process.user}: connect to ${process.label} once to give it`);
+    }
+    const connection = await QConnection.open(
+      {
+        host: process.host,
+        port: process.port,
+        ...(process.user ? { user: process.user, password: password ?? "" } : {}),
+        ...(process.tls ? { tls: true } : {}),
+      },
+      undefined,
+      signal,
+    );
+    const stop = (): void => connection.abort();
+    signal?.addEventListener("abort", stop);
+    const controls = this.controls.settings();
+    let timedOut = false;
+    const disarm = armTimeout(controls.timeout, () => {
+      timedOut = true;
+      connection.abort();
+    });
+    try {
+      await this.runConnectScript(connection, process);
+      const configuration = workspace.getConfiguration("q-lint");
+      const settings = readLive((key, fallback) => configuration.get(key, fallback));
+      const unlimited = this.controls.unlimited;
+      const { consoleSize, gridLimit } = limits(settings, unlimited);
+      const cut = statements(code);
+      return controls.unwrapped
+        ? await runUnwrapped(connection, cut, { size: consoleSize, limit: gridLimit, unlimited, grid: true })
+        : await connection.queryGrid(cut, consoleSize, gridLimit);
+    } catch (error) {
+      throw timedOut ? new Error(timedOutError(controls.timeout)) : signal?.aborted ? new Error("cancelled") : error;
+    } finally {
+      disarm();
+      signal?.removeEventListener("abort", stop);
+      void connection.close();
+    }
+  }
+
+  /// Show `payload` in the result panel, as a grid when the query mode is
+  /// the console, under `label`: Query a Tag's merged table.
+  showGrid(label: string, code: string, payload: GridPayload, millis: number): void {
+    const configuration = workspace.getConfiguration("q-lint");
+    const settings = readLive((key, fallback) => configuration.get(key, fallback));
+    this.modes.show(
+      { process: label, code, millis, answer: { ok: true, type: 98, text: [], grid: payload } },
+      { ...settings, mode: settings.mode === "console" ? "grid" : settings.mode },
+    );
+  }
+
+  /// Watch Query (#914): run `code` (one given, or the editor's selection
+  /// or statement at the cursor) on the active connection now and then
+  /// every `every` seconds (one given, or asked for), refreshing its result
+  /// in place, until stopped, disconnected, or connected elsewhere. A run
+  /// due while a query is out is skipped. The read-only guard asks once, at
+  /// the start, as does a guarded or production process.
+  async watch(given?: string, every?: number): Promise<void> {
+    if (!this.featureOn(this.setting(readWatch).enabled, "Watch Query", "q-lint.query.watch.enable")) {
+      return;
+    }
+    const code = typeof given === "string" ? given : await this.codeFromEditor();
+    if (code === undefined) {
+      return;
+    }
+    if (statements(code).length === 0) {
+      void window.showInformationMessage("q-lint: the query is empty: it is blank or only comments.");
+      return;
+    }
+    let seconds = typeof every === "number" && intervalProblem(String(every)) === undefined ? every : undefined;
+    if (seconds === undefined) {
+      const text = await window.showInputBox({
+        title: "Watch Query: every how many seconds?",
+        value: String(this.setting(readWatch).interval),
+        prompt: "The query runs now, and again at this interval until Stop Watching Query, a disconnect, or a connect elsewhere.",
+        validateInput: intervalProblem,
+      });
+      if (text === undefined) {
+        return;
+      }
+      seconds = Number(text.trim());
+    }
     const ready = await this.ready();
     if (ready === undefined) {
       return;
     }
+    const { process } = ready;
+    if (!(await this.guardAllows(code, [process]))) {
+      return;
+    }
+    const tags = guardedBy(process, this.setting(readGuard));
+    if (tags.length > 0 || isProduction(process)) {
+      const yes = "Watch";
+      const asked = await window.showWarningMessage(
+        `Watch the query on ${process.label}?`,
+        {
+          modal: true,
+          detail: `${process.label} is tagged ${process.tags.join(", ")}. The query runs there every ${seconds} s until you stop it.`,
+        },
+        yes,
+      );
+      if (asked !== yes) {
+        return;
+      }
+    }
+    if (this.activeLabel() !== process.label) {
+      void window.showInformationMessage(`q-lint: the connection moved from ${process.label} while you were asked; nothing is watched.`);
+      return;
+    }
+    this.stopWatching();
+    const status = window.createStatusBarItem("q-lint.watch", StatusBarAlignment.Left, 48);
+    status.name = "q-lint: watched query";
+    status.command = WATCH.stop;
+    status.tooltip = `Watching on ${process.label} every ${seconds} s:\n${code}\nClick to stop.`;
+    this.watching = {
+      code,
+      label: process.label,
+      every: seconds,
+      runs: 0,
+      timer: setInterval(() => void this.watchRun(), seconds * 1000),
+      status,
+      running: false,
+    };
+    void commands.executeCommand("setContext", WATCHING, true);
+    status.show();
+    await this.watchRun();
+  }
+
+  /// One run of the watched query; skipped while a query, or the last run,
+  /// is still out.
+  private async watchRun(): Promise<void> {
+    const watched = this.watching;
+    if (watched === undefined || watched.running) {
+      return;
+    }
+    if (this.activeLabel() !== watched.label) {
+      this.stopWatching(`the connection is no longer to ${watched.label}`);
+      return;
+    }
+    if (this.connection?.isBusy || this.borrowed !== undefined) {
+      return;
+    }
+    watched.running = true;
+    const first = watched.runs === 0;
+    watched.runs++;
+    watched.status.text = watchText(iconsEscaped(watched.label), watched.every, watched.runs);
+    try {
+      await this.run(watched.code, first ? "watch" : "watched");
+    } finally {
+      watched.running = false;
+    }
+  }
+
+  /// Stop the watch, if there is one, saying why when `why` is given.
+  private stopWatching(why?: string): void {
+    const watched = this.watching;
+    if (watched === undefined) {
+      if (why === undefined && !this.disposed) {
+        void window.showInformationMessage("q-lint: no query is watched.");
+      }
+      return;
+    }
+    this.watching = undefined;
+    clearInterval(watched.timer);
+    watched.status.dispose();
+    void commands.executeCommand("setContext", WATCHING, false);
+    if (why !== undefined) {
+      void window.showInformationMessage(`q-lint: stopped watching the query: ${why}.`);
+    }
+  }
+
+  /// Run `code` on the active connection, connecting first if there is none.
+  /// The process explorer's Preview runs here too. A watched query's first
+  /// run (`watch`) asks nothing more, and its later ones (`watched`) are
+  /// not recorded, and refresh the result in place. On a TorQ gateway the
+  /// code goes through `.gw.syncexec` to `serverTypes` (#909); the guard
+  /// reads it as written.
+  async run(written: string, as?: "watch" | "watched", serverTypes?: string[]): Promise<void> {
+    let ready = await this.ready();
+    if (ready === undefined) {
+      return;
+    }
+    if (as === undefined && this.guardRefuses(written, [ready.process]) !== undefined) {
+      if (!(await this.guardAllows(written, [ready.process]))) {
+        return;
+      }
+      ready = this.stillReady(ready);
+      if (ready === undefined) {
+        return;
+      }
+    }
     const { connection, process } = ready;
+    const code = this.throughGateway(written, process, serverTypes);
     const configuration = workspace.getConfiguration("q-lint");
     const settings = readLive((key, fallback) => configuration.get(key, fallback));
     const controls = this.controls.settings();
@@ -1607,10 +2300,15 @@ export class Live {
       // Grid and chart modes ask for the rows too; a value that is not
       // tabular comes back as console mode's text.
       const cut = statements(code);
+      // Paging (#922) leaves a cut result on the process: never in
+      // unwrapped mode, which sends nothing of ours, nor on production or
+      // a process the read-only guard (#918) guards, as holding assigns.
+      const readOnly = isProduction(process) || guardedBy(process, this.setting(readGuard)).length > 0;
+      const hold = !controls.unwrapped && settings.mode !== "console" && this.modes.wantsHold(readOnly);
       const answer = controls.unwrapped
         ? await runUnwrapped(connection, cut, { size: consoleSize, limit: gridLimit, unlimited, grid: settings.mode !== "console" })
         : settings.mode !== "console"
-          ? await connection.queryGrid(cut, consoleSize, gridLimit, this.modes.wantsTree())
+          ? await connection.queryGrid(cut, consoleSize, gridLimit, this.modes.wantsTree(), hold)
           : unlimited
             ? readUnlimited(await connection.call(UNLIMITED, cut, consoleSize))
             : await connection.query(cut, consoleSize);
@@ -1623,8 +2321,8 @@ export class Live {
         outcome: answer.ok ? "ok" : "error",
         ...(answer.ok ? {} : { error: answer.error }),
       };
-      if (!this.modes.show({ process: process.label, code, answer, millis }, settings)) {
-        this.show(render({ process: process.label, code, answer, millis }, settings), settings.autoClear);
+      if (!this.modes.show({ process: process.label, code, answer, millis, held: hold }, settings, as === "watched")) {
+        this.show(render({ process: process.label, code, answer, millis }, settings), settings.autoClear || as === "watched");
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -1652,9 +2350,53 @@ export class Live {
       }
       this.showStatus();
     }
+    if (as === "watched") {
+      return;
+    }
     this.changed.fire("queried");
     this.notifyFinished(entry);
     await this.record(entry);
+  }
+
+  /// Rows `offset` on of the result `label`'s process holds for paging, or
+  /// why they could not be fetched. Only on the connection the result came
+  /// from, and only when no query is running on it.
+  private async pageHeld(label: string, offset: number, count: number): Promise<GridPage | string> {
+    const connection = this.connection;
+    if (connection === undefined || this.activeLabel() !== label) {
+      return `it is no longer the connected process; run the query again to page through it`;
+    }
+    if (connection.isBusy) {
+      return "a query is running on it; scroll again once it ends";
+    }
+    return readPage(await connection.call(PAGE, offset, count));
+  }
+
+  /// Run a drill-down query on the process the result came from, as a
+  /// query from the editor is run, after asking when it is a production one.
+  private async runDrilldown(code: string, label: string): Promise<void> {
+    const process = this.processes().find((p) => p.label === label) ?? (this.active?.label === label ? this.active : undefined);
+    if (process !== undefined && isProduction(process)) {
+      const yes = "Run";
+      const sure = await window.showWarningMessage(
+        `${process.label} is a production process (tagged ${process.tags.join(", ")}). Run this drill-down query there?\n\n${code}`,
+        { modal: true },
+        yes,
+      );
+      if (sure !== yes) {
+        return;
+      }
+    }
+    if (this.activeLabel() !== label) {
+      if (this.connection?.isBusy) {
+        void window.showInformationMessage(`q-lint: a query is still running on ${this.active?.label}; the drill-down query goes to ${label}.`);
+        return;
+      }
+      if (!(await this.connectTo(label))) {
+        return;
+      }
+    }
+    await this.run(code);
   }
 
   /// Say a long query has ended, when the window is not focused: the user

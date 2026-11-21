@@ -43,13 +43,27 @@ const { AGENT } = require("../out/agent.js");
 const { SOURCE_COMMANDS } = require("../out/funcsource.js");
 const { INFO, readMonitorInterval } = require("../out/monitor.js");
 const { readInsight } = require("../out/insightconfig.js");
+const { EDITOR_SETTINGS, editorFeatureOn } = require("../out/editorfeatures.js");
+const { CHECK_UNDEFINED } = require("../out/undefinednames.js");
+const { readAssist, QUERY_FEATURES } = require("../out/assistconfig.js");
+const { DRIFT_COMMANDS } = require("../out/definitions.js");
+const { QSQL_COMMANDS } = require("../out/assist.js");
 const { CONTROL_COMMANDS, readControls } = require("../out/querycontrols.js");
 const { readProgress } = require("../out/progress.js");
 const { readPlaceholders } = require("../out/placeholders.js");
 const { HISTORY_COMMANDS, readHistorySearch } = require("../out/historyfilter.js");
 const { CONNECT_SCRIPT_COMMANDS } = require("../out/connectscript.js");
+const { TUNNEL_COMMANDS } = require("../out/tunnel.js");
+const { GATEWAY_COMMANDS } = require("../out/gateway.js");
+const { STREAM_COMMANDS } = require("../out/stream.js");
+const { LAUNCH_COMMANDS } = require("../out/launcher.js");
+const { SHARED_COMMANDS } = require("../out/shared.js");
 const { ONBOARDING } = require("../out/onboarding.js");
 const { PARAM_CACHE } = require("../out/paramcache.js");
+const { TAG_QUERY, readTagQuery } = require("../out/tagquery.js");
+const { COMPARE, readCompare } = require("../out/compare.js");
+const { SAVED_QUERIES, readSavedQueries } = require("../out/savedqueries.js");
+const { WATCH, readWatch } = require("../out/watch.js");
 
 test("a statement is a line and the indented lines after it", () => {
   assert.deepStrictEqual(statements("a:1\nb:a+1\nb*10"), ["a:1", "b:a+1", "b*10"]);
@@ -270,6 +284,11 @@ test("package.json declares exactly the commands the extension registers", () =>
     ...Object.values(CONTROL_COMMANDS),
     ...Object.values(HISTORY_COMMANDS),
     ...Object.values(CONNECT_SCRIPT_COMMANDS),
+    ...Object.values(TUNNEL_COMMANDS),
+    ...Object.values(GATEWAY_COMMANDS),
+    ...Object.values(STREAM_COMMANDS),
+    ...Object.values(LAUNCH_COMMANDS),
+    ...Object.values(SHARED_COMMANDS),
     ...Object.values(PARAM_CACHE),
     ...Object.values(DISCOVERY_COMMANDS),
     ...Object.values(EXPLORER).filter((id) => id !== EXPLORER.view),
@@ -287,6 +306,13 @@ test("package.json declares exactly the commands the extension registers", () =>
     ...Object.values(SOURCE_COMMANDS),
     INFO.refreshMonitor,
     INFO.refreshHdb,
+    ...Object.values(TAG_QUERY),
+    ...Object.values(COMPARE),
+    ...Object.values(SAVED_QUERIES).filter((id) => id !== SAVED_QUERIES.view),
+    ...Object.values(WATCH),
+    CHECK_UNDEFINED,
+    ...Object.values(DRIFT_COMMANDS),
+    ...Object.values(QSQL_COMMANDS),
   ].sort();
   assert.deepStrictEqual(declared, registered);
 });
@@ -296,7 +322,7 @@ test("the views live in their own container, and every menu names a declared com
   assert.strictEqual(container.id, VIEWS.container);
   assert.deepStrictEqual(
     pkg.contributes.views[VIEWS.container].map((v) => v.id),
-    [VIEWS.processes, EXPLORER.view, VIEWS.history, ONBOARDING.helpView, INFO.monitor, INFO.hdb, NOTEBOOK.variablesView],
+    [VIEWS.processes, EXPLORER.view, VIEWS.history, ONBOARDING.helpView, INFO.monitor, INFO.hdb, NOTEBOOK.variablesView, SAVED_QUERIES.view],
   );
   const declared = new Set(pkg.contributes.commands.map((c) => c.command));
   for (const [where, items] of Object.entries(pkg.contributes.menus)) {
@@ -378,8 +404,17 @@ test("every query setting is read, with the default package.json declares, and n
   const progress = readProgress(get);
   const placeholders = readPlaceholders(get);
   const historySearch = readHistorySearch(get);
+  assert.deepStrictEqual(readTagQuery(get), { enabled: true });
+  assert.deepStrictEqual(readCompare(get), { enabled: true });
+  assert.deepStrictEqual(readSavedQueries(get), { enabled: true });
+  assert.deepStrictEqual(readWatch(get), { enabled: false, interval: 5 });
   readMonitorInterval(get);
   readInsight(get);
+  // Each editor feature's switch that is declared here (#939, #940, #944, #945).
+  for (const [feature, { key }] of Object.entries(EDITOR_SETTINGS)) {
+    if (`q-lint.${key}` in declared) editorFeatureOn(get, feature);
+  }
+  readAssist(get, QUERY_FEATURES);
   for (const [key, spec] of Object.entries(declared)) {
     const short = key.replace(/^q-lint\./, "");
     assert.ok(read.has(short), `${key} is declared but never read`);
@@ -402,7 +437,8 @@ test("every query setting is read, with the default package.json declares, and n
   assert.deepStrictEqual(resultView, {
     history: 10,
     heatmap: false,
-    enable: { history: true, diff: true, statistics: true, heatmap: true, tree: true },
+    enable: { history: true, diff: true, statistics: true, heatmap: true, tree: true, export: true, paging: false, pivot: true, charts: true, drilldown: true },
+    drilldown: [],
   });
   const view = (values) => readResultView((key, fallback) => (key in values ? values[key] : fallback));
   assert.strictEqual(view({ "query.resultHistory": 0 }).history, 1);

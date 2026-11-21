@@ -28,7 +28,19 @@ import { Relations } from "./relate";
 import { Serial } from "./serial";
 import { FunctionSources } from "./funcsourceview";
 import { registerInfoViews } from "./infoview";
+import { QueryAcross } from "./queryacross";
+import { SavedQueries } from "./savedqueriesview";
+import { TableStreams } from "./streamview";
+import { Launcher } from "./launcherview";
 import type { InfoNode } from "./monitor";
+import { registerTestExplorer } from "./testexplorer";
+import { registerValueHover } from "./valuehoverview";
+import { registerUndefinedNames } from "./undefinednamesview";
+import { registerIdioms } from "./idiomsview";
+import { Drift } from "./driftview";
+import { registerAssistTools } from "./assisttools";
+import { registerChat } from "./chat";
+import { registerQsqlDraft } from "./qsqldraft";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -57,6 +69,18 @@ let channel: OutputChannel | undefined;
 /// The dependencies view and the affected-tests list, which ask whichever
 /// `client` is running and are told when it changes.
 let relations: Relations | undefined;
+/// The Test Explorer integration, which asks the running `client` for the
+/// tests and is told when it changes.
+let testExplorer: ReturnType<typeof registerTestExplorer> | undefined;
+
+/// The server's requests, while one runs.
+const running = () => (client?.isRunning() ? client : undefined);
+
+/// Tell what asks the server that it changed.
+function serverChanged(): void {
+  relations?.serverChanged();
+  testExplorer?.serverChanged();
+}
 
 /// The server this extension was packaged with, if it was packaged with one.
 ///
@@ -97,6 +121,17 @@ export async function activate(
     processMonitor: () => InfoNode[];
     hdbBrowser: () => InfoNode[];
     functionSources: FunctionSources["state"];
+    queryAcross: QueryAcross["state"];
+    savedQueries: SavedQueries["queries"];
+    tableStreams: TableStreams["state"];
+    launchedProcesses: Launcher["running"];
+    testExplorer: Omit<ReturnType<typeof registerTestExplorer>, "serverChanged">;
+    valueHover: ReturnType<typeof registerValueHover>;
+    undefinedNames: ReturnType<typeof registerUndefinedNames>;
+    idioms: ReturnType<typeof registerIdioms>;
+    hotReload: Drift["hotReloadState"];
+    assistTools: () => string[];
+    chatParticipant: () => boolean;
   }
 > {
   // Replacing the binary does not restart the server, and a window reload is
@@ -140,11 +175,27 @@ export async function activate(
   const explorer = new ProcessExplorer(context, live);
   const sources = new FunctionSources(context, live);
   const infoViews = registerInfoViews(context, live);
+  const across = new QueryAcross(context, live);
+  const saved = new SavedQueries(context, live);
+  const drift = new Drift(context, live);
+  // The tools' qlinter is the one the server is started from.
+  const assistTools = registerAssistTools(context, live, () => {
+    const { serverPath } = launch(workspace.getConfiguration("q-lint"), workspace.workspaceFolders?.[0]?.uri.fsPath);
+    return serverPath ? [serverPath] : [bundledServer(context), "qlinter"].filter((c): c is string => !!c);
+  });
+  const chatParticipant = registerChat(context, live);
+  registerQsqlDraft(context, live);
   registerOnboarding(context, () => live.processes());
+  const streams = new TableStreams(context, live);
+  const launcher = new Launcher(context, live);
   relations = new Relations(context, () => client);
+  testExplorer = registerTestExplorer(context, live, running);
+  const valueHover = registerValueHover(context, live, running);
+  const undefinedNames = registerUndefinedNames(context, live, running);
+  const idioms = registerIdioms(context);
   // Not awaited: nothing above needs the server, and a slow or hung one
   // would hold up every command of the extension until it answered.
-  void serial.run(() => start(context)).then(() => relations?.serverChanged());
+  void serial.run(() => start(context)).then(() => serverChanged());
   return {
     ...live.api(),
     explorer: () => explorer.rows(),
@@ -155,6 +206,17 @@ export async function activate(
     processMonitor: infoViews.monitor,
     hdbBrowser: infoViews.hdb,
     functionSources: () => sources.state(),
+    queryAcross: () => across.state(),
+    savedQueries: () => saved.queries(),
+    tableStreams: () => streams.state(),
+    launchedProcesses: () => launcher.running(),
+    testExplorer: { discover: testExplorer.discover, items: testExplorer.items, results: testExplorer.results, run: testExplorer.run },
+    valueHover,
+    undefinedNames,
+    idioms,
+    hotReload: () => drift.hotReloadState(),
+    assistTools: assistTools.registered,
+    chatParticipant: chatParticipant.registered,
   };
 }
 
@@ -165,7 +227,7 @@ function restart(context: ExtensionContext, asked = false): Promise<void> {
     await client?.stop().catch(() => {});
     client = undefined;
     await start(context);
-    relations?.serverChanged();
+    serverChanged();
     if (asked && client === undefined && workspace.getConfiguration("q-lint").get<unknown>("enable", true) === false) {
       void window.showInformationMessage("q-lint: the language server is turned off (q-lint.enable), so Restart Server started none.");
     }
@@ -181,7 +243,7 @@ function stop(): Promise<void> {
   return serial.run(async () => {
     await client?.stop().catch(() => {});
     client = undefined;
-    relations?.serverChanged();
+    serverChanged();
   });
 }
 

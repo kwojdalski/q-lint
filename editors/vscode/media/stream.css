@@ -1,0 +1,68 @@
+/* A tickerplant table's live grid (#915), in the editor's theme. */
+html,
+body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  background: var(--vscode-editor-background);
+  color: var(--vscode-foreground);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+}
+
+header {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--vscode-panel-border, transparent);
+}
+
+header .status {
+  color: var(--vscode-descriptionForeground);
+}
+
+header .closed {
+  color: var(--vscode-errorForeground);
+}
+
+button {
+  font: inherit;
+  color: var(--vscode-button-secondaryForeground);
+  background: var(--vscode-button-secondaryBackground);
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 2px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+main {
+  flex: 1;
+  overflow: auto;
+}
+
+table {
+  border-collapse: collapse;
+  font-family: var(--vscode-editor-font-family);
+  font-size: var(--vscode-editor-font-size);
+}
+
+th,
+td {
+  padding: 1px 8px;
+  text-align: left;
+  white-space: pre;
+  border-bottom: 1px solid var(--vscode-editorWidget-border, transparent);
+}
+
+th {
+  position: sticky;
+  top: 0;
+  background: var(--vscode-editor-background);
+  font-weight: 600;
+}

@@ -552,7 +552,8 @@ last parameter and one spelled as the parameter itself get none.
 
 `textDocument/codeLens`, when `codeLens.enable` asks for it, puts a **Run**
 lens on the name of each function a statement at column 0 defines, and a
-**Run test** lens too when its name starts `test_`. Each runs the command
+**Run test** lens too when its name starts `test_`, or `test` and a capital
+as qUnit's do. Each runs the command
 `q-lint.runDefinition` with two arguments: the code to send and the
 document's URI. Run's code is the statement, wrapped in `\d .ns` and `\d .`
 when it is written under `\d .ns`; Run test's is that, then a call of the
@@ -567,6 +568,26 @@ passes and `/ @return` at the start of the definition's line, below any
 description already there, and is not offered when the comment above has an
 `@param` or `@return`. `generateQdoc.enable: false` withdraws it and its kind
 from `codeActionKinds`.
+
+A code action of kind `refactor.extract.function`, **Extract function as
+extracted**, is offered over a selection - with no `context.only` and no
+diagnostics in the request, or with a `context.only` naming `refactor` or
+`refactor.extract`. It defines the selection as a lambda directly above the
+top-level statement it is in, so under the same `\d`, taking as parameters
+the parameters and locals of the lambda around it that the selection reads,
+and puts a call to it in the selection's place:
+`f:{[a;b] a+b*2}` with `b*2` selected becomes `extracted:{[b] b*2}` and
+`f:{[a;b] a+extracted[b]}`. The name is `extracted`, or `extracted2` and on,
+whichever the file does not already spell. Only a selection q reads as one
+value is rewritten: a single term (a name, a literal, a bracketed group,
+with its indexes) anywhere, or everything from a noun to the end of its
+expression - q reads right to left, so `y*z` in `x+y*z` is one, and `x+y`
+is not. A selection that assigns or returns, names `.z.s`, sits in a qSQL
+phrase or a signature, cuts a name, string, symbol or list of numbers, or
+reads more than 8 locals is refused; to a client with
+`codeAction.disabledSupport` that asked by kind, the action comes back
+disabled with the reason. `extractFunction.enable: false` withdraws it and
+its kind.
 
 Completion is off unless `completion.enable` asks for it, because an editor
 told that a server completes stops offering the words already in the buffer,
@@ -631,6 +652,29 @@ tests is left to whatever runs them. Each request draws the graph again
 from what the index already holds - about a quarter of a second over 3,665
 files - so a client should ask when a view is shown or a file saved, not on
 every keystroke.
+
+Three more of its own, also under `capabilities.experimental`, are what a
+client asks before it talks to a q process. The server runs nothing and
+connects to nothing: it reads, and the client runs the tests, reads the
+value or asks the process which names it defines.
+
+```
+q-lint/tests            {} or {"textDocument": {"uri": U}}
+                     -> [{"uri": uri, "tests": [{"name": as written, "range": R,
+                                                  "code": C, "call": "ns.test_x[]"}]}]
+q-lint/globalAt         {"textDocument": {"uri": U}, "position": P}
+                     -> {"names": [name q may resolve it to], "range": R}, or null
+q-lint/unresolvedNames  {"textDocument": {"uri": U}}
+                     -> [{"names": [name], "written": as written, "range": R}]
+```
+
+`tests` lists the functions a **Run test** lens is drawn over, in every
+indexed file or one: `code` is the lens's (the statement, wrapped in `\d`
+when written under one) and `call` runs it. `globalAt` names the global at
+a position, and is null on a local, a word of q's or nothing. `unresolvedNames`
+lists the globals a document reads that no indexed file defines - not q's
+words, a one-letter namespace's names, a system command's, or one in a qSQL
+phrase other than the table after `from`, which may be a column.
 
 Every answer names a file the way the client knows it: an open document by
 the URI it was opened with, and a file under a workspace folder by that
@@ -731,6 +775,7 @@ Every key is optional, and these are the defaults:
  "callHierarchy": {"enable": true}, "graph": {"enable": true},
  "rename": {"enable": true}, "inlayHints": {"enable": true}, "codeLens": {"enable": false},
  "documentLinks": {"enable": true}, "generateQdoc": {"enable": true},
+ "extractFunction": {"enable": true},
  "workspaceIndex": {"enable": true, "exclude": []}}
 ```
 

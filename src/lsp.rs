@@ -54,6 +54,11 @@
 //! as `qlinter analyze graph` has them, and `q-lint/affectedTests`, the test
 //! files reaching the files a client says changed. Which files changed is
 //! git's to say and the client's to ask: this server starts no process.
+//! And what a client asks before it talks to a q process, in `live`, also
+//! under `experimental`: `q-lint/tests`, the test functions to run,
+//! `q-lint/globalAt`, the global a position names, and
+//! `q-lint/unresolvedNames`, the globals a document reads that no workspace
+//! file defines. The client runs and asks; this server reads.
 //!
 //! Around those: each diagnostic links its code to that rule's row in the
 //! reference (`codeDescription`); beside its fix, or without one, a finding
@@ -165,6 +170,7 @@ const REQUEST_CANCELLED: i64 = -32800;
 
 mod annotate;
 mod help;
+mod live;
 mod navigate;
 mod relate;
 
@@ -643,6 +649,11 @@ struct Options {
     document_links: bool,
     /// Offer the code action that writes a qDoc block above a function.
     generate_qdoc: bool,
+    /// Offer Extract Function on a selection.
+    extract_function: bool,
+    /// Whether the client shows an action it cannot take with the reason
+    /// (`codeAction.disabledSupport`): a capability, not a setting.
+    disabled_actions: bool,
     /// A diagnostic severity by code or prefix; the longest that names a
     /// code decides.
     severity: Vec<(String, i64)>,
@@ -667,6 +678,8 @@ impl Default for Options {
             code_lens: false,
             document_links: true,
             generate_qdoc: true,
+            extract_function: true,
+            disabled_actions: false,
             severity: vec![],
         }
     }
@@ -703,6 +716,7 @@ impl Options {
                         "codeLens",
                         "documentLinks",
                         "generateQdoc",
+                        "extractFunction",
                     ]
                     .contains(&key.as_str())
                         && !value.is_object()
@@ -738,6 +752,11 @@ impl Options {
         options.code_lens = flag("/codeLens/enable", false);
         options.document_links = flag("/documentLinks/enable", true);
         options.generate_qdoc = flag("/generateQdoc/enable", true);
+        options.extract_function = flag("/extractFunction/enable", true);
+        options.disabled_actions = params
+            .pointer("/capabilities/textDocument/codeAction/disabledSupport")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         match init.pointer("/lint/run") {
             None | Some(Value::Null) => {}
             Some(v) if v == "onType" => {}
@@ -1052,6 +1071,7 @@ pub fn serve(
                 help_client = help::Client::read(&params);
                 help::announce(&mut result["capabilities"], opts.help, opts.completion);
                 relate::announce(&mut result["capabilities"], opts.call_hierarchy, opts.graph);
+                live::announce(&mut result["capabilities"]);
                 annotate::announce(
                     &mut result["capabilities"],
                     opts.inlay_hints,
@@ -1130,7 +1150,9 @@ pub fn serve(
                 | "textDocument/inlayHint"
                 | "textDocument/codeLens"
                 | "textDocument/documentLink"
-                | "q-lint/graph",
+                | "q-lint/graph"
+                | "q-lint/globalAt"
+                | "q-lint/unresolvedNames",
                 id,
             ) if !params["textDocument"]["uri"].is_string() => {
                 let message = format!("{method}: params.textDocument.uri must be a string");
@@ -1340,6 +1362,16 @@ pub fn serve(
                     Err(panic) => send(writer, internal_error(id, &panic))?,
                 }
             }
+            ("q-lint/tests" | "q-lint/globalAt" | "q-lint/unresolvedNames", Some(id)) => {
+                let answer = guarded(|| {
+                    let sources = navigate::Sources::new(&docs, &idx);
+                    live::answer(&method, &params, &sources)
+                });
+                match answer {
+                    Ok(result) => send(writer, json!({"id": id, "result": result}))?,
+                    Err(panic) => send(writer, internal_error(id, &panic))?,
+                }
+            }
             (
                 "textDocument/prepareCallHierarchy"
                 | "callHierarchy/incomingCalls"
@@ -1496,6 +1528,9 @@ fn capabilities(opts: &Options, code_action_literals: bool) -> Value {
         let mut kinds = vec![QUICK_FIX, FIX_ALL];
         if opts.generate_qdoc {
             kinds.push(REWRITE);
+        }
+        if opts.extract_function {
+            kinds.push(EXTRACT);
         }
         capabilities["codeActionProvider"] = json!({ "codeActionKinds": kinds });
     }
@@ -1719,6 +1754,8 @@ const QUICK_FIX: &str = "quickfix";
 const FIX_ALL: &str = "source.fixAll.q-lint";
 /// The kind of the action that writes a qDoc block above a function.
 const REWRITE: &str = "refactor.rewrite";
+/// The kind of Extract Function.
+const EXTRACT: &str = "refactor.extract.function";
 
 /// Whether a kind the client asks for (`context.only`) takes in `kind`. Kinds
 /// are hierarchical, a dot at a time: `source` and `source.fixAll` each ask
@@ -1765,6 +1802,22 @@ fn code_actions(
             .is_none_or(|only| only.iter().any(|kind| asks_for(kind, REWRITE)))
     {
         actions.extend(qdoc_action(params, docs));
+    }
+    // Unasked for by kind, only over a selection with no diagnostic to fix:
+    // a request about a diagnostic is about that diagnostic's range.
+    let about_diagnostics = params["context"]["diagnostics"]
+        .as_array()
+        .is_some_and(|d| !d.is_empty());
+    if opts.extract_function
+        && match &only {
+            None => !about_diagnostics,
+            Some(only) => only.iter().any(|kind| asks_for(kind, EXTRACT)),
+        }
+    {
+        // The reason it is refused only to a menu that asked for refactors
+        // by name: the lightbulb asks as the cursor moves.
+        let why = opts.disabled_actions && only.is_some();
+        actions.extend(extract_action(params, docs, why));
     }
     if only
         .as_ref()
@@ -1916,6 +1969,56 @@ fn qdoc_action(params: &Value, docs: &Documents) -> Option<Value> {
         "kind": REWRITE,
         "edit": {"changes": changes},
     }))
+}
+
+/// Extract Function over the request's range: the selection made a lambda
+/// of the locals it reads, defined above the top-level statement it is in
+/// (`q_lint_rs::extract`), and the selection a call to it. Nothing for an
+/// empty selection; for one it refuses, nothing, or with `why` the action
+/// disabled with the reason.
+fn extract_action(params: &Value, docs: &Documents, why: bool) -> Option<Value> {
+    let uri = uri_of(&params["textDocument"]);
+    let source = docs.get(&uri).filter(|_| is_q_uri(&uri))?;
+    let lines = Lines::new(source);
+    let at = |p: &Value| {
+        Some(lines.offset(
+            p["line"].as_u64()? as usize,
+            p["character"].as_u64()? as usize,
+        ))
+    };
+    let (from, to) = (at(&params["range"]["start"])?, at(&params["range"]["end"])?);
+    if from == to {
+        return None;
+    }
+    let title = "Extract function";
+    match q_lint_rs::extract(source, from, to) {
+        Ok(found) => {
+            let name = q_lint_rs::fresh_name(source, "extracted");
+            let insert = lines.json(found.insert_at);
+            let mut changes = serde_json::Map::new();
+            // Both edits are in the original's positions, as LSP has them;
+            // the definition goes above, so the two never overlap.
+            changes.insert(
+                uri.clone(),
+                json!([
+                    {"range": {"start": insert, "end": insert}, "newText": found.definition(&name)},
+                    {"range": {"start": lines.json(found.start), "end": lines.json(found.end)},
+                     "newText": found.call(&name)},
+                ]),
+            );
+            Some(json!({
+                "title": format!("{title} as {name}"),
+                "kind": EXTRACT,
+                "edit": {"changes": changes},
+            }))
+        }
+        Err(reason) if why => Some(json!({
+            "title": title,
+            "kind": EXTRACT,
+            "disabled": {"reason": reason},
+        })),
+        Err(_) => None,
+    }
 }
 
 /// Every safe fix at once, as one action of kind `source.fixAll.q-lint`: the

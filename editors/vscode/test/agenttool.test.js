@@ -42,6 +42,7 @@ Module._load = function (request, ...rest) {
 };
 const { registerAgentTool } = require("../out/agenttool.js");
 Module._load = load;
+const { guardCheck, guardRefusal, readGuard } = require("../out/guard.js");
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const dev = { label: "dev", host: "d", port: 1, tags: ["dev"] };
@@ -71,6 +72,10 @@ function fakeLive({ active, wait = 0, during } = {}) {
     },
     record: async (entry) => {
       live.records.push(entry);
+    },
+    guardRefuses: (code, targets) => {
+      const check = guardCheck(code, targets, readGuard((key, fallback) => settings[key] ?? fallback));
+      return check === undefined ? undefined : guardRefusal(check);
     },
     runOnActive: async (code, query) => {
       await sleep(wait);
@@ -140,7 +145,7 @@ test("a query runs only on the process the user confirmed", async () => {
   // Asked with dev active; the user connects to prod before answering.
   const live = fakeLive({ active: dev });
   const t = register(live);
-  const input = { query: "delete from `trades" };
+  const input = { query: "select from trades" };
   const asked = t.prepareInvocation({ input });
   assert.strictEqual(asked.confirmationMessages.title, "Run a q query on dev?");
   live.active = prod;
@@ -193,7 +198,7 @@ test("a call the user was not asked about does not run once it could", async () 
   settings = { "agent.queryTimeout": 0 };
   const live = fakeLive({});
   const t = register(live);
-  const input = { query: "delete from `trades" };
+  const input = { query: "select from trades" };
   const asked = t.prepareInvocation({ input });
   assert.strictEqual(asked.confirmationMessages, undefined);
   live.active = prod;
@@ -213,4 +218,31 @@ test("a call cancelled before it runs does not connect to its process", async ()
   const result = await within(t.run(input, cancelled), 2000);
   assert.match(result.error, /cancelled/);
   assert.strictEqual(live.active, dev, "the active connection was switched for a cancelled call");
+});
+
+// The read-only guard (#918): an agent cannot be asked, so a query that
+// would change a guarded process is refused, and the user is not offered it.
+test("a query that would change a read-only process is refused, unasked and unsent", async () => {
+  settings = { "agent.queryTimeout": 0 };
+  const live = fakeLive({ active: prod });
+  const t = register(live);
+  const input = { query: "delete from `trades" };
+  assert.strictEqual(t.prepareInvocation({ input }).confirmationMessages, undefined);
+  const result = await within(t.run({ ...input }, token()), 2000);
+  assert.match(result.error, /^Nothing was run: prod is read-only guarded \(tagged prod; q-lint.processes.readOnlyGuard.tags\), and the query deletes from `trades in place\./);
+  assert.deepStrictEqual(live.ran, []);
+  // Named, the process is not connected to either.
+  const named = fakeLive({ active: dev });
+  const result2 = await within(register(named).run({ query: "a:1", process: "prod" }, token()), 2000);
+  assert.match(result2.error, /read-only guarded/);
+  assert.strictEqual(named.active, dev);
+  // A query that reads runs; so does any, with the guard off.
+  const reads = fakeLive({ active: prod });
+  const t2 = register(reads);
+  const select = { query: "select from trades" };
+  assert.ok(t2.prepareInvocation({ input: select }).confirmationMessages);
+  settings = { "agent.queryTimeout": 0, "processes.readOnlyGuard.enable": false };
+  const off = fakeLive({ active: prod });
+  const t3 = register(off);
+  assert.ok(t3.prepareInvocation({ input }).confirmationMessages);
 });

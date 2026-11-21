@@ -47,6 +47,7 @@ test("the defaults start the server as it was started before settings", () => {
     codeLens: { enable: true },
     documentLinks: { enable: true },
     generateQdoc: { enable: true },
+    extractFunction: { enable: true },
     workspaceIndex: { enable: true, exclude: [] },
   });
 });
@@ -104,6 +105,7 @@ test("every editor-only setting reaches the server's options", () => {
       "codeLens.enable": false,
       "documentLinks.enable": false,
       "generateQdoc.enable": false,
+      "extractFunction.enable": false,
       "workspaceIndex.enable": false,
       "workspaceIndex.exclude": ["vendor/**"],
     }),
@@ -126,6 +128,7 @@ test("every editor-only setting reaches the server's options", () => {
     codeLens: { enable: false },
     documentLinks: { enable: false },
     generateQdoc: { enable: false },
+    extractFunction: { enable: false },
     workspaceIndex: { enable: false, exclude: ["vendor/**"] },
   });
 });

@@ -62,6 +62,12 @@ export const RESULT_VIEW = {
   compare: "q-lint.compareResultWithPrevious",
   heatmap: "q-lint.toggleResultHeatmap",
   history: "q-lint.showResultFromHistory",
+  exportAs: "q-lint.exportResultsAs",
+  copyAs: "q-lint.copyResultsAs",
+  loadMore: "q-lint.loadMoreResultRows",
+  pivot: "q-lint.showResultPivot",
+  saveChart: "q-lint.saveResultChart",
+  drillDown: "q-lint.drillDownResultCell",
 } as const;
 
 /// Context keys the result panel sets, for its commands' `when` clauses.
@@ -69,6 +75,8 @@ export const RESULT_CONTEXT = {
   shown: "q-lint.result.shown",
   hasPrevious: "q-lint.result.hasPrevious",
   hasTree: "q-lint.result.hasTree",
+  /// The process holds more of the result on show than the grid has.
+  hasMore: "q-lint.result.hasMore",
 } as const;
 
 /// Where the result panel opens: beside the editor, or in the bottom panel.
@@ -129,8 +137,12 @@ export function readLive(get: <T>(key: string, fallback: T) => T): LiveSettings 
 }
 
 /// The result panel's features, each with its own `q-lint.results.<feature>.enable`.
-export const RESULT_FEATURES = ["history", "diff", "statistics", "heatmap", "tree"] as const;
+export const RESULT_FEATURES = ["history", "diff", "statistics", "heatmap", "tree", "export", "paging", "pivot", "charts", "drilldown"] as const;
 export type ResultFeature = (typeof RESULT_FEATURES)[number];
+
+/// The features off unless turned on: paging keeps a result on the process
+/// and asks it for rows as the grid scrolls.
+const RESULT_FEATURES_OFF: ReadonlySet<ResultFeature> = new Set(["paging"]);
 
 export interface ResultViewSettings {
   /// Results kept as tabs, 1 to 50; 1 while the history is off.
@@ -140,12 +152,45 @@ export interface ResultViewSettings {
   heatmap: boolean;
   /// Which of the panel's features are on.
   enable: Record<ResultFeature, boolean>;
+  /// The drill-down queries a grid's cell offers.
+  drilldown: DrilldownTemplate[];
+}
+
+/// A follow-up query a cell of the grid offers (#927): `{{value}}` in its
+/// code is the cell's value as q, `{{column}}` its column's name as a
+/// symbol, and `{{row.name}}` the value of column `name` in its row.
+export interface DrilldownTemplate {
+  label: string;
+  query: string;
+  /// The columns it is offered for; every column when empty.
+  columns: string[];
+}
+
+/// `q-lint.results.drilldownTemplates`, dropping an item that is not a
+/// template: settings.json can hold anything.
+export function readDrilldown(value: unknown): DrilldownTemplate[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.flatMap((item): DrilldownTemplate[] => {
+    const t = item as Record<string, unknown> | null;
+    if (t === null || typeof t !== "object" || typeof t.query !== "string" || t.query.trim() === "") {
+      return [];
+    }
+    const columns = Array.isArray(t.columns) ? t.columns.filter((c): c is string => typeof c === "string") : [];
+    return [{ label: typeof t.label === "string" && t.label.trim() !== "" ? t.label : t.query, query: t.query, columns }];
+  });
 }
 
 /// The result view's own settings, read with `get` as `readLive` reads the
-/// query ones. Every feature is on unless its setting is `false`.
+/// query ones. Every feature is on unless its setting is `false`, but for
+/// those in RESULT_FEATURES_OFF, off unless it is `true`.
 export function readResultView(get: <T>(key: string, fallback: T) => T): ResultViewSettings {
-  const enable = Object.fromEntries(RESULT_FEATURES.map((f) => [f, get<unknown>(`results.${f}.enable`, true) !== false])) as Record<
+  const on = (f: ResultFeature): boolean => {
+    const value = get<unknown>(`results.${f}.enable`, !RESULT_FEATURES_OFF.has(f));
+    return RESULT_FEATURES_OFF.has(f) ? value === true : value !== false;
+  };
+  const enable = Object.fromEntries(RESULT_FEATURES.map((f) => [f, on(f)])) as Record<
     ResultFeature,
     boolean
   >;
@@ -154,6 +199,7 @@ export function readResultView(get: <T>(key: string, fallback: T) => T): ResultV
     history: !enable.history ? 1 : typeof n === "number" && Number.isInteger(n) ? Math.max(1, Math.min(50, n)) : 10,
     heatmap: enable.heatmap && get<unknown>("query.gridHeatmap", false) === true,
     enable,
+    drilldown: readDrilldown(get<unknown>("results.drilldownTemplates", [])),
   };
 }
 

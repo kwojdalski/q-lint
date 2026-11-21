@@ -90,6 +90,16 @@ function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir
     "./relate": { Relations: class { serverChanged() {} } },
     "./funcsourceview": { FunctionSources: class { state() { return {}; } } },
     "./infoview": { registerInfoViews: () => ({ monitor: () => [], hdb: () => [] }) },
+    "./queryacross": { QueryAcross: class { state() { return {}; } } },
+    "./savedqueriesview": { SavedQueries: class { queries() { return []; } } },
+    "./testexplorer": { registerTestExplorer: () => ({ serverChanged() {}, discover: async () => {}, items: () => [], results: () => [], run: async () => {} }) },
+    "./valuehoverview": { registerValueHover: () => ({ registered: () => false }) },
+    "./undefinednamesview": { registerUndefinedNames: () => ({ registered: () => false }) },
+    "./idiomsview": { registerIdioms: () => ({ registered: () => false }) },
+    "./driftview": { Drift: class { hotReloadState() { return {}; } } },
+    "./assisttools": { registerAssistTools: () => ({ registered: () => [] }) },
+    "./chat": { registerChat: () => ({ registered: () => false }) },
+    "./qsqldraft": { registerQsqlDraft() {} },
   };
   const file = require.resolve("../out/extension.js");
   delete require.cache[file];

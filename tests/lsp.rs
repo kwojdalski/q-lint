@@ -225,9 +225,10 @@ fn is_suppression(action: &Value) -> bool {
 
 /// What a server that offers quick fixes says it offers: the kinds, so an
 /// editor knows there is a `source.fixAll` to ask for on save - and the
-/// rewrite that writes a qDoc block.
+/// rewrite that writes a qDoc block, and Extract Function.
 fn code_action_provider() -> Value {
-    json!({"codeActionKinds": ["quickfix", "source.fixAll.q-lint", "refactor.rewrite"]})
+    json!({"codeActionKinds": ["quickfix", "source.fixAll.q-lint", "refactor.rewrite",
+                               "refactor.extract.function"]})
 }
 
 /// What VS Code declares, as far as this server reads it: Quick Fixes come
