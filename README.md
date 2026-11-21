@@ -589,6 +589,20 @@ reads more than 8 locals is refused; to a client with
 disabled with the reason. `extractFunction.enable: false` withdraws it and
 its kind.
 
+A code action of kind `refactor.rewrite`, **Lay out qSQL query on aligned
+lines**, is offered inside a `select`, `exec`, `update` or `delete` - with no
+`context.only` and no diagnostics in the request, or with a `context.only`
+naming `refactor`. It puts each clause on its own line, `by`, `from` and the
+`where` after `from` right-aligned under the first word, and a clause's
+columns or constraints one per line when they do not fit in
+`qsqlLayout.lineLength`. It replaces only blanks - before those words, and
+after a comma that separates two items - and is not offered in a query where
+a newline there could change what q reads: one with a comment in it, one
+broken over lines somewhere else, one with another query word at its own
+depth, or one on a `\t` line. With `qsqlLayout.onFormat`, formatting lays
+out every query longer than `qsqlLayout.lineLength` after the safe fixes;
+the fix-all action never does. `qsqlLayout.enable: false` withdraws both.
+
 Completion is off unless `completion.enable` asks for it, because an editor
 told that a server completes stops offering the words already in the buffer,
 and this server's list is narrower than that fallback in one way that matters:
@@ -776,6 +790,7 @@ Every key is optional, and these are the defaults:
  "rename": {"enable": true}, "inlayHints": {"enable": true}, "codeLens": {"enable": false},
  "documentLinks": {"enable": true}, "generateQdoc": {"enable": true},
  "extractFunction": {"enable": true},
+ "qsqlLayout": {"enable": true, "onFormat": false, "lineLength": 80},
  "workspaceIndex": {"enable": true, "exclude": []}}
 ```
 

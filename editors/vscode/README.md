@@ -121,6 +121,30 @@ to a process you add and connect to, and sends only the code you run.
   is not). One that assigns, returns, names `.z.s`, sits in a qSQL phrase
   or cuts a name, string or list is refused, and **Refactor...** says why.
   `q-lint.extractFunction.enable` turns it off.
+- **Lay out qSQL query on aligned lines**, in the lightbulb and
+  **Refactor...** menu inside a `select`, `exec`, `update` or `delete`:
+  each clause goes on its own line, with `by`, `from` and `where`
+  right-aligned under the first word, and a clause's columns or
+  constraints one per line when they do not fit in
+  `q-lint.qsqlLayout.lineLength` (80):
+
+  ```q
+  r:select n:count i, px:avg px
+        by sym
+      from trade
+     where date=.z.d,
+           size>100
+  ```
+
+  Only blanks change: a newline goes before `by`, `from` and the `where`
+  after `from`, and after a comma that separates two items. A query where
+  that could change what q reads is left as it is: one with a comment in
+  it, one already broken somewhere else, a `where` phrase holding another
+  query unbracketed, or a `\t` line. Every case in the tests was loaded
+  before and after into KDB-X and PeachQ and gave the same result. Format
+  Document lays out every query longer than the line length too, but only
+  with `q-lint.qsqlLayout.onFormat` on (see [Formatting](#formatting)).
+  `q-lint.qsqlLayout.enable` turns it off.
 - **Hover** on a name the workspace defines shows its parameters, the
   comment written above its definition and the file it is in; on a word of
   q itself - `ssr`, `select`, `.z.p`, `.Q.s`, `.h.hy`, or a glyph such as
@@ -1284,6 +1308,9 @@ q-pro column names the setting of [q-pro](https://marketplace.visualstudio.com/i
 | `q-lint.documentLinks.enable` | `true` | Make each `\l`, `system "l ..."` and `` `:file.q `` path a link to the file it loads. | - |
 | `q-lint.generateQdoc.enable` | `true` | Offer **Generate qDoc** above a top-level function. | - |
 | `q-lint.extractFunction.enable` | `true` | Offer **Extract Function** over a selection q reads as one value. | - |
+| `q-lint.qsqlLayout.enable` | `true` | Offer **Lay out qSQL query on aligned lines** inside a query. Off: no action, and Format Document lays nothing out. | - |
+| `q-lint.qsqlLayout.onFormat` | `false` | Have **Format Document** lay out every qSQL query longer than the line length, after the safe fixes. | - |
+| `q-lint.qsqlLayout.lineLength` | `80` | The line length a query is laid out to, 20 to 400. | - |
 | `q-lint.workspaceIndex.enable` | `true` | Read every workspace `.q` file at startup for the names it defines, up to 20,000 files or 500,000 directory entries. Off: only open files. | - |
 | `q-lint.workspaceIndex.exclude` | `[]` | Globs, relative to the workspace folder, the index does not read: `["vendor/**"]`. | `q-lang-server.sourceFiles.ignoreGlob` |
 | `q-lint.trace.server` | `off` | Log client-server traffic: `off`, `messages`, `verbose`. | `q-lang-server.trace.server` |
@@ -1476,6 +1503,13 @@ action instead:
 `"source.fixAll": "explicit"` runs it too, with every other extension's.
 `q-lint.format.enable` does not turn this off: it says whether q-lint is a
 formatter, and this runs only where you list it.
+
+Format Document changes no layout unless you ask it to. With
+`q-lint.qsqlLayout.onFormat` on, it also splits each qSQL query longer than
+`q-lint.qsqlLayout.lineLength` a clause to a line, as **Lay out qSQL query
+on aligned lines** does; a query already laid out, or short enough, is left
+as it is, so formatting twice changes nothing. The fix-all action never
+lays a query out.
 
 ## Folding
 

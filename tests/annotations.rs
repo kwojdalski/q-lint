@@ -458,7 +458,8 @@ fn a_qdoc_block_is_written_above_a_function_from_its_parameters() {
 #[test]
 fn generating_qdoc_can_be_turned_off() {
     let dir = tempfile::tempdir().unwrap();
-    let options = json!({"generateQdoc": {"enable": false}});
+    // The qSQL layout is a rewrite too, so it is off here as well.
+    let options = json!({"generateQdoc": {"enable": false}, "qsqlLayout": {"enable": false}});
     let (mut server, reply) = Server::over(dir.path(), &[], client(), options);
     assert_eq!(
         reply["result"]["capabilities"]["codeActionProvider"]["codeActionKinds"],
@@ -760,4 +761,102 @@ fn the_names_no_workspace_file_defines_are_listed_for_the_process() {
         ],
         "{reply}"
     );
+}
+
+/// The one qSQL layout action among `actions`: its title and new text.
+fn qsql(actions: &[Value], uri: &str) -> Option<(String, String)> {
+    let action = actions
+        .iter()
+        .find(|a| a["title"] == "Lay out qSQL query on aligned lines")?;
+    assert_eq!(action["kind"], "refactor.rewrite");
+    let edit = &action["edit"]["changes"][uri][0];
+    Some((
+        edit["newText"].as_str().unwrap().to_string(),
+        format!(
+            "{}:{}-{}:{}",
+            edit["range"]["start"]["line"],
+            edit["range"]["start"]["character"],
+            edit["range"]["end"]["line"],
+            edit["range"]["end"]["character"]
+        ),
+    ))
+}
+
+const QUERY: &str = "a:1\nr:select n:count i by sym from trade where px>1, sz<400\n";
+
+#[test]
+fn the_qsql_query_at_the_cursor_is_laid_out_on_aligned_lines() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let uri = server.open(dir.path(), "q.q", QUERY);
+    let laid = Some((
+        "select n:count i\n      by sym\n    from trade\n   where px>1, sz<400".to_string(),
+        "1:2-1:55".to_string(),
+    ));
+    // Anywhere in it, asked for by kind or by the lightbulb.
+    for (character, only) in [(2, None), (30, None), (40, Some(json!(["refactor"])))] {
+        let actions = actions_at(&mut server, &uri, 1, character, only);
+        assert_eq!(qsql(&actions, &uri), laid, "{actions:?}");
+    }
+    // Not outside a query, nor when only quick fixes are asked for.
+    for (line, only) in [(0, None), (1, Some(json!(["quickfix"])))] {
+        let actions = actions_at(&mut server, &uri, line, 5, only);
+        assert_eq!(qsql(&actions, &uri), None, "{line}: {actions:?}");
+    }
+    // Formatting does not lay it out unless asked to.
+    let reply = server.whole(
+        "textDocument/formatting",
+        &uri,
+        json!({"options": {"tabSize": 4, "insertSpaces": true}}),
+    );
+    assert_eq!(reply["result"], json!([]), "{reply}");
+}
+
+#[test]
+fn formatting_lays_out_long_qsql_queries_when_asked_to() {
+    let dir = tempfile::tempdir().unwrap();
+    let options = json!({"qsqlLayout": {"onFormat": true, "lineLength": 40}});
+    let (mut server, _) = Server::over(dir.path(), &[], client(), options);
+    // The safe fix (`==` to `=`) and the layout, as one edit.
+    let text = "b:1==1\nr:select n:count i by sym from trade where px>1, sz<400\nc:select from t\n";
+    let uri = server.open(dir.path(), "f.q", text);
+    let opts = json!({"options": {"tabSize": 4, "insertSpaces": true}});
+    let reply = server.whole("textDocument/formatting", &uri, opts.clone());
+    let edits = reply["result"].as_array().unwrap();
+    assert_eq!(edits.len(), 1, "{reply}");
+    let edit = &edits[0];
+    let mut lines: Vec<String> = text.lines().map(String::from).collect();
+    assert_eq!(edit["range"]["start"]["line"], 0);
+    assert_eq!(edit["range"]["end"]["line"], 1);
+    let start = edit["range"]["start"]["character"].as_u64().unwrap() as usize;
+    let end = edit["range"]["end"]["character"].as_u64().unwrap() as usize;
+    let joined = format!("{}\n{}", lines[0], lines[1]);
+    let line0_len = lines[0].len() + 1;
+    let new = format!(
+        "{}{}{}",
+        &joined[..start],
+        edit["newText"].as_str().unwrap(),
+        &joined[line0_len + end..]
+    );
+    lines.splice(0..2, [new]);
+    assert_eq!(
+        lines.join("\n"),
+        "b:1=1\nr:select n:count i\n      by sym\n    from trade\n   where px>1, sz<400\nc:select from t"
+    );
+}
+
+#[test]
+fn the_qsql_layout_can_be_turned_off() {
+    let dir = tempfile::tempdir().unwrap();
+    let options = json!({"qsqlLayout": {"enable": false, "onFormat": true, "lineLength": 3}});
+    let (mut server, _) = Server::over(dir.path(), &[], client(), options);
+    let uri = server.open(dir.path(), "q.q", QUERY);
+    let actions = actions_at(&mut server, &uri, 1, 5, None);
+    assert_eq!(qsql(&actions, &uri), None, "{actions:?}");
+    let reply = server.whole(
+        "textDocument/formatting",
+        &uri,
+        json!({"options": {"tabSize": 4, "insertSpaces": true}}),
+    );
+    assert_eq!(reply["result"], json!([]), "{reply}");
 }

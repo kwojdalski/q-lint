@@ -95,6 +95,15 @@
 //! another to make outside the range, and a selection's half of a pass is
 //! not something `--fix` ever produces.
 //!
+//! One layout is offered, because it needs no parser: a long qSQL query
+//! split a clause to a line (`q_lint_rs::qsql_layouts`). It replaces only
+//! blanks, before `by`, `from` and the `where` after `from` and after a
+//! comma that separates items, and leaves alone any query where a newline
+//! there could change what q reads - one with a comment in it, say. It is a
+//! code action on the query at the cursor, and joins Format Document only
+//! when `qsqlLayout.onFormat` asks it to; never the fix-all action, which
+//! is the safe fixes and nothing else.
+//!
 //! FOLDING IS THE BRACKETS THAT SPAN LINES, AND REPLACES THE EDITOR'S OWN
 //!
 //! A lambda, a parenthesised list, a bracketed block and a block comment
@@ -141,7 +150,8 @@ use crate::jsonrpc::{INVALID_REQUEST, Malformed, receive, send};
 use q_lint_rs::graph::Placement;
 use q_lint_rs::{
     FileIndex, Finding, Fix, References, TokenKind, Workspace, balanced, broken_statement, fix_all,
-    fix_for, folds, rule_url, semantic_tokens_in, suppressions_for, whole_edit,
+    fix_for, folds, qsql_layout_at, qsql_layouts, rule_url, semantic_tokens_in, suppressions_for,
+    whole_edit,
 };
 use serde_json::{Value, json};
 use std::{
@@ -600,7 +610,8 @@ fn workspace_folders(params: &Value) -> Vec<(String, String)> {
 ///  "semanticTokens": {"enable": true}, "navigation": {"enable": true},
 ///  "help": {"enable": true}, "completion": {"enable": false},
 ///  "callHierarchy": {"enable": true}, "graph": {"enable": true},
-///  "workspaceIndex": {"enable": true, "exclude": []}}
+///  "workspaceIndex": {"enable": true, "exclude": []},
+///  "qsqlLayout": {"enable": true, "onFormat": false, "lineLength": 80}}
 /// ```
 ///
 /// `lint.select` and `lint.ignore` narrow the selection (see
@@ -651,6 +662,14 @@ struct Options {
     generate_qdoc: bool,
     /// Offer Extract Function on a selection.
     extract_function: bool,
+    /// Offer the code action that lays out the qSQL query at the cursor.
+    qsql_layout: bool,
+    /// Have Format Document lay out every qSQL query longer than
+    /// `qsql_width` too. Off unless asked for: formatting was the safe
+    /// fixes alone, and a format on save would start moving lines.
+    qsql_on_format: bool,
+    /// The line length a laid-out query's parts are fitted to.
+    qsql_width: usize,
     /// Whether the client shows an action it cannot take with the reason
     /// (`codeAction.disabledSupport`): a capability, not a setting.
     disabled_actions: bool,
@@ -679,6 +698,9 @@ impl Default for Options {
             document_links: true,
             generate_qdoc: true,
             extract_function: true,
+            qsql_layout: true,
+            qsql_on_format: false,
+            qsql_width: 80,
             disabled_actions: false,
             severity: vec![],
         }
@@ -717,6 +739,7 @@ impl Options {
                         "documentLinks",
                         "generateQdoc",
                         "extractFunction",
+                        "qsqlLayout",
                     ]
                     .contains(&key.as_str())
                         && !value.is_object()
@@ -753,6 +776,17 @@ impl Options {
         options.document_links = flag("/documentLinks/enable", true);
         options.generate_qdoc = flag("/generateQdoc/enable", true);
         options.extract_function = flag("/extractFunction/enable", true);
+        options.qsql_layout = flag("/qsqlLayout/enable", true);
+        options.qsql_on_format = flag("/qsqlLayout/onFormat", false);
+        match init.pointer("/qsqlLayout/lineLength") {
+            None | Some(Value::Null) => {}
+            Some(n) => match n.as_u64().filter(|n| (20..=400).contains(n)) {
+                Some(n) => options.qsql_width = n as usize,
+                None => problems.push(format!(
+                    "/qsqlLayout/lineLength must be a whole number from 20 to 400, not {n}"
+                )),
+            },
+        }
         options.disabled_actions = params
             .pointer("/capabilities/textDocument/codeAction/disabledSupport")
             .and_then(Value::as_bool)
@@ -1275,7 +1309,9 @@ pub fn serve(
             }
             ("textDocument/formatting", Some(id)) => {
                 let edits = if opts.format {
-                    guarded(|| format(&params, &docs, &idx.ws, policy))
+                    let layout =
+                        (opts.qsql_layout && opts.qsql_on_format).then_some(opts.qsql_width);
+                    guarded(|| format(&params, &docs, &idx.ws, policy, layout))
                 } else {
                     Ok(vec![])
                 };
@@ -1526,7 +1562,7 @@ fn capabilities(opts: &Options, code_action_literals: bool) -> Value {
         // The kinds, not a bare `true`: an editor asks for `source.fixAll`
         // actions on save only of a server that says it has some.
         let mut kinds = vec![QUICK_FIX, FIX_ALL];
-        if opts.generate_qdoc {
+        if opts.generate_qdoc || opts.qsql_layout {
             kinds.push(REWRITE);
         }
         if opts.extract_function {
@@ -1808,6 +1844,16 @@ fn code_actions(
     let about_diagnostics = params["context"]["diagnostics"]
         .as_array()
         .is_some_and(|d| !d.is_empty());
+    // The same for the qSQL layout: a query with a finding in it is fixed
+    // first, and the Refactor menu asks by kind.
+    if opts.qsql_layout
+        && match &only {
+            None => !about_diagnostics,
+            Some(only) => only.iter().any(|kind| asks_for(kind, REWRITE)),
+        }
+    {
+        actions.extend(qsql_action(params, docs, opts.qsql_width));
+    }
     if opts.extract_function
         && match &only {
             None => !about_diagnostics,
@@ -1971,6 +2017,33 @@ fn qdoc_action(params: &Value, docs: &Documents) -> Option<Value> {
     }))
 }
 
+/// The qSQL query the request's range starts in, laid out on aligned lines:
+/// a clause per line, and a part's items one per line where they do not
+/// fit in `width` (`q_lint_rs::qsql_layout_at`). None outside a query, in
+/// one laid out so already, and in one a new line could change.
+fn qsql_action(params: &Value, docs: &Documents, width: usize) -> Option<Value> {
+    let uri = uri_of(&params["textDocument"]);
+    let source = docs.get(&uri).filter(|_| is_q_uri(&uri))?;
+    let lines = Lines::new(source);
+    let start = &params["range"]["start"];
+    let cursor = lines.offset(
+        start["line"].as_u64()? as usize,
+        start["character"].as_u64()? as usize,
+    );
+    let l = qsql_layout_at(source, cursor, width)?;
+    let mut changes = serde_json::Map::new();
+    changes.insert(
+        uri.clone(),
+        json!([{"range": {"start": lines.json(l.start), "end": lines.json(l.end)},
+                "newText": l.text}]),
+    );
+    Some(json!({
+        "title": "Lay out qSQL query on aligned lines",
+        "kind": REWRITE,
+        "edit": {"changes": changes},
+    }))
+}
+
 /// Extract Function over the request's range: the selection made a lambda
 /// of the locals it reads, defined above the top-level statement it is in
 /// (`q_lint_rs::extract`), and the selection a call to it. Nothing for an
@@ -2034,7 +2107,7 @@ fn fix_all_action(
     ws: &Workspace,
     policy: &Policy,
 ) -> Option<Value> {
-    let edits = format(params, docs, ws, policy);
+    let edits = format(params, docs, ws, policy, None);
     if edits.is_empty() {
         return None;
     }
@@ -2105,11 +2178,19 @@ fn folds_in(source: &str) -> Vec<Value> {
 }
 
 /// The edits "Format document" makes: the safe fixes `--fix` applies, to the
-/// open buffer, under the same policy as its diagnostics. At most one edit,
+/// open buffer, under the same policy as its diagnostics - and with `layout`
+/// (`qsqlLayout.onFormat`'s line length), every qSQL query longer than that
+/// laid out after them. At most one edit,
 /// from the first byte that changed to the last, and none at all when nothing
 /// would - a document that is not open or not q, a broken structure, a
 /// configuration that cannot be read, or nothing to fix.
-fn format(params: &Value, docs: &Documents, ws: &Workspace, policy: &Policy) -> Vec<Value> {
+fn format(
+    params: &Value,
+    docs: &Documents,
+    ws: &Workspace,
+    policy: &Policy,
+    layout: Option<usize>,
+) -> Vec<Value> {
     let uri = uri_of(&params["textDocument"]);
     let path = path_of(&uri);
     // A document whose brackets or strings do not close gets no edits, even
@@ -2125,7 +2206,13 @@ fn format(params: &Value, docs: &Documents, ws: &Workspace, policy: &Policy) -> 
     let Ok(fixed) = fix_all(source, false, |text| policy.lint(text, &path, ws)) else {
         return vec![];
     };
-    let Some(edit) = whole_edit(source, &fixed.text) else {
+    let mut text = fixed.text;
+    if let Some(width) = layout {
+        for l in qsql_layouts(&text, width).into_iter().rev() {
+            text.replace_range(l.start..l.end, &l.text);
+        }
+    }
+    let Some(edit) = whole_edit(source, &text) else {
         return vec![];
     };
     let lines = Lines::new(source);

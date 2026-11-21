@@ -300,6 +300,26 @@
             "order": 29,
             "markdownDescription": "Offer **Extract function** in the lightbulb and **Refactor...** menu over a selection: it becomes a lambda defined above the top-level statement it is in, taking the parameters and locals it reads, and the selection a call to it. Only a selection q reads as one value is rewritten; **Refactor...** says why another is refused. Off, q-lint offers no such action."
           },
+          "q-lint.qsqlLayout.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 29,
+            "markdownDescription": "Offer **Lay out qSQL query on aligned lines** in the lightbulb and **Refactor...** menu inside a `select`, `exec`, `update` or `delete`: each clause on its own line, `by`, `from` and `where` right-aligned under the first word, and the columns or constraints one per line where they do not fit in `#q-lint.qsqlLayout.lineLength#`. Only blanks change, and a query where a new line could change what q reads (a comment in it, say) is left alone. Off, q-lint offers no such action, and Format Document does not lay queries out."
+          },
+          "q-lint.qsqlLayout.onFormat": {
+            "type": "boolean",
+            "default": false,
+            "order": 29,
+            "markdownDescription": "Have **Format Document** also lay out every qSQL query longer than `#q-lint.qsqlLayout.lineLength#`, after the safe fixes. Off by default, so formatting (and a format on save) keeps to the safe fixes. Needs `#q-lint.qsqlLayout.enable#`."
+          },
+          "q-lint.qsqlLayout.lineLength": {
+            "type": "integer",
+            "default": 80,
+            "minimum": 20,
+            "maximum": 400,
+            "order": 29,
+            "markdownDescription": "The line length a qSQL query is laid out to: Format Document lays out a query longer than this, and a clause's columns or constraints go one per line when they would not fit."
+          },
           "q-lint.workspaceIndex.enable": {
             "type": "boolean",
             "default": true,

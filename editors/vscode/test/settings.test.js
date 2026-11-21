@@ -48,6 +48,7 @@ test("the defaults start the server as it was started before settings", () => {
     documentLinks: { enable: true },
     generateQdoc: { enable: true },
     extractFunction: { enable: true },
+    qsqlLayout: { enable: true, onFormat: false, lineLength: 80 },
     workspaceIndex: { enable: true, exclude: [] },
   });
 });
@@ -106,6 +107,9 @@ test("every editor-only setting reaches the server's options", () => {
       "documentLinks.enable": false,
       "generateQdoc.enable": false,
       "extractFunction.enable": false,
+      "qsqlLayout.enable": false,
+      "qsqlLayout.onFormat": true,
+      "qsqlLayout.lineLength": 100,
       "workspaceIndex.enable": false,
       "workspaceIndex.exclude": ["vendor/**"],
     }),
@@ -129,8 +133,16 @@ test("every editor-only setting reaches the server's options", () => {
     documentLinks: { enable: false },
     generateQdoc: { enable: false },
     extractFunction: { enable: false },
+    qsqlLayout: { enable: false, onFormat: true, lineLength: 100 },
     workspaceIndex: { enable: false, exclude: ["vendor/**"] },
   });
+});
+
+test("a qSQL line length out of range or not a whole number is 80", () => {
+  for (const bad of [5, 401, 80.5, "100", null]) {
+    const l = launch(configuration({ "qsqlLayout.lineLength": bad }), undefined);
+    assert.strictEqual(l.initializationOptions.qsqlLayout.lineLength, 80, String(bad));
+  }
 });
 
 test("an unknown run mode falls back to linting on type", () => {
