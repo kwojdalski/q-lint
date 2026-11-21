@@ -1,0 +1,84 @@
+// The Data Wrangler (#961) and cell edits (#964), src/wrangle.ts: the q each
+// writes, without q. datatools_q.test.js runs that q on a real process.
+const test = require("node:test");
+const assert = require("node:assert");
+const w = require("../out/wrangle.js");
+
+const payload = (over = {}) => ({
+  count: 2,
+  keys: 0,
+  names: ["sym", "px", "note", "e"],
+  types: [11, 9, 0, 20],
+  cells: [["a", "b"], ["1.5", ""], ['"x y"', ',"z"'], ["a", "b"]],
+  raw: [[], [1.5, null], [], []],
+  rank: [],
+  ...over,
+});
+
+test("a wrangle starts only from a single expression (#961)", () => {
+  assert.strictEqual(w.wrangleBase("select from trade where sym=`a"), undefined);
+  assert.strictEqual(w.wrangleBase("trade"), undefined);
+  assert.strictEqual(w.wrangleBase("select a:x from t"), undefined);
+  assert.match(w.wrangleBase("a:1\nb:2"), /more than one statement/);
+  assert.match(w.wrangleBase("t:select from trade"), /assigns a name/);
+  assert.match(w.wrangleBase("t[`a]:1"), /assigns a name/);
+  assert.match(w.wrangleBase("x+:1"), /assigns a name/);
+  assert.match(w.wrangleBase("\\t select from t"), /system command/);
+  assert.match(w.wrangleBase("select from t;"), /ends with ';'/);
+  assert.match(w.wrangleBase("/ only a comment"), /empty/);
+});
+
+test("each step is written as q over the step before, and the steps as a script that assigns nothing (#961)", () => {
+  assert.strictEqual(w.stepCode({ kind: "filter", column: "px", op: ">", value: "1" }, "t"), "select from t where px>1");
+  assert.strictEqual(w.stepCode({ kind: "filter", column: "s", op: "like", value: '"AB*"' }, "t"), 'select from t where s like "AB*"');
+  assert.strictEqual(w.stepCode({ kind: "filter", column: "s", op: "in", value: ",`a" }, "t"), "select from t where s in enlist `a");
+  assert.strictEqual(w.stepCode({ kind: "filter", column: "s", op: "not null", value: "" }, "t"), "select from t where not null s");
+  assert.strictEqual(w.stepCode({ kind: "sort", column: "px", descending: true }, "t"), "`px xdesc t");
+  assert.strictEqual(w.stepCode({ kind: "rename", column: "px", to: "price" }, "t"), "(enlist[`px]!enlist `price) xcol t");
+  assert.strictEqual(w.stepCode({ kind: "cast", column: "q", to: "f" }, "t"), 'update q:"f"$q from t');
+  assert.strictEqual(w.stepCode({ kind: "cast", column: "q", to: "j", strings: true }, "t"), 'update q:"J"$q from t');
+  assert.strictEqual(w.stepCode({ kind: "cast", column: "q", to: "s", strings: true }, "t"), "update q:`$q from t");
+  assert.strictEqual(w.stepCode({ kind: "cast", column: "q", to: "*" }, "t"), "update q:string q from t");
+  assert.strictEqual(w.stepCode({ kind: "drop", column: "note" }, "t"), "delete note from t");
+  const steps = [
+    { kind: "filter", column: "px", op: ">", value: "1" },
+    { kind: "sort", column: "px", descending: false },
+  ];
+  assert.strictEqual(w.wrangleQuery("select from t", steps), "`px xasc (select from (select from t) where px>1)");
+  assert.strictEqual(w.wrangleScript("t", steps, "rdb"), "/ Wrangled on rdb by q-lint: 2 steps\n{[]\n  w:t;\n  w:select from w where px>1;\n  w:`px xasc w;\n  w}[]\n");
+  assert.deepStrictEqual(steps.map(w.stepText), ["keep rows where px > 1", "sort by px, ascending"]);
+  // Only a plain name can be a q-sql column.
+  assert.strictEqual(w.columnProblem("px"), undefined);
+  assert.match(w.columnProblem("a b"), /cannot be named in q-sql/);
+  assert.match(w.columnProblem("count"), /reserved word/);
+  assert.strictEqual(w.stringColumn(payload(), 2), true);
+  assert.strictEqual(w.stringColumn(payload(), 0), false);
+});
+
+test("a cell edit is an update of the table, its rows found by the row's values, null-safe; enumerations by = (#964)", () => {
+  const edit = w.editStatement(payload(), 1, 1, "t", "9.5");
+  assert.deepStrictEqual(edit, {
+    code: 'update px:(9.5) from `t where (sym=`b),(px~\\:(0n)),(note~\\:(enlist "z")),(e=`b)',
+    matchedBy: ["sym", "px", "note", "e"],
+  });
+  // A general column takes a list as long as the rows found.
+  assert.strictEqual(w.editStatement(payload(), 2, 0, ".ns.t", '"new"').code, 'update note:(count i)#enlist "new" from `.ns.t where (sym=`a),(px~\\:(1.5f)),(note~\\:("x y")),(e=`a)');
+  // A keyed result is found by its keys alone.
+  const keyed = w.editStatement(payload({ keys: 1 }), 1, 0, "kt", "2");
+  assert.deepStrictEqual(keyed, { code: "update px:(2) from `kt where (sym=`a)", matchedBy: ["sym"] });
+  assert.match(w.editStatement(payload(), 1, 0, "t", "  ").error, /no new value/);
+  assert.match(w.editStatement(payload(), 1, 0, "not a name", "1").error, /not a table's name/);
+  assert.match(w.editStatement(payload(), 9, 0, "t", "1").error, /not in the result/);
+  assert.match(w.editStatement(payload({ names: ["a b", "px", "note", "e"] }), 1, 0, "t", "1").error, /cannot be named in q-sql/);
+  const cut = payload({ cells: [["a", "b"], ["1.5", ""], [`"${"x".repeat(196)}...`, ',"z"'], ["a", "b"]] });
+  assert.match(w.editStatement(cut, 1, 0, "t", "1").error, /cut at 200 characters/);
+  assert.strictEqual(w.cellLiteral(payload(), 1, 1), "0n");
+  // A monadic , becomes enlist, outside strings only.
+  assert.strictEqual(w.enlisted(',"a,(,b"'), 'enlist "a,(,b"');
+  assert.strictEqual(w.enlisted("(,1;,`a)"), "(enlist 1;enlist `a)");
+  assert.strictEqual(w.enlisted("1,2"), "1,2");
+  assert.strictEqual(w.guessTable("trade"), "trade");
+  assert.strictEqual(w.guessTable("select from .ns.trade where sym=`a"), ".ns.trade");
+  assert.strictEqual(w.guessTable("select sum px by sym from trade"), "trade");
+  assert.strictEqual(w.guessTable("1+1"), undefined);
+});
