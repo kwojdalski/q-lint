@@ -85,6 +85,9 @@ export class QConnection {
   /// The last answer, the whole message.
   private answerMessage: Buffer | undefined;
   private readonly onClose: (() => void)[] = [];
+  /// Listeners for the async messages the process sends, each whole: a
+  /// tickerplant's updates to a subscriber (#915).
+  private readonly onAsync: ((message: Buffer) => void)[] = [];
 
   private constructor(private readonly socket: net.Socket) {
     socket.on("data", (chunk) => this.received(chunk));
@@ -230,6 +233,12 @@ export class QConnection {
     });
   }
 
+  /// Run `listener` with each async message the process sends, as the
+  /// whole message, header and all; a query's answer is not one.
+  whenAsync(listener: (message: Buffer) => void): void {
+    this.onAsync.push(listener);
+  }
+
   /// Run `listener` once, when this connection closes for any reason.
   whenClosed(listener: () => void): void {
     if (this.closed) {
@@ -267,7 +276,8 @@ export class QConnection {
       this.chunks = rest.length > 0 ? [rest] : [];
       this.size = rest.length;
       // Only a response answers a query. Async messages the user's code
-      // sends back (`neg[.z.w] x`) are not results, and are dropped. A sync
+      // sends back (`neg[.z.w] x`) are not results: they go to the async
+      // listeners, a tickerplant stream's, and are otherwise dropped. A sync
       // one (`.z.w x`) waits for an answer, and the process with it, so it
       // gets an error: q-lint runs nothing a process sends it.
       if (message.readUInt8(1) === SYNC) {
@@ -275,6 +285,9 @@ export class QConnection {
         continue;
       }
       if (message.readUInt8(1) !== RESPONSE) {
+        for (const listener of this.onAsync) {
+          listener(message);
+        }
         continue;
       }
       const pending = this.pending;

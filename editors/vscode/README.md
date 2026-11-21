@@ -311,6 +311,22 @@ it twice. A query from a notebook, the Process Explorer or an agent goes to
 the gateway as written. `q-lint.connection.torqGateway.enable` off sends
 every query as written and hides both commands.
 
+**Streaming a tickerplant table.** With `q-lint.tickerplant.stream.enable`
+on (it is off by default: a subscriber is a load on a tickerplant, which
+sends it every update), **Stream Tickerplant Table**, on a process row or
+from the palette, opens a connection of its own to the process, lists the
+tables `.u.t` names, and subscribes to the one you pick with
+`.u.sub[table;\`]`, as a TorQ or kdb+tick subscriber does. Each update the
+tickerplant sends, `(\`upd;table;data)`, is shown in a grid beside the
+editor, newest first, keeping the last `q-lint.tickerplant.stream.rows`
+(1000; at most 10,000). The grid counts the rows received, redraws at most
+five times a second, and **Pause** stops redrawing while the rows keep
+coming. Closing it closes the connection, which the tickerplant drops as a
+subscriber; it says so when the process closes it instead. On a process
+tagged `prod` it asks first. The lambda that subscribes defines nothing on
+the process. Turning the setting off hides the command and closes every
+stream.
+
 **Abort Current Query** stops waiting at once. q has no message that cancels
 a query, so the connection is closed and opened again; the process goes on
 running the query, and the new connection is made once it is free, however
@@ -996,6 +1012,8 @@ Each applies at once, without a reload. None reaches the language server.
 | --- | --- | --- | --- |
 | `q-lint.connection.sshTunnel.enable` | `true` | Reach a process that names a jump host through `ssh -N -L`; off, **Set SSH Tunnel** is hidden and such a process is not connected to. | - |
 | `q-lint.connection.torqGateway.enable` | `true` | Send a TorQ gateway's queries through `.gw.syncexec`; off, they go as written and **Set Gateway Server Types** and **Query Gateway on Server Types...** are hidden. | - |
+| `q-lint.tickerplant.stream.enable` | `false` | **Stream Tickerplant Table**: subscribe with `.u.sub` and show a table's updates live. Off, the command is hidden and refuses, and open streams close. | - |
+| `q-lint.tickerplant.stream.rows` | `1000` | The newest rows a stream keeps, 1 to 10,000. | - |
 
 ### Terminal settings
 

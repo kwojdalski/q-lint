@@ -95,7 +95,7 @@ const HISTORY_LIMIT = 200;
 /// What a process command is given: a view row, a process's label (from a
 /// keybinding's `args`, or another extension), or nothing - then the user
 /// picks one. A discovered process is named `server/label`.
-type ProcessArg = Row | string | undefined;
+export type ProcessArg = Row | string | undefined;
 
 export interface HistoryEntry {
   process: string;
@@ -618,6 +618,11 @@ export class Live {
     };
   }
 
+  /// Where the extension's own files are, for a webview of another view.
+  get extensionUri(): Uri {
+    return this.context.extensionUri;
+  }
+
   processes(): Process[] {
     return parseProcesses(this.context.globalState.get<unknown>(PROCESSES_KEY, []), true).processes;
   }
@@ -877,6 +882,12 @@ export class Live {
       { title, matchOnDescription: true, matchOnDetail: true },
     );
     return picked?.process;
+  }
+
+  /// The process a command was given, or one the user picks, a discovered
+  /// one with its label qualified: for the views around this one.
+  pick(row: ProcessArg, title: string): Promise<Process | undefined> {
+    return this.chosen(row, title, true);
   }
 
   private async edit(row?: ProcessArg): Promise<void> {

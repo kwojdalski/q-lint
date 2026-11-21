@@ -730,6 +730,20 @@
             "default": true,
             "order": 701,
             "markdownDescription": "Send a query to a process marked as a TorQ gateway (**Set Gateway Server Types**) as `.gw.syncexec[query;servertypes]`: to the server types a `/ @servertypes rdb hdb` line in the file names, else the process's own; **Query Gateway on Server Types...** asks for them. Off: queries go to a gateway as written, and both commands are hidden."
+          },
+          "q-lint.tickerplant.stream.enable": {
+            "type": "boolean",
+            "default": false,
+            "order": 702,
+            "markdownDescription": "Offer **Stream Tickerplant Table**: subscribe to a table with `.u.sub` on a connection of its own, and show its updates live in a grid. Off by default: a subscriber is a load on a tickerplant, which sends it every update. Off: the command is hidden and refuses, and every open stream closes, unsubscribing."
+          },
+          "q-lint.tickerplant.stream.rows": {
+            "type": "integer",
+            "default": 1000,
+            "minimum": 1,
+            "maximum": 10000,
+            "order": 703,
+            "markdownDescription": "The newest rows a stream's grid keeps, with `#q-lint.tickerplant.stream.enable#` on. Read when a stream starts."
           }
         }
       }
@@ -1192,6 +1206,12 @@
         "command": "q-lint.queryGatewayWithServerTypes",
         "title": "Query Gateway on Server Types...",
         "category": "q-lint"
+      },
+      {
+        "command": "q-lint.streamTable",
+        "title": "Stream Tickerplant Table",
+        "category": "q-lint",
+        "icon": "$(pulse)"
       }
     ],
     "views": {
@@ -1543,6 +1563,11 @@
           "command": "q-lint.setGatewayServerTypes",
           "when": "view == q-lint.processes && viewItem =~ /^process/ && config.q-lint.connection.torqGateway.enable",
           "group": "2_edit@6"
+        },
+        {
+          "command": "q-lint.streamTable",
+          "when": "view == q-lint.processes && viewItem =~ /^(process|discovered)/ && config.q-lint.tickerplant.stream.enable",
+          "group": "1_connect@3"
         }
       ],
       "editor/title/run": [
@@ -1752,6 +1777,10 @@
         {
           "command": "q-lint.queryGatewayWithServerTypes",
           "when": "editorLangId == q && q-lint.connected && config.q-lint.connection.torqGateway.enable"
+        },
+        {
+          "command": "q-lint.streamTable",
+          "when": "config.q-lint.tickerplant.stream.enable"
         }
       ],
       "editor/title": [

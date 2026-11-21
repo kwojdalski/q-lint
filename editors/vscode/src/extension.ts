@@ -28,6 +28,7 @@ import { Relations } from "./relate";
 import { Serial } from "./serial";
 import { FunctionSources } from "./funcsourceview";
 import { registerInfoViews } from "./infoview";
+import { TableStreams } from "./streamview";
 import type { InfoNode } from "./monitor";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, statSync } from "node:fs";
@@ -97,6 +98,7 @@ export async function activate(
     processMonitor: () => InfoNode[];
     hdbBrowser: () => InfoNode[];
     functionSources: FunctionSources["state"];
+    tableStreams: TableStreams["state"];
   }
 > {
   // Replacing the binary does not restart the server, and a window reload is
@@ -141,6 +143,7 @@ export async function activate(
   const sources = new FunctionSources(context, live);
   const infoViews = registerInfoViews(context, live);
   registerOnboarding(context, () => live.processes());
+  const streams = new TableStreams(context, live);
   relations = new Relations(context, () => client);
   // Not awaited: nothing above needs the server, and a slow or hung one
   // would hold up every command of the extension until it answered.
@@ -155,6 +158,7 @@ export async function activate(
     processMonitor: infoViews.monitor,
     hdbBrowser: infoViews.hdb,
     functionSources: () => sources.state(),
+    tableStreams: () => streams.state(),
   };
 }
 

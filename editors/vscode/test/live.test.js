@@ -50,6 +50,7 @@ const { HISTORY_COMMANDS, readHistorySearch } = require("../out/historyfilter.js
 const { CONNECT_SCRIPT_COMMANDS } = require("../out/connectscript.js");
 const { TUNNEL_COMMANDS } = require("../out/tunnel.js");
 const { GATEWAY_COMMANDS } = require("../out/gateway.js");
+const { STREAM_COMMANDS } = require("../out/stream.js");
 const { ONBOARDING } = require("../out/onboarding.js");
 const { PARAM_CACHE } = require("../out/paramcache.js");
 
@@ -274,6 +275,7 @@ test("package.json declares exactly the commands the extension registers", () =>
     ...Object.values(CONNECT_SCRIPT_COMMANDS),
     ...Object.values(TUNNEL_COMMANDS),
     ...Object.values(GATEWAY_COMMANDS),
+    ...Object.values(STREAM_COMMANDS),
     ...Object.values(PARAM_CACHE),
     ...Object.values(DISCOVERY_COMMANDS),
     ...Object.values(EXPLORER).filter((id) => id !== EXPLORER.view),
