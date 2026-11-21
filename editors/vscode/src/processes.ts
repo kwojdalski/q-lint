@@ -15,6 +15,10 @@ export interface Process {
   /// The discovery server that listed it, for a discovered process, whose
   /// label is then `server/label`. Never saved or read from a file.
   server?: string;
+  /// q code run on every connect, before any query (#916); or `initFile`,
+  /// a q file read and run so. Never taken from a discovery server.
+  init?: string;
+  initFile?: string;
 }
 
 /// Where a process's password is kept in secret storage. A discovered
@@ -74,6 +78,8 @@ export function processTooltip(process: Process, from?: string): string {
     `${markdownText(address(process.host, process.port))}${process.tls ? " (TLS)" : ""}`,
     process.user ? `user ${markdownText(process.user)}` : "no user",
     process.tags.length ? `tags: ${markdownText(process.tags.join(", "))}` : "no tags",
+    ...(process.init !== undefined ? ["runs q code on connect"] : []),
+    ...(process.initFile !== undefined ? [`runs ${markdownText(process.initFile)} on connect`] : []),
     ...(from === undefined ? [] : [`listed by ${markdownText(from)}, connected to as ${markdownText(`${from}/${process.label}`)}`]),
   ].join("\n\n");
 }
@@ -94,8 +100,10 @@ export function parseTags(text: string): string[] {
 /// The processes a JSON value describes, and what was wrong with the rest.
 /// Accepts a list of processes, or an object holding one under `processes`.
 /// An entry is kept only when it has a label, a host and a port; a label
-/// already seen is skipped, so an import cannot hold two of one name.
-export function parseProcesses(json: unknown): { processes: Process[]; problems: string[] } {
+/// already seen is skipped, so an import cannot hold two of one name. A
+/// connect script (`init` code or an `initFile`) is read only when `scripts`
+/// asks: a list from a discovery server never runs code on a process.
+export function parseProcesses(json: unknown, scripts = false): { processes: Process[]; problems: string[] } {
   const list = Array.isArray(json)
     ? json
     : typeof json === "object" && json !== null && Array.isArray((json as { processes?: unknown }).processes)
@@ -147,16 +155,23 @@ export function parseProcesses(json: unknown): { processes: Process[]; problems:
       ...(typeof e.user === "string" && e.user !== "" ? { user: e.user } : {}),
       tags,
       ...(e.tls === true ? { tls: true } : {}),
+      ...(scripts && typeof e.init === "string" && e.init.trim() !== "" ? { init: e.init } : {}),
+      ...(scripts && typeof e.initFile === "string" && e.initFile.trim() !== "" && !(typeof e.init === "string" && e.init.trim() !== "")
+        ? { initFile: e.initFile.trim() }
+        : {}),
     });
+    if (scripts && typeof e.init === "string" && e.init.trim() !== "" && typeof e.initFile === "string" && e.initFile.trim() !== "") {
+      problems.push(`${where} (${label}) has both init and initFile: its init code was kept.`);
+    }
   });
   return { processes, problems };
 }
 
-/// The processes a process file lists, as `parseProcesses` reads them. A
-/// byte order mark, which Windows editors write, is skipped. Throws a
-/// SyntaxError when the text is not JSON.
+/// The processes a process file lists, as `parseProcesses` reads them, with
+/// their connect scripts. A byte order mark, which Windows editors write, is
+/// skipped. Throws a SyntaxError when the text is not JSON.
 export function readProcessFile(text: string): { processes: Process[]; problems: string[] } {
-  return parseProcesses(JSON.parse(text.replace(/^\uFEFF/, "")));
+  return parseProcesses(JSON.parse(text.replace(/^\uFEFF/, "")), true);
 }
 
 /// `processes` merged with `incoming`: an incoming process replaces the one

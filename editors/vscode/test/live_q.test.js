@@ -102,3 +102,48 @@ test("placeholders are filled in before a query reaches q (#911)", { skip }, asy
   await stub.commands.get("q-lint.queryCurrentLine")();
   assert.match(last(), /^error .* n>=`oops; .* 'type$/);
 });
+
+test("a process's connect script runs on every connect, before any query (#916)", { skip }, async (t) => {
+  const q = await startQ("connects:0\nslow:{system \"sleep \",string x; x}\n");
+  t.after(() => q.stop());
+  const script = path.join(q.dir, "init.q");
+  fs.writeFileSync(script, "/ a comment\nfromFile:`yes\nf:{[a]\n  a*2}\n");
+  const vscode = require("vscode");
+  const workspaceFs = vscode.workspace.fs;
+  vscode.workspace.fs = { readFile: async (uri) => fs.promises.readFile(uri.fsPath) };
+  t.after(() => (vscode.workspace.fs = workspaceFs));
+  const { live, editor, last } = await setUp(t, [
+    proc("code", q.port, { init: "connects+:1; .lib.v:42" }),
+    proc("file", q.port, { initFile: script }),
+    proc("bad", q.port, { init: "1+`a" }),
+    proc("missing", q.port, { initFile: path.join(q.dir, "nope.q") }),
+  ]);
+  const query = async (code) => {
+    editor(code);
+    await stub.commands.get("q-lint.queryCurrentLine")();
+    return last();
+  };
+  assert.strictEqual(await live.connectTo("code"), true);
+  assert.strictEqual(await query("(connects;.lib.v)"), "ok (connects;.lib.v)");
+  assert.strictEqual(await query("if[not connects=1;'wrong]"), "ok if[not connects=1;'wrong]");
+  // Again on reconnecting: the abort's reconnect runs it too.
+  editor("slow 1");
+  const running = stub.commands.get("q-lint.queryCurrentLine")();
+  await sleep(200);
+  await stub.commands.get("q-lint.abortQuery")();
+  await running;
+  for (let i = 0; i < 50 && live.activeLabel() === undefined; i++) await sleep(100);
+  assert.strictEqual(live.activeLabel(), "code");
+  assert.strictEqual(await query("if[not connects=2;'wrong]"), "ok if[not connects=2;'wrong]");
+  // A file, read at connect.
+  assert.strictEqual(await live.connectTo("file"), true);
+  assert.strictEqual(await query("(fromFile;f 21)~(`yes;42)"), "ok (fromFile;f 21)~(`yes;42)");
+  // A script that fails is said, and the connection kept.
+  stub.messages = [];
+  assert.strictEqual(await live.connectTo("bad"), true);
+  assert.deepStrictEqual(stub.messages.filter(([k]) => k === "warning").map(([, m]) => m), ["q-lint: the connect script of bad failed: 'type"]);
+  assert.strictEqual(live.activeLabel(), "bad");
+  stub.messages = [];
+  assert.strictEqual(await live.connectTo("missing"), true);
+  assert.match(stub.messages.find(([k]) => k === "warning")[1], /^q-lint: the connect script of missing failed: could not read .*nope\.q/);
+});

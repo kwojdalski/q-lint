@@ -153,6 +153,18 @@ and clicking it switches. The commands:
   An import replaces processes of the same label, adds the rest, and says
   which entries it skipped. A process it moves to another host, port or
   user forgets its stored password, so that is never sent to the new one.
+- **Set Connect Script**, on a process row: q code, or a q file, run on
+  the process at every connect - the first, a reconnect after an abort, and
+  an automatic reconnect - before any query is sent, as a query runs it
+  (unwrapped when `q-lint.query.unwrapped` is on). Use it to load helpers,
+  set `\d`, or open handles a session needs. A file chosen inside the
+  workspace folder is kept relative to it, and is read again at each
+  connect; a leading `~` is your home directory. A script that fails, or a
+  file that cannot be read, is said in a warning and the output, and the
+  connection is kept. On a process tagged `prod` it asks first. It is kept
+  in the process list, and exported with it as `init` (code) or `initFile`;
+  an import that brings a script new to a process asks whether to keep it,
+  and a discovery server's list never brings one.
 - **Insert Active Connection Label**, at the cursor.
 - **Copy Label for Agent Query**, on a process row: the label an agent's
   query names the process by (`server/label` for a discovered one).

@@ -42,6 +42,7 @@ const { CONTROL_COMMANDS, readControls } = require("../out/querycontrols.js");
 const { readProgress } = require("../out/progress.js");
 const { readPlaceholders } = require("../out/placeholders.js");
 const { HISTORY_COMMANDS } = require("../out/historyfilter.js");
+const { CONNECT_SCRIPT_COMMANDS } = require("../out/connectscript.js");
 const { ONBOARDING } = require("../out/onboarding.js");
 const { PARAM_CACHE } = require("../out/paramcache.js");
 
@@ -263,6 +264,7 @@ test("package.json declares exactly the commands the extension registers", () =>
     ...Object.values(COMMANDS),
     ...Object.values(CONTROL_COMMANDS),
     ...Object.values(HISTORY_COMMANDS),
+    ...Object.values(CONNECT_SCRIPT_COMMANDS),
     ...Object.values(PARAM_CACHE),
     ...Object.values(DISCOVERY_COMMANDS),
     ...Object.values(EXPLORER).filter((id) => id !== EXPLORER.view),

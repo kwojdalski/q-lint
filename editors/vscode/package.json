@@ -839,6 +839,12 @@
         "title": "Export Query History",
         "category": "q-lint",
         "icon": "$(save-as)"
+      },
+      {
+        "command": "q-lint.setConnectScript",
+        "title": "Set Connect Script",
+        "category": "q-lint",
+        "icon": "$(debug-start)"
       }
     ],
     "views": {
@@ -1117,6 +1123,11 @@
           "command": "q-lint.copyQuery",
           "when": "view == q-lint.queryHistory && viewItem == history",
           "group": "1_history@2"
+        },
+        {
+          "command": "q-lint.setConnectScript",
+          "when": "view == q-lint.processes && viewItem =~ /^process/",
+          "group": "2_edit@4"
         }
       ],
       "editor/title/run": [

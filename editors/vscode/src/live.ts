@@ -73,6 +73,8 @@ import {
   normalised,
   type HistoryFilter,
 } from "./historyfilter";
+import { CONNECT_SCRIPT_COMMANDS, scriptOf, scriptPath, scriptsBrought, scriptSummary, withScript, type ConnectScript } from "./connectscript";
+import { isProduction } from "./agent";
 import { PLACEHOLDER_VALUES_KEY, lastValue, placeholderNames, readPlaceholders, remembered, substitute } from "./placeholders";
 
 const PROCESSES_KEY = "q-lint.processes";
@@ -490,6 +492,7 @@ export class Live {
       c(CONTROL_COMMANDS.startRepl, () => terminals.repl()),
       c(CONTROL_COMMANDS.copyQuery, (entry?: HistoryEntry) => this.copyQuery(entry)),
       c(CONTROL_COMMANDS.revealProcess, () => this.revealProcess()),
+      c(CONNECT_SCRIPT_COMMANDS.set, (row?: ProcessArg, script?: ConnectScript | null) => this.setConnectScript(row, script)),
       c(HISTORY_COMMANDS.filter, (filter?: HistoryFilter) => this.filterHistory(filter)),
       c(HISTORY_COMMANDS.clearFilter, () => this.setHistoryFilter({})),
       c(HISTORY_COMMANDS.export, (file?: Uri) => this.exportHistory(file)),
@@ -558,7 +561,7 @@ export class Live {
   }
 
   processes(): Process[] {
-    return parseProcesses(this.context.globalState.get<unknown>(PROCESSES_KEY, [])).processes;
+    return parseProcesses(this.context.globalState.get<unknown>(PROCESSES_KEY, []), true).processes;
   }
 
   activeLabel(): string | undefined {
@@ -786,7 +789,8 @@ export class Live {
     if (answer === undefined) {
       return;
     }
-    const { process } = answer;
+    // The boxes do not ask for the connect script: it is kept.
+    const process = withScript(answer.process, scriptOf(old));
     // Read again: the list may have changed while the boxes were open.
     const now = this.processes();
     const problem = !now.some((p) => p.label === old.label)
@@ -820,7 +824,10 @@ export class Live {
       // The connection is still to where it was opened: it takes the new
       // label and tags, and keeps its address until connected again.
       const { host, port, user, tls } = active;
-      this.active = { label: process.label, host, port, ...(user !== undefined ? { user } : {}), tags: process.tags, ...(tls ? { tls } : {}) };
+      this.active = withScript(
+        { label: process.label, host, port, ...(user !== undefined ? { user } : {}), tags: process.tags, ...(tls ? { tls } : {}) },
+        scriptOf(process),
+      );
       this.showStatus();
       // The explorer keeps what it read under the label it read it for.
       if (process.label !== old.label && this.activeLabel() !== undefined) {
@@ -912,8 +919,29 @@ export class Live {
       void window.showErrorMessage(`q-lint: could not read ${files[0].fsPath}: ${String(error)}`);
       return;
     }
-    const { processes, problems } = read;
+    const { problems } = read;
+    let { processes } = read;
     const before = this.processes();
+    // Code that runs on a process at every connect is not taken from a file
+    // unasked: someone else's list may hold it.
+    const brought = scriptsBrought(before, processes);
+    if (brought.length > 0) {
+      const keep = "Import with Scripts";
+      const drop = "Import without Scripts";
+      const answer = await window.showWarningMessage(
+        `${files[0].fsPath} gives ${brought.length} process(es) a connect script, q code run on the process at every connect: ${brought.slice(0, 5).join(", ")}${brought.length > 5 ? ", ..." : ""}. Keep the scripts?`,
+        { modal: true },
+        keep,
+        drop,
+      );
+      if (answer === undefined) {
+        return;
+      }
+      if (answer === drop) {
+        const old = new Map(before.map((p) => [p.label, p]));
+        processes = processes.map((p) => (brought.includes(p.label) ? withScript(p, old.get(p.label) && scriptOf(old.get(p.label)!)) : p));
+      }
+    }
     for (const label of passwordsToForget(before, processes)) {
       await this.context.secrets.delete(passwordKey({ label }));
     }
@@ -961,6 +989,139 @@ export class Live {
         edit.replace(selection, label);
       }
     });
+  }
+
+  /// Set the connect script of a saved process: q code or a q file run on
+  /// every connect, before any query (#916). `script` (from a keybinding or
+  /// a test) sets it without asking; `null` removes it.
+  private async setConnectScript(row?: ProcessArg, script?: ConnectScript | null): Promise<void> {
+    const process = await this.chosen(row, "Set the connect script of which q process?");
+    if (process === undefined) {
+      return;
+    }
+    const current = scriptOf(process);
+    let chosen: ConnectScript | undefined;
+    if (script === null) {
+      chosen = undefined;
+    } else if (typeof script === "object" && (script.kind === "code" ? typeof script.code === "string" : typeof script.file === "string")) {
+      chosen = script.kind === "code" ? { kind: "code", code: script.code } : { kind: "file", file: script.file };
+    } else {
+      const picked = await window.showQuickPick(
+        [
+          { label: "q Code", choice: "code" as const, detail: "A line of q, run as a query is: statements separated by `;`." },
+          { label: "q File", choice: "file" as const, detail: "A q file, read at each connect and run as Execute Entire File runs one." },
+          { label: "None", choice: "none" as const, detail: "Run nothing on connect." },
+        ].map((c) => ({ ...c, ...((current?.kind ?? "none") === c.choice ? { description: `current: ${scriptSummary(current)}` } : {}) })),
+        { title: `Connect script of ${process.label}`, placeHolder: "What runs on the process at every connect, before any query?" },
+      );
+      if (picked === undefined) {
+        return;
+      }
+      if (picked.choice === "code") {
+        const code = await window.showInputBox({
+          title: `Connect script of ${process.label}: q code`,
+          value: current?.kind === "code" ? current.code : "",
+          prompt: "Run on every connect, before any query, as a query is. Empty for none.",
+          ignoreFocusOut: true,
+        });
+        if (code === undefined) {
+          return;
+        }
+        chosen = code.trim() === "" ? undefined : { kind: "code", code };
+      } else if (picked.choice === "file") {
+        const folder = workspace.workspaceFolders?.[0]?.uri;
+        const files = await window.showOpenDialog({
+          title: `Connect script of ${process.label}: q file`,
+          canSelectMany: false,
+          filters: { "q script": ["q", "k"] },
+          ...(folder !== undefined ? { defaultUri: folder } : {}),
+        });
+        if (files === undefined || files.length === 0) {
+          return;
+        }
+        // Inside the workspace folder it is kept relative, so the list
+        // reads the same on a colleague's machine.
+        const relative = folder === undefined ? undefined : path.relative(folder.fsPath, files[0].fsPath);
+        chosen = { kind: "file", file: relative !== undefined && relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative) ? relative : files[0].fsPath };
+      }
+    }
+    if (chosen !== undefined && isProduction(process)) {
+      const yes = "Set Script";
+      const sure = await window.showWarningMessage(
+        `${process.label} is a production process (tagged ${process.tags.join(", ")}). Its connect script runs there at every connect, as written, and can change or delete data. Set it?`,
+        { modal: true },
+        yes,
+      );
+      if (sure !== yes) {
+        return;
+      }
+    }
+    const now = this.processes();
+    if (!now.some((p) => p.label === process.label)) {
+      void window.showErrorMessage(`q-lint: "${process.label}" was deleted meanwhile; its connect script was not set.`);
+      return;
+    }
+    await this.save(now.map((p) => (p.label === process.label ? withScript(p, chosen) : p)));
+    if (this.active?.label === process.label && this.active.server === undefined) {
+      this.active = withScript(this.active, chosen);
+    }
+    void window.showInformationMessage(
+      chosen === undefined
+        ? `q-lint: ${process.label} runs nothing on connect.`
+        : `q-lint: ${process.label} runs its connect script (${scriptSummary(chosen)}) from the next connect.`,
+    );
+  }
+
+  /// Run `process`'s connect script on `connection`, just opened, before any
+  /// query can be: its failure is said, and the connection kept.
+  private async runConnectScript(connection: QConnection, process: Process): Promise<void> {
+    const script = scriptOf(process);
+    if (script === undefined) {
+      return;
+    }
+    const failed = (why: string): void => {
+      this.show([`# ${process.label} - connect script failed: ${why}`], false);
+      void window.showWarningMessage(`q-lint: the connect script of ${process.label} failed: ${why}`);
+    };
+    let code: string;
+    if (script.kind === "code") {
+      code = script.code;
+    } else {
+      const file = scriptPath(script.file, os.homedir(), workspace.workspaceFolders?.[0]?.uri.fsPath);
+      if (file === undefined) {
+        failed(`${script.file} is relative, and there is no workspace folder to read it from.`);
+        return;
+      }
+      try {
+        code = Buffer.from(await workspace.fs.readFile(Uri.file(file))).toString("utf8");
+      } catch (error) {
+        failed(`could not read ${file}: ${error instanceof Error ? error.message : String(error)}`);
+        return;
+      }
+    }
+    const cut = statements(code);
+    if (cut.length === 0) {
+      return;
+    }
+    const configuration = workspace.getConfiguration("q-lint");
+    const { consoleSize } = readLive((key, fallback) => configuration.get(key, fallback));
+    const started = Date.now();
+    try {
+      const answer = await window.withProgress(
+        { location: { viewId: VIEWS.processes }, title: `Running the connect script of ${process.label}` },
+        () =>
+          this.controls.settings().unwrapped
+            ? runUnwrapped(connection, cut, { size: consoleSize, limit: 0, unlimited: false, grid: false })
+            : connection.query(cut, consoleSize),
+      );
+      if (!answer.ok) {
+        failed(`'${answer.error}`);
+        return;
+      }
+      this.output.appendLine(`# ${process.label} - connect script ran (${Date.now() - started} ms)`);
+    } catch (error) {
+      failed(error instanceof Error ? error.message : String(error));
+    }
   }
 
   // --- connections
@@ -1051,6 +1212,7 @@ export class Live {
           await connection.close();
           return false;
         }
+        await this.runConnectScript(connection, process);
         this.connection = connection;
         this.active = process;
         connection.whenClosed(() => {
