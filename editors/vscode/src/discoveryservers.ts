@@ -55,7 +55,8 @@ export class DiscoveryServers {
   /// removals, so a second Reload waits for it.
   private readonly inFlight = new Map<string, { url: string; removals: number; done: Promise<void> }>();
   /// Bumped per server by Remove Processes, so a fetch out at the time
-  /// does not bring them back.
+  /// does not bring them back, and by a change of its auth header, so what
+  /// a fetch with the old one answers is not kept.
   private readonly removals = new Map<string, number>();
   private timer: ReturnType<typeof setInterval> | undefined;
   private readonly changed = new EventEmitter<void>();
@@ -247,6 +248,7 @@ export class DiscoveryServers {
     if (secret === undefined) {
       return;
     }
+    this.removals.set(label, (this.removals.get(label) ?? 0) + 1);
     await (secret.trim() === ""
       ? this.context.secrets.delete(secretKey(label))
       : this.context.secrets.store(secretKey(label), secret.trim()));

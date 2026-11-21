@@ -278,3 +278,31 @@ test("Export Processes says why it could not write the file", async (t) => {
   await stub.commands.get("q-lint.exportProcesses")();
   assert.deepStrictEqual(stub.messages.at(-1), ["error", "q-lint: could not write /ro/q-processes.json: EACCES: permission denied, open '/ro/q-processes.json'"]);
 });
+
+// Edit a server's auth header while a fetch with the old one is out: the
+// Edit's fetch was taken for that one, as its URL was the same, so the
+// server went on showing the old header's 401 until the next refresh.
+test("changing a server's auth header during a fetch fetches again with it", async (t) => {
+  const http = require("node:http");
+  const server = http.createServer((req, res) => {
+    setTimeout(() => {
+      if (req.headers.authorization !== "Bearer good") {
+        res.writeHead(401, { "content-type": "application/json" });
+        res.end("{}");
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify([{ label: "rdb", host: "h", port: 1 }]));
+    }, 300);
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  t.after(() => server.close());
+  const url = `http://127.0.0.1:${server.address().port}/`;
+  const { live } = await setUp(t, []);
+  const added = stub.commands.get("q-lint.addDiscoveryServer")({ label: "desk", url, secret: "Bearer bad" });
+  await sleep(100);
+  await stub.commands.get("q-lint.editDiscoveryServer")("desk", { secret: "Bearer good" });
+  await added;
+  const [state] = live.api().discovered();
+  assert.deepStrictEqual([state.error, state.processes.map((p) => p.label)], [undefined, ["rdb"]]);
+});
