@@ -31,6 +31,10 @@
 // cut at gridLimit stays on the process (`grid.ts`'s `HELD`) and the grid
 // asks for more of it as it scrolls. A cell's drill-down templates run a
 // follow-up query with its value put in (`drilldown.ts`).
+//
+// A column header's menu offers the Data Wrangler and a cell's Edit Cell
+// (`resulttools.ts`), which work from `current()`: the page only marks
+// where each menu applies.
 import { randomBytes } from "node:crypto";
 import {
   commands,
@@ -276,6 +280,13 @@ export class QueryModes {
   /// What the panel last drew, or undefined before it drew anything.
   lastRendered(): Rendered | undefined {
     return this.rendered;
+  }
+
+  /// The result on show, with the process and code it came from: what the
+  /// Data Wrangler (#961) and a cell edit (#964) work from.
+  current(): { process: string; code: string; payload: GridPayload } | undefined {
+    const shown = this.shown;
+    return shown === undefined ? undefined : { process: shown.process, code: shown.code, payload: shown.payload };
   }
 
   /// Where the live half fetches pages of a held result from.
@@ -890,6 +901,8 @@ export class QueryModes {
         pivot: features.enable.pivot,
         charts: features.enable.charts,
         drilldown: features.enable.drilldown,
+        wrangler: features.enable.wrangler,
+        editCells: features.enable.editCells,
       },
       // Whether the grid can ask for more rows as it scrolls.
       more: this.canPage(),

@@ -47,6 +47,8 @@ import { registerDevContainer } from "./devcontainerview";
 import { registerInteractive } from "./interactiveview";
 import { registerRepl } from "./replview";
 import { registerViewHelpers } from "./viewhelpers";
+import { ResultTools } from "./resulttools";
+import { SchemaTools } from "./schemaview";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -143,6 +145,7 @@ export async function activate(
     interactive: ReturnType<typeof registerInteractive>;
     repl: ReturnType<typeof registerRepl>;
     viewHelpers: ReturnType<typeof registerViewHelpers>;
+    schemaDiagram: SchemaTools["state"];
   }
 > {
   // Replacing the binary does not restart the server, and a window reload is
@@ -210,6 +213,8 @@ export async function activate(
   const interpreters = new Interpreters(context);
   const qTasks = registerTasks(context);
   registerDevContainer(context);
+  new ResultTools(context, live);
+  const schema = new SchemaTools(context, live);
   // Not awaited: nothing above needs the server, and a slow or hung one
   // would hold up every command of the extension until it answered.
   void serial.run(() => start(context)).then(() => serverChanged());
@@ -239,6 +244,7 @@ export async function activate(
     interactive,
     repl,
     viewHelpers,
+    schemaDiagram: () => schema.state(),
   };
 }
 

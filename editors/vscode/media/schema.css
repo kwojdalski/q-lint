@@ -1,0 +1,85 @@
+/* The schema diagram (#966), in the editor's theme. */
+body {
+  margin: 0;
+  padding: 8px 12px;
+  background: var(--vscode-editor-background);
+  color: var(--vscode-foreground);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+}
+
+.summary {
+  margin: 4px 0;
+  font-weight: 600;
+}
+
+.legend,
+.note {
+  margin: 0 0 8px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.legend span {
+  margin-right: 12px;
+}
+
+.legend .link {
+  border-bottom: 1px dashed var(--vscode-textLink-foreground);
+}
+
+.legend .fk {
+  border-bottom: 1px solid var(--vscode-textLink-foreground);
+}
+
+.legend .key {
+  text-decoration: underline;
+}
+
+.diagram {
+  overflow: auto;
+}
+
+.schema text {
+  fill: var(--vscode-foreground);
+  font-family: var(--vscode-editor-font-family);
+}
+
+.schema .box {
+  fill: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  stroke: var(--vscode-editorWidget-border, var(--vscode-panel-border));
+}
+
+.schema .head {
+  fill: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background));
+  stroke: var(--vscode-editorWidget-border, var(--vscode-panel-border));
+}
+
+.schema .name {
+  font-weight: bold;
+}
+
+.schema .key {
+  text-decoration: underline;
+}
+
+.schema .type,
+.schema .more {
+  fill: var(--vscode-descriptionForeground);
+}
+
+.schema .more {
+  font-style: italic;
+}
+
+.schema .edge {
+  stroke: var(--vscode-textLink-foreground);
+  stroke-width: 1.5;
+}
+
+.schema .edge.link {
+  stroke-dasharray: 5 3;
+}
+
+.schema .arrowhead {
+  fill: var(--vscode-textLink-foreground);
+}

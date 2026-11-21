@@ -68,6 +68,11 @@ export const RESULT_VIEW = {
   pivot: "q-lint.showResultPivot",
   saveChart: "q-lint.saveResultChart",
   drillDown: "q-lint.drillDownResultCell",
+  /// The Data Wrangler (#961): from the palette, and a column's menu.
+  wrangle: "q-lint.wrangleResult",
+  wrangleColumn: "q-lint.wrangleResultColumn",
+  /// A cell edit (#964), from a cell's menu.
+  editCell: "q-lint.editResultCell",
 } as const;
 
 /// Context keys the result panel sets, for its commands' `when` clauses.
@@ -137,7 +142,7 @@ export function readLive(get: <T>(key: string, fallback: T) => T): LiveSettings 
 }
 
 /// The result panel's features, each with its own `q-lint.results.<feature>.enable`.
-export const RESULT_FEATURES = ["history", "diff", "statistics", "heatmap", "tree", "export", "paging", "pivot", "charts", "drilldown"] as const;
+export const RESULT_FEATURES = ["history", "diff", "statistics", "heatmap", "tree", "export", "paging", "pivot", "charts", "drilldown", "wrangler", "editCells"] as const;
 export type ResultFeature = (typeof RESULT_FEATURES)[number];
 
 /// The features off unless turned on: paging keeps a result on the process

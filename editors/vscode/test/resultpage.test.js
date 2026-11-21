@@ -392,10 +392,24 @@ test("a double-clicked cell asks to drill down from it, and carries its menu con
   const body = page.body.all((e) => e.tagName === "TBODY")[0];
   body.fire("dblclick", { target: cell });
   assert.deepStrictEqual(page.posted.at(-1), { type: "drill", id: "s.1", column: 0, row: 2 });
-  page.send({ ...result("s.2", 3), features: { drilldown: false } });
+  page.send({ ...result("s.2", 3), features: { drilldown: false, editCells: false } });
   const off = page.rows()[0].children[0];
   assert.strictEqual(off.attributes, undefined);
   assert.strictEqual((page.body.all((e) => e.tagName === "TBODY")[0].listeners.dblclick ?? []).length, 0);
+});
+
+test("a cell carries its menu context for Edit Cell, and a column header for Wrangle Column, only while each is on (#961, #964)", () => {
+  const page = loadPage(undefined);
+  page.send({ ...result("s.1", 3), features: { drilldown: false } });
+  const cell = page.rows()[1].children[0];
+  assert.deepStrictEqual(JSON.parse(cell.attributes["data-vscode-context"]), { webviewSection: "cell", column: 0, row: 1, preventDefaultContextMenuItems: false });
+  // Edit Cell is a menu item only: a double-click still drills down, and that is off.
+  assert.strictEqual((page.body.all((e) => e.tagName === "TBODY")[0].listeners.dblclick ?? []).length, 0);
+  const header = page.body.all((e) => e.tagName === "TH" && e.attributes?.["data-vscode-context"] !== undefined)[0];
+  assert.deepStrictEqual(JSON.parse(header.attributes["data-vscode-context"]), { webviewSection: "column", column: 0, preventDefaultContextMenuItems: false });
+  page.send({ ...result("s.2", 3), features: { drilldown: false, editCells: false, wrangler: false } });
+  assert.strictEqual(page.rows()[0].children[0].attributes, undefined);
+  assert.strictEqual(page.body.all((e) => e.tagName === "TH" && e.attributes?.["data-vscode-context"] !== undefined).length, 0);
 });
 
 test("the chart offers area, step and candles, a right axis and image buttons only while charts are on (#926)", () => {
