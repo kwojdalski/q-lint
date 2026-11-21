@@ -575,6 +575,12 @@
             "default": false,
             "order": 132,
             "markdownDescription": "Warn on each global a q file reads that neither the workspace nor the connected process defines. The process is asked, by each name's namespace and without evaluating anything, when the file is opened, saved or brought to the front, on connect and after a query; a production process only by **Check Undefined Names on Process**. Off by default: it queries the process on its own."
+          },
+          "q-lint.idiomSnippets.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 133,
+            "markdownDescription": "Offer the q idiom snippets in a q editor's completion list: `aj`, `aj0`, `wj`, `wj1`, `lj`, `ij`, `uj`, a bucketed `xbar` select, the `.z` handlers (`zpg`, `zps`, `zpo`, `zpc`, `zpw`, `zts`, `zws`, `zexit`) and a TorQ process skeleton (`torq`). Off, they leave the list."
           }
         }
       },

@@ -1,0 +1,111 @@
+{
+  "As-of join": {
+    "prefix": "aj",
+    "body": "aj[`${1:sym}`${2:time};${3:trades};${4:quotes}]",
+    "description": "aj[c;t1;t2]: each row of t1 with the columns of the last row of t2 at or before its time, matched on the other columns of c; t2 sorted by them, ideally `p#sym"
+  },
+  "As-of join, time of the match": {
+    "prefix": "aj0",
+    "body": "aj0[`${1:sym}`${2:time};${3:trades};${4:quotes}]",
+    "description": "aj0[c;t1;t2]: as aj, with the time of the row of t2 it matched in place of t1's"
+  },
+  "Window join": {
+    "prefix": "wj",
+    "body": [
+      "w:${1:-0D00:00:01 0D00:00:00}+\\\\:${2:trades}`${3:time};",
+      "wj[w;`${4:sym}`${3:time};${2:trades};(${5:quotes};(max;`${6:ask});(min;`${7:bid}))]"
+    ],
+    "description": "wj[w;c;t;(q;(f;c)..)]: each row of t with the aggregates of the rows of q within its window, those prevailing at its start included"
+  },
+  "Window join, rows inside the window": {
+    "prefix": "wj1",
+    "body": [
+      "w:${1:-0D00:00:01 0D00:00:00}+\\\\:${2:trades}`${3:time};",
+      "wj1[w;`${4:sym}`${3:time};${2:trades};(${5:quotes};(max;`${6:ask});(min;`${7:bid}))]"
+    ],
+    "description": "wj1[w;c;t;(q;(f;c)..)]: as wj, over only the rows of q inside each window"
+  },
+  "Left join": {
+    "prefix": "lj",
+    "body": "${1:t} lj `${2:sym} xkey ${3:ref}",
+    "description": "t lj kt: each row of t with the columns of the row of the keyed table kt its key columns match, nulls where none does"
+  },
+  "Inner join": {
+    "prefix": "ij",
+    "body": "${1:t} ij `${2:sym} xkey ${3:ref}",
+    "description": "t ij kt: the rows of t whose key columns match a row of the keyed table kt, with that row's columns"
+  },
+  "Union join": {
+    "prefix": "uj",
+    "body": "${1:t1} uj ${2:t2}",
+    "description": "t1 uj t2: the rows of both, with the columns of both, nulls where a table lacks one"
+  },
+  "Bucketed select": {
+    "prefix": "xbar",
+    "body": "select ${1:last price} by ${2:sym}, ${3:5} xbar ${4:time.minute} from ${5:trades}",
+    "description": "select ... by n xbar time: one row per group and bucket of n, a bar of the data"
+  },
+  "Synchronous message handler": {
+    "prefix": "zpg",
+    "body": ".z.pg:{[x] ${1:value x}}",
+    "description": ".z.pg: what a client's synchronous query evaluates to; q's own is value"
+  },
+  "Asynchronous message handler": {
+    "prefix": "zps",
+    "body": ".z.ps:{[x] ${1:value x}}",
+    "description": ".z.ps: what runs on a client's asynchronous message; nothing is sent back"
+  },
+  "Connection opened": {
+    "prefix": "zpo",
+    "body": ".z.po:{[h] ${1:-1 \"opened \",string h};}",
+    "description": ".z.po: called with the handle of each connection a client opens"
+  },
+  "Connection closed": {
+    "prefix": "zpc",
+    "body": ".z.pc:{[h] ${1:-1 \"closed \",string h};}",
+    "description": ".z.pc: called with the handle of each connection that closes, after it has"
+  },
+  "Password check": {
+    "prefix": "zpw",
+    "body": ".z.pw:{[user;pass] ${1:1b}}",
+    "description": ".z.pw: whether user, with this password as a string, may connect; 0b refuses"
+  },
+  "Timer": {
+    "prefix": "zts",
+    "body": [
+      ".z.ts:{[t] ${1:-1 string t};}",
+      "\\\\t ${2:1000}"
+    ],
+    "description": ".z.ts and \\t: run every n milliseconds with the time, from now; \\t 0 stops it"
+  },
+  "WebSocket message handler": {
+    "prefix": "zws",
+    "body": ".z.ws:{[x] neg[.z.w] ${1:.j.j value x};}",
+    "description": ".z.ws: called with each WebSocket message; neg[.z.w] sends back to that client"
+  },
+  "Exit handler": {
+    "prefix": "zexit",
+    "body": ".z.exit:{[code] ${1:-1 \"exit \",string code};}",
+    "description": ".z.exit: called with the exit code as the process exits"
+  },
+  "TorQ process skeleton": {
+    "prefix": "torq",
+    "body": [
+      "/ ${1:myproc}: a TorQ process. Start it with",
+      "/ q torq.q -load ${1:myproc}.q -proctype ${1:myproc} -procname ${1:myproc}1",
+      "\\\\d .${1:myproc}",
+      "/ a setting, overridden by appconfig/settings/${1:myproc}.q",
+      "interval:@[value;`interval;${2:0D00:00:10}];",
+      "/ connect to the processes it needs, then start the timer",
+      "init:{[]",
+      "\t.servers.startup[];",
+      "\t.timer.repeat[.proc.cp[];0Wp;interval;(`.${1:myproc}.tick;`);\"${1:myproc} tick\"];",
+      "\t.lg.o[`init;\"${1:myproc} started\"];",
+      "\t}",
+      "tick:{[x] ${3:.lg.o[`tick;\"tick\"]};}",
+      "\\\\d .",
+      ".${1:myproc}.init[];"
+    ],
+    "description": "A TorQ process: its namespace, a setting, init connecting to its servers and starting a timer, and the tick it runs"
+  }
+}

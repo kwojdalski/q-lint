@@ -55,6 +55,15 @@ to a process you add and connect to, and sends only the code you run.
   `eachleft`, `eachright`, `eachprior`), control flow (`cond`, `condn`,
   `if`, `do`, `while`), a function under a qdoc header (`fn`) and a `\d`
   block (`namespace`).
+- **Idiom snippets**, in the completion list: the joins (`aj`, `aj0`, `wj`
+  and `wj1` with their window, `lj`, `ij`, `uj`), a bucketed `xbar` select,
+  the `.z` handlers (`zpg`, `zps`, `zpo`, `zpc`, `zpw`, `zts` with its `\t`,
+  `zws`, `zexit`) and a TorQ process skeleton (`torq`: its namespace, a
+  setting, `init` calling `.servers.startup` and starting a `.timer.repeat`,
+  and the tick it runs). Each is q that parses, and the joins run as
+  inserted over tables of the names they default to. They come from a
+  completion provider rather than a contributed snippet file, so
+  `q-lint.idiomSnippets.enable` can take them out of the list.
 - **Syntax colouring** from a TextMate grammar, plus semantic tokens: a
   function is coloured wherever it is called, even when another `.q` file in
   the workspace defines it, and a parameter wherever its body reads it.
@@ -1006,6 +1015,7 @@ nothing.
 | `q-lint.testExplorer.enable` | `true` | List q tests (`test_*`, qUnit `testName`, k4unit CSV suites) in the Testing view and run them on a q process. Off, none is listed, read or sent. | - |
 | `q-lint.liveValueHover.enable` | `false` | Show a global's value on the connected process when hovering it in a q editor. Off, no hover is registered and nothing is sent. | - |
 | `q-lint.undefinedNames.enable` | `false` | Warn on globals a q file reads that neither the workspace nor the connected process defines, and offer **Check Undefined Names on Process**. Off, nothing is sent and the command is hidden. | - |
+| `q-lint.idiomSnippets.enable` | `true` | Offer the idiom snippets (joins, `.z` handlers, a TorQ process) in the completion list. | - |
 
 ### Connection settings
 

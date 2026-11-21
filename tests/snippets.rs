@@ -1,4 +1,6 @@
-//! The editor snippets (`editors/vscode/snippets/q.json`) are q somebody is
+//! The editor snippets (`editors/vscode/snippets/q.json`, and the idioms in
+//! `idioms.json` the extension offers while `q-lint.idiomSnippets.enable`
+//! is on) are q somebody is
 //! about to have in a buffer, so each is held to what the editor will then
 //! say about it: expanded with every placeholder at its default, a snippet
 //! reports nothing under `uqf`, the broadest profile, and so under any. A
@@ -78,9 +80,13 @@ fn closing_brace(text: &str) -> usize {
 }
 
 fn snippets() -> Vec<(String, String)> {
-    let file = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/editors/vscode/snippets/q.json"
+    snippets_in("q.json")
+}
+
+fn snippets_in(name: &str) -> Vec<(String, String)> {
+    let file = format!(
+        "{}/editors/vscode/snippets/{name}",
+        env!("CARGO_MANIFEST_DIR")
     );
     let all: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(file).unwrap()).unwrap();
@@ -116,7 +122,9 @@ fn the_expander_reads_the_snippet_syntax() {
 fn every_snippet_expands_to_q_the_editor_reports_nothing_on() {
     let all = snippets();
     assert!(all.len() >= 20, "expected the snippet file, found {all:?}");
-    for (name, body) in all {
+    let idioms = snippets_in("idioms.json");
+    assert!(idioms.len() >= 15, "expected the idioms, found {idioms:?}");
+    for (name, body) in all.into_iter().chain(idioms) {
         // A leading tab is one indent: VS Code writes it as the buffer
         // indents, with spaces or with the tab itself. q continues a
         // statement on either.
