@@ -708,6 +708,12 @@
             "default": false,
             "order": 131,
             "markdownDescription": "On saving a q file, send the function definitions the save changed to its process (the file's bound one, or the active connection), after Redefine's confirmation. Only a function the process holds as the file had it before the edit is replaced. Off by default: it sends code to a process on save. Off, nothing listens and nothing is sent."
+          },
+          "q-lint.query.lineTimings.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 145,
+            "markdownDescription": "**Time Lines on Process**: run the selection, or the file, one statement at a time on the connected process, and show each statement's time (by `.z.p`) and memory (by `\\ts`) after its last line. Sends code only when the command is run, through the read-only guard. Off, the command is hidden and refuses, and the timings are cleared."
           }
         }
       },
@@ -1556,6 +1562,18 @@
         "icon": "$(sparkle)"
       },
       {
+        "command": "q-lint.timeLines",
+        "title": "Time Lines on Process",
+        "category": "q-lint",
+        "icon": "$(watch)",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.clearLineTimings",
+        "title": "Clear Line Timings",
+        "category": "q-lint"
+      },
+      {
         "command": "q-lint.formatChangedLines",
         "title": "Format Changed Lines",
         "category": "q-lint"
@@ -2166,6 +2184,11 @@
           "command": "q-lint.draftQsql",
           "when": "editorLangId == q && config.q-lint.chat.englishToQsql.enable",
           "group": "q-lint@9"
+        },
+        {
+          "command": "q-lint.timeLines",
+          "when": "editorLangId == q && config.q-lint.query.lineTimings.enable",
+          "group": "q-lint@40"
         }
       ],
       "commandPalette": [
@@ -2344,6 +2367,14 @@
         {
           "command": "q-lint.draftQsql",
           "when": "config.q-lint.chat.englishToQsql.enable"
+        },
+        {
+          "command": "q-lint.timeLines",
+          "when": "config.q-lint.query.lineTimings.enable && editorLangId == q"
+        },
+        {
+          "command": "q-lint.clearLineTimings",
+          "when": "config.q-lint.query.lineTimings.enable"
         },
         {
           "command": "q-lint.formatChangedLines",

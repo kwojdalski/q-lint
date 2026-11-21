@@ -41,6 +41,7 @@ import { Drift } from "./driftview";
 import { registerAssistTools } from "./assisttools";
 import { registerChat } from "./chat";
 import { registerQsqlDraft } from "./qsqldraft";
+import { registerLineTimings } from "./linetimingsview";
 import { registerFormatChanged } from "./formatchangedview";
 import { registerOrganiseLoads } from "./organiseloads";
 import { spawnSync } from "node:child_process";
@@ -134,6 +135,7 @@ export async function activate(
     hotReload: Drift["hotReloadState"];
     assistTools: () => string[];
     chatParticipant: () => boolean;
+    lineTimings: ReturnType<typeof registerLineTimings>;
     formatChanged: ReturnType<typeof registerFormatChanged>;
   }
 > {
@@ -196,6 +198,7 @@ export async function activate(
   const valueHover = registerValueHover(context, live, running);
   const undefinedNames = registerUndefinedNames(context, live, running);
   const idioms = registerIdioms(context);
+  const lineTimings = registerLineTimings(context, live);
   const formatChanged = registerFormatChanged(context, running);
   registerOrganiseLoads(context);
   // Not awaited: nothing above needs the server, and a slow or hung one
@@ -222,6 +225,7 @@ export async function activate(
     hotReload: () => drift.hotReloadState(),
     assistTools: assistTools.registered,
     chatParticipant: chatParticipant.registered,
+    lineTimings,
     formatChanged,
   };
 }

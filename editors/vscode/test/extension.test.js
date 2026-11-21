@@ -100,6 +100,7 @@ function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir
     "./assisttools": { registerAssistTools: () => ({ registered: () => [] }) },
     "./chat": { registerChat: () => ({ registered: () => false }) },
     "./qsqldraft": { registerQsqlDraft() {} },
+    "./linetimingsview": { registerLineTimings: () => ({ registered: () => false }) },
     "./formatchangedview": { registerFormatChanged: () => ({ registered: () => false }) },
     "./organiseloads": { registerOrganiseLoads() {} },
   };

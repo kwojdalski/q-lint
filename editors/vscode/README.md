@@ -491,6 +491,22 @@ read-only guard guards) it asks before it starts, and code that would
 change a guarded process is asked about once, then. It also takes the code
 and the seconds as arguments.
 
+**Time Lines on Process**, in a q editor's context menu or the palette, runs
+the selection - or the whole file when nothing is selected - one statement
+at a time on the active connection, as a query would (assignments are
+global, a `\d` holds for the statements after it), and draws each
+statement's time and memory after its last line: `⏱ 2.34 ms · 8.0 MB`.
+Time is q's own clock, `.z.p` before and after; memory is what `\ts`
+reports allocating (a system command has none). It stops at the first
+statement that fails, marked `✗` with q's error. Nothing of q-lint's is
+defined on the process: the statements go with one lambda. The timing costs
+something itself, and is measured each run - `::` through the same path a
+hundred times - and said in the message and the hover: about 0.9 µs a
+statement on KDB-X and 1.8 µs on PeachQ here, and `.z.p` advances in
+microseconds on macOS, so a statement faster than that reads 0. Editing the
+file, or **Clear Line Timings**, clears them. The read-only guard reads the
+statements as it reads a query (`q-lint.query.lineTimings.enable`).
+
 **Read-only guard.** Code sent to a process tagged `prod`, `prd` or
 `production` (`q-lint.processes.readOnlyGuard.tags`, ignoring case) is read
 first, and when it would change the process, a modal asks before anything
@@ -1397,6 +1413,7 @@ nothing.
 | `q-lint.undefinedNames.enable` | `false` | Warn on globals a q file reads that neither the workspace nor the connected process defines, and offer **Check Undefined Names on Process**. Off, nothing is sent and the command is hidden. | - |
 | `q-lint.idiomSnippets.enable` | `true` | Offer the idiom snippets (joins, `.z` handlers, a TorQ process) in the completion list. | - |
 | `q-lint.processExplorer.driftDetection.enable` | `false` | **Check Drift Against Process**: compare the workspace's function definitions with the connected process. Off, the command is hidden and reads nothing. | - |
+| `q-lint.query.lineTimings.enable` | `true` | **Time Lines on Process** and **Clear Line Timings**. Off, the commands are hidden and refuse, and the timings drawn are cleared. | - |
 | `q-lint.hotReload.enable` | `false` | On saving a q file, send the definitions the save changed to its process, after Redefine's confirmation. Off, nothing listens and nothing is sent. | - |
 
 ### Connection settings
