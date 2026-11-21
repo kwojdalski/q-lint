@@ -185,3 +185,24 @@ test("showing the q Results view gives the focus back to the editor as it was, e
   assert.strictEqual(calls[0].preserveFocus, false);
   assert.deepStrictEqual(editor.selections, selections);
 });
+
+test("a query setting other than the decimals does not redraw the result on show", () => {
+  // Toggle Unwrapped Query, or the timeout, sent the result again, and
+  // the page drew it afresh: the grid back at its first row.
+  const fake = fakeVscode();
+  const modes = loadModes(fake);
+  modes.show(result([1, 2, 3]), live());
+  const page = fake.pages[0];
+  const sent = page.posted.length;
+  const change = (key) => {
+    for (const f of fake.listeners.config) {
+      f({ affectsConfiguration: (k) => key === k || key.startsWith(`${k}.`) });
+    }
+  };
+  for (const key of ["q-lint.query.unwrapped", "q-lint.query.timeout", "q-lint.query.mode", "q-lint.query.gridLimit"]) {
+    change(key);
+  }
+  assert.strictEqual(page.posted.length, sent);
+  change("q-lint.query.gridDecimals");
+  assert.strictEqual(page.posted.length, sent + 1);
+});

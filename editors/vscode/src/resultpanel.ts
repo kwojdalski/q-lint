@@ -135,7 +135,10 @@ export class QueryModes {
       workspace.onDidChangeConfiguration((event) => {
         if (event.affectsConfiguration("q-lint.query")) {
           this.showStatus();
-          // New decimals apply to what is on show.
+        }
+        // New decimals apply to what is on show. Nothing else does, and a
+        // result sent again is drawn afresh, its grid back at the top.
+        if (event.affectsConfiguration("q-lint.query.gridDecimals")) {
           this.post();
         }
       }),
