@@ -486,7 +486,12 @@ rerun, Preview, a saved query, a watched one, asked once when it starts),
 process they reach), a notebook cell and **Run Notebook with Parameters**,
 **Redefine on Process** (whose confirmation says so, since it always
 assigns) and a connect script, asked at each connect, and skipped, with the
-connection kept, when declined. An agent's query cannot be asked about, so
+connection kept, when declined; also a result-grid drill-down query, a run
+from the Testing view (each test's definition), and a query to a TorQ
+gateway, read as written - and a `.gw.syncexec` or `.gw.asyncexec` call,
+such as one rerun from the history, is read inside its strings. A guarded
+process holds no result for paging, since holding assigns `.qlint.held`,
+and streaming its table asks first, since `.u.sub` adds a subscriber. An agent's query cannot be asked about, so
 one that would change such a process is refused with why, and never offered
 to you. q-lint's own reads - the Process Explorer, Monitor, HDB browser,
 hovers and the heartbeat - define nothing and are not asked about. The

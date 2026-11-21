@@ -320,3 +320,65 @@ test("a k4unit suite's before rows run once before its tests, and its after rows
     ],
   );
 });
+
+test("a test run on a process the read-only guard guards goes through the guard: declined, the test's definition is not sent (#918)", async (t) => {
+  const net = require("node:net");
+  const { serialize, deserialize } = require("node-q/lib/c.js");
+  const { Live } = require("../out/live.js");
+  stub.reset();
+  fakeTests();
+  stub.config.user["testExplorer.enable"] = true;
+  stub.config.user["processes.readOnlyGuard.tags"] = ["live"];
+  // A q process played by a socket server, which keeps what it is sent.
+  const sent = [];
+  const sockets = new Set();
+  const server = net.createServer((socket) => {
+    sockets.add(socket);
+    socket.on("error", () => {});
+    let shook = false;
+    let buffer = Buffer.alloc(0);
+    socket.on("data", (chunk) => {
+      if (!shook) {
+        shook = true;
+        socket.write(Buffer.from([3]));
+        return;
+      }
+      buffer = Buffer.concat([buffer, chunk]);
+      while (buffer.length >= 8 && buffer.length >= buffer.readUInt32LE(4)) {
+        const message = buffer.subarray(0, buffer.readUInt32LE(4));
+        buffer = buffer.subarray(message.length);
+        sent.push(deserialize(message));
+        const out = serialize({ ok: true, failed: false, text: "1b" });
+        out.writeUInt8(2, 1);
+        socket.write(out);
+      }
+    });
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const context = stub.newContext();
+  await context.globalState.update("q-lint.processes", [{ label: "rdb", host: "127.0.0.1", port: server.address().port, tags: ["live"] }]);
+  const live = new Live(context);
+  t.after(async () => {
+    await stub.commands.get("q-lint.disconnectProcess")?.();
+    for (const d of context.subscriptions) d.dispose?.();
+    for (const s of sockets) s.destroy();
+    server.close();
+  });
+  assert.strictEqual(await live.connectTo("rdb"), true);
+  const explorer = registerTestExplorer(stub.newContext(), live, () => ({ sendRequest: async () => LISTED }));
+  await explorer.discover();
+  stub.picks.push(undefined, undefined);
+  await explorer.run();
+  const asked = stub.messages.filter(([kind, text]) => kind === "warning" && /would change rdb/.test(text));
+  assert.strictEqual(asked.length, 2);
+  assert.deepStrictEqual(sent, []);
+  assert.deepStrictEqual(
+    explorer.results().map((r) => r.state),
+    ["errored", "errored"],
+  );
+  assert.match(explorer.results()[0].message, /not confirmed/);
+  // Confirmed, the tests are sent.
+  stub.picks.push("Run Anyway", "Run Anyway");
+  await explorer.run();
+  assert.strictEqual(sent.length, 2);
+});

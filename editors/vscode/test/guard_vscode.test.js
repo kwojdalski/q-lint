@@ -44,6 +44,8 @@ async function fakeQ() {
     port: server.address().port,
     /// The statements each query sent.
     queries: () => sent.filter((m) => Array.isArray(m) && Array.isArray(m[1])).map((m) => m[1].join("\n")),
+    /// The lambda each query was sent with.
+    lambdas: () => sent.filter((m) => Array.isArray(m) && Array.isArray(m[1])).map((m) => m[0]),
     close: () => {
       for (const s of sockets) s.destroy();
       server.close();
@@ -51,12 +53,12 @@ async function fakeQ() {
   };
 }
 
-async function setUp(t, tags, config = {}) {
+async function setUp(t, tags, config = {}, extra = {}) {
   stub.reset();
   Object.assign(stub.config.user, config);
   const q = await fakeQ();
   const context = stub.newContext();
-  await context.globalState.update("q-lint.processes", [{ label: "rdb", host: "127.0.0.1", port: q.port, tags }]);
+  await context.globalState.update("q-lint.processes", [{ label: "rdb", host: "127.0.0.1", port: q.port, tags, ...extra }]);
   const live = new Live(context);
   t.after(async () => {
     vscode.window.activeTextEditor = undefined;
@@ -171,4 +173,56 @@ test("a connect script that would change a guarded process asks at each connect;
   stub.picks.push("Run Anyway");
   assert.strictEqual(await live.connectTo("rdb"), true);
   assert.deepStrictEqual(q.queries(), ["helper:{x+1}"]);
+});
+
+test("a query to a guarded TorQ gateway is read as written, and a gateway call rerun from the history is read inside its strings (#909)", async (t) => {
+  const { q, live, editor } = await setUp(t, ["prod"], {}, { gateway: ["rdb"] });
+  assert.strictEqual(await live.connectTo("rdb"), true);
+  editor("delete from `trade");
+  stub.picks.push(undefined);
+  await stub.commands.get("q-lint.queryCurrentLine")();
+  assert.deepStrictEqual(asked(), ["This code would change rdb. Run it anyway?"]);
+  assert.deepStrictEqual(q.queries(), []);
+  // Confirmed, it goes through the gateway, and the history keeps the call.
+  stub.picks.push("Run Anyway");
+  await stub.commands.get("q-lint.queryCurrentLine")();
+  assert.deepStrictEqual(q.queries(), [".gw.syncexec[\"delete from `trade\";enlist `rdb]"]);
+  const entry = live.history().find((e) => e.code.startsWith(".gw.syncexec"));
+  assert.ok(entry);
+  // Rerun as recorded: the write is inside a string, and still asked about.
+  stub.picks.push(undefined);
+  await stub.commands.get("q-lint.rerunQuery")(entry);
+  assert.strictEqual(asked().length, 3);
+  assert.strictEqual(q.queries().length, 1);
+  // A read through the gateway is sent unasked.
+  editor("select from trade");
+  await stub.commands.get("q-lint.queryCurrentLine")();
+  assert.strictEqual(asked().length, 3);
+  assert.deepStrictEqual(q.queries().at(-1), ".gw.syncexec[\"select from trade\";enlist `rdb]");
+});
+
+test("paging (#922) holds no result on a guarded process, as holding assigns .qlint.held; unguarded, it does", async (t) => {
+  const { q, live, editor } = await setUp(t, ["live"], { "processes.readOnlyGuard.tags": ["live"], "results.paging.enable": true, "query.mode": "grid" });
+  await live.connectTo("rdb");
+  editor("select from trade");
+  await stub.commands.get("q-lint.queryCurrentLine")();
+  assert.strictEqual(q.lambdas().length, 1);
+  assert.doesNotMatch(q.lambdas()[0], /\.qlint\.held/);
+  // The guard off: the same process holds the cut result for paging.
+  stub.config.user["processes.readOnlyGuard.enable"] = false;
+  stub.changeConfig("q-lint.processes.readOnlyGuard.enable");
+  await stub.commands.get("q-lint.queryCurrentLine")();
+  assert.strictEqual(q.lambdas().length, 2);
+  assert.match(q.lambdas()[1], /\.qlint\.held/);
+});
+
+test("a drill-down query (#927) on a guarded process goes through the guard; declined, nothing is sent", async (t) => {
+  const { q, live } = await setUp(t, ["live"], { "processes.readOnlyGuard.tags": ["live"] });
+  await live.connectTo("rdb");
+  stub.picks.push(undefined);
+  await live.runDrilldown("delete from `trade where sym=`a", "rdb");
+  assert.deepStrictEqual(asked(), ["This code would change rdb. Run it anyway?"]);
+  assert.deepStrictEqual(q.queries(), []);
+  await live.runDrilldown("select from trade where sym=`a", "rdb");
+  assert.deepStrictEqual(q.queries(), ["select from trade where sym=`a"]);
 });

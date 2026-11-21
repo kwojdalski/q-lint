@@ -157,6 +157,19 @@ test("with q-lint.tickerplant.stream.enable off, Stream Tickerplant Table refuse
   assert.deepStrictEqual(streams.state(), []);
 });
 
+test("a tickerplant the read-only guard guards asks before .u.sub; declined, nothing is connected to or sent (#918)", async (t) => {
+  // A port nothing listens on: a connect would be an error message.
+  const { streams, panels } = await setUp(t, [{ label: "tp", host: "127.0.0.1", port: 1, tags: ["live"] }]);
+  stub.config.user["tickerplant.stream.enable"] = true;
+  stub.config.user["processes.readOnlyGuard.tags"] = ["live"];
+  stub.picks.push(undefined);
+  await stub.commands.get(STREAM_COMMANDS.start)("tp", "trade");
+  assert.strictEqual(stub.messages.length, 1);
+  assert.match(stub.messages[0][1], /^tp is read-only guarded \(tagged live\)\. Subscribing adds q-lint/);
+  assert.deepStrictEqual(panels, []);
+  assert.deepStrictEqual(streams.state(), []);
+});
+
 test("a tickerplant table streams into the grid, keeping its newest rows, and closing unsubscribes", { skip }, async (t) => {
   const port = await startQ(t, TICKERPLANT);
   const { streams, panels } = await setUp(t, [

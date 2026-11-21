@@ -2295,8 +2295,10 @@ export class Live {
       // tabular comes back as console mode's text.
       const cut = statements(code);
       // Paging (#922) leaves a cut result on the process: never in
-      // unwrapped mode, which sends nothing of ours, nor on production.
-      const hold = !controls.unwrapped && settings.mode !== "console" && this.modes.wantsHold(isProduction(process));
+      // unwrapped mode, which sends nothing of ours, nor on production or
+      // a process the read-only guard (#918) guards, as holding assigns.
+      const readOnly = isProduction(process) || guardedBy(process, this.setting(readGuard)).length > 0;
+      const hold = !controls.unwrapped && settings.mode !== "console" && this.modes.wantsHold(readOnly);
       const answer = controls.unwrapped
         ? await runUnwrapped(connection, cut, { size: consoleSize, limit: gridLimit, unlimited, grid: settings.mode !== "console" })
         : settings.mode !== "console"

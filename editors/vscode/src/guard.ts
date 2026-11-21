@@ -27,7 +27,9 @@
 // - `value` or `eval` applied to a string;
 // - a system command (`\l`, `\cd x`, `\\`), except one that only reads a
 //   setting (`\c`, `\d`, `\P` without an argument) and `\t` or `\ts`, whose
-//   expression is read by these rules.
+//   expression is read by these rules;
+// - any of these in a string given to a TorQ gateway's `.gw.syncexec` or
+//   `.gw.asyncexec`, which runs it on the gateway's servers (#909).
 import type { Process } from "./processes";
 import { statements } from "./statements";
 
@@ -137,6 +139,18 @@ function tokens(code: string): Token[] {
   return out;
 }
 
+/// The TorQ gateway calls that run a query string on the gateway's servers.
+const GATEWAY_EXEC = /^\.gw\.(syncexec|asyncexec)[A-Za-z]*$/;
+
+/// The text of the q string literal `literal`, quotes and escapes taken off.
+function qText(literal: string): string {
+  return literal
+    .slice(1, literal.endsWith('"') && literal.length > 1 ? -1 : undefined)
+    .replace(/\\([0-7]{3}|.)/g, (_, c: string) =>
+      c.length === 3 ? String.fromCharCode(parseInt(c, 8)) : c === "n" ? "\n" : c === "r" ? "\r" : c === "t" ? "\t" : c,
+    );
+}
+
 /// What one statement does that the guard asks about, added to `found`.
 function readStatement(statement: string, found: Set<string>): void {
   const text = statement.trimStart();
@@ -215,6 +229,21 @@ function readStatement(statement: string, found: Set<string>): void {
       }
       if ((k.text === "value" || k.text === "eval") && next?.kind === "str") {
         found.add(`evaluates a string with ${k.text}`);
+        continue;
+      }
+      // A TorQ gateway runs the strings it is given on its servers (#909):
+      // what they do is read as if they were sent directly.
+      if (GATEWAY_EXEC.test(k.text) && next?.text === "[") {
+        let depth = 0;
+        for (let j = i + 1; j < t.length; j++) {
+          if (t[j].kind === "open") depth++;
+          else if (t[j].kind === "close" && --depth === 0) break;
+          else if (t[j].kind === "str") {
+            for (const reason of writes(qText(t[j].text))) {
+              found.add(`${reason} through ${k.text}`);
+            }
+          }
+        }
         continue;
       }
       // An assignment: the name, an index, an operator, then `:`.

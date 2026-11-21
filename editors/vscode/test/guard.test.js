@@ -131,3 +131,13 @@ test("the check names the guarded processes and what the code does; the question
   assert.match(guardQuestion(two).detail, /^rdb, hdb are tagged prod, PRD/);
   assert.match(guardRefusal(check), /^Nothing was run: rdb is read-only guarded \(tagged prod; q-lint.processes.readOnlyGuard.tags\), and the query assigns a\./);
 });
+
+test("a string given to a TorQ gateway's .gw.syncexec is read as code sent to its servers (#909)", () => {
+  assert.deepStrictEqual(writes(".gw.syncexec[\"delete from `t\";enlist `rdb]"), ["deletes from `t in place through .gw.syncexec"]);
+  // Several statements, as the gateway wrap sends them, with q's escapes.
+  assert.deepStrictEqual(writes('.gw.syncexec[({last value each x};("select from t";"a:\\"x\\""));`rdb`hdb]'), ["assigns a through .gw.syncexec"]);
+  assert.deepStrictEqual(writes(".gw.asyncexec[\"`t upsert 1\";`rdb]"), ["calls upsert through .gw.asyncexec"]);
+  // One that only reads is not asked about.
+  assert.deepStrictEqual(writes(".gw.syncexec[\"select from t\";`rdb]"), []);
+  assert.deepStrictEqual(writes('.gw.syncexec[enlist "t";enlist `rdb]'), []);
+});

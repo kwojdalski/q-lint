@@ -9,6 +9,7 @@
 import { randomBytes } from "node:crypto";
 import { Uri, ViewColumn, commands, window, workspace, type ExtensionContext, type Webview, type WebviewPanel } from "vscode";
 import { isProduction } from "./agent";
+import { guardedBy, readGuard } from "./guard";
 import type { Live, ProcessArg } from "./live";
 import { decode } from "./qdecode";
 import type { QConnection } from "./qclient";
@@ -83,10 +84,13 @@ export class TableStreams {
     if (process === undefined) {
       return;
     }
-    if (isProduction(process)) {
+    // `.u.sub` adds q-lint to the tickerplant's subscribers: asked first on
+    // production, and on a process the read-only guard (#918) guards.
+    const guarded = guardedBy(process, readGuard((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback)));
+    if (isProduction(process) || guarded.length > 0) {
       const yes = "Subscribe";
       const sure = await window.showWarningMessage(
-        `${process.label} is a production process (tagged ${process.tags.join(", ")}). Subscribing adds q-lint as a subscriber there: the tickerplant sends it every update of the table while the grid is open. Subscribe?`,
+        `${process.label} is ${isProduction(process) ? "a production process" : "read-only guarded"} (tagged ${process.tags.join(", ")}). Subscribing adds q-lint as a subscriber there: the tickerplant sends it every update of the table while the grid is open. Subscribe?`,
         { modal: true },
         yes,
       );
