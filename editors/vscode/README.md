@@ -178,7 +178,8 @@ and clicking it switches. The commands:
 - **Connect to Process**, which also takes a process's label as an
   argument for a keybinding, and **Disconnect**.
 - **Import** and **Export Processes**: a JSON file holding
-  `{"processes": [{"label", "host", "port", "user"?, "tags"?, "tls"?}]}`.
+  `{"processes": [{"label", "host", "port", "user"?, "tags"?, "tls"?}]}`,
+  and any of `init`, `initFile`, `ssh`, `gateway` and `launch` (below).
   An import replaces processes of the same label, adds the rest, and says
   which entries it skipped. A process it moves to another host, port or
   user forgets its stored password, so that is never sent to the new one.
@@ -274,6 +275,26 @@ first connect, and keeps it in secret storage under `server/label`; one
 that fails to connect is forgotten, and asked for again on the next, and
 so are those of a server's processes when it is deleted or its URL or label
 changed.
+
+**The shared process list.** A `.qlint/processes.json` in the workspace
+folder - the same JSON as an import, committed with the code - lists a
+team's processes for everyone who opens the repository. Its processes are
+shown in a **Workspace: .qlint/processes.json** group after the saved ones,
+read again whenever the file is created, changed or deleted, and connect
+as a discovered process does: once connected one is `.qlint/label`, and one
+with a `user` asks for its password on the first connect and keeps it in
+secret storage, forgetting it when the file moves the process to another
+host, port or user. The file never holds a secret: a `password`, `secret`,
+`token` or similar field is ignored, a warning names the processes that
+held one, and a note under the group says so. Its connect scripts, SSH jump
+hosts and launch definitions are read only in a trusted workspace; in a
+restricted one they are left out and a note says so. A file that is not
+JSON shows why under the group. **Add to Shared Process List**, on a saved
+process row, writes the process there (creating the file), replacing an
+entry of its label: its address, user, tags and settings, never its
+password. `q-lint.processes.shared.enable` off stops reading the file,
+removes the group, closes a connection to one of its processes, and hides
+the command.
 
 **Querying.** With a q file open:
 - **Query Current Line**, `ctrl+q`.
@@ -1033,6 +1054,7 @@ Each applies at once, without a reload. None reaches the language server.
 | `q-lint.tickerplant.stream.enable` | `false` | **Stream Tickerplant Table**: subscribe with `.u.sub` and show a table's updates live. Off, the command is hidden and refuses, and open streams close. | - |
 | `q-lint.tickerplant.stream.rows` | `1000` | The newest rows a stream keeps, 1 to 10,000. | - |
 | `q-lint.processes.launcher.enable` | `true` | **Start Process**, **Stop Process** and **Set Launch Definition**. Off, they are hidden and refuse, and what was started is stopped. | - |
+| `q-lint.processes.shared.enable` | `true` | Read, watch and list `.qlint/processes.json`, and offer **Add to Shared Process List**. Off, the file is not read and the group is removed. | - |
 
 ### Terminal settings
 

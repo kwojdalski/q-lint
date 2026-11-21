@@ -35,6 +35,10 @@ export const MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
 /// The most redirects a fetch follows; the auth header only to its origin.
 const MAX_REDIRECTS = 20;
 
+/// The `server` of a process from the workspace's shared list (#955), as a
+/// discovery server's name is: its label once connected is `.qlint/label`.
+export const SHARED_SOURCE = ".qlint";
+
 /// Why `label` cannot name a discovery server, or undefined when it can.
 /// A `/` would make a qualified label (`server/process`) ambiguous.
 export function serverLabelProblem(label: string, taken: Set<string>): string | undefined {
@@ -45,7 +49,9 @@ export function serverLabelProblem(label: string, taken: Set<string>): string | 
       ? "A discovery server's label cannot hold a /."
       : taken.has(l)
         ? "That label is taken."
-        : undefined;
+        : l === SHARED_SOURCE
+          ? "That label names the workspace's shared process list."
+          : undefined;
 }
 
 /// Why `url` is not one a discovery server can have, or undefined when it is.
@@ -244,6 +250,9 @@ export type Row =
   | { kind: "servers" }
   | { kind: "server"; server: DiscoveryServer; state: ServerState }
   | { kind: "discovered"; server: string; process: Process }
+  /// The workspace's shared process list (#955), its processes under it as
+  /// `discovered` rows of the server `SHARED_SOURCE`.
+  | { kind: "shared"; file: string; state: ServerState }
   | { kind: "note"; level: "error" | "warning" | "info"; text: string };
 
 export interface Discovered {
@@ -259,7 +268,7 @@ const PROBLEMS_SHOWN = 10;
 /// the untagged ones at the top level, then a Discovery Servers group when
 /// there is a server. Under a server, its notes come first, then its
 /// processes by label.
-export function children(saved: Process[], discovered: Discovered[], row?: Row): Row[] {
+export function children(saved: Process[], discovered: Discovered[], row?: Row, shared?: Discovered): Row[] {
   if (row === undefined) {
     return [
       ...grouped(saved).flatMap((group): Row[] =>
@@ -267,10 +276,13 @@ export function children(saved: Process[], discovered: Discovered[], row?: Row):
           ? group.processes.map((process): Row => ({ kind: "process", process }))
           : [{ kind: "tag", tag: group.tag, processes: group.processes }],
       ),
+      ...(shared !== undefined ? [{ kind: "shared", file: shared.server.url, state: shared.state } as const] : []),
       ...(discovered.length > 0 ? [{ kind: "servers" } as const] : []),
     ];
   }
   switch (row.kind) {
+    case "shared":
+      return serverChildren({ label: SHARED_SOURCE, url: row.file }, row.state);
     case "tag":
       return row.processes.map((process) => ({ kind: "process", process }));
     case "servers":

@@ -14,6 +14,7 @@ import {
   commands,
   EventEmitter,
   MarkdownString,
+  RelativePattern,
   StatusBarAlignment,
   env,
   ThemeColor,
@@ -23,6 +24,7 @@ import {
   Uri,
   window,
   workspace,
+  type Disposable,
   type ExtensionContext,
   type OutputChannel,
   type StatusBarItem,
@@ -31,11 +33,13 @@ import {
   type TreeDataProvider,
   type TreeView,
 } from "vscode";
-import { children, findDiscovered, qualified, type Row } from "./discovery";
+import { children, findDiscovered, qualified, type Discovered, type Row } from "./discovery";
+import { SHARED_COMMANDS, SHARED_FILE, SHARED_SOURCE, readShared, readSharedFile, secretsWarning, withShared } from "./shared";
 import { DiscoveryServers, discoveryItem } from "./discoveryservers";
 import {
   address,
   hostProblem,
+  markdownText,
   merge,
   parseProcesses,
   plainHost,
@@ -86,6 +90,8 @@ import { isProduction } from "./agent";
 import { PLACEHOLDER_VALUES_KEY, lastValue, placeholderNames, readPlaceholders, remembered, substitute } from "./placeholders";
 
 const PROCESSES_KEY = "q-lint.processes";
+/// The address of each process the shared list held when last read (#955).
+const SHARED_SEEN_KEY = "q-lint.sharedProcessesSeen";
 const HISTORY_KEY = "q-lint.queryHistory";
 /// How many queries the history keeps.
 const HISTORY_LIMIT = 200;
@@ -174,7 +180,7 @@ class ProcessesView implements TreeDataProvider<Row> {
   getChildren(row?: Row): Row[] {
     let rows = this.given.get(row);
     if (rows === undefined) {
-      rows = children(this.live.processes(), this.live.discovery.discovered(), row);
+      rows = children(this.live.processes(), this.live.discovery.discovered(), row, this.live.sharedList()[0]);
       this.given.set(row, rows);
       for (const child of rows) {
         this.parents.set(child, row);
@@ -197,7 +203,7 @@ class ProcessesView implements TreeDataProvider<Row> {
       if (row.kind === "discovered" && row.server === process.server && qualified(row.server, row.process.label) === process.label) {
         return row;
       }
-      if (row.kind === "tag" || row.kind === "servers" || row.kind === "server") {
+      if (row.kind === "tag" || row.kind === "servers" || row.kind === "server" || row.kind === "shared") {
         const found = this.find(process, row);
         if (found !== undefined) {
           return found;
@@ -208,6 +214,17 @@ class ProcessesView implements TreeDataProvider<Row> {
   }
 
   getTreeItem(row: Row): TreeItem {
+    if (row.kind === "shared") {
+      const item = new TreeItem(`Workspace: ${SHARED_FILE}`, TreeItemCollapsibleState.Expanded);
+      const n = row.state.processes.length;
+      item.description = row.state.error !== undefined ? "failed" : `${n} process${n === 1 ? "" : "es"}`;
+      item.iconPath = new ThemeIcon("repo", row.state.error !== undefined ? new ThemeColor("errorForeground") : undefined);
+      item.tooltip = new MarkdownString(
+        `The processes ${markdownText(row.file)} lists, shared with the repository. Once connected, one is \`${SHARED_SOURCE}/label\`.`,
+      );
+      item.contextValue = "sharedProcesses";
+      return item;
+    }
     if (row.kind !== "tag" && row.kind !== "process" && row.kind !== "discovered") {
       return discoveryItem(row);
     }
@@ -472,6 +489,12 @@ export class Live {
   private historyFilter: HistoryFilter = {};
   private readonly modes: QueryModes;
   readonly discovery: DiscoveryServers;
+  /// The workspace's shared process list as last read (#955), when it is
+  /// on and the file is there, and the watcher on the file.
+  private shared: Discovered | undefined;
+  private sharedWatcher: Disposable | undefined;
+  /// Bumped by each read, so a slow one does not overwrite a later one.
+  private sharedRead = 0;
 
   constructor(private readonly context: ExtensionContext) {
     this.output = window.createOutputChannel("q-lint: query", "q-console");
@@ -522,6 +545,7 @@ export class Live {
       c(CONTROL_COMMANDS.revealProcess, () => this.revealProcess()),
       c(CONNECT_SCRIPT_COMMANDS.set, (row?: ProcessArg, script?: ConnectScript | null) => this.setConnectScript(row, script)),
       c(TUNNEL_COMMANDS.set, (row?: ProcessArg, destination?: string | null) => this.setSshTunnel(row, destination)),
+      c(SHARED_COMMANDS.add, (row?: ProcessArg) => this.addToShared(row)),
       c(GATEWAY_COMMANDS.set, (row?: ProcessArg, types?: string | string[] | null) => this.setGateway(row, types)),
       c(GATEWAY_COMMANDS.queryWith, (types?: string | string[]) => this.queryGatewayWith(types)),
       c(HISTORY_COMMANDS.filter, (filter?: HistoryFilter) => this.filterHistory(filter)),
@@ -546,6 +570,9 @@ export class Live {
         if (event.affectsConfiguration("q-lint.query.progress")) {
           this.showStatus();
         }
+        if (event.affectsConfiguration("q-lint.processes.shared")) {
+          this.watchShared();
+        }
         // Turned off, a connection through a tunnel closes with its tunnel.
         if (event.affectsConfiguration("q-lint.connection.sshTunnel") && !this.setting(readTunnel).enabled && this.active?.ssh !== undefined && this.connection !== undefined) {
           void this.disconnect();
@@ -565,11 +592,129 @@ export class Live {
           // A reconnect after an abort stops trying.
           this.reconnectStopped = true;
           void this.connection?.close();
+          this.sharedWatcher?.dispose();
         },
       },
+      workspace.onDidGrantWorkspaceTrust(() => void this.loadShared()),
     );
     this.showStatus();
     this.status.show();
+    this.watchShared();
+  }
+
+  /// The workspace's shared process list, as a discovery server's list is
+  /// given: empty while it is off or there is no file.
+  sharedList(): Discovered[] {
+    return this.shared === undefined ? [] : [this.shared];
+  }
+
+  /// Watch and read the shared list while `q-lint.processes.shared.enable`
+  /// is on; turned off, stop, forget what it listed, and close a connection
+  /// to one of its processes.
+  private watchShared(): void {
+    this.sharedWatcher?.dispose();
+    this.sharedWatcher = undefined;
+    const folder = workspace.workspaceFolders?.[0];
+    if (!this.setting(readShared).enabled || folder === undefined) {
+      this.sharedRead++;
+      const had = this.shared !== undefined;
+      this.shared = undefined;
+      if (had) {
+        this.processesView.refresh();
+      }
+      if (this.active?.server === SHARED_SOURCE && this.connection !== undefined) {
+        void this.disconnect();
+      }
+      return;
+    }
+    const watcher = workspace.createFileSystemWatcher(new RelativePattern(folder, SHARED_FILE));
+    const reload = (): void => void this.loadShared();
+    this.sharedWatcher = { dispose: () => watcher.dispose() };
+    watcher.onDidCreate(reload);
+    watcher.onDidChange(reload);
+    watcher.onDidDelete(reload);
+    void this.loadShared();
+  }
+
+  /// Write a saved process into the shared list, creating it if need be
+  /// (#955): its address, user, tags and settings, never a password.
+  private async addToShared(row?: ProcessArg): Promise<void> {
+    if (!this.featureOn(this.setting(readShared).enabled, "The shared process list", "q-lint.processes.shared.enable")) {
+      return;
+    }
+    const folder = workspace.workspaceFolders?.[0];
+    if (folder === undefined) {
+      void window.showInformationMessage(`q-lint: open a folder first: the shared process list is its ${SHARED_FILE}.`);
+      return;
+    }
+    const process = await this.chosen(row, "Share which q process with the repository?");
+    if (process === undefined) {
+      return;
+    }
+    const file = Uri.joinPath(folder.uri, SHARED_FILE);
+    let text: string | undefined;
+    try {
+      text = Buffer.from(await workspace.fs.readFile(file)).toString("utf8");
+    } catch {
+      text = undefined;
+    }
+    try {
+      await workspace.fs.writeFile(file, Buffer.from(withShared(text, process), "utf8"));
+    } catch (error) {
+      void window.showErrorMessage(`q-lint: could not write ${file.fsPath}: ${error instanceof Error ? error.message : String(error)}`);
+      return;
+    }
+    await this.loadShared();
+    void window.showInformationMessage(
+      `q-lint: ${process.label} is in ${SHARED_FILE}, without its password${process.user !== undefined ? `: each user is asked for ${process.user}'s on connect` : ""}.`,
+    );
+  }
+
+  /// Read the shared list again. A process whose host, port or user changed
+  /// since it was last read forgets the password given for it.
+  private async loadShared(): Promise<void> {
+    const folder = workspace.workspaceFolders?.[0];
+    const run = ++this.sharedRead;
+    if (!this.setting(readShared).enabled || folder === undefined) {
+      return;
+    }
+    const file = Uri.joinPath(folder.uri, SHARED_FILE);
+    let text: string | undefined;
+    try {
+      text = Buffer.from(await workspace.fs.readFile(file)).toString("utf8");
+    } catch {
+      text = undefined;
+    }
+    if (run !== this.sharedRead) {
+      return;
+    }
+    const server = { label: SHARED_SOURCE, url: file.fsPath };
+    if (text === undefined) {
+      this.shared = undefined;
+    } else {
+      try {
+        const read = readSharedFile(text, workspace.isTrusted === true);
+        const before = this.context.workspaceState.get<unknown>(SHARED_SEEN_KEY);
+        const seen = parseProcesses(Array.isArray(before) ? before : [], true).processes;
+        for (const label of passwordsToForget(seen, read.processes)) {
+          await this.context.secrets.delete(passwordKey({ label: qualified(SHARED_SOURCE, label), server: SHARED_SOURCE }));
+        }
+        await this.context.workspaceState.update(
+          SHARED_SEEN_KEY,
+          read.processes.map(({ label, host, port, user }) => ({ label, host, port, ...(user !== undefined ? { user } : {}) })),
+        );
+        if (run !== this.sharedRead) {
+          return;
+        }
+        this.shared = { server, state: { processes: read.processes, problems: read.problems, loading: false, removed: false, fetchedAt: Date.now() } };
+        if (read.secrets.length > 0) {
+          void window.showWarningMessage(secretsWarning(read.secrets));
+        }
+      } catch (error) {
+        this.shared = { server, state: { processes: [], problems: [], loading: false, removed: false, error: `not JSON: ${error instanceof Error ? error.message : String(error)}` } };
+      }
+    }
+    this.processesView.refresh();
   }
 
   /// What the extension returns from `activate`: a read-only view for tests
@@ -593,6 +738,8 @@ export class Live {
     unlimited: () => boolean;
     /// How many lambdas in the active file cache their parameters (#892).
     cachedLambdas: () => number;
+    /// The workspace's shared process list (#955), when it is shown.
+    sharedProcesses: () => { file: string; processes: Process[]; problems: string[]; error?: string } | undefined;
   } {
     return {
       processes: () => this.processes(),
@@ -616,6 +763,15 @@ export class Live {
       },
       unlimited: () => this.controls.unlimited,
       cachedLambdas: () => this.parameterCache.cached(),
+      sharedProcesses: () =>
+        this.shared === undefined
+          ? undefined
+          : {
+              file: this.shared.server.url,
+              processes: this.shared.state.processes,
+              problems: this.shared.state.problems,
+              ...(this.shared.state.error !== undefined ? { error: this.shared.state.error } : {}),
+            },
     };
   }
 
@@ -858,7 +1014,7 @@ export class Live {
   /// A discovered process only when `discovered`, with its label qualified;
   /// a label names a saved process before a discovered one.
   private async chosen(row: ProcessArg, title: string, discovered = false): Promise<Process | undefined> {
-    const listed = discovered ? this.discovery.discovered() : [];
+    const listed = discovered ? [...this.discovery.discovered(), ...this.sharedList()] : [];
     if (typeof row === "string") {
       const named = this.processes().find((p) => p.label === row) ?? findDiscovered(listed, row);
       if (named === undefined) {
