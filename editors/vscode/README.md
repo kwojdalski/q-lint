@@ -75,12 +75,32 @@ to a process you add and connect to, and sends only the code you run.
   including in a file another loads under a context. A name several
   scripts assign goes first to the current file's own assignment, then to
   those in files it loads; the outline groups names by namespace; and Go to
-  Definition on the path in `\l path/file.q` opens that file. What only
+  Definition on the path in `\l path/file.q` opens that file - and the path
+  is a link too, Ctrl/Cmd+click to open it, in `\l`, `system "l ..."` and a
+  file symbol `` `:lib/x.q `` alike (`q-lint.documentLinks.enable`). A path
+  that reaches no file, or a directory, is no link. What only
   running the code would tell - a name built at run time, `value "..."`,
   another process - is not found.
-- **Rename** for a lambda's parameters and locals. A global is refused with
-  the reason: it can be reached from a string, a symbol or another process,
-  and a rename that misses one of those breaks the program quietly.
+- **Rename Symbol** (F2) for a lambda's parameters and locals, and for a
+  global across the workspace: every place Find All References lists, under
+  the `\d` context each file is in, is rewritten - `add` under `\d .lib` and
+  `.lib.add` elsewhere both become `plus`. Only the last part of a name is
+  renamed (type `plus` or `.lib.plus`, not a name in another namespace).
+  It is refused, with the reason, for a name q reserves or one in a
+  one-letter namespace (`.z.pg`, `.q.f`), a name no workspace file assigns,
+  a new name that is not one q takes, is already assigned, or is a
+  parameter or local of a lambda that reads the global bare. A name reached
+  through a string (`value "f[]"`), a bare symbol (`` `f ``) or another
+  process is not seen and keeps its old name: preview the rename
+  (Shift+Enter) when that matters. `q-lint.rename.enable` turns renaming off
+  and leaves the rest of navigation on.
+- **Generate qDoc**, a refactoring in the lightbulb and **Refactor...**
+  menu inside a top-level function: it writes `/ @param` for each
+  parameter - the signature's, or the `x`, `y` and `z` the body reads - and
+  `/ @return` directly above the definition, below any description already
+  there, for the descriptions to be typed after. Not offered when the
+  comment above has an `@param` or `@return` already
+  (`q-lint.generateQdoc.enable`).
 - **Hover** on a name the workspace defines shows its parameters, the
   comment written above its definition and the file it is in; on a word of
   q itself - `ssr`, `select`, `.z.p`, `.Q.s`, `.h.hy`, or a glyph such as
@@ -91,6 +111,15 @@ to a process you add and connect to, and sends only the code you run.
   of one - showing the slots it leaves open - or a q function called with
   brackets. Past the last parameter none is marked, and it says the call has
   too many arguments.
+- **Inlay hints** for parameter names: in `rate[px;10 20]`, `qty:` is drawn
+  before `10 20` when the workspace defines `rate:{[px;qty] ...}`, whether
+  the call is qualified or bare under the `\d` in force. Only for a bracketed
+  call to a function whose every definition declares the same signature -
+  not `x`, `y` and `z`, which say nothing, nor two definitions that
+  disagree. Not at an empty slot of a projection, past the last parameter,
+  or where the argument is already the parameter's name.
+  `q-lint.inlayHints.enable` turns them off, and VS Code's
+  `editor.inlayHints.enabled` can show them only while a key is held.
 - **Completion**, when turned on with `q-lint.completion.enable`: a lambda's
   parameters and locals first, then the names the workspace defines, spelled
   as the `\d` context in force reads them, then q's own words. It does not
@@ -209,6 +238,16 @@ changed.
   keys KX's extension uses, `ctrl+d` and `ctrl+shift+d`, are VS Code's "add
   next occurrence" and Run and Debug view, and a `ctrl+alt` key is AltGr on
   Windows, which types `ę`, `€` or `@` on many layouts.
+
+- **Run** and **Run test**, code lenses: **Run** above each function a
+  statement at column 0 defines sends that statement, continuation lines
+  and all; **Run test**, above a function named `test_*`, sends it and then
+  calls it with no argument. A definition under `\d .ns` is sent between
+  `\d .ns` and `\d .`, so its body reads names as it does in the file, and
+  a test there is called by its full name, `.ns.test_x[]` - which leaves
+  the process at the root context afterwards. Either goes to the process
+  the file is bound to, as the commands above do, and lands in the history.
+  `q-lint.codeLens.enable` turns them off.
 
 The code is cut into statements by q's own script rules: a line starting
 with a space or tab continues the one above, `/` lines and block comments
@@ -567,11 +606,16 @@ q-pro column names the setting of [q-pro](https://marketplace.visualstudio.com/i
 | `q-lint.fixes.unsafe` | `true` | Offer the editor-only Quick Fixes (`--unsafe-fixes`) as well as those `--fix` applies. | - |
 | `q-lint.format.enable` | `true` | Register **Format Document** (the safe fixes). | - |
 | `q-lint.semanticTokens.enable` | `true` | Colour calls and parameter reads on top of the grammar. | - |
-| `q-lint.navigation.enable` | `true` | Offer the outline, workspace symbols, definitions, references, highlights and local rename. Off when another q extension already navigates. | - |
+| `q-lint.navigation.enable` | `true` | Offer the outline, workspace symbols, definitions, references, highlights and rename. Off when another q extension already navigates. | - |
+| `q-lint.rename.enable` | `true` | Offer **Rename Symbol** for a local, and for a global across the workspace. Needs `q-lint.navigation.enable`. | - |
 | `q-lint.help.enable` | `true` | Show hovers and signature help, from the source and the built-in catalogue of q's words. | - |
 | `q-lint.completion.enable` | `false` | Complete locals, workspace names and q's words. Off by default: an editor told a server completes stops offering the words already in the file. | - |
 | `q-lint.callHierarchy.enable` | `true` | Offer the call hierarchy of a global function. | - |
 | `q-lint.graph.enable` | `true` | Offer the **q Dependencies** view and **q-lint: List Affected Tests**. Off: the view is hidden and the server answers neither. | - |
+| `q-lint.inlayHints.enable` | `true` | Show parameter names at the arguments of a call to a workspace function. | - |
+| `q-lint.codeLens.enable` | `true` | Show **Run** above each top-level function definition and **Run test** above a `test_*` one. | - |
+| `q-lint.documentLinks.enable` | `true` | Make each `\l`, `system "l ..."` and `` `:file.q `` path a link to the file it loads. | - |
+| `q-lint.generateQdoc.enable` | `true` | Offer **Generate qDoc** above a top-level function. | - |
 | `q-lint.workspaceIndex.enable` | `true` | Read every workspace `.q` file at startup for the names it defines, up to 20,000 files or 500,000 directory entries. Off: only open files. | - |
 | `q-lint.workspaceIndex.exclude` | `[]` | Globs, relative to the workspace folder, the index does not read: `["vendor/**"]`. | `q-lang-server.sourceFiles.ignoreGlob` |
 | `q-lint.trace.server` | `off` | Log client-server traffic: `off`, `messages`, `verbose`. | `q-lang-server.trace.server` |

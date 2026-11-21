@@ -224,9 +224,10 @@ fn is_suppression(action: &Value) -> bool {
 }
 
 /// What a server that offers quick fixes says it offers: the kinds, so an
-/// editor knows there is a `source.fixAll` to ask for on save.
+/// editor knows there is a `source.fixAll` to ask for on save - and the
+/// rewrite that writes a qDoc block.
 fn code_action_provider() -> Value {
-    json!({"codeActionKinds": ["quickfix", "source.fixAll.q-lint"]})
+    json!({"codeActionKinds": ["quickfix", "source.fixAll.q-lint", "refactor.rewrite"]})
 }
 
 /// What VS Code declares, as far as this server reads it: Quick Fixes come
@@ -703,7 +704,7 @@ fn an_unsupported_request_is_refused_rather_than_ignored() {
     // A request with no reply looks like a hung server to every client.
     let mut server = Server::start();
     server.initialize();
-    server.send(json!({"jsonrpc":"2.0","id":7,"method":"textDocument/inlayHint","params":{}}));
+    server.send(json!({"jsonrpc":"2.0","id":7,"method":"textDocument/typeDefinition","params":{}}));
     let reply = server.receive();
     assert_eq!(reply["id"], 7);
     assert_eq!(reply["error"]["code"], -32601);
@@ -2534,9 +2535,14 @@ fn suppressions_are_one_to_a_line_and_code() {
         ],
         "{actions:?}"
     );
-    // Every fix first, then every suppression.
-    let first = actions.iter().position(is_suppression).unwrap();
-    assert!(actions[first..].iter().all(is_suppression), "{actions:?}");
+    // Every fix first, then every suppression - and after the quick fixes,
+    // the qDoc block for the function the range is in.
+    let quick: Vec<&Value> = actions.iter().filter(|a| a["kind"] == "quickfix").collect();
+    let first = quick.iter().position(|a| is_suppression(a)).unwrap();
+    assert!(
+        quick[first..].iter().all(|a| is_suppression(a)),
+        "{actions:?}"
+    );
 
     let once = apply_edits(
         text,

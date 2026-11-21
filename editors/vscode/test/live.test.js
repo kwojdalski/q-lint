@@ -270,6 +270,7 @@ test("package.json declares exactly the commands the extension registers", () =>
     AGENT.copyLabel,
     ...[ONBOARDING.getStarted, ONBOARDING.openHelpLink, ONBOARDING.editTagColor, ONBOARDING.newNotebook],
     "q-lint.restartServer",
+    "q-lint.runDefinition",
   ].sort();
   assert.deepStrictEqual(declared, registered);
 });

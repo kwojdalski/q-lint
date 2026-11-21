@@ -190,7 +190,7 @@ fn defined(sources: &Sources, names: &HashSet<String>, from: &str) -> Vec<Define
 
 /// A file as a hover names it: under the workspace folder that holds it,
 /// or by its name alone.
-fn shown(sources: &Sources, key: &str) -> String {
+pub(super) fn shown(sources: &Sources, key: &str) -> String {
     let path = std::path::Path::new(key);
     sources
         .idx

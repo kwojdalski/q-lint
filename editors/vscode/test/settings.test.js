@@ -42,6 +42,11 @@ test("the defaults start the server as it was started before settings", () => {
     completion: { enable: false },
     callHierarchy: { enable: true },
     graph: { enable: true },
+    rename: { enable: true },
+    inlayHints: { enable: true },
+    codeLens: { enable: true },
+    documentLinks: { enable: true },
+    generateQdoc: { enable: true },
     workspaceIndex: { enable: true, exclude: [] },
   });
 });
@@ -94,6 +99,11 @@ test("every editor-only setting reaches the server's options", () => {
       "completion.enable": true,
       "callHierarchy.enable": false,
       "graph.enable": false,
+      "rename.enable": false,
+      "inlayHints.enable": false,
+      "codeLens.enable": false,
+      "documentLinks.enable": false,
+      "generateQdoc.enable": false,
       "workspaceIndex.enable": false,
       "workspaceIndex.exclude": ["vendor/**"],
     }),
@@ -111,6 +121,11 @@ test("every editor-only setting reaches the server's options", () => {
     completion: { enable: true },
     callHierarchy: { enable: false },
     graph: { enable: false },
+    rename: { enable: false },
+    inlayHints: { enable: false },
+    codeLens: { enable: false },
+    documentLinks: { enable: false },
+    generateQdoc: { enable: false },
     workspaceIndex: { enable: false, exclude: ["vendor/**"] },
   });
 });

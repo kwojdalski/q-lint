@@ -276,6 +276,14 @@ pub fn rename(source: &str, offset: usize, new: &str) -> Result<Vec<(usize, usiz
     semantics::navigate::rename(&v.code, source, offset, new)
 }
 
+/// The first of `offsets` in `source` that is inside a lambda with a
+/// parameter or local called `name`: where a global renamed to `name` would
+/// be hidden by the local.
+pub fn shadowing(source: &str, name: &str, offsets: &[usize]) -> Option<usize> {
+    let v = views(source);
+    semantics::navigate::shadowing(&v.code, source, name, offsets)
+}
+
 /// A bracketed call around a cursor: the name called, at byte `at` for `len`
 /// bytes, and which argument the cursor is in, from 0.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -283,6 +291,31 @@ pub struct Call {
     pub at: usize,
     pub len: usize,
     pub argument: usize,
+}
+
+/// A call written as a name and its brackets: the name at byte `at` for
+/// `len` bytes, and each argument as its start and length, blanks trimmed.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct BracketCall {
+    pub at: usize,
+    pub len: usize,
+    pub arguments: Vec<(usize, usize)>,
+}
+
+/// Every call in `source` written as a name and its brackets, in order.
+pub fn bracket_calls(source: &str) -> Vec<BracketCall> {
+    let v = views(source);
+    semantics::help::bracket_calls(&v.code)
+}
+
+/// The paths of the loads in `source` - `\l path`, `system "l path"` and a
+/// file symbol - as start and length, in order.
+pub fn load_paths(source: &str) -> Vec<(usize, usize)> {
+    let v = views(source);
+    semantics::load_paths(&v.code, source)
+        .into_iter()
+        .map(|path| (path.start, path.len()))
+        .collect()
 }
 
 /// What a definition that is no lambda may still be called as: the name at
@@ -387,6 +420,11 @@ pub fn rule_url(code: &str) -> Option<String> {
 }
 pub(crate) static RESERVED: LazyLock<Vec<String>> =
     LazyLock::new(|| serde_json::from_str(include_str!("reserved.json")).unwrap());
+
+/// Whether q reserves `word`, as `reserved.json` lists the words.
+pub fn is_reserved(word: &str) -> bool {
+    RESERVED.iter().any(|reserved| reserved == word)
+}
 
 /// What a name q defines is, as far as an editor shows it differently.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize)]

@@ -1,5 +1,5 @@
 //! Navigation: the outline, workspace symbols, go to definition, find
-//! references, highlights, and renaming a local.
+//! references, highlights, and renaming a local or a global.
 //!
 //! WHERE THE POSITIONS COME FROM
 //!
@@ -20,8 +20,10 @@
 //! and the context the file is loaded in - the resolution the checks and
 //! the dependency graph use, and no more than that. A name reached through
 //! a string (`value "f[]"`), a symbol built at run time, or another process
-//! is in no list here, which is why only a lambda's own parameters and
-//! locals can be renamed: every place those are named is inside the lambda.
+//! is in no list here. Every place a lambda's own parameter or local is
+//! named is inside the lambda, so renaming one is complete; renaming a
+//! global changes what Find All References lists, and leaves a name built
+//! in a string, a bare symbol or another process as it was.
 use super::{Documents, Index, Lines, file_key, is_q_uri, path_of};
 use q_lint_rs::graph::{self, Placement};
 use q_lint_rs::{Mention, Name, load_at, mentions, name_at};
@@ -73,7 +75,7 @@ impl<'a> Sources<'a> {
 
     /// The document a request names, when it is an open `.q` file - the only
     /// kind linted, indexed or coloured, and so the only kind navigated.
-    fn document(&self, params: &Value) -> Option<(&'a str, &'a str)> {
+    pub(super) fn document(&self, params: &Value) -> Option<(&'a str, &'a str)> {
         let (uri, text) = self
             .docs
             .get_key_value(params["textDocument"]["uri"].as_str()?)?;
@@ -351,7 +353,7 @@ fn location(uri: &str, lines: &Lines, at: usize, len: usize) -> Value {
 /// What the server adds to its capabilities for the requests answered here.
 /// `prepare` when the client asks, before a rename, what would be renamed -
 /// the options form of `renameProvider` is for such a client only (LSP 3.17).
-pub(super) fn announce(capabilities: &mut Value, prepare: bool) {
+pub(super) fn announce(capabilities: &mut Value, prepare: bool, rename: bool) {
     for provider in [
         "documentSymbolProvider",
         "workspaceSymbolProvider",
@@ -360,6 +362,9 @@ pub(super) fn announce(capabilities: &mut Value, prepare: bool) {
         "documentHighlightProvider",
     ] {
         capabilities[provider] = json!(true);
+    }
+    if !rename {
+        return;
     }
     capabilities["renameProvider"] = if prepare {
         json!({"prepareProvider": true})
@@ -803,13 +808,21 @@ fn assigned(sources: &Sources, key: &str) -> Symbols {
     found
 }
 
-/// `textDocument/prepareRename`: the range of the local under the cursor,
-/// or why nothing there is renamed.
+/// `textDocument/prepareRename`: the range of the name under the cursor -
+/// a local, or the last part of a global as it is written there - or why
+/// nothing there is renamed.
 fn prepare_rename(params: &Value, sources: &Sources) -> Result<Value, String> {
     let Some(cursor) = sources.cursor(params) else {
         return Ok(Value::Null);
     };
-    let (at, len) = q_lint_rs::rename_target(cursor.text, cursor.offset)?;
+    let (at, len) = match name_at(cursor.text, cursor.offset) {
+        Some(Name::Global { at, len, .. }) => {
+            renamable_global(sources, &cursor, at)?;
+            let leaf = leaf(&cursor.text[at..at + len]);
+            (at + len - leaf.len(), leaf.len())
+        }
+        _ => q_lint_rs::rename_target(cursor.text, cursor.offset)?,
+    };
     Ok(json!({
         "range": range(&Lines::new(cursor.text), at, len),
         "placeholder": &cursor.text[at..at + len],
@@ -817,16 +830,182 @@ fn prepare_rename(params: &Value, sources: &Sources) -> Result<Value, String> {
 }
 
 /// `textDocument/rename`: the edits that rename the local under the cursor,
-/// all of them in its own document, or why it is not renamed.
+/// all of them in its own document, or the global under it, in every file
+/// that names it - or why it is not renamed.
 fn rename(params: &Value, sources: &Sources) -> Result<Value, String> {
     let Some(cursor) = sources.cursor(params) else {
         return Ok(Value::Null);
     };
     let new = params["newName"].as_str().unwrap_or_default();
+    if let Some(Name::Global { at, len, .. }) = name_at(cursor.text, cursor.offset) {
+        return rename_global(sources, &cursor, at, len, new);
+    }
     let lines = Lines::new(cursor.text);
     let edits: Vec<Value> = q_lint_rs::rename(cursor.text, cursor.offset, new)?
         .into_iter()
         .map(|(at, len)| json!({"range": range(&lines, at, len), "newText": new}))
         .collect();
     Ok(json!({"changes": {(cursor.uri): edits}}))
+}
+
+/// The last part of a name as written: `f` of `.ns.f`, and of `f`.
+fn leaf(spelled: &str) -> &str {
+    spelled.rsplit('.').next().unwrap_or(spelled)
+}
+
+/// `name` with its last part `new`: `.ns.g` for `.ns.f`.
+fn releafed(name: &str, new: &str) -> String {
+    match name.rfind('.') {
+        Some(dot) => format!("{}{new}", &name[..=dot]),
+        None => new.to_string(),
+    }
+}
+
+/// The names the global at `at` of the cursor's document answers to, when
+/// the workspace can rename it: a name some indexed file assigns, and none
+/// in a namespace q keeps for itself.
+///
+/// What a rename finds is what Find All References finds: each place an
+/// indexed file names the global, under the `\d` in force and the context
+/// the file is loaded in. A name reached through a string (`value "f[]"`),
+/// a bare symbol (`` `f ``), another process or a file outside the
+/// workspace is not among them, and keeps the old name.
+fn renamable_global(
+    sources: &Sources,
+    cursor: &Cursor,
+    at: usize,
+) -> Result<HashSet<String>, String> {
+    let targets = sources.targets(cursor, at);
+    let mut sorted: Vec<&String> = targets.iter().collect();
+    sorted.sort_unstable();
+    let Some(shown) = sorted.first() else {
+        return Err("nothing here is a name q-lint can rename".into());
+    };
+    // q keeps every one-letter namespace for itself: `.z.pg` is a callback,
+    // `.q.f` a word of the language.
+    if let Some(name) = sorted.iter().find(|name| {
+        name.len() > 2 && name.starts_with('.') && name.as_bytes().get(2) == Some(&b'.')
+    }) {
+        return Err(format!(
+            "`{name}` is in `{}`, a namespace q keeps for itself, where a name means what q \
+             gives it",
+            &name[..2]
+        ));
+    }
+    if sources.definers(&targets, &cursor.key).is_empty() {
+        return Err(format!(
+            "no file in the workspace assigns `{shown}`: it is q's own, or defined where \
+             q-lint cannot read, so the places it is named cannot all be found"
+        ));
+    }
+    Ok(targets)
+}
+
+/// The edits that rename the global written at `at..at + len` of the
+/// cursor's document to `new` - its last part only, as `g` or as the whole
+/// name with the same namespace written before it (`.ns.g` for `.ns.f`) -
+/// in every indexed file that names it.
+///
+/// Refused when `new` is no name q takes, a word q reserves, a name the
+/// workspace already assigns, or a parameter or local of a lambda that
+/// reads the global without its namespace, which would then read the local.
+fn rename_global(
+    sources: &Sources,
+    cursor: &Cursor,
+    at: usize,
+    len: usize,
+    new: &str,
+) -> Result<Value, String> {
+    let targets = renamable_global(sources, cursor, at)?;
+    let spelled = &cursor.text[at..at + len];
+    let old = leaf(spelled);
+    let written = &spelled[..spelled.len() - old.len()];
+    let new = match new.strip_prefix(written) {
+        Some(rest) if !written.is_empty() => rest,
+        _ if new.contains('.') => {
+            return Err(format!(
+                "q-lint renames the last part of a name only: `{spelled}` can become \
+                 `{written}{old}2`, and not a name in another namespace"
+            ));
+        }
+        _ => new,
+    };
+    if !re_name(new) {
+        return Err(format!("`{new}` is not a name q takes"));
+    }
+    if q_lint_rs::builtin(new).is_some() || q_lint_rs::is_reserved(new) {
+        return Err(format!("`{new}` is a q builtin, which q refuses to assign"));
+    }
+    if new == old {
+        return Ok(json!({"changes": {}}));
+    }
+    let mut renamed: Vec<String> = targets.iter().map(|name| releafed(name, new)).collect();
+    renamed.sort_unstable();
+    if let Some(taken) = renamed.iter().find(|name| sources.idx.ws.defines(name)) {
+        return Err(format!("`{taken}` is already assigned in the workspace"));
+    }
+    let mut changes = serde_json::Map::new();
+    for key in sources.keys() {
+        let Some((uri, text)) = sources.text(key) else {
+            continue;
+        };
+        if !text.contains(old) {
+            continue;
+        }
+        let placement = &sources.idx.files[key].placement;
+        let lines = Lines::new(&text);
+        let mut edits = vec![];
+        let mut bare = vec![];
+        let mut done = HashSet::new();
+        for m in &mentions(&text) {
+            if done.contains(&m.at)
+                || !sources
+                    .names(&text, m, placement)
+                    .iter()
+                    .any(|name| targets.contains(name))
+            {
+                continue;
+            }
+            done.insert(m.at);
+            let spelling = &text[m.at..m.at + m.len];
+            let place = || {
+                let (line, _) = lines.position(m.at);
+                format!("{}:{}", Path::new(key).display(), line + 1)
+            };
+            if leaf(spelling) != old {
+                return Err(format!(
+                    "`{spelling}` at {} names it without ending in `{old}`, which a rename \
+                     cannot follow",
+                    place()
+                ));
+            }
+            if !spelling.contains('.') {
+                bare.push(m.at);
+            }
+            edits.push(
+                json!({"range": range(&lines, m.at + m.len - old.len(), old.len()),
+                              "newText": new}),
+            );
+        }
+        if let Some(hidden) = q_lint_rs::shadowing(&text, new, &bare) {
+            let (line, _) = lines.position(hidden);
+            return Err(format!(
+                "`{new}` is a parameter or local of the lambda at {}:{}, which would hide the \
+                 renamed global there",
+                Path::new(key).display(),
+                line + 1
+            ));
+        }
+        if !edits.is_empty() {
+            changes.insert(uri, json!(edits));
+        }
+    }
+    Ok(json!({"changes": changes}))
+}
+
+/// Whether `name` is one q takes for a name, with no dot in it.
+fn re_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }

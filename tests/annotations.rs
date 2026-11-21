@@ -1,0 +1,470 @@
+//! What the language server draws over a document: parameter names at a
+//! call's arguments (inlay hints), Run lenses above definitions, links on
+//! load paths - and the qDoc block a code action writes above a function.
+use serde_json::{Value, json};
+use std::{
+    io::{BufRead, BufReader, Read, Write},
+    path::Path,
+    process::{Child, ChildStdin, ChildStdout, Command, Stdio},
+    sync::mpsc::{Receiver, channel},
+    time::Duration,
+};
+
+struct Server {
+    child: Child,
+    stdin: ChildStdin,
+    messages: Receiver<Value>,
+    next_id: u64,
+}
+
+/// Every framed message on `stdout`, until it closes.
+fn read_messages(stdout: ChildStdout) -> Receiver<Value> {
+    let (sender, messages) = channel();
+    std::thread::spawn(move || {
+        let mut stdout = BufReader::new(stdout);
+        loop {
+            let mut length = 0;
+            loop {
+                let mut line = String::new();
+                if stdout.read_line(&mut line).unwrap_or(0) == 0 {
+                    return;
+                }
+                if line == "\r\n" {
+                    break;
+                }
+                if let Some(v) = line.strip_prefix("Content-Length: ") {
+                    length = v.trim().parse().unwrap();
+                }
+            }
+            let mut body = vec![0; length];
+            if stdout.read_exact(&mut body).is_err()
+                || sender.send(serde_json::from_slice(&body).unwrap()).is_err()
+            {
+                return;
+            }
+        }
+    });
+    messages
+}
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+fn file_uri(path: &Path) -> String {
+    let path = path.display().to_string().replace('\\', "/");
+    if path.starts_with('/') {
+        format!("file://{path}")
+    } else {
+        format!("file:///{path}")
+    }
+}
+
+impl Server {
+    /// A server over the workspace `dir`, holding `files`, with what the
+    /// client declares and the options it sends.
+    fn over(dir: &Path, files: &[(&str, &str)], client: Value, options: Value) -> (Self, Value) {
+        for (name, text) in files {
+            std::fs::write(dir.join(name), text).unwrap();
+        }
+        let mut child = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .current_dir(dir)
+            .env("XDG_CONFIG_HOME", dir.join("no-such-config-home"))
+            .args(["--lsp"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn qlinter --lsp");
+        let stdin = child.stdin.take().unwrap();
+        let messages = read_messages(child.stdout.take().unwrap());
+        let mut server = Server {
+            child,
+            stdin,
+            messages,
+            next_id: 1,
+        };
+        let reply = server.request(
+            "initialize",
+            json!({"capabilities": client, "initializationOptions": options,
+                   "workspaceFolders": [{"uri": file_uri(dir), "name": "ws"}]}),
+        );
+        server.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+        (server, reply)
+    }
+
+    fn start(dir: &Path, files: &[(&str, &str)]) -> Self {
+        Self::over(dir, files, client(), Value::Null).0
+    }
+
+    fn send(&mut self, value: Value) {
+        let body = serde_json::to_vec(&value).unwrap();
+        write!(self.stdin, "Content-Length: {}\r\n\r\n", body.len()).unwrap();
+        self.stdin.write_all(&body).unwrap();
+        self.stdin.flush().unwrap();
+    }
+
+    /// The reply to a request, past the diagnostics pushed meanwhile.
+    fn request(&mut self, method: &str, params: Value) -> Value {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.send(json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}));
+        loop {
+            let message = self
+                .messages
+                .recv_timeout(Duration::from_secs(30))
+                .expect("the server answers");
+            if message["id"] == id {
+                return message;
+            }
+        }
+    }
+
+    fn open(&mut self, dir: &Path, name: &str, text: &str) -> String {
+        let uri = file_uri(&dir.join(name));
+        self.send(json!({"jsonrpc":"2.0","method":"textDocument/didOpen",
+            "params":{"textDocument":{"uri":uri,"languageId":"q","version":1,"text":text}}}));
+        uri
+    }
+
+    /// A request about the whole of the open document `uri`.
+    fn whole(&mut self, method: &str, uri: &str, extra: Value) -> Value {
+        let mut params = json!({"textDocument": {"uri": uri}});
+        for (key, value) in extra.as_object().into_iter().flatten() {
+            params[key] = value.clone();
+        }
+        self.request(method, params)
+    }
+}
+
+/// What VS Code declares, as far as these requests read it.
+fn client() -> Value {
+    json!({"textDocument": {"codeAction": {"codeActionLiteralSupport":
+        {"codeActionKind": {"valueSet": ["quickfix", "refactor"]}}}}})
+}
+
+/// A range as `(line, start character, end character)`; no name spans lines.
+fn span(range: &Value) -> (u64, u64, u64) {
+    (
+        range["start"]["line"].as_u64().unwrap(),
+        range["start"]["character"].as_u64().unwrap(),
+        range["end"]["character"].as_u64().unwrap(),
+    )
+}
+
+/// The whole of a short document, as an LSP range.
+fn everything() -> Value {
+    json!({"range": {"start": {"line": 0, "character": 0}, "end": {"line": 99, "character": 0}}})
+}
+
+/// Each hint as `(line, character, label)`, in order.
+fn hints(reply: &Value) -> Vec<(u64, u64, String)> {
+    reply["result"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a list of hints, not {reply}"))
+        .iter()
+        .map(|h| {
+            assert_eq!(h["kind"], 2, "{h}");
+            (
+                h["position"]["line"].as_u64().unwrap(),
+                h["position"]["character"].as_u64().unwrap(),
+                h["label"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect()
+}
+
+fn hint(line: u64, character: u64, label: &str) -> (u64, u64, String) {
+    (line, character, label.to_string())
+}
+
+const LIB: &str = "\\d .lib\nadd:{[a;b] a+b}\nscale:{x*y}\n\\d .\n\
+                   twice:{[v] 2*v}\ntwice:{[w] 2*w}\nrate:{[px;qty] px*qty}\n";
+
+#[test]
+fn a_call_to_a_workspace_function_shows_its_parameter_names() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[("lib.q", LIB)]);
+    let main = "\\l lib.q\n\
+                t:.lib.add[1;2]\n\
+                p:.lib.add[;2]\n\
+                u:.lib.scale[3;4]\n\
+                v:twice[5]\n\
+                w:rate[px;10 20]\n\
+                f:{[add] add[1;2]}\n\
+                \\d .lib\n\
+                s:add [ 1 ; (2;3) ]\n";
+    let uri = server.open(dir.path(), "main.q", main);
+    let reply = server.whole("textDocument/inlayHint", &uri, everything());
+    assert_eq!(
+        hints(&reply),
+        [
+            // Qualified, and bare under `\d .lib`, with a space before the
+            // bracket and blanks inside it.
+            hint(1, 11, "a:"),
+            hint(1, 13, "b:"),
+            // A projection's empty slot has none.
+            hint(2, 12, "b:"),
+            // `scale` declares no signature, `twice` two that differ, `rate`'s
+            // first argument is its parameter's own name, and the local
+            // `add` is no call to `.lib.add`.
+            hint(5, 10, "qty:"),
+            hint(8, 8, "a:"),
+            hint(8, 12, "b:"),
+        ],
+        "{reply}"
+    );
+    // A range asks for the calls in it only.
+    let reply = server.whole(
+        "textDocument/inlayHint",
+        &uri,
+        json!({"range": {"start": {"line": 5, "character": 0}, "end": {"line": 5, "character": 99}}}),
+    );
+    assert_eq!(hints(&reply), [hint(5, 10, "qty:")]);
+}
+
+#[test]
+fn inlay_hints_are_announced_and_can_be_turned_off() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_, reply) = Server::over(dir.path(), &[], client(), Value::Null);
+    assert_eq!(reply["result"]["capabilities"]["inlayHintProvider"], true);
+    let options = json!({"inlayHints": {"enable": false}});
+    let (mut server, reply) = Server::over(dir.path(), &[("lib.q", LIB)], client(), options);
+    assert!(reply["result"]["capabilities"]["inlayHintProvider"].is_null());
+    let main = "t:.lib.add[1;2]\n";
+    let uri = server.open(dir.path(), "main.q", main);
+    let reply = server.whole("textDocument/inlayHint", &uri, everything());
+    assert_eq!(reply["result"], Value::Null, "{reply}");
+}
+
+/// Each lens as `(line, title, the code it runs)`, after checking it runs
+/// the client's command on the document.
+fn lenses(reply: &Value, uri: &str) -> Vec<(u64, String, String)> {
+    reply["result"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a list of lenses, not {reply}"))
+        .iter()
+        .map(|l| {
+            let command = &l["command"];
+            assert_eq!(command["command"], "q-lint.runDefinition", "{l}");
+            assert_eq!(command["arguments"][1], uri, "{l}");
+            (
+                span(&l["range"]).0,
+                command["title"].as_str().unwrap().to_string(),
+                command["arguments"][0].as_str().unwrap().to_string(),
+            )
+        })
+        .collect()
+}
+
+fn lens(line: u64, title: &str, code: &str) -> (u64, String, String) {
+    (line, title.to_string(), code.to_string())
+}
+
+#[test]
+fn a_top_level_function_has_a_run_lens_and_a_test_a_run_test_lens_too() {
+    let dir = tempfile::tempdir().unwrap();
+    let options = json!({"codeLens": {"enable": true}});
+    let (mut server, reply) = Server::over(dir.path(), &[], client(), options);
+    assert_eq!(
+        reply["result"]["capabilities"]["codeLensProvider"],
+        json!({"resolveProvider": false})
+    );
+    let text = "add:{[a;b]\n  a+b}\nlimit:10\ntest_add:{[] add[1;2]}\n\
+                outer:{inner::{x}; 1}\n\\d .qt.math\ntest_mul:{[] 2*3}\nhelp:{x}\n\\d .\n\
+                .ns.f:{x}\n";
+    let uri = server.open(dir.path(), "suite.q", text);
+    let reply = server.whole("textDocument/codeLens", &uri, json!({}));
+    assert_eq!(
+        lenses(&reply, &uri),
+        [
+            // The whole statement, its continuation line too.
+            lens(0, "Run", "add:{[a;b]\n  a+b}"),
+            // Before the file's first `\d`: run and called where it lands.
+            lens(3, "Run", "test_add:{[] add[1;2]}"),
+            lens(3, "Run test", "test_add:{[] add[1;2]}\ntest_add[]"),
+            // A function assigned inside another is no lens of its own.
+            lens(4, "Run", "outer:{inner::{x}; 1}"),
+            // Under `\d .qt.math`: sent under it, and called by its full name.
+            lens(6, "Run", "\\d .qt.math\ntest_mul:{[] 2*3}\n\\d ."),
+            lens(
+                6,
+                "Run test",
+                "\\d .qt.math\ntest_mul:{[] 2*3}\n\\d .\n.qt.math.test_mul[]"
+            ),
+            lens(7, "Run", "\\d .qt.math\nhelp:{x}\n\\d ."),
+            lens(9, "Run", ".ns.f:{x}"),
+        ],
+        "{reply}"
+    );
+}
+
+#[test]
+fn code_lenses_are_off_unless_asked_for() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut server, reply) = Server::over(dir.path(), &[], client(), Value::Null);
+    assert!(reply["result"]["capabilities"]["codeLensProvider"].is_null());
+    let uri = server.open(dir.path(), "a.q", "f:{x}\n");
+    let reply = server.whole("textDocument/codeLens", &uri, json!({}));
+    assert_eq!(reply["result"], Value::Null, "{reply}");
+}
+
+/// Each link as `(line, start, end, the target's path under `dir`)`.
+fn links(reply: &Value, dir: &Path) -> Vec<(u64, u64, u64, String)> {
+    let roots = [file_uri(&dir.canonicalize().unwrap()), file_uri(dir)];
+    reply["result"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a list of links, not {reply}"))
+        .iter()
+        .map(|l| {
+            let (line, start, end) = span(&l["range"]);
+            let target = l["target"].as_str().unwrap();
+            let file = roots
+                .iter()
+                .find_map(|root| target.strip_prefix(&format!("{root}/")))
+                .unwrap_or(target);
+            (line, start, end, file.to_string())
+        })
+        .collect()
+}
+
+#[test]
+fn each_load_path_links_to_the_file_it_loads() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("lib/sub")).unwrap();
+    std::fs::create_dir_all(dir.path().join("app")).unwrap();
+    let files = [
+        ("lib/util.q", "u:1\n"),
+        ("lib/sub/a.q", "a:1\n"),
+        ("lib/sub/b.q", "b:1\n"),
+        ("app/local.q", "l:1\n"),
+    ];
+    let mut server = Server::start(dir.path(), &files);
+    let text = "\\l lib/util.q\nsystem \"l local.q\"\n.q.x:`:lib/util.q\n\
+                \\l lib/sub\n\\l missing.q\ns:\"\\\\l lib/util.q\"\n";
+    std::fs::write(dir.path().join("app/main.q"), text).unwrap();
+    let uri = server.open(dir.path(), "app/main.q", text);
+    let reply = server.whole("textDocument/documentLink", &uri, json!({}));
+    assert_eq!(
+        links(&reply, dir.path()),
+        [
+            // Against the workspace folder, and the file's own directory.
+            (0, 3, 13, "lib/util.q".to_string()),
+            (1, 10, 17, "app/local.q".into()),
+            // A file symbol `.Q.l`-style loads read.
+            (2, 7, 17, "lib/util.q".into()),
+            // A directory loads several, and a missing file nothing; a
+            // string is no load.
+        ],
+        "{reply}"
+    );
+    let reply = &reply["result"][0];
+    assert_eq!(reply["tooltip"], "Open lib/util.q", "{reply}");
+}
+
+#[test]
+fn document_links_are_announced_and_can_be_turned_off() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_, reply) = Server::over(dir.path(), &[], client(), Value::Null);
+    assert_eq!(
+        reply["result"]["capabilities"]["documentLinkProvider"],
+        json!({"resolveProvider": false})
+    );
+    let options = json!({"documentLinks": {"enable": false}});
+    let (mut server, reply) = Server::over(dir.path(), &[("lib.q", "a:1\n")], client(), options);
+    assert!(reply["result"]["capabilities"]["documentLinkProvider"].is_null());
+    let uri = server.open(dir.path(), "main.q", "\\l lib.q\n");
+    let reply = server.whole("textDocument/documentLink", &uri, json!({}));
+    assert_eq!(reply["result"], Value::Null, "{reply}");
+}
+
+/// The code actions offered at `line`:`character` of the open document
+/// `uri`, with `only` when given.
+fn actions_at(
+    server: &mut Server,
+    uri: &str,
+    line: u64,
+    character: u64,
+    only: Option<Value>,
+) -> Vec<Value> {
+    let at = json!({"line": line, "character": character});
+    let mut context = json!({"diagnostics": []});
+    if let Some(only) = only {
+        context["only"] = only;
+    }
+    let reply = server.whole(
+        "textDocument/codeAction",
+        uri,
+        json!({"range": {"start": at, "end": at}, "context": context}),
+    );
+    reply["result"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a list of actions, not {reply}"))
+        .clone()
+}
+
+/// The text of the one qDoc action among `actions`, and its title.
+fn qdoc(actions: &[Value], uri: &str) -> Option<(String, String, (u64, u64))> {
+    let action = actions.iter().find(|a| a["kind"] == "refactor.rewrite")?;
+    let edit = &action["edit"]["changes"][uri][0];
+    Some((
+        action["title"].as_str().unwrap().to_string(),
+        edit["newText"].as_str().unwrap().to_string(),
+        (
+            edit["range"]["start"]["line"].as_u64().unwrap(),
+            edit["range"]["start"]["character"].as_u64().unwrap(),
+        ),
+    ))
+}
+
+#[test]
+fn a_qdoc_block_is_written_above_a_function_from_its_parameters() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let text = "\\d .qf.mkt\n/ Folds level columns.\nfold:{[tbl;groups]\n  tbl}\n\
+                twice:{2*x}\nlimit:10\n/ @param t the table\n/ @return it\ndone:{[t] t}\n\
+                none:{[] 1}\n";
+    let uri = server.open(dir.path(), "book.q", text);
+    // Anywhere in the statement, its continuation line too: below the
+    // description already there, so that stays on top.
+    for (line, character) in [(2, 0), (3, 3)] {
+        let actions = actions_at(&mut server, &uri, line, character, None);
+        assert_eq!(
+            qdoc(&actions, &uri),
+            Some((
+                "Generate qDoc for fold".to_string(),
+                "/ @param tbl\n/ @param groups\n/ @return\n".to_string(),
+                (2, 0)
+            )),
+            "{actions:?}"
+        );
+    }
+    // The x a body reads; a signature with none; asked for by kind.
+    let actions = actions_at(&mut server, &uri, 4, 2, Some(json!(["refactor"])));
+    assert_eq!(qdoc(&actions, &uri).unwrap().1, "/ @param x\n/ @return\n");
+    let actions = actions_at(&mut server, &uri, 9, 0, None);
+    assert_eq!(qdoc(&actions, &uri).unwrap().1, "/ @return\n");
+    // Not on a value, not where a block is already written, and not when
+    // only quick fixes are asked for.
+    for (line, only) in [(5, None), (8, None), (2, Some(json!(["quickfix"])))] {
+        let actions = actions_at(&mut server, &uri, line, 0, only);
+        assert_eq!(qdoc(&actions, &uri), None, "{line}: {actions:?}");
+    }
+}
+
+#[test]
+fn generating_qdoc_can_be_turned_off() {
+    let dir = tempfile::tempdir().unwrap();
+    let options = json!({"generateQdoc": {"enable": false}});
+    let (mut server, reply) = Server::over(dir.path(), &[], client(), options);
+    assert_eq!(
+        reply["result"]["capabilities"]["codeActionProvider"]["codeActionKinds"],
+        json!(["quickfix", "source.fixAll.q-lint"])
+    );
+    let uri = server.open(dir.path(), "a.q", "f:{[a] a}\n");
+    let actions = actions_at(&mut server, &uri, 0, 0, None);
+    assert_eq!(qdoc(&actions, &uri), None, "{actions:?}");
+}
