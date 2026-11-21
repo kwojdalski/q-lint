@@ -459,22 +459,112 @@ export function formatValue(value: unknown, type?: number): string[] {
   return [cellText(value)];
 }
 
+/// A value decoded with its types on one line, as q's `-3!` writes it:
+/// `` `a`b!1 2 ``, `(1;`a)`, `,1 2`.
+function oneLine(q: QValue): string {
+  switch (q.kind) {
+    case "atom":
+      return atomText(q.v, q.t);
+    case "vector":
+      return vectorText(q.v, q.t, q.attr);
+    case "chars":
+      return vectorText(q.v, 10, q.attr);
+    case "list":
+      return q.v.length === 1 ? `,${oneLine(q.v[0])}` : `(${q.v.map(oneLine).join(";")})`;
+    case "dict": {
+      // A key of one item, a table or a dictionary is put in parentheses.
+      const k = oneLine(q.k);
+      const one = (q.k.kind === "list" || q.k.kind === "vector") && q.k.v.length === 1;
+      return `${attrText(q.sorted ? 1 : 0)}${one || q.k.kind === "table" || q.k.kind === "dict" ? `(${k})` : k}!${oneLine(q.v)}`;
+    }
+    case "table":
+      return `+${oneLine({ kind: "dict", sorted: false, k: { kind: "vector", t: 11, attr: 0, v: q.cols }, v: { kind: "list", attr: 0, v: q.data } })}`;
+    case "func":
+      return q.text ?? (q.t === 101 ? "::" : "func");
+  }
+}
+
+/// How many items a decoded list has; 1 for anything else.
+function countOf(q: QValue): number {
+  return q.kind === "vector" || q.kind === "list" || q.kind === "chars" ? q.v.length : q.kind === "table" ? (q.data[0] ? countOf(q.data[0]) : 0) : 1;
+}
+
+/// Rows of cells laid out as q's `.Q.tab` lays them: each cell padded to its
+/// place's widest, joined by spaces.
+function tabulate(rows: string[][]): string[] {
+  const widths: number[] = [];
+  for (const row of rows) {
+    row.forEach((cell, i) => {
+      widths[i] = Math.max(widths[i] ?? 0, cell.length);
+    });
+  }
+  return rows.map((row) => row.map((cell, i) => cell.padEnd(widths[i])).join(" "));
+}
+
+/// `y` with a blank and a dashed line in front when it has fewer lines than
+/// `n`, as q's `.Q.t0` lines up a dictionary's keys with a table's values.
+function lineUp(n: number, y: string[]): string[] {
+  return n > y.length && y.length > 0 ? [" ".repeat(y[0].length), "-".repeat(y[0].length), ...y] : y;
+}
+
+/// The lines of a value inside the console's text, as q's `.Q.s2` writes
+/// them: a simple list's items as `string` writes them (no suffixes, nulls
+/// blank); a general list's with `-3!`, or as rows lined up when every item
+/// is a list of the same count; a table's names, a rule and its rows; a
+/// dictionary's keys and values with `| ` between.
+function nested(q: QValue): string[] {
+  switch (q.kind) {
+    case "atom":
+    case "func":
+      return [oneLine(q)];
+    case "vector":
+      return q.v.map((x) => (q.t === 11 ? (x === null ? "" : String(x)) : (itemText(x, q.t) ?? (q.t === 2 ? NULL_GUID : ""))));
+    case "chars":
+      return [...q.v].map((c) => String.fromCharCode(c));
+    case "dict": {
+      const d = nested(q.v);
+      const k = lineUp(d.length, nested(q.k));
+      const v = lineUp(k.length, d);
+      const width = Math.max(0, ...k.map((line) => line.length));
+      return k.map((line, i) => `${line.padEnd(width)}| ${v[i] ?? ""}`);
+    }
+    case "table": {
+      const columns = q.data.map(nested);
+      const rows = Array.from({ length: columns[0]?.length ?? 0 }, (_, r) => columns.map((c) => c[r] ?? ""));
+      const [header, ...body] = tabulate([q.cols, ...rows]);
+      return [header, "-".repeat(header.length), ...body];
+    }
+    case "list": {
+      const items = q.v;
+      if (items.length === 0) {
+        return [];
+      }
+      const types = new Set(items.map((x) => (x.kind === "vector" ? x.t : x.kind === "chars" ? 10 : x.kind === "list" ? 0 : -1)));
+      const atomic = items.some((x) => x.kind === "atom" || x.kind === "func" || x.kind === "dict" || x.kind === "table");
+      const counts = new Set(items.map(countOf));
+      const same = types.size === 1 && [1, 4, 10].includes([...types][0]);
+      if (atomic || counts.size > 1 || same) {
+        return items.map(oneLine);
+      }
+      return tabulate(items.map(nested));
+    }
+  }
+}
+
 /// The lines q's console would show for a value decoded with its types
-/// (`qdecode.ts`): an atom or a simple list from the numbers q holds, so a
-/// timestamp keeps its nanoseconds and a negative infinity its sign.
-/// Anything else is written as `formatValue` writes the codec's `value` of
+/// (`qdecode.ts`), as `.Q.S` writes them: from the numbers q holds, so a
+/// timestamp keeps its nanoseconds and a negative infinity its sign, and
+/// with each item's own type, so a symbol is told from a string. A table or
+/// a function is left to `formatValue`, which writes the codec's `value` of
 /// it, of q type `type`.
 export function formatQ(q: QValue, value: unknown, type?: number): string[] {
-  if (q.kind === "atom") {
-    return [atomText(q.v, q.t)];
+  if (q.kind === "atom" || q.kind === "vector" || q.kind === "chars") {
+    return [oneLine(q)];
   }
-  if (q.kind === "vector") {
-    return [vectorText(q.v, q.t, q.attr)];
+  if (q.kind === "table" || q.kind === "func" || (q.kind === "dict" && q.k.kind === "table")) {
+    return formatValue(value, type);
   }
-  if (q.kind === "chars") {
-    return [vectorText(q.v, 10, q.attr)];
-  }
-  return formatValue(value, type);
+  return nested(q);
 }
 
 /// `lines` cut to a console of `size` (height, width) as `.Q.S` cuts: a

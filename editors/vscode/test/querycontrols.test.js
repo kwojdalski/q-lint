@@ -340,3 +340,25 @@ test("a list's attribute is written before it, unwrapped and unlimited", async (
   assert.deepStrictEqual(readUnlimited({ ok: true, type: 7, text: [], value: [], attr: "p" }).text, ["`p#`long$()"]);
   assert.deepStrictEqual(readUnlimited({ ok: true, type: 7, text: [], value: [Long.fromInt(1)], attr: null }).text, [",1"]);
 });
+
+test("an unwrapped general list or dictionary tells a symbol from a string, and nests as q's console does", async () => {
+  // -8!(1;`a;"b")
+  assert.deepStrictEqual((await unwrapped("0x010000001c000000000003000000f90100000000000000f56100f662")).text, ["1", "`a", '"b"']);
+  // -8!`a`b!(`c`d!1 2;`e`f!3 4)
+  assert.deepStrictEqual(
+    (await unwrapped("0x010000005b000000630b000200000061006200000002000000630b00020000006300640007000200000001000000000000000200000000000000630b00020000006500660007000200000003000000000000000400000000000000")).text,
+    ["a| `c`d!1 2", "b| `e`f!3 4"],
+  );
+  // -8!1#.q: the null symbol key and the generic null.
+  assert.deepStrictEqual((await unwrapped("0x0100000018000000630b0001000000000000010000006500")).text, ["| ::"]);
+  // -8!(1 2;30 4): rows lined up.
+  assert.deepStrictEqual(
+    (await unwrapped("0x010000003a000000000002000000070002000000010000000000000002000000000000000700020000001e000000000000000400000000000000")).text,
+    ["1  2", "30 4"],
+  );
+  // -8!(`a;1)!(2;`b)
+  assert.deepStrictEqual(
+    (await unwrapped("0x010000002d00000063000002000000f56100f90100000000000000000002000000f90200000000000000f56200")).text,
+    ["`a| 2", "1 | `b"],
+  );
+});

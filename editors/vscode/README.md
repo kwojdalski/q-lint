@@ -249,9 +249,8 @@ outcome; the buttons on a row run it again on the active connection and
   formatted by q-lint: tables, keyed tables, dictionaries, lists and atoms
   as q's console writes them, and a table, dictionary or list reaches the
   grid and chart too. q-lint knows less than q does, so it is close but not
-  exact: inside a table or a general list a symbol and a string are both
-  shown as text, a timestamp is shown to the microsecond, and a function's
-  text is not sent. Errors still come back as q errors, without a trace.
+  exact: inside a table a symbol and a string are both shown as text, a
+  timestamp is shown to the microsecond, and a function's text is not sent. Errors still come back as q errors, without a trace.
   The status bar shows `unwrapped`.
 - **Query timeout**, `q-lint.query.timeout` seconds (`0`, the default, is
   none): a query still running then is aborted exactly as **Abort Current
