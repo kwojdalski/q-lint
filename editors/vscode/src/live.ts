@@ -718,9 +718,19 @@ export class Live {
       await this.context.secrets.delete(passwordKey(process.label));
     }
     await this.save(processes.map((p) => (p.label === old.label ? process : p)));
-    if (this.active?.label === old.label) {
-      this.active = process;
+    const active = this.active;
+    if (active?.label === old.label) {
+      // The connection is still to where it was opened: it takes the new
+      // label and tags, and keeps its address until connected again.
+      const { host, port, user, tls } = active;
+      this.active = { label: process.label, host, port, ...(user !== undefined ? { user } : {}), tags: process.tags, ...(tls ? { tls } : {}) };
       this.showStatus();
+      const moved = process.host !== host || process.port !== port || process.user !== user || (process.tls === true) !== (tls === true);
+      if (moved && this.activeLabel() !== undefined) {
+        void window.showInformationMessage(
+          `q-lint: still connected to ${process.label} at ${host}:${port}. Connect to it again to use ${process.host}:${process.port}.`,
+        );
+      }
     }
   }
 

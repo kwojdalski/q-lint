@@ -166,3 +166,27 @@ test("a query stopped by Disconnect is recorded as aborted", async (t) => {
   await running;
   assert.deepStrictEqual([live.history()[0].outcome, live.history()[0].error], ["aborted", "aborted"]);
 });
+
+/// Edit Process's answers: label, host, port, TLS (no), user (none), tags.
+const editAnswers = (label, host, port) => {
+  stub.inputs.push(label, host, String(port));
+  stub.picks.push(({ items }) => items.find((i) => i.label === "No"));
+  stub.inputs.push("", "");
+};
+
+// Editing the connected process's host or port set it as the connection's
+// process, so the status bar said "Connected to" the new address while
+// the connection was still to the old one, and an agent's query was told
+// the same.
+test("editing the connected process's address leaves the connection's as it is", async (t) => {
+  const q = await fakeQ(() => OK);
+  t.after(() => q.close());
+  const { live, status } = await setUp(t, [proc("p", q.port)]);
+  assert.strictEqual(await live.connectTo("p"), true);
+  editAnswers("p", "127.0.0.1", q.port + 1);
+  await stub.commands.get("q-lint.editProcess")("p");
+  assert.strictEqual(live.processes()[0].port, q.port + 1);
+  assert.strictEqual(live.activeProcess().port, q.port);
+  assert.ok(status.tooltip.includes(`127.0.0.1:${q.port}.`), status.tooltip);
+  assert.ok(stub.messages.some(([, text]) => text.includes(`still connected to p at 127.0.0.1:${q.port}`)), JSON.stringify(stub.messages));
+});
