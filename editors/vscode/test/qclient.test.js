@@ -314,6 +314,49 @@ test("a connect that gets no answer gives up", { skip }, async () => {
   silent.close();
 });
 
+test("a connect with no time limit waits for the process until it is cancelled", { timeout: 10_000 }, async (t) => {
+  // A process busy with a query accepts a connection and answers the
+  // handshake only once it is free: a reconnect after Abort waits for that.
+  const sockets = [];
+  let closed = 0;
+  const busy = net.createServer((s) => {
+    sockets.push(s);
+    s.resume();
+    s.on("close", () => closed++);
+  }).listen(0, "127.0.0.1");
+  const free = net.createServer((s) => {
+    sockets.push(s);
+    setTimeout(() => s.write(Buffer.from([3])), 400);
+  }).listen(0, "127.0.0.1");
+  t.after(() => {
+    for (const s of sockets) s.destroy();
+    busy.close();
+    free.close();
+  });
+  await new Promise((r) => busy.once("listening", r));
+  const controller = new AbortController();
+  let outcome = "pending";
+  const opening = QConnection.open({ host: "127.0.0.1", port: busy.address().port }, Infinity, controller.signal).then(
+    (c) => {
+      c.abort();
+      outcome = "connected";
+    },
+    (e) => (outcome = e.message),
+  );
+  await new Promise((r) => setTimeout(r, 300));
+  assert.strictEqual(outcome, "pending");
+  controller.abort();
+  await opening;
+  assert.match(outcome, /cancelled/);
+  // What was opened is closed.
+  await new Promise((r) => setTimeout(r, 50));
+  assert.deepStrictEqual([sockets.length, closed], [1, 1]);
+  // A busy process that becomes free is connected to, however long it took.
+  const connection = await QConnection.open({ host: "127.0.0.1", port: free.address().port }, Infinity);
+  assert.ok(connection.isOpen);
+  connection.abort();
+});
+
 // A process with what the explorer shows (#854): namespaces nested two deep,
 // tables in memory, a keyed one, a partitioned one on disk, functions, and a
 // namespace of 3,000 names.

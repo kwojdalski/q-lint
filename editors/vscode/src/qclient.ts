@@ -90,27 +90,35 @@ export class QConnection {
     socket.on("error", () => {});
   }
 
-  /// Open a connection, or reject with why not within `timeoutMs`. A
-  /// connect given up is closed, so nothing is left open behind it.
-  static open(target: Target, timeoutMs: number = CONNECT_TIMEOUT_MS): Promise<QConnection> {
+  /// Open a connection, or reject with why not within `timeoutMs` (with no
+  /// limit when it is infinite), or once `signal` aborts. A connect given up
+  /// is closed, so nothing is left open behind it.
+  static open(target: Target, timeoutMs: number = CONNECT_TIMEOUT_MS, signal?: AbortSignal): Promise<QConnection> {
     return new Promise((resolve, reject) => {
       const options = { host: target.host, port: target.port };
       const socket = target.tls
         ? tls.connect({ ...options, servername: net.isIP(target.host) ? undefined : target.host })
         : net.connect(options);
       let settled = false;
+      const cancelled = (): void => fail(new Error(`the connect to ${target.host}:${target.port} was cancelled`));
       const fail = (error: Error): void => {
         if (!settled) {
           settled = true;
           clearTimeout(timer);
+          signal?.removeEventListener("abort", cancelled);
           socket.destroy();
           reject(error);
         }
       };
-      const timer = setTimeout(
-        () => fail(new Error(`no answer from ${target.host}:${target.port} in ${timeoutMs / 1000} s`)),
-        timeoutMs,
-      );
+      // A timer cannot wait for ever: an infinite delay fires at once.
+      const timer = Number.isFinite(timeoutMs)
+        ? setTimeout(() => fail(new Error(`no answer from ${target.host}:${target.port} in ${timeoutMs / 1000} s`)), timeoutMs)
+        : undefined;
+      if (signal?.aborted) {
+        cancelled();
+        return;
+      }
+      signal?.addEventListener("abort", cancelled);
       socket.once("error", fail);
       // A process that refuses the user closes the socket without a byte.
       socket.once("close", () => fail(new Error(`${target.host}:${target.port} closed the connection: the user or password was refused`)));
@@ -124,6 +132,7 @@ export class QConnection {
         }
         settled = true;
         clearTimeout(timer);
+        signal?.removeEventListener("abort", cancelled);
         socket.removeAllListeners();
         const connection = new QConnection(socket);
         // Anything after the capability byte is already a message.

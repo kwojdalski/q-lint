@@ -371,6 +371,9 @@ export class Live {
   private connecting: Promise<boolean> | undefined;
   /// The label of the process `connecting` connects to.
   private connectingTo: string | undefined;
+  /// Cancels the reconnect after an abort, which waits as long as the
+  /// process takes to finish the query it was left with.
+  private reconnecting: AbortController | undefined;
   private running: { code: string; started: number } | undefined;
   /// When the query that timed out started, so its entry says so.
   private timedOut: number | undefined;
@@ -842,9 +845,14 @@ export class Live {
   }
 
   /// Connect to `process`, closing the connection there was. Whether it
-  /// connected.
-  private open(process: Process): Promise<boolean> {
+  /// connected. A reconnect after an abort passes `reconnect`, and waits
+  /// with no time limit until it aborts.
+  private open(process: Process, reconnect?: AbortSignal): Promise<boolean> {
     if (this.connecting !== undefined) {
+      // Another process chosen stops a reconnect waiting for a busy one.
+      if (this.connectingTo !== process.label) {
+        this.reconnecting?.abort();
+      }
       // A connect to another process - a reconnect after an abort, waiting
       // for that process to be free - is let finish and this one follows:
       // its result says nothing of this process.
@@ -862,12 +870,16 @@ export class Live {
         const connection = await window.withProgress(
           { location: { viewId: VIEWS.processes }, title: `Connecting to ${process.label}` },
           () =>
-            QConnection.open({
-              host: process.host,
-              port: process.port,
-              ...(process.user ? { user: process.user, password: password ?? "" } : {}),
-              ...(process.tls ? { tls: true } : {}),
-            }),
+            QConnection.open(
+              {
+                host: process.host,
+                port: process.port,
+                ...(process.user ? { user: process.user, password: password ?? "" } : {}),
+                ...(process.tls ? { tls: true } : {}),
+              },
+              reconnect === undefined ? undefined : Infinity,
+              reconnect,
+            ),
         );
         this.connection = connection;
         this.active = process;
@@ -884,9 +896,11 @@ export class Live {
         this.changed.fire("connected");
         return true;
       } catch (error) {
-        void window.showErrorMessage(
-          `q-lint: could not connect to ${process.label} (${process.host}:${process.port}): ${error instanceof Error ? error.message : String(error)}`,
-        );
+        if (!reconnect?.aborted) {
+          void window.showErrorMessage(
+            `q-lint: could not connect to ${process.label} (${process.host}:${process.port}): ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
         return false;
       } finally {
         this.showStatus();
@@ -899,6 +913,8 @@ export class Live {
   }
 
   private async disconnect(): Promise<void> {
+    // A reconnect after an abort, still waiting, is not to connect after this.
+    this.reconnecting?.abort();
     const connection = this.connection;
     this.connection = undefined;
     this.running = undefined;
@@ -1088,7 +1104,15 @@ export class Live {
     // Not awaited: q runs one message at a time, so the new connection's
     // handshake waits until the process has finished the query it was left
     // with, and the command should not wait with it.
-    void this.open(process).then((connected) => {
+    // It waits as long as that takes, not a connect's usual timeout, until
+    // another process is chosen or Disconnect is run.
+    this.reconnecting?.abort();
+    const reconnecting = new AbortController();
+    this.reconnecting = reconnecting;
+    void this.open(process, reconnecting.signal).then((connected) => {
+      if (this.reconnecting === reconnecting) {
+        this.reconnecting = undefined;
+      }
       if (connected) {
         void window.showInformationMessage(`q-lint: reconnected to ${process.label}.`);
       }
