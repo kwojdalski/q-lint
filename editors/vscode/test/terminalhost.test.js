@@ -158,3 +158,17 @@ test("two sends at once with no q terminal start one, and both reach it", async 
   assert.strictEqual(fake.terminals.length, 1);
   assert.deepStrictEqual(fake.terminals[0].sent.slice(1), ["1+1", "1+1"]);
 });
+
+test("Run Code from Terminal closes the file's own terminal, not another file's of the same name", async () => {
+  const fake = fakeVscode();
+  const terminals = load(fake);
+  fake.vscode.window.activeTextEditor = { document: fake.document("/ws/a/main.q", "1") };
+  await terminals.runFile();
+  fake.vscode.window.activeTextEditor = { document: fake.document("/ws/b/main.q", "2") };
+  await terminals.runFile();
+  assert.deepStrictEqual(fake.terminals.map((t) => [t.name, t.disposed]), [["main.q", false], ["main.q", false]]);
+  // Running a/main.q again replaces its own.
+  fake.vscode.window.activeTextEditor = { document: fake.document("/ws/a/main.q", "1") };
+  await terminals.runFile();
+  assert.deepStrictEqual(fake.terminals.map((t) => t.disposed), [true, false, false]);
+});

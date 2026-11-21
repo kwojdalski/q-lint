@@ -246,6 +246,8 @@ class HistoryView implements TreeDataProvider<HistoryEntry> {
 export class QTerminals {
   /// The terminals started here, still open.
   private readonly ours = new Set<Terminal>();
+  /// The file each Run Code from Terminal terminal runs.
+  private readonly files = new WeakMap<Terminal, string>();
   /// Where code is sent: the last q terminal started, of those still open.
   private last: Terminal | undefined;
   /// The terminal a send is starting, so a second send waits for it.
@@ -262,9 +264,9 @@ export class QTerminals {
     );
   }
 
-  /// Run the active file in a terminal named after it, saving it first. A
-  /// terminal of the same name started before is closed: running the file
-  /// again starts a fresh q.
+  /// Run the active file in a terminal named after it, saving it first. The
+  /// terminal it ran in before is closed: running the file again starts a
+  /// fresh q. Another file of the same name keeps its own.
   async runFile(): Promise<void> {
     const document = window.activeTextEditor?.document;
     if (document === undefined || document.uri.scheme !== "file") {
@@ -274,18 +276,18 @@ export class QTerminals {
     if (document.isDirty && !(await document.save())) {
       return;
     }
-    const name = path.basename(document.uri.fsPath);
+    const file = document.uri.fsPath;
     // Closed only once the new one can start: an env file that cannot be
     // read leaves the running q as it was.
     const close = (): void => {
       for (const terminal of this.ours) {
-        if (terminal.name === name) {
+        if (this.files.get(terminal) === file) {
           this.ours.delete(terminal);
           terminal.dispose();
         }
       }
     };
-    const terminal = await this.start(name, document.uri, document.uri.fsPath, close);
+    const terminal = await this.start(path.basename(file), document.uri, file, close);
     terminal?.show();
   }
 
@@ -361,6 +363,9 @@ export class QTerminals {
     before?.();
     const terminal = window.createTerminal({ name, cwd });
     this.ours.add(terminal);
+    if (file !== undefined) {
+      this.files.set(terminal, file);
+    }
     this.last = terminal;
     // A file inside the folder is named relative to it, as you would type it.
     const relative = file !== undefined && cwd !== undefined ? path.relative(cwd, file) : "";
