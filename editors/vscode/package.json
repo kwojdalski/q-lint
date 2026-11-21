@@ -3483,18 +3483,6 @@
         {
           "command": "q-lint.toggleLogFollow",
           "when": "resourceScheme == q-log && config.q-lint.processes.logViewer.enable"
-        }
-      ],
-      "editor/title": [
-        {
-          "command": "q-lint.editFunctionSource",
-          "when": "resourceScheme == q-lint-source && config.q-lint.processExplorer.functionSource.enable",
-          "group": "navigation"
-        },
-        {
-          "command": "q-lint.redefineFunction",
-          "when": "q-lint.redefinable && config.q-lint.processExplorer.functionSource.enable",
-          "group": "navigation"
         },
         {
           "command": "q-lint.refreshNotebookVariables",
@@ -3515,6 +3503,34 @@
         {
           "command": "q-lint.runNotebookWithParameters",
           "when": "config.q-lint.notebook.parameters.enable"
+        },
+        {
+          "command": "q-lint.diffNotebook",
+          "when": "config.q-lint.notebook.diff.enable"
+        },
+        {
+          "command": "q-lint.stripNotebookOutputs",
+          "when": "config.q-lint.notebook.stripOutputs.enable"
+        },
+        {
+          "command": "q-lint.setUpNotebookStripFilter",
+          "when": "config.q-lint.notebook.stripOutputs.enable"
+        },
+        {
+          "command": "q-lint.restartNotebookAndRunAll",
+          "when": "q-lint.notebookActive && config.q-lint.notebook.restartRunAll.enable"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "q-lint.editFunctionSource",
+          "when": "resourceScheme == q-lint-source && config.q-lint.processExplorer.functionSource.enable",
+          "group": "navigation"
+        },
+        {
+          "command": "q-lint.redefineFunction",
+          "when": "q-lint.redefinable && config.q-lint.processExplorer.functionSource.enable",
+          "group": "navigation"
         },
         {
           "command": "q-lint.saveSchemaDiagram",
@@ -3555,22 +3571,6 @@
           "command": "q-lint.clearLogFilters",
           "when": "resourceScheme == q-log && config.q-lint.processes.logViewer.enable",
           "group": "1_qlog@3"
-        },
-        {
-          "command": "q-lint.diffNotebook",
-          "when": "config.q-lint.notebook.diff.enable"
-        },
-        {
-          "command": "q-lint.stripNotebookOutputs",
-          "when": "config.q-lint.notebook.stripOutputs.enable"
-        },
-        {
-          "command": "q-lint.setUpNotebookStripFilter",
-          "when": "config.q-lint.notebook.stripOutputs.enable"
-        },
-        {
-          "command": "q-lint.restartNotebookAndRunAll",
-          "when": "q-lint.notebookActive && config.q-lint.notebook.restartRunAll.enable"
         }
       ]
     },

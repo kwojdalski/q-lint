@@ -587,6 +587,19 @@ test("Execute Entire File is bound to a key no VS Code default takes, and is in 
   assert.deepStrictEqual(rows.map((m) => m.group).sort(), ["1_history@2", "inline"]);
 });
 
+test("every editor title entry has a group; the notebook commands' palette entries are in the palette", () => {
+  // An editor/title entry without a group goes in the overflow menu of every
+  // editor its `when` allows: the notebook commands' palette entries once
+  // sat there, shown in any text editor's title menu.
+  for (const entry of pkg.contributes.menus["editor/title"]) {
+    assert.ok(entry.group, `editor/title entry without a group: ${entry.command}`);
+  }
+  const palette = new Set(pkg.contributes.menus.commandPalette.map((m) => m.command));
+  for (const command of ["q-lint.exportNotebookHtml", "q-lint.runNotebookWithParameters", "q-lint.diffNotebook", "q-lint.restartNotebookAndRunAll"]) {
+    assert.ok(palette.has(command), command);
+  }
+});
+
 test("Toggle Parameter Cache is bound to a key no VS Code default takes (#892)", () => {
   const binding = pkg.contributes.keybindings.find((k) => k.command === PARAM_CACHE.toggle);
   // ctrl+shift+' is in none of VS Code 1.147's default keybindings on macOS,
