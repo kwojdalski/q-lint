@@ -39,6 +39,7 @@ import {
   plainHost,
   parseTags,
   passwordKey,
+  passwordsToForget,
   portProblem,
   processThemeColour,
   processTooltip,
@@ -771,7 +772,11 @@ export class Live {
       return;
     }
     const { processes, problems } = read;
-    await this.save(merge(this.processes(), processes));
+    const before = this.processes();
+    for (const label of passwordsToForget(before, processes)) {
+      await this.context.secrets.delete(passwordKey({ label }));
+    }
+    await this.save(merge(before, processes));
     const note = problems.length ? ` Skipped ${problems.length}: ${problems.slice(0, 3).join(" ")}` : "";
     void window.showInformationMessage(`q-lint: imported ${processes.length} q process(es).${note}`);
   }

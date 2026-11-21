@@ -168,6 +168,19 @@ export function merge(processes: Process[], incoming: Process[]): Process[] {
   return [...kept, ...incoming.filter((p) => !known.has(p.label))];
 }
 
+/// The labels of the processes `merge` replaces with one at another host,
+/// port or user: their stored password was given for the old one, and is
+/// not to be sent to the new.
+export function passwordsToForget(processes: Process[], incoming: Process[]): string[] {
+  const byLabel = new Map(incoming.map((p) => [p.label, p]));
+  return processes
+    .filter((p) => {
+      const next = byLabel.get(p.label);
+      return next !== undefined && (next.host !== p.host || next.port !== p.port || next.user !== p.user);
+    })
+    .map((p) => p.label);
+}
+
 /// The view's top level: a group per tag, sorted, each holding its processes
 /// by label, then the untagged processes. A process with two tags is under
 /// both.

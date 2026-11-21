@@ -78,3 +78,13 @@ test("a saved and a discovered process of one label keep their passwords apart",
   // A saved list never holds the server: it is not read back.
   assert.strictEqual(parseProcesses([{ label: "a", host: "h", port: 1, server: "desk" }]).processes[0].server, undefined);
 });
+
+// An import replaces a process of the same label. The password stored for
+// the old one stayed, and was sent to whatever host and user the file named.
+test("an import that moves a process to another host or user forgets its password", () => {
+  const { passwordsToForget } = require("../out/processes.js");
+  const p = (label, host, user, port = 5000) => ({ label, host, port, tags: [], ...(user ? { user } : {}) });
+  const saved = [p("a", "h1", "u"), p("b", "h1", "u"), p("c", "h1", "u"), p("d", "h1", "u"), p("e", "h1", "u")];
+  const incoming = [p("a", "h1", "u"), p("b", "evil", "u"), p("c", "h1", "v"), p("d", "h1", "u", 6000), p("new", "h", "u")];
+  assert.deepStrictEqual(passwordsToForget(saved, incoming), ["b", "c", "d"]);
+});

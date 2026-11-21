@@ -151,7 +151,8 @@ and clicking it switches. The commands:
 - **Import** and **Export Processes**: a JSON file holding
   `{"processes": [{"label", "host", "port", "user"?, "tags"?, "tls"?}]}`.
   An import replaces processes of the same label, adds the rest, and says
-  which entries it skipped.
+  which entries it skipped. A process it moves to another host, port or
+  user forgets its stored password, so that is never sent to the new one.
 - **Insert Active Connection Label**, at the cursor.
 - **Copy Label for Agent Query**, on a process row: the label an agent's
   query names the process by (`server/label` for a discovered one).
