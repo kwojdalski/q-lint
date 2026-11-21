@@ -357,13 +357,23 @@ export class QTerminals {
       noEditor();
       return;
     }
-    const lines = replLines(codeAt(editor, from) ?? "");
-    if (lines.length === 0) {
+    const code = codeAt(editor, from) ?? "";
+    if (replLines(code).length === 0) {
       nothingThere(from);
       return;
     }
+    await this.sendCode(code, editor.document.uri);
+  }
+
+  /// Send `code`, from the document `from`, to the q terminal as `send`
+  /// does: Smart Send's terminal target (#957).
+  async sendCode(code: string, from: Uri): Promise<void> {
+    const lines = replLines(code);
+    if (lines.length === 0) {
+      return;
+    }
     if (this.last === undefined && this.starting === undefined) {
-      this.starting = this.start("q", editor.document.uri).finally(() => (this.starting = undefined));
+      this.starting = this.start("q", from).finally(() => (this.starting = undefined));
     }
     const terminal = this.last ?? (await this.starting);
     if (terminal === undefined) {
@@ -512,6 +522,11 @@ export class Live {
   private sharedWatcher: Disposable | undefined;
   /// Bumped by each read, so a slow one does not overwrite a later one.
   private sharedRead = 0;
+  /// The q terminals, for Smart Send (#957).
+  private terminals: QTerminals | undefined;
+  /// Told each async message the active connection's process sends:
+  /// `.qlint.view` and `.qlint.plot` (#960).
+  private readonly asyncListeners = new Set<(message: Buffer, process: Process) => void>();
 
   constructor(private readonly context: ExtensionContext) {
     this.output = window.createOutputChannel("q-lint: query", "q-console");
@@ -524,6 +539,7 @@ export class Live {
     this.historyTree = window.createTreeView(VIEWS.history, { treeDataProvider: this.historyView });
     this.discovery = new DiscoveryServers(context, { list: () => this.processes(), save: (processes) => this.save(processes) });
     const terminals = new QTerminals(context);
+    this.terminals = terminals;
     this.modes = new QueryModes(context);
     this.modes.setPager((label, offset, count) => this.pageHeld(label, offset, count));
     this.modes.setRunner((code, label) => this.runDrilldown(code, label));
@@ -1570,6 +1586,13 @@ export class Live {
         await this.runConnectScript(connection, process);
         this.connection = connection;
         this.active = process;
+        connection.whenAsync((message) => {
+          if (this.connection === connection) {
+            for (const listener of this.asyncListeners) {
+              listener(message, process);
+            }
+          }
+        });
         connection.whenClosed(() => {
           if (this.connection === connection) {
             this.connection = undefined;
@@ -2070,6 +2093,29 @@ export class Live {
     return fill ? this.filledIn(written) : written;
   }
 
+  /// Run `code` from the document `uri` as Query Current Block runs it:
+  /// its placeholders asked for, on the process the file is bound to.
+  /// Smart Send's query target (#957).
+  async queryFilledIn(code: string, uri: Uri): Promise<void> {
+    const filled = await this.filledIn(code);
+    if (filled !== undefined) {
+      await this.queryCode(filled, uri);
+    }
+  }
+
+  /// Send `code` from the document `uri` to the q terminal, starting one if
+  /// none is open: Smart Send's terminal target (#957).
+  sendToTerminal(code: string, uri: Uri): Promise<void> {
+    return this.terminals?.sendCode(code, uri) ?? Promise.resolve();
+  }
+
+  /// Hear each async message the active connection's process sends, with
+  /// that process, until the returned disposable is disposed (#960).
+  onAsyncMessage(listener: (message: Buffer, process: Process) => void): Disposable {
+    this.asyncListeners.add(listener);
+    return { dispose: () => void this.asyncListeners.delete(listener) };
+  }
+
   /// Run `code` as a query from the editor is run, its placeholders asked
   /// for first: a saved query (#912).
   async runFilledIn(code: string): Promise<void> {
@@ -2135,12 +2181,14 @@ export class Live {
 
   /// Show `payload` in the result panel, as a grid when the query mode is
   /// the console, under `label`: Query a Tag's merged table.
-  showGrid(label: string, code: string, payload: GridPayload, millis: number): void {
+  /// `mode`: shown as that, whatever the query mode: `.qlint.plot`'s chart
+  /// (#960).
+  showGrid(label: string, code: string, payload: GridPayload, millis: number, mode?: "grid" | "chart"): void {
     const configuration = workspace.getConfiguration("q-lint");
     const settings = readLive((key, fallback) => configuration.get(key, fallback));
     this.modes.show(
       { process: label, code, millis, answer: { ok: true, type: 98, text: [], grid: payload } },
-      { ...settings, mode: settings.mode === "console" ? "grid" : settings.mode },
+      { ...settings, mode: mode ?? (settings.mode === "console" ? "grid" : settings.mode) },
     );
   }
 

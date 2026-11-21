@@ -103,6 +103,9 @@ function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir
     "./interpreterview": { Interpreters: class { status() { return undefined; } } },
     "./taskprovider": { registerTasks: () => ({ registered: () => false }) },
     "./devcontainerview": { registerDevContainer() {} },
+    "./replview": { registerRepl: () => ({}) },
+    "./interactiveview": { registerInteractive: () => ({}) },
+    "./viewhelpers": { registerViewHelpers: () => ({}) },
   };
   const file = require.resolve("../out/extension.js");
   delete require.cache[file];

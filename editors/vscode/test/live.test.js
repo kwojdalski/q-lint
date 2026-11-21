@@ -48,6 +48,7 @@ const { CHECK_UNDEFINED } = require("../out/undefinednames.js");
 const { readAssist, QUERY_FEATURES } = require("../out/assistconfig.js");
 const { DRIFT_COMMANDS } = require("../out/definitions.js");
 const { QSQL_COMMANDS } = require("../out/assist.js");
+const { INTERACTIVE_COMMANDS } = require("../out/interactiveconfig.js");
 const { CONTROL_COMMANDS, readControls } = require("../out/querycontrols.js");
 const { readProgress } = require("../out/progress.js");
 const { readPlaceholders } = require("../out/placeholders.js");
@@ -315,6 +316,7 @@ test("package.json declares exactly the commands the extension registers", () =>
     ...Object.values(QSQL_COMMANDS),
     ...Object.values(require("../out/interpreter.js").INTERPRETER_COMMANDS),
     require("../out/devcontainer.js").DEVCONTAINER_COMMAND,
+    ...Object.values(INTERACTIVE_COMMANDS),
   ].sort();
   assert.deepStrictEqual(declared, registered);
 });

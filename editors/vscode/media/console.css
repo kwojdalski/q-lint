@@ -1,0 +1,134 @@
+/* The Interactive Window (#956) and the q REPL pane (#959), in the editor's theme. */
+html,
+body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  background: var(--vscode-editor-background);
+  color: var(--vscode-foreground);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+}
+
+header {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--vscode-panel-border, transparent);
+}
+
+header .hint {
+  flex: 1;
+  color: var(--vscode-descriptionForeground);
+}
+
+button {
+  font: inherit;
+  color: var(--vscode-button-secondaryForeground);
+  background: var(--vscode-button-secondaryBackground);
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 2px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+main {
+  flex: 1;
+  overflow: auto;
+  padding: 4px 8px;
+}
+
+section.entry {
+  border-bottom: 1px solid var(--vscode-panel-border, transparent);
+  padding: 4px 0;
+}
+
+section.entry .head {
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.9em;
+}
+
+section.entry .head .title {
+  color: var(--vscode-foreground);
+  font-weight: bold;
+  margin-right: 8px;
+}
+
+pre {
+  margin: 2px 0;
+  font-family: var(--vscode-editor-font-family);
+  font-size: var(--vscode-editor-font-size);
+  white-space: pre;
+}
+
+pre.code {
+  color: var(--vscode-textPreformat-foreground, var(--vscode-foreground));
+  opacity: 0.85;
+}
+
+pre.error {
+  color: var(--vscode-errorForeground);
+}
+
+.running {
+  color: var(--vscode-descriptionForeground);
+  font-style: italic;
+}
+
+footer {
+  position: relative;
+  border-top: 1px solid var(--vscode-panel-border, transparent);
+  padding: 4px 8px;
+}
+
+footer .search {
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.9em;
+  min-height: 1.2em;
+}
+
+textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 2.4em;
+  font-family: var(--vscode-editor-font-family);
+  font-size: var(--vscode-editor-font-size);
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, transparent);
+}
+
+ul.completions {
+  position: absolute;
+  bottom: 100%;
+  left: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 12em;
+  overflow: auto;
+  background: var(--vscode-editorSuggestWidget-background, var(--vscode-input-background));
+  border: 1px solid var(--vscode-editorSuggestWidget-border, var(--vscode-input-border, transparent));
+  font-family: var(--vscode-editor-font-family);
+}
+
+ul.completions li {
+  padding: 1px 8px;
+  white-space: nowrap;
+}
+
+ul.completions li .detail {
+  color: var(--vscode-descriptionForeground);
+  margin-left: 12px;
+}
+
+ul.completions li.selected {
+  background: var(--vscode-editorSuggestWidget-selectedBackground, var(--vscode-list-activeSelectionBackground));
+}

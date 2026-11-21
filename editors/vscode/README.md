@@ -468,6 +468,77 @@ read-only guard guards) it asks before it starts, and code that would
 change a guarded process is asked about once, then. It also takes the code
 and the seconds as arguments.
 
+**Code cells.** A line that starts `/ %%` (or `/%%`) at column 0 starts a
+cell, as `# %%` does in a Python file; the text after `%%` names it. To q
+it is a comment, so the file loads as it always did. q's rules decide what
+is a marker: a `/ %%` line inside a block comment (`/` alone to `\` alone),
+after a `\` that ends the script, indented, or between a statement and its
+indented continuation lines (`f:{x+`, `/ %%`, `  y}` is one statement to
+q) marks nothing. The lines above the first marker are a cell when a
+statement starts there. **Run Cell** (Ctrl+Enter in a q file with cells, or
+the editor's context menu) runs the cell at the cursor and **Run All
+Cells** every cell, on the process the file is bound to (connecting first
+if none is), into the **q Interactive** window beside the editor: each run
+with its cell's name, its code without the marker, the process, the time
+and q's answer or error. Cells run one at a time, in order, and a run of
+several stops at the first that fails. **Open Interactive Window** and
+**Clear Interactive Window** do what they say. Each run lands in Query
+History, and the read-only guard asks before a cell that would change a
+guarded process. `q-lint.cells.enable` off hides and refuses the commands
+and closes the window.
+
+**Run Cell, Run Above, Run Below**: code lenses over each `/ %%` line.
+**Run Above** runs the cells before that one, and **Run Below** that one
+and those after it, as Jupyter's do, into the Interactive Window. The
+palette has them as **Run Cells Above** and **Run Cell and Below**, for the
+cell at the cursor. `q-lint.cells.codeLens.enable` off removes the lenses
+and hides and refuses the two commands.
+
+**Smart Send** is off by default, as it takes Shift+Enter and sends code
+on a keypress: turn on `q-lint.smartSend.enable`. Then Shift+Enter in a q
+editor sends the statement the cursor is in, continuation lines and all,
+and moves the cursor to the first line of the next statement, skipping
+blank lines, comments and block comments; on a blank or comment line it
+only moves. With a selection, it sends the selection and stays.
+`q-lint.smartSend.target` says where: `query` (the default) as **Query
+Current Block** does, placeholders and all; `interactiveWindow`; `repl`,
+the q REPL pane; or `terminal`, as **Send Current Block to Terminal** does.
+
+**q REPL pane.** **Open q REPL Pane** opens a console beside the editor on
+the connected process. Enter runs what is typed when its brackets are
+closed and no string is open, and otherwise starts a new line, as the
+Julia REPL does; Shift+Enter always starts one. A line typed inside an
+open bracket reaches q as a continuation line, so `f:{x+` then `y}` is one
+statement, as in a script. Up and Down walk the history (the last 500
+inputs, kept across sessions), and Ctrl+R searches it as a shell does:
+type to find the newest input containing the text, Ctrl+R again for the
+one before, Escape to leave it. Tab completes the name before the cursor
+from the process's own names (read with the Process Explorer's read-only
+call, once until the next run, and only when Tab asks), the language
+server's workspace symbols and q's words. Each input lands in Query
+History, and the read-only guard asks before one that would change a
+guarded process. Unlike **Start q REPL**, which starts a q in a terminal,
+it runs on the process you are connected to. `q-lint.repl.enable` off
+hides and refuses the command and closes the pane; the history is kept.
+
+**`.qlint.view` and `.qlint.plot`**, R's `View()` for q. **Define
+.qlint.view and .qlint.plot on Process** defines them on the connected
+process - q-lint defines nothing anywhere unasked, so only this command
+does, or each connect while `q-lint.view.defineOnConnect` is on (off by
+default; never on a process the read-only guard guards). Then, in code
+run from the editor, a notebook, a cell or the REPL, `.qlint.view t` opens
+t in the result grid and `.qlint.plot t` as a chart, whatever the query
+mode, and each gives t back, so `n:count .qlint.view select from t` works.
+A dictionary or a list opens as a grid does. The value is shaped on the
+process by the grid's own query (at most `q-lint.query.gridLimit` rows,
+as when it was defined) and sent back as an async message on the handle
+that called it; called from the process's own console or a timer, where
+there is no caller, it only gives the value back. It defines
+`.qlint.grid`, `.qlint.show`, `.qlint.view` and `.qlint.plot`. In grid or
+chart mode the query's own result follows it into the panel, as another
+tab. `q-lint.view.enable` off stops listening, so a call opens nothing,
+and hides and refuses the command.
+
 **Read-only guard.** Code sent to a process tagged `prod`, `prd` or
 `production` (`q-lint.processes.readOnlyGuard.tags`, ignoring case) is read
 first, and when it would change the process, a modal asks before anything
@@ -1452,6 +1523,20 @@ nothing.
 | `q-lint.idiomSnippets.enable` | `true` | Offer the idiom snippets (joins, `.z` handlers, a TorQ process) in the completion list. | - |
 | `q-lint.processExplorer.driftDetection.enable` | `false` | **Check Drift Against Process**: compare the workspace's function definitions with the connected process. Off, the command is hidden and reads nothing. | - |
 | `q-lint.hotReload.enable` | `false` | On saving a q file, send the definitions the save changed to its process, after Redefine's confirmation. Off, nothing listens and nothing is sent. | - |
+
+### Interactive settings
+
+Each applies at once, without a reload. None reaches the language server.
+
+| Setting | Default | What it does | q-pro |
+| --- | --- | --- | --- |
+| `q-lint.cells.enable` | `true` | `/ %%` lines split a q file into cells: **Run Cell** (Ctrl+Enter), **Run All Cells** and the **q Interactive** window. Off, the commands are hidden and refuse, and the window closes. | - |
+| `q-lint.cells.codeLens.enable` | `true` | **Run Cell**, **Run Above** and **Run Below** lenses over each cell, and **Run Cells Above** and **Run Cell and Below**. Off, no lens is drawn and the two commands are hidden and refuse. | - |
+| `q-lint.smartSend.enable` | `false` | **Smart Send** on Shift+Enter: send the statement at the cursor, or the selection, and move to the next statement. Off, Shift+Enter is left alone and the command refuses. | - |
+| `q-lint.smartSend.target` | `"query"` | Where Smart Send sends: `query`, `interactiveWindow`, `repl` or `terminal`. | - |
+| `q-lint.repl.enable` | `true` | **Open q REPL Pane**: a console on the connected process, with multiline input, history, Ctrl+R search and Tab completion. Off, the command is hidden and refuses, and the pane closes. | - |
+| `q-lint.view.enable` | `true` | Open what `.qlint.view` and `.qlint.plot` send, and offer **Define .qlint.view and .qlint.plot on Process**. Off, nothing listens and nothing is defined. | - |
+| `q-lint.view.defineOnConnect` | `false` | Define `.qlint.view` and `.qlint.plot` on each process as it is connected to; never on one the read-only guard guards. | - |
 
 ### Connection settings
 

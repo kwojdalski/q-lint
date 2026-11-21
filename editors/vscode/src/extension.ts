@@ -44,6 +44,9 @@ import { registerQsqlDraft } from "./qsqldraft";
 import { Interpreters } from "./interpreterview";
 import { registerTasks } from "./taskprovider";
 import { registerDevContainer } from "./devcontainerview";
+import { registerInteractive } from "./interactiveview";
+import { registerRepl } from "./replview";
+import { registerViewHelpers } from "./viewhelpers";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -137,6 +140,9 @@ export async function activate(
     chatParticipant: () => boolean;
     interpreter: { status: () => string | undefined };
     qTasks: () => boolean;
+    interactive: ReturnType<typeof registerInteractive>;
+    repl: ReturnType<typeof registerRepl>;
+    viewHelpers: ReturnType<typeof registerViewHelpers>;
   }
 > {
   // Replacing the binary does not restart the server, and a window reload is
@@ -190,6 +196,9 @@ export async function activate(
   });
   const chatParticipant = registerChat(context, live);
   registerQsqlDraft(context, live);
+  const repl = registerRepl(context, live);
+  const interactive = registerInteractive(context, live, repl);
+  const viewHelpers = registerViewHelpers(context, live);
   registerOnboarding(context, () => live.processes());
   const streams = new TableStreams(context, live);
   const launcher = new Launcher(context, live);
@@ -227,6 +236,9 @@ export async function activate(
     chatParticipant: chatParticipant.registered,
     interpreter: { status: () => interpreters.status() },
     qTasks: qTasks.registered,
+    interactive,
+    repl,
+    viewHelpers,
   };
 }
 
