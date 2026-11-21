@@ -53,6 +53,11 @@ const { CONVERT_TEMPORAL } = require("../out/temporal.js");
 const { PASTE } = require("../out/pastetable.js");
 const { HELP, CHEAT_SHEET } = require("../out/helpcatalog.js");
 const { PLOT_COMMANDS } = require("../out/plots.js");
+const { RERUN_FAILED } = require("../out/testing.js");
+const { SNAPSHOT_COMMANDS } = require("../out/snapshot.js");
+const { TEST_STUB_COMMAND } = require("../out/teststub.js");
+const { LOGPOINT_COMMANDS } = require("../out/logpoint.js");
+const { CAPTURE_LOCALS } = require("../out/locals.js");
 const { CONTROL_COMMANDS, readControls } = require("../out/querycontrols.js");
 const { readProgress } = require("../out/progress.js");
 const { readPlaceholders } = require("../out/placeholders.js");
@@ -330,6 +335,11 @@ test("package.json declares exactly the commands the extension registers", () =>
     ...Object.values(HELP),
     ...Object.values(CHEAT_SHEET).filter((id) => id !== CHEAT_SHEET.view),
     ...Object.values(PLOT_COMMANDS).filter((id) => id !== PLOT_COMMANDS.view),
+    RERUN_FAILED,
+    ...Object.values(SNAPSHOT_COMMANDS),
+    TEST_STUB_COMMAND,
+    ...Object.values(LOGPOINT_COMMANDS),
+    CAPTURE_LOCALS,
   ].sort();
   assert.deepStrictEqual(declared, registered);
 });

@@ -710,6 +710,48 @@
             "order": 133,
             "markdownDescription": "Offer the q idiom snippets in a q editor's completion list: `aj`, `aj0`, `wj`, `wj1`, `lj`, `ij`, `uj`, a bucketed `xbar` select, the `.z` handlers (`zpg`, `zps`, `zpo`, `zpc`, `zpw`, `zts`, `zws`, `zexit`) and a TorQ process skeleton (`torq`). Off, they leave the list."
           },
+          "q-lint.testExplorer.coverage.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 134,
+            "markdownDescription": "Offer the Testing view's **Coverage** profile: the workspace's functions the process holds as their files define them are replaced there with copies that count each statement, the tests run, and every function is put back; the counts show as coverage in the editor's gutter. Only a run you start sends anything. Off, the profile is not offered."
+          },
+          "q-lint.testExplorer.failedTests.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 135,
+            "markdownDescription": "Show a failed assertion's expected and actual values as a diff - a k4unit `true` row `a~b`, sent as `(a;b)` so both sides come back, or a qUnit `assertEquals` - and offer **Re-run Failed q Tests**. Off, a `true` row is sent as written and the command is hidden."
+          },
+          "q-lint.snapshotTests.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 136,
+            "markdownDescription": "Snapshot tests: **Record Query Snapshot** writes a query's printed result to `__snapshots__/<name>.qsnap` beside its file, after showing it and asking; the Testing view runs each `.qsnap` file's query again and compares; **Update Snapshot** rewrites one, after asking. Off, the files are not listed and the commands are hidden."
+          },
+          "q-lint.testStub.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 137,
+            "markdownDescription": "Offer **Generate a test for ...** on a function's definition, and **Generate Test Stub**: a `test_` function in the style of the function's test file, added to its end (or a new `tests/test_<name>.q`) after showing it and asking. Off, the code action is not offered and the command is hidden."
+          },
+          "q-lint.backtraceLinks.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 138,
+            "markdownDescription": "Make each frame of a q backtrace a link to the line that failed: in the **q-lint: query** output and other output channels, and in a terminal running q under `\\e 1`. A path from another machine opens the workspace file sharing its trailing folders. Off, nothing is linked."
+          },
+          "q-lint.logpoints.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 139,
+            "markdownDescription": "**Add Logpoint**: wrap a function on the active process so each call's arguments are printed there with `0N!` and the last 1000 kept, without editing its file; **Remove Logpoint**, **Remove All Logpoints** and **Show Logpoint Hits**. Adding and removing go through the read-only guard. Off, the commands are hidden and nothing is sent."
+          },
+          "q-lint.localsAtError.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 140,
+            "markdownDescription": "**Capture Locals at Last Error**: run the last query that failed again, after asking, with a function of its backtrace keeping its arguments, the statement it is on and its locals, put it back, and show what was kept. Off, the command is hidden and nothing is sent."
+          },
           "q-lint.processExplorer.driftDetection.enable": {
             "type": "boolean",
             "default": false,
@@ -1602,6 +1644,59 @@
         "title": "Redefine on Process",
         "category": "q-lint",
         "icon": "$(cloud-upload)",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.rerunFailedTests",
+        "title": "Re-run Failed q Tests",
+        "category": "q-lint",
+        "icon": "$(debug-rerun)"
+      },
+      {
+        "command": "q-lint.recordSnapshot",
+        "title": "Record Query Snapshot",
+        "category": "q-lint",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.updateSnapshot",
+        "title": "Update Snapshot",
+        "category": "q-lint",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.generateTestStub",
+        "title": "Generate Test Stub",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.addLogpoint",
+        "title": "Add Logpoint",
+        "category": "q-lint",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.removeLogpoint",
+        "title": "Remove Logpoint",
+        "category": "q-lint",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.removeAllLogpoints",
+        "title": "Remove All Logpoints",
+        "category": "q-lint",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.showLogpointHits",
+        "title": "Show Logpoint Hits",
+        "category": "q-lint",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.captureLocals",
+        "title": "Capture Locals at Last Error",
+        "category": "q-lint",
         "enablement": "q-lint.connected"
       },
       {
@@ -2628,6 +2723,27 @@
           "command": "q-lint.copyAsJson",
           "when": "editorLangId == q && config.q-lint.jsonConversion.enable",
           "group": "q-lint@36"
+        },
+        {
+          "command": "q-lint.recordSnapshot",
+          "when": "editorLangId == q && q-lint.connected && config.q-lint.snapshotTests.enable",
+          "group": "q-lint@10"
+        },
+        {
+          "command": "q-lint.addLogpoint",
+          "when": "editorLangId == q && q-lint.connected && config.q-lint.logpoints.enable",
+          "group": "q-lint@10"
+        },
+        {
+          "command": "q-lint.generateTestStub",
+          "when": "editorLangId == q && config.q-lint.testStub.enable",
+          "group": "q-lint@10"
+        }
+      ],
+      "testing/item/context": [
+        {
+          "command": "q-lint.updateSnapshot",
+          "when": "controllerId == q-lint.tests && testId =~ /\\.qsnap$/ && config.q-lint.snapshotTests.enable"
         }
       ],
       "commandPalette": [
@@ -2946,6 +3062,42 @@
         {
           "command": "q-lint.clearPlots",
           "when": "config.q-lint.results.plots.enable"
+        },
+        {
+          "command": "q-lint.rerunFailedTests",
+          "when": "config.q-lint.testExplorer.enable && config.q-lint.testExplorer.failedTests.enable"
+        },
+        {
+          "command": "q-lint.recordSnapshot",
+          "when": "config.q-lint.snapshotTests.enable && editorLangId == q"
+        },
+        {
+          "command": "q-lint.updateSnapshot",
+          "when": "config.q-lint.snapshotTests.enable"
+        },
+        {
+          "command": "q-lint.generateTestStub",
+          "when": "config.q-lint.testStub.enable && editorLangId == q"
+        },
+        {
+          "command": "q-lint.addLogpoint",
+          "when": "config.q-lint.logpoints.enable"
+        },
+        {
+          "command": "q-lint.removeLogpoint",
+          "when": "config.q-lint.logpoints.enable"
+        },
+        {
+          "command": "q-lint.removeAllLogpoints",
+          "when": "config.q-lint.logpoints.enable"
+        },
+        {
+          "command": "q-lint.showLogpointHits",
+          "when": "config.q-lint.logpoints.enable"
+        },
+        {
+          "command": "q-lint.captureLocals",
+          "when": "config.q-lint.localsAtError.enable"
         }
       ],
       "editor/title": [

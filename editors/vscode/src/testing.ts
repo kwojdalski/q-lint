@@ -11,21 +11,33 @@
 // signals and the result is not false (`0b`, or a boolean list with a 0b in
 // it): `.qt` and qUnit tests signal, and a k4unit-style one answers false.
 // `true` passes only on `1b`, `fail` only on an error, `run` on anything
-// but an error.
+// but an error. `match` (#980) is a k4unit `true` row `a~b` sent as `(a;b)`:
+// it passes when the two match, and a failure carries both sides.
 //
-//   `ok`failed`text!(no error;failed;the result as .Q.s1 shows it, or the error)
+//   `ok`failed`text`diff!(no error;failed;the result as .Q.s1 shows it, or
+//                         the error;(expected;actual) as .Q.s shows them, or ())
+//
+// The two sides of a failure are those of a `match` row, or a qUnit
+// assertion's: `.qunit.assertEquals` and `assertThat` keep them in
+// `.qunit.ar` before they signal `assertThatFAIL`.
 
 export const TEST_RUN = [
   "{[s;mode]",
   " s:{(),x} each (),s; mode:`$mode; d:system \"d\";",
   " r:@[{(1b;last value each x)};s;{(0b;x)}];",
   " system \"d \",string d;",
-  " ok:r 0; v:r 1;",
+  " ok:r 0; v:r 1; m:();",
+  " if[ok&mode~`match;m:v;v:$[2=count m;(~). m;0b];mode:`true];",
   " failed:$[mode~`fail;ok;not ok;1b;mode~`true;not 1b~v;mode~`run;0b;-1h=type v;not v;1h=type v;not all v;0b];",
-  " `ok`failed`text!(ok;failed;$[ok;300 sublist .Q.s1 v;v])}",
+  " q:$[ok;();\"assertThatFAIL\"~v;@[get;`.qunit.ar;()];()];",
+  " diff:{20000 sublist .Q.s x} each $[not failed;();2=count m;m 1 0;not 99h=type q;();all`actual`expected in key q;q`expected`actual;()];",
+  " `ok`failed`text`diff!(ok;failed;$[ok;300 sublist .Q.s1 v;v];diff)}",
 ].join("\n");
 
-export type TestMode = "test" | "true" | "fail" | "run";
+/// The command that runs again the tests the last run failed (#980).
+export const RERUN_FAILED = "q-lint.rerunFailedTests";
+
+export type TestMode = "test" | "true" | "fail" | "run" | "match";
 
 /// One test the language server lists: its name as written, where, the code
 /// that defines it under its `\d`, and the call that runs it.
@@ -95,6 +107,8 @@ export interface TestResult {
   /// The result as q shows it, or the error's text.
   text: string;
   errored: boolean;
+  /// A failed assertion's two sides, as q shows them, when it has them.
+  diff?: { expected: string; actual: string };
 }
 
 /// What `TEST_RUN` answered. Throws when it is not its answer.
@@ -104,7 +118,10 @@ export function readTestResult(raw: unknown): TestResult {
     throw new Error(`the process answered something other than a test's result: ${JSON.stringify(raw)?.slice(0, 200)}`);
   }
   const text = typeof r.text === "string" ? r.text : Array.isArray(r.text) ? r.text.join("") : String(r.text ?? "");
-  return { passed: !r.failed, text, errored: !r.ok };
+  const sides = (r as { diff?: unknown }).diff;
+  const side = (v: unknown): string => (typeof v === "string" ? v : Array.isArray(v) ? v.join("") : String(v));
+  const diff = Array.isArray(sides) && sides.length === 2 ? { expected: side(sides[0]), actual: side(sides[1]) } : undefined;
+  return { passed: !r.failed, text, errored: !r.ok, ...(diff !== undefined ? { diff } : {}) };
 }
 
 /// What a failed test's message says.
@@ -115,8 +132,69 @@ export function failureText(result: TestResult, mode: TestMode): string {
   if (result.errored) {
     return `'${result.text}`;
   }
+  if (mode === "match") {
+    return "the two sides of ~ differ";
+  }
   return mode === "true" ? `expected 1b, got ${result.text}` : `returned ${result.text}`;
 }
+
+/// A k4unit `true` row's `a~b` as the two sides, when `a` is one term - a
+/// name, literal, string, symbol, or bracketed group, with any indexes
+/// after it - so that q reads the row as `a ~ b`; undefined otherwise.
+/// Sent as `(a;b)`, which q evaluates in the same order: `b` first.
+export function splitMatch(code: string): { left: string; right: string } | undefined {
+  const text = code.trim();
+  if (text.includes("\n") || text.startsWith("k)")) {
+    return undefined;
+  }
+  let depth = 0;
+  let at = -1;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '"') {
+      // A string, with its escapes.
+      for (i++; i < text.length && text[i] !== '"'; i++) {
+        if (text[i] === "\\") {
+          i++;
+        }
+      }
+      continue;
+    }
+    if (c === "/" && (i === 0 || /\s/.test(text[i - 1]))) {
+      return undefined;
+    }
+    if ("([{".includes(c)) {
+      depth++;
+    } else if (")]}".includes(c)) {
+      depth--;
+    } else if (depth === 0 && c === "~" && at < 0) {
+      at = i;
+    } else if (depth === 0 && c === ";") {
+      return undefined;
+    }
+  }
+  if (at <= 0 || depth !== 0) {
+    return undefined;
+  }
+  const left = text.slice(0, at).trim();
+  const right = text.slice(at + 1).trim();
+  return right !== "" && TERM.test(left) ? { left, right } : undefined;
+}
+
+/// One term of q, with any indexes: `f[1;2]`, `t\`a`, `(1+2)`, `1 2 3`,
+/// `"ab"`, `` `a`b ``. A space or an operator outside brackets makes it more
+/// than one, as q would read it.
+const TERM = new RegExp(
+  "^(?:" +
+    [
+      "-?[0-9][0-9a-zA-Z.:]*(?: -?[0-9][0-9a-zA-Z.:]*)*", // a number, or a vector of them
+      '"(?:[^"\\\\]|\\\\.)*"', // a string
+      "(?:`[A-Za-z0-9_.:/]*)+", // symbols
+      "\\.?[A-Za-z][A-Za-z0-9_.]*", // a name
+      "\\((?:[^()]|\\([^()]*\\))*\\)", // a group, nested once
+    ].join("|") +
+    ")(?:\\[[^\\]]*\\])*$",
+);
 
 // --- k4unit
 

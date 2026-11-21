@@ -1,0 +1,98 @@
+// Instrumenting a process's functions against a real q (#979, #985): the
+// coverage probes count, the locals are kept, and every definition is put
+// back as it was, in its own context, with `.qlint` gone. Needs QLINT_TEST_Q.
+const test = require("node:test");
+const assert = require("node:assert");
+const fs = require("node:fs");
+const path = require("node:path");
+const { connect, skip } = require("./qserver.js");
+const { definitions, DRIFT, readDrift } = require("../out/definitions.js");
+const { coverageText, localsText, installLambda, restoreExpression, readInstalled, readRestored } = require("../out/instrument.js");
+const { RUN, readAnswer } = require("../out/query.js");
+
+const LIB = [
+  "/ a library",
+  "f:{[a;b]",
+  "  c:a+b;",
+  "  $[c>10;big c;small c]}",
+  "big:{x*2}",
+  "small:{[x] y:x+1;",
+  "  y}",
+  "\\d .ns",
+  "h:{[p] k p}",
+  "k:{p:x; p+1}",
+  "\\d .",
+  "",
+].join("\n");
+
+const value = async (c, text) => (await c.evaluate(text)).value;
+
+test("coverage counts each statement, and the functions are put back as they were", { skip }, async (t) => {
+  const { connection: c, dir } = await connect(t, "\\l lib.q\n.qlint.cache.p1:42\n", { "lib.q": LIB });
+  const defs = definitions(fs.readFileSync(path.join(dir, "lib.q"), "utf8"));
+  assert.deepStrictEqual(defs.map((d) => d.name), ["f", "big", "small", ".ns.h", ".ns.k"]);
+  const before = await value(c, "{.Q.s1 (value each x),'(get each x)~'get each x}`f`big`small`.ns.h`.ns.k");
+  const states = readDrift(await c.call(DRIFT, defs.map((d) => d.name).join(" ")));
+  let next = 0;
+  const covered = defs.map((d) => {
+    const cov = coverageText(d.text, next);
+    next += cov.statements.length;
+    return cov;
+  });
+  const statuses = readInstalled(
+    await c.call(installLambda("cov"), defs.map((d) => d.name), defs.map((d) => states.get(d.name).text), covered.map((x) => x.text), next),
+    defs.length,
+  );
+  assert.deepStrictEqual(statuses, ["ok", "ok", "ok", "ok", "ok"]);
+  // The functions run as before, in their own context.
+  assert.strictEqual(Number(await value(c, "f[1;2]")), 4);
+  assert.strictEqual(Number(await value(c, ".ns.h 5")), 6);
+  // Redefined meanwhile: left as it is, and named.
+  await value(c, "big:{x*3}");
+  const restored = readRestored(await c.call(restoreExpression("cov")));
+  assert.deepStrictEqual(restored.kept, ["big"]);
+  // f: 2 statements once, big never, small 2 once, .ns.h once, .ns.k 2 once.
+  assert.deepStrictEqual(restored.d.map(Number), [1, 1, 0, 1, 1, 1, 1, 1]);
+  await value(c, "big:{x*2}");
+  const after = await value(c, "{.Q.s1 (value each x),'(get each x)~'get each x}`f`big`small`.ns.h`.ns.k");
+  assert.strictEqual(after, before);
+  assert.strictEqual(await value(c, "(`cov in key`.qlint;.qlint.cache.p1)~(0b;42)"), true);
+  // With nothing else of q-lint's there, .qlint goes too.
+  await value(c, "delete qlint from `.");
+  readInstalled(await c.call(installLambda("cov"), ["f"], [states.get("f").text], [covered[0].text], 2), 1);
+  readRestored(await c.call(restoreExpression("cov")));
+  assert.strictEqual(await value(c, "`qlint in key`."), false);
+  // Nothing to restore is not an error.
+  assert.deepStrictEqual(readRestored(await c.call(restoreExpression("cov"))).kept, []);
+});
+
+test("a function that changed on the process, or is not there, is not replaced", { skip }, async (t) => {
+  const { connection: c } = await connect(t, "f:{x+1}\n");
+  const statuses = readInstalled(
+    await c.call(installLambda("cov"), ["f", "g", "f"], ["{x+2}", "{x}", "{x+1}"], ["{x+3}", "{x}", "{x+"], 0),
+    3,
+  );
+  assert.deepStrictEqual(statuses.slice(0, 2), ["changed", "missing"]);
+  assert.notStrictEqual(statuses[2], "ok", "text that does not parse is reported, not defined");
+  readRestored(await c.call(restoreExpression("cov")));
+  assert.strictEqual(await value(c, "last value f"), "{x+1}");
+});
+
+test("the locals capture keeps the arguments and locals up to the error", { skip }, async (t) => {
+  const { connection: c, dir } = await connect(t, "\\l lib.q\n", { "lib.q": "\\d .ns\nm:{[a;b]\n  c:a+b;\n  d:c*2;\n  d+`x}\n\\d .\n" });
+  const [def] = definitions(fs.readFileSync(path.join(dir, "lib.q"), "utf8"));
+  const captured = localsText(def.text);
+  const was = await value(c, "last value .ns.m");
+  assert.deepStrictEqual(readInstalled(await c.call(installLambda("err"), [def.name], [was], [captured.text], 0), 1), ["ok"]);
+  const answer = readAnswer(await c.call(RUN, [".ns.m[1;2]"], [25, 80]));
+  assert.strictEqual(answer.ok, false);
+  assert.strictEqual(answer.error, "type");
+  const { d, kept } = readRestored(await c.call(restoreExpression("err")));
+  assert.deepStrictEqual(kept, []);
+  assert.strictEqual(Number(d.at), 2);
+  assert.deepStrictEqual(d.args, { a: "1", b: "2" });
+  assert.deepStrictEqual(d.locals, { c: "3", d: "6" });
+  assert.strictEqual(await value(c, "last value .ns.m"), was);
+  // Back in its own context, and nothing of q-lint's left.
+  assert.deepStrictEqual(await value(c, "(`ns~first(value .ns.m)3;`qlint in key`.)"), [true, false]);
+});

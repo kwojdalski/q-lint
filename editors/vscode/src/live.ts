@@ -487,6 +487,10 @@ export class Live {
   /// for started, so its entry says so: a connection the process closed is
   /// a failure, not an abort.
   private aborted: number | undefined;
+  /// The last query from the editor that failed, with q's backtrace: what
+  /// Capture Locals at Last Error (#985) runs again. Not one sent through a
+  /// gateway, nor in unwrapped mode, which has no backtrace.
+  lastFailure: { process: string; code: string; error: string; trace: string } | undefined;
   private readonly controls: QueryControls;
   private readonly parameterCache: ParameterCache;
   /// The process explorer's call on the connection, if one is out: a query
@@ -2368,6 +2372,9 @@ export class Live {
             ? readUnlimited(await connection.call(UNLIMITED, cut, consoleSize))
             : await connection.query(cut, consoleSize);
       const millis = Date.now() - started;
+      if (!answer.ok && code === written && !controls.unwrapped) {
+        this.lastFailure = { process: process.label, code, error: answer.error, trace: answer.trace };
+      }
       entry = {
         process: process.label,
         code,

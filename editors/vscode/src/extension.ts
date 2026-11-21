@@ -55,6 +55,11 @@ import { registerHelp } from "./helpview";
 import { registerCheatSheet } from "./cheatsheetview";
 import { PlotsView } from "./plotsview";
 import { PLOTS } from "./plots";
+import { registerSnapshots } from "./snapshotview";
+import { registerTestStubs } from "./teststubview";
+import { registerBacktraceLinks } from "./backtraceview";
+import { registerLogpoints } from "./logpointview";
+import { registerLocalsAtError } from "./localsview";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -156,6 +161,10 @@ export async function activate(
     help: ReturnType<typeof registerHelp>;
     cheatSheet: ReturnType<typeof registerCheatSheet>;
     plots: { registered: () => boolean; list: () => readonly { kind: string; process: string; code: string; svg: string }[]; current: () => number };
+    testStubs: ReturnType<typeof registerTestStubs>;
+    backtraceLinks: ReturnType<typeof registerBacktraceLinks>;
+    logpoints: ReturnType<typeof registerLogpoints>;
+    localsAtError: ReturnType<typeof registerLocalsAtError>;
   }
 > {
   // Replacing the binary does not restart the server, and a window reload is
@@ -230,6 +239,11 @@ export async function activate(
   const help = registerHelp(context, live);
   const cheatSheet = registerCheatSheet(context);
   const plots = new PlotsView(context);
+  registerSnapshots(context, live, () => void testExplorer?.discover());
+  const testStubs = registerTestStubs(context);
+  const backtraceLinks = registerBacktraceLinks(context);
+  const logpoints = registerLogpoints(context, live);
+  const localsAtError = registerLocalsAtError(context, live);
   // Not awaited: nothing above needs the server, and a slow or hung one
   // would hold up every command of the extension until it answered.
   void serial.run(() => start(context)).then(() => serverChanged());
@@ -247,7 +261,14 @@ export async function activate(
     savedQueries: () => saved.queries(),
     tableStreams: () => streams.state(),
     launchedProcesses: () => launcher.running(),
-    testExplorer: { discover: testExplorer.discover, items: testExplorer.items, results: testExplorer.results, run: testExplorer.run },
+    testExplorer: {
+      discover: testExplorer.discover,
+      items: testExplorer.items,
+      results: testExplorer.results,
+      run: testExplorer.run,
+      coverage: testExplorer.coverage,
+      profiles: testExplorer.profiles,
+    },
     valueHover,
     undefinedNames,
     idioms,
@@ -264,6 +285,10 @@ export async function activate(
     help,
     cheatSheet,
     plots: { registered: () => plots.registered(), list: () => PLOTS.list(), current: () => PLOTS.current },
+    testStubs,
+    backtraceLinks,
+    logpoints,
+    localsAtError,
   };
 }
 

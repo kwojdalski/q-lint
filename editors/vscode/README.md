@@ -412,6 +412,60 @@ The process's `\d` is put back after each test. A failure shows q's error
 or the value at the test. `q-lint.testExplorer.enable` turns the
 integration off: the tests leave the view and nothing is read or sent.
 
+**Coverage.** The Testing view's **Coverage** profile (the run button's
+menu, or **Run Tests with Coverage**) runs the tests with line coverage.
+Before the first test, each function a workspace q file defines that the
+process holds with the same text (trailing blanks aside) is replaced there
+by a copy that counts each statement of its body, defined in its own
+namespace as Redefine defines it; after the last test, every one is put
+back and the counts show in the editor's gutter and the Test Coverage view.
+A function changed on the process since it was loaded, or not loaded, is
+left alone, and the run's output names those; one redefined while the tests
+ran is left as it is then. `.qlint.cov` holds the counts and the originals
+meanwhile, and is deleted after, with `.qlint` when nothing else of
+q-lint's is in it. A run interrupted before the functions were put back
+(the connection lost, say) is put right first thing in the next coverage
+run. The replacing goes through the read-only guard. A statement is
+counted, not each line inside it: an `if[...]` or a nested lambda counts
+as part of the statement it is in. `q-lint.testExplorer.coverage.enable`
+removes the profile.
+
+**Failed tests.** A failed assertion with two sides shows them as an
+expected-against-actual diff in the Testing view: a k4unit `true` row
+`a~b`, whose left side is one term (a name, literal, string, symbols or
+a bracketed group, with any indexes), is sent as `(a;b)` - evaluated in the
+same order, right first - and judged by `~`; a qUnit `assertEquals` or
+`assertThat` that signals `assertThatFAIL` is read from `.qunit.ar`. The
+right side is the expected value. **Re-run Failed q Tests** runs again
+those the last run failed or could not run. `q-lint.testExplorer.failedTests.enable`
+turns both off: a `true` row is sent as written.
+
+**Snapshot tests.** **Record Query Snapshot** (a q editor's context menu)
+runs the query at the cursor and writes its result, as the process prints
+it, to `__snapshots__/<name>.qsnap` beside the file - after showing what
+it will write and asking, a replacement included. The result is printed at
+a 2000 by 2000 console (`\c` is set for the query and put back), so `\P`
+still matters. Each `.qsnap` file is a test in the Testing view: its query
+runs again and passes when the result is the same line for line, trailing
+blanks aside, and a failure is shown as a diff. **Update Snapshot**, on a
+snapshot in the Testing view or an open `.qsnap` file, records the new
+result after asking. The file is plain text: `// q-lint snapshot`, `//
+query`, the query, `// result`, the result. `q-lint.snapshotTests.enable`
+turns them off: the files leave the view and the commands are hidden.
+
+**Generate Test Stub.** On a function's definition, the light bulb (and
+**Generate Test Stub**, in the context menu) writes a test for it in its
+test file's style: `test_<name>.q` or `<name>_test.q` in the workspace, or
+else a new `tests/test_<name>.q` (beside the file when there is no `tests`
+folder). In a file of `.qt` suites the test joins the first suite
+(`.qt.<suite>.test_<name>`); in a qUnit file it is `test<Name>`; otherwise
+`test_<name>`. It asserts with `.qunit.assertEquals` where the file does,
+and otherwise answers `actual~expected`. The arguments and the expected
+value are `(::)` with a TODO, so the test fails until they are filled in.
+It shows the stub and the file and asks first, adds to an existing file's
+end as an edit that can be undone, and never writes over a file.
+`q-lint.testStub.enable` removes the action and the command.
+
 The code is cut into statements by q's own script rules: a line starting
 with a space or tab continues the one above, `/` lines and block comments
 are skipped, as is a first line starting `#!`, and a `\` line is a system
@@ -427,6 +481,18 @@ connect to first. The output is coloured from the editor's theme: each
 answer's `# process (n ms)` header, the error and its backtrace (each frame,
 where it is and the caret under it), a table's rule and a keyed table's `|`,
 numbers, symbols, temporal literals and strings, and an included query as q.
+
+**Backtrace links.** Each frame of a backtrace (`[n]  file:line: code`) is
+a link to the line that failed: in the **q-lint: query** output, in other
+output channels such as a launched process's, and in a terminal running q
+under `\e 1`. KDB-X prints the line that failed and PeachQ the line the
+function starts on, followed by its whole text; the link reads the file and
+opens whichever line holds the code above the `^`, at its column. A path
+the process printed that is not on this machine opens the workspace file
+sharing the most trailing folders with it. A frame with no file - a
+function defined over IPC - links to where the workspace defines its name.
+In a terminal, only the frame's header line is seen, so the link opens the
+line the header names. `q-lint.backtraceLinks.enable` turns the links off.
 
 **TorQ gateways.** A query from the editor to a process marked as a TorQ
 gateway goes as `.gw.syncexec[query;servertypes]`, so the gateway runs it on
@@ -785,6 +851,34 @@ and `.qlint.cache.<id>`, holding the call's arguments, in the `.qlint.cache`
 namespace. Toggling the statement off and loading the definition again stops
 that, but does not delete the globals already defined. Do not leave it in
 code that runs anywhere it matters.
+
+**Logpoints.** **Add Logpoint** (a q editor's context menu) logs the calls
+of the function under the cursor - or one named - on the active process
+without editing its file: the function is replaced there by a wrapper of
+the same parameters that prints `(name; arguments)` with `0N!`, to the
+process's console or log (a launched process's output channel), keeps the
+last 1000 calls as text in `.qlint.log.hits`, and calls the original, kept
+in `.qlint.log.orig`. The editor marks the definition `logpoint on
+<process>`. **Show Logpoint Hits** reads the calls kept, **Remove
+Logpoint** puts one function back, and **Remove All Logpoints** all of
+them; a function redefined while it had a logpoint is left as it is. With
+the last one removed, `.qlint.log` is deleted. Only a lambda takes one, and
+a projection or alias made of the function before keeps calling the
+original. Adding and removing go through the read-only guard; reading the
+hits changes nothing. `q-lint.logpoints.enable` hides the commands.
+
+**Locals at the error.** **Capture Locals at Last Error** looks into the
+last query from the editor that failed. Pick a function its backtrace names
+(the innermost first), confirm, and the query runs again with that
+function replaced by a copy that keeps, as the parameter cache does, each
+call's arguments, the statement it is on, and each local a statement at the
+top of its body assigns (`a:`, `a+:`, `a[i]:`), once that statement has
+run. The function is put back in the same call, error or not, and what was
+kept opens as a document: the arguments, the statement that failed, and the
+locals. It runs the query again as written, so it can change data again;
+the replacing goes through the read-only guard. A local assigned inside an
+`if[...]` or a nested lambda is not seen. `q-lint.localsAtError.enable`
+hides the command.
 
 **Query modes.** **Switch Query Mode** (or the mode in the status bar) picks
 where a result goes; it sets `q-lint.query.mode`, and takes `console`,
@@ -1703,6 +1797,13 @@ nothing.
 | `q-lint.helpPages.enable` | `true` | **Show Help for q Builtin**: a page with a builtin's syntax, examples and related builtins. | - |
 | `q-lint.tryExamples.enable` | `true` | A builtin's examples in its hover, each with **Try it** to run it on the connected process; sent only when clicked. Off, no hover is registered and nothing is sent. | - |
 | `q-lint.cheatSheet.enable` | `true` | The **q Cheat Sheet** view: iterators, joins, temporal casts and attributes, each inserted in one click. | - |
+| `q-lint.testExplorer.coverage.enable` | `true` | Offer the Testing view's **Coverage** profile: the workspace's functions replaced on the process by counting copies while the tests run, and put back. Off, the profile is not offered. | - |
+| `q-lint.testExplorer.failedTests.enable` | `true` | Show a failed `a~b` row's or qUnit assertion's two sides as a diff, and offer **Re-run Failed q Tests**. | - |
+| `q-lint.snapshotTests.enable` | `true` | **Record Query Snapshot** and **Update Snapshot**, and `.qsnap` files as tests in the Testing view. Off, none is listed and the commands are hidden. | - |
+| `q-lint.testStub.enable` | `true` | Offer **Generate Test Stub** on a function's definition. | - |
+| `q-lint.backtraceLinks.enable` | `true` | Link each backtrace frame in the output and terminals to the line that failed. | - |
+| `q-lint.logpoints.enable` | `true` | **Add Logpoint**, **Remove Logpoint**, **Remove All Logpoints** and **Show Logpoint Hits**. Off, the commands are hidden and nothing is sent. | - |
+| `q-lint.localsAtError.enable` | `true` | **Capture Locals at Last Error**. Off, the command is hidden and nothing is sent. | - |
 
 ### Interactive settings
 
