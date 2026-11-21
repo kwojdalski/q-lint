@@ -424,12 +424,13 @@ defined on the process but what the query defines. The agent gets:
 - a table, keyed table, dictionary or list: `{columns, types, rowCount,
   data}`, `data` being the first 200 rows as arrays of values, with
   `truncated: true` when there were more and `keyColumns` for a keyed
-  table. Booleans and numbers are JSON values and nulls `null`; a
+  table; a table of more than 100 columns gives its first 100, with
+  `columnCount` and `truncated: true`. Booleans and numbers are JSON values and nulls `null`; a
   temporal, a symbol, a guid or a nested value is q's text, and so are a
   long above 2^53 and an infinity, so a timestamp keeps its nanoseconds;
 - any other value: `{output}`, the process's text of it at
   `q-lint.output.consoleSize`;
-- a failure: `{error, trace?}`.
+- a failure: `{error, trace?}`, the backtrace cut at 40 lines.
 
 A query running longer than `q-lint.agent.queryTimeout` seconds, or one the
 agent cancels, is aborted as **Abort Current Query** aborts one, and the
@@ -542,11 +543,11 @@ q-pro column names the setting of [q-pro](https://marketplace.visualstudio.com/i
 
 | setting | default | what it does | q-pro |
 |---|---|---|---|
-| `q-lint.enable` | `true` | Run the language server. Off: syntax colouring only. | - |
-| `q-lint.serverPath` | empty | Your own `qlinter` binary. Empty uses the bundled one, then `qlinter` on `PATH`; set, it always wins. | - (q-pro runs `qls` from `PATH`) |
+| `q-lint.enable` | `true` | Run the language server. Off: no diagnostics, Quick Fixes, formatting, navigation or semantic colouring; the grammar's colouring, processes, queries and notebooks stay. | - |
+| `q-lint.serverPath` | empty | Your own `qlinter` binary. Empty uses the bundled one, then `qlinter` on `PATH`; set, it always wins. A leading `~` is your home directory. | - (q-pro runs `qls` from `PATH`) |
 | `q-lint.serverArgs` | `[]` | Extra `qlinter --lsp` arguments, after the ones the settings produce. They keep their command-line meaning, so `--extend-select` here can widen the repository's selection. | - |
 | `q-lint.profile` | unset | `general`: only what q refuses. `style`: also likely mistakes. `styleq`: also published style guides. `uqf`: also one repository's conventions. Unset, a repository's `qlinter.toml` decides, and `style` applies without one. | - |
-| `q-lint.configFile` | empty | One configuration file for every document instead of the nearest `qlinter.toml` (`--config`); relative to the first workspace folder. | - |
+| `q-lint.configFile` | empty | One configuration file for every document instead of the nearest `qlinter.toml` (`--config`); relative to the first workspace folder, and a leading `~` is your home directory. | - |
 | `q-lint.lint.select` | `[]` | Show only these rule codes or prefixes, among those the configuration turns on. Narrows, never widens. | - |
 | `q-lint.lint.ignore` | `[]` | Hide these rule codes or prefixes. | - |
 | `q-lint.lint.run` | `onType` | `onType` lints every change; `onSave` lints on open and save. | - |
