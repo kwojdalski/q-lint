@@ -38,7 +38,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 /// response), nothing when it gives undefined, and closes the socket when
 /// it gives `CLOSE`.
 const CLOSE = Symbol("close");
-async function fakeQ(answer = () => null) {
+async function fakeQ(answer = () => null, delay = () => 0) {
   const sockets = new Set();
   const server = net.createServer((socket) => {
     sockets.add(socket);
@@ -49,7 +49,7 @@ async function fakeQ(answer = () => null) {
     socket.on("data", (chunk) => {
       if (!shook) {
         shook = true;
-        socket.write(Buffer.from([3]));
+        setTimeout(() => socket.writable && socket.write(Buffer.from([3])), delay());
         return;
       }
       buffer = Buffer.concat([buffer, chunk]);
@@ -70,6 +70,7 @@ async function fakeQ(answer = () => null) {
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   return {
     port: server.address().port,
+    connections: () => sockets.size,
     close: () => {
       for (const s of sockets) s.destroy();
       server.close();
@@ -296,4 +297,25 @@ test("a label holding $(...) is shown as written in the status bar and the pick"
   stub.picks.push(({ items }) => ((offered = items.map((i) => [i.label, i.description])), undefined));
   await stub.commands.get("q-lint.rerunQuery")();
   assert.deepStrictEqual(offered[0], ["`int\\$(x)", "p"]);
+});
+
+// Deactivating closed the connection there was, but not one still being
+// opened: the reconnect after an Abort, waiting for a busy process, opened
+// its connection after the extension was gone, and nothing closed it - a
+// login left on the process for as long as the extension host lived.
+test("a reconnect still under way when the extension is deactivated is closed", async (t) => {
+  let wait = 0;
+  const q = await fakeQ(() => undefined, () => wait);
+  t.after(() => q.close());
+  const { context, live } = await setUp(t, [proc("p", q.port)]);
+  assert.strictEqual(await live.connectTo("p"), true);
+  const running = live.run("slow 1");
+  await sleep(50);
+  wait = 300;
+  await live.abort();
+  await running;
+  for (const d of context.subscriptions) d.dispose?.();
+  await sleep(600);
+  assert.strictEqual(live.activeLabel(), undefined);
+  assert.strictEqual(q.connections(), 0);
 });

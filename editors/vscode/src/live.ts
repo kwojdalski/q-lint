@@ -386,6 +386,8 @@ export class Live {
   /// The process explorer's call on the connection, if one is out: a query
   /// waits for it (`borrow`).
   private borrowed: Promise<unknown> | undefined;
+  /// Set on deactivate: a connection opened after it is closed at once.
+  private disposed = false;
   private readonly changed = new EventEmitter<"connected" | "disconnected" | "queried">();
   /// Fired when a connection opens or closes, and when a query has finished:
   /// what the process explorer refreshes on.
@@ -452,7 +454,12 @@ export class Live {
           this.processesView.refresh();
         }
       }),
-      { dispose: () => void this.connection?.close() },
+      {
+        dispose: () => {
+          this.disposed = true;
+          void this.connection?.close();
+        },
+      },
     );
     this.showStatus();
     this.status.show();
@@ -892,6 +899,12 @@ export class Live {
               ...(process.tls ? { tls: true } : {}),
             }),
         );
+        if (this.disposed) {
+          // Opened after deactivate - a reconnect after an abort - and
+          // nothing would close it.
+          void connection.close();
+          return false;
+        }
         this.connection = connection;
         this.active = process;
         connection.whenClosed(() => {
