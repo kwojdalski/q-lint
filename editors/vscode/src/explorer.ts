@@ -7,7 +7,9 @@
 // and nothing is defined on the process. It walks the namespaces breadth
 // first from the root and `key \``, skipping the excluded ones and any
 // dotted root name that is not a dictionary of names (kdb+ lists `.cfg:42`
-// in `key \``), and answers
+// in `key \``); below the root, a namespace is a dictionary of names whose
+// first value is `::`, and one keyed by anything else (`1 2!(::;3)`) is a
+// variable. It answers
 //
 //   rows    one per name: ns, name, kind (table, function or variable), type,
 //           count, cols, keys, params, partitioned
@@ -44,7 +46,7 @@ export const GATHER = [
   "  ns:first todo;todo:1_todo;seen,:ns;",
   "  d:@[get;ns;{()!()}];",
   "  k:asc(key d)except`;",
-  "  kids:$[ns~`.;`$();k where{(99h=type x)&(::)~first x}each d k];",
+  "  kids:$[ns~`.;`$();k where{$[99h=type x;$[11h=type key x;(::)~first x;0b];0b]}each d k];",
   "  todo,:` sv'ns,'kids;",
   "  k:k except kids;",
   "  spaces,:enlist`ns`total!(ns;\"f\"$count k);",
