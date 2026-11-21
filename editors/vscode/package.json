@@ -398,6 +398,50 @@
             "default": false,
             "order": 122,
             "markdownDescription": "Read the active process again after each query, so the **Process Explorer** and live completion show what it defined. Off, they are read on connect and on **Refresh Process Explorer**."
+          },
+          "q-lint.processMonitor.refreshInterval": {
+            "type": "number",
+            "default": 0,
+            "minimum": 0,
+            "maximum": 3600,
+            "order": 123,
+            "markdownDescription": "Seconds between reads of the connected process while the **Process Monitor** is shown. `0`: read on connect and on **Refresh Process Monitor** only. A read never interrupts a query: it waits, or skips its turn."
+          },
+          "q-lint.processExplorer.functionSource.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 124,
+            "markdownDescription": "**Open Function Source**, **Edit and Redefine** and **Redefine on Process**. Off, their commands are hidden and send nothing."
+          },
+          "q-lint.processExplorer.findCallers.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 125,
+            "markdownDescription": "**Find Callers in Process**. Off, its command is hidden and sends nothing."
+          },
+          "q-lint.processExplorer.tableHover.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 126,
+            "markdownDescription": "A table row's tooltip in the **Process Explorer** asks the process for the table's `meta`, rows and memory when first shown. Off, it shows what the explorer already read."
+          },
+          "q-lint.processExplorer.editorTableHover.enable": {
+            "type": "boolean",
+            "default": false,
+            "order": 127,
+            "markdownDescription": "A hover on a table's name in a q editor asks the connected process for its `meta`, rows and memory. Off by default: it queries the process whenever the mouse rests on a table's name."
+          },
+          "q-lint.processMonitor.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 128,
+            "markdownDescription": "The **Process Monitor** view. Off, it is hidden and reads nothing."
+          },
+          "q-lint.hdbBrowser.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 129,
+            "markdownDescription": "The **HDB Browser** view. Off, it is hidden and reads nothing."
           }
         }
       },
@@ -807,6 +851,47 @@
         "command": "q-lint.newNotebook",
         "title": "New q Notebook",
         "category": "q-lint"
+      },
+      {
+        "command": "q-lint.openFunctionSource",
+        "title": "Open Function Source",
+        "category": "q-lint",
+        "icon": "$(go-to-file)",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.editFunctionSource",
+        "title": "Edit and Redefine",
+        "category": "q-lint",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "q-lint.redefineFunction",
+        "title": "Redefine on Process",
+        "category": "q-lint",
+        "icon": "$(cloud-upload)",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.findCallers",
+        "title": "Find Callers in Process",
+        "category": "q-lint",
+        "icon": "$(references)",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.refreshProcessMonitor",
+        "title": "Refresh Process Monitor",
+        "category": "q-lint",
+        "icon": "$(refresh)",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.refreshHdbBrowser",
+        "title": "Refresh HDB Browser",
+        "category": "q-lint",
+        "icon": "$(refresh)",
+        "enablement": "q-lint.connected"
       }
     ],
     "views": {
@@ -845,6 +930,22 @@
           "icon": "media/view-help.svg",
           "contextualTitle": "q-lint",
           "visibility": "collapsed"
+        },
+        {
+          "id": "q-lint.processMonitor",
+          "name": "Process Monitor",
+          "icon": "media/view-explorer.svg",
+          "contextualTitle": "q-lint",
+          "visibility": "collapsed",
+          "when": "config.q-lint.processMonitor.enable"
+        },
+        {
+          "id": "q-lint.hdbBrowser",
+          "name": "HDB Browser",
+          "icon": "media/view-explorer.svg",
+          "contextualTitle": "q-lint",
+          "visibility": "collapsed",
+          "when": "config.q-lint.hdbBrowser.enable"
         }
       ],
       "q-lint-results": [
@@ -928,6 +1029,16 @@
           "command": "q-lint.openSettings",
           "when": "view == q-lint.processes",
           "group": "3_settings@1"
+        },
+        {
+          "command": "q-lint.refreshProcessMonitor",
+          "when": "view == q-lint.processMonitor && config.q-lint.processMonitor.enable",
+          "group": "navigation@1"
+        },
+        {
+          "command": "q-lint.refreshHdbBrowser",
+          "when": "view == q-lint.hdbBrowser && config.q-lint.hdbBrowser.enable",
+          "group": "navigation@1"
         }
       ],
       "view/item/context": [
@@ -1065,6 +1176,21 @@
           "command": "q-lint.copyQuery",
           "when": "view == q-lint.queryHistory && viewItem == history",
           "group": "1_history@2"
+        },
+        {
+          "command": "q-lint.openFunctionSource",
+          "when": "view == q-lint.processExplorer && viewItem == explorer.function && config.q-lint.processExplorer.functionSource.enable",
+          "group": "inline"
+        },
+        {
+          "command": "q-lint.openFunctionSource",
+          "when": "view == q-lint.processExplorer && viewItem == explorer.function && config.q-lint.processExplorer.functionSource.enable",
+          "group": "1_source@1"
+        },
+        {
+          "command": "q-lint.findCallers",
+          "when": "view == q-lint.processExplorer && viewItem == explorer.function && config.q-lint.processExplorer.findCallers.enable",
+          "group": "1_source@2"
         }
       ],
       "editor/title/run": [
@@ -1138,6 +1264,16 @@
           "command": "q-lint.toggleParameterCache",
           "when": "editorLangId == q",
           "group": "q-lint@6"
+        },
+        {
+          "command": "q-lint.openFunctionSource",
+          "when": "editorLangId == q && q-lint.connected && config.q-lint.processExplorer.functionSource.enable",
+          "group": "q-lint@7"
+        },
+        {
+          "command": "q-lint.findCallers",
+          "when": "editorLangId == q && q-lint.connected && config.q-lint.processExplorer.findCallers.enable",
+          "group": "q-lint@8"
         }
       ],
       "commandPalette": [
@@ -1148,6 +1284,42 @@
         {
           "command": "q-lint.exportResultsView",
           "when": "false"
+        },
+        {
+          "command": "q-lint.editFunctionSource",
+          "when": "resourceScheme == q-lint-source && config.q-lint.processExplorer.functionSource.enable"
+        },
+        {
+          "command": "q-lint.redefineFunction",
+          "when": "q-lint.redefinable && config.q-lint.processExplorer.functionSource.enable"
+        },
+        {
+          "command": "q-lint.openFunctionSource",
+          "when": "config.q-lint.processExplorer.functionSource.enable"
+        },
+        {
+          "command": "q-lint.findCallers",
+          "when": "config.q-lint.processExplorer.findCallers.enable"
+        },
+        {
+          "command": "q-lint.refreshProcessMonitor",
+          "when": "config.q-lint.processMonitor.enable"
+        },
+        {
+          "command": "q-lint.refreshHdbBrowser",
+          "when": "config.q-lint.hdbBrowser.enable"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "q-lint.editFunctionSource",
+          "when": "resourceScheme == q-lint-source && config.q-lint.processExplorer.functionSource.enable",
+          "group": "navigation"
+        },
+        {
+          "command": "q-lint.redefineFunction",
+          "when": "q-lint.redefinable && config.q-lint.processExplorer.functionSource.enable",
+          "group": "navigation"
         }
       ]
     },
@@ -1184,6 +1356,16 @@
       {
         "view": "q-lint.help",
         "contents": "[Get Started](command:q-lint.getStarted) with q-lint, or read the [documentation](https://github.com/kwojdalski/q-lint/blob/master/editors/vscode/README.md) and the [rule reference](https://github.com/kwojdalski/q-lint/blob/master/docs/rules.md).\nFound a problem? [Report a bug](https://github.com/kwojdalski/q-lint/issues/new?labels=bug) or [suggest a feature](https://github.com/kwojdalski/q-lint/issues/new?labels=enhancement)."
+      },
+      {
+        "view": "q-lint.processMonitor",
+        "when": "!q-lint.connected",
+        "contents": "Not connected to a q process. Connect to one to see its memory, open handles, timers and settings.\n[Connect to Process](command:q-lint.connectProcess)"
+      },
+      {
+        "view": "q-lint.hdbBrowser",
+        "when": "!q-lint.connected",
+        "contents": "Not connected to a q process. Connect to an HDB to browse its partitions, the rows of each table in them, and its sym file.\n[Connect to Process](command:q-lint.connectProcess)"
       }
     ],
     "keybindings": [

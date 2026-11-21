@@ -22,6 +22,9 @@ import { registerNotebooks, type RenderedChart } from "./notebook";
 import { ProcessExplorer } from "./explorerview";
 import { Relations } from "./relate";
 import { Serial } from "./serial";
+import { FunctionSources } from "./funcsourceview";
+import { registerInfoViews } from "./infoview";
+import type { InfoNode } from "./monitor";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -78,7 +81,13 @@ function bundledServer(context: ExtensionContext): string | undefined {
 
 export async function activate(
   context: ExtensionContext,
-): Promise<ReturnType<Live["api"]> & { explorer: ProcessExplorer["rows"]; notebookCharts: () => RenderedChart[]; agentConfirmation: ReturnType<typeof registerAgentTool> }> {
+): Promise<
+  ReturnType<Live["api"]> & { explorer: ProcessExplorer["rows"]; notebookCharts: () => RenderedChart[]; agentConfirmation: ReturnType<typeof registerAgentTool> } & {
+    processMonitor: () => InfoNode[];
+    hdbBrowser: () => InfoNode[];
+    functionSources: FunctionSources["state"];
+  }
+> {
   // Replacing the binary does not restart the server, and a window reload is
   // a blunt way to pick up a new one. This is the small way.
   context.subscriptions.push(commands.registerCommand("q-lint.restartServer", () => restart(context, true)));
@@ -98,12 +107,22 @@ export async function activate(
   const agentConfirmation = registerAgentTool(context, live);
   const notebook = registerNotebooks(context, live);
   const explorer = new ProcessExplorer(context, live);
+  const sources = new FunctionSources(context, live);
+  const infoViews = registerInfoViews(context, live);
   registerOnboarding(context, () => live.processes());
   relations = new Relations(context, () => client);
   // Not awaited: nothing above needs the server, and a slow or hung one
   // would hold up every command of the extension until it answered.
   void serial.run(() => start(context)).then(() => relations?.serverChanged());
-  return { ...live.api(), explorer: () => explorer.rows(), notebookCharts: () => notebook.charts(), agentConfirmation };
+  return {
+    ...live.api(),
+    explorer: () => explorer.rows(),
+    notebookCharts: () => notebook.charts(),
+    agentConfirmation,
+    processMonitor: infoViews.monitor,
+    hdbBrowser: infoViews.hdb,
+    functionSources: () => sources.state(),
+  };
 }
 
 /// Stop the server and start it again. `asked`: by Restart Server, which

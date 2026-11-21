@@ -210,7 +210,8 @@ export function typeName(t: number): string {
 const plural = (n: number, one: string, many = `${one}s`): string => `${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;
 
 /// A row of the explorer. `name` is the q expression naming a table or a
-/// variable, what Preview shows.
+/// variable, what Preview shows, or a function, what Open Function Source
+/// and Find Callers read.
 export interface Node {
   kind: "namespace" | "group" | "table" | "column" | "function" | "variable" | "note";
   label: string;
@@ -251,6 +252,7 @@ function functionNode(e: Entry): Node {
     label: e.name,
     description: e.type === 100 ? `[${e.params.join(";")}]` : typeName(e.type),
     tooltip: `${fullName(e)}${e.type === 100 ? `[${e.params.join(";")}]` : `: ${typeName(e.type)}`}`,
+    name: fullName(e),
   };
 }
 
@@ -437,4 +439,10 @@ export function liveCompletions(g: Gathered, process: string, table?: string): C
             : `${typeName(e.type)} (${process})`,
     })),
   ];
+}
+
+/// The table `word` names among what was gathered, for a hover: as q code
+/// names it, `t` in the root or `.ns.t`.
+export function tableNamed(g: Gathered, word: string): Entry | undefined {
+  return g.entries.find((e) => e.kind === "table" && fullName(e) === word);
 }

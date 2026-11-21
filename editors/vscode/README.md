@@ -405,6 +405,63 @@ rows, or the variable, as a query. The explorer shares the query connection:
 while a query runs it waits and refreshes after, and a query sent while it
 reads waits for it.
 
+**Table details.** Hovering a table in the Process Explorer shows its
+columns with their types, attributes (`s`orted, `u`nique, `p`arted,
+`g`rouped) and foreign keys, from `meta`, its rows, and for a table in
+memory the bytes it takes (`-22!`). A partitioned table is counted by
+`.Q.cn` and its `meta` read from the last partition; neither it nor a
+splayed table is loaded or measured, and the hover says so. With
+`q-lint.processExplorer.editorTableHover.enable` on (it is off by default,
+since it asks the process whenever the mouse rests on a name), hovering a
+table's name in a q editor shows the same, shorter, beside the language
+server's hover. Details are read once per refresh of the explorer.
+
+**Function source.** **Open Function Source**, on a function in the Process
+Explorer or the name under the cursor in a q editor, shows the function as
+the process has it (`last value f`) in a read-only editor, headed by the
+namespace it was defined in; a projection or composition is shown as q
+prints it. **Edit and Redefine**, in that editor's title bar, copies a
+lambda into a new q editor, and **Redefine on Process** in its title bar
+sends the edit back. It asks first, in a modal that warns when the process
+is tagged `prod`, `prd` or `production`; it goes only to the process the
+function came from, and is refused if the function there has changed since
+it was opened. The new text is parsed in the namespace the function was
+defined in, so its globals mean what they meant, and the process's own
+`\d` is left as it was. Nothing is written to a file: a restart of the
+process brings back the old definition.
+
+**Find Callers in Process**, on a function in the explorer or the name
+under the cursor, lists the loaded functions that call it, read from what q
+parsed rather than from text: each lambda's globals, resolved in its
+namespace (a lambda defined in `.ns` that calls `f` calls `.ns.f`), and
+those of the lambdas nested in it. A local, a parameter, a string or a
+comment that spells the name is not a call. A lambda whose text holds the
+name as a symbol (`` value(`f;x) ``) is listed as naming it. Picking one
+opens its source at the call. Namespaces in
+`q-lint.processExplorer.excludedNamespaces` are not read.
+
+**Process Monitor** shows the connected process's memory (`.Q.w[]`), its
+open handles (`.z.W`) with the bytes queued on each and which is this
+connection, its timer (`\t`, `.z.ts`, and TorQ's `.timer.timer` when there
+is one), its `\` settings and its version, pid and host. It reads them in
+one call when shown, on connect and on **Refresh Process Monitor**, and
+every `q-lint.processMonitor.refreshInterval` seconds while shown, if set.
+It never reads the command line (`.z.x`), which can hold a password.
+
+**HDB Browser**, for a process that has loaded a partitioned database,
+shows its partition field, root, segments (`par.txt`) and sym file size;
+its partitions, newest first, with the rows of each table in each; and its
+tables with their rows in all, splayed ones too. No data is read: the
+partitions are `.Q.pv`, the rows `.Q.cn`, which reads each partition's count
+from a column file and caches it in `.Q.pn` as the explorer does, and the
+sym file's size `hcount`. The newest 1000 partitions are listed.
+
+The Monitor, the HDB Browser, Open Function Source and Find Callers share
+the query connection as the explorer does: they never interrupt a query,
+and wait a moment for one to finish. Each of these features has its own
+`enable` setting (below); turned off, its commands are hidden and refuse,
+its view or hover is gone, and it sends nothing.
+
 **Help and Feedback** links to this README, the
 [rule reference](https://github.com/kwojdalski/q-lint/blob/master/docs/rules.md),
 **Report a Bug** and **Suggest a Feature** (a new GitHub issue, labelled
@@ -624,6 +681,13 @@ nothing.
 | `q-lint.processExplorer.excludedNamespaces` | `["q","Q","h","j","o","s"]` | Namespaces the Process Explorer and live completion leave out (`q`, or a nested one as `ns.sub`), with those nested in them. | - |
 | `q-lint.processExplorer.previewLimit` | `5` | Rows of a table Preview shows. | - |
 | `q-lint.processExplorer.autoRefresh` | `false` | Read the process again after each query. | - |
+| `q-lint.processExplorer.functionSource.enable` | `true` | Open Function Source, Edit and Redefine, Redefine on Process. | - |
+| `q-lint.processExplorer.findCallers.enable` | `true` | Find Callers in Process. | - |
+| `q-lint.processExplorer.tableHover.enable` | `true` | A table's details in its Process Explorer tooltip. | - |
+| `q-lint.processExplorer.editorTableHover.enable` | `false` | A table's details on hovering its name in a q editor; asks the process. | - |
+| `q-lint.processMonitor.enable` | `true` | The Process Monitor view. | - |
+| `q-lint.processMonitor.refreshInterval` | `0` | Seconds between the Monitor's reads while it is shown; `0` none. | - |
+| `q-lint.hdbBrowser.enable` | `true` | The HDB Browser view. | - |
 
 ### Terminal settings
 

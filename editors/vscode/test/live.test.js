@@ -38,6 +38,9 @@ const relations = require("../out/relations.js");
 const { NOTEBOOK } = require("../out/qnb.js");
 const { needsRestart } = require("../out/settings.js");
 const { AGENT } = require("../out/agent.js");
+const { SOURCE_COMMANDS } = require("../out/funcsource.js");
+const { INFO, readMonitorInterval } = require("../out/monitor.js");
+const { readInsight } = require("../out/insightconfig.js");
 const { CONTROL_COMMANDS, readControls } = require("../out/querycontrols.js");
 const { ONBOARDING } = require("../out/onboarding.js");
 const { PARAM_CACHE } = require("../out/paramcache.js");
@@ -270,6 +273,9 @@ test("package.json declares exactly the commands the extension registers", () =>
     AGENT.copyLabel,
     ...[ONBOARDING.getStarted, ONBOARDING.openHelpLink, ONBOARDING.editTagColor, ONBOARDING.newNotebook],
     "q-lint.restartServer",
+    ...Object.values(SOURCE_COMMANDS),
+    INFO.refreshMonitor,
+    INFO.refreshHdb,
   ].sort();
   assert.deepStrictEqual(declared, registered);
 });
@@ -279,7 +285,7 @@ test("the views live in their own container, and every menu names a declared com
   assert.strictEqual(container.id, VIEWS.container);
   assert.deepStrictEqual(
     pkg.contributes.views[VIEWS.container].map((v) => v.id),
-    [VIEWS.processes, EXPLORER.view, VIEWS.history, ONBOARDING.helpView],
+    [VIEWS.processes, EXPLORER.view, VIEWS.history, ONBOARDING.helpView, INFO.monitor, INFO.hdb],
   );
   const declared = new Set(pkg.contributes.commands.map((c) => c.command));
   for (const [where, items] of Object.entries(pkg.contributes.menus)) {
@@ -357,6 +363,8 @@ test("every query setting is read, with the default package.json declares, and n
   const live = readLive(get);
   const explorer = readExplorer(get);
   const controls = readControls(get);
+  readMonitorInterval(get);
+  readInsight(get);
   for (const [key, spec] of Object.entries(declared)) {
     const short = key.replace(/^q-lint\./, "");
     assert.ok(read.has(short), `${key} is declared but never read`);
