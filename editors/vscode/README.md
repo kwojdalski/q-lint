@@ -324,7 +324,7 @@ where a result goes; it sets `q-lint.query.mode`, and takes `console`,
   above.
 - **Grid**: a table, a keyed table (unkeyed, its key columns shaded), a
   dictionary (as `key` and `value` columns; one keyed by a table as its
-  key columns and a `value` column) or a list (as one `value` column) opens in the **q-lint: result** panel. Click a header to sort,
+  key columns and a `value` column) or a list (as one `value` column) opens in the **q-lint: result** panel. Click a header (or Tab to it and press Enter) to sort,
   type under it to filter (by the text shown, ignoring case). **Copy as
   CSV** copies the rows shown, in the order shown, and **Export to CSV**
   saves them to a file you pick; the command **Export Results to CSV** does

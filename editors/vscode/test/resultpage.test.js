@@ -30,6 +30,12 @@ class Element {
     this.children = [];
     this.append(...nodes);
   }
+  setAttribute(name, value) {
+    (this.attributes ??= {})[name] = String(value);
+  }
+  focus() {
+    Element.focused = this;
+  }
   addEventListener(type, f) {
     (this.listeners[type] ??= []).push(f);
   }
@@ -143,4 +149,25 @@ test("a page hidden and shown again, which reloads it, is back where its grid wa
   const next = loadPage(again.state);
   next.send(result("s.2", 1000));
   assert.strictEqual(next.scroller().scrollTop, 0);
+});
+
+test("a column sorts from the keyboard: its header takes the focus, and Enter or Space sorts", () => {
+  // The header sorted on a click only: it could not be tabbed to, and a
+  // keyboard or screen-reader user could not sort at all.
+  const page = loadPage(undefined);
+  page.send(result("s.1", 5));
+  const header = () => page.body.all((e) => e.tagName === "TH" && (e.title || "").startsWith("n:"))[0];
+  assert.strictEqual(header().tabIndex, 0);
+  assert.strictEqual(header().attributes["aria-sort"], "none");
+  header().fire("keydown", { key: "Enter" });
+  assert.strictEqual(page.state.sort.column, 0);
+  assert.strictEqual(page.state.sort.descending, false);
+  assert.strictEqual(header().attributes["aria-sort"], "ascending");
+  // Still focused, though the header was drawn again.
+  assert.strictEqual(Element.focused, header());
+  header().fire("keydown", { key: " " });
+  assert.strictEqual(page.state.sort.descending, true);
+  assert.strictEqual(page.rows()[0].children[0].textContent, "4");
+  header().fire("keydown", { key: "a" });
+  assert.strictEqual(page.state.sort.descending, true);
 });

@@ -202,6 +202,8 @@
   let scroller = null;
   /// What paint() last drew: the rows (that list) and their span.
   let painted = null;
+  /// The column headers drawn, by place.
+  let headers = [];
 
   function drawGrid() {
     const grid = result.grid;
@@ -222,11 +224,15 @@
     const head = el("thead");
     const names = el("tr");
     const filters = el("tr", "filters");
+    headers = [];
     grid.columns.forEach(function (c, i) {
       const sorted = state.sort && state.sort.column === i ? (state.sort.descending ? " ▼" : " ▲") : "";
       const th = el("th", (c.key ? "key" : "") + (c.numeric ? " num" : ""), c.name + sorted);
       th.title = c.name + ": " + c.typeName + ". Click to sort.";
-      th.addEventListener("click", function () {
+      // A keyboard sorts it too: Tab to it, then Enter or Space.
+      th.tabIndex = 0;
+      th.setAttribute("aria-sort", sorted === "" ? "none" : state.sort.descending ? "descending" : "ascending");
+      const sort = function () {
         const s = state.sort;
         state.sort = !s || s.column !== i ? { column: i, descending: false } : s.descending ? null : { column: i, descending: true };
         state.top = 0;
@@ -235,6 +241,16 @@
         drawGrid();
         drawBar();
         rendered();
+      };
+      th.addEventListener("click", sort);
+      headers.push(th);
+      th.addEventListener("keydown", function (event) {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          sort();
+          // The header was drawn again: the focus stays on it.
+          headers[i].focus();
+        }
       });
       names.append(th);
       const ft = el("th", c.key ? "key" : "");

@@ -116,6 +116,11 @@ thead th {
   font-weight: 600;
 }
 
+thead th:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+
 thead tr.filters th {
   top: 22px;
   cursor: default;
