@@ -133,6 +133,14 @@ th.key {
   background: var(--vscode-editor-inactiveSelectionBackground);
 }
 
+/* A sticky header: the key's shade, which can be translucent, over an
+   opaque ground, so the rows scrolled under it do not show through. */
+thead th.key {
+  background:
+    linear-gradient(var(--vscode-editor-inactiveSelectionBackground, transparent), var(--vscode-editor-inactiveSelectionBackground, transparent)),
+    var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background));
+}
+
 tbody tr:hover td {
   background: var(--vscode-list-hoverBackground);
 }

@@ -546,3 +546,13 @@ test("the grid's table is laid out by its columns' widths, not by the cells in v
   assert.match(table, /table-layout:\s*fixed/);
   assert.match(table, /(^|;|\s)width:\s*(?!auto)[^;]+;/);
 });
+
+test("a key column's sticky header is opaque, though the key shade is translucent", () => {
+  // th.key's shade won over the header's background, and a theme's
+  // editor.inactiveSelectionBackground is often translucent (VS Code's
+  // default is the selection colour at half alpha; #ffffff80 in high
+  // contrast): the rows scrolled up showed through the key's header and
+  // its filter.
+  const head = cssRule("thead th.key");
+  assert.match(head, /background:[^;]*var\(--vscode-editor-inactiveSelectionBackground[^;]*,\s*var\(--vscode-editor(GroupHeader-tabs)?-background/);
+});
