@@ -4,10 +4,17 @@ r:select from t where sym=`a, date=2024.01.05
 === QV001 | within, after a numeric comparison (56 ms against 12 ms)
 r:select from t where size>500, date within 2024.01.05 2024.01.06
 
-=== QV001 | month and year partitions, and exec, update, delete
+=== QV001 | month and year partitions, and exec
 a:exec price from t where sym in `a`b, month=2024.01m
+b:exec px from t where sym=s, year=2024
+
+=== clean | update and delete: q refuses both on a partitioned table ('par in KDB-X), so the table is in memory
 b:update x:1 from t where sym=s, year=2024
 c:delete from t where px>1.5, date<2024.01.01
+futures:update settle:settle+30f from futures where commodity=`SYNA, date>dMid
+
+=== QV001 | an update over a select still reports the select
+r:update x:1 from select from t where sym=`a, date=d
 
 === QV001 | a string literal before it
 r:select from t where name like "ab*", date=2024.01.05
@@ -65,6 +72,16 @@ g:{raze h each til n}
 === clean | a join to another name, or each-both
 f:{r:(); do[n; s:r,til 10]; s}
 g:{r:(); do[n; r:r,'x]; r}
+
+=== clean | given a fresh value earlier in the same pass, so each pass joins to that
+f:{while[null fd; d:g[]; if[not 99h=type d; d:()!()]; d:d,enlist[`a]!enlist 1; h d]}
+g:{do[n; r:(); r:r,til 10; h r]}
+
+=== clean | a lambda's own local, inside the loop body
+f:{do[n; h {[r;x] r:r,x; r}[r0;1]]}
+
+=== QV003 | a fresh value of another name does not hide the join
+f:{r:(); do[n; s:(); r:r,til 10]; r}
 
 === clean | outside a loop
 f:{[r] r:r,til 10; r}

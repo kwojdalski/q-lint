@@ -1045,6 +1045,10 @@ fn performance(path: &str, source: &str, code: &str, comments: &str, out: &mut V
 /// literal or a name - `sym=`a`, `size>500`, `sym in s`. Moving a constraint
 /// past one that aggregates (`price>avg price`) would change the rows it
 /// aggregates over, and so the answer.
+///
+/// Never for `update` or `delete`: q refuses both on a partitioned table
+/// (`'par` in KDB-X), so the table they filter is in memory and the order
+/// costs nothing the rule claims.
 fn partition_filter_late(
     path: &str,
     source: &str,
@@ -1056,7 +1060,10 @@ fn partition_filter_late(
     // `select ... from select ... where` finds the inner where from both.
     let mut reported = std::collections::HashSet::new();
     for q in re!(r"(?:select|exec|update|delete)\b").find_iter(code) {
-        if !crate::boundary(code, q.start()) || strings.at(q.start()) {
+        if !crate::boundary(code, q.start())
+            || strings.at(q.start())
+            || matches!(q.as_str(), "update" | "delete")
+        {
             continue;
         }
         let rest = &code[q.end()..];
@@ -1164,6 +1171,10 @@ fn atomic_each(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
 /// Measured in KDB-X, 10, 20 and 40 thousand passes of `r:r,til 10`: 52,
 /// 205 and 818 ms, against 2.5, 5.5 and 11 ms for `r,:til 10`, which
 /// appends in place, and for `raze f each`.
+///
+/// Not when the body gives `r` a fresh value before the join (`r:g x;
+/// r:r,y`): each pass then joins to that, not to every pass before it. Nor
+/// inside a lambda in the body, whose `r` is its own local.
 fn append_in_loop(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
     let mut strings = InString::new(code);
     // A loop inside a loop has its assignments in both bodies: once each.
@@ -1182,12 +1193,14 @@ fn append_in_loop(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) 
             continue;
         };
         let start = open + 1 + semi + 1;
+        // Names the body has given a value not joined from themselves.
+        let mut fresh = std::collections::HashSet::new();
         for a in
             re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]*:[ \t]*").captures_iter(&code[start..close - 1])
         {
             let name = a.get(1).unwrap();
             let at = start + name.start();
-            if !crate::boundary(code, at) {
+            if !crate::boundary(code, at) || strings.at(at) || in_lambda(code, start, at) {
                 continue;
             }
             // Directly after a `:` is a compound or nested assignment.
@@ -1197,7 +1210,11 @@ fn append_in_loop(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) 
                 .is_ok_and(|r| r.is_match(rhs))
                 || regex::Regex::new(&format!(r"^raze[ \t]*\([ \t]*{n}[ \t]*;"))
                     .is_ok_and(|r| r.is_match(rhs));
-            if appends && reported.insert(at) {
+            if !appends {
+                fresh.insert(name.as_str());
+                continue;
+            }
+            if !fresh.contains(name.as_str()) && reported.insert(at) {
                 out.push(Finding::at(
                     path,
                     source,
@@ -1213,6 +1230,19 @@ fn append_in_loop(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) 
             }
         }
     }
+}
+
+/// Whether `at` is inside a lambda that opens after `from`: braces outside
+/// strings between the two that do not close again.
+fn in_lambda(code: &str, from: usize, at: usize) -> bool {
+    let mut strings = InString::new(code);
+    let mut depth = 0i32;
+    for (i, b) in code.as_bytes()[from..at].iter().enumerate() {
+        if matches!(b, b'{' | b'}') && !strings.at(from + i) {
+            depth += if *b == b'{' { 1 } else { -1 };
+        }
+    }
+    depth > 0
 }
 
 /// Where `byte` first occurs in `text` outside every bracket.
