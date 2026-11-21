@@ -32,7 +32,7 @@ import {
 import type { Row } from "./discovery";
 import type { Live } from "./live";
 import { readLive } from "./liveconfig";
-import type { Process } from "./processes";
+import { address, type Process } from "./processes";
 import { statements } from "./statements";
 
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));
@@ -141,7 +141,7 @@ class RunQueryTool implements LanguageModelTool<AgentInput> {
       return { error: "The query was cancelled before it ran." };
     }
     if (target.connects && !(await this.live.connectTo(process.label))) {
-      return { error: `Could not connect to ${process.label} (${process.host}:${process.port}); q-lint showed the user why.` };
+      return { error: `Could not connect to ${process.label} (${address(process.host, process.port)}); q-lint showed the user why.` };
     }
     if (token.isCancellationRequested) {
       return { error: "The query was cancelled before it ran." };

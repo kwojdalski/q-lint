@@ -257,3 +257,11 @@ test("the labels an error lists are cut, so a large discovery server cannot floo
   assert.match(error, /and 1952 more/);
   assert.ok(notConnected(saved, many).length < 2000);
 });
+
+test("the confirmation writes an IPv6 address as a URL does, and a label with markdown in it as written", () => {
+  const v6 = confirmation("1", { label: "a&lt;b", host: "::1", port: 5000, tags: [] });
+  // Escaped, so the brackets show and are not a link.
+  assert.match(v6.message, /\(\\\[::1\\\]:5000\)/);
+  // `&lt;` would show as `<`: the user is asked about a label they do not have.
+  assert.match(v6.message, /\*\*a\\&lt;b\*\*/);
+});

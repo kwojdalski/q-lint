@@ -10,7 +10,7 @@
 // nanoseconds, so those are q's own text.
 import { findDiscovered, qualified, type Discovered, type Row } from "./discovery";
 import { cellText, typeName, type GridAnswer, type GridPayload } from "./grid";
-import { tagColour, type Process } from "./processes";
+import { address as hostPort, markdownText, tagColour, type Process } from "./processes";
 import type { QConnection } from "./qclient";
 import { statements } from "./statements";
 
@@ -227,7 +227,8 @@ function fenced(code: string): string {
   return `${fence}q\n${code}\n${fence}`;
 }
 
-const escaped = (text: string): string => text.replace(/([\\`*_[\]<>])/g, "\\$1");
+/// As written: an entity such as `&lt;` or a `#` is not read as Markdown.
+const escaped = markdownText;
 
 /// What the user is asked before an agent's query runs on `target`: its
 /// title, and its body as Markdown. `connects` when q-lint connects to the
@@ -245,7 +246,7 @@ export function confirmation(
           "Read it before you continue.",
       ]
     : [];
-  const address = escaped(`${target.host}:${target.port}`);
+  const address = escaped(hostPort(target.host, target.port));
   const where = !how.connects
     ? `on **${label}** (${address}), the active connection`
     : how.replaces === undefined
