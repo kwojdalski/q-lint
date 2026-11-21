@@ -8,6 +8,7 @@
 // use for - narrowing the rules shown, Quick Fixes, formatting, colouring, the
 // workspace index - goes in `initializationOptions`, which the server reads in
 // `initialize`. Either way the server reads it once: a change restarts it.
+import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 
 /// The documents the language client hands the server: a saved `.q` file, and
@@ -66,6 +67,20 @@ function explicit<T>(settings: Settings, key: string): T | undefined {
   return i?.workspaceFolderValue ?? i?.workspaceValue ?? i?.globalValue;
 }
 
+/// A string setting, trimmed; empty for one that is not a string, as a
+/// hand-written `null` or a number in settings.json is.
+function text(settings: Settings, key: string): string {
+  const value = settings.get<unknown>(key, "");
+  return typeof value === "string" ? value.trim() : "";
+}
+
+/// `path` with a leading `~` made the home directory, as a shell would: the
+/// server is spawned without one, so `~/bin/qlinter` would name a directory
+/// called `~`.
+function home(path: string): string {
+  return path === "~" || /^~[\\/]/.test(path) ? join(homedir(), path.slice(1)) : path;
+}
+
 function strings(settings: Settings, key: string): string[] {
   const value = settings.get<unknown>(key, []);
   return Array.isArray(value)
@@ -82,11 +97,11 @@ export function launch(settings: Settings, folder: string | undefined): Launch {
   // silently override the project's own `profile`. Left unset, the server
   // reads the repository's configuration, and uses `style` where there is
   // none - the same default this setting declares.
-  const profile = explicit<string>(settings, "profile");
-  if (profile) {
-    args.push("--profile", profile);
+  const profile = explicit<unknown>(settings, "profile");
+  if (typeof profile === "string" && profile.trim() !== "") {
+    args.push("--profile", profile.trim());
   }
-  const setting = settings.get<string>("configFile", "").trim();
+  const setting = home(text(settings, "configFile"));
   const configFile = !setting
     ? undefined
     : isAbsolute(setting) || folder === undefined
@@ -100,8 +115,8 @@ export function launch(settings: Settings, folder: string | undefined): Launch {
   const run = settings.get<string>("lint.run", "onType") === "onSave" ? "onSave" : "onType";
   const severity = settings.get<Record<string, string>>("lint.severity", {});
   return {
-    enabled: settings.get<boolean>("enable", true),
-    serverPath: settings.get<string>("serverPath", "").trim(),
+    enabled: settings.get<unknown>("enable", true) !== false,
+    serverPath: home(text(settings, "serverPath")),
     args,
     initializationOptions: {
       lint: {
