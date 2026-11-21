@@ -1,7 +1,7 @@
 // Queries on saved processes against real q processes, driven through the
-// stand-in `vscode` module: the read-only guard (#918), Query a Tag (#906)
-// and Compare Query (#907). Needs a q binary, so it runs only when
-// QLINT_TEST_Q names one, as qclient.test.js does.
+// stand-in `vscode` module: the read-only guard (#918), Query a Tag (#906),
+// Compare Query (#907) and saved queries (#912). Needs a q binary, so it
+// runs only when QLINT_TEST_Q names one, as qclient.test.js does.
 const { stub, vscode } = require("./vscode_stub.js");
 const test = require("node:test");
 const assert = require("node:assert");
@@ -12,6 +12,10 @@ const os = require("node:os");
 const path = require("node:path");
 const { Live } = require("../out/live.js");
 const { QueryAcross } = require("../out/queryacross.js");
+const { SavedQueries } = require("../out/savedqueriesview.js");
+
+// What the stand-in leaves as a no-op: a saved query's document's URI.
+vscode.Uri.from = ({ scheme, path }) => ({ scheme, path, toString: () => `${scheme}:${path}` });
 
 const Q = process.env.QLINT_TEST_Q;
 const skip = Q ? false : "QLINT_TEST_Q names no q binary";
@@ -62,9 +66,13 @@ async function setUp(t, processes, config = {}) {
   stub.reset();
   Object.assign(stub.config.user, config);
   const context = stub.newContext();
+  // The workspace's storage, in memory.
+  const state = new Map();
+  context.workspaceState = { get: (k, d) => (state.has(k) ? state.get(k) : d), update: async (k, v) => void state.set(k, v), keys: () => [...state.keys()] };
   await context.globalState.update("q-lint.processes", processes);
   const live = new Live(context);
   const across = new QueryAcross(context, live);
+  const saved = new SavedQueries(context, live);
   t.after(async () => {
     vscode.window.activeTextEditor = undefined;
     await stub.commands.get("q-lint.disconnectProcess")?.();
@@ -80,7 +88,7 @@ async function setUp(t, processes, config = {}) {
     const h = live.history()[0];
     return h && `${h.process} ${h.outcome} ${h.code}`;
   };
-  return { context, live, across, editor, last };
+  return { context, live, across, saved, editor, last };
 }
 
 const proc = (label, port, tags = []) => ({ label, host: "127.0.0.1", port, tags });
@@ -150,4 +158,19 @@ test("Compare Query lines up two real q processes' keyed tables by key (#907)", 
   // An atom on each side: compared as text.
   await stub.commands.get("q-lint.compareQuery")("sum exec qty from pos", "a", "b");
   assert.deepStrictEqual([across.state().comparison.left.text, across.state().comparison.right.text, across.state().comparison.same], ["6", "16", false]);
+});
+
+test("a saved query runs on a real q process, its placeholder asked for (#912)", { skip }, async (t) => {
+  const q = await startQ(t, "trade:([] sym:`a`b`a; px:1 2 3f)\n");
+  const { live, saved, editor, last } = await setUp(t, [proc("rdb", q.port)]);
+  editor("exec sum px from trade where sym={{s}}");
+  stub.inputs.push("by sym");
+  await stub.commands.get("q-lint.saveQuery")();
+  assert.deepStrictEqual(saved.queries(), [{ name: "by sym", code: "exec sum px from trade where sym={{s}}" }]);
+  assert.strictEqual(await live.connectTo("rdb"), true);
+  stub.inputs.push("`a");
+  await stub.commands.get("q-lint.runSavedQuery")("by sym");
+  assert.strictEqual(last(), "rdb ok exec sum px from trade where sym=`a");
+  const value = await live.runOnActive("x", (c) => c.query(["exec sum px from trade where sym=`a"], [10, 80]));
+  assert.strictEqual(value.value.text[0], "4f");
 });

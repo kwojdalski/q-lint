@@ -335,8 +335,8 @@ symbol (`` from `t ``), `set`, `upsert`, `insert`, `hdel`, `exit`, `system`,
 and a system command other than one that reads a setting (`\c`, `\d`, `\P`
 alone) - `\t` and `\ts` are read for their expression. It holds for every
 path that sends code: a query (line, selection, block, file, a Run lens, a
-rerun, Preview), **Query a Tag** and **Compare Query** (asked once, for
-every guarded process they reach), a notebook cell and **Run Notebook with Parameters**,
+rerun, Preview, a saved query), **Query a Tag** and **Compare Query**
+(asked once, for every guarded process they reach), a notebook cell and **Run Notebook with Parameters**,
 **Redefine on Process** (whose confirmation says so, since it always
 assigns) and a connect script, asked at each connect, and skipped, with the
 connection kept, when declined. An agent's query cannot be asked about, so
@@ -407,6 +407,23 @@ duration, outcome and error; any other name as JSON,
 `{"queries": [{"process", "at", "millis", "outcome", "error"?, "code"}]}`,
 newest first. `q-lint.queryHistory.search.enable` off hides the filter and
 export, and clears a filter set.
+
+**Saved Queries**, a view in the q-lint panel, keeps named queries for the
+workspace. **Save Query** - on the view's title bar, in a q editor's
+context menu, or on a Query History entry - saves the selection, or the
+statement at the cursor, or that entry's code, as written, under a name you
+give (the first line is offered); placeholders stay in it and are asked for
+each time it runs. On a saved query's row: **Run Saved Query** runs it on
+the active connection as a query from the editor runs (connecting first if
+there is none; the read-only guard applies, and it lands in Query History),
+**Edit Saved Query** - also a click on the row - opens it as a q document of
+its own (`q-lint-saved:/name.q`), linted as any q file, where saving saves
+the query, and **Rename** and **Delete Saved Query**, which asks first.
+Each takes a query's name as an argument for a keybinding. The list is kept
+in the workspace's storage, not in a file, so each workspace has its own and
+nothing is written into the folder. `q-lint.savedQueries.enable` off removes
+the view and its documents and makes the commands refuse; the queries are
+kept for when it is on again.
 
 **Query controls.**
 - **Toggle Unlimited Query**: while on, the console text is not cut at
@@ -997,6 +1014,7 @@ nothing.
 | `q-lint.query.placeholders.enable` | `true` | Ask for a value for each `{{name}}` in the code a query sends, and put it in place. | - |
 | `q-lint.query.tagQuery.enable` | `true` | **Query a Tag**: one query on every process with a tag, the answers as one table. | - |
 | `q-lint.query.compare.enable` | `true` | **Compare Query Across Two Processes**: one query on two processes, the answers side by side, differences marked. | - |
+| `q-lint.savedQueries.enable` | `true` | The **Saved Queries** view and its commands. Off, the view is removed and the commands refuse; the queries are kept. | - |
 | `q-lint.processExplorer.excludedNamespaces` | `["q","Q","h","j","o","s"]` | Namespaces the Process Explorer and live completion leave out (`q`, or a nested one as `ns.sub`), with those nested in them. | - |
 | `q-lint.processExplorer.previewLimit` | `5` | Rows of a table Preview shows. | - |
 | `q-lint.processExplorer.autoRefresh` | `false` | Read the process again after each query. | - |

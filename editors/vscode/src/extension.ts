@@ -29,6 +29,7 @@ import { Serial } from "./serial";
 import { FunctionSources } from "./funcsourceview";
 import { registerInfoViews } from "./infoview";
 import { QueryAcross } from "./queryacross";
+import { SavedQueries } from "./savedqueriesview";
 import type { InfoNode } from "./monitor";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, statSync } from "node:fs";
@@ -99,6 +100,7 @@ export async function activate(
     hdbBrowser: () => InfoNode[];
     functionSources: FunctionSources["state"];
     queryAcross: QueryAcross["state"];
+    savedQueries: SavedQueries["queries"];
   }
 > {
   // Replacing the binary does not restart the server, and a window reload is
@@ -143,6 +145,7 @@ export async function activate(
   const sources = new FunctionSources(context, live);
   const infoViews = registerInfoViews(context, live);
   const across = new QueryAcross(context, live);
+  const saved = new SavedQueries(context, live);
   registerOnboarding(context, () => live.processes());
   relations = new Relations(context, () => client);
   // Not awaited: nothing above needs the server, and a slow or hung one
@@ -159,6 +162,7 @@ export async function activate(
     hdbBrowser: infoViews.hdb,
     functionSources: () => sources.state(),
     queryAcross: () => across.state(),
+    savedQueries: () => saved.queries(),
   };
 }
 

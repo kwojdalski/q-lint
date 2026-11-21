@@ -1640,10 +1640,10 @@ export class Live {
   }
 
   /// The code a command takes from the active editor: the selection, or the
-  /// statement the cursor is in, its `{{name}}` placeholders filled in.
-  /// Undefined, having said why, when there is none or the user pressed
-  /// Escape.
-  async codeFromEditor(): Promise<string | undefined> {
+  /// statement the cursor is in, its `{{name}}` placeholders filled in
+  /// unless `fill` is false. Undefined, having said why, when there is none
+  /// or the user pressed Escape.
+  async codeFromEditor(fill = true): Promise<string | undefined> {
     const editor = window.activeTextEditor;
     if (editor === undefined) {
       noEditor();
@@ -1655,7 +1655,16 @@ export class Live {
       nothingThere(from);
       return undefined;
     }
-    return this.filledIn(written);
+    return fill ? this.filledIn(written) : written;
+  }
+
+  /// Run `code` as a query from the editor is run, its placeholders asked
+  /// for first: a saved query (#912).
+  async runFilledIn(code: string): Promise<void> {
+    const filled = await this.filledIn(code);
+    if (filled !== undefined) {
+      await this.run(filled);
+    }
   }
 
   /// The process `row` names, or one the user picks, saved or discovered.

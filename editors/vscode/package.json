@@ -563,6 +563,12 @@
             "default": true,
             "order": 141,
             "markdownDescription": "**Compare Query Across Two Processes**: run one query on two processes, each over a connection of its own, and show the answers side by side with the cells that differ marked."
+          },
+          "q-lint.savedQueries.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 142,
+            "markdownDescription": "The **Saved Queries** view: named queries kept for the workspace, run on the active connection, edited as q documents of their own, renamed and deleted. Off, the view is removed and its commands refuse; the queries are kept."
           }
         }
       },
@@ -1199,6 +1205,35 @@
         "title": "Compare Query Across Two Processes",
         "category": "q-lint",
         "icon": "$(diff)"
+      },
+      {
+        "command": "q-lint.saveQuery",
+        "title": "Save Query",
+        "category": "q-lint",
+        "icon": "$(add)"
+      },
+      {
+        "command": "q-lint.runSavedQuery",
+        "title": "Run Saved Query",
+        "category": "q-lint",
+        "icon": "$(play)"
+      },
+      {
+        "command": "q-lint.editSavedQuery",
+        "title": "Edit Saved Query",
+        "category": "q-lint",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "q-lint.renameSavedQuery",
+        "title": "Rename Saved Query",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.deleteSavedQuery",
+        "title": "Delete Saved Query",
+        "category": "q-lint",
+        "icon": "$(trash)"
       }
     ],
     "views": {
@@ -1260,6 +1295,13 @@
           "icon": "media/view-explorer.svg",
           "contextualTitle": "q-lint",
           "when": "q-lint.notebookActive && config.q-lint.notebook.variables.enable"
+        },
+        {
+          "id": "q-lint.savedQueries",
+          "name": "Saved Queries",
+          "icon": "media/view-history.svg",
+          "contextualTitle": "q-lint",
+          "when": "config.q-lint.savedQueries.enable"
         }
       ],
       "q-lint-results": [
@@ -1383,6 +1425,11 @@
           "command": "q-lint.refreshNotebookVariables",
           "when": "view == q-lint.notebookVariables && config.q-lint.notebook.variables.enable",
           "group": "navigation"
+        },
+        {
+          "command": "q-lint.saveQuery",
+          "when": "view == q-lint.savedQueries && config.q-lint.savedQueries.enable",
+          "group": "navigation@1"
         }
       ],
       "view/item/context": [
@@ -1550,6 +1597,41 @@
           "command": "q-lint.queryTag",
           "when": "view == q-lint.processes && viewItem == tag && config.q-lint.query.tagQuery.enable",
           "group": "1_query@1"
+        },
+        {
+          "command": "q-lint.runSavedQuery",
+          "when": "view == q-lint.savedQueries && viewItem == savedQuery && config.q-lint.savedQueries.enable",
+          "group": "inline@1"
+        },
+        {
+          "command": "q-lint.editSavedQuery",
+          "when": "view == q-lint.savedQueries && viewItem == savedQuery && config.q-lint.savedQueries.enable",
+          "group": "inline@2"
+        },
+        {
+          "command": "q-lint.runSavedQuery",
+          "when": "view == q-lint.savedQueries && viewItem == savedQuery && config.q-lint.savedQueries.enable",
+          "group": "1_saved@1"
+        },
+        {
+          "command": "q-lint.editSavedQuery",
+          "when": "view == q-lint.savedQueries && viewItem == savedQuery && config.q-lint.savedQueries.enable",
+          "group": "1_saved@2"
+        },
+        {
+          "command": "q-lint.renameSavedQuery",
+          "when": "view == q-lint.savedQueries && viewItem == savedQuery && config.q-lint.savedQueries.enable",
+          "group": "1_saved@3"
+        },
+        {
+          "command": "q-lint.deleteSavedQuery",
+          "when": "view == q-lint.savedQueries && viewItem == savedQuery && config.q-lint.savedQueries.enable",
+          "group": "1_saved@4"
+        },
+        {
+          "command": "q-lint.saveQuery",
+          "when": "view == q-lint.queryHistory && viewItem == history && config.q-lint.savedQueries.enable",
+          "group": "1_history@3"
         }
       ],
       "editor/title/run": [
@@ -1678,6 +1760,11 @@
           "command": "q-lint.compareQuery",
           "when": "editorLangId == q && config.q-lint.query.compare.enable",
           "group": "q-lint@22"
+        },
+        {
+          "command": "q-lint.saveQuery",
+          "when": "editorLangId == q && config.q-lint.savedQueries.enable",
+          "group": "q-lint@23"
         }
       ],
       "commandPalette": [
@@ -1760,6 +1847,26 @@
         {
           "command": "q-lint.compareQuery",
           "when": "config.q-lint.query.compare.enable"
+        },
+        {
+          "command": "q-lint.saveQuery",
+          "when": "config.q-lint.savedQueries.enable"
+        },
+        {
+          "command": "q-lint.runSavedQuery",
+          "when": "config.q-lint.savedQueries.enable"
+        },
+        {
+          "command": "q-lint.editSavedQuery",
+          "when": "config.q-lint.savedQueries.enable"
+        },
+        {
+          "command": "q-lint.renameSavedQuery",
+          "when": "config.q-lint.savedQueries.enable"
+        },
+        {
+          "command": "q-lint.deleteSavedQuery",
+          "when": "config.q-lint.savedQueries.enable"
         }
       ],
       "editor/title": [
@@ -1842,6 +1949,10 @@
       {
         "view": "q-lint.notebookVariables",
         "contents": "Run a cell of a q notebook to see the globals on its process.\n[Refresh](command:q-lint.refreshNotebookVariables)"
+      },
+      {
+        "view": "q-lint.savedQueries",
+        "contents": "No saved queries in this workspace.\n[Save Query](command:q-lint.saveQuery) saves the selection, or the statement at the cursor, under a name; Save Query on a Query History entry saves that one."
       }
     ],
     "keybindings": [

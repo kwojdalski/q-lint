@@ -91,6 +91,7 @@ function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir
     "./funcsourceview": { FunctionSources: class { state() { return {}; } } },
     "./infoview": { registerInfoViews: () => ({ monitor: () => [], hdb: () => [] }) },
     "./queryacross": { QueryAcross: class { state() { return {}; } } },
+    "./savedqueriesview": { SavedQueries: class { queries() { return []; } } },
   };
   const file = require.resolve("../out/extension.js");
   delete require.cache[file];
