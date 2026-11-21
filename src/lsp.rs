@@ -643,6 +643,11 @@ struct Options {
     document_links: bool,
     /// Offer the code action that writes a qDoc block above a function.
     generate_qdoc: bool,
+    /// Offer Extract Function on a selection.
+    extract_function: bool,
+    /// Whether the client shows an action it cannot take with the reason
+    /// (`codeAction.disabledSupport`): a capability, not a setting.
+    disabled_actions: bool,
     /// A diagnostic severity by code or prefix; the longest that names a
     /// code decides.
     severity: Vec<(String, i64)>,
@@ -667,6 +672,8 @@ impl Default for Options {
             code_lens: false,
             document_links: true,
             generate_qdoc: true,
+            extract_function: true,
+            disabled_actions: false,
             severity: vec![],
         }
     }
@@ -703,6 +710,7 @@ impl Options {
                         "codeLens",
                         "documentLinks",
                         "generateQdoc",
+                        "extractFunction",
                     ]
                     .contains(&key.as_str())
                         && !value.is_object()
@@ -738,6 +746,11 @@ impl Options {
         options.code_lens = flag("/codeLens/enable", false);
         options.document_links = flag("/documentLinks/enable", true);
         options.generate_qdoc = flag("/generateQdoc/enable", true);
+        options.extract_function = flag("/extractFunction/enable", true);
+        options.disabled_actions = params
+            .pointer("/capabilities/textDocument/codeAction/disabledSupport")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         match init.pointer("/lint/run") {
             None | Some(Value::Null) => {}
             Some(v) if v == "onType" => {}
@@ -1497,6 +1510,9 @@ fn capabilities(opts: &Options, code_action_literals: bool) -> Value {
         if opts.generate_qdoc {
             kinds.push(REWRITE);
         }
+        if opts.extract_function {
+            kinds.push(EXTRACT);
+        }
         capabilities["codeActionProvider"] = json!({ "codeActionKinds": kinds });
     }
     capabilities["foldingRangeProvider"] = json!(true);
@@ -1719,6 +1735,8 @@ const QUICK_FIX: &str = "quickfix";
 const FIX_ALL: &str = "source.fixAll.q-lint";
 /// The kind of the action that writes a qDoc block above a function.
 const REWRITE: &str = "refactor.rewrite";
+/// The kind of Extract Function.
+const EXTRACT: &str = "refactor.extract.function";
 
 /// Whether a kind the client asks for (`context.only`) takes in `kind`. Kinds
 /// are hierarchical, a dot at a time: `source` and `source.fixAll` each ask
@@ -1765,6 +1783,22 @@ fn code_actions(
             .is_none_or(|only| only.iter().any(|kind| asks_for(kind, REWRITE)))
     {
         actions.extend(qdoc_action(params, docs));
+    }
+    // Unasked for by kind, only over a selection with no diagnostic to fix:
+    // a request about a diagnostic is about that diagnostic's range.
+    let about_diagnostics = params["context"]["diagnostics"]
+        .as_array()
+        .is_some_and(|d| !d.is_empty());
+    if opts.extract_function
+        && match &only {
+            None => !about_diagnostics,
+            Some(only) => only.iter().any(|kind| asks_for(kind, EXTRACT)),
+        }
+    {
+        // The reason it is refused only to a menu that asked for refactors
+        // by name: the lightbulb asks as the cursor moves.
+        let why = opts.disabled_actions && only.is_some();
+        actions.extend(extract_action(params, docs, why));
     }
     if only
         .as_ref()
@@ -1916,6 +1950,56 @@ fn qdoc_action(params: &Value, docs: &Documents) -> Option<Value> {
         "kind": REWRITE,
         "edit": {"changes": changes},
     }))
+}
+
+/// Extract Function over the request's range: the selection made a lambda
+/// of the locals it reads, defined above the top-level statement it is in
+/// (`q_lint_rs::extract`), and the selection a call to it. Nothing for an
+/// empty selection; for one it refuses, nothing, or with `why` the action
+/// disabled with the reason.
+fn extract_action(params: &Value, docs: &Documents, why: bool) -> Option<Value> {
+    let uri = uri_of(&params["textDocument"]);
+    let source = docs.get(&uri).filter(|_| is_q_uri(&uri))?;
+    let lines = Lines::new(source);
+    let at = |p: &Value| {
+        Some(lines.offset(
+            p["line"].as_u64()? as usize,
+            p["character"].as_u64()? as usize,
+        ))
+    };
+    let (from, to) = (at(&params["range"]["start"])?, at(&params["range"]["end"])?);
+    if from == to {
+        return None;
+    }
+    let title = "Extract function";
+    match q_lint_rs::extract(source, from, to) {
+        Ok(found) => {
+            let name = q_lint_rs::fresh_name(source, "extracted");
+            let insert = lines.json(found.insert_at);
+            let mut changes = serde_json::Map::new();
+            // Both edits are in the original's positions, as LSP has them;
+            // the definition goes above, so the two never overlap.
+            changes.insert(
+                uri.clone(),
+                json!([
+                    {"range": {"start": insert, "end": insert}, "newText": found.definition(&name)},
+                    {"range": {"start": lines.json(found.start), "end": lines.json(found.end)},
+                     "newText": found.call(&name)},
+                ]),
+            );
+            Some(json!({
+                "title": format!("{title} as {name}"),
+                "kind": EXTRACT,
+                "edit": {"changes": changes},
+            }))
+        }
+        Err(reason) if why => Some(json!({
+            "title": title,
+            "kind": EXTRACT,
+            "disabled": {"reason": reason},
+        })),
+        Err(_) => None,
+    }
 }
 
 /// Every safe fix at once, as one action of kind `source.fixAll.q-lint`: the

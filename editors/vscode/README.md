@@ -101,6 +101,17 @@ to a process you add and connect to, and sends only the code you run.
   there, for the descriptions to be typed after. Not offered when the
   comment above has an `@param` or `@return` already
   (`q-lint.generateQdoc.enable`).
+- **Extract Function**, in the lightbulb and **Refactor...** menu over a
+  selection: the selection becomes a lambda defined directly above the
+  top-level statement it is in, under the same `\d`, taking the parameters
+  and locals of the lambda around it that it reads, and the selection a
+  call to it - `b*2` in `f:{[a;b] a+b*2}` becomes `extracted:{[b] b*2}` and
+  `f:{[a;b] a+extracted[b]}`. Only a selection q reads as one value is
+  rewritten: a whole term anywhere, or everything to the end of its
+  expression (q reads right to left, so `y*z` of `x+y*z` is one and `x+y`
+  is not). One that assigns, returns, names `.z.s`, sits in a qSQL phrase
+  or cuts a name, string or list is refused, and **Refactor...** says why.
+  `q-lint.extractFunction.enable` turns it off.
 - **Hover** on a name the workspace defines shows its parameters, the
   comment written above its definition and the file it is in; on a word of
   q itself - `ssr`, `select`, `.z.p`, `.Q.s`, `.h.hy`, or a glyph such as
@@ -873,6 +884,7 @@ q-pro column names the setting of [q-pro](https://marketplace.visualstudio.com/i
 | `q-lint.codeLens.enable` | `true` | Show **Run** above each top-level function definition and **Run test** above a `test_*` one. | - |
 | `q-lint.documentLinks.enable` | `true` | Make each `\l`, `system "l ..."` and `` `:file.q `` path a link to the file it loads. | - |
 | `q-lint.generateQdoc.enable` | `true` | Offer **Generate qDoc** above a top-level function. | - |
+| `q-lint.extractFunction.enable` | `true` | Offer **Extract Function** over a selection q reads as one value. | - |
 | `q-lint.workspaceIndex.enable` | `true` | Read every workspace `.q` file at startup for the names it defines, up to 20,000 files or 500,000 directory entries. Off: only open files. | - |
 | `q-lint.workspaceIndex.exclude` | `[]` | Globs, relative to the workspace folder, the index does not read: `["vendor/**"]`. | `q-lang-server.sourceFiles.ignoreGlob` |
 | `q-lint.trace.server` | `off` | Log client-server traffic: `off`, `messages`, `verbose`. | `q-lang-server.trace.server` |

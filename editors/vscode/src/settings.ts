@@ -60,6 +60,7 @@ export interface InitializationOptions {
   codeLens: { enable: boolean };
   documentLinks: { enable: boolean };
   generateQdoc: { enable: boolean };
+  extractFunction: { enable: boolean };
   workspaceIndex: { enable: boolean; exclude: string[] };
 }
 
@@ -143,6 +144,7 @@ export function launch(settings: Settings, folder: string | undefined): Launch {
       codeLens: { enable: settings.get<boolean>("codeLens.enable", true) },
       documentLinks: { enable: settings.get<boolean>("documentLinks.enable", true) },
       generateQdoc: { enable: settings.get<boolean>("generateQdoc.enable", true) },
+      extractFunction: { enable: settings.get<boolean>("extractFunction.enable", true) },
       workspaceIndex: {
         enable: settings.get<boolean>("workspaceIndex.enable", true),
         exclude: strings(settings, "workspaceIndex.exclude"),
@@ -173,6 +175,7 @@ const RESTARTING = [
   "codeLens",
   "documentLinks",
   "generateQdoc",
+  "extractFunction",
   "workspaceIndex",
 ];
 

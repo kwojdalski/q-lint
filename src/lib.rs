@@ -284,6 +284,18 @@ pub fn shadowing(source: &str, name: &str, offsets: &[usize]) -> Option<usize> {
     semantics::navigate::shadowing(&v.code, source, name, offsets)
 }
 
+/// What Extract Function writes for a selection: see `extract`.
+pub use semantics::extract::{Extraction, fresh_name};
+
+/// The selection `from..to` of `source` made a lambda of its own - its
+/// trimmed range, the lambda's parameters (the locals of the lambda around
+/// it that it reads) and body, and where the new definition goes - or why
+/// that would change what the code means.
+pub fn extract(source: &str, from: usize, to: usize) -> Result<Extraction, String> {
+    let v = views(source);
+    semantics::extract::extract(&v.code, &v.comments, source, from, to)
+}
+
 /// A bracketed call around a cursor: the name called, at byte `at` for `len`
 /// bytes, and which argument the cursor is in, from 0.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

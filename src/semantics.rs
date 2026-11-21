@@ -2,6 +2,7 @@ use crate::{Finding, blank, boundary, matching, operand_ends, signature};
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 
+pub(crate) mod extract;
 pub(crate) mod help;
 pub(crate) mod navigate;
 

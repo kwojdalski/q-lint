@@ -568,6 +568,26 @@ description already there, and is not offered when the comment above has an
 `@param` or `@return`. `generateQdoc.enable: false` withdraws it and its kind
 from `codeActionKinds`.
 
+A code action of kind `refactor.extract.function`, **Extract function as
+extracted**, is offered over a selection - with no `context.only` and no
+diagnostics in the request, or with a `context.only` naming `refactor` or
+`refactor.extract`. It defines the selection as a lambda directly above the
+top-level statement it is in, so under the same `\d`, taking as parameters
+the parameters and locals of the lambda around it that the selection reads,
+and puts a call to it in the selection's place:
+`f:{[a;b] a+b*2}` with `b*2` selected becomes `extracted:{[b] b*2}` and
+`f:{[a;b] a+extracted[b]}`. The name is `extracted`, or `extracted2` and on,
+whichever the file does not already spell. Only a selection q reads as one
+value is rewritten: a single term (a name, a literal, a bracketed group,
+with its indexes) anywhere, or everything from a noun to the end of its
+expression - q reads right to left, so `y*z` in `x+y*z` is one, and `x+y`
+is not. A selection that assigns or returns, names `.z.s`, sits in a qSQL
+phrase or a signature, cuts a name, string, symbol or list of numbers, or
+reads more than 8 locals is refused; to a client with
+`codeAction.disabledSupport` that asked by kind, the action comes back
+disabled with the reason. `extractFunction.enable: false` withdraws it and
+its kind.
+
 Completion is off unless `completion.enable` asks for it, because an editor
 told that a server completes stops offering the words already in the buffer,
 and this server's list is narrower than that fallback in one way that matters:
@@ -731,6 +751,7 @@ Every key is optional, and these are the defaults:
  "callHierarchy": {"enable": true}, "graph": {"enable": true},
  "rename": {"enable": true}, "inlayHints": {"enable": true}, "codeLens": {"enable": false},
  "documentLinks": {"enable": true}, "generateQdoc": {"enable": true},
+ "extractFunction": {"enable": true},
  "workspaceIndex": {"enable": true, "exclude": []}}
 ```
 

@@ -462,9 +462,174 @@ fn generating_qdoc_can_be_turned_off() {
     let (mut server, reply) = Server::over(dir.path(), &[], client(), options);
     assert_eq!(
         reply["result"]["capabilities"]["codeActionProvider"]["codeActionKinds"],
-        json!(["quickfix", "source.fixAll.q-lint"])
+        json!([
+            "quickfix",
+            "source.fixAll.q-lint",
+            "refactor.extract.function"
+        ])
     );
     let uri = server.open(dir.path(), "a.q", "f:{[a] a}\n");
     let actions = actions_at(&mut server, &uri, 0, 0, None);
     assert_eq!(qdoc(&actions, &uri), None, "{actions:?}");
+}
+
+/// The actions offered over `start..end` (each `(line, character)`) of the
+/// open document `uri`, with `only` when given.
+fn actions_over(
+    server: &mut Server,
+    uri: &str,
+    start: (u64, u64),
+    end: (u64, u64),
+    only: Option<Value>,
+) -> Vec<Value> {
+    let mut context = json!({"diagnostics": []});
+    if let Some(only) = only {
+        context["only"] = only;
+    }
+    let reply = server.whole(
+        "textDocument/codeAction",
+        uri,
+        json!({"range": {"start": {"line": start.0, "character": start.1},
+                         "end": {"line": end.0, "character": end.1}},
+               "context": context}),
+    );
+    reply["result"].as_array().cloned().unwrap_or_default()
+}
+
+/// The text after applying the Extract Function action among `actions`.
+fn extracted(actions: &[Value], uri: &str, text: &str) -> Option<(String, String)> {
+    let action = actions
+        .iter()
+        .find(|a| a["kind"] == "refactor.extract.function" && a["edit"].is_object())?;
+    let lines: Vec<usize> = std::iter::once(0)
+        .chain(text.match_indices('\n').map(|(i, _)| i + 1))
+        .collect();
+    let offset = |p: &Value| {
+        lines[p["line"].as_u64().unwrap() as usize] + p["character"].as_u64().unwrap() as usize
+    };
+    let mut edits: Vec<(usize, usize, String)> = action["edit"]["changes"][uri]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| {
+            (
+                offset(&e["range"]["start"]),
+                offset(&e["range"]["end"]),
+                e["newText"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    // From the end, so each edit's positions are still the original's.
+    edits.sort_by_key(|e| std::cmp::Reverse(e.0));
+    let mut out = text.to_string();
+    for (start, end, new) in edits {
+        out.replace_range(start..end, &new);
+    }
+    Some((action["title"].as_str().unwrap().to_string(), out))
+}
+
+#[test]
+fn a_selection_is_extracted_into_a_lambda_of_the_locals_it_reads() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let text = "\\d .m\nmid:{[bid;ask;w]\n  w*(bid+ask)%2}\n";
+    let uri = server.open(dir.path(), "m.q", text);
+    // In the lightbulb's request, and in the Refactor menu's.
+    for only in [
+        None,
+        Some(json!(["refactor"])),
+        Some(json!(["refactor.extract"])),
+    ] {
+        let actions = actions_over(&mut server, &uri, (2, 4), (2, 15), only);
+        assert_eq!(
+            extracted(&actions, &uri, text),
+            Some((
+                "Extract function as extracted".to_string(),
+                "\\d .m\nextracted:{[bid;ask] (bid+ask)%2}\nmid:{[bid;ask;w]\n  w*extracted[bid;ask]}\n"
+                    .to_string()
+            )),
+            "{actions:?}"
+        );
+    }
+    // A cursor is no selection; quick fixes alone are not refactors.
+    let actions = actions_over(&mut server, &uri, (2, 4), (2, 4), None);
+    assert!(
+        actions
+            .iter()
+            .all(|a| a["kind"] != "refactor.extract.function"),
+        "{actions:?}"
+    );
+    let actions = actions_over(
+        &mut server,
+        &uri,
+        (2, 4),
+        (2, 15),
+        Some(json!(["quickfix"])),
+    );
+    assert_eq!(extracted(&actions, &uri, text), None);
+    // `w*(bid` is no value of the expression: nothing in the lightbulb.
+    let actions = actions_over(&mut server, &uri, (2, 2), (2, 8), None);
+    assert!(
+        actions
+            .iter()
+            .all(|a| a["kind"] != "refactor.extract.function"),
+        "{actions:?}"
+    );
+}
+
+#[test]
+fn a_refused_extraction_says_why_to_a_client_that_shows_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut capabilities = client();
+    capabilities["textDocument"]["codeAction"]["disabledSupport"] = json!(true);
+    let (mut server, _) = Server::over(dir.path(), &[], capabilities, Value::Null);
+    let uri = server.open(dir.path(), "a.q", "f:{[x;y;z] x+y*z}\n");
+    let actions = actions_over(
+        &mut server,
+        &uri,
+        (0, 11),
+        (0, 14),
+        Some(json!(["refactor.extract"])),
+    );
+    let action = actions
+        .iter()
+        .find(|a| a["kind"] == "refactor.extract.function")
+        .unwrap_or_else(|| panic!("{actions:?}"));
+    assert!(action["edit"].is_null(), "{action}");
+    assert!(
+        action["disabled"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("not a value"),
+        "{action}"
+    );
+    // The lightbulb is not told.
+    let actions = actions_over(&mut server, &uri, (0, 11), (0, 14), None);
+    assert!(
+        actions
+            .iter()
+            .all(|a| a["kind"] != "refactor.extract.function"),
+        "{actions:?}"
+    );
+}
+
+#[test]
+fn extract_function_can_be_turned_off() {
+    let dir = tempfile::tempdir().unwrap();
+    let options = json!({"extractFunction": {"enable": false}});
+    let (mut server, reply) = Server::over(dir.path(), &[], client(), options);
+    assert_eq!(
+        reply["result"]["capabilities"]["codeActionProvider"]["codeActionKinds"],
+        json!(["quickfix", "source.fixAll.q-lint", "refactor.rewrite"])
+    );
+    let text = "f:{[a;b] a+b*2}\n";
+    let uri = server.open(dir.path(), "a.q", text);
+    let actions = actions_over(
+        &mut server,
+        &uri,
+        (0, 11),
+        (0, 14),
+        Some(json!(["refactor"])),
+    );
+    assert_eq!(extracted(&actions, &uri, text), None, "{actions:?}");
 }

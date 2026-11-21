@@ -294,6 +294,12 @@
             "order": 29,
             "markdownDescription": "Offer **Generate qDoc for f** in the lightbulb and **Refactor...** menu inside a function a statement at column 0 defines: it writes a `/ @param` line for each parameter and a `/ @return` line directly above the definition, for the descriptions to be typed after. Not offered where the comment above already has an `@param` or `@return`. Off, q-lint offers no such action."
           },
+          "q-lint.extractFunction.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 29,
+            "markdownDescription": "Offer **Extract function** in the lightbulb and **Refactor...** menu over a selection: it becomes a lambda defined above the top-level statement it is in, taking the parameters and locals it reads, and the selection a call to it. Only a selection q reads as one value is rewritten; **Refactor...** says why another is refused. Off, q-lint offers no such action."
+          },
           "q-lint.workspaceIndex.enable": {
             "type": "boolean",
             "default": true,
