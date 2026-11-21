@@ -86,6 +86,8 @@ function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir
     "./notebook": { registerNotebooks: () => ({ charts: () => [] }) },
     "./explorerview": { ProcessExplorer: class { rows() { return []; } } },
     "./relate": { Relations: class { serverChanged() {} } },
+    "./funcsourceview": { FunctionSources: class { state() { return {}; } } },
+    "./infoview": { registerInfoViews: () => ({ monitor: () => [], hdb: () => [] }) },
   };
   const file = require.resolve("../out/extension.js");
   delete require.cache[file];
