@@ -56,7 +56,7 @@ import {
   withExtras,
   type Process,
 } from "./processes";
-import { COMMANDS, CONNECTED, VIEWS, readLive, readProcessSettings, readTerminal } from "./liveconfig";
+import { COMMANDS, CONNECTED, VIEWS, readLive, readProcessSettings, readTerminal, type QueryMode } from "./liveconfig";
 import { QConnection, QError, type Target } from "./qclient";
 import { SshTunnel, TUNNEL_COMMANDS, readTunnel } from "./tunnel";
 import { GATEWAY_COMMANDS, fileServerTypes, gatewayStatement, isGatewayCall, readGateway } from "./gateway";
@@ -520,7 +520,7 @@ export class Live {
     const terminals = new QTerminals(context);
     this.modes = new QueryModes(context);
     this.modes.setPager((label, offset, count) => this.pageHeld(label, offset, count));
-    this.modes.setRunner((code, label) => this.runDrilldown(code, label));
+    this.modes.setRunner((code, label) => this.runOnProcess(code, label));
     this.controls = new QueryControls(context, {
       activeLabel: () => this.activeLabel(),
       pick: async (title) => (await this.chosen(undefined, title, true))?.label,
@@ -2263,8 +2263,9 @@ export class Live {
   /// run (`watch`) asks nothing more, and its later ones (`watched`) are
   /// not recorded, and refresh the result in place. On a TorQ gateway the
   /// code goes through `.gw.syncexec` to `serverTypes` (#909); the guard
-  /// reads it as written.
-  async run(written: string, as?: "watch" | "watched", serverTypes?: string[]): Promise<void> {
+  /// reads it as written. `mode` shows the result as a grid or a chart
+  /// whatever q-lint.query.mode is: a data file opened in the grid (#962).
+  async run(written: string, as?: "watch" | "watched", serverTypes?: string[], mode?: QueryMode): Promise<void> {
     let ready = await this.ready();
     if (ready === undefined) {
       return;
@@ -2281,7 +2282,7 @@ export class Live {
     const { connection, process } = ready;
     const code = this.throughGateway(written, process, serverTypes);
     const configuration = workspace.getConfiguration("q-lint");
-    const settings = readLive((key, fallback) => configuration.get(key, fallback));
+    const settings = { ...readLive((key, fallback) => configuration.get(key, fallback)), ...(mode !== undefined ? { mode } : {}) };
     const controls = this.controls.settings();
     const unlimited = this.controls.unlimited;
     const { consoleSize, gridLimit } = limits(settings, unlimited);
@@ -2372,14 +2373,21 @@ export class Live {
     return readPage(await connection.call(PAGE, offset, count));
   }
 
-  /// Run a drill-down query on the process the result came from, as a
-  /// query from the editor is run, after asking when it is a production one.
-  private async runDrilldown(code: string, label: string): Promise<void> {
+  /// The result the panel shows, with the process and code it came from.
+  resultOnShow(): { process: string; code: string; payload: GridPayload } | undefined {
+    return this.modes.current();
+  }
+
+  /// Run a query on the process a result came from - a drill-down query
+  /// (#927), a wrangle step (#961), a cell edit (#964) - as a query from the
+  /// editor is run, read by the guard, after asking when it is a production
+  /// one (unless `askProduction` is false: the caller asked already).
+  async runOnProcess(code: string, label: string, options: { what?: string; mode?: QueryMode; askProduction?: boolean } = {}): Promise<void> {
     const process = this.processes().find((p) => p.label === label) ?? (this.active?.label === label ? this.active : undefined);
-    if (process !== undefined && isProduction(process)) {
+    if (process !== undefined && isProduction(process) && options.askProduction !== false) {
       const yes = "Run";
       const sure = await window.showWarningMessage(
-        `${process.label} is a production process (tagged ${process.tags.join(", ")}). Run this drill-down query there?\n\n${code}`,
+        `${process.label} is a production process (tagged ${process.tags.join(", ")}). Run this ${options.what ?? "drill-down query"} there?\n\n${code}`,
         { modal: true },
         yes,
       );
@@ -2389,14 +2397,14 @@ export class Live {
     }
     if (this.activeLabel() !== label) {
       if (this.connection?.isBusy) {
-        void window.showInformationMessage(`q-lint: a query is still running on ${this.active?.label}; the drill-down query goes to ${label}.`);
+        void window.showInformationMessage(`q-lint: a query is still running on ${this.active?.label}; the ${options.what ?? "drill-down query"} goes to ${label}.`);
         return;
       }
       if (!(await this.connectTo(label))) {
         return;
       }
     }
-    await this.run(code);
+    await this.run(code, undefined, undefined, options.mode);
   }
 
   /// Say a long query has ended, when the window is not focused: the user

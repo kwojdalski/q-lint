@@ -374,7 +374,7 @@ test("each result feature turned off: its command refuses, the page is sent noth
   assert.strictEqual(m.tree, undefined);
   assert.strictEqual(m.diff, undefined);
   assert.strictEqual(m.heatmap, false);
-  assert.deepStrictEqual(m.features, { statistics: false, heatmap: false, export: true, pivot: true, charts: true, drilldown: true });
+  assert.deepStrictEqual(m.features, { statistics: false, heatmap: false, export: true, pivot: true, charts: true, drilldown: true, wrangler: true, editCells: true });
   assert.strictEqual(m.history.length, 1);
   const { RESULT_VIEW } = require("../out/liveconfig.js");
   const features = { statistics: "statistics", tree: "tree", compare: "diff", heatmap: "heatmap", history: "history" };
@@ -399,7 +399,7 @@ test("each result feature turned off: its command refuses, the page is sent noth
   }
   const on = page.posted.at(-1);
   assert.deepStrictEqual(on.tree, tree);
-  assert.deepStrictEqual(on.features, { statistics: true, heatmap: true, export: true, pivot: true, charts: true, drilldown: true });
+  assert.deepStrictEqual(on.features, { statistics: true, heatmap: true, export: true, pivot: true, charts: true, drilldown: true, wrangler: true, editCells: true });
   assert.strictEqual(on.heatmap, true);
   assert.strictEqual(on.diff, undefined);
   assert.strictEqual(modes.wantsTree(), true);
@@ -582,7 +582,7 @@ test("export, paging, pivot, charts and drill-down turned off: each command refu
   modes.show({ ...result([1, 2], 5), held: true }, live());
   const page = fake.pages[0];
   const m = page.posted.at(-1);
-  assert.deepStrictEqual(m.features, { statistics: true, heatmap: true, export: false, pivot: false, charts: false, drilldown: false });
+  assert.deepStrictEqual(m.features, { statistics: true, heatmap: true, export: false, pivot: false, charts: false, drilldown: false, wrangler: true, editCells: true });
   assert.strictEqual(m.more, false);
   const { RESULT_VIEW } = require("../out/liveconfig.js");
   const features = { exportAs: "export", copyAs: "export", loadMore: "paging", pivot: "pivot", saveChart: "charts", drillDown: "drilldown" };
@@ -610,5 +610,5 @@ test("export, paging, pivot, charts and drill-down turned off: each command refu
   for (const f of fake.listeners.config) {
     f({ affectsConfiguration: (k) => k === "q-lint.results" || k === "q-lint" });
   }
-  assert.deepStrictEqual(page.posted.at(-1).features, { statistics: true, heatmap: true, export: true, pivot: true, charts: true, drilldown: true });
+  assert.deepStrictEqual(page.posted.at(-1).features, { statistics: true, heatmap: true, export: true, pivot: true, charts: true, drilldown: true, wrangler: true, editCells: true });
 });

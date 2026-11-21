@@ -220,9 +220,33 @@ test("a drill-down query (#927) on a guarded process goes through the guard; dec
   const { q, live } = await setUp(t, ["live"], { "processes.readOnlyGuard.tags": ["live"] });
   await live.connectTo("rdb");
   stub.picks.push(undefined);
-  await live.runDrilldown("delete from `trade where sym=`a", "rdb");
+  await live.runOnProcess("delete from `trade where sym=`a", "rdb");
   assert.deepStrictEqual(asked(), ["This code would change rdb. Run it anyway?"]);
   assert.deepStrictEqual(q.queries(), []);
-  await live.runDrilldown("select from trade where sym=`a", "rdb");
+  await live.runOnProcess("select from trade where sym=`a", "rdb");
   assert.deepStrictEqual(q.queries(), ["select from trade where sym=`a"]);
+});
+
+test("a cell edit (#964) and a CSV load statement (#963) go through the guard; declined, nothing is sent; a data file read (#962) is not asked about", async (t) => {
+  const { q, live } = await setUp(t, ["prod"]);
+  await live.connectTo("rdb");
+  const edit = "update px:(9.5) from `t where (sym=`b)";
+  stub.picks.push(undefined);
+  // As Edit Cell sends it: its own review was the production question.
+  await live.runOnProcess(edit, "rdb", { what: "cell edit", askProduction: false });
+  assert.deepStrictEqual(asked(), ["This code would change rdb. Run it anyway?"]);
+  assert.ok(!stub.messages.some(([, text]) => /production process/.test(text)));
+  assert.deepStrictEqual(q.queries(), []);
+  stub.picks.push("Run Anyway");
+  await live.runOnProcess(edit, "rdb", { what: "cell edit", askProduction: false });
+  assert.deepStrictEqual(q.queries(), [edit]);
+  const load = 'tr:("SF";enlist ",")0:`:/data/t.csv';
+  stub.picks.push(undefined);
+  await live.run(load);
+  assert.strictEqual(asked().length, 3);
+  assert.deepStrictEqual(q.queries(), [edit]);
+  // Reading a file into the grid changes nothing: sent unasked.
+  await live.run('("SF";enlist ",")0:`:/data/t.csv', undefined, undefined, "grid");
+  assert.strictEqual(asked().length, 3);
+  assert.deepStrictEqual(q.queries().at(-1), '("SF";enlist ",")0:`:/data/t.csv');
 });

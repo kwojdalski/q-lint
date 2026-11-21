@@ -487,15 +487,17 @@ process they reach), a notebook cell and **Run Notebook with Parameters**,
 **Redefine on Process** and hot reload on save (whose confirmation says so,
 since they always assign; hot reload asks at every save, with no
 **Reload on Every Save**) and a connect script, asked at each connect, and skipped, with the
-connection kept, when declined; also a result-grid drill-down query, a run
-from the Testing view (each test's definition), and a query to a TorQ
+connection kept, when declined; also a result-grid drill-down query, a
+Data Wrangler step, a cell edit, a data file opened in the grid and a CSV
+load statement, a run from the Testing view (each test's definition), and a query to a TorQ
 gateway, read as written - and a `.gw.syncexec` or `.gw.asyncexec` call,
 such as one rerun from the history, is read inside its strings. A guarded
 process holds no result for paging, since holding assigns `.qlint.held`,
 and streaming its table asks first, since `.u.sub` adds a subscriber. An agent's query cannot be asked about, so
 one that would change such a process is refused with why, and never offered
 to you. q-lint's own reads - the Process Explorer, Monitor, HDB browser,
-hovers and the heartbeat - define nothing and are not asked about. The
+table templates' and the schema diagram's `meta`, hovers and the
+heartbeat - define nothing and are not asked about. The
 guard reads the code's text: a function defined earlier that writes, or a
 string built at run time and evaluated, is not seen, so it guards against a
 slip, not a person - a process that must not change needs its own `.z.pg`.
@@ -796,9 +798,80 @@ holds one result, replaced by the next grid query while paging is on
 or in unwrapped mode. Turning paging off stops holding new results; one
 already held stays until the process restarts or `.qlint.held:()` frees it.
 
+**Data Wrangler.** **Wrangle Result...** (in the palette and on the q
+Results view's title bar), or **Wrangle Column...** on a column header's
+right-click menu, filters, sorts, renames, casts or drops, one step at a
+time, each recorded as q over the step before:
+
+| Step | q |
+| --- | --- |
+| Filter rows | `select from x where px>1` (also `<>`, `like`, `in`, `null`, `not null`) |
+| Sort | `` `px xasc x `` or `xdesc` |
+| Rename column | `` (enlist[`px]!enlist `price) xcol x `` |
+| Cast column | `update qty:"f"$qty from x`; a column of strings is parsed, `"J"$s`, or made symbols, `` `$s `` |
+| Drop column | `delete note from x` |
+
+After each step the steps, nested over the query the result came from, run
+on its process and show in the grid, and the next step goes on from that
+result. **Undo last step** and **Start over** run the query again without
+it, or without any. **Show steps as q** opens them in an editor as one
+statement to keep, a lambda run at once so it assigns nothing:
+
+```q
+{[]
+  w:select from trade;
+  w:select from w where px>1;
+  w:`px xdesc w;
+  w}[]
+```
+
+A step changes nothing on the process: each works on a value. So the query
+must be one expression - a script of several statements, an assignment or
+a system command is refused - and a column it names must be a plain q name.
+A step on a production process asks first, as a drill-down query does.
+
+**Edit Cell...**, on a grid cell's right-click menu, writes the update that
+sets it in the table the result came from: it asks for the table (guessed
+from a query like `select from trade where ...`) and the new value as q
+(the cell's own to start), then shows the statement:
+
+```q
+update px:(9.5) from `trade where (time~\:(2026.01.02D11:00:00.000000000)),(sym=`b),(px~\:(2f))
+```
+
+It is sent only on **Run** (**Open in Editor** opens it to change and run
+yourself), and the read-only guard reads it as any query, so a guarded
+process asks again. The rows are found by the edited row's values - a keyed
+result's keys, or else every column, compared with `~\:` so a null finds a
+null, and a symbol or enumeration with `=` - and every row of the table with
+those values is changed. It updates a table in memory; a splayed or
+partitioned table on disk is not changed by `update`.
+
+**Data files.** **Open Data File in Grid**, on a `.csv`, `.tsv`, `.psv`,
+`.txt` or `.json` file in the Explorer (or from the palette), loads it
+through the connected process and shows it in the grid, whatever the query
+mode. A delimited file is read with `0:` and a type string guessed from its
+first 1,000 rows (a long, a float, a date in `yyyy.mm.dd` or `yyyy-mm-dd`, a
+timestamp, a time, else a symbol or a string), the first line its header:
+`("SFJD";enlist ",")0:`:/data/trades.csv`. A JSON file is `.j.k` of its
+text, so an array of objects is a table of floats and strings. A process on
+this machine reads the file by its path; one on another host, or through an
+SSH tunnel, is sent the file's lines with the query instead, up to 256 KB.
+Parquet and Excel files are not read.
+
+**Load CSV into q...**, on a delimited file or from the palette, is the
+same guess as a wizard: a list of the columns with their types and a few
+values; pick one to change its type (any `0:` letter, or a space to skip
+it), or the delimiter, then **Done**, and name the table. The statement,
+`trades:("SFF D";enlist ",")0:`:/data/trades.csv`, opens in an editor, and
+is sent to the connected process only on **Run**, through the read-only
+guard, as it assigns a global. The process reads the file by its path, so it
+must run on this machine, or the path be changed in the editor first.
+
 Each of these - the history, Compare, Stats, the heatmap, the tree, export,
-paging, the pivot, the new charts and drill-down - has its own
-`q-lint.results.<feature>.enable` setting, on by default but for paging.
+paging, the pivot, the new charts, drill-down, the Data Wrangler and cell
+edits - has its own `q-lint.results.<feature>.enable` setting, on by
+default but for paging.
 Turned off, its button and command are gone (the command, run anyway, says
 which setting turns it back on), and a change applies at once, without a
 reload.
@@ -874,6 +947,37 @@ splayed table is loaded or measured, and the hover says so. With
 since it asks the process whenever the mouse rests on a name), hovering a
 table's name in a q editor shows the same, shorter, beside the language
 server's hover. Details are read once per refresh of the explorer.
+
+**Table templates.** **Table Templates...**, on a table's right-click menu
+in the Process Explorer, reads the table's `meta` and offers:
+- **Select first 100**: `select[100] from trade`, or for a partitioned
+  table the last partition's first rows, `select from quote where
+  date=last date, i<100`;
+- **meta**: `meta trade`;
+- **Count by date**: rows per partition, `select count i by date from
+  quote`, or per date of the first date or timestamp column, `select count
+  i by date:time.date from trade`;
+- **Insert template**: `` `trade insert ( `` with a typed null for each
+  column, enlisted, one per line with its name and type (and the table a
+  foreign key needs a key of), for an in-memory table.
+
+A read picked runs as a query, as **Preview** does; the insert template
+opens in an editor to fill in, and is never sent.
+
+**Schema diagram.** **Show Schema Diagram**, on the Process Explorer's title
+bar or in the palette, draws the connected process's tables - the root
+namespace's and those of the namespaces the explorer shows, up to 80 - as
+boxes with their columns and types (keys underlined, the first 40 columns),
+and an arrow from each foreign key column (enumerated over a keyed table)
+and each link column (dashed) to the table it points into, all read from
+`meta` in one call that defines nothing. The panel runs no script. **Save
+Schema Diagram as SVG** and **Copy Schema as Mermaid** (an `erDiagram` for
+Markdown) are on its title bar.
+
+Each has its own setting, `q-lint.processExplorer.tableTemplates.enable` and
+`q-lint.processExplorer.schemaDiagram.enable`, on by default; off, its
+commands are hidden and refuse, an open diagram closes, and nothing is
+read.
 
 **Live values.** With `q-lint.liveValueHover.enable` on (off by default,
 since it asks the process whenever the mouse rests on a global), hovering a
@@ -1346,6 +1450,8 @@ nothing.
 | `q-lint.results.charts.enable` | `true` | Offer area, step and candle charts, a right axis, **Save PNG**, **Save SVG** and **Save Result Chart as Image**. | - |
 | `q-lint.results.drilldown.enable` | `true` | Offer a grid cell's drill-down queries, on a double-click or **Drill Down from Cell**. | - |
 | `q-lint.results.drilldownTemplates` | `[]` | The drill-down queries: `label`, `query` with `{{value}}`, `{{column}}` and `{{row.name}}`, and the `columns` each is offered for. | - |
+| `q-lint.results.wrangler.enable` | `true` | Offer the Data Wrangler: **Wrangle Result...** and a column header's **Wrangle Column...**, each step recorded as q and run over the result's query. | - |
+| `q-lint.results.editCells.enable` | `true` | Offer a cell's **Edit Cell...**: the `update` that sets it, shown and sent only on **Run**, through the read-only guard. | - |
 | `q-lint.query.progress.enable` | `true` | Count a running query's time in the status bar, and notify a long one's end. | - |
 | `q-lint.query.notifyAfter` | `10` | Seconds a query must run for its end to be notified while the window is not focused; `0` never. | - |
 | `q-lint.query.placeholders.enable` | `true` | Ask for a value for each `{{name}}` in the code a query sends, and put it in place. | - |
@@ -1362,6 +1468,10 @@ nothing.
 | `q-lint.processExplorer.findCallers.enable` | `true` | Find Callers in Process. | - |
 | `q-lint.processExplorer.tableHover.enable` | `true` | A table's details in its Process Explorer tooltip. | - |
 | `q-lint.processExplorer.editorTableHover.enable` | `false` | A table's details on hovering its name in a q editor; asks the process. | - |
+| `q-lint.processExplorer.tableTemplates.enable` | `true` | **Table Templates...** on a Process Explorer table: select first 100, `meta`, count by date, an insert template. | - |
+| `q-lint.processExplorer.schemaDiagram.enable` | `true` | **Show Schema Diagram**: the process's tables with their foreign keys and link columns. Off, an open diagram closes. | - |
+| `q-lint.dataFiles.open.enable` | `true` | **Open Data File in Grid** on a CSV, TSV or JSON file: loaded through q and shown in the grid. | - |
+| `q-lint.dataFiles.loadWizard.enable` | `true` | **Load CSV into q...**: adjust the guessed column types and get the `0:` load statement, sent only on **Run**. | - |
 | `q-lint.processMonitor.enable` | `true` | The Process Monitor view. | - |
 | `q-lint.processMonitor.refreshInterval` | `0` | Seconds between the Monitor's reads while it is shown; `0` none. | - |
 | `q-lint.hdbBrowser.enable` | `true` | The HDB Browser view. | - |

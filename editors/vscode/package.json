@@ -498,6 +498,18 @@
             },
             "markdownDescription": "Follow-up queries a grid cell offers. In `query`, `{{value}}` is the cell's value as a q literal (`` `AAPL ``, `2024.01.02`, `0Nj`), `{{column}}` its column's name as a symbol, and `{{row.name}}` the value of column `name` in the same row. For example `{\"label\": \"Trades\", \"query\": \"select from trade where date={{row.date}}, sym={{value}}\", \"columns\": [\"sym\"]}`."
           },
+          "q-lint.results.wrangler.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 129,
+            "markdownDescription": "Offer the **Data Wrangler**: **q-lint: Wrangle Result...**, and **Wrangle Column...** on a grid column header's menu. Filter, sort, rename, cast and drop, each step recorded as q (`select ... where`, `xasc`, `xcol`, `update`, `delete`) and run over the result's query on its process, in the grid; **Show steps as q** opens them in an editor. Only a result of a single expression can be wrangled."
+          },
+          "q-lint.results.editCells.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 130,
+            "markdownDescription": "Offer **Edit Cell...** on a grid cell's menu: it writes the `update` that sets the cell in the table the result came from (`` update c:v from `t where ... ``), shows it, and sends it only when you choose **Run**, through the read-only guard. Off, the menu item is hidden and nothing is written or sent."
+          },
           "q-lint.query.gridHeatmap": {
             "type": "boolean",
             "default": false,
@@ -604,6 +616,30 @@
             "default": false,
             "order": 127,
             "markdownDescription": "A hover on a table's name in a q editor asks the connected process for its `meta`, rows and memory. Off by default: it queries the process whenever the mouse rests on a table's name."
+          },
+          "q-lint.processExplorer.tableTemplates.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 128,
+            "markdownDescription": "**Table Templates...** on a table of the **Process Explorer**: Select first 100, `meta`, count by date (run as a query), and an insert template of typed nulls (opened in an editor, never sent). Off, its command is hidden and sends nothing."
+          },
+          "q-lint.processExplorer.schemaDiagram.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 129,
+            "markdownDescription": "**Show Schema Diagram**: the connected process's tables drawn with their columns, and an arrow for each foreign key and link column. It can be saved as SVG or copied as a Mermaid diagram. Off, its commands are hidden, an open diagram is closed, and nothing is read."
+          },
+          "q-lint.dataFiles.open.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 131,
+            "markdownDescription": "**Open Data File in Grid** on a `.csv`, `.tsv`, `.psv`, `.txt` or `.json` file in the Explorer: loaded through q (`0:` with a type string guessed from the first 1,000 rows, or `.j.k`) and shown in the result grid. A process on this machine reads the file by its path; one elsewhere is sent the file's lines, up to 256 KB. Off, its command is hidden and sends nothing."
+          },
+          "q-lint.dataFiles.loadWizard.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 132,
+            "markdownDescription": "**Load CSV into q...**: preview a delimited file's columns with their guessed types, change any or skip it, and get the `(\"SFJ\";enlist\",\")0:` load statement. It opens in an editor, and is sent only when you choose **Run**, through the read-only guard. Off, its command is hidden and sends nothing."
           },
           "q-lint.processMonitor.enable": {
             "type": "boolean",
@@ -1210,6 +1246,60 @@
         "icon": "$(search)"
       },
       {
+        "command": "q-lint.wrangleResult",
+        "title": "Wrangle Result...",
+        "category": "q-lint",
+        "icon": "$(wand)"
+      },
+      {
+        "command": "q-lint.wrangleResultColumn",
+        "title": "Wrangle Column...",
+        "category": "q-lint",
+        "icon": "$(wand)"
+      },
+      {
+        "command": "q-lint.editResultCell",
+        "title": "Edit Cell...",
+        "category": "q-lint",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "q-lint.openDataFile",
+        "title": "Open Data File in Grid",
+        "category": "q-lint",
+        "icon": "$(table)"
+      },
+      {
+        "command": "q-lint.loadCsvWizard",
+        "title": "Load CSV into q...",
+        "category": "q-lint",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "q-lint.tableTemplates",
+        "title": "Table Templates...",
+        "category": "q-lint",
+        "icon": "$(symbol-snippet)"
+      },
+      {
+        "command": "q-lint.showSchemaDiagram",
+        "title": "Show Schema Diagram",
+        "category": "q-lint",
+        "icon": "$(type-hierarchy)"
+      },
+      {
+        "command": "q-lint.saveSchemaDiagram",
+        "title": "Save Schema Diagram as SVG",
+        "category": "q-lint",
+        "icon": "$(save)"
+      },
+      {
+        "command": "q-lint.copySchemaMermaid",
+        "title": "Copy Schema as Mermaid",
+        "category": "q-lint",
+        "icon": "$(copy)"
+      },
+      {
         "command": "q-lint.runInTerminal",
         "title": "Run Code from Terminal",
         "category": "q-lint",
@@ -1615,6 +1705,14 @@
         {
           "command": "q-lint.drillDownResultCell",
           "when": "(webviewId == 'q-lint.result' || webviewId == 'q-lint.results') && webviewSection == 'cell' && config.q-lint.results.drilldown.enable"
+        },
+        {
+          "command": "q-lint.editResultCell",
+          "when": "(webviewId == 'q-lint.result' || webviewId == 'q-lint.results') && webviewSection == 'cell' && config.q-lint.results.editCells.enable"
+        },
+        {
+          "command": "q-lint.wrangleResultColumn",
+          "when": "(webviewId == 'q-lint.result' || webviewId == 'q-lint.results') && webviewSection == 'column' && config.q-lint.results.wrangler.enable"
         }
       ],
       "view/title": [
@@ -1742,6 +1840,16 @@
           "command": "q-lint.checkDrift",
           "when": "view == q-lint.processExplorer && config.q-lint.processExplorer.driftDetection.enable",
           "group": "2_drift@1"
+        },
+        {
+          "command": "q-lint.showSchemaDiagram",
+          "when": "view == q-lint.processExplorer && q-lint.connected && config.q-lint.processExplorer.schemaDiagram.enable",
+          "group": "navigation@3"
+        },
+        {
+          "command": "q-lint.wrangleResult",
+          "when": "view == q-lint.results && q-lint.result.shown && config.q-lint.results.wrangler.enable",
+          "group": "navigation"
         }
       ],
       "view/item/context": [
@@ -1979,6 +2087,11 @@
           "command": "q-lint.addToSharedProcesses",
           "when": "view == q-lint.processes && viewItem =~ /^process/ && workspaceFolderCount > 0 && config.q-lint.processes.shared.enable",
           "group": "2_edit@7"
+        },
+        {
+          "command": "q-lint.tableTemplates",
+          "when": "view == q-lint.processExplorer && viewItem == explorer.table && config.q-lint.processExplorer.tableTemplates.enable",
+          "group": "1_preview@2"
         }
       ],
       "editor/title/run": [
@@ -2054,6 +2167,16 @@
         {
           "command": "q-lint.importIpynb",
           "when": "resourceExtname =~ /^\\.ipynb$/i && config.q-lint.notebook.export.enable",
+          "group": "q-lint"
+        },
+        {
+          "command": "q-lint.openDataFile",
+          "when": "resourceExtname =~ /^\\.(csv|tsv|tab|psv|txt|json)$/i && config.q-lint.dataFiles.open.enable",
+          "group": "q-lint"
+        },
+        {
+          "command": "q-lint.loadCsvWizard",
+          "when": "resourceExtname =~ /^\\.(csv|tsv|tab|psv|txt)$/i && config.q-lint.dataFiles.loadWizard.enable",
           "group": "q-lint"
         }
       ],
@@ -2310,6 +2433,42 @@
         {
           "command": "q-lint.draftQsql",
           "when": "config.q-lint.chat.englishToQsql.enable"
+        },
+        {
+          "command": "q-lint.wrangleResult",
+          "when": "q-lint.result.shown && config.q-lint.results.wrangler.enable"
+        },
+        {
+          "command": "q-lint.wrangleResultColumn",
+          "when": "false"
+        },
+        {
+          "command": "q-lint.editResultCell",
+          "when": "false"
+        },
+        {
+          "command": "q-lint.openDataFile",
+          "when": "config.q-lint.dataFiles.open.enable"
+        },
+        {
+          "command": "q-lint.loadCsvWizard",
+          "when": "config.q-lint.dataFiles.loadWizard.enable"
+        },
+        {
+          "command": "q-lint.tableTemplates",
+          "when": "false"
+        },
+        {
+          "command": "q-lint.showSchemaDiagram",
+          "when": "q-lint.connected && config.q-lint.processExplorer.schemaDiagram.enable"
+        },
+        {
+          "command": "q-lint.saveSchemaDiagram",
+          "when": "activeWebviewPanelId == 'q-lint.schema' && config.q-lint.processExplorer.schemaDiagram.enable"
+        },
+        {
+          "command": "q-lint.copySchemaMermaid",
+          "when": "activeWebviewPanelId == 'q-lint.schema' && config.q-lint.processExplorer.schemaDiagram.enable"
         }
       ],
       "editor/title": [
@@ -2342,6 +2501,16 @@
         {
           "command": "q-lint.runNotebookWithParameters",
           "when": "config.q-lint.notebook.parameters.enable"
+        },
+        {
+          "command": "q-lint.saveSchemaDiagram",
+          "when": "activeWebviewPanelId == 'q-lint.schema' && config.q-lint.processExplorer.schemaDiagram.enable",
+          "group": "navigation@1"
+        },
+        {
+          "command": "q-lint.copySchemaMermaid",
+          "when": "activeWebviewPanelId == 'q-lint.schema' && config.q-lint.processExplorer.schemaDiagram.enable",
+          "group": "navigation@2"
         }
       ]
     },
