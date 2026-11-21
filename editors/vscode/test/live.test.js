@@ -41,6 +41,10 @@ const { NOTEBOOK } = require("../out/qnb.js");
 const { needsRestart } = require("../out/settings.js");
 const { AGENT } = require("../out/agent.js");
 const { CONTROL_COMMANDS, readControls } = require("../out/querycontrols.js");
+const { readProgress } = require("../out/progress.js");
+const { readPlaceholders } = require("../out/placeholders.js");
+const { HISTORY_COMMANDS, readHistorySearch } = require("../out/historyfilter.js");
+const { CONNECT_SCRIPT_COMMANDS } = require("../out/connectscript.js");
 const { ONBOARDING } = require("../out/onboarding.js");
 const { PARAM_CACHE } = require("../out/paramcache.js");
 
@@ -261,6 +265,8 @@ test("package.json declares exactly the commands the extension registers", () =>
   const registered = [
     ...Object.values(COMMANDS),
     ...Object.values(CONTROL_COMMANDS),
+    ...Object.values(HISTORY_COMMANDS),
+    ...Object.values(CONNECT_SCRIPT_COMMANDS),
     ...Object.values(PARAM_CACHE),
     ...Object.values(DISCOVERY_COMMANDS),
     ...Object.values(EXPLORER).filter((id) => id !== EXPLORER.view),
@@ -362,6 +368,9 @@ test("every query setting is read, with the default package.json declares, and n
   const explorer = readExplorer(get);
   const controls = readControls(get);
   const resultView = readResultView(get);
+  const progress = readProgress(get);
+  const placeholders = readPlaceholders(get);
+  const historySearch = readHistorySearch(get);
   for (const [key, spec] of Object.entries(declared)) {
     const short = key.replace(/^q-lint\./, "");
     assert.ok(read.has(short), `${key} is declared but never read`);
@@ -395,6 +404,9 @@ test("every query setting is read, with the default package.json declares, and n
   assert.strictEqual(view({ "results.history.enable": false, "query.resultHistory": 20 }).history, 1);
   assert.strictEqual(view({ "results.heatmap.enable": false, "query.gridHeatmap": true }).heatmap, false);
   assert.strictEqual(view({ "results.tree.enable": false }).enable.tree, false);
+  assert.deepStrictEqual(progress, { enabled: true, notifyAfter: 10 });
+  assert.deepStrictEqual(historySearch, { enabled: true });
+  assert.deepStrictEqual(placeholders, { enabled: true });
   assert.deepStrictEqual(explorer, { excludedNamespaces: ["q", "Q", "h", "j", "o", "s"], previewLimit: 5, autoRefresh: false });
   // A size that is not one falls back to the default.
   assert.deepStrictEqual(readLive((key, fallback) => (key === "output.consoleSize" ? "big" : fallback)).consoleSize, [50, 160]);

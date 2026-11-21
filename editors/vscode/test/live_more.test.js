@@ -105,7 +105,7 @@ async function setUp(t, processes) {
     context,
     live,
     status: statusItems.find((s) => s.id === "q-lint.connection"),
-    history: providers.get("q-lint.queryHistory"),
+    history: providers.get("q-lint.queryHistory") ?? stub.trees.find((v) => v.id === "q-lint.queryHistory")?.options.treeDataProvider,
   };
 }
 
