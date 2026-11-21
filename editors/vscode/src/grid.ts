@@ -16,7 +16,9 @@
 //   names  the column names
 //   types  each column's q type
 //   cells  each column as q prints it in a table: `string` of a simple
-//          column, `-3!` of each item of any other (cut at 200 characters)
+//          column, `-3!` of each item of any other (cut at 200 characters).
+//          `-3!` stops at the process's `\c` width, so a string item is
+//          written here, each character escaped as `-3!` escapes it
 //   raw    the column itself, made its underlying number - `"j"$` of a
 //          timestamp, `"i"$` of a date - for the numeric, temporal and guid
 //          types; `()` for the rest
@@ -49,6 +51,7 @@ export const GRID = [
   " $[r 0;",
   "   `ok`type`text`grid!(1b;type r 1;.Q.S[\"j\"$size;0j] r 1;.[{[v;n]",
   "     k:$[99h<>type v;0;98h=type key v;count cols key v;1];",
+  "     e:{1_-1_-3!x} each \"c\"$til 256;",
   "     t:$[98h=type v;v;",
   "       99h=type v;$[98h<>type key v;flip`key`value!(key v;value v);",
   "         98h=type value v;0!v;",
@@ -60,7 +63,8 @@ export const GRID = [
   "        t:$[1b~.Q.qp t;[j:$[n<0;(m+n)|0;0]+til m&abs n;$[count j;.Q.ind[t;j];select from t where i<0]];n sublist t];",
   "        c:$[count[cols t]=count distinct cols t;t cols t;value flip t];",
   "        `count`keys`names`types`cells`raw`rank!(\"f\"$m;\"i\"$k;cols t;type each c;",
-  "          {$[type[x] within 1 76h;string x;{$[200<count x;(197#x),\"...\";x]} each -3!'x]} each c;",
+  "          {[e;x]$[type[x] within 1 76h;string x;{$[200<count x;(197#x),\"...\";x]} each",
+  "            {[e;x]$[10h=type x;$[1=count x;\",\";\"\"],\"\\\"\",raze[e\"i\"$200 sublist x],\"\\\"\";-3!x]}[e] each x]}[e] each c;",
   "          {[c]u:type c;$[u in 12 16h;\"j\"$c;u in 13 14 17 18 19h;\"i\"$c;u=15h;\"f\"$c;u in 2 5 6 7 8 9h;c;()]} each c;",
   "          {@[{i:iasc x;\"i\"$@[count[x]#0;i;:;-1+sums differ x i]};x;{[e]()}]} each c)]]};",
   "     (r 1;\"j\"$limit);{[e]e}]);",

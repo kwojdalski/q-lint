@@ -60,7 +60,7 @@ async function startQ(source) {
 const SERVER = (dir) => `
 {[d] .Q.dd[hsym \`$"${dir}/hdb";d,\`p\`] set .Q.en[hsym \`$"${dir}/hdb"] ([] sym:\`a\`b\`c; px:1 2 3f)} each 2026.01.01 2026.01.02;
 \\l ${dir}/hdb
-strs:([] s:(150#"a";"b\\"c\\n";"caf\\303\\251";enlist "x";""))
+strs:([] s:(250#"a";"b\\"c\\n";"caf\\303\\251";enlist "x";""))
 `;
 
 test("the grid lambda against a real q process", { skip }, async (t) => {
@@ -80,5 +80,15 @@ test("the grid lambda against a real q process", { skip }, async (t) => {
     assert.deepStrictEqual(last.grid.cells[1], ["b", "c"]);
     const all = await connection.queryGrid(statements("p"), SIZE, Infinity);
     assert.strictEqual(all.grid.cells[0].length, 6);
+  });
+
+  await t.test("a string column's cells are not cut at the process's console width", async () => {
+    const answer = await connection.queryGrid(statements("strs"), SIZE, 10);
+    const cells = answer.grid.cells[0];
+    // Cut at 200 characters, as the cell's text is, not at \\c's 80.
+    assert.strictEqual(cells[0], `"${"a".repeat(196)}...`);
+    // Escaped as q writes them, one character with its comma.
+    const own = (await connection.query(statements('-3!\'1_strs`s'), [25, 2000])).text.join("");
+    assert.deepStrictEqual(cells.slice(1), ['"b\\"c\\n"', '"caf\\303\\251"', ',"x"', '""'], own);
   });
 });
