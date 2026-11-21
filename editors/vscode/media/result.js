@@ -200,6 +200,8 @@
 
   let body = null;
   let scroller = null;
+  /// What paint() last drew: the rows (that list) and their span.
+  let painted = null;
 
   function drawGrid() {
     const grid = result.grid;
@@ -253,6 +255,7 @@
     });
     head.append(names, filters);
     body = el("tbody");
+    painted = null;
     table.append(cols, head, body);
     scroller.append(table);
     gridView.append(scroller);
@@ -270,6 +273,12 @@
     const at = span(scroller.scrollTop, scroller.clientHeight || 600, rows.length);
     const start = at.start;
     const end = at.end;
+    // The same rows over the same spacers: leave them be, so a selection
+    // made in them, to copy, is not lost to a scroll.
+    if (painted && painted.rows === rows && painted.start === start && painted.end === end && painted.before === at.before && painted.after === at.after) {
+      return;
+    }
+    painted = { rows: rows, start: start, end: end, before: at.before, after: at.after };
     const spacer = function (px) {
       const tr = el("tr", "spacer");
       const td = el("td");
