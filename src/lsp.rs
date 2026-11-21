@@ -632,6 +632,10 @@ struct Options {
     graph: bool,
     /// Answer inlay hints: parameter names at a call's arguments.
     inlay_hints: bool,
+    /// Answer code lenses: Run above a function's definition. Off unless
+    /// asked for, since the lens runs a command only an editor that
+    /// registers it has (`q-lint.runDefinition`, the VS Code extension's).
+    code_lens: bool,
     /// A diagnostic severity by code or prefix; the longest that names a
     /// code decides.
     severity: Vec<(String, i64)>,
@@ -652,6 +656,7 @@ impl Default for Options {
             call_hierarchy: true,
             graph: true,
             inlay_hints: true,
+            code_lens: false,
             severity: vec![],
         }
     }
@@ -684,6 +689,7 @@ impl Options {
                         "callHierarchy",
                         "graph",
                         "inlayHints",
+                        "codeLens",
                     ]
                     .contains(&key.as_str())
                         && !value.is_object()
@@ -715,6 +721,7 @@ impl Options {
         options.call_hierarchy = flag("/callHierarchy/enable", true);
         options.graph = flag("/graph/enable", true);
         options.inlay_hints = flag("/inlayHints/enable", true);
+        options.code_lens = flag("/codeLens/enable", false);
         match init.pointer("/lint/run") {
             None | Some(Value::Null) => {}
             Some(v) if v == "onType" => {}
@@ -1028,7 +1035,11 @@ pub fn serve(
                 help_client = help::Client::read(&params);
                 help::announce(&mut result["capabilities"], opts.help, opts.completion);
                 relate::announce(&mut result["capabilities"], opts.call_hierarchy, opts.graph);
-                annotate::announce(&mut result["capabilities"], opts.inlay_hints);
+                annotate::announce(
+                    &mut result["capabilities"],
+                    opts.inlay_hints,
+                    opts.code_lens,
+                );
                 send(writer, json!({"id": id, "result": result}))?;
                 initialized = true;
             }
@@ -1099,6 +1110,7 @@ pub fn serve(
                 | "textDocument/completion"
                 | "textDocument/prepareCallHierarchy"
                 | "textDocument/inlayHint"
+                | "textDocument/codeLens"
                 | "q-lint/graph",
                 id,
             ) if !params["textDocument"]["uri"].is_string() => {
@@ -1285,10 +1297,13 @@ pub fn serve(
                     Err(panic) => send(writer, internal_error(id, &panic))?,
                 }
             }
-            ("textDocument/inlayHint", Some(id)) => {
+            ("textDocument/inlayHint" | "textDocument/codeLens", Some(id)) => {
                 // Asked of a server that did not announce it, a request is
                 // answered with nothing rather than refused.
-                let on = opts.inlay_hints;
+                let on = match method.as_str() {
+                    "textDocument/codeLens" => opts.code_lens,
+                    _ => opts.inlay_hints,
+                };
                 let answer = guarded(|| {
                     if !on {
                         return Value::Null;

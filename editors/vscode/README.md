@@ -228,6 +228,16 @@ changed.
   next occurrence" and Run and Debug view, and a `ctrl+alt` key is AltGr on
   Windows, which types `ę`, `€` or `@` on many layouts.
 
+- **Run** and **Run test**, code lenses: **Run** above each function a
+  statement at column 0 defines sends that statement, continuation lines
+  and all; **Run test**, above a function named `test_*`, sends it and then
+  calls it with no argument. A definition under `\d .ns` is sent between
+  `\d .ns` and `\d .`, so its body reads names as it does in the file, and
+  a test there is called by its full name, `.ns.test_x[]` - which leaves
+  the process at the root context afterwards. Either goes to the process
+  the file is bound to, as the commands above do, and lands in the history.
+  `q-lint.codeLens.enable` turns them off.
+
 The code is cut into statements by q's own script rules: a line starting
 with a space or tab continues the one above, `/` lines and block comments
 are skipped, as is a first line starting `#!`, and a `\` line is a system
@@ -591,6 +601,7 @@ q-pro column names the setting of [q-pro](https://marketplace.visualstudio.com/i
 | `q-lint.callHierarchy.enable` | `true` | Offer the call hierarchy of a global function. | - |
 | `q-lint.graph.enable` | `true` | Offer the **q Dependencies** view and **q-lint: List Affected Tests**. Off: the view is hidden and the server answers neither. | - |
 | `q-lint.inlayHints.enable` | `true` | Show parameter names at the arguments of a call to a workspace function. | - |
+| `q-lint.codeLens.enable` | `true` | Show **Run** above each top-level function definition and **Run test** above a `test_*` one. | - |
 | `q-lint.workspaceIndex.enable` | `true` | Read every workspace `.q` file at startup for the names it defines, up to 20,000 files or 500,000 directory entries. Off: only open files. | - |
 | `q-lint.workspaceIndex.exclude` | `[]` | Globs, relative to the workspace folder, the index does not read: `["vendor/**"]`. | `q-lang-server.sourceFiles.ignoreGlob` |
 | `q-lint.trace.server` | `off` | Log client-server traffic: `off`, `messages`, `verbose`. | `q-lang-server.trace.server` |

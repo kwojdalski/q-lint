@@ -146,6 +146,15 @@ fn client() -> Value {
         {"codeActionKind": {"valueSet": ["quickfix", "refactor"]}}}}})
 }
 
+/// A range as `(line, start character, end character)`; no name spans lines.
+fn span(range: &Value) -> (u64, u64, u64) {
+    (
+        range["start"]["line"].as_u64().unwrap(),
+        range["start"]["character"].as_u64().unwrap(),
+        range["end"]["character"].as_u64().unwrap(),
+    )
+}
+
 /// The whole of a short document, as an LSP range.
 fn everything() -> Value {
     json!({"range": {"start": {"line": 0, "character": 0}, "end": {"line": 99, "character": 0}}})
@@ -228,5 +237,77 @@ fn inlay_hints_are_announced_and_can_be_turned_off() {
     let main = "t:.lib.add[1;2]\n";
     let uri = server.open(dir.path(), "main.q", main);
     let reply = server.whole("textDocument/inlayHint", &uri, everything());
+    assert_eq!(reply["result"], Value::Null, "{reply}");
+}
+
+/// Each lens as `(line, title, the code it runs)`, after checking it runs
+/// the client's command on the document.
+fn lenses(reply: &Value, uri: &str) -> Vec<(u64, String, String)> {
+    reply["result"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a list of lenses, not {reply}"))
+        .iter()
+        .map(|l| {
+            let command = &l["command"];
+            assert_eq!(command["command"], "q-lint.runDefinition", "{l}");
+            assert_eq!(command["arguments"][1], uri, "{l}");
+            (
+                span(&l["range"]).0,
+                command["title"].as_str().unwrap().to_string(),
+                command["arguments"][0].as_str().unwrap().to_string(),
+            )
+        })
+        .collect()
+}
+
+fn lens(line: u64, title: &str, code: &str) -> (u64, String, String) {
+    (line, title.to_string(), code.to_string())
+}
+
+#[test]
+fn a_top_level_function_has_a_run_lens_and_a_test_a_run_test_lens_too() {
+    let dir = tempfile::tempdir().unwrap();
+    let options = json!({"codeLens": {"enable": true}});
+    let (mut server, reply) = Server::over(dir.path(), &[], client(), options);
+    assert_eq!(
+        reply["result"]["capabilities"]["codeLensProvider"],
+        json!({"resolveProvider": false})
+    );
+    let text = "add:{[a;b]\n  a+b}\nlimit:10\ntest_add:{[] add[1;2]}\n\
+                outer:{inner::{x}; 1}\n\\d .qt.math\ntest_mul:{[] 2*3}\nhelp:{x}\n\\d .\n\
+                .ns.f:{x}\n";
+    let uri = server.open(dir.path(), "suite.q", text);
+    let reply = server.whole("textDocument/codeLens", &uri, json!({}));
+    assert_eq!(
+        lenses(&reply, &uri),
+        [
+            // The whole statement, its continuation line too.
+            lens(0, "Run", "add:{[a;b]\n  a+b}"),
+            // Before the file's first `\d`: run and called where it lands.
+            lens(3, "Run", "test_add:{[] add[1;2]}"),
+            lens(3, "Run test", "test_add:{[] add[1;2]}\ntest_add[]"),
+            // A function assigned inside another is no lens of its own.
+            lens(4, "Run", "outer:{inner::{x}; 1}"),
+            // Under `\d .qt.math`: sent under it, and called by its full name.
+            lens(6, "Run", "\\d .qt.math\ntest_mul:{[] 2*3}\n\\d ."),
+            lens(
+                6,
+                "Run test",
+                "\\d .qt.math\ntest_mul:{[] 2*3}\n\\d .\n.qt.math.test_mul[]"
+            ),
+            lens(7, "Run", "\\d .qt.math\nhelp:{x}\n\\d ."),
+            lens(9, "Run", ".ns.f:{x}"),
+        ],
+        "{reply}"
+    );
+}
+
+#[test]
+fn code_lenses_are_off_unless_asked_for() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut server, reply) = Server::over(dir.path(), &[], client(), Value::Null);
+    assert!(reply["result"]["capabilities"]["codeLensProvider"].is_null());
+    let uri = server.open(dir.path(), "a.q", "f:{x}\n");
+    let reply = server.whole("textDocument/codeLens", &uri, json!({}));
     assert_eq!(reply["result"], Value::Null, "{reply}");
 }

@@ -545,6 +545,16 @@ to whichever ran last. An empty slot of a projection, an argument past the
 last parameter and one spelled as the parameter itself get none.
 `inlayHints.enable: false` turns them off.
 
+`textDocument/codeLens`, when `codeLens.enable` asks for it, puts a **Run**
+lens on the name of each function a statement at column 0 defines, and a
+**Run test** lens too when its name starts `test_`. Each runs the command
+`q-lint.runDefinition` with two arguments: the code to send and the
+document's URI. Run's code is the statement, wrapped in `\d .ns` and `\d .`
+when it is written under `\d .ns`; Run test's is that, then a call of the
+function by its full name with no argument (`.ns.test_x[]`). It is off by
+default because only a client that registers that command - the VS Code
+extension, which sends the code to the connected q process - can run it.
+
 Completion is off unless `completion.enable` asks for it, because an editor
 told that a server completes stops offering the words already in the buffer,
 and this server's list is narrower than that fallback in one way that matters:
@@ -706,7 +716,7 @@ Every key is optional, and these are the defaults:
  "semanticTokens": {"enable": true}, "navigation": {"enable": true},
  "help": {"enable": true}, "completion": {"enable": false},
  "callHierarchy": {"enable": true}, "graph": {"enable": true},
- "inlayHints": {"enable": true},
+ "inlayHints": {"enable": true}, "codeLens": {"enable": false},
  "workspaceIndex": {"enable": true, "exclude": []}}
 ```
 
@@ -722,7 +732,8 @@ language server already answers those requests. `completion.enable` is the
 one that starts off; `true` announces completion.
 `callHierarchy.enable` set to `false` leaves the call hierarchy unannounced,
 and `graph.enable` does that for `q-lint/graph` and `q-lint/affectedTests`,
-which then answer `null`; `inlayHints.enable` does it for inlay hints.
+which then answer `null`; `inlayHints.enable` does it for inlay hints, and `codeLens.enable: true`
+announces the Run lenses.
 `workspaceIndex.exclude`
 holds globs relative to each workspace folder that the index does not read.
 The index stops after 20,000 `.q` files or 500,000 directory entries of any

@@ -9,6 +9,7 @@
 // file is knowledge those editors would have to reimplement.
 import {
   commands,
+  Uri,
   workspace,
   window,
   type ExtensionContext,
@@ -35,6 +36,8 @@ import {
 } from "vscode-languageclient/node";
 
 let client: LanguageClient | undefined;
+/// The command a code lens of the server runs (`src/lsp/annotate.rs`).
+export const RUN_DEFINITION = "q-lint.runDefinition";
 /// How long a server has to answer `initialize`. qlinter answers it at once
 /// - the workspace is indexed after - so one still silent by then is hung,
 /// and every restart would otherwise queue behind it for good.
@@ -95,6 +98,13 @@ export async function activate(
   // The q processes, queries and their history: in the editor only, and
   // started before the server so they work when it does not.
   const live = new Live(context);
+  // The server's Run and Run test lenses hand over the code to send and the
+  // document it is from; it goes as a query from that editor would.
+  context.subscriptions.push(
+    commands.registerCommand(RUN_DEFINITION, (code?: unknown, uri?: unknown) =>
+      typeof code === "string" && typeof uri === "string" ? live.queryCode(code, Uri.parse(uri)) : undefined,
+    ),
+  );
   const agentConfirmation = registerAgentTool(context, live);
   const notebook = registerNotebooks(context, live);
   const explorer = new ProcessExplorer(context, live);

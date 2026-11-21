@@ -43,6 +43,7 @@ test("the defaults start the server as it was started before settings", () => {
     callHierarchy: { enable: true },
     graph: { enable: true },
     inlayHints: { enable: true },
+    codeLens: { enable: true },
     workspaceIndex: { enable: true, exclude: [] },
   });
 });
@@ -96,6 +97,7 @@ test("every editor-only setting reaches the server's options", () => {
       "callHierarchy.enable": false,
       "graph.enable": false,
       "inlayHints.enable": false,
+      "codeLens.enable": false,
       "workspaceIndex.enable": false,
       "workspaceIndex.exclude": ["vendor/**"],
     }),
@@ -114,6 +116,7 @@ test("every editor-only setting reaches the server's options", () => {
     callHierarchy: { enable: false },
     graph: { enable: false },
     inlayHints: { enable: false },
+    codeLens: { enable: false },
     workspaceIndex: { enable: false, exclude: ["vendor/**"] },
   });
 });

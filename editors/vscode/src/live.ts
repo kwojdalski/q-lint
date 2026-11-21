@@ -1070,8 +1070,15 @@ export class Live {
       nothingThere(from);
       return;
     }
+    await this.queryCode(code, editor.document.uri);
+  }
+
+  /// Run `code` from the document `uri` as a query from the editor is run:
+  /// on the process the file is bound to, when it has one. A Run code lens
+  /// sends its definition here.
+  async queryCode(code: string, uri: Uri): Promise<void> {
     // A file with a process of its own switches the connection to it.
-    const bound = this.controls.binding(editor.document.uri);
+    const bound = this.controls.binding(uri);
     if (bound !== undefined && bound !== this.activeLabel()) {
       if (this.connection?.isBusy) {
         void window.showInformationMessage(

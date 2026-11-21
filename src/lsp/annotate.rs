@@ -1,27 +1,37 @@
 //! What the server draws over the text of a document: parameter names at the
-//! arguments of a call (inlay hints).
+//! arguments of a call (inlay hints) and a Run lens above each function
+//! definition (code lenses).
 //!
 //! Read from the source as navigation reads it, and never by running it: a
-//! hint names the parameters a function's definition spells.
-use super::navigate::Sources;
+//! hint names the parameters a function's definition spells, and a lens
+//! hands the editor the statement to send.
+use super::navigate::{Sources, range};
 use super::{Lines, file_key, path_of};
-use q_lint_rs::{Mention, bracket_calls, mentions};
+use q_lint_rs::{Mention, bracket_calls, completing, mentions};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 
 /// LSP's `InlayHintKind` for a parameter.
 const PARAMETER: u8 = 2;
+/// The command a lens runs: the client's, which sends the code it is given
+/// to the connected q process as a query from the editor would be sent.
+/// Only an editor that registers it is offered lenses (`codeLens.enable`).
+const RUN_COMMAND: &str = "q-lint.runDefinition";
 
 /// What the server adds to its capabilities for the requests answered here.
-pub(super) fn announce(capabilities: &mut Value, hints: bool) {
+pub(super) fn announce(capabilities: &mut Value, hints: bool, lenses: bool) {
     if hints {
         capabilities["inlayHintProvider"] = json!(true);
+    }
+    if lenses {
+        capabilities["codeLensProvider"] = json!({"resolveProvider": false});
     }
 }
 
 pub(super) fn answer(method: &str, params: &Value, sources: &Sources) -> Value {
     match method {
         "textDocument/inlayHint" => inlay_hints(params, sources),
+        "textDocument/codeLens" => code_lenses(params, sources),
         _ => Value::Null,
     }
 }
@@ -127,4 +137,61 @@ fn declared(sources: &Sources, names: &[String], from: &str) -> Option<Vec<Strin
         }
     }
     agreed.filter(|params| !params.is_empty())
+}
+
+/// `textDocument/codeLens`: above each function a statement at column 0
+/// defines, **Run**, which sends that statement to the connected process -
+/// under the `\d` it is written in, and back to the root after - and above a
+/// function whose name starts `test_`, **Run test** too, which sends it and
+/// then calls it with no argument.
+///
+/// The code is the lens's argument, as the text is when the lenses are
+/// asked for: an editor asks again as the document changes.
+fn code_lenses(params: &Value, sources: &Sources) -> Value {
+    let Some((uri, text)) = sources.document(params) else {
+        return json!([]);
+    };
+    let lines = Lines::new(text);
+    let mut lenses = vec![];
+    let mut seen = HashSet::new();
+    for m in &mentions(text) {
+        let Some(definition) = &m.definition else {
+            continue;
+        };
+        if !definition.function
+            || m.at != definition.start
+            || !(m.at == 0 || text[..m.at].ends_with('\n'))
+            || !seen.insert(m.at)
+        {
+            continue;
+        }
+        let spelled = &text[m.at..m.at + m.len];
+        let statement = text[definition.start..definition.end].trim_end();
+        let context = completing(text, m.at)
+            .map(|c| c.namespace)
+            .filter(|ns| !ns.is_empty() && ns != ".");
+        let code = match &context {
+            Some(ns) => format!("\\d {ns}\n{statement}\n\\d ."),
+            None => statement.to_string(),
+        };
+        let at = range(&lines, m.at, m.len);
+        let lens = |title: &str, code: String| {
+            json!({"range": at, "command": {"title": title, "command": RUN_COMMAND,
+                                             "arguments": [code, uri]}})
+        };
+        lenses.push(lens("Run", code.clone()));
+        if spelled
+            .rsplit('.')
+            .next()
+            .unwrap_or(spelled)
+            .starts_with("test_")
+        {
+            // Called by the name it has once defined: a bare one before the
+            // file's first `\d` is wherever the process puts it, the root
+            // for a query.
+            let name = if m.implicit { spelled } else { &m.name };
+            lenses.push(lens("Run test", format!("{code}\n{name}[]")));
+        }
+    }
+    json!(lenses)
 }

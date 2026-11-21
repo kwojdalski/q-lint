@@ -56,6 +56,7 @@ export interface InitializationOptions {
   callHierarchy: { enable: boolean };
   graph: { enable: boolean };
   inlayHints: { enable: boolean };
+  codeLens: { enable: boolean };
   workspaceIndex: { enable: boolean; exclude: string[] };
 }
 
@@ -135,6 +136,7 @@ export function launch(settings: Settings, folder: string | undefined): Launch {
       callHierarchy: { enable: settings.get<boolean>("callHierarchy.enable", true) },
       graph: { enable: settings.get<boolean>("graph.enable", true) },
       inlayHints: { enable: settings.get<boolean>("inlayHints.enable", true) },
+      codeLens: { enable: settings.get<boolean>("codeLens.enable", true) },
       workspaceIndex: {
         enable: settings.get<boolean>("workspaceIndex.enable", true),
         exclude: strings(settings, "workspaceIndex.exclude"),
@@ -161,6 +163,7 @@ const RESTARTING = [
   "callHierarchy",
   "graph",
   "inlayHints",
+  "codeLens",
   "workspaceIndex",
 ];
 
