@@ -244,6 +244,13 @@ export class NotebookStrip {
     );
   }
 
+  /// Ask `message` in a modal dialog, with `detail` under it: whether the
+  /// user chose `button`. A method, so a run without dialogs - the e2e
+  /// harness - can answer in their place.
+  async ask(message: string, detail: string, button: string): Promise<boolean> {
+    return (await window.showWarningMessage(message, { modal: true, detail }, button)) === button;
+  }
+
   /// Clear the outputs, run numbers and live values of the `.qnb` files
   /// picked in the explorer - or the active notebook's file - once the user
   /// says yes. A notebook open with unsaved edits is left alone.
@@ -282,12 +289,12 @@ export class NotebookStrip {
       return;
     }
     const go = "Clear Outputs";
-    const answer = await window.showWarningMessage(
+    const confirmed = await this.ask(
       `Clear the outputs of ${names(todo.map((t) => t.uri))}?`,
-      { modal: true, detail: "Each cell's outputs, run number and times, and the live values of Markdown cells, are removed from the file. The cells are kept." },
+      "Each cell's outputs, run number and times, and the live values of Markdown cells, are removed from the file. The cells are kept.",
       go,
     );
-    if (answer !== go) {
+    if (!confirmed) {
       return;
     }
     for (const { uri: file, text } of todo) {
@@ -392,12 +399,12 @@ export class NotebookStrip {
     }
     const warning = plan.node ? "" : "\n\nnode was not found on PATH. Until it is, git cannot run the filter, and commits notebooks as they are.";
     const go = "Write";
-    const answer = await window.showWarningMessage(
+    const confirmed = await this.ask(
       `Set up git in ${plan.top} to strip q notebook outputs on commit?`,
-      { modal: true, detail: `${steps.map((s, i) => `${i + 1}. ${s}`).join("\n")}\n\nNo hook is written, and nothing else is changed.${warning}` },
+      `${steps.map((s, i) => `${i + 1}. ${s}`).join("\n")}\n\nNo hook is written, and nothing else is changed.${warning}`,
       go,
     );
-    if (answer !== go) {
+    if (!confirmed) {
       return;
     }
     try {

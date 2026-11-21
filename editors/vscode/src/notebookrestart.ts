@@ -35,6 +35,13 @@ export class NotebookRestart {
     context.subscriptions.push(commands.registerCommand(NOTEBOOK.restartRunAll, (notebook?: Uri) => this.run(notebook)));
   }
 
+  /// Ask `message` in a modal dialog, with `detail` under it: whether the
+  /// user chose `button`. A method, so a run without dialogs - the e2e
+  /// harness - can answer in their place.
+  async ask(message: string, detail: string, button: string): Promise<boolean> {
+    return (await window.showWarningMessage(message, { modal: true, detail }, button)) === button;
+  }
+
   private done(outcome: RestartOutcome, process?: string): void {
     this.last = { outcome, process };
   }
@@ -66,15 +73,12 @@ export class NotebookRestart {
     const cells = notebook.getCells().filter((c) => c.kind === NotebookCellKind.Code && c.document.languageId === "q").length;
     if (this.live.launched(label)) {
       const go = "Restart and Run All";
-      const answer = await window.showWarningMessage(
+      const confirmed = await this.ask(
         `Restart ${label} and run all ${cells} q cells of the notebook?`,
-        {
-          modal: true,
-          detail: `q-lint started ${label}. It is stopped, so everything defined on it is lost, started again from its launch definition, and the cells run on it in order from 1, stopping at the first that fails.`,
-        },
+        `q-lint started ${label}. It is stopped, so everything defined on it is lost, started again from its launch definition, and the cells run on it in order from 1, stopping at the first that fails.`,
         go,
       );
-      if (answer !== go) {
+      if (!confirmed) {
         return this.done("declined", label);
       }
       const problem = await this.launcher.restart(label);
@@ -89,15 +93,12 @@ export class NotebookRestart {
       return this.done("restarted", label);
     }
     const go = "Run All Without Restart";
-    const answer = await window.showWarningMessage(
+    const confirmed = await this.ask(
       `${label} was not started by q-lint, so q-lint cannot restart it.`,
-      {
-        modal: true,
-        detail: `Restart ${label} yourself, then run all; or run all ${cells} q cells on it now, as it is, keeping what is defined there. A process q-lint starts from its launch definition (Start Process, in the Processes view) can be restarted from here.`,
-      },
+      `Restart ${label} yourself, then run all; or run all ${cells} q cells on it now, as it is, keeping what is defined there. A process q-lint starts from its launch definition (Start Process, in the Processes view) can be restarted from here.`,
       go,
     );
-    if (answer !== go) {
+    if (!confirmed) {
       return this.done("declined", label);
     }
     // The cells go where they last ran, not wherever the connection is now.
