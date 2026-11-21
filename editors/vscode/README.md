@@ -489,7 +489,9 @@ settings can set one for its notebooks.
 They are q comments, so a cell runs the same as a query or in a script. A
 directive q-lint does not know, a chart of no known kind, or a title or
 height on a cell with no `/ @chart`, fails the cell with the directives it
-does know. An error shows q's message and, on kdb+
+does know. A qDoc line (`/ @param`, `/ @return`, `/ @eg` and the rest) is
+documentation, not a directive: it ends the directives, so a cell that
+opens with a documented function runs. An error shows q's message and, on kdb+
 3.5 and later, its backtrace.
 
 **Export Notebook as q Script**, on the notebook's toolbar and a `.qnb`

@@ -425,3 +425,12 @@ test("fields this extension does not know are kept on an output, an item and a r
   const text = JSON.stringify(file, null, 1) + "\n";
   assert.strictEqual(serializeQnb(parseQnb(text)), text);
 });
+
+test("a cell that opens with a qDoc comment runs: @param and its kin are documentation, not directives", () => {
+  const documented = "/ @param x long\n/ @return long\n/ @throws type\nf:{x+1}";
+  assert.deepStrictEqual(cellDirective(documented), { mode: "console" });
+  assert.deepStrictEqual(cellDirective("/ @private\n/ @eg f 1\nf:{x}"), { mode: "console" });
+  // A directive before the documentation still counts; a misspelt one is still caught.
+  assert.deepStrictEqual(cellDirective("/ @grid\n/ @param t table\nt"), { mode: "grid" });
+  assert.match(cellDirective("/ @grd\nt").problem, /not a cell directive/);
+});

@@ -91,11 +91,6 @@ function whole(value: unknown, least: number, fallback: number): number {
   return typeof value === "number" && Number.isInteger(value) && value >= least ? value : fallback;
 }
 
-/// A string from `get`, or `fallback` when settings.json holds another type.
-function text(value: unknown, fallback: string): string {
-  return typeof value === "string" ? value : fallback;
-}
-
 /// Whether `get` gave `true`: settings.json may hold any type, and a string
 /// `"false"` is not true.
 const yes = (value: unknown): boolean => value === true;
@@ -104,7 +99,7 @@ const yes = (value: unknown): boolean => value === true;
 /// would. None of them reaches the language server, and none restarts it.
 export function readLive(get: <T>(key: string, fallback: T) => T): LiveSettings {
   return {
-    consoleSize: consoleSize(text(get<unknown>("output.consoleSize", "50 160"), "50 160")) ?? [50, 160],
+    consoleSize: consoleSize(get<unknown>("output.consoleSize", "50 160")) ?? [50, 160],
     autoClear: yes(get<unknown>("output.autoClear", false)),
     includeQuery: yes(get<unknown>("output.includeQuery", false)),
     ignoreNullReturn: yes(get<unknown>("output.ignoreNullReturn", false)),
@@ -123,10 +118,15 @@ export interface TerminalSettings {
 /// The terminal settings, read as `readLive` reads the query ones. Each is
 /// read when a terminal starts, so a change applies to the next one.
 export function readTerminal(get: <T>(key: string, fallback: T) => T): TerminalSettings {
-  const qBinary = text(get<unknown>("terminal.qBinary", "q"), "q").trim();
+  // A hand-written `null` or number in settings.json is no setting.
+  const text = (key: string, fallback: string): string => {
+    const value = get<unknown>(key, fallback);
+    return typeof value === "string" ? value.trim() : "";
+  };
+  const qBinary = text("terminal.qBinary", "q");
   return {
     qBinary: qBinary === "" ? "q" : qBinary,
-    envPath: text(get<unknown>("terminal.envPath", ""), "").trim(),
+    envPath: text("terminal.envPath", ""),
   };
 }
 
