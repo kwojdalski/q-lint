@@ -49,7 +49,8 @@ import {
   type Process,
 } from "./processes";
 import { COMMANDS, CONNECTED, VIEWS, readLive, readProcessSettings, readTerminal } from "./liveconfig";
-import { QConnection } from "./qclient";
+import { QConnection, QError } from "./qclient";
+import { HEARTBEAT, UNANSWERED_MS, backoffDelay, latencyText, readHealth } from "./health";
 import { historyHeading, historyLabel, iconsEscaped } from "./history";
 import { render } from "./query";
 import { QueryModes, type Rendered } from "./resultpanel";
@@ -63,6 +64,7 @@ import {
   HISTORY_COMMANDS,
   HISTORY_FILTERED,
   OUTCOME_CHOICES,
+  readHistorySearch,
   exportFormat,
   filterDescription,
   filtered,
@@ -73,7 +75,7 @@ import {
   normalised,
   type HistoryFilter,
 } from "./historyfilter";
-import { CONNECT_SCRIPT_COMMANDS, scriptOf, scriptPath, scriptsBrought, scriptSummary, withScript, type ConnectScript } from "./connectscript";
+import { CONNECT_SCRIPT_COMMANDS, readConnectScript, scriptOf, scriptPath, scriptsBrought, scriptSummary, withScript, type ConnectScript } from "./connectscript";
 import { isProduction } from "./agent";
 import { PLACEHOLDER_VALUES_KEY, lastValue, placeholderNames, readPlaceholders, remembered, substitute } from "./placeholders";
 
@@ -415,6 +417,15 @@ export class Live {
   /// Redraws the status bar each second while a query runs, so its time
   /// counts up (#910).
   private ticker: ReturnType<typeof setInterval> | undefined;
+  /// The heartbeat's timer while connected, the last round trip it timed,
+  /// and when the one still unanswered was sent (#917).
+  private heartbeat: ReturnType<typeof setInterval> | undefined;
+  private latency: { millis: number; at: number } | undefined;
+  private beatSent: number | undefined;
+  /// The automatic reconnect under way: its process and try. `reconnectRun`
+  /// counts them, so a connect or Disconnect stops the one running.
+  private reconnecting: { label: string; attempt: number; of: number } | undefined;
+  private reconnectRun = 0;
   /// When the query that timed out started, so its entry says so.
   private timedOut: number | undefined;
   /// When the query Abort, Disconnect or a connect elsewhere stopped waiting
@@ -502,11 +513,31 @@ export class Live {
         if (event.affectsConfiguration("q-lint.processes.tagColors")) {
           this.processesView.refresh();
         }
+        if (event.affectsConfiguration("q-lint.connection.heartbeat") || event.affectsConfiguration("q-lint.connection.heartbeatInterval")) {
+          this.restartHeartbeat();
+        }
+        // Turned off, a reconnect under way stops, and a filter goes.
+        if (event.affectsConfiguration("q-lint.connection.autoReconnect") && !this.setting(readHealth).autoReconnect) {
+          this.stopReconnecting();
+        }
+        if (event.affectsConfiguration("q-lint.queryHistory.search") && !this.setting(readHistorySearch).enabled) {
+          this.setHistoryFilter({});
+        }
+        if (event.affectsConfiguration("q-lint.query.progress")) {
+          this.showStatus();
+        }
+      }),
+      this.changed.event((what) => {
+        if (what !== "queried") {
+          this.restartHeartbeat();
+        }
       }),
       {
         dispose: () => {
           this.disposed = true;
           clearInterval(this.ticker);
+          clearInterval(this.heartbeat);
+          this.reconnectRun++;
           // A reconnect after an abort stops trying.
           this.reconnectStopped = true;
           void this.connection?.close();
@@ -607,21 +638,58 @@ export class Live {
     this.processesView.refresh();
   }
 
+  /// A setting group read with `read`, as configured now.
+  private setting<T>(read: (get: <V>(key: string, fallback: V) => V) => T): T {
+    const configuration = workspace.getConfiguration("q-lint");
+    return read((key, fallback) => configuration.get(key, fallback));
+  }
+
+  /// Whether a feature's setting is on; when it is off, says so and how to
+  /// turn it on, for a command invoked anyway.
+  private featureOn(enabled: boolean, feature: string, key: string): boolean {
+    if (!enabled) {
+      void window.showInformationMessage(`q-lint: ${feature} is turned off. Set ${key} to true to turn it on.`);
+    }
+    return enabled;
+  }
+
   private showStatus(): void {
     const label = this.activeLabel();
-    const running = this.running !== undefined && label !== undefined;
-    if (running && this.ticker === undefined && !this.disposed) {
+    // The time counts only with q-lint.query.progress.enable on (#910).
+    const counting = this.running !== undefined && label !== undefined && this.setting(readProgress).enabled;
+    if (counting && this.ticker === undefined && !this.disposed) {
       this.ticker = setInterval(() => this.showStatus(), 1000);
-    } else if (!running && this.ticker !== undefined) {
+    } else if (!counting && this.ticker !== undefined) {
       clearInterval(this.ticker);
       this.ticker = undefined;
     }
     if (this.running !== undefined && label !== undefined) {
-      this.status.text = `$(sync~spin) q: ${iconsEscaped(label)} ${elapsedText(Date.now() - this.running.started)}`;
-      this.status.tooltip = `A query has been running on ${label} for ${elapsedText(Date.now() - this.running.started)}. q-lint: Abort Current Query stops waiting for it.`;
+      const took = elapsedText(Date.now() - this.running.started);
+      this.status.text = `$(sync~spin) q: ${iconsEscaped(label)}${counting ? ` ${took}` : ""}`;
+      this.status.tooltip = counting
+        ? `A query has been running on ${label} for ${took}. q-lint: Abort Current Query stops waiting for it.`
+        : "A query is running. q-lint: Abort Current Query stops waiting for it.";
     } else if (label !== undefined) {
-      this.status.text = `$(plug) q: ${iconsEscaped(label)}`;
-      this.status.tooltip = `Connected to ${this.active === undefined ? "" : address(this.active.host, this.active.port)}. Click to switch.`;
+      const unanswered = this.beatSent === undefined ? 0 : Date.now() - this.beatSent;
+      const health =
+        unanswered >= UNANSWERED_MS
+          ? ` $(warning) no answer ${elapsedText(unanswered)}`
+          : this.latency !== undefined
+            ? ` $(pulse) ${latencyText(this.latency.millis)}`
+            : "";
+      this.status.text = `$(plug) q: ${iconsEscaped(label)}${health}`;
+      this.status.tooltip = [
+        `Connected to ${this.active === undefined ? "" : address(this.active.host, this.active.port)}. Click to switch.`,
+        ...(unanswered >= UNANSWERED_MS
+          ? [`The heartbeat has had no answer for ${elapsedText(unanswered)}: the process is busy, or gone.`]
+          : this.latency !== undefined
+            ? [`Heartbeat round trip ${latencyText(this.latency.millis)}, at ${new Date(this.latency.at).toLocaleTimeString()}.`]
+            : []),
+      ].join("\n");
+    } else if (this.reconnecting !== undefined) {
+      const { label: to, attempt, of } = this.reconnecting;
+      this.status.text = `$(sync~spin) q: reconnecting to ${iconsEscaped(to)} (${attempt} of ${of})`;
+      this.status.tooltip = `The connection to ${to} dropped; q-lint is reconnecting (q-lint.connection.autoReconnect). q-lint: Disconnect stops it.`;
     } else {
       this.status.text = "$(debug-disconnect) q: not connected";
       this.status.tooltip = "Click to connect to a q process.";
@@ -995,6 +1063,9 @@ export class Live {
   /// every connect, before any query (#916). `script` (from a keybinding or
   /// a test) sets it without asking; `null` removes it.
   private async setConnectScript(row?: ProcessArg, script?: ConnectScript | null): Promise<void> {
+    if (!this.featureOn(this.setting(readConnectScript).enabled, "Connect scripts", "q-lint.connection.connectScript.enable")) {
+      return;
+    }
     const process = await this.chosen(row, "Set the connect script of which q process?");
     if (process === undefined) {
       return;
@@ -1076,7 +1147,7 @@ export class Live {
   /// query can be: its failure is said, and the connection kept.
   private async runConnectScript(connection: QConnection, process: Process): Promise<void> {
     const script = scriptOf(process);
-    if (script === undefined) {
+    if (script === undefined || !this.setting(readConnectScript).enabled) {
       return;
     }
     const failed = (why: string): void => {
@@ -1128,6 +1199,10 @@ export class Live {
 
   async connectTo(row?: ProcessArg): Promise<boolean> {
     const process = await this.chosen(row, "Connect to which q process?", true);
+    // A connect the user asks for stops an automatic reconnect.
+    if (process !== undefined) {
+      this.stopReconnecting();
+    }
     if (process === undefined) {
       return false;
     }
@@ -1161,7 +1236,7 @@ export class Live {
   /// the handshake is still running the query it was left with, and is
   /// tried again until it does, or until the user disconnects or connects
   /// elsewhere.
-  private open(process: Process, untilFree = false): Promise<boolean> {
+  private open(process: Process, untilFree = false, quiet = false): Promise<boolean> {
     if (this.connecting !== undefined) {
       // A connect to another process - a reconnect after an abort, waiting
       // for that process to be free - is stopped and this one follows: its
@@ -1208,7 +1283,7 @@ export class Live {
         );
         // Opened after deactivate (a reconnect after an abort), when nothing
         // would close it, or after the reconnect was stopped.
-        if (this.disposed || (untilFree && this.reconnectStopped)) {
+        if (this.disposed || ((untilFree || quiet) && this.reconnectStopped)) {
           await connection.close();
           return false;
         }
@@ -1219,16 +1294,21 @@ export class Live {
           if (this.connection === connection) {
             this.connection = undefined;
             this.running = undefined;
+            const configuration = workspace.getConfiguration("q-lint");
+            const again = readHealth((key, fallback) => configuration.get(key, fallback)).autoReconnect && !this.disposed;
             this.showStatus();
             this.processesView.refresh();
             this.changed.fire("disconnected");
-            void window.showWarningMessage(`q-lint: the connection to ${process.label} closed.`);
+            void window.showWarningMessage(`q-lint: the connection to ${process.label} closed.${again ? " Reconnecting." : ""}`);
+            if (again) {
+              void this.autoReconnect(process);
+            }
           }
         });
         this.changed.fire("connected");
         return true;
       } catch (error) {
-        if (untilFree && this.reconnectStopped) {
+        if ((untilFree && this.reconnectStopped) || quiet) {
           return false;
         }
         void window.showErrorMessage(
@@ -1245,7 +1325,108 @@ export class Live {
     return this.connecting;
   }
 
+  /// Reconnect to `process`, whose connection dropped, waiting longer before
+  /// each try (`backoffDelay`), until it connects, the tries run out, or the
+  /// user connects elsewhere or disconnects (#917).
+  private async autoReconnect(process: Process): Promise<void> {
+    const run = ++this.reconnectRun;
+    const configuration = workspace.getConfiguration("q-lint");
+    const { reconnectAttempts } = readHealth((key, fallback) => configuration.get(key, fallback));
+    for (let attempt = 1; attempt <= reconnectAttempts; attempt++) {
+      this.reconnecting = { label: process.label, attempt, of: reconnectAttempts };
+      this.showStatus();
+      await new Promise((resolve) => setTimeout(resolve, backoffDelay(attempt)));
+      if (run !== this.reconnectRun || this.connection !== undefined) {
+        return;
+      }
+      const connected = await this.open(process, false, true);
+      if (run !== this.reconnectRun) {
+        return;
+      }
+      if (connected) {
+        this.reconnecting = undefined;
+        this.showStatus();
+        void window.showInformationMessage(`q-lint: reconnected to ${process.label}.`);
+        return;
+      }
+    }
+    this.reconnecting = undefined;
+    this.showStatus();
+    void window.showWarningMessage(`q-lint: could not reconnect to ${process.label} after ${reconnectAttempts} tries.`);
+  }
+
+  /// Stop an automatic reconnect, if one is under way.
+  private stopReconnecting(): void {
+    this.reconnectRun++;
+    if (this.reconnecting !== undefined) {
+      this.reconnecting = undefined;
+      this.showStatus();
+    }
+  }
+
+  /// Start the heartbeat for the connection there is, or stop it when there
+  /// is none or `q-lint.connection.heartbeat` is 0.
+  private restartHeartbeat(): void {
+    clearInterval(this.heartbeat);
+    this.heartbeat = undefined;
+    this.latency = undefined;
+    this.beatSent = undefined;
+    const configuration = workspace.getConfiguration("q-lint");
+    const { heartbeat } = readHealth((key, fallback) => configuration.get(key, fallback));
+    if (heartbeat > 0 && this.activeLabel() !== undefined && !this.disposed) {
+      this.heartbeat = setInterval(() => void this.beat(), heartbeat * 1000);
+      void this.beat();
+    }
+    this.showStatus();
+  }
+
+  /// Send one heartbeat and time its answer. Skipped while a query or the
+  /// explorer's read is out: the connection takes one message at a time,
+  /// and is plainly alive. One still unanswered is shown waiting instead.
+  private async beat(): Promise<void> {
+    if (this.beatSent !== undefined) {
+      this.showStatus();
+      return;
+    }
+    const sent = Date.now();
+    const call = this.borrow(async (connection) => {
+      this.beatSent = sent;
+      try {
+        await connection.evaluate(HEARTBEAT);
+      } catch (error) {
+        // A q error is still an answer: a gateway may refuse the string.
+        if (!(error instanceof QError)) {
+          throw error;
+        }
+      }
+      return connection;
+    });
+    if (call === undefined) {
+      return;
+    }
+    try {
+      const connection = await call;
+      if (connection === this.connection) {
+        this.latency = { millis: Date.now() - sent, at: Date.now() };
+      }
+    } catch {
+      // Closed meanwhile: whenClosed says so.
+    } finally {
+      if (this.beatSent === sent) {
+        this.beatSent = undefined;
+      }
+      this.showStatus();
+    }
+  }
+
   private async disconnect(): Promise<void> {
+    if (this.reconnecting !== undefined && this.connection === undefined) {
+      // A try under way is closed once it opens.
+      this.reconnectStopped = true;
+      this.stopReconnecting();
+      return;
+    }
+    this.reconnectRun++;
     if (this.connection === undefined && this.connecting === undefined) {
       void window.showInformationMessage("q-lint: not connected to a q process.");
       return;
@@ -1575,6 +1756,10 @@ export class Live {
       on && this.history().length > 0 && this.shownHistory().length === 0 ? "No query in the history matches the filter." : undefined;
   }
 
+  private historySearchOn(): boolean {
+    return this.featureOn(this.setting(readHistorySearch).enabled, "Query History search", "q-lint.queryHistory.search.enable");
+  }
+
   private setHistoryFilter(filter: HistoryFilter): void {
     this.historyFilter = normalised(filter);
     void commands.executeCommand("setContext", HISTORY_FILTERED, isFiltering(this.historyFilter));
@@ -1585,6 +1770,9 @@ export class Live {
   /// in turn starting from the current filter, or set to `given` (from a
   /// keybinding's `args`). Escape leaves the filter as it was.
   private async filterHistory(given?: HistoryFilter): Promise<void> {
+    if (!this.historySearchOn()) {
+      return;
+    }
     if (typeof given === "object" && given !== null) {
       this.setHistoryFilter({
         ...(typeof given.process === "string" ? { process: given.process } : {}),
@@ -1631,6 +1819,9 @@ export class Live {
   /// Write the queries the Query History view shows, through its filter, to
   /// `file` or one the user picks: a `.q` file as a q script, else JSON.
   private async exportHistory(file?: Uri): Promise<void> {
+    if (!this.historySearchOn()) {
+      return;
+    }
     const entries = this.shownHistory();
     if (entries.length === 0) {
       void window.showInformationMessage(

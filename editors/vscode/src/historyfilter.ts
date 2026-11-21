@@ -9,6 +9,11 @@ export const HISTORY_COMMANDS = {
   export: "q-lint.exportQueryHistory",
 } as const;
 
+/// `q-lint.queryHistory.search.enable`: filtering and exporting at all.
+export function readHistorySearch(get: <T>(key: string, fallback: T) => T): { enabled: boolean } {
+  return { enabled: get<unknown>("queryHistory.search.enable", true) !== false };
+}
+
 /// Set while the Query History view is filtered.
 export const HISTORY_FILTERED = "q-lint.queryHistoryFiltered";
 

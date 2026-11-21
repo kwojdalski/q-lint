@@ -165,6 +165,8 @@ and clicking it switches. The commands:
   in the process list, and exported with it as `init` (code) or `initFile`;
   an import that brings a script new to a process asks whether to keep it,
   and a discovery server's list never brings one.
+  `q-lint.connection.connectScript.enable` off runs no script and hides
+  the command; the scripts stay in the list.
 - **Insert Active Connection Label**, at the cursor.
 - **Copy Label for Agent Query**, on a process row: the label an agent's
   query names the process by (`server/label` for a discovered one).
@@ -258,13 +260,32 @@ sessions; Escape runs nothing. The history keeps the code as it was sent,
 values in place. A placeholder is a q name (`day`, `.ns.v`, `start_date`)
 found outside strings and comments; `{{x}}`, `{{y}}` and `{{z}}` are q
 lambdas and never asked for. A lambda that reads a global as `{{a}}` is
-taken for one too: `q-lint.query.placeholders` turns them off.
+taken for one too: `q-lint.query.placeholders.enable` turns them off.
 
 **A long query.** While a query runs, the status bar spins and counts its
 time (`q: rdb 1m 05s`). When one that ran at least `q-lint.query.notifyAfter`
 seconds (10 by default; `0` never) ends while the VS Code window is not
 focused, a notification says so: finished, failed with q's error, or timed
-out. One you aborted is not announced.
+out. One you aborted is not announced. `q-lint.query.progress.enable` off
+turns both off: the status bar only spins.
+
+**Connection health.** Both are off by default, as each acts without being
+asked. With `q-lint.connection.heartbeat.enable` on, q-lint sends `::` as a
+plain string on the active connection every
+`q-lint.connection.heartbeatInterval` seconds (30 by default), and the status
+bar shows its round trip: `q: rdb 3 ms`. It defines nothing on the process,
+and a q error back (a gateway that refuses the string) still counts as an
+answer. It is skipped while a query or the Process Explorer's read is out,
+and a query sent while one is out waits for it; one unanswered for 5 seconds
+shows as `no answer 12s` - the process is busy, or gone. A process that logs
+its clients sees every heartbeat. With
+`q-lint.connection.autoReconnect.enable` on, a connection the process or the
+network drops is reconnected: the status bar shows `reconnecting to rdb (2
+of 5)`, the tries wait 1, 2, 4... seconds (at most 30) up to
+`q-lint.connection.reconnectAttempts`, failures are quiet until the last,
+and the connect script runs again. **Disconnect**, connecting elsewhere or
+turning the setting off stops it; a connection you closed, or one aborted,
+is never reconnected this way.
 
 **Query History** lists each query with its process, time, duration and
 outcome; the buttons on a row run it again on the active connection and
@@ -282,7 +303,8 @@ the window. **Export Query History** writes the queries the view shows
 oldest first, each query after a `/` comment naming its process, time,
 duration, outcome and error; any other name as JSON,
 `{"queries": [{"process", "at", "millis", "outcome", "error"?, "code"}]}`,
-newest first.
+newest first. `q-lint.queryHistory.search.enable` off hides the filter and
+export, and clears a filter set.
 
 **Query controls.**
 - **Toggle Unlimited Query**: while on, the console text is not cut at
@@ -669,11 +691,25 @@ nothing.
 | `q-lint.query.resultsLocation` | `"editor"` | Where a grid or chart opens: `editor`, beside it, or `panel`, the **q Results** view in the bottom panel. | - |
 | `q-lint.query.unwrapped` | `false` | Send code as plain strings, for a gateway that refuses a lambda, and format the result in q-lint. **Toggle Unwrapped Query** changes it. | - |
 | `q-lint.query.timeout` | `0` | Seconds a query may run before it is aborted, as Abort does; `0` none. | - |
+| `q-lint.query.progress.enable` | `true` | Count a running query's time in the status bar, and notify a long one's end. | - |
 | `q-lint.query.notifyAfter` | `10` | Seconds a query must run for its end to be notified while the window is not focused; `0` never. | - |
-| `q-lint.query.placeholders` | `true` | Ask for a value for each `{{name}}` in the code a query sends, and put it in place. | - |
+| `q-lint.query.placeholders.enable` | `true` | Ask for a value for each `{{name}}` in the code a query sends, and put it in place. | - |
 | `q-lint.processExplorer.excludedNamespaces` | `["q","Q","h","j","o","s"]` | Namespaces the Process Explorer and live completion leave out (`q`, or a nested one as `ns.sub`), with those nested in them. | - |
 | `q-lint.processExplorer.previewLimit` | `5` | Rows of a table Preview shows. | - |
 | `q-lint.processExplorer.autoRefresh` | `false` | Read the process again after each query. | - |
+| `q-lint.queryHistory.search.enable` | `true` | **Filter Query History** and **Export Query History**. | - |
+
+### Connection settings
+
+Each applies at once, without a reload. None reaches the language server.
+
+| Setting | Default | What it does | q-pro |
+| --- | --- | --- | --- |
+| `q-lint.connection.connectScript.enable` | `true` | Run a process's connect script on every connect; off, none runs and **Set Connect Script** is hidden. | - |
+| `q-lint.connection.heartbeat.enable` | `false` | Send a heartbeat on the active connection and show its round trip in the status bar. | - |
+| `q-lint.connection.heartbeatInterval` | `30` | Seconds between heartbeats. | - |
+| `q-lint.connection.autoReconnect.enable` | `false` | Reconnect a connection the process or the network dropped, with backoff. | - |
+| `q-lint.connection.reconnectAttempts` | `5` | Tries before a reconnect gives up. | - |
 
 ### Terminal settings
 

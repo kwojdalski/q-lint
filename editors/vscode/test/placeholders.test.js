@@ -66,8 +66,8 @@ test("values are remembered newest last, at most REMEMBERED_LIMIT, and read back
 
 test("placeholders are on unless the setting is false", () => {
   assert.deepStrictEqual(readPlaceholders((k, f) => f), { enabled: true });
-  assert.deepStrictEqual(readPlaceholders((k, f) => (k === "query.placeholders" ? false : f)), { enabled: false });
-  assert.deepStrictEqual(readPlaceholders((k, f) => (k === "query.placeholders" ? "no" : f)), { enabled: true });
+  assert.deepStrictEqual(readPlaceholders((k, f) => (k === "query.placeholders.enable" ? false : f)), { enabled: false });
+  assert.deepStrictEqual(readPlaceholders((k, f) => (k === "query.placeholders.enable" ? "no" : f)), { enabled: true });
 });
 
 /// A Live over a fresh context, and the code Query Current Line sent.
@@ -107,9 +107,9 @@ test("a query asks for each placeholder, starting from the value given last, and
 
 test("with placeholders off, or none in the code, nothing is asked", async (t) => {
   const { sent, query } = setUp(t, "f:{{x}}; {{a}}");
-  stub.config.user["query.placeholders"] = false;
+  stub.config.user["query.placeholders.enable"] = false;
   await query();
-  stub.config.user["query.placeholders"] = true;
+  stub.config.user["query.placeholders.enable"] = true;
   stub.inputs.push("1");
   await query();
   assert.deepStrictEqual(sent, ["f:{{x}}; {{a}}", "f:{{x}}; 1"]);

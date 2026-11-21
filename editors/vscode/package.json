@@ -370,18 +370,24 @@
             "order": 115,
             "markdownDescription": "Seconds a query may run before it is aborted, as **q-lint: Abort Current Query** aborts it; the history records it as timed out. `0`: no limit."
           },
+          "q-lint.query.progress.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 116,
+            "markdownDescription": "Count a running query's time in the status bar, and notify the end of one that ran `#q-lint.query.notifyAfter#` seconds while the window was not focused. Off: the status bar only spins, and nothing is notified."
+          },
           "q-lint.query.notifyAfter": {
             "type": "number",
             "default": 10,
             "minimum": 0,
             "maximum": 86400,
-            "order": 116,
-            "markdownDescription": "Seconds a query must run for VS Code to notify you when it ends while its window is not focused. The status bar counts a running query's time whatever this is. `0`: never notify."
+            "order": 117,
+            "markdownDescription": "Seconds a query must run for VS Code to notify you when it ends while its window is not focused, with `#q-lint.query.progress.enable#` on. `0`: never notify."
           },
-          "q-lint.query.placeholders": {
+          "q-lint.query.placeholders.enable": {
             "type": "boolean",
             "default": true,
-            "order": 117,
+            "order": 118,
             "markdownDescription": "Ask for a value for each `{{name}}` in the code a query sends, outside strings and comments, and put it in place before the query runs. Each box starts from the value given last. `{{x}}`, `{{y}}` and `{{z}}` are q lambdas and never asked for; turn this off if your code holds others, such as `{{a}}`."
           },
           "q-lint.processExplorer.excludedNamespaces": {
@@ -412,6 +418,12 @@
             "default": false,
             "order": 122,
             "markdownDescription": "Read the active process again after each query, so the **Process Explorer** and live completion show what it defined. Off, they are read on connect and on **Refresh Process Explorer**."
+          },
+          "q-lint.queryHistory.search.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 119,
+            "markdownDescription": "**Filter Query History** and **Export Query History**. Off: their buttons and commands are hidden, and a filter set is cleared."
           }
         }
       },
@@ -505,6 +517,45 @@
               ]
             },
             "markdownDescription": "The colour of each tag in the Processes view, as a theme colour id: `{\"eu\": \"charts.purple\"}`. Over the built-in colours (`prod` red, `uat` blue, `dev` green); a process takes its most cautious tag's colour. **Edit Tag Color** on a tag row writes it."
+          }
+        }
+      },
+      {
+        "title": "q-lint: connections",
+        "properties": {
+          "q-lint.connection.connectScript.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 599,
+            "markdownDescription": "Run a process's connect script (**Set Connect Script**) on every connect. Off: no script runs, and **Set Connect Script** is hidden; the scripts stay in the process list."
+          },
+          "q-lint.connection.heartbeat.enable": {
+            "type": "boolean",
+            "default": false,
+            "order": 600,
+            "markdownDescription": "Send a heartbeat on the active connection every `#q-lint.connection.heartbeatInterval#` seconds: a `::` sent as a plain string, whose round trip the status bar shows (`q: rdb 3 ms`). One the process has not answered for 5 seconds shows as `no answer`. It is skipped while a query runs. Off by default: a process that logs its clients sees every heartbeat."
+          },
+          "q-lint.connection.heartbeatInterval": {
+            "type": "number",
+            "default": 30,
+            "minimum": 1,
+            "maximum": 86400,
+            "order": 601,
+            "markdownDescription": "Seconds between heartbeats, with `#q-lint.connection.heartbeat.enable#` on."
+          },
+          "q-lint.connection.autoReconnect.enable": {
+            "type": "boolean",
+            "default": false,
+            "order": 602,
+            "markdownDescription": "Reconnect when the process or the network drops the connection, waiting 1, 2, 4... seconds (at most 30) before each try, up to `#q-lint.connection.reconnectAttempts#` tries. The process's connect script runs again. **Disconnect**, or connecting to another process, stops it; a connection you closed is never reopened."
+          },
+          "q-lint.connection.reconnectAttempts": {
+            "type": "integer",
+            "default": 5,
+            "minimum": 1,
+            "maximum": 100,
+            "order": 603,
+            "markdownDescription": "How many times `#q-lint.connection.autoReconnect.enable#` tries before it gives up."
           }
         }
       }
@@ -969,22 +1020,22 @@
         },
         {
           "command": "q-lint.filterQueryHistory",
-          "when": "view == q-lint.queryHistory && !q-lint.queryHistoryFiltered",
+          "when": "view == q-lint.queryHistory && !q-lint.queryHistoryFiltered && config.q-lint.queryHistory.search.enable",
           "group": "navigation@1"
         },
         {
           "command": "q-lint.clearQueryHistoryFilter",
-          "when": "view == q-lint.queryHistory && q-lint.queryHistoryFiltered",
+          "when": "view == q-lint.queryHistory && q-lint.queryHistoryFiltered && config.q-lint.queryHistory.search.enable",
           "group": "navigation@1"
         },
         {
           "command": "q-lint.filterQueryHistory",
-          "when": "view == q-lint.queryHistory && q-lint.queryHistoryFiltered",
+          "when": "view == q-lint.queryHistory && q-lint.queryHistoryFiltered && config.q-lint.queryHistory.search.enable",
           "group": "1_history@1"
         },
         {
           "command": "q-lint.exportQueryHistory",
-          "when": "view == q-lint.queryHistory",
+          "when": "view == q-lint.queryHistory && config.q-lint.queryHistory.search.enable",
           "group": "1_history@2"
         }
       ],
@@ -1126,7 +1177,7 @@
         },
         {
           "command": "q-lint.setConnectScript",
-          "when": "view == q-lint.processes && viewItem =~ /^process/",
+          "when": "view == q-lint.processes && viewItem =~ /^process/ && config.q-lint.connection.connectScript.enable",
           "group": "2_edit@4"
         }
       ],
@@ -1211,6 +1262,22 @@
         {
           "command": "q-lint.exportResultsView",
           "when": "false"
+        },
+        {
+          "command": "q-lint.filterQueryHistory",
+          "when": "config.q-lint.queryHistory.search.enable"
+        },
+        {
+          "command": "q-lint.clearQueryHistoryFilter",
+          "when": "config.q-lint.queryHistory.search.enable && q-lint.queryHistoryFiltered"
+        },
+        {
+          "command": "q-lint.exportQueryHistory",
+          "when": "config.q-lint.queryHistory.search.enable"
+        },
+        {
+          "command": "q-lint.setConnectScript",
+          "when": "config.q-lint.connection.connectScript.enable"
         }
       ]
     },

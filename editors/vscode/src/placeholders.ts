@@ -6,7 +6,8 @@
 // comment, where `{{name}}` is text. Its name is a q name (`a`, `.ns.v`,
 // `start_date`), and not `x`, `y` or `z`: `{{x}}` is a lambda in a lambda,
 // q's own code, and is left alone. A lambda that reads a global as
-// `{{a}}` is still taken for one; `q-lint.query.placeholders` turns them off.
+// `{{a}}` is still taken for one; `q-lint.query.placeholders.enable` turns
+// them off.
 
 /// Where `values` are remembered between queries: `globalState`, under this
 /// key, as `{ [name]: value }`.
@@ -20,7 +21,7 @@ export interface PlaceholderSettings {
 
 /// The settings read as `readLive` reads the query ones, at each query.
 export function readPlaceholders(get: <T>(key: string, fallback: T) => T): PlaceholderSettings {
-  return { enabled: get<unknown>("query.placeholders", true) !== false };
+  return { enabled: get<unknown>("query.placeholders.enable", true) !== false };
 }
 
 export interface Placeholder {

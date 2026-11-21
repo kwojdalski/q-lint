@@ -41,7 +41,7 @@ const { AGENT } = require("../out/agent.js");
 const { CONTROL_COMMANDS, readControls } = require("../out/querycontrols.js");
 const { readProgress } = require("../out/progress.js");
 const { readPlaceholders } = require("../out/placeholders.js");
-const { HISTORY_COMMANDS } = require("../out/historyfilter.js");
+const { HISTORY_COMMANDS, readHistorySearch } = require("../out/historyfilter.js");
 const { CONNECT_SCRIPT_COMMANDS } = require("../out/connectscript.js");
 const { ONBOARDING } = require("../out/onboarding.js");
 const { PARAM_CACHE } = require("../out/paramcache.js");
@@ -365,6 +365,7 @@ test("every query setting is read, with the default package.json declares, and n
   const controls = readControls(get);
   const progress = readProgress(get);
   const placeholders = readPlaceholders(get);
+  const historySearch = readHistorySearch(get);
   for (const [key, spec] of Object.entries(declared)) {
     const short = key.replace(/^q-lint\./, "");
     assert.ok(read.has(short), `${key} is declared but never read`);
@@ -384,7 +385,8 @@ test("every query setting is read, with the default package.json declares, and n
     resultsLocation: "editor",
   });
   assert.deepStrictEqual(controls, { unwrapped: false, timeout: 0 });
-  assert.deepStrictEqual(progress, { notifyAfter: 10 });
+  assert.deepStrictEqual(progress, { enabled: true, notifyAfter: 10 });
+  assert.deepStrictEqual(historySearch, { enabled: true });
   assert.deepStrictEqual(placeholders, { enabled: true });
   assert.deepStrictEqual(explorer, { excludedNamespaces: ["q", "Q", "h", "j", "o", "s"], previewLimit: 5, autoRefresh: false });
   // A size that is not one falls back to the default.

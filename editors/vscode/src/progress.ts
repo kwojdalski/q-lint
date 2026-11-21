@@ -3,6 +3,8 @@
 // `vscode` import, so node tests it; `live.ts` keeps the timer and asks.
 
 export interface ProgressSettings {
+  /// `q-lint.query.progress.enable`: count the time and notify at all.
+  enabled: boolean;
   /// Seconds a query must have run for its end to be notified while the
   /// window is not focused; 0: never.
   notifyAfter: number;
@@ -12,6 +14,7 @@ export interface ProgressSettings {
 export function readProgress(get: <T>(key: string, fallback: T) => T): ProgressSettings {
   const after = get<unknown>("query.notifyAfter", 10);
   return {
+    enabled: get<unknown>("query.progress.enable", true) !== false,
     notifyAfter: typeof after === "number" && Number.isFinite(after) && after > 0 ? Math.min(after, 86_400) : 0,
   };
 }
@@ -35,7 +38,7 @@ export function elapsedText(millis: number): string {
 /// seconds, and only when the user is looking elsewhere. One the user
 /// aborted is not news to them.
 export function shouldNotify(millis: number, focused: boolean, outcome: string, settings: ProgressSettings): boolean {
-  return settings.notifyAfter > 0 && !focused && outcome !== "aborted" && millis >= settings.notifyAfter * 1000;
+  return settings.enabled && settings.notifyAfter > 0 && !focused && outcome !== "aborted" && millis >= settings.notifyAfter * 1000;
 }
 
 /// What the notification says of a query on `process` that ended with

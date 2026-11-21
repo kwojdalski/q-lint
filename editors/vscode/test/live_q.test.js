@@ -147,3 +147,34 @@ test("a process's connect script runs on every connect, before any query (#916)"
   assert.strictEqual(await live.connectTo("missing"), true);
   assert.match(stub.messages.find(([k]) => k === "warning")[1], /^q-lint: the connect script of missing failed: could not read .*nope\.q/);
 });
+
+test("the heartbeat times a real process, and a process that restarts is reconnected to (#917)", { skip }, async (t) => {
+  const body = "started:.z.p\n";
+  let q = await startQ(body);
+  const port = q.port;
+  t.after(() => q.stop());
+  const { live, editor, last } = await setUp(t, [proc("q", port, { init: "inited:1b" })]);
+  stub.config.user["connection.heartbeat.enable"] = true;
+  stub.config.user["connection.heartbeatInterval"] = 1;
+  stub.config.user["connection.autoReconnect.enable"] = true;
+  assert.strictEqual(await live.connectTo("q"), true);
+  for (let i = 0; i < 100 && live.latency === undefined; i++) await sleep(20);
+  assert.match(live.status.text, /^\$\(plug\) q: q \$\(pulse\) \d+ ms$/);
+  // The heartbeat defines nothing on the process.
+  editor("key[`.] except `started`inited");
+  await stub.commands.get("q-lint.queryCurrentLine")();
+  assert.strictEqual(last(), "ok key[`.] except `started`inited");
+  q.stop();
+  for (let i = 0; i < 100 && live.activeLabel() !== undefined; i++) await sleep(20);
+  assert.strictEqual(live.activeLabel(), undefined);
+  assert.match(live.status.text, /reconnecting to q \(\d of 5\)/);
+  q = await startQ(body, port);
+  for (let i = 0; i < 200 && live.activeLabel() === undefined; i++) await sleep(50);
+  assert.strictEqual(live.activeLabel(), "q");
+  // The connect script ran again on the new process.
+  editor("if[not inited;'no]");
+  await stub.commands.get("q-lint.queryCurrentLine")();
+  assert.strictEqual(last(), "ok if[not inited;'no]");
+  for (let i = 0; i < 100 && live.latency === undefined; i++) await sleep(20);
+  assert.ok(live.latency !== undefined, "the heartbeat restarted");
+});

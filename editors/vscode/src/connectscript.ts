@@ -8,6 +8,11 @@ export const CONNECT_SCRIPT_COMMANDS = {
   set: "q-lint.setConnectScript",
 } as const;
 
+/// `q-lint.connection.connectScript.enable`: whether scripts run, and can be set.
+export function readConnectScript(get: <T>(key: string, fallback: T) => T): { enabled: boolean } {
+  return { enabled: get<unknown>("connection.connectScript.enable", true) !== false };
+}
+
 export type ConnectScript = { kind: "code"; code: string } | { kind: "file"; file: string };
 
 /// The script `process` runs on connect, if it has one.

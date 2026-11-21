@@ -78,9 +78,15 @@ test("the history is exported as JSON, newest first, or as a q script, oldest fi
 test("the filter is on the view's title bar, and Clear Filter only while filtered", () => {
   const title = pkg.contributes.menus["view/title"];
   const on = (command) => title.filter((m) => m.command === command).map((m) => m.when);
-  assert.deepStrictEqual(on(HISTORY_COMMANDS.clearFilter), [`view == q-lint.queryHistory && ${HISTORY_FILTERED}`]);
-  assert.ok(on(HISTORY_COMMANDS.filter).includes(`view == q-lint.queryHistory && !${HISTORY_FILTERED}`));
-  assert.deepStrictEqual(on(HISTORY_COMMANDS.export), ["view == q-lint.queryHistory"]);
+  const search = "config.q-lint.queryHistory.search.enable";
+  assert.deepStrictEqual(on(HISTORY_COMMANDS.clearFilter), [`view == q-lint.queryHistory && ${HISTORY_FILTERED} && ${search}`]);
+  assert.ok(on(HISTORY_COMMANDS.filter).includes(`view == q-lint.queryHistory && !${HISTORY_FILTERED} && ${search}`));
+  assert.deepStrictEqual(on(HISTORY_COMMANDS.export), [`view == q-lint.queryHistory && ${search}`]);
+  // Hidden from the palette too while the setting is off.
+  for (const command of Object.values(HISTORY_COMMANDS)) {
+    const palette = pkg.contributes.menus.commandPalette.find((m) => m.command === command);
+    assert.ok(palette && palette.when.includes(search), command);
+  }
   for (const command of Object.values(HISTORY_COMMANDS)) {
     const declared = pkg.contributes.commands.find((c) => c.command === command);
     assert.strictEqual(declared.category, "q-lint", command);
@@ -153,4 +159,29 @@ test("Export Query History writes what the view shows, as JSON or a q script", a
   assert.deepStrictEqual(stub.messages.at(-1), ["info", "q-lint: no query in the history matches the filter."]);
   assert.ok(!written.has("/out/x.json"));
   assert.strictEqual(live.history().length, 4);
+});
+
+test("with q-lint.queryHistory.search.enable off, filter and export refuse, and a filter set is cleared", async (t) => {
+  const { live, view, run } = await setUp(t);
+  const vscode = require("vscode");
+  const written = new Map();
+  const fs = vscode.workspace.fs;
+  vscode.workspace.fs = { writeFile: async (uri, bytes) => void written.set(uri.fsPath, bytes) };
+  t.after(() => (vscode.workspace.fs = fs));
+  await run(HISTORY_COMMANDS.filter, { process: "rdb" });
+  assert.strictEqual(live.shownHistory().length, 2);
+  stub.config.user["queryHistory.search.enable"] = false;
+  stub.changeConfig("q-lint.queryHistory.search.enable");
+  assert.deepStrictEqual([live.shownHistory().length, view.description], [4, undefined]);
+  const off = ["info", "q-lint: Query History search is turned off. Set q-lint.queryHistory.search.enable to true to turn it on."];
+  stub.messages = [];
+  await run(HISTORY_COMMANDS.filter, { process: "rdb" });
+  await run(HISTORY_COMMANDS.export, vscode.Uri.file("/out/h.json"));
+  assert.deepStrictEqual(stub.messages, [off, off]);
+  assert.deepStrictEqual([live.shownHistory().length, written.size], [4, 0]);
+  // On again, without a reload.
+  stub.config.user["queryHistory.search.enable"] = true;
+  stub.changeConfig("q-lint.queryHistory.search.enable");
+  await run(HISTORY_COMMANDS.filter, { process: "rdb" });
+  assert.strictEqual(live.shownHistory().length, 2);
 });

@@ -61,7 +61,9 @@ test("a script is summed up in a line", () => {
 
 test("Set Connect Script is on a saved process's row only", () => {
   const rows = pkg.contributes.menus["view/item/context"].filter((m) => m.command === CONNECT_SCRIPT_COMMANDS.set);
-  assert.deepStrictEqual(rows.map((m) => m.when), ["view == q-lint.processes && viewItem =~ /^process/"]);
+  assert.deepStrictEqual(rows.map((m) => m.when), ["view == q-lint.processes && viewItem =~ /^process/ && config.q-lint.connection.connectScript.enable"]);
+  const palette = pkg.contributes.menus.commandPalette.find((m) => m.command === CONNECT_SCRIPT_COMMANDS.set);
+  assert.strictEqual(palette.when, "config.q-lint.connection.connectScript.enable");
 });
 
 async function setUp(t, processes) {
@@ -130,4 +132,32 @@ test("Edit Process keeps the connect script; Import asks before taking one", asy
   stub.picks.push("Import with Scripts");
   await stub.commands.get("q-lint.importProcesses")(vscode.Uri.file("/l.json"));
   assert.deepStrictEqual(live.processes().map((p) => scriptOf(p)), [{ kind: "code", code: "evil:1" }, { kind: "file", file: "i.q" }]);
+});
+
+test("with q-lint.connection.connectScript.enable off, Set Connect Script refuses and no script is sent", async (t) => {
+  const net = require("node:net");
+  const messages = [];
+  const server = net.createServer((socket) => {
+    socket.on("error", () => {});
+    let shook = false;
+    socket.on("data", (chunk) => {
+      if (!shook) {
+        shook = true;
+        socket.write(Buffer.from([3]));
+        return;
+      }
+      messages.push(chunk.length);
+    });
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  t.after(() => server.close());
+  const { live, run } = await setUp(t, [{ label: "s", host: "127.0.0.1", port: server.address().port, tags: [], init: "x:1" }]);
+  t.after(() => stub.commands.get("q-lint.disconnectProcess")?.());
+  stub.config.user["connection.connectScript.enable"] = false;
+  await run("s", null);
+  assert.deepStrictEqual(stub.messages.at(-1), ["info", "q-lint: Connect scripts is turned off. Set q-lint.connection.connectScript.enable to true to turn it on."]);
+  assert.ok(scriptOf(live.processes()[0]), "the script is kept");
+  assert.strictEqual(await live.connectTo("s"), true);
+  await new Promise((r) => setTimeout(r, 100));
+  assert.deepStrictEqual(messages, [], "nothing was sent on connect");
 });

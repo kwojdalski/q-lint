@@ -22,21 +22,23 @@ test("the running time is whole seconds, then minutes, then hours", () => {
 
 test("notifyAfter is read as a positive number of seconds, else never", () => {
   const read = (v) => readProgress((key, fallback) => (key === "query.notifyAfter" && v !== undefined ? v : fallback));
-  assert.deepStrictEqual(read(undefined), { notifyAfter: 10 });
-  assert.deepStrictEqual(read(2.5), { notifyAfter: 2.5 });
-  for (const off of [0, -1, "10", null, NaN, Infinity]) assert.deepStrictEqual(read(off), { notifyAfter: 0 }, String(off));
-  assert.deepStrictEqual(read(1e9), { notifyAfter: 86_400 });
+  assert.deepStrictEqual(read(undefined), { enabled: true, notifyAfter: 10 });
+  assert.deepStrictEqual(read(2.5).notifyAfter, 2.5);
+  for (const off of [0, -1, "10", null, NaN, Infinity]) assert.deepStrictEqual(read(off).notifyAfter, 0, String(off));
+  assert.deepStrictEqual(read(1e9).notifyAfter, 86_400);
+  assert.strictEqual(readProgress((key, fallback) => (key === "query.progress.enable" ? false : fallback)).enabled, false);
 });
 
 test("only a long query that ends unseen is notified, and never an aborted one", () => {
-  const on = { notifyAfter: 10 };
+  const on = { enabled: true, notifyAfter: 10 };
   assert.strictEqual(shouldNotify(10_000, false, "ok", on), true);
   assert.strictEqual(shouldNotify(9_999, false, "ok", on), false);
   assert.strictEqual(shouldNotify(60_000, true, "ok", on), false);
   assert.strictEqual(shouldNotify(60_000, false, "error", on), true);
   assert.strictEqual(shouldNotify(60_000, false, "timeout", on), true);
   assert.strictEqual(shouldNotify(60_000, false, "aborted", on), false);
-  assert.strictEqual(shouldNotify(60_000, false, "ok", { notifyAfter: 0 }), false);
+  assert.strictEqual(shouldNotify(60_000, false, "ok", { enabled: true, notifyAfter: 0 }), false);
+  assert.strictEqual(shouldNotify(60_000, false, "ok", { enabled: false, notifyAfter: 10 }), false);
 });
 
 test("the notification names the process, the time and q's error, cut when long", () => {
@@ -101,4 +103,37 @@ test("the status bar counts a running query's time, and its end is notified when
   vscode.window.state = { focused: true };
   await live.run("slow 1");
   assert.strictEqual(stub.messages.filter(([, m]) => m.includes("finished after")).length, 1);
+});
+
+test("with q-lint.query.progress.enable off, the status bar only spins and nothing is notified", async (t) => {
+  const q = await slowQ(1200);
+  stub.reset();
+  const context = stub.newContext();
+  await context.globalState.update("q-lint.processes", [{ label: "slow", host: "127.0.0.1", port: q.port, tags: [] }]);
+  const vscode = require("vscode");
+  const focused = vscode.window.state;
+  vscode.window.state = { focused: false };
+  const live = new Live(context);
+  t.after(async () => {
+    vscode.window.state = focused;
+    await stub.commands.get("q-lint.disconnectProcess")?.();
+    for (const d of context.subscriptions) d.dispose?.();
+    q.close();
+  });
+  stub.config.user["query.notifyAfter"] = 1;
+  stub.config.user["query.progress.enable"] = false;
+  assert.strictEqual(await live.connectTo("slow"), true);
+  const running = live.run("slow 1");
+  await sleep(150);
+  assert.strictEqual(live.status.text, "$(sync~spin) q: slow");
+  assert.strictEqual(live.ticker, undefined, "no ticker while off");
+  // Turned on mid-query, it counts at once, without a reload.
+  stub.config.user["query.progress.enable"] = true;
+  stub.changeConfig("q-lint.query.progress.enable");
+  assert.match(live.status.text, /^\$\(sync~spin\) q: slow 0s$/);
+  stub.config.user["query.progress.enable"] = false;
+  stub.changeConfig("q-lint.query.progress.enable");
+  await running;
+  assert.ok(!stub.messages.some(([, m]) => m.includes("finished after")));
+  assert.strictEqual(live.ticker, undefined);
 });
