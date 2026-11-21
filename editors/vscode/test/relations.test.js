@@ -24,6 +24,7 @@ const {
   picks,
   rows,
   summary,
+  unsavedIn,
 } = require("../out/relations.js");
 
 // A file as a test names it: what follows the workspace folder.
@@ -331,4 +332,17 @@ test("only a q file is sent to the server", () => {
   assert.strictEqual(isQ("/ws/A.Q"), true);
   assert.strictEqual(isQ("/ws/a.py"), false);
   assert.strictEqual(isQ("/ws/q"), false);
+});
+
+test("an unsaved q file counts as changed only in a folder git answered for", () => {
+  // A scratch q file open from outside the workspace, edited and not
+  // saved, was sent as changed, and the list said a changed q file was
+  // "not in the index (deleted or excluded)" though nothing had changed.
+  const sep = path.sep;
+  const ws = `${sep}ws`;
+  const other = `${sep}other`;
+  const dirty = [`${ws}${sep}a.q`, `${sep}tmp${sep}scratch.q`, `${other}${sep}b.q`, `${sep}wsx${sep}c.q`];
+  assert.deepStrictEqual(unsavedIn(dirty, [ws]), [`${ws}${sep}a.q`]);
+  assert.deepStrictEqual(unsavedIn(dirty, [ws, other]), [`${ws}${sep}a.q`, `${other}${sep}b.q`]);
+  assert.deepStrictEqual(unsavedIn(dirty, []), []);
 });

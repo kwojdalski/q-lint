@@ -46,6 +46,7 @@ import {
   picks,
   rows,
   summary,
+  unsavedIn,
   type Git,
   type Row,
 } from "./relations";
@@ -339,6 +340,7 @@ export class Relations implements TreeDataProvider<Row> {
     const run = git(binary);
     const paths = new Set<string>();
     const failed: string[] = [];
+    const answered: string[] = [];
     await window.withProgress(
       { location: ProgressLocation.Window, title: "q-lint: asking git what changed" },
       async () => {
@@ -347,6 +349,7 @@ export class Relations implements TreeDataProvider<Row> {
             for (const path of await changedFiles(run, folder.uri.fsPath)) {
               paths.add(path);
             }
+            answered.push(folder.uri.fsPath);
           } catch (error) {
             failed.push(`${folder.name}: ${reason(error)}`);
           }
@@ -361,11 +364,11 @@ export class Relations implements TreeDataProvider<Row> {
     }
     // A buffer edited and not saved differs from HEAD too, and the server's
     // graph is already of the buffer: leaving it out would list the tests of
-    // a file as it was, beside an editor showing it as it is.
-    for (const document of workspace.textDocuments) {
-      if (document.isDirty && isQFile(document)) {
-        paths.add(document.uri.fsPath);
-      }
+    // a file as it was, beside an editor showing it as it is. Only in a
+    // folder git answered for: elsewhere a file has no HEAD to differ from.
+    const dirty = workspace.textDocuments.filter((d) => d.isDirty && isQFile(d)).map((d) => d.uri.fsPath);
+    for (const path of unsavedIn(dirty, answered)) {
+      paths.add(path);
     }
     const changed = [...paths]
       .filter(isQ)
