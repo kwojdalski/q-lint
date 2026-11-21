@@ -1,0 +1,173 @@
+// Compare Query (#907) as data, and its page: two answers lined up row by
+// row with the cells that differ marked, and media/compare.js drawing them
+// in a small stand-in for the page's DOM. Run after `tsc`;
+// queryacross_vscode.test.js drives the command, queries_q.test.js real q.
+const test = require("node:test");
+const assert = require("node:assert");
+const fs = require("node:fs");
+const path = require("node:path");
+const vm = require("node:vm");
+const { COMPARE_ROWS, compareOutcomes, readCompare } = require("../out/compare.js");
+
+/// A grid answer of columns `{name: [type, cells, raw]}`.
+function table(columns, keys = 0) {
+  const names = Object.keys(columns);
+  const cells = names.map((n) => columns[n][1]);
+  return {
+    ok: true,
+    type: 98,
+    text: ["as the console writes it"],
+    grid: { count: cells[0].length, keys, names, types: names.map((n) => columns[n][0]), cells, raw: names.map((n) => columns[n][2] ?? []), rank: names.map(() => []) },
+  };
+}
+const side = (process, answer) => ({ process, answer });
+
+test("the setting is on by default, and only false turns it off", () => {
+  assert.deepStrictEqual(readCompare((k, f) => f), { enabled: true });
+  assert.deepStrictEqual(readCompare((k, f) => (k === "query.compare.enable" ? false : f)), { enabled: false });
+});
+
+test("two tables without keys are lined up by place, and differing cells marked", () => {
+  const c = compareOutcomes(
+    side("a", table({ sym: [11, ["x", "y", "z"]], px: [9, ["1", "2", "3"]] })),
+    side("b", table({ sym: [11, ["x", "y"]], px: [9, ["1", "5"]] })),
+    -1,
+  );
+  assert.strictEqual(c.matchedBy, "place");
+  assert.deepStrictEqual(c.columns, ["sym", "px"]);
+  assert.deepStrictEqual(c.rows, [
+    { left: ["x", "1"], right: ["x", "1"], differs: [false, false] },
+    { left: ["y", "2"], right: ["y", "5"], differs: [false, true] },
+    { left: ["z", "3"], differs: [true, true] },
+  ]);
+  assert.deepStrictEqual([c.differing, c.onlyLeft, c.onlyRight, c.same, c.lined], [1, 1, 0, false, 3]);
+});
+
+test("two tables keyed alike are lined up by key, whatever their order", () => {
+  const c = compareOutcomes(
+    side("a", table({ k: [11, ["x", "y"]], v: [7, ["1", "2"]] }, 1)),
+    side("b", table({ k: [11, ["z", "y", "x"]], v: [7, ["9", "2", "1"]] }, 1)),
+    -1,
+  );
+  assert.strictEqual(c.matchedBy, "key");
+  assert.deepStrictEqual(
+    c.rows.map((r) => [r.left?.[0], r.right?.[0]]),
+    [["x", "x"], ["y", "y"], [undefined, "z"]],
+  );
+  assert.deepStrictEqual([c.differing, c.onlyLeft, c.onlyRight], [0, 0, 1]);
+});
+
+test("a column only one side has differs in every row; the same tables are the same", () => {
+  const c = compareOutcomes(side("a", table({ v: [7, ["1"]] })), side("b", table({ v: [7, ["1"]], w: [7, ["2"]] })), -1);
+  assert.deepStrictEqual(c.columns, ["v", "w"]);
+  assert.deepStrictEqual([c.inLeft, c.inRight], [[true, false], [true, true]]);
+  assert.deepStrictEqual(c.rows[0], { left: ["1", ""], right: ["1", "2"], differs: [false, true] });
+  assert.strictEqual(c.same, false);
+  const same = compareOutcomes(side("a", table({ v: [7, ["1"]] })), side("b", table({ v: [7, ["1"]] })), -1);
+  assert.deepStrictEqual([same.same, same.differing], [true, 0]);
+});
+
+test("floats are compared to the decimals the grid shows", () => {
+  const a = side("a", table({ f: [9, ["1.2345"], [1.2345]] }));
+  const b = side("b", table({ f: [9, ["1.2346"], [1.2346]] }));
+  assert.strictEqual(compareOutcomes(a, b, -1).differing, 1);
+  assert.strictEqual(compareOutcomes(a, b, 2).same, true);
+});
+
+test("a value that is not tabular, an error or a process not reached is compared as text", () => {
+  const atom = (t) => ({ ok: true, type: -7, text: [t] });
+  assert.deepStrictEqual(compareOutcomes(side("a", atom("42")), side("b", atom("42")), -1).same, true);
+  const c = compareOutcomes(side("a", atom("42")), { process: "b", error: "could not connect" }, -1);
+  assert.deepStrictEqual([c.left, c.right, c.same, c.columns], [
+    { process: "a", kind: "text", text: "42" },
+    { process: "b", kind: "error", text: "could not connect" },
+    false,
+    [],
+  ]);
+  const t = compareOutcomes(side("a", table({ v: [7, ["1"]] })), side("b", { ok: false, error: "type", trace: "" }), -1);
+  assert.deepStrictEqual([t.left.kind, t.left.text, t.right.text], ["grid", "as the console writes it", "'type"]);
+});
+
+test("at most COMPARE_ROWS rows are kept, and all are counted", () => {
+  const n = COMPARE_ROWS + 10;
+  const many = (offset) => table({ v: [7, Array.from({ length: n }, (_, i) => String(i + (i >= n - 3 ? offset : 0)))] });
+  const c = compareOutcomes(side("a", many(0)), side("b", many(1)), -1);
+  assert.strictEqual(c.rows.length, COMPARE_ROWS);
+  assert.deepStrictEqual([c.lined, c.differing], [n, 3]);
+});
+
+// The page, in a stand-in DOM.
+class Element {
+  constructor(tag) {
+    this.tagName = tag.toUpperCase();
+    this.children = [];
+    this.className = "";
+    this.text = "";
+  }
+  appendChild(e) {
+    this.children.push(e);
+    return e;
+  }
+  set textContent(v) {
+    this.text = String(v);
+    this.children = [];
+  }
+  get textContent() {
+    return this.text + this.children.map((c) => c.textContent).join("");
+  }
+  all(match) {
+    const out = [];
+    const walk = (e) => e.children.forEach((c) => (match(c) && out.push(c), walk(c)));
+    walk(this);
+    return out;
+  }
+}
+
+function loadPage() {
+  const posted = [];
+  const listeners = [];
+  const body = new Element("body");
+  const sandbox = {
+    document: { body, createElement: (t) => new Element(t) },
+    acquireVsCodeApi: () => ({ postMessage: (m) => posted.push(JSON.parse(JSON.stringify(m))) }),
+    window: { addEventListener: (type, f) => type === "message" && listeners.push(f) },
+  };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "media", "compare.js"), "utf8"), sandbox);
+  return { body, posted, send: (data) => listeners.forEach((f) => f({ data })) };
+}
+
+test("the page draws the two tables side by side, marks what differs, and puts every value in as text", () => {
+  const page = loadPage();
+  assert.deepStrictEqual(page.posted, [{ type: "ready" }]);
+  const comparison = compareOutcomes(
+    side("<b>a</b>", table({ sym: [11, ["<img src=x onerror=alert(1)>", "y"]], px: [9, ["1", "2"]] })),
+    side("b", table({ sym: [11, ["<img src=x onerror=alert(1)>", "y"]], px: [9, ["1", "3"]] })),
+    -1,
+  );
+  page.send({ type: "compare", id: 1, code: "select from t", comparison });
+  const cells = page.body.all((e) => e.tagName === "TD");
+  // Two rows, two columns a side and the gap between.
+  assert.strictEqual(cells.length, 10);
+  assert.deepStrictEqual(
+    cells.filter((c) => c.className === "changed").map((c) => c.textContent),
+    ["2", "3"],
+  );
+  assert.strictEqual(cells[0].textContent, "<img src=x onerror=alert(1)>");
+  assert.strictEqual(cells[0].children.length, 0);
+  assert.ok(page.body.all((e) => e.tagName === "TH").some((th) => th.textContent === "<b>a</b> (2 rows)"));
+  assert.deepStrictEqual(page.posted.at(-1), {
+    type: "rendered",
+    id: 1,
+    rendered: { processes: ["<b>a</b>", "b"], rows: 2, marked: 2, summary: "1 cell differs (rows lined up by place)." },
+  });
+});
+
+test("the page shows two answers that are not tables as text, and says when they are the same", () => {
+  const page = loadPage();
+  const atom = (t) => ({ ok: true, type: -7, text: [t] });
+  page.send({ type: "compare", id: 2, code: "x", comparison: compareOutcomes(side("a", atom("1")), side("b", atom("1")), -1) });
+  assert.strictEqual(page.posted.at(-1).rendered.summary, "a and b gave the same answer.");
+  page.send({ type: "compare", id: 3, code: "x", comparison: compareOutcomes(side("a", atom("1")), { process: "b", error: "down" }, -1) });
+  const pres = page.body.all((e) => e.tagName === "PRE");
+  assert.deepStrictEqual(pres.map((p) => [p.className, p.textContent]), [["changed", "1"], ["error", "down"]]);
+});

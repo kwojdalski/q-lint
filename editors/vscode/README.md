@@ -290,8 +290,8 @@ from the palette, runs one query on every saved and discovered process
 carrying a tag (ignoring case; asked for when none is given), and shows the
 answers as one table in the result panel - as a grid even in console mode -
 with a `process` column first. The code is the selection, or the statement
-at the cursor, placeholders filled in; it also takes the tag and the code
-as arguments for a keybinding. Each process is queried over a connection of
+at the cursor, placeholders filled in; it also takes a tag as the
+argument of a keybinding. Each process is queried over a connection of
 its own, eight at a time, opened for the query and closed after, so the
 active connection is left as it was; its connect script runs first, and
 the query controls apply (unlimited, unwrapped, the timeout). A
@@ -302,6 +302,25 @@ column; a q error, or a process that could not be reached, one row, its
 message in an `error` column. Each table is cut at `q-lint.query.gridLimit`
 rows, as a grid query is. Every run lands in Query History under its
 process. `q-lint.query.tagQuery.enable` off hides and refuses it.
+
+**Compare Query Across Two Processes**, in a q editor's context menu or
+from the palette, runs the selection, or the statement at the cursor, on
+two processes you pick - the second pick says which the first was - each
+over a connection of its own as **Query a Tag** does, and opens a panel
+beside the editor showing the answers side by side: the first process's
+columns, then the second's, each pair of rows on one line. Two tables are
+lined up as **Compare with Previous Run** lines up two runs: by their key
+when both are keyed by the same columns, otherwise by their place.
+Columns are matched by name (one only a side has is struck through on the
+other), and cells by the text the grid shows, so floats compare to
+`q-lint.query.gridDecimals`. A cell that differs is marked, a row only one
+side has is marked on that side and hatched on the other, and a line above
+says how many cells differ, how many rows only each side has, or that the
+answers are the same. Anything that is not two tables - an atom, a list, a
+q error, a process not reached - is shown as the two texts side by side.
+The first 5000 rows lined up are drawn; the counts are of all of them.
+Both runs land in Query History. `q-lint.query.compare.enable` off hides
+and refuses it.
 
 **Read-only guard.** Code sent to a process tagged `prod`, `prd` or
 `production` (`q-lint.processes.readOnlyGuard.tags`, ignoring case) is read
@@ -316,8 +335,8 @@ symbol (`` from `t ``), `set`, `upsert`, `insert`, `hdel`, `exit`, `system`,
 and a system command other than one that reads a setting (`\c`, `\d`, `\P`
 alone) - `\t` and `\ts` are read for their expression. It holds for every
 path that sends code: a query (line, selection, block, file, a Run lens, a
-rerun, Preview), **Query a Tag** (asked once, for every guarded process it
-reaches), a notebook cell and **Run Notebook with Parameters**,
+rerun, Preview), **Query a Tag** and **Compare Query** (asked once, for
+every guarded process they reach), a notebook cell and **Run Notebook with Parameters**,
 **Redefine on Process** (whose confirmation says so, since it always
 assigns) and a connect script, asked at each connect, and skipped, with the
 connection kept, when declined. An agent's query cannot be asked about, so
@@ -977,6 +996,7 @@ nothing.
 | `q-lint.query.notifyAfter` | `10` | Seconds a query must run for its end to be notified while the window is not focused; `0` never. | - |
 | `q-lint.query.placeholders.enable` | `true` | Ask for a value for each `{{name}}` in the code a query sends, and put it in place. | - |
 | `q-lint.query.tagQuery.enable` | `true` | **Query a Tag**: one query on every process with a tag, the answers as one table. | - |
+| `q-lint.query.compare.enable` | `true` | **Compare Query Across Two Processes**: one query on two processes, the answers side by side, differences marked. | - |
 | `q-lint.processExplorer.excludedNamespaces` | `["q","Q","h","j","o","s"]` | Namespaces the Process Explorer and live completion leave out (`q`, or a nested one as `ns.sub`), with those nested in them. | - |
 | `q-lint.processExplorer.previewLimit` | `5` | Rows of a table Preview shows. | - |
 | `q-lint.processExplorer.autoRefresh` | `false` | Read the process again after each query. | - |

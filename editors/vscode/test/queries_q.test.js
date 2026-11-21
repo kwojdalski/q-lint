@@ -1,7 +1,7 @@
 // Queries on saved processes against real q processes, driven through the
-// stand-in `vscode` module: the read-only guard (#918) and Query a Tag
-// (#906). Needs a q binary, so it runs only when QLINT_TEST_Q names one, as
-// qclient.test.js does.
+// stand-in `vscode` module: the read-only guard (#918), Query a Tag (#906)
+// and Compare Query (#907). Needs a q binary, so it runs only when
+// QLINT_TEST_Q names one, as qclient.test.js does.
 const { stub, vscode } = require("./vscode_stub.js");
 const test = require("node:test");
 const assert = require("node:assert");
@@ -126,4 +126,28 @@ test("Query a Tag merges the answers of real q processes, a failure as a row (#9
   // A q error is a row too.
   await stub.commands.get("q-lint.queryTag")("eu", "1+`x");
   assert.deepStrictEqual(across.state().tag.payload.cells.at(-1).slice(0, 3), ["'type", "'type", "'type"]);
+});
+
+test("Compare Query lines up two real q processes' keyed tables by key (#907)", { skip }, async (t) => {
+  const a = await startQ(t, "pos:([sym:`a`b`c] qty:1 2 3; px:1.5 2.5 3.5)\n");
+  const b = await startQ(t, "pos:([sym:`c`b`d] qty:3 9 4; px:3.5 2.5 4.5)\n");
+  const { live, across } = await setUp(t, [proc("a", a.port), proc("b", b.port)]);
+  await stub.commands.get("q-lint.compareQuery")("pos", "a", "b");
+  const c = across.state().comparison;
+  assert.strictEqual(c.matchedBy, "key");
+  assert.deepStrictEqual(c.columns, ["sym", "qty", "px"]);
+  assert.deepStrictEqual(
+    c.rows.map((r) => [r.left?.join(" "), r.right?.join(" "), r.differs.map(Number).join("")]),
+    [
+      ["a 1 1.5", undefined, "111"],
+      ["b 2 2.5", "b 9 2.5", "010"],
+      ["c 3 3.5", "c 3 3.5", "000"],
+      [undefined, "d 4 4.5", "111"],
+    ],
+  );
+  assert.deepStrictEqual([c.differing, c.onlyLeft, c.onlyRight], [1, 1, 1]);
+  assert.strictEqual(live.activeLabel(), undefined);
+  // An atom on each side: compared as text.
+  await stub.commands.get("q-lint.compareQuery")("sum exec qty from pos", "a", "b");
+  assert.deepStrictEqual([across.state().comparison.left.text, across.state().comparison.right.text, across.state().comparison.same], ["6", "16", false]);
 });

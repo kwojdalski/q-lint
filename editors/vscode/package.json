@@ -557,6 +557,12 @@
             "default": true,
             "order": 140,
             "markdownDescription": "**Query a Tag**: run one query on every saved and discovered process carrying a tag, each over a connection of its own, and show the answers as one table with a `process` column first; a process that fails is a row with its error."
+          },
+          "q-lint.query.compare.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 141,
+            "markdownDescription": "**Compare Query Across Two Processes**: run one query on two processes, each over a connection of its own, and show the answers side by side with the cells that differ marked."
           }
         }
       },
@@ -1187,6 +1193,12 @@
         "title": "Query a Tag",
         "category": "q-lint",
         "icon": "$(run-all)"
+      },
+      {
+        "command": "q-lint.compareQuery",
+        "title": "Compare Query Across Two Processes",
+        "category": "q-lint",
+        "icon": "$(diff)"
       }
     ],
     "views": {
@@ -1661,6 +1673,11 @@
           "command": "q-lint.queryTag",
           "when": "editorLangId == q && config.q-lint.query.tagQuery.enable",
           "group": "q-lint@21"
+        },
+        {
+          "command": "q-lint.compareQuery",
+          "when": "editorLangId == q && config.q-lint.query.compare.enable",
+          "group": "q-lint@22"
         }
       ],
       "commandPalette": [
@@ -1739,6 +1756,10 @@
         {
           "command": "q-lint.queryTag",
           "when": "config.q-lint.query.tagQuery.enable"
+        },
+        {
+          "command": "q-lint.compareQuery",
+          "when": "config.q-lint.query.compare.enable"
         }
       ],
       "editor/title": [

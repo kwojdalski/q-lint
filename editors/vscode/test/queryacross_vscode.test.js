@@ -1,6 +1,6 @@
 // Queries across processes through the stand-in `vscode` (vscode_stub.js),
-// against q processes played by socket servers: Query a Tag (#906). No q
-// and no editor needed.
+// against q processes played by socket servers: Query a Tag (#906) and
+// Compare Query (#907). No q and no editor needed.
 const { stub, vscode } = require("./vscode_stub.js");
 const test = require("node:test");
 const assert = require("node:assert");
@@ -151,4 +151,54 @@ test("turned off, Query a Tag refuses, says how to turn it on, and sends nothing
   stub.changeConfig("q-lint.query.tagQuery.enable");
   await stub.commands.get("q-lint.queryTag")("eu", "count t");
   assert.deepStrictEqual(queries(a), ["count t"]);
+});
+
+test("Compare Query runs one query on two processes and lines up the answers (#907)", async (t) => {
+  const a = await fakeQ(table([1, 2]));
+  const b = await fakeQ(table([1, 3, 4]));
+  t.after(() => [a, b].forEach((q) => q.close()));
+  const { live, across } = await setUp(t, [proc("a", a.port, []), proc("b", b.port, [])]);
+  await stub.commands.get("q-lint.compareQuery")("select from t", "a", "b");
+  const { comparison } = across.state();
+  assert.deepStrictEqual([comparison.left.process, comparison.right.process], ["a", "b"]);
+  assert.deepStrictEqual([comparison.differing, comparison.onlyLeft, comparison.onlyRight, comparison.same], [1, 0, 1, false]);
+  assert.deepStrictEqual([queries(a), queries(b)], [["select from t"], ["select from t"]]);
+  assert.deepStrictEqual(live.history().map((h) => h.process).sort(), ["a", "b"]);
+  assert.strictEqual(live.activeLabel(), undefined);
+  // Picked when not given; the second pick says which is first.
+  let titles = [];
+  stub.picks.push((o) => (titles.push(o.title), o.items.find((i) => i.label === "b")));
+  stub.picks.push((o) => (titles.push(o.title), o.items.find((i) => i.label === "a")));
+  await stub.commands.get("q-lint.compareQuery")("count t");
+  assert.deepStrictEqual(titles, ["Compare Query (1 of 2): run it on which process?", "Compare Query (2 of 2): and compare b with which process?"]);
+  assert.strictEqual(across.state().comparison.left.process, "b");
+  // The same process twice is not a comparison.
+  stub.messages = [];
+  await stub.commands.get("q-lint.compareQuery")("count t", "a", "a");
+  assert.deepStrictEqual(stub.messages, [["info", "q-lint: Compare Query compares two processes; a was chosen twice."]]);
+  assert.strictEqual(queries(a).length, 2);
+});
+
+test("Compare Query asks the read-only guard first; declined, neither process is sent anything", async (t) => {
+  const a = await fakeQ(table([1]));
+  const b = await fakeQ(table([1]));
+  t.after(() => [a, b].forEach((q) => q.close()));
+  const { across } = await setUp(t, [proc("a", a.port, ["dev"]), proc("b", b.port, ["prd"])]);
+  stub.picks.push(undefined);
+  await stub.commands.get("q-lint.compareQuery")("`t upsert 1", "a", "b");
+  assert.deepStrictEqual(stub.messages.filter(([k]) => k === "warning").map(([, m]) => m), ["This code would change b. Run it anyway?"]);
+  assert.deepStrictEqual([queries(a), queries(b), across.state().comparison], [[], [], undefined]);
+});
+
+test("turned off, Compare Query refuses, says how to turn it on, and sends nothing", async (t) => {
+  const a = await fakeQ(table([1]));
+  t.after(() => a.close());
+  await setUp(t, [proc("a", a.port, []), proc("b", a.port, [])], { "query.compare.enable": false });
+  await stub.commands.get("q-lint.compareQuery")("count t", "a", "b");
+  assert.deepStrictEqual(stub.messages, [["info", "q-lint: Compare Query is turned off. Set q-lint.query.compare.enable to true to turn it on."]]);
+  assert.deepStrictEqual(a.sent, []);
+  stub.config.user["query.compare.enable"] = true;
+  stub.changeConfig("q-lint.query.compare.enable");
+  await stub.commands.get("q-lint.compareQuery")("count t", "a", "b");
+  assert.strictEqual(queries(a).length, 2);
 });

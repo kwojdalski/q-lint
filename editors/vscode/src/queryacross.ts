@@ -1,5 +1,6 @@
-// Queries across processes: Query a Tag (#906), the VS Code around
-// `tagquery.ts`. Each process is queried over a connection of its own
+// Queries across processes: Query a Tag (#906) and Compare Query (#907),
+// the VS Code around `tagquery.ts` and `compare.ts`. Each process is
+// queried over a connection of its own
 // (`Live.runApart`), so the active connection is left as it was, and each
 // query lands in Query History under its process.
 import { ProgressLocation, commands, window, workspace, type ExtensionContext } from "vscode";
@@ -10,6 +11,9 @@ import type { Live } from "./live";
 import type { Process } from "./processes";
 import { statements } from "./statements";
 import { AT_ONCE, TAG_QUERY, allTags, mergeOutcomes, readTagQuery, tagged, type Outcome } from "./tagquery";
+import { COMPARE, compareOutcomes, readCompare, type Comparison } from "./compare";
+import { CompareView, type RenderedComparison } from "./compareview";
+import { readLive } from "./liveconfig";
 
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
@@ -44,18 +48,65 @@ const setting = <T>(read: (get: <V>(key: string, fallback: V) => V) => T): T => 
 export class QueryAcross {
   /// What Query a Tag last showed, for tests through the API.
   private lastTag: { tag: string; payload: GridPayload } | undefined;
+  /// What Compare Query last compared.
+  private lastComparison: Comparison | undefined;
+  private readonly compareView: CompareView;
 
   constructor(
     context: ExtensionContext,
     private readonly live: Live,
   ) {
+    this.compareView = new CompareView(context);
     context.subscriptions.push(
       commands.registerCommand(TAG_QUERY.command, (tag?: Row | string, code?: string) => this.queryTag(tag, code)),
+      commands.registerCommand(COMPARE.command, (code?: string, first?: Row | string, second?: Row | string) => this.compare(code, first, second)),
     );
   }
 
-  state(): { tag?: { tag: string; payload: GridPayload } } {
-    return { ...(this.lastTag !== undefined ? { tag: this.lastTag } : {}) };
+  state(): { tag?: { tag: string; payload: GridPayload }; comparison?: Comparison; compared?: RenderedComparison } {
+    const rendered = this.compareView.lastRendered();
+    return {
+      ...(this.lastTag !== undefined ? { tag: this.lastTag } : {}),
+      ...(this.lastComparison !== undefined ? { comparison: this.lastComparison } : {}),
+      ...(rendered !== undefined ? { compared: rendered } : {}),
+    };
+  }
+
+  /// Compare Query: run one query on two processes and show the answers
+  /// side by side, the cells that differ marked. The code is one given, or
+  /// the editor's selection or the statement at the cursor; each process
+  /// one given (a label or a Processes row), or one picked.
+  async compare(given?: string, first?: Row | string, second?: Row | string): Promise<void> {
+    if (!featureOn(setting(readCompare).enabled, "Compare Query", "q-lint.query.compare.enable")) {
+      return;
+    }
+    const code = typeof given === "string" ? given : await this.live.codeFromEditor();
+    if (code === undefined) {
+      return;
+    }
+    if (statements(code).length === 0) {
+      void window.showInformationMessage("q-lint: the query is empty: it is blank or only comments.");
+      return;
+    }
+    const a = await this.live.choose(first, "Compare Query (1 of 2): run it on which process?");
+    if (a === undefined) {
+      return;
+    }
+    const b = await this.live.choose(second, `Compare Query (2 of 2): and compare ${a.label} with which process?`);
+    if (b === undefined) {
+      return;
+    }
+    if (a.label === b.label) {
+      void window.showInformationMessage(`q-lint: Compare Query compares two processes; ${a.label} was chosen twice.`);
+      return;
+    }
+    if (!(await this.live.guardAllows(code, [a, b]))) {
+      return;
+    }
+    const { outcomes } = await this.runEach([a, b], code, `q-lint: comparing ${a.label} and ${b.label}`);
+    const comparison = compareOutcomes(outcomes[0], outcomes[1], setting(readLive).gridDecimals);
+    this.lastComparison = comparison;
+    this.compareView.show(comparison, code);
   }
 
   /// Run `code` on each of `processes` over connections of their own, at
