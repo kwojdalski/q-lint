@@ -83,21 +83,15 @@ export function renamed(list: SavedQuery[], from: string, to: string): SavedQuer
   return list.map((q) => (q.name === from ? { ...q, name: to } : q));
 }
 
-/// The path of the document `name` is edited in: `/<name>.q`, the name
-/// escaped so a `/` or `?` in it is part of it.
+/// The path of the document `name` is edited in: `/<name>.q`, with only a
+/// `/` (and `%`, which escapes it) escaped, so the editor's tab reads as
+/// the name.
 export function savedPath(name: string): string {
-  return `/${encodeURIComponent(name)}.q`;
+  return `/${name.replace(/%/g, "%25").replace(/\//g, "%2F")}.q`;
 }
 
 /// The name a document's path is of, or undefined when it is none.
 export function nameOfPath(path: string): string | undefined {
   const m = /^\/(.+)\.q$/.exec(path);
-  if (m === null) {
-    return undefined;
-  }
-  try {
-    return decodeURIComponent(m[1]);
-  } catch {
-    return undefined;
-  }
+  return m === null ? undefined : m[1].replace(/%(25|2F)/gi, (e) => (e === "%25" ? "%" : "/"));
 }

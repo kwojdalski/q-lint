@@ -49,12 +49,13 @@ test("adding, replacing and renaming keep the order", () => {
 });
 
 test("a name maps to its document's path and back, whatever it holds", () => {
-  for (const name of ["trades", "a/b", "50% ?x#", "ünï"]) {
+  for (const name of ["trades", "a/b", "50% ?x#", "ünï", "%2F", "a%25/b"]) {
     assert.strictEqual(nameOfPath(savedPath(name)), name, name);
   }
+  // Only a `/` and the `%` escaping it are escaped: the tab reads as the name.
   assert.strictEqual(savedPath("a/b"), "/a%2Fb.q");
+  assert.strictEqual(savedPath("px by sym"), "/px by sym.q");
   assert.strictEqual(nameOfPath("/"), undefined);
-  assert.strictEqual(nameOfPath("/%E0%A4%A.q"), undefined);
 });
 
 // --- the view and its commands
