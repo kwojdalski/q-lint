@@ -522,7 +522,7 @@ unless it has a `language`. Outputs are saved, so a notebook reopens with
 its results: an item is `text` when it is UTF-8 and `base64` otherwise.
 `execution` holds the run's number, outcome and start and end, in
 milliseconds since the epoch. Fields with nothing in them are left out, a
-field q-lint does not know - on the file or on a cell - is kept and saved
+field q-lint does not know - on the file, a cell, an output, an item or a run - is kept and saved
 back, and saving a notebook that was opened unchanged writes the same file. A file
 that is not a notebook does not open: the editor says what is wrong with
 it, and the file is left as it was. An empty file is a new notebook.
@@ -619,8 +619,8 @@ reaches the language server.
 
 | Setting | Default | What it does | q-pro |
 | --- | --- | --- | --- |
-| `q-lint.terminal.qBinary` | `"q"` | The q binary a terminal starts: a name on `PATH` or a path. It is quoted for the terminal's shell (POSIX, PowerShell or cmd), so it names one program, not a command with arguments. | `q-terminal.cfg.qBinary` |
-| `q-lint.terminal.envPath` | `""` | A file of `NAME=value` lines set for q, such as `QHOME` and `QLIC`. They go on the command line that starts q (`NAME=value q`, `$env:NAME=` in PowerShell, `set` in cmd), so they win over what your shell's startup files set, and show there. Relative to the workspace folder. It is read, not run as a shell script as q-pro's is: `#` lines are comments, `export ` is allowed, quotes around a value are dropped, and nothing is expanded: `$HOME` stays `$HOME`. | `q-terminal.cfg.envPath` |
+| `q-lint.terminal.qBinary` | `"q"` | The q binary a terminal starts: a name on `PATH` or a path, where a leading `~` is your home directory. It is quoted for the terminal's shell (POSIX, PowerShell or cmd), so it names one program, not a command with arguments. | `q-terminal.cfg.qBinary` |
+| `q-lint.terminal.envPath` | `""` | A file of `NAME=value` lines set for q, such as `QHOME` and `QLIC`. They go on the command line that starts q (`NAME=value q`, `$env:NAME=` in PowerShell, `set` in cmd), so they win over what your shell's startup files set, and show there. Relative to the workspace folder; a leading `~` is your home directory. It is read, not run as a shell script as q-pro's is: `#` lines are comments, `export ` is allowed, quotes around a value are dropped, and nothing is expanded: `$HOME` stays `$HOME`. | `q-terminal.cfg.envPath` |
 
 ### Discovery settings
 

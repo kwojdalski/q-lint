@@ -7,6 +7,7 @@
 // statements, `statements.ts`'s; how processes are read and grouped,
 // `processes.ts`'s; discovery servers, `discoveryservers.ts`'s; what a
 // terminal is sent, `terminal.ts`'s. This file is the VS Code around them.
+import * as os from "os";
 import * as path from "path";
 import {
   commands,
@@ -52,7 +53,7 @@ import { QConnection } from "./qclient";
 import { render } from "./query";
 import { QueryModes, type Rendered } from "./resultpanel";
 import { blockAt, statements } from "./statements";
-import { commandLine, parseEnv, replLines, shellKind } from "./terminal";
+import { commandLine, expandHome, parseEnv, replLines, shellKind } from "./terminal";
 import { QueryControls } from "./controls";
 import { ParameterCache } from "./paramcachecontrol";
 import { CONTROL_COMMANDS, UNLIMITED, armTimeout, limits, readUnlimited, runUnwrapped, timedOutError } from "./querycontrols";
@@ -240,26 +241,30 @@ class HistoryView implements TreeDataProvider<HistoryEntry> {
 /// q in VS Code terminals: a file run in one, and code sent to one. The
 /// terminal runs the user's shell, which starts q, so q exiting leaves the
 /// shell and the command line shows what was run.
-class QTerminals {
+export class QTerminals {
   /// The terminals started here, still open.
   private readonly ours = new Set<Terminal>();
-  /// Where code is sent: the last q terminal started.
+  /// The file each Run Code from Terminal terminal runs.
+  private readonly files = new WeakMap<Terminal, string>();
+  /// Where code is sent: the last q terminal started, of those still open.
   private last: Terminal | undefined;
+  /// The terminal a send is starting, so a second send waits for it.
+  private starting: Promise<Terminal | undefined> | undefined;
 
   constructor(context: ExtensionContext) {
     context.subscriptions.push(
       window.onDidCloseTerminal((terminal) => {
         this.ours.delete(terminal);
         if (terminal === this.last) {
-          this.last = undefined;
+          this.last = [...this.ours].pop();
         }
       }),
     );
   }
 
-  /// Run the active file in a terminal named after it, saving it first. A
-  /// terminal of the same name started before is closed: running the file
-  /// again starts a fresh q.
+  /// Run the active file in a terminal named after it, saving it first. The
+  /// terminal it ran in before is closed: running the file again starts a
+  /// fresh q. Another file of the same name keeps its own.
   async runFile(): Promise<void> {
     const document = window.activeTextEditor?.document;
     if (document === undefined || document.uri.scheme !== "file") {
@@ -269,13 +274,18 @@ class QTerminals {
     if (document.isDirty && !(await document.save())) {
       return;
     }
-    const name = path.basename(document.uri.fsPath);
-    for (const terminal of this.ours) {
-      if (terminal.name === name) {
-        terminal.dispose();
+    const file = document.uri.fsPath;
+    // Closed only once the new one can start: an env file that cannot be
+    // read leaves the running q as it was.
+    const close = (): void => {
+      for (const terminal of this.ours) {
+        if (this.files.get(terminal) === file) {
+          this.ours.delete(terminal);
+          terminal.dispose();
+        }
       }
-    }
-    const terminal = await this.start(name, document.uri, document.uri.fsPath);
+    };
+    const terminal = await this.start(path.basename(file), document.uri, file, close);
     terminal?.show();
   }
 
@@ -298,7 +308,10 @@ class QTerminals {
       nothingThere(from);
       return;
     }
-    const terminal = this.last ?? (await this.start("q", editor.document.uri));
+    if (this.last === undefined && this.starting === undefined) {
+      this.starting = this.start("q", editor.document.uri).finally(() => (this.starting = undefined));
+    }
+    const terminal = this.last ?? (await this.starting);
     if (terminal === undefined) {
       return;
     }
@@ -312,10 +325,11 @@ class QTerminals {
   /// `file` if one is given, with the variables of `q-lint.terminal.envPath`
   /// set for it. It starts in the workspace folder of `from`, so a script's
   /// relative `\l` reads as it does from a shell there. Undefined if the env
-  /// file cannot be read.
-  private async start(name: string, from: Uri | undefined, file?: string): Promise<Terminal | undefined> {
+  /// file cannot be read; `before` runs only once it can start.
+  private async start(name: string, from: Uri | undefined, file?: string, before?: () => void): Promise<Terminal | undefined> {
     const configuration = workspace.getConfiguration("q-lint", from);
-    const settings = readTerminal((key, fallback) => configuration.get(key, fallback));
+    const read = readTerminal((key, fallback) => configuration.get(key, fallback));
+    const settings = { qBinary: expandHome(read.qBinary, os.homedir()), envPath: expandHome(read.envPath, os.homedir()) };
     const folder = (from && workspace.getWorkspaceFolder(from)) ?? workspace.workspaceFolders?.[0];
     const cwd = folder?.uri.fsPath ?? (file !== undefined ? path.dirname(file) : undefined);
     let variables: Record<string, string> = {};
@@ -344,8 +358,12 @@ class QTerminals {
         );
       }
     }
+    before?.();
     const terminal = window.createTerminal({ name, cwd });
     this.ours.add(terminal);
+    if (file !== undefined) {
+      this.files.set(terminal, file);
+    }
     this.last = terminal;
     // A file inside the folder is named relative to it, as you would type it.
     const relative = file !== undefined && cwd !== undefined ? path.relative(cwd, file) : "";
