@@ -662,3 +662,13 @@ test("the grid shows a splayed table on disk, by name and selected", { skip }, a
     assert.strictEqual(answer.grid.count, count);
   }
 });
+
+test("a message whose header gives a length shorter than itself closes the connection, not the editor", async (t) => {
+  // Not q: something on the port that answers the handshake, then junk.
+  const fake = await fakeProcess((_, socket) => socket.write(Buffer.from("0102000000000000", "hex")));
+  t.after(() => fake.close());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: fake.port });
+  t.after(() => connection.abort());
+  await assert.rejects(connection.evaluate("1+1"), /length/);
+  assert.strictEqual(connection.isOpen, false);
+});

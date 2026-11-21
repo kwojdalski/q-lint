@@ -248,6 +248,12 @@ export class QConnection {
     this.size += chunk.length;
     while (this.size >= 8) {
       const length = (this.chunks[0].length >= 8 ? this.chunks[0] : this.joined()).readUInt32LE(4);
+      if (length < 8) {
+        // Not a q message - a header is 8 bytes - and nothing after it can
+        // be read: reading on would take the same 8 bytes for ever.
+        this.fail(new Error(`the process sent a message of length ${length}, shorter than its header: is it a q process?`));
+        return;
+      }
       if (this.size < length) {
         return;
       }
@@ -283,6 +289,14 @@ export class QConnection {
         pending.reject(this.answerType === -128 ? new QError(text) : error instanceof Error ? error : new Error(text));
       }
     }
+  }
+
+  /// Close now, failing a query running with `error`.
+  private fail(error: Error): void {
+    const pending = this.pending;
+    this.pending = undefined;
+    pending?.reject(error);
+    this.abort();
   }
 
   private closedNow(): void {
