@@ -378,6 +378,12 @@
             "order": 116,
             "markdownDescription": "Seconds a query must run for VS Code to notify you when it ends while its window is not focused. The status bar counts a running query's time whatever this is. `0`: never notify."
           },
+          "q-lint.query.placeholders": {
+            "type": "boolean",
+            "default": true,
+            "order": 117,
+            "markdownDescription": "Ask for a value for each `{{name}}` in the code a query sends, outside strings and comments, and put it in place before the query runs. Each box starts from the value given last. `{{x}}`, `{{y}}` and `{{z}}` are q lambdas and never asked for; turn this off if your code holds others, such as `{{a}}`."
+          },
           "q-lint.processExplorer.excludedNamespaces": {
             "type": "array",
             "items": {

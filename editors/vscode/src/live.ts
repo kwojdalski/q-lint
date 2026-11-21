@@ -59,6 +59,7 @@ import { QueryControls } from "./controls";
 import { ParameterCache } from "./paramcachecontrol";
 import { CONTROL_COMMANDS, FILE_CONNECTIONS_KEY, UNLIMITED, armTimeout, limits, readUnlimited, runUnwrapped, timedOutError, withBinding } from "./querycontrols";
 import { elapsedText, finishedText, readProgress, shouldNotify } from "./progress";
+import { PLACEHOLDER_VALUES_KEY, lastValue, placeholderNames, readPlaceholders, remembered, substitute } from "./placeholders";
 
 const PROCESSES_KEY = "q-lint.processes";
 const HISTORY_KEY = "q-lint.queryHistory";
@@ -1077,9 +1078,13 @@ export class Live {
       noEditor();
       return;
     }
-    const code = codeAt(editor, from);
-    if (code === undefined || statements(code).length === 0) {
+    const written = codeAt(editor, from);
+    if (written === undefined || statements(written).length === 0) {
       nothingThere(from);
+      return;
+    }
+    const code = await this.filledIn(written);
+    if (code === undefined) {
       return;
     }
     // A file with a process of its own switches the connection to it.
@@ -1096,6 +1101,33 @@ export class Live {
       }
     }
     await this.run(code);
+  }
+
+  /// `code` with its `{{name}}` placeholders given the values the user
+  /// types, each box starting from the value given last (#911); undefined
+  /// when the user pressed Escape, and nothing is run.
+  private async filledIn(code: string): Promise<string | undefined> {
+    const configuration = workspace.getConfiguration("q-lint");
+    const names = readPlaceholders((key, fallback) => configuration.get(key, fallback)).enabled ? placeholderNames(code) : [];
+    if (names.length === 0) {
+      return code;
+    }
+    const stored = this.context.globalState.get<unknown>(PLACEHOLDER_VALUES_KEY);
+    const values: Record<string, string> = {};
+    for (const [i, name] of names.entries()) {
+      const value = await window.showInputBox({
+        title: `q-lint: {{${name}}}${names.length > 1 ? ` (${i + 1} of ${names.length})` : ""}`,
+        value: lastValue(stored, name) ?? "",
+        prompt: `q put in place of {{${name}}} before the query is sent, as written: \`AAPL, 2024.01.01, "text". Escape runs nothing.`,
+        ignoreFocusOut: true,
+      });
+      if (value === undefined) {
+        return undefined;
+      }
+      Object.defineProperty(values, name, { value, enumerable: true, writable: true, configurable: true });
+    }
+    await this.context.globalState.update(PLACEHOLDER_VALUES_KEY, remembered(stored, values));
+    return substitute(code, values);
   }
 
   /// The active connection and its process, connecting first if there is
