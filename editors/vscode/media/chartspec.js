@@ -218,6 +218,13 @@
     // The x axis is the rows' numbers: a list's, or a scatter's whose first
     // column has no values to plot.
     const rowAxis = byRow(grid) || (kind === "scatter" && !grid.values[0]);
+    // A long line has no points, only segments - but a value with a null
+    // (a gap) on each side has no segment either, and gets a point.
+    const isolated = function (ctx) {
+      const d = ctx.dataset.data;
+      const i = ctx.dataIndex;
+      return d[i] !== null && (i === 0 || d[i - 1] === null) && (i === d.length - 1 || d[i + 1] === null) ? 2 : 0;
+    };
     const translucent = function (colour) { return /^#[0-9a-f]{6}$/i.test(colour) ? colour + "99" : colour; };
     return {
       type: data.type,
@@ -228,7 +235,7 @@
           return Object.assign({}, d, {
             borderColor: colour,
             backgroundColor: kind === "line" ? colour : translucent(colour),
-            pointRadius: kind === "line" ? (rows.length > 200 ? 0 : 2) : 3,
+            pointRadius: kind === "line" ? (rows.length > 200 ? isolated : 2) : 3,
             borderWidth: kind === "bar" || kind === "histogram" ? 0 : 1.5,
             spanGaps: false,
           });

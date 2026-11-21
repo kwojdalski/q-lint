@@ -496,3 +496,21 @@ test("a histogram's bins over a narrow range of prices are labelled apart", () =
   // A wide range keeps its short labels.
   assert.deepStrictEqual(charts.chartData(sample(), [0, 1, 2, 3], "histogram", [1], 2).labels, ["1 - 2", "2 - 3"]);
 });
+
+test("a long line chart shows a value between two nulls, which no segment draws", () => {
+  // Over 200 rows a line has no points, only segments, and a value with a
+  // null on each side has none: a column null every other row drew nothing.
+  const n = 300;
+  const raw = Array.from({ length: n }, (_, i) => (i % 2 === 0 ? i : null));
+  const grid = toGrid({ count: n, keys: 0, names: ["i", "px"], types: [7, 9], cells: [raw.map((_, i) => String(i)), raw.map(String)], raw: [raw.map((_, i) => i), raw], rank: [raw.map((_, i) => i), raw.map((_, i) => i)] }, -1);
+  const rows = [...Array(n).keys()];
+  const config = charts.chartConfig(grid, rows, "line", charts.chartData(grid, rows, "line", [1], 10), LOOK);
+  const dataset = config.data.datasets[0];
+  const radius = (i) => (typeof dataset.pointRadius === "function" ? dataset.pointRadius({ dataset, dataIndex: i }) : dataset.pointRadius);
+  assert.ok(radius(2) > 0, "an isolated value has a point");
+  assert.strictEqual(radius(1), 0, "a null has none");
+  // A value beside another is drawn by its segment, with no point.
+  const full = toGrid({ count: n, keys: 0, names: ["i", "px"], types: [7, 9], cells: [rows.map(String), rows.map(String)], raw: [rows, rows], rank: [rows, rows] }, -1);
+  const solid = charts.chartConfig(full, rows, "line", charts.chartData(full, rows, "line", [1], 10), LOOK).data.datasets[0];
+  assert.strictEqual(typeof solid.pointRadius === "function" ? solid.pointRadius({ dataset: solid, dataIndex: 5 }) : solid.pointRadius, 0);
+});
