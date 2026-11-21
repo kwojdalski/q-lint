@@ -25,12 +25,19 @@ import { Serial } from "./serial";
 import { chmodSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
+  CloseAction,
+  ErrorAction,
   LanguageClient,
+  type ErrorHandler,
   type LanguageClientOptions,
   type ServerOptions,
 } from "vscode-languageclient/node";
 
 let client: LanguageClient | undefined;
+/// How long a server has to answer `initialize`. qlinter answers it at once
+/// - the workspace is indexed after - so one still silent by then is hung,
+/// and every restart would otherwise queue behind it for good.
+export const timing = { start: 20_000 };
 /// Every start, restart and stop of `client`, one at a time.
 const serial = new Serial();
 /// One channel for the life of the extension. Each client would otherwise
@@ -92,8 +99,9 @@ export async function activate(
   const explorer = new ProcessExplorer(context, live);
   registerOnboarding(context, () => live.processes());
   relations = new Relations(context, () => client);
-  await serial.run(() => start(context));
-  relations.serverChanged();
+  // Not awaited: nothing above needs the server, and a slow or hung one
+  // would hold up every command of the extension until it answered.
+  void serial.run(() => start(context)).then(() => relations?.serverChanged());
   return { ...live.api(), explorer: () => explorer.rows(), notebookCharts: () => notebook.charts(), agentConfirmation };
 }
 
@@ -163,9 +171,32 @@ async function start(context: ExtensionContext): Promise<void> {
       run: { command, args },
       debug: { command, args },
     };
-    client = new LanguageClient("q-lint", "q-lint", server, options);
+    // A server given up on must not be restarted by its own client when it
+    // is killed: the default handler restarts a server that closes.
+    let abandoned = false;
+    let fallback: ErrorHandler | undefined;
+    const errorHandler: ErrorHandler = {
+      error: (error, message, count) =>
+        abandoned || fallback === undefined
+          ? { action: ErrorAction.Shutdown, handled: true }
+          : fallback.error(error, message, count),
+      closed: () =>
+        abandoned || fallback === undefined ? { action: CloseAction.DoNotRestart, handled: true } : fallback.closed(),
+    };
+    client = new LanguageClient("q-lint", "q-lint", server, { ...options, errorHandler });
+    fallback = client.createDefaultErrorHandler();
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      await client.start();
+      await Promise.race([
+        client.start(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            abandoned = true;
+            reject(new Error(`${command} did not answer initialize within ${timing.start / 1000} s.`));
+          }, timing.start);
+        }),
+      ]);
+      clearTimeout(timer);
       started = undefined;
       // Which server answered, and where it came from. The rules live in the
       // binary, so a diagnostic that looks wrong is often a diagnostic from a
@@ -175,7 +206,10 @@ async function start(context: ExtensionContext): Promise<void> {
       client.outputChannel.appendLine(`q-lint ${version} from ${command}`);
       break;
     } catch (error) {
+      clearTimeout(timer);
       started = error;
+      // A client still starting refuses to stop, but its server is killed
+      // all the same once the attempt settles.
       await client.stop().catch(() => {});
       client = undefined;
     }
