@@ -569,6 +569,12 @@
             "default": false,
             "order": 131,
             "markdownDescription": "Hovering a global in a q editor shows the value it has on the connected process, as the console prints it and cut at 2,000 characters. A view is named and not evaluated, a partitioned table not printed, and a production process not asked. Off by default: it queries the process whenever the mouse rests on a global."
+          },
+          "q-lint.undefinedNames.enable": {
+            "type": "boolean",
+            "default": false,
+            "order": 132,
+            "markdownDescription": "Warn on each global a q file reads that neither the workspace nor the connected process defines. The process is asked, by each name's namespace and without evaluating anything, when the file is opened, saved or brought to the front, on connect and after a query; a production process only by **Check Undefined Names on Process**. Off by default: it queries the process on its own."
           }
         }
       },
@@ -1125,6 +1131,12 @@
         "title": "Redefine on Process",
         "category": "q-lint",
         "icon": "$(cloud-upload)",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.checkUndefinedNames",
+        "title": "Check Undefined Names on Process",
+        "category": "q-lint",
         "enablement": "q-lint.connected"
       },
       {
@@ -1701,6 +1713,10 @@
         {
           "command": "q-lint.findCallers",
           "when": "config.q-lint.processExplorer.findCallers.enable"
+        },
+        {
+          "command": "q-lint.checkUndefinedNames",
+          "when": "config.q-lint.undefinedNames.enable && editorLangId == q"
         },
         {
           "command": "q-lint.refreshProcessMonitor",

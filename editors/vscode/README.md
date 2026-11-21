@@ -602,6 +602,20 @@ partitioned table is not printed, and a process tagged `prod`, `prd` or
 `production` is not asked. The read waits up to a second for a query to
 finish, and shows nothing if it does not.
 
+**Undefined names.** With `q-lint.undefinedNames.enable` on (off by
+default, since it asks the process on its own), a q file gets a warning on
+each global it reads that neither the workspace nor the connected process
+defines - a name defined only on the process, by a script outside the
+workspace or by hand, is no longer a mystery. The language server lists the
+names no workspace file defines (not q's words, nor a name in a one-letter
+namespace such as `.z.pc`, nor a name in a qSQL phrase that may be a
+column), and the process is asked which of them its namespaces hold, by
+`key`, evaluating nothing. The active file is checked when it is opened,
+saved or brought to the front, on connect and after each query, only while
+the connection is free; a disconnect clears the warnings. A production
+process is asked only by **q-lint: Check Undefined Names on Process**,
+after a confirmation.
+
 **Function source.** **Open Function Source**, on a function in the Process
 Explorer or the name under the cursor in a q editor, shows the function as
 the process has it (`last value f`) in a read-only editor, headed by the
@@ -991,6 +1005,7 @@ nothing.
 | `q-lint.hdbBrowser.enable` | `true` | The HDB Browser view. | - |
 | `q-lint.testExplorer.enable` | `true` | List q tests (`test_*`, qUnit `testName`, k4unit CSV suites) in the Testing view and run them on a q process. Off, none is listed, read or sent. | - |
 | `q-lint.liveValueHover.enable` | `false` | Show a global's value on the connected process when hovering it in a q editor. Off, no hover is registered and nothing is sent. | - |
+| `q-lint.undefinedNames.enable` | `false` | Warn on globals a q file reads that neither the workspace nor the connected process defines, and offer **Check Undefined Names on Process**. Off, nothing is sent and the command is hidden. | - |
 
 ### Connection settings
 

@@ -44,6 +44,7 @@ const { SOURCE_COMMANDS } = require("../out/funcsource.js");
 const { INFO, readMonitorInterval } = require("../out/monitor.js");
 const { readInsight } = require("../out/insightconfig.js");
 const { EDITOR_SETTINGS, editorFeatureOn } = require("../out/editorfeatures.js");
+const { CHECK_UNDEFINED } = require("../out/undefinednames.js");
 const { CONTROL_COMMANDS, readControls } = require("../out/querycontrols.js");
 const { readProgress } = require("../out/progress.js");
 const { readPlaceholders } = require("../out/placeholders.js");
@@ -288,6 +289,7 @@ test("package.json declares exactly the commands the extension registers", () =>
     ...Object.values(SOURCE_COMMANDS),
     INFO.refreshMonitor,
     INFO.refreshHdb,
+    CHECK_UNDEFINED,
   ].sort();
   assert.deepStrictEqual(declared, registered);
 });

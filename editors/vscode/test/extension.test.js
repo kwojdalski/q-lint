@@ -92,6 +92,7 @@ function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir
     "./infoview": { registerInfoViews: () => ({ monitor: () => [], hdb: () => [] }) },
     "./testexplorer": { registerTestExplorer: () => ({ serverChanged() {}, discover: async () => {}, items: () => [], results: () => [], run: async () => {} }) },
     "./valuehoverview": { registerValueHover: () => ({ registered: () => false }) },
+    "./undefinednamesview": { registerUndefinedNames: () => ({ registered: () => false }) },
   };
   const file = require.resolve("../out/extension.js");
   delete require.cache[file];
