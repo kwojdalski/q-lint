@@ -104,6 +104,7 @@ function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir
     "./profileview": { registerFunctionProfile: () => ({ panelOpen: () => false }) },
     "./formatchangedview": { registerFormatChanged: () => ({ registered: () => false }) },
     "./organiseloads": { registerOrganiseLoads() {} },
+    "./problemsview": { registerProblemsDashboard: () => ({ panelOpen: () => false }) },
   };
   const file = require.resolve("../out/extension.js");
   delete require.cache[file];

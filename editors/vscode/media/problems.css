@@ -1,0 +1,130 @@
+/* The problems dashboard, in the editor's theme. */
+body {
+  margin: 0;
+  padding: 8px 16px;
+  background: var(--vscode-editor-background);
+  color: var(--vscode-foreground);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+}
+
+h1 {
+  font-size: 1.3em;
+  margin: 4px 0;
+}
+
+h2 {
+  font-size: 1.05em;
+  margin: 16px 0 6px;
+}
+
+.note {
+  color: var(--vscode-descriptionForeground);
+  margin: 0 0 6px;
+}
+
+.actions button {
+  margin-right: 6px;
+  padding: 3px 10px;
+  border: none;
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+  cursor: pointer;
+}
+
+.actions button:hover {
+  background: var(--vscode-button-hoverBackground);
+}
+
+.cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.card {
+  min-width: 90px;
+  padding: 6px 12px;
+  border: 1px solid var(--vscode-editorWidget-border, transparent);
+  background: var(--vscode-editorWidget-background);
+}
+
+.card .value {
+  font-size: 1.6em;
+  font-weight: 600;
+}
+
+.card .label {
+  color: var(--vscode-descriptionForeground);
+}
+
+.card.errors .value {
+  color: var(--vscode-errorForeground);
+}
+
+.grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+}
+
+table {
+  border-collapse: collapse;
+}
+
+th,
+td {
+  padding: 2px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--vscode-editorWidget-border, transparent);
+}
+
+.number {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.mono {
+  font-family: var(--vscode-editor-font-family);
+}
+
+.trend {
+  width: 100%;
+  max-width: 640px;
+  height: auto;
+}
+
+.trend .axis {
+  stroke: var(--vscode-descriptionForeground);
+}
+
+.trend .tick {
+  fill: var(--vscode-descriptionForeground);
+  font-size: 10px;
+}
+
+.trend .series {
+  fill: none;
+  stroke-width: 2;
+}
+
+.trend .series.total,
+.trend .dot.total {
+  stroke: var(--vscode-charts-blue, #3794ff);
+  fill: var(--vscode-charts-blue, #3794ff);
+}
+
+.trend .series.total {
+  fill: none;
+}
+
+.trend .series.errors,
+.trend .dot.errors {
+  stroke: var(--vscode-charts-red, #f14c4c);
+  fill: var(--vscode-charts-red, #f14c4c);
+}
+
+.trend .series.errors {
+  fill: none;
+}

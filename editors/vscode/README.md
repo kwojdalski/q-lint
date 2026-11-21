@@ -63,6 +63,15 @@ to a process you add and connect to, and sends only the code you run.
   a `.q` or `.k` file (`\l db` changes directory) is left alone, as are
   loads a blank line or anything else separates. `source.organizeImports` in
   `editor.codeActionsOnSave` runs it on save (`q-lint.organiseLoads.enable`).
+- **Problems dashboard** (**q-lint: Show Problems Dashboard**): a workspace
+  folder's findings, as `qlinter --format json` reports them under the
+  repository's configuration, counted by rule and by folder, and their count
+  over commits. A refresh on a commit whose q files are unchanged adds that
+  commit to the trend, kept in the workspace's state; **Lint Earlier
+  Commits...** adds the last 5 to 50 from git, each exported with `git
+  archive` to a temporary directory and linted there - nothing is checked
+  out. It reads files and sends nothing to a q process
+  (`q-lint.problemsDashboard.enable`).
 - **Format Document** applies the fixes `qlinter --fix` makes - those that
   cannot change a working program - and nothing else: it is not a
   whitespace or layout formatter, and it never applies an editor-only fix.
@@ -1438,6 +1447,7 @@ nothing.
 | `q-lint.processExplorer.driftDetection.enable` | `false` | **Check Drift Against Process**: compare the workspace's function definitions with the connected process. Off, the command is hidden and reads nothing. | - |
 | `q-lint.query.lineTimings.enable` | `true` | **Time Lines on Process** and **Clear Line Timings**. Off, the commands are hidden and refuse, and the timings drawn are cleared. | - |
 | `q-lint.query.functionProfile.enable` | `true` | **Profile Functions on Process**. Off, the command is hidden and refuses, and the panel closes. | - |
+| `q-lint.problemsDashboard.enable` | `true` | **Show Problems Dashboard** and **Lint Earlier Commits**. Off, the commands are hidden and refuse, and the dashboard closes. | - |
 | `q-lint.hotReload.enable` | `false` | On saving a q file, send the definitions the save changed to its process, after Redefine's confirmation. Off, nothing listens and nothing is sent. | - |
 
 ### Connection settings

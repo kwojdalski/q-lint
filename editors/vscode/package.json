@@ -720,6 +720,12 @@
             "default": true,
             "order": 146,
             "markdownDescription": "**Profile Functions on Process**: run the selection, or the statement at the cursor, with every function of a namespace timed, and show them as a sortable table and a flame chart. The functions are replaced by timing wrappers for the run and put back after; the read-only guard asks first on a guarded process. Off, the command is hidden and refuses."
+          },
+          "q-lint.problemsDashboard.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 147,
+            "markdownDescription": "**Show Problems Dashboard**: a workspace folder's findings, as `qlinter` reports them, by rule and by folder, with their count over commits. Nothing is sent to a q process. Off, the commands are hidden and refuse, and the dashboard closes."
           }
         }
       },
@@ -1595,6 +1601,17 @@
         "command": "q-lint.organiseLoads",
         "title": "Organise Loads",
         "category": "q-lint"
+      },
+      {
+        "command": "q-lint.showProblemsDashboard",
+        "title": "Show Problems Dashboard",
+        "category": "q-lint",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "q-lint.problemsDashboard.lintHistory",
+        "title": "Problems Dashboard: Lint Earlier Commits",
+        "category": "q-lint"
       }
     ],
     "views": {
@@ -2405,6 +2422,14 @@
         {
           "command": "q-lint.organiseLoads",
           "when": "config.q-lint.organiseLoads.enable && editorLangId == q"
+        },
+        {
+          "command": "q-lint.showProblemsDashboard",
+          "when": "config.q-lint.problemsDashboard.enable"
+        },
+        {
+          "command": "q-lint.problemsDashboard.lintHistory",
+          "when": "config.q-lint.problemsDashboard.enable"
         }
       ],
       "editor/title": [
