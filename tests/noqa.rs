@@ -1,7 +1,7 @@
 //! `/ noqa: CODE` - a trailing comment that accepts named findings on its
 //! own line, and nothing else - and `suppression_for`, the edit that writes
 //! one.
-use q_lint_rs::{Finding, Profile, lint, suppression_for};
+use q_lint_rs::{Finding, Profile, file_suppression_for, lint, suppression_for};
 use std::{fs, process::Command};
 
 fn codes(source: &str) -> Vec<(usize, String)> {
@@ -326,4 +326,94 @@ fn every_suppression_over_the_fixtures_removes_its_finding_and_nothing_else() {
     }
     assert!(offered > 200, "expected a corpus, suppressed {offered}");
     assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+}
+
+#[test]
+fn a_file_directive_suppresses_its_codes_on_every_line() {
+    let two = "f:{[dt;data] dt}\ng:{[dt;data] dt}\n";
+    assert!(has(two, 1, "QF016") && has(two, 2, "QF016"));
+    let accepted = format!("/ qlinter: noqa: QF016\n{two}");
+    assert!(!codes(&accepted).iter().any(|(_, c)| c == "QF016"));
+    // Anywhere in the file, any case, several codes.
+    let below = format!("{two}/  QLinter:NOQA: QS001, QF016 reason\n");
+    assert!(!codes(&below).iter().any(|(_, c)| c == "QF016"));
+    // Other codes are still reported.
+    let other = format!("/ qlinter: noqa: QS001\n{two}");
+    assert!(has(&other, 2, "QF016"));
+}
+
+#[test]
+fn a_file_directive_is_only_a_comment_line_at_the_margin() {
+    let two = "f:{[dt;data] dt}\ng:{[dt;data] dt}\n";
+    // Indented, trailing, in a string, in a block comment, after the end.
+    for wrapped in [
+        format!("  / qlinter: noqa: QF016\n{two}"),
+        format!("a:1 / qlinter: noqa: QF016\n{two}"),
+        format!("s:\"/ qlinter: noqa: QF016\"\n{two}"),
+        format!("{two}/\n/ qlinter: noqa: QF016\n\\\n"),
+    ] {
+        assert!(
+            codes(&wrapped).iter().any(|(_, c)| c == "QF016"),
+            "{wrapped:?}"
+        );
+    }
+    assert!(has(
+        &format!("{two}\\\n/ qlinter: noqa: QF016\n"),
+        1,
+        "QF016"
+    ));
+}
+
+fn suppressed_in_file(source: &str, code: &str) -> Option<String> {
+    let findings = lint(source, "t.q", Profile::Uqf);
+    let finding = findings.iter().find(|f| f.code == code)?;
+    let fix = file_suppression_for(finding, source)?;
+    assert!(!fix.batch_safe);
+    assert_eq!(fix.title, format!("Suppress {code} in this file"));
+    let mut out = source.to_string();
+    out.replace_range(fix.start..fix.end, &fix.replacement);
+    Some(out)
+}
+
+#[test]
+fn a_file_suppression_writes_a_directive_or_adds_to_it() {
+    let two = "f:{[dt;data] dt}\ng:{[dt;data] dt}\n";
+    let written = suppressed_in_file(two, "QF016").unwrap();
+    assert_eq!(written, format!("/ qlinter: noqa: QF016\n{two}"));
+    assert!(!codes(&written).iter().any(|(_, c)| c == "QF016"));
+    // Into the directive there, keeping its reason.
+    let there = format!("/ qlinter: noqa: QS001 generated\n{two}");
+    assert_eq!(
+        suppressed_in_file(&there, "QF016").unwrap(),
+        format!("/ qlinter: noqa: QS001, QF016 generated\n{two}")
+    );
+    // After a shebang and a byte-order mark, in the file's line endings.
+    assert_eq!(
+        suppressed_in_file(&format!("#!/usr/bin/env q\n{two}"), "QF016").unwrap(),
+        format!("#!/usr/bin/env q\n/ qlinter: noqa: QF016\n{two}")
+    );
+    let crlf = two.replace('\n', "\r\n");
+    assert_eq!(
+        suppressed_in_file(&crlf, "QF016").unwrap(),
+        format!("/ qlinter: noqa: QF016\r\n{crlf}")
+    );
+    // Before a block comment that opens the file, which stays one.
+    let block = format!("/\nnotes\n\\\n{two}");
+    let written = suppressed_in_file(&block, "QF016").unwrap();
+    assert!(
+        written.starts_with("/ qlinter: noqa: QF016\n/\n"),
+        "{written}"
+    );
+    assert!(!codes(&written).iter().any(|(_, c)| c == "QF016"));
+}
+
+#[test]
+fn no_file_suppression_where_the_structure_is_broken() {
+    let broken = "f:{[dt;data] dt}\nb:(1\n";
+    let findings = lint(broken, "t.q", Profile::Uqf);
+    assert!(
+        findings
+            .iter()
+            .all(|f| file_suppression_for(f, broken).is_none())
+    );
 }

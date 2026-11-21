@@ -40,6 +40,11 @@ to a process you add and connect to, and sends only the code you run.
   there. It is missing where no such comment would be read as one - a line
   that ends inside a string, a system command, a block comment, a file whose
   brackets do not close - and it is never the preferred fix.
+  **Suppress CODE in this file** beside it writes `/ qlinter: noqa: CODE` at
+  the top of the file (after a `#!` line), or adds the code to the
+  `qlinter: noqa:` line already there; the linter reads that line anywhere
+  in the file, at the left margin, and accepts the code on every line.
+  `q-lint.suppressions.enable` turns both off.
 - **Performance lints**, three rules after Ruff's `PERF`, each checked by
   timing both forms on KDB-X: a where phrase that constrains the partition
   column after another (`where sym=s, date=d` read 85 ms against 5 ms with
@@ -1293,6 +1298,7 @@ q-pro column names the setting of [q-pro](https://marketplace.visualstudio.com/i
 | `q-lint.documentLinks.enable` | `true` | Make each `\l`, `system "l ..."` and `` `:file.q `` path a link to the file it loads. | - |
 | `q-lint.generateQdoc.enable` | `true` | Offer **Generate qDoc** above a top-level function. | - |
 | `q-lint.extractFunction.enable` | `true` | Offer **Extract Function** over a selection q reads as one value. | - |
+| `q-lint.suppressions.enable` | `true` | Offer **Suppress CODE on this line** and **Suppress CODE in this file**. | - |
 | `q-lint.performanceLints.enable` | `true` | Report the performance rules, `QV`. Off, they are hidden as `q-lint.lint.ignore` would. | - |
 | `q-lint.workspaceIndex.enable` | `true` | Read every workspace `.q` file at startup for the names it defines, up to 20,000 files or 500,000 directory entries. Off: only open files. | - |
 | `q-lint.workspaceIndex.exclude` | `[]` | Globs, relative to the workspace folder, the index does not read: `["vendor/**"]`. | `q-lang-server.sourceFiles.ignoreGlob` |

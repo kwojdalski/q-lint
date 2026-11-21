@@ -336,7 +336,10 @@ One finding on one line is accepted with a trailing comment naming its code:
 are separated by commas or spaces, and text after them is a reason. It drops
 only findings reported on that line, from the output, `--fix` and the
 language server alike; a bare `/ noqa` names nothing and suppresses nothing.
-The built-in rules honour it; findings from qls do not.
+A comment line at the left margin, `/ qlinter: noqa: QS001, QF016 reason`,
+accepts those codes on every line of its file, as Ruff's `# ruff: noqa:` does;
+inside a block comment or after the line that ends the script it is not read.
+The built-in rules honour both; findings from qls do not.
 
 Diagnostics carry a
 code and a category; `qlinter --rules` lists them all and `qlinter --explain
@@ -395,7 +398,9 @@ Around those:
   still run the same line: not on a line that ends inside a string, a system
   command, a `k)` or `p)` line, a block comment or the bare `/` that opens
   one, nor in a file whose brackets or strings do not close. It is never the
-  preferred fix.
+  preferred fix. Beside it, "Suppress CODE in this file" adds the code to the
+  file's `/ qlinter: noqa:` line, or writes one at the top of the file (after
+  a `#!` line). `suppressions.enable: false` withdraws both.
 - `textDocument/codeAction` answers the kind `source.fixAll.q-lint` - asked
   for by that name, or as `source.fixAll` or `source` - with the edit Format
   Document makes. That is how an editor applies the safe fixes on save where
@@ -775,6 +780,7 @@ Every key is optional, and these are the defaults:
  "callHierarchy": {"enable": true}, "graph": {"enable": true},
  "rename": {"enable": true}, "inlayHints": {"enable": true}, "codeLens": {"enable": false},
  "documentLinks": {"enable": true}, "generateQdoc": {"enable": true},
+ "extractFunction": {"enable": true}, "suppressions": {"enable": true},
  "organiseLoads": {"enable": true}, "performanceLints": {"enable": true},
  "workspaceIndex": {"enable": true, "exclude": []}}
 ```
@@ -793,6 +799,7 @@ one that starts off; `true` announces completion.
 and `graph.enable` does that for `q-lint/graph` and `q-lint/affectedTests`,
 which then answer `null`; `inlayHints.enable` does it for inlay hints, and `codeLens.enable: true`
 announces the Run lenses.
+`suppressions.enable: false` withdraws both "Suppress CODE" Quick Fixes,
 `performanceLints.enable: false` ignores the QV rules as `lint.ignore`
 `workspaceIndex.exclude`
 holds globs relative to each workspace folder that the index does not read.

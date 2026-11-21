@@ -300,6 +300,12 @@
             "order": 29,
             "markdownDescription": "Offer **Extract function** in the lightbulb and **Refactor...** menu over a selection: it becomes a lambda defined above the top-level statement it is in, taking the parameters and locals it reads, and the selection a call to it. Only a selection q reads as one value is rewritten; **Refactor...** says why another is refused. Off, q-lint offers no such action."
           },
+          "q-lint.suppressions.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 29,
+            "markdownDescription": "Offer the Quick Fixes that accept a finding instead of fixing it: **Suppress CODE on this line**, which writes `/ noqa: CODE` after its line, and **Suppress CODE in this file**, which writes `/ qlinter: noqa: CODE` at the top of the file or adds the code to the one there. Off, q-lint offers neither."
+          },
           "q-lint.performanceLints.enable": {
             "type": "boolean",
             "default": true,

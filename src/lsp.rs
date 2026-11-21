@@ -66,8 +66,8 @@
 //! only where the linter would read that comment (`suppression_for`);
 //! textDocument/codeAction also answers `source.fixAll.q-lint` with the
 //! formatting edit, for `editor.codeActionsOnSave` in an editor where this
-//! server is not the formatter; and textDocument/foldingRange folds the
-//! brackets and block comments that span lines.
+//! the `\l` lines of each run sorted, deduped and grouped; a finding can be
+//! accepted for its whole file with `/ qlinter: noqa: CODE`;
 //!
 //! A workspace index: every `.q` file under the workspace folders is read at
 //! startup - never run - for the global names it defines and reads, and
@@ -140,8 +140,9 @@ use crate::config::{FILES, Layer, Policy, selector};
 use crate::jsonrpc::{INVALID_REQUEST, Malformed, receive, send};
 use q_lint_rs::graph::Placement;
 use q_lint_rs::{
-    FileIndex, Finding, Fix, References, TokenKind, Workspace, balanced, broken_statement, fix_all,
-    fix_for, folds, rule_url, semantic_tokens_in, suppressions_for, whole_edit,
+    FileIndex, Finding, Fix, References, TokenKind, Workspace, balanced, broken_statement,
+    file_suppression_for, fix_all, fix_for, folds, rule_url, semantic_tokens_in, suppressions_for,
+    whole_edit,
 };
 use serde_json::{Value, json};
 use std::{
@@ -600,6 +601,7 @@ fn workspace_folders(params: &Value) -> Vec<(String, String)> {
 ///  "semanticTokens": {"enable": true}, "navigation": {"enable": true},
 ///  "help": {"enable": true}, "completion": {"enable": false},
 ///  "callHierarchy": {"enable": true}, "graph": {"enable": true},
+///  "suppressions": {"enable": true}, "organiseLoads": {"enable": true},
 ///  "performanceLints": {"enable": true}, "formatChangedLines": {"enable": false},
 ///  "workspaceIndex": {"enable": true, "exclude": []}}
 /// ```
@@ -652,6 +654,9 @@ struct Options {
     generate_qdoc: bool,
     /// Offer Extract Function on a selection.
     extract_function: bool,
+    /// Offer the Quick Fixes that accept a finding: `/ noqa: CODE` on its
+    /// line, and `/ qlinter: noqa: CODE` for its file.
+    suppressions: bool,
     /// Report the performance rules, QV. Off, they are ignored as
     /// `lint.ignore` would.
     performance_lints: bool,
@@ -683,6 +688,7 @@ impl Default for Options {
             document_links: true,
             generate_qdoc: true,
             extract_function: true,
+            suppressions: true,
             performance_lints: true,
             disabled_actions: false,
             severity: vec![],
@@ -722,6 +728,7 @@ impl Options {
                         "documentLinks",
                         "generateQdoc",
                         "extractFunction",
+                        "suppressions",
                         "performanceLints",
                     ]
                     .contains(&key.as_str())
@@ -759,6 +766,7 @@ impl Options {
         options.document_links = flag("/documentLinks/enable", true);
         options.generate_qdoc = flag("/generateQdoc/enable", true);
         options.extract_function = flag("/extractFunction/enable", true);
+        options.suppressions = flag("/suppressions/enable", true);
         options.performance_lints = flag("/performanceLints/enable", true);
         options.disabled_actions = params
             .pointer("/capabilities/textDocument/codeAction/disabledSupport")
@@ -1804,7 +1812,14 @@ fn code_actions(
         only.iter()
             .any(|kind| *kind == QUICK_FIX || kind.starts_with("quickfix."))
     }) {
-        actions.extend(quick_fixes(params, docs, ws, policy, unsafe_fixes));
+        actions.extend(quick_fixes(
+            params,
+            docs,
+            ws,
+            policy,
+            unsafe_fixes,
+            opts.suppressions,
+        ));
     }
     if opts.generate_qdoc
         && only
@@ -1847,12 +1862,17 @@ fn code_actions(
 /// something else. Once for a line and a code, however many of the
 /// diagnostics are that code on that line: one comment accepts them all, and
 /// the action says so by listing them.
+///
+/// Last, once a code, the edit that accepts it in the whole file: the code
+/// added to the file's `/ qlinter: noqa:` line, or that line written at the
+/// top (`file_suppression_for`). Neither is offered with `suppressions` off.
 fn quick_fixes(
     params: &Value,
     docs: &Documents,
     ws: &Workspace,
     policy: &Policy,
     unsafe_fixes: bool,
+    suppress: bool,
 ) -> Vec<Value> {
     let uri = uri_of(&params["textDocument"]);
     let Some(source) = docs.get(&uri) else {
@@ -1887,7 +1907,12 @@ fn quick_fixes(
         .collect();
     // For them all at once: a selection of the whole of a long file asks
     // about every finding in it, and each would mask the file again.
-    let accepted = suppressions_for(asked_about.iter().map(|(finding, _)| finding), source);
+    let accepted = if suppress {
+        suppressions_for(asked_about.iter().map(|(finding, _)| finding), source)
+    } else {
+        asked_about.iter().map(|_| None).collect()
+    };
+    let mut in_file: Vec<(String, Option<Value>)> = vec![];
     for ((finding, client_diagnostic), suppression) in asked_about.iter().zip(accepted) {
         // The edit's range comes from the fix, not from the diagnostic. The
         // two coincide for an operator swapped in place, but `f x` becomes
@@ -1927,8 +1952,23 @@ fn quick_fixes(
                 None => suppressions.push(suppression),
             }
         }
+        // One edit a code, and each asked for once: it masks the file.
+        if suppress {
+            match in_file.iter_mut().find(|(code, _)| *code == finding.code) {
+                Some((_, Some(same))) => same["diagnostics"]
+                    .as_array_mut()
+                    .expect("made above")
+                    .push((*client_diagnostic).clone()),
+                Some((_, None)) => {}
+                None => in_file.push((
+                    finding.code.clone(),
+                    file_suppression_for(finding, source).map(action),
+                )),
+            }
+        }
     }
     actions.extend(suppressions);
+    actions.extend(in_file.into_iter().filter_map(|(_, action)| action));
     actions
 }
 

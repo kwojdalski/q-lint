@@ -4817,7 +4817,19 @@ impl Profile {
 /// blanked as one, so a `noqa` inside a string literal is text, not a
 /// directive - and only the codes it names: a bare `/ noqa` suppresses
 /// nothing. Anything after the codes is a free-text reason.
-fn suppress(out: &mut Vec<Finding>, source: &str, comments: &str) {
+///
+/// And each finding whose code a file directive names: a comment line
+/// `/ qlinter: noqa: CODE[, CODE...]` at the left margin, anywhere in the
+/// file, as Ruff's `# ruff: noqa: CODE` (`file_noqa`).
+fn suppress(out: &mut Vec<Finding>, source: &str, v: &Views) {
+    let comments = v.comments.as_str();
+    let file: Vec<&str> = file_noqa(source, v)
+        .into_iter()
+        .flat_map(|codes| codes_in(&source[codes]))
+        .collect();
+    if !file.is_empty() {
+        out.retain(|f| !file.contains(&f.code.as_str()));
+    }
     let mut noqa: std::collections::HashMap<usize, Vec<&str>> = Default::default();
     let mut offset = 0;
     for (n, line) in source.split_inclusive('\n').enumerate() {
@@ -4869,6 +4881,119 @@ fn noqa_codes(
 /// Each code of a `noqa` comment's list.
 fn codes_in(list: &str) -> impl Iterator<Item = &str> {
     list.split([',', ' ', '\t']).filter(|c| !c.is_empty())
+}
+
+/// The code lists of the file's `/ qlinter: noqa: CODE` directives, each as
+/// the span of the source that lists them. Only a whole comment line at the
+/// left margin, with a blank after its `/` - a bare `/` opens a block - and
+/// never one inside a block comment or after the line that ends the script,
+/// which q does not read as a line at all.
+fn file_noqa(source: &str, v: &Views) -> Vec<std::ops::Range<usize>> {
+    let (raw, blanked) = (source.as_bytes(), v.comments.as_bytes());
+    let mut out = vec![];
+    let mut offset = 0;
+    for line in source.split_inclusive('\n') {
+        let start = offset;
+        offset += line.len();
+        // `views` reads `<BOM>/ note` as a comment line (#221).
+        let at = if start == 0 && source.starts_with('\u{feff}') {
+            3
+        } else {
+            start
+        };
+        if raw.get(at) != Some(&b'/') || blanked.get(at) != Some(&b' ') {
+            continue;
+        }
+        let in_block = v.open_block.is_some_and(|open| at >= open)
+            || v.blocks
+                .iter()
+                .any(|&(open, close)| (open..=close).contains(&at));
+        if in_block || v.script_end.is_some_and(|end| at >= end) {
+            continue;
+        }
+        if let Some(codes) = re!(
+            r"^/+[ \t]+(?i:qlinter)[ \t]*:[ \t]*(?i:noqa)[ \t]*:[ \t]*([A-Z]+[0-9]+\b(?:[ \t]*,[ \t]*[A-Z]+[0-9]+\b|[ \t]+[A-Z]+[0-9]+\b)*)"
+        )
+        .captures(&source[at..offset])
+        .and_then(|c| c.get(1))
+        {
+            out.push(at + codes.start()..at + codes.end());
+        }
+    }
+    out
+}
+
+/// The edit that accepts `finding` everywhere in its file: its code added to
+/// the file's `/ qlinter: noqa:` directive, or a new directive line at the
+/// top of the file - after a `#!` line, which must stay first, and after a
+/// byte-order mark. `None` where the code is not one a directive can name,
+/// the file's brackets or strings do not close (as `suppression_for`), or
+/// the edit would be read as anything but that directive: the edited source
+/// must mask exactly as the original does, the new text blank in both views,
+/// and its directive must name the code. Never batch-safe.
+pub fn file_suppression_for(finding: &Finding, source: &str) -> Option<Fix> {
+    let code = finding.code.as_str();
+    if !re!(r"^[A-Z]+[0-9]+$").is_match(code) {
+        return None;
+    }
+    let v = views(source);
+    if !problems(source, &v).is_empty() {
+        return None;
+    }
+    let directives = file_noqa(source, &v);
+    if directives
+        .iter()
+        .any(|codes| codes_in(&source[codes.clone()]).any(|c| c == code))
+    {
+        return None;
+    }
+    let (at, replacement) = match directives.first() {
+        Some(codes) => (codes.end, format!(", {code}")),
+        None => {
+            let bom = if source.starts_with('\u{feff}') { 3 } else { 0 };
+            let first = &source[bom..];
+            let at = if first.starts_with("#!") {
+                first.find('\n').map_or(source.len(), |n| bom + n + 1)
+            } else {
+                bom
+            };
+            let newline = if source.contains("\r\n") {
+                "\r\n"
+            } else {
+                "\n"
+            };
+            // A shebang with no newline after it ends the file.
+            let lead = if at == source.len() && at > bom {
+                newline
+            } else {
+                ""
+            };
+            (at, format!("{lead}/ qlinter: noqa: {code}{newline}"))
+        }
+    };
+    let mut edited = source.to_string();
+    edited.insert_str(at, &replacement);
+    let after = views(&edited);
+    let added = at + replacement.len();
+    let comment_only = |before: &str, after: &str| {
+        let (before, after) = (before.as_bytes(), after.as_bytes());
+        before[..at] == after[..at]
+            && after[at..added]
+                .iter()
+                .all(|&b| b == b' ' || b == b'\n' || b == b'\r')
+            && before[at..] == after[added..]
+    };
+    let named = file_noqa(&edited, &after)
+        .into_iter()
+        .any(|codes| codes_in(&edited[codes]).any(|c| c == code));
+    (named && comment_only(&v.code, &after.code) && comment_only(&v.comments, &after.comments))
+        .then(|| Fix {
+            start: at,
+            end: at,
+            replacement: replacement.into(),
+            title: format!("Suppress {code} in this file").into(),
+            batch_safe: false,
+        })
 }
 
 /// The edit that accepts `finding` where it is reported: ` / noqa: CODE`
@@ -5029,7 +5154,7 @@ fn lint_rules(
     let mut v = views(source);
     if structure_selected {
         let mut out = structure(path, source, &v);
-        suppress(&mut out, source, &v.comments);
+        suppress(&mut out, source, &v);
         if !out.is_empty() {
             out.truncate(1);
             return out;
@@ -8924,7 +9049,7 @@ fn lint_rules(
             .find(|r| r.code == f.code)
             .is_none_or(|r| profile.allows(&r.scope) || opt_in && r.scope == "opt-in")
     });
-    suppress(&mut out, source, &v.comments);
+    suppress(&mut out, source, &v);
     out.sort_by(|a, b| {
         (&a.path, a.line, &a.rule, &a.detail).cmp(&(&b.path, b.line, &b.rule, &b.detail))
     });

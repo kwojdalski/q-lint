@@ -223,6 +223,15 @@ fn is_suppression(action: &Value) -> bool {
         .is_some_and(|title| title.starts_with("Suppress "))
 }
 
+/// Whether a code action is the `/ noqa` one for the finding's line, not the
+/// `/ qlinter: noqa:` one for its file.
+fn is_line_suppression(action: &Value) -> bool {
+    is_suppression(action)
+        && action["title"]
+            .as_str()
+            .is_some_and(|title| title.ends_with(" on this line"))
+}
+
 /// What a server that offers quick fixes says it offers: the kinds, so an
 /// editor knows there is a `source.fixAll` to ask for on save - and the
 /// rewrite that writes a qDoc block, and Extract Function.
@@ -1604,8 +1613,9 @@ fn the_precedence_fix_is_a_quick_fix_for_the_trap_and_for_the_routine_mix() {
         (&diagnostics[1], (1, 12, 22), "(step*til n)"),
     ] {
         let actions = server.code_actions(uri, std::slice::from_ref(diagnostic));
-        // The fix, then the `/ noqa` suppression every finding is offered.
-        assert_eq!(actions.len(), 2, "{actions:?}");
+        // The fix, then the `/ noqa` suppressions every finding is offered:
+        // for its line, and for its file.
+        assert_eq!(actions.len(), 3, "{actions:?}");
         assert_eq!(
             actions[0]["title"],
             "Parenthesise to show the order q evaluates in"
@@ -1659,7 +1669,7 @@ fn the_reverse_precedence_fix_is_a_quick_fix_that_removes_the_pair() {
     let diagnostics = server.diagnostics_for(uri);
     assert_eq!(codes_of(&diagnostics), ["QP008", "QP008", "QP008"]);
     let actions = server.code_actions(uri, std::slice::from_ref(&diagnostics[0]));
-    assert_eq!(actions.len(), 2, "{actions:?}");
+    assert_eq!(actions.len(), 3, "{actions:?}");
     assert_eq!(
         actions[0]["title"],
         "Remove the parentheses q's order already implies"
@@ -2478,7 +2488,7 @@ fn suppressing_a_finding_writes_a_noqa_the_linter_honours() {
             .find(|d| d["code"] == "QE004")
             .unwrap_or_else(|| panic!("{before:?}: {diagnostics:?}"));
         let actions = server.code_actions(uri, std::slice::from_ref(target));
-        let suppressions: Vec<&Value> = actions.iter().filter(|a| is_suppression(a)).collect();
+        let suppressions: Vec<&Value> = actions.iter().filter(|a| is_line_suppression(a)).collect();
         assert_eq!(suppressions.len(), 1, "{before:?}: {actions:?}");
         let action = suppressions[0];
         assert_eq!(action["title"], "Suppress QE004 on this line");
@@ -2521,7 +2531,7 @@ fn suppressions_are_one_to_a_line_and_code() {
         "{diagnostics:?}"
     );
     let actions = server.code_actions(uri, &diagnostics);
-    let suppressions: Vec<&Value> = actions.iter().filter(|a| is_suppression(a)).collect();
+    let suppressions: Vec<&Value> = actions.iter().filter(|a| is_line_suppression(a)).collect();
     assert_eq!(
         suppressions
             .iter()
@@ -2616,8 +2626,10 @@ fn no_suppression_is_offered_where_a_noqa_would_not_be_one() {
             .collect();
         assert_eq!(target.len(), 1, "{text:?} {code}: {diagnostics:?}");
         let actions = server.code_actions(uri, &target);
+        // The file's directive can still accept it, but for a file whose
+        // brackets do not close (`file_suppression_for`).
         assert!(
-            !actions.iter().any(is_suppression),
+            !actions.iter().any(is_line_suppression),
             "{text:?} ({why}): {actions:?}"
         );
         assert_eq!(server.shutdown_and_exit(), 0);
@@ -3075,6 +3087,69 @@ fn a_request_cancelled_while_it_waits_is_answered_cancelled() {
     let answered = server.until(|m| m["id"] == 61);
     assert_eq!(answered["result"].as_array().map(Vec::len), Some(1000));
     server.send(json!({"jsonrpc":"2.0","method":"$/cancelRequest","params":{"id":61}}));
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+/// "Suppress CODE in this file": once a code, however many findings of it
+/// the request carries, after every line suppression; it writes the file's
+/// directive, and the findings of that code go.
+#[test]
+fn suppressing_a_code_in_the_file_writes_the_directive() {
+    let mut server = Server::start();
+    server.initialize();
+    let uri = "file:///tmp/suppress-file.q";
+    let text = "a:1==1\nb:2==2\nf:{[desc] desc}\n";
+    server.open(uri, text);
+    let diagnostics = server.diagnostics_for(uri);
+    assert_eq!(codes_of(&diagnostics), ["QE004", "QE004", "QF001"]);
+    let actions = server.code_actions(uri, &diagnostics);
+    let in_file: Vec<&Value> = actions
+        .iter()
+        .filter(|a| is_suppression(a) && !is_line_suppression(a))
+        .collect();
+    assert_eq!(
+        in_file
+            .iter()
+            .map(|a| (
+                a["title"].as_str().unwrap(),
+                a["diagnostics"].as_array().unwrap().len()
+            ))
+            .collect::<Vec<_>>(),
+        [
+            ("Suppress QE004 in this file", 2),
+            ("Suppress QF001 in this file", 1)
+        ]
+    );
+    let last_line = actions.iter().rposition(is_line_suppression).unwrap();
+    let first_file = actions
+        .iter()
+        .position(|a| is_suppression(a) && !is_line_suppression(a))
+        .unwrap();
+    assert!(last_line < first_file, "{actions:?}");
+    let edited = apply_edits(text, in_file[0]["edit"]["changes"][uri].as_array().unwrap());
+    assert_eq!(edited, format!("/ qlinter: noqa: QE004\n{text}"));
+    server.change(uri, 2, &edited);
+    assert_eq!(codes_of(&server.diagnostics_for(uri)), ["QF001"]);
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+/// `suppressions.enable: false` withdraws both suppressions, and leaves the
+/// fixes.
+#[test]
+fn suppressions_can_be_turned_off() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut server, _) = start_with_options(
+        dir.path(),
+        &["--lsp", "--profile", "uqf"],
+        json!({"suppressions": {"enable": false}}),
+        None,
+    );
+    let uri = "file:///tmp/no-suppressions.q";
+    server.open(uri, "a:1==1\n");
+    let diagnostics = server.diagnostics_for(uri);
+    let actions = server.code_actions(uri, &diagnostics);
+    assert!(!actions.is_empty(), "the fix is still offered");
+    assert!(!actions.iter().any(is_suppression), "{actions:?}");
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 

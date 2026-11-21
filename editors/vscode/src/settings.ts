@@ -61,6 +61,7 @@ export interface InitializationOptions {
   documentLinks: { enable: boolean };
   generateQdoc: { enable: boolean };
   extractFunction: { enable: boolean };
+  suppressions: { enable: boolean };
   performanceLints: { enable: boolean };
   workspaceIndex: { enable: boolean; exclude: string[] };
 }
@@ -146,6 +147,7 @@ export function launch(settings: Settings, folder: string | undefined): Launch {
       documentLinks: { enable: settings.get<boolean>("documentLinks.enable", true) },
       generateQdoc: { enable: settings.get<boolean>("generateQdoc.enable", true) },
       extractFunction: { enable: settings.get<boolean>("extractFunction.enable", true) },
+      suppressions: { enable: settings.get<boolean>("suppressions.enable", true) },
       performanceLints: { enable: settings.get<boolean>("performanceLints.enable", true) },
       workspaceIndex: {
         enable: settings.get<boolean>("workspaceIndex.enable", true),
@@ -178,6 +180,7 @@ const RESTARTING = [
   "documentLinks",
   "generateQdoc",
   "extractFunction",
+  "suppressions",
   "performanceLints",
   "workspaceIndex",
 ];
