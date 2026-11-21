@@ -365,43 +365,40 @@ export function inCode(text: string, offset: number): boolean {
 }
 
 /// The table a qSQL statement reads, when `offset` is inside one in `text`:
-/// the nearest `select`, `exec`, `update` or `delete` before the cursor, and
-/// the first `from t` after it in the same statement, which may come before
-/// the cursor or after it (`select | from t`). Undefined outside a
-/// statement, or once a `;` at the statement's own bracket depth has ended
-/// it. Strings, symbols and comments are not read: `\`delete` and
-/// `"update"` are no keyword, and a `;` in a string ends nothing.
+/// the nearest `select`, `exec`, `update` or `delete` before the cursor
+/// whose statement the cursor is in, and the first `from t` after it in the
+/// same statement, which may come before the cursor or after it (`select |
+/// from t`). Undefined outside a statement. A statement ends at a `;` at
+/// its own bracket depth, or at a bracket that closes one opened before it:
+/// past `(exec s from u)`, the cursor is in the statement around it.
+/// Strings, symbols and comments are not read: `\`delete` and `"update"`
+/// are no keyword, and a `;` in a string ends nothing.
 export function qsqlTable(text: string, offset: number): string | undefined {
   const kinds = charKinds(text);
   const code = [...text].map((ch, i) => (kinds[i] === "c" ? ch : " ")).join("");
-  const before = code.slice(0, offset);
-  let keyword: RegExpExecArray | undefined;
-  for (const m of before.matchAll(/(?<![\w.])(select|exec|update|delete)(?![\w.])/g)) {
-    keyword = m as RegExpExecArray;
-  }
-  if (keyword === undefined) {
-    return undefined;
-  }
-  const start = keyword.index + keyword[0].length;
-  // Where the statement ends: a `;` outside brackets opened after the keyword.
-  let depth = 0;
-  let end = code.length;
-  for (let i = start; i < code.length; i++) {
-    const ch = code[i];
-    if ("([{".includes(ch)) {
-      depth++;
-    } else if (")]}".includes(ch)) {
-      depth--;
-    } else if (ch === ";" && depth <= 0) {
-      end = i;
-      break;
+  const keywords = [...code.slice(0, offset).matchAll(/(?<![\w.])(select|exec|update|delete)(?![\w.])/g)];
+  for (const keyword of keywords.reverse()) {
+    const start = keyword.index + keyword[0].length;
+    let depth = 0;
+    let end = code.length;
+    for (let i = start; i < code.length; i++) {
+      const ch = code[i];
+      if ("([{".includes(ch)) {
+        depth++;
+      } else if (")]}".includes(ch) && --depth < 0) {
+        end = i;
+        break;
+      } else if (ch === ";" && depth === 0) {
+        end = i;
+        break;
+      }
+    }
+    if (end >= offset) {
+      const from = /(?<![\w.])from\s+(\.?[A-Za-z][\w.]*)/.exec(code.slice(start, end));
+      return from === null ? undefined : from[1];
     }
   }
-  if (end < offset) {
-    return undefined;
-  }
-  const from = /(?<![\w.])from\s+(\.?[A-Za-z][\w.]*)/.exec(code.slice(start, end));
-  return from === null ? undefined : from[1];
+  return undefined;
 }
 
 /// The columns of the table `name` names, as q code would name it there.
