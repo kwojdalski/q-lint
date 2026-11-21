@@ -914,6 +914,37 @@ defined in, so its globals mean what they meant, and the process's own
 `\d` is left as it was. Nothing is written to a file: a restart of the
 process brings back the old definition.
 
+**Drift detection.** **Check Drift Against Process**, in the Process
+Explorer's title bar or the palette, compares the functions the workspace's
+q files define with what the connected process holds. A definition is a
+top-level `name:{...}`, in the context `\d .ns` gives it, as loading the
+file would define it; texts are compared without trailing blanks. It reads
+each name's `last value` from the process, and changes nothing there. The
+list shows the functions that differ, are not defined on the process or
+are not a lambda there; picking one that differs opens a diff of the
+process's text and the file's, and picking another opens the file at its
+definition. An open file is read as the editor has it. It reads up to 5000
+files and 20,000 definitions. Off by default
+(`q-lint.processExplorer.driftDetection.enable`), since it reads every
+function the workspace defines from the process.
+
+**Hot reload on save.** With `q-lint.hotReload.enable` on (it is off by
+default), saving a q file sends the function definitions the save changed
+to its process: the process the file is bound to by **Choose Connection
+for File**, which must be the connected one, or the active connection when
+it has no binding. It never connects. Each goes as **Redefine on Process**
+sends an edit: after the same modal, with the same warning for a process
+tagged `prod`, `prd` or `production`, parsed in the namespace the function
+was defined in, and refused if the process no longer holds the text it was
+read with. A function is replaced only while the process holds the text
+the file had before the edit - when the file was opened, or last reloaded
+- so a process that has drifted is never overwritten: such a function, a
+new one, or one the process does not hold as a lambda is listed as not
+sent. You are asked on every save that sends something, until you pick
+**Reload on Every Save** for that file and process, which lasts until the
+window closes or the setting is turned off; a production process is never
+offered it.
+
 **Find Callers in Process**, on a function in the explorer or the name
 under the cursor, lists the loaded functions that call it, read from what q
 parsed rather than from text: each lambda's globals, resolved in its
@@ -987,6 +1018,41 @@ agent cancels, is aborted as **Abort Current Query** aborts one, and the
 agent is told so. Each agent query goes into **Query History**, marked
 `agent`. The tool needs VS Code 1.95 or later; before it, only the command
 is there.
+
+Two more tools read and lint without running anything. **List q Tables**
+(`q-lint_listTables`, `#qTables`) answers the connected process's tables -
+each by the name a query uses, with its kind, rows and first 50 columns -
+or, given `{"table"}`, that table's schema from `meta`: each column's type,
+attribute and foreign key, its keys and rows. It reads as the Process
+Explorer reads, with the same lambdas and limits, and only the connected
+process: to read another, an agent connects with Run q Query's `process`.
+**Lint q Code** (`q-lint_lint`, `#qLint`) runs the qlinter the language
+server runs on the code it is given, as the file `{"file"}` names (for its
+configuration) or `snippet.q`, and answers its findings. Each has its own
+setting, `q-lint.agent.schemaTool.enable` and `q-lint.agent.lintTool.enable`;
+turned off, the tool is unregistered.
+
+**@q in the chat.** `@q <code>`, or `@q` with q code selected in an editor,
+explains the code, right to left. The model is the one picked in the chat,
+through VS Code's language-model API: q-lint holds no key and calls no
+service of its own. With the question go the language server's hovers on
+the selection's names and its findings there, and what the connected
+process holds for each name the code uses (a function's source, a table's
+columns, a variable's type and first items), read without running the
+code. `@q /error` explains the last failed query in Query History, with its
+code, or the error typed after it. The model may call q-lint's tools: Run q
+Query asks you first, as it always does. `q-lint.chat.participant.enable`
+off removes `@q`.
+
+**Draft qSQL from a Description**, in the palette or a q editor's context
+menu, asks a language model for a query that does what you describe, given
+the connected process's tables and columns, and opens the draft in a new q
+editor. Nothing runs: the notification offers **Run**, which runs the
+draft as it then stands, edited or not, as a query from an editor runs,
+and **Insert at Cursor**, which puts it in the editor you started from.
+Close it, and nothing happens. `q-lint.chat.englishToQsql.enable` off hides
+the command. Both need a language model in VS Code, such as GitHub
+Copilot's; without one they say so.
 
 ## q notebooks
 
@@ -1302,6 +1368,8 @@ nothing.
 | `q-lint.liveValueHover.enable` | `false` | Show a global's value on the connected process when hovering it in a q editor. Off, no hover is registered and nothing is sent. | - |
 | `q-lint.undefinedNames.enable` | `false` | Warn on globals a q file reads that neither the workspace nor the connected process defines, and offer **Check Undefined Names on Process**. Off, nothing is sent and the command is hidden. | - |
 | `q-lint.idiomSnippets.enable` | `true` | Offer the idiom snippets (joins, `.z` handlers, a TorQ process) in the completion list. | - |
+| `q-lint.processExplorer.driftDetection.enable` | `false` | **Check Drift Against Process**: compare the workspace's function definitions with the connected process. Off, the command is hidden and reads nothing. | - |
+| `q-lint.hotReload.enable` | `false` | On saving a q file, send the definitions the save changed to its process, after Redefine's confirmation. Off, nothing listens and nothing is sent. | - |
 
 ### Connection settings
 
@@ -1363,6 +1431,10 @@ Read when a cell runs or a command is used, so a change needs no reload. None re
 | Setting | Default | What it does | q-pro |
 | --- | --- | --- | --- |
 | `q-lint.agent.queryTimeout` | `30` | Seconds a query run by an agent through **Run q Query** may take before it is aborted, as **Abort Current Query** aborts one. `0` sets no limit. | - |
+| `q-lint.agent.schemaTool.enable` | `true` | The **List q Tables** tool: the connected process's tables, or one table's schema. Off, it is unregistered. | - |
+| `q-lint.agent.lintTool.enable` | `true` | The **Lint q Code** tool: qlinter's findings on code an agent gives it. Off, it is unregistered. | - |
+| `q-lint.chat.participant.enable` | `true` | The **@q** chat participant. Off, it is removed from the chat. | - |
+| `q-lint.chat.englishToQsql.enable` | `true` | **Draft qSQL from a Description**, shown for review and run only on **Run**. Off, the command is hidden and refuses. | - |
 
 ### Process settings
 

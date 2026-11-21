@@ -37,6 +37,10 @@ import { registerTestExplorer } from "./testexplorer";
 import { registerValueHover } from "./valuehoverview";
 import { registerUndefinedNames } from "./undefinednamesview";
 import { registerIdioms } from "./idiomsview";
+import { Drift } from "./driftview";
+import { registerAssistTools } from "./assisttools";
+import { registerChat } from "./chat";
+import { registerQsqlDraft } from "./qsqldraft";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -125,6 +129,9 @@ export async function activate(
     valueHover: ReturnType<typeof registerValueHover>;
     undefinedNames: ReturnType<typeof registerUndefinedNames>;
     idioms: ReturnType<typeof registerIdioms>;
+    hotReload: Drift["hotReloadState"];
+    assistTools: () => string[];
+    chatParticipant: () => boolean;
   }
 > {
   // Replacing the binary does not restart the server, and a window reload is
@@ -170,6 +177,14 @@ export async function activate(
   const infoViews = registerInfoViews(context, live);
   const across = new QueryAcross(context, live);
   const saved = new SavedQueries(context, live);
+  const drift = new Drift(context, live);
+  // The tools' qlinter is the one the server is started from.
+  const assistTools = registerAssistTools(context, live, () => {
+    const { serverPath } = launch(workspace.getConfiguration("q-lint"), workspace.workspaceFolders?.[0]?.uri.fsPath);
+    return serverPath ? [serverPath] : [bundledServer(context), "qlinter"].filter((c): c is string => !!c);
+  });
+  const chatParticipant = registerChat(context, live);
+  registerQsqlDraft(context, live);
   registerOnboarding(context, () => live.processes());
   const streams = new TableStreams(context, live);
   const launcher = new Launcher(context, live);
@@ -199,6 +214,9 @@ export async function activate(
     valueHover,
     undefinedNames,
     idioms,
+    hotReload: () => drift.hotReloadState(),
+    assistTools: assistTools.registered,
+    chatParticipant: chatParticipant.registered,
   };
 }
 

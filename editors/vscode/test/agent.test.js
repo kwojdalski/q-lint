@@ -19,6 +19,7 @@ const {
   shape,
 } = require("../out/agent.js");
 const { needsRestart } = require("../out/settings.js");
+const { readAssist, AGENT_FEATURES } = require("../out/assistconfig.js");
 
 const grid = (over) => ({
   count: 2,
@@ -165,7 +166,8 @@ test("the confirmation names the process, shows the query, and warns of producti
 
 test("package.json declares the tool as the extension registers it", () => {
   const [tool, ...more] = pkg.contributes.languageModelTools;
-  assert.strictEqual(more.length, 0);
+  // List q Tables and Lint q Code (#951) follow it; assisttools.test.js holds them.
+  assert.deepStrictEqual(more.map((t) => t.name), ["q-lint_listTables", "q-lint_lint"]);
   assert.strictEqual(tool.name, AGENT.tool);
   assert.strictEqual(tool.displayName, "Run q Query");
   assert.strictEqual(tool.toolReferenceName, "qQuery");
@@ -191,6 +193,10 @@ test("every agent setting is read, with the default package.json declares, and n
     read.set(key, fallback);
     return fallback;
   });
+  readAssist((key, fallback) => {
+    read.set(key, fallback);
+    return fallback;
+  }, AGENT_FEATURES);
   for (const [key, spec] of Object.entries(section.properties)) {
     const short = key.replace(/^q-lint\./, "");
     assert.ok(read.has(short), `${key} is declared but never read`);
