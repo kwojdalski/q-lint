@@ -306,6 +306,12 @@
             "order": 29,
             "markdownDescription": "Offer the Quick Fixes that accept a finding instead of fixing it: **Suppress CODE on this line**, which writes `/ noqa: CODE` after its line, and **Suppress CODE in this file**, which writes `/ qlinter: noqa: CODE` at the top of the file or adds the code to the one there. Off, q-lint offers neither."
           },
+          "q-lint.organiseLoads.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 29,
+            "markdownDescription": "Answer **Organize Imports** (and `source.organizeImports` in `editor.codeActionsOnSave`) with **Organise loads**: in each run of consecutive `\\l` lines, a path loaded twice is loaded once and the rest are sorted, absolute paths first, then relative ones. A run that loads anything but a `.q` or `.k` file is left alone. Off, q-lint offers no such action and **q-lint: Organise Loads** is hidden."
+          },
           "q-lint.performanceLints.enable": {
             "type": "boolean",
             "default": true,
@@ -1542,6 +1548,11 @@
         "title": "Draft qSQL from a Description",
         "category": "q-lint",
         "icon": "$(sparkle)"
+      },
+      {
+        "command": "q-lint.organiseLoads",
+        "title": "Organise Loads",
+        "category": "q-lint"
       }
     ],
     "views": {
@@ -2322,6 +2333,10 @@
         {
           "command": "q-lint.draftQsql",
           "when": "config.q-lint.chat.englishToQsql.enable"
+        },
+        {
+          "command": "q-lint.organiseLoads",
+          "when": "config.q-lint.organiseLoads.enable && editorLangId == q"
         }
       ],
       "editor/title": [

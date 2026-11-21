@@ -465,7 +465,8 @@ fn generating_qdoc_can_be_turned_off() {
         json!([
             "quickfix",
             "source.fixAll.q-lint",
-            "refactor.extract.function"
+            "refactor.extract.function",
+            "source.organizeImports.q-lint"
         ])
     );
     let uri = server.open(dir.path(), "a.q", "f:{[a] a}\n");
@@ -620,7 +621,12 @@ fn extract_function_can_be_turned_off() {
     let (mut server, reply) = Server::over(dir.path(), &[], client(), options);
     assert_eq!(
         reply["result"]["capabilities"]["codeActionProvider"]["codeActionKinds"],
-        json!(["quickfix", "source.fixAll.q-lint", "refactor.rewrite"])
+        json!([
+            "quickfix",
+            "source.fixAll.q-lint",
+            "refactor.rewrite",
+            "source.organizeImports.q-lint"
+        ])
     );
     let text = "f:{[a;b] a+b*2}\n";
     let uri = server.open(dir.path(), "a.q", text);

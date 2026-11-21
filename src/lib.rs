@@ -5102,6 +5102,105 @@ fn suppression_with(finding: &Finding, source: &str, v: &Views) -> Option<Fix> {
         })
 }
 
+/// The edit that organises a file's loads, as isort does a Python file's
+/// imports: in each run of consecutive `\l` lines, a path loaded twice is
+/// loaded once, at its first place, and the rest are sorted - absolute paths
+/// (`/`, `~`, `$`, a drive) first and relative ones after, each group by
+/// path without regard to case, with a blank line between the two. `None`
+/// when nothing would change.
+///
+/// Loads run in order, and a later file can read what an earlier one
+/// defined, so this is a person's decision, made where they ask for it - it
+/// is not a fix, and `--fix` never makes it. What it leaves alone, so as not
+/// to change more than order: a run with a load that is not a `.q` or `.k`
+/// file - `\l db` loads a database and changes directory, which every
+/// relative load after it depends on - lines separated by anything at all,
+/// a blank line included, which keeps a person's grouping; a load in a block
+/// comment or after the line that ends the script; and a file whose
+/// brackets or strings do not close.
+pub fn organise_loads(source: &str) -> Option<Fix> {
+    let v = views(source);
+    if !problems(source, &v).is_empty() {
+        return None;
+    }
+    let skipped = |at: usize| {
+        v.open_block.is_some_and(|open| at >= open)
+            || v.blocks
+                .iter()
+                .any(|&(open, close)| (open..=close).contains(&at))
+            || v.script_end.is_some_and(|end| at >= end)
+    };
+    // Each line: where it starts, its text, its line ending, and its path
+    // when it is a load.
+    let mut lines: Vec<(usize, &str, &str, Option<&str>)> = vec![];
+    let mut offset = 0;
+    for line in source.split_inclusive('\n') {
+        let body = line.trim_end_matches(['\n', '\r']);
+        let ending = &line[body.len()..];
+        let path = re!(r"^\\l[ \t]+(\S(?:.*\S)?)[ \t]*$")
+            .captures(body)
+            .and_then(|c| c.get(1))
+            .map(|m| m.as_str())
+            .filter(|_| !skipped(offset));
+        lines.push((offset, body, ending, path));
+        offset += line.len();
+    }
+    let mut edited = String::with_capacity(source.len());
+    let mut i = 0;
+    while i < lines.len() {
+        let (start, body, ending, path) = lines[i];
+        if path.is_none() {
+            edited.push_str(&source[start..start + body.len() + ending.len()]);
+            i += 1;
+            continue;
+        }
+        let run_end = (i..lines.len())
+            .find(|&j| lines[j].3.is_none())
+            .unwrap_or(lines.len());
+        let run = &lines[i..run_end];
+        let paths: Vec<&str> = run.iter().filter_map(|l| l.3).collect();
+        let files = paths
+            .iter()
+            .all(|p| re!(r"(?i)\.[qk]$").is_match(p) && !p.contains(char::is_whitespace));
+        let text =
+            |l: &(usize, &str, &str, Option<&str>)| &source[l.0..l.0 + l.1.len() + l.2.len()];
+        if !files {
+            run.iter().for_each(|l| edited.push_str(text(l)));
+            i = run_end;
+            continue;
+        }
+        let newline = run
+            .iter()
+            .map(|l| l.2)
+            .find(|e| !e.is_empty())
+            .unwrap_or("\n");
+        let last_ending = run.last().map_or("", |l| l.2);
+        let mut seen = std::collections::HashSet::new();
+        let mut kept: Vec<(&str, &str)> = run
+            .iter()
+            .filter(|l| seen.insert(l.3.unwrap()))
+            .map(|l| (l.3.unwrap(), l.1))
+            .collect();
+        let absolute =
+            |p: &str| p.starts_with(['/', '~', '$', '\\']) || re!(r"^[A-Za-z]:[\\/]").is_match(p);
+        kept.sort_by_key(|&(p, _)| (!absolute(p), p.to_lowercase(), p.to_string()));
+        let mut out: Vec<&str> = vec![];
+        for (n, &(p, line)) in kept.iter().enumerate() {
+            if n > 0 && absolute(kept[n - 1].0) && !absolute(p) {
+                out.push("");
+            }
+            out.push(line);
+        }
+        edited.push_str(&out.join(newline));
+        edited.push_str(last_ending);
+        i = run_end;
+    }
+    let mut fix = whole_edit(source, &edited)?;
+    fix.title = "Organise loads".into();
+    fix.batch_safe = false;
+    Some(fix)
+}
+
 pub fn lint(source: &str, path: &str, profile: Profile) -> Vec<Finding> {
     lint_in(source, path, profile, &Workspace::default())
 }

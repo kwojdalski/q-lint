@@ -54,6 +54,15 @@ to a process you add and connect to, and sends only the code you run.
   `do` or `while` body, which copies `r` on every pass and makes the loop
   quadratic where `r,:x` is linear - **QV003**, with a Quick Fix for the
   first form. `q-lint.performanceLints.enable` hides them.
+- **Organise Loads** (VS Code's **Organize Imports**, Shift+Alt+O, or
+  **q-lint: Organise Loads**): in each run of consecutive `\l` lines, a path
+  loaded twice is loaded once, at its first place, and the rest are sorted,
+  absolute paths first, then relative ones, with a blank line between. Load
+  order is meaning in q - a file can read what an earlier one defined - so
+  it runs only when asked, never as a fix, and a run that loads anything but
+  a `.q` or `.k` file (`\l db` changes directory) is left alone, as are
+  loads a blank line or anything else separates. `source.organizeImports` in
+  `editor.codeActionsOnSave` runs it on save (`q-lint.organiseLoads.enable`).
 - **Format Document** applies the fixes `qlinter --fix` makes - those that
   cannot change a working program - and nothing else: it is not a
   whitespace or layout formatter, and it never applies an editor-only fix.
@@ -1299,6 +1308,7 @@ q-pro column names the setting of [q-pro](https://marketplace.visualstudio.com/i
 | `q-lint.generateQdoc.enable` | `true` | Offer **Generate qDoc** above a top-level function. | - |
 | `q-lint.extractFunction.enable` | `true` | Offer **Extract Function** over a selection q reads as one value. | - |
 | `q-lint.suppressions.enable` | `true` | Offer **Suppress CODE on this line** and **Suppress CODE in this file**. | - |
+| `q-lint.organiseLoads.enable` | `true` | Answer **Organize Imports** with **Organise loads**, and offer **q-lint: Organise Loads**. | - |
 | `q-lint.performanceLints.enable` | `true` | Report the performance rules, `QV`. Off, they are hidden as `q-lint.lint.ignore` would. | - |
 | `q-lint.workspaceIndex.enable` | `true` | Read every workspace `.q` file at startup for the names it defines, up to 20,000 files or 500,000 directory entries. Off: only open files. | - |
 | `q-lint.workspaceIndex.exclude` | `[]` | Globs, relative to the workspace folder, the index does not read: `["vendor/**"]`. | `q-lang-server.sourceFiles.ignoreGlob` |

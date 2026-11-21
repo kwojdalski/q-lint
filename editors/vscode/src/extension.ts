@@ -41,6 +41,7 @@ import { Drift } from "./driftview";
 import { registerAssistTools } from "./assisttools";
 import { registerChat } from "./chat";
 import { registerQsqlDraft } from "./qsqldraft";
+import { registerOrganiseLoads } from "./organiseloads";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -193,6 +194,7 @@ export async function activate(
   const valueHover = registerValueHover(context, live, running);
   const undefinedNames = registerUndefinedNames(context, live, running);
   const idioms = registerIdioms(context);
+  registerOrganiseLoads(context);
   // Not awaited: nothing above needs the server, and a slow or hung one
   // would hold up every command of the extension until it answered.
   void serial.run(() => start(context)).then(() => serverChanged());

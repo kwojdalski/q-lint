@@ -237,7 +237,7 @@ fn is_line_suppression(action: &Value) -> bool {
 /// rewrite that writes a qDoc block, and Extract Function.
 fn code_action_provider() -> Value {
     json!({"codeActionKinds": ["quickfix", "source.fixAll.q-lint", "refactor.rewrite",
-                               "refactor.extract.function"]})
+                               "refactor.extract.function", "source.organizeImports.q-lint"]})
 }
 
 /// What VS Code declares, as far as this server reads it: Quick Fixes come
@@ -3150,6 +3150,51 @@ fn suppressions_can_be_turned_off() {
     let actions = server.code_actions(uri, &diagnostics);
     assert!(!actions.is_empty(), "the fix is still offered");
     assert!(!actions.iter().any(is_suppression), "{actions:?}");
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+/// Organize Imports asks for `source.organizeImports`: the loads sorted,
+/// deduped and grouped. Never unasked, and not at all with the setting off.
+#[test]
+fn organise_loads_answers_organize_imports_and_only_that() {
+    let text = "\\l src/b.q\n\\l /opt/a.q\n\\l src/b.q\n\\l lib/c.q\nx:1\n";
+    let mut server = Server::start();
+    server.initialize();
+    let uri = "file:///tmp/organise.q";
+    server.open(uri, text);
+    server.diagnostics_for(uri);
+    let actions = server.code_actions_only(uri, &["source.organizeImports"]);
+    assert_eq!(actions.len(), 1, "{actions:?}");
+    assert_eq!(actions[0]["title"], "Organise loads");
+    assert_eq!(actions[0]["kind"], "source.organizeImports.q-lint");
+    assert_eq!(
+        apply_edits(text, actions[0]["edit"]["changes"][uri].as_array().unwrap()),
+        "\\l /opt/a.q\n\n\\l lib/c.q\n\\l src/b.q\nx:1\n"
+    );
+    assert!(server.code_actions_only(uri, &["source.fixAll"]).is_empty());
+    assert_eq!(server.shutdown_and_exit(), 0);
+
+    let dir = tempfile::tempdir().unwrap();
+    let (mut server, reply) = start_with_options(
+        dir.path(),
+        &["--lsp"],
+        json!({"organiseLoads": {"enable": false}}),
+        None,
+    );
+    let kinds = &reply["result"]["capabilities"]["codeActionProvider"]["codeActionKinds"];
+    assert!(
+        !kinds
+            .as_array()
+            .unwrap()
+            .contains(&json!("source.organizeImports.q-lint")),
+        "{kinds}"
+    );
+    server.open(uri, text);
+    assert!(
+        server
+            .code_actions_only(uri, &["source.organizeImports"])
+            .is_empty()
+    );
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 

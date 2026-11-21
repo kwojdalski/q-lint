@@ -66,6 +66,7 @@
 //! only where the linter would read that comment (`suppression_for`);
 //! textDocument/codeAction also answers `source.fixAll.q-lint` with the
 //! formatting edit, for `editor.codeActionsOnSave` in an editor where this
+//! server is not the formatter, and `source.organizeImports.q-lint` with
 //! the `\l` lines of each run sorted, deduped and grouped; a finding can be
 //! accepted for its whole file with `/ qlinter: noqa: CODE`;
 //!
@@ -141,8 +142,8 @@ use crate::jsonrpc::{INVALID_REQUEST, Malformed, receive, send};
 use q_lint_rs::graph::Placement;
 use q_lint_rs::{
     FileIndex, Finding, Fix, References, TokenKind, Workspace, balanced, broken_statement,
-    file_suppression_for, fix_all, fix_for, folds, rule_url, semantic_tokens_in, suppressions_for,
-    whole_edit,
+    file_suppression_for, fix_all, fix_for, folds, organise_loads, rule_url, semantic_tokens_in,
+    suppressions_for, whole_edit,
 };
 use serde_json::{Value, json};
 use std::{
@@ -657,6 +658,9 @@ struct Options {
     /// Offer the Quick Fixes that accept a finding: `/ noqa: CODE` on its
     /// line, and `/ qlinter: noqa: CODE` for its file.
     suppressions: bool,
+    /// Answer `source.organizeImports` with the edit that sorts, dedupes and
+    /// groups each run of `\l` lines (`organise_loads`).
+    organise_loads: bool,
     /// Report the performance rules, QV. Off, they are ignored as
     /// `lint.ignore` would.
     performance_lints: bool,
@@ -689,6 +693,7 @@ impl Default for Options {
             generate_qdoc: true,
             extract_function: true,
             suppressions: true,
+            organise_loads: true,
             performance_lints: true,
             disabled_actions: false,
             severity: vec![],
@@ -729,6 +734,7 @@ impl Options {
                         "generateQdoc",
                         "extractFunction",
                         "suppressions",
+                        "organiseLoads",
                         "performanceLints",
                     ]
                     .contains(&key.as_str())
@@ -767,6 +773,7 @@ impl Options {
         options.generate_qdoc = flag("/generateQdoc/enable", true);
         options.extract_function = flag("/extractFunction/enable", true);
         options.suppressions = flag("/suppressions/enable", true);
+        options.organise_loads = flag("/organiseLoads/enable", true);
         options.performance_lints = flag("/performanceLints/enable", true);
         options.disabled_actions = params
             .pointer("/capabilities/textDocument/codeAction/disabledSupport")
@@ -1550,6 +1557,9 @@ fn capabilities(opts: &Options, code_action_literals: bool) -> Value {
         if opts.extract_function {
             kinds.push(EXTRACT);
         }
+        if opts.organise_loads {
+            kinds.push(ORGANISE);
+        }
         capabilities["codeActionProvider"] = json!({ "codeActionKinds": kinds });
     }
     capabilities["foldingRangeProvider"] = json!(true);
@@ -1774,6 +1784,10 @@ const FIX_ALL: &str = "source.fixAll.q-lint";
 const REWRITE: &str = "refactor.rewrite";
 /// The kind of Extract Function.
 const EXTRACT: &str = "refactor.extract.function";
+/// The kind of the action that organises a file's `\l` lines: what VS Code's
+/// Organize Imports and `editor.codeActionsOnSave` ask for as
+/// `source.organizeImports`.
+const ORGANISE: &str = "source.organizeImports.q-lint";
 
 /// Whether a kind the client asks for (`context.only`) takes in `kind`. Kinds
 /// are hierarchical, a dot at a time: `source` and `source.fixAll` each ask
@@ -1850,7 +1864,38 @@ fn code_actions(
     {
         actions.extend(fix_all_action(params, docs, ws, policy));
     }
+    // Only by kind, as the fix-all: it reorders, and is asked for by name.
+    if opts.organise_loads
+        && only
+            .as_ref()
+            .is_some_and(|only| only.iter().any(|kind| asks_for(kind, ORGANISE)))
+    {
+        actions.extend(organise_action(params, docs));
+    }
     actions
+}
+
+/// The `\l` lines of an open q document sorted, deduped and grouped
+/// (`organise_loads`), as one action of kind `source.organizeImports.q-lint`;
+/// none when nothing would change.
+fn organise_action(params: &Value, docs: &Documents) -> Option<Value> {
+    let uri = uri_of(&params["textDocument"]);
+    let source = docs.get(&uri).filter(|_| is_q_uri(&uri))?;
+    let fix = organise_loads(source)?;
+    let lines = Lines::new(source);
+    let mut changes = serde_json::Map::new();
+    changes.insert(
+        uri.clone(),
+        json!([{
+            "range": {"start": lines.json(fix.start), "end": lines.json(fix.end)},
+            "newText": fix.replacement,
+        }]),
+    );
+    Some(json!({
+        "title": fix.title,
+        "kind": ORGANISE,
+        "edit": {"changes": changes},
+    }))
 }
 
 /// The fixes for the diagnostics a request carries, and after them, for each

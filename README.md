@@ -594,6 +594,18 @@ reads more than 8 locals is refused; to a client with
 disabled with the reason. `extractFunction.enable: false` withdraws it and
 its kind.
 
+A code action of kind `source.organizeImports.q-lint`, **Organise loads**, is
+returned only to a request that asks for it by kind - `source.organizeImports`,
+which VS Code's Organize Imports and `editor.codeActionsOnSave` send. In each
+run of consecutive `\l` lines it loads a path once, at its first place, and
+sorts the rest: absolute paths (`/`, `~`, `$`, a drive) first, then relative
+ones, each by path without regard to case, with a blank line between the two
+groups. Load order is meaning in q - a file can read what an earlier one
+defined - so it is never a fix and `--fix` never makes it, and it leaves alone
+a run with a load that is not a `.q` or `.k` file (`\l db` loads a database
+and changes directory, which the relative loads after it depend on), runs a
+blank line or anything else separates, loads in a block comment or after the
+end of the script, and a file whose brackets do not close.
 Completion is off unless `completion.enable` asks for it, because an editor
 told that a server completes stops offering the words already in the buffer,
 and this server's list is narrower than that fallback in one way that matters:
@@ -800,6 +812,7 @@ and `graph.enable` does that for `q-lint/graph` and `q-lint/affectedTests`,
 which then answer `null`; `inlayHints.enable` does it for inlay hints, and `codeLens.enable: true`
 announces the Run lenses.
 `suppressions.enable: false` withdraws both "Suppress CODE" Quick Fixes,
+`organiseLoads.enable: false` Organise loads and its kind, and
 `performanceLints.enable: false` ignores the QV rules as `lint.ignore`
 `workspaceIndex.exclude`
 holds globs relative to each workspace folder that the index does not read.
