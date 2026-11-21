@@ -137,7 +137,7 @@ export function readLive(get: <T>(key: string, fallback: T) => T): LiveSettings 
 }
 
 /// The result panel's features, each with its own `q-lint.results.<feature>.enable`.
-export const RESULT_FEATURES = ["history", "diff", "statistics", "heatmap", "tree", "export", "paging", "pivot", "charts", "drilldown"] as const;
+export const RESULT_FEATURES = ["history", "diff", "statistics", "heatmap", "tree", "export", "paging", "pivot", "charts", "drilldown", "plots"] as const;
 export type ResultFeature = (typeof RESULT_FEATURES)[number];
 
 /// The features off unless turned on: paging keeps a result on the process

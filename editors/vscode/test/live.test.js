@@ -51,6 +51,7 @@ const { QSQL_COMMANDS } = require("../out/assist.js");
 const { CONVERT_TEMPORAL } = require("../out/temporal.js");
 const { PASTE } = require("../out/pastetable.js");
 const { HELP, CHEAT_SHEET } = require("../out/helpcatalog.js");
+const { PLOT_COMMANDS } = require("../out/plots.js");
 const { CONTROL_COMMANDS, readControls } = require("../out/querycontrols.js");
 const { readProgress } = require("../out/progress.js");
 const { readPlaceholders } = require("../out/placeholders.js");
@@ -320,6 +321,7 @@ test("package.json declares exactly the commands the extension registers", () =>
     ...Object.values(PASTE),
     ...Object.values(HELP),
     ...Object.values(CHEAT_SHEET).filter((id) => id !== CHEAT_SHEET.view),
+    ...Object.values(PLOT_COMMANDS).filter((id) => id !== PLOT_COMMANDS.view),
   ].sort();
   assert.deepStrictEqual(declared, registered);
 });
@@ -444,7 +446,7 @@ test("every query setting is read, with the default package.json declares, and n
   assert.deepStrictEqual(resultView, {
     history: 10,
     heatmap: false,
-    enable: { history: true, diff: true, statistics: true, heatmap: true, tree: true, export: true, paging: false, pivot: true, charts: true, drilldown: true },
+    enable: { history: true, diff: true, statistics: true, heatmap: true, tree: true, export: true, paging: false, pivot: true, charts: true, drilldown: true, plots: true },
     drilldown: [],
   });
   const view = (values) => readResultView((key, fallback) => (key in values ? values[key] : fallback));

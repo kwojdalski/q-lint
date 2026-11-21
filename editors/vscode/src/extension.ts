@@ -45,6 +45,8 @@ import { registerTemporal } from "./temporalview";
 import { registerPaste } from "./pasteview";
 import { registerHelp } from "./helpview";
 import { registerCheatSheet } from "./cheatsheetview";
+import { PlotsView } from "./plotsview";
+import { PLOTS } from "./plots";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -139,6 +141,7 @@ export async function activate(
     temporal: ReturnType<typeof registerTemporal>;
     help: ReturnType<typeof registerHelp>;
     cheatSheet: ReturnType<typeof registerCheatSheet>;
+    plots: { registered: () => boolean; list: () => readonly { kind: string; process: string; code: string; svg: string }[]; current: () => number };
   }
 > {
   // Replacing the binary does not restart the server, and a window reload is
@@ -204,6 +207,7 @@ export async function activate(
   registerPaste(context, live);
   const help = registerHelp(context, live);
   const cheatSheet = registerCheatSheet(context);
+  const plots = new PlotsView(context);
   // Not awaited: nothing above needs the server, and a slow or hung one
   // would hold up every command of the extension until it answered.
   void serial.run(() => start(context)).then(() => serverChanged());
@@ -231,6 +235,7 @@ export async function activate(
     temporal,
     help,
     cheatSheet,
+    plots: { registered: () => plots.registered(), list: () => PLOTS.list(), current: () => PLOTS.current },
   };
 }
 

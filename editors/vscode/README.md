@@ -818,6 +818,18 @@ Result Chart as Image**, which takes `png` or `svg` and a `Uri`) save the
 chart: the PNG as drawn, on the editor's background, and the SVG as vector
 graphics drawn by q-lint from the same data, for a document or a slide.
 
+**q Plots.** Every chart the panel draws is kept in the **q Plots** view,
+beside q Results in the bottom panel (**q-lint: Show Plots**): one plot for
+each result and chart kind - ticking a column redraws it rather than adding
+another - with the query and process it came from, the newest 50. The
+arrows, or **Previous Plot** and **Next Plot**, step through them; **Save
+Plot As...** writes the one on show as SVG or as PNG on the editor's
+background (it also takes `svg` or `png` and a `Uri`); **Remove Plot** and
+**Clear Plots** forget them. Plots are kept for the window, not across a
+reload, and a notebook's charts are not among them
+(`q-lint.results.plots.enable`; off, the view goes and what it held is
+dropped).
+
 **Drill down.** `q-lint.results.drilldownTemplates` holds follow-up queries a
 grid cell offers: double-click a cell, or right-click it and choose **Drill
 Down from Cell**, pick one, and it runs on the process the result came
@@ -848,7 +860,7 @@ or in unwrapped mode. Turning paging off stops holding new results; one
 already held stays until the process restarts or `.qlint.held:()` frees it.
 
 Each of these - the history, Compare, Stats, the heatmap, the tree, export,
-paging, the pivot, the new charts and drill-down - has its own
+paging, the pivot, the new charts, drill-down and the plots - has its own
 `q-lint.results.<feature>.enable` setting, on by default but for paging.
 Turned off, its button and command are gone (the command, run anyway, says
 which setting turns it back on), and a change applies at once, without a
@@ -1422,6 +1434,7 @@ nothing.
 | `q-lint.idiomSnippets.enable` | `true` | Offer the idiom snippets (joins, `.z` handlers, a TorQ process) in the completion list. | - |
 | `q-lint.processExplorer.driftDetection.enable` | `false` | **Check Drift Against Process**: compare the workspace's function definitions with the connected process. Off, the command is hidden and reads nothing. | - |
 | `q-lint.hotReload.enable` | `false` | On saving a q file, send the definitions the save changed to its process, after Redefine's confirmation. Off, nothing listens and nothing is sent. | - |
+| `q-lint.results.plots.enable` | `true` | Keep every chart the result panel draws in the **q Plots** view, to step through and save as SVG or PNG. Off, the view is hidden and its plots dropped. | - |
 | `q-lint.temporalHover.enable` | `true` | Show a temporal literal or an epoch-sized number converted on hover, and offer **Convert Temporal Value**. Nothing is sent. | - |
 | `q-lint.pasteTable.enable` | `true` | **Paste Spreadsheet Data as q Table**: the clipboard's CSV or TSV as a `([] ...)` literal. | - |
 | `q-lint.jsonConversion.enable` | `true` | **Paste JSON as q** and **Copy Value as JSON** (`.j.k` and `.j.j`). Off, both are hidden and nothing is sent. | - |

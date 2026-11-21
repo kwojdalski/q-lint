@@ -1060,6 +1060,22 @@
     C.applyTheme(Chart, look);
     chart = new Chart(canvas, C.chartConfig(grid, rows, state.kind, data, look, undefined, { y2: y2 }));
     drawnChart = { data: data, look: look, y2: y2, canvas: canvas };
+    // Kept in the q Plots view (#970), as the SVG Save SVG writes.
+    if (feature("plots")) {
+      vscode.postMessage({
+        type: "plotted",
+        id: result.id,
+        format: state.kind,
+        // At least 640 by 360: a plot drawn in a narrow panel is still one
+        // to read, and to save.
+        data: C.chartSvg(grid, rows, state.kind, data, look, {
+          width: Math.max(640, Math.round(canvas.clientWidth || 800)),
+          height: Math.max(360, Math.round(canvas.clientHeight || 450)),
+          background: cssVar("--vscode-editor-background", "#ffffff"),
+          y2: y2,
+        }),
+      });
+    }
     rendered({ chart: summary });
   }
 

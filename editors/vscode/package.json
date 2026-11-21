@@ -685,6 +685,12 @@
             "order": 131,
             "markdownDescription": "On saving a q file, send the function definitions the save changed to its process (the file's bound one, or the active connection), after Redefine's confirmation. Only a function the process holds as the file had it before the edit is replaced. Off by default: it sends code to a process on save. Off, nothing listens and nothing is sent."
           },
+          "q-lint.results.plots.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 706,
+            "markdownDescription": "Keep every chart the result panel draws in the **q Plots** view, beside q Results, to step back through and save as SVG or PNG. Off, the view is hidden, the plots kept are dropped and no more are kept."
+          },
           "q-lint.temporalHover.enable": {
             "type": "boolean",
             "default": true,
@@ -1614,6 +1620,42 @@
         "title": "Insert Cheat Sheet Entry",
         "category": "q-lint",
         "icon": "$(insert)"
+      },
+      {
+        "command": "q-lint.showPlots",
+        "title": "Show Plots",
+        "category": "q-lint",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "q-lint.previousPlot",
+        "title": "Previous Plot",
+        "category": "q-lint",
+        "icon": "$(arrow-left)"
+      },
+      {
+        "command": "q-lint.nextPlot",
+        "title": "Next Plot",
+        "category": "q-lint",
+        "icon": "$(arrow-right)"
+      },
+      {
+        "command": "q-lint.savePlot",
+        "title": "Save Plot As...",
+        "category": "q-lint",
+        "icon": "$(save)"
+      },
+      {
+        "command": "q-lint.removePlot",
+        "title": "Remove Plot",
+        "category": "q-lint",
+        "icon": "$(close)"
+      },
+      {
+        "command": "q-lint.clearPlots",
+        "title": "Clear Plots",
+        "category": "q-lint",
+        "icon": "$(clear-all)"
       }
     ],
     "views": {
@@ -1697,6 +1739,13 @@
           "name": "q Results",
           "icon": "media/view-results.svg",
           "contextualTitle": "q-lint"
+        },
+        {
+          "type": "webview",
+          "id": "q-lint.plots",
+          "name": "q Plots",
+          "when": "config.q-lint.results.plots.enable",
+          "icon": "media/view-plots.svg"
         }
       ]
     },
@@ -1832,6 +1881,26 @@
           "command": "q-lint.checkDrift",
           "when": "view == q-lint.processExplorer && config.q-lint.processExplorer.driftDetection.enable",
           "group": "2_drift@1"
+        },
+        {
+          "command": "q-lint.previousPlot",
+          "when": "view == q-lint.plots && config.q-lint.results.plots.enable",
+          "group": "navigation@1"
+        },
+        {
+          "command": "q-lint.nextPlot",
+          "when": "view == q-lint.plots && config.q-lint.results.plots.enable",
+          "group": "navigation@2"
+        },
+        {
+          "command": "q-lint.savePlot",
+          "when": "view == q-lint.plots && config.q-lint.results.plots.enable",
+          "group": "navigation@3"
+        },
+        {
+          "command": "q-lint.clearPlots",
+          "when": "view == q-lint.plots && config.q-lint.results.plots.enable",
+          "group": "navigation@4"
         }
       ],
       "view/item/context": [
@@ -2457,6 +2526,30 @@
         {
           "command": "q-lint.insertCheatSheetEntry",
           "when": "false"
+        },
+        {
+          "command": "q-lint.showPlots",
+          "when": "config.q-lint.results.plots.enable"
+        },
+        {
+          "command": "q-lint.previousPlot",
+          "when": "config.q-lint.results.plots.enable"
+        },
+        {
+          "command": "q-lint.nextPlot",
+          "when": "config.q-lint.results.plots.enable"
+        },
+        {
+          "command": "q-lint.savePlot",
+          "when": "config.q-lint.results.plots.enable"
+        },
+        {
+          "command": "q-lint.removePlot",
+          "when": "config.q-lint.results.plots.enable"
+        },
+        {
+          "command": "q-lint.clearPlots",
+          "when": "config.q-lint.results.plots.enable"
         }
       ],
       "editor/title": [

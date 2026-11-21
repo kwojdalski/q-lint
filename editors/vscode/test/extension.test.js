@@ -104,6 +104,7 @@ function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir
     "./pasteview": { registerPaste() {} },
     "./helpview": { registerHelp: () => ({ hoverRegistered: () => false }) },
     "./cheatsheetview": { registerCheatSheet: () => ({ view: () => undefined }) },
+    "./plotsview": { PlotsView: class { registered() { return false; } } },
   };
   const file = require.resolve("../out/extension.js");
   delete require.cache[file];

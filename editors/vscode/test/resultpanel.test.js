@@ -374,7 +374,7 @@ test("each result feature turned off: its command refuses, the page is sent noth
   assert.strictEqual(m.tree, undefined);
   assert.strictEqual(m.diff, undefined);
   assert.strictEqual(m.heatmap, false);
-  assert.deepStrictEqual(m.features, { statistics: false, heatmap: false, export: true, pivot: true, charts: true, drilldown: true });
+  assert.deepStrictEqual(m.features, { statistics: false, heatmap: false, export: true, pivot: true, charts: true, drilldown: true, plots: true });
   assert.strictEqual(m.history.length, 1);
   const { RESULT_VIEW } = require("../out/liveconfig.js");
   const features = { statistics: "statistics", tree: "tree", compare: "diff", heatmap: "heatmap", history: "history" };
@@ -399,7 +399,7 @@ test("each result feature turned off: its command refuses, the page is sent noth
   }
   const on = page.posted.at(-1);
   assert.deepStrictEqual(on.tree, tree);
-  assert.deepStrictEqual(on.features, { statistics: true, heatmap: true, export: true, pivot: true, charts: true, drilldown: true });
+  assert.deepStrictEqual(on.features, { statistics: true, heatmap: true, export: true, pivot: true, charts: true, drilldown: true, plots: true });
   assert.strictEqual(on.heatmap, true);
   assert.strictEqual(on.diff, undefined);
   assert.strictEqual(modes.wantsTree(), true);
@@ -582,7 +582,7 @@ test("export, paging, pivot, charts and drill-down turned off: each command refu
   modes.show({ ...result([1, 2], 5), held: true }, live());
   const page = fake.pages[0];
   const m = page.posted.at(-1);
-  assert.deepStrictEqual(m.features, { statistics: true, heatmap: true, export: false, pivot: false, charts: false, drilldown: false });
+  assert.deepStrictEqual(m.features, { statistics: true, heatmap: true, export: false, pivot: false, charts: false, drilldown: false, plots: true });
   assert.strictEqual(m.more, false);
   const { RESULT_VIEW } = require("../out/liveconfig.js");
   const features = { exportAs: "export", copyAs: "export", loadMore: "paging", pivot: "pivot", saveChart: "charts", drillDown: "drilldown" };
@@ -610,5 +610,34 @@ test("export, paging, pivot, charts and drill-down turned off: each command refu
   for (const f of fake.listeners.config) {
     f({ affectsConfiguration: (k) => k === "q-lint.results" || k === "q-lint" });
   }
-  assert.deepStrictEqual(page.posted.at(-1).features, { statistics: true, heatmap: true, export: true, pivot: true, charts: true, drilldown: true });
+  assert.deepStrictEqual(page.posted.at(-1).features, { statistics: true, heatmap: true, export: true, pivot: true, charts: true, drilldown: true, plots: true });
+});
+
+test("each chart the page draws is kept for the q Plots view; off, none is (#970)", () => {
+  const fake = fakeVscode();
+  const modes = loadModes(fake);
+  const { PLOTS } = require("../out/plots.js");
+  modes.show(result([1, 2]), live({ mode: "chart" }));
+  const page = fake.pages[0];
+  const m = page.posted.at(-1);
+  assert.strictEqual(m.features.plots, true);
+  const svg = (label) => `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="450"><text>${label}</text></svg>`;
+  page.receive({ type: "plotted", id: m.id, format: "line", data: svg("a") });
+  page.receive({ type: "plotted", id: m.id, format: "bar", data: svg("b") });
+  // The same result and kind drawn again replaces its plot.
+  page.receive({ type: "plotted", id: m.id, format: "line", data: svg("c") });
+  assert.deepStrictEqual(PLOTS.list().map((p) => [p.kind, p.process, p.code, p.svg.includes("<text>c") || p.svg.includes("<text>b")]), [["line", "p", "t", true], ["bar", "p", "t", true]]);
+  // Anything but a plain SVG, or a plot of a result no longer on show, is not kept.
+  page.receive({ type: "plotted", id: m.id, format: "area", data: '<svg xmlns="http://www.w3.org/2000/svg"><script>x</script></svg>' });
+  page.receive({ type: "plotted", id: "old", format: "area", data: svg("d") });
+  assert.strictEqual(PLOTS.list().length, 2);
+  // Off: the page is told, and a plot it sends anyway is not kept.
+  fake.config["results.plots.enable"] = false;
+  for (const f of fake.listeners.config) {
+    f({ affectsConfiguration: (k) => k === "q-lint.results" || k === "q-lint" });
+  }
+  assert.strictEqual(page.posted.at(-1).features.plots, false);
+  page.receive({ type: "plotted", id: m.id, format: "step", data: svg("e") });
+  assert.strictEqual(PLOTS.list().length, 2);
+  PLOTS.clear();
 });
