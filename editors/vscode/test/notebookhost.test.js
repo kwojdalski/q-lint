@@ -191,7 +191,7 @@ test("Export Notebook of an untitled notebook offers to save the script on disk,
   load(fake);
   // As New q Notebook opens one: `untitled:Untitled-1.qnb`, never saved.
   const uri = new fake.vscode.Uri("Untitled-1.qnb", "untitled");
-  const notebook = { uri, getCells: () => [{ kind: 2, document: { getText: () => "til 3", languageId: "q" } }] };
+  const notebook = { uri, notebookType: "q-lint-notebook", getCells: () => [{ kind: 2, document: { getText: () => "til 3", languageId: "q" } }] };
   fake.vscode.workspace.notebookDocuments.push(notebook);
   fake.vscode.window.activeNotebookEditor = { notebook };
   fake.vscode.workspace.workspaceFolders = [{ uri: fake.vscode.Uri.file("/ws") }];
@@ -203,6 +203,22 @@ test("Export Notebook of an untitled notebook offers to save the script on disk,
   // A target given is written from the open notebook's cells.
   await fake.registered.commands["q-lint.exportNotebook"](undefined, fake.vscode.Uri.file("/ws/u.q"));
   assert.match(fake.written.get("/ws/u.q").toString(), /^til 3$/m);
+});
+
+test("Export Notebook takes a q notebook whose extension is in capitals, and offers a script, not the notebook itself", async () => {
+  const fake = fakeVscode();
+  load(fake);
+  // VS Code opens `Prices.QNB` as a q notebook: its file pattern ignores case.
+  const uri = fake.vscode.Uri.file("/ws/Prices.QNB");
+  const notebook = { uri, notebookType: "q-lint-notebook", getCells: () => [{ kind: 2, document: { getText: () => "til 3", languageId: "q" } }] };
+  fake.vscode.workspace.notebookDocuments.push(notebook);
+  fake.vscode.window.activeNotebookEditor = { notebook };
+  await fake.registered.commands["q-lint.exportNotebook"]();
+  assert.strictEqual(fake.dialogs.length, 1, fake.messages.join("\n"));
+  assert.strictEqual(fake.dialogs[0].defaultUri.path, "/ws/Prices.q");
+  // And from the explorer's context menu, by its URI.
+  await fake.registered.commands["q-lint.exportNotebook"](uri, fake.vscode.Uri.file("/ws/p.q"));
+  assert.match(fake.written.get("/ws/p.q").toString(), /^til 3$/m);
 });
 
 /// A notebook of code cells with `sources`, as the kernel sees it.

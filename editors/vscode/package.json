@@ -1096,7 +1096,7 @@
       "explorer/context": [
         {
           "command": "q-lint.exportNotebook",
-          "when": "resourceExtname == .qnb",
+          "when": "resourceExtname =~ /^\\.qnb$/i",
           "group": "q-lint"
         }
       ],

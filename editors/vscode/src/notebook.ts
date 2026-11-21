@@ -336,9 +336,9 @@ async function cellsOf(uri: Uri): Promise<QnbCell[]> {
 /// folder - a save dialog cannot browse `untitled:`, and nothing can be
 /// written there.
 function scriptBeside(notebook: Uri): Uri {
-  const name = path.posix.basename(notebook.path).replace(/\.qnb$/, ".q");
+  const name = path.posix.basename(notebook.path).replace(/\.qnb$/i, ".q");
   if (notebook.scheme !== "untitled") {
-    return notebook.with({ path: notebook.path.replace(/\.qnb$/, ".q") });
+    return notebook.with({ path: notebook.path.replace(/\.qnb$/i, ".q") });
   }
   const folder = workspace.workspaceFolders?.[0]?.uri ?? Uri.file(os.homedir());
   return Uri.joinPath(folder, name);
@@ -347,8 +347,11 @@ function scriptBeside(notebook: Uri): Uri {
 /// Write the notebook at `source` - the active one when not given - as a q
 /// script, to `target` or where the user picks.
 async function exportNotebook(source?: Uri, target?: Uri): Promise<void> {
-  const from = source instanceof Uri ? source : window.activeNotebookEditor?.notebook.uri;
-  if (from === undefined || !from.path.endsWith(".qnb")) {
+  // A q notebook by its type, or a file by its extension in any case: VS
+  // Code opens `A.QNB` as one too.
+  const active = window.activeNotebookEditor?.notebook;
+  const from = source instanceof Uri ? source : active?.notebookType === NOTEBOOK.type ? active.uri : undefined;
+  if (from === undefined || (from !== active?.uri && !/\.qnb$/i.test(from.path))) {
     void window.showInformationMessage("q-lint: open a q notebook (.qnb) to export it.");
     return;
   }
