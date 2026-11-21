@@ -3,7 +3,7 @@
   "displayName": "q-lint",
   "description": "q/kdb+ for VS Code: linting, Quick Fixes, navigation and help from the source, and connections to q processes to run code on.",
   "icon": "icon.png",
-  "version": "0.27.0",
+  "version": "0.28.0",
   "publisher": "wojdalski",
   "license": "MIT",
   "engines": {
@@ -108,6 +108,15 @@
         "mimeTypes": [
           "application/vnd.q-lint.chart+json"
         ],
+        "requiresMessaging": "optional"
+      },
+      {
+        "id": "q-lint.liveMarkdown",
+        "displayName": "q-lint live values",
+        "entrypoint": {
+          "extends": "vscode.markdown-it-renderer",
+          "path": "./media/livemarkdown.js"
+        },
         "requiresMessaging": "optional"
       }
     ],
@@ -229,7 +238,7 @@
             "type": "boolean",
             "default": true,
             "order": 23,
-            "markdownDescription": "Offer the outline, workspace symbols, **Go to Definition**, **Find All References**, occurrence highlights and renaming a lambda's parameter or local - all read from the source, never by running it. Off, q-lint announces none of them: turn it off when another q extension already navigates and both would answer."
+            "markdownDescription": "Offer the outline, workspace symbols, **Go to Definition**, **Find All References**, occurrence highlights, **Rename Symbol** for a local or a global across the workspace - all read from the source, never by running it. Off, q-lint announces none of them: turn it off when another q extension already navigates and both would answer."
           },
           "q-lint.help.enable": {
             "type": "boolean",
@@ -254,6 +263,36 @@
             "default": true,
             "order": 27,
             "markdownDescription": "Offer the **q Dependencies** view - the files the active q file depends on and those depending on it - and **q-lint: List Affected Tests**, the test files that reach a q file changed against git HEAD. Both are what `qlinter analyze graph` prints. Off, the server answers neither and the view is hidden."
+          },
+          "q-lint.rename.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 23,
+            "markdownDescription": "Offer **Rename Symbol** (F2): a lambda's parameter or local within its lambda, and a global in every workspace file that names it, under the `\\d` each is written in. Needs `q-lint.navigation.enable`. Off, q-lint does not announce renaming, and the rest of navigation stays."
+          },
+          "q-lint.inlayHints.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 28,
+            "markdownDescription": "Show parameter names at the arguments of a bracketed call to a workspace function - `f[a: 1; b: 2]` drawn over `f[1;2]` - for a function whose definitions all declare the same signature. Read from the source, never from a running q. VS Code's own `editor.inlayHints.enabled` hides them too, or shows them only while a key is held. Off, q-lint announces none."
+          },
+          "q-lint.codeLens.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 29,
+            "markdownDescription": "Show **Run** above each function a statement at column 0 defines, and **Run test** above one named `test_*`. Run sends the definition to the connected process - under the `\\d` it is written in - as a query from the editor would be sent; Run test sends it and then calls it with no argument. Off, q-lint announces no lenses."
+          },
+          "q-lint.documentLinks.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 29,
+            "markdownDescription": "Make the path of each load - `\\l lib/x.q`, `system \"l lib/x.q\"` or a file symbol `` `:lib/x.q `` - a link: Ctrl/Cmd+click opens the file, found against the workspace folder and then the loading file's own directory and each one above it, as **Go to Definition** on the path finds it. Off, q-lint announces no links."
+          },
+          "q-lint.generateQdoc.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 29,
+            "markdownDescription": "Offer **Generate qDoc for f** in the lightbulb and **Refactor...** menu inside a function a statement at column 0 defines: it writes a `/ @param` line for each parameter and a `/ @return` line directly above the definition, for the descriptions to be typed after. Not offered where the comment above already has an `@param` or `@return`. Off, q-lint offers no such action."
           },
           "q-lint.workspaceIndex.enable": {
             "type": "boolean",
@@ -356,6 +395,50 @@
             "order": 113,
             "markdownDescription": "Where a grid or chart result is shown: beside the editor, or in the **q Results** view in the bottom panel."
           },
+          "q-lint.query.resultHistory": {
+            "type": "integer",
+            "default": 10,
+            "minimum": 1,
+            "maximum": 50,
+            "order": 116,
+            "markdownDescription": "How many grid or chart results the result panel keeps as tabs. **q-lint: Show Result from History** picks one too."
+          },
+          "q-lint.results.history.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 118,
+            "markdownDescription": "Keep the last `q-lint.query.resultHistory` results as tabs in the result panel, and offer **q-lint: Show Result from History**."
+          },
+          "q-lint.results.diff.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 119,
+            "markdownDescription": "Offer **Compare** in the result panel, and **q-lint: Compare Result with Previous Run**: mark what changed since the previous run of the same query. Off, no previous result is kept."
+          },
+          "q-lint.results.statistics.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 120,
+            "markdownDescription": "Offer the result panel's **Stats** view, and **q-lint: Show Column Statistics**: each column's count, nulls, distinct values, min, max and mean."
+          },
+          "q-lint.results.heatmap.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 121,
+            "markdownDescription": "Offer the grid's **Heatmap** button, and **q-lint: Toggle Result Heatmap**. Off, no column is coloured, whatever `q-lint.query.gridHeatmap` says."
+          },
+          "q-lint.results.tree.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 122,
+            "markdownDescription": "Offer the result panel's **Tree** view of a dictionary or a nested list, and **q-lint: Show Result as Tree**. Off, the process is not asked for the tree."
+          },
+          "q-lint.query.gridHeatmap": {
+            "type": "boolean",
+            "default": false,
+            "order": 117,
+            "markdownDescription": "Colour the grid's numeric columns by value, in the theme's chart colours: blue from the least to the greatest, or, for a column either side of zero, blue above it and red below. **q-lint: Toggle Result Heatmap** and the grid's **Heatmap** button change it."
+          },
           "q-lint.query.unwrapped": {
             "type": "boolean",
             "default": false,
@@ -369,6 +452,26 @@
             "maximum": 86400,
             "order": 115,
             "markdownDescription": "Seconds a query may run before it is aborted, as **q-lint: Abort Current Query** aborts it; the history records it as timed out. `0`: no limit."
+          },
+          "q-lint.query.progress.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 116,
+            "markdownDescription": "Count a running query's time in the status bar, and notify the end of one that ran `#q-lint.query.notifyAfter#` seconds while the window was not focused. Off: the status bar only spins, and nothing is notified."
+          },
+          "q-lint.query.notifyAfter": {
+            "type": "number",
+            "default": 10,
+            "minimum": 0,
+            "maximum": 86400,
+            "order": 117,
+            "markdownDescription": "Seconds a query must run for VS Code to notify you when it ends while its window is not focused, with `#q-lint.query.progress.enable#` on. `0`: never notify."
+          },
+          "q-lint.query.placeholders.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 118,
+            "markdownDescription": "Ask for a value for each `{{name}}` in the code a query sends, outside strings and comments, and put it in place before the query runs. Each box starts from the value given last. `{{x}}`, `{{y}}` and `{{z}}` are q lambdas and never asked for; turn this off if your code holds others, such as `{{a}}`."
           },
           "q-lint.processExplorer.excludedNamespaces": {
             "type": "array",
@@ -398,6 +501,56 @@
             "default": false,
             "order": 122,
             "markdownDescription": "Read the active process again after each query, so the **Process Explorer** and live completion show what it defined. Off, they are read on connect and on **Refresh Process Explorer**."
+          },
+          "q-lint.queryHistory.search.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 119,
+            "markdownDescription": "**Filter Query History** and **Export Query History**. Off: their buttons and commands are hidden, and a filter set is cleared."
+          },
+          "q-lint.processMonitor.refreshInterval": {
+            "type": "number",
+            "default": 0,
+            "minimum": 0,
+            "maximum": 3600,
+            "order": 123,
+            "markdownDescription": "Seconds between reads of the connected process while the **Process Monitor** is shown. `0`: read on connect and on **Refresh Process Monitor** only. A read never interrupts a query: it waits, or skips its turn."
+          },
+          "q-lint.processExplorer.functionSource.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 124,
+            "markdownDescription": "**Open Function Source**, **Edit and Redefine** and **Redefine on Process**. Off, their commands are hidden and send nothing."
+          },
+          "q-lint.processExplorer.findCallers.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 125,
+            "markdownDescription": "**Find Callers in Process**. Off, its command is hidden and sends nothing."
+          },
+          "q-lint.processExplorer.tableHover.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 126,
+            "markdownDescription": "A table row's tooltip in the **Process Explorer** asks the process for the table's `meta`, rows and memory when first shown. Off, it shows what the explorer already read."
+          },
+          "q-lint.processExplorer.editorTableHover.enable": {
+            "type": "boolean",
+            "default": false,
+            "order": 127,
+            "markdownDescription": "A hover on a table's name in a q editor asks the connected process for its `meta`, rows and memory. Off by default: it queries the process whenever the mouse rests on a table's name."
+          },
+          "q-lint.processMonitor.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 128,
+            "markdownDescription": "The **Process Monitor** view. Off, it is hidden and reads nothing."
+          },
+          "q-lint.hdbBrowser.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 129,
+            "markdownDescription": "The **HDB Browser** view. Off, it is hidden and reads nothing."
           }
         }
       },
@@ -460,6 +613,36 @@
         }
       },
       {
+        "title": "q-lint: notebook features",
+        "properties": {
+          "q-lint.notebook.variables.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Show the **Notebook Variables** view: the globals on the process a q notebook's cells ran on, read with one lambda that defines nothing, only after a cell runs or on Refresh, and only while the view is open. Off, the view is removed and nothing is read."
+          },
+          "q-lint.notebook.parameters.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Turn on **q-lint: Run Notebook with Parameters** and the `/ @parameters` cell directive. Off, the command is hidden and refuses, and a cell with `/ @parameters` is not run. The shell's `node out/qnbrun.js` does not read VS Code's settings."
+          },
+          "q-lint.notebook.export.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Turn on **Export Notebook as HTML**, **Export Notebook as Jupyter Notebook** and **Import Jupyter Notebook as q Notebook**. Off, they are hidden and refuse. Export Notebook as q Script is not affected."
+          },
+          "q-lint.notebook.liveValues.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Read the `{{q: expr}}` live values of a q notebook's Markdown cells on the process. They are read only when you run the code cell above them, never on their own. Off, no expression is sent; values a run kept before still show."
+          },
+          "q-lint.notebook.processDirective.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Honour the `/ @process <label>` cell directive, which connects to that process before the cell runs (a production process is confirmed first). Off, a cell with it is not run, and nothing is sent."
+          }
+        }
+      },
+      {
         "title": "q-lint: agents",
         "properties": {
           "q-lint.agent.queryTimeout": {
@@ -493,12 +676,56 @@
             "markdownDescription": "The colour of each tag in the Processes view, as a theme colour id: `{\"eu\": \"charts.purple\"}`. Over the built-in colours (`prod` red, `uat` blue, `dev` green); a process takes its most cautious tag's colour. **Edit Tag Color** on a tag row writes it."
           }
         }
+      },
+      {
+        "title": "q-lint: connections",
+        "properties": {
+          "q-lint.connection.connectScript.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 599,
+            "markdownDescription": "Run a process's connect script (**Set Connect Script**) on every connect. Off: no script runs, and **Set Connect Script** is hidden; the scripts stay in the process list."
+          },
+          "q-lint.connection.heartbeat.enable": {
+            "type": "boolean",
+            "default": false,
+            "order": 600,
+            "markdownDescription": "Send a heartbeat on the active connection every `#q-lint.connection.heartbeatInterval#` seconds: a `::` sent as a plain string, whose round trip the status bar shows (`q: rdb 3 ms`). One the process has not answered for 5 seconds shows as `no answer`. It is skipped while a query runs. Off by default: a process that logs its clients sees every heartbeat."
+          },
+          "q-lint.connection.heartbeatInterval": {
+            "type": "number",
+            "default": 30,
+            "minimum": 1,
+            "maximum": 86400,
+            "order": 601,
+            "markdownDescription": "Seconds between heartbeats, with `#q-lint.connection.heartbeat.enable#` on."
+          },
+          "q-lint.connection.autoReconnect.enable": {
+            "type": "boolean",
+            "default": false,
+            "order": 602,
+            "markdownDescription": "Reconnect when the process or the network drops the connection, waiting 1, 2, 4... seconds (at most 30) before each try, up to `#q-lint.connection.reconnectAttempts#` tries. The process's connect script runs again. **Disconnect**, or connecting to another process, stops it; a connection you closed is never reopened."
+          },
+          "q-lint.connection.reconnectAttempts": {
+            "type": "integer",
+            "default": 5,
+            "minimum": 1,
+            "maximum": 100,
+            "order": 603,
+            "markdownDescription": "How many times `#q-lint.connection.autoReconnect.enable#` tries before it gives up."
+          }
+        }
       }
     ],
     "commands": [
       {
         "command": "q-lint.restartServer",
         "title": "Restart Server",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.runDefinition",
+        "title": "Run Definition",
         "category": "q-lint"
       },
       {
@@ -700,6 +927,36 @@
         "icon": "$(save-as)"
       },
       {
+        "command": "q-lint.showResultStatistics",
+        "title": "Show Column Statistics",
+        "category": "q-lint",
+        "icon": "$(symbol-numeric)"
+      },
+      {
+        "command": "q-lint.showResultTree",
+        "title": "Show Result as Tree",
+        "category": "q-lint",
+        "icon": "$(list-tree)"
+      },
+      {
+        "command": "q-lint.compareResultWithPrevious",
+        "title": "Compare Result with Previous Run",
+        "category": "q-lint",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "q-lint.toggleResultHeatmap",
+        "title": "Toggle Result Heatmap",
+        "category": "q-lint",
+        "icon": "$(color-mode)"
+      },
+      {
+        "command": "q-lint.showResultFromHistory",
+        "title": "Show Result from History",
+        "category": "q-lint",
+        "icon": "$(history)"
+      },
+      {
         "command": "q-lint.runInTerminal",
         "title": "Run Code from Terminal",
         "category": "q-lint",
@@ -807,6 +1064,100 @@
         "command": "q-lint.newNotebook",
         "title": "New q Notebook",
         "category": "q-lint"
+      },
+      {
+        "command": "q-lint.filterQueryHistory",
+        "title": "Filter Query History",
+        "category": "q-lint",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "q-lint.clearQueryHistoryFilter",
+        "title": "Clear Query History Filter",
+        "category": "q-lint",
+        "icon": "$(clear-filter)"
+      },
+      {
+        "command": "q-lint.exportQueryHistory",
+        "title": "Export Query History",
+        "category": "q-lint",
+        "icon": "$(save-as)"
+      },
+      {
+        "command": "q-lint.setConnectScript",
+        "title": "Set Connect Script",
+        "category": "q-lint",
+        "icon": "$(debug-start)"
+      },
+      {
+        "command": "q-lint.openFunctionSource",
+        "title": "Open Function Source",
+        "category": "q-lint",
+        "icon": "$(go-to-file)",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.editFunctionSource",
+        "title": "Edit and Redefine",
+        "category": "q-lint",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "q-lint.redefineFunction",
+        "title": "Redefine on Process",
+        "category": "q-lint",
+        "icon": "$(cloud-upload)",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.findCallers",
+        "title": "Find Callers in Process",
+        "category": "q-lint",
+        "icon": "$(references)",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.refreshProcessMonitor",
+        "title": "Refresh Process Monitor",
+        "category": "q-lint",
+        "icon": "$(refresh)",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.refreshHdbBrowser",
+        "title": "Refresh HDB Browser",
+        "category": "q-lint",
+        "icon": "$(refresh)",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.exportNotebookHtml",
+        "title": "Export Notebook as HTML",
+        "category": "q-lint",
+        "icon": "$(globe)"
+      },
+      {
+        "command": "q-lint.exportNotebookIpynb",
+        "title": "Export Notebook as Jupyter Notebook",
+        "category": "q-lint",
+        "icon": "$(notebook)"
+      },
+      {
+        "command": "q-lint.importIpynb",
+        "title": "Import Jupyter Notebook as q Notebook",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.runNotebookWithParameters",
+        "title": "Run Notebook with Parameters",
+        "category": "q-lint",
+        "icon": "$(run-all-coverage)"
+      },
+      {
+        "command": "q-lint.refreshNotebookVariables",
+        "title": "Refresh Notebook Variables",
+        "category": "q-lint",
+        "icon": "$(refresh)"
       }
     ],
     "views": {
@@ -845,6 +1196,29 @@
           "icon": "media/view-help.svg",
           "contextualTitle": "q-lint",
           "visibility": "collapsed"
+        },
+        {
+          "id": "q-lint.processMonitor",
+          "name": "Process Monitor",
+          "icon": "media/view-explorer.svg",
+          "contextualTitle": "q-lint",
+          "visibility": "collapsed",
+          "when": "config.q-lint.processMonitor.enable"
+        },
+        {
+          "id": "q-lint.hdbBrowser",
+          "name": "HDB Browser",
+          "icon": "media/view-explorer.svg",
+          "contextualTitle": "q-lint",
+          "visibility": "collapsed",
+          "when": "config.q-lint.hdbBrowser.enable"
+        },
+        {
+          "id": "q-lint.notebookVariables",
+          "name": "Notebook Variables",
+          "icon": "media/view-explorer.svg",
+          "contextualTitle": "q-lint",
+          "when": "q-lint.notebookActive && config.q-lint.notebook.variables.enable"
         }
       ],
       "q-lint-results": [
@@ -920,6 +1294,11 @@
           "group": "navigation"
         },
         {
+          "command": "q-lint.showResultFromHistory",
+          "when": "view == q-lint.results && q-lint.result.shown && config.q-lint.results.history.enable",
+          "group": "navigation@1"
+        },
+        {
           "command": "q-lint.revealProcess",
           "when": "view == q-lint.processes && q-lint.connected",
           "group": "1_processes@3"
@@ -928,6 +1307,41 @@
           "command": "q-lint.openSettings",
           "when": "view == q-lint.processes",
           "group": "3_settings@1"
+        },
+        {
+          "command": "q-lint.filterQueryHistory",
+          "when": "view == q-lint.queryHistory && !q-lint.queryHistoryFiltered && config.q-lint.queryHistory.search.enable",
+          "group": "navigation@1"
+        },
+        {
+          "command": "q-lint.clearQueryHistoryFilter",
+          "when": "view == q-lint.queryHistory && q-lint.queryHistoryFiltered && config.q-lint.queryHistory.search.enable",
+          "group": "navigation@1"
+        },
+        {
+          "command": "q-lint.filterQueryHistory",
+          "when": "view == q-lint.queryHistory && q-lint.queryHistoryFiltered && config.q-lint.queryHistory.search.enable",
+          "group": "1_history@1"
+        },
+        {
+          "command": "q-lint.exportQueryHistory",
+          "when": "view == q-lint.queryHistory && config.q-lint.queryHistory.search.enable",
+          "group": "1_history@2"
+        },
+        {
+          "command": "q-lint.refreshProcessMonitor",
+          "when": "view == q-lint.processMonitor && config.q-lint.processMonitor.enable",
+          "group": "navigation@1"
+        },
+        {
+          "command": "q-lint.refreshHdbBrowser",
+          "when": "view == q-lint.hdbBrowser && config.q-lint.hdbBrowser.enable",
+          "group": "navigation@1"
+        },
+        {
+          "command": "q-lint.refreshNotebookVariables",
+          "when": "view == q-lint.notebookVariables && config.q-lint.notebook.variables.enable",
+          "group": "navigation"
         }
       ],
       "view/item/context": [
@@ -1065,6 +1479,26 @@
           "command": "q-lint.copyQuery",
           "when": "view == q-lint.queryHistory && viewItem == history",
           "group": "1_history@2"
+        },
+        {
+          "command": "q-lint.setConnectScript",
+          "when": "view == q-lint.processes && viewItem =~ /^process/ && config.q-lint.connection.connectScript.enable",
+          "group": "2_edit@4"
+        },
+        {
+          "command": "q-lint.openFunctionSource",
+          "when": "view == q-lint.processExplorer && viewItem == explorer.function && config.q-lint.processExplorer.functionSource.enable",
+          "group": "inline"
+        },
+        {
+          "command": "q-lint.openFunctionSource",
+          "when": "view == q-lint.processExplorer && viewItem == explorer.function && config.q-lint.processExplorer.functionSource.enable",
+          "group": "1_source@1"
+        },
+        {
+          "command": "q-lint.findCallers",
+          "when": "view == q-lint.processExplorer && viewItem == explorer.function && config.q-lint.processExplorer.findCallers.enable",
+          "group": "1_source@2"
         }
       ],
       "editor/title/run": [
@@ -1099,12 +1533,47 @@
           "command": "q-lint.setNotebookRowLimit",
           "when": "notebookType == q-lint-notebook",
           "group": "navigation"
+        },
+        {
+          "command": "q-lint.runNotebookWithParameters",
+          "when": "notebookType == q-lint-notebook && config.q-lint.notebook.parameters.enable",
+          "group": "navigation"
+        },
+        {
+          "command": "q-lint.exportNotebookHtml",
+          "when": "notebookType == q-lint-notebook && config.q-lint.notebook.export.enable",
+          "group": "export"
+        },
+        {
+          "command": "q-lint.exportNotebookIpynb",
+          "when": "notebookType == q-lint-notebook && config.q-lint.notebook.export.enable",
+          "group": "export"
         }
       ],
       "explorer/context": [
         {
           "command": "q-lint.exportNotebook",
           "when": "resourceExtname =~ /^\\.qnb$/i",
+          "group": "q-lint"
+        },
+        {
+          "command": "q-lint.exportNotebookHtml",
+          "when": "resourceExtname =~ /^\\.qnb$/i && config.q-lint.notebook.export.enable",
+          "group": "q-lint"
+        },
+        {
+          "command": "q-lint.exportNotebookIpynb",
+          "when": "resourceExtname =~ /^\\.qnb$/i && config.q-lint.notebook.export.enable",
+          "group": "q-lint"
+        },
+        {
+          "command": "q-lint.runNotebookWithParameters",
+          "when": "resourceExtname =~ /^\\.qnb$/i && config.q-lint.notebook.parameters.enable",
+          "group": "q-lint"
+        },
+        {
+          "command": "q-lint.importIpynb",
+          "when": "resourceExtname =~ /^\\.ipynb$/i && config.q-lint.notebook.export.enable",
           "group": "q-lint"
         }
       ],
@@ -1138,6 +1607,16 @@
           "command": "q-lint.toggleParameterCache",
           "when": "editorLangId == q",
           "group": "q-lint@6"
+        },
+        {
+          "command": "q-lint.openFunctionSource",
+          "when": "editorLangId == q && q-lint.connected && config.q-lint.processExplorer.functionSource.enable",
+          "group": "q-lint@7"
+        },
+        {
+          "command": "q-lint.findCallers",
+          "when": "editorLangId == q && q-lint.connected && config.q-lint.processExplorer.findCallers.enable",
+          "group": "q-lint@8"
         }
       ],
       "commandPalette": [
@@ -1148,6 +1627,102 @@
         {
           "command": "q-lint.exportResultsView",
           "when": "false"
+        },
+        {
+          "command": "q-lint.runDefinition",
+          "when": "false"
+        },
+        {
+          "command": "q-lint.showResultStatistics",
+          "when": "q-lint.result.shown && config.q-lint.results.statistics.enable"
+        },
+        {
+          "command": "q-lint.showResultTree",
+          "when": "q-lint.result.hasTree && config.q-lint.results.tree.enable"
+        },
+        {
+          "command": "q-lint.compareResultWithPrevious",
+          "when": "q-lint.result.hasPrevious && config.q-lint.results.diff.enable"
+        },
+        {
+          "command": "q-lint.showResultFromHistory",
+          "when": "q-lint.result.shown && config.q-lint.results.history.enable"
+        },
+        {
+          "command": "q-lint.toggleResultHeatmap",
+          "when": "config.q-lint.results.heatmap.enable"
+        },
+        {
+          "command": "q-lint.filterQueryHistory",
+          "when": "config.q-lint.queryHistory.search.enable"
+        },
+        {
+          "command": "q-lint.clearQueryHistoryFilter",
+          "when": "config.q-lint.queryHistory.search.enable && q-lint.queryHistoryFiltered"
+        },
+        {
+          "command": "q-lint.exportQueryHistory",
+          "when": "config.q-lint.queryHistory.search.enable"
+        },
+        {
+          "command": "q-lint.setConnectScript",
+          "when": "config.q-lint.connection.connectScript.enable"
+        },
+        {
+          "command": "q-lint.editFunctionSource",
+          "when": "resourceScheme == q-lint-source && config.q-lint.processExplorer.functionSource.enable"
+        },
+        {
+          "command": "q-lint.redefineFunction",
+          "when": "q-lint.redefinable && config.q-lint.processExplorer.functionSource.enable"
+        },
+        {
+          "command": "q-lint.openFunctionSource",
+          "when": "config.q-lint.processExplorer.functionSource.enable"
+        },
+        {
+          "command": "q-lint.findCallers",
+          "when": "config.q-lint.processExplorer.findCallers.enable"
+        },
+        {
+          "command": "q-lint.refreshProcessMonitor",
+          "when": "config.q-lint.processMonitor.enable"
+        },
+        {
+          "command": "q-lint.refreshHdbBrowser",
+          "when": "config.q-lint.hdbBrowser.enable"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "q-lint.editFunctionSource",
+          "when": "resourceScheme == q-lint-source && config.q-lint.processExplorer.functionSource.enable",
+          "group": "navigation"
+        },
+        {
+          "command": "q-lint.redefineFunction",
+          "when": "q-lint.redefinable && config.q-lint.processExplorer.functionSource.enable",
+          "group": "navigation"
+        },
+        {
+          "command": "q-lint.refreshNotebookVariables",
+          "when": "q-lint.notebookActive && config.q-lint.notebook.variables.enable"
+        },
+        {
+          "command": "q-lint.exportNotebookHtml",
+          "when": "config.q-lint.notebook.export.enable"
+        },
+        {
+          "command": "q-lint.exportNotebookIpynb",
+          "when": "config.q-lint.notebook.export.enable"
+        },
+        {
+          "command": "q-lint.importIpynb",
+          "when": "config.q-lint.notebook.export.enable"
+        },
+        {
+          "command": "q-lint.runNotebookWithParameters",
+          "when": "config.q-lint.notebook.parameters.enable"
         }
       ]
     },
@@ -1184,6 +1759,20 @@
       {
         "view": "q-lint.help",
         "contents": "[Get Started](command:q-lint.getStarted) with q-lint, or read the [documentation](https://github.com/kwojdalski/q-lint/blob/master/editors/vscode/README.md) and the [rule reference](https://github.com/kwojdalski/q-lint/blob/master/docs/rules.md).\nFound a problem? [Report a bug](https://github.com/kwojdalski/q-lint/issues/new?labels=bug) or [suggest a feature](https://github.com/kwojdalski/q-lint/issues/new?labels=enhancement)."
+      },
+      {
+        "view": "q-lint.processMonitor",
+        "when": "!q-lint.connected",
+        "contents": "Not connected to a q process. Connect to one to see its memory, open handles, timers and settings.\n[Connect to Process](command:q-lint.connectProcess)"
+      },
+      {
+        "view": "q-lint.hdbBrowser",
+        "when": "!q-lint.connected",
+        "contents": "Not connected to a q process. Connect to an HDB to browse its partitions, the rows of each table in them, and its sym file.\n[Connect to Process](command:q-lint.connectProcess)"
+      },
+      {
+        "view": "q-lint.notebookVariables",
+        "contents": "Run a cell of a q notebook to see the globals on its process.\n[Refresh](command:q-lint.refreshNotebookVariables)"
       }
     ],
     "keybindings": [

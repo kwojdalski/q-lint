@@ -43,6 +43,19 @@ test("the grid lambda keeps nothing on the process, and runs code as RUN does", 
   }
 });
 
+test("the tree is in GRID_TREE only: the lambda sent unless the result panel asks for a tree has none (#928)", () => {
+  const { GRID_TREE } = require("../out/grid.js");
+  assert.ok(!GRID.includes("g:{[g;e;b;k;v]"), GRID);
+  assert.ok(GRID_TREE.includes("g:{[g;e;b;k;v]"), GRID_TREE);
+  for (const lambda of [GRID, GRID_TREE]) {
+    assert.ok(!lambda.includes("::") && !/\bset\b/.test(lambda));
+    assert.ok(lambda.startsWith("{[s;size;limit]") && lambda.endsWith("}"));
+    for (const line of lambda.split("\n").slice(1)) {
+      assert.match(line, /^ /, line);
+    }
+  }
+});
+
 test("booleans, bytes, chars and symbols show q's text", () => {
   assert.deepStrictEqual(shown(1, ["1", "0"]), ["1", "0"]);
   assert.deepStrictEqual(shown(4, ["01", "ff"]), ["01", "ff"]);

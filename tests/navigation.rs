@@ -227,11 +227,11 @@ fn refusal(source: &str, context: &str, skip: usize, new: &str) -> String {
 }
 
 #[test]
-fn a_global_is_never_renamed() {
+fn a_global_is_not_renamed_within_one_file() {
     let source = "g:1\nf:{[a] a+g}\n";
     for offset in [0, at(source, "a+g", 2)] {
         let why = rename(source, offset, "h").unwrap_err();
-        assert!(why.contains("parameters and locals only"), "{why}");
+        assert!(why.contains("across the workspace"), "{why}");
         assert_eq!(rename_target(source, offset), Err(why));
     }
 }
@@ -1124,7 +1124,7 @@ fn workspace_symbols_rank_an_exact_name_before_the_cap() {
 }
 
 #[test]
-fn a_local_is_renamed_in_its_own_document_and_a_global_refused_with_the_reason() {
+fn a_local_is_renamed_in_its_own_document() {
     let dir = tempfile::tempdir().unwrap();
     let mut server = Server::start(dir.path(), &[("lib.q", LIB)]);
     let uri = server.open(dir.path(), "main.q", MAIN);
@@ -1147,12 +1147,6 @@ fn a_local_is_renamed_in_its_own_document_and_a_global_refused_with_the_reason()
     assert_eq!(reply["result"]["changes"].as_object().unwrap().len(), 1);
 
     // LSP 3.17's RequestFailed, with why - which an editor shows.
-    for method in ["textDocument/prepareRename", "textDocument/rename"] {
-        let reply = server.ask(method, &uri, MAIN, "root_fn m", 0, new.clone());
-        assert_eq!(reply["error"]["code"], -32803, "{reply}");
-        let message = reply["error"]["message"].as_str().unwrap();
-        assert!(message.contains("parameters and locals only"), "{message}");
-    }
     let reply = server.ask(
         "textDocument/rename",
         &uri,
@@ -1314,4 +1308,179 @@ fn a_computed_set_target_is_no_definition_of_the_name_it_ends_in() {
     // A symbol alone in parentheses still names what it sets.
     let reply = server.ask("textDocument/definition", &uri, text, "s:e", 2, json!({}));
     assert_eq!(places(&reply["result"]), [place("lib.q", 3, 2, 3)]);
+}
+
+/// Each edit of a rename as `(file name, line, start, end, new text)`.
+fn edits(result: &Value) -> Vec<(String, u64, u64, u64, String)> {
+    let mut out = vec![];
+    for (uri, list) in result["changes"]
+        .as_object()
+        .unwrap_or_else(|| panic!("a workspace edit, not {result}"))
+    {
+        for edit in list.as_array().unwrap() {
+            let (line, start, end) = span(&edit["range"]);
+            out.push((
+                uri.rsplit('/').next().unwrap().to_string(),
+                line,
+                start,
+                end,
+                edit["newText"].as_str().unwrap().to_string(),
+            ));
+        }
+    }
+    out.sort();
+    out
+}
+
+fn edit(file: &str, line: u64, start: u64, end: u64, new: &str) -> (String, u64, u64, u64, String) {
+    (file.to_string(), line, start, end, new.to_string())
+}
+
+/// The message of a refused request.
+fn refused(reply: &Value) -> String {
+    assert_eq!(reply["error"]["code"], -32803, "{reply}");
+    reply["error"]["message"].as_str().unwrap().to_string()
+}
+
+#[test]
+fn a_global_is_renamed_in_every_file_that_names_it_under_its_context() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[("lib.q", LIB)]);
+    let uri = server.open(dir.path(), "main.q", MAIN);
+    // On `.lib.add`, only the last part is renamed: the prepared range and
+    // placeholder are `add`.
+    let reply = server.ask(
+        "textDocument/prepareRename",
+        &uri,
+        MAIN,
+        ".lib.add",
+        6,
+        json!({}),
+    );
+    assert_eq!(span(&reply["result"]["range"]), (1, 11, 14), "{reply}");
+    assert_eq!(reply["result"]["placeholder"], "add");
+    // lib.q writes it bare under `\d .lib`, main.q qualified and bare.
+    let want = [
+        edit("lib.q", 1, 0, 3, "plus"),
+        edit("main.q", 1, 11, 14, "plus"),
+        edit("main.q", 4, 7, 10, "plus"),
+    ];
+    for new in ["plus", ".lib.plus"] {
+        let reply = server.ask(
+            "textDocument/rename",
+            &uri,
+            MAIN,
+            ".lib.add",
+            6,
+            json!({"newName": new}),
+        );
+        assert_eq!(edits(&reply["result"]), want, "{new}: {reply}");
+    }
+    // And from a bare spelling, a name at the root defined in another file.
+    let reply = server.ask(
+        "textDocument/rename",
+        &uri,
+        MAIN,
+        "root_fn m",
+        0,
+        json!({"newName": "double"}),
+    );
+    assert_eq!(
+        edits(&reply["result"]),
+        [
+            edit("lib.q", 4, 0, 7, "double"),
+            edit("main.q", 2, 26, 33, "double")
+        ]
+    );
+    // `.lib.limit` is named in main.q, inside `calc`'s lambda, qualified -
+    // so a local `m` there hides nothing.
+    let reply = server.ask(
+        "textDocument/rename",
+        &uri,
+        MAIN,
+        ".lib.limit",
+        6,
+        json!({"newName": "m"}),
+    );
+    assert_eq!(edits(&reply["result"]).len(), 2, "{reply}");
+}
+
+#[test]
+fn a_global_rename_is_refused_where_it_would_change_what_the_code_means() {
+    let dir = tempfile::tempdir().unwrap();
+    let lib = "helper:{x+1}\ntotal:0\nuse:{[n] helper n}\n";
+    let mut server = Server::start(dir.path(), &[("lib.q", lib)]);
+    let main = "\\l lib.q\nrun:{[v] helper v}\nt:.z.p\nn:count til 3\nother:.q.x\n";
+    let uri = server.open(dir.path(), "main.q", main);
+    let ask = |server: &mut Server, context: &str, new: &str| {
+        server.ask(
+            "textDocument/rename",
+            &uri,
+            main,
+            context,
+            0,
+            json!({"newName": new}),
+        )
+    };
+    let why = refused(&ask(&mut server, "helper v", "total"));
+    assert!(why.contains("`total` is already assigned"), "{why}");
+    let why = refused(&ask(&mut server, "helper v", "v"));
+    assert!(
+        why.contains("parameter or local") && why.contains("main.q:2"),
+        "{why}"
+    );
+    for bad in ["count", "select", "2x", "a-b", ""] {
+        let why = refused(&ask(&mut server, "helper v", bad));
+        assert!(
+            why.contains("builtin") || why.contains("not a name"),
+            "{bad}: {why}"
+        );
+    }
+    let why = refused(&ask(&mut server, "helper v", ".elsewhere.helper"));
+    assert!(why.contains("last part of a name only"), "{why}");
+    // q's own names, and one nothing in the workspace assigns.
+    for method in ["textDocument/prepareRename", "textDocument/rename"] {
+        let reply = server.ask(method, &uri, main, ".z.p", 3, json!({"newName": "q"}));
+        assert!(refused(&reply).contains("namespace q keeps"), "{reply}");
+        let reply = server.ask(method, &uri, main, ".q.x", 3, json!({"newName": "q"}));
+        assert!(refused(&reply).contains("namespace q keeps"), "{reply}");
+    }
+    let reply = server.ask(
+        "textDocument/prepareRename",
+        &uri,
+        main,
+        "count til",
+        0,
+        json!({}),
+    );
+    assert!(
+        reply["error"].is_object() || reply["result"].is_null(),
+        "{reply}"
+    );
+    // A legal one goes through: lib.q's definition and both calls.
+    let reply = ask(&mut server, "helper v", "bump");
+    assert_eq!(
+        edits(&reply["result"]),
+        [
+            edit("lib.q", 0, 0, 6, "bump"),
+            edit("lib.q", 2, 9, 15, "bump"),
+            edit("main.q", 1, 9, 15, "bump")
+        ]
+    );
+}
+
+#[test]
+fn rename_can_be_turned_off_on_its_own() {
+    let dir = tempfile::tempdir().unwrap();
+    let options = json!({"rename": {"enable": false}});
+    let (mut server, reply) = Server::over(dir.path(), &[("lib.q", LIB)], client(), options);
+    let capabilities = &reply["result"]["capabilities"];
+    assert!(capabilities["renameProvider"].is_null(), "{capabilities}");
+    // The rest of navigation stays.
+    assert_eq!(capabilities["definitionProvider"], true, "{capabilities}");
+    let uri = server.open(dir.path(), "main.q", MAIN);
+    for method in ["textDocument/prepareRename", "textDocument/rename"] {
+        let reply = server.ask(method, &uri, MAIN, "root_fn m", 0, json!({"newName": "g"}));
+        assert_eq!(reply["result"], Value::Null, "{reply}");
+    }
 }

@@ -89,12 +89,152 @@
     return { start: start, end: end, before: before, after: Math.max(0, MAX_HEIGHT - before - (end - start) * ROW) };
   }
 
+  const NULL_GUID = "00000000-0000-0000-0000-000000000000";
+
+  /// Whether a cell shows a null: blank, as grid.ts writes every null but
+  /// a guid's and a char's.
+  function isNull(type, text) {
+    return text === "" || (type === 2 && text === NULL_GUID) || (type === 10 && text === " ");
+  }
+
+  /// A mean as the statistics show it: twelve significant digits at most.
+  function meanText(x) {
+    return String(Number(x.toPrecision(12)));
+  }
+
+  /// Each column's statistics over `rows`, the rows shown: {name, type,
+  /// count, nulls, distinct, min, max, mean}. Distinct counts a null as
+  /// one value, as q's `count distinct` does. Min and max are by the
+  /// process's order (the ranks), nulls left out, as the cells show them;
+  /// blank where q could not sort the column. Mean is of a numeric
+  /// column's values, nulls and infinities left out.
+  function columnStats(grid, rows) {
+    return grid.columns.map(function (c, i) {
+      const cells = grid.cells[i];
+      const rank = grid.rank[i];
+      const values = c.numeric ? grid.values[i] : null;
+      const seen = new Set();
+      let nulls = 0;
+      let lo = -1;
+      let hi = -1;
+      let sum = 0;
+      let n = 0;
+      rows.forEach(function (r) {
+        const text = cells[r];
+        seen.add(rank ? rank[r] : text);
+        if (isNull(c.type, text)) {
+          nulls++;
+          return;
+        }
+        if (rank) {
+          if (lo < 0 || rank[r] < rank[lo]) {
+            lo = r;
+          }
+          if (hi < 0 || rank[r] > rank[hi]) {
+            hi = r;
+          }
+        }
+        if (values && values[r] !== null) {
+          sum += values[r];
+          n++;
+        }
+      });
+      return {
+        name: c.name,
+        type: c.typeName,
+        count: rows.length,
+        nulls: nulls,
+        distinct: seen.size,
+        min: lo < 0 ? "" : cells[lo],
+        max: hi < 0 ? "" : cells[hi],
+        mean: n > 0 ? meanText(sum / n) : "",
+      };
+    });
+  }
+
+  /// Where each value sits for a heatmap: from 0 (the least) to 1 (the
+  /// greatest), or - a column with values either side of zero - from -1 to
+  /// 1 by its distance from zero, so the sign shows. Null for a null or an
+  /// infinity, and for every row when the column holds one value.
+  function heatLevels(values) {
+    if (!values) {
+      return null;
+    }
+    let lo = Infinity;
+    let hi = -Infinity;
+    values.forEach(function (v) {
+      if (v !== null) {
+        lo = Math.min(lo, v);
+        hi = Math.max(hi, v);
+      }
+    });
+    if (!(lo < hi)) {
+      return null;
+    }
+    if (lo < 0 && hi > 0) {
+      const most = Math.max(-lo, hi);
+      return values.map(function (v) { return v === null ? null : v / most; });
+    }
+    return values.map(function (v) { return v === null ? null : (v - lo) / (hi - lo); });
+  }
+
+  /// A heatmap level as a cell's background: the theme's blue, or its red
+  /// for a level below zero, stronger the further from zero.
+  function heatColour(level) {
+    const colour = level < 0 ? "var(--vscode-charts-red, #f14c4c)" : "var(--vscode-charts-blue, #3794ff)";
+    return "color-mix(in srgb, " + colour + " " + Math.round(6 + Math.abs(level) * 50) + "%, transparent)";
+  }
+
+  /// A diff (resultdiff.ts) as lookups: the previous text of each changed
+  /// cell by "column:row", and the added rows and columns.
+  function diffMarks(diff) {
+    const changed = new Map();
+    diff.changes.forEach(function (c) { changed.set(c[0] + ":" + c[1], c[2]); });
+    return { changed: changed, rows: new Set(diff.addedRows), columns: new Set(diff.addedColumns) };
+  }
+
+  /// q's names of the types a tree node can have.
+  const TYPE_NAMES = { 1: "boolean", 2: "guid", 4: "byte", 5: "short", 6: "int", 7: "long", 8: "real", 9: "float", 10: "char", 11: "symbol", 12: "timestamp", 13: "month", 14: "date", 15: "datetime", 16: "timespan", 17: "minute", 18: "second", 19: "time" };
+
+  /// What a tree node says of itself after its key: a leaf's text, and
+  /// what a node with children holds.
+  function treeText(node) {
+    const n = node.count.toLocaleString("en-US");
+    if (node.type === 0) {
+      return "list of " + n;
+    }
+    if (node.type === 99) {
+      return node.text || "dictionary of " + n;
+    }
+    if (node.type === 98) {
+      return "table of " + n + " row" + (node.count === 1 ? "" : "s");
+    }
+    if (node.type > 0 && node.type < 20 && node.type !== 10 && node.text === "") {
+      return TYPE_NAMES[node.type] + " list of " + n;
+    }
+    if (node.type >= 20 && node.type <= 76 && node.text === "") {
+      return "enum list of " + n;
+    }
+    return node.text;
+  }
+
+  /// Whether a node can be opened: it has children, or had some not sent.
+  function treeOpens(node) {
+    return node.children.length > 0 || (node.text === "" && node.count > 0 && node.type >= 0 && node.type < 98);
+  }
+
   const helpers = {
     rowCount: rowCount,
     visibleRows: visibleRows,
     chartColumns: chartColumns,
     binsFrom: binsFrom,
     span: span,
+    columnStats: columnStats,
+    heatLevels: heatLevels,
+    heatColour: heatColour,
+    diffMarks: diffMarks,
+    treeText: treeText,
+    treeOpens: treeOpens,
     MAX_HEIGHT: MAX_HEIGHT,
   };
   if (typeof module !== "undefined" && module.exports) {
@@ -109,10 +249,17 @@
   const vscode = acquireVsCodeApi();
   const C = root.qlintChart;
   const KINDS = ["line", "bar", "scatter", "histogram"];
-  const state = Object.assign({ id: 0, view: "grid", sort: null, filters: [], kind: "line", columns: null, bins: C.BINS, top: 0 }, vscode.getState() || {});
+  const VIEWS = { grid: "Grid", chart: "Chart", stats: "Stats", tree: "Tree" };
+  const state = Object.assign(
+    { id: 0, view: "grid", sort: null, filters: [], kind: "line", columns: null, bins: C.BINS, top: 0, compare: false, open: [""], saved: {}, control: null },
+    vscode.getState() || {},
+  );
   let result = null;
   let rows = [];
   let chart = null;
+  /// The result's diff as lookups, and each column's heatmap levels.
+  let marks = null;
+  let heat = [];
 
   const el = function (tag, cls, text) {
     const e = document.createElement(tag);
@@ -124,10 +271,16 @@
     }
     return e;
   };
+  const tabs = el("nav", "tabs");
+  tabs.setAttribute("role", "tablist");
+  tabs.setAttribute("aria-label", "Results");
+  tabs.hidden = true;
   const bar = el("header", "bar");
   const gridView = el("main", "grid-view");
   const chartView = el("main", "chart-view");
-  document.body.append(bar, gridView, chartView);
+  const statsView = el("main", "stats-view");
+  const treeView = el("main", "tree-view");
+  document.body.append(tabs, bar, gridView, chartView, statsView, treeView);
   // Until a result arrives: what fills the page, as a view's welcome would.
   gridView.append(el("p", "note", "No result yet. Run a query in grid or chart mode (q-lint: Switch Query Mode) to show it here."));
 
@@ -142,6 +295,21 @@
 
   function rendered(extra) {
     const grid = result.grid;
+    const more = {};
+    const kept = result.history || [];
+    if (kept.length > 0) {
+      more.history = { count: kept.length, index: kept.map(function (h) { return h.id; }).indexOf(result.id) };
+    }
+    if (comparing()) {
+      const d = result.diff;
+      more.diff = { changed: d.changed, added: d.addedRows.length, removed: d.removed.count, matchedBy: d.matchedBy };
+    }
+    if (state.view === "grid" && result.heatmap) {
+      more.heat = heat.reduce(function (n, levels) {
+        return n + (levels ? rows.filter(function (r) { return levels[r] !== null; }).length : 0);
+      }, 0);
+    }
+    extra = Object.assign(more, extra || {});
     vscode.postMessage({
       type: "rendered",
       id: result.id,
@@ -158,12 +326,48 @@
     });
   }
 
+  /// Whether a feature the extension can turn off (q-lint.results.*.enable)
+  /// is on: a result sent without `features` has them all.
+  function feature(name) {
+    return !result.features || result.features[name] !== false;
+  }
+
+  /// Whether the page offers view `v` for the result on show.
+  function offered(v) {
+    return v === "tree" ? !!result.tree : v === "stats" ? feature("statistics") : true;
+  }
+
+  /// Whether Compare with Previous Run is on, for a result that has one.
+  function comparing() {
+    return state.compare && !!result.diff;
+  }
+
+  /// The results kept, as tabs: choosing one asks the extension for it.
+  function drawTabs() {
+    const kept = result.history || [];
+    tabs.hidden = kept.length < 2;
+    tabs.replaceChildren();
+    kept.forEach(function (h, i) {
+      const on = h.id === result.id;
+      const tab = el("button", "tab" + (on ? " on" : ""), (i + 1) + ". " + h.code);
+      tab.setAttribute("role", "tab");
+      tab.setAttribute("aria-selected", on ? "true" : "false");
+      tab.title = h.code + "\n" + h.process + " · " + new Date(h.at).toLocaleTimeString() + " · " + h.rows.toLocaleString("en-US") + " row(s)";
+      tab.addEventListener("click", function () {
+        if (!on) {
+          vscode.postMessage({ type: "select", id: result.id, pick: h.id });
+        }
+      });
+      tabs.append(tab);
+    });
+  }
+
   function drawBar() {
     const grid = result.grid;
     bar.replaceChildren();
     const views = el("div", "views");
-    ["grid", "chart"].forEach(function (v) {
-      const b = el("button", v === state.view ? "on" : "", v === "grid" ? "Grid" : "Chart");
+    Object.keys(VIEWS).filter(offered).forEach(function (v) {
+      const b = el("button", v === state.view ? "on" : "", VIEWS[v]);
       b.addEventListener("click", function () {
         state.view = v;
         save();
@@ -193,7 +397,40 @@
     exporter.addEventListener("click", function () {
       vscode.postMessage({ type: "export", id: result.id, rows: rows });
     });
-    bar.append(views, info, meta, copy, exporter);
+    const extras = [];
+    if (result.diff) {
+      const compare = el("button", state.compare ? "on" : "", "Compare");
+      compare.title = "Mark what changed since the previous run of this query, on " + result.diff.process + " at " + new Date(result.diff.at).toLocaleTimeString();
+      compare.setAttribute("aria-pressed", state.compare ? "true" : "false");
+      compare.addEventListener("click", function () {
+        state.compare = !state.compare;
+        save();
+        draw();
+      });
+      extras.push(compare);
+    }
+    if (state.view === "grid" && feature("heatmap")) {
+      const heatmap = el("button", result.heatmap ? "on" : "", "Heatmap");
+      heatmap.title = "Colour numeric columns by value (q-lint.query.gridHeatmap)";
+      heatmap.setAttribute("aria-pressed", result.heatmap ? "true" : "false");
+      heatmap.addEventListener("click", function () {
+        vscode.postMessage({ type: "heatmap", id: result.id });
+      });
+      extras.push(heatmap);
+    }
+    bar.append.apply(bar, [views, info].concat(extras, [meta, copy, exporter]));
+    if (comparing()) {
+      const d = result.diff;
+      const parts = [d.changed + " changed", d.addedRows.length + " added", d.removed.count + " removed"];
+      if (d.addedColumns.length) {
+        parts.push("new column" + (d.addedColumns.length === 1 ? " " : "s ") + d.addedColumns.map(function (c) { return grid.columns[c].name; }).join(", "));
+      }
+      if (d.removedColumns.length) {
+        parts.push("no longer " + d.removedColumns.join(", "));
+      }
+      const line = el("span", "diff-summary", "Since " + d.process + " at " + new Date(d.at).toLocaleTimeString() + " (rows by " + d.matchedBy + "): " + parts.join(", "));
+      bar.append(line);
+    }
   }
 
   // --- grid
@@ -277,6 +514,9 @@
     table.append(cols, head, body);
     scroller.append(table);
     gridView.append(scroller);
+    if (comparing() && result.diff.removed.count > 0) {
+      gridView.append(removedRows(result.diff.removed));
+    }
     scroller.addEventListener("scroll", function () {
       // Kept, so a page reloaded - hidden and shown again - is back here.
       state.top = scroller.scrollTop;
@@ -288,6 +528,145 @@
       scroller.scrollTop = state.top;
       paint();
     }
+  }
+
+  /// The rows the previous run had and this one has not, below the grid.
+  function removedRows(removed) {
+    const box = el("details", "removed");
+    const n = removed.count;
+    box.append(el("summary", "", n.toLocaleString("en-US") + " row" + (n === 1 ? "" : "s") + " removed since the previous run" + (removed.rows.length < n ? " (the first " + removed.rows.length + " shown)" : "")));
+    const table = el("table");
+    const head = el("tr");
+    removed.columns.forEach(function (name) { head.append(el("th", "", name)); });
+    const thead = el("thead");
+    thead.append(head);
+    const tbody = el("tbody");
+    removed.rows.forEach(function (row) {
+      const tr = el("tr");
+      row.forEach(function (text) {
+        const td = el("td", "", text);
+        td.title = text;
+        tr.append(td);
+      });
+      tbody.append(tr);
+    });
+    table.append(thead, tbody);
+    box.append(table);
+    return box;
+  }
+
+  // --- statistics
+
+  function drawStats() {
+    const grid = result.grid;
+    statsView.replaceChildren();
+    const stats = columnStats(grid, rows);
+    const held = rowCount(grid);
+    let note = "Over the " + rows.length.toLocaleString("en-US") + " row" + (rows.length === 1 ? "" : "s") + " shown";
+    if (rows.length !== held) {
+      note += " (the grid's filters apply)";
+    }
+    if (grid.total > held) {
+      note += "; the result had " + grid.total.toLocaleString("en-US") + ", cut at q-lint.query.gridLimit";
+    }
+    statsView.append(el("p", "note", note + "."));
+    const scroll = el("div", "scroller");
+    const table = el("table", "stats");
+    const head = el("tr");
+    ["column", "type", "count", "nulls", "distinct", "min", "max", "mean"].forEach(function (h, i) {
+      head.append(el("th", i >= 2 && i <= 4 ? "num" : "", h));
+    });
+    const thead = el("thead");
+    thead.append(head);
+    const tbody = el("tbody");
+    stats.forEach(function (st, i) {
+      const tr = el("tr");
+      const num = grid.columns[i].numeric || grid.columns[i].temporal ? " num" : "";
+      [[st.name, grid.columns[i].key ? "key" : ""], [st.type, ""], [String(st.count), "num"], [String(st.nulls), "num"], [String(st.distinct), "num"], [st.min, num], [st.max, num], [st.mean, "num"]].forEach(function (cell) {
+        const td = el("td", cell[1], cell[0]);
+        td.title = cell[0];
+        tr.append(td);
+      });
+      tbody.append(tr);
+    });
+    table.append(thead, tbody);
+    scroll.append(table);
+    statsView.append(scroll);
+    rendered({ stats: stats });
+  }
+
+  // --- tree
+
+  /// Draw the result's tree: each node a line, its children drawn only once
+  /// it is opened. What is open is kept by path, the children's places.
+  function drawTree() {
+    treeView.replaceChildren();
+    const labels = [];
+    let drawn = 0;
+    const open = new Set(state.open);
+    const toggle = function (path) {
+      const at = state.open.indexOf(path);
+      if (at >= 0) {
+        state.open.splice(at, 1);
+      } else {
+        state.open.push(path);
+      }
+      save();
+      drawTree();
+    };
+    const line = function (node, path, depth) {
+      const li = el("li");
+      li.setAttribute("role", "treeitem");
+      const opens = treeOpens(node);
+      const isOpen = opens && open.has(path);
+      const row = el("div", "node");
+      row.style.paddingLeft = depth * 16 + "px";
+      if (opens) {
+        li.setAttribute("aria-expanded", isOpen ? "true" : "false");
+        const twist = el("button", "twist", isOpen ? "\u25be" : "\u25b8");
+        twist.title = isOpen ? "Close" : "Open";
+        twist.setAttribute("aria-label", (isOpen ? "Close " : "Open ") + (node.key || "the result"));
+        twist.addEventListener("click", function () { toggle(path); });
+        row.append(twist);
+      } else {
+        row.append(el("span", "twist"));
+      }
+      const text = treeText(node);
+      if (node.key !== "" || depth > 0) {
+        row.append(el("span", "tree-key", node.key), el("span", "tree-sep", ": "));
+      }
+      const value = el("span", "tree-value" + (node.text === "" ? " tree-kind" : ""), text);
+      value.title = text;
+      row.append(value);
+      li.append(row);
+      drawn++;
+      if (labels.length < 50) {
+        labels.push((path === "" ? "" : path + " ") + (node.key ? node.key + ": " : "") + text);
+      }
+      if (isOpen) {
+        const ul = el("ul");
+        ul.setAttribute("role", "group");
+        node.children.forEach(function (child, i) {
+          ul.append(line(child, path === "" ? String(i) : path + "/" + i, depth + 1));
+        });
+        const missing = node.count - node.children.length;
+        if (missing > 0) {
+          const more = el("li", "tree-more");
+          more.style.paddingLeft = (depth + 1) * 16 + 18 + "px";
+          more.textContent = (node.children.length ? missing.toLocaleString("en-US") + " more" : node.count.toLocaleString("en-US") + " item" + (node.count === 1 ? "" : "s")) + " not sent: the tree is cut at 2,000 nodes";
+          ul.append(more);
+        }
+        li.append(ul);
+      }
+      return li;
+    };
+    const tree = el("ul", "tree");
+    tree.setAttribute("role", "tree");
+    tree.append(line(result.tree, "", 0));
+    const scroll = el("div", "scroller");
+    scroll.append(tree);
+    treeView.append(scroll);
+    rendered({ tree: { drawn: drawn, open: state.open.length, labels: labels } });
   }
 
   /// Draw the rows in view, and spacers for the rest: a grid holds up to
@@ -321,10 +700,26 @@
     for (let i = start; i < end; i++) {
       const r = rows[i];
       const tr = el("tr");
+      const added = marks && marks.rows.has(r);
+      if (added) {
+        tr.className = "added";
+      }
       grid.columns.forEach(function (c, ci) {
         const text = grid.cells[ci][r];
-        const td = el("td", (c.key ? "key" : "") + (c.numeric || c.temporal ? " num" : ""), text);
-        td.title = text;
+        let cls = (c.key ? "key" : "") + (c.numeric || c.temporal ? " num" : "");
+        const was = marks && !added ? marks.changed.get(ci + ":" + r) : undefined;
+        if (was !== undefined) {
+          cls += " changed";
+        } else if (marks && marks.columns.has(ci)) {
+          cls += " added";
+        }
+        const td = el("td", cls, text);
+        td.title = was !== undefined ? text + "\nwas: " + (was === "" ? "(null)" : was) : text;
+        // A cell the diff marks keeps the diff's colour.
+        const level = heat[ci] && was === undefined && !added ? heat[ci][r] : null;
+        if (level !== null && level !== undefined) {
+          td.style.backgroundColor = heatColour(level);
+        }
         tr.append(td);
       });
       out.push(tr);
@@ -414,16 +809,30 @@
     if (!result) {
       return;
     }
+    if (!VIEWS[state.view] || !offered(state.view)) {
+      state.view = "grid";
+    }
+    marks = comparing() ? diffMarks(result.diff) : null;
+    drawTabs();
     drawBar();
     gridView.hidden = state.view !== "grid";
     chartView.hidden = state.view !== "chart";
+    statsView.hidden = state.view !== "stats";
+    treeView.hidden = state.view !== "tree";
     if (state.view === "grid") {
       drawGrid();
       rendered();
+    } else if (state.view === "stats") {
+      drawStats();
+    } else if (state.view === "tree") {
+      drawTree();
     } else {
       drawChart();
     }
   }
+
+  /// What is kept of a result's page when another is chosen from the tabs.
+  const PER_RESULT = ["view", "sort", "filters", "columns", "top", "open", "names"];
 
   window.addEventListener("message", function (event) {
     const m = event.data;
@@ -431,19 +840,50 @@
       return;
     }
     const names = m.grid.columns.map(function (c) { return c.name; }).join("\u0000");
+    const kept = (m.history || []).map(function (h) { return h.id; });
     if (m.id !== state.id) {
-      // A new result: the view its mode asks for; the sort, filters and
-      // chosen columns only if it has the same columns.
-      if (names !== state.names) {
-        state.sort = null;
-        state.filters = [];
-        state.columns = null;
+      // The page of the result left, to go back to from its tab.
+      const mine = {};
+      PER_RESULT.forEach(function (k) { mine[k] = state[k]; });
+      state.saved[state.id] = mine;
+      const back = state.saved[m.id];
+      if (back) {
+        // A result chosen again from the tabs: as it was left.
+        Object.assign(state, back);
+      } else {
+        // A new result: the view its mode asks for; the sort, filters and
+        // chosen columns only if it has the same columns.
+        if (names !== state.names) {
+          state.sort = null;
+          state.filters = [];
+          state.columns = null;
+        }
+        state.view = m.view;
+        state.top = 0;
+        state.open = [""];
+        state.names = names;
       }
-      state.view = m.view;
       state.id = m.id;
-      state.top = 0;
-      state.names = names;
     }
+    Object.keys(state.saved).forEach(function (id) {
+      if (kept.indexOf(id) < 0 || id === m.id) {
+        delete state.saved[id];
+      }
+    });
+    // A command's request, once: Show Column Statistics, Show as Tree,
+    // Compare with Previous Run.
+    if (m.control && m.control.key !== state.control) {
+      state.control = m.control.key;
+      if (m.control.action === "view") {
+        state.view = m.control.view;
+      } else if (m.control.action === "compare") {
+        state.compare = true;
+        state.view = "grid";
+      }
+    }
+    heat = m.heatmap
+      ? m.grid.columns.map(function (c, i) { return c.numeric && !c.key ? heatLevels(m.grid.values[i]) : null; })
+      : [];
     result = m;
     rows = visibleRows(m.grid, state.filters, state.sort);
     save();

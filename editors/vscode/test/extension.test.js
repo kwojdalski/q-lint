@@ -17,7 +17,7 @@ const within = (promise, ms) => Promise.race([promise, sleep(ms).then(() => "sti
 /// what the server named `command` does when started: "ok", "fail" or
 /// "hang" (it never answers `initialize`).
 function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir() } = {}) {
-  const world = { clients: [], errors: [], infos: [], commands: {}, started: [] };
+  const world = { clients: [], errors: [], infos: [], commands: {}, started: [], queried: [] };
   class LanguageClient {
     constructor(id, name, server, options) {
       this.command = server.run.command;
@@ -50,6 +50,7 @@ function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir
     }
   }
   const vscode = {
+    Uri: { parse: (text) => ({ parsed: text }) },
     commands: {
       registerCommand: (name, run) => {
         world.commands[name] = run;
@@ -73,12 +74,22 @@ function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir
   const stubs = {
     vscode,
     "vscode-languageclient/node": { LanguageClient, CloseAction: { DoNotRestart: 1, Restart: 2 }, ErrorAction: { Continue: 1, Shutdown: 2 } },
-    "./live": { Live: class { api() { return {}; } processes() { return []; } } },
+    "./live": {
+      Live: class {
+        api() { return {}; }
+        processes() { return []; }
+        queryCode(code, uri) { world.queried.push([code, uri]); return Promise.resolve(); }
+      },
+    },
     "./agenttool": { registerAgentTool: () => () => undefined },
     "./onboardingview": { registerOnboarding() {} },
     "./notebook": { registerNotebooks: () => ({ charts: () => [] }) },
+    "./notebookvarsview": { registerNotebookVariables: () => ({ variables: () => [] }) },
+    "./notebookrun": { runWithParameters: async () => undefined },
     "./explorerview": { ProcessExplorer: class { rows() { return []; } } },
     "./relate": { Relations: class { serverChanged() {} } },
+    "./funcsourceview": { FunctionSources: class { state() { return {}; } } },
+    "./infoview": { registerInfoViews: () => ({ monitor: () => [], hdb: () => [] }) },
   };
   const file = require.resolve("../out/extension.js");
   delete require.cache[file];
@@ -147,5 +158,29 @@ test("Restart Server says why it starts nothing when the server is turned off", 
   await w.commands["q-lint.restartServer"]();
   assert.strictEqual(w.clients.length, 0);
   assert.match(w.infos.join("\n"), /q-lint\.enable/);
+  await w.extension.deactivate();
+});
+
+test("a Run lens's command sends its code as a query from its document", async () => {
+  const w = load();
+  await w.extension.activate(w.context);
+  const run = w.commands[w.extension.RUN_DEFINITION];
+  assert.strictEqual(w.extension.RUN_DEFINITION, "q-lint.runDefinition");
+  await run("\\d .qt\ntest_a:{[] 1}\n\\d .\n.qt.test_a[]", "file:///ws/suite.q");
+  assert.deepStrictEqual(w.queried, [["\\d .qt\ntest_a:{[] 1}\n\\d .\n.qt.test_a[]", { parsed: "file:///ws/suite.q" }]]);
+  // Anything else - run by hand from a keybinding with no arguments - is
+  // nothing to send.
+  await run();
+  await run(1, "file:///ws/suite.q");
+  assert.strictEqual(w.queried.length, 1);
+  await w.extension.deactivate();
+});
+
+test("with code lenses turned off, a lens's command says so and sends nothing", async () => {
+  const w = load({ settings: { "codeLens.enable": false } });
+  await w.extension.activate(w.context);
+  await w.commands[w.extension.RUN_DEFINITION]("f:{x}", "file:///ws/a.q");
+  assert.deepStrictEqual(w.queried, []);
+  assert.match(w.infos.join("\n"), /turned off \(q-lint\.codeLens\.enable\)/);
   await w.extension.deactivate();
 });

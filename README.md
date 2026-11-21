@@ -474,6 +474,10 @@ The path is followed as the dependency graph follows it: against the first
 workspace folder, then the loading file's own directory and each one above it;
 a directory loads the scripts directly in it. A load that reaches no file, or
 a relative one written after the script changes directory, goes nowhere.
+`textDocument/documentLink` makes each such path a link to the file it
+reaches, found the same way, with the file under its workspace folder as the
+tooltip; a load that reaches no file, or a directory (several files), has
+none. `documentLinks.enable: false` leaves it unannounced.
 
 A global is named as q would resolve it where it is written: under the `\d`
 context in force, in each context a file is loaded in when it names none of
@@ -487,11 +491,25 @@ running the code would tell is not found: a name built at run time, a
 `value "..."` string, a definition another process sends. A column in a qSQL
 phrase reads like a global of that name and is listed with it.
 
-Rename is for a lambda's parameters and locals only. A global is refused, with
-the reason in the error, because it can be reached by name from a string, a
-symbol or another process, and no reading of the source finds those. So are an
-implicit `x`, `y` or `z`, a local a qSQL phrase reads (it may be a column),
-and a new name that is a q builtin or that the lambda already uses.
+Rename takes a lambda's parameter or local, within its lambda, and a global
+across the workspace. A local is refused, with the reason in the error, when
+it is an implicit `x`, `y` or `z`, when a qSQL phrase reads it (it may be a
+column), and when the new name is a q builtin or one the lambda already uses.
+
+A global is renamed in every place Find All References lists - each indexed
+file that names it, under the `\d` in force and the context the file is
+loaded in - and only its last part changes: `.lib.add` and `add` under
+`\d .lib` both become `plus`, given as `plus` or as `.lib.plus`, and a name
+in another namespace is refused. `prepareRename` answers with the range of
+that last part. `rename.enable: false` leaves renaming unannounced, and the
+rest of navigation on. The rename is refused for a name in a one-letter namespace
+(`.z.pg`, `.q.f`, which q keeps for itself), a name no indexed file assigns
+(q's own, or defined where the server cannot read), a new name that is not
+one q takes, is reserved or is already assigned, and one that is a
+parameter or local of a lambda reading the global without its namespace,
+where it would hide the renamed global. What reading cannot find keeps the
+old name: a string handed to `value`, a bare symbol (`` `f ``), a name another
+process sends.
 
 Hover, signature help and completion answer from two places and never from a
 running q: the workspace's own source, and a catalogue of q's words that ships
@@ -521,6 +539,34 @@ juxtaposition have no signature shown. `if`, `do` and `while` take any number
 of expressions, so the last parameter stays marked; past the last parameter
 of anything else no parameter is marked, and the signature says the call has
 too many arguments.
+
+`textDocument/inlayHint` draws a parameter's name before each argument of a
+bracketed call to a workspace function in the range asked about: `f[a:1;b:2]`
+over `f[1;2]`, the call written qualified or bare under the `\d` in force. A
+hint is given only when every definition of the name assigns a lambda with a
+signature, and the same one: an implicit `x`, `y` or `z` names nothing a
+reader does not know, and definitions that disagree leave which one is called
+to whichever ran last. An empty slot of a projection, an argument past the
+last parameter and one spelled as the parameter itself get none.
+`inlayHints.enable: false` turns them off.
+
+`textDocument/codeLens`, when `codeLens.enable` asks for it, puts a **Run**
+lens on the name of each function a statement at column 0 defines, and a
+**Run test** lens too when its name starts `test_`. Each runs the command
+`q-lint.runDefinition` with two arguments: the code to send and the
+document's URI. Run's code is the statement, wrapped in `\d .ns` and `\d .`
+when it is written under `\d .ns`; Run test's is that, then a call of the
+function by its full name with no argument (`.ns.test_x[]`). It is off by
+default because only a client that registers that command - the VS Code
+extension, which sends the code to the connected q process - can run it.
+
+A code action of kind `refactor.rewrite`, **Generate qDoc for f**, is offered
+inside a function a statement at column 0 defines, with no `context.only` or
+one naming `refactor`: it inserts `/ @param p` for each parameter a caller
+passes and `/ @return` at the start of the definition's line, below any
+description already there, and is not offered when the comment above has an
+`@param` or `@return`. `generateQdoc.enable: false` withdraws it and its kind
+from `codeActionKinds`.
 
 Completion is off unless `completion.enable` asks for it, because an editor
 told that a server completes stops offering the words already in the buffer,
@@ -683,6 +729,8 @@ Every key is optional, and these are the defaults:
  "semanticTokens": {"enable": true}, "navigation": {"enable": true},
  "help": {"enable": true}, "completion": {"enable": false},
  "callHierarchy": {"enable": true}, "graph": {"enable": true},
+ "rename": {"enable": true}, "inlayHints": {"enable": true}, "codeLens": {"enable": false},
+ "documentLinks": {"enable": true}, "generateQdoc": {"enable": true},
  "workspaceIndex": {"enable": true, "exclude": []}}
 ```
 
@@ -698,7 +746,9 @@ language server already answers those requests. `completion.enable` is the
 one that starts off; `true` announces completion.
 `callHierarchy.enable` set to `false` leaves the call hierarchy unannounced,
 and `graph.enable` does that for `q-lint/graph` and `q-lint/affectedTests`,
-which then answer `null`. `workspaceIndex.exclude`
+which then answer `null`; `inlayHints.enable` does it for inlay hints, and `codeLens.enable: true`
+announces the Run lenses.
+`workspaceIndex.exclude`
 holds globs relative to each workspace folder that the index does not read.
 The index stops after 20,000 `.q` files or 500,000 directory entries of any
 kind, whichever comes first, so a folder opened at `/` cannot stall the

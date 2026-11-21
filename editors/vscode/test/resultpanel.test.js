@@ -248,3 +248,162 @@ test("the q Results view's page is drawn on the panel's background, the editor's
   const css = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "media", "result.css"), "utf8");
   assert.match(css, /body\[data-location="panel"\]\s*\{[^}]*background:\s*var\(--vscode-panel-background/);
 });
+
+test("the last q-lint.query.resultHistory results are kept, and a tab shows one again (#920)", async () => {
+  const fake = fakeVscode({ "query.resultHistory": 2 });
+  const modes = loadModes(fake);
+  modes.show({ ...result([1]), code: "a" }, live());
+  modes.show({ ...result([2]), code: "b" }, live());
+  modes.show({ ...result([3]), code: "c\nmore" }, live());
+  const page = fake.pages[0];
+  const last = page.posted.at(-1);
+  assert.deepStrictEqual(last.history.map((h) => h.code), ["b", "c..."]);
+  page.receive({ type: "select", id: last.id, pick: last.history[0].id });
+  assert.strictEqual(page.posted.at(-1).id, last.history[0].id);
+  assert.deepStrictEqual(page.posted.at(-1).grid.cells, [["2"]]);
+  // Copy now copies the result chosen.
+  page.receive({ type: "copy", id: last.history[0].id });
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(fake.clipboard.text, "c\n2\n");
+  // One no longer kept is not shown.
+  const sent = page.posted.length;
+  page.receive({ type: "select", pick: "gone" });
+  assert.strictEqual(page.posted.length, sent);
+  // Show Result from History takes an id too.
+  const { RESULT_VIEW } = require("../out/liveconfig.js");
+  await fake.vscode.commands[RESULT_VIEW.history](last.id);
+  assert.strictEqual(page.posted.at(-1).id, last.id);
+});
+
+test("a query run again is sent with what changed since its previous run, in this window (#919)", () => {
+  const fake = fakeVscode();
+  const modes = loadModes(fake);
+  modes.show({ ...result([1, 2]), code: "q1" }, live());
+  const page = fake.pages[0];
+  assert.strictEqual(page.posted.at(-1).diff, undefined);
+  modes.show({ ...result([5]), code: "other" }, live());
+  modes.show({ ...result([1, 3, 4]), code: "q1", process: "p2" }, live());
+  const { diff } = page.posted.at(-1);
+  assert.strictEqual(diff.process, "p");
+  assert.deepStrictEqual(diff.changes, [[0, 1, "2"]]);
+  assert.deepStrictEqual(diff.addedRows, [2]);
+});
+
+test("the result commands ask the page for a view once, and say why when they cannot (#923, #928, #919)", async () => {
+  const fake = fakeVscode();
+  const info = [];
+  fake.vscode.window.showInformationMessage = async (m) => info.push(m);
+  const modes = loadModes(fake);
+  const { RESULT_VIEW } = require("../out/liveconfig.js");
+  await fake.vscode.commands[RESULT_VIEW.statistics]();
+  assert.match(info.at(-1), /no result yet/);
+  modes.show(result([1, 2]), live());
+  const page = fake.pages[0];
+  await fake.vscode.commands[RESULT_VIEW.statistics]();
+  const first = page.posted.at(-1).control;
+  assert.deepStrictEqual({ ...first, key: undefined }, { key: undefined, action: "view", view: "stats" });
+  await fake.vscode.commands[RESULT_VIEW.statistics]();
+  assert.notStrictEqual(page.posted.at(-1).control.key, first.key);
+  await fake.vscode.commands[RESULT_VIEW.tree]();
+  assert.match(info.at(-1), /has no tree/);
+  await fake.vscode.commands[RESULT_VIEW.compare]();
+  assert.match(info.at(-1), /nothing to compare/);
+  // A dictionary's tree is sent with it.
+  const tree = { key: "", text: "", type: 99, count: 0, children: [] };
+  modes.show({ ...result([1]), answer: { ok: true, type: 99, text: [], grid: { ...payload([1]), tree } } }, live());
+  assert.deepStrictEqual(page.posted.at(-1).tree, tree);
+  await fake.vscode.commands[RESULT_VIEW.tree]();
+  assert.strictEqual(page.posted.at(-1).control.view, "tree");
+});
+
+test("Toggle Result Heatmap and the page's button switch q-lint.query.gridHeatmap, and the page is drawn again (#924)", async () => {
+  const fake = fakeVscode();
+  const updates = [];
+  fake.vscode.workspace.getConfiguration = () => ({
+    get: (key, fallback) => (key in fake.config ? fake.config[key] : fallback),
+    inspect: () => ({}),
+    update: async (key, value, target) => {
+      updates.push([key, value, target]);
+      fake.config[key] = value;
+    },
+  });
+  const modes = loadModes(fake);
+  modes.show(result([1, 2]), live());
+  const page = fake.pages[0];
+  assert.strictEqual(page.posted.at(-1).heatmap, false);
+  const { RESULT_VIEW } = require("../out/liveconfig.js");
+  await fake.vscode.commands[RESULT_VIEW.heatmap]();
+  assert.deepStrictEqual(updates, [["query.gridHeatmap", true, 1]]);
+  for (const f of fake.listeners.config) {
+    f({ affectsConfiguration: (k) => "q-lint.query.gridHeatmap" === k || "q-lint.query.gridHeatmap".startsWith(`${k}.`) });
+  }
+  assert.strictEqual(page.posted.at(-1).heatmap, true);
+  page.receive({ type: "heatmap", id: page.posted.at(-1).id });
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(updates.at(-1), ["query.gridHeatmap", false, 1]);
+});
+
+test("each result feature turned off: its command refuses, the page is sent nothing for it, and the process is not asked for a tree", async () => {
+  const off = {
+    "results.history.enable": false,
+    "results.diff.enable": false,
+    "results.statistics.enable": false,
+    "results.heatmap.enable": false,
+    "results.tree.enable": false,
+    "query.gridHeatmap": true,
+  };
+  const fake = fakeVscode({ ...off });
+  const info = [];
+  const updates = [];
+  fake.vscode.window.showInformationMessage = async (m) => info.push(m);
+  const base = fake.vscode.workspace.getConfiguration;
+  fake.vscode.workspace.getConfiguration = () => ({ ...base(), update: async (...a) => updates.push(a) });
+  const modes = loadModes(fake);
+  assert.strictEqual(modes.wantsTree(), false);
+  const tree = { key: "", text: "", type: 99, count: 0, children: [] };
+  const dict = (code) => ({ ...result([1]), code, answer: { ok: true, type: 99, text: [], grid: { ...payload([1]), tree } } });
+  modes.show(dict("q"), live());
+  modes.show(dict("q"), live());
+  const page = fake.pages[0];
+  const m = page.posted.at(-1);
+  assert.strictEqual(m.tree, undefined);
+  assert.strictEqual(m.diff, undefined);
+  assert.strictEqual(m.heatmap, false);
+  assert.deepStrictEqual(m.features, { statistics: false, heatmap: false });
+  assert.strictEqual(m.history.length, 1);
+  const { RESULT_VIEW } = require("../out/liveconfig.js");
+  const features = { statistics: "statistics", tree: "tree", compare: "diff", heatmap: "heatmap", history: "history" };
+  for (const [command, feature] of Object.entries(features)) {
+    const sent = page.posted.length;
+    await fake.vscode.commands[RESULT_VIEW[command]]();
+    assert.match(info.at(-1), new RegExp(`turned off\\. Turn it on with the setting q-lint\\.results\\.${feature}\\.enable`), command);
+    assert.strictEqual(page.posted.length, sent, command);
+  }
+  page.receive({ type: "heatmap", id: m.id });
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(updates, []);
+  // Turned on again, without a reload: the page is sent them at once, and
+  // the tree is asked for. The diff starts from the next run: none was kept.
+  for (const key of Object.keys(off)) {
+    if (key.startsWith("results.")) {
+      delete fake.config[key];
+    }
+  }
+  for (const f of fake.listeners.config) {
+    f({ affectsConfiguration: (k) => k === "q-lint.results" || k === "q-lint" });
+  }
+  const on = page.posted.at(-1);
+  assert.deepStrictEqual(on.tree, tree);
+  assert.deepStrictEqual(on.features, { statistics: true, heatmap: true });
+  assert.strictEqual(on.heatmap, true);
+  assert.strictEqual(on.diff, undefined);
+  assert.strictEqual(modes.wantsTree(), true);
+  // History turned off while results are kept: only the one on show stays.
+  modes.show(dict("r"), live());
+  assert.strictEqual(page.posted.at(-1).history.length, 2);
+  fake.config["results.history.enable"] = false;
+  for (const f of fake.listeners.config) {
+    f({ affectsConfiguration: (k) => k === "q-lint.results" || k === "q-lint" });
+  }
+  assert.deepStrictEqual(page.posted.at(-1).history.map((h) => h.code), ["r"]);
+});

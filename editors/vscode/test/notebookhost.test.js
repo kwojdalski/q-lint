@@ -62,13 +62,36 @@ function fakeVscode() {
       return NotebookCellOutputItem.text(JSON.stringify(e), "application/vnd.code.notebook.error");
     }
   }
+  class EventEmitter {
+    constructor() {
+      this.listeners = [];
+      this.event = (l) => (this.listeners.push(l), disposable);
+    }
+    fire(v) {
+      this.listeners.forEach((l) => l(v));
+    }
+    dispose() {}
+  }
+  const edits = [];
+  const settings = {};
+  const warnings = [];
+  class WorkspaceEdit {
+    set(uri, list) {
+      this.uri = uri;
+      this.list = list;
+    }
+  }
   const vscode = {
     Uri,
+    EventEmitter,
+    WorkspaceEdit,
+    NotebookEdit: { updateCellMetadata: (index, metadata) => ({ index, metadata }) },
     NotebookCellData,
     NotebookData,
     NotebookCellOutput,
     NotebookCellOutputItem,
     NotebookCellKind: { Markup: 1, Code: 2 },
+    ProgressLocation: { Notification: 15 },
     ConfigurationTarget: { Global: 1, Workspace: 2 },
     commands: {
       registerCommand: (id, f) => {
@@ -87,7 +110,12 @@ function fakeVscode() {
     window: {
       activeNotebookEditor: undefined,
       showInformationMessage: async (m) => void messages.push(m),
-      showWarningMessage: async (m) => void messages.push(m),
+      showWarningMessage: async (m, ...rest) => {
+        messages.push(m);
+        warnings.push(rest);
+        return fake.answer;
+      },
+      withProgress: async (_o, task) => task({ report() {} }, { isCancellationRequested: false }),
       showErrorMessage: async (m) => void messages.push(m),
       showSaveDialog: async (options) => {
         dialogs.push(options);
@@ -98,11 +126,15 @@ function fakeVscode() {
     workspace: {
       workspaceFolders: undefined,
       notebookDocuments: [],
+      applyEdit: async (edit) => {
+        edits.push(edit);
+        return true;
+      },
       registerNotebookSerializer: (type, s) => {
         registered.serializer = s;
         return disposable;
       },
-      getConfiguration: () => ({ get: (key, fallback) => fallback, inspect: () => ({}), update: async () => {} }),
+      getConfiguration: () => ({ get: (key, fallback) => (key in settings ? settings[key] : fallback), inspect: () => ({}), update: async () => {} }),
       fs: {
         readFile: async (uri) => {
           if (!written.has(uri.path)) throw new Error(`ENOENT: ${uri.path}`);
@@ -115,7 +147,8 @@ function fakeVscode() {
       },
     },
   };
-  return { vscode, messages, written, registered, dialogs };
+  const fake = { vscode, messages, written, registered, dialogs, edits, settings, warnings, answer: undefined };
+  return fake;
 }
 
 /// A cell execution that records what the kernel did with it.
@@ -315,4 +348,203 @@ test("a save of what was opened keeps a run's start without its end, or its end 
   data.cells[0].executionSummary = { executionOrder: 3, success: true, timing: { startTime: 5, endTime: 6 } };
   const saved = JSON.parse(Buffer.from(serializer.serializeNotebook(data)).toString());
   assert.deepStrictEqual(saved.cells[0].execution, { order: 3, success: true, start: 5, end: 6 });
+});
+
+// --- #946-#950: the directives, live values, export and the headless run,
+// on and off.
+
+/// A notebook of `cells` ([kind, source]), as the kernel and the commands
+/// see it.
+function notebookWith(fake, cells, uri = fake.vscode.Uri.file("/ws/n.qnb")) {
+  const notebook = { uri, notebookType: "q-lint-notebook", metadata: {}, cells: [], getCells: () => notebook.cells, cellAt: (i) => notebook.cells[i] };
+  notebook.cells = cells.map(([kind, source], index) => ({
+    notebook,
+    index,
+    kind: kind === "code" ? 2 : 1,
+    metadata: {},
+    outputs: [],
+    executionSummary: undefined,
+    document: { getText: () => source, languageId: kind === "code" ? "q" : "markdown" },
+  }));
+  return notebook;
+}
+
+/// A stand-in Live over saved `processes`, connected to `active`, that
+/// records what is connected to and what is sent.
+function recordingLive(processes, active) {
+  const live = {
+    active,
+    connected: [],
+    sent: [],
+    processes: () => processes,
+    discovery: { discovered: () => [] },
+    activeLabel: () => live.active,
+    isBusy: () => false,
+    connectTo: async (label) => {
+      live.connected.push(label);
+      live.active = label;
+      return true;
+    },
+    runOnActive: async (code, query) => {
+      live.sent.push(code);
+      const connection = {
+        query: async (cut) => ({ ok: true, type: -7, text: [`${live.active}: ${cut.join(";")}`] }),
+        call: async (lambda, arg) => {
+          live.sent.push(lambda.startsWith("{[es]") ? `live ${arg.join(",")}` : "call");
+          return lambda.startsWith("{[es]") ? arg.map((e) => [true, `<${e}>`]) : { ok: true, table: false, type: -7, text: ["1"] };
+        },
+      };
+      return { process: live.active, value: await query(connection) };
+    },
+    abort: async () => {},
+  };
+  return live;
+}
+
+const PROCESSES = [
+  { label: "dev1", host: "h", port: 1, tags: ["dev"] },
+  { label: "prod1", host: "h", port: 2, tags: ["prod"] },
+];
+
+/// Run `cells` of `notebook` through the kernel; their executions.
+async function runCells(fake, notebook, indexes) {
+  const executions = [];
+  const create = fake.registered.controller.createNotebookCellExecution;
+  fake.registered.controller.createNotebookCellExecution = (cell) => {
+    const e = create(cell);
+    executions.push(e);
+    return e;
+  };
+  await fake.registered.controller.executeHandler(indexes.map((i) => notebook.cells[i]), notebook);
+  return executions;
+}
+const outputText = (e) => e.outputs.flatMap((o) => o.items.map((i) => Buffer.from(i.data).toString("utf8"))).join("\n");
+
+test("/ @process connects to the process it names before the cell runs, and the cell runs there", async () => {
+  const fake = fakeVscode();
+  const live = recordingLive(PROCESSES, "other");
+  load(fake, live);
+  const notebook = notebookWith(fake, [["code", "/ @process dev1\n1+1"], ["code", "/ @process nope\n1"]]);
+  const [first, second] = await runCells(fake, notebook, [0, 1]);
+  assert.deepStrictEqual(live.connected, ["dev1"]);
+  assert.match(outputText(first), /^dev1: 1\+1$/);
+  assert.strictEqual(first.success, true);
+  assert.strictEqual(second.success, false);
+  assert.match(outputText(second), /No q process is labelled \\"nope\\"/);
+});
+
+test("/ @process to a production process asks first, and runs nothing unless confirmed", async () => {
+  const fake = fakeVscode();
+  const live = recordingLive(PROCESSES, "dev1");
+  load(fake, live);
+  const notebook = notebookWith(fake, [["code", "/ @process prod1\n1"]]);
+  const [refused] = await runCells(fake, notebook, [0]);
+  assert.deepStrictEqual(live.connected, []);
+  assert.deepStrictEqual(live.sent, []);
+  assert.match(fake.messages.join("\n"), /prod1 is a production process \(tagged prod\)/);
+  assert.deepStrictEqual(fake.warnings[0][0].modal, true);
+  assert.match(outputText(refused), /not confirmed/);
+  fake.answer = "Connect and Run";
+  const [ran] = await runCells(fake, notebook, [0]);
+  assert.deepStrictEqual(live.connected, ["prod1"]);
+  assert.strictEqual(ran.success, true);
+});
+
+test("with q-lint.notebook.processDirective.enable off, a / @process cell is refused and nothing is sent", async () => {
+  const fake = fakeVscode();
+  fake.settings["notebook.processDirective.enable"] = false;
+  const live = recordingLive(PROCESSES, "other");
+  load(fake, live);
+  const [e] = await runCells(fake, notebookWith(fake, [["code", "/ @process dev1\n1"]]), [0]);
+  assert.strictEqual(e.success, false);
+  assert.match(outputText(e), /q-lint\.notebook\.processDirective\.enable/);
+  assert.deepStrictEqual(live.connected, []);
+  assert.deepStrictEqual(live.sent, []);
+});
+
+test("with q-lint.notebook.parameters.enable off, a / @parameters cell is refused", async () => {
+  const fake = fakeVscode();
+  fake.settings["notebook.parameters.enable"] = false;
+  const live = recordingLive(PROCESSES, "dev1");
+  load(fake, live);
+  const [e] = await runCells(fake, notebookWith(fake, [["code", "/ @parameters\nn:1"]]), [0]);
+  assert.strictEqual(e.success, false);
+  assert.match(outputText(e), /Run Notebook with Parameters is turned off/);
+  assert.deepStrictEqual(live.sent, []);
+});
+
+test("a code cell that runs reads the live values of the Markdown after it into their metadata, not their source", async () => {
+  const fake = fakeVscode();
+  const live = recordingLive(PROCESSES, "dev1");
+  const api = load(fake, live);
+  const notebook = notebookWith(fake, [["markdown", "top {{q: a}}"], ["code", "a:1"], ["markdown", "a is {{q: a}} and {{q: b}}"], ["code", "2"], ["markdown", "{{q: c}}"]]);
+  await runCells(fake, notebook, [1]);
+  assert.deepStrictEqual(live.sent, ["a:1", "live a,b"]);
+  assert.deepStrictEqual(fake.edits[0].list, [
+    { index: 0, metadata: { "q-lint.liveValues": { a: { text: "<a>" } } } },
+    { index: 2, metadata: { "q-lint.liveValues": { a: { text: "<a>" }, b: { text: "<b>" } } } },
+  ]);
+  assert.strictEqual(api.processOf(notebook), "dev1");
+  // Off: the cell runs, and no expression is sent.
+  fake.settings["notebook.liveValues.enable"] = false;
+  live.sent = [];
+  await runCells(fake, notebook, [1]);
+  assert.deepStrictEqual(live.sent, ["a:1"]);
+  assert.strictEqual(fake.edits.length, 1);
+});
+
+test("Export as HTML and as Jupyter write the notebook with its outputs; off, they refuse and write nothing", async () => {
+  const fake = fakeVscode();
+  load(fake);
+  fake.written.set(
+    "/ws/a.qnb",
+    Buffer.from(JSON.stringify({ qnb: 1, cells: [{ kind: "code", source: ["\"<b>\""], execution: { order: 1 }, outputs: [{ items: [{ mime: "text/plain", text: "\"<b>\"" }] }] }] })),
+  );
+  const { Uri } = fake.vscode;
+  await fake.registered.commands["q-lint.exportNotebookHtml"](Uri.file("/ws/a.qnb"), Uri.file("/ws/a.html"));
+  assert.match(fake.written.get("/ws/a.html").toString(), /<pre class="out">&quot;&lt;b&gt;&quot;<\/pre>/);
+  await fake.registered.commands["q-lint.exportNotebookIpynb"](Uri.file("/ws/a.qnb"), Uri.file("/ws/a.ipynb"));
+  assert.strictEqual(JSON.parse(fake.written.get("/ws/a.ipynb").toString()).cells[0].execution_count, 1);
+  await fake.registered.commands["q-lint.importIpynb"](Uri.file("/ws/a.ipynb"), Uri.file("/ws/b.qnb"));
+  assert.strictEqual(JSON.parse(fake.written.get("/ws/b.qnb").toString()).cells[0].source[0], "\"<b>\"");
+  fake.settings["notebook.export.enable"] = false;
+  for (const [command, out] of [["q-lint.exportNotebookHtml", "/ws/c.html"], ["q-lint.exportNotebookIpynb", "/ws/c.ipynb"], ["q-lint.importIpynb", "/ws/c.qnb"]]) {
+    await fake.registered.commands[command](Uri.file(command.endsWith("Ipynb") && command.startsWith("q-lint.import") ? "/ws/a.ipynb" : "/ws/a.qnb"), Uri.file(out));
+    assert.strictEqual(fake.written.has(out), false, command);
+  }
+  assert.match(fake.messages.at(-1), /set q-lint\.notebook\.export\.enable to true/);
+});
+
+/// `src/notebookrun.ts` loaded against `fake`, beside `src/notebook.ts`.
+function loadRun(fake, live) {
+  load(fake, live);
+  const original = Module._load;
+  Module._load = function (request, ...rest) {
+    return request === "vscode" ? fake.vscode : original.call(this, request, ...rest);
+  };
+  try {
+    return require("../out/notebookrun.js");
+  } finally {
+    Module._load = original;
+  }
+}
+
+test("Run Notebook with Parameters runs the notebook on the active connection and writes the run; off, it refuses", async () => {
+  const fake = fakeVscode();
+  const live = recordingLive(PROCESSES, "dev1");
+  const { runWithParameters } = loadRun(fake, live);
+  const { Uri } = fake.vscode;
+  fake.written.set("/ws/p.qnb", Buffer.from(JSON.stringify({ qnb: 1, cells: [{ kind: "code", source: ["/ @parameters", "n:1"] }, { kind: "code", source: ["n"] }] })));
+  const result = await runWithParameters(live, Uri.file("/ws/p.qnb"), Uri.file("/ws/p-run.qnb"), { n: "7" });
+  assert.strictEqual(result.failed, undefined);
+  assert.deepStrictEqual(live.sent, ["/ @parameters\nn:1", "/ Parameters given to this run.\nn:7;", "n"]);
+  const written = JSON.parse(fake.written.get("/ws/p-run.qnb").toString());
+  assert.deepStrictEqual(written.cells[1].source, ["/ Parameters given to this run.", "n:7;"]);
+  assert.strictEqual(written.cells[2].outputs[0].items[0].text, "dev1: n");
+  fake.settings["notebook.parameters.enable"] = false;
+  live.sent = [];
+  assert.strictEqual(await runWithParameters(live, Uri.file("/ws/p.qnb"), Uri.file("/ws/p-off.qnb"), {}), undefined);
+  assert.deepStrictEqual(live.sent, []);
+  assert.strictEqual(fake.written.has("/ws/p-off.qnb"), false);
+  assert.match(fake.messages.at(-1), /q-lint\.notebook\.parameters\.enable/);
 });

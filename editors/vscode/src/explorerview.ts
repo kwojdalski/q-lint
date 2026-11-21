@@ -3,11 +3,19 @@
 // connect, on Refresh, and after a query when auto refresh is on - and kept;
 // the tree and completion both answer from what was kept, so typing never
 // sends the process anything.
+//
+// A table's hover (#930) - its row's tooltip, and a hover on its name in a
+// q editor - asks the process for its details (`tableinfo.ts`) when first
+// shown, and keeps them until the next refresh. Each has its own setting
+// (`insightconfig.ts`); the editor's is off unless asked for, and its
+// provider is registered only while it is on.
 import {
   CompletionItem,
   CompletionItemKind,
   ConfigurationTarget,
   EventEmitter,
+  Hover,
+  MarkdownString,
   languages,
   Range,
   ThemeIcon,
@@ -34,12 +42,17 @@ import {
   qsqlTable,
   readExplorer,
   readGathered,
+  tableNamed,
   type Completion,
   type Gathered,
   type Node,
 } from "./explorer";
+import { nameAt } from "./funcsource";
+import { borrowWhenFree } from "./infoview";
+import { readInsight } from "./insightconfig";
 import type { Live } from "./live";
 import { blockAt } from "./statements";
+import { TABLE_INFO, HOVER_COLUMNS, readTableInfo, tableMarkdown, type TableInfo } from "./tableinfo";
 
 const ICONS: Record<Node["kind"], string> = {
   namespace: "symbol-namespace",
@@ -58,6 +71,14 @@ const KINDS: Record<Completion["kind"], CompletionItemKind> = {
   column: CompletionItemKind.Field,
 };
 
+const insight = () => {
+  const configuration = workspace.getConfiguration("q-lint");
+  return readInsight((key, fallback) => configuration.get(key, fallback));
+};
+
+/// Columns an editor hover lists, kept short beside the language server's.
+const EDITOR_COLUMNS = 10;
+
 const settings = () => {
   const configuration = workspace.getConfiguration("q-lint");
   return readExplorer((key, fallback) => configuration.get(key, fallback));
@@ -70,7 +91,11 @@ export class ProcessExplorer implements TreeDataProvider<Node> {
   /// What the active process held at the last refresh, and its label.
   private kept: { process: string; gathered: Gathered } | undefined;
   private problem: string | undefined;
+  /// Tables' details, by process and name, read since the last refresh.
+  private details = new Map<string, Promise<TableInfo | undefined>>();
   private refreshing = false;
+  /// The editor's table hover, while q-lint.processExplorer.editorTableHover.enable is on.
+  private hoverProvider: { dispose(): unknown } | undefined;
   /// A refresh asked for while a query ran or another refresh was out,
   /// made once the connection is free.
   private owed = false;
@@ -112,7 +137,10 @@ export class ProcessExplorer implements TreeDataProvider<Node> {
       }),
       // VS Code merges this provider's items with the language server's.
       languages.registerCompletionItemProvider({ language: "q" }, { provideCompletionItems: (d, p) => this.complete(d, p) }, "."),
+      workspace.onDidChangeConfiguration((event) => event.affectsConfiguration("q-lint.processExplorer.editorTableHover") && this.switchHover()),
+      { dispose: () => this.hoverProvider?.dispose() },
     );
+    this.switchHover();
     this.show();
   }
 
@@ -153,6 +181,7 @@ export class ProcessExplorer implements TreeDataProvider<Node> {
     this.show();
     try {
       this.kept = await call;
+      this.details.clear();
       this.problem = undefined;
     } catch (error) {
       this.problem = error instanceof Error ? error.message : String(error);
@@ -191,6 +220,84 @@ export class ProcessExplorer implements TreeDataProvider<Node> {
       return;
     }
     await this.live.run(code);
+  }
+
+  private switchHover(): void {
+    const on = insight().editorTableHover;
+    if (on && this.hoverProvider === undefined) {
+      // VS Code shows this hover beside the language server's.
+      this.hoverProvider = languages.registerHoverProvider({ language: "q" }, { provideHover: (d, p) => this.hover(d, p) });
+    } else if (!on && this.hoverProvider !== undefined) {
+      this.hoverProvider.dispose();
+      this.hoverProvider = undefined;
+    }
+  }
+
+  /// A table's details, asked for once per refresh. Undefined when not
+  /// connected to the process the explorer read, or it stayed busy.
+  private tableDetails(name: string, wait: number): Promise<TableInfo | undefined> {
+    const process = this.live.activeLabel();
+    const key = `${process}\0${name}`;
+    const kept = this.details.get(key);
+    if (kept !== undefined) {
+      return kept;
+    }
+    const asked = borrowWhenFree(
+      this.live,
+      async (connection) => readTableInfo(await connection.call(TABLE_INFO, name, HOVER_COLUMNS)),
+      wait,
+    ).then(
+      (got) => got?.value,
+      () => undefined,
+    );
+    this.details.set(key, asked);
+    // Busy is not kept: the next hover asks again.
+    void asked.then((info) => info === undefined && this.details.get(key) === asked && this.details.delete(key));
+    return asked;
+  }
+
+  /// A table row's tooltip: its details, read when first hovered.
+  async resolveTreeItem(item: TreeItem, node: Node): Promise<TreeItem> {
+    const process = this.live.activeLabel();
+    if (node.kind !== "table" || node.name === undefined || process === undefined || !insight().tableHover) {
+      return item;
+    }
+    const info = await this.tableDetails(node.name, 3000);
+    if (info !== undefined) {
+      item.tooltip = new MarkdownString(tableMarkdown(node.name, process, info));
+    }
+    return item;
+  }
+
+  /// A hover on a table's name in a q editor, while connected to the process
+  /// the explorer read.
+  private async hover(document: TextDocument, position: Position): Promise<Hover | undefined> {
+    const kept = this.kept;
+    if (kept === undefined || this.live.activeLabel() !== kept.process || !insight().editorTableHover) {
+      return undefined;
+    }
+    const word = nameAt(document.lineAt(position.line).text, position.character);
+    const entry = word === undefined ? undefined : tableNamed(kept.gathered, word);
+    if (word === undefined || entry === undefined) {
+      return undefined;
+    }
+    const info = await this.tableDetails(word, 1000);
+    // Busy: what the explorer already knows, its rows and columns.
+    return new Hover(
+      new MarkdownString(
+        info !== undefined
+          ? tableMarkdown(word, kept.process, info, EDITOR_COLUMNS)
+          : tableMarkdown(word, kept.process, {
+              kind: entry.partitioned ? "partitioned" : entry.keys.length > 0 ? "keyed" : "table",
+              rows: entry.count,
+              bytes: null,
+              partitions: null,
+              keys: entry.keys,
+              ncols: entry.allCols ?? entry.cols.length,
+              columns: entry.cols.map((c) => ({ name: c, type: "", fkey: "", attr: "" })),
+            }, EDITOR_COLUMNS),
+      ),
+    );
   }
 
   getChildren(node?: Node): Node[] {

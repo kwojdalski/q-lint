@@ -75,12 +75,32 @@ to a process you add and connect to, and sends only the code you run.
   including in a file another loads under a context. A name several
   scripts assign goes first to the current file's own assignment, then to
   those in files it loads; the outline groups names by namespace; and Go to
-  Definition on the path in `\l path/file.q` opens that file. What only
+  Definition on the path in `\l path/file.q` opens that file - and the path
+  is a link too, Ctrl/Cmd+click to open it, in `\l`, `system "l ..."` and a
+  file symbol `` `:lib/x.q `` alike (`q-lint.documentLinks.enable`). A path
+  that reaches no file, or a directory, is no link. What only
   running the code would tell - a name built at run time, `value "..."`,
   another process - is not found.
-- **Rename** for a lambda's parameters and locals. A global is refused with
-  the reason: it can be reached from a string, a symbol or another process,
-  and a rename that misses one of those breaks the program quietly.
+- **Rename Symbol** (F2) for a lambda's parameters and locals, and for a
+  global across the workspace: every place Find All References lists, under
+  the `\d` context each file is in, is rewritten - `add` under `\d .lib` and
+  `.lib.add` elsewhere both become `plus`. Only the last part of a name is
+  renamed (type `plus` or `.lib.plus`, not a name in another namespace).
+  It is refused, with the reason, for a name q reserves or one in a
+  one-letter namespace (`.z.pg`, `.q.f`), a name no workspace file assigns,
+  a new name that is not one q takes, is already assigned, or is a
+  parameter or local of a lambda that reads the global bare. A name reached
+  through a string (`value "f[]"`), a bare symbol (`` `f ``) or another
+  process is not seen and keeps its old name: preview the rename
+  (Shift+Enter) when that matters. `q-lint.rename.enable` turns renaming off
+  and leaves the rest of navigation on.
+- **Generate qDoc**, a refactoring in the lightbulb and **Refactor...**
+  menu inside a top-level function: it writes `/ @param` for each
+  parameter - the signature's, or the `x`, `y` and `z` the body reads - and
+  `/ @return` directly above the definition, below any description already
+  there, for the descriptions to be typed after. Not offered when the
+  comment above has an `@param` or `@return` already
+  (`q-lint.generateQdoc.enable`).
 - **Hover** on a name the workspace defines shows its parameters, the
   comment written above its definition and the file it is in; on a word of
   q itself - `ssr`, `select`, `.z.p`, `.Q.s`, `.h.hy`, or a glyph such as
@@ -91,6 +111,15 @@ to a process you add and connect to, and sends only the code you run.
   of one - showing the slots it leaves open - or a q function called with
   brackets. Past the last parameter none is marked, and it says the call has
   too many arguments.
+- **Inlay hints** for parameter names: in `rate[px;10 20]`, `qty:` is drawn
+  before `10 20` when the workspace defines `rate:{[px;qty] ...}`, whether
+  the call is qualified or bare under the `\d` in force. Only for a bracketed
+  call to a function whose every definition declares the same signature -
+  not `x`, `y` and `z`, which say nothing, nor two definitions that
+  disagree. Not at an empty slot of a projection, past the last parameter,
+  or where the argument is already the parameter's name.
+  `q-lint.inlayHints.enable` turns them off, and VS Code's
+  `editor.inlayHints.enabled` can show them only while a key is held.
 - **Completion**, when turned on with `q-lint.completion.enable`: a lambda's
   parameters and locals first, then the names the workspace defines, spelled
   as the `\d` context in force reads them, then q's own words. It does not
@@ -153,6 +182,20 @@ and clicking it switches. The commands:
   An import replaces processes of the same label, adds the rest, and says
   which entries it skipped. A process it moves to another host, port or
   user forgets its stored password, so that is never sent to the new one.
+- **Set Connect Script**, on a process row: q code, or a q file, run on
+  the process at every connect - the first, a reconnect after an abort, and
+  an automatic reconnect - before any query is sent, as a query runs it
+  (unwrapped when `q-lint.query.unwrapped` is on). Use it to load helpers,
+  set `\d`, or open handles a session needs. A file chosen inside the
+  workspace folder is kept relative to it, and is read again at each
+  connect; a leading `~` is your home directory. A script that fails, or a
+  file that cannot be read, is said in a warning and the output, and the
+  connection is kept. On a process tagged `prod` it asks first. It is kept
+  in the process list, and exported with it as `init` (code) or `initFile`;
+  an import that brings a script new to a process asks whether to keep it,
+  and a discovery server's list never brings one.
+  `q-lint.connection.connectScript.enable` off runs no script and hides
+  the command; the scripts stay in the list.
 - **Insert Active Connection Label**, at the cursor.
 - **Copy Label for Agent Query**, on a process row: the label an agent's
   query names the process by (`server/label` for a discovered one).
@@ -210,6 +253,16 @@ changed.
   next occurrence" and Run and Debug view, and a `ctrl+alt` key is AltGr on
   Windows, which types `ę`, `€` or `@` on many layouts.
 
+- **Run** and **Run test**, code lenses: **Run** above each function a
+  statement at column 0 defines sends that statement, continuation lines
+  and all; **Run test**, above a function named `test_*`, sends it and then
+  calls it with no argument. A definition under `\d .ns` is sent between
+  `\d .ns` and `\d .`, so its body reads names as it does in the file, and
+  a test there is called by its full name, `.ns.test_x[]` - which leaves
+  the process at the root context afterwards. Either goes to the process
+  the file is bound to, as the commands above do, and lands in the history.
+  `q-lint.codeLens.enable` turns them off.
+
 The code is cut into statements by q's own script rules: a line starting
 with a space or tab continues the one above, `/` lines and block comments
 are skipped, as is a first line starting `#!`, and a `\` line is a system
@@ -232,9 +285,65 @@ running the query, and the new connection is made once it is free, however
 long that takes. **Disconnect**, or connecting to another process, stops
 it waiting.
 
+**Placeholders.** A query from the editor (line, selection, block or entire
+file) that holds `{{name}}` asks for each name's value in an input box, then
+sends the code with the values put in place, as written - so a symbol is
+typed `` `AAPL `` and a date `2024.01.01`:
+
+```q
+select from trade where date={{day}}, sym={{sym}}
+```
+
+Each box starts from the value you gave that name last, remembered across
+sessions; Escape runs nothing. The history keeps the code as it was sent,
+values in place. A placeholder is a q name (`day`, `.ns.v`, `start_date`)
+found outside strings and comments; `{{x}}`, `{{y}}` and `{{z}}` are q
+lambdas and never asked for. A lambda that reads a global as `{{a}}` is
+taken for one too: `q-lint.query.placeholders.enable` turns them off.
+
+**A long query.** While a query runs, the status bar spins and counts its
+time (`q: rdb 1m 05s`). When one that ran at least `q-lint.query.notifyAfter`
+seconds (10 by default; `0` never) ends while the VS Code window is not
+focused, a notification says so: finished, failed with q's error, or timed
+out. One you aborted is not announced. `q-lint.query.progress.enable` off
+turns both off: the status bar only spins.
+
+**Connection health.** Both are off by default, as each acts without being
+asked. With `q-lint.connection.heartbeat.enable` on, q-lint sends `::` as a
+plain string on the active connection every
+`q-lint.connection.heartbeatInterval` seconds (30 by default), and the status
+bar shows its round trip: `q: rdb 3 ms`. It defines nothing on the process,
+and a q error back (a gateway that refuses the string) still counts as an
+answer. It is skipped while a query or the Process Explorer's read is out,
+and a query sent while one is out waits for it; one unanswered for 5 seconds
+shows as `no answer 12s` - the process is busy, or gone. A process that logs
+its clients sees every heartbeat. With
+`q-lint.connection.autoReconnect.enable` on, a connection the process or the
+network drops is reconnected: the status bar shows `reconnecting to rdb (2
+of 5)`, the tries wait 1, 2, 4... seconds (at most 30) up to
+`q-lint.connection.reconnectAttempts`, failures are quiet until the last,
+and the connect script runs again. **Disconnect**, connecting elsewhere or
+turning the setting off stops it; a connection you closed, or one aborted,
+is never reconnected this way.
+
 **Query History** lists each query with its process, time, duration and
 outcome; the buttons on a row run it again on the active connection and
 **Copy Query** copies its code, and **Clear Query History** empties it.
+
+**Filter Query History**, on the view's title bar, narrows it by process,
+outcome (succeeded; failed, which is any of error, timed out and aborted; or
+each of those) and text found in the code or q's error, ignoring case. It
+asks for each in turn, starting from the current filter, and takes
+`{"process", "outcome", "text"}` as an argument for a keybinding. The view's
+title says what it is filtered by, and **Clear Query History Filter**, in
+place of the filter button, shows every query again. The filter lasts for
+the window. **Export Query History** writes the queries the view shows
+(through the filter, if one is set) to a file: a `.q` file as a q script,
+oldest first, each query after a `/` comment naming its process, time,
+duration, outcome and error; any other name as JSON,
+`{"queries": [{"process", "at", "millis", "outcome", "error"?, "code"}]}`,
+newest first. `q-lint.queryHistory.search.enable` off hides the filter and
+export, and clears a filter set.
 
 **Query controls.**
 - **Toggle Unlimited Query**: while on, the console text is not cut at
@@ -345,6 +454,38 @@ where a result goes; it sets `q-lint.query.mode`, and takes `console`,
   chosen in the panel; the panel's
   **Grid** and **Chart** buttons switch between the two for one result.
 
+The panel has two more views of the same rows. **Stats** (or **Show Column
+Statistics**) gives each column's count, nulls, distinct values, min, max
+and mean, over the rows shown, so the grid's filters apply: min and max in
+q's own order, nulls left out, and the mean of a numeric column without its
+nulls or infinities. **Tree** (or **Show Result as Tree**), for a dictionary
+or a general list, shows the value as a tree that opens a level at a time:
+a dictionary's entries, a list's items, and a simple list's atoms. The
+process sends at most 2,000 nodes of it, shared out level by level, and a
+node says how many of its items were not sent.
+
+**Heatmap** in the grid (or **Toggle Result Heatmap**, which sets
+`q-lint.query.gridHeatmap`) colours the numeric columns by value in the
+theme's chart colours: blue from the least to the greatest, or, for a column
+either side of zero, blue above it and red below, stronger further out. A
+key column is left as it is.
+
+The panel keeps the last `q-lint.query.resultHistory` results (10) as tabs
+above it; choosing one shows it again with its own view, sort and filters,
+and **Show Result from History** picks one from a list. When a query has run
+before in this window, **Compare** (or **Compare Result with Previous Run**)
+marks what changed since: a changed cell is shaded and underlined, its
+tooltip says what it was, a new row or column is shaded, and the rows that
+went are listed under the grid. Rows are matched by their key when both
+results are keyed by the same columns, and by their place otherwise; cells
+are compared by the text the grid shows, so `q-lint.query.gridDecimals`
+applies. The previous run can be on another process, which the bar names.
+
+Each of these - the history, Compare, Stats, the heatmap and the tree - has
+its own `q-lint.results.<feature>.enable` setting, on by default. Turned
+off, its button and command are gone (the command, run anyway, says which
+setting turns it back on), and a change applies at once, without a reload.
+
 The panel opens beside the editor. With `q-lint.query.resultsLocation` set
 to `panel`, results go instead to the **q Results** view in the bottom
 panel, beside the terminal and the output, and the editor keeps the focus.
@@ -404,6 +545,63 @@ on a table or a variable, runs its first `q-lint.processExplorer.previewLimit`
 rows, or the variable, as a query. The explorer shares the query connection:
 while a query runs it waits and refreshes after, and a query sent while it
 reads waits for it.
+
+**Table details.** Hovering a table in the Process Explorer shows its
+columns with their types, attributes (`s`orted, `u`nique, `p`arted,
+`g`rouped) and foreign keys, from `meta`, its rows, and for a table in
+memory the bytes it takes (`-22!`). A partitioned table is counted by
+`.Q.cn` and its `meta` read from the last partition; neither it nor a
+splayed table is loaded or measured, and the hover says so. With
+`q-lint.processExplorer.editorTableHover.enable` on (it is off by default,
+since it asks the process whenever the mouse rests on a name), hovering a
+table's name in a q editor shows the same, shorter, beside the language
+server's hover. Details are read once per refresh of the explorer.
+
+**Function source.** **Open Function Source**, on a function in the Process
+Explorer or the name under the cursor in a q editor, shows the function as
+the process has it (`last value f`) in a read-only editor, headed by the
+namespace it was defined in; a projection or composition is shown as q
+prints it. **Edit and Redefine**, in that editor's title bar, copies a
+lambda into a new q editor, and **Redefine on Process** in its title bar
+sends the edit back. It asks first, in a modal that warns when the process
+is tagged `prod`, `prd` or `production`; it goes only to the process the
+function came from, and is refused if the function there has changed since
+it was opened. The new text is parsed in the namespace the function was
+defined in, so its globals mean what they meant, and the process's own
+`\d` is left as it was. Nothing is written to a file: a restart of the
+process brings back the old definition.
+
+**Find Callers in Process**, on a function in the explorer or the name
+under the cursor, lists the loaded functions that call it, read from what q
+parsed rather than from text: each lambda's globals, resolved in its
+namespace (a lambda defined in `.ns` that calls `f` calls `.ns.f`), and
+those of the lambdas nested in it. A local, a parameter, a string or a
+comment that spells the name is not a call. A lambda whose text holds the
+name as a symbol (`` value(`f;x) ``) is listed as naming it. Picking one
+opens its source at the call. Namespaces in
+`q-lint.processExplorer.excludedNamespaces` are not read.
+
+**Process Monitor** shows the connected process's memory (`.Q.w[]`), its
+open handles (`.z.W`) with the bytes queued on each and which is this
+connection, its timer (`\t`, `.z.ts`, and TorQ's `.timer.timer` when there
+is one), its `\` settings and its version, pid and host. It reads them in
+one call when shown, on connect and on **Refresh Process Monitor**, and
+every `q-lint.processMonitor.refreshInterval` seconds while shown, if set.
+It never reads the command line (`.z.x`), which can hold a password.
+
+**HDB Browser**, for a process that has loaded a partitioned database,
+shows its partition field, root, segments (`par.txt`) and sym file size;
+its partitions, newest first, with the rows of each table in each; and its
+tables with their rows in all, splayed ones too. No data is read: the
+partitions are `.Q.pv`, the rows `.Q.cn`, which reads each partition's count
+from a column file and caches it in `.Q.pn` as the explorer does, and the
+sym file's size `hcount`. The newest 1000 partitions are listed.
+
+The Monitor, the HDB Browser, Open Function Source and Find Callers share
+the query connection as the explorer does: they never interrupt a query,
+and wait a moment for one to finish. Each of these features has its own
+`enable` setting (below); turned off, its commands are hidden and refuse,
+its view or hover is gone, and it sends nothing.
 
 **Help and Feedback** links to this README, the
 [rule reference](https://github.com/kwojdalski/q-lint/blob/master/docs/rules.md),
@@ -479,6 +677,20 @@ A cell's first lines can choose how its result is shown:
   `/ @title <text>` puts a title above it and `/ @height <px>` makes it
   that many pixels tall (100 to 2000; 300 otherwise).
 
+Two more directives say where a cell runs and what it is for:
+- `/ @process <label>`: the cell runs on that process - a saved one, or a
+  discovered one as `server/label` - connecting to it first as **Connect**
+  does, with its password from VS Code's secret storage or asked for. The
+  connection stays there, so the cells after it run there too, as they do
+  after a file bound to a process switches it. Connecting to a process
+  tagged `prod`, `prd` or `production` asks first; one a query is still
+  running on is not left. A label that names no process fails the cell with
+  the labels there are.
+- `/ @parameters`: the cell holds the notebook's parameters, one
+  `name:value` a line (papermill's convention). It runs as any cell does;
+  **Run Notebook with Parameters** puts the values it is given in a cell
+  right after it.
+
 **Set Notebook Row Limit**, on the notebook's toolbar, picks the row limit
 - 10, 100, 1,000, 10,000, 100,000 or all - and whether it takes the first
 rows or the last, and sets the two settings. The process cuts the table, so
@@ -494,6 +706,90 @@ does know. A qDoc line (`/ @param`, `/ @return`, `/ @eg` and the rest) is
 documentation, not a directive: it ends the directives, so a cell that
 opens with a documented function runs. An error shows q's message and, on kdb+
 3.5 and later, its backtrace.
+
+### Live values in Markdown
+
+`{{q: expr}}` in a Markdown cell shows the value of `expr` on the process:
+``Total {{q: sum t`px}} over {{q: count t}} trades``. The values are read
+when the code cell above the Markdown runs - for Markdown above every code
+cell, when the first one runs - each on its own, so one that fails shows
+its error and the rest still show. A string or a symbol shows as its
+characters, anything else as `-3!` writes it, cut to 200 characters. They
+run only when you run a cell, never on their own; nothing is defined on the
+process but what an expression defines. The cell's source is not changed:
+the values are kept in its metadata, saved with the notebook, and shown
+escaped in place of their expressions. One not read yet shows as written,
+and in a code span or a code block `{{q: ...}}` is text.
+`q-lint.notebook.liveValues.enable` turns them off.
+
+### Notebook Variables
+
+The **Notebook Variables** view, in the q-lint sidebar while a q notebook
+is the active editor, lists the globals in the root namespace of the
+process the notebook's cells last ran on: each one's name, its type, its
+count (a table's rows) and its size, the bytes `-22!` says it takes
+serialized (none for a function or a partitioned table, which would read
+every partition). It is read with one lambda that defines nothing, after a
+cell runs and on **Refresh**, only while the view is open, and never in
+front of a query. It lists what the cells defined and anything else defined
+there; up to 1,000 names.
+
+### Running a notebook with parameters
+
+**Run Notebook with Parameters**, on the notebook's toolbar and a `.qnb`
+file's context menu, runs the whole notebook without its editor: it asks
+for each parameter of the `/ @parameters` cell, offering the notebook's
+value, and writes the run - every cell's output, Markdown's live values -
+to a new file: a `.qnb`, or an HTML page or a Jupyter notebook by the
+name's extension. The given values go in a cell right after the parameters
+cell, marked so a later run replaces it. Cells are numbered from 1; the run
+stops at the first cell that fails and clears what the cells after it
+showed, so nothing stale passes for this run's. Cells run on the active
+connection, and `/ @process` cells as they do in the notebook.
+
+The same run works from a shell, with Node.js, as the script the extension
+ships in `out/qnbrun.js` (in an installed extension,
+`~/.vscode/extensions/wojdalski.q-lint-<version>/out/qnbrun.js`):
+
+```sh
+node out/qnbrun.js report.qnb --process localhost:5001 \
+  -p date 2024.01.02 -p syms '`EURUSD`GBPUSD' -o report-0102.html
+```
+
+A value is q text, so a string is `-p name '"text"'`. `--process` is
+`host:port`, or a label in `--processes FILE`, a list as **Export Process
+List** writes it, which also names the processes `/ @process` cells ask
+for. A password is never an argument: it is read from `QLINT_Q_PASSWORD`,
+or `QLINT_Q_PASSWORD_<LABEL>` for a listed process (its label in capitals,
+anything but a letter or digit as `_`), with `--user` for `host:port`. A
+listed process tagged `prod`, `prd` or `production` is refused unless
+`--allow-production` is given. `--row-limit`, `--rows-from` and
+`--console-size` stand in for the settings. It exits 0 when every cell ran,
+1 when one failed (the file is written, run up to it), and 2 for a usage
+error or a file it cannot read or write; `--help` says the rest. The script
+does not read VS Code's settings.
+
+### Export and import
+
+**Export Notebook as HTML** writes one self-contained page: no script, its
+style inline, a policy that fetches nothing, light and dark from the
+system. Code, outputs and Markdown are escaped; Markdown is rendered
+(headings, paragraphs, lists, quotes, code, emphasis, and links to http,
+https and mailto only) with its live values. An output's `text/plain` view
+is shown, never its `text/html`, which a notebook from elsewhere could fill
+with script; a chart shows as its table; an image is kept.
+
+**Export Notebook as Jupyter Notebook** writes nbformat 4.4, with q's
+kernel spec: a q cell is a code cell, a cell in another language says so as
+VS Code's Jupyter support does (`metadata.vscode.languageId`), outputs keep
+their types, an error is Jupyter's error output.
+
+**Import Jupyter Notebook as q Notebook**, on a `.ipynb` file's context
+menu, writes it as a `.qnb` and opens it. A code cell is q when the cell or
+the notebook says q - or says nothing - and keeps its language otherwise,
+so a Python notebook's cells stay Python; a `%%q` cell (PyKX's magic) is q,
+without the magic line. Markdown, outputs and run numbers are kept; a raw
+cell is a code cell in `raw`.
 
 **Export Notebook as q Script**, on the notebook's toolbar and a `.qnb`
 file's context menu, writes the code cells as a `.q` script q can load,
@@ -567,11 +863,16 @@ q-pro column names the setting of [q-pro](https://marketplace.visualstudio.com/i
 | `q-lint.fixes.unsafe` | `true` | Offer the editor-only Quick Fixes (`--unsafe-fixes`) as well as those `--fix` applies. | - |
 | `q-lint.format.enable` | `true` | Register **Format Document** (the safe fixes). | - |
 | `q-lint.semanticTokens.enable` | `true` | Colour calls and parameter reads on top of the grammar. | - |
-| `q-lint.navigation.enable` | `true` | Offer the outline, workspace symbols, definitions, references, highlights and local rename. Off when another q extension already navigates. | - |
+| `q-lint.navigation.enable` | `true` | Offer the outline, workspace symbols, definitions, references, highlights and rename. Off when another q extension already navigates. | - |
+| `q-lint.rename.enable` | `true` | Offer **Rename Symbol** for a local, and for a global across the workspace. Needs `q-lint.navigation.enable`. | - |
 | `q-lint.help.enable` | `true` | Show hovers and signature help, from the source and the built-in catalogue of q's words. | - |
 | `q-lint.completion.enable` | `false` | Complete locals, workspace names and q's words. Off by default: an editor told a server completes stops offering the words already in the file. | - |
 | `q-lint.callHierarchy.enable` | `true` | Offer the call hierarchy of a global function. | - |
 | `q-lint.graph.enable` | `true` | Offer the **q Dependencies** view and **q-lint: List Affected Tests**. Off: the view is hidden and the server answers neither. | - |
+| `q-lint.inlayHints.enable` | `true` | Show parameter names at the arguments of a call to a workspace function. | - |
+| `q-lint.codeLens.enable` | `true` | Show **Run** above each top-level function definition and **Run test** above a `test_*` one. | - |
+| `q-lint.documentLinks.enable` | `true` | Make each `\l`, `system "l ..."` and `` `:file.q `` path a link to the file it loads. | - |
+| `q-lint.generateQdoc.enable` | `true` | Offer **Generate qDoc** above a top-level function. | - |
 | `q-lint.workspaceIndex.enable` | `true` | Read every workspace `.q` file at startup for the names it defines, up to 20,000 files or 500,000 directory entries. Off: only open files. | - |
 | `q-lint.workspaceIndex.exclude` | `[]` | Globs, relative to the workspace folder, the index does not read: `["vendor/**"]`. | `q-lang-server.sourceFiles.ignoreGlob` |
 | `q-lint.trace.server` | `off` | Log client-server traffic: `off`, `messages`, `verbose`. | `q-lang-server.trace.server` |
@@ -621,9 +922,39 @@ nothing.
 | `q-lint.query.resultsLocation` | `"editor"` | Where a grid or chart opens: `editor`, beside it, or `panel`, the **q Results** view in the bottom panel. | - |
 | `q-lint.query.unwrapped` | `false` | Send code as plain strings, for a gateway that refuses a lambda, and format the result in q-lint. **Toggle Unwrapped Query** changes it. | - |
 | `q-lint.query.timeout` | `0` | Seconds a query may run before it is aborted, as Abort does; `0` none. | - |
+| `q-lint.query.resultHistory` | `10` | Results the result panel keeps as tabs, 1 to 50. | - |
+| `q-lint.query.gridHeatmap` | `false` | Colour the grid's numeric columns by value. **Toggle Result Heatmap** changes it. | - |
+| `q-lint.results.history.enable` | `true` | Keep results as tabs, and offer **Show Result from History**. Off, the panel keeps only the result on show. | - |
+| `q-lint.results.diff.enable` | `true` | Offer **Compare** and **Compare Result with Previous Run**. Off, no previous run is kept. | - |
+| `q-lint.results.statistics.enable` | `true` | Offer the **Stats** view and **Show Column Statistics**. | - |
+| `q-lint.results.heatmap.enable` | `true` | Offer the **Heatmap** button and **Toggle Result Heatmap**. Off, nothing is coloured, whatever `q-lint.query.gridHeatmap` says. | - |
+| `q-lint.results.tree.enable` | `true` | Offer the **Tree** view and **Show Result as Tree**. Off, the process is not asked for the tree. | - |
+| `q-lint.query.progress.enable` | `true` | Count a running query's time in the status bar, and notify a long one's end. | - |
+| `q-lint.query.notifyAfter` | `10` | Seconds a query must run for its end to be notified while the window is not focused; `0` never. | - |
+| `q-lint.query.placeholders.enable` | `true` | Ask for a value for each `{{name}}` in the code a query sends, and put it in place. | - |
 | `q-lint.processExplorer.excludedNamespaces` | `["q","Q","h","j","o","s"]` | Namespaces the Process Explorer and live completion leave out (`q`, or a nested one as `ns.sub`), with those nested in them. | - |
 | `q-lint.processExplorer.previewLimit` | `5` | Rows of a table Preview shows. | - |
 | `q-lint.processExplorer.autoRefresh` | `false` | Read the process again after each query. | - |
+| `q-lint.queryHistory.search.enable` | `true` | **Filter Query History** and **Export Query History**. | - |
+| `q-lint.processExplorer.functionSource.enable` | `true` | Open Function Source, Edit and Redefine, Redefine on Process. | - |
+| `q-lint.processExplorer.findCallers.enable` | `true` | Find Callers in Process. | - |
+| `q-lint.processExplorer.tableHover.enable` | `true` | A table's details in its Process Explorer tooltip. | - |
+| `q-lint.processExplorer.editorTableHover.enable` | `false` | A table's details on hovering its name in a q editor; asks the process. | - |
+| `q-lint.processMonitor.enable` | `true` | The Process Monitor view. | - |
+| `q-lint.processMonitor.refreshInterval` | `0` | Seconds between the Monitor's reads while it is shown; `0` none. | - |
+| `q-lint.hdbBrowser.enable` | `true` | The HDB Browser view. | - |
+
+### Connection settings
+
+Each applies at once, without a reload. None reaches the language server.
+
+| Setting | Default | What it does | q-pro |
+| --- | --- | --- | --- |
+| `q-lint.connection.connectScript.enable` | `true` | Run a process's connect script on every connect; off, none runs and **Set Connect Script** is hidden. | - |
+| `q-lint.connection.heartbeat.enable` | `false` | Send a heartbeat on the active connection and show its round trip in the status bar. | - |
+| `q-lint.connection.heartbeatInterval` | `30` | Seconds between heartbeats. | - |
+| `q-lint.connection.autoReconnect.enable` | `false` | Reconnect a connection the process or the network dropped, with backoff. | - |
+| `q-lint.connection.reconnectAttempts` | `5` | Tries before a reconnect gives up. | - |
 
 ### Terminal settings
 
@@ -643,12 +974,17 @@ reaches the language server.
 
 ### Notebook settings
 
-Read when a cell runs. None reaches the language server.
+Read when a cell runs or a command is used, so a change needs no reload. None reaches the language server.
 
 | Setting | Default | What it does | q-pro |
 | --- | --- | --- | --- |
 | `q-lint.notebook.rowLimit` | `1000` | The most rows of a table a `@grid` or `@chart` cell is sent; `0`: every row. | - |
 | `q-lint.notebook.rowLimitFrom` | `"first"` | Which rows of a larger table a cell shows: `first` or `last`. | - |
+| `q-lint.notebook.variables.enable` | `true` | The **Notebook Variables** view. It reads only after a cell runs or on Refresh, while it is open; off, it is removed and reads nothing. | - |
+| `q-lint.notebook.parameters.enable` | `true` | **Run Notebook with Parameters** and `/ @parameters`. Off, the command is hidden and refuses, and a `/ @parameters` cell is not run. | - |
+| `q-lint.notebook.export.enable` | `true` | **Export Notebook as HTML**, **as Jupyter Notebook** and **Import Jupyter Notebook**. Off, they are hidden and refuse. | - |
+| `q-lint.notebook.liveValues.enable` | `true` | Read `{{q: expr}}` in Markdown cells when the code cell above runs; never on their own. Off, nothing is sent. | - |
+| `q-lint.notebook.processDirective.enable` | `true` | `/ @process <label>`. Off, a cell with it is not run and nothing is sent. | - |
 
 ### Agent settings
 

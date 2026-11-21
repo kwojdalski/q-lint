@@ -290,16 +290,14 @@ pub fn name_at(code: &str, raw: &str, offset: usize) -> Option<Name> {
 
 /// Why the local at `offset` cannot be renamed, or the local when it can.
 ///
-/// Only a parameter or a local is renamed at all. A global is reached by
-/// name from places no reading finds - a string handed to `value`, a symbol
-/// to `set`, another process over IPC - so a rename that looked complete
-/// would not be.
+/// Only a parameter or a local is renamed in one file. A global is named
+/// from other files too, so the language server renames one, over every
+/// file it indexes (`lsp::navigate`).
 fn renamable(code: &str, raw: &str, scopes: &[Scope], offset: usize) -> Result<Local, String> {
     let Some((s, name)) = local_at(code, scopes, offset) else {
         return Err(
-            "q-lint renames a lambda's parameters and locals only: a global can be reached \
-             by name from a string, a symbol or another process, which reading the source \
-             does not find"
+            "q-lint renames a lambda's parameters and locals within one file only: a global \
+             is renamed across the workspace, by the language server"
                 .into(),
         );
     };
@@ -373,4 +371,14 @@ pub fn rename(
         return Err(format!("this lambda already uses the name `{new}`"));
     }
     Ok(local.places.iter().map(|p| (p.at, p.len)).collect())
+}
+
+/// The first of `offsets` inside a lambda with a parameter or local called
+/// `name`, where a global written `name` would read the local instead.
+pub fn shadowing(code: &str, raw: &str, name: &str, offsets: &[usize]) -> Option<usize> {
+    let (scopes, _) = scopes(code, raw);
+    offsets
+        .iter()
+        .copied()
+        .find(|&at| scope_at(&scopes, at).is_some_and(|s| scopes[s].locals.contains(name)))
 }

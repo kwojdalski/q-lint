@@ -7,7 +7,7 @@
 //! open bracket, and a completion is a name the source already holds: all of
 //! it read from the text, and none of it from running the script.
 use super::{Scope, scope_at, scopes};
-use crate::{Applied, Call, Completing, boundary, ends_in_name, matching, signature};
+use crate::{Applied, BracketCall, Call, Completing, boundary, ends_in_name, matching, signature};
 
 const NAME: &str = r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*";
 /// How many lines of comment above a definition are its description. A
@@ -351,4 +351,41 @@ pub fn completing(
         locals,
         namespace,
     })
+}
+
+/// Every call written as a name and its brackets, `f[a;b]` or `f [a;b]`,
+/// with where each argument starts and how long it is, its blanks trimmed:
+/// an empty slot, as in a projection, has no length. Nothing in a string, a
+/// comment or a system command, which the code view blanks.
+pub fn bracket_calls(code: &str) -> Vec<BracketCall> {
+    let mut out = vec![];
+    for m in re!(NAME).find_iter(code) {
+        if !boundary(code, m.start()) {
+            continue;
+        }
+        let rest = &code[m.end()..];
+        let open = m.end() + (rest.len() - rest.trim_start_matches([' ', '\t']).len());
+        if code.as_bytes().get(open) != Some(&b'[') {
+            continue;
+        }
+        let Some(close) = matching(code, open, b'[', b']') else {
+            continue;
+        };
+        let inside = &code[open + 1..close - 1];
+        let arguments = crate::slots(inside)
+            .into_iter()
+            .map(|slot| {
+                let start = slot.as_ptr() as usize - code.as_ptr() as usize;
+                let trimmed = slot.trim_start();
+                let lead = slot.len() - trimmed.len();
+                (start + lead, trimmed.trim_end().len())
+            })
+            .collect();
+        out.push(BracketCall {
+            at: m.start(),
+            len: m.len(),
+            arguments,
+        });
+    }
+    out
 }

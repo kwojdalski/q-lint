@@ -9,6 +9,7 @@
 // file is knowledge those editors would have to reimplement.
 import {
   commands,
+  Uri,
   workspace,
   window,
   type ExtensionContext,
@@ -18,10 +19,16 @@ import { LINTED, launch, needsRestart } from "./settings";
 import { Live } from "./live";
 import { registerAgentTool } from "./agenttool";
 import { registerOnboarding } from "./onboardingview";
-import { registerNotebooks, type RenderedChart } from "./notebook";
+import { registerNotebooks, type RenderedChart, type RenderedLiveValue } from "./notebook";
+import { runWithParameters } from "./notebookrun";
+import { registerNotebookVariables } from "./notebookvarsview";
+import { NOTEBOOK } from "./qnb";
 import { ProcessExplorer } from "./explorerview";
 import { Relations } from "./relate";
 import { Serial } from "./serial";
+import { FunctionSources } from "./funcsourceview";
+import { registerInfoViews } from "./infoview";
+import type { InfoNode } from "./monitor";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -35,6 +42,8 @@ import {
 } from "vscode-languageclient/node";
 
 let client: LanguageClient | undefined;
+/// The command a code lens of the server runs (`src/lsp/annotate.rs`).
+export const RUN_DEFINITION = "q-lint.runDefinition";
 /// How long a server has to answer `initialize`. qlinter answers it at once
 /// - the workspace is indexed after - so one still silent by then is hung,
 /// and every restart would otherwise queue behind it for good.
@@ -78,7 +87,18 @@ function bundledServer(context: ExtensionContext): string | undefined {
 
 export async function activate(
   context: ExtensionContext,
-): Promise<ReturnType<Live["api"]> & { explorer: ProcessExplorer["rows"]; notebookCharts: () => RenderedChart[]; agentConfirmation: ReturnType<typeof registerAgentTool> }> {
+): Promise<
+  ReturnType<Live["api"]> & {
+    explorer: ProcessExplorer["rows"];
+    notebookCharts: () => RenderedChart[];
+    agentConfirmation: ReturnType<typeof registerAgentTool>;
+    notebookLiveValues: () => RenderedLiveValue[];
+    notebookVariables: ReturnType<typeof registerNotebookVariables>;
+    processMonitor: () => InfoNode[];
+    hdbBrowser: () => InfoNode[];
+    functionSources: FunctionSources["state"];
+  }
+> {
   // Replacing the binary does not restart the server, and a window reload is
   // a blunt way to pick up a new one. This is the small way.
   context.subscriptions.push(commands.registerCommand("q-lint.restartServer", () => restart(context, true)));
@@ -95,15 +115,47 @@ export async function activate(
   // The q processes, queries and their history: in the editor only, and
   // started before the server so they work when it does not.
   const live = new Live(context);
+  // The server's Run and Run test lenses hand over the code to send and the
+  // document it is from; it goes as a query from that editor would.
+  context.subscriptions.push(
+    commands.registerCommand(RUN_DEFINITION, (code?: unknown, uri?: unknown) => {
+      // A lens drawn before the setting was turned off can still be clicked.
+      if (workspace.getConfiguration("q-lint").get<unknown>("codeLens.enable", true) === false) {
+        void window.showInformationMessage(
+          "q-lint: the Run code lenses are turned off (q-lint.codeLens.enable); turn the setting on to run a definition from its lens.",
+        );
+        return undefined;
+      }
+      return typeof code === "string" && typeof uri === "string" ? live.queryCode(code, Uri.parse(uri)) : undefined;
+    }),
+  );
   const agentConfirmation = registerAgentTool(context, live);
   const notebook = registerNotebooks(context, live);
+  const notebookVariables = registerNotebookVariables(context, live, notebook.processOf, notebook.onDidRun);
+  context.subscriptions.push(
+    commands.registerCommand(NOTEBOOK.runWithParameters, (source?: Uri, target?: Uri, overrides?: Record<string, string>) =>
+      runWithParameters(live, source, target, overrides),
+    ),
+  );
   const explorer = new ProcessExplorer(context, live);
+  const sources = new FunctionSources(context, live);
+  const infoViews = registerInfoViews(context, live);
   registerOnboarding(context, () => live.processes());
   relations = new Relations(context, () => client);
   // Not awaited: nothing above needs the server, and a slow or hung one
   // would hold up every command of the extension until it answered.
   void serial.run(() => start(context)).then(() => relations?.serverChanged());
-  return { ...live.api(), explorer: () => explorer.rows(), notebookCharts: () => notebook.charts(), agentConfirmation };
+  return {
+    ...live.api(),
+    explorer: () => explorer.rows(),
+    notebookCharts: () => notebook.charts(),
+    agentConfirmation,
+    notebookLiveValues: () => notebook.liveValues(),
+    notebookVariables,
+    processMonitor: infoViews.monitor,
+    hdbBrowser: infoViews.hdb,
+    functionSources: () => sources.state(),
+  };
 }
 
 /// Stop the server and start it again. `asked`: by Restart Server, which

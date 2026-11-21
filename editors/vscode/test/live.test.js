@@ -24,12 +24,14 @@ const {
   DISCOVERY_COMMANDS,
   QUERY_MODES,
   RESULTS,
+  RESULT_VIEW,
   RESULTS_LOCATIONS,
   ROW_LIMIT_CHOICES,
   ROW_LIMIT_FROM,
   VIEWS,
   readLive,
   readNotebook,
+  readResultView,
   rowLimitLabel,
   rowsArgument,
 } = require("../out/liveconfig.js");
@@ -38,7 +40,14 @@ const relations = require("../out/relations.js");
 const { NOTEBOOK } = require("../out/qnb.js");
 const { needsRestart } = require("../out/settings.js");
 const { AGENT } = require("../out/agent.js");
+const { SOURCE_COMMANDS } = require("../out/funcsource.js");
+const { INFO, readMonitorInterval } = require("../out/monitor.js");
+const { readInsight } = require("../out/insightconfig.js");
 const { CONTROL_COMMANDS, readControls } = require("../out/querycontrols.js");
+const { readProgress } = require("../out/progress.js");
+const { readPlaceholders } = require("../out/placeholders.js");
+const { HISTORY_COMMANDS, readHistorySearch } = require("../out/historyfilter.js");
+const { CONNECT_SCRIPT_COMMANDS } = require("../out/connectscript.js");
 const { ONBOARDING } = require("../out/onboarding.js");
 const { PARAM_CACHE } = require("../out/paramcache.js");
 
@@ -259,17 +268,25 @@ test("package.json declares exactly the commands the extension registers", () =>
   const registered = [
     ...Object.values(COMMANDS),
     ...Object.values(CONTROL_COMMANDS),
+    ...Object.values(HISTORY_COMMANDS),
+    ...Object.values(CONNECT_SCRIPT_COMMANDS),
     ...Object.values(PARAM_CACHE),
     ...Object.values(DISCOVERY_COMMANDS),
     ...Object.values(EXPLORER).filter((id) => id !== EXPLORER.view),
     ...Object.values(relations.COMMANDS),
     NOTEBOOK.exportCommand,
+    ...[NOTEBOOK.exportHtmlCommand, NOTEBOOK.exportIpynbCommand, NOTEBOOK.importIpynbCommand, NOTEBOOK.runWithParameters, NOTEBOOK.refreshVariables],
     RESULTS.exportCsv,
     RESULTS.exportViewCsv,
     RESULTS.setRowLimit,
+    ...Object.values(RESULT_VIEW),
     AGENT.copyLabel,
     ...[ONBOARDING.getStarted, ONBOARDING.openHelpLink, ONBOARDING.editTagColor, ONBOARDING.newNotebook],
     "q-lint.restartServer",
+    "q-lint.runDefinition",
+    ...Object.values(SOURCE_COMMANDS),
+    INFO.refreshMonitor,
+    INFO.refreshHdb,
   ].sort();
   assert.deepStrictEqual(declared, registered);
 });
@@ -279,7 +296,7 @@ test("the views live in their own container, and every menu names a declared com
   assert.strictEqual(container.id, VIEWS.container);
   assert.deepStrictEqual(
     pkg.contributes.views[VIEWS.container].map((v) => v.id),
-    [VIEWS.processes, EXPLORER.view, VIEWS.history, ONBOARDING.helpView],
+    [VIEWS.processes, EXPLORER.view, VIEWS.history, ONBOARDING.helpView, INFO.monitor, INFO.hdb, NOTEBOOK.variablesView],
   );
   const declared = new Set(pkg.contributes.commands.map((c) => c.command));
   for (const [where, items] of Object.entries(pkg.contributes.menus)) {
@@ -357,6 +374,12 @@ test("every query setting is read, with the default package.json declares, and n
   const live = readLive(get);
   const explorer = readExplorer(get);
   const controls = readControls(get);
+  const resultView = readResultView(get);
+  const progress = readProgress(get);
+  const placeholders = readPlaceholders(get);
+  const historySearch = readHistorySearch(get);
+  readMonitorInterval(get);
+  readInsight(get);
   for (const [key, spec] of Object.entries(declared)) {
     const short = key.replace(/^q-lint\./, "");
     assert.ok(read.has(short), `${key} is declared but never read`);
@@ -376,6 +399,23 @@ test("every query setting is read, with the default package.json declares, and n
     resultsLocation: "editor",
   });
   assert.deepStrictEqual(controls, { unwrapped: false, timeout: 0 });
+  assert.deepStrictEqual(resultView, {
+    history: 10,
+    heatmap: false,
+    enable: { history: true, diff: true, statistics: true, heatmap: true, tree: true },
+  });
+  const view = (values) => readResultView((key, fallback) => (key in values ? values[key] : fallback));
+  assert.strictEqual(view({ "query.resultHistory": 0 }).history, 1);
+  assert.strictEqual(view({ "query.resultHistory": 99 }).history, 50);
+  assert.strictEqual(view({ "query.resultHistory": 2.5 }).history, 10);
+  assert.strictEqual(view({ "query.gridHeatmap": "true" }).heatmap, false);
+  // A feature turned off: the history keeps one result, the heatmap colours nothing.
+  assert.strictEqual(view({ "results.history.enable": false, "query.resultHistory": 20 }).history, 1);
+  assert.strictEqual(view({ "results.heatmap.enable": false, "query.gridHeatmap": true }).heatmap, false);
+  assert.strictEqual(view({ "results.tree.enable": false }).enable.tree, false);
+  assert.deepStrictEqual(progress, { enabled: true, notifyAfter: 10 });
+  assert.deepStrictEqual(historySearch, { enabled: true });
+  assert.deepStrictEqual(placeholders, { enabled: true });
   assert.deepStrictEqual(explorer, { excludedNamespaces: ["q", "Q", "h", "j", "o", "s"], previewLimit: 5, autoRefresh: false });
   // A size that is not one falls back to the default.
   assert.deepStrictEqual(readLive((key, fallback) => (key === "output.consoleSize" ? "big" : fallback)).consoleSize, [50, 160]);
