@@ -89,7 +89,7 @@ export function readExplorer(get: <T>(key: string, fallback: T) => T): ExplorerS
       ? excluded.map((n) => String(n).trim().replace(/^\./, "")).filter((n) => n !== "" && !/\s/.test(n))
       : [],
     previewLimit: typeof limit === "number" && Number.isInteger(limit) && limit > 0 ? limit : 5,
-    autoRefresh: get("processExplorer.autoRefresh", false),
+    autoRefresh: get<unknown>("processExplorer.autoRefresh", false) === true,
   };
 }
 
