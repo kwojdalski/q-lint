@@ -79,6 +79,10 @@ const cases = [
   ["a date made a timestamp with p is one literal", "d:2024.01.02p", "2024.01.02p", "constant.numeric.temporal.q"],
   ["and made a datetime with z", "d:2024.01.02z", "2024.01.02z", "constant.numeric.temporal.q"],
   ["an upper-case exponent is part of the number", "n:1.5E3", "1.5E3", "constant.numeric.q"],
+  // A number with p is a timestamp that many hours past 2000: KDB-X and
+  // PeachQ read 1p as 2000.01.01D01:00:00.000000000.
+  ["a number made a timestamp with p is one literal", "t:1p", "1p", "constant.numeric.q"],
+  ["and a fractional one", "t:1.5p", "1.5p", "constant.numeric.q"],
 ];
 
 for (const [description, source, text, scope, which = -1] of cases) {

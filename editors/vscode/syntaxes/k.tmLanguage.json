@@ -104,6 +104,7 @@
       "endCaptures": { "0": { "name": "punctuation.section.function.end.k" } },
       "patterns": [
         { "include": "#block-comment" },
+        { "include": "#end-of-script" },
         { "include": "#comment" },
         { "include": "#string" },
         { "include": "#symbol" },
@@ -141,7 +142,7 @@
         },
         {
           "name": "constant.numeric.k",
-          "match": "(?<![A-Za-z0-9_.`])(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?[hijefcnuvt]?(?![A-Za-z0-9_])"
+          "match": "(?<![A-Za-z0-9_.`])(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?[hijefcnuvtp]?(?![A-Za-z0-9_])"
         }
       ]
     },

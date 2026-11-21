@@ -95,12 +95,20 @@ cases("source.k", [
   ["a parameter", "f:{[a;b] a+b}", "b", "variable.parameter.k", 0],
   ["an implicit x", "f:{x+1}", "x", "variable.language.implicit.k"],
   ["an assignment", "a:1", ":", "keyword.operator.assignment.k"],
+  ["a number made a timestamp with p", "t:1p", "1p", "constant.numeric.k"],
 ]);
 
 test("source.k: a block comment runs from a lone / to a lone \\, and code follows", async () => {
   const src = "a:1\n/\nnot code\n\\\nb:2";
   assert.ok((await innermost("source.k", src, "not code"))[0].startsWith("comment.block.k"));
   assert.deepStrictEqual(await innermost("source.k", src, "b"), ["variable.other.k"]);
+});
+
+test("source.k: a lone backslash ends the script inside an open lambda too", async () => {
+  // The loader reads a lone backslash line by line, whatever is open -
+  // as the q grammar has it.
+  const scopes = await innermost("source.k", "f:{x+\n\\\nb:2", "b:2");
+  assert.ok(scopes[0] && scopes[0].startsWith("comment.block.end-of-script.k"), String(scopes[0]));
 });
 
 test("source.k: a lone backslash outside a block ends the script", async () => {

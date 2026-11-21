@@ -257,8 +257,9 @@ def grammar():
                     {"name": "constant.language.boolean.q", "match": BEFORE + r"[01]+b" + AFTER},
                     {"name": "constant.numeric.byte.q", "match": BEFORE + r"0x[0-9a-fA-F]*" + AFTER},
                     {
+                        "comment": "With p, a number is a timestamp that many hours past 2000: 1p.",
                         "name": "constant.numeric.q",
-                        "match": BEFORE + r"(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?[hijefcnuvt]?" + AFTER,
+                        "match": BEFORE + r"(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?[hijefcnuvtp]?" + AFTER,
                     },
                 ],
             },

@@ -366,8 +366,9 @@
           "match": "(?<![A-Za-z0-9_.`])0x[0-9a-fA-F]*(?![A-Za-z0-9_])"
         },
         {
+          "comment": "With p, a number is a timestamp that many hours past 2000: 1p.",
           "name": "constant.numeric.q",
-          "match": "(?<![A-Za-z0-9_.`])(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?[hijefcnuvt]?(?![A-Za-z0-9_])"
+          "match": "(?<![A-Za-z0-9_.`])(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?[hijefcnuvtp]?(?![A-Za-z0-9_])"
         }
       ]
     },
