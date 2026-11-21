@@ -529,3 +529,20 @@ test("a line or bar chart's tooltip says the cell's value, not Chart.js's three 
     assert.strictEqual(label({ dataset: config.data.datasets[0], dataIndex: 1, raw: 1.0835, formattedValue: "1.084" }), "px: 1.0835");
   }
 });
+
+/// The declarations of result.css's rule for `selector`, as written.
+function cssRule(selector) {
+  const css = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "media", "result.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  const found = [...css.matchAll(/([^{}]+)\{([^}]*)\}/g)].find((m) => m[1].split(",").map((s) => s.trim()).includes(selector));
+  return found ? found[2] : "";
+}
+
+test("the grid's table is laid out by its columns' widths, not by the cells in view", () => {
+  // `table-layout: fixed` is ignored on a table whose width is auto: a
+  // 150-character cell scrolled into view widened its column from 12ch
+  // to 1212 px and squeezed the next to 20 px (headless Chrome), so the
+  // columns jumped as the rows were scrolled.
+  const table = cssRule("table");
+  assert.match(table, /table-layout:\s*fixed/);
+  assert.match(table, /(^|;|\s)width:\s*(?!auto)[^;]+;/);
+});

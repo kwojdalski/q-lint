@@ -78,7 +78,10 @@ button.on {
 }
 
 table {
+  /* A fixed layout needs a width: as narrow as the columns allow, so they
+     keep result.js's widths whatever the rows in view hold. */
   table-layout: fixed;
+  width: 1px;
   border-collapse: separate;
   border-spacing: 0;
   font-family: var(--vscode-editor-font-family);
