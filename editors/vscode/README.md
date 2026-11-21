@@ -276,6 +276,34 @@ and clicking it switches. The commands:
   {"KDBCODE": "code", "KDBCONFIG": "config"}}}`. A discovery server's list
   never brings one. `q-lint.processes.launcher.enable` off hides the three
   commands and stops what was started.
+- **Open Log File...**, in the palette and on a `.log`, `.out` or `.err`
+  file in the Explorer: one or more q or TorQ logs on this machine in a
+  read-only editor, each entry coloured by its level - ERROR and WARN lines
+  whole, INFO's level word, DEBUG dimmed - and followed as the file grows
+  (**Follow or Pause Log**, in the editor's title bar). It reads TorQ's
+  lines as `.lg.format` writes them
+  (`time|host|proctype|proc|LEVEL|id|message`), its `-jsonlogs` lines and
+  its usage logs (a call whose status is `e` is an error), and plain q
+  output: q's own errors (`'type`, with KDB-X's timestamp or without) with
+  the indented backtrace after them, and a timestamp and a level word
+  (`ERROR`, `WARN`, `INFO`, `DEBUG` and their short forms, in capitals or
+  as `[error]` or `level=error`) near the start of a line. An indented line
+  continues the entry above it. **Filter Log by Level...**, **by
+  Process...**, **by Time...** (a time of day, which applies to every day
+  in the log, or a date and time) and **by Text...** narrow the view, and
+  **Clear Log Filters** undoes them; the status bar shows the filter. A
+  keybinding can give a filter command its value as the argument:
+  `["ERROR", "WARN"]`, `["rdb1"]`, `{"from": "09:30", "to": "16:00"}` or the
+  text. Files
+  are read a piece at a time - a 97 MB TorQ usage log takes about a third
+  of a second - and only the last `q-lint.processes.logViewer.maxLines`
+  entries that pass the filter are kept, so a new filter reads the files
+  again. Several files open as one view, merged by time, with a line that
+  names no process marked with its file's (`out_rdb1_..._.log` is `rdb1`).
+  A line shows once it ends, and a file truncated or rotated is read again
+  from its start. Nothing is sent to any process.
+  `q-lint.processes.logViewer.enable` off hides the commands and stops
+  following.
 - **Insert Active Connection Label**, at the cursor.
 - **Copy Label for Agent Query**, on a process row: the label an agent's
   query names the process by (`server/label` for a discovered one).
@@ -1443,6 +1471,8 @@ Each applies at once, without a reload. None reaches the language server.
 | `q-lint.tickerplant.stream.rows` | `1000` | The newest rows a stream keeps, 1 to 10,000. | - |
 | `q-lint.processes.launcher.enable` | `true` | **Start Process**, **Stop Process** and **Set Launch Definition**. Off, they are hidden and refuse, and what was started is stopped. | - |
 | `q-lint.processes.newQuery.enable` | `true` | **New Query for Process**: an untitled q editor bound to a process. Off, the command is hidden and refuses. | - |
+| `q-lint.processes.logViewer.enable` | `true` | **Open Log File...** and its filters: q and TorQ logs on this machine, coloured by level and followed as they grow. Off, the commands are hidden and refuse, and open views stop following. | - |
+| `q-lint.processes.logViewer.maxLines` | `10000` | The most entries a log view keeps, the last that pass its filter; 100 to 1,000,000. | - |
 | `q-lint.processes.shared.enable` | `true` | Read, watch and list `.qlint/processes.json`, and offer **Add to Shared Process List**. Off, the file is not read and the group is removed. | - |
 
 ### Terminal settings

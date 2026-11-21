@@ -100,6 +100,7 @@ function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir
     "./assisttools": { registerAssistTools: () => ({ registered: () => [] }) },
     "./chat": { registerChat: () => ({ registered: () => false }) },
     "./qsqldraft": { registerQsqlDraft() {} },
+    "./logview": { LogViewer: class { state() { return undefined; } } },
   };
   const file = require.resolve("../out/extension.js");
   delete require.cache[file];

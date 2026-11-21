@@ -962,6 +962,20 @@
             "default": true,
             "order": 706,
             "markdownDescription": "Offer **New Query for Process**, in the palette and on a process in the Processes view: an untitled q editor whose queries go to that process, whatever is connected (as **Choose Connection for File** binds a file). Nothing is sent until you run a query from it. Off: the command is hidden and refuses."
+          },
+          "q-lint.processes.logViewer.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 707,
+            "markdownDescription": "Offer **Open Log File...** (palette, and on a `.log` file in the Explorer): a q or TorQ log in a read-only editor, coloured by level, filtered by level, process, time and text, and followed as the file grows. TorQ's `time|host|proctype|proc|LEVEL|id|message` lines, its `-jsonlogs` and usage logs, and plain q output (`'type` errors and their backtraces, a timestamp and a level word near the start of a line) are read. Files are read a piece at a time, never whole, and nothing is sent to any process. Off: the commands are hidden and refuse, and open views stop following."
+          },
+          "q-lint.processes.logViewer.maxLines": {
+            "type": "integer",
+            "default": 10000,
+            "minimum": 100,
+            "maximum": 1000000,
+            "order": 708,
+            "markdownDescription": "The most entries a log view keeps: the last ones that pass its filter. A new filter reads the files again, so an older entry it lets through is found."
           }
         }
       }
@@ -1574,6 +1588,48 @@
         "title": "Run File with Arguments...",
         "category": "q-lint",
         "icon": "$(debug-alt)"
+      },
+      {
+        "command": "q-lint.openLog",
+        "title": "Open Log File...",
+        "category": "q-lint",
+        "icon": "$(output)"
+      },
+      {
+        "command": "q-lint.filterLogLevels",
+        "title": "Filter Log by Level...",
+        "category": "q-lint",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "q-lint.filterLogProcesses",
+        "title": "Filter Log by Process...",
+        "category": "q-lint",
+        "icon": "$(server-process)"
+      },
+      {
+        "command": "q-lint.filterLogTime",
+        "title": "Filter Log by Time...",
+        "category": "q-lint",
+        "icon": "$(clock)"
+      },
+      {
+        "command": "q-lint.filterLogText",
+        "title": "Filter Log by Text...",
+        "category": "q-lint",
+        "icon": "$(search)"
+      },
+      {
+        "command": "q-lint.clearLogFilters",
+        "title": "Clear Log Filters",
+        "category": "q-lint",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "q-lint.toggleLogFollow",
+        "title": "Follow or Pause Log",
+        "category": "q-lint",
+        "icon": "$(debug-pause)"
       }
     ],
     "views": {
@@ -2109,6 +2165,11 @@
           "command": "q-lint.importIpynb",
           "when": "resourceExtname =~ /^\\.ipynb$/i && config.q-lint.notebook.export.enable",
           "group": "q-lint"
+        },
+        {
+          "command": "q-lint.openLog",
+          "when": "resourceScheme == file && resourceExtname =~ /^\\.(log|out|err)$/i && config.q-lint.processes.logViewer.enable",
+          "group": "q-lint"
         }
       ],
       "editor/context": [
@@ -2377,6 +2438,34 @@
         {
           "command": "q-lint.runFileWithArguments",
           "when": "editorLangId == q && resourceScheme == file && config.q-lint.terminal.runWithArguments.enable"
+        },
+        {
+          "command": "q-lint.openLog",
+          "when": "config.q-lint.processes.logViewer.enable"
+        },
+        {
+          "command": "q-lint.filterLogLevels",
+          "when": "resourceScheme == q-log && config.q-lint.processes.logViewer.enable"
+        },
+        {
+          "command": "q-lint.filterLogProcesses",
+          "when": "resourceScheme == q-log && config.q-lint.processes.logViewer.enable"
+        },
+        {
+          "command": "q-lint.filterLogTime",
+          "when": "resourceScheme == q-log && config.q-lint.processes.logViewer.enable"
+        },
+        {
+          "command": "q-lint.filterLogText",
+          "when": "resourceScheme == q-log && config.q-lint.processes.logViewer.enable"
+        },
+        {
+          "command": "q-lint.clearLogFilters",
+          "when": "resourceScheme == q-log && config.q-lint.processes.logViewer.enable"
+        },
+        {
+          "command": "q-lint.toggleLogFollow",
+          "when": "resourceScheme == q-log && config.q-lint.processes.logViewer.enable"
         }
       ],
       "editor/title": [
@@ -2409,6 +2498,36 @@
         {
           "command": "q-lint.runNotebookWithParameters",
           "when": "config.q-lint.notebook.parameters.enable"
+        },
+        {
+          "command": "q-lint.filterLogLevels",
+          "when": "resourceScheme == q-log && config.q-lint.processes.logViewer.enable",
+          "group": "navigation@1"
+        },
+        {
+          "command": "q-lint.filterLogProcesses",
+          "when": "resourceScheme == q-log && config.q-lint.processes.logViewer.enable",
+          "group": "navigation@2"
+        },
+        {
+          "command": "q-lint.toggleLogFollow",
+          "when": "resourceScheme == q-log && config.q-lint.processes.logViewer.enable",
+          "group": "navigation@3"
+        },
+        {
+          "command": "q-lint.filterLogTime",
+          "when": "resourceScheme == q-log && config.q-lint.processes.logViewer.enable",
+          "group": "1_qlog@1"
+        },
+        {
+          "command": "q-lint.filterLogText",
+          "when": "resourceScheme == q-log && config.q-lint.processes.logViewer.enable",
+          "group": "1_qlog@2"
+        },
+        {
+          "command": "q-lint.clearLogFilters",
+          "when": "resourceScheme == q-log && config.q-lint.processes.logViewer.enable",
+          "group": "1_qlog@3"
         }
       ]
     },
