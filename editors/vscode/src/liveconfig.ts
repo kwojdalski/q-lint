@@ -114,10 +114,15 @@ export interface TerminalSettings {
 /// The terminal settings, read as `readLive` reads the query ones. Each is
 /// read when a terminal starts, so a change applies to the next one.
 export function readTerminal(get: <T>(key: string, fallback: T) => T): TerminalSettings {
-  const qBinary = get("terminal.qBinary", "q").trim();
+  // A hand-written `null` or number in settings.json is no setting.
+  const text = (key: string, fallback: string): string => {
+    const value = get<unknown>(key, fallback);
+    return typeof value === "string" ? value.trim() : "";
+  };
+  const qBinary = text("terminal.qBinary", "q");
   return {
     qBinary: qBinary === "" ? "q" : qBinary,
-    envPath: get("terminal.envPath", "").trim(),
+    envPath: text("terminal.envPath", ""),
   };
 }
 

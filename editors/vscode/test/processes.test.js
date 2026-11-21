@@ -3,7 +3,8 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const net = require("node:net");
-const { address, hostProblem, parseProcesses } = require("../out/processes.js");
+const { address, consoleSize, hostProblem, parseProcesses } = require("../out/processes.js");
+const { readLive } = require("../out/liveconfig.js");
 
 // An IPv6 address was written `::1:5000`: the port read as part of the
 // address, in the row, its tooltip, the status bar and the connect error.
@@ -87,4 +88,11 @@ test("an import that moves a process to another host or user forgets its passwor
   const saved = [p("a", "h1", "u"), p("b", "h1", "u"), p("c", "h1", "u"), p("d", "h1", "u"), p("e", "h1", "u")];
   const incoming = [p("a", "h1", "u"), p("b", "evil", "u"), p("c", "h1", "v"), p("d", "h1", "u", 6000), p("new", "h", "u")];
   assert.deepStrictEqual(passwordsToForget(saved, incoming), ["b", "c", "d"]);
+});
+
+test("a console size of the wrong type, as settings.json allows, is no size instead of failing every query", () => {
+  assert.strictEqual(consoleSize(null), undefined);
+  assert.strictEqual(consoleSize(50), undefined);
+  assert.strictEqual(consoleSize([50, 160]), undefined);
+  assert.deepStrictEqual(readLive((key, fallback) => (key === "output.consoleSize" ? 50 : fallback)).consoleSize, [50, 160]);
 });

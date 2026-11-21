@@ -10,6 +10,7 @@ function fakeVscode() {
   const disposable = { dispose() {} };
   const messages = [];
   const written = new Map();
+  const dialogs = [];
   const registered = { commands: {}, serializer: undefined, controller: undefined };
   class Uri {
     constructor(path, scheme = "file") {
@@ -19,6 +20,9 @@ function fakeVscode() {
     }
     static file(p) {
       return new Uri(p);
+    }
+    static joinPath(base, ...parts) {
+      return new Uri([base.path, ...parts].join("/").replace(/\/+/g, "/"), base.scheme);
     }
     with({ path }) {
       return new Uri(path, this.scheme);
@@ -85,10 +89,14 @@ function fakeVscode() {
       showInformationMessage: async (m) => void messages.push(m),
       showWarningMessage: async (m) => void messages.push(m),
       showErrorMessage: async (m) => void messages.push(m),
-      showSaveDialog: async () => undefined,
+      showSaveDialog: async (options) => {
+        dialogs.push(options);
+        return undefined;
+      },
       showQuickPick: async () => undefined,
     },
     workspace: {
+      workspaceFolders: undefined,
       notebookDocuments: [],
       registerNotebookSerializer: (type, s) => {
         registered.serializer = s;
@@ -107,7 +115,7 @@ function fakeVscode() {
       },
     },
   };
-  return { vscode, messages, written, registered };
+  return { vscode, messages, written, registered, dialogs };
 }
 
 /// A cell execution that records what the kernel did with it.
@@ -176,6 +184,41 @@ test("Export Notebook to a place it cannot write says so, instead of failing the
   // A target it can write is written.
   await fake.registered.commands["q-lint.exportNotebook"](fake.vscode.Uri.file("/ws/a.qnb"), fake.vscode.Uri.file("/ws/a.q"));
   assert.match(fake.written.get("/ws/a.q").toString(), /^1\+1$/m);
+});
+
+test("Export Notebook of an untitled notebook offers to save the script on disk, not as another untitled file", async () => {
+  const fake = fakeVscode();
+  load(fake);
+  // As New q Notebook opens one: `untitled:Untitled-1.qnb`, never saved.
+  const uri = new fake.vscode.Uri("Untitled-1.qnb", "untitled");
+  const notebook = { uri, notebookType: "q-lint-notebook", getCells: () => [{ kind: 2, document: { getText: () => "til 3", languageId: "q" } }] };
+  fake.vscode.workspace.notebookDocuments.push(notebook);
+  fake.vscode.window.activeNotebookEditor = { notebook };
+  fake.vscode.workspace.workspaceFolders = [{ uri: fake.vscode.Uri.file("/ws") }];
+  await fake.registered.commands["q-lint.exportNotebook"]();
+  assert.strictEqual(fake.dialogs.length, 1, fake.messages.join("\n"));
+  const offered = fake.dialogs[0].defaultUri;
+  assert.strictEqual(offered.scheme, "file");
+  assert.strictEqual(offered.path, "/ws/Untitled-1.q");
+  // A target given is written from the open notebook's cells.
+  await fake.registered.commands["q-lint.exportNotebook"](undefined, fake.vscode.Uri.file("/ws/u.q"));
+  assert.match(fake.written.get("/ws/u.q").toString(), /^til 3$/m);
+});
+
+test("Export Notebook takes a q notebook whose extension is in capitals, and offers a script, not the notebook itself", async () => {
+  const fake = fakeVscode();
+  load(fake);
+  // VS Code opens `Prices.QNB` as a q notebook: its file pattern ignores case.
+  const uri = fake.vscode.Uri.file("/ws/Prices.QNB");
+  const notebook = { uri, notebookType: "q-lint-notebook", getCells: () => [{ kind: 2, document: { getText: () => "til 3", languageId: "q" } }] };
+  fake.vscode.workspace.notebookDocuments.push(notebook);
+  fake.vscode.window.activeNotebookEditor = { notebook };
+  await fake.registered.commands["q-lint.exportNotebook"]();
+  assert.strictEqual(fake.dialogs.length, 1, fake.messages.join("\n"));
+  assert.strictEqual(fake.dialogs[0].defaultUri.path, "/ws/Prices.q");
+  // And from the explorer's context menu, by its URI.
+  await fake.registered.commands["q-lint.exportNotebook"](uri, fake.vscode.Uri.file("/ws/p.q"));
+  assert.match(fake.written.get("/ws/p.q").toString(), /^til 3$/m);
 });
 
 /// A notebook of code cells with `sources`, as the kernel sees it.

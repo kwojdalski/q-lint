@@ -303,8 +303,11 @@ export function tlsChoices(
 }
 
 /// `"50 160"` as console height and width, or undefined when it is not two
-/// positive whole numbers.
-export function consoleSize(text: string): [number, number] | undefined {
+/// positive whole numbers - or not a string, as a hand-written setting may be.
+export function consoleSize(text: unknown): [number, number] | undefined {
+  if (typeof text !== "string") {
+    return undefined;
+  }
   const parts = text.trim().split(/\s+/);
   if (parts.length !== 2 || !parts.every((p) => /^\d+$/.test(p))) {
     return undefined;
