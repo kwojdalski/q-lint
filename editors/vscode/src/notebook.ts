@@ -215,6 +215,7 @@ export const FEATURES = {
   processDirective: "The / @process cell directive",
   diff: "Compare Notebook Cells",
   stripOutputs: "Clearing notebook outputs and the git filter that strips them",
+  restartRunAll: "Restart Notebook Process and Run All",
 } as const;
 export type Feature = keyof typeof FEATURES;
 
@@ -304,12 +305,20 @@ class QnbKernel {
     return this.where.get(notebook);
   }
 
-  private execute(cells: NotebookCell[], notebook: NotebookDocument): Promise<void> {
+  /// Run every q code cell of `notebook` in order, as Run All does, but as
+  /// a fresh run (#1000): numbered from 1, and a cell not reached loses its
+  /// old output, so nothing stale passes for this run's.
+  runAll(notebook: NotebookDocument): Promise<void> {
+    const cells = notebook.getCells().filter((c) => c.kind === NotebookCellKind.Code && c.document.languageId === "q");
+    return this.execute(cells, notebook, true);
+  }
+
+  private execute(cells: NotebookCell[], notebook: NotebookDocument, fresh = false): Promise<void> {
     // Created now, so the cells show as waiting while those before them run.
     const executions = cells.map((cell) => this.controller.createNotebookCellExecution(cell));
     // Numbering goes on from what the notebook shows, as it was saved.
-    let order = this.orders.get(notebook) ?? 0;
-    for (const cell of notebook.getCells()) {
+    let order = fresh ? 0 : this.orders.get(notebook) ?? 0;
+    for (const cell of fresh ? [] : notebook.getCells()) {
       order = Math.max(order, cell.executionSummary?.executionOrder ?? 0);
     }
     this.orders.set(notebook, order);
@@ -320,6 +329,9 @@ class QnbKernel {
       if (!begun.has(execution)) {
         begun.add(execution);
         execution.start();
+        if (fresh) {
+          void execution.clearOutput();
+        }
         execution.end(undefined);
       }
     };
@@ -684,6 +696,7 @@ export function registerNotebooks(
   liveValues: () => RenderedLiveValue[];
   processOf: (notebook: NotebookDocument) => string | undefined;
   onDidRun: QnbKernel["onDidRun"];
+  runAll: (notebook: NotebookDocument) => Promise<void>;
 } {
   // By output, the last drawing of each, in the order last drawn.
   const drawn = new Map<string, RenderedChart>();
@@ -720,5 +733,6 @@ export function registerNotebooks(
     liveValues: () => [...shown],
     processOf: (notebook) => kernel.processOf(notebook),
     onDidRun: kernel.onDidRun,
+    runAll: (notebook) => kernel.runAll(notebook),
   };
 }

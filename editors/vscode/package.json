@@ -778,6 +778,11 @@
             "default": true,
             "markdownDescription": "Turn on **q-lint: Compare Notebook Cells**, a diff of a q notebook's cells against the last commit or another notebook that leaves outputs, run numbers and metadata out. It sends nothing to any process. Off, the command is hidden and refuses."
           },
+          "q-lint.notebook.restartRunAll.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Turn on **q-lint: Restart Notebook Process and Run All**: the process a q notebook's cells ran on is restarted, when q-lint started it, and every q cell runs on it from 1. It acts only when you run it, and asks first; a process q-lint did not start is never restarted. Off, the command is hidden and refuses, and nothing is sent or restarted."
+          },
           "q-lint.notebook.stripOutputs.enable": {
             "type": "boolean",
             "default": true,
@@ -1440,6 +1445,12 @@
         "category": "q-lint"
       },
       {
+        "command": "q-lint.restartNotebookAndRunAll",
+        "title": "Restart Notebook Process and Run All",
+        "category": "q-lint",
+        "icon": "$(debug-restart)"
+      },
+      {
         "command": "q-lint.refreshNotebookVariables",
         "title": "Refresh Notebook Variables",
         "category": "q-lint",
@@ -2047,6 +2058,11 @@
           "group": "navigation"
         },
         {
+          "command": "q-lint.restartNotebookAndRunAll",
+          "when": "notebookType == q-lint-notebook && config.q-lint.notebook.restartRunAll.enable",
+          "group": "navigation"
+        },
+        {
           "command": "q-lint.exportNotebookHtml",
           "when": "notebookType == q-lint-notebook && config.q-lint.notebook.export.enable",
           "group": "export"
@@ -2408,6 +2424,10 @@
         {
           "command": "q-lint.setUpNotebookStripFilter",
           "when": "config.q-lint.notebook.stripOutputs.enable"
+        },
+        {
+          "command": "q-lint.restartNotebookAndRunAll",
+          "when": "q-lint.notebookActive && config.q-lint.notebook.restartRunAll.enable"
         }
       ]
     },

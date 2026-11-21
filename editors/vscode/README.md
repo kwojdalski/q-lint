@@ -1117,6 +1117,23 @@ documentation, not a directive: it ends the directives, so a cell that
 opens with a documented function runs. An error shows q's message and, on kdb+
 3.5 and later, its backtrace.
 
+### Restart and run all
+
+**Restart Notebook Process and Run All**, on the notebook's toolbar, is
+Jupyter's Restart & Run All. The process is the one the notebook's cells
+last ran on (the active connection before any has run). When q-lint
+started it - **Start Process**, from its launch definition - it asks, then
+stops it, starts it again from the same definition, waits until it
+listens, connects to it, and runs every q cell in order. When q-lint did
+not start it, it is never restarted: q-lint says so and asks you to
+restart it yourself, or offers to run every cell on it as it is. Either
+way the run is a fresh one: cells are numbered from 1, the run stops at the
+first cell that fails, and the cells after it lose their old outputs, so
+nothing stale passes for this run's. The cells run as any cell does, so the
+read-only guard asks before one that would change a guarded process, and
+`/ @process` cells switch the connection. It refuses while a query is still
+running. `q-lint.notebook.restartRunAll.enable` turns it off.
+
 ### Live values in Markdown
 
 `{{q: expr}}` in a Markdown cell shows the value of `expr` on the process:
@@ -1480,6 +1497,7 @@ Read when a cell runs or a command is used, so a change needs no reload. None re
 | `q-lint.notebook.processDirective.enable` | `true` | `/ @process <label>`. Off, a cell with it is not run and nothing is sent. | - |
 | `q-lint.notebook.diff.enable` | `true` | **Compare Notebook Cells**: a diff of a notebook's cells against `HEAD` or another notebook, outputs and metadata left out. Sends nothing. Off, the command is hidden and refuses. | - |
 | `q-lint.notebook.stripOutputs.enable` | `true` | **Clear Notebook Outputs in File** and **Set Up Git to Strip Notebook Outputs**, each only when run, asking first. Off, both are hidden and refuse. | - |
+| `q-lint.notebook.restartRunAll.enable` | `true` | **Restart Notebook Process and Run All**: restarts the notebook's process only when q-lint started it, and only after asking, then runs every q cell from 1. Off, the command is hidden and refuses, and nothing is sent or restarted. | - |
 
 ### Agent settings
 

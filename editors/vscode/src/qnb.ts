@@ -41,6 +41,7 @@ export const NOTEBOOK = {
   diffCommand: "q-lint.diffNotebook",
   stripCommand: "q-lint.stripNotebookOutputs",
   stripFilterCommand: "q-lint.setUpNotebookStripFilter",
+  restartRunAll: "q-lint.restartNotebookAndRunAll",
   /// The renderer that draws a `/ @chart` cell's output.
   renderer: "q-lint.chart",
   /// The Markdown renderer's extension that shows live values.
