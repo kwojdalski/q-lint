@@ -93,14 +93,18 @@ function whole(value: unknown, least: number, fallback: number): number {
   return typeof value === "number" && Number.isInteger(value) && value >= least ? value : fallback;
 }
 
+/// Whether `get` gave `true`: settings.json may hold any type, and a string
+/// `"false"` is not true.
+const yes = (value: unknown): boolean => value === true;
+
 /// The query settings, read with `get` as `workspace.getConfiguration("q-lint")`
 /// would. None of them reaches the language server, and none restarts it.
 export function readLive(get: <T>(key: string, fallback: T) => T): LiveSettings {
   return {
-    consoleSize: consoleSize(get("output.consoleSize", "50 160")) ?? [50, 160],
-    autoClear: get("output.autoClear", false),
-    includeQuery: get("output.includeQuery", false),
-    ignoreNullReturn: get("output.ignoreNullReturn", false),
+    consoleSize: consoleSize(get<unknown>("output.consoleSize", "50 160")) ?? [50, 160],
+    autoClear: yes(get<unknown>("output.autoClear", false)),
+    includeQuery: yes(get<unknown>("output.includeQuery", false)),
+    ignoreNullReturn: yes(get<unknown>("output.ignoreNullReturn", false)),
     mode: QUERY_MODES.find((m) => m === get("query.mode", "console")) ?? "console",
     gridLimit: whole(get("query.gridLimit", 10000), 1, 10000),
     gridDecimals: Math.min(whole(get("query.gridDecimals", -1), -1, -1), 20),

@@ -274,6 +274,8 @@ outcome; the buttons on a row run it again on the active connection and
   rerun, Preview and notebooks use the active connection, never a binding.
   While the file's process is not the active connection, the status bar
   shows `file: <label>`. **Clear Connection for File** removes the binding.
+  Renaming the process (**Edit Process**) carries its files along, and
+  deleting it removes their bindings.
 - **Reveal Process** selects the connected process in the **Processes**
   view, and shows the view. **Open q-lint Settings** opens Settings at
   q-lint's.
@@ -414,6 +416,8 @@ your browser.
 process's global names, as read by the explorer, to the language server's,
 and inside a qSQL statement - `select`, `exec`, `update` or `delete` ... `from
 t` - the columns of `t` first. It adds nothing inside a string or a comment.
+A name q cannot parse (`café`, `a b`, made with `set`) goes in as Preview
+reads it, by its symbol: ``get`$"café"``.
 
 **Agents.** The **Run q Query** language-model tool (`q-lint_runQuery`,
 `#qQuery` in a chat prompt) lets Copilot and other agents run a q query and
@@ -617,7 +621,7 @@ nothing.
 | `q-lint.query.resultsLocation` | `"editor"` | Where a grid or chart opens: `editor`, beside it, or `panel`, the **q Results** view in the bottom panel. | - |
 | `q-lint.query.unwrapped` | `false` | Send code as plain strings, for a gateway that refuses a lambda, and format the result in q-lint. **Toggle Unwrapped Query** changes it. | - |
 | `q-lint.query.timeout` | `0` | Seconds a query may run before it is aborted, as Abort does; `0` none. | - |
-| `q-lint.processExplorer.excludedNamespaces` | `["q","Q","h","j","o","s"]` | Namespaces the Process Explorer and live completion leave out, with those nested in them. | - |
+| `q-lint.processExplorer.excludedNamespaces` | `["q","Q","h","j","o","s"]` | Namespaces the Process Explorer and live completion leave out (`q`, or a nested one as `ns.sub`), with those nested in them. | - |
 | `q-lint.processExplorer.previewLimit` | `5` | Rows of a table Preview shows. | - |
 | `q-lint.processExplorer.autoRefresh` | `false` | Read the process again after each query. | - |
 

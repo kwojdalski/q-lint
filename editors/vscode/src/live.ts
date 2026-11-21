@@ -50,13 +50,14 @@ import {
 } from "./processes";
 import { COMMANDS, CONNECTED, VIEWS, readLive, readProcessSettings, readTerminal } from "./liveconfig";
 import { QConnection } from "./qclient";
+import { historyHeading, historyLabel, iconsEscaped } from "./history";
 import { render } from "./query";
 import { QueryModes, type Rendered } from "./resultpanel";
 import { blockAt, statements } from "./statements";
 import { commandLine, expandHome, parseEnv, replLines, shellKind } from "./terminal";
 import { QueryControls } from "./controls";
 import { ParameterCache } from "./paramcachecontrol";
-import { CONTROL_COMMANDS, UNLIMITED, armTimeout, limits, readUnlimited, runUnwrapped, timedOutError } from "./querycontrols";
+import { CONTROL_COMMANDS, FILE_CONNECTIONS_KEY, UNLIMITED, armTimeout, limits, readUnlimited, runUnwrapped, timedOutError, withBinding } from "./querycontrols";
 
 const PROCESSES_KEY = "q-lint.processes";
 const HISTORY_KEY = "q-lint.queryHistory";
@@ -102,6 +103,11 @@ function codeAt(editor: TextEditor, from: From): string | undefined {
     return block === undefined ? undefined : lines.slice(block.start, block.end + 1).join("\n");
   }
   return document.lineAt(line).text;
+}
+
+/// What a command that reads the active editor says when there is none.
+function noEditor(): void {
+  void window.showInformationMessage("q-lint: open a q file first: there is no active editor.");
 }
 
 function nothingThere(from: From): void {
@@ -218,8 +224,7 @@ class HistoryView implements TreeDataProvider<HistoryEntry> {
   }
 
   getTreeItem(entry: HistoryEntry): TreeItem {
-    const first = entry.code.split("\n")[0];
-    const item = new TreeItem(first.length > 80 ? `${first.slice(0, 79)}…` : first, TreeItemCollapsibleState.None);
+    const item = new TreeItem(historyLabel(entry.code), TreeItemCollapsibleState.None);
     const when = new Date(entry.at);
     item.description = `${entry.agent ? "agent · " : ""}${entry.process} · ${when.toLocaleTimeString()} · ${entry.millis} ms`;
     item.iconPath = new ThemeIcon(
@@ -227,10 +232,7 @@ class HistoryView implements TreeDataProvider<HistoryEntry> {
       new ThemeColor(entry.outcome === "ok" ? "testing.iconPassed" : entry.outcome === "error" ? "errorForeground" : "disabledForeground"),
     );
     const tooltip = new MarkdownString();
-    tooltip.appendMarkdown(`${entry.process}, ${when.toLocaleString()}, ${entry.millis} ms${entry.agent ? ", run by an agent" : ""}`);
-    if (entry.error !== undefined) {
-      tooltip.appendMarkdown(`\n\n'${entry.error}`);
-    }
+    tooltip.appendMarkdown(historyHeading(entry, when.toLocaleString()));
     tooltip.appendCodeblock(entry.code, "q");
     item.tooltip = tooltip;
     item.contextValue = "history";
@@ -301,6 +303,7 @@ export class QTerminals {
   async send(from: From): Promise<void> {
     const editor = window.activeTextEditor;
     if (editor === undefined) {
+      noEditor();
       return;
     }
     const lines = replLines(codeAt(editor, from) ?? "");
@@ -393,11 +396,17 @@ export class Live {
   private running: { code: string; started: number } | undefined;
   /// When the query that timed out started, so its entry says so.
   private timedOut: number | undefined;
+  /// When the query Abort, Disconnect or a connect elsewhere stopped waiting
+  /// for started, so its entry says so: a connection the process closed is
+  /// a failure, not an abort.
+  private aborted: number | undefined;
   private readonly controls: QueryControls;
   private readonly parameterCache: ParameterCache;
   /// The process explorer's call on the connection, if one is out: a query
   /// waits for it (`borrow`).
   private borrowed: Promise<unknown> | undefined;
+  /// Set on deactivate: a connection opened after it is closed at once.
+  private disposed = false;
   private readonly changed = new EventEmitter<"connected" | "disconnected" | "queried">();
   /// Fired when a connection opens or closes, and when a query has finished:
   /// what the process explorer refreshes on.
@@ -464,7 +473,14 @@ export class Live {
           this.processesView.refresh();
         }
       }),
-      { dispose: () => void this.connection?.close() },
+      {
+        dispose: () => {
+          this.disposed = true;
+          // A reconnect after an abort stops trying.
+          this.reconnectStopped = true;
+          void this.connection?.close();
+        },
+      },
     );
     this.showStatus();
     this.status.show();
@@ -555,10 +571,10 @@ export class Live {
   private showStatus(): void {
     const label = this.activeLabel();
     if (this.running !== undefined && label !== undefined) {
-      this.status.text = `$(sync~spin) q: ${label}`;
+      this.status.text = `$(sync~spin) q: ${iconsEscaped(label)}`;
       this.status.tooltip = "A query is running. q-lint: Abort Current Query stops waiting for it.";
     } else if (label !== undefined) {
-      this.status.text = `$(plug) q: ${label}`;
+      this.status.text = `$(plug) q: ${iconsEscaped(label)}`;
       this.status.tooltip = `Connected to ${this.active === undefined ? "" : address(this.active.host, this.active.port)}. Click to switch.`;
     } else {
       this.status.text = "$(debug-disconnect) q: not connected";
@@ -706,7 +722,7 @@ export class Live {
     }
     const picked = await window.showQuickPick(
       processes.map((p) => ({
-        label: p.label,
+        label: iconsEscaped(p.label),
         description: address(p.host, p.port),
         detail: p.tags.length ? p.tags.join(", ") : undefined,
         process: p,
@@ -753,9 +769,26 @@ export class Live {
       await this.context.secrets.delete(passwordKey(process));
     }
     await this.save(now.map((p) => (p.label === old.label ? process : p)));
-    if (this.active?.label === old.label && this.active.server === undefined) {
-      this.active = process;
+    if (process.label !== old.label) {
+      await this.rebind(old.label, process.label);
+    }
+    const active = this.active;
+    if (active?.label === old.label && active.server === undefined) {
+      // The connection is still to where it was opened: it takes the new
+      // label and tags, and keeps its address until connected again.
+      const { host, port, user, tls } = active;
+      this.active = { label: process.label, host, port, ...(user !== undefined ? { user } : {}), tags: process.tags, ...(tls ? { tls } : {}) };
       this.showStatus();
+      // The explorer keeps what it read under the label it read it for.
+      if (process.label !== old.label && this.activeLabel() !== undefined) {
+        this.changed.fire("connected");
+      }
+      const moved = process.host !== host || process.port !== port || process.user !== user || (process.tls === true) !== (tls === true);
+      if (moved && this.activeLabel() !== undefined) {
+        void window.showInformationMessage(
+          `q-lint: still connected to ${process.label} at ${address(host, port)}. Connect to it again to use ${address(process.host, process.port)}.`,
+        );
+      }
     }
   }
 
@@ -769,11 +802,28 @@ export class Live {
     if (sure !== yes) {
       return;
     }
-    if (this.active?.label === process.label && this.active.server === undefined) {
+    if (this.activeLabel() === process.label && this.active?.server === undefined) {
       await this.disconnect();
     }
     await this.context.secrets.delete(passwordKey(process));
     await this.save(this.processes().filter((p) => p.label !== process.label));
+    await this.rebind(process.label, undefined);
+  }
+
+  /// Bind the files bound to the process `from` to `to` instead, or unbind
+  /// them: a binding is by label, and one to no process fails every query.
+  private async rebind(from: string, to: string | undefined): Promise<void> {
+    let stored = this.context.workspaceState.get<unknown>(FILE_CONNECTIONS_KEY);
+    if (typeof stored !== "object" || stored === null) {
+      return;
+    }
+    for (const [uri, label] of Object.entries(stored)) {
+      if (label === from) {
+        stored = withBinding(stored, uri, to);
+      }
+    }
+    await this.context.workspaceState.update(FILE_CONNECTIONS_KEY, stored);
+    this.controls.refresh();
   }
 
   private async tag(row?: ProcessArg): Promise<void> {
@@ -860,6 +910,7 @@ export class Live {
       return;
     }
     if (editor === undefined) {
+      noEditor();
       return;
     }
     void editor.edit((edit) => {
@@ -888,12 +939,15 @@ export class Live {
         return false;
       }
       await this.context.secrets.store(passwordKey(process), password);
+      // Kept, so deleting the server forgets it even after a reload.
+      await this.discovery.passwordGiven(process.server!, process.label.slice(process.server!.length + 1));
     }
     const connected = await this.open(process);
     // A discovered process cannot be edited, so a password that did not
     // connect is forgotten: the next connect asks for it again.
     if (!connected && !saved && process.user) {
       await this.context.secrets.delete(passwordKey(process));
+      await this.discovery.passwordGiven(process.server!, process.label.slice(process.server!.length + 1), false);
     }
     return connected;
   }
@@ -920,6 +974,7 @@ export class Live {
       if (this.connection !== undefined) {
         const old = this.connection;
         this.connection = undefined;
+        this.aborted = this.running?.started;
         await old.close();
         // Said now, not on connecting: the new one may never come.
         this.changed.fire("disconnected");
@@ -947,7 +1002,9 @@ export class Live {
             }
           },
         );
-        if (untilFree && this.reconnectStopped) {
+        // Opened after deactivate (a reconnect after an abort), when nothing
+        // would close it, or after the reconnect was stopped.
+        if (this.disposed || (untilFree && this.reconnectStopped)) {
           await connection.close();
           return false;
         }
@@ -984,9 +1041,15 @@ export class Live {
   }
 
   private async disconnect(): Promise<void> {
+    if (this.connection === undefined && this.connecting === undefined) {
+      void window.showInformationMessage("q-lint: not connected to a q process.");
+      return;
+    }
     this.reconnectStopped = true;
     const connection = this.connection;
     this.connection = undefined;
+    // A query running on it was stopped by the user, as Abort stops one.
+    this.aborted = this.running?.started;
     this.running = undefined;
     await connection?.close();
     this.showStatus();
@@ -999,6 +1062,7 @@ export class Live {
   private async queryFrom(from: From): Promise<void> {
     const editor = window.activeTextEditor;
     if (editor === undefined) {
+      noEditor();
       return;
     }
     const code = codeAt(editor, from);
@@ -1033,9 +1097,18 @@ export class Live {
     if (this.connection === undefined && !(await this.connectTo())) {
       return undefined;
     }
+    const before = this.connection;
     await this.borrowed;
     const connection = this.connection;
     const process = this.active;
+    if (connection !== before && before !== undefined) {
+      // Closed while the explorer's read was out: by Abort, which stopped
+      // that read, or by the process.
+      void window.showInformationMessage(
+        `q-lint: the connection to ${process?.label ?? "the process"} closed before the query was sent; it was not run.`,
+      );
+      return undefined;
+    }
     if (connection === undefined || process === undefined) {
       return undefined;
     }
@@ -1121,7 +1194,7 @@ export class Live {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const aborted = this.running === undefined || !connection.isOpen;
+      const aborted = this.aborted === started;
       const timedOut = this.timedOut === started;
       entry = {
         process: process.label,
@@ -1129,13 +1202,16 @@ export class Live {
         at: new Date(started).toISOString(),
         millis: Date.now() - started,
         outcome: timedOut ? "timeout" : aborted ? "aborted" : "error",
-        error: timedOut ? timedOutError(controls.timeout) : aborted && this.running === undefined ? "aborted" : message,
+        error: timedOut ? timedOutError(controls.timeout) : aborted ? "aborted" : message,
       };
       this.show([`# ${process.label} - ${timedOut ? timedOutError(controls.timeout) : aborted ? "aborted" : "failed"}: ${message}`], false);
     } finally {
       disarm();
       if (this.timedOut === started) {
         this.timedOut = undefined;
+      }
+      if (this.aborted === started) {
+        this.aborted = undefined;
       }
       if (this.running?.started === started) {
         this.running = undefined;
@@ -1167,6 +1243,7 @@ export class Live {
       void window.showInformationMessage("q-lint: no query is running.");
       return;
     }
+    this.aborted = this.running?.started;
     this.running = undefined;
     this.connection = undefined;
     connection.abort();
@@ -1180,7 +1257,9 @@ export class Live {
       }
     });
     void window.showInformationMessage(
-      `q-lint: ${timedOut === undefined ? "stopped waiting for the query" : `the query ${timedOutError(timedOut)} (q-lint.query.timeout), and was aborted`}. ${process.label} may still be running it; q-lint reconnects once it is free.`,
+      this.aborted === undefined && timedOut === undefined
+        ? `q-lint: stopped the Process Explorer's read of ${process.label}, the only call running. q-lint reconnects once ${process.label} is free.`
+        : `q-lint: ${timedOut === undefined ? "stopped waiting for the query" : `the query ${timedOutError(timedOut)} (q-lint.query.timeout), and was aborted`}. ${process.label} may still be running it; q-lint reconnects once it is free.`,
     );
   }
 
@@ -1193,7 +1272,7 @@ export class Live {
   private async rerun(entry?: HistoryEntry): Promise<void> {
     if (entry === undefined) {
       const picked = await window.showQuickPick(
-        this.history().map((e) => ({ label: e.code.split("\n")[0], description: e.process, entry: e })),
+        this.history().map((e) => ({ label: iconsEscaped(historyLabel(e.code)), description: iconsEscaped(e.process), entry: e })),
         { title: "Run which query again?" },
       );
       entry = picked?.entry;

@@ -293,3 +293,26 @@ test("a save of what was opened keeps the fields of an output, an item and a run
   assert.deepStrictEqual(saved.cells[1].execution, { order: 2, success: true, start: 5, end: 6 });
   assert.deepStrictEqual(saved.cells[1].outputs, [{ items: [{ mime: "text/plain", text: "1" }] }]);
 });
+
+// VS Code times a run only with both ends, so a run with a `start` and no
+// `end` (a cell interrupted mid-run by a crash, or a file another tool
+// wrote), or an `end` alone, lost it on the first save of the notebook.
+test("a save of what was opened keeps a run's start without its end, or its end alone", () => {
+  const fake = fakeVscode();
+  load(fake);
+  const file = {
+    qnb: 1,
+    cells: [
+      { kind: "code", source: ["1"], execution: { order: 1, success: true, start: 1700000000000 } },
+      { kind: "code", source: ["2"], execution: { order: 2, end: 1700000000012, host: "h" } },
+    ],
+  };
+  const text = JSON.stringify(file, null, 1) + "\n";
+  const serializer = fake.registered.serializer;
+  const data = serializer.deserializeNotebook(Buffer.from(text));
+  assert.strictEqual(Buffer.from(serializer.serializeNotebook(data)).toString(), text);
+  // Run again, the new run does not take the old one's lone start.
+  data.cells[0].executionSummary = { executionOrder: 3, success: true, timing: { startTime: 5, endTime: 6 } };
+  const saved = JSON.parse(Buffer.from(serializer.serializeNotebook(data)).toString());
+  assert.deepStrictEqual(saved.cells[0].execution, { order: 3, success: true, start: 5, end: 6 });
+});

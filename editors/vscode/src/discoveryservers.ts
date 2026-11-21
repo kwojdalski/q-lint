@@ -35,6 +35,10 @@ import { DISCOVERY_COMMANDS, readDiscovery } from "./liveconfig";
 import { passwordKey, type Process } from "./processes";
 
 const SERVERS_KEY = "q-lint.discoveryServers";
+/// The discovered processes a password was given for, by server, as
+/// `{ [server]: label[] }`: kept, so a server deleted after a reload, before
+/// it has listed anything, still forgets them.
+const PASSWORDS_KEY = "q-lint.discoveredPasswords";
 const secretKey = (label: string): string => `q-lint.discovery.auth.${label}`;
 
 /// What a server command is given: its row, its label, or nothing - then the
@@ -239,9 +243,39 @@ export class DiscoveryServers {
   /// server is gone, or lists from another URL, a process of the same label
   /// may be another, at another host.
   private async forgetPasswords(label: string): Promise<void> {
-    for (const process of this.states.get(label)?.processes ?? []) {
-      await this.context.secrets.delete(passwordKey({ label: qualified(label, process.label), server: label }));
+    const given = this.given();
+    const labels = new Set([...(this.states.get(label)?.processes ?? []).map((p) => p.label), ...(given[label] ?? [])]);
+    for (const process of labels) {
+      await this.context.secrets.delete(passwordKey({ label: qualified(label, process), server: label }));
     }
+    delete given[label];
+    await this.context.globalState.update(PASSWORDS_KEY, given);
+  }
+
+  /// What `PASSWORDS_KEY` holds, entries that are not lists of labels dropped.
+  private given(): Record<string, string[]> {
+    const stored = this.context.globalState.get<unknown>(PASSWORDS_KEY, {});
+    const out: Record<string, string[]> = Object.create(null);
+    if (typeof stored === "object" && stored !== null) {
+      for (const [server, labels] of Object.entries(stored)) {
+        if (Array.isArray(labels)) {
+          out[server] = labels.filter((l): l is string => typeof l === "string");
+        }
+      }
+    }
+    return out;
+  }
+
+  /// Record, or with `kept` false unrecord, that a password was given for the
+  /// process `label` that `server` lists (the label as the server lists it).
+  async passwordGiven(server: string, label: string, kept = true): Promise<void> {
+    const given = this.given();
+    const labels = (given[server] ?? []).filter((l) => l !== label);
+    given[server] = kept ? [...labels, label] : labels;
+    if (given[server].length === 0) {
+      delete given[server];
+    }
+    await this.context.globalState.update(PASSWORDS_KEY, given);
   }
 
   private async keepSecret(label: string, secret: string | undefined): Promise<void> {

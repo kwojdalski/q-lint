@@ -30,6 +30,7 @@ import {
   inCode,
   liveCompletions,
   previewCode,
+  qName,
   qsqlTable,
   readExplorer,
   readGathered,
@@ -234,6 +235,10 @@ export class ProcessExplorer implements TreeDataProvider<Node> {
       const item = new CompletionItem(c.label, KINDS[c.kind]);
       item.detail = c.detail;
       item.range = range;
+      // A name q cannot parse goes in as Preview reads it, by its symbol.
+      if (c.kind !== "column" && qName(c.label) !== c.label) {
+        item.insertText = qName(c.label);
+      }
       // A table's columns first, inside its statement.
       item.sortText = `${c.kind === "column" ? "0" : "1"}${c.label}`;
       return item;

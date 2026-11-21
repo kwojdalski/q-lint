@@ -384,7 +384,7 @@
               "s"
             ],
             "order": 120,
-            "markdownDescription": "Namespaces the **Process Explorer** and live completion leave out, without the leading dot. Their nested namespaces are left out with them."
+            "markdownDescription": "Namespaces the **Process Explorer** and live completion leave out, without the leading dot: a root namespace (`q`) or a nested one (`ns.sub`). The namespaces nested in them are left out with them."
           },
           "q-lint.processExplorer.previewLimit": {
             "type": "integer",
