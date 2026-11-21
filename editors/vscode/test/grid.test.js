@@ -481,3 +481,18 @@ test("a scatter against the row puts each point at its row, filtered or sorted",
   const scatter = charts.chartData(grid, [3, 1], "scatter", [1], 10);
   assert.deepStrictEqual(scatter.datasets[0].data.map((p) => [p.x, p.y]), [[3, 4], [1, 2]]);
 });
+
+test("a histogram's bins over a narrow range of prices are labelled apart", () => {
+  // EURUSD between 1.08341 and 1.08349 in 4 bins: every label read
+  // "1.08341 - 1.08341", six significant digits being too few.
+  const grid = toGrid({ count: 3, keys: 0, names: ["px"], types: [9], cells: [["a", "b", "c"]], raw: [[1.08341, 1.08345, 1.08349]], rank: [[0, 1, 2]] }, -1);
+  const h = charts.chartData(grid, [0, 1, 2], "histogram", [0], 4);
+  assert.deepStrictEqual(h.labels, ["1.08341 - 1.08343", "1.08343 - 1.08345", "1.08345 - 1.08347", "1.08347 - 1.08349"]);
+  // Large values the same, in exponent form.
+  const big = toGrid({ count: 2, keys: 0, names: ["n"], types: [7], cells: [["a", "b"]], raw: [[1e15, 1e15 + 4e10]], rank: [[0, 1]] }, -1);
+  const labels = charts.chartData(big, [0, 1], "histogram", [0], 2).labels;
+  assert.strictEqual(new Set(labels).size, 2, String(labels));
+  assert.notStrictEqual(labels[0].split(" - ")[0], labels[0].split(" - ")[1], String(labels));
+  // A wide range keeps its short labels.
+  assert.deepStrictEqual(charts.chartData(sample(), [0, 1, 2, 3], "histogram", [1], 2).labels, ["1 - 2", "2 - 3"]);
+});

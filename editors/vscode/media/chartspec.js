@@ -135,8 +135,12 @@
   }
 
   /// A number short enough for an axis or a bin label.
-  function short(v) {
-    return Math.abs(v) >= 1e6 || (v !== 0 && Math.abs(v) < 1e-3) ? v.toExponential(3) : String(+v.toPrecision(6));
+  /// With `step`, the distance to the next label, the digits that tell the
+  /// two apart, so bins over a narrow range of prices are not all
+  /// "1.08341 - 1.08341".
+  function short(v, step) {
+    const digits = step > 0 && v !== 0 ? Math.min(15, Math.max(6, Math.ceil(Math.log10(Math.abs(v) / step)) + 2)) : 6;
+    return Math.abs(v) >= 1e6 || (v !== 0 && Math.abs(v) < 1e-3) ? v.toExponential(step > 0 ? Math.max(3, digits - 1) : 3) : String(+v.toPrecision(digits));
   }
 
   /// What a chart of `kind` over `rows` of the grid draws, before colours:
@@ -152,7 +156,8 @@
     const name = function (c) { return grid.columns[c].name; };
     if (kind === "histogram") {
       const h = histogram(columns.map(values), bins);
-      const labels = h.edges.slice(1).map(function (e, i) { return short(h.edges[i]) + " - " + short(e); });
+      const step = h.edges.length > 1 ? Math.abs(h.edges[1] - h.edges[0]) : 0;
+      const labels = h.edges.slice(1).map(function (e, i) { return short(h.edges[i], step) + " - " + short(e, step); });
       return {
         type: "bar",
         labels: labels,
