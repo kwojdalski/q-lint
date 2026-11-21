@@ -66,6 +66,7 @@ import { render } from "./query";
 import { QueryModes, type Rendered } from "./resultpanel";
 import { blockAt, statements } from "./statements";
 import { commandLine, expandHome, parseEnv, replLines, shellKind } from "./terminal";
+import type { RunExtra } from "./runargs";
 import { QueryControls } from "./controls";
 import { ParameterCache } from "./paramcachecontrol";
 import { CONTROL_COMMANDS, FILE_CONNECTIONS_KEY, UNLIMITED, armTimeout, limits, readUnlimited, runUnwrapped, timedOutError, withBinding } from "./querycontrols";
@@ -315,8 +316,10 @@ export class QTerminals {
 
   /// Run the active file in a terminal named after it, saving it first. The
   /// terminal it ran in before is closed: running the file again starts a
-  /// fresh q. Another file of the same name keeps its own.
-  async runFile(): Promise<void> {
+  /// fresh q. Another file of the same name keeps its own. `extra`: Run File
+  /// with Arguments' words after the file (`.z.x`) and lines typed into q
+  /// once it starts.
+  async runFile(extra?: RunExtra): Promise<void> {
     const document = window.activeTextEditor?.document;
     if (document === undefined || document.uri.scheme !== "file") {
       void window.showInformationMessage("q-lint: open a q file saved on disk to run it.");
@@ -336,7 +339,11 @@ export class QTerminals {
         }
       }
     };
-    const terminal = await this.start(path.basename(file), document.uri, file, close);
+    const terminal = await this.start(path.basename(file), document.uri, file, close, extra?.args);
+    // Typed once q is started: the shell hands them to q's console.
+    for (const line of extra?.input ?? []) {
+      terminal?.sendText(line, true);
+    }
     terminal?.show();
   }
 
@@ -378,7 +385,7 @@ export class QTerminals {
   /// set for it. It starts in the workspace folder of `from`, so a script's
   /// relative `\l` reads as it does from a shell there. Undefined if the env
   /// file cannot be read; `before` runs only once it can start.
-  private async start(name: string, from: Uri | undefined, file?: string, before?: () => void): Promise<Terminal | undefined> {
+  private async start(name: string, from: Uri | undefined, file?: string, before?: () => void, extraArgs: string[] = []): Promise<Terminal | undefined> {
     const configuration = workspace.getConfiguration("q-lint", from);
     const read = readTerminal((key, fallback) => configuration.get(key, fallback));
     const settings = { qBinary: expandHome(read.qBinary, os.homedir()), envPath: expandHome(read.envPath, os.homedir()) };
@@ -420,7 +427,7 @@ export class QTerminals {
     // A file inside the folder is named relative to it, as you would type it.
     const relative = file !== undefined && cwd !== undefined ? path.relative(cwd, file) : "";
     const inside = relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
-    const args = file === undefined ? [] : [inside ? relative : file];
+    const args = file === undefined ? [] : [inside ? relative : file, ...extraArgs];
     terminal.sendText(commandLine(settings.qBinary, args, shellKind(env.shell), variables), true);
     return terminal;
   }
@@ -437,6 +444,9 @@ function targetOf(process: Process, password: string | undefined): Target {
 }
 
 export class Live {
+  /// Run the active file in its q terminal with Run File with Arguments'
+  /// extra words and input (#1005).
+  readonly runFileWith: (extra: RunExtra) => Promise<void>;
   private connection: QConnection | undefined;
   /// The query history, newest first. Kept here and written through to
   /// `globalState`, never rebuilt from it: a read of `globalState` straight
@@ -518,6 +528,7 @@ export class Live {
     this.historyTree = window.createTreeView(VIEWS.history, { treeDataProvider: this.historyView });
     this.discovery = new DiscoveryServers(context, { list: () => this.processes(), save: (processes) => this.save(processes) });
     const terminals = new QTerminals(context);
+    this.runFileWith = (extra) => terminals.runFile(extra);
     this.modes = new QueryModes(context);
     this.modes.setPager((label, offset, count) => this.pageHeld(label, offset, count));
     this.modes.setRunner((code, label) => this.runDrilldown(code, label));

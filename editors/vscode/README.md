@@ -858,6 +858,18 @@ inline script and no network. Its charts are drawn by
   starts `q-lint.terminal.qBinary` on it in a terminal named after the
   file, in the workspace folder. Running it again closes that terminal and
   starts a fresh q.
+- **Run File with Arguments...**, in the editor's run menu and context
+  menu: the same run, with words after the file and input for q. A quick
+  pick lists the argument sets saved for the file, newest first, and **New
+  arguments...** asks for the words (which q reads as `.z.x`; double quotes
+  keep spaces together, and q takes its own options, such as `-p` or `-c`,
+  from anywhere on the line and leaves them out of `.z.x`), then for lines
+  to type into q's console once it starts, one at a time until an empty
+  one. The set is saved for the file in the workspace, the last ten kept;
+  **Forget saved arguments...** removes one. Nothing runs but on the pick,
+  or on a set given as the command's argument by a keybinding:
+  `{"args": "-p 5001", "input": ["show .z.x"]}`.
+  `q-lint.terminal.runWithArguments.enable` off hides it.
 - **Send Current Line to Terminal**, `ctrl+shift+q`.
 - **Send Current Selection to Terminal**, `ctrl+shift+r`: the current line
   when nothing is selected.
@@ -1442,6 +1454,7 @@ reaches the language server.
 | --- | --- | --- | --- |
 | `q-lint.terminal.qBinary` | `"q"` | The q binary a terminal starts: a name on `PATH` or a path, where a leading `~` is your home directory. It is quoted for the terminal's shell (POSIX, PowerShell or cmd), so it names one program, not a command with arguments. | `q-terminal.cfg.qBinary` |
 | `q-lint.terminal.envPath` | `""` | A file of `NAME=value` lines set for q, such as `QHOME` and `QLIC`. They go on the command line that starts q (`NAME=value q`, `$env:NAME=` in PowerShell, `set` in cmd), so they win over what your shell's startup files set, and show there. Relative to the workspace folder; a leading `~` is your home directory. It is read, not run as a shell script as q-pro's is: `#` lines are comments, `export ` is allowed, quotes around a value are dropped, and nothing is expanded: `$HOME` stays `$HOME`. | `q-terminal.cfg.envPath` |
+| `q-lint.terminal.runWithArguments.enable` | `true` | **Run File with Arguments...**: run the file in its q terminal with a saved or new set of `.z.x` words and console input. The sets are kept per workspace, never in settings. Off, the command is hidden and refuses. | - |
 
 ### Discovery settings
 

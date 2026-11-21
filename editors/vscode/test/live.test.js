@@ -58,6 +58,7 @@ const { GATEWAY_COMMANDS } = require("../out/gateway.js");
 const { STREAM_COMMANDS } = require("../out/stream.js");
 const { LAUNCH_COMMANDS } = require("../out/launcher.js");
 const { NEW_QUERY_COMMAND } = require("../out/newquery.js");
+const { RUN_ARGS_COMMAND } = require("../out/runargs.js");
 const { SHARED_COMMANDS } = require("../out/shared.js");
 const { ONBOARDING } = require("../out/onboarding.js");
 const { PARAM_CACHE } = require("../out/paramcache.js");
@@ -315,6 +316,7 @@ test("package.json declares exactly the commands the extension registers", () =>
     ...Object.values(DRIFT_COMMANDS),
     ...Object.values(QSQL_COMMANDS),
     NEW_QUERY_COMMAND,
+    RUN_ARGS_COMMAND,
   ].sort();
   assert.deepStrictEqual(declared, registered);
 });

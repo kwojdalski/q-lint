@@ -723,6 +723,12 @@
             "order": 201,
             "scope": "resource",
             "markdownDescription": "A file of `NAME=value` lines set for q in a q terminal (**Run Code from Terminal**, **Start q REPL**, **Send ... to Terminal**), such as `QHOME` and `QLIC`, on the command line that starts it, so they win over the shell's startup files. Relative to the workspace folder, which may set its own; a leading `~` is your home directory. Values are taken as written: `$HOME` is not expanded."
+          },
+          "q-lint.terminal.runWithArguments.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 202,
+            "markdownDescription": "Offer **Run File with Arguments...**: pick an argument set saved for the file, or type a new one - the words after the file, which q reads as `.z.x`, and lines typed into q's console once it starts - and the file runs in its q terminal as **Run Code from Terminal** runs it. Sets are kept per workspace, the last ten for each file. Off: the command is hidden and refuses."
           }
         }
       },
@@ -1562,6 +1568,12 @@
         "title": "New Query for Process",
         "category": "q-lint",
         "icon": "$(new-file)"
+      },
+      {
+        "command": "q-lint.runFileWithArguments",
+        "title": "Run File with Arguments...",
+        "category": "q-lint",
+        "icon": "$(debug-alt)"
       }
     ],
     "views": {
@@ -2038,6 +2050,11 @@
           "command": "q-lint.queryEntireFile",
           "when": "editorLangId == q",
           "group": "navigation@4"
+        },
+        {
+          "command": "q-lint.runFileWithArguments",
+          "when": "editorLangId == q && resourceScheme == file && config.q-lint.terminal.runWithArguments.enable",
+          "group": "navigation@4"
         }
       ],
       "notebook/toolbar": [
@@ -2169,6 +2186,11 @@
           "command": "q-lint.draftQsql",
           "when": "editorLangId == q && config.q-lint.chat.englishToQsql.enable",
           "group": "q-lint@9"
+        },
+        {
+          "command": "q-lint.runFileWithArguments",
+          "when": "editorLangId == q && resourceScheme == file && config.q-lint.terminal.runWithArguments.enable",
+          "group": "q-lint@5"
         }
       ],
       "commandPalette": [
@@ -2351,6 +2373,10 @@
         {
           "command": "q-lint.newQueryForProcess",
           "when": "config.q-lint.processes.newQuery.enable"
+        },
+        {
+          "command": "q-lint.runFileWithArguments",
+          "when": "editorLangId == q && resourceScheme == file && config.q-lint.terminal.runWithArguments.enable"
         }
       ],
       "editor/title": [
