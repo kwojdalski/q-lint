@@ -703,6 +703,12 @@
             "order": 138,
             "markdownDescription": "Make each frame of a q backtrace a link to the line that failed: in the **q-lint: query** output and other output channels, and in a terminal running q under `\\e 1`. A path from another machine opens the workspace file sharing its trailing folders. Off, nothing is linked."
           },
+          "q-lint.logpoints.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 139,
+            "markdownDescription": "**Add Logpoint**: wrap a function on the active process so each call's arguments are printed there with `0N!` and the last 1000 kept, without editing its file; **Remove Logpoint**, **Remove All Logpoints** and **Show Logpoint Hits**. Adding and removing go through the read-only guard. Off, the commands are hidden and nothing is sent."
+          },
           "q-lint.processExplorer.driftDetection.enable": {
             "type": "boolean",
             "default": false,
@@ -1414,6 +1420,30 @@
         "command": "q-lint.generateTestStub",
         "title": "Generate Test Stub",
         "category": "q-lint"
+      },
+      {
+        "command": "q-lint.addLogpoint",
+        "title": "Add Logpoint",
+        "category": "q-lint",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.removeLogpoint",
+        "title": "Remove Logpoint",
+        "category": "q-lint",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.removeAllLogpoints",
+        "title": "Remove All Logpoints",
+        "category": "q-lint",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.showLogpointHits",
+        "title": "Show Logpoint Hits",
+        "category": "q-lint",
+        "enablement": "q-lint.connected"
       },
       {
         "command": "q-lint.checkUndefinedNames",
@@ -2192,6 +2222,11 @@
           "group": "q-lint@10"
         },
         {
+          "command": "q-lint.addLogpoint",
+          "when": "editorLangId == q && q-lint.connected && config.q-lint.logpoints.enable",
+          "group": "q-lint@10"
+        },
+        {
           "command": "q-lint.generateTestStub",
           "when": "editorLangId == q && config.q-lint.testStub.enable",
           "group": "q-lint@10"
@@ -2395,6 +2430,22 @@
         {
           "command": "q-lint.generateTestStub",
           "when": "config.q-lint.testStub.enable && editorLangId == q"
+        },
+        {
+          "command": "q-lint.addLogpoint",
+          "when": "config.q-lint.logpoints.enable"
+        },
+        {
+          "command": "q-lint.removeLogpoint",
+          "when": "config.q-lint.logpoints.enable"
+        },
+        {
+          "command": "q-lint.removeAllLogpoints",
+          "when": "config.q-lint.logpoints.enable"
+        },
+        {
+          "command": "q-lint.showLogpointHits",
+          "when": "config.q-lint.logpoints.enable"
         }
       ],
       "editor/title": [

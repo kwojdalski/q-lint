@@ -19,6 +19,7 @@ export const EDITOR_SETTINGS = {
   snapshotTests: { key: "snapshotTests.enable", fallback: true, name: "Snapshot tests" },
   testStub: { key: "testStub.enable", fallback: true, name: "Generate Test Stub" },
   backtraceLinks: { key: "backtraceLinks.enable", fallback: true, name: "Clickable q backtraces" },
+  logpoints: { key: "logpoints.enable", fallback: true, name: "Logpoints" },
 } as const;
 
 export type EditorFeature = keyof typeof EDITOR_SETTINGS;

@@ -103,6 +103,7 @@ function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir
     "./snapshotview": { registerSnapshots() {} },
     "./teststubview": { registerTestStubs: () => ({ registered: () => false }) },
     "./backtraceview": { registerBacktraceLinks: () => ({ registered: () => false }) },
+    "./logpointview": { registerLogpoints: () => ({ logged: () => ({}), marked: () => [] }) },
   };
   const file = require.resolve("../out/extension.js");
   delete require.cache[file];

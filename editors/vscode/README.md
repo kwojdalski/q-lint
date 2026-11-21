@@ -728,6 +728,21 @@ namespace. Toggling the statement off and loading the definition again stops
 that, but does not delete the globals already defined. Do not leave it in
 code that runs anywhere it matters.
 
+**Logpoints.** **Add Logpoint** (a q editor's context menu) logs the calls
+of the function under the cursor - or one named - on the active process
+without editing its file: the function is replaced there by a wrapper of
+the same parameters that prints `(name; arguments)` with `0N!`, to the
+process's console or log (a launched process's output channel), keeps the
+last 1000 calls as text in `.qlint.log.hits`, and calls the original, kept
+in `.qlint.log.orig`. The editor marks the definition `logpoint on
+<process>`. **Show Logpoint Hits** reads the calls kept, **Remove
+Logpoint** puts one function back, and **Remove All Logpoints** all of
+them; a function redefined while it had a logpoint is left as it is. With
+the last one removed, `.qlint.log` is deleted. Only a lambda takes one, and
+a projection or alias made of the function before keeps calling the
+original. Adding and removing go through the read-only guard; reading the
+hits changes nothing. `q-lint.logpoints.enable` hides the commands.
+
 **Query modes.** **Switch Query Mode** (or the mode in the status bar) picks
 where a result goes; it sets `q-lint.query.mode`, and takes `console`,
 `grid` or `chart` as an argument for a keybinding.
@@ -1442,6 +1457,7 @@ nothing.
 | `q-lint.snapshotTests.enable` | `true` | **Record Query Snapshot** and **Update Snapshot**, and `.qsnap` files as tests in the Testing view. Off, none is listed and the commands are hidden. | - |
 | `q-lint.testStub.enable` | `true` | Offer **Generate Test Stub** on a function's definition. | - |
 | `q-lint.backtraceLinks.enable` | `true` | Link each backtrace frame in the output and terminals to the line that failed. | - |
+| `q-lint.logpoints.enable` | `true` | **Add Logpoint**, **Remove Logpoint**, **Remove All Logpoints** and **Show Logpoint Hits**. Off, the commands are hidden and nothing is sent. | - |
 
 ### Connection settings
 

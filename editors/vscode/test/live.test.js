@@ -51,6 +51,7 @@ const { QSQL_COMMANDS } = require("../out/assist.js");
 const { RERUN_FAILED } = require("../out/testing.js");
 const { SNAPSHOT_COMMANDS } = require("../out/snapshot.js");
 const { TEST_STUB_COMMAND } = require("../out/teststub.js");
+const { LOGPOINT_COMMANDS } = require("../out/logpoint.js");
 const { CONTROL_COMMANDS, readControls } = require("../out/querycontrols.js");
 const { readProgress } = require("../out/progress.js");
 const { readPlaceholders } = require("../out/placeholders.js");
@@ -319,6 +320,7 @@ test("package.json declares exactly the commands the extension registers", () =>
     RERUN_FAILED,
     ...Object.values(SNAPSHOT_COMMANDS),
     TEST_STUB_COMMAND,
+    ...Object.values(LOGPOINT_COMMANDS),
   ].sort();
   assert.deepStrictEqual(declared, registered);
 });
