@@ -23,6 +23,33 @@ export function portProblem(port: string): string | undefined {
   return n >= 1 && n <= 65535 ? undefined : "A port is between 1 and 65535.";
 }
 
+/// `host` as it is connected to: an IPv6 address written in brackets, as a
+/// URL writes one (`[::1]`), without them.
+export function plainHost(host: string): string {
+  const h = host.trim();
+  return /^\[[^\]]*:[^\]]*\]$/.test(h) ? h.slice(1, -1) : h;
+}
+
+/// Why `host` is not a host, or undefined when it is: a name or an address,
+/// with no port, scheme, space or slash.
+export function hostProblem(host: string): string | undefined {
+  const h = plainHost(host);
+  if (h === "") {
+    return "A host is needed.";
+  }
+  // One colon is a port or a scheme; an IPv6 address has two or more.
+  if (h.split(":").length === 2) {
+    return "A host only: the port is asked for next.";
+  }
+  return /[\s/\\]/.test(h) ? "A host has no spaces or slashes." : undefined;
+}
+
+/// `host:port` as it is shown, an IPv6 host in brackets so the port is not
+/// read as part of it.
+export function address(host: string, port: number): string {
+  return host.includes(":") ? `[${host}]:${port}` : `${host}:${port}`;
+}
+
 /// Tags as written in an input box: comma or space separated, lower case,
 /// each once.
 export function parseTags(text: string): string[] {
@@ -60,7 +87,7 @@ export function parseProcesses(json: unknown): { processes: Process[]; problems:
     }
     const e = entry as Record<string, unknown>;
     const label = typeof e.label === "string" ? e.label.trim() : "";
-    const host = typeof e.host === "string" ? e.host.trim() : "";
+    const host = typeof e.host === "string" ? plainHost(e.host) : "";
     const port = typeof e.port === "number" ? String(e.port) : typeof e.port === "string" ? e.port : "";
     if (label === "") {
       problems.push(`${where} has no label.`);

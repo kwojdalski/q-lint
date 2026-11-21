@@ -32,8 +32,11 @@ import {
 import { children, findDiscovered, qualified, type Row } from "./discovery";
 import { DiscoveryServers, discoveryItem } from "./discoveryservers";
 import {
+  address,
+  hostProblem,
   merge,
   parseProcesses,
+  plainHost,
   parseTags,
   portProblem,
   processThemeColour,
@@ -185,12 +188,12 @@ class ProcessesView implements TreeDataProvider<Row> {
     const from = row.kind === "discovered" ? row.server : undefined;
     const active = this.live.activeLabel() === (from === undefined ? process.label : qualified(from, process.label));
     const item = new TreeItem(process.label, TreeItemCollapsibleState.None);
-    item.description = `${process.host}:${process.port}${active ? " - connected" : ""}`;
+    item.description = `${address(process.host, process.port)}${active ? " - connected" : ""}`;
     item.iconPath = new ThemeIcon(active ? "vm-active" : "server-process", colourOf(process.tags));
     item.tooltip = new MarkdownString(
       [
         `**${process.label}**`,
-        `${process.host}:${process.port}${process.tls ? " (TLS)" : ""}`,
+        `${address(process.host, process.port)}${process.tls ? " (TLS)" : ""}`,
         process.user ? `user \`${process.user}\`` : "no user",
         process.tags.length ? `tags: ${process.tags.join(", ")}` : "no tags",
         ...(from === undefined ? [] : [`listed by ${from}, connected to as \`${qualified(from, process.label)}\``]),
@@ -540,7 +543,7 @@ export class Live {
       this.status.tooltip = "A query is running. q-lint: Abort Current Query stops waiting for it.";
     } else if (label !== undefined) {
       this.status.text = `$(plug) q: ${label}`;
-      this.status.tooltip = `Connected to ${this.active?.host}:${this.active?.port}. Click to switch.`;
+      this.status.tooltip = `Connected to ${this.active === undefined ? "" : address(this.active.host, this.active.port)}. Click to switch.`;
     } else {
       this.status.text = "$(debug-disconnect) q: not connected";
       this.status.tooltip = "Click to connect to a q process.";
@@ -568,7 +571,7 @@ export class Live {
     const host = await window.showInputBox({
       title: "q process: host",
       value: from.host ?? "localhost",
-      validateInput: (v) => (v.trim() === "" ? "A host is needed." : undefined),
+      validateInput: hostProblem,
     });
     if (host === undefined) {
       return undefined;
@@ -624,7 +627,7 @@ export class Live {
     return {
       process: {
         label: label.trim(),
-        host: host.trim(),
+        host: plainHost(host),
         port: Number(port),
         ...(user.trim() !== "" ? { user: user.trim() } : {}),
         tags: parseTags(tags),
@@ -682,7 +685,7 @@ export class Live {
     const picked = await window.showQuickPick(
       processes.map((p) => ({
         label: p.label,
-        description: `${p.host}:${p.port}`,
+        description: address(p.host, p.port),
         detail: p.tags.length ? p.tags.join(", ") : undefined,
         process: p,
       })),
@@ -885,7 +888,7 @@ export class Live {
         return true;
       } catch (error) {
         void window.showErrorMessage(
-          `q-lint: could not connect to ${process.label} (${process.host}:${process.port}): ${error instanceof Error ? error.message : String(error)}`,
+          `q-lint: could not connect to ${process.label} (${address(process.host, process.port)}): ${error instanceof Error ? error.message : String(error)}`,
         );
         return false;
       } finally {
