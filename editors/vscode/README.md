@@ -93,6 +93,13 @@ to a process you add and connect to, and sends only the code you run.
   through a string (`value "f[]"`), a bare symbol (`` `f ``) or another
   process is not seen and keeps its old name: preview the rename
   (Shift+Enter) when that matters.
+- **Generate qDoc**, a refactoring in the lightbulb and **Refactor...**
+  menu inside a top-level function: it writes `/ @param` for each
+  parameter - the signature's, or the `x`, `y` and `z` the body reads - and
+  `/ @return` directly above the definition, below any description already
+  there, for the descriptions to be typed after. Not offered when the
+  comment above has an `@param` or `@return` already
+  (`q-lint.generateQdoc.enable`).
 - **Hover** on a name the workspace defines shows its parameters, the
   comment written above its definition and the file it is in; on a word of
   q itself - `ssr`, `select`, `.z.p`, `.Q.s`, `.h.hy`, or a glyph such as
@@ -606,6 +613,7 @@ q-pro column names the setting of [q-pro](https://marketplace.visualstudio.com/i
 | `q-lint.inlayHints.enable` | `true` | Show parameter names at the arguments of a call to a workspace function. | - |
 | `q-lint.codeLens.enable` | `true` | Show **Run** above each top-level function definition and **Run test** above a `test_*` one. | - |
 | `q-lint.documentLinks.enable` | `true` | Make each `\l`, `system "l ..."` and `` `:file.q `` path a link to the file it loads. | - |
+| `q-lint.generateQdoc.enable` | `true` | Offer **Generate qDoc** above a top-level function. | - |
 | `q-lint.workspaceIndex.enable` | `true` | Read every workspace `.q` file at startup for the names it defines, up to 20,000 files or 500,000 directory entries. Off: only open files. | - |
 | `q-lint.workspaceIndex.exclude` | `[]` | Globs, relative to the workspace folder, the index does not read: `["vendor/**"]`. | `q-lang-server.sourceFiles.ignoreGlob` |
 | `q-lint.trace.server` | `off` | Log client-server traffic: `off`, `messages`, `verbose`. | `q-lang-server.trace.server` |

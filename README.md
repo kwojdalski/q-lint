@@ -559,6 +559,14 @@ function by its full name with no argument (`.ns.test_x[]`). It is off by
 default because only a client that registers that command - the VS Code
 extension, which sends the code to the connected q process - can run it.
 
+A code action of kind `refactor.rewrite`, **Generate qDoc for f**, is offered
+inside a function a statement at column 0 defines, with no `context.only` or
+one naming `refactor`: it inserts `/ @param p` for each parameter a caller
+passes and `/ @return` at the start of the definition's line, below any
+description already there, and is not offered when the comment above has an
+`@param` or `@return`. `generateQdoc.enable: false` withdraws it and its kind
+from `codeActionKinds`.
+
 Completion is off unless `completion.enable` asks for it, because an editor
 told that a server completes stops offering the words already in the buffer,
 and this server's list is narrower than that fallback in one way that matters:
@@ -721,7 +729,7 @@ Every key is optional, and these are the defaults:
  "help": {"enable": true}, "completion": {"enable": false},
  "callHierarchy": {"enable": true}, "graph": {"enable": true},
  "inlayHints": {"enable": true}, "codeLens": {"enable": false},
- "documentLinks": {"enable": true},
+ "documentLinks": {"enable": true}, "generateQdoc": {"enable": true},
  "workspaceIndex": {"enable": true, "exclude": []}}
 ```
 

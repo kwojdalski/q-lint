@@ -638,6 +638,8 @@ struct Options {
     code_lens: bool,
     /// Answer document links: each load's path, to the file it loads.
     document_links: bool,
+    /// Offer the code action that writes a qDoc block above a function.
+    generate_qdoc: bool,
     /// A diagnostic severity by code or prefix; the longest that names a
     /// code decides.
     severity: Vec<(String, i64)>,
@@ -660,6 +662,7 @@ impl Default for Options {
             inlay_hints: true,
             code_lens: false,
             document_links: true,
+            generate_qdoc: true,
             severity: vec![],
         }
     }
@@ -694,6 +697,7 @@ impl Options {
                         "inlayHints",
                         "codeLens",
                         "documentLinks",
+                        "generateQdoc",
                     ]
                     .contains(&key.as_str())
                         && !value.is_object()
@@ -727,6 +731,7 @@ impl Options {
         options.inlay_hints = flag("/inlayHints/enable", true);
         options.code_lens = flag("/codeLens/enable", false);
         options.document_links = flag("/documentLinks/enable", true);
+        options.generate_qdoc = flag("/generateQdoc/enable", true);
         match init.pointer("/lint/run") {
             None | Some(Value::Null) => {}
             Some(v) if v == "onType" => {}
@@ -1234,7 +1239,7 @@ pub fn serve(
                 send(writer, json!({"id": id, "result": []}))?
             }
             ("textDocument/codeAction", Some(id)) => {
-                match guarded(|| code_actions(&params, &docs, &idx.ws, policy, opts.unsafe_fixes)) {
+                match guarded(|| code_actions(&params, &docs, &idx.ws, policy, &opts)) {
                     Ok(actions) => send(writer, json!({"id": id, "result": actions}))?,
                     Err(panic) => send(writer, internal_error(id, &panic))?,
                 }
@@ -1480,7 +1485,11 @@ fn capabilities(opts: &Options, code_action_literals: bool) -> Value {
     if code_action_literals {
         // The kinds, not a bare `true`: an editor asks for `source.fixAll`
         // actions on save only of a server that says it has some.
-        capabilities["codeActionProvider"] = json!({"codeActionKinds": [QUICK_FIX, FIX_ALL]});
+        let mut kinds = vec![QUICK_FIX, FIX_ALL];
+        if opts.generate_qdoc {
+            kinds.push(REWRITE);
+        }
+        capabilities["codeActionProvider"] = json!({ "codeActionKinds": kinds });
     }
     capabilities["foldingRangeProvider"] = json!(true);
     capabilities["workspace"] = json!({
@@ -1700,6 +1709,8 @@ impl navigate::Sources<'_> {
 /// `editor.codeActionsOnSave` to have exactly these fixes run on save.
 const QUICK_FIX: &str = "quickfix";
 const FIX_ALL: &str = "source.fixAll.q-lint";
+/// The kind of the action that writes a qDoc block above a function.
+const REWRITE: &str = "refactor.rewrite";
 
 /// Whether a kind the client asks for (`context.only`) takes in `kind`. Kinds
 /// are hierarchical, a dot at a time: `source` and `source.fixAll` each ask
@@ -1710,7 +1721,8 @@ fn asks_for(only: &str, kind: &str) -> bool {
 }
 
 /// The code actions for a request: the quick fixes for the diagnostics it
-/// carries, and - only when asked for by kind - the fix-all action.
+/// carries, the qDoc block for the function the range is in, and - only
+/// when asked for by kind - the fix-all action.
 ///
 /// WITHOUT `context.only`, QUICK FIXES AND NOTHING ELSE. That request is the
 /// lightbulb's, made as the cursor moves, about the diagnostics at one range.
@@ -1726,8 +1738,9 @@ fn code_actions(
     docs: &Documents,
     ws: &Workspace,
     policy: &Policy,
-    unsafe_fixes: bool,
+    opts: &Options,
 ) -> Vec<Value> {
+    let unsafe_fixes = opts.unsafe_fixes;
     let only: Option<Vec<&str>> = params["context"]["only"]
         .as_array()
         .map(|only| only.iter().filter_map(Value::as_str).collect());
@@ -1737,6 +1750,13 @@ fn code_actions(
             .any(|kind| *kind == QUICK_FIX || kind.starts_with("quickfix."))
     }) {
         actions.extend(quick_fixes(params, docs, ws, policy, unsafe_fixes));
+    }
+    if opts.generate_qdoc
+        && only
+            .as_ref()
+            .is_none_or(|only| only.iter().any(|kind| asks_for(kind, REWRITE)))
+    {
+        actions.extend(qdoc_action(params, docs));
     }
     if only
         .as_ref()
@@ -1839,6 +1859,55 @@ fn quick_fixes(
     }
     actions.extend(suppressions);
     actions
+}
+
+/// A qDoc block for the function whose definition the request's range
+/// starts in - a statement at column 0 assigning a lambda - written above
+/// it in the form the uqf tree documents its functions: a `/ @param` line
+/// for each parameter a caller passes (the signature's, or the `x`, `y`
+/// and `z` its body reads) and a `/ @return` line, each for the
+/// description to be typed after. Inserted directly above the definition,
+/// so a description already there stays on top; none when the comment
+/// above already has an `@param` or `@return`.
+fn qdoc_action(params: &Value, docs: &Documents) -> Option<Value> {
+    let uri = uri_of(&params["textDocument"]);
+    let source = docs.get(&uri).filter(|_| is_q_uri(&uri))?;
+    let lines = Lines::new(source);
+    let start = &params["range"]["start"];
+    let cursor = lines.offset(
+        start["line"].as_u64()? as usize,
+        start["character"].as_u64()? as usize,
+    );
+    let all = q_lint_rs::mentions(source);
+    let (m, definition) = all.iter().find_map(|m| {
+        let d = m.definition.as_ref()?;
+        (d.function
+            && m.at == d.start
+            && (m.at == 0 || source[..m.at].ends_with('\n'))
+            && (d.start..=d.end).contains(&cursor))
+        .then_some((m, d))
+    })?;
+    let above = q_lint_rs::comment_above(source, definition.start);
+    if above.contains("@param") || above.contains("@return") {
+        return None;
+    }
+    let mut block: String = definition
+        .params
+        .iter()
+        .map(|param| format!("/ @param {param}\n"))
+        .collect();
+    block.push_str("/ @return\n");
+    let at = lines.json(m.at);
+    let mut changes = serde_json::Map::new();
+    changes.insert(
+        uri.clone(),
+        json!([{"range": {"start": at, "end": at}, "newText": block}]),
+    );
+    Some(json!({
+        "title": format!("Generate qDoc for {}", &source[m.at..m.at + m.len]),
+        "kind": REWRITE,
+        "edit": {"changes": changes},
+    }))
 }
 
 /// Every safe fix at once, as one action of kind `source.fixAll.q-lint`: the

@@ -380,3 +380,91 @@ fn document_links_are_announced_and_can_be_turned_off() {
     let reply = server.whole("textDocument/documentLink", &uri, json!({}));
     assert_eq!(reply["result"], Value::Null, "{reply}");
 }
+
+/// The code actions offered at `line`:`character` of the open document
+/// `uri`, with `only` when given.
+fn actions_at(
+    server: &mut Server,
+    uri: &str,
+    line: u64,
+    character: u64,
+    only: Option<Value>,
+) -> Vec<Value> {
+    let at = json!({"line": line, "character": character});
+    let mut context = json!({"diagnostics": []});
+    if let Some(only) = only {
+        context["only"] = only;
+    }
+    let reply = server.whole(
+        "textDocument/codeAction",
+        uri,
+        json!({"range": {"start": at, "end": at}, "context": context}),
+    );
+    reply["result"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a list of actions, not {reply}"))
+        .clone()
+}
+
+/// The text of the one qDoc action among `actions`, and its title.
+fn qdoc(actions: &[Value], uri: &str) -> Option<(String, String, (u64, u64))> {
+    let action = actions.iter().find(|a| a["kind"] == "refactor.rewrite")?;
+    let edit = &action["edit"]["changes"][uri][0];
+    Some((
+        action["title"].as_str().unwrap().to_string(),
+        edit["newText"].as_str().unwrap().to_string(),
+        (
+            edit["range"]["start"]["line"].as_u64().unwrap(),
+            edit["range"]["start"]["character"].as_u64().unwrap(),
+        ),
+    ))
+}
+
+#[test]
+fn a_qdoc_block_is_written_above_a_function_from_its_parameters() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let text = "\\d .qf.mkt\n/ Folds level columns.\nfold:{[tbl;groups]\n  tbl}\n\
+                twice:{2*x}\nlimit:10\n/ @param t the table\n/ @return it\ndone:{[t] t}\n\
+                none:{[] 1}\n";
+    let uri = server.open(dir.path(), "book.q", text);
+    // Anywhere in the statement, its continuation line too: below the
+    // description already there, so that stays on top.
+    for (line, character) in [(2, 0), (3, 3)] {
+        let actions = actions_at(&mut server, &uri, line, character, None);
+        assert_eq!(
+            qdoc(&actions, &uri),
+            Some((
+                "Generate qDoc for fold".to_string(),
+                "/ @param tbl\n/ @param groups\n/ @return\n".to_string(),
+                (2, 0)
+            )),
+            "{actions:?}"
+        );
+    }
+    // The x a body reads; a signature with none; asked for by kind.
+    let actions = actions_at(&mut server, &uri, 4, 2, Some(json!(["refactor"])));
+    assert_eq!(qdoc(&actions, &uri).unwrap().1, "/ @param x\n/ @return\n");
+    let actions = actions_at(&mut server, &uri, 9, 0, None);
+    assert_eq!(qdoc(&actions, &uri).unwrap().1, "/ @return\n");
+    // Not on a value, not where a block is already written, and not when
+    // only quick fixes are asked for.
+    for (line, only) in [(5, None), (8, None), (2, Some(json!(["quickfix"])))] {
+        let actions = actions_at(&mut server, &uri, line, 0, only);
+        assert_eq!(qdoc(&actions, &uri), None, "{line}: {actions:?}");
+    }
+}
+
+#[test]
+fn generating_qdoc_can_be_turned_off() {
+    let dir = tempfile::tempdir().unwrap();
+    let options = json!({"generateQdoc": {"enable": false}});
+    let (mut server, reply) = Server::over(dir.path(), &[], client(), options);
+    assert_eq!(
+        reply["result"]["capabilities"]["codeActionProvider"]["codeActionKinds"],
+        json!(["quickfix", "source.fixAll.q-lint"])
+    );
+    let uri = server.open(dir.path(), "a.q", "f:{[a] a}\n");
+    let actions = actions_at(&mut server, &uri, 0, 0, None);
+    assert_eq!(qdoc(&actions, &uri), None, "{actions:?}");
+}

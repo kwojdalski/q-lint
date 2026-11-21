@@ -273,6 +273,12 @@
             "order": 29,
             "markdownDescription": "Make the path of each load - `\\l lib/x.q`, `system \"l lib/x.q\"` or a file symbol `` `:lib/x.q `` - a link: Ctrl/Cmd+click opens the file, found against the workspace folder and then the loading file's own directory and each one above it, as **Go to Definition** on the path finds it. Off, q-lint announces no links."
           },
+          "q-lint.generateQdoc.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 29,
+            "markdownDescription": "Offer **Generate qDoc for f** in the lightbulb and **Refactor...** menu inside a function a statement at column 0 defines: it writes a `/ @param` line for each parameter and a `/ @return` line directly above the definition, for the descriptions to be typed after. Not offered where the comment above already has an `@param` or `@return`. Off, q-lint offers no such action."
+          },
           "q-lint.workspaceIndex.enable": {
             "type": "boolean",
             "default": true,

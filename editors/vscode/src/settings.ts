@@ -58,6 +58,7 @@ export interface InitializationOptions {
   inlayHints: { enable: boolean };
   codeLens: { enable: boolean };
   documentLinks: { enable: boolean };
+  generateQdoc: { enable: boolean };
   workspaceIndex: { enable: boolean; exclude: string[] };
 }
 
@@ -139,6 +140,7 @@ export function launch(settings: Settings, folder: string | undefined): Launch {
       inlayHints: { enable: settings.get<boolean>("inlayHints.enable", true) },
       codeLens: { enable: settings.get<boolean>("codeLens.enable", true) },
       documentLinks: { enable: settings.get<boolean>("documentLinks.enable", true) },
+      generateQdoc: { enable: settings.get<boolean>("generateQdoc.enable", true) },
       workspaceIndex: {
         enable: settings.get<boolean>("workspaceIndex.enable", true),
         exclude: strings(settings, "workspaceIndex.exclude"),
@@ -167,6 +169,7 @@ const RESTARTING = [
   "inlayHints",
   "codeLens",
   "documentLinks",
+  "generateQdoc",
   "workspaceIndex",
 ];
 
