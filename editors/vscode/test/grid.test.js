@@ -441,3 +441,22 @@ test("a histogram of floats spanning more than the largest double counts every v
   assert.ok(h.edges.every(Number.isFinite), String(h.edges));
   assert.deepStrictEqual(h.edges, [-1e308, 0, 1e308]);
 });
+
+test("a grid of more rows than a page can be tall still scrolls to its last row", () => {
+  // 22 px a row: two million rows are 44,000,000 px, past the 33,554,432
+  // px Chromium lets an element be, so the last half million could not be
+  // scrolled to.
+  const count = 2e6;
+  const view = 600;
+  const top = panel.span(0, view, count);
+  assert.strictEqual(top.start, 0);
+  assert.ok(top.before + (top.end - top.start) * 22 + top.after <= panel.MAX_HEIGHT);
+  const bottom = panel.span(panel.MAX_HEIGHT - view, view, count);
+  assert.strictEqual(bottom.end, count);
+  assert.ok(bottom.before + (bottom.end - bottom.start) * 22 + bottom.after <= panel.MAX_HEIGHT + 1);
+  // The rows drawn are those in view: the spacer above ends at or before it.
+  assert.ok(bottom.before <= panel.MAX_HEIGHT - view);
+  // A grid that fits is laid out row for row, as before.
+  assert.deepStrictEqual(panel.span(220, view, 1000), { start: 0, end: 68, before: 0, after: (1000 - 68) * 22 });
+  assert.deepStrictEqual(panel.span(22000, view, 1000), { start: 980, end: 1000, before: 980 * 22, after: 0 });
+});

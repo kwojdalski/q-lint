@@ -54,10 +54,40 @@
     return columns.length === 0 && can.length > 0 ? { columns: columns, note: "No column is ticked: tick one above to chart it." } : { columns: columns };
   }
 
+  /// Pixels a grid row takes: result.css sets the same.
+  const ROW = 22;
+  /// The tallest the rows may be laid out: under the 33,554,432 px Chromium
+  /// lets an element be, and Firefox's 17,895,697.
+  const MAX_HEIGHT = 15000000;
+
+  /// The rows to draw for a scroll position, and the spacers above and
+  /// below them, in pixels: {start, end, before, after}. Row for row while
+  /// they fit in MAX_HEIGHT; past that, the scrollbar's range is spread
+  /// over the rows, so the last is still reached.
+  function span(scrollTop, height, count) {
+    const visible = Math.ceil(height / ROW);
+    if (count * ROW <= MAX_HEIGHT) {
+      const start = Math.max(0, Math.floor(scrollTop / ROW) - 20);
+      const end = Math.min(count, start + visible + 40);
+      return { start: start, end: end, before: start * ROW, after: (count - end) * ROW };
+    }
+    const range = Math.max(1, MAX_HEIGHT - height);
+    const at = Math.max(0, Math.min(1, scrollTop / range));
+    const first = Math.round(at * Math.max(0, count - visible));
+    const start = Math.max(0, first - 20);
+    const end = Math.min(count, first + visible + 20);
+    // The first row in view sits at the top of the view; at the bottom,
+    // the last row ends where the rows do.
+    const before = Math.max(0, Math.min(scrollTop - (first - start) * ROW, MAX_HEIGHT - (end - start) * ROW));
+    return { start: start, end: end, before: before, after: Math.max(0, MAX_HEIGHT - before - (end - start) * ROW) };
+  }
+
   const helpers = {
     rowCount: rowCount,
     visibleRows: visibleRows,
     chartColumns: chartColumns,
+    span: span,
+    MAX_HEIGHT: MAX_HEIGHT,
   };
   if (typeof module !== "undefined" && module.exports) {
     module.exports = helpers;
@@ -70,8 +100,6 @@
 
   const vscode = acquireVsCodeApi();
   const C = root.qlintChart;
-  /// Pixels a grid row takes: result.css sets the same.
-  const ROW = 22;
   const KINDS = ["line", "bar", "scatter", "histogram"];
   const state = Object.assign({ id: 0, view: "grid", sort: null, filters: [], kind: "line", columns: null, bins: C.BINS }, vscode.getState() || {});
   let result = null;
@@ -231,20 +259,20 @@
       return;
     }
     const grid = result.grid;
-    const height = scroller.clientHeight || 600;
-    const start = Math.max(0, Math.floor(scroller.scrollTop / ROW) - 20);
-    const end = Math.min(rows.length, start + Math.ceil(height / ROW) + 40);
-    const spacer = function (n) {
+    const at = span(scroller.scrollTop, scroller.clientHeight || 600, rows.length);
+    const start = at.start;
+    const end = at.end;
+    const spacer = function (px) {
       const tr = el("tr", "spacer");
       const td = el("td");
       td.colSpan = Math.max(1, grid.columns.length);
-      td.style.height = n * ROW + "px";
+      td.style.height = px + "px";
       tr.append(td);
       return tr;
     };
     const out = [];
-    if (start > 0) {
-      out.push(spacer(start));
+    if (at.before > 0) {
+      out.push(spacer(at.before));
     }
     for (let i = start; i < end; i++) {
       const r = rows[i];
@@ -257,8 +285,8 @@
       });
       out.push(tr);
     }
-    if (end < rows.length) {
-      out.push(spacer(rows.length - end));
+    if (at.after > 0) {
+      out.push(spacer(at.after));
     }
     body.replaceChildren.apply(body, out);
   }
