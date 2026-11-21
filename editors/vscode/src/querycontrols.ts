@@ -71,7 +71,7 @@ export function limits(
 
 /// `RUN` for an unlimited console query: the same answer, except that a
 /// simple list (types 1 to 19) comes as `value`, with no text, for
-/// `readUnlimited` to write. A temporal list comes as the numbers q holds
+/// `readUnlimited` to write, with its attribute (`-2!`). A temporal list comes as the numbers q holds
 /// it as - timestamps and timespans long nanoseconds, a datetime float
 /// days, the rest ints - since the codec would make a timestamp a float,
 /// exact only to 256 ns, and loses the sign of a date's infinity. Like `RUN`
@@ -81,7 +81,7 @@ export const UNLIMITED = [
   ...TRAP,
   " t:type r 1;",
   " $[r 0;",
-  "   $[t within 1 19h;`ok`type`text`value!(1b;t;();$[t within 12 19h;\"jiifjiii\"[t-12h]$r 1;r 1]);`ok`type`text!(1b;t;.Q.S[\"j\"$size;0j] r 1)];",
+  "   $[t within 1 19h;`ok`type`text`value`attr!(1b;t;();$[t within 12 19h;\"jiifjiii\"[t-12h]$r 1;r 1];-2!r 1);`ok`type`text!(1b;t;.Q.S[\"j\"$size;0j] r 1)];",
   "   `ok`error`trace!(0b;r 1;r 2)]}",
 ].join("\n");
 
@@ -91,7 +91,9 @@ export function readUnlimited(raw: unknown): Answer {
   const answer = readAnswer(raw);
   const r = raw as Record<string, unknown>;
   if (answer.ok && "value" in r && answer.type >= 1 && answer.type <= 19) {
-    return { ...answer, text: [vectorText(r.value, answer.type)] };
+    // The codec drops a list's attribute; q writes it first: `s#1 2 3.
+    const attr = typeof r.attr === "string" && /^[supg]$/.test(r.attr) ? `\`${r.attr}#` : "";
+    return { ...answer, text: [attr + vectorText(r.value, answer.type)] };
   }
   return answer;
 }
