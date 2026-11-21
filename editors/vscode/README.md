@@ -263,8 +263,9 @@ outcome; the buttons on a row run it again on the active connection and
   none): a query still running then is aborted exactly as **Abort Current
   Query** aborts it, and the history records it as timed out.
 - **Choose Connection for File** binds the active file to a process, kept
-  per workspace, and takes a label as an argument for a keybinding. A query
-  from that file (line, selection, block or entire file) switches the
+  per workspace (an untitled editor's only until the window closes, so the
+  next window's `Untitled-1` is not bound to it), and takes a label as an
+  argument for a keybinding. A query from that file (line, selection, block or entire file) switches the
   connection to its process first, connecting if nothing is connected -
   there is one connection at a time, so the file's process becomes the
   active one, and an unbound file then queries it too. The history, a
@@ -327,15 +328,17 @@ where a result goes; it sets `q-lint.query.mode`, and takes `console`,
   CSV** copies the rows shown, in the order shown, and **Export to CSV**
   saves them to a file you pick; the command **Export Results to CSV** does
   the same, and takes the file's `Uri` as an argument to skip the dialog.
-  In the CSV, a name, symbol or string a spreadsheet would run as a
-  formula (`=`, `+`, `-` or `@` first, but not a number) starts with `'`.
+  In the CSV, a cell or name a spreadsheet would run as a formula (`=`,
+  `+`, `-` or `@` first, but not a number) starts with `'`: a symbol or a
+  string, and a `-0W` or a negative timespan too.
   Each cell is what q
   prints in a table: a timestamp keeps its nanoseconds, a long above 2^53
   every digit, a null is blank and an infinity is `0W` or `0w`. Sorting is
   q's own order (`iasc` on the process), nulls first, and either way keeps
   equal values in their order, as `xasc` and `xdesc` do.
 - **Chart**: the same results as a line, bar, scatter or histogram chart of
-  the numeric columns against the first, chosen in the panel; the panel's
+  the numeric columns against the first (a list against its row numbers),
+  chosen in the panel; the panel's
   **Grid** and **Chart** buttons switch between the two for one result.
 
 The panel opens beside the editor. With `q-lint.query.resultsLocation` set
@@ -462,7 +465,8 @@ A cell's first lines can choose how its result is shown:
   a timestamp keeps its nanoseconds.
 - `/ @chart line`, `bar`, `scatter` or `histogram`: a table, a keyed
   table, a dictionary or a list as a chart, drawn as query **Chart** mode
-  draws it - the numeric columns against the first (a histogram bins every
+  draws it - the numeric columns against the first (a list against its row
+  numbers; a histogram bins every
   numeric column, in 20 bins), a temporal x axis written in q's notation,
   colours from the editor's theme - from the same rows: the first or the
   last `q-lint.notebook.rowLimit`.

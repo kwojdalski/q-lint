@@ -163,3 +163,46 @@ test("rows a page chose for an earlier result are not copied from the one now sh
   await new Promise((r) => setImmediate(r));
   assert.strictEqual(fake.clipboard.text, "c\n60\n");
 });
+
+test("showing the q Results view gives the focus back to the editor as it was, every cursor kept", async () => {
+  const fake = fakeVscode();
+  const calls = [];
+  const selections = [{ anchor: 1 }, { anchor: 9 }];
+  const editor = { document: { uri: "file:///a.q" }, viewColumn: 1, selection: selections[0], selections };
+  fake.vscode.window.activeTextEditor = editor;
+  fake.vscode.window.showTextDocument = async (document, options) => {
+    calls.push(options);
+    // As VS Code does: a selection given replaces every cursor with it.
+    if (options && options.selection) {
+      editor.selections = [options.selection];
+    }
+    return editor;
+  };
+  const modes = loadModes(fake);
+  modes.show(result([1, 2]), live({ resultsLocation: "panel" }));
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls[0].preserveFocus, false);
+  assert.deepStrictEqual(editor.selections, selections);
+});
+
+test("a query setting other than the decimals does not redraw the result on show", () => {
+  // Toggle Unwrapped Query, or the timeout, sent the result again, and
+  // the page drew it afresh: the grid back at its first row.
+  const fake = fakeVscode();
+  const modes = loadModes(fake);
+  modes.show(result([1, 2, 3]), live());
+  const page = fake.pages[0];
+  const sent = page.posted.length;
+  const change = (key) => {
+    for (const f of fake.listeners.config) {
+      f({ affectsConfiguration: (k) => key === k || key.startsWith(`${k}.`) });
+    }
+  };
+  for (const key of ["q-lint.query.unwrapped", "q-lint.query.timeout", "q-lint.query.mode", "q-lint.query.gridLimit"]) {
+    change(key);
+  }
+  assert.strictEqual(page.posted.length, sent);
+  change("q-lint.query.gridDecimals");
+  assert.strictEqual(page.posted.length, sent + 1);
+});

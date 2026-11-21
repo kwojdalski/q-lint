@@ -16,7 +16,9 @@
 //   names  the column names
 //   types  each column's q type
 //   cells  each column as q prints it in a table: `string` of a simple
-//          column, `-3!` of each item of any other (cut at 200 characters)
+//          column, `-3!` of each item of any other (cut at 200 characters).
+//          `-3!` stops at the process's `\c` width, so a string item is
+//          written here, each character escaped as `-3!` escapes it
 //   raw    the column itself, made its underlying number - `"j"$` of a
 //          timestamp, `"i"$` of a date - for the numeric, temporal and guid
 //          types; `()` for the rest
@@ -38,9 +40,9 @@
 // Column by column, because a column is one q vector and arrives as one.
 //
 // Like `RUN`, it defines nothing on the process: every name in it is a local
-// or a parameter. A value it cannot shape (a partitioned table that
-// `sublist` refuses) gives q's error as a string in `grid`, and the result
-// is shown in the output instead.
+// or a parameter. A partitioned table, which `sublist` refuses, is read by
+// row index with `.Q.ind`. A value it cannot shape gives q's error as a
+// string in `grid`, and the result is shown in the output instead.
 import { TRAP, readAnswer, type Answer } from "./query";
 
 export const GRID = [
@@ -49,6 +51,7 @@ export const GRID = [
   " $[r 0;",
   "   `ok`type`text`grid!(1b;type r 1;.Q.S[\"j\"$size;0j] r 1;.[{[v;n]",
   "     k:$[99h<>type v;0;98h=type key v;count cols key v;1];",
+  "     e:{1_-1_-3!x} each \"c\"$til 256;",
   "     t:$[98h=type v;v;",
   "       99h=type v;$[98h<>type key v;flip`key`value!(key v;value v);",
   "         98h=type value v;0!v;",
@@ -56,9 +59,12 @@ export const GRID = [
   "       (10h=type v)|not type[v] within 0 97h;();",
   "       flip(enlist`value)!enlist v];",
   "     $[98h<>type t;t;",
-  "       [m:count t;t:n sublist t;c:$[count[cols t]=count distinct cols t;t cols t;value flip t];",
+  "       [m:count t;",
+  "        t:$[1b~.Q.qp t;[j:$[n<0;(m+n)|0;0]+til m&abs n;$[count j;.Q.ind[t;j];select from t where i<0]];n sublist t];",
+  "        c:$[count[cols t]=count distinct cols t;t cols t;value flip t];",
   "        `count`keys`names`types`cells`raw`rank!(\"f\"$m;\"i\"$k;cols t;type each c;",
-  "          {$[type[x] within 1 76h;string x;{$[200<count x;(197#x),\"...\";x]} each -3!'x]} each c;",
+  "          {[e;x]$[type[x] within 1 76h;string x;{$[200<count x;(197#x),\"...\";x]} each",
+  "            {[e;x]$[10h=type x;$[1=count x;\",\";\"\"],\"\\\"\",raze[e\"i\"$200 sublist x],\"\\\"\";-3!x]}[e] each x]}[e] each c;",
   "          {[c]u:type c;$[u in 12 16h;\"j\"$c;u in 13 14 17 18 19h;\"i\"$c;u=15h;\"f\"$c;u in 2 5 6 7 8 9h;c;()]} each c;",
   "          {@[{i:iasc x;\"i\"$@[count[x]#0;i;:;-1+sums differ x i]};x;{[e]()}]} each c)]]};",
   "     (r 1;\"j\"$limit);{[e]e}]);",
@@ -269,14 +275,14 @@ export function csvText(text: string): string {
 
 /// The grid as CSV: a header of the column names, then `rows` (indices, in
 /// the order shown) as their cells show them. Lines end in `\n`. Names
-/// and the cells of a column that is not numeric or temporal go through
-/// `csvText`: a symbol or a string can be anything.
+/// and every cell go through `csvText`: a symbol or a string can be
+/// anything, and a numeric or temporal column holds `-0W` and `-0D01:00`,
+/// which are no number either.
 export function toCsv(grid: Grid, rows?: number[]): string {
   const order = rows ?? [...Array(rowCount(grid)).keys()];
-  const text = grid.columns.map((c) => (c.numeric || c.temporal ? (t: string) => t : csvText));
   const lines = [grid.columns.map((c) => csvField(csvText(c.name))).join(",")];
   for (const r of order) {
-    lines.push(grid.cells.map((column, i) => csvField(text[i](column[r] ?? ""))).join(","));
+    lines.push(grid.cells.map((column) => csvField(csvText(column[r] ?? ""))).join(","));
   }
   return lines.join("\n") + "\n";
 }
