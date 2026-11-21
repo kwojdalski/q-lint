@@ -361,6 +361,24 @@ The process's `\d` is put back after each test. A failure shows q's error
 or the value at the test. `q-lint.testExplorer.enable` turns the
 integration off: the tests leave the view and nothing is read or sent.
 
+**Coverage.** The Testing view's **Coverage** profile (the run button's
+menu, or **Run Tests with Coverage**) runs the tests with line coverage.
+Before the first test, each function a workspace q file defines that the
+process holds with the same text (trailing blanks aside) is replaced there
+by a copy that counts each statement of its body, defined in its own
+namespace as Redefine defines it; after the last test, every one is put
+back and the counts show in the editor's gutter and the Test Coverage view.
+A function changed on the process since it was loaded, or not loaded, is
+left alone, and the run's output names those; one redefined while the tests
+ran is left as it is then. `.qlint.cov` holds the counts and the originals
+meanwhile, and is deleted after, with `.qlint` when nothing else of
+q-lint's is in it. A run interrupted before the functions were put back
+(the connection lost, say) is put right first thing in the next coverage
+run. The replacing goes through the read-only guard. A statement is
+counted, not each line inside it: an `if[...]` or a nested lambda counts
+as part of the statement it is in. `q-lint.testExplorer.coverage.enable`
+removes the profile.
+
 **Failed tests.** A failed assertion with two sides shows them as an
 expected-against-actual diff in the Testing view: a k4unit `true` row
 `a~b`, whose left side is one term (a name, literal, string, symbols or
@@ -1419,6 +1437,7 @@ nothing.
 | `q-lint.idiomSnippets.enable` | `true` | Offer the idiom snippets (joins, `.z` handlers, a TorQ process) in the completion list. | - |
 | `q-lint.processExplorer.driftDetection.enable` | `false` | **Check Drift Against Process**: compare the workspace's function definitions with the connected process. Off, the command is hidden and reads nothing. | - |
 | `q-lint.hotReload.enable` | `false` | On saving a q file, send the definitions the save changed to its process, after Redefine's confirmation. Off, nothing listens and nothing is sent. | - |
+| `q-lint.testExplorer.coverage.enable` | `true` | Offer the Testing view's **Coverage** profile: the workspace's functions replaced on the process by counting copies while the tests run, and put back. Off, the profile is not offered. | - |
 | `q-lint.testExplorer.failedTests.enable` | `true` | Show a failed `a~b` row's or qUnit assertion's two sides as a diff, and offer **Re-run Failed q Tests**. | - |
 | `q-lint.snapshotTests.enable` | `true` | **Record Query Snapshot** and **Update Snapshot**, and `.qsnap` files as tests in the Testing view. Off, none is listed and the commands are hidden. | - |
 | `q-lint.testStub.enable` | `true` | Offer **Generate Test Stub** on a function's definition. | - |

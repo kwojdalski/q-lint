@@ -149,7 +149,7 @@ function fakeTests() {
       return controller;
     },
   };
-  vscode.TestRunProfileKind = { Run: 1 };
+  vscode.TestRunProfileKind = { Run: 1, Debug: 2, Coverage: 3 };
   vscode.TestRunRequest = class {
     constructor(include, exclude) {
       this.include = include;
@@ -248,6 +248,7 @@ test("off, there is no controller and nothing is asked or sent; on, the tests ar
     [
       ["Run", true],
       ["Run on q Process...", false],
+      ["Coverage", true],
     ],
   );
   await controller.resolveHandler(undefined);

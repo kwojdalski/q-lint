@@ -1,14 +1,16 @@
-// The failed-test diff and Re-run Failed, and snapshot tests in the Test
-// Explorer (#980, #981): each with its switch off offers and sends nothing;
-// on, what is sent and what the Testing view is given. The q side is
-// testing_q.test.js and snapshot_q.test.js.
+// Coverage, the failed-test diff and Re-run Failed, and snapshot tests in
+// the Test Explorer (#979, #980, #981): each with its switch off offers and
+// sends nothing; on, what is sent and what the Testing view is given. The q
+// side is instrument_q.test.js, testing_q.test.js and snapshot_q.test.js.
 const test = require("node:test");
 const assert = require("node:assert");
 const { stub, vscode } = require("./vscode_stub");
 const { registerTestExplorer, RERUN_FAILED } = require("../out/testexplorer.js");
 const { TEST_RUN } = require("../out/testing.js");
 const { DRIFT } = require("../out/definitions.js");
+const { installLambda, restoreExpression } = require("../out/instrument.js");
 const { SNAPSHOT_RUN } = require("../out/snapshot.js");
+const { coveragePlan, coverageByFile, coverageSummary, definedNames } = require("../out/coverage.js");
 const { formatSnapshot } = require("../out/snapshot.js");
 
 const range = (line, a, b) => ({ start: { line, character: a }, end: { line, character: b } });
@@ -151,6 +153,90 @@ const TESTS = [
   },
 ];
 
+test("coverage plans only the functions the process holds as the file has them", () => {
+  const files = [{ uri: "file:///ws/lib.q", text: LIB }];
+  assert.deepStrictEqual(definedNames(files), ["f", "g"]);
+  const states = new Map([
+    ["f", { state: "lambda", text: "{[a]\n  b:a+1;\n  $[b>2;g b;b]}" }],
+    ["g", { state: "lambda", text: "{x*3}" }],
+  ]);
+  const plan = coveragePlan(files, states);
+  assert.deepStrictEqual(plan.names, ["f"]);
+  assert.deepStrictEqual(plan.skipped, [{ name: "g", why: "changed" }]);
+  assert.strictEqual(plan.src[0], "{[a]\n  .qlint.cov.d[0]+:1;b:a+1;\n  .qlint.cov.d[1]+:1;$[b>2;g b;b]}");
+  assert.deepStrictEqual(
+    plan.probes.map((p) => [p.start, p.end]),
+    [
+      [{ line: 1, character: 2 }, { line: 1, character: 7 }],
+      [{ line: 2, character: 2 }, { line: 2, character: 14 }],
+    ],
+  );
+  const byFile = coverageByFile(plan, [3, 0], new Set(["f"]));
+  assert.deepStrictEqual(byFile.get("file:///ws/lib.q").map((s) => s.count), [3, 0]);
+  assert.strictEqual(coverageSummary(byFile, 1), "Coverage: 1 of 2 statements run (50%) in 1 function across 1 file.");
+  // Not installed: not counted.
+  assert.strictEqual(coverageByFile(plan, [3, 0], new Set()).size, 0);
+  // Missing on the process.
+  assert.deepStrictEqual(coveragePlan(files, new Map()).skipped.map((s) => s.why), ["missing", "missing"]);
+});
+
+test("the Coverage profile instruments, runs the tests, puts the functions back and shows the counts; off, it is not offered", async () => {
+  stub.reset();
+  const made = fakeVscode({ "/ws/lib.q": LIB });
+  const server = { sendRequest: async () => TESTS };
+  const live = fakeLive((lambda, ...args) => {
+    if (lambda === DRIFT) {
+      return { name: ["f", "g"], state: ["lambda", "lambda"], text: ["{[a]\n  b:a+1;\n  $[b>2;g b;b]}", "{x*2}"] };
+    }
+    if (lambda === installLambda("cov")) {
+      return args[0].map(() => "ok");
+    }
+    if (lambda === restoreExpression("cov")) {
+      return { kept: [], d: [1, 1, 0] };
+    }
+    if (lambda === TEST_RUN) {
+      return { ok: true, failed: false, text: "1b" };
+    }
+    throw new Error(`unexpected ${lambda}`);
+  });
+  stub.config.user["testExplorer.coverage.enable"] = false;
+  const explorer = registerTestExplorer(stub.newContext(), live, () => server);
+  assert.deepStrictEqual(explorer.profiles(), ["Run", "Run on q Process..."]);
+  await explorer.discover();
+  await explorer.run(undefined, false, true);
+  assert.deepStrictEqual(live.sent, [], "off, a coverage run sends nothing");
+
+  stub.config.user["testExplorer.coverage.enable"] = true;
+  stub.changeConfig("q-lint.testExplorer.coverage.enable");
+  assert.deepStrictEqual(explorer.profiles(), ["Run", "Run on q Process...", "Coverage"]);
+  const controller = made[0];
+  const profile = controller.profiles.find((p) => p.label === "Coverage");
+  assert.strictEqual(profile.kind, 3);
+  await explorer.run(undefined, false, true);
+  const lambdas = live.sent.map((s) => s.lambda);
+  // Leftovers put back, the process read, the functions replaced, the tests, then put back.
+  assert.deepStrictEqual(lambdas, [restoreExpression("cov"), DRIFT, installLambda("cov"), TEST_RUN, TEST_RUN, restoreExpression("cov")]);
+  assert.deepStrictEqual(live.sent[2].args[0], ["f", "g"]);
+  assert.strictEqual(live.sent[2].args[3], 3);
+  // The read-only guard reads the code that replaces them.
+  assert.strictEqual(live.guarded[0], installLambda("cov"));
+  const run = controller.runs.at(-1);
+  assert.strictEqual(run.coverage.length, 1);
+  assert.deepStrictEqual(run.coverage[0].details.map((d) => d.executed), [1, 1, 0]);
+  assert.deepStrictEqual(await profile.loadDetailedCoverage(run, run.coverage[0]), run.coverage[0].details);
+  assert.deepStrictEqual(explorer.coverage(), [{ uri: "file:///ws/lib.q", covered: 2, total: 3, hit: [1, 2], missed: [3] }]);
+  assert.match(run.output, /Coverage: 2 of 3 statements run \(66\.7%\) in 2 functions across 1 file\./);
+  // A plain run instruments nothing.
+  const before = live.sent.length;
+  await explorer.run();
+  assert.deepStrictEqual(live.sent.slice(before).map((s) => s.lambda), [TEST_RUN, TEST_RUN]);
+
+  // Turned off: the profile goes.
+  stub.config.user["testExplorer.coverage.enable"] = false;
+  stub.changeConfig("q-lint.testExplorer.coverage.enable");
+  assert.strictEqual(profile.disposed, true);
+  assert.deepStrictEqual(explorer.profiles(), ["Run", "Run on q Process..."]);
+});
 
 test("a failed assertion's two sides are a diff, and Re-run Failed runs only those that failed; off, neither", async () => {
   stub.reset();

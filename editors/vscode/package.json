@@ -673,6 +673,12 @@
             "order": 133,
             "markdownDescription": "Offer the q idiom snippets in a q editor's completion list: `aj`, `aj0`, `wj`, `wj1`, `lj`, `ij`, `uj`, a bucketed `xbar` select, the `.z` handlers (`zpg`, `zps`, `zpo`, `zpc`, `zpw`, `zts`, `zws`, `zexit`) and a TorQ process skeleton (`torq`). Off, they leave the list."
           },
+          "q-lint.testExplorer.coverage.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 134,
+            "markdownDescription": "Offer the Testing view's **Coverage** profile: the workspace's functions the process holds as their files define them are replaced there with copies that count each statement, the tests run, and every function is put back; the counts show as coverage in the editor's gutter. Only a run you start sends anything. Off, the profile is not offered."
+          },
           "q-lint.testExplorer.failedTests.enable": {
             "type": "boolean",
             "default": true,
