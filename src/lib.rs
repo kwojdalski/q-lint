@@ -284,6 +284,29 @@ pub fn shadowing(source: &str, name: &str, offsets: &[usize]) -> Option<usize> {
     semantics::navigate::shadowing(&v.code, source, name, offsets)
 }
 
+/// What Extract Function writes for a selection: see `extract`.
+pub use semantics::extract::{Extraction, fresh_name};
+
+/// The selection `from..to` of `source` made a lambda of its own - its
+/// trimmed range, the lambda's parameters (the locals of the lambda around
+/// it that it reads) and body, and where the new definition goes - or why
+/// that would change what the code means.
+pub fn extract(source: &str, from: usize, to: usize) -> Result<Extraction, String> {
+    let v = views(source);
+    semantics::extract::extract(&v.code, &v.comments, source, from, to)
+}
+
+/// For each of `offsets` in `source`, the qSQL clause it is written in -
+/// `select`, `by`, `from`, `where` and so on - or `None` outside a query,
+/// where a name is no column.
+pub fn query_clauses(source: &str, offsets: &[usize]) -> Vec<Option<&'static str>> {
+    let v = views(source);
+    offsets
+        .iter()
+        .map(|&at| query_clause(&v.code, at.min(v.code.len())))
+        .collect()
+}
+
 /// A bracketed call around a cursor: the name called, at byte `at` for `len`
 /// bytes, and which argument the cursor is in, from 0.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

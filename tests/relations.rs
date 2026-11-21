@@ -422,10 +422,8 @@ fn the_relations_are_announced_and_each_can_be_turned_off() {
     let (mut server, reply) = Server::over(dir.path(), &WORKSPACE, Value::Null);
     let capabilities = &reply["result"]["capabilities"];
     assert_eq!(capabilities["callHierarchyProvider"], true);
-    assert_eq!(
-        capabilities["experimental"],
-        json!({"q-lint/graph": true, "q-lint/affectedTests": true})
-    );
+    assert_eq!(capabilities["experimental"]["q-lint/graph"], true);
+    assert_eq!(capabilities["experimental"]["q-lint/affectedTests"], true);
     let uri = server.open(dir.path(), "main.q", MAIN);
     assert!(server.graph(&uri).is_object());
     assert!(server.prepare(&uri, MAIN, "calc:", 0).is_array());
@@ -437,7 +435,12 @@ fn the_relations_are_announced_and_each_can_be_turned_off() {
     let options = json!({"graph": {"enable": false}});
     let (mut server, reply) = Server::over(dir.path(), &[], options);
     let capabilities = &reply["result"]["capabilities"];
-    assert!(capabilities["experimental"].is_null(), "{capabilities}");
+    // Only the requests the client asks before it talks to a process.
+    assert!(
+        capabilities["experimental"]["q-lint/graph"].is_null()
+            && capabilities["experimental"]["q-lint/affectedTests"].is_null(),
+        "{capabilities}"
+    );
     assert_eq!(capabilities["callHierarchyProvider"], true);
     let uri = server.open(dir.path(), "main.q", MAIN);
     assert_eq!(server.graph(&uri), Value::Null);

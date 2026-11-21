@@ -55,6 +55,15 @@ to a process you add and connect to, and sends only the code you run.
   `eachleft`, `eachright`, `eachprior`), control flow (`cond`, `condn`,
   `if`, `do`, `while`), a function under a qdoc header (`fn`) and a `\d`
   block (`namespace`).
+- **Idiom snippets**, in the completion list: the joins (`aj`, `aj0`, `wj`
+  and `wj1` with their window, `lj`, `ij`, `uj`), a bucketed `xbar` select,
+  the `.z` handlers (`zpg`, `zps`, `zpo`, `zpc`, `zpw`, `zts` with its `\t`,
+  `zws`, `zexit`) and a TorQ process skeleton (`torq`: its namespace, a
+  setting, `init` calling `.servers.startup` and starting a `.timer.repeat`,
+  and the tick it runs). Each is q that parses, and the joins run as
+  inserted over tables of the names they default to. They come from a
+  completion provider rather than a contributed snippet file, so
+  `q-lint.idiomSnippets.enable` can take them out of the list.
 - **Syntax colouring** from a TextMate grammar, plus semantic tokens: a
   function is coloured wherever it is called, even when another `.q` file in
   the workspace defines it, and a parameter wherever its body reads it.
@@ -101,6 +110,17 @@ to a process you add and connect to, and sends only the code you run.
   there, for the descriptions to be typed after. Not offered when the
   comment above has an `@param` or `@return` already
   (`q-lint.generateQdoc.enable`).
+- **Extract Function**, in the lightbulb and **Refactor...** menu over a
+  selection: the selection becomes a lambda defined directly above the
+  top-level statement it is in, under the same `\d`, taking the parameters
+  and locals of the lambda around it that it reads, and the selection a
+  call to it - `b*2` in `f:{[a;b] a+b*2}` becomes `extracted:{[b] b*2}` and
+  `f:{[a;b] a+extracted[b]}`. Only a selection q reads as one value is
+  rewritten: a whole term anywhere, or everything to the end of its
+  expression (q reads right to left, so `y*z` of `x+y*z` is one and `x+y`
+  is not). One that assigns, returns, names `.z.s`, sits in a qSQL phrase
+  or cuts a name, string or list is refused, and **Refactor...** says why.
+  `q-lint.extractFunction.enable` turns it off.
 - **Hover** on a name the workspace defines shows its parameters, the
   comment written above its definition and the file it is in; on a word of
   q itself - `ssr`, `select`, `.z.p`, `.Q.s`, `.h.hy`, or a glyph such as
@@ -311,13 +331,35 @@ the command.
 
 - **Run** and **Run test**, code lenses: **Run** above each function a
   statement at column 0 defines sends that statement, continuation lines
-  and all; **Run test**, above a function named `test_*`, sends it and then
-  calls it with no argument. A definition under `\d .ns` is sent between
-  `\d .ns` and `\d .`, so its body reads names as it does in the file, and
-  a test there is called by its full name, `.ns.test_x[]` - which leaves
-  the process at the root context afterwards. Either goes to the process
-  the file is bound to, as the commands above do, and lands in the history.
-  `q-lint.codeLens.enable` turns them off.
+  and all; **Run test**, above a function named `test_*` (or qUnit's
+  `testName`), sends it and then calls it with no argument. A definition
+  under `\d .ns` is sent between `\d .ns` and `\d .`, so its body reads
+  names as it does in the file, and a test there is called by its full
+  name, `.ns.test_x[]` - which leaves the process at the root context
+  afterwards. Either goes to the process the file is bound to, as the
+  commands above do, and lands in the history. `q-lint.codeLens.enable`
+  turns them off.
+
+**Testing view.** The tests a **Run test** lens is drawn over - a
+`test_*` or qUnit `testName` function a statement at column 0 defines,
+`.qt.*` suites included - are listed in VS Code's Testing view, by file,
+from the language server's reading of the workspace; so are k4unit suites,
+CSV files with k4unit's `action,ms,bytes,lang,code,...` header, one test
+per `true`, `fail` or `run` row. The list follows saves and files created
+or deleted, and the view's refresh reads it again. **Run** runs the chosen
+tests on the active connection, or asks which process to connect to when
+there is none; **Run on q Process...** (the run button's menu) always asks.
+A process tagged `prod`, `prd` or `production` is confirmed first. A
+function test runs as its lens does - its definition under its `\d`, then
+the call - and passes when nothing signals and it does not answer false
+(`0b`, or a boolean list with a `0b`); the rest of its file is not loaded
+first, so load what it needs (**Execute Entire File**) before. A k4unit
+`true` row passes on `1b`, a `fail` row on an error, a `run` row on
+anything but one; the file's `before` rows run once before its first test
+and its `after` rows once after its last, and `k` rows go through `k)`.
+The process's `\d` is put back after each test. A failure shows q's error
+or the value at the test. `q-lint.testExplorer.enable` turns the
+integration off: the tests leave the view and nothing is read or sent.
 
 The code is cut into statements by q's own script rules: a line starting
 with a space or tab continues the one above, `/` lines and block comments
@@ -827,6 +869,32 @@ since it asks the process whenever the mouse rests on a name), hovering a
 table's name in a q editor shows the same, shorter, beside the language
 server's hover. Details are read once per refresh of the explorer.
 
+**Live values.** With `q-lint.liveValueHover.enable` on (off by default,
+since it asks the process whenever the mouse rests on a global), hovering a
+global in a q editor shows its value on the connected process beside the
+language server's hover: its kind and count, then the value as the console
+prints it - within `\c`'s rows and columns - cut at 2,000 characters. The
+language server says which global the mouse is on, under the `\d` in force,
+so a local or a word of q's asks nothing. The name is found by its
+namespace's `key`, never by evaluating it; a view is named and not run, a
+partitioned table is not printed, and a process tagged `prod`, `prd` or
+`production` is not asked. The read waits up to a second for a query to
+finish, and shows nothing if it does not.
+
+**Undefined names.** With `q-lint.undefinedNames.enable` on (off by
+default, since it asks the process on its own), a q file gets a warning on
+each global it reads that neither the workspace nor the connected process
+defines - a name defined only on the process, by a script outside the
+workspace or by hand, is no longer a mystery. The language server lists the
+names no workspace file defines (not q's words, nor a name in a one-letter
+namespace such as `.z.pc`, nor a name in a qSQL phrase that may be a
+column), and the process is asked which of them its namespaces hold, by
+`key`, evaluating nothing. The active file is checked when it is opened,
+saved or brought to the front, on connect and after each query, only while
+the connection is free; a disconnect clears the warnings. A production
+process is asked only by **q-lint: Check Undefined Names on Process**,
+after a confirmation.
+
 **Function source.** **Open Function Source**, on a function in the Process
 Explorer or the name under the cursor in a q editor, shows the function as
 the process has it (`last value f`) in a read-only editor, headed by the
@@ -1143,6 +1211,7 @@ q-pro column names the setting of [q-pro](https://marketplace.visualstudio.com/i
 | `q-lint.codeLens.enable` | `true` | Show **Run** above each top-level function definition and **Run test** above a `test_*` one. | - |
 | `q-lint.documentLinks.enable` | `true` | Make each `\l`, `system "l ..."` and `` `:file.q `` path a link to the file it loads. | - |
 | `q-lint.generateQdoc.enable` | `true` | Offer **Generate qDoc** above a top-level function. | - |
+| `q-lint.extractFunction.enable` | `true` | Offer **Extract Function** over a selection q reads as one value. | - |
 | `q-lint.workspaceIndex.enable` | `true` | Read every workspace `.q` file at startup for the names it defines, up to 20,000 files or 500,000 directory entries. Off: only open files. | - |
 | `q-lint.workspaceIndex.exclude` | `[]` | Globs, relative to the workspace folder, the index does not read: `["vendor/**"]`. | `q-lang-server.sourceFiles.ignoreGlob` |
 | `q-lint.trace.server` | `off` | Log client-server traffic: `off`, `messages`, `verbose`. | `q-lang-server.trace.server` |
@@ -1224,6 +1293,10 @@ nothing.
 | `q-lint.processMonitor.enable` | `true` | The Process Monitor view. | - |
 | `q-lint.processMonitor.refreshInterval` | `0` | Seconds between the Monitor's reads while it is shown; `0` none. | - |
 | `q-lint.hdbBrowser.enable` | `true` | The HDB Browser view. | - |
+| `q-lint.testExplorer.enable` | `true` | List q tests (`test_*`, qUnit `testName`, k4unit CSV suites) in the Testing view and run them on a q process. Off, none is listed, read or sent. | - |
+| `q-lint.liveValueHover.enable` | `false` | Show a global's value on the connected process when hovering it in a q editor. Off, no hover is registered and nothing is sent. | - |
+| `q-lint.undefinedNames.enable` | `false` | Warn on globals a q file reads that neither the workspace nor the connected process defines, and offer **Check Undefined Names on Process**. Off, nothing is sent and the command is hidden. | - |
+| `q-lint.idiomSnippets.enable` | `true` | Offer the idiom snippets (joins, `.z` handlers, a TorQ process) in the completion list. | - |
 
 ### Connection settings
 

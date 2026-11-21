@@ -462,9 +462,302 @@ fn generating_qdoc_can_be_turned_off() {
     let (mut server, reply) = Server::over(dir.path(), &[], client(), options);
     assert_eq!(
         reply["result"]["capabilities"]["codeActionProvider"]["codeActionKinds"],
-        json!(["quickfix", "source.fixAll.q-lint"])
+        json!([
+            "quickfix",
+            "source.fixAll.q-lint",
+            "refactor.extract.function"
+        ])
     );
     let uri = server.open(dir.path(), "a.q", "f:{[a] a}\n");
     let actions = actions_at(&mut server, &uri, 0, 0, None);
     assert_eq!(qdoc(&actions, &uri), None, "{actions:?}");
+}
+
+/// The actions offered over `start..end` (each `(line, character)`) of the
+/// open document `uri`, with `only` when given.
+fn actions_over(
+    server: &mut Server,
+    uri: &str,
+    start: (u64, u64),
+    end: (u64, u64),
+    only: Option<Value>,
+) -> Vec<Value> {
+    let mut context = json!({"diagnostics": []});
+    if let Some(only) = only {
+        context["only"] = only;
+    }
+    let reply = server.whole(
+        "textDocument/codeAction",
+        uri,
+        json!({"range": {"start": {"line": start.0, "character": start.1},
+                         "end": {"line": end.0, "character": end.1}},
+               "context": context}),
+    );
+    reply["result"].as_array().cloned().unwrap_or_default()
+}
+
+/// The text after applying the Extract Function action among `actions`.
+fn extracted(actions: &[Value], uri: &str, text: &str) -> Option<(String, String)> {
+    let action = actions
+        .iter()
+        .find(|a| a["kind"] == "refactor.extract.function" && a["edit"].is_object())?;
+    let lines: Vec<usize> = std::iter::once(0)
+        .chain(text.match_indices('\n').map(|(i, _)| i + 1))
+        .collect();
+    let offset = |p: &Value| {
+        lines[p["line"].as_u64().unwrap() as usize] + p["character"].as_u64().unwrap() as usize
+    };
+    let mut edits: Vec<(usize, usize, String)> = action["edit"]["changes"][uri]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| {
+            (
+                offset(&e["range"]["start"]),
+                offset(&e["range"]["end"]),
+                e["newText"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    // From the end, so each edit's positions are still the original's.
+    edits.sort_by_key(|e| std::cmp::Reverse(e.0));
+    let mut out = text.to_string();
+    for (start, end, new) in edits {
+        out.replace_range(start..end, &new);
+    }
+    Some((action["title"].as_str().unwrap().to_string(), out))
+}
+
+#[test]
+fn a_selection_is_extracted_into_a_lambda_of_the_locals_it_reads() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let text = "\\d .m\nmid:{[bid;ask;w]\n  w*(bid+ask)%2}\n";
+    let uri = server.open(dir.path(), "m.q", text);
+    // In the lightbulb's request, and in the Refactor menu's.
+    for only in [
+        None,
+        Some(json!(["refactor"])),
+        Some(json!(["refactor.extract"])),
+    ] {
+        let actions = actions_over(&mut server, &uri, (2, 4), (2, 15), only);
+        assert_eq!(
+            extracted(&actions, &uri, text),
+            Some((
+                "Extract function as extracted".to_string(),
+                "\\d .m\nextracted:{[bid;ask] (bid+ask)%2}\nmid:{[bid;ask;w]\n  w*extracted[bid;ask]}\n"
+                    .to_string()
+            )),
+            "{actions:?}"
+        );
+    }
+    // A cursor is no selection; quick fixes alone are not refactors.
+    let actions = actions_over(&mut server, &uri, (2, 4), (2, 4), None);
+    assert!(
+        actions
+            .iter()
+            .all(|a| a["kind"] != "refactor.extract.function"),
+        "{actions:?}"
+    );
+    let actions = actions_over(
+        &mut server,
+        &uri,
+        (2, 4),
+        (2, 15),
+        Some(json!(["quickfix"])),
+    );
+    assert_eq!(extracted(&actions, &uri, text), None);
+    // `w*(bid` is no value of the expression: nothing in the lightbulb.
+    let actions = actions_over(&mut server, &uri, (2, 2), (2, 8), None);
+    assert!(
+        actions
+            .iter()
+            .all(|a| a["kind"] != "refactor.extract.function"),
+        "{actions:?}"
+    );
+}
+
+#[test]
+fn a_refused_extraction_says_why_to_a_client_that_shows_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut capabilities = client();
+    capabilities["textDocument"]["codeAction"]["disabledSupport"] = json!(true);
+    let (mut server, _) = Server::over(dir.path(), &[], capabilities, Value::Null);
+    let uri = server.open(dir.path(), "a.q", "f:{[x;y;z] x+y*z}\n");
+    let actions = actions_over(
+        &mut server,
+        &uri,
+        (0, 11),
+        (0, 14),
+        Some(json!(["refactor.extract"])),
+    );
+    let action = actions
+        .iter()
+        .find(|a| a["kind"] == "refactor.extract.function")
+        .unwrap_or_else(|| panic!("{actions:?}"));
+    assert!(action["edit"].is_null(), "{action}");
+    assert!(
+        action["disabled"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("not a value"),
+        "{action}"
+    );
+    // The lightbulb is not told.
+    let actions = actions_over(&mut server, &uri, (0, 11), (0, 14), None);
+    assert!(
+        actions
+            .iter()
+            .all(|a| a["kind"] != "refactor.extract.function"),
+        "{actions:?}"
+    );
+}
+
+#[test]
+fn extract_function_can_be_turned_off() {
+    let dir = tempfile::tempdir().unwrap();
+    let options = json!({"extractFunction": {"enable": false}});
+    let (mut server, reply) = Server::over(dir.path(), &[], client(), options);
+    assert_eq!(
+        reply["result"]["capabilities"]["codeActionProvider"]["codeActionKinds"],
+        json!(["quickfix", "source.fixAll.q-lint", "refactor.rewrite"])
+    );
+    let text = "f:{[a;b] a+b*2}\n";
+    let uri = server.open(dir.path(), "a.q", text);
+    let actions = actions_over(
+        &mut server,
+        &uri,
+        (0, 11),
+        (0, 14),
+        Some(json!(["refactor"])),
+    );
+    assert_eq!(extracted(&actions, &uri, text), None, "{actions:?}");
+}
+
+#[test]
+fn the_workspace_tests_are_listed_with_the_code_that_runs_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let suite = "\\d .qt.m\nhelper:{x}\ntest_add:{[] 2~1+1}\ntestQunit:{[] 1b}\n\\d .\n";
+    let bare = "test_top:{[] 1b}\nnot_a_test:{[] 0b}\ntestlower:{[] 1b}\n";
+    let mut server = Server::start(
+        dir.path(),
+        &[("suite.q", suite), ("bare.q", bare), ("none.q", "a:1\n")],
+    );
+    let reply = server.request("q-lint/tests", json!({}));
+    let files = reply["result"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{reply}"));
+    type Listed = (String, String, String);
+    let listed: Vec<(String, Vec<Listed>)> = files
+        .iter()
+        .map(|f| {
+            let uri = f["uri"].as_str().unwrap();
+            let name = uri.rsplit('/').next().unwrap().to_string();
+            let tests = f["tests"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|t| {
+                    (
+                        t["name"].as_str().unwrap().to_string(),
+                        t["code"].as_str().unwrap().to_string(),
+                        t["call"].as_str().unwrap().to_string(),
+                    )
+                })
+                .collect();
+            (name, tests)
+        })
+        .collect();
+    assert_eq!(
+        listed,
+        vec![
+            (
+                "bare.q".to_string(),
+                vec![(
+                    "test_top".into(),
+                    "test_top:{[] 1b}".into(),
+                    "test_top[]".into()
+                )]
+            ),
+            (
+                "suite.q".to_string(),
+                vec![
+                    (
+                        "test_add".into(),
+                        "\\d .qt.m\ntest_add:{[] 2~1+1}\n\\d .".into(),
+                        ".qt.m.test_add[]".into()
+                    ),
+                    (
+                        "testQunit".into(),
+                        "\\d .qt.m\ntestQunit:{[] 1b}\n\\d .".into(),
+                        ".qt.m.testQunit[]".into()
+                    ),
+                ]
+            ),
+        ]
+    );
+    // One document's, by its URI; its range is the name.
+    let uri = file_uri(&dir.path().join("suite.q"));
+    let reply = server.request("q-lint/tests", json!({"textDocument": {"uri": uri}}));
+    let tests = &reply["result"][0]["tests"];
+    assert_eq!(tests.as_array().unwrap().len(), 2, "{reply}");
+    assert_eq!(span(&tests[0]["range"]), (2, 0, 8));
+}
+
+#[test]
+fn the_global_at_a_position_is_named_as_q_resolves_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let text = "\\d .lib\nrate:10\nf:{[px] px*rate}\n\\d .\ng:{count x}\n";
+    let uri = server.open(dir.path(), "lib.q", text);
+    let at = |server: &mut Server, line: u64, character: u64| {
+        server.whole(
+            "q-lint/globalAt",
+            &uri,
+            json!({"position": {"line": line, "character": character}}),
+        )["result"]
+            .clone()
+    };
+    let got = at(&mut server, 2, 12);
+    assert_eq!(got["names"], json!([".lib.rate"]), "{got}");
+    assert_eq!(span(&got["range"]), (2, 11, 15));
+    // A parameter, a word of q's, a blank: nothing to ask a process about.
+    assert_eq!(at(&mut server, 2, 9), Value::Null);
+    assert_eq!(at(&mut server, 4, 4), Value::Null);
+    assert_eq!(at(&mut server, 3, 3), Value::Null);
+}
+
+#[test]
+fn the_names_no_workspace_file_defines_are_listed_for_the_process() {
+    let dir = tempfile::tempdir().unwrap();
+    let lib = "\\d .lib\nrate:10\n\\d .\n";
+    let mut server = Server::start(dir.path(), &[("lib.q", lib)]);
+    let text = "f:{[px] px*.lib.rate+.lib.missing+other}\n\
+                g:{select from trade where sym=px, size>limit}\n\
+                h:{.z.p+.Q.dd[x;y]+count x}\n";
+    let uri = server.open(dir.path(), "main.q", text);
+    let reply = server.whole("q-lint/unresolvedNames", &uri, json!({}));
+    let got: Vec<(String, (u64, u64, u64))> = reply["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| {
+            (
+                n["written"].as_str().unwrap().to_string(),
+                span(&n["range"]),
+            )
+        })
+        .collect();
+    // Not `.lib.rate` (lib.q), `f` and `g` (here), the parameter, the
+    // columns, q's words or its one-letter namespaces: the table is asked
+    // about, the columns are not.
+    assert_eq!(
+        got,
+        vec![
+            (".lib.missing".to_string(), (0, 21, 33)),
+            ("other".to_string(), (0, 34, 39)),
+            ("trade".to_string(), (1, 15, 20)),
+        ],
+        "{reply}"
+    );
 }

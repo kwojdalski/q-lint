@@ -92,6 +92,10 @@ function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir
     "./infoview": { registerInfoViews: () => ({ monitor: () => [], hdb: () => [] }) },
     "./queryacross": { QueryAcross: class { state() { return {}; } } },
     "./savedqueriesview": { SavedQueries: class { queries() { return []; } } },
+    "./testexplorer": { registerTestExplorer: () => ({ serverChanged() {}, discover: async () => {}, items: () => [], results: () => [], run: async () => {} }) },
+    "./valuehoverview": { registerValueHover: () => ({ registered: () => false }) },
+    "./undefinednamesview": { registerUndefinedNames: () => ({ registered: () => false }) },
+    "./idiomsview": { registerIdioms: () => ({ registered: () => false }) },
   };
   const file = require.resolve("../out/extension.js");
   delete require.cache[file];

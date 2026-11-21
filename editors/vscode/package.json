@@ -280,7 +280,7 @@
             "type": "boolean",
             "default": true,
             "order": 29,
-            "markdownDescription": "Show **Run** above each function a statement at column 0 defines, and **Run test** above one named `test_*`. Run sends the definition to the connected process - under the `\\d` it is written in - as a query from the editor would be sent; Run test sends it and then calls it with no argument. Off, q-lint announces no lenses."
+            "markdownDescription": "Show **Run** above each function a statement at column 0 defines, and **Run test** above one named `test_*` (or qUnit's `testName`). Run sends the definition to the connected process - under the `\\d` it is written in - as a query from the editor would be sent; Run test sends it and then calls it with no argument. Off, q-lint announces no lenses."
           },
           "q-lint.documentLinks.enable": {
             "type": "boolean",
@@ -293,6 +293,12 @@
             "default": true,
             "order": 29,
             "markdownDescription": "Offer **Generate qDoc for f** in the lightbulb and **Refactor...** menu inside a function a statement at column 0 defines: it writes a `/ @param` line for each parameter and a `/ @return` line directly above the definition, for the descriptions to be typed after. Not offered where the comment above already has an `@param` or `@return`. Off, q-lint offers no such action."
+          },
+          "q-lint.extractFunction.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 29,
+            "markdownDescription": "Offer **Extract function** in the lightbulb and **Refactor...** menu over a selection: it becomes a lambda defined above the top-level statement it is in, taking the parameters and locals it reads, and the selection a call to it. Only a selection q reads as one value is rewritten; **Refactor...** says why another is refused. Off, q-lint offers no such action."
           },
           "q-lint.workspaceIndex.enable": {
             "type": "boolean",
@@ -642,6 +648,30 @@
             "maximum": 86400,
             "order": 144,
             "markdownDescription": "Seconds between a watched query's runs that **Watch Query** offers, with `#q-lint.query.watch.enable#` on."
+          },
+          "q-lint.testExplorer.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 130,
+            "markdownDescription": "List q tests in the Testing view - the `test_*` and qUnit `testName` functions a **Run test** lens is drawn over, and k4unit CSV suites - and run them on the active connection, or a process you choose. A production process is confirmed first. Off, no test is listed, read or sent."
+          },
+          "q-lint.liveValueHover.enable": {
+            "type": "boolean",
+            "default": false,
+            "order": 131,
+            "markdownDescription": "Hovering a global in a q editor shows the value it has on the connected process, as the console prints it and cut at 2,000 characters. A view is named and not evaluated, a partitioned table not printed, and a production process not asked. Off by default: it queries the process whenever the mouse rests on a global."
+          },
+          "q-lint.undefinedNames.enable": {
+            "type": "boolean",
+            "default": false,
+            "order": 132,
+            "markdownDescription": "Warn on each global a q file reads that neither the workspace nor the connected process defines. The process is asked, by each name's namespace and without evaluating anything, when the file is opened, saved or brought to the front, on connect and after a query; a production process only by **Check Undefined Names on Process**. Off by default: it queries the process on its own."
+          },
+          "q-lint.idiomSnippets.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 133,
+            "markdownDescription": "Offer the q idiom snippets in a q editor's completion list: `aj`, `aj0`, `wj`, `wj1`, `lj`, `ij`, `uj`, a bucketed `xbar` select, the `.z` handlers (`zpg`, `zps`, `zpo`, `zpc`, `zpw`, `zts`, `zws`, `zexit`) and a TorQ process skeleton (`torq`). Off, they leave the list."
           }
         }
       },
@@ -1294,6 +1324,12 @@
         "title": "Redefine on Process",
         "category": "q-lint",
         "icon": "$(cloud-upload)",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.checkUndefinedNames",
+        "title": "Check Undefined Names on Process",
+        "category": "q-lint",
         "enablement": "q-lint.connected"
       },
       {
@@ -2127,6 +2163,10 @@
         {
           "command": "q-lint.findCallers",
           "when": "config.q-lint.processExplorer.findCallers.enable"
+        },
+        {
+          "command": "q-lint.checkUndefinedNames",
+          "when": "config.q-lint.undefinedNames.enable && editorLangId == q"
         },
         {
           "command": "q-lint.refreshProcessMonitor",
