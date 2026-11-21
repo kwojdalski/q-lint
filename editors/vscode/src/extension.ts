@@ -32,6 +32,7 @@ import { QueryAcross } from "./queryacross";
 import { SavedQueries } from "./savedqueriesview";
 import { TableStreams } from "./streamview";
 import { Launcher } from "./launcherview";
+import { registerNotebookGit, type NotebookDiff } from "./notebookgit";
 import type { InfoNode } from "./monitor";
 import { registerTestExplorer } from "./testexplorer";
 import { registerValueHover } from "./valuehoverview";
@@ -118,6 +119,7 @@ export async function activate(
     agentConfirmation: ReturnType<typeof registerAgentTool>;
     notebookLiveValues: () => RenderedLiveValue[];
     notebookVariables: ReturnType<typeof registerNotebookVariables>;
+    notebookDiff: NotebookDiff;
     processMonitor: () => InfoNode[];
     hdbBrowser: () => InfoNode[];
     functionSources: FunctionSources["state"];
@@ -167,6 +169,7 @@ export async function activate(
   const agentConfirmation = registerAgentTool(context, live);
   const notebook = registerNotebooks(context, live);
   const notebookVariables = registerNotebookVariables(context, live, notebook.processOf, notebook.onDidRun);
+  const notebookGit = registerNotebookGit(context);
   context.subscriptions.push(
     commands.registerCommand(NOTEBOOK.runWithParameters, (source?: Uri, target?: Uri, overrides?: Record<string, string>) =>
       runWithParameters(live, source, target, overrides),
@@ -203,6 +206,7 @@ export async function activate(
     agentConfirmation,
     notebookLiveValues: () => notebook.liveValues(),
     notebookVariables,
+    notebookDiff: notebookGit.diff,
     processMonitor: infoViews.monitor,
     hdbBrowser: infoViews.hdb,
     functionSources: () => sources.state(),

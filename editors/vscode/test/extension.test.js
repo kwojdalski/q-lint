@@ -86,6 +86,7 @@ function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir
     "./notebook": { registerNotebooks: () => ({ charts: () => [] }) },
     "./notebookvarsview": { registerNotebookVariables: () => ({ variables: () => [] }) },
     "./notebookrun": { runWithParameters: async () => undefined },
+    "./notebookgit": { registerNotebookGit: () => ({ diff: {}, strip: {} }) },
     "./explorerview": { ProcessExplorer: class { rows() { return []; } } },
     "./relate": { Relations: class { serverChanged() {} } },
     "./funcsourceview": { FunctionSources: class { state() { return {}; } } },

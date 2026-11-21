@@ -38,6 +38,7 @@ export const NOTEBOOK = {
   runWithParameters: "q-lint.runNotebookWithParameters",
   refreshVariables: "q-lint.refreshNotebookVariables",
   variablesView: "q-lint.notebookVariables",
+  diffCommand: "q-lint.diffNotebook",
   /// The renderer that draws a `/ @chart` cell's output.
   renderer: "q-lint.chart",
   /// The Markdown renderer's extension that shows live values.

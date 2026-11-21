@@ -213,6 +213,7 @@ export const FEATURES = {
   export: "Notebook export to HTML and Jupyter, and Jupyter import,",
   liveValues: "Live values in Markdown cells",
   processDirective: "The / @process cell directive",
+  diff: "Compare Notebook Cells",
 } as const;
 export type Feature = keyof typeof FEATURES;
 

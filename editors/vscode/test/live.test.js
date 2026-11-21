@@ -295,6 +295,7 @@ test("package.json declares exactly the commands the extension registers", () =>
     ...Object.values(relations.COMMANDS),
     NOTEBOOK.exportCommand,
     ...[NOTEBOOK.exportHtmlCommand, NOTEBOOK.exportIpynbCommand, NOTEBOOK.importIpynbCommand, NOTEBOOK.runWithParameters, NOTEBOOK.refreshVariables],
+    ...[NOTEBOOK.diffCommand],
     RESULTS.exportCsv,
     RESULTS.exportViewCsv,
     RESULTS.setRowLimit,

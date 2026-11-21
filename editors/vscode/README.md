@@ -1246,6 +1246,31 @@ back, and saving a notebook that was opened unchanged writes the same file. A fi
 that is not a notebook does not open: the editor says what is wrong with
 it, and the file is left as it was. An empty file is a new notebook.
 
+### Notebooks in git
+
+**Compare Notebook Cells...**, on the notebook's toolbar, a `.qnb` file's
+context menu and a changed `.qnb` in Source Control, opens a diff of the
+notebook's cells against the last commit (`HEAD`) or another notebook you
+pick. Each side shows only the cells - a `%% markdown`, `%% code` or
+`%% code <language>` line, then the source - so a run that changed every
+output and run number shows no change, and an edited cell is the lines
+that changed in it. An open notebook is compared as it is, unsaved edits
+and all. A message says how many cells changed, were added, were removed
+and stayed the same; cells are matched as a diff matches lines, so a cell
+added at the top is one added cell. Nothing is sent to any process.
+`q-lint.notebook.diff.enable` turns it off.
+
+`git diff` and `git log -p` can show the same text, with the script the
+extension ships in `out/qnbgit.js` as git's `textconv` for `*.qnb`:
+
+```sh
+git config diff.qnb.textconv "node ~/.vscode/extensions/wojdalski.q-lint-<version>/out/qnbgit.js --text"
+echo '*.qnb diff=qnb' >> .gitattributes
+```
+
+The script needs only Node.js; a file that is not a notebook is shown as it
+is.
+
 ## Requirements
 
 None on macOS (Apple Silicon and Intel), Linux x64 or Windows x64: the
@@ -1426,6 +1451,7 @@ Read when a cell runs or a command is used, so a change needs no reload. None re
 | `q-lint.notebook.export.enable` | `true` | **Export Notebook as HTML**, **as Jupyter Notebook** and **Import Jupyter Notebook**. Off, they are hidden and refuse. | - |
 | `q-lint.notebook.liveValues.enable` | `true` | Read `{{q: expr}}` in Markdown cells when the code cell above runs; never on their own. Off, nothing is sent. | - |
 | `q-lint.notebook.processDirective.enable` | `true` | `/ @process <label>`. Off, a cell with it is not run and nothing is sent. | - |
+| `q-lint.notebook.diff.enable` | `true` | **Compare Notebook Cells**: a diff of a notebook's cells against `HEAD` or another notebook, outputs and metadata left out. Sends nothing. Off, the command is hidden and refuses. | - |
 
 ### Agent settings
 

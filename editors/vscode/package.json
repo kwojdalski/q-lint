@@ -772,6 +772,11 @@
             "type": "boolean",
             "default": true,
             "markdownDescription": "Honour the `/ @process <label>` cell directive, which connects to that process before the cell runs (a production process is confirmed first). Off, a cell with it is not run, and nothing is sent."
+          },
+          "q-lint.notebook.diff.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Turn on **q-lint: Compare Notebook Cells**, a diff of a q notebook's cells against the last commit or another notebook that leaves outputs, run numbers and metadata out. It sends nothing to any process. Off, the command is hidden and refuses."
           }
         }
       },
@@ -1413,6 +1418,12 @@
         "icon": "$(run-all-coverage)"
       },
       {
+        "command": "q-lint.diffNotebook",
+        "title": "Compare Notebook Cells...",
+        "category": "q-lint",
+        "icon": "$(diff)"
+      },
+      {
         "command": "q-lint.refreshNotebookVariables",
         "title": "Refresh Notebook Variables",
         "category": "q-lint",
@@ -2028,6 +2039,18 @@
           "command": "q-lint.exportNotebookIpynb",
           "when": "notebookType == q-lint-notebook && config.q-lint.notebook.export.enable",
           "group": "export"
+        },
+        {
+          "command": "q-lint.diffNotebook",
+          "when": "notebookType == q-lint-notebook && config.q-lint.notebook.diff.enable",
+          "group": "git"
+        }
+      ],
+      "scm/resourceState/context": [
+        {
+          "command": "q-lint.diffNotebook",
+          "when": "resourceExtname =~ /^\\.qnb$/i && config.q-lint.notebook.diff.enable",
+          "group": "q-lint"
         }
       ],
       "explorer/context": [
@@ -2054,6 +2077,11 @@
         {
           "command": "q-lint.importIpynb",
           "when": "resourceExtname =~ /^\\.ipynb$/i && config.q-lint.notebook.export.enable",
+          "group": "q-lint"
+        },
+        {
+          "command": "q-lint.diffNotebook",
+          "when": "resourceExtname =~ /^\\.qnb$/i && config.q-lint.notebook.diff.enable",
           "group": "q-lint"
         }
       ],
@@ -2342,6 +2370,10 @@
         {
           "command": "q-lint.runNotebookWithParameters",
           "when": "config.q-lint.notebook.parameters.enable"
+        },
+        {
+          "command": "q-lint.diffNotebook",
+          "when": "config.q-lint.notebook.diff.enable"
         }
       ]
     },
