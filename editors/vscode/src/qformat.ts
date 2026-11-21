@@ -11,14 +11,17 @@
 //   all. Inside a table, a dictionary or a general list the codec gives
 //   plain JavaScript values, and the type is guessed from them: a symbol and
 //   a string are both strings, and a date, a month and a datetime all Dates.
-// - A long and a timespan are exact (the codec gives a Long). A timestamp
-//   arrives as a float of nanoseconds, exact only to 256 ns, so it is shown
-//   to the microsecond, its last three digits 0.
+// - An unwrapped answer is also decoded with its types (`qdecode.ts`), and
+//   an atom or a simple list is written from that: exact, every type.
+// - Otherwise a long and a timespan are exact (the codec gives a Long). A
+//   timestamp arrives as a float of nanoseconds, exact only to 256 ns, so it
+//   is shown to the microsecond, its last three digits 0.
 // - The infinity of a date, month, datetime or time arrives as an invalid
 //   Date, its sign lost, so a negative one is written as a positive one.
 // - A function arrives as the word "func": its text is not sent.
 // - An empty table arrives with no columns, so they cannot be shown.
 import type { GridPayload } from "./grid";
+import type { QValue } from "./qdecode";
 
 /// q's generic null, `(::)`.
 const NULL_TYPE = 101;
@@ -157,7 +160,7 @@ function exactTimestampText(ns: bigint): string {
 /// as - months, days or float days since 2000, minutes, seconds or
 /// milliseconds - which an unlimited query sends; undefined for any other
 /// type.
-function temporalText(x: number | LongLike, t: number): string | undefined {
+function temporalText(x: number | bigint | LongLike, t: number): string | undefined {
   const n = Number(x.toString());
   switch (t) {
     case 13: {
@@ -210,11 +213,11 @@ function itemText(x: unknown, t: number): string | undefined {
     case 11:
       return String(x);
     case 12:
-      return isLong(x) ? exactTimestampText(BigInt(x.toString())) : timestampText(Number(x));
+      return isLong(x) || typeof x === "bigint" ? exactTimestampText(BigInt(x.toString())) : timestampText(Number(x));
     case 16:
       return spanText(BigInt(String(x)));
   }
-  if (typeof x === "number" || isLong(x)) {
+  if (typeof x === "number" || typeof x === "bigint" || isLong(x)) {
     const n = temporalText(x, t);
     if (n !== undefined) {
       return n;
@@ -424,6 +427,21 @@ export function formatValue(value: unknown, type?: number): string[] {
     return [type === undefined && value === "func" ? "<a function: the process sends no text for one>" : quoted(value)];
   }
   return [cellText(value)];
+}
+
+/// The lines q's console would show for a value decoded with its types
+/// (`qdecode.ts`): an atom or a simple list from the numbers q holds, so a
+/// timestamp keeps its nanoseconds and a negative infinity its sign.
+/// Anything else is written as `formatValue` writes the codec's `value` of
+/// it, of q type `type`.
+export function formatQ(q: QValue, value: unknown, type?: number): string[] {
+  if (q.kind === "atom") {
+    return [atomText(q.t === -10 && typeof q.v === "number" ? String.fromCharCode(q.v) : q.v, q.t)];
+  }
+  if (q.kind === "vector") {
+    return [vectorText(q.v, q.t)];
+  }
+  return formatValue(value, type);
 }
 
 /// `lines` cut to a console of `size` (height, width) as `.Q.S` cuts: a

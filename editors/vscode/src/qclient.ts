@@ -79,6 +79,8 @@ export class QConnection {
   private closed = false;
   /// The q type of the last answer, read from the first byte of its body.
   private answerType: number | undefined;
+  /// The last answer, the whole message.
+  private answerMessage: Buffer | undefined;
   private readonly onClose: (() => void)[] = [];
 
   private constructor(private readonly socket: net.Socket) {
@@ -155,8 +157,9 @@ export class QConnection {
   /// Send `text` as a char vector, as a client that sends a string does,
   /// for the process to evaluate as its `.z.pg` does (`value`, unless it is
   /// set): nothing of ours runs there. Resolves with the value as the codec
-  /// decodes it and its q type; rejects with a `QError` for a q error.
-  async evaluate(text: string): Promise<{ value: unknown; type: number | undefined }> {
+  /// decodes it, its q type and the message it came in; rejects with a
+  /// `QError` for a q error.
+  async evaluate(text: string): Promise<{ value: unknown; type: number | undefined; message?: Buffer }> {
     const body = Buffer.from(text, "utf8");
     // A char vector (type 10, no attribute, its length), built here: the
     // codec sends a string starting with a backtick as a symbol.
@@ -168,7 +171,7 @@ export class QConnection {
     message.writeUInt32LE(body.length, 10);
     body.copy(message, 14);
     const value = await this.send(message);
-    return { value, type: this.answerType };
+    return { value, type: this.answerType, message: this.answerMessage };
   }
 
   /// Send `expression` applied to `args` as a sync message, and resolve with
@@ -261,6 +264,7 @@ export class QConnection {
         continue;
       }
       this.answerType = typeOf(message);
+      this.answerMessage = message;
       try {
         pending.resolve(deserialize(message, false, true, false, false));
       } catch (error) {

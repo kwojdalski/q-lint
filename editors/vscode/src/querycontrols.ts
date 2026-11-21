@@ -15,7 +15,8 @@
 // a gateway that refuses a lambda. The process evaluates each as it
 // evaluates any string a client sends, and the answer is whatever it
 // returns, formatted here.
-import { gridOf, cutLines, formatValue, vectorText } from "./qformat";
+import { gridOf, cutLines, formatQ, formatValue, vectorText } from "./qformat";
+import { decode, type QValue } from "./qdecode";
 import { TRAP, readAnswer, type Answer } from "./query";
 import type { GridAnswer } from "./grid";
 import { QError } from "./qclient";
@@ -98,7 +99,7 @@ export function readUnlimited(raw: unknown): Answer {
 
 /// What `runUnwrapped` needs of a connection.
 export interface Evaluator {
-  evaluate(text: string): Promise<{ value: unknown; type: number | undefined }>;
+  evaluate(text: string): Promise<{ value: unknown; type: number | undefined; message?: Buffer }>;
 }
 
 /// Run `statements` unwrapped: each sent as a plain string, in order,
@@ -112,7 +113,7 @@ export async function runUnwrapped(
   statements: string[],
   options: { size: [number, number]; limit: number; unlimited: boolean; grid: boolean },
 ): Promise<GridAnswer> {
-  let last: { value: unknown; type: number | undefined } = { value: null, type: 101 };
+  let last: { value: unknown; type: number | undefined; message?: Buffer } = { value: null, type: 101 };
   for (const statement of statements) {
     try {
       last = await connection.evaluate(statement);
@@ -123,7 +124,15 @@ export async function runUnwrapped(
       throw error;
     }
   }
-  const lines = formatValue(last.value, last.type);
+  // The message read again with its types; what cannot be is written from
+  // the codec's value alone.
+  let typed: QValue | undefined;
+  try {
+    typed = last.message === undefined ? undefined : decode(last.message);
+  } catch {
+    typed = undefined;
+  }
+  const lines = typed === undefined ? formatValue(last.value, last.type) : formatQ(typed, last.value, last.type);
   const text = options.unlimited ? lines : cutLines(lines, options.size);
   const answer: GridAnswer = { ok: true, type: last.type ?? 0, text };
   if (!options.grid) {

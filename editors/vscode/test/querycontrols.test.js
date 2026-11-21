@@ -286,3 +286,32 @@ test("the status bar names the flags that are on", () => {
   assert.match(flagsText(true, true), /unlimited.*unwrapped/);
   assert.strictEqual(timedOutError(2), "timed out after 2 s");
 });
+
+/// An unwrapped answer as the connection gives it, from what q's `-8!` of
+/// the value is: the codec's value, the q type and the message.
+function fromQ(hex) {
+  const message = Buffer.from(hex.replace(/^0x/, ""), "hex");
+  message.writeUInt8(2, 1);
+  return { value: deserialize(message, false, true, false, false), type: message.readInt8(8), message };
+}
+
+/// What an unwrapped query shows for each `-8!` hex, as one text.
+async function unwrapped(hex, options = {}) {
+  const fake = { evaluate: async () => fromQ(hex) };
+  const answer = await runUnwrapped(fake, ["x"], { size: [1e9, 1e9], limit: 100, unlimited: true, grid: false, ...options });
+  return answer;
+}
+
+test("an unwrapped atom or simple list keeps nanoseconds, a negative infinity's sign and a negative time", async () => {
+  // -8!2026.11.20D10:11:12.123456789
+  assert.deepStrictEqual((await unwrapped("0x0100000011000000f4154d4857506cc60b")).text, ["2026.11.20D10:11:12.123456789"]);
+  // -8!1999.12.31D23:59:59.999999999 0Np
+  assert.deepStrictEqual(
+    (await unwrapped("0x010000001e0000000c0002000000ffffffffffffffff0000000000000080")).text,
+    ["1999.12.31D23:59:59.999999999 0N"],
+  );
+  // -8!-0Wd
+  assert.deepStrictEqual((await unwrapped("0x010000000d000000f201000080")).text, ["-0Wd"]);
+  // -8!-00:00:01.000
+  assert.deepStrictEqual((await unwrapped("0x010000000d000000ed18fcffff")).text, ["-00:00:01.000"]);
+});
