@@ -684,6 +684,12 @@
             "default": false,
             "order": 131,
             "markdownDescription": "On saving a q file, send the function definitions the save changed to its process (the file's bound one, or the active connection), after Redefine's confirmation. Only a function the process holds as the file had it before the edit is replaced. Off by default: it sends code to a process on save. Off, nothing listens and nothing is sent."
+          },
+          "q-lint.temporalHover.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 707,
+            "markdownDescription": "On hovering a q temporal literal (`2024.01.02D03:04:05`, `2024.01.02`, `0D01:00`, `09:30:00.000`, `0Np` ...) or a number of 9 digits or more in a q editor, show it converted: the integer under it, a timestamp, a date, Unix seconds to nanoseconds, ISO 8601. Also offers **q-lint: Convert Temporal Value**. Computed in the editor: nothing is sent."
           }
         }
       },
@@ -1530,6 +1536,12 @@
         "title": "Draft qSQL from a Description",
         "category": "q-lint",
         "icon": "$(sparkle)"
+      },
+      {
+        "command": "q-lint.convertTemporal",
+        "title": "Convert Temporal Value",
+        "category": "q-lint",
+        "icon": "$(calendar)"
       }
     ],
     "views": {
@@ -2132,6 +2144,11 @@
           "command": "q-lint.draftQsql",
           "when": "editorLangId == q && config.q-lint.chat.englishToQsql.enable",
           "group": "q-lint@9"
+        },
+        {
+          "command": "q-lint.convertTemporal",
+          "when": "editorLangId == q && config.q-lint.temporalHover.enable",
+          "group": "q-lint@32"
         }
       ],
       "commandPalette": [
@@ -2310,6 +2327,10 @@
         {
           "command": "q-lint.draftQsql",
           "when": "config.q-lint.chat.englishToQsql.enable"
+        },
+        {
+          "command": "q-lint.convertTemporal",
+          "when": "config.q-lint.temporalHover.enable"
         }
       ],
       "editor/title": [

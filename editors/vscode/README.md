@@ -64,6 +64,23 @@ to a process you add and connect to, and sends only the code you run.
   inserted over tables of the names they default to. They come from a
   completion provider rather than a contributed snippet file, so
   `q-lint.idiomSnippets.enable` can take them out of the list.
+- **Temporal hover**: hovering a temporal literal - `2024.01.02D03:04:05`,
+  `2024.01.02`, `2024.01m`, `0D01:00`, `09:30:00.000`, `09:30`, a legacy
+  `2024.01.02T03:04:05.123`, a null or infinity such as `0Np` or `-0Wd` -
+  shows what it converts to: the long or int q holds under it, the
+  timestamp, date or month, Unix seconds, milliseconds, microseconds and
+  nanoseconds, and ISO 8601 in UTC. A number of 9 digits or more shows it as
+  a timestamp of that many nanoseconds since 2000.01.01 (`"p"$`) and as the
+  Unix epoch its size suggests (10 digits seconds, 13 milliseconds, and so
+  on). **q-lint: Convert Temporal Value** replaces the selection, or the
+  literal under the cursor, with the conversion picked. Every value is
+  counted in integers, so a conversion read back gives the value it came
+  from, to the nanosecond; nulls and infinities convert as q's casts do. A
+  datetime is a float in q, so its conversions name its millisecond (KDB-X's
+  own `"p"$` can be microseconds off), and only between 1709 and 2290. A
+  timestamp outside those years, which KDB-X writes but will not read back
+  as a literal, converts to `"p"$` of its long. Nothing is sent to a process
+  (`q-lint.temporalHover.enable`).
 - **Syntax colouring** from a TextMate grammar, plus semantic tokens: a
   function is coloured wherever it is called, even when another `.q` file in
   the workspace defines it, and a parameter wherever its body reads it.
@@ -1371,6 +1388,7 @@ nothing.
 | `q-lint.idiomSnippets.enable` | `true` | Offer the idiom snippets (joins, `.z` handlers, a TorQ process) in the completion list. | - |
 | `q-lint.processExplorer.driftDetection.enable` | `false` | **Check Drift Against Process**: compare the workspace's function definitions with the connected process. Off, the command is hidden and reads nothing. | - |
 | `q-lint.hotReload.enable` | `false` | On saving a q file, send the definitions the save changed to its process, after Redefine's confirmation. Off, nothing listens and nothing is sent. | - |
+| `q-lint.temporalHover.enable` | `true` | Show a temporal literal or an epoch-sized number converted on hover, and offer **Convert Temporal Value**. Nothing is sent. | - |
 
 ### Connection settings
 
