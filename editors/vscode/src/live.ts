@@ -608,6 +608,12 @@ export class Live {
     return this.connection?.isOpen ? this.active : undefined;
   }
 
+  /// The process the file `uri` is bound to by Choose Connection for File,
+  /// if any: where hot reload on save (#934) sends its definitions.
+  fileBinding(uri: Uri): string | undefined {
+    return this.controls.binding(uri);
+  }
+
   /// Whether a query is running on the active connection: connecting
   /// elsewhere now would stop waiting for it.
   isBusy(): boolean {

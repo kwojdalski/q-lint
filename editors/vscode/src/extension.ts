@@ -29,6 +29,7 @@ import { Serial } from "./serial";
 import { FunctionSources } from "./funcsourceview";
 import { registerInfoViews } from "./infoview";
 import type { InfoNode } from "./monitor";
+import { Drift } from "./driftview";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -97,6 +98,7 @@ export async function activate(
     processMonitor: () => InfoNode[];
     hdbBrowser: () => InfoNode[];
     functionSources: FunctionSources["state"];
+    hotReload: Drift["hotReloadState"];
   }
 > {
   // Replacing the binary does not restart the server, and a window reload is
@@ -140,6 +142,7 @@ export async function activate(
   const explorer = new ProcessExplorer(context, live);
   const sources = new FunctionSources(context, live);
   const infoViews = registerInfoViews(context, live);
+  const drift = new Drift(context, live);
   registerOnboarding(context, () => live.processes());
   relations = new Relations(context, () => client);
   // Not awaited: nothing above needs the server, and a slow or hung one
@@ -155,6 +158,7 @@ export async function activate(
     processMonitor: infoViews.monitor,
     hdbBrowser: infoViews.hdb,
     functionSources: () => sources.state(),
+    hotReload: () => drift.hotReloadState(),
   };
 }
 

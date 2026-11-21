@@ -551,6 +551,18 @@
             "default": true,
             "order": 129,
             "markdownDescription": "The **HDB Browser** view. Off, it is hidden and reads nothing."
+          },
+          "q-lint.processExplorer.driftDetection.enable": {
+            "type": "boolean",
+            "default": false,
+            "order": 130,
+            "markdownDescription": "**Check Drift Against Process**: compare the functions the workspace's q files define with what the connected process holds, and list those that differ. Off by default: it reads every function the workspace defines from the process. Off, its command is hidden and sends nothing."
+          },
+          "q-lint.hotReload.enable": {
+            "type": "boolean",
+            "default": false,
+            "order": 131,
+            "markdownDescription": "On saving a q file, send the function definitions the save changed to its process (the file's bound one, or the active connection), after Redefine's confirmation. Only a function the process holds as the file had it before the edit is replaced. Off by default: it sends code to a process on save. Off, nothing listens and nothing is sent."
           }
         }
       },
@@ -1158,6 +1170,13 @@
         "title": "Refresh Notebook Variables",
         "category": "q-lint",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "q-lint.checkDrift",
+        "title": "Check Drift Against Process",
+        "category": "q-lint",
+        "icon": "$(diff)",
+        "enablement": "q-lint.connected"
       }
     ],
     "views": {
@@ -1342,6 +1361,11 @@
           "command": "q-lint.refreshNotebookVariables",
           "when": "view == q-lint.notebookVariables && config.q-lint.notebook.variables.enable",
           "group": "navigation"
+        },
+        {
+          "command": "q-lint.checkDrift",
+          "when": "view == q-lint.processExplorer && config.q-lint.processExplorer.driftDetection.enable",
+          "group": "2_drift@1"
         }
       ],
       "view/item/context": [
@@ -1691,6 +1715,10 @@
         {
           "command": "q-lint.refreshHdbBrowser",
           "when": "config.q-lint.hdbBrowser.enable"
+        },
+        {
+          "command": "q-lint.checkDrift",
+          "when": "config.q-lint.processExplorer.driftDetection.enable"
         }
       ],
       "editor/title": [

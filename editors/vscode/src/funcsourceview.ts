@@ -45,6 +45,7 @@ import {
 import { borrowWhenFree } from "./infoview";
 import { readInsight, turnedOff, type InsightFeature } from "./insightconfig";
 import type { Live } from "./live";
+import type { Process } from "./processes";
 
 export const SCHEME = "q-lint-source";
 /// Set while the active editor holds a copy Redefine can send.
@@ -68,6 +69,18 @@ interface Copy {
 }
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+/// Ask before replacing `name` - one function, or several as a sentence
+/// lists them - on `process`, in a modal with the production warning: the
+/// one place Redefine on Process and hot reload on save (#934) ask. `yes`
+/// are the buttons that send; `also` is said after the detail. The button
+/// picked, or undefined.
+export async function askRedefine(name: string, process: Process, yes: string[] = ["Redefine"], also?: string): Promise<string | undefined> {
+  const asked = redefineConfirmation(name, process);
+  const detail = also === undefined ? asked.detail : `${asked.detail} ${also}`;
+  // A modal VS Code refuses to show (as in its test host) is a No.
+  return Promise.resolve(window.showWarningMessage(asked.message, { modal: true, detail }, ...yes)).catch(() => undefined);
+}
 
 /// Whether `feature` is on; when it is not, says so.
 function on(feature: InsightFeature): boolean {
@@ -226,9 +239,7 @@ export class FunctionSources implements TextDocumentContentProvider {
       return false;
     }
     const text = editedText(document.getText());
-    const asked = redefineConfirmation(copy.name, process);
-    const yes = "Redefine";
-    if ((await window.showWarningMessage(asked.message, { modal: true, detail: asked.detail }, yes)) !== yes) {
+    if ((await askRedefine(copy.name, process)) !== "Redefine") {
       return false;
     }
     try {

@@ -571,6 +571,37 @@ defined in, so its globals mean what they meant, and the process's own
 `\d` is left as it was. Nothing is written to a file: a restart of the
 process brings back the old definition.
 
+**Drift detection.** **Check Drift Against Process**, in the Process
+Explorer's title bar or the palette, compares the functions the workspace's
+q files define with what the connected process holds. A definition is a
+top-level `name:{...}`, in the context `\d .ns` gives it, as loading the
+file would define it; texts are compared without trailing blanks. It reads
+each name's `last value` from the process, and changes nothing there. The
+list shows the functions that differ, are not defined on the process or
+are not a lambda there; picking one that differs opens a diff of the
+process's text and the file's, and picking another opens the file at its
+definition. An open file is read as the editor has it. It reads up to 5000
+files and 20,000 definitions. Off by default
+(`q-lint.processExplorer.driftDetection.enable`), since it reads every
+function the workspace defines from the process.
+
+**Hot reload on save.** With `q-lint.hotReload.enable` on (it is off by
+default), saving a q file sends the function definitions the save changed
+to its process: the process the file is bound to by **Choose Connection
+for File**, which must be the connected one, or the active connection when
+it has no binding. It never connects. Each goes as **Redefine on Process**
+sends an edit: after the same modal, with the same warning for a process
+tagged `prod`, `prd` or `production`, parsed in the namespace the function
+was defined in, and refused if the process no longer holds the text it was
+read with. A function is replaced only while the process holds the text
+the file had before the edit - when the file was opened, or last reloaded
+- so a process that has drifted is never overwritten: such a function, a
+new one, or one the process does not hold as a lambda is listed as not
+sent. You are asked on every save that sends something, until you pick
+**Reload on Every Save** for that file and process, which lasts until the
+window closes or the setting is turned off; a production process is never
+offered it.
+
 **Find Callers in Process**, on a function in the explorer or the name
 under the cursor, lists the loaded functions that call it, read from what q
 parsed rather than from text: each lambda's globals, resolved in its
@@ -943,6 +974,8 @@ nothing.
 | `q-lint.processMonitor.enable` | `true` | The Process Monitor view. | - |
 | `q-lint.processMonitor.refreshInterval` | `0` | Seconds between the Monitor's reads while it is shown; `0` none. | - |
 | `q-lint.hdbBrowser.enable` | `true` | The HDB Browser view. | - |
+| `q-lint.processExplorer.driftDetection.enable` | `false` | **Check Drift Against Process**: compare the workspace's function definitions with the connected process. Off, the command is hidden and reads nothing. | - |
+| `q-lint.hotReload.enable` | `false` | On saving a q file, send the definitions the save changed to its process, after Redefine's confirmation. Off, nothing listens and nothing is sent. | - |
 
 ### Connection settings
 
