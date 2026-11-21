@@ -26,3 +26,9 @@ export function historyHeading(entry: { process: string; millis: number; error?:
   const heading = markdownText(`${entry.process}, ${when}, ${entry.millis} ms${entry.agent ? ", run by an agent" : ""}`);
   return entry.error === undefined ? heading : `${heading}\n\n${markdownText(`'${entry.error}`)}`;
 }
+
+/// `text` as the status bar and a quick pick show it as written: they draw
+/// `$(name)` as an icon unless it is escaped.
+export function iconsEscaped(text: string): string {
+  return text.replace(/\$\(/g, "\\$(");
+}

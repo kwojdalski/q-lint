@@ -277,3 +277,23 @@ test("a query, send or Insert Label with no editor open says what it needs", asy
     assert.deepStrictEqual(stub.messages, [["info", "q-lint: open a q file first: there is no active editor."]], name);
   }
 });
+
+// The status bar and a quick pick draw `$(name)` as an icon: a process
+// labelled `$(zap)rdb` (or listed so by a discovery server) showed as an
+// icon and `rdb` in the status bar and in Connect's pick.
+test("a label holding $(...) is shown as written in the status bar and the pick", async (t) => {
+  const q = await fakeQ(() => OK);
+  t.after(() => q.close());
+  const { live, status } = await setUp(t, [proc("$(zap)rdb", q.port)]);
+  let offered;
+  stub.picks.push(({ items }) => ((offered = items.map((i) => i.label)), items[0]));
+  assert.strictEqual(await live.connectTo(), true);
+  assert.deepStrictEqual(offered, ["\\$(zap)rdb"]);
+  assert.strictEqual(status.text, "$(plug) q: \\$(zap)rdb");
+  assert.strictEqual(live.activeLabel(), "$(zap)rdb");
+  // q code holds `$(x)` often: a cast, `` `int$(x) ``.
+  await live.record(entry({ code: "`int$(x)" }));
+  stub.picks.push(({ items }) => ((offered = items.map((i) => [i.label, i.description])), undefined));
+  await stub.commands.get("q-lint.rerunQuery")();
+  assert.deepStrictEqual(offered[0], ["`int\\$(x)", "p"]);
+});

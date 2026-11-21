@@ -43,7 +43,7 @@ import {
 } from "./processes";
 import { COMMANDS, CONNECTED, VIEWS, readLive, readProcessSettings, readTerminal } from "./liveconfig";
 import { QConnection } from "./qclient";
-import { historyHeading, historyLabel } from "./history";
+import { historyHeading, historyLabel, iconsEscaped } from "./history";
 import { render } from "./query";
 import { QueryModes, type Rendered } from "./resultpanel";
 import { blockAt, statements } from "./statements";
@@ -543,10 +543,10 @@ export class Live {
   private showStatus(): void {
     const label = this.activeLabel();
     if (this.running !== undefined && label !== undefined) {
-      this.status.text = `$(sync~spin) q: ${label}`;
+      this.status.text = `$(sync~spin) q: ${iconsEscaped(label)}`;
       this.status.tooltip = "A query is running. q-lint: Abort Current Query stops waiting for it.";
     } else if (label !== undefined) {
-      this.status.text = `$(plug) q: ${label}`;
+      this.status.text = `$(plug) q: ${iconsEscaped(label)}`;
       this.status.tooltip = `Connected to ${this.active?.host}:${this.active?.port}. Click to switch.`;
     } else {
       this.status.text = "$(debug-disconnect) q: not connected";
@@ -688,7 +688,7 @@ export class Live {
     }
     const picked = await window.showQuickPick(
       processes.map((p) => ({
-        label: p.label,
+        label: iconsEscaped(p.label),
         description: `${p.host}:${p.port}`,
         detail: p.tags.length ? p.tags.join(", ") : undefined,
         process: p,
@@ -1137,7 +1137,7 @@ export class Live {
   private async rerun(entry?: HistoryEntry): Promise<void> {
     if (entry === undefined) {
       const picked = await window.showQuickPick(
-        this.history().map((e) => ({ label: historyLabel(e.code), description: e.process, entry: e })),
+        this.history().map((e) => ({ label: iconsEscaped(historyLabel(e.code)), description: iconsEscaped(e.process), entry: e })),
         { title: "Run which query again?" },
       );
       entry = picked?.entry;
