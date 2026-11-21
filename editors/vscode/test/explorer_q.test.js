@@ -71,3 +71,14 @@ test("a dictionary keyed by numbers with :: first is a variable, not a namespace
   const d = g.entries.find((e) => e.ns === ".ns" && e.name === "d");
   assert.deepStrictEqual([d.kind, d.type, d.count], ["variable", 99, 2]);
 });
+
+// Only a table's first `LIMITS[0]` columns are sent; its row said that was
+// how many it had.
+test("a table with more columns than are read says how many it has", { skip }, async (t) => {
+  const g = await gathered(t, 'w:flip(`$"c",/:string til 600)!600#enlist 1 2;\n');
+  const w = g.entries.find((e) => e.name === "w");
+  assert.strictEqual(w.cols.length, LIMITS[0]);
+  const node = explorerTree(g, []).find((n) => n.label === ".").children[0].children[0];
+  assert.strictEqual(node.description, "2 rows · 600 columns");
+  assert.deepStrictEqual(node.children.slice(-1)[0], { kind: "note", label: "100 more columns not shown", description: "the first 500 are" });
+});

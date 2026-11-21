@@ -384,8 +384,9 @@ shown not counted. It is read in one call that defines nothing on the process,
 on connect, on **Refresh Process Explorer**, and after each query when
 **Toggle Process Explorer Auto Refresh** has turned
 `q-lint.processExplorer.autoRefresh` on - never as you type. On a process
-with thousands of names it reads 100 namespaces at most and the first 500
-names of each, in sorted order, and says how many it left out. **Preview**,
+with thousands of names it reads 100 namespaces at most, the first 500
+names of each in sorted order, and a table's first 500 columns, and says how
+many it left out. **Preview**,
 on a table or a variable, runs its first `q-lint.processExplorer.previewLimit`
 rows, or the variable, as a query. The explorer shares the query connection:
 while a query runs it waits and refreshes after, and a query sent while it

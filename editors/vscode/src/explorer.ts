@@ -12,7 +12,8 @@
 // variable. It answers
 //
 //   rows    one per name: ns, name, kind (table, function or variable), type,
-//           count, cols, keys, params, partitioned
+//           count, cols, keys, params, partitioned, and ncols, a table's
+//           columns in all
 //   spaces  one per namespace read: ns, total (its names, nested namespaces
 //           not counted)
 //   more    how many namespaces were left unread
@@ -52,13 +53,13 @@ export const GATHER = [
   "  spaces,:enlist`ns`total!(ns;\"f\"$count k);",
   "  rows,:{[ns;n;nm;x]",
   "   t:type x;tb:$[98h=t;1b;.Q.qt x];fn:t within 100 112h;part:$[tb;1b~.Q.qp x;0b];",
-  "   `ns`name`kind`type`count`cols`keys`params`partitioned!(ns;nm;",
+  "   `ns`name`kind`type`count`cols`keys`params`partitioned`ncols!(ns;nm;",
   "    $[tb;`table;fn;`function;`variable];t;",
   "    \"f\"$$[fn;0N;part;@[{sum .Q.cn x};x;0n];count x];",
   "    $[tb;n sublist(),cols x;`$()];",
   "    $[tb&99h=t;(),keys x;`$()];",
   "    $[100h=t;@[{(),(value x)1};x;{`$()}];`$()];",
-  "    part)}[ns;n]'[n sublist k;d n sublist k]];",
+  "    part;\"f\"$$[tb;count cols x;0])}[ns;n]'[n sublist k;d n sublist k]];",
   " `rows`spaces`more!(rows;spaces;\"f\"$count todo)}",
 ].join("\n");
 
@@ -105,6 +106,8 @@ export interface Entry {
   keys: string[];
   params: string[];
   partitioned: boolean;
+  /// A table's columns in all, when that is more than `cols` holds.
+  allCols?: number;
 }
 
 export interface Gathered {
@@ -138,6 +141,7 @@ export function readGathered(raw: unknown): Gathered {
             keys: strings(row.keys),
             params: strings(row.params),
             partitioned: row.partitioned === true,
+            ...(number(row.ncols) !== null && number(row.ncols)! > strings(row.cols).length ? { allCols: number(row.ncols)! } : {}),
           },
         ]
       : [],
@@ -218,18 +222,24 @@ export interface Node {
 function tableNode(e: Entry): Node {
   const rows = e.count === null ? "rows not counted" : plural(e.count, "row");
   const how = e.partitioned && e.count !== null ? " (partitioned, counted by .Q.cn)" : "";
+  const all = e.allCols ?? e.cols.length;
   return {
     kind: "table",
     label: e.name,
-    description: `${rows}${how} · ${plural(e.cols.length, "column")}`,
+    description: `${rows}${how} · ${plural(all, "column")}`,
     tooltip: `${fullName(e)}: ${typeName(e.type) === "dictionary" ? "keyed table" : "table"}, ${rows}${how}`,
     name: fullName(e),
     partitioned: e.partitioned,
-    children: e.cols.map((c) => ({
-      kind: "column",
-      label: c,
-      ...(e.keys.includes(c) ? { description: "key" } : {}),
-    })),
+    children: [
+      ...e.cols.map((c): Node => ({
+        kind: "column",
+        label: c,
+        ...(e.keys.includes(c) ? { description: "key" } : {}),
+      })),
+      ...(all > e.cols.length
+        ? [{ kind: "note" as const, label: `${plural(all - e.cols.length, "more column")} not shown`, description: `the first ${e.cols.length} are` }]
+        : []),
+    ],
   };
 }
 
