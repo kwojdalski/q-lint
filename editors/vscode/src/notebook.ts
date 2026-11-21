@@ -124,9 +124,14 @@ class QnbSerializer implements NotebookSerializer {
           };
         }
         let metadata = stash(cell.metadata, cell.extra);
-        if (cell.execution?.extra !== undefined) {
-          const { order, start, extra } = cell.execution;
-          metadata = { ...metadata, [RUN_EXTRA]: { order, start, extra } };
+        // A start without an end, or an end alone, which VS Code's timing
+        // cannot hold, rides with the run's unknown fields.
+        const lone = cell.execution === undefined || (cell.execution.start === undefined) === (cell.execution.end === undefined)
+          ? undefined
+          : cell.execution.start !== undefined ? { start: cell.execution.start } : { end: cell.execution.end };
+        if (cell.execution?.extra !== undefined || lone !== undefined) {
+          const { order, start, extra } = cell.execution ?? {};
+          metadata = { ...metadata, [RUN_EXTRA]: { order, start: lone === undefined ? start : undefined, extra, lone } };
         }
         if (metadata !== undefined) {
           item.metadata = metadata;
@@ -147,10 +152,9 @@ class QnbSerializer implements NotebookSerializer {
       const summary = cell.executionSummary;
       // The run's unknown fields, while the run is still the one they came with.
       const run = cell.metadata?.[RUN_EXTRA];
-      const runExtra =
-        isJson(run) && isJson(run.extra) && run.order === summary?.executionOrder && run.start === summary?.timing?.startTime
-          ? { extra: run.extra }
-          : {};
+      const same = isJson(run) && run.order === summary?.executionOrder && run.start === summary?.timing?.startTime;
+      const runExtra = same && isJson(run.extra) ? { extra: run.extra } : {};
+      const lone = same && isJson(run.lone) && summary?.timing === undefined ? (run.lone as { start?: number; end?: number }) : {};
       return {
         kind: code ? "code" : "markdown",
         source: cell.value,
@@ -165,8 +169,8 @@ class QnbSerializer implements NotebookSerializer {
               execution: {
                 order: summary.executionOrder,
                 success: summary.success,
-                start: summary.timing?.startTime,
-                end: summary.timing?.endTime,
+                start: summary.timing?.startTime ?? lone.start,
+                end: summary.timing?.endTime ?? lone.end,
                 ...runExtra,
               },
             }
