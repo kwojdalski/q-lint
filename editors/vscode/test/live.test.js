@@ -313,6 +313,7 @@ test("package.json declares exactly the commands the extension registers", () =>
     CHECK_UNDEFINED,
     ...Object.values(DRIFT_COMMANDS),
     ...Object.values(QSQL_COMMANDS),
+    ...Object.values(require("../out/interpreter.js").INTERPRETER_COMMANDS),
   ].sort();
   assert.deepStrictEqual(declared, registered);
 });

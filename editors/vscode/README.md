@@ -1246,6 +1246,53 @@ back, and saving a notebook that was opened unchanged writes the same file. A fi
 that is not a notebook does not open: the editor says what is wrong with
 it, and the file is left as it was. An empty file is a new notebook.
 
+## The local q
+
+**q interpreter.** **Select q Interpreter**, or the status bar item beside
+a q editor, lists the q binaries on this machine: KDB-X's `~/.kx/bin/q`,
+`$QHOME/<platform>/q` (`~/q` when `QHOME` is unset), each `q` on `PATH`,
+and a PeachQ-style `q` (or `peachq`) at a workspace folder's root or in its
+`bin/`. One file reached twice - `~/.kx/bin` on `PATH`, a link - is listed
+once. Opening the picker starts each once with `-q`, to print its version
+and exit, so each shows as `q 4.1 2024.10.16`; one that does not answer
+says so. **Enter a q binary's path...** takes any other. The one picked
+becomes the workspace's `q-lint.terminal.qBinary`: what the q terminals,
+and **Start Process** start. A binary inside a kdb+ install
+(`<home>/m64/q` beside `<home>/q.k`) is started with `QHOME=<home>`, and one
+inside a KDB-X install (`<home>/bin/q` with `<home>/q/` and a licence) with
+`QHOME=<home>/q` and `QLIC=<home>`, so a `QHOME` your shell sets for another
+q does not reach it; `q-lint.terminal.envPath` and the `.env` file still
+win. The item shows the version once the picker has asked for it, and the
+binary's name before.
+
+**Licence expiry.** When the picker or **Check q Licence Expiry** starts a
+q, it also prints the expiry date of its licence: the second item of
+`.z.l`, as [code.kx.com documents it](https://code.kx.com/q/ref/dotz/#zl).
+The licence files themselves (`kc.lic`, `k4.lic`) are not in a published
+format, so they are only located - in `QLIC`, `QHOME`, the KDB-X install or
+`~/q` - to notice one replaced, and never read. The date is kept on this
+machine with the binary's path and version, and nothing else: no banner
+text, no licensee, and it is sent nowhere. From then on, at start and when
+the binary changes, a licence within `q-lint.licence.warningDays` of its
+date is warned of once a day, without starting q. A q whose `.z.l` is empty
+(PeachQ, a 32-bit kdb+) reports no date, and nothing is guessed; a licence
+file changed since the date was learnt is not warned of until it is checked
+again.
+
+**`.env` files.** The variables of the workspace folder's `.env`
+(`q-lint.env.file`) go to every q the extension starts here: the q
+terminals and **Start q REPL**, and **Start Process**. The
+file is read as `q-lint.terminal.envPath` reads its file - `NAME=value`
+lines, `#` comments, quotes dropped, nothing expanded - each time one of
+them starts. Its values may be secrets, so they go in the environment and
+never on a command line, and no message or log ever shows one: a line that
+is not `NAME=value` is named by its number, and the variables by their
+names. In a terminal, q is started by your shell, so a variable your
+shell's startup files export wins over the `.env` file's; put that one in
+`q-lint.terminal.envPath` instead, whose variables go on the command line.
+A launched process gets the `.env` file's variables under its definition's
+own `env`. A missing file is no file.
+
 ## Requirements
 
 None on macOS (Apple Silicon and Intel), Linux x64 or Windows x64: the
@@ -1406,6 +1453,18 @@ reaches the language server.
 | --- | --- | --- | --- |
 | `q-lint.terminal.qBinary` | `"q"` | The q binary a terminal starts: a name on `PATH` or a path, where a leading `~` is your home directory. It is quoted for the terminal's shell (POSIX, PowerShell or cmd), so it names one program, not a command with arguments. | `q-terminal.cfg.qBinary` |
 | `q-lint.terminal.envPath` | `""` | A file of `NAME=value` lines set for q, such as `QHOME` and `QLIC`. They go on the command line that starts q (`NAME=value q`, `$env:NAME=` in PowerShell, `set` in cmd), so they win over what your shell's startup files set, and show there. Relative to the workspace folder; a leading `~` is your home directory. It is read, not run as a shell script as q-pro's is: `#` lines are comments, `export ` is allowed, quotes around a value are dropped, and nothing is expanded: `$HOME` stays `$HOME`. | `q-terminal.cfg.envPath` |
+
+### q environment settings
+
+Read when they are used, so a change needs no reload. None reaches the language server.
+
+| Setting | Default | What it does | q-pro |
+| --- | --- | --- | --- |
+| `q-lint.interpreter.enable` | `true` | **Select q Interpreter** and its status bar item. Off, both are hidden, and no q is started to ask its version; a binary's install no longer sets `QHOME`. | - |
+| `q-lint.licence.expiryWarning.enable` | `true` | The licence expiry warning and **Check q Licence Expiry**. The date is the one q reports in `.z.l`, kept on this machine; the licence file is never read. Off, nothing warns and the command is hidden and refuses. | - |
+| `q-lint.licence.warningDays` | `30` | Days before the expiry date the warning starts, 0 to 365. | - |
+| `q-lint.env.enable` | `true` | Give the `.env` file's variables to the q terminals and launched processes, in their environment, never shown. Off, the file is not read. | - |
+| `q-lint.env.file` | `".env"` | The `.env` file: relative to the workspace folder, which may set its own; a leading `~` is your home directory. | - |
 
 ### Discovery settings
 

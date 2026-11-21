@@ -66,6 +66,8 @@ import { render } from "./query";
 import { QueryModes, type Rendered } from "./resultpanel";
 import { blockAt, statements } from "./statements";
 import { commandLine, expandHome, parseEnv, replLines, shellKind } from "./terminal";
+import { terminalEnv } from "./qenv";
+import { dotenvFor, layoutEnvFor } from "./qenvironment";
 import { QueryControls } from "./controls";
 import { ParameterCache } from "./paramcachecontrol";
 import { CONTROL_COMMANDS, FILE_CONNECTIONS_KEY, UNLIMITED, armTimeout, limits, readUnlimited, runUnwrapped, timedOutError, withBinding } from "./querycontrols";
@@ -410,8 +412,12 @@ export class QTerminals {
         );
       }
     }
+    // The `.env` file's variables go in the terminal's environment, never on
+    // its command line, where they would show; the layout's stay under the
+    // env file's.
+    const { shown, hidden } = terminalEnv(layoutEnvFor(read.qBinary, from), variables, await dotenvFor(from));
     before?.();
-    const terminal = window.createTerminal({ name, cwd });
+    const terminal = window.createTerminal({ name, cwd, ...(Object.keys(hidden).length > 0 ? { env: hidden } : {}) });
     this.ours.add(terminal);
     if (file !== undefined) {
       this.files.set(terminal, file);
@@ -421,7 +427,7 @@ export class QTerminals {
     const relative = file !== undefined && cwd !== undefined ? path.relative(cwd, file) : "";
     const inside = relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
     const args = file === undefined ? [] : [inside ? relative : file];
-    terminal.sendText(commandLine(settings.qBinary, args, shellKind(env.shell), variables), true);
+    terminal.sendText(commandLine(settings.qBinary, args, shellKind(env.shell), shown), true);
     return terminal;
   }
 }

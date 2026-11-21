@@ -932,6 +932,44 @@
             "markdownDescription": "Read and watch the workspace's `.qlint/processes.json`, a process list committed with the code, and list its processes beside the saved ones; **Add to Shared Process List** writes a saved process there, never its password. A password or secret in the file is ignored and said. Connect scripts, SSH jump hosts and launch definitions in it are read only in a trusted workspace. Off: the file is not read, its group is removed, and the command is hidden."
           }
         }
+      },
+      {
+        "title": "q-lint: q environment",
+        "properties": {
+          "q-lint.interpreter.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 210,
+            "markdownDescription": "**Select q Interpreter** and the status bar item beside a q editor that shows the q this workspace starts. The picker lists the q binaries found in `~/.kx` (KDB-X), `QHOME` (or `~/q`), `PATH` and the workspace folders, starts each once with `-q` to show its version, and sets the one picked as the workspace's `q-lint.terminal.qBinary`. A binary in a kdb+ or KDB-X install is started with that install's `QHOME` (and `QLIC`). Off, the command and the item are hidden, and no q is started."
+          },
+          "q-lint.licence.expiryWarning.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 211,
+            "markdownDescription": "Warn, once a day, when the licence of the q this workspace starts is within `q-lint.licence.warningDays` of its expiry date, and offer **Check q Licence Expiry**. The date is the one q reports in `.z.l`, learnt when the picker or that command starts it, and kept on this machine: the licence file is never read or sent anywhere. Off, nothing warns and the command is hidden."
+          },
+          "q-lint.licence.warningDays": {
+            "type": "integer",
+            "default": 30,
+            "minimum": 0,
+            "maximum": 365,
+            "order": 212,
+            "markdownDescription": "How many days before the licence's expiry date `q-lint.licence.expiryWarning.enable` starts warning; `0` warns only on the day and after."
+          },
+          "q-lint.env.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 213,
+            "markdownDescription": "Give the variables of the workspace folder's `q-lint.env.file` to every q the extension starts on this machine: the q terminals and REPL, and processes started from the Processes view. They go in the environment, never on a command line, and no value is ever shown or logged. Off, the file is not read."
+          },
+          "q-lint.env.file": {
+            "type": "string",
+            "default": ".env",
+            "order": 214,
+            "scope": "resource",
+            "markdownDescription": "The `.env` file `q-lint.env.enable` reads: `NAME=value` lines, `#` comments, an optional `export `, quotes dropped and nothing expanded, as `q-lint.terminal.envPath` reads its file. Relative to the workspace folder; a leading `~` is your home directory. A missing file is no file."
+          }
+        }
       }
     ],
     "commands": [
@@ -1530,6 +1568,16 @@
         "title": "Draft qSQL from a Description",
         "category": "q-lint",
         "icon": "$(sparkle)"
+      },
+      {
+        "command": "q-lint.selectInterpreter",
+        "title": "Select q Interpreter",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.checkLicence",
+        "title": "Check q Licence Expiry",
+        "category": "q-lint"
       }
     ],
     "views": {
@@ -2310,6 +2358,14 @@
         {
           "command": "q-lint.draftQsql",
           "when": "config.q-lint.chat.englishToQsql.enable"
+        },
+        {
+          "command": "q-lint.selectInterpreter",
+          "when": "config.q-lint.interpreter.enable"
+        },
+        {
+          "command": "q-lint.checkLicence",
+          "when": "config.q-lint.licence.expiryWarning.enable"
         }
       ],
       "editor/title": [

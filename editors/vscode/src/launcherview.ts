@@ -7,6 +7,8 @@ import * as net from "node:net";
 import { commands, window, workspace, type ExtensionContext, type OutputChannel } from "vscode";
 import { LAUNCH_COMMANDS, commandText, launchPlan, readLauncher } from "./launcher";
 import { readTerminal } from "./liveconfig";
+import { mergeEnv } from "./qenv";
+import { dotenvFor, layoutEnvFor } from "./qenvironment";
 import type { Live, ProcessArg } from "./live";
 import { launchOf, splitArgs, withExtras, type Launch } from "./processes";
 
@@ -100,6 +102,10 @@ export class Launcher {
       void window.showErrorMessage(`q-lint: something already listens on port ${process.port}; ${process.label} was not started.`);
       return;
     }
+    // The binary's layout's variables, then the workspace's .env file's,
+    // then the definition's own; the output shows none of their values.
+    const folder = workspace.workspaceFolders?.[0]?.uri;
+    const env = mergeEnv(layoutEnvFor(plan.command, folder), await dotenvFor(folder), plan.env);
     const channel = this.channel(process.label);
     channel.appendLine(`$ ${commandText(plan)}    (in ${plan.cwd})`);
     channel.show(true);
@@ -107,7 +113,7 @@ export class Launcher {
     try {
       child = spawn(plan.command, plan.args, {
         cwd: plan.cwd,
-        env: { ...globalThis.process.env, ...plan.env },
+        env: { ...globalThis.process.env, ...env },
         // No stdin: q reads none from a launcher, and keeps running without.
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,

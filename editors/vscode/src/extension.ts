@@ -41,6 +41,7 @@ import { Drift } from "./driftview";
 import { registerAssistTools } from "./assisttools";
 import { registerChat } from "./chat";
 import { registerQsqlDraft } from "./qsqldraft";
+import { Interpreters } from "./interpreterview";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -132,6 +133,7 @@ export async function activate(
     hotReload: Drift["hotReloadState"];
     assistTools: () => string[];
     chatParticipant: () => boolean;
+    interpreter: { status: () => string | undefined };
   }
 > {
   // Replacing the binary does not restart the server, and a window reload is
@@ -193,6 +195,7 @@ export async function activate(
   const valueHover = registerValueHover(context, live, running);
   const undefinedNames = registerUndefinedNames(context, live, running);
   const idioms = registerIdioms(context);
+  const interpreters = new Interpreters(context);
   // Not awaited: nothing above needs the server, and a slow or hung one
   // would hold up every command of the extension until it answered.
   void serial.run(() => start(context)).then(() => serverChanged());
@@ -217,6 +220,7 @@ export async function activate(
     hotReload: () => drift.hotReloadState(),
     assistTools: assistTools.registered,
     chatParticipant: chatParticipant.registered,
+    interpreter: { status: () => interpreters.status() },
   };
 }
 
