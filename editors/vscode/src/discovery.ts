@@ -49,7 +49,14 @@ export function serverLabelProblem(label: string, taken: Set<string>): string | 
 }
 
 /// Why `url` is not one a discovery server can have, or undefined when it is.
+/// A user or password in it is refused: fetch sends no such request, and
+/// the URL is kept and shown in the clear, unlike the auth header.
 export function urlProblem(url: string): string | undefined {
+  return schemeProblem(url) ?? (hasCredentials(new URL(url.trim())) ? "Put a user and password in the auth header, not the URL." : undefined);
+}
+
+/// Why `url` is not an http or https URL, or undefined when it is.
+function schemeProblem(url: string): string | undefined {
   let parsed: URL;
   try {
     parsed = new URL(url.trim());
@@ -58,6 +65,9 @@ export function urlProblem(url: string): string | undefined {
   }
   return parsed.protocol === "http:" || parsed.protocol === "https:" ? undefined : "The URL must be http or https.";
 }
+
+const hasCredentials = (url: URL): boolean => url.username !== "" || url.password !== "";
+const CREDENTIALS = "its URL holds a user or password: put them in the auth header";
 
 /// The discovery servers a stored JSON value lists; anything that is not one
 /// is dropped, and a label seen before is skipped.
@@ -75,7 +85,8 @@ export function parseServers(json: unknown): DiscoveryServer[] {
     if (typeof label !== "string" || typeof url !== "string") {
       continue;
     }
-    if (serverLabelProblem(label, seen) !== undefined || urlProblem(url) !== undefined) {
+    // One with a user or password in its URL is kept, so it can be edited.
+    if (serverLabelProblem(label, seen) !== undefined || schemeProblem(url) !== undefined) {
       continue;
     }
     seen.add(label.trim());
@@ -119,6 +130,14 @@ export async function fetchProcesses(url: string, options: FetchOptions = {}): P
   const timeoutMs = options.timeoutMs ?? FETCH_TIMEOUT_MS;
   const maxBytes = options.maxBytes ?? MAX_RESPONSE_BYTES;
   const header = authHeader(options.secret);
+  // Refused here, since fetch's own errors spell out the URL or the header
+  // value, password or secret and all.
+  if (hasCredentials(new URL(url))) {
+    throw new Error(CREDENTIALS);
+  }
+  if (header !== undefined && !/^[\t\x20-\x7e\x80-\xff]*$/.test(header[1])) {
+    throw new Error("its auth header holds a character HTTP cannot send");
+  }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const timedOut = (): Error => new Error(`no answer within ${timeoutMs / 1000} s`);
@@ -154,6 +173,9 @@ export async function fetchProcesses(url: string, options: FetchOptions = {}): P
       const next = new URL(location, at);
       if (next.protocol !== "http:" && next.protocol !== "https:") {
         throw new Error(`it redirected to ${next.protocol} URL`);
+      }
+      if (hasCredentials(next)) {
+        throw new Error(`it redirected to a URL that holds a user or password`);
       }
       if (next.origin !== new URL(at).origin) {
         send = undefined;

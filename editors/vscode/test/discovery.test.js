@@ -353,3 +353,34 @@ test("a redirect to another origin is not sent the auth header", async () => {
     }
   }
 });
+
+// A URL's user and password: fetch refuses every such request, and its
+// error, shown under the server's row, spelled the URL out password and all.
+// The password was also kept in plain globalState and shown in the tooltip.
+test("a URL with a user or password is refused, and the password never shown", async () => {
+  assert.strictEqual(urlProblem("https://u:pw@x.example/list"), "Put a user and password in the auth header, not the URL.");
+  assert.strictEqual(urlProblem("https://u@x.example/list"), "Put a user and password in the auth header, not the URL.");
+  // One stored before stays listed, so it can be edited or deleted.
+  assert.deepStrictEqual(parseServers([{ label: "a", url: "https://u:pw@x.example/" }]), [{ label: "a", url: "https://u:pw@x.example/" }]);
+  await withServer(async (base) => {
+    const url = base.replace("://", "://u:s3cretpw@") + "/list";
+    await assert.rejects(fetchProcesses(url), (error) => {
+      assert.strictEqual(error.message, "its URL holds a user or password: put them in the auth header");
+      return true;
+    });
+  });
+});
+
+// An auth header fetch cannot send: its error named the header's value -
+// the secret - under the server's row, and called it unreachable.
+test("an auth header that cannot be sent is refused without showing it", async () => {
+  await withServer(async (base) => {
+    for (const secret of ["Bearer s3cret\nmore", "X-Api-Key: s3cret\u0000", "Bearer s3cr€t"]) {
+      await assert.rejects(fetchProcesses(`${base}/auth`, { secret }), (error) => {
+        assert.ok(!error.message.includes("s3cr"), error.message);
+        assert.strictEqual(error.message, "its auth header holds a character HTTP cannot send");
+        return true;
+      });
+    }
+  });
+});
