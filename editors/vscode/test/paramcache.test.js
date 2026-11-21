@@ -210,3 +210,14 @@ test("the status bar counts the cached lambdas in the file", () => {
   assert.strictEqual(t.kind, "insert");
   assert.ok(!t.text.includes(ID), t.text);
 });
+
+test("a number followed by _ ends at it: 1_x drops from x, and reads x", () => {
+  // q has no `_` in a number, so `1_x` is 1, drop, x: `{1_x}` takes x and
+  // `{-2_y}` takes x and y (KDB-X and PeachQ agree).
+  assert.deepStrictEqual(paramsAt("f:{|1_x}"), ["x"]);
+  assert.deepStrictEqual(paramsAt("f:{|-2_y}"), ["x", "y"]);
+  assert.deepStrictEqual(paramsAt("f:{|1_z}"), ["x", "y", "z"]);
+  assert.strictEqual(toggleAt("f:{1_x}", 3, fixed).kind, "insert");
+  // A name keeps its `_`: `x_y` is one name, not x drop y.
+  assert.deepStrictEqual(paramsAt("f:{|x_y;z_1;y}"), ["x", "y"]);
+});
