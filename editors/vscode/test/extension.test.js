@@ -112,3 +112,32 @@ test("a server that never answers initialize does not hold up activation or Rest
   assert.strictEqual(w.clients.length, 2);
   await w.extension.deactivate();
 });
+
+test("a bundled server that cannot run falls back to PATH without an error", { skip: process.platform === "win32" && "a shell script" }, async () => {
+  // A package built on another platform carries a binary this one cannot
+  // execute. PATH's server then runs, and nothing failed that the user must
+  // hear about.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-ext-"));
+  fs.mkdirSync(path.join(dir, "server"));
+  fs.writeFileSync(path.join(dir, "server", "qlinter"), "#!/bin/sh\nexit 126\n", { mode: 0o755 });
+  const bundled = path.join(dir, "server", "qlinter");
+  const w = load({ extensionPath: dir, behaviour: (command) => (command === bundled ? "fail" : "ok") });
+  await w.extension.activate(w.context);
+  await sleep(100);
+  assert.deepStrictEqual(w.started, ["qlinter"]);
+  assert.deepStrictEqual(w.errors, []);
+  await w.extension.deactivate();
+});
+
+test("the error for a serverPath that will not start is about that setting", async () => {
+  const w = load({ settings: { serverPath: "/opt/missing/qlinter" }, behaviour: () => "fail" });
+  await w.extension.activate(w.context);
+  await sleep(100);
+  const error = w.errors[w.errors.length - 1];
+  assert.match(error, /\/opt\/missing\/qlinter/);
+  assert.match(error, /q-lint\.serverPath/);
+  // Not the advice for a missing bundled server: the user already set it.
+  assert.doesNotMatch(error, /No server for|set q-lint\.serverPath/);
+  await w.extension.deactivate();
+});
+

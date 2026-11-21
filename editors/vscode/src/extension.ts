@@ -22,6 +22,7 @@ import { registerNotebooks, type RenderedChart } from "./notebook";
 import { ProcessExplorer } from "./explorerview";
 import { Relations } from "./relate";
 import { Serial } from "./serial";
+import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -114,6 +115,11 @@ function restart(context: ExtensionContext): Promise<void> {
   });
 }
 
+/// Whether `command --version` runs and succeeds.
+function answersVersion(command: string): boolean {
+  return spawnSync(command, ["--version"], { stdio: "ignore", timeout: 10_000, windowsHide: true }).status === 0;
+}
+
 function stop(): Promise<void> {
   return serial.run(async () => {
     await client?.stop().catch(() => {});
@@ -160,7 +166,16 @@ async function start(context: ExtensionContext): Promise<void> {
   };
 
   let started: unknown;
-  for (const command of candidates) {
+  for (const [i, command] of candidates.entries()) {
+    // The language client reports a server it cannot start with an error of
+    // its own, so a candidate with another after it is asked its version
+    // first: a bundled binary built for another platform then falls through
+    // to PATH without a false alarm. The last is left to the client, which
+    // says why it failed - and a wrapper script need not know --version.
+    if (i < candidates.length - 1 && !answersVersion(command)) {
+      started = new Error(`${command} --version did not run`);
+      continue;
+    }
     const server: ServerOptions = {
       // One entry, used for both: this server has no separate debug mode, and
       // giving it a fabricated one would mean a second thing to keep in step.
@@ -218,7 +233,14 @@ async function start(context: ExtensionContext): Promise<void> {
   {
     const error = started;
     const command = candidates.join('", "');
-    if (client === undefined) {
+    if (client === undefined && configured) {
+      // The user named this binary, so the advice is about that setting -
+      // not to install one and set it, which they did.
+      window.showErrorMessage(
+        `q-lint: could not start "${configured}", the binary q-lint.serverPath names. ` +
+          `Check the path, or clear the setting to use the server bundled with the extension. ${error}`,
+      );
+    } else if (client === undefined) {
       // Name every binary that was tried. "Couldn't start the server" sends
       // someone to the logs; saying what was attempted, and that none of them
       // ran, tells them what to fix.
