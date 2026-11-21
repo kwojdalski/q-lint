@@ -208,7 +208,8 @@ that fails to connect is forgotten, and asked for again on the next.
 
 The code is cut into statements by q's own script rules: a line starting
 with a space or tab continues the one above, `/` lines and block comments
-are skipped, and a `\` line is a system command. A closing `}` at column 0
+are skipped, as is a first line starting `#!`, and a `\` line is a system
+command. A closing `}` at column 0
 starts a new statement, which q refuses, here as when it loads the file.
 The statements run in order on the process, in its current `\d`, as its
 console would run them, and nothing is defined on the process but what
