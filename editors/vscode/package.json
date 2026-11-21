@@ -673,6 +673,12 @@
             "order": 133,
             "markdownDescription": "Offer the q idiom snippets in a q editor's completion list: `aj`, `aj0`, `wj`, `wj1`, `lj`, `ij`, `uj`, a bucketed `xbar` select, the `.z` handlers (`zpg`, `zps`, `zpo`, `zpc`, `zpw`, `zts`, `zws`, `zexit`) and a TorQ process skeleton (`torq`). Off, they leave the list."
           },
+          "q-lint.backtraceLinks.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 138,
+            "markdownDescription": "Make each frame of a q backtrace a link to the line that failed: in the **q-lint: query** output and other output channels, and in a terminal running q under `\\e 1`. A path from another machine opens the workspace file sharing its trailing folders. Off, nothing is linked."
+          },
           "q-lint.processExplorer.driftDetection.enable": {
             "type": "boolean",
             "default": false,

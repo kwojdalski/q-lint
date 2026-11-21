@@ -377,6 +377,18 @@ answer's `# process (n ms)` header, the error and its backtrace (each frame,
 where it is and the caret under it), a table's rule and a keyed table's `|`,
 numbers, symbols, temporal literals and strings, and an included query as q.
 
+**Backtrace links.** Each frame of a backtrace (`[n]  file:line: code`) is
+a link to the line that failed: in the **q-lint: query** output, in other
+output channels such as a launched process's, and in a terminal running q
+under `\e 1`. KDB-X prints the line that failed and PeachQ the line the
+function starts on, followed by its whole text; the link reads the file and
+opens whichever line holds the code above the `^`, at its column. A path
+the process printed that is not on this machine opens the workspace file
+sharing the most trailing folders with it. A frame with no file - a
+function defined over IPC - links to where the workspace defines its name.
+In a terminal, only the frame's header line is seen, so the link opens the
+line the header names. `q-lint.backtraceLinks.enable` turns the links off.
+
 **TorQ gateways.** A query from the editor to a process marked as a TorQ
 gateway goes as `.gw.syncexec[query;servertypes]`, so the gateway runs it on
 a server of each type and joins what they answer. The server types are, in
@@ -1371,6 +1383,7 @@ nothing.
 | `q-lint.idiomSnippets.enable` | `true` | Offer the idiom snippets (joins, `.z` handlers, a TorQ process) in the completion list. | - |
 | `q-lint.processExplorer.driftDetection.enable` | `false` | **Check Drift Against Process**: compare the workspace's function definitions with the connected process. Off, the command is hidden and reads nothing. | - |
 | `q-lint.hotReload.enable` | `false` | On saving a q file, send the definitions the save changed to its process, after Redefine's confirmation. Off, nothing listens and nothing is sent. | - |
+| `q-lint.backtraceLinks.enable` | `true` | Link each backtrace frame in the output and terminals to the line that failed. | - |
 
 ### Connection settings
 

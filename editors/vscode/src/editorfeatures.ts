@@ -1,5 +1,6 @@
 // The switches for the editor features that work with a q process or add to
-// the editor's lists (#939, #940, #944, #945): each has its own `enable`
+// the editor's lists (#939, #940, #944, #945), and the test and debugging
+// tools built on them (#979-#985): each has its own `enable`
 // setting. Free of any `vscode` import, so node tests it. A feature turned
 // off has its commands hidden (package.json's `when`) and refusing, its
 // providers and listeners unregistered, and sends nothing.
@@ -13,6 +14,7 @@ export const EDITOR_SETTINGS = {
   liveValueHover: { key: "liveValueHover.enable", fallback: false, name: "The live value hover" },
   idiomSnippets: { key: "idiomSnippets.enable", fallback: true, name: "The q idiom snippets" },
   undefinedNames: { key: "undefinedNames.enable", fallback: false, name: "The undefined-name check against the process" },
+  backtraceLinks: { key: "backtraceLinks.enable", fallback: true, name: "Clickable q backtraces" },
 } as const;
 
 export type EditorFeature = keyof typeof EDITOR_SETTINGS;
