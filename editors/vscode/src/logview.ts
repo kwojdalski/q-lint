@@ -422,6 +422,14 @@ export class LogViewer {
       view.watchers.set(file, listener);
       fs.watchFile(file, { interval: FOLLOW_MS, persistent: false }, listener);
     }
+    // fs.watchFile takes its first stat asynchronously, so lines appended
+    // before it are part of its baseline and raise no change: read once more
+    // after the first poll, unless following has stopped since.
+    setTimeout(() => {
+      if (view.watchers.size > 0) {
+        void this.append(view);
+      }
+    }, FOLLOW_MS);
   }
 
   /// Stop following: only this view's listeners, so another view of the
