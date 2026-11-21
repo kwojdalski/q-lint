@@ -199,3 +199,23 @@ test("Add and Edit Process keep what was saved while they asked", async (t) => {
   assert.deepStrictEqual(live.processes().filter((p) => p.label === "dup").map((p) => p.port), [4]);
   assert.ok(stub.messages.some(([, text]) => /dup.*taken/.test(text)), JSON.stringify(stub.messages));
 });
+
+// The same for discovery servers: Add and Edit saved the list as it was
+// before their input boxes.
+test("Add and Edit Discovery Server keep what was saved while they asked", async (t) => {
+  const { context, live } = await setUp(t, []);
+  const url = `http://127.0.0.1:${await deadPort()}/`;
+  await context.globalState.update("q-lint.discoveryServers", [{ label: "old", url }]);
+  const elsewhere = async (label) =>
+    context.globalState.update("q-lint.discoveryServers", [...live.discovery.servers(), { label, url }]);
+  stub.inputs = ["new", url, async () => (await elsewhere("other"), "")];
+  await stub.commands.get("q-lint.addDiscoveryServer")();
+  assert.deepStrictEqual(live.discovery.servers().map((s) => s.label), ["old", "other", "new"]);
+  stub.inputs = ["renamed", url, async () => (await elsewhere("third"), "")];
+  await stub.commands.get("q-lint.editDiscoveryServer")("old");
+  assert.deepStrictEqual(live.discovery.servers().map((s) => s.label), ["renamed", "other", "new", "third"]);
+  stub.inputs = ["dup", url, async () => (await elsewhere("dup"), "")];
+  await stub.commands.get("q-lint.addDiscoveryServer")();
+  assert.strictEqual(live.discovery.servers().filter((s) => s.label === "dup").length, 1);
+  assert.ok(stub.messages.some(([, text]) => /dup.*taken/.test(text)), JSON.stringify(stub.messages));
+});

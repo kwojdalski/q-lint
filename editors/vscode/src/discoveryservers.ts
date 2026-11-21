@@ -221,9 +221,15 @@ export class DiscoveryServers {
     if (answer === undefined) {
       return;
     }
+    // Read again: the list may have changed while the boxes were open.
+    const now = this.servers();
+    if (now.some((s) => s.label === answer.label)) {
+      void window.showErrorMessage(`q-lint: the label "${answer.label}" was taken meanwhile; the discovery server was not added.`);
+      return;
+    }
     const server = { label: answer.label, url: answer.url };
     await this.keepSecret(server.label, answer.secret);
-    await this.store([...servers, server]);
+    await this.store([...now, server]);
     await this.fetch(server);
   }
 
@@ -282,6 +288,16 @@ export class DiscoveryServers {
     if (answer === undefined) {
       return;
     }
+    const now = this.servers();
+    const problem = !now.some((s) => s.label === old.label)
+      ? `"${old.label}" was deleted meanwhile`
+      : answer.label !== old.label && now.some((s) => s.label === answer!.label)
+        ? `the label "${answer.label}" was taken meanwhile`
+        : undefined;
+    if (problem !== undefined) {
+      void window.showErrorMessage(`q-lint: ${problem}; the discovery server was not changed.`);
+      return;
+    }
     const server = { label: answer.label, url: answer.url };
     if (server.label !== old.label) {
       const kept = await this.context.secrets.get(secretKey(old.label));
@@ -292,7 +308,7 @@ export class DiscoveryServers {
       this.states.delete(old.label);
     }
     await this.keepSecret(server.label, answer.secret);
-    await this.store(servers.map((s) => (s.label === old.label ? server : s)));
+    await this.store(now.map((s) => (s.label === old.label ? server : s)));
     await this.fetch(server);
   }
 
