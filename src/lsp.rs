@@ -69,6 +69,9 @@
 //! server is not the formatter, and `source.organizeImports.q-lint` with
 //! the `\l` lines of each run sorted, deduped and grouped; a finding can be
 //! accepted for its whole file with `/ qlinter: noqa: CODE`;
+//! `q-lint/formatChangedLines` formats only the lines a client says changed;
+//! and textDocument/foldingRange folds the brackets and block comments that
+//! span lines.
 //!
 //! A workspace index: every `.q` file under the workspace folders is read at
 //! startup - never run - for the global names it defines and reads, and
@@ -142,8 +145,8 @@ use crate::jsonrpc::{INVALID_REQUEST, Malformed, receive, send};
 use q_lint_rs::graph::Placement;
 use q_lint_rs::{
     FileIndex, Finding, Fix, References, TokenKind, Workspace, balanced, broken_statement,
-    file_suppression_for, fix_all, fix_for, folds, organise_loads, rule_url, semantic_tokens_in,
-    suppressions_for, whole_edit,
+    file_suppression_for, fix_all, fix_for, fix_lines, folds, organise_loads, rule_url,
+    semantic_tokens_in, suppressions_for, whole_edit,
 };
 use serde_json::{Value, json};
 use std::{
@@ -664,6 +667,10 @@ struct Options {
     /// Report the performance rules, QV. Off, they are ignored as
     /// `lint.ignore` would.
     performance_lints: bool,
+    /// Answer `q-lint/formatChangedLines`: the safe fixes, for findings on
+    /// the lines a client says changed. Off unless asked for, since only a
+    /// client that asks git for those lines can use it.
+    format_changed_lines: bool,
     /// Whether the client shows an action it cannot take with the reason
     /// (`codeAction.disabledSupport`): a capability, not a setting.
     disabled_actions: bool,
@@ -695,6 +702,7 @@ impl Default for Options {
             suppressions: true,
             organise_loads: true,
             performance_lints: true,
+            format_changed_lines: false,
             disabled_actions: false,
             severity: vec![],
         }
@@ -736,6 +744,7 @@ impl Options {
                         "suppressions",
                         "organiseLoads",
                         "performanceLints",
+                        "formatChangedLines",
                     ]
                     .contains(&key.as_str())
                         && !value.is_object()
@@ -775,6 +784,7 @@ impl Options {
         options.suppressions = flag("/suppressions/enable", true);
         options.organise_loads = flag("/organiseLoads/enable", true);
         options.performance_lints = flag("/performanceLints/enable", true);
+        options.format_changed_lines = flag("/formatChangedLines/enable", false);
         options.disabled_actions = params
             .pointer("/capabilities/textDocument/codeAction/disabledSupport")
             .and_then(Value::as_bool)
@@ -1177,7 +1187,8 @@ pub fn serve(
                 | "textDocument/documentLink"
                 | "q-lint/graph"
                 | "q-lint/globalAt"
-                | "q-lint/unresolvedNames",
+                | "q-lint/unresolvedNames"
+                | "q-lint/formatChangedLines",
                 id,
             ) if !params["textDocument"]["uri"].is_string() => {
                 let message = format!("{method}: params.textDocument.uri must be a string");
@@ -1295,6 +1306,17 @@ pub fn serve(
             ("textDocument/codeAction", Some(id)) => {
                 match guarded(|| code_actions(&params, &docs, &idx.ws, policy, &opts)) {
                     Ok(actions) => send(writer, json!({"id": id, "result": actions}))?,
+                    Err(panic) => send(writer, internal_error(id, &panic))?,
+                }
+            }
+            ("q-lint/formatChangedLines", Some(id)) => {
+                let edits = if opts.format_changed_lines {
+                    guarded(|| format_changed_lines(&params, &docs, &idx.ws, policy))
+                } else {
+                    Ok(vec![])
+                };
+                match edits {
+                    Ok(edits) => send(writer, json!({"id": id, "result": edits}))?,
                     Err(panic) => send(writer, internal_error(id, &panic))?,
                 }
             }
@@ -1896,6 +1918,51 @@ fn organise_action(params: &Value, docs: &Documents) -> Option<Value> {
         "kind": ORGANISE,
         "edit": {"changes": changes},
     }))
+}
+
+/// The edits for `q-lint/formatChangedLines`: what Format Document makes,
+/// for only the findings on `params.lines` - pairs of 0-based first and
+/// last lines, inclusive - which the client works out from git, as this
+/// server starts no process. None for no lines at all, and in every case
+/// `format` gives none.
+fn format_changed_lines(
+    params: &Value,
+    docs: &Documents,
+    ws: &Workspace,
+    policy: &Policy,
+) -> Vec<Value> {
+    let uri = uri_of(&params["textDocument"]);
+    let path = path_of(&uri);
+    let Some(source) = docs
+        .get(&uri)
+        .filter(|source| is_q_uri(&uri) && balanced(source))
+    else {
+        return vec![];
+    };
+    let lines: Vec<(usize, usize)> = params["lines"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|pair| {
+            let first = pair.get(0)?.as_u64()? as usize;
+            let last = pair.get(1)?.as_u64()? as usize;
+            (first <= last).then_some((first + 1, last + 1))
+        })
+        .collect();
+    if lines.is_empty() {
+        return vec![];
+    }
+    let Ok(fixed) = fix_lines(source, &lines, |text| policy.lint(text, &path, ws)) else {
+        return vec![];
+    };
+    let Some(edit) = whole_edit(source, &fixed.text) else {
+        return vec![];
+    };
+    let lines = Lines::new(source);
+    vec![json!({
+        "range": {"start": lines.json(edit.start), "end": lines.json(edit.end)},
+        "newText": edit.replacement,
+    })]
 }
 
 /// The fixes for the diagnostics a request carries, and after them, for each

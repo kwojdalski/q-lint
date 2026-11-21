@@ -51,6 +51,7 @@ test("the defaults start the server as it was started before settings", () => {
     suppressions: { enable: true },
     organiseLoads: { enable: true },
     performanceLints: { enable: true },
+    formatChangedLines: { enable: false },
     workspaceIndex: { enable: true, exclude: [] },
   });
 });
@@ -112,6 +113,7 @@ test("every editor-only setting reaches the server's options", () => {
       "suppressions.enable": false,
       "organiseLoads.enable": false,
       "performanceLints.enable": false,
+      "formatChangedLines.enable": true,
       "workspaceIndex.enable": false,
       "workspaceIndex.exclude": ["vendor/**"],
     }),
@@ -138,6 +140,7 @@ test("every editor-only setting reaches the server's options", () => {
     suppressions: { enable: false },
     organiseLoads: { enable: false },
     performanceLints: { enable: false },
+    formatChangedLines: { enable: true },
     workspaceIndex: { enable: false, exclude: ["vendor/**"] },
   });
 });

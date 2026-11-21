@@ -100,6 +100,7 @@ function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir
     "./assisttools": { registerAssistTools: () => ({ registered: () => [] }) },
     "./chat": { registerChat: () => ({ registered: () => false }) },
     "./qsqldraft": { registerQsqlDraft() {} },
+    "./formatchangedview": { registerFormatChanged: () => ({ registered: () => false }) },
     "./organiseloads": { registerOrganiseLoads() {} },
   };
   const file = require.resolve("../out/extension.js");

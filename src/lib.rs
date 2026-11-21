@@ -1067,13 +1067,41 @@ pub struct Fixed {
 pub fn fix_all<E>(
     source: &str,
     unsafe_fixes: bool,
+    lint: impl FnMut(&str) -> Result<Vec<Finding>, E>,
+) -> Result<Fixed, E> {
+    fix_loop(source, unsafe_fixes, None, lint)
+}
+
+/// `fix_all`, for only the findings reported on `lines` - 1-based and
+/// inclusive, in `source` - as an editor asks to format the lines a change
+/// touched and leave the rest alone. The lines move with the edits: one a
+/// fix inserts or removes shifts those below it, and a fix on one of them
+/// keeps the lines it rewrote. A finding whose fix reaches outside its
+/// line is still fixed, since the finding is on a line that was asked for.
+pub fn fix_lines<E>(
+    source: &str,
+    lines: &[(usize, usize)],
+    lint: impl FnMut(&str) -> Result<Vec<Finding>, E>,
+) -> Result<Fixed, E> {
+    let mut lines = lines.to_vec();
+    fix_loop(source, false, Some(&mut lines), lint)
+}
+
+fn fix_loop<E>(
+    source: &str,
+    unsafe_fixes: bool,
+    mut within: Option<&mut Vec<(usize, usize)>>,
     mut lint: impl FnMut(&str) -> Result<Vec<Finding>, E>,
 ) -> Result<Fixed, E> {
     let mut updated = source.to_string();
     let mut count = 0;
     let (mut passes, mut first) = (0, vec![]);
     for _ in 0..100 {
-        let mut edits: Vec<_> = fixes_for(&lint(&updated)?, &updated)
+        let mut found = lint(&updated)?;
+        if let Some(lines) = within.as_deref() {
+            found.retain(|f| lines.iter().any(|&(a, b)| (a..=b).contains(&f.line)));
+        }
+        let mut edits: Vec<_> = fixes_for(&found, &updated)
             .into_iter()
             .filter(|fix| fix.batch_safe || unsafe_fixes)
             .collect();
@@ -1092,6 +1120,22 @@ pub fn fix_all<E>(
         }
         let before = updated.clone();
         for edit in selected.iter().rev() {
+            if let Some(lines) = within.as_deref_mut() {
+                // From the last edit back, so each one's lines are still
+                // those of `before`.
+                let line = |at: usize| 1 + before[..at].matches('\n').count();
+                let (first, last) = (line(edit.start), line(edit.end));
+                let delta = edit.replacement.matches('\n').count() as isize
+                    - before[edit.start..edit.end].matches('\n').count() as isize;
+                for (a, b) in lines.iter_mut() {
+                    let shift = |n: usize| (n as isize + delta).max(1) as usize;
+                    if *a > last {
+                        (*a, *b) = (shift(*a), shift(*b));
+                    } else if *b >= first {
+                        *b = shift((*b).max(last)).max(*a);
+                    }
+                }
+            }
             updated.replace_range(edit.start..edit.end, &edit.replacement);
         }
         if updated == before {

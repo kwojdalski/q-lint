@@ -3219,3 +3219,43 @@ fn performance_lints_can_be_turned_off() {
     assert_eq!(codes_of(&server.diagnostics_for(&uri)), ["QE004"]);
     assert_eq!(server.shutdown_and_exit(), 0);
 }
+
+/// `q-lint/formatChangedLines` makes the safe fixes for the findings on the
+/// lines it is given and no others; with the setting off, or no lines, it
+/// makes none.
+#[test]
+fn format_changed_lines_fixes_only_those_lines() {
+    let text = "a:1==1\nb:2==2\nc:3==3\n";
+    let ask = |server: &mut Server, lines: Value| {
+        server.send(
+            json!({"jsonrpc":"2.0","id":31,"method":"q-lint/formatChangedLines",
+            "params":{"textDocument":{"uri":"file:///tmp/changed.q"},"lines":lines}}),
+        );
+        server.until(|m| m["id"] == 31)["result"].clone()
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let (mut server, _) = start_with_options(
+        dir.path(),
+        &["--lsp"],
+        json!({"formatChangedLines": {"enable": true}}),
+        None,
+    );
+    server.open("file:///tmp/changed.q", text);
+    let edits = ask(&mut server, json!([[1, 1]]));
+    assert_eq!(
+        apply_edits(text, edits.as_array().unwrap()),
+        "a:1==1\nb:2=2\nc:3==3\n"
+    );
+    let edits = ask(&mut server, json!([[0, 0], [2, 2]]));
+    assert_eq!(
+        apply_edits(text, edits.as_array().unwrap()),
+        "a:1=1\nb:2==2\nc:3=3\n"
+    );
+    assert_eq!(ask(&mut server, json!([])), json!([]));
+    assert_eq!(server.shutdown_and_exit(), 0);
+
+    let (mut server, _) = start_with_options(dir.path(), &["--lsp"], json!({}), None);
+    server.open("file:///tmp/changed.q", text);
+    assert_eq!(ask(&mut server, json!([[0, 2]])), json!([]));
+    assert_eq!(server.shutdown_and_exit(), 0);
+}

@@ -606,6 +606,15 @@ a run with a load that is not a `.q` or `.k` file (`\l db` loads a database
 and changes directory, which the relative loads after it depend on), runs a
 blank line or anything else separates, loads in a block comment or after the
 end of the script, and a file whose brackets do not close.
+
+`q-lint/formatChangedLines`, a request of this server's own, takes a
+document and `lines`, pairs of 0-based first and last lines, and answers the
+edits Format Document would make for the findings on those lines only - the
+lines moving with the edits as they are made. It is how an editor formats
+only what changed on save: which lines changed is git's to say and the
+client's to ask, so the server is given them. It answers `[]` unless
+`formatChangedLines.enable` is `true`.
+
 Completion is off unless `completion.enable` asks for it, because an editor
 told that a server completes stops offering the words already in the buffer,
 and this server's list is narrower than that fallback in one way that matters:
@@ -794,6 +803,7 @@ Every key is optional, and these are the defaults:
  "documentLinks": {"enable": true}, "generateQdoc": {"enable": true},
  "extractFunction": {"enable": true}, "suppressions": {"enable": true},
  "organiseLoads": {"enable": true}, "performanceLints": {"enable": true},
+ "formatChangedLines": {"enable": false},
  "workspaceIndex": {"enable": true, "exclude": []}}
 ```
 
@@ -814,6 +824,7 @@ announces the Run lenses.
 `suppressions.enable: false` withdraws both "Suppress CODE" Quick Fixes,
 `organiseLoads.enable: false` Organise loads and its kind, and
 `performanceLints.enable: false` ignores the QV rules as `lint.ignore`
+would. `formatChangedLines.enable: true` answers `q-lint/formatChangedLines`.
 `workspaceIndex.exclude`
 holds globs relative to each workspace folder that the index does not read.
 The index stops after 20,000 `.q` files or 500,000 directory entries of any

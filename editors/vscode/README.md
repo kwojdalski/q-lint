@@ -1310,6 +1310,7 @@ q-pro column names the setting of [q-pro](https://marketplace.visualstudio.com/i
 | `q-lint.suppressions.enable` | `true` | Offer **Suppress CODE on this line** and **Suppress CODE in this file**. | - |
 | `q-lint.organiseLoads.enable` | `true` | Answer **Organize Imports** with **Organise loads**, and offer **q-lint: Organise Loads**. | - |
 | `q-lint.performanceLints.enable` | `true` | Report the performance rules, `QV`. Off, they are hidden as `q-lint.lint.ignore` would. | - |
+| `q-lint.formatChangedLines.enable` | `false` | On saving a q file in a git repository, apply the safe fixes for the findings on the lines changed against `HEAD` only, and offer **q-lint: Format Changed Lines**. Off by default: it edits the file at every save. | - |
 | `q-lint.workspaceIndex.enable` | `true` | Read every workspace `.q` file at startup for the names it defines, up to 20,000 files or 500,000 directory entries. Off: only open files. | - |
 | `q-lint.workspaceIndex.exclude` | `[]` | Globs, relative to the workspace folder, the index does not read: `["vendor/**"]`. | `q-lang-server.sourceFiles.ignoreGlob` |
 | `q-lint.trace.server` | `off` | Log client-server traffic: `off`, `messages`, `verbose`. | `q-lang-server.trace.server` |
@@ -1502,6 +1503,15 @@ action instead:
 `"source.fixAll": "explicit"` runs it too, with every other extension's.
 `q-lint.format.enable` does not turn this off: it says whether q-lint is a
 formatter, and this runs only where you list it.
+
+To fix only what you changed - Black's and Ruff's format-modified - turn on
+`q-lint.formatChangedLines.enable` instead of `editor.formatOnSave`: on each
+save of a q file, the lines it changed against git `HEAD` are worked out
+(a file git does not track, or a repository with no commit, is all new),
+and the same safe fixes are made for the findings on those lines only. A
+finding on an unchanged line is left as it is. Outside a git repository
+the save changes nothing. **q-lint: Format Changed Lines** makes the same
+edit without saving.
 
 ## Folding
 

@@ -64,6 +64,7 @@ export interface InitializationOptions {
   suppressions: { enable: boolean };
   organiseLoads: { enable: boolean };
   performanceLints: { enable: boolean };
+  formatChangedLines: { enable: boolean };
   workspaceIndex: { enable: boolean; exclude: string[] };
 }
 
@@ -151,6 +152,7 @@ export function launch(settings: Settings, folder: string | undefined): Launch {
       suppressions: { enable: settings.get<boolean>("suppressions.enable", true) },
       organiseLoads: { enable: settings.get<boolean>("organiseLoads.enable", true) },
       performanceLints: { enable: settings.get<boolean>("performanceLints.enable", true) },
+      formatChangedLines: { enable: settings.get<boolean>("formatChangedLines.enable", false) },
       workspaceIndex: {
         enable: settings.get<boolean>("workspaceIndex.enable", true),
         exclude: strings(settings, "workspaceIndex.exclude"),
@@ -185,6 +187,7 @@ const RESTARTING = [
   "suppressions",
   "organiseLoads",
   "performanceLints",
+  "formatChangedLines",
   "workspaceIndex",
 ];
 

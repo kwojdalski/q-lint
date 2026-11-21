@@ -318,6 +318,12 @@
             "order": 29,
             "markdownDescription": "Report the performance rules, `QV`: a where phrase that constrains the partition column after another, `each` over an atomic builtin such as `abs`, and `r:r,x` in a loop. Off, they are hidden as `#q-lint.lint.ignore#` would hide them."
           },
+          "q-lint.formatChangedLines.enable": {
+            "type": "boolean",
+            "default": false,
+            "order": 29,
+            "markdownDescription": "On saving a q file in a git repository, apply the safe fixes **Format Document** makes, for the findings on the lines changed against `HEAD` only. Outside git nothing is changed. Off by default: it edits the file at every save. Off, nothing listens and **q-lint: Format Changed Lines** is hidden."
+          },
           "q-lint.workspaceIndex.enable": {
             "type": "boolean",
             "default": true,
@@ -1550,6 +1556,11 @@
         "icon": "$(sparkle)"
       },
       {
+        "command": "q-lint.formatChangedLines",
+        "title": "Format Changed Lines",
+        "category": "q-lint"
+      },
+      {
         "command": "q-lint.organiseLoads",
         "title": "Organise Loads",
         "category": "q-lint"
@@ -2333,6 +2344,10 @@
         {
           "command": "q-lint.draftQsql",
           "when": "config.q-lint.chat.englishToQsql.enable"
+        },
+        {
+          "command": "q-lint.formatChangedLines",
+          "when": "config.q-lint.formatChangedLines.enable && editorLangId == q"
         },
         {
           "command": "q-lint.organiseLoads",
