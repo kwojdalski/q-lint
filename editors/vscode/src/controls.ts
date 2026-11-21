@@ -69,6 +69,14 @@ export class QueryControls {
           this.refresh();
         }
       }),
+      // The next new editor in this window takes a closed one's name.
+      workspace.onDidCloseTextDocument((document) => {
+        if (document.uri.scheme === "untitled") {
+          this.untitled.delete(document.uri.toString());
+        }
+      }),
+      // A file renamed or moved, or one in a folder that was, keeps its process.
+      workspace.onDidRenameFiles((event) => this.moved(event.files)),
     );
     this.refresh();
   }
@@ -153,6 +161,26 @@ export class QueryControls {
       return;
     }
     await this.store(document.uri, undefined);
+  }
+
+  private async moved(files: readonly { oldUri: Uri; newUri: Uri }[]): Promise<void> {
+    const stored = this.context.workspaceState.get(FILE_CONNECTIONS_KEY);
+    let next = withBinding(stored, "", undefined);
+    let changed = false;
+    for (const { oldUri, newUri } of files) {
+      const from = oldUri.toString();
+      const to = newUri.toString();
+      for (const [key, label] of Object.entries(next)) {
+        if (key === from || key.startsWith(`${from}/`)) {
+          next = withBinding(withBinding(next, key, undefined), to + key.slice(from.length), label);
+          changed = true;
+        }
+      }
+    }
+    if (changed) {
+      await this.context.workspaceState.update(FILE_CONNECTIONS_KEY, next);
+      this.refresh();
+    }
   }
 
   private async store(uri: Uri, label: string | undefined): Promise<void> {
