@@ -109,7 +109,8 @@ async function editTagColour(arg: TagArg, processes: () => Process[]): Promise<v
   const configuration = workspace.getConfiguration("q-lint");
   const inspected = configuration.inspect<unknown>(TAG_COLOURS_KEY);
   const target = tagColourTarget(inspected);
-  const current = readProcessSettings((key, fallback) => configuration.get(key, fallback)).tagColors[tag];
+  const colours = readProcessSettings((key, fallback) => configuration.get(key, fallback)).tagColors;
+  const current = Object.prototype.hasOwnProperty.call(colours, tag) ? colours[tag] : undefined;
   const builtIn = tagColour(tag);
   const items: (QuickPickItem & { colour: string | undefined })[] = [
     {
@@ -145,7 +146,8 @@ async function editTagColour(arg: TagArg, processes: () => Process[]): Promise<v
     picked.colour === undefined ? (["user", "workspace"] as const) : ([target] as const);
   for (const level of levels) {
     const value = level === "workspace" ? inspected?.workspaceValue : inspected?.globalValue;
-    if (picked.colour === undefined && !(tag in tagColours(value))) {
+    // Own keys only: a tag named `toString` is not Object's.
+    if (picked.colour === undefined && !Object.prototype.hasOwnProperty.call(tagColours(value), tag)) {
       continue;
     }
     const next = withTagColour(tagColours(value), tag, picked.colour);
