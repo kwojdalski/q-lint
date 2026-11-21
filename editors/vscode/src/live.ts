@@ -43,7 +43,7 @@ import {
 } from "./processes";
 import { COMMANDS, CONNECTED, VIEWS, readLive, readProcessSettings, readTerminal } from "./liveconfig";
 import { QConnection } from "./qclient";
-import { historyHeading } from "./history";
+import { historyHeading, historyLabel } from "./history";
 import { render } from "./query";
 import { QueryModes, type Rendered } from "./resultpanel";
 import { blockAt, statements } from "./statements";
@@ -220,8 +220,7 @@ class HistoryView implements TreeDataProvider<HistoryEntry> {
   }
 
   getTreeItem(entry: HistoryEntry): TreeItem {
-    const first = entry.code.split("\n")[0];
-    const item = new TreeItem(first.length > 80 ? `${first.slice(0, 79)}…` : first, TreeItemCollapsibleState.None);
+    const item = new TreeItem(historyLabel(entry.code), TreeItemCollapsibleState.None);
     const when = new Date(entry.at);
     item.description = `${entry.agent ? "agent · " : ""}${entry.process} · ${when.toLocaleTimeString()} · ${entry.millis} ms`;
     item.iconPath = new ThemeIcon(
@@ -1105,7 +1104,7 @@ export class Live {
   private async rerun(entry?: HistoryEntry): Promise<void> {
     if (entry === undefined) {
       const picked = await window.showQuickPick(
-        this.history().map((e) => ({ label: e.code.split("\n")[0], description: e.process, entry: e })),
+        this.history().map((e) => ({ label: historyLabel(e.code), description: e.process, entry: e })),
         { title: "Run which query again?" },
       );
       entry = picked?.entry;

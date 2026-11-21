@@ -115,3 +115,20 @@ test("a history row's tooltip shows the process and q's error as written", async
   assert.ok(value.includes("\\*prod\\*\\_rdb"), value);
   assert.ok(value.includes("'\\<cfg\\> a\\_b\\_c \\[x\\]\\(y\\)"), value);
 });
+
+// A row was labelled with the code's first line as it came: a selection
+// starting on a blank line gave a row with no label, a CRLF file's left
+// its CR, and a long line was cut inside a surrogate pair, showing a
+// replacement character. Run Again's pick was labelled the same way.
+test("a history row and Run Again's pick are labelled with the first line of code", async (t) => {
+  const { live, history } = await setUp(t, []);
+  const long = `${"a".repeat(78)}😀tail`;
+  const codes = ["\r\n  \r\nx:1\r\ny:2", "f:{x}\r\nf 1", long];
+  const labels = codes.map((code) => history.getTreeItem(entry({ code })).label);
+  assert.deepStrictEqual(labels, ["x:1", "f:{x}", `${"a".repeat(78)}😀…`]);
+  for (const code of codes.reverse()) await live.record(entry({ code }));
+  let offered;
+  stub.picks.push(({ items }) => ((offered = items.map((i) => i.label)), undefined));
+  await stub.commands.get("q-lint.rerunQuery")();
+  assert.deepStrictEqual(offered, labels);
+});
