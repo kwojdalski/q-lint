@@ -181,3 +181,14 @@ test("every terminal setting is read, with the default package.json declares, an
   // An empty binary falls back to q.
   assert.strictEqual(readTerminal((key, fallback) => (key === "terminal.qBinary" ? "  " : fallback)).qBinary, "q");
 });
+
+test("a leading ~ in a q binary or env file setting is the home directory", () => {
+  const { expandHome } = require("../out/terminal.js");
+  assert.strictEqual(expandHome("~/q/m64/q", "/Users/me"), "/Users/me/q/m64/q");
+  assert.strictEqual(expandHome("~", "/Users/me"), "/Users/me");
+  assert.strictEqual(expandHome("~\\q\\w64\\q.exe", "C:\\Users\\me"), "C:\\Users\\me\\q\\w64\\q.exe");
+  // Another user's home, a ~ inside a path, and a plain name are left alone.
+  assert.strictEqual(expandHome("~bob/q", "/Users/me"), "~bob/q");
+  assert.strictEqual(expandHome("/opt/~/q", "/Users/me"), "/opt/~/q");
+  assert.strictEqual(expandHome("q", "/Users/me"), "q");
+});

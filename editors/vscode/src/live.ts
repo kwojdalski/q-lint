@@ -7,6 +7,7 @@
 // statements, `statements.ts`'s; how processes are read and grouped,
 // `processes.ts`'s; discovery servers, `discoveryservers.ts`'s; what a
 // terminal is sent, `terminal.ts`'s. This file is the VS Code around them.
+import * as os from "os";
 import * as path from "path";
 import {
   commands,
@@ -46,7 +47,7 @@ import { QConnection } from "./qclient";
 import { render } from "./query";
 import { QueryModes, type Rendered } from "./resultpanel";
 import { blockAt, statements } from "./statements";
-import { commandLine, parseEnv, replLines, shellKind } from "./terminal";
+import { commandLine, expandHome, parseEnv, replLines, shellKind } from "./terminal";
 import { QueryControls } from "./controls";
 import { ParameterCache } from "./paramcachecontrol";
 import { CONTROL_COMMANDS, UNLIMITED, armTimeout, limits, readUnlimited, runUnwrapped, timedOutError } from "./querycontrols";
@@ -242,7 +243,7 @@ class HistoryView implements TreeDataProvider<HistoryEntry> {
 /// q in VS Code terminals: a file run in one, and code sent to one. The
 /// terminal runs the user's shell, which starts q, so q exiting leaves the
 /// shell and the command line shows what was run.
-class QTerminals {
+export class QTerminals {
   /// The terminals started here, still open.
   private readonly ours = new Set<Terminal>();
   /// Where code is sent: the last q terminal started.
@@ -317,7 +318,8 @@ class QTerminals {
   /// file cannot be read.
   private async start(name: string, from: Uri | undefined, file?: string): Promise<Terminal | undefined> {
     const configuration = workspace.getConfiguration("q-lint", from);
-    const settings = readTerminal((key, fallback) => configuration.get(key, fallback));
+    const read = readTerminal((key, fallback) => configuration.get(key, fallback));
+    const settings = { qBinary: expandHome(read.qBinary, os.homedir()), envPath: expandHome(read.envPath, os.homedir()) };
     const folder = (from && workspace.getWorkspaceFolder(from)) ?? workspace.workspaceFolders?.[0];
     const cwd = folder?.uri.fsPath ?? (file !== undefined ? path.dirname(file) : undefined);
     let variables: Record<string, string> = {};
