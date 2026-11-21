@@ -301,7 +301,12 @@ async function exportNotebook(source?: Uri, target?: Uri): Promise<void> {
   if (to === undefined) {
     return;
   }
-  await workspace.fs.writeFile(to, Buffer.from(exportScript(cells, path.posix.basename(from.path)), "utf8"));
+  try {
+    await workspace.fs.writeFile(to, Buffer.from(exportScript(cells, path.posix.basename(from.path)), "utf8"));
+  } catch (error) {
+    void window.showErrorMessage(`q-lint: could not write ${to.fsPath}: ${error instanceof Error ? error.message : String(error)}`);
+    return;
+  }
   if (!(target instanceof Uri)) {
     void window.showInformationMessage(`q-lint: exported the notebook to ${to.fsPath}.`);
   }
