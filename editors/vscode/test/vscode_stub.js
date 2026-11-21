@@ -182,6 +182,25 @@ const commands = new Proxy(
   { get: (t, key) => (key in t ? t[key] : (t[key] = anything())) },
 );
 
+class Uri {
+  constructor(fsPath) {
+    this.fsPath = fsPath;
+    this.scheme = "file";
+  }
+  static file(p) {
+    return new Uri(p);
+  }
+  static parse(s) {
+    return new Uri(s);
+  }
+  static joinPath(base, ...parts) {
+    return new Uri([base.fsPath, ...parts].join("/"));
+  }
+  toString() {
+    return `file://${this.fsPath}`;
+  }
+}
+
 class TreeItem {
   constructor(label, collapsibleState) {
     this.label = label;
@@ -231,10 +250,7 @@ const vscode = new Proxy(
     window,
     workspace,
     commands,
-    Uri: new Proxy(
-      { file: (p) => ({ fsPath: p, scheme: "file", toString: () => `file://${p}` }), parse: (s) => ({ toString: () => s }) },
-      { get: (t, key) => (key in t ? t[key] : (t[key] = anything())) },
-    ),
+    Uri,
   },
   { get: (t, key) => (key in t ? t[key] : (t[key] = anything())) },
 );

@@ -772,6 +772,16 @@ export class Live {
       return;
     }
     await this.save(this.processes().map((p) => (p.label === process.label ? { ...p, tags: parseTags(tags) } : p)));
+    this.retagActive();
+  }
+
+  /// Give the connected process, when it is a saved one, its saved tags: an
+  /// agent's query warns by them.
+  private retagActive(): void {
+    const saved = this.active?.server === undefined ? this.processes().find((p) => p.label === this.active?.label) : undefined;
+    if (this.active !== undefined && saved !== undefined) {
+      this.active = { ...this.active, tags: saved.tags };
+    }
   }
 
   /// Import the processes `file` lists, or a file the user picks.
@@ -797,6 +807,7 @@ export class Live {
       await this.context.secrets.delete(passwordKey({ label }));
     }
     await this.save(merge(before, processes));
+    this.retagActive();
     const note = problems.length ? ` Skipped ${problems.length}: ${problems.slice(0, 3).join(" ")}` : "";
     void window.showInformationMessage(`q-lint: imported ${processes.length} q process(es).${note}`);
   }

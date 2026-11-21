@@ -219,3 +219,22 @@ test("Add and Edit Discovery Server keep what was saved while they asked", async
   assert.strictEqual(live.discovery.servers().filter((s) => s.label === "dup").length, 1);
   assert.ok(stub.messages.some(([, text]) => /dup.*taken/.test(text)), JSON.stringify(stub.messages));
 });
+
+// Tag Process and Import on the connected process left the connection with
+// its old tags: an agent's query on it, which warns for a production tag,
+// asked without the warning after the process was tagged prod.
+test("tagging or importing the connected process gives the connection its tags", async (t) => {
+  const a = await fakeQ(() => GATHERED);
+  t.after(() => a.close());
+  const { live } = await setUp(t, [proc("a", a.port)]);
+  assert.strictEqual(await live.connectTo("a"), true);
+  stub.inputs = ["prod"];
+  await stub.commands.get("q-lint.tagProcess")("a");
+  assert.deepStrictEqual(live.activeProcess().tags, ["prod"]);
+  const { confirmation } = require("../out/agent.js");
+  assert.match(confirmation("1+1", live.activeProcess(), { connects: false }).message, /prod/i);
+  const { vscode } = require("./vscode_stub.js");
+  vscode.workspace.fs = { readFile: async () => Buffer.from(JSON.stringify([proc("a", a.port, { tags: ["uat"] })])) };
+  await stub.commands.get("q-lint.importProcesses")(vscode.Uri.file("/list.json"));
+  assert.deepStrictEqual(live.activeProcess().tags, ["uat"]);
+});
