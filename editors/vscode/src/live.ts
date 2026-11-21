@@ -986,9 +986,18 @@ export class Live {
     if (this.connection === undefined && !(await this.connectTo())) {
       return undefined;
     }
+    const before = this.connection;
     await this.borrowed;
     const connection = this.connection;
     const process = this.active;
+    if (connection !== before && before !== undefined) {
+      // Closed while the explorer's read was out: by Abort, which stopped
+      // that read, or by the process.
+      void window.showInformationMessage(
+        `q-lint: the connection to ${process?.label ?? "the process"} closed before the query was sent; it was not run.`,
+      );
+      return undefined;
+    }
     if (connection === undefined || process === undefined) {
       return undefined;
     }
@@ -1137,7 +1146,9 @@ export class Live {
       }
     });
     void window.showInformationMessage(
-      `q-lint: ${timedOut === undefined ? "stopped waiting for the query" : `the query ${timedOutError(timedOut)} (q-lint.query.timeout), and was aborted`}. ${process.label} may still be running it; q-lint reconnects once it is free.`,
+      this.aborted === undefined && timedOut === undefined
+        ? `q-lint: stopped the Process Explorer's read of ${process.label}, the only call running. q-lint reconnects once ${process.label} is free.`
+        : `q-lint: ${timedOut === undefined ? "stopped waiting for the query" : `the query ${timedOutError(timedOut)} (q-lint.query.timeout), and was aborted`}. ${process.label} may still be running it; q-lint reconnects once it is free.`,
     );
   }
 

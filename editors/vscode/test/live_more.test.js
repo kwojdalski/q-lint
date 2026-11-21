@@ -319,3 +319,25 @@ test("a reconnect still under way when the extension is deactivated is closed", 
   assert.strictEqual(live.activeLabel(), undefined);
   assert.strictEqual(q.connections(), 0);
 });
+
+// A query sent while the Process Explorer's read was out waited for it,
+// showing nothing. Abort then stopped that read - the connection was busy
+// with it - and the query, finding the connection gone, was dropped: not
+// run, not in the history, and not a word said.
+test("a query waiting for the explorer's read that is aborted says it was not run", async (t) => {
+  const { ProcessExplorer } = require("../out/explorerview.js");
+  const q = await fakeQ((message) => (message.includes("`rows`spaces`more") ? undefined : OK));
+  t.after(() => q.close());
+  const { context, live } = await setUp(t, [proc("p", q.port)]);
+  new ProcessExplorer(context, live);
+  assert.strictEqual(await live.connectTo("p"), true);
+  await sleep(50);
+  const waiting = live.run("1+1");
+  await sleep(50);
+  stub.messages = [];
+  await live.abort();
+  await waiting;
+  assert.ok(stub.messages.some(([, text]) => text.includes("was not run")), JSON.stringify(stub.messages));
+  // Abort said it stopped waiting for "the query", which was never sent.
+  assert.ok(stub.messages.some(([, text]) => text.includes("stopped the Process Explorer's read of p")), JSON.stringify(stub.messages));
+});
