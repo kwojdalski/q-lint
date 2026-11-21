@@ -673,6 +673,12 @@
             "order": 133,
             "markdownDescription": "Offer the q idiom snippets in a q editor's completion list: `aj`, `aj0`, `wj`, `wj1`, `lj`, `ij`, `uj`, a bucketed `xbar` select, the `.z` handlers (`zpg`, `zps`, `zpo`, `zpc`, `zpw`, `zts`, `zws`, `zexit`) and a TorQ process skeleton (`torq`). Off, they leave the list."
           },
+          "q-lint.testStub.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 137,
+            "markdownDescription": "Offer **Generate a test for ...** on a function's definition, and **Generate Test Stub**: a `test_` function in the style of the function's test file, added to its end (or a new `tests/test_<name>.q`) after showing it and asking. Off, the code action is not offered and the command is hidden."
+          },
           "q-lint.backtraceLinks.enable": {
             "type": "boolean",
             "default": true,
@@ -1367,6 +1373,11 @@
         "category": "q-lint",
         "icon": "$(cloud-upload)",
         "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.generateTestStub",
+        "title": "Generate Test Stub",
+        "category": "q-lint"
       },
       {
         "command": "q-lint.checkUndefinedNames",
@@ -2138,6 +2149,11 @@
           "command": "q-lint.draftQsql",
           "when": "editorLangId == q && config.q-lint.chat.englishToQsql.enable",
           "group": "q-lint@9"
+        },
+        {
+          "command": "q-lint.generateTestStub",
+          "when": "editorLangId == q && config.q-lint.testStub.enable",
+          "group": "q-lint@10"
         }
       ],
       "commandPalette": [
@@ -2316,6 +2332,10 @@
         {
           "command": "q-lint.draftQsql",
           "when": "config.q-lint.chat.englishToQsql.enable"
+        },
+        {
+          "command": "q-lint.generateTestStub",
+          "when": "config.q-lint.testStub.enable && editorLangId == q"
         }
       ],
       "editor/title": [

@@ -14,6 +14,7 @@ export const EDITOR_SETTINGS = {
   liveValueHover: { key: "liveValueHover.enable", fallback: false, name: "The live value hover" },
   idiomSnippets: { key: "idiomSnippets.enable", fallback: true, name: "The q idiom snippets" },
   undefinedNames: { key: "undefinedNames.enable", fallback: false, name: "The undefined-name check against the process" },
+  testStub: { key: "testStub.enable", fallback: true, name: "Generate Test Stub" },
   backtraceLinks: { key: "backtraceLinks.enable", fallback: true, name: "Clickable q backtraces" },
 } as const;
 

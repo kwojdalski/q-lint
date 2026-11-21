@@ -361,6 +361,19 @@ The process's `\d` is put back after each test. A failure shows q's error
 or the value at the test. `q-lint.testExplorer.enable` turns the
 integration off: the tests leave the view and nothing is read or sent.
 
+**Generate Test Stub.** On a function's definition, the light bulb (and
+**Generate Test Stub**, in the context menu) writes a test for it in its
+test file's style: `test_<name>.q` or `<name>_test.q` in the workspace, or
+else a new `tests/test_<name>.q` (beside the file when there is no `tests`
+folder). In a file of `.qt` suites the test joins the first suite
+(`.qt.<suite>.test_<name>`); in a qUnit file it is `test<Name>`; otherwise
+`test_<name>`. It asserts with `.qunit.assertEquals` where the file does,
+and otherwise answers `actual~expected`. The arguments and the expected
+value are `(::)` with a TODO, so the test fails until they are filled in.
+It shows the stub and the file and asks first, adds to an existing file's
+end as an edit that can be undone, and never writes over a file.
+`q-lint.testStub.enable` removes the action and the command.
+
 The code is cut into statements by q's own script rules: a line starting
 with a space or tab continues the one above, `/` lines and block comments
 are skipped, as is a first line starting `#!`, and a `\` line is a system
@@ -1383,6 +1396,7 @@ nothing.
 | `q-lint.idiomSnippets.enable` | `true` | Offer the idiom snippets (joins, `.z` handlers, a TorQ process) in the completion list. | - |
 | `q-lint.processExplorer.driftDetection.enable` | `false` | **Check Drift Against Process**: compare the workspace's function definitions with the connected process. Off, the command is hidden and reads nothing. | - |
 | `q-lint.hotReload.enable` | `false` | On saving a q file, send the definitions the save changed to its process, after Redefine's confirmation. Off, nothing listens and nothing is sent. | - |
+| `q-lint.testStub.enable` | `true` | Offer **Generate Test Stub** on a function's definition. | - |
 | `q-lint.backtraceLinks.enable` | `true` | Link each backtrace frame in the output and terminals to the line that failed. | - |
 
 ### Connection settings

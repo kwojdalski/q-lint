@@ -41,6 +41,7 @@ import { Drift } from "./driftview";
 import { registerAssistTools } from "./assisttools";
 import { registerChat } from "./chat";
 import { registerQsqlDraft } from "./qsqldraft";
+import { registerTestStubs } from "./teststubview";
 import { registerBacktraceLinks } from "./backtraceview";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, statSync } from "node:fs";
@@ -133,6 +134,7 @@ export async function activate(
     hotReload: Drift["hotReloadState"];
     assistTools: () => string[];
     chatParticipant: () => boolean;
+    testStubs: ReturnType<typeof registerTestStubs>;
     backtraceLinks: ReturnType<typeof registerBacktraceLinks>;
   }
 > {
@@ -195,6 +197,7 @@ export async function activate(
   const valueHover = registerValueHover(context, live, running);
   const undefinedNames = registerUndefinedNames(context, live, running);
   const idioms = registerIdioms(context);
+  const testStubs = registerTestStubs(context);
   const backtraceLinks = registerBacktraceLinks(context);
   // Not awaited: nothing above needs the server, and a slow or hung one
   // would hold up every command of the extension until it answered.
@@ -220,6 +223,7 @@ export async function activate(
     hotReload: () => drift.hotReloadState(),
     assistTools: assistTools.registered,
     chatParticipant: chatParticipant.registered,
+    testStubs,
     backtraceLinks,
   };
 }
