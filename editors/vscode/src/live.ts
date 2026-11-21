@@ -50,7 +50,7 @@ import { blockAt, statements } from "./statements";
 import { commandLine, parseEnv, replLines, shellKind } from "./terminal";
 import { QueryControls } from "./controls";
 import { ParameterCache } from "./paramcachecontrol";
-import { CONTROL_COMMANDS, UNLIMITED, armTimeout, limits, readUnlimited, runUnwrapped, timedOutError } from "./querycontrols";
+import { CONTROL_COMMANDS, FILE_CONNECTIONS_KEY, UNLIMITED, armTimeout, limits, readUnlimited, runUnwrapped, timedOutError, withBinding } from "./querycontrols";
 
 const PROCESSES_KEY = "q-lint.processes";
 const HISTORY_KEY = "q-lint.queryHistory";
@@ -731,6 +731,9 @@ export class Live {
       await this.context.secrets.delete(passwordKey(process.label));
     }
     await this.save(processes.map((p) => (p.label === old.label ? process : p)));
+    if (process.label !== old.label) {
+      await this.rebind(old.label, process.label);
+    }
     const active = this.active;
     if (active?.label === old.label) {
       // The connection is still to where it was opened: it takes the new
@@ -766,6 +769,23 @@ export class Live {
     }
     await this.context.secrets.delete(passwordKey(process.label));
     await this.save(this.processes().filter((p) => p.label !== process.label));
+    await this.rebind(process.label, undefined);
+  }
+
+  /// Bind the files bound to the process `from` to `to` instead, or unbind
+  /// them: a binding is by label, and one to no process fails every query.
+  private async rebind(from: string, to: string | undefined): Promise<void> {
+    let stored = this.context.workspaceState.get<unknown>(FILE_CONNECTIONS_KEY);
+    if (typeof stored !== "object" || stored === null) {
+      return;
+    }
+    for (const [uri, label] of Object.entries(stored)) {
+      if (label === from) {
+        stored = withBinding(stored, uri, to);
+      }
+    }
+    await this.context.workspaceState.update(FILE_CONNECTIONS_KEY, stored);
+    this.controls.refresh();
   }
 
   private async tag(row?: ProcessArg): Promise<void> {

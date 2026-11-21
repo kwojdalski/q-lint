@@ -88,6 +88,13 @@ async function setUp(t, processes) {
   providers.clear();
   output.length = 0;
   const context = stub.newContext();
+  // A workspaceState in memory, as globalState is.
+  const workspaceState = new Map();
+  context.workspaceState = {
+    get: (k, d) => (workspaceState.has(k) ? structuredClone(workspaceState.get(k)) : d),
+    update: async (k, v) => void workspaceState.set(k, structuredClone(v)),
+    keys: () => [...workspaceState.keys()],
+  };
   await context.globalState.update("q-lint.processes", processes);
   const live = new Live(context);
   t.after(async () => {
@@ -340,4 +347,21 @@ test("a query waiting for the explorer's read that is aborted says it was not ru
   assert.ok(stub.messages.some(([, text]) => text.includes("was not run")), JSON.stringify(stub.messages));
   // Abort said it stopped waiting for "the query", which was never sent.
   assert.ok(stub.messages.some(([, text]) => text.includes("stopped the Process Explorer's read of p")), JSON.stringify(stub.messages));
+});
+
+// A file bound to a process (Choose Connection for File) kept the label it
+// was bound to. Renaming the process left every query from the file
+// failing with "no q process is labelled", and so did deleting it, with
+// the status bar still showing `file: <label>`.
+test("renaming or deleting a process carries the files bound to it along", async (t) => {
+  const q = await fakeQ(() => OK);
+  t.after(() => q.close());
+  const { context } = await setUp(t, [proc("p", q.port), proc("other", q.port)]);
+  await context.workspaceState.update("q-lint.fileConnections", { "file:///a.q": "p", "file:///b.q": "other" });
+  editAnswers("renamed", "127.0.0.1", q.port);
+  await stub.commands.get("q-lint.editProcess")("p");
+  assert.deepStrictEqual(context.workspaceState.get("q-lint.fileConnections"), { "file:///a.q": "renamed", "file:///b.q": "other" });
+  stub.picks.push("Delete");
+  await stub.commands.get("q-lint.deleteProcess")("renamed");
+  assert.deepStrictEqual(context.workspaceState.get("q-lint.fileConnections"), { "file:///b.q": "other" });
 });

@@ -265,6 +265,8 @@ outcome; the buttons on a row run it again on the active connection and
   rerun, Preview and notebooks use the active connection, never a binding.
   While the file's process is not the active connection, the status bar
   shows `file: <label>`. **Clear Connection for File** removes the binding.
+  Renaming the process (**Edit Process**) carries its files along, and
+  deleting it removes their bindings.
 - **Reveal Process** selects the connected process in the **Processes**
   view, and shows the view. **Open q-lint Settings** opens Settings at
   q-lint's.
