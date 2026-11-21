@@ -442,6 +442,15 @@ test("a histogram of floats spanning more than the largest double counts every v
   assert.deepStrictEqual(h.edges, [-1e308, 0, 1e308]);
 });
 
+test("the bins field takes 0 as the fewest bins, not as the default 20", () => {
+  assert.strictEqual(panel.binsFrom("0", 20), 1);
+  assert.strictEqual(panel.binsFrom("-3", 20), 1);
+  assert.strictEqual(panel.binsFrom("7", 20), 7);
+  assert.strictEqual(panel.binsFrom("9999", 20), 500);
+  // Nothing typed: the default.
+  assert.strictEqual(panel.binsFrom("", 20), 20);
+});
+
 test("a grid of more rows than a page can be tall still scrolls to its last row", () => {
   // 22 px a row: two million rows are 44,000,000 px, past the 33,554,432
   // px Chromium lets an element be, so the last half million could not be

@@ -54,6 +54,13 @@
     return columns.length === 0 && can.length > 0 ? { columns: columns, note: "No column is ticked: tick one above to chart it." } : { columns: columns };
   }
 
+  /// The bins a histogram's field asks for: 1 to 500, `fallback` when it
+  /// holds no number. 0 is a number: the fewest bins, not the default.
+  function binsFrom(text, fallback) {
+    const n = parseInt(text, 10);
+    return Number.isNaN(n) ? fallback : Math.max(1, Math.min(500, n));
+  }
+
   /// Pixels a grid row takes: result.css sets the same.
   const ROW = 22;
   /// The tallest the rows may be laid out: under the 33,554,432 px Chromium
@@ -86,6 +93,7 @@
     rowCount: rowCount,
     visibleRows: visibleRows,
     chartColumns: chartColumns,
+    binsFrom: binsFrom,
     span: span,
     MAX_HEIGHT: MAX_HEIGHT,
   };
@@ -339,7 +347,7 @@
       bins.max = "500";
       bins.value = String(state.bins);
       bins.addEventListener("change", function () {
-        state.bins = Math.max(1, Math.min(500, parseInt(bins.value, 10) || C.BINS));
+        state.bins = binsFrom(bins.value, C.BINS);
         save();
         drawChart();
       });
