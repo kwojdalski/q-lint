@@ -29,6 +29,7 @@ import {
   type NotebookDocument,
   type NotebookSerializer,
 } from "vscode";
+import * as os from "node:os";
 import * as path from "node:path";
 import { cellOutputs, chartCellOutputs, DATA, readCellData, type OutputPart } from "./celldata";
 import { cellDirective } from "./celldirectives";
@@ -330,6 +331,19 @@ async function cellsOf(uri: Uri): Promise<QnbCell[]> {
   return parseQnb(Buffer.from(await workspace.fs.readFile(uri)).toString("utf8")).cells;
 }
 
+/// Where Export Notebook offers to write `notebook`'s script: beside it, or,
+/// for an untitled notebook (New q Notebook's), in the first workspace
+/// folder - a save dialog cannot browse `untitled:`, and nothing can be
+/// written there.
+function scriptBeside(notebook: Uri): Uri {
+  const name = path.posix.basename(notebook.path).replace(/\.qnb$/, ".q");
+  if (notebook.scheme !== "untitled") {
+    return notebook.with({ path: notebook.path.replace(/\.qnb$/, ".q") });
+  }
+  const folder = workspace.workspaceFolders?.[0]?.uri ?? Uri.file(os.homedir());
+  return Uri.joinPath(folder, name);
+}
+
 /// Write the notebook at `source` - the active one when not given - as a q
 /// script, to `target` or where the user picks.
 async function exportNotebook(source?: Uri, target?: Uri): Promise<void> {
@@ -350,7 +364,7 @@ async function exportNotebook(source?: Uri, target?: Uri): Promise<void> {
       ? target
       : await window.showSaveDialog({
           title: "Export the notebook as a q script",
-          defaultUri: from.with({ path: from.path.replace(/\.qnb$/, ".q") }),
+          defaultUri: scriptBeside(from),
           filters: { "q script": ["q"] },
         });
   if (to === undefined) {
