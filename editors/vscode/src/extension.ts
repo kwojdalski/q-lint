@@ -32,7 +32,7 @@ import { QueryAcross } from "./queryacross";
 import { SavedQueries } from "./savedqueriesview";
 import { TableStreams } from "./streamview";
 import { Launcher } from "./launcherview";
-import { registerNotebookGit, type NotebookDiff } from "./notebookgit";
+import { registerNotebookGit, type NotebookDiff, type NotebookStrip } from "./notebookgit";
 import type { InfoNode } from "./monitor";
 import { registerTestExplorer } from "./testexplorer";
 import { registerValueHover } from "./valuehoverview";
@@ -120,6 +120,7 @@ export async function activate(
     notebookLiveValues: () => RenderedLiveValue[];
     notebookVariables: ReturnType<typeof registerNotebookVariables>;
     notebookDiff: NotebookDiff;
+    notebookStrip: NotebookStrip;
     processMonitor: () => InfoNode[];
     hdbBrowser: () => InfoNode[];
     functionSources: FunctionSources["state"];
@@ -207,6 +208,7 @@ export async function activate(
     notebookLiveValues: () => notebook.liveValues(),
     notebookVariables,
     notebookDiff: notebookGit.diff,
+    notebookStrip: notebookGit.strip,
     processMonitor: infoViews.monitor,
     hdbBrowser: infoViews.hdb,
     functionSources: () => sources.state(),

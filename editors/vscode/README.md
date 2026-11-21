@@ -1271,6 +1271,33 @@ echo '*.qnb diff=qnb' >> .gitattributes
 The script needs only Node.js; a file that is not a notebook is shown as it
 is.
 
+Outputs need not be committed, as nbstripout arranges for Jupyter:
+
+- **Clear Notebook Outputs in File**, on a `.qnb` file's context menu (several
+  can be picked), asks, then removes each cell's outputs, run number and
+  times and the live values of Markdown cells from the file, keeping the
+  cells and everything else. A notebook open with unsaved edits is left
+  alone. VS Code's own **Clear All Outputs** clears an open notebook.
+- **Set Up Git to Strip Notebook Outputs...**, on the notebook's toolbar,
+  installs `qnbgit.js --strip` as a git clean filter for `*.qnb` in the
+  repository of the active notebook, or of the first workspace folder. It
+  asks whether the `*.qnb filter=qnb-strip` line goes in this clone's
+  `.git/info/attributes` or in `.gitattributes`, committed for everyone
+  (each clone sets the filter up for itself; one that has not commits
+  notebooks as they are), then shows what it will write - a copy of the
+  script in `.git/q-lint/`, `git config --local filter.qnb-strip.clean`,
+  and the attributes line, appended - and writes it only on **Write**. A
+  `filter.qnb-strip.clean` set to anything else is never changed, a copy of
+  the script from another version is replaced only on that **Write**, and
+  no hook is written. From then on git commits notebooks without their
+  outputs, the files keep them, and an output-only change does not show as
+  a change. The filter needs `node` on `PATH`; without it git commits
+  notebooks as they are. To undo it, remove the attributes line and run
+  `git config --unset filter.qnb-strip.clean`.
+
+`q-lint.notebook.stripOutputs.enable` turns both commands off; a filter set
+up before keeps working, since git runs it, not VS Code.
+
 ## Requirements
 
 None on macOS (Apple Silicon and Intel), Linux x64 or Windows x64: the
@@ -1452,6 +1479,7 @@ Read when a cell runs or a command is used, so a change needs no reload. None re
 | `q-lint.notebook.liveValues.enable` | `true` | Read `{{q: expr}}` in Markdown cells when the code cell above runs; never on their own. Off, nothing is sent. | - |
 | `q-lint.notebook.processDirective.enable` | `true` | `/ @process <label>`. Off, a cell with it is not run and nothing is sent. | - |
 | `q-lint.notebook.diff.enable` | `true` | **Compare Notebook Cells**: a diff of a notebook's cells against `HEAD` or another notebook, outputs and metadata left out. Sends nothing. Off, the command is hidden and refuses. | - |
+| `q-lint.notebook.stripOutputs.enable` | `true` | **Clear Notebook Outputs in File** and **Set Up Git to Strip Notebook Outputs**, each only when run, asking first. Off, both are hidden and refuse. | - |
 
 ### Agent settings
 

@@ -777,6 +777,11 @@
             "type": "boolean",
             "default": true,
             "markdownDescription": "Turn on **q-lint: Compare Notebook Cells**, a diff of a q notebook's cells against the last commit or another notebook that leaves outputs, run numbers and metadata out. It sends nothing to any process. Off, the command is hidden and refuses."
+          },
+          "q-lint.notebook.stripOutputs.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Turn on **q-lint: Clear Notebook Outputs** and **q-lint: Set Up Git to Strip Notebook Outputs**, which installs a git clean filter for `*.qnb` in one repository after showing what it writes. Each acts only when you run it and asks first. Off, both are hidden and refuse; a filter already set up keeps working, since git runs it, not VS Code."
           }
         }
       },
@@ -1424,6 +1429,17 @@
         "icon": "$(diff)"
       },
       {
+        "command": "q-lint.stripNotebookOutputs",
+        "title": "Clear Notebook Outputs in File",
+        "category": "q-lint",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "q-lint.setUpNotebookStripFilter",
+        "title": "Set Up Git to Strip Notebook Outputs...",
+        "category": "q-lint"
+      },
+      {
         "command": "q-lint.refreshNotebookVariables",
         "title": "Refresh Notebook Variables",
         "category": "q-lint",
@@ -2044,6 +2060,11 @@
           "command": "q-lint.diffNotebook",
           "when": "notebookType == q-lint-notebook && config.q-lint.notebook.diff.enable",
           "group": "git"
+        },
+        {
+          "command": "q-lint.setUpNotebookStripFilter",
+          "when": "notebookType == q-lint-notebook && config.q-lint.notebook.stripOutputs.enable",
+          "group": "git"
         }
       ],
       "scm/resourceState/context": [
@@ -2082,6 +2103,11 @@
         {
           "command": "q-lint.diffNotebook",
           "when": "resourceExtname =~ /^\\.qnb$/i && config.q-lint.notebook.diff.enable",
+          "group": "q-lint"
+        },
+        {
+          "command": "q-lint.stripNotebookOutputs",
+          "when": "resourceExtname =~ /^\\.qnb$/i && config.q-lint.notebook.stripOutputs.enable",
           "group": "q-lint"
         }
       ],
@@ -2374,6 +2400,14 @@
         {
           "command": "q-lint.diffNotebook",
           "when": "config.q-lint.notebook.diff.enable"
+        },
+        {
+          "command": "q-lint.stripNotebookOutputs",
+          "when": "config.q-lint.notebook.stripOutputs.enable"
+        },
+        {
+          "command": "q-lint.setUpNotebookStripFilter",
+          "when": "config.q-lint.notebook.stripOutputs.enable"
         }
       ]
     },

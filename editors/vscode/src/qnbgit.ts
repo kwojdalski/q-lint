@@ -1,9 +1,12 @@
 // A `.qnb` notebook as git and a reviewer want to read it: its cells only,
 // as text (#998). No import but Node's own, so the compiled
 // `out/qnbgit.js` runs on its own: as git's `textconv` for `*.qnb`, which
-// makes `git diff` and `git log -p` show changed cells rather than JSON.
+// makes `git diff` and `git log -p` show changed cells rather than JSON,
+// and as the `clean` filter that strips outputs on commit (#999).
 //
 //   node out/qnbgit.js --text NB.qnb     the notebook's cells as text
+//   node out/qnbgit.js --strip [NB.qnb]  the notebook without its outputs,
+//                                        from the file or stdin, to stdout
 //
 // The text leaves out what changes on every run and says nothing about the
 // code: outputs, run numbers and times, and metadata. Each cell is a `%%`
@@ -11,8 +14,14 @@
 // source. The header line carries no cell number, so a cell added at the
 // top changes one hunk, not every header after it.
 //
+// Stripping takes out each cell's `outputs`, its `execution` (run number
+// and times) and the live values kept in a Markdown cell's metadata, and
+// keeps everything else - fields this extension does not know included -
+// in the order and the layout the extension writes, so a notebook saved
+// after a strip is the same file.
+//
 // A file that is not a notebook is given back as it is: git shows what it
-// has rather than failing the diff.
+// has, and commits what it has, rather than failing.
 import * as fs from "node:fs";
 
 /// The cell of a notebook these read: a `.qnb` file's, or `qnb.ts`'s.
@@ -71,6 +80,37 @@ export function notebookText(cells: readonly CellLike[], name?: string): string 
 export function fileText(raw: string, name?: string): string {
   const json = notebookJson(raw);
   return json === undefined ? raw : notebookText(json.cells, name);
+}
+
+/// Where a Markdown cell keeps its live values (`livemarkdown.ts`'s
+/// `LIVE_KEY`): an output of a run, so stripped with the outputs.
+export const LIVE_VALUES_KEY = "q-lint.liveValues";
+
+/// `raw` without its outputs, run numbers and times and live values, or as
+/// it is when it is not a notebook.
+export function stripQnb(raw: string): string {
+  const json = notebookJson(raw);
+  if (json === undefined) {
+    return raw;
+  }
+  for (const cell of json.cells as Json[]) {
+    delete cell.outputs;
+    delete cell.execution;
+    if (isObject(cell.metadata)) {
+      delete cell.metadata[LIVE_VALUES_KEY];
+      if (Object.keys(cell.metadata).length === 0) {
+        delete cell.metadata;
+      }
+    }
+  }
+  return JSON.stringify(json, null, 1) + "\n";
+}
+
+/// Whether `raw` is a notebook with anything for `stripQnb` to take out.
+export function hasOutputs(raw: string): boolean {
+  return ((notebookJson(raw)?.cells ?? []) as Json[]).some(
+    (cell: Json) => "outputs" in cell || "execution" in cell || (isObject(cell.metadata) && LIVE_VALUES_KEY in cell.metadata),
+  );
 }
 
 export interface CellDiff {
@@ -154,10 +194,18 @@ export function diffSummary(diff: CellDiff): string {
   return `${diff.changed} ${diff.changed === 1 ? "cell" : "cells"} changed, ${diff.added} added, ${diff.removed} removed, ${diff.same} the same`;
 }
 
-const USAGE = "usage: node qnbgit.js --text NOTEBOOK.qnb";
+const USAGE = "usage: node qnbgit.js --text NOTEBOOK.qnb | --strip [NOTEBOOK.qnb]";
 
 /// The command line: what to write to stdout and stderr, and the exit code.
-export function main(argv: string[], read: (file: string) => string = (f) => fs.readFileSync(f, "utf8")): { out: string; err: string; code: number } {
+/// `--strip` with no file reads stdin, as git's clean filter gives it.
+export function main(argv: string[], read: (file: string | 0) => string = (f) => fs.readFileSync(f, "utf8")): { out: string; err: string; code: number } {
+  if (argv[0] === "--strip" && argv.length <= 2) {
+    try {
+      return { out: stripQnb(read(argv[1] ?? 0)), err: "", code: 0 };
+    } catch (error) {
+      return { out: "", err: `qnbgit: ${error instanceof Error ? error.message : String(error)}\n`, code: 2 };
+    }
+  }
   if (argv[0] === "--text" && argv.length === 2) {
     try {
       return { out: fileText(read(argv[1])), err: "", code: 0 };

@@ -2,12 +2,20 @@
 // notebooks' cells that leaves outputs, run numbers and metadata out. The
 // text each side shows is `qnbgit.ts`'s, the one `git diff` shows through
 // its textconv; VS Code's diff editor compares the two.
+//
+// Outputs on commit (#999), as nbstripout does it: Clear Notebook Outputs
+// strips the `.qnb` files picked, and Set Up Git to Strip Notebook Outputs
+// installs `qnbgit.js --strip` as a git clean filter for `*.qnb` in one
+// repository. Nothing is written into git until the user has seen what will
+// be written and said yes; a filter already set is never changed, and no
+// hook is written at all.
 import { execFile } from "node:child_process";
+import * as fs from "node:fs";
 import * as path from "node:path";
 import { EventEmitter, Uri, commands, window, workspace, type Disposable, type ExtensionContext, type TextDocumentContentProvider } from "vscode";
 import { featureOn, qnbOf, requireFeature } from "./notebook";
 import { NOTEBOOK } from "./qnb";
-import { diffCells, diffSummary, notebookJson, notebookText, type CellLike } from "./qnbgit";
+import { diffCells, diffSummary, hasOutputs, notebookJson, notebookText, stripQnb, type CellLike } from "./qnbgit";
 
 /// The scheme of the read-only documents a comparison shows.
 export const CELLS_SCHEME = "q-lint-qnb-cells";
@@ -174,8 +182,253 @@ export class NotebookDiff implements TextDocumentContentProvider {
   }
 }
 
-/// Register Compare Notebook Cells: its command, which says when the
-/// setting is off, and its documents' provider, only while it is on.
-export function registerNotebookGit(context: ExtensionContext): { diff: NotebookDiff } {
-  return { diff: new NotebookDiff(context) };
+/// The git filter's name, as `.gitattributes` and `git config` spell it.
+export const FILTER = "qnb-strip";
+/// The line that sends `*.qnb` through it.
+export const ATTRIBUTE_LINE = `*.qnb filter=${FILTER}`;
+const HAS_ATTRIBUTE = new RegExp(`^\\*\\.qnb\\s(.*\\s)?filter=${FILTER}(\\s|$)`, "m");
+
+/// Where the attribute goes: this clone's `.git/info/attributes`, or the
+/// repository's `.gitattributes`, committed for everyone who clones it.
+export type AttributesAt = "info" | "gitattributes";
+
+/// Run git in `cwd`: its exit code and output.
+function git(args: string[], cwd: string): Promise<{ code: number; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    execFile("git", args, { cwd, encoding: "utf8" }, (error, stdout, stderr) => {
+      const code = error === null ? 0 : typeof (error as { code?: unknown }).code === "number" ? (error as { code: number }).code : -1;
+      resolve({ code, stdout, stderr: stderr || (error?.message ?? "") });
+    });
+  });
+}
+
+/// Whether `node` runs from PATH, as git will run the filter.
+function nodeOnPath(): Promise<boolean> {
+  return new Promise((resolve) => execFile("node", ["--version"], (error) => resolve(error === null)));
+}
+
+const readText = (file: string): string | undefined => {
+  try {
+    return fs.readFileSync(file, "utf8");
+  } catch {
+    return undefined;
+  }
+};
+
+/// What Set Up Git to Strip Notebook Outputs found and would write.
+export interface FilterPlan {
+  top: string;
+  /// The copy of `qnbgit.js` the filter runs, in the repository's git folder.
+  script: string;
+  scriptAction: "write" | "replace" | "keep";
+  /// The `filter.qnb-strip.clean` command, and whether it is set already.
+  clean: string;
+  cleanSet: boolean;
+  attributes: string;
+  attributeSet: boolean;
+  node: boolean;
+}
+
+export class NotebookStrip {
+  /// The last setup's plan, for tests.
+  lastPlan: FilterPlan | undefined;
+
+  constructor(
+    context: ExtensionContext,
+    /// The `qnbgit.js` the filter's copy is made from: this extension's.
+    private readonly source: string = path.join(__dirname, "qnbgit.js"),
+  ) {
+    context.subscriptions.push(
+      commands.registerCommand(NOTEBOOK.stripCommand, (uri?: Uri, uris?: Uri[]) => this.strip(uri, uris)),
+      commands.registerCommand(NOTEBOOK.stripFilterCommand, (folder?: Uri, where?: AttributesAt) => this.setUp(folder, where)),
+    );
+  }
+
+  /// Clear the outputs, run numbers and live values of the `.qnb` files
+  /// picked in the explorer - or the active notebook's file - once the user
+  /// says yes. A notebook open with unsaved edits is left alone.
+  async strip(uri?: Uri, uris?: Uri[]): Promise<void> {
+    if (!requireFeature("stripOutputs")) {
+      return;
+    }
+    const active = window.activeNotebookEditor?.notebook;
+    const picked = uris !== undefined && uris.length > 0 ? uris : uri instanceof Uri ? [uri] : active?.notebookType === NOTEBOOK.type ? [active.uri] : [];
+    const files = picked.filter((u) => /\.qnb$/i.test(u.path) && u.scheme === "file");
+    if (files.length === 0) {
+      void window.showInformationMessage("q-lint: pick a saved q notebook (.qnb) to clear its outputs.");
+      return;
+    }
+    const unsaved = files.filter((u) => workspace.notebookDocuments.some((n) => n.uri.toString() === u.toString() && n.isDirty));
+    const todo: { uri: Uri; text: string }[] = [];
+    let clean = 0;
+    for (const file of files.filter((u) => !unsaved.includes(u))) {
+      let text: string;
+      try {
+        text = Buffer.from(await workspace.fs.readFile(file)).toString("utf8");
+      } catch (error) {
+        void window.showErrorMessage(`q-lint: could not read ${file.fsPath}: ${error instanceof Error ? error.message : String(error)}`);
+        return;
+      }
+      if (hasOutputs(text)) {
+        todo.push({ uri: file, text });
+      } else {
+        clean++;
+      }
+    }
+    const names = (list: Uri[]): string => list.map((u) => path.basename(u.fsPath)).join(", ");
+    const unsavedNote = unsaved.length > 0 ? ` ${names(unsaved)} ${unsaved.length === 1 ? "has" : "have"} unsaved edits: save first.` : "";
+    if (todo.length === 0) {
+      void window.showInformationMessage(`q-lint: no outputs to clear.${unsavedNote}`);
+      return;
+    }
+    const go = "Clear Outputs";
+    const answer = await window.showWarningMessage(
+      `Clear the outputs of ${names(todo.map((t) => t.uri))}?`,
+      { modal: true, detail: "Each cell's outputs, run number and times, and the live values of Markdown cells, are removed from the file. The cells are kept." },
+      go,
+    );
+    if (answer !== go) {
+      return;
+    }
+    for (const { uri: file, text } of todo) {
+      try {
+        await workspace.fs.writeFile(file, Buffer.from(stripQnb(text), "utf8"));
+      } catch (error) {
+        void window.showErrorMessage(`q-lint: could not write ${file.fsPath}: ${error instanceof Error ? error.message : String(error)}`);
+        return;
+      }
+    }
+    void window.showInformationMessage(
+      `q-lint: cleared the outputs of ${todo.length} ${todo.length === 1 ? "notebook" : "notebooks"}${clean > 0 ? `; ${clean} had none` : ""}.${unsavedNote}`,
+    );
+  }
+
+  /// What setting up the filter in the repository around `folder` would
+  /// write, or why it cannot be set up there.
+  async plan(folder: string, where: AttributesAt): Promise<FilterPlan | { error: string }> {
+    const top = await git(["rev-parse", "--show-toplevel"], folder);
+    const dir = await git(["rev-parse", "--absolute-git-dir"], folder);
+    if (top.code !== 0 || dir.code !== 0) {
+      return { error: `${folder} is not in a git repository (${(top.stderr || dir.stderr).trim()}).` };
+    }
+    const root = top.stdout.trim();
+    const gitDir = dir.stdout.trim();
+    const script = path.join(gitDir, "q-lint", "qnbgit.js");
+    const ours = readText(this.source);
+    if (ours === undefined) {
+      return { error: `this extension's ${this.source} is missing.` };
+    }
+    const theirs = readText(script);
+    // Forward slashes: git runs the command through a POSIX shell.
+    const clean = `node "${script.replace(/\\/g, "/")}" --strip`;
+    const set = await git(["config", "--local", "--get", `filter.${FILTER}.clean`], root);
+    const current = set.code === 0 ? set.stdout.trim() : undefined;
+    if (current !== undefined && current !== clean) {
+      return {
+        error: `filter.${FILTER}.clean is set already, to ${current}, and q-lint does not change it. To have q-lint set it, remove it first: git config --unset filter.${FILTER}.clean`,
+      };
+    }
+    const attributes = where === "info" ? path.join(gitDir, "info", "attributes") : path.join(root, ".gitattributes");
+    return {
+      top: root,
+      script,
+      scriptAction: theirs === undefined ? "write" : theirs === ours ? "keep" : "replace",
+      clean,
+      cleanSet: current !== undefined,
+      attributes,
+      attributeSet: HAS_ATTRIBUTE.test(readText(attributes) ?? ""),
+      node: await nodeOnPath(),
+    };
+  }
+
+  /// Set Up Git to Strip Notebook Outputs: in the repository of `folder` -
+  /// the active notebook's or the first workspace folder's when not given -
+  /// show what would be written, and write it once the user says yes.
+  async setUp(folder?: Uri, where?: AttributesAt): Promise<void> {
+    if (!requireFeature("stripOutputs")) {
+      return;
+    }
+    const active = window.activeNotebookEditor?.notebook.uri;
+    const from = folder instanceof Uri
+      ? folder.fsPath
+      : active?.scheme === "file" ? path.dirname(active.fsPath) : workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (from === undefined) {
+      void window.showInformationMessage("q-lint: open a folder in a git repository to set up its filter.");
+      return;
+    }
+    let at = where;
+    if (at === undefined) {
+      const picked = await window.showQuickPick(
+        [
+          { label: ".git/info/attributes", detail: "This clone only: nothing to commit", at: "info" as AttributesAt },
+          { label: ".gitattributes", detail: "Committed, for everyone who clones the repository (each sets the filter up for themselves)", at: "gitattributes" as AttributesAt },
+        ],
+        { title: "Where should git read that *.qnb files go through the filter?" },
+      );
+      if (picked === undefined) {
+        return;
+      }
+      at = picked.at;
+    }
+    const plan = await this.plan(from, at);
+    if ("error" in plan) {
+      void window.showErrorMessage(`q-lint: ${plan.error}`);
+      return;
+    }
+    this.lastPlan = plan;
+    const steps: string[] = [];
+    if (plan.scriptAction !== "keep") {
+      steps.push(`${plan.scriptAction === "write" ? "Write" : "Replace, since it differs from this extension's,"} ${plan.script}: the filter, a copy of this extension's qnbgit.js.`);
+    }
+    if (!plan.cleanSet) {
+      steps.push(`Run: git config --local filter.${FILTER}.clean '${plan.clean}'`);
+    }
+    if (!plan.attributeSet) {
+      steps.push(`Add the line "${ATTRIBUTE_LINE}" at the end of ${plan.attributes}.`);
+    }
+    if (steps.length === 0) {
+      void window.showInformationMessage(`q-lint: ${plan.top} strips notebook outputs on commit already.`);
+      return;
+    }
+    const warning = plan.node ? "" : "\n\nnode was not found on PATH. Until it is, git cannot run the filter, and commits notebooks as they are.";
+    const go = "Write";
+    const answer = await window.showWarningMessage(
+      `Set up git in ${plan.top} to strip q notebook outputs on commit?`,
+      { modal: true, detail: `${steps.map((s, i) => `${i + 1}. ${s}`).join("\n")}\n\nNo hook is written, and nothing else is changed.${warning}` },
+      go,
+    );
+    if (answer !== go) {
+      return;
+    }
+    try {
+      if (plan.scriptAction !== "keep") {
+        fs.mkdirSync(path.dirname(plan.script), { recursive: true });
+        fs.copyFileSync(this.source, plan.script);
+      }
+      if (!plan.cleanSet) {
+        const set = await git(["config", "--local", `filter.${FILTER}.clean`, plan.clean], plan.top);
+        if (set.code !== 0) {
+          throw new Error(set.stderr.trim());
+        }
+      }
+      if (!plan.attributeSet) {
+        const before = readText(plan.attributes) ?? "";
+        fs.mkdirSync(path.dirname(plan.attributes), { recursive: true });
+        fs.appendFileSync(plan.attributes, `${before === "" || before.endsWith("\n") ? "" : "\n"}${ATTRIBUTE_LINE}\n`);
+      }
+    } catch (error) {
+      void window.showErrorMessage(`q-lint: could not set up the filter: ${error instanceof Error ? error.message : String(error)}`);
+      return;
+    }
+    void window.showInformationMessage(
+      `q-lint: git in ${plan.top} now commits q notebooks without their outputs; the files keep them. A notebook committed before keeps its outputs in git until it is next committed.`,
+    );
+  }
+}
+
+/// Register Compare Notebook Cells - its command, which says when the
+/// setting is off, and its documents' provider, only while it is on - and
+/// Clear Notebook Outputs and Set Up Git to Strip Notebook Outputs.
+export function registerNotebookGit(context: ExtensionContext): { diff: NotebookDiff; strip: NotebookStrip } {
+  return { diff: new NotebookDiff(context), strip: new NotebookStrip(context) };
 }

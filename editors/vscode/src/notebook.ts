@@ -214,6 +214,7 @@ export const FEATURES = {
   liveValues: "Live values in Markdown cells",
   processDirective: "The / @process cell directive",
   diff: "Compare Notebook Cells",
+  stripOutputs: "Clearing notebook outputs and the git filter that strips them",
 } as const;
 export type Feature = keyof typeof FEATURES;
 

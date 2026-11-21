@@ -1,7 +1,8 @@
 // q notebooks and git: Compare Notebook Cells and the `qnbgit.js` textconv
-// (#998). The pure text and diff, the command line, a real `git diff`
-// through the textconv, and the command under a stand-in `vscode`. Needs
-// git on PATH, never a q process.
+// (#998), Clear Notebook Outputs and the git clean filter (#999). The pure
+// text, diff and strip, the command line, a real `git diff` and `git
+// commit` through the textconv and the filter, and the commands under a
+// stand-in `vscode`. Needs git and node on PATH, never a q process.
 const test = require("node:test");
 const assert = require("node:assert");
 const fs = require("node:fs");
@@ -10,7 +11,8 @@ const path = require("node:path");
 const Module = require("node:module");
 const { execFileSync } = require("node:child_process");
 const pkg = require("../package.json");
-const { diffCells, diffSummary, fileText, main, notebookText } = require("../out/qnbgit.js");
+const { diffCells, diffSummary, fileText, hasOutputs, main, notebookText, stripQnb } = require("../out/qnbgit.js");
+const { parseQnb, serializeQnb } = require("../out/qnb.js");
 
 const QNBGIT = path.join(__dirname, "..", "out", "qnbgit.js");
 
@@ -112,7 +114,7 @@ test("as git's textconv, git diff shows the cell that changed and nothing of the
 /// A stand-in `vscode` for Compare Notebook Cells: files from disk.
 function fakeVscode() {
   const disposable = { dispose() {} };
-  const fake = { messages: [], diffs: [], commands: {}, settings: {}, providers: new Map(), configListeners: [], picks: [], opened: [] };
+  const fake = { messages: [], diffs: [], commands: {}, settings: {}, providers: new Map(), configListeners: [], picks: [], opened: [], answers: [], details: [] };
   class Uri {
     constructor(scheme, p, query = "") {
       this.scheme = scheme;
@@ -154,6 +156,12 @@ function fakeVscode() {
         return items.find((i) => i.label === label);
       },
       showOpenDialog: async () => fake.opened.shift(),
+      showWarningMessage: async (m, options, ...buttons) => {
+        fake.messages.push(m);
+        fake.details.push(options?.detail);
+        const answer = fake.answers.shift();
+        return buttons.includes(answer) ? answer : undefined;
+      },
     },
     workspace: {
       notebookDocuments: [],
@@ -163,7 +171,7 @@ function fakeVscode() {
         fake.providers.set(scheme, provider);
         return { dispose: () => fake.providers.delete(scheme) };
       },
-      fs: { readFile: async (uri) => fs.readFileSync(uri.fsPath) },
+      fs: { readFile: async (uri) => fs.readFileSync(uri.fsPath), writeFile: async (uri, data) => fs.writeFileSync(uri.fsPath, data) },
     },
   };
   fake.change = (key) => fake.configListeners.forEach((l) => l({ affectsConfiguration: (s) => key === s || key.startsWith(`${s}.`) }));
@@ -179,7 +187,9 @@ function load(fake) {
     for (const key of Object.keys(require.cache)) {
       if (/[\\/]out[\\/]/.test(key)) delete require.cache[key];
     }
-    return require("../out/notebookgit.js").registerNotebookGit({ subscriptions: [] }).diff;
+    const registered = require("../out/notebookgit.js").registerNotebookGit({ subscriptions: [] });
+    fake.strip = registered.strip;
+    return registered.diff;
   } finally {
     Module._load = original;
   }
@@ -260,4 +270,171 @@ test("Compare Notebook Cells is contributed with its setting in every menu", () 
   const menus = Object.values(pkg.contributes.menus).flat().filter((m) => m.command === "q-lint.diffNotebook");
   assert.ok(menus.length >= 4);
   for (const m of menus) assert.match(m.when, /config\.q-lint\.notebook\.diff\.enable/);
+});
+
+// --- outputs on commit (#999)
+
+const withOutputs = () =>
+  qnb(
+    [
+      { kind: "markdown", source: ["n is {{q: n}}"], metadata: { "q-lint.liveValues": { n: { ok: true, text: "3" } }, tag: "keep" } },
+      code("n:3", { ...ran(1, ""), metadata: { "q-lint.liveValues": "only Markdown has these, but a strip takes them anywhere" } }),
+      code("til n", { ...ran(2, "0 1 2"), mine: { kept: true } }),
+    ],
+    { metadata: { author: "me" } },
+  );
+
+test("a strip takes out outputs, runs and live values, keeps the rest, and writes what the extension writes", () => {
+  const stripped = stripQnb(withOutputs());
+  const json = JSON.parse(stripped);
+  assert.deepStrictEqual(json.cells, [
+    { kind: "markdown", source: ["n is {{q: n}}"], metadata: { tag: "keep" } },
+    { kind: "code", source: ["n:3"] },
+    { kind: "code", source: ["til n"], mine: { kept: true } },
+  ]);
+  assert.deepStrictEqual(json.metadata, { author: "me" });
+  // The extension reads it and saves it back as the same file.
+  assert.strictEqual(serializeQnb(parseQnb(stripped)), stripped);
+  assert.strictEqual(stripQnb(stripped), stripped);
+  assert.ok(hasOutputs(withOutputs()));
+  assert.ok(!hasOutputs(stripped));
+  assert.ok(!hasOutputs("not json"));
+  // Not a notebook: given back as it is, so git commits what it has.
+  assert.strictEqual(stripQnb("{oops"), "{oops");
+  assert.strictEqual(stripQnb('{"a":1}'), '{"a":1}');
+});
+
+test("the strip runs from stdin as git's clean filter, and the script needs nothing beside it", () => {
+  const out = execFileSync(process.execPath, [QNBGIT, "--strip"], { input: withOutputs(), encoding: "utf8" });
+  assert.strictEqual(out, stripQnb(withOutputs()));
+  assert.strictEqual(execFileSync(process.execPath, [QNBGIT, "--strip"], { input: "plain", encoding: "utf8" }), "plain");
+  // Copied on its own into a repository's git folder, it must still run.
+  const requires = [...fs.readFileSync(QNBGIT, "utf8").matchAll(/require\("([^"]+)"\)/g)].map((m) => m[1]);
+  assert.deepStrictEqual(requires, ["node:fs"]);
+});
+
+test("Set Up Git to Strip Notebook Outputs shows what it writes, writes it on Write, and git commits notebooks without outputs", async () => {
+  const { dir, git } = repo({ "README": "r\n" });
+  const fake = fakeVscode();
+  load(fake);
+  const folder = fake.vscode.Uri.file(dir);
+  // Declined: nothing is written.
+  fake.answers.push(undefined);
+  await fake.commands["q-lint.setUpNotebookStripFilter"](folder, "info");
+  assert.match(fake.messages.at(-1), /Set up git in .* to strip q notebook outputs on commit\?/);
+  const detail = fake.details.at(-1);
+  assert.match(detail, /1\. Write .*\.git\/q-lint\/qnbgit\.js/);
+  assert.match(detail, /2\. Run: git config --local filter\.qnb-strip\.clean 'node ".*qnbgit\.js" --strip'/);
+  assert.match(detail, /3\. Add the line "\*\.qnb filter=qnb-strip" at the end of .*\.git\/info\/attributes/);
+  assert.match(detail, /No hook is written/);
+  assert.ok(!fs.existsSync(path.join(dir, ".git", "q-lint")));
+  assert.throws(() => git("config", "--get", "filter.qnb-strip.clean"));
+  // Written.
+  fs.mkdirSync(path.join(dir, ".git", "info"), { recursive: true });
+  fs.writeFileSync(path.join(dir, ".git", "info", "attributes"), "*.bin binary");
+  fake.answers.push("Write");
+  await fake.commands["q-lint.setUpNotebookStripFilter"](folder, "info");
+  assert.match(fake.messages.at(-1), /now commits q notebooks without their outputs/);
+  assert.strictEqual(fs.readFileSync(path.join(dir, ".git", "info", "attributes"), "utf8"), "*.bin binary\n*.qnb filter=qnb-strip\n");
+  assert.strictEqual(fs.readFileSync(path.join(dir, ".git", "q-lint", "qnbgit.js"), "utf8"), fs.readFileSync(QNBGIT, "utf8"));
+  assert.match(git("config", "--get", "filter.qnb-strip.clean"), /^node ".*\/\.git\/q-lint\/qnbgit\.js" --strip$/m);
+  // Git commits the notebook without its outputs; the file keeps them and is not shown as changed.
+  fs.writeFileSync(path.join(dir, "a.qnb"), withOutputs());
+  git("add", "a.qnb");
+  git("commit", "-qm", "nb");
+  assert.strictEqual(git("show", "HEAD:a.qnb"), stripQnb(withOutputs()));
+  assert.strictEqual(fs.readFileSync(path.join(dir, "a.qnb"), "utf8"), withOutputs());
+  assert.strictEqual(git("status", "--porcelain"), "");
+  // Set up already: nothing to ask.
+  const asked = fake.details.length;
+  await fake.commands["q-lint.setUpNotebookStripFilter"](folder, "info");
+  assert.strictEqual(fake.details.length, asked);
+  assert.match(fake.messages.at(-1), /strips notebook outputs on commit already/);
+});
+
+test("the setup never changes a filter set otherwise, asks before replacing its script, and can write .gitattributes", async () => {
+  const { dir, git } = repo({ ".gitattributes": "*.png binary" });
+  const fake = fakeVscode();
+  load(fake);
+  const folder = fake.vscode.Uri.file(dir);
+  git("config", "filter.qnb-strip.clean", "jq .");
+  await fake.commands["q-lint.setUpNotebookStripFilter"](folder, "gitattributes");
+  assert.match(fake.messages.at(-1), /filter\.qnb-strip\.clean is set already, to jq \., and q-lint does not change it/);
+  assert.strictEqual(git("config", "--get", "filter.qnb-strip.clean"), "jq .\n");
+  assert.strictEqual(fake.details.length, 0);
+  git("config", "--unset", "filter.qnb-strip.clean");
+  // A script of another version is replaced only when the user says so.
+  fs.mkdirSync(path.join(dir, ".git", "q-lint"));
+  fs.writeFileSync(path.join(dir, ".git", "q-lint", "qnbgit.js"), "// old");
+  fake.answers.push(undefined);
+  await fake.commands["q-lint.setUpNotebookStripFilter"](folder, "gitattributes");
+  assert.match(fake.details.at(-1), /Replace, since it differs from this extension's,/);
+  assert.strictEqual(fs.readFileSync(path.join(dir, ".git", "q-lint", "qnbgit.js"), "utf8"), "// old");
+  fake.answers.push("Write");
+  await fake.commands["q-lint.setUpNotebookStripFilter"](folder, "gitattributes");
+  assert.strictEqual(fs.readFileSync(path.join(dir, ".gitattributes"), "utf8"), "*.png binary\n*.qnb filter=qnb-strip\n");
+  assert.strictEqual(fs.readFileSync(path.join(dir, ".git", "q-lint", "qnbgit.js"), "utf8"), fs.readFileSync(QNBGIT, "utf8"));
+  // Not a repository.
+  await fake.commands["q-lint.setUpNotebookStripFilter"](fake.vscode.Uri.file(fs.mkdtempSync(path.join(os.tmpdir(), "norepo-"))), "info");
+  assert.match(fake.messages.at(-1), /is not in a git repository/);
+});
+
+test("Clear Notebook Outputs asks, then strips the files picked; one with unsaved edits is left alone", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qnbstrip-"));
+  const file = (n, text) => (fs.writeFileSync(path.join(dir, n), text), path.join(dir, n));
+  const a = file("a.qnb", withOutputs());
+  const b = file("b.qnb", qnb([code("1")]));
+  const c = file("c.qnb", withOutputs());
+  const fake = fakeVscode();
+  load(fake);
+  const { Uri } = fake.vscode;
+  fake.vscode.workspace.notebookDocuments.push({ uri: Uri.file(c), isDirty: true });
+  fake.answers.push(undefined);
+  await fake.commands["q-lint.stripNotebookOutputs"](Uri.file(a), [Uri.file(a), Uri.file(b), Uri.file(c)]);
+  assert.match(fake.messages.at(-1), /Clear the outputs of a\.qnb\?/);
+  assert.strictEqual(fs.readFileSync(a, "utf8"), withOutputs());
+  fake.answers.push("Clear Outputs");
+  await fake.commands["q-lint.stripNotebookOutputs"](Uri.file(a), [Uri.file(a), Uri.file(b), Uri.file(c)]);
+  assert.strictEqual(fs.readFileSync(a, "utf8"), stripQnb(withOutputs()));
+  assert.strictEqual(fs.readFileSync(c, "utf8"), withOutputs());
+  assert.match(fake.messages.at(-1), /cleared the outputs of 1 notebook; 1 had none\. c\.qnb has unsaved edits: save first\./);
+  await fake.commands["q-lint.stripNotebookOutputs"](Uri.file(a));
+  assert.match(fake.messages.at(-1), /no outputs to clear/);
+  await fake.commands["q-lint.stripNotebookOutputs"]();
+  assert.match(fake.messages.at(-1), /pick a saved q notebook/);
+});
+
+test("off, Clear Notebook Outputs and the setup refuse and write nothing", async () => {
+  const { dir, git } = repo({ "a.qnb": "{}" });
+  fs.writeFileSync(path.join(dir, "b.qnb"), withOutputs());
+  const fake = fakeVscode();
+  fake.settings["notebook.stripOutputs.enable"] = false;
+  load(fake);
+  const { Uri } = fake.vscode;
+  fake.answers.push("Write", "Clear Outputs");
+  await fake.commands["q-lint.setUpNotebookStripFilter"](Uri.file(dir), "info");
+  assert.match(fake.messages.at(-1), /is turned off: set q-lint\.notebook\.stripOutputs\.enable to true/);
+  await fake.commands["q-lint.stripNotebookOutputs"](Uri.file(path.join(dir, "b.qnb")));
+  assert.match(fake.messages.at(-1), /is turned off: set q-lint\.notebook\.stripOutputs\.enable to true/);
+  assert.strictEqual(fake.details.length, 0);
+  assert.strictEqual(fs.readFileSync(path.join(dir, "b.qnb"), "utf8"), withOutputs());
+  assert.ok(!fs.existsSync(path.join(dir, ".git", "q-lint")));
+  assert.throws(() => git("config", "--get", "filter.qnb-strip.clean"));
+  // Turned on, it works without a reload: the setting is read when used.
+  fake.settings["notebook.stripOutputs.enable"] = true;
+  fake.answers.length = 0;
+  fake.answers.push("Clear Outputs");
+  await fake.commands["q-lint.stripNotebookOutputs"](Uri.file(path.join(dir, "b.qnb")));
+  assert.strictEqual(fs.readFileSync(path.join(dir, "b.qnb"), "utf8"), stripQnb(withOutputs()));
+});
+
+test("Clear Notebook Outputs and the setup are contributed with their setting in every menu", () => {
+  const section = pkg.contributes.configuration.find((c) => c.title === "q-lint: notebook features");
+  assert.strictEqual(section.properties["q-lint.notebook.stripOutputs.enable"].default, true);
+  for (const command of ["q-lint.stripNotebookOutputs", "q-lint.setUpNotebookStripFilter"]) {
+    assert.strictEqual(pkg.contributes.commands.find((c) => c.command === command).category, "q-lint");
+    const menus = Object.values(pkg.contributes.menus).flat().filter((m) => m.command === command);
+    assert.ok(menus.length >= 2, command);
+    for (const m of menus) assert.match(m.when, /config\.q-lint\.notebook\.stripOutputs\.enable/, command);
+  }
 });
