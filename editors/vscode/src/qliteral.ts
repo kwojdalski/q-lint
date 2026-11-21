@@ -31,7 +31,7 @@ const LETTERS: Record<number, string> = {
 
 /// q's reserved words and the names of its builtins: as a column name in
 /// `([] ...)` each is an 'assign error, except `by` and `from`.
-const RESERVED = new Set(
+export const RESERVED = new Set(
   ("abs acos aj aj0 ajf ajf0 all and any asc asin asof atan attr avg avgs bin binr by ceiling cols cor cos count cov cross " +
     "csv cut delete deltas desc dev differ distinct div do dsave each ej ema enlist eval except exec exit exp fby fills first " +
     "fkeys flip floor from get getenv group gtime hclose hcount hdel hopen hsym iasc idesc if ij ijf in insert inter inv key " +

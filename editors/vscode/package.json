@@ -932,6 +932,65 @@
             "markdownDescription": "Read and watch the workspace's `.qlint/processes.json`, a process list committed with the code, and list its processes beside the saved ones; **Add to Shared Process List** writes a saved process there, never its password. A password or secret in the file is ignored and said. Connect scripts, SSH jump hosts and launch definitions in it are read only in a trusted workspace. Off: the file is not read, its group is removed, and the command is hidden."
           }
         }
+      },
+      {
+        "title": "q-lint: interactive",
+        "properties": {
+          "q-lint.cells.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 0,
+            "markdownDescription": "Code cells: a line starting `/ %%` at column 0 starts a cell, as `# %%` does in a Python file. **Run Cell** (Ctrl+Enter in a file with cells), **Run All Cells** and **Open Interactive Window**; a cell runs on the file's process and its answer lands in the **q Interactive** window. Off: the commands are hidden and refuse, and the window closes."
+          },
+          "q-lint.cells.codeLens.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 1,
+            "markdownDescription": "Show **Run Cell**, **Run Above** and **Run Below** over each `/ %%` line, and offer **Run Cells Above** and **Run Cell and Below**. Needs `#q-lint.cells.enable#`."
+          },
+          "q-lint.smartSend.enable": {
+            "type": "boolean",
+            "default": false,
+            "order": 2,
+            "markdownDescription": "**Smart Send** on Shift+Enter in a q editor: send the statement at the cursor (or the selection) and move the cursor to the next statement. Off by default, since it takes Shift+Enter and sends code on a keypress."
+          },
+          "q-lint.smartSend.target": {
+            "type": "string",
+            "enum": [
+              "query",
+              "interactiveWindow",
+              "repl",
+              "terminal"
+            ],
+            "enumDescriptions": [
+              "As **Query Current Block** does: the result output or panel, and Query History.",
+              "The **q Interactive** window (needs `#q-lint.cells.enable#`).",
+              "The **q REPL** pane (needs `#q-lint.repl.enable#`).",
+              "The q terminal, as **Send Current Block to Terminal** does."
+            ],
+            "default": "query",
+            "order": 3,
+            "markdownDescription": "Where **Smart Send** sends the statement."
+          },
+          "q-lint.repl.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 4,
+            "markdownDescription": "**Open q REPL Pane**: a console beside the editor on the connected process, with multiline input, history (Up, Down, Ctrl+R) and Tab completion from q's words, the workspace and the process. Off: the command is hidden and refuses, and the pane closes."
+          },
+          "q-lint.view.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 5,
+            "markdownDescription": "Open what `.qlint.view t` (the grid) and `.qlint.plot t` (a chart) send from code you run, and offer **Define .qlint.view and .qlint.plot on Process**, which defines them there. Off: nothing is defined and a call only gives its value back."
+          },
+          "q-lint.view.defineOnConnect": {
+            "type": "boolean",
+            "default": false,
+            "order": 6,
+            "markdownDescription": "Define `.qlint.view` and `.qlint.plot` on each process as it is connected to. Never on a process the read-only guard guards. Needs `#q-lint.view.enable#`."
+          }
+        }
       }
     ],
     "commands": [
@@ -1530,6 +1589,60 @@
         "title": "Draft qSQL from a Description",
         "category": "q-lint",
         "icon": "$(sparkle)"
+      },
+      {
+        "command": "q-lint.runCell",
+        "title": "Run Cell",
+        "category": "q-lint",
+        "icon": "$(play)"
+      },
+      {
+        "command": "q-lint.runAllCells",
+        "title": "Run All Cells",
+        "category": "q-lint",
+        "icon": "$(run-all)"
+      },
+      {
+        "command": "q-lint.openInteractiveWindow",
+        "title": "Open Interactive Window",
+        "category": "q-lint",
+        "icon": "$(window)"
+      },
+      {
+        "command": "q-lint.clearInteractiveWindow",
+        "title": "Clear Interactive Window",
+        "category": "q-lint",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "q-lint.runCellsAbove",
+        "title": "Run Cells Above",
+        "category": "q-lint",
+        "icon": "$(run-above)"
+      },
+      {
+        "command": "q-lint.runCellsBelow",
+        "title": "Run Cell and Below",
+        "category": "q-lint",
+        "icon": "$(run-below)"
+      },
+      {
+        "command": "q-lint.smartSend",
+        "title": "Smart Send Statement and Move to the Next",
+        "category": "q-lint",
+        "icon": "$(debug-step-over)"
+      },
+      {
+        "command": "q-lint.openReplPane",
+        "title": "Open q REPL Pane",
+        "category": "q-lint",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "q-lint.defineViewHelpers",
+        "title": "Define .qlint.view and .qlint.plot on Process",
+        "category": "q-lint",
+        "icon": "$(eye)"
       }
     ],
     "views": {
@@ -2132,6 +2245,16 @@
           "command": "q-lint.draftQsql",
           "when": "editorLangId == q && config.q-lint.chat.englishToQsql.enable",
           "group": "q-lint@9"
+        },
+        {
+          "command": "q-lint.runCell",
+          "when": "editorLangId == q && q-lint.hasCells && config.q-lint.cells.enable",
+          "group": "q-lint@30"
+        },
+        {
+          "command": "q-lint.smartSend",
+          "when": "editorLangId == q && config.q-lint.smartSend.enable",
+          "group": "q-lint@31"
         }
       ],
       "commandPalette": [
@@ -2310,6 +2433,42 @@
         {
           "command": "q-lint.draftQsql",
           "when": "config.q-lint.chat.englishToQsql.enable"
+        },
+        {
+          "command": "q-lint.runCell",
+          "when": "config.q-lint.cells.enable"
+        },
+        {
+          "command": "q-lint.runAllCells",
+          "when": "config.q-lint.cells.enable"
+        },
+        {
+          "command": "q-lint.openInteractiveWindow",
+          "when": "config.q-lint.cells.enable"
+        },
+        {
+          "command": "q-lint.clearInteractiveWindow",
+          "when": "config.q-lint.cells.enable"
+        },
+        {
+          "command": "q-lint.runCellsAbove",
+          "when": "config.q-lint.cells.enable && config.q-lint.cells.codeLens.enable"
+        },
+        {
+          "command": "q-lint.runCellsBelow",
+          "when": "config.q-lint.cells.enable && config.q-lint.cells.codeLens.enable"
+        },
+        {
+          "command": "q-lint.smartSend",
+          "when": "config.q-lint.smartSend.enable"
+        },
+        {
+          "command": "q-lint.openReplPane",
+          "when": "config.q-lint.repl.enable"
+        },
+        {
+          "command": "q-lint.defineViewHelpers",
+          "when": "config.q-lint.view.enable"
         }
       ],
       "editor/title": [
@@ -2438,6 +2597,16 @@
         "command": "q-lint.toggleParameterCache",
         "key": "ctrl+shift+'",
         "when": "editorTextFocus && editorLangId == q"
+      },
+      {
+        "command": "q-lint.runCell",
+        "key": "ctrl+enter",
+        "when": "editorTextFocus && editorLangId == q && q-lint.hasCells && config.q-lint.cells.enable"
+      },
+      {
+        "command": "q-lint.smartSend",
+        "key": "shift+enter",
+        "when": "editorTextFocus && editorLangId == q && !suggestWidgetVisible && !inlineSuggestionVisible && config.q-lint.smartSend.enable"
       }
     ],
     "languageModelTools": [

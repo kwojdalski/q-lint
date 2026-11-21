@@ -41,6 +41,9 @@ import { Drift } from "./driftview";
 import { registerAssistTools } from "./assisttools";
 import { registerChat } from "./chat";
 import { registerQsqlDraft } from "./qsqldraft";
+import { registerInteractive } from "./interactiveview";
+import { registerRepl } from "./replview";
+import { registerViewHelpers } from "./viewhelpers";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -132,6 +135,9 @@ export async function activate(
     hotReload: Drift["hotReloadState"];
     assistTools: () => string[];
     chatParticipant: () => boolean;
+    interactive: ReturnType<typeof registerInteractive>;
+    repl: ReturnType<typeof registerRepl>;
+    viewHelpers: ReturnType<typeof registerViewHelpers>;
   }
 > {
   // Replacing the binary does not restart the server, and a window reload is
@@ -185,6 +191,9 @@ export async function activate(
   });
   const chatParticipant = registerChat(context, live);
   registerQsqlDraft(context, live);
+  const repl = registerRepl(context, live);
+  const interactive = registerInteractive(context, live, repl);
+  const viewHelpers = registerViewHelpers(context, live);
   registerOnboarding(context, () => live.processes());
   const streams = new TableStreams(context, live);
   const launcher = new Launcher(context, live);
@@ -217,6 +226,9 @@ export async function activate(
     hotReload: () => drift.hotReloadState(),
     assistTools: assistTools.registered,
     chatParticipant: chatParticipant.registered,
+    interactive,
+    repl,
+    viewHelpers,
   };
 }
 
