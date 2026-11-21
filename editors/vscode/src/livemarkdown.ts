@@ -1,0 +1,177 @@
+// Live values in a notebook's Markdown cells (#949): `{{q: expr}}` in a
+// cell's text shows the value of `expr` on the process, read when the code
+// cell above it runs - or, for Markdown above every code cell, when the
+// first one runs. Free of any `vscode` import, so a test can drive it.
+//
+// The cell's source is never touched. The values are kept in the cell's
+// metadata under `LIVE_KEY`, by expression, and the Markdown renderer's
+// extension `media/livemarkdown.js` shows each in place of its expression,
+// escaped; an expression with no value yet shows as written. An export to
+// HTML (`qnbconvert.ts`) puts them in the same way.
+//
+// `LIVE` evaluates the expressions with `value`, each on its own so one that
+// fails does not lose the rest, and answers with `(1b;text)` or
+// `(0b;error)` each: a string or a symbol as its characters, anything else
+// as `-3!` writes it, cut to `VALUE_LIMIT` characters by the process.
+// Nothing is defined there.
+
+/// Where a Markdown cell's values are kept in its metadata.
+export const LIVE_KEY = "q-lint.liveValues";
+
+/// The most characters of one value the process sends.
+export const VALUE_LIMIT = 200;
+
+export const LIVE = [
+  "{[es]",
+  " {r:@[{(1b;value x)};x;{(0b;x)}];",
+  "  if[not r 0;:r];",
+  "  v:r 1;",
+  `  (1b;${VALUE_LIMIT} sublist $[10h=abs type v;(),v;-11h=type v;string v;-3!v])} each es}`,
+].join("\n");
+
+export type LiveValue = { text: string } | { error: string };
+
+/// What `expr` stood in for, from text to its `}}`: the expression's start
+/// and the index after the `}}`, or undefined when it is never closed.
+/// Braces inside it - a lambda, a dictionary - must balance, and a brace in
+/// a q string does not count. `media/livemarkdown.js` reads them the same.
+export function scanLive(text: string, at: number): { expr: string; end: number } | undefined {
+  if (!text.startsWith("{{q:", at)) {
+    return undefined;
+  }
+  let depth = 0;
+  let quoted = false;
+  for (let i = at + 4; i < text.length; i++) {
+    const c = text[i];
+    if (quoted) {
+      if (c === "\\") {
+        i++;
+      } else if (c === '"') {
+        quoted = false;
+      }
+    } else if (c === '"') {
+      quoted = true;
+    } else if (c === "\n" && text[i + 1] === "\n") {
+      // A blank line ends a paragraph, and the expression with it.
+      return undefined;
+    } else if (c === "{") {
+      depth++;
+    } else if (c === "}") {
+      if (depth === 0) {
+        if (text[i + 1] !== "}") {
+          return undefined;
+        }
+        const expr = text.slice(at + 4, i).trim();
+        return expr === "" ? undefined : { expr, end: i + 2 };
+      }
+      depth--;
+    }
+  }
+  return undefined;
+}
+
+/// The live values and code spans of a line of Markdown's inline text, left
+/// to right, as markdown-it reads them: whichever starts first wins, so a
+/// q symbol's backtick inside `{{q: ...}}` opens no code span, and a
+/// `{{q: ...}}` inside a code span is text. A backslash escapes the
+/// character after it.
+export function inlineSpans(text: string): { kind: "live" | "code"; start: number; end: number; expr: string }[] {
+  const spans: { kind: "live" | "code"; start: number; end: number; expr: string }[] = [];
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i];
+    if (c === "\\") {
+      i += 2;
+    } else if (c === "{") {
+      const live = scanLive(text, i);
+      if (live !== undefined) {
+        spans.push({ kind: "live", start: i, end: live.end, expr: live.expr });
+        i = live.end;
+      } else {
+        i++;
+      }
+    } else if (c === "`") {
+      let j = i;
+      while (text[j] === "`") {
+        j++;
+      }
+      const run = j - i;
+      // The closing run is one exactly as long.
+      let close = -1;
+      for (let k = j; k < text.length; ) {
+        if (text[k] !== "`") {
+          k++;
+          continue;
+        }
+        let e = k;
+        while (text[e] === "`") {
+          e++;
+        }
+        if (e - k === run) {
+          close = k;
+          break;
+        }
+        k = e;
+      }
+      if (close < 0) {
+        i = j;
+      } else {
+        spans.push({ kind: "code", start: i, end: close + run, expr: text.slice(j, close) });
+        i = close + run;
+      }
+    } else {
+      i++;
+    }
+  }
+  return spans;
+}
+
+/// The expressions in a Markdown cell's `source`, each once, in order. Ones
+/// in a code block or a code span are text, as the renderer shows them.
+export function liveExpressions(source: string): string[] {
+  const prose = source.replace(/^ {0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:^ {0,3}\1[^\n]*$|(?![\s\S]))/gm, (m) => " ".repeat(m.length));
+  const found: string[] = [];
+  for (const span of inlineSpans(prose)) {
+    if (span.kind === "live" && !found.includes(span.expr)) {
+      found.push(span.expr);
+    }
+  }
+  return found;
+}
+
+/// The values `LIVE` answered for `exprs`, by expression. Throws when the
+/// answer is not one.
+export function readLiveValues(exprs: string[], raw: unknown): Record<string, LiveValue> {
+  if (!Array.isArray(raw) || raw.length !== exprs.length) {
+    throw new Error(`the process answered something other than ${exprs.length} live values: ${JSON.stringify(raw)?.slice(0, 200)}`);
+  }
+  const values: Record<string, LiveValue> = {};
+  raw.forEach((r, i) => {
+    const pair = Array.isArray(r) ? r : [];
+    const text = typeof pair[1] === "string" ? pair[1] : Array.isArray(pair[1]) ? pair[1].join("") : String(pair[1] ?? "");
+    values[exprs[i]] = pair[0] === true ? { text } : { error: text };
+  });
+  return values;
+}
+
+/// The Markdown cells whose values are read after the code cell at `index`
+/// runs: those after it up to the next code cell, and, when it is the first
+/// code cell, those above it.
+export function markdownAfter(cells: readonly { kind: "code" | "markdown" }[], index: number): number[] {
+  const out: number[] = [];
+  if (!cells.slice(0, index).some((c) => c.kind === "code")) {
+    for (let i = 0; i < index; i++) {
+      out.push(i);
+    }
+  }
+  for (let i = index + 1; i < cells.length && cells[i].kind === "markdown"; i++) {
+    out.push(i);
+  }
+  return out;
+}
+
+/// The values kept in a cell's metadata, or none.
+export function storedValues(metadata: Record<string, unknown> | undefined): Record<string, LiveValue> {
+  const v = metadata?.[LIVE_KEY];
+  return typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, LiveValue>) : {};
+}

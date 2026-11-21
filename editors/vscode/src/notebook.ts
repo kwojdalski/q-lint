@@ -8,14 +8,23 @@
 // which says here what it drew. A cell is cut into statements as a query is
 // (`statements.ts`) and runs on the extension's active connection through
 // `Live`, so a notebook and the editor's queries share one process, one
-// status bar and one Abort.
+// status bar and one Abort - unless a cell says `/ @process <label>`, which
+// connects to that process first, as a file bound to one does (#950).
+//
+// A Markdown cell's `{{q: expr}}` values are read on the process after the
+// code cell above it runs (`livemarkdown.ts`, #949). Export as HTML or
+// Jupyter, and Import Jupyter Notebook, are `qnbconvert.ts`'s formats
+// (#948).
 import {
   NotebookCellData,
   NotebookCellKind,
   NotebookCellOutput,
   NotebookCellOutputItem,
   NotebookData,
+  NotebookEdit,
   ConfigurationTarget,
+  EventEmitter,
+  WorkspaceEdit,
   Uri,
   commands,
   notebooks,
@@ -31,8 +40,13 @@ import {
 } from "vscode";
 import * as os from "node:os";
 import * as path from "node:path";
-import { cellOutputs, chartCellOutputs, DATA, readCellData, type OutputPart } from "./celldata";
+import { isProduction, resolveProcess } from "./agent";
+import { type OutputPart } from "./celldata";
 import { cellDirective } from "./celldirectives";
+import { LIVE_KEY, liveExpressions, markdownAfter, type LiveValue } from "./livemarkdown";
+import { cellAnswer, liveValues } from "./qnbrun";
+import { fromIpynb, toHtml, toIpynb } from "./qnbconvert";
+import { address } from "./processes";
 import {
   readLive,
   readNotebook,
@@ -44,7 +58,7 @@ import {
   type RowLimitFrom,
 } from "./liveconfig";
 import type { Live } from "./live";
-import { decodeItem, encodeItem, exportScript, NOTEBOOK, parseQnb, serializeQnb, type QnbCell, type QnbOutput } from "./qnb";
+import { decodeItem, encodeItem, exportScript, NOTEBOOK, parseQnb, serializeQnb, type Qnb, type QnbCell, type QnbOutput } from "./qnb";
 import { statements } from "./statements";
 
 /// Where the fields of a file, a cell or an output this extension does not
@@ -190,6 +204,71 @@ const toOutput = (part: OutputPart): NotebookCellOutput =>
 
 const notice = (text: string): NotebookCellOutput => new NotebookCellOutput([NotebookCellOutputItem.stderr(text)]);
 
+/// The notebook features a setting turns on and off, each
+/// `q-lint.notebook.<feature>.enable`, and what each is called when it says
+/// it is off. Read when used, so a change needs no reload.
+export const FEATURES = {
+  variables: "The Notebook Variables view",
+  parameters: "Run Notebook with Parameters",
+  export: "Notebook export to HTML and Jupyter, and Jupyter import,",
+  liveValues: "Live values in Markdown cells",
+  processDirective: "The / @process cell directive",
+} as const;
+export type Feature = keyof typeof FEATURES;
+
+export const featureSetting = (feature: Feature): string => `q-lint.notebook.${feature}.enable`;
+
+export function featureOn(feature: Feature): boolean {
+  return workspace.getConfiguration("q-lint").get<boolean>(`notebook.${feature}.enable`, true) !== false;
+}
+
+/// What a command or a directive of a feature that is off says.
+export const featureOff = (feature: Feature): string =>
+  `${FEATURES[feature]} is turned off: set ${featureSetting(feature)} to true to turn it on.`;
+
+/// Whether `feature` is on; when it is not, says so.
+export function requireFeature(feature: Feature): boolean {
+  if (featureOn(feature)) {
+    return true;
+  }
+  void window.showInformationMessage(`q-lint: ${featureOff(feature)}`);
+  return false;
+}
+
+/// Make the process `label` names the active connection, for a cell that
+/// says `/ @process <label>`: a saved process or a discovered one, its
+/// password from secret storage or asked for as Connect asks. Connecting to
+/// a production process is confirmed first. Why it could not, or undefined
+/// once it is the active connection.
+export async function switchProcess(live: Live, label: string): Promise<string | undefined> {
+  if (live.activeLabel() === label) {
+    return undefined;
+  }
+  const found = resolveProcess(label, live.processes(), live.discovery.discovered());
+  if ("error" in found) {
+    return found.error;
+  }
+  const { process } = found;
+  if (live.activeLabel() === process.label) {
+    return undefined;
+  }
+  if (live.isBusy()) {
+    return `Not run: a query is still running on ${live.activeLabel()}, and this cell runs on ${process.label}. q-lint: Abort Current Query stops waiting for it.`;
+  }
+  if (isProduction(process)) {
+    const go = "Connect and Run";
+    const answer = await window.showWarningMessage(
+      `${process.label} is a production process (tagged ${process.tags.join(", ")}). Connect to it and run the cell there?`,
+      { modal: true, detail: `The cell says / @process ${label}. It runs on ${address(process.host, process.port)} as written, and later cells run there too.` },
+      go,
+    );
+    if (answer !== go) {
+      return `Not run: connecting to the production process ${process.label} was not confirmed.`;
+    }
+  }
+  return (await live.connectTo(process.label)) ? undefined : `Not run: could not connect to ${process.label} (${address(process.host, process.port)}).`;
+}
+
 /// Runs code cells on the active connection: one at a time, in the order
 /// asked, each numbered and timed.
 class QnbKernel {
@@ -198,6 +277,12 @@ class QnbKernel {
   private readonly orders = new WeakMap<NotebookDocument, number>();
   /// The cells asked for so far, run one after another.
   private queue: Promise<void> = Promise.resolve();
+  /// The process each notebook's cells last ran on, by its label.
+  private readonly where = new WeakMap<NotebookDocument, string>();
+  private readonly ran = new EventEmitter<NotebookDocument>();
+  /// Fired when a cell has run on a process: what the variables view
+  /// refreshes on.
+  readonly onDidRun = this.ran.event;
 
   constructor(private readonly live: Live) {
     this.controller = notebooks.createNotebookController(NOTEBOOK.controller, NOTEBOOK.type, "q (active connection)");
@@ -209,6 +294,12 @@ class QnbKernel {
 
   dispose(): void {
     this.controller.dispose();
+    this.ran.dispose();
+  }
+
+  /// The label of the process `notebook`'s cells last ran on.
+  processOf(notebook: NotebookDocument): string | undefined {
+    return this.where.get(notebook);
   }
 
   private execute(cells: NotebookCell[], notebook: NotebookDocument): Promise<void> {
@@ -269,14 +360,33 @@ class QnbKernel {
     if ("problem" in directive) {
       return finish(false, [toOutput({ kind: "error", name: "cell directive", message: directive.problem, stack: "" })]);
     }
+    const off = directive.process !== undefined && !featureOn("processDirective")
+      ? "processDirective"
+      : directive.parameters === true && !featureOn("parameters") ? "parameters" : undefined;
+    if (off !== undefined) {
+      return finish(false, [toOutput({ kind: "error", name: "cell directive", message: featureOff(off), stack: "" })]);
+    }
     const cut = statements(source);
     if (cut.length === 0) {
       return finish(true, []);
     }
+    if (directive.process !== undefined) {
+      const problem = await switchProcess(this.live, directive.process);
+      if (problem !== undefined) {
+        return finish(false, [problem.startsWith("Not run") ? notice(problem) : toOutput({ kind: "error", name: "@process", message: problem, stack: "" })]);
+      }
+    }
+    // The Markdown cells after this one with live values, read once it has run.
+    const notebook = execution.cell.notebook;
+    const all = notebook.getCells();
+    const kinds = all.map((c) => ({ kind: c.kind === NotebookCellKind.Code ? ("code" as const) : ("markdown" as const) }));
+    const markdown = !featureOn("liveValues") ? [] : markdownAfter(kinds, execution.cell.index ?? all.indexOf(execution.cell)).filter(
+      (j) => kinds[j].kind === "markdown" && liveExpressions(all[j].document.getText()).length > 0,
+    );
     const configuration = workspace.getConfiguration("q-lint");
     const { consoleSize } = readLive((key, fallback) => configuration.get(key, fallback));
     const limit = readNotebook((key, fallback) => configuration.get(key, fallback));
-    const rows = rowsArgument(limit);
+    const settings = { consoleSize, rows: rowsArgument(limit), rowLimitFrom: limit.rowLimitFrom };
     let running = false;
     const listener = execution.token.onCancellationRequested(() => {
       // As Abort Current Query: stop waiting, and reconnect once the process
@@ -286,20 +396,18 @@ class QnbKernel {
       }
     });
     try {
-      const result = await this.live.runOnActive(source, async (connection): Promise<[boolean, OutputPart[]] | undefined> => {
+      const result = await this.live.runOnActive(source, async (connection): Promise<[boolean, OutputPart[], Record<string, LiveValue>[]] | undefined> => {
         if (execution.token.isCancellationRequested) {
           // Interrupted while connecting, before anything was sent.
           return undefined;
         }
         running = true;
-        if (directive.mode === "chart") {
-          const answer = await connection.queryGrid(cut, consoleSize, rows);
-          return [answer.ok, chartCellOutputs(directive, answer, limit.rowLimitFrom)];
-        }
-        const answer = directive.mode === "console"
-          ? await connection.query(cut, consoleSize)
-          : readCellData(await connection.call(DATA, cut, rows, consoleSize));
-        return [answer.ok, cellOutputs(directive, answer, limit.rowLimitFrom)];
+        const [ok, parts] = await cellAnswer(connection, directive, cut, settings);
+        // A value that cannot be read leaves the cell's output as it is.
+        const values = ok && markdown.length > 0
+          ? await liveValues(connection, markdown.map((j) => all[j].document.getText())).catch(() => [])
+          : [];
+        return [ok, parts, values];
       });
       if (result === undefined) {
         return finish(false, [notice("Not run: no q process is connected, or a query is still running on it.")]);
@@ -307,8 +415,14 @@ class QnbKernel {
       if (result.value === undefined) {
         return finish(false, [notice("Interrupted: the cell was not run.")]);
       }
-      const [ok, parts] = result.value;
-      return finish(ok, parts.map(toOutput));
+      this.where.set(notebook, result.process);
+      const [ok, parts, values] = result.value;
+      if (values.length > 0) {
+        await keepLiveValues(notebook, markdown, values);
+      }
+      const done = await finish(ok, parts.map(toOutput));
+      this.ran.fire(notebook);
+      return done;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (execution.token.isCancellationRequested) {
@@ -319,6 +433,43 @@ class QnbKernel {
       listener.dispose();
     }
   }
+}
+
+/// Keep each of `values` in the metadata of the Markdown cell at the same
+/// place in `indexes`, where the renderer reads it; the source is not
+/// changed.
+async function keepLiveValues(notebook: NotebookDocument, indexes: number[], values: Record<string, LiveValue>[]): Promise<void> {
+  const edit = new WorkspaceEdit();
+  edit.set(
+    notebook.uri,
+    indexes.map((j, k) => {
+      const { [LIVE_KEY]: _old, ...rest } = notebook.cellAt(j).metadata ?? {};
+      return NotebookEdit.updateCellMetadata(j, { ...rest, [LIVE_KEY]: values[k] });
+    }),
+  );
+  await workspace.applyEdit(edit);
+}
+
+/// The notebook at `uri` as the file keeps it, outputs and all: the open
+/// document, unsaved edits and all, or the file.
+export async function qnbOf(uri: Uri): Promise<Qnb> {
+  const open = workspace.notebookDocuments.find((n) => n.uri.toString() === uri.toString());
+  if (open === undefined) {
+    return parseQnb(Buffer.from(await workspace.fs.readFile(uri)).toString("utf8"));
+  }
+  // Written as a save writes it, and read back.
+  const data = {
+    cells: open.getCells().map((cell) => ({
+      kind: cell.kind,
+      value: cell.document.getText(),
+      languageId: cell.document.languageId,
+      outputs: [...(cell.outputs ?? [])],
+      executionSummary: cell.executionSummary,
+      metadata: cell.metadata,
+    })),
+    metadata: open.metadata,
+  } as unknown as NotebookData;
+  return parseQnb(Buffer.from(new QnbSerializer().serializeNotebook(data, undefined as unknown as CancellationToken)).toString("utf8"));
 }
 
 /// The cells of the notebook at `uri`: the open document's, unsaved edits and
@@ -339,18 +490,28 @@ async function cellsOf(uri: Uri): Promise<QnbCell[]> {
 /// for an untitled notebook (New q Notebook's), in the first workspace
 /// folder - a save dialog cannot browse `untitled:`, and nothing can be
 /// written there.
-function scriptBeside(notebook: Uri): Uri {
-  const name = path.posix.basename(notebook.path).replace(/\.qnb$/i, ".q");
+function scriptBeside(notebook: Uri, extension = ".q"): Uri {
+  const name = path.posix.basename(notebook.path).replace(/\.qnb$/i, extension);
   if (notebook.scheme !== "untitled") {
-    return notebook.with({ path: notebook.path.replace(/\.qnb$/i, ".q") });
+    return notebook.with({ path: notebook.path.replace(/\.qnb$/i, extension) });
   }
   const folder = workspace.workspaceFolders?.[0]?.uri ?? Uri.file(os.homedir());
   return Uri.joinPath(folder, name);
 }
 
+/// What Export Notebook writes, by format: the file's extension, the save
+/// dialog's title and filter, and the file's text.
+type ExportFormat = "q" | "html" | "ipynb";
+const EXPORTS: Record<ExportFormat, { extension: string; title: string; filter: Record<string, string[]> }> = {
+  q: { extension: ".q", title: "Export the notebook as a q script", filter: { "q script": ["q"] } },
+  html: { extension: ".html", title: "Export the notebook as HTML", filter: { HTML: ["html", "htm"] } },
+  ipynb: { extension: ".ipynb", title: "Export the notebook as a Jupyter notebook", filter: { "Jupyter notebook": ["ipynb"] } },
+};
+
 /// Write the notebook at `source` - the active one when not given - as a q
-/// script, to `target` or where the user picks.
-async function exportNotebook(source?: Uri, target?: Uri): Promise<void> {
+/// script, an HTML page or a Jupyter notebook, to `target` or where the
+/// user picks.
+async function exportNotebook(source?: Uri, target?: Uri, format: ExportFormat = "q"): Promise<void> {
   // A q notebook by its type, or a file by its extension in any case: VS
   // Code opens `A.QNB` as one too.
   const active = window.activeNotebookEditor?.notebook;
@@ -359,9 +520,14 @@ async function exportNotebook(source?: Uri, target?: Uri): Promise<void> {
     void window.showInformationMessage("q-lint: open a q notebook (.qnb) to export it.");
     return;
   }
-  let cells: QnbCell[];
+  let text: string;
   try {
-    cells = await cellsOf(from);
+    const name = path.posix.basename(from.path);
+    text = format === "q"
+      ? exportScript(await cellsOf(from), name)
+      : format === "html"
+        ? toHtml(await qnbOf(from), name)
+        : toIpynb(await qnbOf(from));
   } catch (error) {
     void window.showErrorMessage(`q-lint: could not read ${from.fsPath}: ${error instanceof Error ? error.message : String(error)}`);
     return;
@@ -370,21 +536,63 @@ async function exportNotebook(source?: Uri, target?: Uri): Promise<void> {
     target instanceof Uri
       ? target
       : await window.showSaveDialog({
-          title: "Export the notebook as a q script",
-          defaultUri: scriptBeside(from),
-          filters: { "q script": ["q"] },
+          title: EXPORTS[format].title,
+          defaultUri: scriptBeside(from, EXPORTS[format].extension),
+          filters: EXPORTS[format].filter,
         });
   if (to === undefined) {
     return;
   }
   try {
-    await workspace.fs.writeFile(to, Buffer.from(exportScript(cells, path.posix.basename(from.path)), "utf8"));
+    await workspace.fs.writeFile(to, Buffer.from(text, "utf8"));
   } catch (error) {
     void window.showErrorMessage(`q-lint: could not write ${to.fsPath}: ${error instanceof Error ? error.message : String(error)}`);
     return;
   }
   if (!(target instanceof Uri)) {
     void window.showInformationMessage(`q-lint: exported the notebook to ${to.fsPath}.`);
+  }
+}
+
+/// Read the Jupyter notebook at `source` - picked when not given - as a q
+/// notebook, write it to `target` or where the user picks (beside it, as
+/// `.qnb`), and open it when the user picked.
+async function importIpynb(source?: Uri, target?: Uri): Promise<void> {
+  const active = window.activeNotebookEditor?.notebook;
+  let from = source instanceof Uri ? source : active !== undefined && /\.ipynb$/i.test(active.uri.path) ? active.uri : undefined;
+  if (from === undefined) {
+    const picked = await window.showOpenDialog({ title: "Import a Jupyter notebook as a q notebook", filters: { "Jupyter notebook": ["ipynb"] }, canSelectMany: false });
+    if (picked === undefined || picked.length === 0) {
+      return;
+    }
+    from = picked[0];
+  }
+  let qnb: Qnb;
+  try {
+    qnb = fromIpynb(Buffer.from(await workspace.fs.readFile(from)).toString("utf8"));
+  } catch (error) {
+    void window.showErrorMessage(`q-lint: could not import ${from.fsPath}: ${error instanceof Error ? error.message : String(error)}`);
+    return;
+  }
+  const to =
+    target instanceof Uri
+      ? target
+      : await window.showSaveDialog({
+          title: "Save the imported notebook as a q notebook",
+          defaultUri: from.with({ path: from.path.replace(/\.ipynb$/i, "") + ".qnb" }),
+          filters: { "q notebook": ["qnb"] },
+        });
+  if (to === undefined) {
+    return;
+  }
+  try {
+    await workspace.fs.writeFile(to, Buffer.from(serializeQnb(qnb), "utf8"));
+  } catch (error) {
+    void window.showErrorMessage(`q-lint: could not write ${to.fsPath}: ${error instanceof Error ? error.message : String(error)}`);
+    return;
+  }
+  if (!(target instanceof Uri)) {
+    await window.showNotebookDocument(await workspace.openNotebookDocument(to));
   }
 }
 
@@ -456,14 +664,44 @@ export interface RenderedChart {
 /// How many outputs' charts are remembered: the latest drawn.
 const CHARTS_KEPT = 100;
 
-export function registerNotebooks(context: ExtensionContext, live: Live): { charts: () => RenderedChart[] } {
+/// A live value the Markdown renderer showed: for tests, through the API
+/// `activate` returns.
+export interface RenderedLiveValue {
+  expr: string;
+  value: LiveValue | null;
+}
+
+/// How many live values shown are remembered: the latest.
+const LIVE_KEPT = 100;
+
+export function registerNotebooks(
+  context: ExtensionContext,
+  live: Live,
+): {
+  charts: () => RenderedChart[];
+  liveValues: () => RenderedLiveValue[];
+  processOf: (notebook: NotebookDocument) => string | undefined;
+  onDidRun: QnbKernel["onDidRun"];
+} {
   // By output, the last drawing of each, in the order last drawn.
   const drawn = new Map<string, RenderedChart>();
+  const shown: RenderedLiveValue[] = [];
   const messaging = notebooks.createRendererMessaging(NOTEBOOK.renderer);
+  const liveMessaging = notebooks.createRendererMessaging(NOTEBOOK.liveRenderer);
+  const kernel = new QnbKernel(live);
   context.subscriptions.push(
     workspace.registerNotebookSerializer(NOTEBOOK.type, new QnbSerializer()),
-    new QnbKernel(live),
+    kernel,
     commands.registerCommand(NOTEBOOK.exportCommand, (source?: Uri, target?: Uri) => exportNotebook(source, target)),
+    commands.registerCommand(NOTEBOOK.exportHtmlCommand, (source?: Uri, target?: Uri) => requireFeature("export") ? exportNotebook(source, target, "html") : undefined),
+    commands.registerCommand(NOTEBOOK.exportIpynbCommand, (source?: Uri, target?: Uri) => requireFeature("export") ? exportNotebook(source, target, "ipynb") : undefined),
+    commands.registerCommand(NOTEBOOK.importIpynbCommand, (source?: Uri, target?: Uri) => requireFeature("export") ? importIpynb(source, target) : undefined),
+    liveMessaging.onDidReceiveMessage(({ message }: { message: { type?: string; expr?: unknown; value?: LiveValue | null } }) => {
+      if (message.type === "live" && typeof message.expr === "string") {
+        shown.push({ expr: message.expr, value: message.value ?? null });
+        shown.splice(0, Math.max(0, shown.length - LIVE_KEPT));
+      }
+    }),
     commands.registerCommand(RESULTS.setRowLimit, (limit?: number | "all", from?: string) => setRowLimit(limit, from)),
     messaging.onDidReceiveMessage(({ message }: { message: { type?: string; id?: string; chart?: Omit<RenderedChart, "id"> } }) => {
       if (message.type === "rendered" && typeof message.id === "string" && message.chart !== undefined) {
@@ -475,5 +713,10 @@ export function registerNotebooks(context: ExtensionContext, live: Live): { char
       }
     }),
   );
-  return { charts: () => [...drawn.values()] };
+  return {
+    charts: () => [...drawn.values()],
+    liveValues: () => [...shown],
+    processOf: (notebook) => kernel.processOf(notebook),
+    onDidRun: kernel.onDidRun,
+  };
 }

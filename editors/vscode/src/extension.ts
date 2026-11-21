@@ -19,7 +19,10 @@ import { LINTED, launch, needsRestart } from "./settings";
 import { Live } from "./live";
 import { registerAgentTool } from "./agenttool";
 import { registerOnboarding } from "./onboardingview";
-import { registerNotebooks, type RenderedChart } from "./notebook";
+import { registerNotebooks, type RenderedChart, type RenderedLiveValue } from "./notebook";
+import { runWithParameters } from "./notebookrun";
+import { registerNotebookVariables } from "./notebookvarsview";
+import { NOTEBOOK } from "./qnb";
 import { ProcessExplorer } from "./explorerview";
 import { Relations } from "./relate";
 import { Serial } from "./serial";
@@ -85,7 +88,12 @@ function bundledServer(context: ExtensionContext): string | undefined {
 export async function activate(
   context: ExtensionContext,
 ): Promise<
-  ReturnType<Live["api"]> & { explorer: ProcessExplorer["rows"]; notebookCharts: () => RenderedChart[]; agentConfirmation: ReturnType<typeof registerAgentTool> } & {
+  ReturnType<Live["api"]> & {
+    explorer: ProcessExplorer["rows"];
+    notebookCharts: () => RenderedChart[];
+    agentConfirmation: ReturnType<typeof registerAgentTool>;
+    notebookLiveValues: () => RenderedLiveValue[];
+    notebookVariables: ReturnType<typeof registerNotebookVariables>;
     processMonitor: () => InfoNode[];
     hdbBrowser: () => InfoNode[];
     functionSources: FunctionSources["state"];
@@ -123,6 +131,12 @@ export async function activate(
   );
   const agentConfirmation = registerAgentTool(context, live);
   const notebook = registerNotebooks(context, live);
+  const notebookVariables = registerNotebookVariables(context, live, notebook.processOf, notebook.onDidRun);
+  context.subscriptions.push(
+    commands.registerCommand(NOTEBOOK.runWithParameters, (source?: Uri, target?: Uri, overrides?: Record<string, string>) =>
+      runWithParameters(live, source, target, overrides),
+    ),
+  );
   const explorer = new ProcessExplorer(context, live);
   const sources = new FunctionSources(context, live);
   const infoViews = registerInfoViews(context, live);
@@ -136,6 +150,8 @@ export async function activate(
     explorer: () => explorer.rows(),
     notebookCharts: () => notebook.charts(),
     agentConfirmation,
+    notebookLiveValues: () => notebook.liveValues(),
+    notebookVariables,
     processMonitor: infoViews.monitor,
     hdbBrowser: infoViews.hdb,
     functionSources: () => sources.state(),

@@ -84,6 +84,8 @@ function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir
     "./agenttool": { registerAgentTool: () => () => undefined },
     "./onboardingview": { registerOnboarding() {} },
     "./notebook": { registerNotebooks: () => ({ charts: () => [] }) },
+    "./notebookvarsview": { registerNotebookVariables: () => ({ variables: () => [] }) },
+    "./notebookrun": { runWithParameters: async () => undefined },
     "./explorerview": { ProcessExplorer: class { rows() { return []; } } },
     "./relate": { Relations: class { serverChanged() {} } },
     "./funcsourceview": { FunctionSources: class { state() { return {}; } } },
