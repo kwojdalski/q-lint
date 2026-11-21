@@ -238,3 +238,32 @@ test("tagging or importing the connected process gives the connection its tags",
   await stub.commands.get("q-lint.importProcesses")(vscode.Uri.file("/list.json"));
   assert.deepStrictEqual(live.activeProcess().tags, ["uat"]);
 });
+
+// A discovered process's password was kept after its server was deleted or
+// pointed at another URL: a new server of the same label listing a process
+// of the same label - at another host - was sent it without asking.
+test("deleting a discovery server, or changing its URL, forgets its processes' passwords", async (t) => {
+  const http = require("node:http");
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify([{ label: "rdb", host: "h", port: 1, user: "u" }, { label: "hdb", host: "h", port: 2 }]));
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  t.after(() => server.close());
+  const url = `http://127.0.0.1:${server.address().port}/`;
+  const { context } = await setUp(t, []);
+  const secrets = context.secrets.all;
+  await stub.commands.get("q-lint.addDiscoveryServer")({ label: "desk", url });
+  secrets.set("q-lint.discoveredPassword.desk/rdb", "pw");
+  stub.picks = ["Delete"];
+  await stub.commands.get("q-lint.deleteDiscoveryServer")("desk");
+  assert.strictEqual(secrets.has("q-lint.discoveredPassword.desk/rdb"), false);
+  await stub.commands.get("q-lint.addDiscoveryServer")({ label: "desk", url });
+  secrets.set("q-lint.discoveredPassword.desk/rdb", "pw");
+  await stub.commands.get("q-lint.editDiscoveryServer")("desk", { url: `${url}?other` });
+  assert.strictEqual(secrets.has("q-lint.discoveredPassword.desk/rdb"), false);
+  // A change that keeps the URL keeps them.
+  secrets.set("q-lint.discoveredPassword.desk/rdb", "pw");
+  await stub.commands.get("q-lint.editDiscoveryServer")("desk", { secret: "Bearer x" });
+  assert.strictEqual(secrets.get("q-lint.discoveredPassword.desk/rdb"), "pw");
+});

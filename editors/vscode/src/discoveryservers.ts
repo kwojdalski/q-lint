@@ -20,6 +20,7 @@ import {
   downloadedPasswords,
   fetchProcesses,
   parseServers,
+  qualified,
   serverDescription,
   serverLabelProblem,
   serverTooltip,
@@ -31,7 +32,7 @@ import {
   type ServerState,
 } from "./discovery";
 import { DISCOVERY_COMMANDS, readDiscovery } from "./liveconfig";
-import type { Process } from "./processes";
+import { passwordKey, type Process } from "./processes";
 
 const SERVERS_KEY = "q-lint.discoveryServers";
 const secretKey = (label: string): string => `q-lint.discovery.auth.${label}`;
@@ -233,6 +234,15 @@ export class DiscoveryServers {
     await this.fetch(server);
   }
 
+  /// Forget the passwords given for the processes `label` listed: once the
+  /// server is gone, or lists from another URL, a process of the same label
+  /// may be another, at another host.
+  private async forgetPasswords(label: string): Promise<void> {
+    for (const process of this.states.get(label)?.processes ?? []) {
+      await this.context.secrets.delete(passwordKey({ label: qualified(label, process.label), server: label }));
+    }
+  }
+
   private async keepSecret(label: string, secret: string | undefined): Promise<void> {
     if (secret === undefined) {
       return;
@@ -299,6 +309,9 @@ export class DiscoveryServers {
       return;
     }
     const server = { label: answer.label, url: answer.url };
+    if (server.label !== old.label || server.url !== old.url) {
+      await this.forgetPasswords(old.label);
+    }
     if (server.label !== old.label) {
       const kept = await this.context.secrets.get(secretKey(old.label));
       await this.context.secrets.delete(secretKey(old.label));
@@ -327,6 +340,7 @@ export class DiscoveryServers {
       return;
     }
     await this.context.secrets.delete(secretKey(server.label));
+    await this.forgetPasswords(server.label);
     this.states.delete(server.label);
     await this.store(this.servers().filter((s) => s.label !== server.label));
   }

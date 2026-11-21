@@ -193,7 +193,9 @@ Process**'s argument - so the two are never taken for each other. A bare
 label names a saved process first, then a discovered one if only one server
 lists it. A discovered process with a `user` asks for its password on the
 first connect, and keeps it in secret storage under `server/label`; one
-that fails to connect is forgotten, and asked for again on the next.
+that fails to connect is forgotten, and asked for again on the next, and
+so are those of a server's processes when it is deleted or its URL or label
+changed.
 
 **Querying.** With a q file open:
 - **Query Current Line**, `ctrl+q`.
