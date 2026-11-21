@@ -4,7 +4,8 @@
 // through `runOnActive`), an agent's query (refused, never asked) and a
 // connect script. Redefine on Process is in insightview.test.js, the agent
 // tool's own path in agenttool.test.js, and Query a Tag, Compare, saved and
-// watched queries in their own tests. No q and no editor needed.
+// watched queries in their own tests; the 0.30 features' code (logpoints,
+// coverage, locals, .qlint.view) at the end. No q and no editor needed.
 const { stub, vscode } = require("./vscode_stub.js");
 const test = require("node:test");
 const assert = require("node:assert");
@@ -249,4 +250,38 @@ test("a cell edit (#964) and a CSV load statement (#963) go through the guard; d
   await live.run('("SF";enlist ",")0:`:/data/t.csv', undefined, undefined, "grid");
   assert.strictEqual(asked().length, 3);
   assert.deepStrictEqual(q.queries().at(-1), '("SF";enlist ",")0:`:/data/t.csv');
+});
+
+test("the 0.30 paths that change a process hand the guard code it holds: logpoints, coverage, locals, .qlint.view; their reads are not asked about", async (t) => {
+  const { LOG_ADD, LOG_REMOVE, LOG_LIST } = require("../out/logpoint.js");
+  const { installLambda, restoreExpression } = require("../out/instrument.js");
+  const { viewDefinition } = require("../out/qview.js");
+  const { wrangleQuery } = require("../out/wrangle.js");
+  const { loadExpression } = require("../out/datafile.js");
+  const { q, live } = await setUp(t, ["prod"]);
+  await live.connectTo("rdb");
+  const prod = [{ label: "rdb", tags: ["prod"] }];
+  // Each is the text the feature gives Live.runOnActive (logpointview.ts,
+  // testexplorer.ts, localsview.ts, viewhelpers.ts).
+  const changes = {
+    "Add Logpoint (#984)": LOG_ADD,
+    "Remove Logpoint (#984)": LOG_REMOVE,
+    "the Coverage profile's replacing (#979)": installLambda("cov"),
+    "the Coverage profile's restoring (#979)": restoreExpression("cov"),
+    "Capture Locals at Last Error (#985)": `f[1;2]\n${installLambda("err")}`,
+    "Define .qlint.view and .qlint.plot (#960)": viewDefinition([25, 80], 1000),
+  };
+  let calls = 0;
+  for (const [what, code] of Object.entries(changes)) {
+    assert.match(live.guardRefuses(code, prod) ?? "", /^Nothing was run/, what);
+    stub.picks.push(undefined);
+    await assert.rejects(() => live.runOnActive(code, async () => ++calls), /was not confirmed/, what);
+  }
+  assert.strictEqual(asked().length, Object.keys(changes).length);
+  assert.strictEqual(calls, 0, "declined, none is sent");
+  assert.deepStrictEqual(q.queries(), []);
+  // Reads go through unasked: Show Logpoint Hits, a wrangle step, a data file.
+  for (const code of [LOG_LIST, wrangleQuery("select from t", [{ kind: "filter", column: "px", op: ">", value: "1" }]), loadExpression("csv", "/d/t.csv", true, { types: ["S", "F"], delimiter: "," })]) {
+    assert.strictEqual(live.guardRefuses(code, prod), undefined, code);
+  }
 });
