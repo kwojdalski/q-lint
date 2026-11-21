@@ -70,7 +70,8 @@ export function limits(
 }
 
 /// `RUN` for an unlimited console query: the same answer, except that a
-/// simple list (types 1 to 19) comes as `value`, with no text, for
+/// simple list (types 1 to 19), or an enumerated one's values with its
+/// domain, comes as `value`, with no text, for
 /// `readUnlimited` to write, with its attribute (`-2!`). A temporal list
 /// comes as the numbers q holds it as - timestamps and timespans long
 /// nanoseconds, a datetime float days, the rest ints - since the codec
@@ -82,10 +83,13 @@ export const UNLIMITED = [
   "{[s;size]",
   ...TRAP,
   " t:type r 1;",
+  " e:$[r[0]&t within 20 76h;@[value;r 1;{()}];()];",
   " $[r 0;",
   "   $[t=10h;`ok`type`text!(1b;t;enlist $[null a:-2!r 1;\"\";\"`\",string[a],\"#\"],$[1=count r 1;\",\";\"\"],",
   "       \"\\\"\",raze[({1_-1_-3!x} each \"c\"$til 256)\"i\"$r 1],\"\\\"\");",
-  "     t within 1 19h;`ok`type`text`value`attr!(1b;t;();$[t within 12 19h;\"jiifjiii\"[t-12h]$r 1;r 1];-2!r 1);`ok`type`text!(1b;t;.Q.S[\"j\"$size;0j] r 1)];",
+  "     t within 1 19h;`ok`type`text`value`attr!(1b;t;();$[t within 12 19h;\"jiifjiii\"[t-12h]$r 1;r 1];-2!r 1);",
+  "     (t within 20 76h)&type[e] within 1 19h;`ok`type`text`value`attr`vtype`domain`eattr!(1b;t;();$[type[e] within 12 19h;\"jiifjiii\"[type[e]-12h]$e;e];-2!e;type e;key r 1;-2!r 1);",
+  "     `ok`type`text!(1b;t;.Q.S[\"j\"$size;0j] r 1)];",
   "   `ok`error`trace!(0b;r 1;r 2)]}",
 ].join("\n");
 
@@ -94,10 +98,17 @@ export const UNLIMITED = [
 export function readUnlimited(raw: unknown): Answer {
   const answer = readAnswer(raw);
   const r = raw as Record<string, unknown>;
+  // The codec drops a list's attribute; q writes it first: `s#1 2 3.
+  const attr = (a: unknown): string => (typeof a === "string" && /^[supg]$/.test(a) ? `\`${a}#` : "");
   if (answer.ok && "value" in r && answer.type >= 1 && answer.type <= 19) {
-    // The codec drops a list's attribute; q writes it first: `s#1 2 3.
-    const attr = typeof r.attr === "string" && /^[supg]$/.test(r.attr) ? `\`${r.attr}#` : "";
-    return { ...answer, text: [attr + vectorText(r.value, answer.type)] };
+    return { ...answer, text: [attr(r.attr) + vectorText(r.value, answer.type)] };
+  }
+  // An enumerated list, as -3! writes it but whole: `sym$`a`b, its values'
+  // attribute after the domain (KDB-X writes `s#`sym$`s#`a`b), and an
+  // empty one `sym$().
+  if (answer.ok && "domain" in r && typeof r.domain === "string" && typeof r.vtype === "number") {
+    const body = Array.isArray(r.value) && r.value.length === 0 ? "()" : attr(r.attr) + vectorText(r.value, r.vtype);
+    return { ...answer, text: [`${attr(r.eattr)}\`${r.domain}$${body}`] };
   }
   return answer;
 }

@@ -22,6 +22,8 @@ t:([] sym:\`a\`b\`c; px:1.5 2.5 3.5)
 big:([] i:til 20000; s:20000#\`x\`y)
 kt:([k:\`b\`a] v:2 1)
 slow:{system "sleep ",string x; x}
+dom:\`a\`b\`c,\`$"s",/:string til 100
+ids:1 2 3
 `;
 
 function freePort() {
@@ -119,6 +121,20 @@ test("unlimited, unwrapped and timed-out queries against a real q process", { sk
     // And whole, where a query cuts it at \c.
     const long = readUnlimited(await connection.call(UNLIMITED, ["300#\"ab\""], UNLIMITED_SIZE));
     assert.deepStrictEqual(long.text, [`"${"ab".repeat(150)}"`]);
+  });
+
+  await t.test("unlimited: an enumerated list is written whole, as q writes it", async () => {
+    // exec sym from an HDB table is enumerated: .Q.S wrote it with -3!,
+    // which KDB-X cuts at \\c, unlimited or not.
+    const syms = Array.from({ length: 100 }, (_, i) => `\`s${i}`).join("");
+    const whole = readUnlimited(await connection.call(UNLIMITED, ["`dom$`$\"s\",/:string til 100"], UNLIMITED_SIZE));
+    assert.deepStrictEqual(whole.text, [`\`dom$${syms}`]);
+    assert.strictEqual(whole.type, 20);
+    for (const list of ["`dom$`a`b", "`dom$enlist`b", "`dom$0#`", "`s#`dom$`a`b", "`ids$1 3"]) {
+      const own = await connection.query([list], SIZE);
+      const one = readUnlimited(await connection.call(UNLIMITED, [list], UNLIMITED_SIZE));
+      assert.deepStrictEqual(one.text, own.text, list);
+    }
   });
 
   await t.test("unlimited: a table is every row, formatted by the process", async () => {

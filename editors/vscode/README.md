@@ -243,9 +243,9 @@ outcome; the buttons on a row run it again on the active connection and
   for the window: a reload turns it off, so a result sent whole is never
   left over from an earlier session. One cut q makes itself remains: KDB-X
   writes an atom or a list item with `-3!`, which stops at the process's own
-  `\c` width, so a simple list (`til 100000`) is sent as its value and
-  written out by q-lint instead, and a general list's long items are still
-  cut at `\c`.
+  `\c` width, so a simple list (`til 100000`) or an enumerated one
+  (`exec sym from trade` on an HDB) is sent as its values and written out
+  by q-lint instead, and a general list's long items are still cut at `\c`.
 - **Toggle Unwrapped Query**, or `q-lint.query.unwrapped`: for a gateway
   that refuses a lambda, the code is sent as plain strings, one per
   statement in order, stopping at the first error, as a client that sends
