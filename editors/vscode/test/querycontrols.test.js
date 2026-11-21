@@ -329,3 +329,14 @@ test("a string is written with q's escapes, unwrapped and unlimited", async () =
   assert.ok(UNLIMITED.includes('t=10h;"x"$r 1'));
   assert.deepStrictEqual(readUnlimited({ ok: true, type: 10, text: [], value: "é\u0001" }).text, ['"\\303\\251\\001"']);
 });
+
+test("a list's attribute is written before it, unwrapped and unlimited", async () => {
+  // -8!`s#1 2
+  assert.deepStrictEqual((await unwrapped("0x010000001e00000007010200000001000000000000000200000000000000")).text, ["`s#1 2"]);
+  // -8!`u#"ab"
+  assert.deepStrictEqual((await unwrapped("0x01000000100000000a02020000006162")).text, ['`u#"ab"']);
+  assert.ok(UNLIMITED.includes("attr r 1"));
+  assert.deepStrictEqual(readUnlimited({ ok: true, type: 11, text: [], value: ["a"], attr: "g" }).text, ["`g#,`a"]);
+  assert.deepStrictEqual(readUnlimited({ ok: true, type: 7, text: [], value: [], attr: "p" }).text, ["`p#`long$()"]);
+  assert.deepStrictEqual(readUnlimited({ ok: true, type: 7, text: [], value: [Long.fromInt(1)], attr: null }).text, [",1"]);
+});

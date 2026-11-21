@@ -274,9 +274,21 @@ function quoted(text: string | Uint8Array | number[]): string {
   return `"${out}"`;
 }
 
+/// The attribute a list's header holds (1 to 4) as q writes it before the
+/// list: `` `s# ``.
+export function attrText(attr: number | string | null | undefined): string {
+  const name = typeof attr === "number" ? " supg"[attr]?.trim() : attr;
+  return name ? `\`${name}#` : "";
+}
+
 /// A simple list of q type `t` (1 to 19) as q's console writes it:
-/// `1 2 3i`, `101b`, `` `a`b ``, `"abc"`, `,1` for one item.
-export function vectorText(values: unknown, t: number): string {
+/// `1 2 3i`, `101b`, `` `a`b ``, `"abc"`, `,1` for one item; with its
+/// attribute, when it has one, in front: `` `s#1 2 3 ``.
+export function vectorText(values: unknown, t: number, attr?: number | string | null): string {
+  return attrText(attr) + listText(values, t);
+}
+
+function listText(values: unknown, t: number): string {
   if (t === 10) {
     // Bytes from a typed decoding or an unlimited query; a string from the
     // codec.
@@ -457,10 +469,10 @@ export function formatQ(q: QValue, value: unknown, type?: number): string[] {
     return [atomText(q.v, q.t)];
   }
   if (q.kind === "vector") {
-    return [vectorText(q.v, q.t)];
+    return [vectorText(q.v, q.t, q.attr)];
   }
   if (q.kind === "chars") {
-    return [vectorText(q.v, 10)];
+    return [vectorText(q.v, 10, q.attr)];
   }
   return formatValue(value, type);
 }
