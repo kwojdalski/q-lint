@@ -104,6 +104,13 @@ test("source.k: a block comment runs from a lone / to a lone \\, and code follow
   assert.deepStrictEqual(await innermost("source.k", src, "b"), ["variable.other.k"]);
 });
 
+test("source.k: 0Ns, 0Ws and 0Wg are not nulls, since q refuses them", async () => {
+  for (const text of ["0Ns", "0Ws", "0Wg"]) {
+    assert.notDeepStrictEqual(await innermost("source.k", `x:${text}`, text), ["constant.language.null.k"], text);
+  }
+  assert.deepStrictEqual(await innermost("source.k", "x:0Ng", "0Ng"), ["constant.language.null.k"]);
+});
+
 test("source.k: a lone backslash ends the script inside an open lambda too", async () => {
   // The loader reads a lone backslash line by line, whatever is open -
   // as the q grammar has it.

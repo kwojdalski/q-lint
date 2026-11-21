@@ -251,8 +251,10 @@ def grammar():
                         + AFTER,
                     },
                     {
+                        "comment": "A typed null or infinity. None is of symbol (the null symbol "
+                        "is a lone backtick) and no infinity of guid: q refuses 0Ns, 0Ws and 0Wg.",
                         "name": "constant.language.null.q",
-                        "match": BEFORE + r"-?0[NnWw][ghijefcspmdznuvt]?" + AFTER,
+                        "match": BEFORE + r"-?0(?:[Nn][ghijefcpmdznuvt]?|[Ww][hijefcpmdznuvt]?)" + AFTER,
                     },
                     {"name": "constant.language.boolean.q", "match": BEFORE + r"[01]+b" + AFTER},
                     {"name": "constant.numeric.byte.q", "match": BEFORE + r"0x[0-9a-fA-F]*" + AFTER},

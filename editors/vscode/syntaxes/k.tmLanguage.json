@@ -130,7 +130,7 @@
         },
         {
           "name": "constant.language.null.k",
-          "match": "(?<![A-Za-z0-9_.`])-?0[NnWw][ghijefcspmdznuvt]?(?![A-Za-z0-9_])"
+          "match": "(?<![A-Za-z0-9_.`])-?0(?:[Nn][ghijefcpmdznuvt]?|[Ww][hijefcpmdznuvt]?)(?![A-Za-z0-9_])"
         },
         {
           "name": "constant.language.boolean.k",

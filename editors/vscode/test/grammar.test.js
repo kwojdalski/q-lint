@@ -85,6 +85,17 @@ const cases = [
   ["and a fractional one", "t:1.5p", "1.5p", "constant.numeric.q"],
 ];
 
+// What KDB-X refuses: there is no typed null or infinity of symbol (the
+// null symbol is a lone backtick), and no infinite guid.
+test("0Ns, 0Ws and 0Wg are not coloured as nulls, since q refuses them", async () => {
+  for (const text of ["0Ns", "0ns", "0Ws", "-0ws", "0Wg"]) {
+    assert.notDeepStrictEqual(await scopesOf(`x:${text}`, text), ["constant.language.null.q"], text);
+  }
+  for (const text of ["0Ng", "0Nc", "0Wc", "-0Wp", "0wz"]) {
+    assert.deepStrictEqual(await scopesOf(`x:${text}`, text), ["constant.language.null.q"], text);
+  }
+});
+
 for (const [description, source, text, scope, which = -1] of cases) {
   test(description, async () => {
     const scopes = await scopesOf(source, text);
