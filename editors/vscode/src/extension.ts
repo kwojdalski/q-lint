@@ -30,6 +30,7 @@ import { FunctionSources } from "./funcsourceview";
 import { registerInfoViews } from "./infoview";
 import type { InfoNode } from "./monitor";
 import { registerTestExplorer } from "./testexplorer";
+import { registerValueHover } from "./valuehoverview";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -111,6 +112,7 @@ export async function activate(
     hdbBrowser: () => InfoNode[];
     functionSources: FunctionSources["state"];
     testExplorer: Omit<ReturnType<typeof registerTestExplorer>, "serverChanged">;
+    valueHover: ReturnType<typeof registerValueHover>;
   }
 > {
   // Replacing the binary does not restart the server, and a window reload is
@@ -157,6 +159,7 @@ export async function activate(
   registerOnboarding(context, () => live.processes());
   relations = new Relations(context, () => client);
   testExplorer = registerTestExplorer(context, live, running);
+  const valueHover = registerValueHover(context, live, running);
   // Not awaited: nothing above needs the server, and a slow or hung one
   // would hold up every command of the extension until it answered.
   void serial.run(() => start(context)).then(() => serverChanged());
@@ -171,6 +174,7 @@ export async function activate(
     hdbBrowser: infoViews.hdb,
     functionSources: () => sources.state(),
     testExplorer: { discover: testExplorer.discover, items: testExplorer.items, results: testExplorer.results, run: testExplorer.run },
+    valueHover,
   };
 }
 

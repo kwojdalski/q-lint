@@ -590,6 +590,18 @@ since it asks the process whenever the mouse rests on a name), hovering a
 table's name in a q editor shows the same, shorter, beside the language
 server's hover. Details are read once per refresh of the explorer.
 
+**Live values.** With `q-lint.liveValueHover.enable` on (off by default,
+since it asks the process whenever the mouse rests on a global), hovering a
+global in a q editor shows its value on the connected process beside the
+language server's hover: its kind and count, then the value as the console
+prints it - within `\c`'s rows and columns - cut at 2,000 characters. The
+language server says which global the mouse is on, under the `\d` in force,
+so a local or a word of q's asks nothing. The name is found by its
+namespace's `key`, never by evaluating it; a view is named and not run, a
+partitioned table is not printed, and a process tagged `prod`, `prd` or
+`production` is not asked. The read waits up to a second for a query to
+finish, and shows nothing if it does not.
+
 **Function source.** **Open Function Source**, on a function in the Process
 Explorer or the name under the cursor in a q editor, shows the function as
 the process has it (`last value f`) in a read-only editor, headed by the
@@ -978,6 +990,7 @@ nothing.
 | `q-lint.processMonitor.refreshInterval` | `0` | Seconds between the Monitor's reads while it is shown; `0` none. | - |
 | `q-lint.hdbBrowser.enable` | `true` | The HDB Browser view. | - |
 | `q-lint.testExplorer.enable` | `true` | List q tests (`test_*`, qUnit `testName`, k4unit CSV suites) in the Testing view and run them on a q process. Off, none is listed, read or sent. | - |
+| `q-lint.liveValueHover.enable` | `false` | Show a global's value on the connected process when hovering it in a q editor. Off, no hover is registered and nothing is sent. | - |
 
 ### Connection settings
 

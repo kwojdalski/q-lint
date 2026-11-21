@@ -91,6 +91,7 @@ function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir
     "./funcsourceview": { FunctionSources: class { state() { return {}; } } },
     "./infoview": { registerInfoViews: () => ({ monitor: () => [], hdb: () => [] }) },
     "./testexplorer": { registerTestExplorer: () => ({ serverChanged() {}, discover: async () => {}, items: () => [], results: () => [], run: async () => {} }) },
+    "./valuehoverview": { registerValueHover: () => ({ registered: () => false }) },
   };
   const file = require.resolve("../out/extension.js");
   delete require.cache[file];
