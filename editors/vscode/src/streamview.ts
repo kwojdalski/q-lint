@@ -1,0 +1,218 @@
+// Stream Tickerplant Table (#915): a webview grid of a table's updates, kept
+// to its last rows, over a connection of its own that subscribes with
+// `.u.sub`. What is sent and how an update is read is `stream.ts`'s.
+//
+// Off by default (`q-lint.tickerplant.stream.enable`): a subscriber is a load
+// on a tickerplant, and a slow one can grow its memory. Turned off, every
+// stream closes and its connection with it, which the tickerplant sees as
+// the subscriber gone.
+import { randomBytes } from "node:crypto";
+import { Uri, ViewColumn, commands, window, workspace, type ExtensionContext, type Webview, type WebviewPanel } from "vscode";
+import { isProduction } from "./agent";
+import type { Live, ProcessArg } from "./live";
+import { decode } from "./qdecode";
+import type { QConnection } from "./qclient";
+import { RowWindow, STREAM_COMMANDS, SUBSCRIBE, TABLES, readStream, readUpdate } from "./stream";
+
+/// How often the grid is redrawn, at most.
+const DRAW_MS = 200;
+
+interface Stream {
+  process: string;
+  table: string;
+  columns: string[];
+  window: RowWindow;
+  connection: QConnection;
+  panel: WebviewPanel;
+  paused: boolean;
+  closed?: string;
+}
+
+export class TableStreams {
+  private readonly streams = new Set<Stream>();
+
+  constructor(
+    context: ExtensionContext,
+    private readonly live: Live,
+  ) {
+    context.subscriptions.push(
+      commands.registerCommand(STREAM_COMMANDS.start, (row?: ProcessArg, table?: string) => this.start(row, table)),
+      workspace.onDidChangeConfiguration((event) => {
+        if (event.affectsConfiguration("q-lint.tickerplant.stream") && !this.settings().enabled) {
+          this.closeAll();
+        }
+      }),
+      { dispose: () => this.closeAll() },
+    );
+  }
+
+  /// What each stream shows, for tests and the e2e run.
+  state(): { process: string; table: string; columns: string[]; rows: string[][]; total: number; closed?: string }[] {
+    return [...this.streams].map((s) => ({
+      process: s.process,
+      table: s.table,
+      columns: s.columns,
+      rows: s.window.rows(),
+      total: s.window.total,
+      ...(s.closed !== undefined ? { closed: s.closed } : {}),
+    }));
+  }
+
+  private settings(): ReturnType<typeof readStream> {
+    const configuration = workspace.getConfiguration("q-lint");
+    return readStream((key, fallback) => configuration.get(key, fallback));
+  }
+
+  private closeAll(): void {
+    for (const stream of [...this.streams]) {
+      stream.panel.dispose();
+    }
+  }
+
+  /// Subscribe to `table` (or one the user picks) on the process `row`
+  /// names (or one the user picks), and open its grid.
+  private async start(row?: ProcessArg, table?: string): Promise<void> {
+    const settings = this.settings();
+    if (!settings.enabled) {
+      void window.showInformationMessage(
+        "q-lint: Streaming a tickerplant table is turned off. Set q-lint.tickerplant.stream.enable to true to turn it on.",
+      );
+      return;
+    }
+    const process = await this.live.pick(row, "Stream a table from which tickerplant?");
+    if (process === undefined) {
+      return;
+    }
+    if (isProduction(process)) {
+      const yes = "Subscribe";
+      const sure = await window.showWarningMessage(
+        `${process.label} is a production process (tagged ${process.tags.join(", ")}). Subscribing adds q-lint as a subscriber there: the tickerplant sends it every update of the table while the grid is open. Subscribe?`,
+        { modal: true },
+        yes,
+      );
+      if (sure !== yes) {
+        return;
+      }
+    }
+    let connection: QConnection;
+    try {
+      connection = await window.withProgress({ location: { viewId: "q-lint.processes" }, title: `Connecting to ${process.label}` }, () =>
+        this.live.openSeparate(process),
+      );
+    } catch (error) {
+      void window.showErrorMessage(`q-lint: could not connect to ${process.label}: ${error instanceof Error ? error.message : String(error)}`);
+      return;
+    }
+    let columns: string[];
+    try {
+      let name = typeof table === "string" ? table.trim().replace(/^`/, "") : undefined;
+      if (name === undefined) {
+        const listed = await connection.call(TABLES).catch(() => []);
+        const tables = (Array.isArray(listed) ? listed : [listed]).filter((t): t is string => typeof t === "string" && t !== "");
+        name =
+          tables.length > 0
+            ? (await window.showQuickPick(tables, { title: `Stream which table of ${process.label}?` }))
+            : await window.showInputBox({ title: `Stream which table of ${process.label}?`, prompt: "The table's name, as .u.sub takes it." });
+        name = name?.trim().replace(/^`/, "");
+      }
+      if (name === undefined || name === "") {
+        await connection.close();
+        return;
+      }
+      if (!/^[A-Za-z.][A-Za-z0-9_.]*$/.test(name)) {
+        throw new Error(`"${name}" is not a table name`);
+      }
+      table = name;
+      const answer = await connection.call(SUBSCRIBE, `\`${name}`);
+      const cols = Array.isArray(answer) ? answer[1] : undefined;
+      columns = (Array.isArray(cols) ? cols : [cols]).filter((c): c is string => typeof c === "string");
+    } catch (error) {
+      await connection.close();
+      void window.showErrorMessage(`q-lint: could not subscribe to ${table ?? "the table"} on ${process.label}: ${error instanceof Error ? error.message : String(error)}`);
+      return;
+    }
+    this.open(process.label, table, columns, connection, settings.rows);
+  }
+
+  private open(label: string, table: string, columns: string[], connection: QConnection, limit: number): void {
+    const media = Uri.joinPath(this.live.extensionUri, "media");
+    const panel = window.createWebviewPanel(
+      "q-lint.stream",
+      `q: ${table} on ${label}`,
+      { viewColumn: ViewColumn.Beside, preserveFocus: true },
+      { enableScripts: true, localResourceRoots: [media], retainContextWhenHidden: true },
+    );
+    const stream: Stream = { process: label, table, columns, window: new RowWindow(limit), connection, panel, paused: false };
+    this.streams.add(stream);
+    panel.webview.html = streamHtml(panel.webview, media);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const draw = (): void => {
+      timer = undefined;
+      if (!stream.paused) {
+        void panel.webview.postMessage({
+          type: "rows",
+          process: label,
+          table,
+          columns,
+          limit,
+          rows: stream.window.rows(),
+          total: stream.window.total,
+          at: new Date().toLocaleTimeString(),
+          ...(stream.closed !== undefined ? { closed: stream.closed } : {}),
+        });
+      }
+    };
+    const later = (): void => {
+      timer ??= setTimeout(draw, DRAW_MS);
+    };
+    connection.whenAsync((message) => {
+      let rows: string[][] | undefined;
+      try {
+        rows = readUpdate(decode(message), table, columns);
+      } catch {
+        rows = undefined;
+      }
+      if (rows !== undefined && rows.length > 0) {
+        stream.window.push(rows);
+        later();
+      }
+    });
+    connection.whenClosed(() => {
+      stream.closed ??= `the connection to ${label} closed`;
+      later();
+    });
+    panel.webview.onDidReceiveMessage((message: { type?: string; paused?: unknown }) => {
+      if (message.type === "ready") {
+        draw();
+      } else if (message.type === "pause") {
+        stream.paused = message.paused === true;
+        draw();
+      }
+    });
+    panel.onDidDispose(() => {
+      clearTimeout(timer);
+      stream.closed ??= "closed";
+      this.streams.delete(stream);
+      // The tickerplant drops a subscriber whose handle closes.
+      void connection.close();
+    });
+    draw();
+  }
+}
+
+/// The stream page: the extension's own script and stylesheet, a fresh nonce,
+/// nothing inline, no network.
+function streamHtml(webview: Webview, media: Uri): string {
+  const nonce = randomBytes(16).toString("base64");
+  const file = (name: string): string => webview.asWebviewUri(Uri.joinPath(media, name)).toString();
+  return [
+    "<!DOCTYPE html>",
+    '<html lang="en"><head><meta charset="UTF-8">',
+    `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';">`,
+    '<meta name="viewport" content="width=device-width, initial-scale=1.0">',
+    `<link rel="stylesheet" href="${file("stream.css")}">`,
+    "<title>q-lint: stream</title></head><body>",
+    `<script nonce="${nonce}" src="${file("stream.js")}"></script>`,
+    "</body></html>",
+  ].join("\n");
+}

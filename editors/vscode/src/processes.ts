@@ -19,6 +19,26 @@ export interface Process {
   /// a q file read and run so. Never taken from a discovery server.
   init?: string;
   initFile?: string;
+  /// An SSH destination (`bastion`, `me@bastion`, `me@bastion:2222`) the
+  /// process is reached through, by a tunnel the system `ssh` opens (#908).
+  /// Read only where a connect script is.
+  ssh?: string;
+  /// Set for a TorQ gateway: the server types a query goes to through
+  /// `.gw.syncexec` unless a file or the query names others (#909).
+  gateway?: string[];
+  /// How the process is started on this machine (#954). Read only where a
+  /// connect script is: it runs a program.
+  launch?: Launch;
+}
+
+/// A local process's start: `command` (default `q-lint.terminal.qBinary`)
+/// with `script`, `-p <port>` and `args`, in `cwd` with `env` added.
+export interface Launch {
+  command?: string;
+  script?: string;
+  args?: string[];
+  cwd?: string;
+  env?: Record<string, string>;
 }
 
 /// Where a process's password is kept in secret storage. A discovered
@@ -80,6 +100,9 @@ export function processTooltip(process: Process, from?: string): string {
     process.tags.length ? `tags: ${markdownText(process.tags.join(", "))}` : "no tags",
     ...(process.init !== undefined ? ["runs q code on connect"] : []),
     ...(process.initFile !== undefined ? [`runs ${markdownText(process.initFile)} on connect`] : []),
+    ...(process.ssh !== undefined ? [`through an SSH tunnel via ${markdownText(process.ssh)}`] : []),
+    ...(process.gateway !== undefined ? [`TorQ gateway: ${markdownText(process.gateway.join(", "))}`] : []),
+    ...(process.launch !== undefined ? ["has a launch definition"] : []),
     ...(from === undefined ? [] : [`listed by ${markdownText(from)}, connected to as ${markdownText(`${from}/${process.label}`)}`]),
   ].join("\n\n");
 }
@@ -159,12 +182,90 @@ export function parseProcesses(json: unknown, scripts = false): { processes: Pro
       ...(scripts && typeof e.initFile === "string" && e.initFile.trim() !== "" && !(typeof e.init === "string" && e.init.trim() !== "")
         ? { initFile: e.initFile.trim() }
         : {}),
+      ...extrasOf(e, scripts),
     });
     if (scripts && typeof e.init === "string" && e.init.trim() !== "" && typeof e.initFile === "string" && e.initFile.trim() !== "") {
       problems.push(`${where} (${label}) has both init and initFile: its init code was kept.`);
     }
   });
   return { processes, problems };
+}
+
+/// An SSH destination as written, or undefined when it is none. A leading
+/// `-` would be read by ssh as an option, and a space as two arguments.
+export function sshDestination(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const d = value.trim();
+  return d !== "" && !d.startsWith("-") && !/[\s'"`$;|&<>\\]/.test(d) ? d : undefined;
+}
+
+/// Server types as written: a list, or a string split as tags are, each a
+/// q name (`rdb`, `hdb`, `my_rdb`), lower case not forced.
+export function serverTypes(value: unknown): string[] | undefined {
+  const items = Array.isArray(value) ? value.filter((t): t is string => typeof t === "string") : typeof value === "string" ? value.split(/[\s,`]+/) : [];
+  const types = [...new Set(items.map((t) => t.trim().replace(/^`/, "")).filter((t) => /^[A-Za-z][A-Za-z0-9_.]*$/.test(t)))];
+  return types.length > 0 ? types : undefined;
+}
+
+/// A launch definition as written, or undefined when it is none: every field
+/// is optional, but the object must be one.
+export function launchOf(value: unknown): Launch | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const v = value as Record<string, unknown>;
+  const text = (x: unknown): string | undefined => (typeof x === "string" && x.trim() !== "" ? x.trim() : undefined);
+  const args = Array.isArray(v.args) ? v.args.filter((a): a is string => typeof a === "string") : typeof v.args === "string" ? splitArgs(v.args) : [];
+  const env: Record<string, string> = {};
+  if (typeof v.env === "object" && v.env !== null && !Array.isArray(v.env)) {
+    for (const [k, x] of Object.entries(v.env as Record<string, unknown>)) {
+      if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(k) && typeof x === "string") {
+        Object.defineProperty(env, k, { value: x, enumerable: true, writable: true, configurable: true });
+      }
+    }
+  }
+  const launch: Launch = {
+    ...(text(v.command) !== undefined ? { command: text(v.command) } : {}),
+    ...(text(v.script) !== undefined ? { script: text(v.script) } : {}),
+    ...(args.length > 0 ? { args } : {}),
+    ...(text(v.cwd) !== undefined ? { cwd: text(v.cwd) } : {}),
+    ...(Object.keys(env).length > 0 ? { env } : {}),
+  };
+  return launch;
+}
+
+/// Arguments as typed in one box: split at spaces, a pair of double quotes
+/// keeping one with spaces together.
+export function splitArgs(text: string): string[] {
+  return [...text.matchAll(/"([^"]*)"|(\S+)/g)].map((m) => m[1] ?? m[2]);
+}
+
+/// The SSH destination, gateway server types and launch definition of a
+/// process entry. `trusted`: from a source whose code may run (the saved
+/// list, an import, a trusted workspace), which alone may name an SSH host
+/// or a program to start.
+function extrasOf(e: Record<string, unknown>, trusted: boolean): Pick<Process, "ssh" | "gateway" | "launch"> {
+  const ssh = trusted ? sshDestination(e.ssh) : undefined;
+  const gateway = serverTypes(e.gateway);
+  const launch = trusted ? launchOf(e.launch) : undefined;
+  return { ...(ssh !== undefined ? { ssh } : {}), ...(gateway !== undefined ? { gateway } : {}), ...(launch !== undefined ? { launch } : {}) };
+}
+
+/// `process` with the SSH destination, gateway and launch definition of
+/// `from`: Edit Process asks for none of them, and keeps them.
+export function withExtras<P extends Process>(process: P, from: Pick<Process, "ssh" | "gateway" | "launch">): P {
+  const { ssh: _s, gateway: _g, launch: _l, ...rest } = process;
+  void _s;
+  void _g;
+  void _l;
+  return {
+    ...rest,
+    ...(from.ssh !== undefined ? { ssh: from.ssh } : {}),
+    ...(from.gateway !== undefined ? { gateway: from.gateway } : {}),
+    ...(from.launch !== undefined ? { launch: from.launch } : {}),
+  } as P;
 }
 
 /// The processes a process file lists, as `parseProcesses` reads them, with

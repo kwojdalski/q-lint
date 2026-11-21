@@ -823,6 +823,49 @@
             "markdownDescription": "How many times `#q-lint.connection.autoReconnect.enable#` tries before it gives up."
           }
         }
+      },
+      {
+        "title": "q-lint: process connections",
+        "properties": {
+          "q-lint.connection.sshTunnel.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 700,
+            "markdownDescription": "Reach a process that names an SSH jump host (**Set SSH Tunnel**) through a tunnel the system `ssh` opens (`ssh -N -L`), with your agent and `~/.ssh/config`; it never asks for or keeps a password. Off: **Set SSH Tunnel** is hidden, a connection through a tunnel closes, and such a process is not connected to; the jump hosts stay in the process list."
+          },
+          "q-lint.connection.torqGateway.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 701,
+            "markdownDescription": "Send a query to a process marked as a TorQ gateway (**Set Gateway Server Types**) as `.gw.syncexec[query;servertypes]`: to the server types a `/ @servertypes rdb hdb` line in the file names, else the process's own; **Query Gateway on Server Types...** asks for them. Off: queries go to a gateway as written, and both commands are hidden."
+          },
+          "q-lint.tickerplant.stream.enable": {
+            "type": "boolean",
+            "default": false,
+            "order": 702,
+            "markdownDescription": "Offer **Stream Tickerplant Table**: subscribe to a table with `.u.sub` on a connection of its own, and show its updates live in a grid. Off by default: a subscriber is a load on a tickerplant, which sends it every update. Off: the command is hidden and refuses, and every open stream closes, unsubscribing."
+          },
+          "q-lint.tickerplant.stream.rows": {
+            "type": "integer",
+            "default": 1000,
+            "minimum": 1,
+            "maximum": 10000,
+            "order": 703,
+            "markdownDescription": "The newest rows a stream's grid keeps, with `#q-lint.tickerplant.stream.enable#` on. Read when a stream starts."
+          },
+          "q-lint.processes.launcher.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 704,
+            "markdownDescription": "Offer **Start Process**, **Stop Process** and **Set Launch Definition**: start a local q or TorQ process from its launch definition (program, script, arguments; `-p` is the process's port), with its output in an output channel of its own. Only a process you gave a definition and asked to start is started, and what was started is stopped when VS Code closes. Off: the commands are hidden and refuse, and what was started is stopped."
+          },
+          "q-lint.processes.shared.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 705,
+            "markdownDescription": "Read and watch the workspace's `.qlint/processes.json`, a process list committed with the code, and list its processes beside the saved ones; **Add to Shared Process List** writes a saved process there, never its password. A password or secret in the file is ignored and said. Connect scripts, SSH jump hosts and launch definitions in it are read only in a trusted workspace. Off: the file is not read, its group is removed, and the command is hidden."
+          }
+        }
       }
     ],
     "commands": [
@@ -1355,6 +1398,53 @@
         "title": "Stop Watching Query",
         "category": "q-lint",
         "icon": "$(eye-closed)"
+      },
+      {
+        "command": "q-lint.setSshTunnel",
+        "title": "Set SSH Tunnel",
+        "category": "q-lint",
+        "icon": "$(remote)"
+      },
+      {
+        "command": "q-lint.setGatewayServerTypes",
+        "title": "Set Gateway Server Types",
+        "category": "q-lint",
+        "icon": "$(server-environment)"
+      },
+      {
+        "command": "q-lint.queryGatewayWithServerTypes",
+        "title": "Query Gateway on Server Types...",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.streamTable",
+        "title": "Stream Tickerplant Table",
+        "category": "q-lint",
+        "icon": "$(pulse)"
+      },
+      {
+        "command": "q-lint.startProcess",
+        "title": "Start Process",
+        "category": "q-lint",
+        "icon": "$(play)"
+      },
+      {
+        "command": "q-lint.stopProcess",
+        "title": "Stop Process",
+        "category": "q-lint",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "q-lint.setLaunchDefinition",
+        "title": "Set Launch Definition",
+        "category": "q-lint",
+        "icon": "$(rocket)"
+      },
+      {
+        "command": "q-lint.addToSharedProcesses",
+        "title": "Add to Shared Process List",
+        "category": "q-lint",
+        "icon": "$(repo-push)"
       }
     ],
     "views": {
@@ -1764,6 +1854,41 @@
           "command": "q-lint.saveQuery",
           "when": "view == q-lint.queryHistory && viewItem == history && config.q-lint.savedQueries.enable",
           "group": "1_history@3"
+        },
+        {
+          "command": "q-lint.setSshTunnel",
+          "when": "view == q-lint.processes && viewItem =~ /^process/ && config.q-lint.connection.sshTunnel.enable",
+          "group": "2_edit@5"
+        },
+        {
+          "command": "q-lint.setGatewayServerTypes",
+          "when": "view == q-lint.processes && viewItem =~ /^process/ && config.q-lint.connection.torqGateway.enable",
+          "group": "2_edit@6"
+        },
+        {
+          "command": "q-lint.streamTable",
+          "when": "view == q-lint.processes && viewItem =~ /^(process|discovered)/ && config.q-lint.tickerplant.stream.enable",
+          "group": "1_connect@3"
+        },
+        {
+          "command": "q-lint.startProcess",
+          "when": "view == q-lint.processes && viewItem =~ /^(process|discovered)/ && config.q-lint.processes.launcher.enable",
+          "group": "4_launch@1"
+        },
+        {
+          "command": "q-lint.stopProcess",
+          "when": "view == q-lint.processes && viewItem =~ /^(process|discovered)/ && config.q-lint.processes.launcher.enable",
+          "group": "4_launch@2"
+        },
+        {
+          "command": "q-lint.setLaunchDefinition",
+          "when": "view == q-lint.processes && viewItem =~ /^process/ && config.q-lint.processes.launcher.enable",
+          "group": "4_launch@3"
+        },
+        {
+          "command": "q-lint.addToSharedProcesses",
+          "when": "view == q-lint.processes && viewItem =~ /^process/ && workspaceFolderCount > 0 && config.q-lint.processes.shared.enable",
+          "group": "2_edit@7"
         }
       ],
       "editor/title/run": [
@@ -1907,6 +2032,11 @@
           "command": "q-lint.stopWatchingQuery",
           "when": "editorLangId == q && q-lint.watching",
           "group": "q-lint@25"
+        },
+        {
+          "command": "q-lint.queryGatewayWithServerTypes",
+          "when": "editorLangId == q && q-lint.connected && config.q-lint.connection.torqGateway.enable",
+          "group": "q-lint@9"
         }
       ],
       "commandPalette": [
@@ -2041,6 +2171,38 @@
         {
           "command": "q-lint.stopWatchingQuery",
           "when": "q-lint.watching"
+        },
+        {
+          "command": "q-lint.setSshTunnel",
+          "when": "config.q-lint.connection.sshTunnel.enable"
+        },
+        {
+          "command": "q-lint.setGatewayServerTypes",
+          "when": "config.q-lint.connection.torqGateway.enable"
+        },
+        {
+          "command": "q-lint.queryGatewayWithServerTypes",
+          "when": "editorLangId == q && q-lint.connected && config.q-lint.connection.torqGateway.enable"
+        },
+        {
+          "command": "q-lint.streamTable",
+          "when": "config.q-lint.tickerplant.stream.enable"
+        },
+        {
+          "command": "q-lint.startProcess",
+          "when": "config.q-lint.processes.launcher.enable"
+        },
+        {
+          "command": "q-lint.stopProcess",
+          "when": "config.q-lint.processes.launcher.enable"
+        },
+        {
+          "command": "q-lint.setLaunchDefinition",
+          "when": "config.q-lint.processes.launcher.enable"
+        },
+        {
+          "command": "q-lint.addToSharedProcesses",
+          "when": "workspaceFolderCount > 0 && config.q-lint.processes.shared.enable"
         }
       ],
       "editor/title": [

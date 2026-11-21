@@ -30,6 +30,8 @@ import { FunctionSources } from "./funcsourceview";
 import { registerInfoViews } from "./infoview";
 import { QueryAcross } from "./queryacross";
 import { SavedQueries } from "./savedqueriesview";
+import { TableStreams } from "./streamview";
+import { Launcher } from "./launcherview";
 import type { InfoNode } from "./monitor";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, statSync } from "node:fs";
@@ -101,6 +103,8 @@ export async function activate(
     functionSources: FunctionSources["state"];
     queryAcross: QueryAcross["state"];
     savedQueries: SavedQueries["queries"];
+    tableStreams: TableStreams["state"];
+    launchedProcesses: Launcher["running"];
   }
 > {
   // Replacing the binary does not restart the server, and a window reload is
@@ -147,6 +151,8 @@ export async function activate(
   const across = new QueryAcross(context, live);
   const saved = new SavedQueries(context, live);
   registerOnboarding(context, () => live.processes());
+  const streams = new TableStreams(context, live);
+  const launcher = new Launcher(context, live);
   relations = new Relations(context, () => client);
   // Not awaited: nothing above needs the server, and a slow or hung one
   // would hold up every command of the extension until it answered.
@@ -163,6 +169,8 @@ export async function activate(
     functionSources: () => sources.state(),
     queryAcross: () => across.state(),
     savedQueries: () => saved.queries(),
+    tableStreams: () => streams.state(),
+    launchedProcesses: () => launcher.running(),
   };
 }
 

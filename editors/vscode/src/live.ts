@@ -8,11 +8,13 @@
 // `processes.ts`'s; discovery servers, `discoveryservers.ts`'s; what a
 // terminal is sent, `terminal.ts`'s. This file is the VS Code around them.
 import * as os from "os";
+import * as net from "net";
 import * as path from "path";
 import {
   commands,
   EventEmitter,
   MarkdownString,
+  RelativePattern,
   StatusBarAlignment,
   env,
   ThemeColor,
@@ -22,6 +24,7 @@ import {
   Uri,
   window,
   workspace,
+  type Disposable,
   type ExtensionContext,
   type OutputChannel,
   type StatusBarItem,
@@ -30,11 +33,13 @@ import {
   type TreeDataProvider,
   type TreeView,
 } from "vscode";
-import { children, findDiscovered, qualified, type Row } from "./discovery";
+import { children, findDiscovered, qualified, type Discovered, type Row } from "./discovery";
+import { SHARED_COMMANDS, SHARED_FILE, SHARED_SOURCE, readShared, readSharedFile, secretsWarning, withShared } from "./shared";
 import { DiscoveryServers, discoveryItem } from "./discoveryservers";
 import {
   address,
   hostProblem,
+  markdownText,
   merge,
   parseProcesses,
   plainHost,
@@ -45,11 +50,16 @@ import {
   processThemeColour,
   processTooltip,
   readProcessFile,
+  sshDestination,
+  serverTypes,
   tlsChoices,
+  withExtras,
   type Process,
 } from "./processes";
 import { COMMANDS, CONNECTED, VIEWS, readLive, readProcessSettings, readTerminal } from "./liveconfig";
-import { QConnection, QError } from "./qclient";
+import { QConnection, QError, type Target } from "./qclient";
+import { SshTunnel, TUNNEL_COMMANDS, readTunnel } from "./tunnel";
+import { GATEWAY_COMMANDS, fileServerTypes, gatewayStatement, isGatewayCall, readGateway } from "./gateway";
 import { HEARTBEAT, UNANSWERED_MS, backoffDelay, latencyText, readHealth } from "./health";
 import { historyHeading, historyLabel, iconsEscaped } from "./history";
 import { render } from "./query";
@@ -85,6 +95,8 @@ import { WATCH, WATCHING, intervalProblem, readWatch, watchText } from "./watch"
 import { guardedBy } from "./guard";
 
 const PROCESSES_KEY = "q-lint.processes";
+/// The address of each process the shared list held when last read (#955).
+const SHARED_SEEN_KEY = "q-lint.sharedProcessesSeen";
 const HISTORY_KEY = "q-lint.queryHistory";
 /// How many queries the history keeps.
 const HISTORY_LIMIT = 200;
@@ -94,7 +106,7 @@ const HISTORY_LIMIT = 200;
 /// What a process command is given: a view row, a process's label (from a
 /// keybinding's `args`, or another extension), or nothing - then the user
 /// picks one. A discovered process is named `server/label`.
-type ProcessArg = Row | string | undefined;
+export type ProcessArg = Row | string | undefined;
 
 export interface HistoryEntry {
   process: string;
@@ -173,7 +185,7 @@ class ProcessesView implements TreeDataProvider<Row> {
   getChildren(row?: Row): Row[] {
     let rows = this.given.get(row);
     if (rows === undefined) {
-      rows = children(this.live.processes(), this.live.discovery.discovered(), row);
+      rows = children(this.live.processes(), this.live.discovery.discovered(), row, this.live.sharedList()[0]);
       this.given.set(row, rows);
       for (const child of rows) {
         this.parents.set(child, row);
@@ -196,7 +208,7 @@ class ProcessesView implements TreeDataProvider<Row> {
       if (row.kind === "discovered" && row.server === process.server && qualified(row.server, row.process.label) === process.label) {
         return row;
       }
-      if (row.kind === "tag" || row.kind === "servers" || row.kind === "server") {
+      if (row.kind === "tag" || row.kind === "servers" || row.kind === "server" || row.kind === "shared") {
         const found = this.find(process, row);
         if (found !== undefined) {
           return found;
@@ -207,6 +219,17 @@ class ProcessesView implements TreeDataProvider<Row> {
   }
 
   getTreeItem(row: Row): TreeItem {
+    if (row.kind === "shared") {
+      const item = new TreeItem(`Workspace: ${SHARED_FILE}`, TreeItemCollapsibleState.Expanded);
+      const n = row.state.processes.length;
+      item.description = row.state.error !== undefined ? "failed" : `${n} process${n === 1 ? "" : "es"}`;
+      item.iconPath = new ThemeIcon("repo", row.state.error !== undefined ? new ThemeColor("errorForeground") : undefined);
+      item.tooltip = new MarkdownString(
+        `The processes ${markdownText(row.file)} lists, shared with the repository. Once connected, one is \`${SHARED_SOURCE}/label\`.`,
+      );
+      item.contextValue = "sharedProcesses";
+      return item;
+    }
     if (row.kind !== "tag" && row.kind !== "process" && row.kind !== "discovered") {
       return discoveryItem(row);
     }
@@ -223,7 +246,8 @@ class ProcessesView implements TreeDataProvider<Row> {
     const connected = this.live.activeProcess();
     const active = connected?.server === from && connected?.label === (from === undefined ? process.label : qualified(from, process.label));
     const item = new TreeItem(process.label, TreeItemCollapsibleState.None);
-    item.description = `${address(process.host, process.port)}${active ? " - connected" : ""}`;
+    const running = from === undefined && this.live.launched(process.label);
+    item.description = `${address(process.host, process.port)}${active ? " - connected" : ""}${running ? " - running" : ""}`;
     item.iconPath = new ThemeIcon(active ? "vm-active" : "server-process", colourOf(process.tags));
     item.tooltip = new MarkdownString(processTooltip(process, from));
     const kind = from === undefined ? "process" : "discovered";
@@ -402,6 +426,16 @@ export class QTerminals {
   }
 }
 
+/// Where `process` is connected to, with `password` for its user.
+function targetOf(process: Process, password: string | undefined): Target {
+  return {
+    host: process.host,
+    port: process.port,
+    ...(process.user ? { user: process.user, password: password ?? "" } : {}),
+    ...(process.tls ? { tls: true } : {}),
+  };
+}
+
 export class Live {
   private connection: QConnection | undefined;
   /// The query history, newest first. Kept here and written through to
@@ -466,6 +500,12 @@ export class Live {
   private watching:
     | { code: string; label: string; every: number; runs: number; timer: ReturnType<typeof setInterval>; status: StatusBarItem; running: boolean }
     | undefined;
+  /// The workspace's shared process list as last read (#955), when it is
+  /// on and the file is there, and the watcher on the file.
+  private shared: Discovered | undefined;
+  private sharedWatcher: Disposable | undefined;
+  /// Bumped by each read, so a slow one does not overwrite a later one.
+  private sharedRead = 0;
 
   constructor(private readonly context: ExtensionContext) {
     this.output = window.createOutputChannel("q-lint: query", "q-console");
@@ -517,6 +557,10 @@ export class Live {
       c(CONTROL_COMMANDS.copyQuery, (entry?: HistoryEntry) => this.copyQuery(entry)),
       c(CONTROL_COMMANDS.revealProcess, () => this.revealProcess()),
       c(CONNECT_SCRIPT_COMMANDS.set, (row?: ProcessArg, script?: ConnectScript | null) => this.setConnectScript(row, script)),
+      c(TUNNEL_COMMANDS.set, (row?: ProcessArg, destination?: string | null) => this.setSshTunnel(row, destination)),
+      c(SHARED_COMMANDS.add, (row?: ProcessArg) => this.addToShared(row)),
+      c(GATEWAY_COMMANDS.set, (row?: ProcessArg, types?: string | string[] | null) => this.setGateway(row, types)),
+      c(GATEWAY_COMMANDS.queryWith, (types?: string | string[]) => this.queryGatewayWith(types)),
       c(HISTORY_COMMANDS.filter, (filter?: HistoryFilter) => this.filterHistory(filter)),
       c(HISTORY_COMMANDS.clearFilter, () => this.setHistoryFilter({})),
       c(HISTORY_COMMANDS.export, (file?: Uri) => this.exportHistory(file)),
@@ -544,6 +588,13 @@ export class Live {
         if (event.affectsConfiguration("q-lint.query.watch") && !this.setting(readWatch).enabled) {
           this.stopWatching("q-lint.query.watch.enable was turned off");
         }
+        if (event.affectsConfiguration("q-lint.processes.shared")) {
+          this.watchShared();
+        }
+        // Turned off, a connection through a tunnel closes with its tunnel.
+        if (event.affectsConfiguration("q-lint.connection.sshTunnel") && !this.setting(readTunnel).enabled && this.active?.ssh !== undefined && this.connection !== undefined) {
+          void this.disconnect();
+        }
       }),
       this.changed.event((what) => {
         if (what !== "queried") {
@@ -565,11 +616,129 @@ export class Live {
           // A reconnect after an abort stops trying.
           this.reconnectStopped = true;
           void this.connection?.close();
+          this.sharedWatcher?.dispose();
         },
       },
+      workspace.onDidGrantWorkspaceTrust(() => void this.loadShared()),
     );
     this.showStatus();
     this.status.show();
+    this.watchShared();
+  }
+
+  /// The workspace's shared process list, as a discovery server's list is
+  /// given: empty while it is off or there is no file.
+  sharedList(): Discovered[] {
+    return this.shared === undefined ? [] : [this.shared];
+  }
+
+  /// Watch and read the shared list while `q-lint.processes.shared.enable`
+  /// is on; turned off, stop, forget what it listed, and close a connection
+  /// to one of its processes.
+  private watchShared(): void {
+    this.sharedWatcher?.dispose();
+    this.sharedWatcher = undefined;
+    const folder = workspace.workspaceFolders?.[0];
+    if (!this.setting(readShared).enabled || folder === undefined) {
+      this.sharedRead++;
+      const had = this.shared !== undefined;
+      this.shared = undefined;
+      if (had) {
+        this.processesView.refresh();
+      }
+      if (this.active?.server === SHARED_SOURCE && this.connection !== undefined) {
+        void this.disconnect();
+      }
+      return;
+    }
+    const watcher = workspace.createFileSystemWatcher(new RelativePattern(folder, SHARED_FILE));
+    const reload = (): void => void this.loadShared();
+    this.sharedWatcher = { dispose: () => watcher.dispose() };
+    watcher.onDidCreate(reload);
+    watcher.onDidChange(reload);
+    watcher.onDidDelete(reload);
+    void this.loadShared();
+  }
+
+  /// Write a saved process into the shared list, creating it if need be
+  /// (#955): its address, user, tags and settings, never a password.
+  private async addToShared(row?: ProcessArg): Promise<void> {
+    if (!this.featureOn(this.setting(readShared).enabled, "The shared process list", "q-lint.processes.shared.enable")) {
+      return;
+    }
+    const folder = workspace.workspaceFolders?.[0];
+    if (folder === undefined) {
+      void window.showInformationMessage(`q-lint: open a folder first: the shared process list is its ${SHARED_FILE}.`);
+      return;
+    }
+    const process = await this.chosen(row, "Share which q process with the repository?");
+    if (process === undefined) {
+      return;
+    }
+    const file = Uri.joinPath(folder.uri, SHARED_FILE);
+    let text: string | undefined;
+    try {
+      text = Buffer.from(await workspace.fs.readFile(file)).toString("utf8");
+    } catch {
+      text = undefined;
+    }
+    try {
+      await workspace.fs.writeFile(file, Buffer.from(withShared(text, process), "utf8"));
+    } catch (error) {
+      void window.showErrorMessage(`q-lint: could not write ${file.fsPath}: ${error instanceof Error ? error.message : String(error)}`);
+      return;
+    }
+    await this.loadShared();
+    void window.showInformationMessage(
+      `q-lint: ${process.label} is in ${SHARED_FILE}, without its password${process.user !== undefined ? `: each user is asked for ${process.user}'s on connect` : ""}.`,
+    );
+  }
+
+  /// Read the shared list again. A process whose host, port or user changed
+  /// since it was last read forgets the password given for it.
+  private async loadShared(): Promise<void> {
+    const folder = workspace.workspaceFolders?.[0];
+    const run = ++this.sharedRead;
+    if (!this.setting(readShared).enabled || folder === undefined) {
+      return;
+    }
+    const file = Uri.joinPath(folder.uri, SHARED_FILE);
+    let text: string | undefined;
+    try {
+      text = Buffer.from(await workspace.fs.readFile(file)).toString("utf8");
+    } catch {
+      text = undefined;
+    }
+    if (run !== this.sharedRead) {
+      return;
+    }
+    const server = { label: SHARED_SOURCE, url: file.fsPath };
+    if (text === undefined) {
+      this.shared = undefined;
+    } else {
+      try {
+        const read = readSharedFile(text, workspace.isTrusted === true);
+        const before = this.context.workspaceState.get<unknown>(SHARED_SEEN_KEY);
+        const seen = parseProcesses(Array.isArray(before) ? before : [], true).processes;
+        for (const label of passwordsToForget(seen, read.processes)) {
+          await this.context.secrets.delete(passwordKey({ label: qualified(SHARED_SOURCE, label), server: SHARED_SOURCE }));
+        }
+        await this.context.workspaceState.update(
+          SHARED_SEEN_KEY,
+          read.processes.map(({ label, host, port, user }) => ({ label, host, port, ...(user !== undefined ? { user } : {}) })),
+        );
+        if (run !== this.sharedRead) {
+          return;
+        }
+        this.shared = { server, state: { processes: read.processes, problems: read.problems, loading: false, removed: false, fetchedAt: Date.now() } };
+        if (read.secrets.length > 0) {
+          void window.showWarningMessage(secretsWarning(read.secrets));
+        }
+      } catch (error) {
+        this.shared = { server, state: { processes: [], problems: [], loading: false, removed: false, error: `not JSON: ${error instanceof Error ? error.message : String(error)}` } };
+      }
+    }
+    this.processesView.refresh();
   }
 
   /// What the extension returns from `activate`: a read-only view for tests
@@ -595,6 +764,8 @@ export class Live {
     cachedLambdas: () => number;
     /// The query being watched, and how many times it has run (#914).
     watching: () => { code: string; label: string; every: number; runs: number } | undefined;
+    /// The workspace's shared process list (#955), when it is shown.
+    sharedProcesses: () => { file: string; processes: Process[]; problems: string[]; error?: string } | undefined;
   } {
     return {
       processes: () => this.processes(),
@@ -622,7 +793,21 @@ export class Live {
         const w = this.watching;
         return w === undefined ? undefined : { code: w.code, label: w.label, every: w.every, runs: w.runs };
       },
+      sharedProcesses: () =>
+        this.shared === undefined
+          ? undefined
+          : {
+              file: this.shared.server.url,
+              processes: this.shared.state.processes,
+              problems: this.shared.state.problems,
+              ...(this.shared.state.error !== undefined ? { error: this.shared.state.error } : {}),
+            },
     };
+  }
+
+  /// Where the extension's own files are, for a webview of another view.
+  get extensionUri(): Uri {
+    return this.context.extensionUri;
   }
 
   processes(): Process[] {
@@ -671,6 +856,20 @@ export class Live {
     });
     this.borrowed = settled;
     return call;
+  }
+
+  /// Whether a process of this label was started from the Processes view
+  /// and still runs (#954): the launcher sets it.
+  launched: (label: string) => boolean = () => false;
+
+  /// Redraw the Processes view.
+  refreshProcesses(): void {
+    this.processesView.refresh();
+  }
+
+  /// Save `processes` as the list, for the views around this one.
+  saveProcesses(processes: Process[]): Promise<void> {
+    return this.save(processes);
   }
 
   private async save(processes: Process[]): Promise<void> {
@@ -865,7 +1064,7 @@ export class Live {
   /// A discovered process only when `discovered`, with its label qualified;
   /// a label names a saved process before a discovered one.
   private async chosen(row: ProcessArg, title: string, discovered = false): Promise<Process | undefined> {
-    const listed = discovered ? this.discovery.discovered() : [];
+    const listed = discovered ? [...this.discovery.discovered(), ...this.sharedList()] : [];
     if (typeof row === "string") {
       const named = this.processes().find((p) => p.label === row) ?? findDiscovered(listed, row);
       if (named === undefined) {
@@ -906,6 +1105,12 @@ export class Live {
     return picked?.process;
   }
 
+  /// The process a command was given, or one the user picks, a discovered
+  /// one with its label qualified: for the views around this one.
+  pick(row: ProcessArg, title: string): Promise<Process | undefined> {
+    return this.chosen(row, title, true);
+  }
+
   private async edit(row?: ProcessArg): Promise<void> {
     const old = await this.chosen(row, "Edit which q process?");
     if (old === undefined) {
@@ -918,7 +1123,7 @@ export class Live {
       return;
     }
     // The boxes do not ask for the connect script: it is kept.
-    const process = withScript(answer.process, scriptOf(old));
+    const process = withExtras(withScript(answer.process, scriptOf(old)), old);
     // Read again: the list may have changed while the boxes were open.
     const now = this.processes();
     const problem = !now.some((p) => p.label === old.label)
@@ -952,9 +1157,13 @@ export class Live {
       // The connection is still to where it was opened: it takes the new
       // label and tags, and keeps its address until connected again.
       const { host, port, user, tls } = active;
-      this.active = withScript(
-        { label: process.label, host, port, ...(user !== undefined ? { user } : {}), tags: process.tags, ...(tls ? { tls } : {}) },
-        scriptOf(process),
+      this.active = withExtras(
+        withScript(
+          { label: process.label, host, port, ...(user !== undefined ? { user } : {}), tags: process.tags, ...(tls ? { tls } : {}) },
+          scriptOf(process),
+        ),
+        // The tunnel it was opened through stays until connected again.
+        { ...process, ssh: active.ssh },
       );
       this.showStatus();
       // The explorer keeps what it read under the label it read it for.
@@ -1327,15 +1536,10 @@ export class Live {
         const connection = await window.withProgress(
           { location: { viewId: VIEWS.processes }, title: `Connecting to ${process.label}` },
           async () => {
-            const target = {
-              host: process.host,
-              port: process.port,
-              ...(process.user ? { user: process.user, password: password ?? "" } : {}),
-              ...(process.tls ? { tls: true } : {}),
-            };
+            const target = targetOf(process, password);
             for (;;) {
               try {
-                return await QConnection.open(target);
+                return await this.dial(process, target);
               } catch (error) {
                 const busy = error instanceof Error && error.message.startsWith("no answer from ");
                 if (!untilFree || !busy || this.reconnectStopped) {
@@ -1387,6 +1591,84 @@ export class Live {
       this.connecting = undefined;
     });
     return this.connecting;
+  }
+
+  /// Open a connection to `process` at `target`, through the SSH tunnel it
+  /// names, if it names one (#908): the tunnel closes with the connection,
+  /// and the connection with the tunnel.
+  private async dial(process: Process, target: Target): Promise<QConnection> {
+    if (process.ssh === undefined) {
+      return QConnection.open(target);
+    }
+    if (!this.setting(readTunnel).enabled) {
+      throw new Error(
+        `it is reached through an SSH tunnel via ${process.ssh}, and SSH tunnels are turned off. Set q-lint.connection.sshTunnel.enable to true to turn them on`,
+      );
+    }
+    const tunnel = await SshTunnel.open({ destination: process.ssh, host: target.host, port: target.port });
+    try {
+      const connection = await QConnection.open({
+        ...target,
+        host: "127.0.0.1",
+        port: tunnel.localPort,
+        ...(target.tls ? { servername: net.isIP(target.host) ? undefined : target.host } : {}),
+      });
+      connection.whenClosed(() => tunnel.close());
+      tunnel.whenClosed(() => connection.abort());
+      return connection;
+    } catch (error) {
+      tunnel.close();
+      throw error;
+    }
+  }
+
+  /// A connection of its own to `process`, apart from the active one, with
+  /// its stored password and through its tunnel; the caller closes it.
+  async openSeparate(process: Process): Promise<QConnection> {
+    const password = process.user ? await this.context.secrets.get(passwordKey(process)) : undefined;
+    return this.dial(process, targetOf(process, password));
+  }
+
+  /// Set the SSH destination a saved process is reached through (#908), or
+  /// clear it. `destination` (from a keybinding or a test) sets it without
+  /// asking; `""` or `null` clears it.
+  private async setSshTunnel(row?: ProcessArg, destination?: string | null): Promise<void> {
+    if (!this.featureOn(this.setting(readTunnel).enabled, "SSH tunnels", "q-lint.connection.sshTunnel.enable")) {
+      return;
+    }
+    const process = await this.chosen(row, "Reach which q process through an SSH tunnel?");
+    if (process === undefined) {
+      return;
+    }
+    let given = destination === null ? "" : destination;
+    if (typeof given !== "string") {
+      given = await window.showInputBox({
+        title: `SSH tunnel of ${process.label}`,
+        value: process.ssh ?? "",
+        prompt: `The jump host q-lint runs \`ssh -N -L\` through to reach ${address(process.host, process.port)}, as you would type it: bastion, me@bastion or me@bastion:2222. ssh uses your agent and ~/.ssh/config, and never asks for a password. Empty: connect directly.`,
+        validateInput: (v) => (v.trim() === "" || sshDestination(v) !== undefined ? undefined : "A destination ssh takes: no spaces or quotes, and not starting with -."),
+        ignoreFocusOut: true,
+      });
+      if (given === undefined) {
+        return;
+      }
+    }
+    const ssh = given.trim() === "" ? undefined : sshDestination(given);
+    if (given.trim() !== "" && ssh === undefined) {
+      void window.showErrorMessage(`q-lint: "${given}" is not an SSH destination; the tunnel was not set.`);
+      return;
+    }
+    const now = this.processes();
+    if (!now.some((p) => p.label === process.label)) {
+      void window.showErrorMessage(`q-lint: "${process.label}" was deleted meanwhile; its tunnel was not set.`);
+      return;
+    }
+    await this.save(now.map((p) => (p.label === process.label ? withExtras(p, { ...p, ssh }) : p)));
+    void window.showInformationMessage(
+      ssh === undefined
+        ? `q-lint: ${process.label} is connected to directly from the next connect.`
+        : `q-lint: ${process.label} is reached through an SSH tunnel via ${ssh} from the next connect.`,
+    );
   }
 
   /// Reconnect to `process`, whose connection dropped, waiting longer before
@@ -1509,7 +1791,7 @@ export class Live {
 
   // --- queries
 
-  private async queryFrom(from: From): Promise<void> {
+  private async queryFrom(from: From, serverTypes?: string[]): Promise<void> {
     const editor = window.activeTextEditor;
     if (editor === undefined) {
       noEditor();
@@ -1524,13 +1806,13 @@ export class Live {
     if (code === undefined) {
       return;
     }
-    await this.queryCode(code, editor.document.uri);
+    await this.queryCode(code, editor.document.uri, serverTypes);
   }
 
   /// Run `code` from the document `uri` as a query from the editor is run:
   /// on the process the file is bound to, when it has one. A Run code lens
   /// sends its definition here.
-  async queryCode(code: string, uri: Uri): Promise<void> {
+  async queryCode(code: string, uri: Uri, serverTypes?: string[]): Promise<void> {
     // A file with a process of its own switches the connection to it.
     const bound = this.controls.binding(uri);
     if (bound !== undefined && bound !== this.activeLabel()) {
@@ -1544,7 +1826,97 @@ export class Live {
         return;
       }
     }
-    await this.run(code);
+    // A file can name the server types its queries go to on a gateway.
+    const document = window.activeTextEditor?.document;
+    const named = document !== undefined && document.uri.toString() === uri.toString() ? fileServerTypes(document.getText()) : undefined;
+    await this.run(code, undefined, serverTypes ?? named);
+  }
+
+  /// `code` as it goes to `process`: through `.gw.syncexec` on a TorQ gateway
+  /// (#909), to `serverTypes` or else the process's own; as written to any
+  /// other process, or with q-lint.connection.torqGateway.enable off.
+  private throughGateway(code: string, process: Process, serverTypes?: string[]): string {
+    const types = serverTypes ?? process.gateway;
+    if (process.gateway === undefined || types === undefined || isGatewayCall(code) || !this.setting(readGateway).enabled) {
+      return code;
+    }
+    const cut = statements(code);
+    return cut.length === 0 ? code : gatewayStatement(cut, types);
+  }
+
+  /// Mark a saved process as a TorQ gateway with the server types its
+  /// queries go to, or unmark it. `types` (from a keybinding or a test) sets
+  /// them without asking; `""`, `[]` or `null` unmarks it.
+  private async setGateway(row?: ProcessArg, types?: string | string[] | null): Promise<void> {
+    if (!this.featureOn(this.setting(readGateway).enabled, "TorQ gateways", "q-lint.connection.torqGateway.enable")) {
+      return;
+    }
+    const process = await this.chosen(row, "Mark which q process as a TorQ gateway?");
+    if (process === undefined) {
+      return;
+    }
+    let given: string | string[] | undefined = types === null ? "" : types;
+    if (given === undefined) {
+      given = await window.showInputBox({
+        title: `TorQ gateway: server types of ${process.label}`,
+        value: (process.gateway ?? []).join(" "),
+        prompt: "The server types a query goes to through .gw.syncexec, unless the file or the query names others: rdb hdb. Empty: not a gateway.",
+        validateInput: (v) => (v.trim() === "" || serverTypes(v) !== undefined ? undefined : "Server types are q names: rdb hdb."),
+        ignoreFocusOut: true,
+      });
+      if (given === undefined) {
+        return;
+      }
+    }
+    const gateway = serverTypes(given);
+    const now = this.processes();
+    if (!now.some((p) => p.label === process.label)) {
+      void window.showErrorMessage(`q-lint: "${process.label}" was deleted meanwhile; it was not changed.`);
+      return;
+    }
+    await this.save(now.map((p) => (p.label === process.label ? withExtras(p, { ...p, gateway }) : p)));
+    if (this.active?.label === process.label && this.active.server === undefined) {
+      this.active = withExtras(this.active, { ...this.active, gateway });
+    }
+    void window.showInformationMessage(
+      gateway === undefined
+        ? `q-lint: ${process.label} is no TorQ gateway; its queries go as written.`
+        : `q-lint: queries to ${process.label} go through .gw.syncexec to ${gateway.join(", ")}.`,
+    );
+  }
+
+  /// Query the selection, or the current line, on the connected gateway with
+  /// server types asked for (or `types`, from a keybinding).
+  private async queryGatewayWith(types?: string | string[]): Promise<void> {
+    if (!this.featureOn(this.setting(readGateway).enabled, "TorQ gateways", "q-lint.connection.torqGateway.enable")) {
+      return;
+    }
+    const process = this.activeProcess();
+    if (process?.gateway === undefined) {
+      void window.showInformationMessage(
+        `q-lint: ${process === undefined ? "not connected to a q process" : `${process.label} is not marked as a TorQ gateway`}. Set Gateway Server Types marks one.`,
+      );
+      return;
+    }
+    let given = types;
+    if (given === undefined) {
+      const document = window.activeTextEditor?.document;
+      given = await window.showInputBox({
+        title: `Query ${process.label} on server types`,
+        value: ((document !== undefined ? fileServerTypes(document.getText()) : undefined) ?? process.gateway).join(" "),
+        prompt: "The server types this query goes to through .gw.syncexec: rdb hdb.",
+        validateInput: (v) => (serverTypes(v) !== undefined ? undefined : "Server types are q names: rdb hdb."),
+      });
+      if (given === undefined) {
+        return;
+      }
+    }
+    const chosen = serverTypes(given);
+    if (chosen === undefined) {
+      void window.showErrorMessage("q-lint: no server types given; nothing was run.");
+      return;
+    }
+    await this.queryFrom("selection", chosen);
   }
 
   /// `code` with its `{{name}}` placeholders given the values the user
@@ -1883,14 +2255,16 @@ export class Live {
   /// Run `code` on the active connection, connecting first if there is none.
   /// The process explorer's Preview runs here too. A watched query's first
   /// run (`watch`) asks nothing more, and its later ones (`watched`) are
-  /// not recorded, and refresh the result in place.
-  async run(code: string, as?: "watch" | "watched"): Promise<void> {
+  /// not recorded, and refresh the result in place. On a TorQ gateway the
+  /// code goes through `.gw.syncexec` to `serverTypes` (#909); the guard
+  /// reads it as written.
+  async run(written: string, as?: "watch" | "watched", serverTypes?: string[]): Promise<void> {
     let ready = await this.ready();
     if (ready === undefined) {
       return;
     }
-    if (as === undefined && this.guardRefuses(code, [ready.process]) !== undefined) {
-      if (!(await this.guardAllows(code, [ready.process]))) {
+    if (as === undefined && this.guardRefuses(written, [ready.process]) !== undefined) {
+      if (!(await this.guardAllows(written, [ready.process]))) {
         return;
       }
       ready = this.stillReady(ready);
@@ -1899,6 +2273,7 @@ export class Live {
       }
     }
     const { connection, process } = ready;
+    const code = this.throughGateway(written, process, serverTypes);
     const configuration = workspace.getConfiguration("q-lint");
     const settings = readLive((key, fallback) => configuration.get(key, fallback));
     const controls = this.controls.settings();

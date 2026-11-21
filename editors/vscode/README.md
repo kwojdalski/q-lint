@@ -178,7 +178,8 @@ and clicking it switches. The commands:
 - **Connect to Process**, which also takes a process's label as an
   argument for a keybinding, and **Disconnect**.
 - **Import** and **Export Processes**: a JSON file holding
-  `{"processes": [{"label", "host", "port", "user"?, "tags"?, "tls"?}]}`.
+  `{"processes": [{"label", "host", "port", "user"?, "tags"?, "tls"?}]}`,
+  and any of `init`, `initFile`, `ssh`, `gateway` and `launch` (below).
   An import replaces processes of the same label, adds the rest, and says
   which entries it skipped. A process it moves to another host, port or
   user forgets its stored password, so that is never sent to the new one.
@@ -196,6 +197,41 @@ and clicking it switches. The commands:
   and a discovery server's list never brings one.
   `q-lint.connection.connectScript.enable` off runs no script and hides
   the command; the scripts stay in the list.
+- **Set SSH Tunnel**, on a process row: a jump host the process is
+  reached through, as you would type it for ssh (`bastion`, `me@bastion`,
+  `me@bastion:2222`). Each connect starts the system `ssh` as
+  `ssh -N -L 127.0.0.1:<free port>:<host>:<port> -- <jump host>` and
+  connects to that local port; the host and port are the process's as the
+  jump host sees them. ssh runs in batch mode, so it never asks for a
+  password or a passphrase: it uses your agent and `~/.ssh/config`
+  (`ProxyJump`, `IdentityFile`, a host alias), and q-lint keeps nothing.
+  When ssh cannot open the tunnel, the error says what ssh said. The tunnel
+  closes when the connection does, and the connection when ssh exits. It is
+  kept in the process list and exported as `ssh`; a discovery server's list
+  never brings one. `q-lint.connection.sshTunnel.enable` off hides the
+  command, closes a connection through a tunnel, and refuses to connect to
+  such a process rather than trying its host directly.
+- **Set Gateway Server Types**, on a process row: marks the process as a
+  TorQ gateway, with the server types its queries go to (`rdb hdb`); empty
+  unmarks it. See **TorQ gateways** below.
+- **Start Process** and **Stop Process**, on a process row, and **Set
+  Launch Definition**: start a q or TorQ process on this machine from its
+  launch definition - a program (empty: `q-lint.terminal.qBinary`), a script
+  and arguments, asked for in turn - run as
+  `<program> <script> -p <port> <arguments>` in the workspace folder, with
+  `-p` left out when the arguments set it. Its output goes to an output
+  channel of its own, `q: <label>`, which shows the command line first and
+  how it ended last; the row says `running` while it is. Only a process
+  whose host is this machine is started, never one whose port something
+  already listens on, and **Stop Process** stops only what was started from
+  here: SIGTERM, then SIGKILL after 3 seconds. Everything started is stopped
+  when VS Code closes. In a process file a definition is `launch`, with
+  `cwd` and `env` too; a TorQ process, for instance:
+  `{"launch": {"script": "torq.q", "args": ["-proctype", "rdb", "-procname",
+  "rdb1", "-load", "code/processes/rdb.q"], "cwd": "~/torq", "env":
+  {"KDBCODE": "code", "KDBCONFIG": "config"}}}`. A discovery server's list
+  never brings one. `q-lint.processes.launcher.enable` off hides the three
+  commands and stops what was started.
 - **Insert Active Connection Label**, at the cursor.
 - **Copy Label for Agent Query**, on a process row: the label an agent's
   query names the process by (`server/label` for a discovered one).
@@ -240,6 +276,26 @@ that fails to connect is forgotten, and asked for again on the next, and
 so are those of a server's processes when it is deleted or its URL or label
 changed.
 
+**The shared process list.** A `.qlint/processes.json` in the workspace
+folder - the same JSON as an import, committed with the code - lists a
+team's processes for everyone who opens the repository. Its processes are
+shown in a **Workspace: .qlint/processes.json** group after the saved ones,
+read again whenever the file is created, changed or deleted, and connect
+as a discovered process does: once connected one is `.qlint/label`, and one
+with a `user` asks for its password on the first connect and keeps it in
+secret storage, forgetting it when the file moves the process to another
+host, port or user. The file never holds a secret: a `password`, `secret`,
+`token` or similar field is ignored, a warning names the processes that
+held one, and a note under the group says so. Its connect scripts, SSH jump
+hosts and launch definitions are read only in a trusted workspace; in a
+restricted one they are left out and a note says so. A file that is not
+JSON shows why under the group. **Add to Shared Process List**, on a saved
+process row, writes the process there (creating the file), replacing an
+entry of its label: its address, user, tags and settings, never its
+password. `q-lint.processes.shared.enable` off stops reading the file,
+removes the group, closes a connection to one of its processes, and hides
+the command.
+
 **Querying.** With a q file open:
 - **Query Current Line**, `ctrl+q`.
 - **Query Current Selection**, `ctrl+r`: the current line when nothing is
@@ -278,6 +334,37 @@ connect to first. The output is coloured from the editor's theme: each
 answer's `# process (n ms)` header, the error and its backtrace (each frame,
 where it is and the caret under it), a table's rule and a keyed table's `|`,
 numbers, symbols, temporal literals and strings, and an included query as q.
+
+**TorQ gateways.** A query from the editor to a process marked as a TorQ
+gateway goes as `.gw.syncexec[query;servertypes]`, so the gateway runs it on
+a server of each type and joins what they answer. The server types are, in
+order: those **Query Gateway on Server Types...** (editor menu and palette)
+asks for, for the selection or the current line; those a line at column 0
+of the file names, `/ @servertypes hdb`; else the process's own. One
+statement goes as a string, `.gw.syncexec["select from trade";\`rdb\`hdb]`;
+several go as `({last value each x};("s1";"s2"))`, which each server runs in
+order, answering with the last value, since q's `value` of one string takes
+neither a newline nor a trailing comment as the end of a statement. The
+history keeps the call as it was sent, and running it again does not wrap
+it twice. A query from a notebook, the Process Explorer or an agent goes to
+the gateway as written. `q-lint.connection.torqGateway.enable` off sends
+every query as written and hides both commands.
+
+**Streaming a tickerplant table.** With `q-lint.tickerplant.stream.enable`
+on (it is off by default: a subscriber is a load on a tickerplant, which
+sends it every update), **Stream Tickerplant Table**, on a process row or
+from the palette, opens a connection of its own to the process, lists the
+tables `.u.t` names, and subscribes to the one you pick with
+`.u.sub[table;\`]`, as a TorQ or kdb+tick subscriber does. Each update the
+tickerplant sends, `(\`upd;table;data)`, is shown in a grid beside the
+editor, newest first, keeping the last `q-lint.tickerplant.stream.rows`
+(1000; at most 10,000). The grid counts the rows received, redraws at most
+five times a second, and **Pause** stops redrawing while the rows keep
+coming. Closing it closes the connection, which the tickerplant drops as a
+subscriber; it says so when the process closes it instead. On a process
+tagged `prod` it asks first. The lambda that subscribes defines nothing on
+the process. Turning the setting off hides the command and closes every
+stream.
 
 **Abort Current Query** stops waiting at once. q has no message that cancels
 a query, so the connection is closed and opened again; the process goes on
@@ -1149,6 +1236,19 @@ Each applies at once, without a reload. None reaches the language server.
 | `q-lint.connection.heartbeatInterval` | `30` | Seconds between heartbeats. | - |
 | `q-lint.connection.autoReconnect.enable` | `false` | Reconnect a connection the process or the network dropped, with backoff. | - |
 | `q-lint.connection.reconnectAttempts` | `5` | Tries before a reconnect gives up. | - |
+
+### Process connection settings
+
+Each applies at once, without a reload. None reaches the language server.
+
+| Setting | Default | What it does | q-pro |
+| --- | --- | --- | --- |
+| `q-lint.connection.sshTunnel.enable` | `true` | Reach a process that names a jump host through `ssh -N -L`; off, **Set SSH Tunnel** is hidden and such a process is not connected to. | - |
+| `q-lint.connection.torqGateway.enable` | `true` | Send a TorQ gateway's queries through `.gw.syncexec`; off, they go as written and **Set Gateway Server Types** and **Query Gateway on Server Types...** are hidden. | - |
+| `q-lint.tickerplant.stream.enable` | `false` | **Stream Tickerplant Table**: subscribe with `.u.sub` and show a table's updates live. Off, the command is hidden and refuses, and open streams close. | - |
+| `q-lint.tickerplant.stream.rows` | `1000` | The newest rows a stream keeps, 1 to 10,000. | - |
+| `q-lint.processes.launcher.enable` | `true` | **Start Process**, **Stop Process** and **Set Launch Definition**. Off, they are hidden and refuse, and what was started is stopped. | - |
+| `q-lint.processes.shared.enable` | `true` | Read, watch and list `.qlint/processes.json`, and offer **Add to Shared Process List**. Off, the file is not read and the group is removed. | - |
 
 ### Terminal settings
 
