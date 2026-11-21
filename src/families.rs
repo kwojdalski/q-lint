@@ -1059,6 +1059,7 @@ fn partition_filter_late(
     let mut strings = InString::new(code);
     // `select ... from select ... where` finds the inner where from both.
     let mut reported = std::collections::HashSet::new();
+    let mut froms = vec![];
     for q in re!(r"(?:select|exec|update|delete)\b").find_iter(code) {
         if !crate::boundary(code, q.start())
             || strings.at(q.start())
@@ -1070,12 +1071,26 @@ fn partition_filter_late(
         let Some(from) = top_level_word(rest, re!(r"\bfrom\b")) else {
             continue;
         };
-        let after_from = q.end() + from.end();
-        let end = crate::phrase_end(code, after_from);
-        let Some(w) = top_level_word(&code[after_from..end], re!(r"\bwhere\b")) else {
+        froms.push(q.end() + from.end());
+    }
+    // Each query's phrase ends where `crate::phrase_end` says, and its where
+    // is the first at its own level before then, as `top_level_word` would
+    // find it. Both are read for every query in one pass from the end: in
+    // `select from select from ... t` each phrase runs on to the statement's
+    // end, so reading each in turn was quadratic in the chain (#709).
+    let ends = first_at_level(code, &froms, |i| {
+        matches!(code.as_bytes()[i], b')' | b']' | b'}' | b';')
+    });
+    let wheres: std::collections::HashSet<usize> = re!(r"\bwhere\b")
+        .find_iter(code)
+        .map(|m| m.start())
+        .collect();
+    let first_wheres = first_at_level(code, &froms, |i| wheres.contains(&i));
+    for (&end, &w) in ends.iter().zip(&first_wheres) {
+        if w >= end {
             continue;
-        };
-        let phrase_start = after_from + w.end();
+        }
+        let phrase_start = w + "where".len();
         // An unindented line ends the statement before the phrase does.
         let phrase = &code[phrase_start..end];
         let phrase = match re!(r"\n\S").find(phrase) {
@@ -1122,6 +1137,42 @@ fn partition_filter_late(
             ),
         ));
     }
+}
+
+/// For each offset of `from`, the first offset at or after it that `hit`
+/// accepts at the bracket depth `from` starts at, or `code.len()` when there
+/// is none. Nothing after `from` sits shallower than it until a closer at its
+/// depth, so this is what reading on from `from` and counting brackets
+/// finds - for all of them in two passes over `code`, where reading each in
+/// turn is quadratic when they share a long tail.
+fn first_at_level(code: &str, from: &[usize], hit: impl Fn(usize) -> bool) -> Vec<usize> {
+    let b = code.as_bytes();
+    let step = |c: u8| match c {
+        b'(' | b'[' | b'{' => 1,
+        b')' | b']' | b'}' => -1,
+        _ => 0,
+    };
+    // Not in order: in `select (select a from t) from u` the inner query's
+    // `from` comes first. Answered from the last back, as the pass meets them.
+    let mut order: Vec<usize> = (0..from.len()).collect();
+    order.sort_by_key(|&k| from[k]);
+    // The depth before each byte, rebuilt backwards from the depth at the end.
+    let mut depth: i32 = b.iter().map(|&c| step(c)).sum();
+    let mut next = std::collections::HashMap::new();
+    let mut out = vec![code.len(); from.len()];
+    for i in (0..b.len()).rev() {
+        depth -= step(b[i]);
+        if hit(i) {
+            next.insert(depth, i);
+        }
+        while let Some(&k) = order.last().filter(|&&k| from[k] >= i) {
+            order.pop();
+            if from[k] == i {
+                out[k] = next.get(&depth).copied().unwrap_or(code.len());
+            }
+        }
+    }
+    out
 }
 
 /// Whether a where constraint compares a column with a literal or a name

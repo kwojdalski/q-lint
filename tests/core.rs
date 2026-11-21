@@ -959,6 +959,7 @@ fn a_long_lambda_body_lints_in_bounded_time() {
 }
 /// Chained qSQL keywords: each one scanned on to the statement's end, more
 /// than once over, so a chain took time quadratic in its length (#709).
+/// QV001 (0.31) did it again, reading each query's phrase to its end.
 #[test]
 fn chained_queries_lint_in_bounded_time() {
     let source = format!("r:{}t\n", "select from ".repeat(8000));
