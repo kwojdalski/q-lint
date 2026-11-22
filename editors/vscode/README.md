@@ -923,11 +923,13 @@ is sent; Escape sends nothing. A change is: assigning a global (`a:1`,
 `a+:1`, `t[0]:5`, `a::b` - and, inside a lambda, `a::` or a dotted
 `.ns.v:`, as q makes those global; a column named in `select a:x from t` or
 `([] a:1 2)` is not one), `update` or `delete` from a table named by a
-symbol (`` from `t ``), `set`, `upsert`, `insert`, `hdel`, `exit`, `system`,
-`.Q.dpft`, `.Q.dpfts`, `.Q.hdpf`, `.Q.en`, `0:` or `1:` to a file handle,
-`2:`, an amend in place (`` @[`t;i;:;v] ``), `value` or `eval` of a string,
-and a system command other than one that reads a setting (`\c`, `\d`, `\P`
-alone) - `\t` and `\ts` are read for their expression. It holds for every
+symbol (`` from `t ``), `set`, `upsert`, `insert`, `hdel`, `exit`, `hclose`,
+`system`, `.Q.dpft`, `.Q.dpfts`, `.Q.hdpf`, `.Q.en`, `0:` or `1:` to a file
+handle, `2:`, replaying a log with `-11!` (not `-11!(-1;..)` or `(-2;..)`,
+which only count and check it), an amend in place (`` @[`t;i;:;v] ``),
+`value` or `eval` of a string, and a system command other than one that
+reads a setting (`\c`, `\d`, `\P` alone) - `\t` and `\ts` are read for their
+expression, except `\t 500`, which sets the timer. It holds for every
 path that sends code: a query (line, selection, block, file, a Run lens, a
 rerun, Preview, a saved query, a watched one, asked once when it starts),
 **Query a Tag** and **Compare Query** (asked once, for every guarded
@@ -1719,8 +1721,7 @@ Unix socket, TLS, a WebSocket, where `-38!` tells) and, where TorQ's
 another client's handle, and the view says so. The handles include those
 the process opened itself; this extension's own is marked. **Close Client
 Handle**, on a row, asks first and sends `hclose`; on a process the
-read-only guard guards it is refused outright, as closing a handle is a
-change the guard's reading of the code would not see. **Timers** shows the
+read-only guard guards it is refused outright, not asked about. **Timers** shows the
 process's `\t` interval and `.z.ts`, and TorQ's `.timer.timer` jobs - each
 with its period, next and last run - the first 200. **Turn Timer On/Off**,
 on a job, sets its `active` flag; **Set Timer Interval (\t)** sends

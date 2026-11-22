@@ -4,9 +4,9 @@
 // query is never interrupted - when shown, when a connection opens while it
 // is shown, on Refresh, and after a change. A change - closing a handle,
 // turning a TorQ timer job on or off, setting `\t` - is sent through
-// `Live.runOnActive`, so the read-only guard reads it; closing a handle,
-// which the guard's reading does not take for a write, is refused outright
-// on a guarded process, and asked about on any other. Each view is created
+// `Live.runOnActive`, so the read-only guard reads it; closing a handle is
+// refused outright on a guarded process, rather than asked about there,
+// and asked about on any other. Each view is created
 // only while its switch is on, and disposed when it is turned off.
 import {
   EventEmitter,
