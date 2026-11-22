@@ -1343,6 +1343,11 @@
             "type": "boolean",
             "default": true,
             "markdownDescription": "Offer **Explain aj Match**: for one row of the `aj` call at the cursor, show which right-hand row it matched, or why none did, by re-running the match for that row on the connected process (through the read-only guard). Off, the command is hidden and refuses, and nothing is sent."
+          },
+          "q-lint.processes.scratchBuffer.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Offer **Open Scratch Buffer**: a q file of each process's own, kept in the extension's storage between sessions and bound to the process. It sends nothing. Off, the command is hidden and refuses."
           }
         }
       }
@@ -2404,6 +2409,12 @@
         "title": "Explain aj Match...",
         "category": "q-lint",
         "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.openScratchBuffer",
+        "title": "Open Scratch Buffer",
+        "category": "q-lint",
+        "icon": "$(notebook)"
       }
     ],
     "views": {
@@ -2986,6 +2997,11 @@
           "command": "q-lint.findInProcesses",
           "when": "view == q-lint.processes && viewItem == tag && config.q-lint.processes.findInProcesses.enable",
           "group": "1_query@2"
+        },
+        {
+          "command": "q-lint.openScratchBuffer",
+          "when": "view == q-lint.processes && viewItem =~ /^(process|discovered)/ && config.q-lint.processes.scratchBuffer.enable",
+          "group": "1_connect@5"
         }
       ],
       "editor/title/run": [
@@ -3792,6 +3808,10 @@
         {
           "command": "q-lint.explainAjMatch",
           "when": "config.q-lint.query.ajExplainer.enable && editorLangId == q"
+        },
+        {
+          "command": "q-lint.openScratchBuffer",
+          "when": "config.q-lint.processes.scratchBuffer.enable"
         }
       ],
       "editor/title": [

@@ -18,6 +18,7 @@ export const PROCESS_TOOL_SETTINGS = {
   benchmark: { key: "query.benchmark.enable", fallback: true, name: "The benchmark" },
   joinAssistant: { key: "query.joinAssistant.enable", fallback: true, name: "The join assistant" },
   ajExplainer: { key: "query.ajExplainer.enable", fallback: true, name: "The aj match explainer" },
+  scratchBuffer: { key: "processes.scratchBuffer.enable", fallback: true, name: "Scratch buffers" },
 } as const;
 
 export type ProcessTool = keyof typeof PROCESS_TOOL_SETTINGS;
@@ -37,6 +38,7 @@ export const PROCESS_TOOL_COMMANDS = {
   benchmark: "q-lint.benchmarkExpression",
   joinAssistant: "q-lint.joinAssistant",
   explainAj: "q-lint.explainAjMatch",
+  openScratch: "q-lint.openScratchBuffer",
 } as const;
 
 /// Whether `feature` is on, read with `get` as the other settings are read.

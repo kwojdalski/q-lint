@@ -1673,6 +1673,14 @@ earliest one is after the row's time - and warns when those right rows are
 not in time order, as `aj` assumes. The call's arguments go through the
 read-only guard. `q-lint.query.ajExplainer.enable` off hides it.
 
+**Open Scratch Buffer** (a process's context menu in Processes, or the
+palette) opens that process's own q file, kept in the extension's storage -
+so it is there in the next session, in any workspace, and never in your
+repository - and binds it to the process, as **Choose Connection for File**
+does, so what you run from it goes there. It sends nothing itself, and
+never writes over what you wrote. `q-lint.processes.scratchBuffer.enable`
+off hides it.
+
 ## q notebooks
 
 A `.qnb` file opens as a notebook of q code cells and markdown cells;
@@ -2296,6 +2304,7 @@ Read when a cell runs or a command is used, so a change needs no reload. None re
 | `q-lint.query.benchmark.enable` | `true` | **Benchmark Expression**, run only on the command. Off, it is hidden and refuses, and the panel closes. | - |
 | `q-lint.query.joinAssistant.enable` | `true` | **Join Assistant...**. Off, it is hidden and refuses. | - |
 | `q-lint.query.ajExplainer.enable` | `true` | **Explain aj Match...**. Off, it is hidden and refuses. | - |
+| `q-lint.processes.scratchBuffer.enable` | `true` | **Open Scratch Buffer**. Off, it is hidden and refuses. | - |
 
 ### Not here, and why
 

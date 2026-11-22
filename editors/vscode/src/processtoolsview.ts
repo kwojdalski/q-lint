@@ -13,6 +13,7 @@ import { registerInlineResults } from "./inlineresultview";
 import { registerBenchmark } from "./benchmarkview";
 import { registerJoinAssistant } from "./joinassistview";
 import { registerAjExplainer } from "./ajexplainview";
+import { registerScratchBuffers } from "./scratch";
 
 export function registerProcessTools(context: ExtensionContext, live: Live) {
   return {
@@ -25,5 +26,6 @@ export function registerProcessTools(context: ExtensionContext, live: Live) {
     benchmark: registerBenchmark(context, live),
     joinAssistant: registerJoinAssistant(context, live),
     ajExplainer: registerAjExplainer(context, live),
+    scratchBuffers: registerScratchBuffers(context, live),
   };
 }
