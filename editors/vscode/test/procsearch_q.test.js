@@ -1,0 +1,47 @@
+// Find in processes' q against a real process (#1046): every lambda of the
+// root and of every namespace, nested ones too, is searched ignoring case;
+// ss's wildcards are taken as written; variable names only when asked; q's
+// own namespaces never; and the limit holds. Needs QLINT_TEST_Q.
+const test = require("node:test");
+const assert = require("node:assert");
+const { connect, skip } = require("./qserver.js");
+const { SEARCH, readFound } = require("../out/procsearch.js");
+
+const SERVER = [
+  ".lib.f:{[x]",
+  "  y:x[1]?2;",
+  "  Trade:select from trade;",
+  "  y}",
+  ".lib.sub.g:{trade}",
+  "top:{count trade}",
+  "tradeCount:5",
+  ".lib.upd:{insert[`quote;x]}",
+  ".lib.tradeVar:1",
+  "",
+].join("\n");
+
+test("function definitions are searched everywhere but q's own, ignoring case", { skip }, async (t) => {
+  const { connection } = await connect(t, SERVER);
+  const find = async (text, vars, limit = 100) => readFound(await connection.call(SEARCH, text, vars, limit));
+  const found = await find("trade", false);
+  assert.deepStrictEqual(found.hits.map((h) => [h.name, h.line, h.text]), [
+    ["top", 1, "{count trade}"],
+    [".lib.f", 3, "  Trade:select from trade;"],
+    [".lib.sub.g", 1, "{trade}"],
+  ]);
+  assert.strictEqual(found.more, false);
+  const withVars = await find("trade", true);
+  assert.deepStrictEqual(withVars.hits.filter((h) => h.kind === "variable").map((h) => h.name), ["tradeCount", ".lib.tradeVar"]);
+  // Wildcards are text.
+  assert.deepStrictEqual((await find("x[1]?", false)).hits.map((h) => h.text), ["  y:x[1]?2;"]);
+  assert.deepStrictEqual((await find("zzz", true)).hits, []);
+  // A text starting with a backtick reaches q as a symbol, and is searched as text.
+  assert.deepStrictEqual((await find("`quote", false)).hits.map((h) => h.name), [".lib.upd"]);
+  // q's own namespaces are not searched: every brace found is in ours.
+  assert.ok((await find("{", false)).hits.every((h) => !/^\.(q|Q|h|j|o|z)\./.test(h.name)));
+  const two = await find("trade", true, 2);
+  assert.strictEqual(two.hits.length, 2);
+  assert.strictEqual(two.more, true);
+  // Nothing was assigned.
+  assert.deepStrictEqual(await connection.call("{[x] key `.}", 0), ["top", "tradeCount"]);
+});

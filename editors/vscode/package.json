@@ -1318,6 +1318,11 @@
             "type": "boolean",
             "default": true,
             "markdownDescription": "Offer **Diff Function Across Processes** and **Diff Namespace Across Processes**: a function's definition on two processes side by side, or every function of a namespace that differs, each read over a connection of its own with a read-only lambda. Off, the commands are hidden and refuse, and nothing is sent."
+          },
+          "q-lint.processes.findInProcesses.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Offer **Find in Processes...** and its view: search the function definitions (and, when asked, variable names) of every process with a tag; a hit opens the function's live source at the line. Each process is read over a connection of its own with a read-only lambda. Off, the view is gone, the commands refuse and nothing is sent."
           }
         }
       }
@@ -2344,6 +2349,17 @@
         "command": "q-lint.diffNamespaceAcrossProcesses",
         "title": "Diff Namespace Across Processes...",
         "category": "q-lint"
+      },
+      {
+        "command": "q-lint.findInProcesses",
+        "title": "Find in Processes...",
+        "category": "q-lint",
+        "icon": "$(search)"
+      },
+      {
+        "command": "q-lint.openFoundSource",
+        "title": "Open Found Source",
+        "category": "q-lint"
       }
     ],
     "views": {
@@ -2442,6 +2458,14 @@
           "contextualTitle": "q-lint",
           "visibility": "collapsed",
           "when": "config.q-lint.processes.fileBrowser.enable"
+        },
+        {
+          "id": "q-lint.findInProcesses",
+          "name": "Find in Processes",
+          "icon": "media/view-explorer.svg",
+          "contextualTitle": "q-lint",
+          "visibility": "collapsed",
+          "when": "config.q-lint.processes.findInProcesses.enable"
         }
       ],
       "q-lint-results": [
@@ -2645,6 +2669,11 @@
         {
           "command": "q-lint.browseProcessFiles",
           "when": "view == q-lint.processFiles && config.q-lint.processes.fileBrowser.enable",
+          "group": "navigation@1"
+        },
+        {
+          "command": "q-lint.findInProcesses",
+          "when": "view == q-lint.findInProcesses && config.q-lint.processes.findInProcesses.enable",
           "group": "navigation@1"
         }
       ],
@@ -2908,6 +2937,11 @@
           "command": "q-lint.openProcessFile",
           "when": "view == q-lint.processFiles && viewItem == processFile && config.q-lint.processes.fileBrowser.enable",
           "group": "inline"
+        },
+        {
+          "command": "q-lint.findInProcesses",
+          "when": "view == q-lint.processes && viewItem == tag && config.q-lint.processes.findInProcesses.enable",
+          "group": "1_query@2"
         }
       ],
       "editor/title/run": [
@@ -3675,6 +3709,14 @@
         {
           "command": "q-lint.diffNamespaceAcrossProcesses",
           "when": "config.q-lint.processes.functionDiff.enable"
+        },
+        {
+          "command": "q-lint.findInProcesses",
+          "when": "config.q-lint.processes.findInProcesses.enable"
+        },
+        {
+          "command": "q-lint.openFoundSource",
+          "when": "false"
         }
       ],
       "editor/title": [
@@ -3797,6 +3839,10 @@
       {
         "view": "q-lint.processFiles",
         "contents": "Browse the q host's files through the connected process, read-only.\n[Browse Process Files](command:q-lint.browseProcessFiles)"
+      },
+      {
+        "view": "q-lint.findInProcesses",
+        "contents": "Search the function definitions of every process with a tag.\n[Find in Processes](command:q-lint.findInProcesses)"
       }
     ],
     "keybindings": [

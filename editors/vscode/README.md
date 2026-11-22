@@ -1621,6 +1621,17 @@ over a connection of its own, closed after, with a read-only lambda, so the
 active connection is left as it is. `q-lint.processes.functionDiff.enable`
 off hides both.
 
+**Find in Processes...** (on a tag row in Processes, the view's title,
+or the palette) searches the function definitions - and, when you ask,
+the variable names - of every process with a tag, ignoring case, in the
+root and every namespace but q's own. The hits land in the **Find in
+Processes** view: each process, its functions, each matching line; a line
+opens the function's live source, read again from that process, at the
+line. Each process is searched over a connection of its own, eight at a
+time, with a read-only lambda, at most 500 hits each; one that cannot be
+reached is shown as failed. `q-lint.processes.findInProcesses.enable` off
+removes the view and the command.
+
 ## q notebooks
 
 A `.qnb` file opens as a notebook of q code cells and markdown cells;
@@ -2239,6 +2250,7 @@ Read when a cell runs or a command is used, so a change needs no reload. None re
 | `q-lint.processes.systemSettings.enable` | `true` | The **System Settings** view and **Edit System Setting...**, which asks first. Off, the view is gone, its commands hidden and refusing. | - |
 | `q-lint.processes.fileBrowser.enable` | `true` | The **Process Files** view: the q host's files through the process, read-only and capped. Off, the view is gone and its commands refuse. | - |
 | `q-lint.processes.functionDiff.enable` | `true` | **Diff Function** and **Diff Namespace Across Processes**. Off, both are hidden and refuse. | - |
+| `q-lint.processes.findInProcesses.enable` | `true` | **Find in Processes...** and its view. Off, the view is gone and the command hidden and refusing. | - |
 
 ### Not here, and why
 

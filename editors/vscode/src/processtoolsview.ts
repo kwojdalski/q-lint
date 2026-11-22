@@ -8,6 +8,7 @@ import { registerTickerplantSubscribers } from "./tpsubsview";
 import { registerSystemSettings } from "./syssettingsview";
 import { registerFileBrowser } from "./remotefilesview";
 import { registerFunctionDiff } from "./fndiffview";
+import { registerFindInProcesses } from "./procsearchview";
 
 export function registerProcessTools(context: ExtensionContext, live: Live) {
   return {
@@ -15,5 +16,6 @@ export function registerProcessTools(context: ExtensionContext, live: Live) {
     systemSettings: registerSystemSettings(context, live),
     fileBrowser: registerFileBrowser(context, live),
     functionDiff: registerFunctionDiff(context, live),
+    findInProcesses: registerFindInProcesses(context, live),
   };
 }
