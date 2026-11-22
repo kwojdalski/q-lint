@@ -1833,29 +1833,6 @@ Outputs need not be committed, as nbstripout arranges for Jupyter:
 `q-lint.notebook.stripOutputs.enable` turns both commands off; a filter set
 up before keeps working, since git runs it, not VS Code.
 
-### A Jupyter kernel for q
-
-`.ipynb` q notebooks - **Export Notebook as Jupyter Notebook**'s, or
-anyone's - run in Jupyter and other Jupyter frontends with the kernel in
-this repository's [`editors/jupyter`](https://github.com/kwojdalski/q-lint/tree/master/editors/jupyter), a separate
-Python package that needs only pyzmq:
-
-```sh
-pip install "git+https://github.com/kwojdalski/q-lint#subdirectory=editors/jupyter"
-python -m qlint_kernel install --q q                      # each kernel starts its own q
-python -m qlint_kernel install --connect localhost:5001   # or runs on a process already running
-```
-
-It cuts a cell into statements and runs them with the extension's query
-lambda, so a cell shows what it shows in a q notebook here; it completes
-names on the process, shows a name's value, and interrupts a cell. Restart
-starts a fresh q when the kernel started one. An exported notebook names
-jupyterq's kernel (`qpk`); pick **q (q-lint)** in the frontend, or install
-this one under that name with `--name qpk` where jupyterq is not installed.
-The extension does not run the kernel and has no setting for it: it is used
-only once installed. The read-only guard is the extension's, so it does not
-apply to cells the kernel runs.
-
 ## The local q
 
 **q interpreter.** **Select q Interpreter**, or the status bar item beside
