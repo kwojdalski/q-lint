@@ -1661,6 +1661,18 @@ Schema...** loads a q file - the tickerplant's schema and `upd` - into it
 first. Nothing is sent to any process of yours. The q stops, and its
 directory goes, when the panel closes.
 
+**Open Dashboard...** shows a panel of tiles, each a saved query run on a
+saved process, shown as a table (its first 200 rows) or as a line, bar,
+area, step or scatter chart, with its own **Refresh**, interval and view;
+**Add to Dashboard...**, on a saved query, adds one. A tile runs over a
+connection of its own, as **Query a Tag** does, when the panel opens, on
+**Refresh**, and every so many seconds only when you give it an interval:
+none has one until you do. A refresh due while the last is still out is
+skipped. Only a query the read-only guard reads as changing nothing can be
+a tile, and none with a `{{placeholder}}`. The layout - the tiles, their
+order, intervals and views, and how many a row - is kept in the
+workspace's storage, as saved queries are.
+
 **Render Chart from CSV or JSON File...**, in the Explorer's context menu
 on a `.csv`, `.tsv` or `.json` file, draws it as an SVG chart with the
 code the result panel saves its charts with, and writes the file you name.
@@ -2305,6 +2317,7 @@ Read when a cell runs or a command is used, so a change needs no reload. None re
 | `q-lint.schemaMigration.enable` | `true` | **Write Schema Migration...**. Off, the command is hidden and refuses. | - |
 | `q-lint.testDataGenerator.enable` | `true` | **Generate Test Data...**. Off, the command is hidden and refuses. | - |
 | `q-lint.tickerplantLog.enable` | `true` | **Open Tickerplant Log...**. Off, the command is hidden and refuses, and an open log's panel and q are closed. | - |
+| `q-lint.dashboards.enable` | `true` | **Open Dashboard...** and **Add to Dashboard...**. Off, they are hidden and refuse, the panel closes and every refresh stops. A tile refreshes on its own only with an interval you give it. | - |
 | `q-lint.charts.commandLine.enable` | `true` | **Render Chart from CSV or JSON File...**. Off, the command is hidden and refuses; `out/chartcli.js` is yours to run or not. | - |
 
 ### Not here, and why

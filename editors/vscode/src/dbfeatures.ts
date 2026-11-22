@@ -17,6 +17,7 @@ export const DB_SETTINGS = {
   schemaMigration: { key: "schemaMigration.enable", fallback: true, name: "Schema migration" },
   testData: { key: "testDataGenerator.enable", fallback: true, name: "The test data generator" },
   tickerplantLog: { key: "tickerplantLog.enable", fallback: true, name: "The tickerplant log viewer" },
+  dashboards: { key: "dashboards.enable", fallback: true, name: "Dashboards" },
   chartCli: { key: "charts.commandLine.enable", fallback: true, name: "Charts from a file" },
 } as const;
 
@@ -32,6 +33,8 @@ export const DB_COMMANDS = {
   migrateSchema: "q-lint.writeSchemaMigration",
   testData: "q-lint.generateTestData",
   openTpLog: "q-lint.openTickerplantLog",
+  openDashboard: "q-lint.openDashboard",
+  addToDashboard: "q-lint.addToDashboard",
   renderChart: "q-lint.renderChartFromFile",
 } as const;
 

@@ -1354,6 +1354,12 @@
             "order": 9,
             "markdownDescription": "**Open Tickerplant Log...**: read a tickerplant log in a q of its own, list, filter and step through its messages, and replay a range into that q only. Off, the command is hidden and refuses, and an open log's panel and q are closed."
           },
+          "q-lint.dashboards.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 10,
+            "markdownDescription": "**Open Dashboard...** and **Add to Dashboard...**: a panel of saved queries shown as tables or charts, each refreshed on its own interval only if you give it one. Read-only queries only. Off, the commands are hidden and refuse, the panel closes and every refresh stops."
+          },
           "q-lint.charts.commandLine.enable": {
             "type": "boolean",
             "default": true,
@@ -2393,6 +2399,17 @@
         "category": "q-lint"
       },
       {
+        "command": "q-lint.openDashboard",
+        "title": "Open Dashboard...",
+        "category": "q-lint",
+        "icon": "$(dashboard)"
+      },
+      {
+        "command": "q-lint.addToDashboard",
+        "title": "Add to Dashboard...",
+        "category": "q-lint"
+      },
+      {
         "command": "q-lint.renderChartFromFile",
         "title": "Render Chart from CSV or JSON File...",
         "category": "q-lint"
@@ -2684,6 +2701,11 @@
           "command": "q-lint.documentDatabase",
           "when": "view == q-lint.processExplorer && config.q-lint.databaseDocumenter.enable",
           "group": "2_database@1"
+        },
+        {
+          "command": "q-lint.openDashboard",
+          "when": "view == q-lint.savedQueries && config.q-lint.dashboards.enable",
+          "group": "navigation@2"
         }
       ],
       "view/item/context": [
@@ -2951,6 +2973,11 @@
           "command": "q-lint.generateTestData",
           "when": "view == q-lint.processExplorer && viewItem == explorer.table && config.q-lint.testDataGenerator.enable",
           "group": "3_database@4"
+        },
+        {
+          "command": "q-lint.addToDashboard",
+          "when": "view == q-lint.savedQueries && viewItem == savedQuery && config.q-lint.dashboards.enable && config.q-lint.savedQueries.enable",
+          "group": "2_dashboard@1"
         }
       ],
       "editor/title/run": [
@@ -3722,6 +3749,14 @@
         {
           "command": "q-lint.openTickerplantLog",
           "when": "config.q-lint.tickerplantLog.enable"
+        },
+        {
+          "command": "q-lint.openDashboard",
+          "when": "config.q-lint.dashboards.enable"
+        },
+        {
+          "command": "q-lint.addToDashboard",
+          "when": "config.q-lint.dashboards.enable && config.q-lint.savedQueries.enable"
         },
         {
           "command": "q-lint.renderChartFromFile",

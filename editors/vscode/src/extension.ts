@@ -74,6 +74,7 @@ import { registerFormatChanged } from "./formatchangedview";
 import { registerOrganiseLoads } from "./organiseloads";
 import { registerProblemsDashboard } from "./problemsview";
 import { registerDbTools } from "./dbtoolsview";
+import { Dashboards } from "./dashboardview";
 import { TickerplantLog } from "./tplogview";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, statSync } from "node:fs";
@@ -193,6 +194,7 @@ export async function activate(
     formatChanged: ReturnType<typeof registerFormatChanged>;
     problemsDashboard: ReturnType<typeof registerProblemsDashboard>;
     dbTools: ReturnType<typeof registerDbTools>;
+    dashboards: Dashboards;
     tickerplantLog: TickerplantLog;
   }
 > {
@@ -312,6 +314,7 @@ export async function activate(
     return { command, args: settings.args.filter((a) => a !== "--lsp") };
   });
   const dbTools = registerDbTools(context, live);
+  const dashboards = new Dashboards(context, live);
   const tickerplantLog = new TickerplantLog(context);
   // Not awaited: nothing above needs the server, and a slow or hung one
   // would hold up every command of the extension until it answered.
@@ -371,6 +374,7 @@ export async function activate(
     formatChanged,
     problemsDashboard,
     dbTools,
+    dashboards,
     tickerplantLog,
   };
 }

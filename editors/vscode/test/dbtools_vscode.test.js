@@ -17,11 +17,14 @@ const path = require("node:path");
 const { serialize, deserialize } = require("node-q/lib/c.js");
 const { Live } = require("../out/live.js");
 const { registerDbTools } = require("../out/dbtoolsview.js");
+const { Dashboards, tileContent } = require("../out/dashboardview.js");
 const { TickerplantLog } = require("../out/tplogview.js");
 const { DB_COMMANDS, DB_SETTINGS } = require("../out/dbfeatures.js");
 const { RUN_SCRIPT } = require("../out/colmanager.js");
 const { TABLE_INFO } = require("../out/tableinfo.js");
 const { DOCUMENT } = require("../out/dbdoc.js");
+const { SAVED_QUERIES_KEY } = require("../out/savedqueries.js");
+const { DASHBOARDS_KEY } = require("../out/dashboard.js");
 
 /// A q process played by a socket server; `answer(message)` answers each
 /// message, decoded, and every message is kept.
@@ -130,6 +133,7 @@ const off = Object.fromEntries(Object.values(DB_SETTINGS).map((s) => [s.key, fal
 test("off, every database command refuses, says how to turn it on, and sends nothing", async (t) => {
   const { opened } = capture();
   const { q, live, context } = await setUp(t, [], off);
+  const dashboards = new Dashboards(context, live);
   const log = new TickerplantLog(context);
   await live.connectTo("hdb");
   const before = q.sent.length;
@@ -153,6 +157,7 @@ test("off, every database command refuses, says how to turn it on, and sends not
   }
   assert.strictEqual(q.sent.length, before);
   assert.strictEqual(opened.length, 0);
+  assert.strictEqual(dashboards.timerCount(), 0);
   assert.strictEqual(log.port, undefined);
 });
 
@@ -199,6 +204,41 @@ test("elsewhere the column manager shows its script and runs it only after Run",
   const n = q.sent.length;
   assert.match(await stub.commands.get(DB_COMMANDS.manageColumn)("trade", { op: "delete", column: "nope" }), /no column nope/);
   assert.ok(q.sent.slice(n).every((m) => m[0] === TABLE_INFO));
+});
+
+test("a dashboard runs its tiles' read-only queries, keeps a timer only with an interval, and stops when turned off", async (t) => {
+  const { panels } = capture();
+  const { live, context } = await setUp(t);
+  await context.workspaceState.update(SAVED_QUERIES_KEY, [{ name: "px", code: "select from trade" }, { name: "bad", code: "t:1" }]);
+  let runs = 0;
+  live.runApart = async () => (runs++, { ok: true, type: 98, text: [], grid: { count: 2, keys: 0, names: ["a", "b"], types: [7, 9], cells: [["1", "2"], ["3", "4"]], raw: [[1, 2], [3, 4]], rank: [[0, 1], [0, 1]] } });
+  const dashboards = new Dashboards(context, live);
+  assert.match(await stub.commands.get(DB_COMMANDS.addToDashboard)("bad", undefined, "hdb"), /cannot be a tile: a dashboard runs read-only queries only/);
+  stub.inputs.push("Desk");
+  stub.picks.push("$(add) New dashboard...");
+  const id = await stub.commands.get(DB_COMMANDS.addToDashboard)("px", undefined, "hdb");
+  assert.strictEqual(typeof id, "string");
+  assert.strictEqual(context.workspaceState.get(DASHBOARDS_KEY)[0].name, "Desk");
+  await stub.commands.get(DB_COMMANDS.openDashboard)("Desk");
+  await new Promise((r) => setTimeout(r, 20));
+  assert.strictEqual(runs, 1);
+  assert.strictEqual(dashboards.contents.get(id).kind, "table");
+  assert.strictEqual(dashboards.timerCount(), 0);
+  await dashboards.receive({ type: "refresh-interval", id, seconds: 5 });
+  assert.strictEqual(dashboards.timerCount(), 1);
+  await dashboards.receive({ type: "view", id, view: "line" });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.strictEqual(dashboards.contents.get(id).kind, "chart");
+  assert.ok(panels[0].posted.some((m) => m.type === "layout" && m.tiles[0].refresh === 5));
+  assert.match(panels[0].webview.html, /Content-Security-Policy/);
+  stub.config.user["dashboards.enable"] = false;
+  stub.changeConfig("q-lint.dashboards.enable");
+  assert.strictEqual(panels[0].disposed, true);
+  assert.strictEqual(dashboards.timerCount(), 0);
+  const before = runs;
+  await dashboards.runTile({ id, query: "px", process: "hdb", view: "table", refresh: 0 });
+  assert.strictEqual(runs, before);
+  assert.deepStrictEqual(tileContent({ ok: false, error: "type", trace: "" }, "table"), { kind: "error", text: "type" });
 });
 
 test("a chart is rendered from a file to the path given", async (t) => {

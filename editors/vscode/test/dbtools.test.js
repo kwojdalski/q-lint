@@ -21,6 +21,7 @@ const { advise, filterCounts, adviceReport, readAttributeSample } = require("../
 const { schemaDiff, migrationScript, nullOf, castOf } = require("../out/migrate.js");
 const { symbolPool, rangeOf, generator, testDataQ, testDataCsv, loadTypes, random } = require("../out/testdata.js");
 const { timeOfDay, rangeProblem, readTpPage, readTpLog, readReplayed } = require("../out/tplog.js");
+const { parseDashboards, changed, tileQueryProblem, dashboardNameProblem, withDashboard, refreshOf } = require("../out/dashboard.js");
 const { gridFromCsv, gridFromJson, chartFromGrid } = require("../out/chartfile.js");
 const { parseArgs, main, USAGE } = require("../out/chartcli.js");
 const { guardCheck } = require("../out/guard.js");
@@ -254,6 +255,33 @@ test("the tickerplant log's readers, times of day and ranges", () => {
   assert.strictEqual(readTpLog({ count: 3, bytes: 10, size: 12, complete: false, tables: "trade" }).tables[0], "trade");
   assert.deepStrictEqual(readReplayed({ replayed: 2, failed: 0, errors: [], tables: ["t"], rows: [2] }).tables, [{ name: "t", rows: 2 }]);
   assert.throws(() => readTpPage(1), /page of messages/);
+});
+
+test("dashboards are parsed, changed, and take read-only queries without placeholders only", () => {
+  const list = parseDashboards([
+    { name: "a", columns: 9, tiles: [{ id: "1", query: "q1", process: "p", view: "pie", refresh: 2 }, { bad: 1 }] },
+    { name: "a", tiles: [] },
+    "junk",
+  ]);
+  assert.deepStrictEqual(list, [{ name: "a", columns: 4, tiles: [{ id: "1", query: "q1", process: "p", view: "table", refresh: 5 }] }]);
+  assert.strictEqual(refreshOf(0), 0);
+  assert.strictEqual(refreshOf(-3), 0);
+  let d = { name: "d", columns: 2, tiles: [{ id: "1", query: "a", process: "p", view: "table", refresh: 0 }, { id: "2", query: "b", process: "p", view: "table", refresh: 0 }] };
+  d = changed(d, { type: "move", id: "2", by: -1 });
+  assert.deepStrictEqual(d.tiles.map((t) => t.id), ["2", "1"]);
+  assert.strictEqual(changed(d, { type: "move", id: "2", by: -1 }), d);
+  d = changed(d, { type: "refresh-interval", id: "1", seconds: 30 });
+  assert.strictEqual(d.tiles[1].refresh, 30);
+  d = changed(d, { type: "view", id: "1", view: "line" });
+  assert.strictEqual(d.tiles[1].view, "line");
+  assert.strictEqual(changed(d, { type: "view", id: "1", view: "nope" }).tiles[1].view, "line");
+  assert.strictEqual(changed(d, { type: "remove", id: "2" }).tiles.length, 1);
+  assert.strictEqual(changed(d, { type: "columns", columns: 0 }).columns, 1);
+  assert.strictEqual(tileQueryProblem("select from trade"), undefined);
+  assert.match(tileQueryProblem("t:select from trade"), /read-only queries only/);
+  assert.match(tileQueryProblem("select from trade where sym={{s}}"), /placeholder/);
+  assert.match(dashboardNameProblem(" a ", ["a"]), /already/);
+  assert.deepStrictEqual(withDashboard([{ name: "x", columns: 1, tiles: [] }], { name: "x", columns: 3, tiles: [] }), [{ name: "x", columns: 3, tiles: [] }]);
 });
 
 test("a chart is drawn from CSV and JSON tables, and the command line writes it", async () => {
