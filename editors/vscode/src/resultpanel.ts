@@ -25,7 +25,7 @@
 // changed since (`resultdiff.ts`). A dictionary or a nested list comes with
 // its tree (`grid.ts`'s `tree`), which the page opens level by level.
 //
-// A result can also be exported as Excel, Parquet, JSON, Markdown or q
+// A result can also be exported as Excel, Parquet, JSON, Markdown, q or HTML
 // (`resultexport.ts`), pivoted, and charted as an area, a step line or
 // candles, on two axes, and saved as PNG or SVG. With paging on, a result
 // cut at gridLimit stays on the process (`grid.ts`'s `HELD`) and the grid
@@ -35,17 +35,30 @@
 // A column header's menu offers the Data Wrangler and a cell's Edit Cell
 // (`resulttools.ts`), which work from `current()`: the page only marks
 // where each menu applies.
+//
+// Each result also keeps its look (`resultlook.ts`): conditional formats,
+// data bars and sparklines, the column layout and a chart preset, set from
+// a column's menu or the page, sent with the result, and kept for the
+// result's saved query when it came from one (#1013-#1015, #1019). The
+// page computes the correlation matrix (#1020), and a result can be sent to
+// a q notebook or a Markdown report (#1021, `resultreport.ts`).
 import { randomBytes } from "node:crypto";
 import {
   commands,
   ConfigurationTarget,
   env,
+  NotebookCellData,
+  NotebookCellKind,
+  NotebookEdit,
+  WorkspaceEdit,
   StatusBarAlignment,
   Uri,
   ViewColumn,
   window,
   workspace,
   type ExtensionContext,
+  type NotebookDocument,
+  type NotebookEditor,
   type StatusBarItem,
   type Webview,
   type WebviewPanel,
@@ -70,6 +83,64 @@ import { diffGrids, type GridDiff } from "./resultdiff";
 import { fillDrilldown, templatesFor } from "./drilldown";
 import { EXPORT_FORMATS, exportResult, FORMAT_INFO, type ExportFormat } from "./resultexport";
 import { plainSvg, PLOTS } from "./plots";
+import {
+  lookParts,
+  parseLayout,
+  parseLooks,
+  parsePreset,
+  parseRule,
+  RULE_OPS,
+  ruleValue,
+  ruleValueProblem,
+  SAVED_LOOKS_KEY,
+  TEXT_OPS,
+  withCellChart,
+  withLook,
+  withoutRules,
+  withRule,
+  type ChartPreset,
+  type ColumnLayout,
+  type FormatRule,
+  type LookParts,
+  type PaletteColour,
+  type ResultLook,
+  type RuleOp,
+  type RuleStyle,
+} from "./resultlook";
+import { imagePath, linkTarget, resultMarkdown } from "./resultreport";
+import { SAVED_QUERIES, SAVED_QUERIES_KEY, parseSaved } from "./savedqueries";
+import { NOTEBOOK } from "./qnb";
+import type { Grid } from "./grid";
+
+/// `media/gridlook.js`'s helpers the column commands use, as the page does.
+interface GridLookHelpers {
+  isNumericList(grid: Grid, column: number): boolean;
+  displayColumns(grid: Grid, layout: ColumnLayout | undefined): number[];
+}
+const GRID_LOOK = require("../media/gridlook.js") as GridLookHelpers;
+
+/// What each rule comparison is called in its pick.
+const OP_LABELS: Record<RuleOp, string> = {
+  ">": "greater than",
+  ">=": "at least",
+  "<": "less than",
+  "<=": "at most",
+  "=": "equal to",
+  "<>": "not equal to",
+  top: "among the top N",
+  bottom: "among the bottom N",
+  contains: "containing the text",
+};
+
+/// The styles a rule can give, as its pick offers them.
+const RULE_STYLES: { label: string; style: RuleStyle }[] = [
+  ...(["red", "green", "blue", "orange", "yellow", "purple", "grey"] as PaletteColour[]).map((c) => ({ label: `${c[0].toUpperCase()}${c.slice(1)} background`, style: { background: c } })),
+  ...(["red", "green", "blue", "orange", "purple"] as PaletteColour[]).map((c) => ({ label: `${c[0].toUpperCase()}${c.slice(1)} text`, style: { color: c } })),
+  { label: "Bold", style: { bold: true } },
+];
+
+/// Where the report a result was last appended to is kept, for the next.
+const LAST_REPORT_KEY = "q-lint.lastResultReport";
 
 const MODE_ICONS: Record<QueryMode, string> = { console: "output", grid: "table", chart: "graph-line" };
 const MODE_DETAILS: Record<QueryMode, string> = {
@@ -105,6 +176,16 @@ export interface Rendered {
   tree?: { drawn: number; open: number; labels: string[] };
   /// The pivot view: its row and column values, and its first row's cells.
   pivot?: { rows: number; columns: string[]; first: string[]; note?: string };
+  /// How the grid dressed its columns (#1012-#1015): the headers shown, in
+  /// order, and the cells in view formatted, styled by a rule, drawn as a
+  /// data bar or a sparkline; the columns frozen.
+  dressed?: { headers: string[]; formatted: number; ruled: number; bars: number; sparks: number; frozen: number };
+  /// The correlation view (#1020): its columns and matrix.
+  corr?: { names: string[]; r: (number | null)[][] };
+  /// Linked panes (#1018): their series, the zoom and the crosshair's reading.
+  linked?: { panes: string[]; range?: { min: number; max: number } | null; readout?: { x: string; values: { label: string; text: string }[] } | null };
+  /// The chart drawn, as a preset (#1019).
+  preset?: ChartPreset;
 }
 
 /// What a page is asked to do by a command, once: `key` tells a request
@@ -112,7 +193,7 @@ export interface Rendered {
 interface Control {
   key: string;
   action: "view" | "compare" | "image";
-  view?: "stats" | "tree" | "pivot";
+  view?: "stats" | "tree" | "pivot" | "corr";
   /// "image": the format to save the chart in.
   format?: "png" | "svg";
 }
@@ -143,6 +224,10 @@ interface Shown {
   before?: { payload: GridPayload; process: string; at: number };
   /// The process holds the rest of it, for the grid to page through.
   held?: boolean;
+  /// The saved query it came from (#912), whose look it keeps.
+  saved?: string;
+  /// How it is dressed: rules, cell charts, layout, chart preset.
+  look: ResultLook;
 }
 
 /// A query's code on one line, for a tab or a pick: its first line, cut.
@@ -172,6 +257,9 @@ function resultHtml(webview: Webview, media: Uri, location: ResultsLocation): st
     `<title>q-lint: result</title></head><body${location === "panel" ? ' data-location="panel"' : ""}>`,
     `<script nonce="${nonce}" src="${file("vendor", "chart.umd.min.js")}"></script>`,
     `<script nonce="${nonce}" src="${file("chartspec.js")}"></script>`,
+    `<script nonce="${nonce}" src="${file("gridlook.js")}"></script>`,
+    `<script nonce="${nonce}" src="${file("worldoutline.js")}"></script>`,
+    `<script nonce="${nonce}" src="${file("chartmore.js")}"></script>`,
     `<script nonce="${nonce}" src="${file("result.js")}"></script>`,
     "</body></html>",
   ].join("\n");
@@ -198,6 +286,10 @@ interface PageMessage {
   row?: number;
   /// "copyText": text to put on the clipboard.
   text?: string;
+  /// "look": the layout the page changed.
+  layout?: unknown;
+  /// "chartPreset": the chart drawn.
+  preset?: unknown;
 }
 
 /// What a webview's context menu passes its command: the cell's
@@ -233,6 +325,14 @@ export class QueryModes {
   private paging = false;
   /// Save Result Chart's request, until the page sends the image.
   private image: { key: string; target?: Uri; resolve: () => void } | undefined;
+  /// Requests for the chart as an image to send somewhere (#1021), by key.
+  private readonly images = new Map<string, (data: string | undefined) => void>();
+  /// The saved query being run, whose result is the next of its code.
+  private expecting: { name: string; code: string } | undefined;
+  /// The look of each code's last result, for its next run.
+  private readonly looks = new Map<string, ResultLook>();
+  /// The chart each result last drew, as a preset, by id.
+  private readonly presets = new Map<string, ChartPreset>();
 
   constructor(private readonly context: ExtensionContext) {
     this.media = Uri.joinPath(context.extensionUri, "media");
@@ -255,6 +355,20 @@ export class QueryModes {
       commands.registerCommand(RESULT_VIEW.pivot, () => this.enabled("pivot") && this.ask({ action: "view", view: "pivot" })),
       commands.registerCommand(RESULT_VIEW.saveChart, (format?: string, target?: Uri) => this.enabled("charts") && this.saveChart(format, target)),
       commands.registerCommand(RESULT_VIEW.drillDown, (cell?: CellContext) => this.enabled("drilldown") && this.drill(cell?.column, cell?.row)),
+      commands.registerCommand(RESULT_VIEW.addFormat, (cell?: CellContext | string, rule?: unknown) => this.enabled("conditionalFormats") && this.addFormat(cell, rule)),
+      commands.registerCommand(RESULT_VIEW.clearFormats, (cell?: CellContext | string) => this.enabled("conditionalFormats") && this.clearFormats(cell)),
+      commands.registerCommand(RESULT_VIEW.toggleBar, (cell?: CellContext | string) => this.enabled("cellCharts") && this.toggleCellChart(cell, "bar")),
+      commands.registerCommand(RESULT_VIEW.toggleSpark, (cell?: CellContext | string) => this.enabled("cellCharts") && this.toggleCellChart(cell, "spark")),
+      commands.registerCommand(RESULT_VIEW.hideColumn, (cell?: CellContext | string) => this.enabled("columnLayout") && this.hideColumn(cell)),
+      commands.registerCommand(RESULT_VIEW.showColumns, () => this.enabled("columnLayout") && this.changeLayout((l) => ({ ...l, hidden: [] }))),
+      commands.registerCommand(RESULT_VIEW.freezeColumns, (cell?: CellContext | string) => this.enabled("columnLayout") && this.freezeColumns(cell)),
+      commands.registerCommand(RESULT_VIEW.unfreezeColumns, () => this.enabled("columnLayout") && this.changeLayout((l) => ({ ...l, frozen: 0 }))),
+      commands.registerCommand(RESULT_VIEW.resetLayout, () => this.enabled("columnLayout") && this.changeLayout(() => undefined)),
+      commands.registerCommand(RESULT_VIEW.saveChartPreset, (preset?: unknown) => this.enabled("chartPresets") && this.saveChartPreset(preset)),
+      commands.registerCommand(RESULT_VIEW.forgetChartPreset, () => this.enabled("chartPresets") && this.forgetChartPreset()),
+      commands.registerCommand(RESULT_VIEW.correlation, () => this.enabled("correlation") && this.showCorrelation()),
+      commands.registerCommand(RESULT_VIEW.toNotebook, (withChart?: boolean, notebook?: Uri) => this.enabled("sendResult") && this.toNotebook(undefined, withChart, notebook)),
+      commands.registerCommand(RESULT_VIEW.toReport, (target?: Uri, withChart?: boolean) => this.enabled("sendResult") && this.toReport(undefined, target, withChart)),
       window.registerWebviewViewProvider(RESULTS.view, { resolveWebviewView: (view) => this.resolveView(view) }),
       workspace.onDidChangeConfiguration((event) => {
         if (event.affectsConfiguration("q-lint.query")) {
@@ -329,6 +443,10 @@ export class QueryModes {
     const features = this.viewSettings();
     const last = features.enable.diff ? this.previous.get(result.code) : undefined;
     const replaced = inPlace && this.shown?.code === result.code && this.shown.process === result.process ? this.shown : undefined;
+    // A saved query's result keeps its look; any other starts from the
+    // last run of its code.
+    const saved = replaced?.saved ?? (this.expecting !== undefined && result.code.includes(this.expecting.code) ? this.expecting.name : undefined);
+    const look = replaced?.look ?? (saved !== undefined ? this.savedLooks()[saved] : undefined) ?? this.looks.get(result.code) ?? {};
     const shown: Shown = {
       process: result.process,
       code: result.code,
@@ -339,6 +457,8 @@ export class QueryModes {
       id: replaced?.id ?? `${this.session}.${++this.results}`,
       at: Date.now(),
       ...(last !== undefined ? { before: { payload: last.payload, process: last.process, at: last.at } } : {}),
+      ...(saved !== undefined ? { saved } : {}),
+      look,
     };
     if (result.held === true) {
       // The process holds one result: this one replaced any before it.
@@ -632,7 +752,28 @@ export class QueryModes {
       }
     } else if (!current) {
       return;
+    } else if (message.type === "look") {
+      // A layout the page changed: a column moved or resized (#1015).
+      const layout = parseLayout(message.layout);
+      if (this.viewSettings().enable.columnLayout && layout !== undefined && this.shown !== undefined) {
+        this.shown.look = { ...this.shown.look, layout };
+        void this.keepLook(this.shown);
+      }
+    } else if (message.type === "chartPreset") {
+      const preset = parsePreset(message.preset);
+      if (this.enabled("chartPresets") && preset !== undefined && this.shown !== undefined) {
+        this.presets.set(this.shown.id, preset);
+        void this.saveChartPreset();
+      }
+    } else if (message.type === "send") {
+      if (this.enabled("sendResult")) {
+        void this.sendPicked(message.rows);
+      }
     } else if (message.type === "rendered" && message.rendered !== undefined) {
+      const preset = parsePreset(message.rendered.preset);
+      if (preset !== undefined && this.shown !== undefined) {
+        this.presets.set(this.shown.id, preset);
+      }
       // Both may be open, after the location changed: the API reports the
       // one results now go to.
       if (location === settings().resultsLocation) {
@@ -655,6 +796,11 @@ export class QueryModes {
       void env.clipboard.writeText(message.text);
     } else if (message.type === "more") {
       void this.loadMore(false);
+    } else if (message.type === "image" && message.key !== undefined && this.images.has(message.key)) {
+      // A chart asked for to send to a notebook or a report.
+      const resolve = this.images.get(message.key);
+      this.images.delete(message.key);
+      resolve?.(typeof message.data === "string" && message.data !== "" ? message.data : undefined);
     } else if (message.type === "image") {
       if (this.viewSettings().enable.charts) {
         void this.saveImage(message);
@@ -692,6 +838,12 @@ export class QueryModes {
     return Array.isArray(rows) ? rows.filter((r) => Number.isInteger(r) && r >= 0 && r < held) : undefined;
   }
 
+  /// The conditional formats an export of `shown` keeps: none while they
+  /// are off (#1013).
+  private rulesOf(shown: Shown): FormatRule[] {
+    return this.viewSettings().enable.conditionalFormats ? (shown.look.rules ?? []) : [];
+  }
+
   /// Write the rows shown in `format` (or one picked) to `target`, or to a
   /// file the user picks.
   private async exportAs(format: string | undefined, target: Uri | undefined, rows: number[] | undefined): Promise<void> {
@@ -719,7 +871,7 @@ export class QueryModes {
     }
     let out;
     try {
-      out = exportResult(chosen, shown.payload, settings().gridDecimals, this.rowsOf(rows));
+      out = exportResult(chosen, shown.payload, settings().gridDecimals, this.rowsOf(rows), this.rulesOf(shown));
       await workspace.fs.writeFile(to, out.data);
     } catch (error) {
       void window.showErrorMessage(`q-lint: could not write ${to.fsPath}: ${error instanceof Error ? error.message : String(error)}`);
@@ -742,7 +894,7 @@ export class QueryModes {
     if (chosen === undefined) {
       return;
     }
-    const out = exportResult(chosen, shown.payload, settings().gridDecimals, this.rowsOf(rows));
+    const out = exportResult(chosen, shown.payload, settings().gridDecimals, this.rowsOf(rows), this.rulesOf(shown));
     await env.clipboard.writeText(out.data.toString("utf8"));
     const notes = out.notes.length > 0 ? ` Note: ${out.notes.join("; ")}.` : "";
     void window.showInformationMessage(`q-lint: copied ${out.rows} row(s) as ${FORMAT_INFO[chosen].label}.${notes}`);
@@ -874,6 +1026,442 @@ export class QueryModes {
     await this.runner(picked.filled.code, shown.process);
   }
 
+  /// While the saved query `name` runs as `code`, its result is taken for
+  /// that query's (#1015, #1019); undefined when it is done.
+  expectSaved(name: string | undefined, code?: string): void {
+    this.expecting = name === undefined || code === undefined ? undefined : { name, code };
+  }
+
+  /// The looks the saved queries keep.
+  private savedLooks(): Record<string, ResultLook> {
+    return parseLooks(this.context.workspaceState.get<unknown>(SAVED_LOOKS_KEY, {}));
+  }
+
+  /// Which parts of a look the features on keep.
+  private lookOn(features = this.viewSettings()): LookParts {
+    return { rules: features.enable.conditionalFormats, cellCharts: features.enable.cellCharts, layout: features.enable.columnLayout, chart: features.enable.chartPresets };
+  }
+
+  /// Keep `shown`'s look for its code's next run and, when it came from a
+  /// saved query, for that query: the parts whose feature is on as they
+  /// are now, the others as kept before. `chart`: the chart preset to keep
+  /// with the query, null to forget it; as kept when undefined.
+  private async keepLook(shown: Shown, chart?: ChartPreset | null): Promise<void> {
+    this.looks.delete(shown.code);
+    this.looks.set(shown.code, shown.look);
+    if (this.looks.size > PREVIOUS_RUNS) {
+      this.looks.delete(this.looks.keys().next().value as string);
+    }
+    if (shown.saved === undefined) {
+      return;
+    }
+    const on = this.lookOn();
+    const looks = this.savedLooks();
+    const before = looks[shown.saved] ?? {};
+    const kept: ResultLook = {
+      ...lookParts(before, { rules: !on.rules, cellCharts: !on.cellCharts, layout: !on.layout, chart: chart === undefined }),
+      ...lookParts(shown.look, { ...on, chart: false }),
+      ...(chart ? { chart } : {}),
+    };
+    await this.context.workspaceState.update(SAVED_LOOKS_KEY, withLook(looks, shown.saved, kept));
+  }
+
+  /// The result on show, its grid, and the column a column command names:
+  /// by place (the header's menu) or by name, or one the user picks of
+  /// those `fits` accepts.
+  private async columnOf(cell: CellContext | string | undefined, title: string, fits: (grid: Grid, c: number) => boolean = () => true): Promise<{ shown: Shown; grid: Grid; column: number } | undefined> {
+    const shown = this.shown;
+    if (shown === undefined) {
+      void window.showInformationMessage("q-lint: no result yet. Run a query in grid or chart mode first.");
+      return undefined;
+    }
+    const grid = toGrid(shown.payload, settings().gridDecimals);
+    let column = typeof cell === "string" ? grid.columns.findIndex((c) => c.name === cell) : typeof cell?.column === "number" ? cell.column : undefined;
+    if (column === undefined) {
+      const items = grid.columns.map((c, i) => ({ label: c.name, description: c.typeName, column: i })).filter((item) => fits(grid, item.column));
+      if (items.length === 0) {
+        void window.showInformationMessage("q-lint: no column of the result on show fits.");
+        return undefined;
+      }
+      column = (await window.showQuickPick(items, { title }))?.column;
+      if (column === undefined) {
+        return undefined;
+      }
+    }
+    if (column < 0 || column >= grid.columns.length || !fits(grid, column)) {
+      void window.showInformationMessage("q-lint: that column of the result on show does not fit.");
+      return undefined;
+    }
+    return { shown, grid, column };
+  }
+
+  /// Change the look of the result on show, keep it, and draw it again.
+  private async relook(shown: Shown, look: ResultLook): Promise<void> {
+    shown.look = look;
+    await this.keepLook(shown);
+    if (shown === this.shown) {
+      this.post();
+    }
+  }
+
+  /// Add a conditional format to a column (#1013): the rule given, or one
+  /// built from picks - the comparison, the value, the style.
+  private async addFormat(cell: CellContext | string | undefined, given: unknown): Promise<void> {
+    const at = await this.columnOf(cell, "Add a conditional format to which column?");
+    if (at === undefined) {
+      return;
+    }
+    const column = at.grid.columns[at.column];
+    const numeric = column.numeric;
+    let rule: FormatRule | undefined = given !== null && typeof given === "object" ? parseRule({ ...(given as object), column: column.name }) : undefined;
+    if (rule !== undefined && !numeric && !TEXT_OPS.includes(rule.op)) {
+      rule = undefined;
+    }
+    if (rule === undefined) {
+      if (given !== undefined) {
+        void window.showWarningMessage(`q-lint: that is not a rule ${column.name} can take.`);
+        return;
+      }
+      const op = await window.showQuickPick(
+        (numeric ? RULE_OPS : TEXT_OPS).map((o) => ({ label: o === "top" || o === "bottom" ? o : o === "contains" ? "contains" : o, description: OP_LABELS[o], op: o })),
+        { title: `Conditional format on ${column.name}: when the value is` },
+      );
+      if (op === undefined) {
+        return;
+      }
+      const text = await window.showInputBox({
+        title: `Conditional format on ${column.name}: ${OP_LABELS[op.op]}`,
+        prompt: op.op === "top" || op.op === "bottom" ? "How many values" : numeric && op.op !== "contains" ? "A number" : "The text, as the cell shows it",
+        validateInput: (v) => ruleValueProblem(op.op, v, numeric),
+      });
+      if (text === undefined) {
+        return;
+      }
+      const style = await window.showQuickPick(RULE_STYLES, { title: `Conditional format on ${column.name}: style` });
+      if (style === undefined) {
+        return;
+      }
+      rule = { column: column.name, op: op.op, value: ruleValue(op.op, text, numeric), style: style.style };
+    }
+    await this.relook(at.shown, withRule(at.shown.look, rule));
+  }
+
+  /// Drop a column's conditional formats.
+  private async clearFormats(cell: CellContext | string | undefined): Promise<void> {
+    const shown = this.shown;
+    const ruled = (grid: Grid, c: number): boolean => (shown?.look.rules ?? []).some((r) => r.column === grid.columns[c].name);
+    const at = await this.columnOf(cell, "Clear the conditional formats of which column?", ruled);
+    if (at !== undefined) {
+      await this.relook(at.shown, withoutRules(at.shown.look, at.grid.columns[at.column].name));
+    }
+  }
+
+  /// Draw a numeric column as data bars, or not; draw a column of numeric
+  /// lists as sparklines (as it is by default), or as text (#1014).
+  private async toggleCellChart(cell: CellContext | string | undefined, chart: "bar" | "spark"): Promise<void> {
+    const fits = chart === "bar" ? (grid: Grid, c: number) => grid.columns[c].numeric : (grid: Grid, c: number) => GRID_LOOK.isNumericList(grid, c);
+    const at = await this.columnOf(cell, chart === "bar" ? "Toggle data bars on which numeric column?" : "Toggle sparklines on which column of numeric lists?", fits);
+    if (at === undefined) {
+      return;
+    }
+    const name = at.grid.columns[at.column].name;
+    const now = at.shown.look.cellCharts?.[name];
+    const next = chart === "bar" ? (now === "bar" ? undefined : "bar") : now === "text" ? undefined : "text";
+    await this.relook(at.shown, withCellChart(at.shown.look, name, next));
+  }
+
+  /// Change the column layout of the result on show (#1015); undefined
+  /// drops it.
+  private async changeLayout(change: (layout: ColumnLayout) => ColumnLayout | undefined): Promise<void> {
+    const shown = this.shown;
+    if (shown === undefined) {
+      void window.showInformationMessage("q-lint: no result yet. Run a query in grid or chart mode first.");
+      return;
+    }
+    const next = change(shown.look.layout ?? { order: [], hidden: [], widths: {}, frozen: 0 });
+    const look = { ...shown.look };
+    if (next === undefined) {
+      delete look.layout;
+    } else {
+      look.layout = next;
+    }
+    await this.relook(shown, look);
+  }
+
+  private async hideColumn(cell: CellContext | string | undefined): Promise<void> {
+    const at = await this.columnOf(cell, "Hide which column?");
+    if (at === undefined) {
+      return;
+    }
+    const layout = at.shown.look.layout ?? { order: [], hidden: [], widths: {}, frozen: 0 };
+    if (GRID_LOOK.displayColumns(at.grid, layout).length <= 1) {
+      void window.showInformationMessage("q-lint: the grid shows one column; it is not hidden.");
+      return;
+    }
+    const name = at.grid.columns[at.column].name;
+    await this.changeLayout((l) => ({ ...l, hidden: l.hidden.includes(name) ? l.hidden : [...l.hidden, name] }));
+  }
+
+  /// Freeze the columns drawn up to and with this one.
+  private async freezeColumns(cell: CellContext | string | undefined): Promise<void> {
+    const at = await this.columnOf(cell, "Freeze the columns up to which?");
+    if (at === undefined) {
+      return;
+    }
+    const place = GRID_LOOK.displayColumns(at.grid, at.shown.look.layout).indexOf(at.column);
+    if (place >= 0) {
+      await this.changeLayout((l) => ({ ...l, frozen: place + 1 }));
+    }
+  }
+
+  /// Keep the chart the page drew - or `given`, a preset as a keybinding
+  /// passes it - with the saved query the result came from (#1019); a
+  /// result of no saved query is offered Save Query first.
+  private async saveChartPreset(given?: unknown): Promise<void> {
+    const shown = this.shown;
+    if (shown === undefined) {
+      void window.showInformationMessage("q-lint: no result yet. Run a query in grid or chart mode first.");
+      return;
+    }
+    const preset = (given !== undefined ? parsePreset(given) : undefined) ?? this.presets.get(shown.id);
+    if (preset === undefined) {
+      void window.showInformationMessage("q-lint: draw the result's chart first: open its Chart view, then save it with the query.");
+      return;
+    }
+    if (shown.saved === undefined) {
+      const save = "Save Query...";
+      if ((await window.showInformationMessage("q-lint: the result is not from a saved query. Save its query to Saved Queries, with this chart?", save)) !== save) {
+        return;
+      }
+      const names = (): string[] => parseSaved(this.context.workspaceState.get<unknown>(SAVED_QUERIES_KEY, [])).map((q) => q.name);
+      const before = names();
+      await commands.executeCommand(SAVED_QUERIES.save, { code: shown.code });
+      const added = names().find((n) => !before.includes(n));
+      if (added === undefined) {
+        return;
+      }
+      shown.saved = added;
+    }
+    shown.look = { ...shown.look, chart: preset };
+    await this.keepLook(shown, preset);
+    void window.showInformationMessage(`q-lint: the chart is kept with the saved query "${shown.saved}": running it draws this chart again.`);
+  }
+
+  private async forgetChartPreset(): Promise<void> {
+    const shown = this.shown;
+    if (shown?.saved === undefined || this.savedLooks()[shown.saved]?.chart === undefined) {
+      void window.showInformationMessage("q-lint: the result on show has no chart kept with a saved query.");
+      return;
+    }
+    const look = { ...shown.look };
+    delete look.chart;
+    shown.look = look;
+    await this.keepLook(shown, null);
+    void window.showInformationMessage(`q-lint: forgot the chart kept with "${shown.saved}".`);
+  }
+
+  private showCorrelation(): void {
+    const shown = this.shown;
+    if (shown !== undefined && toGrid(shown.payload, -1).columns.filter((c) => c.numeric && !c.key).length < 2) {
+      void window.showInformationMessage("q-lint: the result on show has fewer than two numeric columns, so there is nothing to correlate.");
+      return;
+    }
+    this.ask({ action: "view", view: "corr" });
+  }
+
+  /// Ask the page for the chart as `format`: a PNG data URL or SVG text,
+  /// or undefined when it draws none or does not answer.
+  private chartImage(format: "png" | "svg"): Promise<string | undefined> {
+    return new Promise((resolve) => {
+      const before = this.controls;
+      this.ask({ action: "image", format });
+      if (this.controls === before) {
+        resolve(undefined);
+        return;
+      }
+      const key = `${this.session}.${this.controls}`;
+      this.images.set(key, resolve);
+      setTimeout(() => {
+        if (this.images.delete(key)) {
+          resolve(undefined);
+        }
+      }, 10000);
+    });
+  }
+
+  /// Whether to send the chart too: `withChart` when given, or picked.
+  private async askChart(withChart: boolean | undefined, where: string): Promise<boolean | undefined> {
+    if (typeof withChart === "boolean") {
+      return withChart;
+    }
+    const picked = await window.showQuickPick(
+      [
+        { label: "Table", detail: "The rows shown, as a Markdown table, under the query", chart: false },
+        { label: "Table and chart", detail: "The table, and the chart as the Chart view draws it, as an image", chart: true },
+      ],
+      { title: `q-lint: send the result to ${where}` },
+    );
+    return picked?.chart;
+  }
+
+  /// The page's Send to...: a notebook or a report, picked.
+  private async sendPicked(rows: number[] | undefined): Promise<void> {
+    const picked = await window.showQuickPick(
+      [
+        { label: "q Notebook", detail: "Insert the result as a Markdown cell into an open q notebook", to: "notebook" as const },
+        { label: "Markdown Report...", detail: "Append the result to a Markdown file you pick", to: "report" as const },
+      ],
+      { title: "q-lint: send the result to" },
+    );
+    if (picked?.to === "notebook") {
+      await this.toNotebook(rows, undefined, undefined);
+    } else if (picked?.to === "report") {
+      await this.toReport(rows, undefined, undefined);
+    }
+  }
+
+  /// Insert the result on show into a q notebook as a Markdown cell
+  /// (#1021): after the selected cell of the q notebook in view (one picked
+  /// when several are), or at the end of the one given or open.
+  private async toNotebook(rows: number[] | undefined, withChart: boolean | undefined, given: Uri | undefined): Promise<void> {
+    const shown = this.shown;
+    if (shown === undefined) {
+      void window.showInformationMessage("q-lint: no result to send. Run a query in grid or chart mode first.");
+      return;
+    }
+    const editors = window.visibleNotebookEditors.filter((e) => e.notebook.notebookType === NOTEBOOK.type);
+    const documents = workspace.notebookDocuments.filter((n) => n.notebookType === NOTEBOOK.type);
+    let editor = given === undefined && editors.length === 1 ? editors[0] : undefined;
+    let notebook = given !== undefined ? documents.find((n) => n.uri.toString() === given.toString()) : editor?.notebook;
+    if (notebook === undefined && given === undefined) {
+      const choices: { label: string; description: string; editor: NotebookEditor | undefined; notebook: NotebookDocument }[] =
+        editors.length > 1
+          ? editors.map((e) => ({ label: e.notebook.uri.path.replace(/^.*\//, ""), description: e.notebook.uri.fsPath, editor: e, notebook: e.notebook }))
+          : documents.map((n) => ({ label: n.uri.path.replace(/^.*\//, ""), description: n.uri.fsPath, editor: undefined, notebook: n }));
+      const picked = choices.length === 1 ? choices[0] : choices.length > 1 ? await window.showQuickPick(choices, { title: "q-lint: insert the result into which q notebook?" }) : undefined;
+      if (choices.length === 0) {
+        void window.showInformationMessage("q-lint: open a q notebook (.qnb) to send the result to.");
+        return;
+      }
+      editor = picked?.editor;
+      notebook = picked?.notebook;
+    }
+    if (notebook === undefined) {
+      if (given !== undefined) {
+        void window.showInformationMessage(`q-lint: ${given.fsPath} is not an open q notebook.`);
+      }
+      return;
+    }
+    const chart = await this.askChart(withChart, "the notebook");
+    if (chart === undefined) {
+      return;
+    }
+    const image = chart ? await this.chartImage("png") : undefined;
+    const text = resultMarkdown({ process: shown.process, code: shown.code, at: shown.at, payload: shown.payload, rows: this.rowsOf(rows), decimals: settings().gridDecimals }, image !== undefined && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(image) ? image : undefined);
+    const at = editor !== undefined && editor.selections.length > 0 ? Math.min(editor.selections[editor.selections.length - 1].end, notebook.cellCount) : notebook.cellCount;
+    const edit = new WorkspaceEdit();
+    edit.set(notebook.uri, [NotebookEdit.insertCells(at, [new NotebookCellData(NotebookCellKind.Markup, text.text.replace(/\n+$/, "\n"), "markdown")])]);
+    if (!(await workspace.applyEdit(edit))) {
+      void window.showErrorMessage(`q-lint: could not insert the result into ${notebook.uri.fsPath}.`);
+      return;
+    }
+    const lost = chart && image === undefined ? " The chart was left out: the result draws none." : "";
+    void window.showInformationMessage(`q-lint: inserted ${text.rows} row(s) into ${notebook.uri.path.replace(/^.*\//, "")} as cell ${at + 1}.${lost}`);
+  }
+
+  /// Append the result on show to a Markdown report (#1021): `target`, or
+  /// the last report, a file picked, or a new one. It says what it will
+  /// write and asks first; the report's text is kept and the result added
+  /// after it, and the chart goes to a new file beside it, never over one.
+  private async toReport(rows: number[] | undefined, target: Uri | undefined, withChart: boolean | undefined): Promise<void> {
+    const shown = this.shown;
+    if (shown === undefined) {
+      void window.showInformationMessage("q-lint: no result to send. Run a query in grid or chart mode first.");
+      return;
+    }
+    let to = target instanceof Uri ? target : undefined;
+    if (to === undefined) {
+      const last = this.context.workspaceState.get<string>(LAST_REPORT_KEY);
+      const folder = workspace.workspaceFolders?.[0]?.uri;
+      const picked = await window.showQuickPick(
+        [
+          ...(typeof last === "string" ? [{ label: `Append to ${Uri.parse(last).path.replace(/^.*\//, "")}`, detail: Uri.parse(last).fsPath, how: "last" as const }] : []),
+          { label: "Choose a Markdown File...", detail: "Append to a report that exists", how: "open" as const },
+          { label: "New Report File...", detail: "Start a report", how: "new" as const },
+        ],
+        { title: "q-lint: append the result to which report?" },
+      );
+      if (picked === undefined) {
+        return;
+      }
+      if (picked.how === "last" && typeof last === "string") {
+        to = Uri.parse(last);
+      } else if (picked.how === "open") {
+        to = (await window.showOpenDialog({ title: "Append the result to", canSelectMany: false, filters: { Markdown: ["md", "markdown"] }, defaultUri: folder }))?.[0];
+      } else {
+        to = await window.showSaveDialog({ title: "New report", filters: { Markdown: ["md"] }, defaultUri: folder === undefined ? undefined : Uri.joinPath(folder, "report.md") });
+      }
+      if (to === undefined) {
+        return;
+      }
+    }
+    const chart = await this.askChart(withChart, "the report");
+    if (chart === undefined) {
+      return;
+    }
+    let existing: Uint8Array | undefined;
+    try {
+      existing = await workspace.fs.readFile(to);
+    } catch {
+      existing = undefined;
+    }
+    const svg = chart ? await this.chartImage("svg") : undefined;
+    const folder = Uri.joinPath(to, "..");
+    let relative: string | undefined;
+    if (svg !== undefined && svg.startsWith("<svg")) {
+      const base = to.path.replace(/^.*\//, "").replace(/\.[^.]*$/, "") || "report";
+      let names: string[] = [];
+      try {
+        names = (await workspace.fs.readDirectory(Uri.joinPath(folder, `${base}-images`))).map(([name]) => `${base}-images/${name}`);
+      } catch {
+        names = [];
+      }
+      relative = imagePath(to.path, Date.now(), (r) => names.includes(r));
+    }
+    const text = resultMarkdown({ process: shown.process, code: shown.code, at: shown.at, payload: shown.payload, rows: this.rowsOf(rows), decimals: settings().gridDecimals }, relative === undefined ? undefined : linkTarget(relative));
+    const before = existing === undefined ? "" : Buffer.from(existing).toString("utf8");
+    const gap = before === "" || before.endsWith("\n\n") ? "" : before.endsWith("\n") ? "\n" : "\n\n";
+    const name = to.path.replace(/^.*\//, "");
+    const lines = text.text.split("\n");
+    const preview = lines.slice(0, 14).join("\n") + (lines.length > 14 ? `\n... ${lines.length - 14} more line(s)` : "");
+    const go = existing === undefined ? "Create" : "Append";
+    const asked = await window.showWarningMessage(
+      existing === undefined ? `Create ${name} with the result?` : `Append the result to ${name}?`,
+      {
+        modal: true,
+        detail: `${existing === undefined ? "A new file" : "Added after its last line; nothing in it is changed"}: ${text.rows} row(s) from ${shown.process}${relative !== undefined ? `, and the chart as a new file, ${relative}` : ""}.\n\n${preview}`,
+      },
+      go,
+    );
+    if (asked !== go) {
+      return;
+    }
+    try {
+      if (relative !== undefined && svg !== undefined) {
+        const image = Uri.joinPath(folder, ...relative.split("/"));
+        await workspace.fs.createDirectory(Uri.joinPath(image, ".."));
+        await workspace.fs.writeFile(image, Buffer.from(svg, "utf8"));
+      }
+      await workspace.fs.writeFile(to, Buffer.from(before + gap + text.text, "utf8"));
+    } catch (error) {
+      void window.showErrorMessage(`q-lint: could not write ${to.fsPath}: ${error instanceof Error ? error.message : String(error)}`);
+      return;
+    }
+    await this.context.workspaceState.update(LAST_REPORT_KEY, to.toString());
+    const lost = chart && relative === undefined ? " The chart was left out: the result draws none." : "";
+    void window.showInformationMessage(`q-lint: ${existing === undefined ? "wrote" : "appended"} ${text.rows} row(s) to ${to.fsPath}.${lost}`);
+  }
+
   /// Send what is shown to `only`, or to every open page. A page still
   /// loading drops it, and asks again once it is ready.
   private post(only?: Webview): void {
@@ -912,7 +1500,20 @@ export class QueryModes {
         wrangler: features.enable.wrangler,
         editCells: features.enable.editCells,
         plots: features.enable.plots,
+        columnFormats: features.enable.columnFormats,
+        conditionalFormats: features.enable.conditionalFormats,
+        cellCharts: features.enable.cellCharts,
+        columnLayout: features.enable.columnLayout,
+        depthChart: features.enable.depthChart,
+        mapChart: features.enable.mapChart,
+        linkedCharts: features.enable.linkedCharts,
+        chartPresets: features.enable.chartPresets,
+        correlation: features.enable.correlation,
+        sendResult: features.enable.sendResult,
       },
+      // The look of the features on, and the saved query it came from.
+      look: lookParts(this.shown.look, this.lookOn(features)),
+      saved: this.shown.saved,
       // Whether the grid can ask for more rows as it scrolls.
       more: this.canPage(),
       history: (features.enable.history ? this.history : [this.shown]).map((h) => ({ id: h.id, process: h.process, code: oneLine(h.code), at: h.at, rows: h.payload.count })),

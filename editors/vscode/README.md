@@ -1095,9 +1095,9 @@ applies. The previous run can be on another process, which the bar names.
 
 **Export as...** in the bar (or **Export Results As...**) saves the rows
 shown, in the order shown, as Excel (`.xlsx`), Parquet, JSON, a Markdown
-table or q; **Copy Results As...** puts JSON, Markdown or q on the
-clipboard. Both take the format (`xlsx`, `parquet`, `json`, `markdown`,
-`q`) as an argument, and Export the file's `Uri` too. Markdown shows the
+table, q or an HTML page; **Copy Results As...** puts JSON, Markdown, q or
+HTML on the clipboard. Both take the format (`xlsx`, `parquet`, `json`,
+`markdown`, `q`, `html`) as an argument, and Export the file's `Uri` too. Markdown shows the
 cells as the grid does. The others write what the process sent rather than
 what the grid shows: a float's every digit, a long past 2^53 exactly, a null
 as a null.
@@ -1116,6 +1116,8 @@ as a null.
 - **JSON**: an array of row objects; a number (a byte too) is a number, a
   boolean a boolean, a null `null`, and the rest - temporals, symbols, an
   infinity, which JSON has no number for - q's text.
+- **HTML**: a page of one table, the cells as the grid shows them, each
+  cell a conditional format matches coloured as in the grid.
 - **q**: an expression that rebuilds the table, keyed as it was:
   `([sym:`a`b] px:(1.5f;0n))`, or `flip` of a dictionary when a column's
   name is one q reserves (`count`, a dictionary's `key` and `value`). A
@@ -1257,10 +1259,121 @@ is sent to the connected process only on **Run**, through the read-only
 guard, as it assigns a global. The process reads the file by its path, so it
 must run on this machine, or the path be changed in the editor first.
 
+**Column formats.** A column whose name ends in one of these suffixes (any
+case, after the last `_`) is shown formatted, so the query decides how its
+result looks. The header shows the name without the suffix, which stays in
+its tooltip, and a cell's tooltip is q's own text:
+
+| Suffix | Shown as |
+| --- | --- |
+| `_PCT` | a fraction as a percent: `0.0123` is `1.23%` |
+| `_BPS` | a fraction in basis points: `0.0123` is `123.0 bp` |
+| `_CCY` | an amount: thousands separated, two decimals |
+| `_NUM` | thousands separated, the decimals as q wrote them |
+| `_BG`, `_FG` | the value is a colour (`` `red ``, `"#ff8800"`): the background or the text of the column the rest of the name names (`px_BG` colours `px`), or of the whole row when there is none |
+| `_CODE` | monospace |
+| `_BAR` | a data bar scaled to the column's range |
+
+A number format can end in a digit, its decimals: `ret_PCT1`, `pnl_CCY0`.
+It applies to a numeric column only, and a null or an infinity is shown as
+q writes it. A colour is a name or `#` and three, four, six or eight hex
+digits; anything else colours nothing. Copy and the exports write the
+cells as q sent them.
+
+```q
+select sym, ret_PCT:ret, spread_BPS:spread, pnl_CCY:pnl, sym_BG:?[pnl>0;`green;`red] from book
+```
+
+**Conditional formats.** **Add Conditional Format...** on a column header's
+right-click menu asks for a comparison - greater than, at least, less than,
+at most, equal, not equal, the top or bottom N, or containing some text (a
+column that is not numeric is offered equal, not equal and contains) - its
+value, and a background colour, a text colour or bold, and colours the
+cells that match. Rules add up, the later's colour winning on a cell; top
+and bottom N count the rows the grid holds, ties included, and a null
+matches nothing. **Clear Conditional Formats** drops a column's rules. The
+rules stay with the result's tab, go to the next run of the same query in
+the window, and are kept with the saved query the result came from. The
+Excel export writes them as Excel's own conditional formatting, so they stay
+live in the sheet; the HTML export colours the cells; the other formats
+cannot hold them.
+
+**Sparklines and data bars.** A column of numeric lists (`1 2 3f` in each
+cell) is drawn as a sparkline in each cell, the list in its tooltip;
+**Toggle Sparkline** on its header's menu shows the text again. **Toggle
+Data Bar**, on a numeric column's menu, draws each value as a bar scaled to
+the column's range, from zero, so a negative value goes left of it. Both are
+kept as the rules are.
+
+**Column layout.** Drag a column's header to move it, or its right edge to
+resize it; **Hide Column**, **Freeze Columns up to Here** (they stay at the
+left as the grid scrolls across) and **Unfreeze Columns** are on the
+header's menu. The bar says how many are hidden, and its button, or **Show
+Hidden Result Columns**, shows them; **Reset Result Column Layout** puts
+everything back. The layout is kept by column name with the result's tab,
+the next run of the same query in the window, and the saved query the
+result came from: run from **Saved Queries**, it opens as it was left.
+Hidden columns are still in Copy and the exports.
+
+**Depth chart.** An order book is drawn as its depth: the cumulative size at
+each price either side of the mid, the bid side green and stepping down to
+the best bid, the ask side red and stepping up from the best ask, with the
+mid and the spread above. The book is read from bid and ask price and size
+columns, one level a row (`bidPx`, `bidSize`, `askPx`, `askSize`; also
+`bid`/`ask`, `bp`/`bs`/`ap`/`as`, `bidQty`, `offer`, ...); from columns of
+lists in one row (`bids`, `bidSizes`, `asks`, `askSizes`: the first row
+shown); or from `side`, `price` and `size` (or `qty`) columns, a side
+`buy`/`bid`/`b` or `sell`/`ask`/`offer`/`a`. A result whose columns fit opens
+as a depth chart by itself.
+
+**Map.** A result with numeric `lat` (or `latitude`) and `lon` (`lng`,
+`long`, `longitude`) columns can be drawn on a plain outline of the world:
+each row a point, **size** by a numeric column (its square root) and
+**colour** by any column, a numeric one from blue to red and any other one
+colour per value. The outline is Natural Earth's 1:110m land, public
+domain, bundled with the extension: nothing is fetched. A row with no
+position, or one off the map, is left out, and the chart says how many.
+
+**Linked panes.** Draws each series ticked in its own pane, stacked, on one
+x axis (the first column, a time or a number, or the row). Move over any
+pane and a crosshair follows in every pane while the line above reads each
+series at that x, as the grid shows it; drag across a pane to zoom every
+pane to that range, and double-click to show all again. Save SVG stacks the
+panes in one image.
+
+**Chart presets.** While a chart is drawn, **Save with Query** (or **Save
+Result Chart with Query**) keeps it with the saved query the result came
+from: its kind, series, right axis, bins, map columns and colours - each
+series has a colour box beside its tick to choose its own. Running the
+saved query again opens its chart as it was saved. A result of a query not
+saved is offered **Save Query...** first. **Forget Result Chart Preset**
+drops it.
+
+**Correlation.** The **Correlation** view (or **Show Result Correlation
+Matrix**) shows the Pearson correlation of every pair of numeric columns
+over the rows shown, computed in the panel: a matrix coloured blue for a
+positive correlation and red for a negative one, stronger the nearer to 1
+or -1, then the pairs from the strongest. Each pair uses the rows where
+both are not null, as q's `cor` over those rows; key columns are left out.
+**Copy Matrix** copies it as CSV.
+
+**Send to a notebook or a report.** **Send to...** in the bar (or **Send
+Result to Notebook** and **Append Result to Markdown Report...**) writes the
+result as Markdown: where and when it ran, its query in a fenced block,
+the rows shown as a table (the first 500), and, if you choose **Table and
+chart**, the chart as the Chart view draws it. Into a q notebook it goes as
+a Markdown cell after the selected cell, the chart a PNG inside it. To a
+report it is added after the file's last line - the last report is offered
+first, or pick a file or start a new one - and the chart goes beside it as
+a new SVG file in `<report>-images/`, never over one there. Before writing,
+it shows what it will write and asks.
+
 Each of these - the history, Compare, Stats, the heatmap, the tree, export,
-paging, the pivot, the new charts, drill-down, the Data Wrangler, cell edits
-and the plots - has its own `q-lint.results.<feature>.enable` setting, on by
-default but for paging.
+paging, the pivot, the new charts, drill-down, the Data Wrangler, cell edits,
+the plots, column formats, conditional formats, sparklines and data bars,
+the column layout, the depth chart, the map, linked panes, chart presets,
+correlation and Send to... - has its own `q-lint.results.<feature>.enable`
+setting, on by default but for paging.
 Turned off, its button and command are gone (the command, run anyway, says
 which setting turns it back on), and a change applies at once, without a
 reload.
@@ -2018,7 +2131,7 @@ nothing.
 | `q-lint.results.statistics.enable` | `true` | Offer the **Stats** view and **Show Column Statistics**. | - |
 | `q-lint.results.heatmap.enable` | `true` | Offer the **Heatmap** button and **Toggle Result Heatmap**. Off, nothing is coloured, whatever `q-lint.query.gridHeatmap` says. | - |
 | `q-lint.results.tree.enable` | `true` | Offer the **Tree** view and **Show Result as Tree**. Off, the process is not asked for the tree. | - |
-| `q-lint.results.export.enable` | `true` | Offer **Export as...**, **Export Results As...** and **Copy Results As...**: Excel, Parquet, JSON, Markdown and q. CSV is always offered. | - |
+| `q-lint.results.export.enable` | `true` | Offer **Export as...**, **Export Results As...** and **Copy Results As...**: Excel, Parquet, JSON, Markdown, q and HTML. CSV is always offered. | - |
 | `q-lint.results.paging.enable` | `false` | Hold a result cut at `gridLimit` on the process as `.qlint.held`, and fetch more of it as the grid scrolls. Never on a production process. | - |
 | `q-lint.results.pivot.enable` | `true` | Offer the **Pivot** view and **Show Result as Pivot**. | - |
 | `q-lint.results.charts.enable` | `true` | Offer area, step and candle charts, a right axis, **Save PNG**, **Save SVG** and **Save Result Chart as Image**. | - |
@@ -2026,6 +2139,16 @@ nothing.
 | `q-lint.results.drilldownTemplates` | `[]` | The drill-down queries: `label`, `query` with `{{value}}`, `{{column}}` and `{{row.name}}`, and the `columns` each is offered for. | - |
 | `q-lint.results.wrangler.enable` | `true` | Offer the Data Wrangler: **Wrangle Result...** and a column header's **Wrangle Column...**, each step recorded as q and run over the result's query. | - |
 | `q-lint.results.editCells.enable` | `true` | Offer a cell's **Edit Cell...**: the `update` that sets it, shown and sent only on **Run**, through the read-only guard. | - |
+| `q-lint.results.columnFormats.enable` | `true` | Format a column by its name's suffix: `_PCT`, `_BPS`, `_CCY`, `_NUM`, `_BG`, `_FG`, `_CODE`, `_BAR`. Off, every column is shown as q writes it. | - |
+| `q-lint.results.conditionalFormats.enable` | `true` | Offer **Add Conditional Format...** and **Clear Conditional Formats** on a column header's menu; rules kept per tab and saved query, and written to Excel and HTML exports. | - |
+| `q-lint.results.cellCharts.enable` | `true` | Draw numeric lists as sparklines, and offer **Toggle Data Bar** and **Toggle Sparkline** on a column header's menu. | - |
+| `q-lint.results.columnLayout.enable` | `true` | Move, resize, hide and freeze columns, the layout kept per tab, for the query's next run and with its saved query. | - |
+| `q-lint.results.depthChart.enable` | `true` | Offer the **Depth** chart for an order book, chosen by itself when the columns fit. | - |
+| `q-lint.results.mapChart.enable` | `true` | Offer the **Map** chart for latitude and longitude columns, on a bundled world outline. | - |
+| `q-lint.results.linkedCharts.enable` | `true` | Offer **Linked panes**: one pane per series, a shared crosshair and zoom. | - |
+| `q-lint.results.chartPresets.enable` | `true` | Offer **Save with Query**, **Save Result Chart with Query** and **Forget Result Chart Preset**, and series colours; a saved query's chart is drawn again when it runs. | - |
+| `q-lint.results.correlation.enable` | `true` | Offer the **Correlation** view and **Show Result Correlation Matrix**. | - |
+| `q-lint.results.sendResult.enable` | `true` | Offer **Send to...**, **Send Result to Notebook** and **Append Result to Markdown Report...**, each showing what it writes first. | - |
 | `q-lint.query.progress.enable` | `true` | Count a running query's time in the status bar, and notify a long one's end. | - |
 | `q-lint.query.notifyAfter` | `10` | Seconds a query must run for its end to be notified while the window is not focused; `0` never. | - |
 | `q-lint.query.placeholders.enable` | `true` | Ask for a value for each `{{name}}` in the code a query sends, and put it in place. | - |
