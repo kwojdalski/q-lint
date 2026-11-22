@@ -350,6 +350,7 @@ test("package.json declares exactly the commands the extension registers", () =>
     NEW_QUERY_COMMAND,
     RUN_ARGS_COMMAND,
     ...Object.values(LOG_COMMANDS),
+    ...Object.values(require("../out/processtools.js").PROCESS_TOOL_COMMANDS),
   ].sort();
   assert.deepStrictEqual(declared, registered);
 });
@@ -359,7 +360,10 @@ test("the views live in their own container, and every menu names a declared com
   assert.strictEqual(container.id, VIEWS.container);
   assert.deepStrictEqual(
     pkg.contributes.views[VIEWS.container].map((v) => v.id),
-    [VIEWS.processes, EXPLORER.view, VIEWS.history, ONBOARDING.helpView, INFO.monitor, INFO.hdb, NOTEBOOK.variablesView, SAVED_QUERIES.view, CHEAT_SHEET.view],
+    [
+      ...[VIEWS.processes, EXPLORER.view, VIEWS.history, ONBOARDING.helpView, INFO.monitor, INFO.hdb, NOTEBOOK.variablesView, SAVED_QUERIES.view, CHEAT_SHEET.view],
+      "q-lint.tickerplantSubscribers",
+    ],
   );
   const declared = new Set(pkg.contributes.commands.map((c) => c.command));
   for (const [where, items] of Object.entries(pkg.contributes.menus)) {

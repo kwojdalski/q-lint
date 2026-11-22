@@ -1295,6 +1295,16 @@
             "markdownDescription": "Define `.qlint.view` and `.qlint.plot` on each process as it is connected to. Never on a process the read-only guard guards. Needs `#q-lint.view.enable#`."
           }
         }
+      },
+      {
+        "title": "q-lint: process tools",
+        "properties": {
+          "q-lint.tickerplant.subscribers.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Show the **Tickerplant Subscribers** view: the connected tickerplant's `.u.w` by table, each subscriber's handle, host (where the process records one) and output queue, read only when **Refresh** is pressed. Off, the view is gone and nothing is read."
+          }
+        }
       }
     ],
     "commands": [
@@ -2275,6 +2285,13 @@
         "title": "Follow or Pause Log",
         "category": "q-lint",
         "icon": "$(debug-pause)"
+      },
+      {
+        "command": "q-lint.refreshTickerplantSubscribers",
+        "title": "Refresh Tickerplant Subscribers",
+        "category": "q-lint",
+        "icon": "$(refresh)",
+        "enablement": "q-lint.connected"
       }
     ],
     "views": {
@@ -2349,6 +2366,14 @@
           "name": "q Cheat Sheet",
           "when": "config.q-lint.cheatSheet.enable",
           "icon": "media/view-cheatsheet.svg"
+        },
+        {
+          "id": "q-lint.tickerplantSubscribers",
+          "name": "Tickerplant Subscribers",
+          "icon": "media/view-explorer.svg",
+          "contextualTitle": "q-lint",
+          "visibility": "collapsed",
+          "when": "config.q-lint.tickerplant.subscribers.enable"
         }
       ],
       "q-lint-results": [
@@ -2538,6 +2563,11 @@
           "command": "q-lint.clearPlots",
           "when": "view == q-lint.plots && config.q-lint.results.plots.enable",
           "group": "navigation@4"
+        },
+        {
+          "command": "q-lint.refreshTickerplantSubscribers",
+          "when": "view == q-lint.tickerplantSubscribers && config.q-lint.tickerplant.subscribers.enable",
+          "group": "navigation@1"
         }
       ],
       "view/item/context": [
@@ -3519,6 +3549,10 @@
         {
           "command": "q-lint.restartNotebookAndRunAll",
           "when": "q-lint.notebookActive && config.q-lint.notebook.restartRunAll.enable"
+        },
+        {
+          "command": "q-lint.refreshTickerplantSubscribers",
+          "when": "config.q-lint.tickerplant.subscribers.enable"
         }
       ],
       "editor/title": [
@@ -3629,6 +3663,10 @@
       {
         "view": "q-lint.cheatSheet",
         "contents": "Iterators, joins, temporal casts and attributes, each inserted at the cursor when chosen.\n[Show Help for q Builtin](command:q-lint.showHelp)"
+      },
+      {
+        "view": "q-lint.tickerplantSubscribers",
+        "contents": "Connect to a tickerplant, then read who subscribes to each table (.u.w): nothing is read until you ask.\n[Refresh](command:q-lint.refreshTickerplantSubscribers)"
       }
     ],
     "keybindings": [

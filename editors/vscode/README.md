@@ -1573,6 +1573,23 @@ Close it, and nothing happens. `q-lint.chat.englishToQsql.enable` off hides
 the command. Both need a language model in VS Code, such as GitHub
 Copilot's; without one they say so.
 
+### Inspecting processes, and editor helpers
+
+Each of these has its own setting, listed under
+[Process tool settings](#process-tool-settings); off, its commands and views
+are gone and it sends nothing. Each reads only when you run its command or
+press its view's **Refresh**.
+
+**Tickerplant Subscribers**, a view in the q-lint panel, shows the
+connected tickerplant's subscriptions (`.u.w`) by table: each subscriber's
+handle, its output queue (`.z.W`, marked when bytes are waiting), the
+symbols it asked for, and its host where the process records one - TorQ's
+`.clients.clients` does; plain q keeps no host for another handle, and the
+view says so. It reads nothing until **Refresh** is pressed, then sends one
+read-only lambda, as the Process Explorer reads, without interrupting a
+query. A process without `.u.w` is said to be no tickerplant.
+`q-lint.tickerplant.subscribers.enable` off removes the view.
+
 ## q notebooks
 
 A `.qnb` file opens as a notebook of q code cells and markdown cells;
@@ -2182,6 +2199,12 @@ Read when a cell runs or a command is used, so a change needs no reload. None re
 | `q-lint.processes.tagColors` | `{}` | A tag's colour in the Processes view, as a theme colour id: `{"eu": "charts.purple"}`. Over the built-in `prod`, `uat` and `dev` colours; a value that is not a colour id is ignored. Changing it recolours the view at once. | - |
 | `q-lint.processes.readOnlyGuard.enable` | `true` | Ask before sending code that would change a process carrying a guarded tag; refuse an agent's. Off, code is sent unasked. | - |
 | `q-lint.processes.readOnlyGuard.tags` | `["prod","prd","production"]` | The tags the read-only guard guards, ignoring case; `[]` guards none. | - |
+
+### Process tool settings
+
+| Setting | Default | What it does | q-pro |
+| --- | --- | --- | --- |
+| `q-lint.tickerplant.subscribers.enable` | `true` | The **Tickerplant Subscribers** view, read only on **Refresh**. Off, the view is gone and nothing is read. | - |
 
 ### Not here, and why
 
