@@ -165,6 +165,7 @@ test("the partition check finds missing dates, files, differing types and outlie
 const { SYM_INSPECT, readSym, symReport } = require("../out/syminspect.js");
 const { ATTRIBUTE_SAMPLE, readAttributeSample, advise } = require("../out/attradvice.js");
 const { TABLE_INFO, readTableInfo } = require("../out/tableinfo.js");
+const { migrationScript } = require("../out/migrate.js");
 
 test("the sym inspector counts the file, its columns' shares and its growth", { skip }, async (t) => {
   const extra = [
@@ -204,4 +205,20 @@ test("the attribute advisor samples a table's columns without changing it", { sk
   assert.deepStrictEqual(p.columns.map((c) => c.name), ["sym", "px", "sz"]);
   assert.strictEqual(advise(p, new Map([["sym", 1]]))[0].suggest, "s");
   assert.strictEqual(await connection.call("{(attr m`sym)~`}", 0), true);
+});
+
+test("a schema migration's q turns one table into the other, in memory and on disk", { skip }, async (t) => {
+  const { connection } = await connect(t, HDB() + "\na:([k:1 2] x:1 2; y:`p`q; z:3 4f)\nb:([k:`long$()] z:`long$(); x:`float$(); w:`symbol$())\ntrade2:([] sym:`$(); px:`long$(); sz:`long$(); ex:`symbol$())\n");
+  const info = async (n) => readTableInfo(await connection.call(TABLE_INFO, n, 100));
+  const script = migrationScript("a", await info("a"), "a", await info("b"), "b", "p");
+  assert.match(script, /drop {3}y/);
+  const ran = readRun(await connection.call(RUN_SCRIPT, statements(script)));
+  assert.ok(ran.ok, ran.error);
+  assert.deepStrictEqual(await connection.call("{(cols a;exec t from meta a;keys a)}", 0), [["k", "z", "x", "w"], "jjfs", ["k"]]);
+  // On disk, through the column manager's helpers.
+  const disk = migrationScript("trade", await info("trade"), "trade", await info("trade2"), "trade2", "p");
+  const done = readRun(await connection.call(RUN_SCRIPT, statements(disk)));
+  assert.ok(done.ok, done.error);
+  assert.match(done.text, /^changed (\d+) of \1 directories$/);
+  assert.deepStrictEqual(await connection.call("{(cols trade;exec t from meta trade)}", 0), [["date", "sym", "px", "sz", "ex"], "dsjjs"]);
 });

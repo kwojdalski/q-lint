@@ -18,6 +18,7 @@ const { readDoc, qdocs, docMarkdown, docHtml, typeName } = require("../out/dbdoc
 const { missingWeekdays, partitionProblems, partitionReport, readPartitions } = require("../out/partcheck.js");
 const { readSym, symReport } = require("../out/syminspect.js");
 const { advise, filterCounts, adviceReport, readAttributeSample } = require("../out/attradvice.js");
+const { schemaDiff, migrationScript, nullOf, castOf } = require("../out/migrate.js");
 const { gridFromCsv, gridFromJson, chartFromGrid } = require("../out/chartfile.js");
 const { parseArgs, main, USAGE } = require("../out/chartcli.js");
 const { guardCheck } = require("../out/guard.js");
@@ -188,6 +189,28 @@ test("the attribute advisor counts filters and suggests by shape, never for an u
   const report = adviceReport("trade", "rdb", s, advise(s, filters), 4);
   assert.match(report, /Nothing was applied/);
   assert.match(report, /\| sym \|  \| g# \|/);
+});
+
+test("a schema diff names adds, drops, casts and order, and the script turns one into the other", () => {
+  const t = (kind, cols, keys = []) => ({ kind, rows: 0, bytes: null, partitions: null, keys, ncols: cols.length, columns: cols.map(([name, type, attr = ""]) => ({ name, type, fkey: "", attr })) });
+  const from = t("keyed", [["k", "j"], ["x", "j"], ["y", "s"]], ["k"]);
+  const to = t("keyed", [["k", "j"], ["z", "f"], ["x", "f", "s"]], ["k"]);
+  const d = schemaDiff(from, to);
+  assert.deepStrictEqual(d.add, [{ name: "z", type: "f" }]);
+  assert.deepStrictEqual(d.drop, ["y"]);
+  assert.deepStrictEqual(d.cast, [{ name: "x", from: "j", to: "f" }]);
+  assert.deepStrictEqual(d.order, ["k", "z", "x"]);
+  const script = migrationScript("a", from, "a", to, "b", "p");
+  assert.match(script, /a:0!a\na:delete y from a\na:update z:0n from a\na:update x:"f"\$x from a\na:update x:`s#x from a\na:`k`z`x xcols a\na:`k xkey a/);
+  assert.strictEqual(nullOf("C"), '""');
+  assert.strictEqual(nullOf("J"), "`long$()");
+  assert.strictEqual(castOf("c", "C", "s"), "`$c");
+  assert.match(migrationScript("a", from, "a", from, "a", "p"), /the same: there is nothing to change/);
+  const disk = migrationScript("trade", t("partitioned", [["date", "d"], ["sym", "s"], ["px", "f"]]), "trade", t("table", [["sym", "s"], ["px", "j"], ["ex", "s"]]), "t2", "hdb");
+  assert.match(disk, /HDB column manager/);
+  assert.match(disk, /\.qlint\.cm\.add\[`ex;`\]/);
+  assert.match(disk, /\.qlint\.cm\.cast\[`px;"j"\]/);
+  assert.doesNotMatch(disk, /del\[`date\]/);
 });
 
 test("a chart is drawn from CSV and JSON tables, and the command line writes it", async () => {

@@ -22,6 +22,7 @@ import { DB_COMMANDS, dbOff, dbOn, type DbFeature } from "./dbfeatures";
 import { DOCUMENT, DOCUMENT_LIMIT, docHtml, docMarkdown, qdocs, readDoc } from "./dbdoc";
 import { borrowWhenFree } from "./infoview";
 import type { Live } from "./live";
+import { migrationScript, sameSchema, schemaDiff } from "./migrate";
 import { CHECK_PARTITIONS, PARTITION_CHECK, partitionReport, readPartitions } from "./partcheck";
 import type { Process } from "./processes";
 import { parseSaved, SAVED_QUERIES_KEY } from "./savedqueries";
@@ -248,6 +249,52 @@ export function registerDbTools(context: ExtensionContext, live: Live): { state:
     }
   };
 
+  /// Schema migration (#1027). `target`: a table name on the same process,
+  /// for tests and keybindings.
+  const migrate = async (arg?: TableArg, target?: unknown): Promise<string> => {
+    if (off("schemaMigration")) return dbOff("schemaMigration");
+    const table = await pickTable(live, arg, "Migrate which table?");
+    if (table === undefined) return "no table";
+    const from = await tableInfo(live, table);
+    if (from === undefined) return "not read";
+    let to: { info: TableInfo; where: string } | undefined;
+    if (typeof target === "string") {
+      const got = await tableInfo(live, target);
+      if (got !== undefined) to = { info: got.info, where: `${target} on ${got.process.label}` };
+    } else {
+      const here = `A table on ${from.process.label}`;
+      const there = "A table on another process";
+      const which = await window.showQuickPick([here, there], { title: `Migrate ${table} to the schema of` });
+      if (which === undefined) return "cancelled";
+      if (which === here) {
+        const name = await pickTable(live, undefined, `Migrate ${table} to the schema of which table?`);
+        if (name === undefined) return "cancelled";
+        const got = await tableInfo(live, name);
+        if (got !== undefined) to = { info: got.info, where: `${name} on ${got.process.label}` };
+      } else {
+        const process = await live.pick(undefined, `Read the other table's schema from which process?`);
+        if (process === undefined) return "cancelled";
+        const name = await window.showInputBox({ title: `Migrate ${table} to the schema of which table on ${process.label}?`, value: table, validateInput: (v) => (/^\.?[A-Za-z][\w.]*$/.test(v.trim()) ? undefined : "A table's name") });
+        if (name === undefined) return "cancelled";
+        try {
+          const connection = await live.openSeparate(process);
+          try {
+            to = { info: readTableInfo(await connection.call(TABLE_INFO, name.trim(), META_COLUMNS)), where: `${name.trim()} on ${process.label}` };
+          } finally {
+            void connection.close();
+          }
+        } catch (error) {
+          return say(`q-lint: could not read ${name.trim()} on ${process.label}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+    }
+    if (to === undefined) return "not read";
+    const script = migrationScript(table, from.info, `${table} on ${from.process.label}`, to.info, to.where, from.process.label);
+    await openDocument(script, "q");
+    if (sameSchema(schemaDiff(from.info, to.info))) say(`q-lint: ${table} already has the schema of ${to.where}.`);
+    return script;
+  };
+
   /// Chart from a CSV or JSON file (#1031), as the command line draws one.
   const renderChart = async (file?: unknown, kind?: unknown, out?: unknown): Promise<string> => {
     if (off("chartCli")) return dbOff("chartCli");
@@ -280,6 +327,7 @@ export function registerDbTools(context: ExtensionContext, live: Live): { state:
   register(DB_COMMANDS.checkPartitions, (depth?: unknown) => checkPartitions(depth));
   register(DB_COMMANDS.inspectSym, () => inspectSym());
   register(DB_COMMANDS.adviseAttributes, (arg?: TableArg) => adviseAttributes(arg));
+  register(DB_COMMANDS.migrateSchema, (arg?: TableArg, target?: unknown) => migrate(arg, target));
   register(DB_COMMANDS.renderChart, (file?: unknown, kind?: unknown, out?: unknown) => renderChart(file, kind, out));
   return { state, registered: () => registered };
 }

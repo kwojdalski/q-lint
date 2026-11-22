@@ -1336,6 +1336,12 @@
             "order": 6,
             "markdownDescription": "**Advise Attributes**: for each column of a table, whether `s#`, `u#`, `p#` or `g#` would help, why and about what it costs, from a sample of its rows and the columns your saved and recent queries filter on. Never applies one. Off, the command is hidden and refuses."
           },
+          "q-lint.schemaMigration.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 7,
+            "markdownDescription": "**Write Schema Migration...**: compare two tables' metas, on one process or two, and write the q that turns the first into the second, for review. Runs nothing. Off, the command is hidden and refuses."
+          },
           "q-lint.charts.commandLine.enable": {
             "type": "boolean",
             "default": true,
@@ -2358,6 +2364,12 @@
         "enablement": "q-lint.connected"
       },
       {
+        "command": "q-lint.writeSchemaMigration",
+        "title": "Write Schema Migration...",
+        "category": "q-lint",
+        "enablement": "q-lint.connected"
+      },
+      {
         "command": "q-lint.renderChartFromFile",
         "title": "Render Chart from CSV or JSON File...",
         "category": "q-lint"
@@ -2906,6 +2918,11 @@
           "command": "q-lint.adviseAttributes",
           "when": "view == q-lint.processExplorer && viewItem == explorer.table && config.q-lint.processExplorer.attributeAdvisor.enable",
           "group": "3_database@2"
+        },
+        {
+          "command": "q-lint.writeSchemaMigration",
+          "when": "view == q-lint.processExplorer && viewItem == explorer.table && config.q-lint.schemaMigration.enable",
+          "group": "3_database@3"
         }
       ],
       "editor/title/run": [
@@ -3665,6 +3682,10 @@
         {
           "command": "q-lint.adviseAttributes",
           "when": "config.q-lint.processExplorer.attributeAdvisor.enable"
+        },
+        {
+          "command": "q-lint.writeSchemaMigration",
+          "when": "config.q-lint.schemaMigration.enable"
         },
         {
           "command": "q-lint.renderChartFromFile",

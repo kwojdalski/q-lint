@@ -14,6 +14,7 @@ export const DB_SETTINGS = {
   partitionCheck: { key: "hdbBrowser.partitionCheck.enable", fallback: true, name: "The partition consistency check" },
   symInspector: { key: "hdbBrowser.symInspector.enable", fallback: true, name: "The sym file inspector" },
   attributeAdvisor: { key: "processExplorer.attributeAdvisor.enable", fallback: true, name: "The attribute advisor" },
+  schemaMigration: { key: "schemaMigration.enable", fallback: true, name: "Schema migration" },
   chartCli: { key: "charts.commandLine.enable", fallback: true, name: "Charts from a file" },
 } as const;
 
@@ -26,6 +27,7 @@ export const DB_COMMANDS = {
   checkPartitions: "q-lint.checkPartitions",
   inspectSym: "q-lint.inspectSymFile",
   adviseAttributes: "q-lint.adviseAttributes",
+  migrateSchema: "q-lint.writeSchemaMigration",
   renderChart: "q-lint.renderChartFromFile",
 } as const;
 

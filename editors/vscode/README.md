@@ -1633,6 +1633,14 @@ value for `g#` - and kdb+ allocates in powers of two, so a real one can be
 up to twice that. A column no query filters on is suggested only `s#`, or
 the shape it already has when it is the table's first.
 
+**Write Schema Migration...**, on a table, compares its meta with another
+table's - on the same process, or on another saved process, read over a
+connection of its own - and writes the q that turns the first into the
+second, for review; nothing runs. A table in memory is assigned again
+(`delete`, `update`, a cast, `xcols`, `xkey`); a table on disk gets the
+column manager's script, every step in every partition. The metas cannot
+tell a rename from a drop and an add, and say so as that.
+
 **Render Chart from CSV or JSON File...**, in the Explorer's context menu
 on a `.csv`, `.tsv` or `.json` file, draws it as an SVG chart with the
 code the result panel saves its charts with, and writes the file you name.
@@ -2274,6 +2282,7 @@ Read when a cell runs or a command is used, so a change needs no reload. None re
 | `q-lint.hdbBrowser.symInspector.enable` | `true` | **Inspect Sym File**. Off, the command is hidden and refuses. | - |
 | `q-lint.hdbBrowser.symInspector.warnAbove` | `1000000` | **Inspect Sym File** warns when the sym file holds more symbols than this. | - |
 | `q-lint.processExplorer.attributeAdvisor.enable` | `true` | **Advise Attributes**. Off, the command is hidden and refuses. | - |
+| `q-lint.schemaMigration.enable` | `true` | **Write Schema Migration...**. Off, the command is hidden and refuses. | - |
 | `q-lint.charts.commandLine.enable` | `true` | **Render Chart from CSV or JSON File...**. Off, the command is hidden and refuses; `out/chartcli.js` is yours to run or not. | - |
 
 ### Not here, and why
