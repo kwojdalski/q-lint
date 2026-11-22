@@ -1316,6 +1316,27 @@
             "default": true,
             "order": 802,
             "markdownDescription": "Offer **Set Credential Command**, on a saved process: a command run in a shell at each connect whose output (a JSON object with `password` or `token` and optionally `user`, or a line: the password, or `user:password`) is the handshake's user and password - for Kerberos, a vault or a token service. What it prints is used for that connect only: never stored, logged or put in settings. Read from a shared list only in a trusted workspace. Off: the command is hidden and refuses, and processes connect with their stored password."
+          },
+          "q-lint.processes.environmentColor.enable": {
+            "type": "boolean",
+            "default": false,
+            "order": 803,
+            "markdownDescription": "While the connected process carries a tag `q-lint.processes.environmentColor.colors` colours (production red and `uat` amber by default), show a status bar item in that colour naming the tag, and a border of it down the left of each q editor. Nothing is written to your settings and nothing is sent to the process. Off (the default): neither is drawn."
+          },
+          "q-lint.processes.environmentColor.colors": {
+            "type": "object",
+            "default": {
+              "prod": "red",
+              "prd": "red",
+              "production": "red",
+              "uat": "amber"
+            },
+            "additionalProperties": {
+              "type": "string",
+              "pattern": "^(red|amber|yellow|purple|blue|green|#[0-9a-fA-F]{6})$"
+            },
+            "order": 804,
+            "markdownDescription": "The environment colour of each tag: `red`, `amber`, `yellow`, `purple`, `blue`, `green` or `#rrggbb`. A process with tags of two colours takes the most cautious, in that order. Only red, amber and yellow colour the status bar item's background (VS Code allows only those two backgrounds); the rest colour its text. Used while `q-lint.processes.environmentColor.enable` is on."
           }
         }
       }

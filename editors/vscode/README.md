@@ -523,6 +523,19 @@ a shared `.qlint/processes.json` it is read only in a trusted workspace.
 `q-lint.connection.credentialCommand.enable` off hides the command, and
 processes connect with their stored password instead.
 
+**Environment colour.** With `q-lint.processes.environmentColor.enable` on
+(off by default, as it recolours the window), while the connected process
+carries a coloured tag a status bar item names the tag in its colour -
+production red and `uat` amber unless
+`q-lint.processes.environmentColor.colors` says otherwise (`red`, `amber`,
+`yellow`, `purple`, `blue`, `green` or `#rrggbb` per tag) - and each q
+editor has a border of it down its left side. A process with tags of two
+colours takes the most cautious. VS Code lets a status bar item have only
+an error (red) or warning (amber, yellow) background, so the other colours
+colour its text. The title bar is left as your theme draws it: colouring it
+would mean writing `workbench.colorCustomizations` into your settings,
+which q-lint does not do. Nothing is sent to the process.
+
 **Querying.** With a q file open:
 - **Query Current Line**, `ctrl+q`.
 - **Query Current Selection**, `ctrl+r`: the current line when nothing is
@@ -2169,6 +2182,8 @@ applies at once, without a reload. None reaches the language server.
 | `q-lint.processes.bulkAdd.enable` | `true` | **Add Many Processes...**: paste lines or CSV, checked and added. Off, the command is hidden and refuses, and an open form closes. | - |
 | `q-lint.processes.importOther.enable` | `true` | **Import Servers from qStudio...** and **Import Connections from KX Extension...**, never a password. Off, both are hidden and refuse. | - |
 | `q-lint.connection.credentialCommand.enable` | `true` | **Set Credential Command**, and running a process's command at each connect for its user and password, never kept. Off, the command is hidden and refuses, and the stored password is used. | - |
+| `q-lint.processes.environmentColor.enable` | `false` | A status bar item and an editor border in the connected process's tag colour. Off, neither is drawn and nothing listens. | - |
+| `q-lint.processes.environmentColor.colors` | prod, prd, production red; uat amber | Tag to colour: `red`, `amber`, `yellow`, `purple`, `blue`, `green` or `#rrggbb`. | - |
 
 ### Terminal settings
 

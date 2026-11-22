@@ -4,14 +4,16 @@
 import type { ExtensionContext } from "vscode";
 import { BulkAdd } from "./bulkaddview";
 import { CredentialCommands } from "./credentialview";
+import { EnvironmentColour } from "./envcolourview";
 import { ImportOther } from "./importotherview";
 import type { Launcher } from "./launcherview";
 import type { Live } from "./live";
 
-export function registerProcessAdmin(context: ExtensionContext, live: Live, launcher: Launcher): { bulkAdd: BulkAdd; importOther: ImportOther; credentials: CredentialCommands } {
+export function registerProcessAdmin(context: ExtensionContext, live: Live, launcher: Launcher): { bulkAdd: BulkAdd; importOther: ImportOther; credentials: CredentialCommands; environmentColour: EnvironmentColour } {
   void launcher;
   const bulkAdd = new BulkAdd(context, live);
   const importOther = new ImportOther(context, live);
   const credentials = new CredentialCommands(context, live);
-  return { bulkAdd, importOther, credentials };
+  const environmentColour = new EnvironmentColour(context, live);
+  return { bulkAdd, importOther, credentials, environmentColour };
 }
