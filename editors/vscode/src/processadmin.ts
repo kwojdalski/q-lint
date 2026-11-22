@@ -8,12 +8,13 @@ import { EnvironmentColour } from "./envcolourview";
 import { ImportOther } from "./importotherview";
 import type { Launcher } from "./launcherview";
 import type { Live } from "./live";
+import { ProcessTimeouts } from "./timeoutview";
 
-export function registerProcessAdmin(context: ExtensionContext, live: Live, launcher: Launcher): { bulkAdd: BulkAdd; importOther: ImportOther; credentials: CredentialCommands; environmentColour: EnvironmentColour } {
-  void launcher;
+export function registerProcessAdmin(context: ExtensionContext, live: Live, launcher: Launcher): { bulkAdd: BulkAdd; importOther: ImportOther; credentials: CredentialCommands; environmentColour: EnvironmentColour; timeouts: ProcessTimeouts } {
   const bulkAdd = new BulkAdd(context, live);
   const importOther = new ImportOther(context, live);
   const credentials = new CredentialCommands(context, live);
   const environmentColour = new EnvironmentColour(context, live);
-  return { bulkAdd, importOther, credentials, environmentColour };
+  const timeouts = new ProcessTimeouts(context, live, launcher);
+  return { bulkAdd, importOther, credentials, environmentColour, timeouts };
 }

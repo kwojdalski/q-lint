@@ -352,7 +352,7 @@ test("package.json declares exactly the commands the extension registers", () =>
     RUN_ARGS_COMMAND,
     ...Object.values(LOG_COMMANDS),
     // Group V (#1032-#1041), as each is declared.
-    ...[ADMIN_COMMANDS.bulkAdd, ADMIN_COMMANDS.importQStudio, ADMIN_COMMANDS.importKx, ADMIN_COMMANDS.setCredentialCommand],
+    ...[ADMIN_COMMANDS.bulkAdd, ADMIN_COMMANDS.importQStudio, ADMIN_COMMANDS.importKx, ADMIN_COMMANDS.setCredentialCommand, ADMIN_COMMANDS.setTimeout, ADMIN_COMMANDS.interrupt],
   ].sort();
   assert.deepStrictEqual(declared, registered);
 });

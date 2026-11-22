@@ -98,6 +98,7 @@ import { WATCH, WATCHING, intervalProblem, readWatch, watchText } from "./watch"
 import { guardedBy } from "./guard";
 import { readAdmin } from "./admin";
 import { credentialEnv, parseCredentials, runCredentialCommand } from "./credentials";
+import { effectiveTimeout, timeoutSource } from "./processtimeout";
 
 const PROCESSES_KEY = "q-lint.processes";
 /// The address of each process the shared list held when last read (#955).
@@ -2183,8 +2184,9 @@ export class Live {
     const stop = (): void => connection.abort();
     signal?.addEventListener("abort", stop);
     const controls = this.controls.settings();
+    const timeout = effectiveTimeout(process, controls.timeout, this.setting(readAdmin).processTimeout);
     let timedOut = false;
-    const disarm = armTimeout(controls.timeout, () => {
+    const disarm = armTimeout(timeout, () => {
       timedOut = true;
       connection.abort();
     });
@@ -2199,7 +2201,7 @@ export class Live {
         ? await runUnwrapped(connection, cut, { size: consoleSize, limit: gridLimit, unlimited, grid: true })
         : await connection.queryGrid(cut, consoleSize, gridLimit);
     } catch (error) {
-      throw timedOut ? new Error(timedOutError(controls.timeout)) : signal?.aborted ? new Error("cancelled") : error;
+      throw timedOut ? new Error(timedOutError(timeout)) : signal?.aborted ? new Error("cancelled") : error;
     } finally {
       disarm();
       signal?.removeEventListener("abort", stop);
@@ -2368,14 +2370,17 @@ export class Live {
     const controls = this.controls.settings();
     const unlimited = this.controls.unlimited;
     const { consoleSize, gridLimit } = limits(settings, unlimited);
+    // A process's own timeout (#1036) over q-lint.query.timeout.
+    const timeoutOn = this.setting(readAdmin).processTimeout;
+    const timeout = effectiveTimeout(process, controls.timeout, timeoutOn);
     const started = Date.now();
     this.running = { code, started };
     this.showStatus();
     // A query still running at the timeout is aborted as Abort does.
-    const disarm = armTimeout(controls.timeout, () => {
+    const disarm = armTimeout(timeout, () => {
       if (this.running?.started === started) {
         this.timedOut = started;
-        void this.abort(controls.timeout);
+        void this.abort(timeout, timeoutSource(process, timeoutOn));
       }
     });
     let entry: HistoryEntry;
@@ -2420,9 +2425,9 @@ export class Live {
         at: new Date(started).toISOString(),
         millis: Date.now() - started,
         outcome: timedOut ? "timeout" : aborted ? "aborted" : "error",
-        error: timedOut ? timedOutError(controls.timeout) : aborted ? "aborted" : message,
+        error: timedOut ? timedOutError(timeout) : aborted ? "aborted" : message,
       };
-      this.show([`# ${process.label} - ${timedOut ? timedOutError(controls.timeout) : aborted ? "aborted" : "failed"}: ${message}`], false);
+      this.show([`# ${process.label} - ${timedOut ? timedOutError(timeout) : aborted ? "aborted" : "failed"}: ${message}`], false);
     } finally {
       disarm();
       if (this.timedOut === started) {
@@ -2522,7 +2527,7 @@ export class Live {
   /// Stop waiting for the running query: q has no message that cancels one,
   /// so the connection is closed - which also stops the process from sending
   /// a result nobody wants - and opened again.
-  async abort(timedOut?: number): Promise<void> {
+  async abort(timedOut?: number, source = "q-lint.query.timeout"): Promise<void> {
     const connection = this.connection;
     const process = this.active;
     if (connection === undefined || process === undefined || !connection.isBusy) {
@@ -2545,7 +2550,7 @@ export class Live {
     void window.showInformationMessage(
       this.aborted === undefined && timedOut === undefined
         ? `q-lint: stopped the Process Explorer's read of ${process.label}, the only call running. q-lint reconnects once ${process.label} is free.`
-        : `q-lint: ${timedOut === undefined ? "stopped waiting for the query" : `the query ${timedOutError(timedOut)} (q-lint.query.timeout), and was aborted`}. ${process.label} may still be running it; q-lint reconnects once it is free.`,
+        : `q-lint: ${timedOut === undefined ? "stopped waiting for the query" : `the query ${timedOutError(timedOut)} (${source}), and was aborted`}. ${process.label} may still be running it; q-lint reconnects once it is free.`,
     );
   }
 

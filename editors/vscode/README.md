@@ -536,6 +536,18 @@ colour its text. The title bar is left as your theme draws it: colouring it
 would mean writing `workbench.colorCustomizations` into your settings,
 which q-lint does not do. Nothing is sent to the process.
 
+**Set Process Timeout**, on a saved process, gives queries on it a timeout
+of their own, in seconds, over `q-lint.query.timeout`: when it passes, the
+query's connection is dropped as **Abort Current Query** drops it, the
+history records a timeout, and the message names the process's timeout.
+Empty goes back to `q-lint.query.timeout`. **Interrupt Query on Local
+Process**, in the palette while connected, stops the running query on a
+process started from the Processes view (**Start Process**) by sending it
+SIGINT: q ends the query with `'stop` and the connection stays, ready for
+the next query, where Abort can only stop waiting and reconnect. For any
+other process it says so and sends nothing. Their switches are
+`q-lint.query.processTimeout.enable` and `q-lint.query.cancelLocal.enable`.
+
 **Querying.** With a q file open:
 - **Query Current Line**, `ctrl+q`.
 - **Query Current Selection**, `ctrl+r`: the current line when nothing is
@@ -2184,6 +2196,8 @@ applies at once, without a reload. None reaches the language server.
 | `q-lint.connection.credentialCommand.enable` | `true` | **Set Credential Command**, and running a process's command at each connect for its user and password, never kept. Off, the command is hidden and refuses, and the stored password is used. | - |
 | `q-lint.processes.environmentColor.enable` | `false` | A status bar item and an editor border in the connected process's tag colour. Off, neither is drawn and nothing listens. | - |
 | `q-lint.processes.environmentColor.colors` | prod, prd, production red; uat amber | Tag to colour: `red`, `amber`, `yellow`, `purple`, `blue`, `green` or `#rrggbb`. | - |
+| `q-lint.query.processTimeout.enable` | `true` | **Set Process Timeout**, and each process's own timeout over `q-lint.query.timeout`. Off, the command is hidden and refuses, and `q-lint.query.timeout` applies everywhere. | - |
+| `q-lint.query.cancelLocal.enable` | `true` | **Interrupt Query on Local Process**: SIGINT to a process started from here. Off, the command is hidden and refuses. | - |
 
 ### Terminal settings
 
