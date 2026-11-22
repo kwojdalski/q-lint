@@ -16,7 +16,8 @@
   "activationEvents": [
     "onLanguage:q",
     "onNotebook:q-lint-notebook",
-    "onTaskType:q"
+    "onTaskType:q",
+    "onUri"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -1355,6 +1356,12 @@
             "default": true,
             "order": 807,
             "markdownDescription": "Offer **Run Query Asynchronously**, in a q editor's context menu and the palette: the selection or statement at the cursor is sent as an async message, the connection stays free for other queries, and the result opens in the result panel when the process sends it back. Read by the read-only guard first. **Show Pending Async Queries** lists those still to answer. Off: the commands are hidden and refuse, and pending results are dropped."
+          },
+          "q-lint.query.links.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 808,
+            "markdownDescription": "Offer **Copy Query Link**, in a q editor's context menu and the palette: a `vscode://` link to the selection or statement at the cursor, aimed at a process by its label, and open such links: the query opens in a new q editor bound to your process of that label, and runs only if you say so, through the read-only guard. Off: the command is hidden and refuses, and links are not opened."
           }
         }
       }
@@ -2380,6 +2387,12 @@
         "command": "q-lint.showPendingAsyncQueries",
         "title": "Show Pending Async Queries",
         "category": "q-lint"
+      },
+      {
+        "command": "q-lint.copyQueryLink",
+        "title": "Copy Query Link",
+        "category": "q-lint",
+        "icon": "$(link)"
       }
     ],
     "views": {
@@ -3190,6 +3203,11 @@
           "command": "q-lint.queryAsync",
           "when": "editorLangId == q && config.q-lint.query.async.enable",
           "group": "q-lint@26"
+        },
+        {
+          "command": "q-lint.copyQueryLink",
+          "when": "editorLangId == q && config.q-lint.query.links.enable",
+          "group": "q-lint@27"
         }
       ],
       "testing/item/context": [
@@ -3686,6 +3704,10 @@
         {
           "command": "q-lint.showPendingAsyncQueries",
           "when": "config.q-lint.query.async.enable"
+        },
+        {
+          "command": "q-lint.copyQueryLink",
+          "when": "config.q-lint.query.links.enable"
         }
       ],
       "editor/title": [

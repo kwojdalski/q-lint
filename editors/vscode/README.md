@@ -563,6 +563,18 @@ closes takes its pending results with it, and says so.
 `q-lint.query.async.enable` off hides both commands and drops what is
 pending.
 
+**Copy Query Link**, in a q editor's context menu, copies a link to the
+selection or the statement at the cursor, aimed at a process by its label
+(the file's process, else the connected one, else one you pick):
+`vscode://wojdalski.q-lint/query?process=...&code=...`, both in base64url,
+placeholders left as written. Opening the link - from chat, a ticket, a
+wiki - opens the query in a new q editor bound to *your* process of that
+label, and asks before running it; run, it goes as a query from that
+editor goes, read by the read-only guard. A label not in your Processes
+list opens the query unbound and runs nothing. Nothing in the link is a
+password. `q-lint.query.links.enable` off hides the command and stops
+opening links.
+
 **Querying.** With a q file open:
 - **Query Current Line**, `ctrl+q`.
 - **Query Current Selection**, `ctrl+r`: the current line when nothing is
@@ -2214,6 +2226,7 @@ applies at once, without a reload. None reaches the language server.
 | `q-lint.query.processTimeout.enable` | `true` | **Set Process Timeout**, and each process's own timeout over `q-lint.query.timeout`. Off, the command is hidden and refuses, and `q-lint.query.timeout` applies everywhere. | - |
 | `q-lint.query.cancelLocal.enable` | `true` | **Interrupt Query on Local Process**: SIGINT to a process started from here. Off, the command is hidden and refuses. | - |
 | `q-lint.query.async.enable` | `true` | **Run Query Asynchronously** and **Show Pending Async Queries**. Off, both are hidden and refuse, and pending results are dropped. | - |
+| `q-lint.query.links.enable` | `true` | **Copy Query Link**, and opening such links: shown, bound to the process of their label, run only when you say so. Off, the command is hidden and refuses, and links are not opened. | - |
 
 ### Terminal settings
 
