@@ -1338,6 +1338,11 @@
             "type": "boolean",
             "default": true,
             "markdownDescription": "Offer **Join Assistant...**: pick two tables (or the result on show) and get `lj`, `ij`, `uj`, `aj` or `wj` written with the keys and sorts it needs, at the cursor. The tables' shapes are read through the read-only guard. Off, the command is hidden and refuses, and nothing is sent."
+          },
+          "q-lint.query.ajExplainer.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Offer **Explain aj Match**: for one row of the `aj` call at the cursor, show which right-hand row it matched, or why none did, by re-running the match for that row on the connected process (through the read-only guard). Off, the command is hidden and refuses, and nothing is sent."
           }
         }
       }
@@ -2393,6 +2398,12 @@
         "title": "Join Assistant...",
         "category": "q-lint",
         "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.explainAjMatch",
+        "title": "Explain aj Match...",
+        "category": "q-lint",
+        "enablement": "q-lint.connected"
       }
     ],
     "views": {
@@ -3260,6 +3271,11 @@
           "command": "q-lint.joinAssistant",
           "when": "editorLangId == q && config.q-lint.query.joinAssistant.enable",
           "group": "q-lint@52"
+        },
+        {
+          "command": "q-lint.explainAjMatch",
+          "when": "editorLangId == q && config.q-lint.query.ajExplainer.enable",
+          "group": "q-lint@53"
         }
       ],
       "testing/item/context": [
@@ -3772,6 +3788,10 @@
         {
           "command": "q-lint.joinAssistant",
           "when": "config.q-lint.query.joinAssistant.enable"
+        },
+        {
+          "command": "q-lint.explainAjMatch",
+          "when": "config.q-lint.query.ajExplainer.enable && editorLangId == q"
         }
       ],
       "editor/title": [

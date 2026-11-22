@@ -1663,6 +1663,16 @@ the one you pick is inserted at the cursor - after the selection, never
 over it - or in a new q editor. The two expressions are sent through the
 read-only guard. `q-lint.query.joinAssistant.enable` off hides it.
 
+**Explain aj Match...** (a q editor's context menu, or the palette)
+finds the `aj` or `aj0` call in the selection or the statement at the
+cursor, asks for a row of its left table, and re-runs the match for that row
+on the connected process: the right table's rows with that row's keys, then
+the last of them at or before its time, found by `bin` as `aj` finds it. It
+shows the row matched, or why none was - no right row has that key, or the
+earliest one is after the row's time - and warns when those right rows are
+not in time order, as `aj` assumes. The call's arguments go through the
+read-only guard. `q-lint.query.ajExplainer.enable` off hides it.
+
 ## q notebooks
 
 A `.qnb` file opens as a notebook of q code cells and markdown cells;
@@ -2285,6 +2295,7 @@ Read when a cell runs or a command is used, so a change needs no reload. None re
 | `q-lint.query.inlineResults.enable` | `true` | The result's short form at the end of a line after **Run Line** or **Run Selection**. Off, none is drawn and those shown are cleared. | - |
 | `q-lint.query.benchmark.enable` | `true` | **Benchmark Expression**, run only on the command. Off, it is hidden and refuses, and the panel closes. | - |
 | `q-lint.query.joinAssistant.enable` | `true` | **Join Assistant...**. Off, it is hidden and refuses. | - |
+| `q-lint.query.ajExplainer.enable` | `true` | **Explain aj Match...**. Off, it is hidden and refuses. | - |
 
 ### Not here, and why
 
