@@ -68,6 +68,7 @@ const { GATEWAY_COMMANDS } = require("../out/gateway.js");
 const { STREAM_COMMANDS } = require("../out/stream.js");
 const { LAUNCH_COMMANDS } = require("../out/launcher.js");
 const { NEW_QUERY_COMMAND } = require("../out/newquery.js");
+const { ADMIN_COMMANDS } = require("../out/admin.js");
 const { RUN_ARGS_COMMAND } = require("../out/runargs.js");
 const { LOG_COMMANDS } = require("../out/logparse.js");
 const { SHARED_COMMANDS } = require("../out/shared.js");
@@ -350,6 +351,8 @@ test("package.json declares exactly the commands the extension registers", () =>
     NEW_QUERY_COMMAND,
     RUN_ARGS_COMMAND,
     ...Object.values(LOG_COMMANDS),
+    // Group V (#1032-#1041), as each is declared.
+    ...[ADMIN_COMMANDS.bulkAdd],
   ].sort();
   assert.deepStrictEqual(declared, registered);
 });

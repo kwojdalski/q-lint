@@ -34,6 +34,7 @@ import { SavedQueries } from "./savedqueriesview";
 import { TableStreams } from "./streamview";
 import { Launcher } from "./launcherview";
 import { NewQuery } from "./newqueryview";
+import { registerProcessAdmin } from "./processadmin";
 import { RunWithArguments } from "./runargsview";
 import { LogViewer } from "./logview";
 import { registerNotebookGit, type NotebookDiff, type NotebookStrip } from "./notebookgit";
@@ -161,6 +162,7 @@ export async function activate(
     tableStreams: TableStreams["state"];
     launchedProcesses: Launcher["running"];
     newQueryForProcess: (label?: string) => ReturnType<NewQuery["open"]>;
+    processAdmin: ReturnType<typeof registerProcessAdmin>;
     runFileWithArguments: () => ReturnType<RunWithArguments["pick"]>;
     logViewer: () => ReturnType<LogViewer["state"]>;
     testExplorer: Omit<ReturnType<typeof registerTestExplorer>, "serverChanged">;
@@ -271,6 +273,7 @@ export async function activate(
   const streams = new TableStreams(context, live);
   const launcher = new Launcher(context, live);
   const newQuery = new NewQuery(context, live);
+  const processAdmin = registerProcessAdmin(context, live, launcher);
   const runWithArguments = new RunWithArguments(context, live.runFileWith);
   const logViewer = new LogViewer(context);
   const notebookRestart = new NotebookRestart(context, live, launcher, notebook);
@@ -328,6 +331,7 @@ export async function activate(
     tableStreams: () => streams.state(),
     launchedProcesses: () => launcher.running(),
     newQueryForProcess: (label?: string) => newQuery.open(label),
+    processAdmin,
     runFileWithArguments: () => runWithArguments.pick(),
     logViewer: () => logViewer.state(),
     testExplorer: {

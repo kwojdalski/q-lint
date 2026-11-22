@@ -135,6 +135,7 @@ function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir
     "./organiseloads": { registerOrganiseLoads() {} },
     "./problemsview": { registerProblemsDashboard: () => ({ panelOpen: () => false }) },
     "./logview": { LogViewer: class { state() { return undefined; } } },
+    "./processadmin": { registerProcessAdmin: () => ({}) },
   };
   const file = require.resolve("../out/extension.js");
   delete require.cache[file];

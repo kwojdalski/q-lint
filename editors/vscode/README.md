@@ -481,6 +481,18 @@ password. `q-lint.processes.shared.enable` off stops reading the file,
 removes the group, closes a connection to one of its processes, and hides
 the command.
 
+**Add Many Processes...**, on the Processes view's title menu, opens a form
+to paste processes into: a line each, `host:port[:label[:tags]]` (an IPv6
+host in brackets, `[::1]:5000:local`), or CSV whose header row names
+`host`, `port` and any of `label`, `tags`, `user` and `tls`. As you type, a
+table under it shows what each line gives - a process, why not, or a
+duplicate - and **Add** adds the processes, after the saved ones. A label
+already in the list, or on an earlier line, is skipped; one at the address
+of a saved process is added, and the table says which. A label left out is
+`host:port`. No password is read from what is pasted (a `password` column
+is ignored and masked in the table): each is asked for on the first
+connect. `q-lint.processes.bulkAdd.enable` off hides the command.
+
 **Querying.** With a q file open:
 - **Query Current Line**, `ctrl+q`.
 - **Query Current Selection**, `ctrl+r`: the current line when nothing is
@@ -2116,6 +2128,15 @@ Each applies at once, without a reload. None reaches the language server.
 | `q-lint.processes.logViewer.enable` | `true` | **Open Log File...** and its filters: q and TorQ logs on this machine, coloured by level and followed as they grow. Off, the commands are hidden and refuse, and open views stop following. | - |
 | `q-lint.processes.logViewer.maxLines` | `10000` | The most entries a log view keeps, the last that pass its filter; 100 to 1,000,000. | - |
 | `q-lint.processes.shared.enable` | `true` | Read, watch and list `.qlint/processes.json`, and offer **Add to Shared Process List**. Off, the file is not read and the group is removed. | - |
+
+### Process admin settings
+
+The connection and process-admin features, each with its own switch. Each
+applies at once, without a reload. None reaches the language server.
+
+| Setting | Default | What it does | q-pro |
+| --- | --- | --- | --- |
+| `q-lint.processes.bulkAdd.enable` | `true` | **Add Many Processes...**: paste lines or CSV, checked and added. Off, the command is hidden and refuses, and an open form closes. | - |
 
 ### Terminal settings
 
