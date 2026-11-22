@@ -45,8 +45,6 @@ jobs:
           check Cargo.toml                 's/^version = "\(.*\)"/\1/p;'
           check pyproject.toml             's/^version = "\(.*\)"/\1/p;'
           check editors/vscode/package.json 's/^  "version": "\(.*\)",/\1/p;'
-          check editors/jupyter/pyproject.toml 's/^version = "\(.*\)"/\1/p;'
-          check editors/jupyter/qlint_kernel/__init__.py 's/^__version__ = "\(.*\)"/\1/p;'
           exit $fail
 
   binaries:

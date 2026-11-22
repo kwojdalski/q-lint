@@ -26,9 +26,6 @@ jobs:
           python-version: "3.12"
       - run: pip install pytest
       - run: python -m pytest -q tests/
-      # The Jupyter kernel's suite (editors/jupyter): the parts that need q,
-      # ZeroMQ or jupyter_client skip themselves here.
-      - run: python -m unittest discover -s editors/jupyter/tests
   # The tests on the other platforms the release builds for. Windows in
   # particular: its paths are drive letters and backslashes, and its file URIs
   # file:///c%3A/..., and a path bug there once surfaced only as a release
