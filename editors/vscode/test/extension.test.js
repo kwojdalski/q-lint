@@ -134,6 +134,7 @@ function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir
     "./formatchangedview": { registerFormatChanged: () => ({ registered: () => false }) },
     "./organiseloads": { registerOrganiseLoads() {} },
     "./problemsview": { registerProblemsDashboard: () => ({ panelOpen: () => false }) },
+    "./dbtoolsview": { registerDbTools: () => ({ state: {}, registered: () => [] }) },
     "./logview": { LogViewer: class { state() { return undefined; } } },
   };
   const file = require.resolve("../out/extension.js");

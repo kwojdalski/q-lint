@@ -73,6 +73,7 @@ import { registerFunctionProfile } from "./profileview";
 import { registerFormatChanged } from "./formatchangedview";
 import { registerOrganiseLoads } from "./organiseloads";
 import { registerProblemsDashboard } from "./problemsview";
+import { registerDbTools } from "./dbtoolsview";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -190,6 +191,7 @@ export async function activate(
     functionProfile: ReturnType<typeof registerFunctionProfile>;
     formatChanged: ReturnType<typeof registerFormatChanged>;
     problemsDashboard: ReturnType<typeof registerProblemsDashboard>;
+    dbTools: ReturnType<typeof registerDbTools>;
   }
 > {
   // Replacing the binary does not restart the server, and a window reload is
@@ -307,6 +309,7 @@ export async function activate(
     const command = settings.serverPath || bundledServer(context) || "qlinter";
     return { command, args: settings.args.filter((a) => a !== "--lsp") };
   });
+  const dbTools = registerDbTools(context, live);
   // Not awaited: nothing above needs the server, and a slow or hung one
   // would hold up every command of the extension until it answered.
   void serial.run(() => start(context)).then(() => serverChanged());
@@ -364,6 +367,7 @@ export async function activate(
     functionProfile,
     formatChanged,
     problemsDashboard,
+    dbTools,
   };
 }
 

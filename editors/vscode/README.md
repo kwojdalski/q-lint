@@ -1573,6 +1573,37 @@ Close it, and nothing happens. `q-lint.chat.englishToQsql.enable` off hides
 the command. Both need a language model in VS Code, such as GitHub
 Copilot's; without one they say so.
 
+### Databases, HDBs and dashboards
+
+Each of these has its own `enable` setting ([Database
+settings](#database-settings)); turned off, its commands are hidden and
+refuse, its panel closes, its timers stop, and it sends nothing. The ones
+that read a process read it as the Process Explorer does - a fixed lambda
+that defines nothing, on the query connection, waiting for a query rather
+than interrupting one - and open what they made in a new, unsaved editor:
+nothing is written into the workspace unless you save it.
+
+**Render Chart from CSV or JSON File...**, in the Explorer's context menu
+on a `.csv`, `.tsv` or `.json` file, draws it as an SVG chart with the
+code the result panel saves its charts with, and writes the file you name.
+The same works from a shell, for a report or a CI job, with nothing but
+node and the extension's files:
+
+```sh
+node out/chartcli.js fills.csv -o fills.svg --kind line --title "Fills"
+node out/chartcli.js --host localhost --port 5000 \
+  --query "select avg px by 5 xbar time.minute from trade" -o px.svg --kind bar
+```
+
+Run it from the extension's directory (`~/.vscode/extensions/wojdalski.q-lint-*`,
+or `editors/vscode` in a checkout after `npm run compile`, where `npm run
+chart -- ...` does the same). `--x` and `--y` pick the columns, `--width`,
+`--height` and `--background` the picture; a CSV's first row names its
+columns, and JSON is an array of rows or an object of columns, as `.j.j`
+writes a table. A query's password is read from `QLINT_CHART_PASSWORD`, and
+a query the read-only guard reads as changing the process is refused. It
+writes SVG only: a PNG would need a rasterizer, and so a dependency.
+
 ## q notebooks
 
 A `.qnb` file opens as a notebook of q code cells and markdown cells;
@@ -2182,6 +2213,12 @@ Read when a cell runs or a command is used, so a change needs no reload. None re
 | `q-lint.processes.tagColors` | `{}` | A tag's colour in the Processes view, as a theme colour id: `{"eu": "charts.purple"}`. Over the built-in `prod`, `uat` and `dev` colours; a value that is not a colour id is ignored. Changing it recolours the view at once. | - |
 | `q-lint.processes.readOnlyGuard.enable` | `true` | Ask before sending code that would change a process carrying a guarded tag; refuse an agent's. Off, code is sent unasked. | - |
 | `q-lint.processes.readOnlyGuard.tags` | `["prod","prd","production"]` | The tags the read-only guard guards, ignoring case; `[]` guards none. | - |
+
+### Database settings
+
+| Setting | Default | What it does | q-pro |
+| --- | --- | --- | --- |
+| `q-lint.charts.commandLine.enable` | `true` | **Render Chart from CSV or JSON File...**. Off, the command is hidden and refuses; `out/chartcli.js` is yours to run or not. | - |
 
 ### Not here, and why
 

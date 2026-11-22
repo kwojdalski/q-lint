@@ -1295,6 +1295,17 @@
             "markdownDescription": "Define `.qlint.view` and `.qlint.plot` on each process as it is connected to. Never on a process the read-only guard guards. Needs `#q-lint.view.enable#`."
           }
         }
+      },
+      {
+        "title": "q-lint: databases",
+        "properties": {
+          "q-lint.charts.commandLine.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 11,
+            "markdownDescription": "**Render Chart from CSV or JSON File...**: draw a table file as an SVG chart, as `node out/chartcli.js` does from a shell. Off, the command is hidden and refuses; the command-line script is yours to run or not."
+          }
+        }
       }
     ],
     "commands": [
@@ -2275,6 +2286,11 @@
         "title": "Follow or Pause Log",
         "category": "q-lint",
         "icon": "$(debug-pause)"
+      },
+      {
+        "command": "q-lint.renderChartFromFile",
+        "title": "Render Chart from CSV or JSON File...",
+        "category": "q-lint"
       }
     ],
     "views": {
@@ -2913,6 +2929,11 @@
           "command": "q-lint.stripNotebookOutputs",
           "when": "resourceExtname =~ /^\\.qnb$/i && config.q-lint.notebook.stripOutputs.enable",
           "group": "q-lint"
+        },
+        {
+          "command": "q-lint.renderChartFromFile",
+          "when": "resourceExtname =~ /^\\.(csv|tsv|json)$/ && config.q-lint.charts.commandLine.enable",
+          "group": "q-lint@20"
         }
       ],
       "editor/context": [
@@ -3519,6 +3540,10 @@
         {
           "command": "q-lint.restartNotebookAndRunAll",
           "when": "q-lint.notebookActive && config.q-lint.notebook.restartRunAll.enable"
+        },
+        {
+          "command": "q-lint.renderChartFromFile",
+          "when": "config.q-lint.charts.commandLine.enable"
         }
       ],
       "editor/title": [
@@ -3910,7 +3935,8 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "package": "vsce package",
-    "test": "tsc -p ./ && node --test test/*.test.js"
+    "test": "tsc -p ./ && node --test test/*.test.js",
+    "chart": "node out/chartcli.js"
   },
   "dependencies": {
     "node-q": "^2.7.0",
