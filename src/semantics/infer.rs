@@ -334,6 +334,13 @@ pub fn typed_locals_up_to(code: &str, raw: &str, comments: &str, most: usize) ->
         let mut names: Vec<&String> = scopes[s].locals.iter().collect();
         names.sort_unstable();
         for name in names {
+            // A parameter - `x`, `y`, `z` included - never settles: its first
+            // write is the caller's argument, not a literal. Reading it would
+            // cost a pass over its lambda for nothing, and a nest of lambdas
+            // pays that pass at every level.
+            if scopes[s].params.contains(name.as_str()) {
+                continue;
+            }
             let local = super::navigate::local_of(code, raw, &scopes, s, name);
             if let Some((kind, end)) = settled(code, comments, &local, &sigs) {
                 out.push(Typed { local, kind, end });
