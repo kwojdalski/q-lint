@@ -13,6 +13,7 @@ const os = require("node:os");
 const path = require("node:path");
 const pkg = require("../package.json");
 const { DB_SETTINGS, DB_COMMANDS, dbOn, dbOff } = require("../out/dbfeatures.js");
+const { readDoc, qdocs, docMarkdown, docHtml, typeName } = require("../out/dbdoc.js");
 const { gridFromCsv, gridFromJson, chartFromGrid } = require("../out/chartfile.js");
 const { parseArgs, main, USAGE } = require("../out/chartcli.js");
 
@@ -49,6 +50,33 @@ test("every switch is declared, on by default, and every command hidden by its s
   assert.strictEqual(dbOn((k, d) => (k === "charts.commandLine.enable" ? false : d), "chartCli"), false);
   assert.strictEqual(dbOn(() => "yes", "chartCli"), true);
   if (DB_SETTINGS.symInspector) assert.strictEqual(props["q-lint.hdbBrowser.symInspector.warnAbove"].default, 1000000);
+});
+
+test("the documenter reads one table's answer, takes the qDoc above a definition, and escapes what it renders", () => {
+  const raw = {
+    pf: "",
+    parts: 0,
+    tables: { name: "t<1>", kind: "keyed", rows: 2, keys: ["k"], cols: ["k", "v"], types: ["j", "C"], fkeys: ["", ""], attrs: ["u", ""] },
+    fnames: ".lib.f",
+    fparams: ["a", "b"],
+  };
+  const doc = readDoc(raw);
+  assert.strictEqual(doc.tables.length, 1);
+  assert.deepStrictEqual(doc.functions, [{ name: ".lib.f", params: ["a", "b"] }]);
+  assert.strictEqual(typeName("C"), "list of char");
+  const source = ["/// Adds two numbers.", "/// @param a", "f:{[a;b] a+b}", "", "/", "Block doc.", "\\", ".lib.g:{x}", "h:{x}"].join("\n");
+  const docs = qdocs(source);
+  assert.strictEqual(docs.get("f"), "Adds two numbers.\n@param a");
+  assert.strictEqual(docs.get(".lib.g"), "Block doc.");
+  assert.strictEqual(docs.has("h"), false);
+  const md = docMarkdown(doc, "rdb", "now", new Map([[".lib.f", "x <b>"]]));
+  assert.match(md, /### t\\<1\\>/);
+  assert.match(md, /\| k \(key\) \| long \| unique \|/);
+  assert.match(md, /x \\<b\\>/);
+  const html = docHtml(doc, "rdb<script>", "now");
+  assert.doesNotMatch(html, /<script>/);
+  assert.match(html, /rdb&lt;script&gt;/);
+  assert.throws(() => readDoc(1), /tables/);
 });
 
 test("a chart is drawn from CSV and JSON tables, and the command line writes it", async () => {

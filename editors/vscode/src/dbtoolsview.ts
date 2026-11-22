@@ -17,6 +17,7 @@ import { Uri, window, workspace, type ExtensionContext } from "vscode";
 import { commands } from "vscode";
 import { CHART_KINDS, chartFromGrid, gridFromFile, type ChartKind } from "./chartfile";
 import { DB_COMMANDS, dbOff, dbOn, type DbFeature } from "./dbfeatures";
+import { DOCUMENT, DOCUMENT_LIMIT, docHtml, docMarkdown, qdocs, readDoc } from "./dbdoc";
 import { borrowWhenFree } from "./infoview";
 import type { Live } from "./live";
 import type { Process } from "./processes";
@@ -109,6 +110,33 @@ export function registerDbTools(context: ExtensionContext, live: Live): { state:
   const state: DbToolsState = {};
   const off = (feature: DbFeature) => !on(feature) && say(dbOff(feature));
 
+  /// Database documenter (#1023).
+  const document = async (format?: unknown): Promise<string> => {
+    if (off("documenter")) return dbOff("documenter");
+    const as = format === "markdown" || format === "html" ? format : (await window.showQuickPick(["Markdown", "HTML"], { title: "Document the process as" }))?.toLowerCase();
+    if (as === undefined) return "cancelled";
+    const got = await read(live, DOCUMENT, DOCUMENT_LIMIT);
+    if (got === undefined) return "not read";
+    const docs = new Map<string, string>();
+    try {
+      for (const uri of await workspace.findFiles("**/*.q", "**/node_modules/**", 2000)) {
+        const text = new TextDecoder().decode(await workspace.fs.readFile(uri));
+        for (const [name, doc] of qdocs(text)) if (!docs.has(name)) docs.set(name, doc);
+      }
+    } catch {
+      // No workspace, or a file that cannot be read: the functions go undocumented.
+    }
+    try {
+      const doc = readDoc(got.value);
+      const at = new Date().toISOString().replace("T", " ").slice(0, 16);
+      const text = as === "html" ? docHtml(doc, got.process.label, at, docs) : docMarkdown(doc, got.process.label, at, docs);
+      await openDocument(text, as);
+      return text;
+    } catch (error) {
+      return say(`q-lint: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
   /// Chart from a CSV or JSON file (#1031), as the command line draws one.
   const renderChart = async (file?: unknown, kind?: unknown, out?: unknown): Promise<string> => {
     if (off("chartCli")) return dbOff("chartCli");
@@ -136,6 +164,7 @@ export function registerDbTools(context: ExtensionContext, live: Live): { state:
     registered.push(name);
     context.subscriptions.push(commands.registerCommand(name, run as (...args: unknown[]) => unknown));
   };
+  register(DB_COMMANDS.document, (format?: unknown) => document(format));
   register(DB_COMMANDS.renderChart, (file?: unknown, kind?: unknown, out?: unknown) => renderChart(file, kind, out));
   return { state, registered: () => registered };
 }

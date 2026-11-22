@@ -1299,6 +1299,12 @@
       {
         "title": "q-lint: databases",
         "properties": {
+          "q-lint.databaseDocumenter.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 2,
+            "markdownDescription": "**Document Database**: the connected process's tables (columns, types, attributes, keys, foreign keys, partitions, rows) and functions, with their qDoc from the workspace, as a Markdown or HTML document. Reads only. Off, the command is hidden and refuses."
+          },
           "q-lint.charts.commandLine.enable": {
             "type": "boolean",
             "default": true,
@@ -2288,6 +2294,12 @@
         "icon": "$(debug-pause)"
       },
       {
+        "command": "q-lint.documentDatabase",
+        "title": "Document Database",
+        "category": "q-lint",
+        "enablement": "q-lint.connected"
+      },
+      {
         "command": "q-lint.renderChartFromFile",
         "title": "Render Chart from CSV or JSON File...",
         "category": "q-lint"
@@ -2554,6 +2566,16 @@
           "command": "q-lint.clearPlots",
           "when": "view == q-lint.plots && config.q-lint.results.plots.enable",
           "group": "navigation@4"
+        },
+        {
+          "command": "q-lint.documentDatabase",
+          "when": "view == q-lint.hdbBrowser && config.q-lint.databaseDocumenter.enable",
+          "group": "2_database@2"
+        },
+        {
+          "command": "q-lint.documentDatabase",
+          "when": "view == q-lint.processExplorer && config.q-lint.databaseDocumenter.enable",
+          "group": "2_database@1"
         }
       ],
       "view/item/context": [
@@ -3540,6 +3562,10 @@
         {
           "command": "q-lint.restartNotebookAndRunAll",
           "when": "q-lint.notebookActive && config.q-lint.notebook.restartRunAll.enable"
+        },
+        {
+          "command": "q-lint.documentDatabase",
+          "when": "config.q-lint.databaseDocumenter.enable"
         },
         {
           "command": "q-lint.renderChartFromFile",

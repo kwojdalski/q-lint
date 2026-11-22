@@ -9,6 +9,7 @@
 // refreshed on its own only when given an interval of its own.
 
 export const DB_SETTINGS = {
+  documenter: { key: "databaseDocumenter.enable", fallback: true, name: "The database documenter" },
   chartCli: { key: "charts.commandLine.enable", fallback: true, name: "Charts from a file" },
 } as const;
 
@@ -16,6 +17,7 @@ export type DbFeature = keyof typeof DB_SETTINGS;
 
 /// The features' commands, here so a test without `vscode` can list them.
 export const DB_COMMANDS = {
+  document: "q-lint.documentDatabase",
   renderChart: "q-lint.renderChartFromFile",
 } as const;
 

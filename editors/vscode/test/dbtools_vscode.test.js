@@ -19,6 +19,7 @@ const { Live } = require("../out/live.js");
 const { registerDbTools } = require("../out/dbtoolsview.js");
 const { DB_COMMANDS, DB_SETTINGS } = require("../out/dbfeatures.js");
 const { TABLE_INFO } = require("../out/tableinfo.js");
+const { DOCUMENT } = require("../out/dbdoc.js");
 
 /// A q process played by a socket server; `answer(message)` answers each
 /// message, decoded, and every message is kept.
@@ -65,6 +66,7 @@ const DOC = { pf: "date", parts: 3, tables: { name: "trade", kind: "partitioned"
 function answers(m) {
   const lambda = Array.isArray(m) ? m[0] : m;
   if (lambda === TABLE_INFO) return INFO;
+  if (lambda === DOCUMENT) return DOC;
   return null;
 }
 
@@ -147,6 +149,20 @@ test("off, every database command refuses, says how to turn it on, and sends not
   }
   assert.strictEqual(q.sent.length, before);
   assert.strictEqual(opened.length, 0);
+});
+
+test("on, the documenter reads the process once and opens its document", async (t) => {
+  const { opened } = capture();
+  const { q, live } = await setUp(t);
+  await live.connectTo("hdb");
+  const before = q.sent.length;
+  const text = await stub.commands.get(DB_COMMANDS.document)("markdown");
+  assert.match(text, /### trade\n\npartitioned, 18 rows\./);
+  assert.deepStrictEqual(q.sent.slice(before).map((m) => m[0]), [DOCUMENT]);
+  assert.strictEqual(opened.at(-1).language, "markdown");
+  // Not connected: it says so and sends nothing.
+  await stub.commands.get("q-lint.disconnectProcess")();
+  assert.strictEqual(await stub.commands.get(DB_COMMANDS.document)("html"), "not read");
 });
 
 test("a chart is rendered from a file to the path given", async (t) => {
