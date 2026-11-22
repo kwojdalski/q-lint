@@ -1324,6 +1324,12 @@
             "order": 5,
             "markdownDescription": "**Inspect Sym File** warns when the sym file holds more symbols than this."
           },
+          "q-lint.processExplorer.attributeAdvisor.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 6,
+            "markdownDescription": "**Advise Attributes**: for each column of a table, whether `s#`, `u#`, `p#` or `g#` would help, why and about what it costs, from a sample of its rows and the columns your saved and recent queries filter on. Never applies one. Off, the command is hidden and refuses."
+          },
           "q-lint.charts.commandLine.enable": {
             "type": "boolean",
             "default": true,
@@ -2333,6 +2339,12 @@
         "enablement": "q-lint.connected"
       },
       {
+        "command": "q-lint.adviseAttributes",
+        "title": "Advise Attributes",
+        "category": "q-lint",
+        "enablement": "q-lint.connected"
+      },
+      {
         "command": "q-lint.renderChartFromFile",
         "title": "Render Chart from CSV or JSON File...",
         "category": "q-lint"
@@ -2866,6 +2878,11 @@
           "command": "q-lint.newQueryForProcess",
           "when": "view == q-lint.processes && viewItem =~ /^(process|discovered)/ && config.q-lint.processes.newQuery.enable",
           "group": "1_connect@4"
+        },
+        {
+          "command": "q-lint.adviseAttributes",
+          "when": "view == q-lint.processExplorer && viewItem == explorer.table && config.q-lint.processExplorer.attributeAdvisor.enable",
+          "group": "3_database@2"
         }
       ],
       "editor/title/run": [
@@ -3617,6 +3634,10 @@
         {
           "command": "q-lint.inspectSymFile",
           "when": "config.q-lint.hdbBrowser.symInspector.enable"
+        },
+        {
+          "command": "q-lint.adviseAttributes",
+          "when": "config.q-lint.processExplorer.attributeAdvisor.enable"
         },
         {
           "command": "q-lint.renderChartFromFile",

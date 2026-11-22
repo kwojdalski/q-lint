@@ -1607,6 +1607,17 @@ how big the file was when each of those partitions was written (one more
 than the largest index it uses), and a warning above
 `q-lint.hdbBrowser.symInspector.warnAbove` symbols.
 
+**Advise Attributes**, on a table in the Process Explorer, suggests `s#`,
+`u#`, `p#` or `g#` per column - or none - with the reason and about what
+it costs in memory, from up to 100,000 rows (of a partitioned table, the
+first rows of its last partition, mapped from its directory) and from how
+many saved queries and Query History entries filter on the column. It
+never applies one. The costs are KX's figures - nothing for `s#`, about 16
+bytes a distinct value for `u#`, 24 for `p#`, 8 a row plus 16 a distinct
+value for `g#` - and kdb+ allocates in powers of two, so a real one can be
+up to twice that. A column no query filters on is suggested only `s#`, or
+the shape it already has when it is the table's first.
+
 **Render Chart from CSV or JSON File...**, in the Explorer's context menu
 on a `.csv`, `.tsv` or `.json` file, draws it as an SVG chart with the
 code the result panel saves its charts with, and writes the file you name.
@@ -2246,6 +2257,7 @@ Read when a cell runs or a command is used, so a change needs no reload. None re
 | `q-lint.hdbBrowser.partitionCheck.enable` | `true` | **Check Partition Consistency**. Off, the command is hidden and refuses. | - |
 | `q-lint.hdbBrowser.symInspector.enable` | `true` | **Inspect Sym File**. Off, the command is hidden and refuses. | - |
 | `q-lint.hdbBrowser.symInspector.warnAbove` | `1000000` | **Inspect Sym File** warns when the sym file holds more symbols than this. | - |
+| `q-lint.processExplorer.attributeAdvisor.enable` | `true` | **Advise Attributes**. Off, the command is hidden and refuses. | - |
 | `q-lint.charts.commandLine.enable` | `true` | **Render Chart from CSV or JSON File...**. Off, the command is hidden and refuses; `out/chartcli.js` is yours to run or not. | - |
 
 ### Not here, and why

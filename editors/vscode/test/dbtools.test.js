@@ -16,6 +16,7 @@ const { DB_SETTINGS, DB_COMMANDS, dbOn, dbOff } = require("../out/dbfeatures.js"
 const { readDoc, qdocs, docMarkdown, docHtml, typeName } = require("../out/dbdoc.js");
 const { missingWeekdays, partitionProblems, partitionReport, readPartitions } = require("../out/partcheck.js");
 const { readSym, symReport } = require("../out/syminspect.js");
+const { advise, filterCounts, adviceReport, readAttributeSample } = require("../out/attradvice.js");
 const { gridFromCsv, gridFromJson, chartFromGrid } = require("../out/chartfile.js");
 const { parseArgs, main, USAGE } = require("../out/chartcli.js");
 
@@ -127,6 +128,37 @@ test("the sym report warns above the threshold and lists columns and growth", ()
   assert.match(text, /\| 2026\.01\.06 \| 2,000 \| 1,900 \|/);
   assert.doesNotMatch(symReport(a, "hdb", 5000), /Warning/);
   assert.match(symReport({ sym: false, root: "/x" }, "p", 1), /no sym file/);
+});
+
+test("the attribute advisor counts filters and suggests by shape, never for an unfiltered column", () => {
+  const queries = ["select from trade where sym=`a", "select from trade where sym in `a`b, px>1", "?[trade;enlist(=;`id;1);0b;()]", "select from quote where sym=`a"];
+  assert.deepStrictEqual(Object.fromEntries(filterCounts(queries, "trade", ["sym", "px", "id", "sz"])), { sym: 2, px: 1, id: 1, sz: 0 });
+  const s = readAttributeSample({
+    kind: "table",
+    rows: 1000,
+    sampled: 1000,
+    partitions: 1,
+    cols: ["time", "sym", "id", "px", "grp", "note"],
+    types: ["p", "s", "j", "f", "s", "C"],
+    attrs: ["", "", "", "", "", ""],
+    distinct: [1000, 3, 1000, 990, 4, 50],
+    runs: [1000, 700, 1000, 990, 4, 0],
+    sorted: [true, false, false, false, false, false],
+  });
+  const filters = new Map([["sym", 2], ["id", 1], ["grp", 1], ["px", 0]]);
+  const by = Object.fromEntries(advise(s, filters).map((a) => [a.column, a]));
+  assert.strictEqual(by.time.suggest, "s");
+  assert.strictEqual(by.time.cost, 0);
+  assert.strictEqual(by.sym.suggest, "g");
+  assert.strictEqual(by.sym.cost, 8 * 1000 + 16 * 3);
+  assert.strictEqual(by.id.suggest, "u");
+  assert.strictEqual(by.grp.suggest, "p");
+  assert.strictEqual(by.px.suggest, "");
+  assert.strictEqual(by.note.suggest, "");
+  assert.strictEqual(advise(s, new Map()).find((a) => a.column === "sym").suggest, "");
+  const report = adviceReport("trade", "rdb", s, advise(s, filters), 4);
+  assert.match(report, /Nothing was applied/);
+  assert.match(report, /\| sym \|  \| g# \|/);
 });
 
 test("a chart is drawn from CSV and JSON tables, and the command line writes it", async () => {

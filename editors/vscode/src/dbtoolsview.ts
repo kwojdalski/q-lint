@@ -15,6 +15,7 @@
 // refuses, and sends nothing.
 import { Uri, window, workspace, type ExtensionContext } from "vscode";
 import { commands } from "vscode";
+import { ATTRIBUTE_ROWS, ATTRIBUTE_SAMPLE, adviceReport, advise, filterCounts, readAttributeSample } from "./attradvice";
 import { CHART_KINDS, chartFromGrid, gridFromFile, type ChartKind } from "./chartfile";
 import { DB_COMMANDS, dbOff, dbOn, type DbFeature } from "./dbfeatures";
 import { DOCUMENT, DOCUMENT_LIMIT, docHtml, docMarkdown, qdocs, readDoc } from "./dbdoc";
@@ -183,6 +184,25 @@ export function registerDbTools(context: ExtensionContext, live: Live): { state:
     }
   };
 
+  /// Attribute advisor (#1026).
+  const adviseAttributes = async (arg?: TableArg): Promise<string> => {
+    if (off("attributeAdvisor")) return dbOff("attributeAdvisor");
+    const table = await pickTable(live, arg, "Advise attributes for which table?");
+    if (table === undefined) return "no table";
+    const got = await read(live, ATTRIBUTE_SAMPLE, table, ATTRIBUTE_ROWS);
+    if (got === undefined) return "not read";
+    try {
+      const sample = readAttributeSample(got.value);
+      const queries = [...parseSaved(context.workspaceState.get<unknown>(SAVED_QUERIES_KEY, [])).map((q) => q.code), ...live.history().map((h) => h.code)];
+      const advice = advise(sample, filterCounts(queries, table, sample.columns.map((c) => c.name)));
+      const text = adviceReport(table, got.process.label, sample, advice, queries.length);
+      await openDocument(text, "markdown");
+      return text;
+    } catch (error) {
+      return say(`q-lint: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
   /// Chart from a CSV or JSON file (#1031), as the command line draws one.
   const renderChart = async (file?: unknown, kind?: unknown, out?: unknown): Promise<string> => {
     if (off("chartCli")) return dbOff("chartCli");
@@ -213,6 +233,7 @@ export function registerDbTools(context: ExtensionContext, live: Live): { state:
   register(DB_COMMANDS.document, (format?: unknown) => document(format));
   register(DB_COMMANDS.checkPartitions, (depth?: unknown) => checkPartitions(depth));
   register(DB_COMMANDS.inspectSym, () => inspectSym());
+  register(DB_COMMANDS.adviseAttributes, (arg?: TableArg) => adviseAttributes(arg));
   register(DB_COMMANDS.renderChart, (file?: unknown, kind?: unknown, out?: unknown) => renderChart(file, kind, out));
   return { state, registered: () => registered };
 }

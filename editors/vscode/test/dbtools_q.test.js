@@ -135,6 +135,7 @@ test("the partition check finds missing dates, files, differing types and outlie
 });
 
 const { SYM_INSPECT, readSym, symReport } = require("../out/syminspect.js");
+const { ATTRIBUTE_SAMPLE, readAttributeSample, advise } = require("../out/attradvice.js");
 const { TABLE_INFO, readTableInfo } = require("../out/tableinfo.js");
 
 test("the sym inspector counts the file, its columns' shares and its growth", { skip }, async (t) => {
@@ -155,4 +156,24 @@ test("the sym inspector counts the file, its columns' shares and its growth", { 
   assert.doesNotMatch(symReport(answer, "hdb", 1e6), /Warning/);
   const { connection: plain } = await connect(t, "a:1\n");
   assert.strictEqual(readSym(await plain.call(SYM_INSPECT, 20)).sym, false);
+});
+
+test("the attribute advisor samples a table's columns without changing it", { skip }, async (t) => {
+  const { connection } = await connect(t, HDB() + "\nm:([] time:asc 1000?0D; sym:1000?`a`b`c; id:til 1000; px:1000?1f)\n");
+  const s = readAttributeSample(await connection.call(ATTRIBUTE_SAMPLE, "m", 100000));
+  assert.strictEqual(s.kind, "table");
+  assert.strictEqual(s.rows, 1000);
+  const byName = Object.fromEntries(s.columns.map((c) => [c.name, c]));
+  assert.strictEqual(byName.time.sorted, true);
+  assert.strictEqual(byName.sym.distinct, 3);
+  assert.strictEqual(byName.id.distinct, 1000);
+  const advice = Object.fromEntries(advise(s, new Map([["sym", 2], ["id", 1]])).map((a) => [a.column, a.suggest]));
+  assert.deepStrictEqual(advice, { time: "s", sym: "g", id: "s", px: "" });
+  const p = readAttributeSample(await connection.call(ATTRIBUTE_SAMPLE, "trade", 100000));
+  assert.strictEqual(p.kind, "partitioned");
+  assert.strictEqual(p.rows, 18);
+  assert.strictEqual(p.sampled, 6);
+  assert.deepStrictEqual(p.columns.map((c) => c.name), ["sym", "px", "sz"]);
+  assert.strictEqual(advise(p, new Map([["sym", 1]]))[0].suggest, "s");
+  assert.strictEqual(await connection.call("{(attr m`sym)~`}", 0), true);
 });
