@@ -79,7 +79,8 @@ fn a_missing_or_broken_baseline_is_an_error_not_silence() {
     fs::write(d.join("a.q"), OLD).unwrap();
     let (status, _, err) = run(d, &["--baseline", "nope.json", "a.q"]);
     assert_eq!(status, Some(2), "{err}");
-    assert!(err.contains("nope.json: No such file"), "{err}");
+    // The OS words the missing file its own way (Windows: "cannot find the file").
+    assert!(err.contains("nope.json: "), "{err}");
     fs::write(d.join("bad.json"), "{\"findings\": []}").unwrap();
     let (status, _, err) = run(d, &["--baseline", "bad.json", "a.q"]);
     assert_eq!(status, Some(2), "{err}");
