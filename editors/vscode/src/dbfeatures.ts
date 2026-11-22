@@ -9,6 +9,7 @@
 // refreshed on its own only when given an interval of its own.
 
 export const DB_SETTINGS = {
+  columnManager: { key: "hdbBrowser.columnManager.enable", fallback: true, name: "The HDB column manager" },
   documenter: { key: "databaseDocumenter.enable", fallback: true, name: "The database documenter" },
   partitionCheck: { key: "hdbBrowser.partitionCheck.enable", fallback: true, name: "The partition consistency check" },
   symInspector: { key: "hdbBrowser.symInspector.enable", fallback: true, name: "The sym file inspector" },
@@ -20,6 +21,7 @@ export type DbFeature = keyof typeof DB_SETTINGS;
 
 /// The features' commands, here so a test without `vscode` can list them.
 export const DB_COMMANDS = {
+  manageColumn: "q-lint.manageHdbColumn",
   document: "q-lint.documentDatabase",
   checkPartitions: "q-lint.checkPartitions",
   inspectSym: "q-lint.inspectSymFile",

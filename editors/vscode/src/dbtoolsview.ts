@@ -17,6 +17,7 @@ import { Uri, window, workspace, type ExtensionContext } from "vscode";
 import { commands } from "vscode";
 import { ATTRIBUTE_ROWS, ATTRIBUTE_SAMPLE, adviceReport, advise, filterCounts, readAttributeSample } from "./attradvice";
 import { CHART_KINDS, chartFromGrid, gridFromFile, type ChartKind } from "./chartfile";
+import { CAST_TYPES, RUN_SCRIPT, columnScript, opProblem, opText, readRun, type ColumnOp } from "./colmanager";
 import { DB_COMMANDS, dbOff, dbOn, type DbFeature } from "./dbfeatures";
 import { DOCUMENT, DOCUMENT_LIMIT, docHtml, docMarkdown, qdocs, readDoc } from "./dbdoc";
 import { borrowWhenFree } from "./infoview";
@@ -112,6 +113,50 @@ export interface DbToolsState {
 export function registerDbTools(context: ExtensionContext, live: Live): { state: DbToolsState; registered: () => string[] } {
   const state: DbToolsState = {};
   const off = (feature: DbFeature) => !on(feature) && say(dbOff(feature));
+
+  /// HDB column manager (#1022).
+  const manageColumn = async (arg?: TableArg, given?: ColumnOp): Promise<string> => {
+    if (off("columnManager")) return dbOff("columnManager");
+    const table = await pickTable(live, arg, "Change a column of which table on disk?", ["partitioned", "splayed"]);
+    if (table === undefined) return "no table";
+    const got = await tableInfo(live, table);
+    if (got === undefined) return "not read";
+    const { process, info } = got;
+    if (info.kind !== "partitioned" && info.kind !== "splayed") {
+      return say(`q-lint: ${table} is a table in memory; the column manager changes tables on disk.`);
+    }
+    const field = info.kind === "partitioned" ? (info.columns[0]?.name ?? "") : "";
+    const columns = info.columns.map((c) => c.name);
+    const op = given ?? (await askOp(columns.filter((c) => c !== field)));
+    if (op === undefined) return "cancelled";
+    const problem = opProblem(op, columns, field);
+    if (problem !== undefined) return say(`q-lint: ${problem}.`);
+    const script = columnScript(table, op, process.label);
+    // A guarded process is refused before anything is shown to run.
+    const refused = live.guardRefuses(script, [process]);
+    if (refused !== undefined) {
+      return say(`q-lint: the column manager does not change ${process.label}, which the read-only guard guards (q-lint.processes.readOnlyGuard.tags). Nothing was shown or sent.`);
+    }
+    state.lastScript = script;
+    await openDocument(script, "q");
+    const run = "Run";
+    const answer = await window.showWarningMessage(
+      `Run the column manager on ${process.label}: ${opText(op)} in ${table}?`,
+      { modal: true, detail: `It changes every ${info.kind === "partitioned" ? "partition of the table" : "file of the table"} on disk, then loads the database again. The script is open for review; edits to it are not what runs.` },
+      run,
+    );
+    if (answer !== run) return "not run";
+    if (off("columnManager")) return dbOff("columnManager");
+    try {
+      const ran = await live.runOnActive(script, (connection) => connection.call(RUN_SCRIPT, statements(script)), "refuse");
+      if (ran === undefined) return "not run";
+      const outcome = readRun(ran.value);
+      state.lastRun = outcome.ok ? outcome.text : outcome.error;
+      return outcome.ok ? say(`q-lint: ${ran.process}: ${outcome.text}.`) : say(`q-lint: the column manager stopped on ${ran.process}: ${outcome.error}`);
+    } catch (error) {
+      return say(`q-lint: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
 
   /// Database documenter (#1023).
   const document = async (format?: unknown): Promise<string> => {
@@ -230,10 +275,50 @@ export function registerDbTools(context: ExtensionContext, live: Live): { state:
     registered.push(name);
     context.subscriptions.push(commands.registerCommand(name, run as (...args: unknown[]) => unknown));
   };
+  register(DB_COMMANDS.manageColumn, (arg?: TableArg, op?: ColumnOp) => manageColumn(arg, op));
   register(DB_COMMANDS.document, (format?: unknown) => document(format));
   register(DB_COMMANDS.checkPartitions, (depth?: unknown) => checkPartitions(depth));
   register(DB_COMMANDS.inspectSym, () => inspectSym());
   register(DB_COMMANDS.adviseAttributes, (arg?: TableArg) => adviseAttributes(arg));
   register(DB_COMMANDS.renderChart, (file?: unknown, kind?: unknown, out?: unknown) => renderChart(file, kind, out));
   return { state, registered: () => registered };
+}
+
+/// Ask what to do to which column. Undefined on Escape.
+async function askOp(columns: string[]): Promise<ColumnOp | undefined> {
+  const what = await window.showQuickPick(
+    [
+      { label: "Add a column", op: "add" },
+      { label: "Delete a column", op: "delete" },
+      { label: "Rename a column", op: "rename" },
+      { label: "Cast a column", op: "cast" },
+      { label: "Set or remove an attribute", op: "attr" },
+    ],
+    { title: "Change the table's columns" },
+  );
+  if (what === undefined) return undefined;
+  if (what.op === "add") {
+    const column = await window.showInputBox({ title: "The new column's name" });
+    if (column === undefined) return undefined;
+    const value = await window.showInputBox({ title: `The value ${column} takes in every row`, value: "0n", prompt: "One q value: 0n, 0, 0b, `, `sym (enumerated against sym), \"\" or 0Np." });
+    return value === undefined ? undefined : { op: "add", column: column.trim(), value: value.trim() };
+  }
+  const column = await window.showQuickPick(columns, { title: "Which column?" });
+  if (column === undefined) return undefined;
+  switch (what.op) {
+    case "delete":
+      return { op: "delete", column };
+    case "rename": {
+      const to = await window.showInputBox({ title: `Rename ${column} to`, value: column });
+      return to === undefined ? undefined : { op: "rename", column, to: to.trim() };
+    }
+    case "cast": {
+      const type = await window.showQuickPick(CAST_TYPES.split(""), { title: `Cast ${column} to which type?` });
+      return type === undefined ? undefined : { op: "cast", column, type };
+    }
+    default: {
+      const attr = await window.showQuickPick(["s", "u", "p", "g", "none"], { title: `Which attribute on ${column}?` });
+      return attr === undefined ? undefined : { op: "attr", column, attr: attr === "none" ? "" : (attr as "s" | "u" | "p" | "g") };
+    }
+  }
 }

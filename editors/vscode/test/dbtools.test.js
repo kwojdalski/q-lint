@@ -13,12 +13,14 @@ const os = require("node:os");
 const path = require("node:path");
 const pkg = require("../package.json");
 const { DB_SETTINGS, DB_COMMANDS, dbOn, dbOff } = require("../out/dbfeatures.js");
+const { opProblem, opText, columnScript, columnScriptOf, readRun, HELPERS } = require("../out/colmanager.js");
 const { readDoc, qdocs, docMarkdown, docHtml, typeName } = require("../out/dbdoc.js");
 const { missingWeekdays, partitionProblems, partitionReport, readPartitions } = require("../out/partcheck.js");
 const { readSym, symReport } = require("../out/syminspect.js");
 const { advise, filterCounts, adviceReport, readAttributeSample } = require("../out/attradvice.js");
 const { gridFromCsv, gridFromJson, chartFromGrid } = require("../out/chartfile.js");
 const { parseArgs, main, USAGE } = require("../out/chartcli.js");
+const { guardCheck } = require("../out/guard.js");
 
 const props = Object.assign({}, ...pkg.contributes.configuration.map((c) => c.properties));
 
@@ -53,6 +55,33 @@ test("every switch is declared, on by default, and every command hidden by its s
   assert.strictEqual(dbOn((k, d) => (k === "charts.commandLine.enable" ? false : d), "chartCli"), false);
   assert.strictEqual(dbOn(() => "yes", "chartCli"), true);
   if (DB_SETTINGS.symInspector) assert.strictEqual(props["q-lint.hdbBrowser.symInspector.warnAbove"].default, 1000000);
+});
+
+test("the column manager checks an op against the table and writes a script the guard reads as a write", () => {
+  const cols = ["date", "sym", "px"];
+  assert.strictEqual(opProblem({ op: "add", column: "ex", value: "`" }, cols, "date"), undefined);
+  assert.match(opProblem({ op: "add", column: "px", value: "0n" }, cols, "date"), /already has a column px/);
+  assert.match(opProblem({ op: "add", column: "1x", value: "0n" }, cols, "date"), /not a column name/);
+  assert.match(opProblem({ op: "add", column: "x", value: "" }, cols, "date"), /one q value/);
+  assert.match(opProblem({ op: "delete", column: "date" }, cols, "date"), /partition field/);
+  assert.match(opProblem({ op: "delete", column: "nope" }, cols, "date"), /no column nope/);
+  assert.match(opProblem({ op: "rename", column: "px", to: "sym" }, cols, "date"), /already has a column sym/);
+  assert.match(opProblem({ op: "cast", column: "px", type: "q" }, cols, "date"), /type characters/);
+  assert.strictEqual(opProblem({ op: "attr", column: "sym", attr: "p" }, cols, "date"), undefined);
+  assert.strictEqual(opProblem({ op: "reorder", order: ["px", "sym"] }, cols, "date"), undefined);
+  assert.match(opProblem({ op: "reorder", order: ["px"] }, cols, "date"), /every column once/);
+  const script = columnScript("trade", { op: "rename", column: "px", to: "price" }, "hdb");
+  assert.match(script, /^\/ q-lint: HDB column manager - rename column px to price in trade on hdb\./);
+  for (const h of HELPERS) assert.ok(script.includes(h));
+  assert.match(script, /\.qlint\.cm\.run\[`trade;\.qlint\.cm\.ren\[`px;`price\]\]/);
+  assert.match(script, /system"l \."/);
+  assert.match(opText({ op: "attr", column: "sym", attr: "" }), /remove the attribute/);
+  assert.match(columnScriptOf("t", [{ op: "delete", column: "a" }, { op: "reorder", order: ["b"] }], "p"), /step:2 from .*order\[enlist`b\]/);
+  const settings = { enabled: true, tags: ["prod"] };
+  assert.notStrictEqual(guardCheck(script, [{ label: "hdb", tags: ["prod"] }], settings), undefined);
+  assert.deepStrictEqual(readRun([true, "changed 3 of 3 directories"]), { ok: true, text: "changed 3 of 3 directories" });
+  assert.deepStrictEqual(readRun([false, "type"]), { ok: false, error: "type" });
+  assert.throws(() => readRun("x"), /outcome/);
 });
 
 test("the documenter reads one table's answer, takes the qDoc above a definition, and escapes what it renders", () => {

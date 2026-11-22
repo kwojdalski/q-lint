@@ -14,6 +14,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { QConnection } = require("../out/qclient.js");
 const { statements } = require("../out/statements.js");
+const { columnScript, RUN_SCRIPT, readRun } = require("../out/colmanager.js");
 const { DOCUMENT, readDoc, docMarkdown } = require("../out/dbdoc.js");
 const { PARTITION_CHECK, readPartitions, partitionProblems } = require("../out/partcheck.js");
 
@@ -92,6 +93,33 @@ const run = async (connection, script) => {
   assert.ok(answer.ok, answer.error);
   return answer.text;
 };
+
+test("the column manager's script changes every partition, reports, reloads and leaves nothing behind", { skip }, async (t) => {
+  const { connection } = await connect(t, HDB());
+  const say = await run(connection, columnScript("trade", { op: "add", column: "ex", value: "`NYSE" }, "hdb"));
+  assert.match(say, /changed 3 of 3 directories/);
+  await run(connection, columnScript("trade", { op: "rename", column: "px", to: "price" }, "hdb"));
+  await run(connection, columnScript("trade", { op: "cast", column: "sz", type: "f" }, "hdb"));
+  await run(connection, columnScript("trade", { op: "attr", column: "sym", attr: "p" }, "hdb"));
+  await run(connection, columnScript("trade", { op: "delete", column: "ex" }, "hdb"));
+  await run(connection, columnScript("trade", { op: "reorder", order: ["price", "sym", "sz"] }, "hdb"));
+  assert.deepStrictEqual(await connection.call("{exec c from meta trade}", 0), ["date", "price", "sym", "sz"]);
+  assert.deepStrictEqual(await connection.call("{exec t from meta trade}", 0), "dfsf");
+  assert.strictEqual(await connection.call("{attr get ` sv .Q.par[hsym`$system\"cd\";first .Q.pv;`trade],`sym}", 0), "p");
+  assert.strictEqual(await connection.call("{\"f\"$count select from trade}", 0), 18);
+  // A column that is not there: every directory is left as it was, and named.
+  const none = await run(connection, columnScript("trade", { op: "delete", column: "nope" }, "hdb"));
+  assert.match(none, /changed 0 of 3 directories; left as they were: .*no nope/);
+  // A symbol default is enumerated against the sym file, which it extends.
+  await run(connection, columnScript("trade", { op: "add", column: "venue", value: "`XLON" }, "hdb"));
+  assert.strictEqual(await connection.call("{\"f\"$count select from trade where venue=`XLON}", 0), 18);
+  assert.ok((await connection.call("{get`:sym}", 0)).includes("XLON"));
+  assert.strictEqual(await connection.call("{`cm in key`.qlint}", 0), false);
+  // A script that fails says why, and leaves no helpers behind either.
+  const failed = readRun(await connection.call(RUN_SCRIPT, statements(columnScript("nosuch", { op: "delete", column: "x" }, "hdb"))));
+  assert.strictEqual(failed.ok, false);
+  assert.strictEqual(await connection.call("{`cm in key`.qlint}", 0), false);
+});
 
 test("the documenter reads tables, keys, foreign keys and functions", { skip }, async (t) => {
   const { connection } = await connect(t, HDB() + "\ns:([sym:`a`b] nm:(\"x\";\"y\"))\nf:([] sym:`s$`a`b`a; v:1 2 3)\nkt:([k:1 2] v:`p#`x`x)\n");

@@ -1583,6 +1583,21 @@ that defines nothing, on the query connection, waiting for a query rather
 than interrupting one - and open what they made in a new, unsaved editor:
 nothing is written into the workspace unless you save it.
 
+**Manage HDB Column...**, in the HDB Browser's title menu, on a table in
+the Process Explorer or in the palette, adds, deletes, renames or casts a
+column, or sets or removes its attribute, in every partition of a
+partitioned table (`.Q.par`, so segments are followed) or in a splayed
+table under the root. It writes the q first, with its helpers in it, in
+the way of KX's dbmaint.q - each changes one table directory's column
+files and `.d`, and a directory where the change cannot be made is left as
+it is and named in the answer - and opens it for review; a modal asks, and
+only **Run** runs it. The database is loaded again after (`\l .`), so the
+process sees what is on disk. A symbol default, and a cast to `s`, are
+enumerated against the root's `sym` file. Casting and setting an attribute
+read and write the whole column of each partition. A process the read-only
+guard guards is refused outright, before the script is shown, whatever is
+answered.
+
 **Document Database** writes the connected process's tables - columns with
 their types, attributes and foreign keys, keys, rows, partitions - and its
 functions with their parameters as a Markdown or HTML document, with the
@@ -2253,6 +2268,7 @@ Read when a cell runs or a command is used, so a change needs no reload. None re
 
 | Setting | Default | What it does | q-pro |
 | --- | --- | --- | --- |
+| `q-lint.hdbBrowser.columnManager.enable` | `true` | **Manage HDB Column...**. Off, the command is hidden and refuses. | - |
 | `q-lint.databaseDocumenter.enable` | `true` | **Document Database**. Off, the command is hidden and refuses. | - |
 | `q-lint.hdbBrowser.partitionCheck.enable` | `true` | **Check Partition Consistency**. Off, the command is hidden and refuses. | - |
 | `q-lint.hdbBrowser.symInspector.enable` | `true` | **Inspect Sym File**. Off, the command is hidden and refuses. | - |

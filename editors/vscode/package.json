@@ -1299,6 +1299,12 @@
       {
         "title": "q-lint: databases",
         "properties": {
+          "q-lint.hdbBrowser.columnManager.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 1,
+            "markdownDescription": "**Manage HDB Column...**: add, delete, rename or cast a column, or set its attribute, in every partition of a partitioned or splayed table on disk. The q script opens for review and runs only when you choose **Run**; a process the read-only guard guards is refused. Off, the command is hidden and refuses."
+          },
           "q-lint.databaseDocumenter.enable": {
             "type": "boolean",
             "default": true,
@@ -2319,6 +2325,13 @@
         "icon": "$(debug-pause)"
       },
       {
+        "command": "q-lint.manageHdbColumn",
+        "title": "Manage HDB Column...",
+        "category": "q-lint",
+        "icon": "$(edit)",
+        "enablement": "q-lint.connected"
+      },
+      {
         "command": "q-lint.documentDatabase",
         "title": "Document Database",
         "category": "q-lint",
@@ -2623,6 +2636,11 @@
           "group": "navigation@3"
         },
         {
+          "command": "q-lint.manageHdbColumn",
+          "when": "view == q-lint.hdbBrowser && config.q-lint.hdbBrowser.columnManager.enable",
+          "group": "2_database@1"
+        },
+        {
           "command": "q-lint.documentDatabase",
           "when": "view == q-lint.hdbBrowser && config.q-lint.databaseDocumenter.enable",
           "group": "2_database@2"
@@ -2878,6 +2896,11 @@
           "command": "q-lint.newQueryForProcess",
           "when": "view == q-lint.processes && viewItem =~ /^(process|discovered)/ && config.q-lint.processes.newQuery.enable",
           "group": "1_connect@4"
+        },
+        {
+          "command": "q-lint.manageHdbColumn",
+          "when": "view == q-lint.processExplorer && viewItem == explorer.table && config.q-lint.hdbBrowser.columnManager.enable",
+          "group": "3_database@1"
         },
         {
           "command": "q-lint.adviseAttributes",
@@ -3622,6 +3645,10 @@
         {
           "command": "q-lint.restartNotebookAndRunAll",
           "when": "q-lint.notebookActive && config.q-lint.notebook.restartRunAll.enable"
+        },
+        {
+          "command": "q-lint.manageHdbColumn",
+          "when": "config.q-lint.hdbBrowser.columnManager.enable"
         },
         {
           "command": "q-lint.documentDatabase",

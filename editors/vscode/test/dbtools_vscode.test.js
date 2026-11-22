@@ -18,6 +18,7 @@ const { serialize, deserialize } = require("node-q/lib/c.js");
 const { Live } = require("../out/live.js");
 const { registerDbTools } = require("../out/dbtoolsview.js");
 const { DB_COMMANDS, DB_SETTINGS } = require("../out/dbfeatures.js");
+const { RUN_SCRIPT } = require("../out/colmanager.js");
 const { TABLE_INFO } = require("../out/tableinfo.js");
 const { DOCUMENT } = require("../out/dbdoc.js");
 
@@ -67,6 +68,7 @@ function answers(m) {
   const lambda = Array.isArray(m) ? m[0] : m;
   if (lambda === TABLE_INFO) return INFO;
   if (lambda === DOCUMENT) return DOC;
+  if (lambda === RUN_SCRIPT) return [true, "changed 3 of 3 directories"];
   return null;
 }
 
@@ -163,6 +165,37 @@ test("on, the documenter reads the process once and opens its document", async (
   // Not connected: it says so and sends nothing.
   await stub.commands.get("q-lint.disconnectProcess")();
   assert.strictEqual(await stub.commands.get(DB_COMMANDS.document)("html"), "not read");
+});
+
+test("the column manager is refused on a guarded process before its script is shown or sent", async (t) => {
+  const { opened } = capture();
+  const { q, live, tools } = await setUp(t, ["prod"]);
+  await live.connectTo("hdb");
+  const said = await stub.commands.get(DB_COMMANDS.manageColumn)("trade", { op: "delete", column: "px" });
+  assert.match(said, /does not change hdb, which the read-only guard guards/);
+  assert.ok(!q.sent.some((m) => m[0] === RUN_SCRIPT));
+  assert.strictEqual(opened.length, 0);
+  assert.strictEqual(tools.state.lastScript, undefined);
+});
+
+test("elsewhere the column manager shows its script and runs it only after Run", async (t) => {
+  const { opened } = capture();
+  const { q, live, tools } = await setUp(t);
+  await live.connectTo("hdb");
+  stub.picks.push(undefined);
+  assert.strictEqual(await stub.commands.get(DB_COMMANDS.manageColumn)("trade", { op: "rename", column: "px", to: "price" }), "not run");
+  assert.ok(!q.sent.some((m) => m[0] === RUN_SCRIPT));
+  assert.strictEqual(opened.at(-1).language, "q");
+  assert.match(opened.at(-1).content, /rename column px to price in trade on hdb/);
+  stub.picks.push("Run");
+  assert.match(await stub.commands.get(DB_COMMANDS.manageColumn)("trade", { op: "rename", column: "px", to: "price" }), /changed 3 of 3 directories/);
+  const run = q.sent.find((m) => m[0] === RUN_SCRIPT);
+  assert.ok(run[1].some((s) => s.includes(".qlint.cm.ren[`px;`price]")));
+  assert.strictEqual(tools.state.lastRun, "changed 3 of 3 directories");
+  // A column the table lacks is refused before anything is shown.
+  const n = q.sent.length;
+  assert.match(await stub.commands.get(DB_COMMANDS.manageColumn)("trade", { op: "delete", column: "nope" }), /no column nope/);
+  assert.ok(q.sent.slice(n).every((m) => m[0] === TABLE_INFO));
 });
 
 test("a chart is rendered from a file to the path given", async (t) => {
