@@ -15,7 +15,8 @@ const pkg = require("../package.json");
 const { Live } = require("../out/live.js");
 const { Launcher } = require("../out/launcherview.js");
 const { ADMIN_COMMANDS, adminOff, readAdmin } = require("../out/admin.js");
-const { effectiveTimeout, timeoutProblem, timeoutSource } = require("../out/processtimeout.js");
+const { effectiveTimeout, ownTimeout, timeoutDropped, timeoutProblem, timeoutSource } = require("../out/processtimeout.js");
+const { callApart } = require("../out/fndiffview.js");
 const { ProcessTimeouts } = require("../out/timeoutview.js");
 
 const Q = process.env.QLINT_TEST_Q;
@@ -32,6 +33,17 @@ test("which timeout applies: the process's own while on, else q-lint.query.timeo
   assert.strictEqual(timeoutProblem(""), undefined);
   assert.strictEqual(timeoutProblem("2.5"), undefined);
   for (const bad of ["0", "-1", "x", "86401"]) assert.ok(timeoutProblem(bad), bad);
+});
+
+test("where only the process's own timeout holds (runOnActive, callSeparate): it while on, else none", () => {
+  assert.strictEqual(ownTimeout({ timeout: 2 }, true), 2);
+  assert.strictEqual(ownTimeout({ timeout: 2 }, false), 0);
+  assert.strictEqual(ownTimeout({}, true), 0);
+  assert.strictEqual(ownTimeout(undefined, true), 0);
+  assert.strictEqual(
+    timeoutDropped({ label: "p", timeout: 2 }, 2, true),
+    "q-lint: the call to p timed out after 2 s (p's own timeout), and its connection was closed. p may still be running it.",
+  );
 });
 
 test("the switches: on by default, contributed, commands hidden while off", () => {
@@ -199,4 +211,69 @@ test("Interrupt Query stops a running query on a local process with 'stop, and t
   assert.strictEqual(live.activeLabel(), "local");
   await live.run("1+1");
   assert.strictEqual(live.history()[0].outcome, "ok");
+});
+
+test("a call through runOnActive (benchmark, join, aj, system settings, async send) is dropped at the process's own timeout; off, or only q-lint.query.timeout, it runs on (real q)", { skip }, async (t) => {
+  const port = await freePort();
+  const q = await startQ(port);
+  t.after(() => q.stop());
+  const { live } = await setUp(t, [{ label: "slow", host: "127.0.0.1", port, tags: [], timeout: 0.5 }]);
+  assert.strictEqual(await live.connectTo("slow"), true);
+  const started = Date.now();
+  await assert.rejects(
+    live.runOnActive("busy 3", (connection) => connection.call("busy", 3)),
+    { message: "timed out after 0.5 s (slow's own timeout)" },
+  );
+  assert.ok(Date.now() - started < 2500, `${Date.now() - started} ms`);
+  assert.ok(stub.messages.some(([, text]) => /the query timed out after 0\.5 s \(slow's own timeout\), and was aborted/.test(text)), JSON.stringify(stub.messages));
+  // The connection was dropped and opened again once the process was free.
+  for (let i = 0; i < 80 && live.activeLabel() === undefined; i++) await sleep(100);
+  assert.strictEqual(live.activeLabel(), "slow");
+  assert.strictEqual(live.isBusy(), false);
+  // A call within the timeout answers.
+  assert.strictEqual((await live.runOnActive("busy 0", (connection) => connection.call("busy", 0))).value, "done");
+  // Off: the process's timeout no longer holds, and q-lint.query.timeout
+  // never did here.
+  stub.config.user["query.processTimeout.enable"] = false;
+  stub.config.user["query.timeout"] = 0.5;
+  const ran = await live.runOnActive("busy 1", (connection) => connection.call("busy", 1));
+  assert.strictEqual(ran.value, "done");
+  delete stub.config.user["query.timeout"];
+});
+
+test("a call over a connection of its own (Diff Function, Find in Processes, schema migration) is dropped at the process's own timeout and the connection closed; off, it runs on (real q)", { skip }, async (t) => {
+  const port = await freePort();
+  const q = await startQ(port);
+  t.after(() => q.stop());
+  const slow = { label: "slow", host: "127.0.0.1", port, tags: [], timeout: 0.5 };
+  const { live } = await setUp(t, [slow]);
+  let opened;
+  const openSeparate = live.openSeparate.bind(live);
+  live.openSeparate = async (p) => (opened = await openSeparate(p));
+  const started = Date.now();
+  await assert.rejects(callApart(live, slow, "busy", 3), { message: "timed out after 0.5 s (slow's own timeout)" });
+  assert.ok(Date.now() - started < 2500, `${Date.now() - started} ms`);
+  assert.strictEqual(opened.isOpen, false);
+  assert.deepStrictEqual(stub.messages.at(-1), ["info", "q-lint: the call to slow timed out after 0.5 s (slow's own timeout), and its connection was closed. slow may still be running it."]);
+  // No active connection was touched.
+  assert.strictEqual(live.activeLabel(), undefined);
+  stub.config.user["query.processTimeout.enable"] = false;
+  assert.strictEqual(await callApart(live, slow, "busy", 1), "done");
+  // Closed after, as before (closing is not awaited).
+  for (let i = 0; i < 20 && opened.isOpen; i++) await sleep(50);
+  assert.strictEqual(opened.isOpen, false);
+});
+
+test("Benchmark of an expression that sleeps is stopped at the process's own timeout and says so (real q)", { skip }, async (t) => {
+  const port = await freePort();
+  const q = await startQ(port);
+  t.after(() => q.stop());
+  const { live, context } = await setUp(t, [{ label: "slow", host: "127.0.0.1", port, tags: [], timeout: 0.5 }]);
+  const { registerBenchmark } = require("../out/benchmarkview.js");
+  const { benchmark } = registerBenchmark(context, live);
+  assert.strictEqual(await live.connectTo("slow"), true);
+  const started = Date.now();
+  const said = await benchmark('system "sleep 3"', "", "1 1");
+  assert.ok(Date.now() - started < 2500, `${Date.now() - started} ms`);
+  assert.strictEqual(said, "q-lint: the benchmark failed: timed out after 0.5 s (slow's own timeout)");
 });

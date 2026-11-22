@@ -98,7 +98,7 @@ import { WATCH, WATCHING, intervalProblem, readWatch, watchText } from "./watch"
 import { guardedBy } from "./guard";
 import { readAdmin } from "./admin";
 import { credentialEnv, parseCredentials, runCredentialCommand } from "./credentials";
-import { effectiveTimeout, timeoutSource } from "./processtimeout";
+import { effectiveTimeout, ownTimeout, timeoutDropped, timeoutSource } from "./processtimeout";
 import type { Answered } from "./inlineresult";
 
 const PROCESSES_KEY = "q-lint.processes";
@@ -1685,9 +1685,37 @@ export class Live {
   }
 
   /// A connection of its own to `process`, apart from the active one, with
-  /// its stored password and through its tunnel; the caller closes it.
+  /// its stored password and through its tunnel; the caller closes it. No
+  /// timeout: a stream's subscription holds it open. A call that should end
+  /// goes through `callSeparate`.
   async openSeparate(process: Process): Promise<QConnection> {
     return this.dial(process, await this.targetFor(process));
+  }
+
+  /// `use` over a connection of its own to `process` (`openSeparate`),
+  /// closed after: Diff Function, Find in Processes and the schema
+  /// migration's other side read here. While
+  /// `q-lint.query.processTimeout.enable` is on, the process's own timeout
+  /// (#1036) holds as it does in `run` and `runApart`: when it passes, the
+  /// connection is dropped, the user told, and this throws the timeout.
+  async callSeparate<T>(process: Process, use: (connection: QConnection) => Promise<T>): Promise<T> {
+    const connection = await this.openSeparate(process);
+    const enabled = this.setting(readAdmin).processTimeout;
+    const timeout = ownTimeout(process, enabled);
+    let timedOut = false;
+    const disarm = armTimeout(timeout, () => {
+      timedOut = true;
+      connection.abort();
+      void window.showInformationMessage(timeoutDropped(process, timeout, enabled));
+    });
+    try {
+      return await use(connection);
+    } catch (error) {
+      throw timedOut ? new Error(`${timedOutError(timeout)} (${timeoutSource(process, enabled)})`) : error;
+    } finally {
+      disarm();
+      void connection.close();
+    }
   }
 
   /// Where and as whom `process` is connected to: its user and stored
@@ -2101,9 +2129,24 @@ export class Live {
     const started = Date.now();
     this.running = { code, started };
     this.showStatus();
+    // The process's own timeout (#1036), while it is on, as in `run`: the
+    // connection is dropped as Abort drops it, and the user told.
+    // `q-lint.query.timeout` stays a timeout for queries run from the editor.
+    const enabled = this.setting(readAdmin).processTimeout;
+    const timeout = ownTimeout(ready.process, enabled);
+    let timedOut = false;
+    const disarm = armTimeout(timeout, () => {
+      if (this.running?.started === started) {
+        timedOut = true;
+        void this.abort(timeout, timeoutSource(ready?.process, enabled));
+      }
+    });
     try {
       return { process: ready.process.label, value: await query(ready.connection) };
+    } catch (error) {
+      throw timedOut ? new Error(`${timedOutError(timeout)} (${timeoutSource(ready.process, enabled)})`) : error;
     } finally {
+      disarm();
       if (this.running?.started === started) {
         this.running = undefined;
       }

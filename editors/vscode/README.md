@@ -610,7 +610,13 @@ which q-lint does not do. Nothing is sent to the process.
 of their own, in seconds, over `q-lint.query.timeout`: when it passes, the
 query's connection is dropped as **Abort Current Query** drops it, the
 history records a timeout, and the message names the process's timeout.
-Empty goes back to `q-lint.query.timeout`. **Interrupt Query on Local
+It holds as well for every other call q-lint sends on the active
+connection - Benchmark, Join Assistant, Explain aj Match, Edit System
+Setting, async sends, notebook cells, test runs - which is dropped the
+same way, and for the reads over a connection of their own (Diff
+Function, Find in Processes, a schema migration's other side), whose
+connection is closed; each says it timed out. `q-lint.query.timeout`
+still applies only to queries. Empty goes back to `q-lint.query.timeout`. **Interrupt Query on Local
 Process**, in the palette while connected, stops the running query on a
 process started from the Processes view (**Start Process**) by sending it
 SIGINT: q ends the query with `'stop` and the connection stays, ready for

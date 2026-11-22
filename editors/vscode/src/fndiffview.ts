@@ -3,7 +3,7 @@
 // Code's side-by-side diff of them; Diff Namespace Across Processes reads
 // every function of a namespace on both and lists the ones that differ or
 // are on one side only, each opening the same diff. Each process is read
-// over a connection of its own (`Live.openSeparate`), closed after, with
+// over a connection of its own (`Live.callSeparate`), closed after, with
 // one fixed read-only lambda (`fndiff.ts`) - so the active connection is
 // left as it was and nothing on either process changes. The diff's two
 // sides are `q-lint-fndiff:` documents, which VS Code never lets one type
@@ -26,14 +26,10 @@ function say(text: string): string {
 }
 
 /// `f` called with `args` on `process` over a connection of its own,
-/// closed after: for fixed read-only lambdas only.
-export async function callApart(live: Pick<Live, "openSeparate">, process: Process, f: string, ...args: unknown[]): Promise<unknown> {
-  const connection = await live.openSeparate(process);
-  try {
-    return await connection.call(f, ...args);
-  } finally {
-    void connection.close();
-  }
+/// closed after, within the process's own timeout (`Live.callSeparate`):
+/// for fixed read-only lambdas only.
+export function callApart(live: Pick<Live, "callSeparate">, process: Process, f: string, ...args: unknown[]): Promise<unknown> {
+  return live.callSeparate(process, (connection) => connection.call(f, ...args));
 }
 
 /// The q name under the cursor in the active editor, dots and all.
