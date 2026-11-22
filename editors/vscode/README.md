@@ -1590,6 +1590,17 @@ read-only lambda, as the Process Explorer reads, without interrupting a
 query. A process without `.u.w` is said to be no tickerplant.
 `q-lint.tickerplant.subscribers.enable` off removes the view.
 
+**System Settings**, a view in the q-lint panel, shows the connected
+process's `\c`, `\s`, `\P`, `\T`, `\g`, `\o`, `\z` and `\w`, each with a
+note on what it does (hover the row), read when **Refresh** is pressed.
+**Edit System Setting...** (the pencil on a row) asks for a new value,
+checks it against what the setting takes - digits, a sign, `0N` and spaces
+only ever reach `system` - and asks before sending `\x value`; on a process
+the read-only guard guards, the guard asks instead, with its warning. `\w`
+is shown, not edited: kdb+ changes the limit only for a process started
+with `-w`, and PeachQ not at all. `q-lint.processes.systemSettings.enable`
+off removes the view and its commands.
+
 ## q notebooks
 
 A `.qnb` file opens as a notebook of q code cells and markdown cells;
@@ -2205,6 +2216,7 @@ Read when a cell runs or a command is used, so a change needs no reload. None re
 | Setting | Default | What it does | q-pro |
 | --- | --- | --- | --- |
 | `q-lint.tickerplant.subscribers.enable` | `true` | The **Tickerplant Subscribers** view, read only on **Refresh**. Off, the view is gone and nothing is read. | - |
+| `q-lint.processes.systemSettings.enable` | `true` | The **System Settings** view and **Edit System Setting...**, which asks first. Off, the view is gone, its commands hidden and refusing. | - |
 
 ### Not here, and why
 

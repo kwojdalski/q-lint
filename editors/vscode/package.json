@@ -1303,6 +1303,11 @@
             "type": "boolean",
             "default": true,
             "markdownDescription": "Show the **Tickerplant Subscribers** view: the connected tickerplant's `.u.w` by table, each subscriber's handle, host (where the process records one) and output queue, read only when **Refresh** is pressed. Off, the view is gone and nothing is read."
+          },
+          "q-lint.processes.systemSettings.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Show the **System Settings** view: the connected process's `\\c`, `\\s`, `\\P`, `\\T`, `\\g`, `\\o`, `\\z` and `\\w`, with what each does, read when **Refresh** is pressed; **Edit Setting** changes one after asking (through the read-only guard on a guarded process). Off, the view is gone, its commands refuse and nothing is sent."
           }
         }
       }
@@ -2292,6 +2297,20 @@
         "category": "q-lint",
         "icon": "$(refresh)",
         "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.refreshSystemSettings",
+        "title": "Refresh System Settings",
+        "category": "q-lint",
+        "icon": "$(refresh)",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.editSystemSetting",
+        "title": "Edit System Setting...",
+        "category": "q-lint",
+        "icon": "$(edit)",
+        "enablement": "q-lint.connected"
       }
     ],
     "views": {
@@ -2374,6 +2393,14 @@
           "contextualTitle": "q-lint",
           "visibility": "collapsed",
           "when": "config.q-lint.tickerplant.subscribers.enable"
+        },
+        {
+          "id": "q-lint.systemSettings",
+          "name": "System Settings",
+          "icon": "media/view-explorer.svg",
+          "contextualTitle": "q-lint",
+          "visibility": "collapsed",
+          "when": "config.q-lint.processes.systemSettings.enable"
         }
       ],
       "q-lint-results": [
@@ -2567,6 +2594,11 @@
         {
           "command": "q-lint.refreshTickerplantSubscribers",
           "when": "view == q-lint.tickerplantSubscribers && config.q-lint.tickerplant.subscribers.enable",
+          "group": "navigation@1"
+        },
+        {
+          "command": "q-lint.refreshSystemSettings",
+          "when": "view == q-lint.systemSettings && config.q-lint.processes.systemSettings.enable",
           "group": "navigation@1"
         }
       ],
@@ -2815,6 +2847,16 @@
           "command": "q-lint.newQueryForProcess",
           "when": "view == q-lint.processes && viewItem =~ /^(process|discovered)/ && config.q-lint.processes.newQuery.enable",
           "group": "1_connect@4"
+        },
+        {
+          "command": "q-lint.editSystemSetting",
+          "when": "view == q-lint.systemSettings && viewItem == systemSetting && config.q-lint.processes.systemSettings.enable",
+          "group": "inline"
+        },
+        {
+          "command": "q-lint.editSystemSetting",
+          "when": "view == q-lint.systemSettings && viewItem == systemSetting && config.q-lint.processes.systemSettings.enable",
+          "group": "1_edit@1"
         }
       ],
       "editor/title/run": [
@@ -3553,6 +3595,14 @@
         {
           "command": "q-lint.refreshTickerplantSubscribers",
           "when": "config.q-lint.tickerplant.subscribers.enable"
+        },
+        {
+          "command": "q-lint.refreshSystemSettings",
+          "when": "config.q-lint.processes.systemSettings.enable"
+        },
+        {
+          "command": "q-lint.editSystemSetting",
+          "when": "config.q-lint.processes.systemSettings.enable"
         }
       ],
       "editor/title": [
@@ -3667,6 +3717,10 @@
       {
         "view": "q-lint.tickerplantSubscribers",
         "contents": "Connect to a tickerplant, then read who subscribes to each table (.u.w): nothing is read until you ask.\n[Refresh](command:q-lint.refreshTickerplantSubscribers)"
+      },
+      {
+        "view": "q-lint.systemSettings",
+        "contents": "Read the connected process's system settings: \\c, \\s, \\P, \\T, \\g, \\o, \\z and \\w.\n[Refresh](command:q-lint.refreshSystemSettings)"
       }
     ],
     "keybindings": [

@@ -363,6 +363,7 @@ test("the views live in their own container, and every menu names a declared com
     [
       ...[VIEWS.processes, EXPLORER.view, VIEWS.history, ONBOARDING.helpView, INFO.monitor, INFO.hdb, NOTEBOOK.variablesView, SAVED_QUERIES.view, CHEAT_SHEET.view],
       "q-lint.tickerplantSubscribers",
+      "q-lint.systemSettings",
     ],
   );
   const declared = new Set(pkg.contributes.commands.map((c) => c.command));

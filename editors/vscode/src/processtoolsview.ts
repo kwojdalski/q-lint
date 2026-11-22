@@ -5,9 +5,11 @@
 import type { ExtensionContext } from "vscode";
 import type { Live } from "./live";
 import { registerTickerplantSubscribers } from "./tpsubsview";
+import { registerSystemSettings } from "./syssettingsview";
 
 export function registerProcessTools(context: ExtensionContext, live: Live) {
   return {
     tickerplantSubscribers: registerTickerplantSubscribers(context, live),
+    systemSettings: registerSystemSettings(context, live),
   };
 }

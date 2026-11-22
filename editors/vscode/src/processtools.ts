@@ -10,6 +10,7 @@
 
 export const PROCESS_TOOL_SETTINGS = {
   tickerplantSubscribers: { key: "tickerplant.subscribers.enable", fallback: true, name: "The tickerplant subscribers view" },
+  systemSettings: { key: "processes.systemSettings.enable", fallback: true, name: "The system settings view" },
 } as const;
 
 export type ProcessTool = keyof typeof PROCESS_TOOL_SETTINGS;
@@ -17,6 +18,8 @@ export type ProcessTool = keyof typeof PROCESS_TOOL_SETTINGS;
 /// The features' commands, here so a test without `vscode` can list them.
 export const PROCESS_TOOL_COMMANDS = {
   refreshSubscribers: "q-lint.refreshTickerplantSubscribers",
+  refreshSystemSettings: "q-lint.refreshSystemSettings",
+  editSystemSetting: "q-lint.editSystemSetting",
 } as const;
 
 /// Whether `feature` is on, read with `get` as the other settings are read.
