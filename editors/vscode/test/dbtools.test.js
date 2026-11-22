@@ -15,6 +15,7 @@ const pkg = require("../package.json");
 const { DB_SETTINGS, DB_COMMANDS, dbOn, dbOff } = require("../out/dbfeatures.js");
 const { readDoc, qdocs, docMarkdown, docHtml, typeName } = require("../out/dbdoc.js");
 const { missingWeekdays, partitionProblems, partitionReport, readPartitions } = require("../out/partcheck.js");
+const { readSym, symReport } = require("../out/syminspect.js");
 const { gridFromCsv, gridFromJson, chartFromGrid } = require("../out/chartfile.js");
 const { parseArgs, main, USAGE } = require("../out/chartcli.js");
 
@@ -114,6 +115,18 @@ test("the partition check finds weekday gaps, and each kind of problem in an ans
   assert.match(report, /\*\*missing dates\*\*/);
   assert.match(partitionReport({ hdb: false, root: "/x" }, "rdb", false), /no partitioned database/);
   assert.deepStrictEqual(readPartitions({ hdb: false, root: "/x" }), { hdb: false, root: "/x" });
+});
+
+test("the sym report warns above the threshold and lists columns and growth", () => {
+  const a = readSym({ sym: true, root: "/db", count: 2000, bytes: 4096, partitions: 10, sampled: 2, ctable: ["t", "o"], ccol: ["sym", "id"], cdistinct: [5, 1900], gpart: ["2026.01.06", "2026.01.05"], gsize: [2000, 100] });
+  assert.deepStrictEqual(a.columns.map((c) => c.column), ["id", "sym"]);
+  assert.deepStrictEqual(a.growth.map((g) => g.partition), ["2026.01.05", "2026.01.06"]);
+  const text = symReport(a, "hdb", 1000);
+  assert.match(text, /\*\*Warning:\*\* more than 1,000 symbols/);
+  assert.match(text, /\| o \| id \| 1,900 \| 95\.0% \|/);
+  assert.match(text, /\| 2026\.01\.06 \| 2,000 \| 1,900 \|/);
+  assert.doesNotMatch(symReport(a, "hdb", 5000), /Warning/);
+  assert.match(symReport({ sym: false, root: "/x" }, "p", 1), /no sym file/);
 });
 
 test("a chart is drawn from CSV and JSON tables, and the command line writes it", async () => {

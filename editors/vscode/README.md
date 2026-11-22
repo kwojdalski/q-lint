@@ -1600,6 +1600,13 @@ column file's header through `type get`); the full check also reads every
 symbol column, for an index past the end of its sym file. The newest 1000
 partitions are checked.
 
+**Inspect Sym File** gives the sym file's size and count, the distinct
+symbols each enumerated column uses (from 20 partitions spread over the
+range, and the splayed tables in the root, whose symbol columns it reads),
+how big the file was when each of those partitions was written (one more
+than the largest index it uses), and a warning above
+`q-lint.hdbBrowser.symInspector.warnAbove` symbols.
+
 **Render Chart from CSV or JSON File...**, in the Explorer's context menu
 on a `.csv`, `.tsv` or `.json` file, draws it as an SVG chart with the
 code the result panel saves its charts with, and writes the file you name.
@@ -2237,6 +2244,8 @@ Read when a cell runs or a command is used, so a change needs no reload. None re
 | --- | --- | --- | --- |
 | `q-lint.databaseDocumenter.enable` | `true` | **Document Database**. Off, the command is hidden and refuses. | - |
 | `q-lint.hdbBrowser.partitionCheck.enable` | `true` | **Check Partition Consistency**. Off, the command is hidden and refuses. | - |
+| `q-lint.hdbBrowser.symInspector.enable` | `true` | **Inspect Sym File**. Off, the command is hidden and refuses. | - |
+| `q-lint.hdbBrowser.symInspector.warnAbove` | `1000000` | **Inspect Sym File** warns when the sym file holds more symbols than this. | - |
 | `q-lint.charts.commandLine.enable` | `true` | **Render Chart from CSV or JSON File...**. Off, the command is hidden and refuses; `out/chartcli.js` is yours to run or not. | - |
 
 ### Not here, and why

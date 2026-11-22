@@ -24,6 +24,7 @@ import { CHECK_PARTITIONS, PARTITION_CHECK, partitionReport, readPartitions } fr
 import type { Process } from "./processes";
 import { parseSaved, SAVED_QUERIES_KEY } from "./savedqueries";
 import { statements } from "./statements";
+import { SYM_INSPECT, SYM_PARTITIONS, readSym, symReport } from "./syminspect";
 import { TABLE_INFO, readTableInfo, type TableInfo } from "./tableinfo";
 
 const settings = <T>(key: string, fallback: T): T => workspace.getConfiguration("q-lint").get(key, fallback);
@@ -167,6 +168,21 @@ export function registerDbTools(context: ExtensionContext, live: Live): { state:
     }
   };
 
+  /// Sym file inspector (#1025).
+  const inspectSym = async (): Promise<string> => {
+    if (off("symInspector")) return dbOff("symInspector");
+    const got = await read(live, SYM_INSPECT, SYM_PARTITIONS);
+    if (got === undefined) return "not read";
+    try {
+      const warn = settings<unknown>("hdbBrowser.symInspector.warnAbove", 1_000_000);
+      const text = symReport(readSym(got.value), got.process.label, typeof warn === "number" && warn >= 0 ? warn : 1_000_000);
+      await openDocument(text, "markdown");
+      return text;
+    } catch (error) {
+      return say(`q-lint: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
   /// Chart from a CSV or JSON file (#1031), as the command line draws one.
   const renderChart = async (file?: unknown, kind?: unknown, out?: unknown): Promise<string> => {
     if (off("chartCli")) return dbOff("chartCli");
@@ -196,6 +212,7 @@ export function registerDbTools(context: ExtensionContext, live: Live): { state:
   };
   register(DB_COMMANDS.document, (format?: unknown) => document(format));
   register(DB_COMMANDS.checkPartitions, (depth?: unknown) => checkPartitions(depth));
+  register(DB_COMMANDS.inspectSym, () => inspectSym());
   register(DB_COMMANDS.renderChart, (file?: unknown, kind?: unknown, out?: unknown) => renderChart(file, kind, out));
   return { state, registered: () => registered };
 }

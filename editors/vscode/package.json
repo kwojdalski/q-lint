@@ -1311,6 +1311,19 @@
             "order": 3,
             "markdownDescription": "**Check Partition Consistency**: missing dates, tables, `.d` and column files, columns and types that differ between partitions, symbol enumeration problems and row-count outliers, as a report. Reads only. Off, the command is hidden and refuses."
           },
+          "q-lint.hdbBrowser.symInspector.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 4,
+            "markdownDescription": "**Inspect Sym File**: the sym file's size and count, the columns that use most of it, and its growth across partitions. Reads only. Off, the command is hidden and refuses."
+          },
+          "q-lint.hdbBrowser.symInspector.warnAbove": {
+            "type": "number",
+            "default": 1000000,
+            "minimum": 0,
+            "order": 5,
+            "markdownDescription": "**Inspect Sym File** warns when the sym file holds more symbols than this."
+          },
           "q-lint.charts.commandLine.enable": {
             "type": "boolean",
             "default": true,
@@ -2313,6 +2326,13 @@
         "enablement": "q-lint.connected"
       },
       {
+        "command": "q-lint.inspectSymFile",
+        "title": "Inspect Sym File",
+        "category": "q-lint",
+        "icon": "$(symbol-key)",
+        "enablement": "q-lint.connected"
+      },
+      {
         "command": "q-lint.renderChartFromFile",
         "title": "Render Chart from CSV or JSON File...",
         "category": "q-lint"
@@ -2584,6 +2604,11 @@
           "command": "q-lint.checkPartitions",
           "when": "view == q-lint.hdbBrowser && config.q-lint.hdbBrowser.partitionCheck.enable",
           "group": "navigation@2"
+        },
+        {
+          "command": "q-lint.inspectSymFile",
+          "when": "view == q-lint.hdbBrowser && config.q-lint.hdbBrowser.symInspector.enable",
+          "group": "navigation@3"
         },
         {
           "command": "q-lint.documentDatabase",
@@ -3588,6 +3613,10 @@
         {
           "command": "q-lint.checkPartitions",
           "when": "config.q-lint.hdbBrowser.partitionCheck.enable"
+        },
+        {
+          "command": "q-lint.inspectSymFile",
+          "when": "config.q-lint.hdbBrowser.symInspector.enable"
         },
         {
           "command": "q-lint.renderChartFromFile",

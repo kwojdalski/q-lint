@@ -11,6 +11,7 @@
 export const DB_SETTINGS = {
   documenter: { key: "databaseDocumenter.enable", fallback: true, name: "The database documenter" },
   partitionCheck: { key: "hdbBrowser.partitionCheck.enable", fallback: true, name: "The partition consistency check" },
+  symInspector: { key: "hdbBrowser.symInspector.enable", fallback: true, name: "The sym file inspector" },
   chartCli: { key: "charts.commandLine.enable", fallback: true, name: "Charts from a file" },
 } as const;
 
@@ -20,6 +21,7 @@ export type DbFeature = keyof typeof DB_SETTINGS;
 export const DB_COMMANDS = {
   document: "q-lint.documentDatabase",
   checkPartitions: "q-lint.checkPartitions",
+  inspectSym: "q-lint.inspectSymFile",
   renderChart: "q-lint.renderChartFromFile",
 } as const;
 

@@ -134,4 +134,25 @@ test("the partition check finds missing dates, files, differing types and outlie
   assert.strictEqual(readPartitions(await plain.call(PARTITION_CHECK, 1000, false)).hdb, false);
 });
 
+const { SYM_INSPECT, readSym, symReport } = require("../out/syminspect.js");
 const { TABLE_INFO, readTableInfo } = require("../out/tableinfo.js");
+
+test("the sym inspector counts the file, its columns' shares and its growth", { skip }, async (t) => {
+  const extra = [
+    "{[r;d;s] .Q.dd[r;d,`orders`] set .Q.en[r] ([] sym:s;oid:`$string til count s)}[r]'[2026.01.05 2026.01.06 2026.01.07 2026.01.08 2026.01.09;(`a;`a;`a`b;`a`b;`a`b`c`d)];",
+  ].join("\n");
+  const { connection } = await connect(t, HDB(extra).replace("mk[r;;6] each 2026.01.05 2026.01.06 2026.01.07;", "mk[r;;6] each 2026.01.05 2026.01.06 2026.01.07 2026.01.08 2026.01.09;").replace("each 2026.01.05 2026.01.06 2026.01.07;\n", "each 2026.01.05 2026.01.06 2026.01.07 2026.01.08 2026.01.09;\n"));
+  const answer = readSym(await connection.call(SYM_INSPECT, 20));
+  assert.strictEqual(answer.sym, true);
+  assert.ok(answer.count >= 8, `count ${answer.count}`);
+  assert.ok(answer.bytes > 0);
+  const oid = answer.columns.find((c) => c.table === "orders" && c.column === "oid");
+  assert.ok(oid !== undefined, JSON.stringify(answer.columns));
+  assert.strictEqual(oid.distinct, 4);
+  assert.ok(answer.growth.length >= 2);
+  assert.ok(answer.growth.at(-1).size >= answer.growth[0].size);
+  assert.match(symReport(answer, "hdb", 5), /Warning/);
+  assert.doesNotMatch(symReport(answer, "hdb", 1e6), /Warning/);
+  const { connection: plain } = await connect(t, "a:1\n");
+  assert.strictEqual(readSym(await plain.call(SYM_INSPECT, 20)).sym, false);
+});
