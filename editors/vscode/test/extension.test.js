@@ -138,6 +138,7 @@ function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir
     "./dashboardview": { Dashboards: class {} },
     "./tplogview": { TickerplantLog: class {} },
     "./logview": { LogViewer: class { state() { return undefined; } } },
+    "./processadmin": { registerProcessAdmin: () => ({}) },
   };
   const file = require.resolve("../out/extension.js");
   delete require.cache[file];

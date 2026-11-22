@@ -52,7 +52,7 @@ export function readSharedFile(text: string, trusted: boolean): SharedList {
         if (Object.keys(kept).length !== Object.keys(e).length) {
           secrets.push(typeof e.label === "string" && e.label.trim() !== "" ? e.label.trim() : `entry ${i + 1}`);
         }
-        if (!trusted && ["init", "initFile", "ssh", "launch"].some((k) => k in kept)) {
+        if (!trusted && ["init", "initFile", "ssh", "launch", "credentialCommand"].some((k) => k in kept)) {
           untrusted++;
         }
         return kept;

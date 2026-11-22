@@ -96,6 +96,9 @@ import { guardCheck, guardQuestion, guardRefusal, readGuard } from "./guard";
 import type { GridAnswer, GridPayload } from "./grid";
 import { WATCH, WATCHING, intervalProblem, readWatch, watchText } from "./watch";
 import { guardedBy } from "./guard";
+import { readAdmin } from "./admin";
+import { credentialEnv, parseCredentials, runCredentialCommand } from "./credentials";
+import { effectiveTimeout, timeoutSource } from "./processtimeout";
 
 const PROCESSES_KEY = "q-lint.processes";
 /// The address of each process the shared list held when last read (#955).
@@ -1524,7 +1527,9 @@ export class Live {
     }
     // A discovered process's user has no password stored until asked for one.
     const saved = process.server === undefined;
-    if (!saved && process.user && (await this.context.secrets.get(passwordKey(process))) === undefined) {
+    // One whose credential command (#1034) gives its password is not asked.
+    const commanded = process.credentialCommand !== undefined && this.setting(readAdmin).credentialCommand;
+    if (!saved && process.user && !commanded && (await this.context.secrets.get(passwordKey(process))) === undefined) {
       const password = await window.showInputBox({
         title: `q process ${process.label}: password of ${process.user}`,
         password: true,
@@ -1540,7 +1545,7 @@ export class Live {
     const connected = await this.open(process);
     // A discovered process cannot be edited, so a password that did not
     // connect is forgotten: the next connect asks for it again.
-    if (!connected && !saved && process.user) {
+    if (!connected && !saved && process.user && !commanded) {
       await this.context.secrets.delete(passwordKey(process));
       await this.discovery.passwordGiven(process.server!, process.label.slice(process.server!.length + 1), false);
     }
@@ -1574,12 +1579,11 @@ export class Live {
         // Said now, not on connecting: the new one may never come.
         this.changed.fire("disconnected");
       }
-      const password = process.user ? await this.context.secrets.get(passwordKey(process)) : undefined;
       try {
         const connection = await window.withProgress(
           { location: { viewId: VIEWS.processes }, title: `Connecting to ${process.label}` },
           async () => {
-            const target = targetOf(process, password);
+            const target = await this.targetFor(process);
             for (;;) {
               try {
                 return await this.dial(process, target);
@@ -1675,8 +1679,26 @@ export class Live {
   /// A connection of its own to `process`, apart from the active one, with
   /// its stored password and through its tunnel; the caller closes it.
   async openSeparate(process: Process): Promise<QConnection> {
-    const password = process.user ? await this.context.secrets.get(passwordKey(process)) : undefined;
-    return this.dial(process, targetOf(process, password));
+    return this.dial(process, await this.targetFor(process));
+  }
+
+  /// Where and as whom `process` is connected to: its user and stored
+  /// password, or what its credential command (#1034) prints, run now and
+  /// kept nowhere. Throws why the command gave none.
+  private async targetFor(process: Process): Promise<Target> {
+    if (process.credentialCommand === undefined || !this.setting(readAdmin).credentialCommand) {
+      const password = process.user ? await this.context.secrets.get(passwordKey(process)) : undefined;
+      return targetOf(process, password);
+    }
+    const output = await runCredentialCommand(process.credentialCommand, {
+      cwd: workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir(),
+      env: credentialEnv(process),
+    });
+    const given = parseCredentials(output, process.user);
+    if ("problem" in given) {
+      throw new Error(`its credential command gave no credentials: ${given.problem}`);
+    }
+    return { ...targetOf({ ...process, user: undefined }, undefined), user: given.user ?? "", password: given.password };
   }
 
   /// Set the SSH destination a saved process is reached through (#908), or
@@ -2159,25 +2181,18 @@ export class Live {
   /// timeout); `signal` stops waiting. Throws why there is no answer. The
   /// caller asks the read-only guard first.
   async runApart(process: Process, code: string, signal?: AbortSignal): Promise<GridAnswer> {
-    const password = process.user ? await this.context.secrets.get(passwordKey(process)) : undefined;
-    if (process.user && password === undefined && process.server !== undefined) {
+    const commanded = process.credentialCommand !== undefined && this.setting(readAdmin).credentialCommand;
+    if (!commanded && process.user && process.server !== undefined && (await this.context.secrets.get(passwordKey(process))) === undefined) {
       throw new Error(`no password is stored for ${process.user}: connect to ${process.label} once to give it`);
     }
-    const connection = await QConnection.open(
-      {
-        host: process.host,
-        port: process.port,
-        ...(process.user ? { user: process.user, password: password ?? "" } : {}),
-        ...(process.tls ? { tls: true } : {}),
-      },
-      undefined,
-      signal,
-    );
+    const target = await this.targetFor(process);
+    const connection = await QConnection.open(target, undefined, signal);
     const stop = (): void => connection.abort();
     signal?.addEventListener("abort", stop);
     const controls = this.controls.settings();
+    const timeout = effectiveTimeout(process, controls.timeout, this.setting(readAdmin).processTimeout);
     let timedOut = false;
-    const disarm = armTimeout(controls.timeout, () => {
+    const disarm = armTimeout(timeout, () => {
       timedOut = true;
       connection.abort();
     });
@@ -2192,7 +2207,7 @@ export class Live {
         ? await runUnwrapped(connection, cut, { size: consoleSize, limit: gridLimit, unlimited, grid: true })
         : await connection.queryGrid(cut, consoleSize, gridLimit);
     } catch (error) {
-      throw timedOut ? new Error(timedOutError(controls.timeout)) : signal?.aborted ? new Error("cancelled") : error;
+      throw timedOut ? new Error(timedOutError(timeout)) : signal?.aborted ? new Error("cancelled") : error;
     } finally {
       disarm();
       signal?.removeEventListener("abort", stop);
@@ -2361,14 +2376,17 @@ export class Live {
     const controls = this.controls.settings();
     const unlimited = this.controls.unlimited;
     const { consoleSize, gridLimit } = limits(settings, unlimited);
+    // A process's own timeout (#1036) over q-lint.query.timeout.
+    const timeoutOn = this.setting(readAdmin).processTimeout;
+    const timeout = effectiveTimeout(process, controls.timeout, timeoutOn);
     const started = Date.now();
     this.running = { code, started };
     this.showStatus();
     // A query still running at the timeout is aborted as Abort does.
-    const disarm = armTimeout(controls.timeout, () => {
+    const disarm = armTimeout(timeout, () => {
       if (this.running?.started === started) {
         this.timedOut = started;
-        void this.abort(controls.timeout);
+        void this.abort(timeout, timeoutSource(process, timeoutOn));
       }
     });
     let entry: HistoryEntry;
@@ -2413,9 +2431,9 @@ export class Live {
         at: new Date(started).toISOString(),
         millis: Date.now() - started,
         outcome: timedOut ? "timeout" : aborted ? "aborted" : "error",
-        error: timedOut ? timedOutError(controls.timeout) : aborted ? "aborted" : message,
+        error: timedOut ? timedOutError(timeout) : aborted ? "aborted" : message,
       };
-      this.show([`# ${process.label} - ${timedOut ? timedOutError(controls.timeout) : aborted ? "aborted" : "failed"}: ${message}`], false);
+      this.show([`# ${process.label} - ${timedOut ? timedOutError(timeout) : aborted ? "aborted" : "failed"}: ${message}`], false);
     } finally {
       disarm();
       if (this.timedOut === started) {
@@ -2515,7 +2533,7 @@ export class Live {
   /// Stop waiting for the running query: q has no message that cancels one,
   /// so the connection is closed - which also stops the process from sending
   /// a result nobody wants - and opened again.
-  async abort(timedOut?: number): Promise<void> {
+  async abort(timedOut?: number, source = "q-lint.query.timeout"): Promise<void> {
     const connection = this.connection;
     const process = this.active;
     if (connection === undefined || process === undefined || !connection.isBusy) {
@@ -2538,7 +2556,7 @@ export class Live {
     void window.showInformationMessage(
       this.aborted === undefined && timedOut === undefined
         ? `q-lint: stopped the Process Explorer's read of ${process.label}, the only call running. q-lint reconnects once ${process.label} is free.`
-        : `q-lint: ${timedOut === undefined ? "stopped waiting for the query" : `the query ${timedOutError(timedOut)} (q-lint.query.timeout), and was aborted`}. ${process.label} may still be running it; q-lint reconnects once it is free.`,
+        : `q-lint: ${timedOut === undefined ? "stopped waiting for the query" : `the query ${timedOutError(timedOut)} (${source}), and was aborted`}. ${process.label} may still be running it; q-lint reconnects once it is free.`,
     );
   }
 

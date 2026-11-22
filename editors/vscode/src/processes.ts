@@ -29,6 +29,13 @@ export interface Process {
   /// How the process is started on this machine (#954). Read only where a
   /// connect script is: it runs a program.
   launch?: Launch;
+  /// A command run at each connect whose output gives the user and password
+  /// or token (#1034): its output is used for that connect only, never
+  /// stored. Read only where a connect script is: it runs a program.
+  credentialCommand?: string;
+  /// Seconds a query on it may run before its connection is dropped (#1036),
+  /// over `q-lint.query.timeout`.
+  timeout?: number;
 }
 
 /// A local process's start: `command` (default `q-lint.terminal.qBinary`)
@@ -103,6 +110,8 @@ export function processTooltip(process: Process, from?: string): string {
     ...(process.ssh !== undefined ? [`through an SSH tunnel via ${markdownText(process.ssh)}`] : []),
     ...(process.gateway !== undefined ? [`TorQ gateway: ${markdownText(process.gateway.join(", "))}`] : []),
     ...(process.launch !== undefined ? ["has a launch definition"] : []),
+    ...(process.credentialCommand !== undefined ? ["gets its credentials from a command at connect"] : []),
+    ...(process.timeout !== undefined ? [`queries time out after ${process.timeout} s`] : []),
     ...(from === undefined ? [] : [`listed by ${markdownText(from)}, connected to as ${markdownText(`${from}/${process.label}`)}`]),
   ].join("\n\n");
 }
@@ -242,29 +251,53 @@ export function splitArgs(text: string): string[] {
   return [...text.matchAll(/"([^"]*)"|(\S+)/g)].map((m) => m[1] ?? m[2]);
 }
 
-/// The SSH destination, gateway server types and launch definition of a
-/// process entry. `trusted`: from a source whose code may run (the saved
-/// list, an import, a trusted workspace), which alone may name an SSH host
-/// or a program to start.
-function extrasOf(e: Record<string, unknown>, trusted: boolean): Pick<Process, "ssh" | "gateway" | "launch"> {
+/// A credential command as written (#1034), or undefined when it is none.
+export function credentialCommandOf(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() !== "" && !value.includes("\0") ? value.trim() : undefined;
+}
+
+/// A per-process query timeout as written (#1036): positive seconds, at
+/// most a day, as `q-lint.query.timeout` is.
+export function timeoutOf(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.min(value, 86_400) : undefined;
+}
+
+/// The SSH destination, gateway server types, launch definition, credential
+/// command and timeout of a process entry. `trusted`: from a source whose
+/// code may run (the saved list, an import, a trusted workspace), which
+/// alone may name an SSH host or a program to run.
+function extrasOf(e: Record<string, unknown>, trusted: boolean): Pick<Process, "ssh" | "gateway" | "launch" | "credentialCommand" | "timeout"> {
   const ssh = trusted ? sshDestination(e.ssh) : undefined;
   const gateway = serverTypes(e.gateway);
   const launch = trusted ? launchOf(e.launch) : undefined;
-  return { ...(ssh !== undefined ? { ssh } : {}), ...(gateway !== undefined ? { gateway } : {}), ...(launch !== undefined ? { launch } : {}) };
+  const credentialCommand = trusted ? credentialCommandOf(e.credentialCommand) : undefined;
+  const timeout = timeoutOf(e.timeout);
+  return {
+    ...(ssh !== undefined ? { ssh } : {}),
+    ...(gateway !== undefined ? { gateway } : {}),
+    ...(launch !== undefined ? { launch } : {}),
+    ...(credentialCommand !== undefined ? { credentialCommand } : {}),
+    ...(timeout !== undefined ? { timeout } : {}),
+  };
 }
 
-/// `process` with the SSH destination, gateway and launch definition of
-/// `from`: Edit Process asks for none of them, and keeps them.
-export function withExtras<P extends Process>(process: P, from: Pick<Process, "ssh" | "gateway" | "launch">): P {
-  const { ssh: _s, gateway: _g, launch: _l, ...rest } = process;
+/// `process` with the SSH destination, gateway, launch definition,
+/// credential command and timeout of `from`: Edit Process asks for none of
+/// them, and keeps them.
+export function withExtras<P extends Process>(process: P, from: Pick<Process, "ssh" | "gateway" | "launch" | "credentialCommand" | "timeout">): P {
+  const { ssh: _s, gateway: _g, launch: _l, credentialCommand: _c, timeout: _t, ...rest } = process;
   void _s;
   void _g;
   void _l;
+  void _c;
+  void _t;
   return {
     ...rest,
     ...(from.ssh !== undefined ? { ssh: from.ssh } : {}),
     ...(from.gateway !== undefined ? { gateway: from.gateway } : {}),
     ...(from.launch !== undefined ? { launch: from.launch } : {}),
+    ...(from.credentialCommand !== undefined ? { credentialCommand: from.credentialCommand } : {}),
+    ...(from.timeout !== undefined ? { timeout: from.timeout } : {}),
   } as P;
 }
 

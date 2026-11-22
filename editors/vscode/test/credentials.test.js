@@ -1,0 +1,159 @@
+// Credential commands (#1034): what a command prints read as a user and
+// password, the command run with how it ended said but never what it
+// printed, Set Credential Command through the stand-in `vscode` module, on
+// and off, and - when QLINT_TEST_Q names a q - a connect to a q started
+// with `-u` that only the command's credentials open, with nothing kept.
+const { stub } = require("./vscode_stub.js");
+const test = require("node:test");
+const assert = require("node:assert");
+const { spawn } = require("node:child_process");
+const net = require("node:net");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const pkg = require("../package.json");
+const { Live } = require("../out/live.js");
+const { ADMIN_COMMANDS, adminOff, readAdmin } = require("../out/admin.js");
+const { credentialEnv, parseCredentials, runCredentialCommand } = require("../out/credentials.js");
+const { CredentialCommands } = require("../out/credentialview.js");
+const { parseProcesses } = require("../out/processes.js");
+const { readSharedFile } = require("../out/shared.js");
+
+const Q = process.env.QLINT_TEST_Q;
+const skip = Q ? false : "QLINT_TEST_Q names no q binary";
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+test("what a command prints: JSON, user:password, a password for the process's user, a token", () => {
+  assert.deepStrictEqual(parseCredentials('{"user":"me","password":"pw"}\n'), { user: "me", password: "pw" });
+  assert.deepStrictEqual(parseCredentials('{"token":"t0k"}', "svc"), { user: "svc", password: "t0k" });
+  assert.deepStrictEqual(parseCredentials('{"username":"u","token":"t"}'), { user: "u", password: "t" });
+  assert.deepStrictEqual(parseCredentials("me:pa:ss\nignored"), { user: "me", password: "pa:ss" });
+  assert.deepStrictEqual(parseCredentials("pa:ss\r\n", "fixed"), { user: "fixed", password: "pa:ss" });
+  assert.deepStrictEqual(parseCredentials("tokenonly"), { password: "tokenonly" });
+  assert.deepStrictEqual(parseCredentials("  \n"), { problem: "it printed nothing" });
+  assert.deepStrictEqual(parseCredentials("{nope"), { problem: "it printed something that starts like JSON but is not" });
+  assert.deepStrictEqual(parseCredentials('{"user":"x"}'), { problem: "its JSON has no password or token string" });
+  assert.deepStrictEqual(credentialEnv({ label: "a", host: "h", port: 1 }), { QLINT_PROCESS_LABEL: "a", QLINT_PROCESS_HOST: "h", QLINT_PROCESS_PORT: "1" });
+});
+
+test("a command's failure says how it ended, never what it printed", async () => {
+  assert.strictEqual(await runCredentialCommand("printf 'me:%s' \"$QLINT_PROCESS_LABEL\"", { env: { QLINT_PROCESS_LABEL: "x" } }), "me:x");
+  await assert.rejects(runCredentialCommand("echo topsecret; echo topsecret >&2; exit 3"), (e) => e.message === "the credential command failed with exit code 3");
+  await assert.rejects(runCredentialCommand("sleep 5", { timeoutMs: 200 }), /did not finish in 0.2 s/);
+});
+
+test("a credential command is kept with a saved process, read only where code may run", () => {
+  const entry = { label: "a", host: "h", port: 1, credentialCommand: " vault read x ", timeout: 5 };
+  assert.deepStrictEqual(parseProcesses([entry], true).processes[0], { label: "a", host: "h", port: 1, tags: [], credentialCommand: "vault read x", timeout: 5 });
+  assert.strictEqual(parseProcesses([entry], false).processes[0].credentialCommand, undefined);
+  const shared = readSharedFile(JSON.stringify({ processes: [entry] }), false);
+  assert.strictEqual(shared.processes[0].credentialCommand, undefined);
+  assert.match(shared.problems.join(" "), /not trusted/);
+});
+
+test("the switch: on by default, contributed, its command hidden while off", () => {
+  assert.strictEqual(readAdmin((_k, f) => f).credentialCommand, true);
+  const section = pkg.contributes.configuration.find((c) => c.title === "q-lint: process admin");
+  assert.strictEqual(section.properties["q-lint.connection.credentialCommand.enable"].default, true);
+  assert.ok(pkg.contributes.commands.some((c) => c.command === ADMIN_COMMANDS.setCredentialCommand && c.category === "q-lint"));
+  const menus = Object.values(pkg.contributes.menus).flat().filter((m) => m.command === ADMIN_COMMANDS.setCredentialCommand);
+  assert.strictEqual(menus.length, 2);
+  for (const m of menus) assert.match(m.when, /config\.q-lint\.connection\.credentialCommand\.enable/);
+});
+
+async function setUp(t, processes) {
+  stub.reset();
+  const context = stub.newContext();
+  await context.globalState.update("q-lint.processes", processes);
+  const live = new Live(context);
+  new CredentialCommands(context, live);
+  t.after(async () => {
+    await stub.commands.get("q-lint.disconnectProcess")?.();
+    for (const d of context.subscriptions) d.dispose?.();
+  });
+  return { live, context };
+}
+
+test("Set Credential Command sets, keeps the rest, and clears", async (t) => {
+  const { live } = await setUp(t, [{ label: "a", host: "h", port: 1, tags: ["dev"], ssh: "bastion" }]);
+  stub.inputs.push("get-creds a");
+  await stub.commands.get(ADMIN_COMMANDS.setCredentialCommand)("a");
+  assert.deepStrictEqual(live.processes(), [{ label: "a", host: "h", port: 1, tags: ["dev"], ssh: "bastion", credentialCommand: "get-creds a" }]);
+  await stub.commands.get(ADMIN_COMMANDS.setCredentialCommand)("a", null);
+  assert.deepStrictEqual(live.processes(), [{ label: "a", host: "h", port: 1, tags: ["dev"], ssh: "bastion" }]);
+  // Escape changes nothing.
+  stub.inputs.push(undefined);
+  await stub.commands.get(ADMIN_COMMANDS.setCredentialCommand)("a");
+  assert.strictEqual(live.processes()[0].credentialCommand, undefined);
+});
+
+test("turned off, Set Credential Command refuses; on again without a reload", async (t) => {
+  const { live } = await setUp(t, [{ label: "a", host: "h", port: 1, tags: [] }]);
+  stub.config.user["connection.credentialCommand.enable"] = false;
+  stub.changeConfig("q-lint.connection.credentialCommand.enable");
+  await stub.commands.get(ADMIN_COMMANDS.setCredentialCommand)("a", "x");
+  assert.deepStrictEqual(stub.messages.at(-1), ["info", adminOff("credentialCommand")]);
+  assert.strictEqual(live.processes()[0].credentialCommand, undefined);
+  stub.config.user["connection.credentialCommand.enable"] = true;
+  await stub.commands.get(ADMIN_COMMANDS.setCredentialCommand)("a", "x");
+  assert.strictEqual(live.processes()[0].credentialCommand, "x");
+});
+
+function freePort() {
+  return new Promise((resolve) => {
+    const s = net.createServer().listen(0, "127.0.0.1", () => {
+      const { port } = s.address();
+      s.close(() => resolve(port));
+    });
+  });
+}
+
+async function startQ(port, users) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-creds-"));
+  fs.writeFileSync(path.join(dir, "server.q"), "x:42\n");
+  fs.writeFileSync(path.join(dir, "users.txt"), users);
+  const child = spawn(`${Q} ${path.join(dir, "server.q")} -p ${port} -u ${path.join(dir, "users.txt")}`, { shell: true, stdio: ["ignore", "ignore", "pipe"], detached: true });
+  const stop = () => {
+    try {
+      process.kill(-child.pid, "SIGKILL");
+    } catch {}
+  };
+  for (let i = 0; i < 100; i++) {
+    const up = await new Promise((resolve) => {
+      const s = net.connect(port, "127.0.0.1", () => (s.end(), resolve(true)));
+      s.on("error", () => resolve(false));
+    });
+    if (up) return { stop, dir };
+    await sleep(100);
+  }
+  stop();
+  throw new Error("q did not start listening");
+}
+
+test("a process whose command prints the right credentials connects, and nothing of them is kept (real q)", { skip }, async (t) => {
+  const port = await freePort();
+  const q = await startQ(port, "svc:s3cr3t\n");
+  t.after(() => q.stop());
+  // The secret is in a file the command reads, so that the command kept
+  // with the process does not hold it.
+  fs.writeFileSync(path.join(q.dir, "creds.json"), '{"user":"svc","password":"s3cr3t"}');
+  const { live, context } = await setUp(t, [
+    { label: "good", host: "127.0.0.1", port, tags: [], credentialCommand: `cat '${path.join(q.dir, "creds.json")}'` },
+    { label: "bad", host: "127.0.0.1", port, tags: [], credentialCommand: "printf 'svc:wrong'" },
+    { label: "fails", host: "127.0.0.1", port, tags: [], credentialCommand: `cat '${path.join(q.dir, "creds.json")}'; exit 7` },
+  ]);
+  assert.strictEqual(await live.connectTo("good"), true);
+  assert.strictEqual(live.activeLabel(), "good");
+  assert.strictEqual(await live.connectTo("bad"), false);
+  assert.match(stub.messages.at(-1)[1], /refused/);
+  assert.strictEqual(await live.connectTo("fails"), false);
+  assert.match(stub.messages.at(-1)[1], /exit code 7/);
+  // Nothing of what was printed is kept or said.
+  assert.strictEqual(context.secrets.all.size, 0);
+  const state = JSON.stringify(context.globalState.keys().map((k) => context.globalState.get(k)));
+  assert.ok(!state.includes("s3cr3t"), state);
+  assert.ok(!JSON.stringify(stub.messages).includes("s3cr3t"));
+  // Turned off, the command is not run: the stored password (none) is sent.
+  stub.config.user["connection.credentialCommand.enable"] = false;
+  assert.strictEqual(await live.connectTo("good"), false);
+});

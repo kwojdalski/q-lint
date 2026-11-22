@@ -16,7 +16,8 @@
   "activationEvents": [
     "onLanguage:q",
     "onNotebook:q-lint-notebook",
-    "onTaskType:q"
+    "onTaskType:q",
+    "onUri"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -1427,6 +1428,92 @@
             "markdownDescription": "**Render Chart from CSV or JSON File...**: draw a table file as an SVG chart, as `node out/chartcli.js` does from a shell. Off, the command is hidden and refuses; the command-line script is yours to run or not."
           }
         }
+      },
+      {
+        "title": "q-lint: process admin",
+        "properties": {
+          "q-lint.processes.bulkAdd.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 800,
+            "markdownDescription": "Offer **Add Many Processes**, on the Processes view's title bar and in the palette: a form to paste `host:port[:label[:tags]]` lines or CSV into, which checks each line, shows duplicates, and adds the processes. Never reads a password. Off: the command is hidden and refuses, and an open form closes."
+          },
+          "q-lint.processes.importOther.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 801,
+            "markdownDescription": "Offer **Import Servers from qStudio...** and **Import Connections from KX Extension...**, on the Processes view's title menu and in the palette: they read qStudio's server list (its Copy Server List text, its XML, or its preferences file) or the KX kdb extension's `kdb.servers` or export file, and add the kdb processes named, after asking. A password is never imported, and a label already saved is kept. Off: the commands are hidden and refuse."
+          },
+          "q-lint.connection.credentialCommand.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 802,
+            "markdownDescription": "Offer **Set Credential Command**, on a saved process: a command run in a shell at each connect whose output (a JSON object with `password` or `token` and optionally `user`, or a line: the password, or `user:password`) is the handshake's user and password - for Kerberos, a vault or a token service. What it prints is used for that connect only: never stored, logged or put in settings. Read from a shared list only in a trusted workspace. Off: the command is hidden and refuses, and processes connect with their stored password."
+          },
+          "q-lint.processes.environmentColor.enable": {
+            "type": "boolean",
+            "default": false,
+            "order": 803,
+            "markdownDescription": "While the connected process carries a tag `q-lint.processes.environmentColor.colors` colours (production red and `uat` amber by default), show a status bar item in that colour naming the tag, and a border of it down the left of each q editor. Nothing is written to your settings and nothing is sent to the process. Off (the default): neither is drawn."
+          },
+          "q-lint.processes.environmentColor.colors": {
+            "type": "object",
+            "default": {
+              "prod": "red",
+              "prd": "red",
+              "production": "red",
+              "uat": "amber"
+            },
+            "additionalProperties": {
+              "type": "string",
+              "pattern": "^(red|amber|yellow|purple|blue|green|#[0-9a-fA-F]{6})$"
+            },
+            "order": 804,
+            "markdownDescription": "The environment colour of each tag: `red`, `amber`, `yellow`, `purple`, `blue`, `green` or `#rrggbb`. A process with tags of two colours takes the most cautious, in that order. Only red, amber and yellow colour the status bar item's background (VS Code allows only those two backgrounds); the rest colour its text. Used while `q-lint.processes.environmentColor.enable` is on."
+          },
+          "q-lint.query.processTimeout.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 805,
+            "markdownDescription": "Offer **Set Process Timeout**, on a saved process: seconds a query on it may run before its connection is dropped and you are told, over `q-lint.query.timeout`. Off: the command is hidden and refuses, and `q-lint.query.timeout` applies to every process."
+          },
+          "q-lint.query.cancelLocal.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 806,
+            "markdownDescription": "Offer **Interrupt Query on Local Process**: for a connected process started from the Processes view (**Start Process**), send it SIGINT, so q stops the running query with `'stop` and the connection stays. Off: the command is hidden and refuses."
+          },
+          "q-lint.query.async.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 807,
+            "markdownDescription": "Offer **Run Query Asynchronously**, in a q editor's context menu and the palette: the selection or statement at the cursor is sent as an async message, the connection stays free for other queries, and the result opens in the result panel when the process sends it back. Read by the read-only guard first. **Show Pending Async Queries** lists those still to answer. Off: the commands are hidden and refuse, and pending results are dropped."
+          },
+          "q-lint.query.links.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 808,
+            "markdownDescription": "Offer **Copy Query Link**, in a q editor's context menu and the palette: a `vscode://` link to the selection or statement at the cursor, aimed at a process by its label, and open such links: the query opens in a new q editor bound to your process of that label, and runs only if you say so, through the read-only guard. Off: the command is hidden and refuses, and links are not opened."
+          },
+          "q-lint.export.schedule.enable": {
+            "type": "boolean",
+            "default": false,
+            "order": 809,
+            "markdownDescription": "Offer **Add Scheduled Export** and **Manage Scheduled Exports**, and run each schedule when due while VS Code is open: a saved query run on a process on a connection of its own, its result written to CSV, Parquet or Excel at the file chosen, replaced or written anew each run as chosen. Only a read-only query with no placeholders is run. Off (the default): no timer runs, nothing is sent, and the commands are hidden and refuse."
+          },
+          "q-lint.connectedClients.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 810,
+            "markdownDescription": "Show the **Connected Clients** view: the connected process's open handles (`.z.W`) with what is queued on each, the kind of socket, and - where TorQ's `.clients` records them - user and host, read by a fixed read-only lambda. **Close Client Handle** asks first, and is refused on a process the read-only guard guards. Off: the view and its commands are hidden, and nothing is read."
+          },
+          "q-lint.timers.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 811,
+            "markdownDescription": "Show the **Timers** view: the connected process's `\\t` interval and `.z.ts`, and TorQ's `.timer.timer` jobs with their period and next run, read by a fixed read-only lambda. **Turn Timer On/Off** and **Set Timer Interval** go through the read-only guard. Off: the view and its commands are hidden, and nothing is read."
+          }
+        }
       }
     ],
     "commands": [
@@ -2557,6 +2644,95 @@
         "command": "q-lint.renderChartFromFile",
         "title": "Render Chart from CSV or JSON File...",
         "category": "q-lint"
+      },
+      {
+        "command": "q-lint.addManyProcesses",
+        "title": "Add Many Processes...",
+        "category": "q-lint",
+        "icon": "$(list-unordered)"
+      },
+      {
+        "command": "q-lint.importQStudioServers",
+        "title": "Import Servers from qStudio...",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.importKxConnections",
+        "title": "Import Connections from KX Extension...",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.setCredentialCommand",
+        "title": "Set Credential Command",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.setProcessTimeout",
+        "title": "Set Process Timeout",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.interruptQuery",
+        "title": "Interrupt Query on Local Process",
+        "category": "q-lint",
+        "icon": "$(debug-pause)"
+      },
+      {
+        "command": "q-lint.queryAsync",
+        "title": "Run Query Asynchronously",
+        "category": "q-lint",
+        "icon": "$(run-below)"
+      },
+      {
+        "command": "q-lint.showPendingAsyncQueries",
+        "title": "Show Pending Async Queries",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.copyQueryLink",
+        "title": "Copy Query Link",
+        "category": "q-lint",
+        "icon": "$(link)"
+      },
+      {
+        "command": "q-lint.addScheduledExport",
+        "title": "Add Scheduled Export...",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.manageScheduledExports",
+        "title": "Manage Scheduled Exports...",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.refreshConnectedClients",
+        "title": "Refresh Connected Clients",
+        "category": "q-lint",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "q-lint.closeClientHandle",
+        "title": "Close Client Handle",
+        "category": "q-lint",
+        "icon": "$(close)"
+      },
+      {
+        "command": "q-lint.refreshTimers",
+        "title": "Refresh Timers",
+        "category": "q-lint",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "q-lint.toggleTimer",
+        "title": "Turn Timer On/Off",
+        "category": "q-lint",
+        "icon": "$(debug-pause)"
+      },
+      {
+        "command": "q-lint.setTimerInterval",
+        "title": "Set Timer Interval (\\t)",
+        "category": "q-lint",
+        "icon": "$(clock)"
       }
     ],
     "views": {
@@ -2631,6 +2807,22 @@
           "name": "q Cheat Sheet",
           "when": "config.q-lint.cheatSheet.enable",
           "icon": "media/view-cheatsheet.svg"
+        },
+        {
+          "id": "q-lint.connectedClients",
+          "name": "Connected Clients",
+          "icon": "media/view-explorer.svg",
+          "contextualTitle": "q-lint",
+          "visibility": "collapsed",
+          "when": "config.q-lint.connectedClients.enable"
+        },
+        {
+          "id": "q-lint.timers",
+          "name": "Timers",
+          "icon": "media/view-explorer.svg",
+          "contextualTitle": "q-lint",
+          "visibility": "collapsed",
+          "when": "config.q-lint.timers.enable"
         }
       ],
       "q-lint-results": [
@@ -2889,6 +3081,46 @@
         {
           "command": "q-lint.openDashboard",
           "when": "view == q-lint.savedQueries && config.q-lint.dashboards.enable",
+          "group": "navigation@2"
+        },
+        {
+          "command": "q-lint.addManyProcesses",
+          "when": "view == q-lint.processes && config.q-lint.processes.bulkAdd.enable",
+          "group": "1_processes@4"
+        },
+        {
+          "command": "q-lint.importQStudioServers",
+          "when": "view == q-lint.processes && config.q-lint.processes.importOther.enable",
+          "group": "1_processes@5"
+        },
+        {
+          "command": "q-lint.importKxConnections",
+          "when": "view == q-lint.processes && config.q-lint.processes.importOther.enable",
+          "group": "1_processes@6"
+        },
+        {
+          "command": "q-lint.addScheduledExport",
+          "when": "view == q-lint.savedQueries && config.q-lint.export.schedule.enable",
+          "group": "2_schedule@1"
+        },
+        {
+          "command": "q-lint.manageScheduledExports",
+          "when": "view == q-lint.savedQueries && config.q-lint.export.schedule.enable",
+          "group": "2_schedule@2"
+        },
+        {
+          "command": "q-lint.refreshConnectedClients",
+          "when": "view == q-lint.connectedClients && config.q-lint.connectedClients.enable",
+          "group": "navigation@1"
+        },
+        {
+          "command": "q-lint.refreshTimers",
+          "when": "view == q-lint.timers && config.q-lint.timers.enable",
+          "group": "navigation@1"
+        },
+        {
+          "command": "q-lint.setTimerInterval",
+          "when": "view == q-lint.timers && q-lint.connected && config.q-lint.timers.enable",
           "group": "navigation@2"
         }
       ],
@@ -3162,6 +3394,41 @@
           "command": "q-lint.addToDashboard",
           "when": "view == q-lint.savedQueries && viewItem == savedQuery && config.q-lint.dashboards.enable && config.q-lint.savedQueries.enable",
           "group": "2_dashboard@1"
+        },
+        {
+          "command": "q-lint.setCredentialCommand",
+          "when": "view == q-lint.processes && viewItem =~ /^process/ && config.q-lint.connection.credentialCommand.enable",
+          "group": "2_edit@8"
+        },
+        {
+          "command": "q-lint.setProcessTimeout",
+          "when": "view == q-lint.processes && viewItem =~ /^process/ && config.q-lint.query.processTimeout.enable",
+          "group": "2_edit@9"
+        },
+        {
+          "command": "q-lint.closeClientHandle",
+          "when": "view == q-lint.connectedClients && viewItem == client && config.q-lint.connectedClients.enable",
+          "group": "inline"
+        },
+        {
+          "command": "q-lint.closeClientHandle",
+          "when": "view == q-lint.connectedClients && viewItem == client && config.q-lint.connectedClients.enable",
+          "group": "1_client@1"
+        },
+        {
+          "command": "q-lint.toggleTimer",
+          "when": "view == q-lint.timers && viewItem =~ /^torqTimer/ && config.q-lint.timers.enable",
+          "group": "inline"
+        },
+        {
+          "command": "q-lint.toggleTimer",
+          "when": "view == q-lint.timers && viewItem =~ /^torqTimer/ && config.q-lint.timers.enable",
+          "group": "1_timer@1"
+        },
+        {
+          "command": "q-lint.setTimerInterval",
+          "when": "view == q-lint.timers && viewItem == qTimer && config.q-lint.timers.enable",
+          "group": "inline"
         }
       ],
       "editor/title/run": [
@@ -3437,6 +3704,16 @@
           "command": "q-lint.runFileWithArguments",
           "when": "editorLangId == q && resourceScheme == file && config.q-lint.terminal.runWithArguments.enable",
           "group": "q-lint@11"
+        },
+        {
+          "command": "q-lint.queryAsync",
+          "when": "editorLangId == q && config.q-lint.query.async.enable",
+          "group": "q-lint@26"
+        },
+        {
+          "command": "q-lint.copyQueryLink",
+          "when": "editorLangId == q && config.q-lint.query.links.enable",
+          "group": "q-lint@27"
         }
       ],
       "testing/item/context": [
@@ -4001,6 +4278,70 @@
         {
           "command": "q-lint.renderChartFromFile",
           "when": "config.q-lint.charts.commandLine.enable"
+        },
+        {
+          "command": "q-lint.addManyProcesses",
+          "when": "config.q-lint.processes.bulkAdd.enable"
+        },
+        {
+          "command": "q-lint.importQStudioServers",
+          "when": "config.q-lint.processes.importOther.enable"
+        },
+        {
+          "command": "q-lint.importKxConnections",
+          "when": "config.q-lint.processes.importOther.enable"
+        },
+        {
+          "command": "q-lint.setCredentialCommand",
+          "when": "config.q-lint.connection.credentialCommand.enable"
+        },
+        {
+          "command": "q-lint.setProcessTimeout",
+          "when": "config.q-lint.query.processTimeout.enable"
+        },
+        {
+          "command": "q-lint.interruptQuery",
+          "when": "q-lint.connected && config.q-lint.query.cancelLocal.enable"
+        },
+        {
+          "command": "q-lint.queryAsync",
+          "when": "config.q-lint.query.async.enable"
+        },
+        {
+          "command": "q-lint.showPendingAsyncQueries",
+          "when": "config.q-lint.query.async.enable"
+        },
+        {
+          "command": "q-lint.copyQueryLink",
+          "when": "config.q-lint.query.links.enable"
+        },
+        {
+          "command": "q-lint.addScheduledExport",
+          "when": "config.q-lint.export.schedule.enable"
+        },
+        {
+          "command": "q-lint.manageScheduledExports",
+          "when": "config.q-lint.export.schedule.enable"
+        },
+        {
+          "command": "q-lint.refreshConnectedClients",
+          "when": "config.q-lint.connectedClients.enable"
+        },
+        {
+          "command": "q-lint.closeClientHandle",
+          "when": "false"
+        },
+        {
+          "command": "q-lint.refreshTimers",
+          "when": "config.q-lint.timers.enable"
+        },
+        {
+          "command": "q-lint.toggleTimer",
+          "when": "false"
+        },
+        {
+          "command": "q-lint.setTimerInterval",
+          "when": "q-lint.connected && config.q-lint.timers.enable"
         }
       ],
       "editor/title": [
@@ -4111,6 +4452,16 @@
       {
         "view": "q-lint.cheatSheet",
         "contents": "Iterators, joins, temporal casts and attributes, each inserted at the cursor when chosen.\n[Show Help for q Builtin](command:q-lint.showHelp)"
+      },
+      {
+        "view": "q-lint.connectedClients",
+        "contents": "Connect to a q process to see its open handles.\n[Connect to Process](command:q-lint.connectProcess)",
+        "when": "!q-lint.connected"
+      },
+      {
+        "view": "q-lint.timers",
+        "contents": "Connect to a q process to see its timer and TorQ timer jobs.\n[Connect to Process](command:q-lint.connectProcess)",
+        "when": "!q-lint.connected"
       }
     ],
     "keybindings": [

@@ -481,6 +481,115 @@ password. `q-lint.processes.shared.enable` off stops reading the file,
 removes the group, closes a connection to one of its processes, and hides
 the command.
 
+**Add Many Processes...**, on the Processes view's title menu, opens a form
+to paste processes into: a line each, `host:port[:label[:tags]]` (an IPv6
+host in brackets, `[::1]:5000:local`), or CSV whose header row names
+`host`, `port` and any of `label`, `tags`, `user` and `tls`. As you type, a
+table under it shows what each line gives - a process, why not, or a
+duplicate - and **Add** adds the processes, after the saved ones. A label
+already in the list, or on an earlier line, is skipped; one at the address
+of a saved process is added, and the table says which. A label left out is
+`host:port`. No password is read from what is pasted (a `password` column
+is ignored and masked in the table): each is asked for on the first
+connect. `q-lint.processes.bulkAdd.enable` off hides the command.
+
+**Import Servers from qStudio...** and **Import Connections from KX
+Extension...**, on the Processes view's title menu, bring in the
+processes another tool knows. From qStudio: the text its **Copy Server
+List** puts on the clipboard (`name@host:port:user`, a folder before a `/`
+taken as a tag), its `<serverlist>` XML, or the preferences it keeps them in
+(on Linux `~/.java/.userPrefs/com/timestored/qstudio/prefs.xml`, offered
+when it is there); only kdb servers are taken. From KX's kdb extension: its
+`kdb.servers` in your settings, with `kdb.labelsConnectionMap`'s labels as
+tags, or a file its **Export Connections** wrote; kdb Insights connections
+are left out. You are shown what will be added and asked first. A label
+already in the list is kept as it is, and no password is ever imported,
+even where the source holds one: each is asked for on the first connect.
+`q-lint.processes.importOther.enable` off hides both commands.
+
+**Set Credential Command**, on a saved process, gives it a command run in
+a shell at each connect, whose output is the user and password sent in the
+handshake - for a Kerberos ticket, a vault or a token service. It prints a
+JSON object with `password` (or `token`) and optionally `user` (or
+`username`), or a line: the password when the process has a user, else
+`user:password`, else the password alone. It runs in the workspace folder
+(or your home), with `QLINT_PROCESS_LABEL`, `QLINT_PROCESS_HOST`,
+`QLINT_PROCESS_PORT` and `QLINT_PROCESS_USER` set, and is given 30 seconds.
+What it prints is used for that one connect and kept nowhere - not in
+secret storage, settings, the process list or a log - and a failure says
+only how it ended (its exit code, or the timeout), never its output. The
+command itself is kept with the process, like a launch definition, and in
+a shared `.qlint/processes.json` it is read only in a trusted workspace.
+`q-lint.connection.credentialCommand.enable` off hides the command, and
+processes connect with their stored password instead.
+
+**Environment colour.** With `q-lint.processes.environmentColor.enable` on
+(off by default, as it recolours the window), while the connected process
+carries a coloured tag a status bar item names the tag in its colour -
+production red and `uat` amber unless
+`q-lint.processes.environmentColor.colors` says otherwise (`red`, `amber`,
+`yellow`, `purple`, `blue`, `green` or `#rrggbb` per tag) - and each q
+editor has a border of it down its left side. A process with tags of two
+colours takes the most cautious. VS Code lets a status bar item have only
+an error (red) or warning (amber, yellow) background, so the other colours
+colour its text. The title bar is left as your theme draws it: colouring it
+would mean writing `workbench.colorCustomizations` into your settings,
+which q-lint does not do. Nothing is sent to the process.
+
+**Set Process Timeout**, on a saved process, gives queries on it a timeout
+of their own, in seconds, over `q-lint.query.timeout`: when it passes, the
+query's connection is dropped as **Abort Current Query** drops it, the
+history records a timeout, and the message names the process's timeout.
+Empty goes back to `q-lint.query.timeout`. **Interrupt Query on Local
+Process**, in the palette while connected, stops the running query on a
+process started from the Processes view (**Start Process**) by sending it
+SIGINT: q ends the query with `'stop` and the connection stays, ready for
+the next query, where Abort can only stop waiting and reconnect. For any
+other process it says so and sends nothing. Their switches are
+`q-lint.query.processTimeout.enable` and `q-lint.query.cancelLocal.enable`.
+
+**Run Query Asynchronously**, in a q editor's context menu, sends the
+selection or the statement at the cursor as an async message: the command
+returns at once, the connection stays free for other queries (which the
+process runs after it, one message at a time), and when the process is done
+the result opens in the result panel - a table as a grid, any other value as
+its lines - and goes into Query History. The query is wrapped in a lambda
+that shapes the value as a grid query does and sends it back on your handle
+(`neg[.z.w]`); nothing is kept on the process. It is read by the read-only
+guard first, as any query is. While results are due, the status bar counts
+them; **Show Pending Async Queries** lists them and can forget one (q runs
+it to the end anyway: it cannot cancel a running query). A connection that
+closes takes its pending results with it, and says so.
+`q-lint.query.async.enable` off hides both commands and drops what is
+pending.
+
+**Copy Query Link**, in a q editor's context menu, copies a link to the
+selection or the statement at the cursor, aimed at a process by its label
+(the file's process, else the connected one, else one you pick):
+`vscode://wojdalski.q-lint/query?process=...&code=...`, both in base64url,
+placeholders left as written. Opening the link - from chat, a ticket, a
+wiki - opens the query in a new q editor bound to *your* process of that
+label, and asks before running it; run, it goes as a query from that
+editor goes, read by the read-only guard. A label not in your Processes
+list opens the query unbound and runs nothing. Nothing in the link is a
+password. `q-lint.query.links.enable` off hides the command and stops
+opening links.
+
+**Scheduled exports.** With `q-lint.export.schedule.enable` on (off by
+default, as it runs queries on its own), **Add Scheduled Export...** (on
+the Saved Queries view's title menu) schedules a saved query on a process:
+daily at given times (`09:00, 17:30`) or every N minutes (`+15`), its
+result written as CSV, Parquet or Excel to the file you choose - replaced
+each run, or written anew with the run's time in its name, as you choose
+then. Each runs while VS Code is open, on a connection of its own, so the
+connected process and your queries are left alone; the grid's row limit
+(`q-lint.query.gridLimit`) applies. Only a read-only query is run - one in
+which the read-only guard's reading finds no write, on any process - and
+one with no `{{name}}` placeholder, since nobody is there to fill it in; a
+run that cannot be made says why. **Manage Scheduled Exports...** lists
+them with how each last ran, and runs one now or removes it. They are kept
+per workspace, as saved queries are.
+
 **Querying.** With a q file open:
 - **Query Current Line**, `ctrl+q`.
 - **Query Current Selection**, `ctrl+r`: the current line when nothing is
@@ -1603,6 +1712,24 @@ partitions are `.Q.pv`, the rows `.Q.cn`, which reads each partition's count
 from a column file and caches it in `.Q.pn` as the explorer does, and the
 sym file's size `hcount`. The newest 1000 partitions are listed.
 
+**Connected Clients** shows the connected process's open handles
+(`.z.W`): each handle, what is queued on it, the kind of socket (TCP or a
+Unix socket, TLS, a WebSocket, where `-38!` tells) and, where TorQ's
+`.clients` records them, the user and host - q itself keeps no address for
+another client's handle, and the view says so. The handles include those
+the process opened itself; this extension's own is marked. **Close Client
+Handle**, on a row, asks first and sends `hclose`; on a process the
+read-only guard guards it is refused outright, as closing a handle is a
+change the guard's reading of the code would not see. **Timers** shows the
+process's `\t` interval and `.z.ts`, and TorQ's `.timer.timer` jobs - each
+with its period, next and last run - the first 200. **Turn Timer On/Off**,
+on a job, sets its `active` flag; **Set Timer Interval (\t)** sends
+`system "t N"` (0 turns the timer off); both go through the read-only
+guard. Each view is read by a fixed read-only lambda when shown, on
+connect and on Refresh, sharing the query connection as the Monitor does,
+and has its own switch: `q-lint.connectedClients.enable` and
+`q-lint.timers.enable`.
+
 The Monitor, the HDB Browser, Open Function Source and Find Callers share
 the query connection as the explorer does: they never interrupt a query,
 and wait a moment for one to finish. Each of these features has its own
@@ -2360,6 +2487,26 @@ Each applies at once, without a reload. None reaches the language server.
 | `q-lint.processes.logViewer.enable` | `true` | **Open Log File...** and its filters: q and TorQ logs on this machine, coloured by level and followed as they grow. Off, the commands are hidden and refuse, and open views stop following. | - |
 | `q-lint.processes.logViewer.maxLines` | `10000` | The most entries a log view keeps, the last that pass its filter; 100 to 1,000,000. | - |
 | `q-lint.processes.shared.enable` | `true` | Read, watch and list `.qlint/processes.json`, and offer **Add to Shared Process List**. Off, the file is not read and the group is removed. | - |
+
+### Process admin settings
+
+The connection and process-admin features, each with its own switch. Each
+applies at once, without a reload. None reaches the language server.
+
+| Setting | Default | What it does | q-pro |
+| --- | --- | --- | --- |
+| `q-lint.processes.bulkAdd.enable` | `true` | **Add Many Processes...**: paste lines or CSV, checked and added. Off, the command is hidden and refuses, and an open form closes. | - |
+| `q-lint.processes.importOther.enable` | `true` | **Import Servers from qStudio...** and **Import Connections from KX Extension...**, never a password. Off, both are hidden and refuse. | - |
+| `q-lint.connection.credentialCommand.enable` | `true` | **Set Credential Command**, and running a process's command at each connect for its user and password, never kept. Off, the command is hidden and refuses, and the stored password is used. | - |
+| `q-lint.processes.environmentColor.enable` | `false` | A status bar item and an editor border in the connected process's tag colour. Off, neither is drawn and nothing listens. | - |
+| `q-lint.processes.environmentColor.colors` | prod, prd, production red; uat amber | Tag to colour: `red`, `amber`, `yellow`, `purple`, `blue`, `green` or `#rrggbb`. | - |
+| `q-lint.query.processTimeout.enable` | `true` | **Set Process Timeout**, and each process's own timeout over `q-lint.query.timeout`. Off, the command is hidden and refuses, and `q-lint.query.timeout` applies everywhere. | - |
+| `q-lint.query.cancelLocal.enable` | `true` | **Interrupt Query on Local Process**: SIGINT to a process started from here. Off, the command is hidden and refuses. | - |
+| `q-lint.query.async.enable` | `true` | **Run Query Asynchronously** and **Show Pending Async Queries**. Off, both are hidden and refuse, and pending results are dropped. | - |
+| `q-lint.query.links.enable` | `true` | **Copy Query Link**, and opening such links: shown, bound to the process of their label, run only when you say so. Off, the command is hidden and refuses, and links are not opened. | - |
+| `q-lint.export.schedule.enable` | `false` | **Add Scheduled Export...** and **Manage Scheduled Exports...**, and running read-only saved queries on a schedule to CSV, Parquet or Excel. Off, no timer runs, nothing is sent, and the commands are hidden and refuse. | - |
+| `q-lint.connectedClients.enable` | `true` | The **Connected Clients** view, and **Close Client Handle** (asked first, refused on a guarded process). Off, the view and its commands are hidden and nothing is read. | - |
+| `q-lint.timers.enable` | `true` | The **Timers** view, **Turn Timer On/Off** and **Set Timer Interval (\\t)**, through the read-only guard. Off, the view and its commands are hidden and nothing is read. | - |
 
 ### Terminal settings
 
