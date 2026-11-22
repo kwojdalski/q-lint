@@ -575,6 +575,21 @@ list opens the query unbound and runs nothing. Nothing in the link is a
 password. `q-lint.query.links.enable` off hides the command and stops
 opening links.
 
+**Scheduled exports.** With `q-lint.export.schedule.enable` on (off by
+default, as it runs queries on its own), **Add Scheduled Export...** (on
+the Saved Queries view's title menu) schedules a saved query on a process:
+daily at given times (`09:00, 17:30`) or every N minutes (`+15`), its
+result written as CSV, Parquet or Excel to the file you choose - replaced
+each run, or written anew with the run's time in its name, as you choose
+then. Each runs while VS Code is open, on a connection of its own, so the
+connected process and your queries are left alone; the grid's row limit
+(`q-lint.query.gridLimit`) applies. Only a read-only query is run - one in
+which the read-only guard's reading finds no write, on any process - and
+one with no `{{name}}` placeholder, since nobody is there to fill it in; a
+run that cannot be made says why. **Manage Scheduled Exports...** lists
+them with how each last ran, and runs one now or removes it. They are kept
+per workspace, as saved queries are.
+
 **Querying.** With a q file open:
 - **Query Current Line**, `ctrl+q`.
 - **Query Current Selection**, `ctrl+r`: the current line when nothing is
@@ -2227,6 +2242,7 @@ applies at once, without a reload. None reaches the language server.
 | `q-lint.query.cancelLocal.enable` | `true` | **Interrupt Query on Local Process**: SIGINT to a process started from here. Off, the command is hidden and refuses. | - |
 | `q-lint.query.async.enable` | `true` | **Run Query Asynchronously** and **Show Pending Async Queries**. Off, both are hidden and refuse, and pending results are dropped. | - |
 | `q-lint.query.links.enable` | `true` | **Copy Query Link**, and opening such links: shown, bound to the process of their label, run only when you say so. Off, the command is hidden and refuses, and links are not opened. | - |
+| `q-lint.export.schedule.enable` | `false` | **Add Scheduled Export...** and **Manage Scheduled Exports...**, and running read-only saved queries on a schedule to CSV, Parquet or Excel. Off, no timer runs, nothing is sent, and the commands are hidden and refuse. | - |
 
 ### Terminal settings
 

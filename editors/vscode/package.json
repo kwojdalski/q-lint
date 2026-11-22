@@ -1362,6 +1362,12 @@
             "default": true,
             "order": 808,
             "markdownDescription": "Offer **Copy Query Link**, in a q editor's context menu and the palette: a `vscode://` link to the selection or statement at the cursor, aimed at a process by its label, and open such links: the query opens in a new q editor bound to your process of that label, and runs only if you say so, through the read-only guard. Off: the command is hidden and refuses, and links are not opened."
+          },
+          "q-lint.export.schedule.enable": {
+            "type": "boolean",
+            "default": false,
+            "order": 809,
+            "markdownDescription": "Offer **Add Scheduled Export** and **Manage Scheduled Exports**, and run each schedule when due while VS Code is open: a saved query run on a process on a connection of its own, its result written to CSV, Parquet or Excel at the file chosen, replaced or written anew each run as chosen. Only a read-only query with no placeholders is run. Off (the default): no timer runs, nothing is sent, and the commands are hidden and refuse."
           }
         }
       }
@@ -2393,6 +2399,16 @@
         "title": "Copy Query Link",
         "category": "q-lint",
         "icon": "$(link)"
+      },
+      {
+        "command": "q-lint.addScheduledExport",
+        "title": "Add Scheduled Export...",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.manageScheduledExports",
+        "title": "Manage Scheduled Exports...",
+        "category": "q-lint"
       }
     ],
     "views": {
@@ -2671,6 +2687,16 @@
           "command": "q-lint.importKxConnections",
           "when": "view == q-lint.processes && config.q-lint.processes.importOther.enable",
           "group": "1_processes@6"
+        },
+        {
+          "command": "q-lint.addScheduledExport",
+          "when": "view == q-lint.savedQueries && config.q-lint.export.schedule.enable",
+          "group": "2_schedule@1"
+        },
+        {
+          "command": "q-lint.manageScheduledExports",
+          "when": "view == q-lint.savedQueries && config.q-lint.export.schedule.enable",
+          "group": "2_schedule@2"
         }
       ],
       "view/item/context": [
@@ -3708,6 +3734,14 @@
         {
           "command": "q-lint.copyQueryLink",
           "when": "config.q-lint.query.links.enable"
+        },
+        {
+          "command": "q-lint.addScheduledExport",
+          "when": "config.q-lint.export.schedule.enable"
+        },
+        {
+          "command": "q-lint.manageScheduledExports",
+          "when": "config.q-lint.export.schedule.enable"
         }
       ],
       "editor/title": [
