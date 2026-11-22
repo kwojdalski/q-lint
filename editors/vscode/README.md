@@ -368,9 +368,12 @@ Each has its own switch, listed in [Settings](#settings) and
   columns (read once, when it opens); **q-lint: Run SQL** (the Run button in the editor's title) sends
   the selection or the editor to KDB-X's SQL engine, `.s.e`, loading it
   (`\l s.k_`) where the process has none, and shows the result as a query's.
-  A statement that changes data (`INSERT`, `UPDATE`, `DELETE`, `CREATE`,
-  `DROP`, ...) and the engine's load are confirmed first on a process the
-  read-only guard guards. PeachQ's own `.s.e` needs DuckDB. `q-lint.sql.enable`.
+  SQL that changes data (`INSERT`, `UPDATE`, `DELETE`, `CREATE`, `DROP`,
+  ... anywhere outside comments and quoted text) and the engine's load are
+  confirmed first on a process the read-only guard guards - the process the
+  query goes to: the editor's binding, else the active connection. With
+  neither, such SQL is not sent. PeachQ's own `.s.e` needs DuckDB.
+  `q-lint.sql.enable`.
 
 ## q processes and queries
 

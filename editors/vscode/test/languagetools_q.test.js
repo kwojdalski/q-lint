@@ -15,7 +15,7 @@ const path = require("node:path");
 const { QConnection } = require("../out/qclient.js");
 const { ERRORS, errorName } = require("../out/errorexplain.js");
 const { CALLED } = require("../out/deadcodeview.js");
-const { HAS_SQL, SQL_SCHEMA, readSchema, sqlQuery } = require("../out/sql.js");
+const { HAS_SQL, SQL_SCHEMA, readSchema, sqlQuery, sqlWrites } = require("../out/sql.js");
 
 const Q = process.env.QLINT_TEST_Q;
 const skip = Q ? false : "QLINT_TEST_Q names no q binary";
@@ -98,4 +98,9 @@ test("the SQL tab's query runs on KDB-X's SQL engine, loading it where there is 
   // Loaded once: the plain form runs now.
   const again = await c.call(sqlQuery("select count(*) as n from t"));
   assert.strictEqual(Number((Array.isArray(again) ? again : [])[0]?.n), 3);
+  // A write behind a block comment still writes, and Run SQL asks about it.
+  const hidden = "/* note */ insert into t values ('c', 4.0, 40)";
+  assert.deepStrictEqual(sqlWrites(hidden), ["INSERT"]);
+  await c.call(sqlQuery(hidden));
+  assert.strictEqual(Number(await c.call("count t")), 4);
 });

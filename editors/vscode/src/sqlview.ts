@@ -111,9 +111,18 @@ export function registerSql(
         return undefined;
       }
       const uri = editor.document.uri;
-      const label = live.fileBinding(uri) ?? editors.get(uri.toString()) ?? live.activeLabel();
+      // The process the query goes to, as queryCode picks it: the file's
+      // binding, else the active connection - never the process the editor
+      // was opened for, once its binding is gone.
+      const label = live.fileBinding(uri) ?? live.activeLabel();
       const process = live.processes().find((p) => p.label === label);
       const writes = sqlWrites(sql);
+      if (label === undefined && writes.length > 0) {
+        // The guard reads q, not the SQL inside `.s.e "..."`: it can only be
+        // asked before the query, about a process known now.
+        void window.showInformationMessage(`q-lint: connect to a process, or bind this editor to one, before running SQL that changes data (${writes.join(", ")}), so the read-only guard can check it.`);
+        return undefined;
+      }
       if (process !== undefined && writes.length > 0) {
         // The guard reads q, not SQL: it is shown a q write so it asks as it
         // would for one.

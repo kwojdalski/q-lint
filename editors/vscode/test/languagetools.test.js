@@ -296,6 +296,16 @@ test("SQL is sent to .s.e with its comments dropped, and a write is recognised",
   assert.match(sqlQuery("select 1", true), /^\{if\[not `e in key `\.s;system "l s\.k_"\];\.s\.e x\} "select 1"$/);
   assert.deepStrictEqual(sqlWrites("select * from t"), []);
   assert.deepStrictEqual(sqlWrites("-- note\ninsert into t values (1); DELETE from t"), ["INSERT", "DELETE"]);
+  // KDB-X runs a write behind a block comment (checked on KDB-X 5): the
+  // write words count wherever they stand outside comments and quotes.
+  assert.deepStrictEqual(sqlWrites("/* c */ insert into t values (3)"), ["INSERT"]);
+  assert.deepStrictEqual(sqlWrites("/* a\nb */\n  Create table u (a int)"), ["CREATE"]);
+  assert.deepStrictEqual(sqlWrites("with x as (select 1) insert into t select * from x"), ["INSERT"]);
+  assert.deepStrictEqual(sqlWrites("(update t set a=1)"), ["UPDATE"]);
+  assert.deepStrictEqual(sqlWrites("select 'delete' as s, \"drop\" from t -- insert\n/* update */"), []);
+  assert.deepStrictEqual(sqlWrites("select 'it''s; delete' from t"), []);
+  assert.deepStrictEqual(sqlWrites("select replace(s, 'a', 'b') from t"), []);
+  assert.deepStrictEqual(sqlWrites("replace into t values (1)"), ["REPLACE"]);
   const schema = readSchema({ trade: ["sym", "px"], quote: ["sym", "bid"] });
   assert.deepStrictEqual([...schema.keys()], ["trade", "quote"]);
   assert.deepStrictEqual(sqlCompletions(schema, "select trade.").map((c) => c.label), ["sym", "px"]);
@@ -349,6 +359,40 @@ test("a SQL write on a guarded process is held until confirmed", async () => {
     };
     registerSql(context, live);
     vscode.window.activeTextEditor = { document: { languageId: "sql", uri: { toString: () => "untitled:2" }, getText: () => "insert into t values (1)" }, selection: { isEmpty: true } };
+    assert.strictEqual(await stub.commands.get(LANGUAGE_COMMANDS.runSql)(), undefined);
+    assert.deepStrictEqual(asked, [["`t insert ()", "prod1", "This SQL statement (INSERT)"]]);
+    assert.deepStrictEqual(sent, []);
+  } finally {
+    restore();
+  }
+});
+
+test("a SQL write is checked against the process it goes to, and refused while that is unknown", async () => {
+  const { context, restore } = setUp();
+  vscode.languages.registerCompletionItemProvider = () => ({ dispose() {} });
+  try {
+    const sent = [];
+    const asked = [];
+    const prod = { label: "prod1", tags: ["prod"] };
+    const dev = { label: "dev1", tags: [] };
+    let active;
+    const live = {
+      activeLabel: () => active,
+      fileBinding: () => undefined,
+      processes: () => [prod, dev],
+      pick: async () => dev,
+      guardAllows: async (code, targets, what) => (asked.push([code, targets[0].label, what]), false),
+      queryCode: async (c) => void sent.push(c),
+    };
+    registerSql(context, live);
+    // Opened for dev1; its binding gone, the query would go to the active
+    // prod1, so prod1 is the one the guard is asked about.
+    vscode.window.activeTextEditor = { document: { languageId: "sql", uri: { toString: () => "untitled:3" }, getText: () => "/* c */ insert into t values (1)" }, selection: { isEmpty: true } };
+    active = undefined;
+    assert.strictEqual(await stub.commands.get(LANGUAGE_COMMANDS.runSql)(), undefined);
+    assert.match(stub.messages.at(-1)[1], /before running SQL that changes data \(INSERT\)/);
+    assert.deepStrictEqual(sent, []);
+    active = "prod1";
     assert.strictEqual(await stub.commands.get(LANGUAGE_COMMANDS.runSql)(), undefined);
     assert.deepStrictEqual(asked, [["`t insert ()", "prod1", "This SQL statement (INSERT)"]]);
     assert.deepStrictEqual(sent, []);

@@ -43,14 +43,54 @@ export function sqlQuery(sql: string, load = false): string {
   return load ? `{if[not \`e in key \`.s;system "l s.k_"];.s.e x} ${literal}` : `.s.e ${literal}`;
 }
 
-/// The statements in `sql` that change data or schema, by their first word.
+/// Words that change data or schema wherever they stand in a statement:
+/// KDB-X runs `/* c */ insert into t ...` as an insert, so a statement's
+/// first word is not enough.
+const WRITE_WORDS = ["INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER", "TRUNCATE", "MERGE"];
+
+/// `sql` without its comments (`--` to the end of the line, `/* ... */`)
+/// and with its quoted text (`'...'`, `"..."`, doubled quotes inside)
+/// blanked, so neither can hide or fake a statement's words.
+function bare(sql: string): string {
+  let out = "";
+  for (let i = 0; i < sql.length; i++) {
+    const c = sql[i];
+    if (c === "-" && sql[i + 1] === "-") {
+      const end = sql.indexOf("\n", i);
+      i = end < 0 ? sql.length : end - 1;
+      out += " ";
+    } else if (c === "/" && sql[i + 1] === "*") {
+      const end = sql.indexOf("*/", i + 2);
+      i = end < 0 ? sql.length : end + 1;
+      out += " ";
+    } else if (c === "'" || c === '"') {
+      let j = i + 1;
+      while (j < sql.length && !(sql[j] === c && sql[j + 1] !== c)) {
+        j += sql[j] === c ? 2 : 1;
+      }
+      i = j;
+      out += " ";
+    } else {
+      out += c;
+    }
+  }
+  return out;
+}
+
+/// The words in `sql` that change data or schema, upper-cased, once each:
+/// a write word anywhere outside comments and quotes, and `REPLACE` where
+/// it starts a statement (elsewhere it is the string function).
 export function sqlWrites(sql: string): string[] {
   const words = new Set<string>();
-  for (const m of sql.replace(/--[^\n]*/g, "").matchAll(/(?:^|;)\s*([A-Za-z]+)/g)) {
-    const w = m[1].toUpperCase();
-    if (["INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER", "TRUNCATE", "MERGE", "REPLACE"].includes(w)) {
+  const text = bare(sql);
+  for (const m of text.matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)) {
+    const w = m[0].toUpperCase();
+    if (WRITE_WORDS.includes(w)) {
       words.add(w);
     }
+  }
+  if (/(?:^|[;(])\s*replace\b/i.test(text)) {
+    words.add("REPLACE");
   }
   return [...words];
 }
