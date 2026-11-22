@@ -10,6 +10,7 @@
 
 export const DB_SETTINGS = {
   documenter: { key: "databaseDocumenter.enable", fallback: true, name: "The database documenter" },
+  partitionCheck: { key: "hdbBrowser.partitionCheck.enable", fallback: true, name: "The partition consistency check" },
   chartCli: { key: "charts.commandLine.enable", fallback: true, name: "Charts from a file" },
 } as const;
 
@@ -18,6 +19,7 @@ export type DbFeature = keyof typeof DB_SETTINGS;
 /// The features' commands, here so a test without `vscode` can list them.
 export const DB_COMMANDS = {
   document: "q-lint.documentDatabase",
+  checkPartitions: "q-lint.checkPartitions",
   renderChart: "q-lint.renderChartFromFile",
 } as const;
 

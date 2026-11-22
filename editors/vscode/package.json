@@ -1305,6 +1305,12 @@
             "order": 2,
             "markdownDescription": "**Document Database**: the connected process's tables (columns, types, attributes, keys, foreign keys, partitions, rows) and functions, with their qDoc from the workspace, as a Markdown or HTML document. Reads only. Off, the command is hidden and refuses."
           },
+          "q-lint.hdbBrowser.partitionCheck.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 3,
+            "markdownDescription": "**Check Partition Consistency**: missing dates, tables, `.d` and column files, columns and types that differ between partitions, symbol enumeration problems and row-count outliers, as a report. Reads only. Off, the command is hidden and refuses."
+          },
           "q-lint.charts.commandLine.enable": {
             "type": "boolean",
             "default": true,
@@ -2300,6 +2306,13 @@
         "enablement": "q-lint.connected"
       },
       {
+        "command": "q-lint.checkPartitions",
+        "title": "Check Partition Consistency",
+        "category": "q-lint",
+        "icon": "$(checklist)",
+        "enablement": "q-lint.connected"
+      },
+      {
         "command": "q-lint.renderChartFromFile",
         "title": "Render Chart from CSV or JSON File...",
         "category": "q-lint"
@@ -2566,6 +2579,11 @@
           "command": "q-lint.clearPlots",
           "when": "view == q-lint.plots && config.q-lint.results.plots.enable",
           "group": "navigation@4"
+        },
+        {
+          "command": "q-lint.checkPartitions",
+          "when": "view == q-lint.hdbBrowser && config.q-lint.hdbBrowser.partitionCheck.enable",
+          "group": "navigation@2"
         },
         {
           "command": "q-lint.documentDatabase",
@@ -3566,6 +3584,10 @@
         {
           "command": "q-lint.documentDatabase",
           "when": "config.q-lint.databaseDocumenter.enable"
+        },
+        {
+          "command": "q-lint.checkPartitions",
+          "when": "config.q-lint.hdbBrowser.partitionCheck.enable"
         },
         {
           "command": "q-lint.renderChartFromFile",

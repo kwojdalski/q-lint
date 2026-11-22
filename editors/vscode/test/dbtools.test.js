@@ -14,6 +14,7 @@ const path = require("node:path");
 const pkg = require("../package.json");
 const { DB_SETTINGS, DB_COMMANDS, dbOn, dbOff } = require("../out/dbfeatures.js");
 const { readDoc, qdocs, docMarkdown, docHtml, typeName } = require("../out/dbdoc.js");
+const { missingWeekdays, partitionProblems, partitionReport, readPartitions } = require("../out/partcheck.js");
 const { gridFromCsv, gridFromJson, chartFromGrid } = require("../out/chartfile.js");
 const { parseArgs, main, USAGE } = require("../out/chartcli.js");
 
@@ -77,6 +78,42 @@ test("the documenter reads one table's answer, takes the qDoc above a definition
   assert.doesNotMatch(html, /<script>/);
   assert.match(html, /rdb&lt;script&gt;/);
   assert.throws(() => readDoc(1), /tables/);
+});
+
+test("the partition check finds weekday gaps, and each kind of problem in an answer", () => {
+  assert.deepStrictEqual(missingWeekdays(["2026.01.02", "2026.01.06"]), ["2026.01.05"]);
+  assert.deepStrictEqual(missingWeekdays(["2026.01.02"]), []);
+  const row = (partition, extra = {}) => ({ table: "t", partition, dir: true, dotd: true, columns: ["sym", "px"], missing: [], types: [20, 9], enums: ["sym", ""], maxIndex: null, rows: 100, ...extra });
+  const answer = {
+    hdb: true,
+    field: "date",
+    root: "/db",
+    all: ["2026.01.05", "2026.01.06", "2026.01.07", "2026.01.08", "2026.01.12"],
+    checked: 5,
+    tables: ["t"],
+    domains: new Map([["sym", 10]]),
+    rows: [
+      row("2026.01.05"),
+      row("2026.01.06", { types: [20, 7] }),
+      row("2026.01.07", { dir: false, dotd: false }),
+      row("2026.01.08", { columns: ["sym", "px", "x"], types: [20, 9, 7], enums: ["sym", "", ""], rows: 0 }),
+      row("2026.01.12", { missing: ["px"], types: [20], enums: ["other"], maxIndex: 12, rows: 5000 }),
+    ],
+  };
+  const kinds = Object.groupBy(partitionProblems(answer), (p) => p.kind);
+  assert.deepStrictEqual(kinds["missing dates"][0].partitions, ["2026.01.09"]);
+  assert.deepStrictEqual(kinds["missing table"][0].partitions, ["2026.01.07"]);
+  assert.deepStrictEqual(kinds["missing column file"][0].partitions, ["2026.01.12"]);
+  assert.match(kinds["different columns"][0].what, /has x/);
+  assert.deepStrictEqual(kinds["different types"][0].partitions, ["2026.01.06"]);
+  assert.ok(kinds.enumeration.some((p) => /against other/.test(p.what)));
+  assert.ok(kinds["row count"].some((p) => p.partitions.includes("2026.01.08")));
+  assert.ok(kinds["row count"].some((p) => p.partitions[0].startsWith("2026.01.12")));
+  const report = partitionReport(answer, "hdb", false);
+  assert.match(report, /A quick check/);
+  assert.match(report, /\*\*missing dates\*\*/);
+  assert.match(partitionReport({ hdb: false, root: "/x" }, "rdb", false), /no partitioned database/);
+  assert.deepStrictEqual(readPartitions({ hdb: false, root: "/x" }), { hdb: false, root: "/x" });
 });
 
 test("a chart is drawn from CSV and JSON tables, and the command line writes it", async () => {

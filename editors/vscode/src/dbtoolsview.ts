@@ -20,6 +20,7 @@ import { DB_COMMANDS, dbOff, dbOn, type DbFeature } from "./dbfeatures";
 import { DOCUMENT, DOCUMENT_LIMIT, docHtml, docMarkdown, qdocs, readDoc } from "./dbdoc";
 import { borrowWhenFree } from "./infoview";
 import type { Live } from "./live";
+import { CHECK_PARTITIONS, PARTITION_CHECK, partitionReport, readPartitions } from "./partcheck";
 import type { Process } from "./processes";
 import { parseSaved, SAVED_QUERIES_KEY } from "./savedqueries";
 import { statements } from "./statements";
@@ -137,6 +138,35 @@ export function registerDbTools(context: ExtensionContext, live: Live): { state:
     }
   };
 
+  /// Partition consistency check (#1024).
+  const checkPartitions = async (depth?: unknown): Promise<string> => {
+    if (off("partitionCheck")) return dbOff("partitionCheck");
+    let deep: boolean;
+    if (depth === "quick" || depth === "full") {
+      deep = depth === "full";
+    } else {
+      const full = "Full check";
+      const picked = await window.showQuickPick(
+        [
+          { label: "Quick check", detail: "Directories, .d files, column files and their types, row counts: no column data is read." },
+          { label: full, detail: "Also reads every symbol column, for an index past the end of its sym file." },
+        ],
+        { title: "Check the partitions" },
+      );
+      if (picked === undefined) return "cancelled";
+      deep = picked.label === full;
+    }
+    const got = await read(live, PARTITION_CHECK, CHECK_PARTITIONS, deep);
+    if (got === undefined) return "not read";
+    try {
+      const text = partitionReport(readPartitions(got.value), got.process.label, deep);
+      await openDocument(text, "markdown");
+      return text;
+    } catch (error) {
+      return say(`q-lint: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
   /// Chart from a CSV or JSON file (#1031), as the command line draws one.
   const renderChart = async (file?: unknown, kind?: unknown, out?: unknown): Promise<string> => {
     if (off("chartCli")) return dbOff("chartCli");
@@ -165,6 +195,7 @@ export function registerDbTools(context: ExtensionContext, live: Live): { state:
     context.subscriptions.push(commands.registerCommand(name, run as (...args: unknown[]) => unknown));
   };
   register(DB_COMMANDS.document, (format?: unknown) => document(format));
+  register(DB_COMMANDS.checkPartitions, (depth?: unknown) => checkPartitions(depth));
   register(DB_COMMANDS.renderChart, (file?: unknown, kind?: unknown, out?: unknown) => renderChart(file, kind, out));
   return { state, registered: () => registered };
 }

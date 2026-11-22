@@ -1589,6 +1589,17 @@ functions with their parameters as a Markdown or HTML document, with the
 qDoc comment written above each function in the workspace where there is
 one.
 
+**Check Partition Consistency**, in the HDB Browser's title bar, reports
+what a partitioned database q would trip on or hide: weekdays missing from
+the date range, a table missing from a partition, a missing `.d` or column
+file, a column or type that differs from the table's other partitions, a
+symbol column enumerated against a domain the root has no file for, and a
+partition whose rows are empty or ten times from the median - each with
+its partitions. The quick check reads no column data (`.d` files, and each
+column file's header through `type get`); the full check also reads every
+symbol column, for an index past the end of its sym file. The newest 1000
+partitions are checked.
+
 **Render Chart from CSV or JSON File...**, in the Explorer's context menu
 on a `.csv`, `.tsv` or `.json` file, draws it as an SVG chart with the
 code the result panel saves its charts with, and writes the file you name.
@@ -2225,6 +2236,7 @@ Read when a cell runs or a command is used, so a change needs no reload. None re
 | Setting | Default | What it does | q-pro |
 | --- | --- | --- | --- |
 | `q-lint.databaseDocumenter.enable` | `true` | **Document Database**. Off, the command is hidden and refuses. | - |
+| `q-lint.hdbBrowser.partitionCheck.enable` | `true` | **Check Partition Consistency**. Off, the command is hidden and refuses. | - |
 | `q-lint.charts.commandLine.enable` | `true` | **Render Chart from CSV or JSON File...**. Off, the command is hidden and refuses; `out/chartcli.js` is yours to run or not. | - |
 
 ### Not here, and why

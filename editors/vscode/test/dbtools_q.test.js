@@ -15,6 +15,7 @@ const path = require("node:path");
 const { QConnection } = require("../out/qclient.js");
 const { statements } = require("../out/statements.js");
 const { DOCUMENT, readDoc, docMarkdown } = require("../out/dbdoc.js");
+const { PARTITION_CHECK, readPartitions, partitionProblems } = require("../out/partcheck.js");
 
 const Q = process.env.QLINT_TEST_Q;
 const skip = Q ? false : "QLINT_TEST_Q names no q binary";
@@ -107,3 +108,30 @@ test("the documenter reads tables, keys, foreign keys and functions", { skip }, 
   const text = docMarkdown(doc, "hdb", "now", new Map([[".lib.add", "Adds."]]));
   assert.match(text, /### \.lib\.add\[a;b\]\n\nAdds\./);
 });
+
+test("the partition check finds missing dates, files, differing types and outliers", { skip }, async (t) => {
+  const extra = [
+    "mk[r;;6] each 2026.01.12 2026.01.13;",
+    "mk[r;2026.01.14;5000];",
+    "{[r;d] .Q.dd[r;d,`quote`] set .Q.en[r] ([] sym:`a`b;bid:1 2f)}[r] each 2026.01.12 2026.01.13 2026.01.14;",
+    "hdel .Q.dd[r;2026.01.13,`trade`px];",
+    ".Q.dd[r;2026.01.12,`trade`sz] set 6#1 2 3i;",
+  ].join("\n");
+  const { connection } = await connect(t, HDB(extra));
+  const answer = readPartitions(await connection.call(PARTITION_CHECK, 1000, true));
+  assert.strictEqual(answer.hdb, true);
+  assert.deepStrictEqual(answer.tables.sort(), ["quote", "trade"]);
+  const problems = partitionProblems(answer);
+  const kinds = (k) => problems.filter((p) => p.kind === k);
+  assert.deepStrictEqual(kinds("missing dates")[0].partitions, ["2026.01.08", "2026.01.09"]);
+  assert.deepStrictEqual(kinds("missing column file")[0].partitions, ["2026.01.13"]);
+  assert.match(kinds("different types")[0].what, /trade\.sz is type 6 here, 7/);
+  assert.deepStrictEqual(kinds("different types")[0].partitions, ["2026.01.12"]);
+  assert.match(kinds("row count")[0].partitions[0], /2026\.01\.14 \(5,000\)/);
+  assert.strictEqual(kinds("enumeration").length, 0);
+  // A process with no database says so.
+  const { connection: plain } = await connect(t, "a:1\n");
+  assert.strictEqual(readPartitions(await plain.call(PARTITION_CHECK, 1000, false)).hdb, false);
+});
+
+const { TABLE_INFO, readTableInfo } = require("../out/tableinfo.js");
