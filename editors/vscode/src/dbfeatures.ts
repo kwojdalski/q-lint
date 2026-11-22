@@ -16,6 +16,7 @@ export const DB_SETTINGS = {
   attributeAdvisor: { key: "processExplorer.attributeAdvisor.enable", fallback: true, name: "The attribute advisor" },
   schemaMigration: { key: "schemaMigration.enable", fallback: true, name: "Schema migration" },
   testData: { key: "testDataGenerator.enable", fallback: true, name: "The test data generator" },
+  tickerplantLog: { key: "tickerplantLog.enable", fallback: true, name: "The tickerplant log viewer" },
   chartCli: { key: "charts.commandLine.enable", fallback: true, name: "Charts from a file" },
 } as const;
 
@@ -30,6 +31,7 @@ export const DB_COMMANDS = {
   adviseAttributes: "q-lint.adviseAttributes",
   migrateSchema: "q-lint.writeSchemaMigration",
   testData: "q-lint.generateTestData",
+  openTpLog: "q-lint.openTickerplantLog",
   renderChart: "q-lint.renderChartFromFile",
 } as const;
 

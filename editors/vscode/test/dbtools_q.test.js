@@ -167,6 +167,7 @@ const { ATTRIBUTE_SAMPLE, readAttributeSample, advise } = require("../out/attrad
 const { TABLE_INFO, readTableInfo } = require("../out/tableinfo.js");
 const { testDataQ, testDataCsv, loadTypes } = require("../out/testdata.js");
 const { migrationScript } = require("../out/migrate.js");
+const { TPLOG_INIT, readTpLog, readTpPage, readReplayed } = require("../out/tplog.js");
 
 test("the sym inspector counts the file, its columns' shares and its growth", { skip }, async (t) => {
   const extra = [
@@ -243,4 +244,41 @@ test("a schema migration's q turns one table into the other, in memory and on di
   assert.ok(done.ok, done.error);
   assert.match(done.text, /^changed (\d+) of \1 directories$/);
   assert.deepStrictEqual(await connection.call("{(cols trade;exec t from meta trade)}", 0), [["date", "sym", "px", "sz", "ex"], "dsjjs"]);
+});
+
+test("the tickerplant log is read, paged, filtered, shown and replayed in a q of its own", { skip }, async (t) => {
+  const log = [
+    'f:hsym`$"$DIR/tp.log";',
+    ".[f;();:;()];",
+    "h:hopen f;",
+    "h enlist(`upd;`trade;([]time:2026.01.05D09:00:00 2026.01.05D09:30:00;sym:`a`b;px:1 2f));",
+    "h enlist(`upd;`quote;([]time:enlist 2026.01.05D10:00:00;sym:enlist`a;bid:enlist 1f));",
+    "h enlist(`upd;`trade;([]time:enlist 2026.01.05D11:00:00;sym:enlist`c;px:enlist 3f));",
+    "hclose h;",
+    'b:read1 f; (hsym`$"$DIR/cut.log") 1:(count[b]-4)#b;',
+    "",
+  ].join("\n");
+  const { connection, dir } = await connect(t, log + TPLOG_INIT + "\n");
+  const summary = readTpLog(await connection.call(".qlint.tp.load", path.join(dir, "tp.log")));
+  assert.deepStrictEqual(summary.tables, ["quote", "trade"]);
+  assert.strictEqual(summary.count, 3);
+  assert.strictEqual(summary.complete, true);
+  const all = readTpPage(await connection.call(".qlint.tp.page", "", NaN, NaN, 0, 100));
+  assert.strictEqual(all.total, 3);
+  assert.deepStrictEqual(all.rows.map((r) => [r.index, r.fn, r.table, r.rows]), [[0, "upd", "trade", 2], [1, "upd", "quote", 1], [2, "upd", "trade", 1]]);
+  assert.match(all.rows[0].time, /2026\.01\.05D09:00:00/);
+  const trades = readTpPage(await connection.call(".qlint.tp.page", "trade", 9.5 * 3600000, NaN, 0, 100));
+  assert.deepStrictEqual(trades.rows.map((r) => r.index), [2]);
+  const shown = await connection.call(".qlint.tp.show", 1, 200);
+  assert.match([].concat(shown).join("\n"), /quote/);
+  const replayed = readReplayed(await connection.call(".qlint.tp.replay", 0, 2));
+  assert.strictEqual(replayed.replayed, 3);
+  assert.strictEqual(replayed.failed, 0);
+  assert.deepStrictEqual(Object.fromEntries(replayed.tables.map((x) => [x.name, x.rows])), { quote: 1, trade: 3 });
+  // A log cut short is read to its last whole message.
+  const cut = readTpLog(await connection.call(".qlint.tp.load", path.join(dir, "cut.log")));
+  assert.strictEqual(cut.count, 2);
+  assert.strictEqual(cut.complete, false);
+  assert.ok(cut.bytes < cut.size);
+  assert.strictEqual(readTpPage(await connection.call(".qlint.tp.page", "", NaN, NaN, 0, 100)).total, 2);
 });

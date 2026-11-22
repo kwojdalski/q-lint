@@ -17,6 +17,7 @@ const path = require("node:path");
 const { serialize, deserialize } = require("node-q/lib/c.js");
 const { Live } = require("../out/live.js");
 const { registerDbTools } = require("../out/dbtoolsview.js");
+const { TickerplantLog } = require("../out/tplogview.js");
 const { DB_COMMANDS, DB_SETTINGS } = require("../out/dbfeatures.js");
 const { RUN_SCRIPT } = require("../out/colmanager.js");
 const { TABLE_INFO } = require("../out/tableinfo.js");
@@ -129,6 +130,7 @@ const off = Object.fromEntries(Object.values(DB_SETTINGS).map((s) => [s.key, fal
 test("off, every database command refuses, says how to turn it on, and sends nothing", async (t) => {
   const { opened } = capture();
   const { q, live, context } = await setUp(t, [], off);
+  const log = new TickerplantLog(context);
   await live.connectTo("hdb");
   const before = q.sent.length;
   const cases = [
@@ -151,6 +153,7 @@ test("off, every database command refuses, says how to turn it on, and sends not
   }
   assert.strictEqual(q.sent.length, before);
   assert.strictEqual(opened.length, 0);
+  assert.strictEqual(log.port, undefined);
 });
 
 test("on, the documenter reads the process once and opens its document", async (t) => {
@@ -216,3 +219,40 @@ test("a chart is rendered from a file to the path given", async (t) => {
 });
 
 const Q = process.env.QLINT_TEST_Q;
+
+test("the tickerplant log is read in a q of the extension's own, replayed there after asking, and goes when turned off", { skip: Q ? false : "QLINT_TEST_Q names no q binary" }, async (t) => {
+  const { panels } = capture();
+  stub.reset();
+  stub.config.user["terminal.qBinary"] = Q;
+  const context = stub.newContext();
+  const log = new TickerplantLog(context);
+  t.after(() => context.subscriptions.forEach((d) => d.dispose?.()));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-tplog-test-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  // A log written by a q of the test's own.
+  const make = path.join(dir, "make.q");
+  fs.writeFileSync(make, ['f:hsym`$"' + path.join(dir, "tp.log") + '";', ".[f;();:;()];", "h:hopen f;", "h enlist(`upd;`t;([]time:enlist 2026.01.05D09:00:00;x:enlist 1));", "h enlist(`upd;`t;([]time:enlist 2026.01.05D10:00:00;x:enlist 2));", "hclose h;", "exit 0;", ""].join("\n"));
+  require("node:child_process").execSync(`${Q} ${make}`, { stdio: "ignore", timeout: 15000 });
+  assert.strictEqual(await log.open(path.join(dir, "tp.log")), "2 messages");
+  const port = log.port;
+  assert.ok(port > 0);
+  await log.receive({ type: "ready" });
+  const page = log.posted.find((m) => m.type === "page");
+  assert.deepStrictEqual(page.rows.map((r) => r.table), ["t", "t"]);
+  await log.receive({ type: "page", table: "t", from: "09:30", to: "", offset: 0 });
+  assert.deepStrictEqual(log.posted.at(-1).rows.map((r) => r.index), [1]);
+  stub.picks.push(undefined);
+  assert.strictEqual(await log.replay(0, 1), "not replayed");
+  stub.picks.push("Replay");
+  assert.match(await log.replay(0, 1), /Replayed 2 messages\. The local q on port \d+ now holds t 2 rows/);
+  stub.config.user["tickerplantLog.enable"] = false;
+  stub.changeConfig("q-lint.tickerplantLog.enable");
+  assert.strictEqual(panels[0].disposed, true);
+  assert.strictEqual(log.port, undefined);
+  await new Promise((r) => setTimeout(r, 300));
+  const up = await new Promise((resolve) => {
+    const s = net.connect(port, "127.0.0.1", () => (s.destroy(), resolve(true)));
+    s.on("error", () => resolve(false));
+  });
+  assert.strictEqual(up, false);
+});

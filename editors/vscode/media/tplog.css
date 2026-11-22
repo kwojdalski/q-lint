@@ -1,0 +1,69 @@
+/* The tickerplant log panel, in the editor's theme. */
+body {
+  margin: 0;
+  padding: 8px 12px;
+  background: var(--vscode-editor-background);
+  color: var(--vscode-foreground);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 6px 0;
+}
+
+button,
+select,
+input {
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-panel-border);
+  padding: 1px 6px;
+  font: inherit;
+}
+
+.summary {
+  font-weight: 600;
+}
+
+.note,
+.status {
+  color: var(--vscode-descriptionForeground);
+}
+
+.failed {
+  color: var(--vscode-errorForeground);
+}
+
+table.messages {
+  border-collapse: collapse;
+  font-family: var(--vscode-editor-font-family);
+}
+
+table.messages th,
+table.messages td {
+  border: 1px solid var(--vscode-panel-border);
+  padding: 1px 6px;
+  text-align: left;
+}
+
+table.messages tr {
+  cursor: pointer;
+}
+
+table.messages tr.picked {
+  background: var(--vscode-list-activeSelectionBackground);
+  color: var(--vscode-list-activeSelectionForeground);
+}
+
+pre.detail {
+  white-space: pre-wrap;
+  font-family: var(--vscode-editor-font-family);
+  border: 1px solid var(--vscode-panel-border);
+  padding: 4px;
+  min-height: 2em;
+}

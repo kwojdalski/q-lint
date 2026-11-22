@@ -135,6 +135,7 @@ function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir
     "./organiseloads": { registerOrganiseLoads() {} },
     "./problemsview": { registerProblemsDashboard: () => ({ panelOpen: () => false }) },
     "./dbtoolsview": { registerDbTools: () => ({ state: {}, registered: () => [] }) },
+    "./tplogview": { TickerplantLog: class {} },
     "./logview": { LogViewer: class { state() { return undefined; } } },
   };
   const file = require.resolve("../out/extension.js");

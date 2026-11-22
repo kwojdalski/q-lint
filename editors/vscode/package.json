@@ -1348,6 +1348,12 @@
             "order": 8,
             "markdownDescription": "**Generate Test Data...**: random rows shaped as a table's meta, as q code to run locally or as CSV. Off, the command is hidden and refuses."
           },
+          "q-lint.tickerplantLog.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 9,
+            "markdownDescription": "**Open Tickerplant Log...**: read a tickerplant log in a q of its own, list, filter and step through its messages, and replay a range into that q only. Off, the command is hidden and refuses, and an open log's panel and q are closed."
+          },
           "q-lint.charts.commandLine.enable": {
             "type": "boolean",
             "default": true,
@@ -2380,6 +2386,11 @@
         "title": "Generate Test Data...",
         "category": "q-lint",
         "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.openTickerplantLog",
+        "title": "Open Tickerplant Log...",
+        "category": "q-lint"
       },
       {
         "command": "q-lint.renderChartFromFile",
@@ -3707,6 +3718,10 @@
         {
           "command": "q-lint.generateTestData",
           "when": "config.q-lint.testDataGenerator.enable"
+        },
+        {
+          "command": "q-lint.openTickerplantLog",
+          "when": "config.q-lint.tickerplantLog.enable"
         },
         {
           "command": "q-lint.renderChartFromFile",

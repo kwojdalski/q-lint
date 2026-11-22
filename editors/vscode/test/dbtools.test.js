@@ -20,6 +20,7 @@ const { readSym, symReport } = require("../out/syminspect.js");
 const { advise, filterCounts, adviceReport, readAttributeSample } = require("../out/attradvice.js");
 const { schemaDiff, migrationScript, nullOf, castOf } = require("../out/migrate.js");
 const { symbolPool, rangeOf, generator, testDataQ, testDataCsv, loadTypes, random } = require("../out/testdata.js");
+const { timeOfDay, rangeProblem, readTpPage, readTpLog, readReplayed } = require("../out/tplog.js");
 const { gridFromCsv, gridFromJson, chartFromGrid } = require("../out/chartfile.js");
 const { parseArgs, main, USAGE } = require("../out/chartcli.js");
 const { guardCheck } = require("../out/guard.js");
@@ -238,6 +239,21 @@ test("test data: pools, ranges, a q generator per type, and CSV that sorts and r
   assert.match(lines[1].split(",")[2], /^2026\.01\.0[23]D\d\d:\d\d:\d\d\.\d{9}$/);
   assert.strictEqual(loadTypes(info), "SFP");
   assert.notStrictEqual(random(1)(), random(2)());
+});
+
+test("the tickerplant log's readers, times of day and ranges", () => {
+  assert.strictEqual(timeOfDay(""), null);
+  assert.strictEqual(timeOfDay("09:30"), 34_200_000);
+  assert.strictEqual(timeOfDay("09:30:01.5"), 34_201_500);
+  assert.strictEqual(timeOfDay("25:00"), undefined);
+  assert.strictEqual(timeOfDay("9.30"), undefined);
+  assert.strictEqual(rangeProblem(0, 2, 3), undefined);
+  assert.match(rangeProblem(2, 1, 3), /comes before/);
+  assert.match(rangeProblem(0, 3, 3), /0 to 2/);
+  assert.deepStrictEqual(readTpPage({ total: 1, i: 4, fn: "upd", tb: "trade", rows: 2, tx: "09:00" }).rows, [{ index: 4, fn: "upd", table: "trade", rows: 2, time: "09:00" }]);
+  assert.strictEqual(readTpLog({ count: 3, bytes: 10, size: 12, complete: false, tables: "trade" }).tables[0], "trade");
+  assert.deepStrictEqual(readReplayed({ replayed: 2, failed: 0, errors: [], tables: ["t"], rows: [2] }).tables, [{ name: "t", rows: 2 }]);
+  assert.throws(() => readTpPage(1), /page of messages/);
 });
 
 test("a chart is drawn from CSV and JSON tables, and the command line writes it", async () => {

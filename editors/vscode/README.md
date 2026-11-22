@@ -1648,6 +1648,19 @@ ascending order chosen, as q code to run on a local process (it sets `\S`, so it
 makes the same rows each time) or as CSV, with the `0:` types that read it
 back.
 
+**Open Tickerplant Log...** starts a q of its own (`q-lint.terminal.qBinary`,
+in a new temporary directory, listening on the loopback only) and has it
+read the log with `-11!`. Its messages are listed by number with their
+function, table, rows and first time, filtered by table and time of day,
+and paged 200 at a time; the one picked is shown in full, and Previous and
+Next step through them. A log cut short is read to its last whole message,
+and the panel says how many bytes were left. **Replay** runs a range of
+messages in that q, after asking, with an `upd` that inserts into a table
+of that name (made from a first message that is a table); **Load
+Schema...** loads a q file - the tickerplant's schema and `upd` - into it
+first. Nothing is sent to any process of yours. The q stops, and its
+directory goes, when the panel closes.
+
 **Render Chart from CSV or JSON File...**, in the Explorer's context menu
 on a `.csv`, `.tsv` or `.json` file, draws it as an SVG chart with the
 code the result panel saves its charts with, and writes the file you name.
@@ -2291,6 +2304,7 @@ Read when a cell runs or a command is used, so a change needs no reload. None re
 | `q-lint.processExplorer.attributeAdvisor.enable` | `true` | **Advise Attributes**. Off, the command is hidden and refuses. | - |
 | `q-lint.schemaMigration.enable` | `true` | **Write Schema Migration...**. Off, the command is hidden and refuses. | - |
 | `q-lint.testDataGenerator.enable` | `true` | **Generate Test Data...**. Off, the command is hidden and refuses. | - |
+| `q-lint.tickerplantLog.enable` | `true` | **Open Tickerplant Log...**. Off, the command is hidden and refuses, and an open log's panel and q are closed. | - |
 | `q-lint.charts.commandLine.enable` | `true` | **Render Chart from CSV or JSON File...**. Off, the command is hidden and refuses; `out/chartcli.js` is yours to run or not. | - |
 
 ### Not here, and why
