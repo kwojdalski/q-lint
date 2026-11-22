@@ -1304,6 +1304,12 @@
             "default": true,
             "order": 800,
             "markdownDescription": "Offer **Add Many Processes**, on the Processes view's title bar and in the palette: a form to paste `host:port[:label[:tags]]` lines or CSV into, which checks each line, shows duplicates, and adds the processes. Never reads a password. Off: the command is hidden and refuses, and an open form closes."
+          },
+          "q-lint.processes.importOther.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 801,
+            "markdownDescription": "Offer **Import Servers from qStudio...** and **Import Connections from KX Extension...**, on the Processes view's title menu and in the palette: they read qStudio's server list (its Copy Server List text, its XML, or its preferences file) or the KX kdb extension's `kdb.servers` or export file, and add the kdb processes named, after asking. A password is never imported, and a label already saved is kept. Off: the commands are hidden and refuse."
           }
         }
       }
@@ -2292,6 +2298,16 @@
         "title": "Add Many Processes...",
         "category": "q-lint",
         "icon": "$(list-unordered)"
+      },
+      {
+        "command": "q-lint.importQStudioServers",
+        "title": "Import Servers from qStudio...",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.importKxConnections",
+        "title": "Import Connections from KX Extension...",
+        "category": "q-lint"
       }
     ],
     "views": {
@@ -2560,6 +2576,16 @@
           "command": "q-lint.addManyProcesses",
           "when": "view == q-lint.processes && config.q-lint.processes.bulkAdd.enable",
           "group": "1_processes@4"
+        },
+        {
+          "command": "q-lint.importQStudioServers",
+          "when": "view == q-lint.processes && config.q-lint.processes.importOther.enable",
+          "group": "1_processes@5"
+        },
+        {
+          "command": "q-lint.importKxConnections",
+          "when": "view == q-lint.processes && config.q-lint.processes.importOther.enable",
+          "group": "1_processes@6"
         }
       ],
       "view/item/context": [
@@ -3545,6 +3571,14 @@
         {
           "command": "q-lint.addManyProcesses",
           "when": "config.q-lint.processes.bulkAdd.enable"
+        },
+        {
+          "command": "q-lint.importQStudioServers",
+          "when": "config.q-lint.processes.importOther.enable"
+        },
+        {
+          "command": "q-lint.importKxConnections",
+          "when": "config.q-lint.processes.importOther.enable"
         }
       ],
       "editor/title": [

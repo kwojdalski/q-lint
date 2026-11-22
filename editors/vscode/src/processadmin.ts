@@ -3,11 +3,13 @@
 // file and its own switch (`admin.ts`).
 import type { ExtensionContext } from "vscode";
 import { BulkAdd } from "./bulkaddview";
+import { ImportOther } from "./importotherview";
 import type { Launcher } from "./launcherview";
 import type { Live } from "./live";
 
-export function registerProcessAdmin(context: ExtensionContext, live: Live, launcher: Launcher): { bulkAdd: BulkAdd } {
+export function registerProcessAdmin(context: ExtensionContext, live: Live, launcher: Launcher): { bulkAdd: BulkAdd; importOther: ImportOther } {
   void launcher;
   const bulkAdd = new BulkAdd(context, live);
-  return { bulkAdd };
+  const importOther = new ImportOther(context, live);
+  return { bulkAdd, importOther };
 }

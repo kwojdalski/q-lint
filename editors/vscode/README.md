@@ -493,6 +493,20 @@ of a saved process is added, and the table says which. A label left out is
 is ignored and masked in the table): each is asked for on the first
 connect. `q-lint.processes.bulkAdd.enable` off hides the command.
 
+**Import Servers from qStudio...** and **Import Connections from KX
+Extension...**, on the Processes view's title menu, bring in the
+processes another tool knows. From qStudio: the text its **Copy Server
+List** puts on the clipboard (`name@host:port:user`, a folder before a `/`
+taken as a tag), its `<serverlist>` XML, or the preferences it keeps them in
+(on Linux `~/.java/.userPrefs/com/timestored/qstudio/prefs.xml`, offered
+when it is there); only kdb servers are taken. From KX's kdb extension: its
+`kdb.servers` in your settings, with `kdb.labelsConnectionMap`'s labels as
+tags, or a file its **Export Connections** wrote; kdb Insights connections
+are left out. You are shown what will be added and asked first. A label
+already in the list is kept as it is, and no password is ever imported,
+even where the source holds one: each is asked for on the first connect.
+`q-lint.processes.importOther.enable` off hides both commands.
+
 **Querying.** With a q file open:
 - **Query Current Line**, `ctrl+q`.
 - **Query Current Selection**, `ctrl+r`: the current line when nothing is
@@ -2137,6 +2151,7 @@ applies at once, without a reload. None reaches the language server.
 | Setting | Default | What it does | q-pro |
 | --- | --- | --- | --- |
 | `q-lint.processes.bulkAdd.enable` | `true` | **Add Many Processes...**: paste lines or CSV, checked and added. Off, the command is hidden and refuses, and an open form closes. | - |
+| `q-lint.processes.importOther.enable` | `true` | **Import Servers from qStudio...** and **Import Connections from KX Extension...**, never a password. Off, both are hidden and refuse. | - |
 
 ### Terminal settings
 
