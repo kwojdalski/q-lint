@@ -3448,7 +3448,7 @@
         },
         {
           "command": "q-lint.namespaces.refresh",
-          "when": "view == q-lint.namespaces",
+          "when": "view == q-lint.namespaces && config.q-lint.namespaceTree.enable",
           "group": "navigation"
         }
       ],
