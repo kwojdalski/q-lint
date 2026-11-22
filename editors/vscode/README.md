@@ -1599,6 +1599,24 @@ partitions are `.Q.pv`, the rows `.Q.cn`, which reads each partition's count
 from a column file and caches it in `.Q.pn` as the explorer does, and the
 sym file's size `hcount`. The newest 1000 partitions are listed.
 
+**Connected Clients** shows the connected process's open handles
+(`.z.W`): each handle, what is queued on it, the kind of socket (TCP or a
+Unix socket, TLS, a WebSocket, where `-38!` tells) and, where TorQ's
+`.clients` records them, the user and host - q itself keeps no address for
+another client's handle, and the view says so. The handles include those
+the process opened itself; this extension's own is marked. **Close Client
+Handle**, on a row, asks first and sends `hclose`; on a process the
+read-only guard guards it is refused outright, as closing a handle is a
+change the guard's reading of the code would not see. **Timers** shows the
+process's `\t` interval and `.z.ts`, and TorQ's `.timer.timer` jobs - each
+with its period, next and last run - the first 200. **Turn Timer On/Off**,
+on a job, sets its `active` flag; **Set Timer Interval (\t)** sends
+`system "t N"` (0 turns the timer off); both go through the read-only
+guard. Each view is read by a fixed read-only lambda when shown, on
+connect and on Refresh, sharing the query connection as the Monitor does,
+and has its own switch: `q-lint.connectedClients.enable` and
+`q-lint.timers.enable`.
+
 The Monitor, the HDB Browser, Open Function Source and Find Callers share
 the query connection as the explorer does: they never interrupt a query,
 and wait a moment for one to finish. Each of these features has its own
@@ -2243,6 +2261,8 @@ applies at once, without a reload. None reaches the language server.
 | `q-lint.query.async.enable` | `true` | **Run Query Asynchronously** and **Show Pending Async Queries**. Off, both are hidden and refuse, and pending results are dropped. | - |
 | `q-lint.query.links.enable` | `true` | **Copy Query Link**, and opening such links: shown, bound to the process of their label, run only when you say so. Off, the command is hidden and refuses, and links are not opened. | - |
 | `q-lint.export.schedule.enable` | `false` | **Add Scheduled Export...** and **Manage Scheduled Exports...**, and running read-only saved queries on a schedule to CSV, Parquet or Excel. Off, no timer runs, nothing is sent, and the commands are hidden and refuse. | - |
+| `q-lint.connectedClients.enable` | `true` | The **Connected Clients** view, and **Close Client Handle** (asked first, refused on a guarded process). Off, the view and its commands are hidden and nothing is read. | - |
+| `q-lint.timers.enable` | `true` | The **Timers** view, **Turn Timer On/Off** and **Set Timer Interval (\\t)**, through the read-only guard. Off, the view and its commands are hidden and nothing is read. | - |
 
 ### Terminal settings
 

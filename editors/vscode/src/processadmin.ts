@@ -2,6 +2,7 @@
 // together so the extension's activation names them once. Each is its own
 // file and its own switch (`admin.ts`).
 import type { ExtensionContext } from "vscode";
+import { registerAdminViews } from "./adminviews";
 import { AsyncQueries } from "./asyncqueryview";
 import { BulkAdd } from "./bulkaddview";
 import { CredentialCommands } from "./credentialview";
@@ -13,7 +14,7 @@ import { QueryLinks } from "./querylinkview";
 import { ScheduledExports } from "./scheduleview";
 import { ProcessTimeouts } from "./timeoutview";
 
-export function registerProcessAdmin(context: ExtensionContext, live: Live, launcher: Launcher): { bulkAdd: BulkAdd; importOther: ImportOther; credentials: CredentialCommands; environmentColour: EnvironmentColour; timeouts: ProcessTimeouts; asyncQueries: AsyncQueries; queryLinks: QueryLinks; scheduledExports: ScheduledExports } {
+export function registerProcessAdmin(context: ExtensionContext, live: Live, launcher: Launcher): { bulkAdd: BulkAdd; importOther: ImportOther; credentials: CredentialCommands; environmentColour: EnvironmentColour; timeouts: ProcessTimeouts; asyncQueries: AsyncQueries; queryLinks: QueryLinks; scheduledExports: ScheduledExports; views: ReturnType<typeof registerAdminViews> } {
   const bulkAdd = new BulkAdd(context, live);
   const importOther = new ImportOther(context, live);
   const credentials = new CredentialCommands(context, live);
@@ -22,5 +23,6 @@ export function registerProcessAdmin(context: ExtensionContext, live: Live, laun
   const asyncQueries = new AsyncQueries(context, live);
   const queryLinks = new QueryLinks(context, live);
   const scheduledExports = new ScheduledExports(context, live);
-  return { bulkAdd, importOther, credentials, environmentColour, timeouts, asyncQueries, queryLinks, scheduledExports };
+  const views = registerAdminViews(context, live);
+  return { bulkAdd, importOther, credentials, environmentColour, timeouts, asyncQueries, queryLinks, scheduledExports, views };
 }

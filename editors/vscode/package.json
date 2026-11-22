@@ -1368,6 +1368,18 @@
             "default": false,
             "order": 809,
             "markdownDescription": "Offer **Add Scheduled Export** and **Manage Scheduled Exports**, and run each schedule when due while VS Code is open: a saved query run on a process on a connection of its own, its result written to CSV, Parquet or Excel at the file chosen, replaced or written anew each run as chosen. Only a read-only query with no placeholders is run. Off (the default): no timer runs, nothing is sent, and the commands are hidden and refuse."
+          },
+          "q-lint.connectedClients.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 810,
+            "markdownDescription": "Show the **Connected Clients** view: the connected process's open handles (`.z.W`) with what is queued on each, the kind of socket, and - where TorQ's `.clients` records them - user and host, read by a fixed read-only lambda. **Close Client Handle** asks first, and is refused on a process the read-only guard guards. Off: the view and its commands are hidden, and nothing is read."
+          },
+          "q-lint.timers.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 811,
+            "markdownDescription": "Show the **Timers** view: the connected process's `\\t` interval and `.z.ts`, and TorQ's `.timer.timer` jobs with their period and next run, read by a fixed read-only lambda. **Turn Timer On/Off** and **Set Timer Interval** go through the read-only guard. Off: the view and its commands are hidden, and nothing is read."
           }
         }
       }
@@ -2409,6 +2421,36 @@
         "command": "q-lint.manageScheduledExports",
         "title": "Manage Scheduled Exports...",
         "category": "q-lint"
+      },
+      {
+        "command": "q-lint.refreshConnectedClients",
+        "title": "Refresh Connected Clients",
+        "category": "q-lint",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "q-lint.closeClientHandle",
+        "title": "Close Client Handle",
+        "category": "q-lint",
+        "icon": "$(close)"
+      },
+      {
+        "command": "q-lint.refreshTimers",
+        "title": "Refresh Timers",
+        "category": "q-lint",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "q-lint.toggleTimer",
+        "title": "Turn Timer On/Off",
+        "category": "q-lint",
+        "icon": "$(debug-pause)"
+      },
+      {
+        "command": "q-lint.setTimerInterval",
+        "title": "Set Timer Interval (\\t)",
+        "category": "q-lint",
+        "icon": "$(clock)"
       }
     ],
     "views": {
@@ -2483,6 +2525,22 @@
           "name": "q Cheat Sheet",
           "when": "config.q-lint.cheatSheet.enable",
           "icon": "media/view-cheatsheet.svg"
+        },
+        {
+          "id": "q-lint.connectedClients",
+          "name": "Connected Clients",
+          "icon": "media/view-explorer.svg",
+          "contextualTitle": "q-lint",
+          "visibility": "collapsed",
+          "when": "config.q-lint.connectedClients.enable"
+        },
+        {
+          "id": "q-lint.timers",
+          "name": "Timers",
+          "icon": "media/view-explorer.svg",
+          "contextualTitle": "q-lint",
+          "visibility": "collapsed",
+          "when": "config.q-lint.timers.enable"
         }
       ],
       "q-lint-results": [
@@ -2697,6 +2755,21 @@
           "command": "q-lint.manageScheduledExports",
           "when": "view == q-lint.savedQueries && config.q-lint.export.schedule.enable",
           "group": "2_schedule@2"
+        },
+        {
+          "command": "q-lint.refreshConnectedClients",
+          "when": "view == q-lint.connectedClients && config.q-lint.connectedClients.enable",
+          "group": "navigation@1"
+        },
+        {
+          "command": "q-lint.refreshTimers",
+          "when": "view == q-lint.timers && config.q-lint.timers.enable",
+          "group": "navigation@1"
+        },
+        {
+          "command": "q-lint.setTimerInterval",
+          "when": "view == q-lint.timers && q-lint.connected && config.q-lint.timers.enable",
+          "group": "navigation@2"
         }
       ],
       "view/item/context": [
@@ -2954,6 +3027,31 @@
           "command": "q-lint.setProcessTimeout",
           "when": "view == q-lint.processes && viewItem =~ /^process/ && config.q-lint.query.processTimeout.enable",
           "group": "2_edit@9"
+        },
+        {
+          "command": "q-lint.closeClientHandle",
+          "when": "view == q-lint.connectedClients && viewItem == client && config.q-lint.connectedClients.enable",
+          "group": "inline"
+        },
+        {
+          "command": "q-lint.closeClientHandle",
+          "when": "view == q-lint.connectedClients && viewItem == client && config.q-lint.connectedClients.enable",
+          "group": "1_client@1"
+        },
+        {
+          "command": "q-lint.toggleTimer",
+          "when": "view == q-lint.timers && viewItem =~ /^torqTimer/ && config.q-lint.timers.enable",
+          "group": "inline"
+        },
+        {
+          "command": "q-lint.toggleTimer",
+          "when": "view == q-lint.timers && viewItem =~ /^torqTimer/ && config.q-lint.timers.enable",
+          "group": "1_timer@1"
+        },
+        {
+          "command": "q-lint.setTimerInterval",
+          "when": "view == q-lint.timers && viewItem == qTimer && config.q-lint.timers.enable",
+          "group": "inline"
         }
       ],
       "editor/title/run": [
@@ -3742,6 +3840,26 @@
         {
           "command": "q-lint.manageScheduledExports",
           "when": "config.q-lint.export.schedule.enable"
+        },
+        {
+          "command": "q-lint.refreshConnectedClients",
+          "when": "config.q-lint.connectedClients.enable"
+        },
+        {
+          "command": "q-lint.closeClientHandle",
+          "when": "false"
+        },
+        {
+          "command": "q-lint.refreshTimers",
+          "when": "config.q-lint.timers.enable"
+        },
+        {
+          "command": "q-lint.toggleTimer",
+          "when": "false"
+        },
+        {
+          "command": "q-lint.setTimerInterval",
+          "when": "q-lint.connected && config.q-lint.timers.enable"
         }
       ],
       "editor/title": [
@@ -3852,6 +3970,16 @@
       {
         "view": "q-lint.cheatSheet",
         "contents": "Iterators, joins, temporal casts and attributes, each inserted at the cursor when chosen.\n[Show Help for q Builtin](command:q-lint.showHelp)"
+      },
+      {
+        "view": "q-lint.connectedClients",
+        "contents": "Connect to a q process to see its open handles.\n[Connect to Process](command:q-lint.connectProcess)",
+        "when": "!q-lint.connected"
+      },
+      {
+        "view": "q-lint.timers",
+        "contents": "Connect to a q process to see its timer and TorQ timer jobs.\n[Connect to Process](command:q-lint.connectProcess)",
+        "when": "!q-lint.connected"
       }
     ],
     "keybindings": [
