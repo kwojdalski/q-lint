@@ -1355,6 +1355,78 @@
             "markdownDescription": "Define `.qlint.view` and `.qlint.plot` on each process as it is connected to. Never on a process the read-only guard guards. Needs `#q-lint.view.enable#`."
           }
         }
+      },
+      {
+        "title": "q-lint: databases",
+        "properties": {
+          "q-lint.hdbBrowser.columnManager.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 1,
+            "markdownDescription": "**Manage HDB Column...**: add, delete, rename or cast a column, or set its attribute, in every partition of a partitioned or splayed table on disk. The q script opens for review and runs only when you choose **Run**; a process the read-only guard guards is refused. Off, the command is hidden and refuses."
+          },
+          "q-lint.databaseDocumenter.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 2,
+            "markdownDescription": "**Document Database**: the connected process's tables (columns, types, attributes, keys, foreign keys, partitions, rows) and functions, with their qDoc from the workspace, as a Markdown or HTML document. Reads only. Off, the command is hidden and refuses."
+          },
+          "q-lint.hdbBrowser.partitionCheck.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 3,
+            "markdownDescription": "**Check Partition Consistency**: missing dates, tables, `.d` and column files, columns and types that differ between partitions, symbol enumeration problems and row-count outliers, as a report. Reads only. Off, the command is hidden and refuses."
+          },
+          "q-lint.hdbBrowser.symInspector.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 4,
+            "markdownDescription": "**Inspect Sym File**: the sym file's size and count, the columns that use most of it, and its growth across partitions. Reads only. Off, the command is hidden and refuses."
+          },
+          "q-lint.hdbBrowser.symInspector.warnAbove": {
+            "type": "number",
+            "default": 1000000,
+            "minimum": 0,
+            "order": 5,
+            "markdownDescription": "**Inspect Sym File** warns when the sym file holds more symbols than this."
+          },
+          "q-lint.processExplorer.attributeAdvisor.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 6,
+            "markdownDescription": "**Advise Attributes**: for each column of a table, whether `s#`, `u#`, `p#` or `g#` would help, why and about what it costs, from a sample of its rows and the columns your saved and recent queries filter on. Never applies one. Off, the command is hidden and refuses."
+          },
+          "q-lint.schemaMigration.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 7,
+            "markdownDescription": "**Write Schema Migration...**: compare two tables' metas, on one process or two, and write the q that turns the first into the second, for review. Runs nothing. Off, the command is hidden and refuses."
+          },
+          "q-lint.testDataGenerator.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 8,
+            "markdownDescription": "**Generate Test Data...**: random rows shaped as a table's meta, as q code to run locally or as CSV. Off, the command is hidden and refuses."
+          },
+          "q-lint.tickerplantLog.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 9,
+            "markdownDescription": "**Open Tickerplant Log...**: read a tickerplant log in a q of its own, list, filter and step through its messages, and replay a range into that q only. Off, the command is hidden and refuses, and an open log's panel and q are closed."
+          },
+          "q-lint.dashboards.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 10,
+            "markdownDescription": "**Open Dashboard...** and **Add to Dashboard...**: a panel of saved queries shown as tables or charts, each refreshed on its own interval only if you give it one. Read-only queries only. Off, the commands are hidden and refuse, the panel closes and every refresh stops."
+          },
+          "q-lint.charts.commandLine.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 11,
+            "markdownDescription": "**Render Chart from CSV or JSON File...**: draw a table file as an SVG chart, as `node out/chartcli.js` does from a shell. Off, the command is hidden and refuses; the command-line script is yours to run or not."
+          }
+        }
       }
     ],
     "commands": [
@@ -2419,6 +2491,72 @@
         "title": "Follow or Pause Log",
         "category": "q-lint",
         "icon": "$(debug-pause)"
+      },
+      {
+        "command": "q-lint.manageHdbColumn",
+        "title": "Manage HDB Column...",
+        "category": "q-lint",
+        "icon": "$(edit)",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.documentDatabase",
+        "title": "Document Database",
+        "category": "q-lint",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.checkPartitions",
+        "title": "Check Partition Consistency",
+        "category": "q-lint",
+        "icon": "$(checklist)",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.inspectSymFile",
+        "title": "Inspect Sym File",
+        "category": "q-lint",
+        "icon": "$(symbol-key)",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.adviseAttributes",
+        "title": "Advise Attributes",
+        "category": "q-lint",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.writeSchemaMigration",
+        "title": "Write Schema Migration...",
+        "category": "q-lint",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.generateTestData",
+        "title": "Generate Test Data...",
+        "category": "q-lint",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.openTickerplantLog",
+        "title": "Open Tickerplant Log...",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.openDashboard",
+        "title": "Open Dashboard...",
+        "category": "q-lint",
+        "icon": "$(dashboard)"
+      },
+      {
+        "command": "q-lint.addToDashboard",
+        "title": "Add to Dashboard...",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.renderChartFromFile",
+        "title": "Render Chart from CSV or JSON File...",
+        "category": "q-lint"
       }
     ],
     "views": {
@@ -2722,6 +2860,36 @@
           "command": "q-lint.clearPlots",
           "when": "view == q-lint.plots && config.q-lint.results.plots.enable",
           "group": "navigation@4"
+        },
+        {
+          "command": "q-lint.checkPartitions",
+          "when": "view == q-lint.hdbBrowser && config.q-lint.hdbBrowser.partitionCheck.enable",
+          "group": "navigation@2"
+        },
+        {
+          "command": "q-lint.inspectSymFile",
+          "when": "view == q-lint.hdbBrowser && config.q-lint.hdbBrowser.symInspector.enable",
+          "group": "navigation@3"
+        },
+        {
+          "command": "q-lint.manageHdbColumn",
+          "when": "view == q-lint.hdbBrowser && config.q-lint.hdbBrowser.columnManager.enable",
+          "group": "2_database@1"
+        },
+        {
+          "command": "q-lint.documentDatabase",
+          "when": "view == q-lint.hdbBrowser && config.q-lint.databaseDocumenter.enable",
+          "group": "2_database@2"
+        },
+        {
+          "command": "q-lint.documentDatabase",
+          "when": "view == q-lint.processExplorer && config.q-lint.databaseDocumenter.enable",
+          "group": "2_database@1"
+        },
+        {
+          "command": "q-lint.openDashboard",
+          "when": "view == q-lint.savedQueries && config.q-lint.dashboards.enable",
+          "group": "navigation@2"
         }
       ],
       "view/item/context": [
@@ -2969,6 +3137,31 @@
           "command": "q-lint.newQueryForProcess",
           "when": "view == q-lint.processes && viewItem =~ /^(process|discovered)/ && config.q-lint.processes.newQuery.enable",
           "group": "1_connect@4"
+        },
+        {
+          "command": "q-lint.manageHdbColumn",
+          "when": "view == q-lint.processExplorer && viewItem == explorer.table && config.q-lint.hdbBrowser.columnManager.enable",
+          "group": "3_database@1"
+        },
+        {
+          "command": "q-lint.adviseAttributes",
+          "when": "view == q-lint.processExplorer && viewItem == explorer.table && config.q-lint.processExplorer.attributeAdvisor.enable",
+          "group": "3_database@2"
+        },
+        {
+          "command": "q-lint.writeSchemaMigration",
+          "when": "view == q-lint.processExplorer && viewItem == explorer.table && config.q-lint.schemaMigration.enable",
+          "group": "3_database@3"
+        },
+        {
+          "command": "q-lint.generateTestData",
+          "when": "view == q-lint.processExplorer && viewItem == explorer.table && config.q-lint.testDataGenerator.enable",
+          "group": "3_database@4"
+        },
+        {
+          "command": "q-lint.addToDashboard",
+          "when": "view == q-lint.savedQueries && viewItem == savedQuery && config.q-lint.dashboards.enable && config.q-lint.savedQueries.enable",
+          "group": "2_dashboard@1"
         }
       ],
       "editor/title/run": [
@@ -3097,6 +3290,11 @@
           "command": "q-lint.stripNotebookOutputs",
           "when": "resourceExtname =~ /^\\.qnb$/i && config.q-lint.notebook.stripOutputs.enable",
           "group": "q-lint"
+        },
+        {
+          "command": "q-lint.renderChartFromFile",
+          "when": "resourceExtname =~ /^\\.(csv|tsv|json)$/ && config.q-lint.charts.commandLine.enable",
+          "group": "q-lint@20"
         }
       ],
       "editor/context": [
@@ -3759,6 +3957,50 @@
         {
           "command": "q-lint.restartNotebookAndRunAll",
           "when": "q-lint.notebookActive && config.q-lint.notebook.restartRunAll.enable"
+        },
+        {
+          "command": "q-lint.manageHdbColumn",
+          "when": "config.q-lint.hdbBrowser.columnManager.enable"
+        },
+        {
+          "command": "q-lint.documentDatabase",
+          "when": "config.q-lint.databaseDocumenter.enable"
+        },
+        {
+          "command": "q-lint.checkPartitions",
+          "when": "config.q-lint.hdbBrowser.partitionCheck.enable"
+        },
+        {
+          "command": "q-lint.inspectSymFile",
+          "when": "config.q-lint.hdbBrowser.symInspector.enable"
+        },
+        {
+          "command": "q-lint.adviseAttributes",
+          "when": "config.q-lint.processExplorer.attributeAdvisor.enable"
+        },
+        {
+          "command": "q-lint.writeSchemaMigration",
+          "when": "config.q-lint.schemaMigration.enable"
+        },
+        {
+          "command": "q-lint.generateTestData",
+          "when": "config.q-lint.testDataGenerator.enable"
+        },
+        {
+          "command": "q-lint.openTickerplantLog",
+          "when": "config.q-lint.tickerplantLog.enable"
+        },
+        {
+          "command": "q-lint.openDashboard",
+          "when": "config.q-lint.dashboards.enable"
+        },
+        {
+          "command": "q-lint.addToDashboard",
+          "when": "config.q-lint.dashboards.enable && config.q-lint.savedQueries.enable"
+        },
+        {
+          "command": "q-lint.renderChartFromFile",
+          "when": "config.q-lint.charts.commandLine.enable"
         }
       ],
       "editor/title": [
@@ -4150,7 +4392,8 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "package": "vsce package",
-    "test": "tsc -p ./ && node --test test/*.test.js"
+    "test": "tsc -p ./ && node --test test/*.test.js",
+    "chart": "node out/chartcli.js"
   },
   "dependencies": {
     "node-q": "^2.7.0",

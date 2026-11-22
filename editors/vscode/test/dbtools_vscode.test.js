@@ -1,0 +1,298 @@
+// The database commands' flows (#1022-#1031) through the stand-in `vscode`
+// and a q process played by a socket server: off, each refuses, says how to
+// turn it on and sends nothing; on, the reports open as new documents; the
+// column manager is refused on a guarded process before anything is shown,
+// and elsewhere runs only after Run; a dashboard's tiles run read-only
+// queries, keep timers only when given an interval, and stop when the
+// switch goes off; the tickerplant log's q is the extension's own, and goes
+// when the switch does. Needs a q binary for the log's part, as
+// dbtools_q.test.js does.
+const { stub, vscode } = require("./vscode_stub.js");
+const test = require("node:test");
+const assert = require("node:assert");
+const net = require("node:net");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const { serialize, deserialize } = require("node-q/lib/c.js");
+const { Live } = require("../out/live.js");
+const { registerDbTools } = require("../out/dbtoolsview.js");
+const { Dashboards, tileContent } = require("../out/dashboardview.js");
+const { TickerplantLog } = require("../out/tplogview.js");
+const { DB_COMMANDS, DB_SETTINGS } = require("../out/dbfeatures.js");
+const { RUN_SCRIPT } = require("../out/colmanager.js");
+const { TABLE_INFO } = require("../out/tableinfo.js");
+const { DOCUMENT } = require("../out/dbdoc.js");
+const { SAVED_QUERIES_KEY } = require("../out/savedqueries.js");
+const { DASHBOARDS_KEY } = require("../out/dashboard.js");
+
+/// A q process played by a socket server; `answer(message)` answers each
+/// message, decoded, and every message is kept.
+async function fakeQ(answer) {
+  const sent = [];
+  const sockets = new Set();
+  const server = net.createServer((socket) => {
+    sockets.add(socket);
+    socket.on("error", () => {});
+    let shook = false;
+    let buffer = Buffer.alloc(0);
+    socket.on("data", (chunk) => {
+      if (!shook) {
+        shook = true;
+        socket.write(Buffer.from([3]));
+        return;
+      }
+      buffer = Buffer.concat([buffer, chunk]);
+      while (buffer.length >= 8 && buffer.length >= buffer.readUInt32LE(4)) {
+        const message = buffer.subarray(0, buffer.readUInt32LE(4));
+        buffer = buffer.subarray(message.length);
+        const m = deserialize(message);
+        sent.push(m);
+        const out = serialize(answer(m));
+        out.writeUInt8(2, 1);
+        socket.write(out);
+      }
+    });
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  return {
+    port: server.address().port,
+    sent,
+    close: () => {
+      for (const s of sockets) s.destroy();
+      server.close();
+    },
+  };
+}
+
+const INFO = { kind: "partitioned", rows: 18, bytes: null, partitions: 3, keys: [], ncols: 3, cols: ["date", "sym", "px"], types: ["d", "s", "f"], fkeys: ["", "", ""], attrs: ["", "", ""] };
+const DOC = { pf: "date", parts: 3, tables: { name: "trade", kind: "partitioned", rows: 18, keys: [], cols: ["date", "sym"], types: ["d", "s"], fkeys: ["", ""], attrs: ["", ""] }, fnames: [], fparams: [] };
+
+function answers(m) {
+  const lambda = Array.isArray(m) ? m[0] : m;
+  if (lambda === TABLE_INFO) return INFO;
+  if (lambda === DOCUMENT) return DOC;
+  if (lambda === RUN_SCRIPT) return [true, "changed 3 of 3 directories"];
+  return null;
+}
+
+/// workspaceState that keeps what is put in it.
+function keepingState(context) {
+  const state = new Map();
+  context.workspaceState = { get: (k, d) => (state.has(k) ? structuredClone(state.get(k)) : d), update: async (k, v) => void state.set(k, structuredClone(v)), keys: () => [...state.keys()] };
+}
+
+function capture() {
+  const opened = [];
+  vscode.workspace.openTextDocument = async (options) => (opened.push(options), options);
+  vscode.window.showTextDocument = async () => undefined;
+  const panels = [];
+  vscode.window.createWebviewPanel = (id, title) => {
+    const panel = {
+      id,
+      title,
+      disposed: false,
+      posted: [],
+      webview: { html: "", cspSource: "vscode-resource:", asWebviewUri: (u) => u, postMessage: async (m) => void panel.posted.push(m), onDidReceiveMessage: () => {} },
+      disposeListeners: [],
+      onDidDispose(l) {
+        this.disposeListeners.push(l);
+      },
+      reveal() {},
+      dispose() {
+        if (this.disposed) return;
+        this.disposed = true;
+        this.disposeListeners.forEach((l) => l());
+      },
+    };
+    panels.push(panel);
+    return panel;
+  };
+  return { opened, panels };
+}
+
+async function setUp(t, tags = [], config = {}) {
+  stub.reset();
+  Object.assign(stub.config.user, config);
+  const q = await fakeQ(answers);
+  const context = stub.newContext();
+  keepingState(context);
+  await context.globalState.update("q-lint.processes", [{ label: "hdb", host: "127.0.0.1", port: q.port, tags }]);
+  const live = new Live(context);
+  const tools = registerDbTools(context, live);
+  t.after(async () => {
+    await stub.commands.get("q-lint.disconnectProcess")?.();
+    for (const d of context.subscriptions) d.dispose?.();
+    q.close();
+  });
+  return { q, live, context, tools };
+}
+
+const off = Object.fromEntries(Object.values(DB_SETTINGS).map((s) => [s.key, false]));
+
+test("off, every database command refuses, says how to turn it on, and sends nothing", async (t) => {
+  const { opened } = capture();
+  const { q, live, context } = await setUp(t, [], off);
+  const dashboards = new Dashboards(context, live);
+  const log = new TickerplantLog(context);
+  await live.connectTo("hdb");
+  const before = q.sent.length;
+  const cases = [
+    [DB_COMMANDS.manageColumn, ["trade", { op: "delete", column: "px" }], "hdbBrowser.columnManager.enable"],
+    [DB_COMMANDS.document, ["markdown"], "databaseDocumenter.enable"],
+    [DB_COMMANDS.checkPartitions, ["quick"], "hdbBrowser.partitionCheck.enable"],
+    [DB_COMMANDS.inspectSym, [], "hdbBrowser.symInspector.enable"],
+    [DB_COMMANDS.adviseAttributes, ["trade"], "processExplorer.attributeAdvisor.enable"],
+    [DB_COMMANDS.migrateSchema, ["a", "b"], "schemaMigration.enable"],
+    [DB_COMMANDS.testData, ["trade", { format: "q" }], "testDataGenerator.enable"],
+    [DB_COMMANDS.openTpLog, ["/no/such.log"], "tickerplantLog.enable"],
+    [DB_COMMANDS.openDashboard, ["d"], "dashboards.enable"],
+    [DB_COMMANDS.addToDashboard, ["q", "d", "hdb"], "dashboards.enable"],
+    [DB_COMMANDS.renderChart, ["/no/such.csv", "line", "/tmp/x.svg"], "charts.commandLine.enable"],
+  ];
+  for (const [command, args, key] of cases) {
+    if (!stub.commands.has(command)) continue;
+    const said = await stub.commands.get(command)(...args);
+    assert.match(said, new RegExp(`turned off\\. Set q-lint\\.${key.replace(/\./g, "\\.")} to true`), command);
+  }
+  assert.strictEqual(q.sent.length, before);
+  assert.strictEqual(opened.length, 0);
+  assert.strictEqual(dashboards.timerCount(), 0);
+  assert.strictEqual(log.port, undefined);
+});
+
+test("on, the documenter reads the process once and opens its document", async (t) => {
+  const { opened } = capture();
+  const { q, live } = await setUp(t);
+  await live.connectTo("hdb");
+  const before = q.sent.length;
+  const text = await stub.commands.get(DB_COMMANDS.document)("markdown");
+  assert.match(text, /### trade\n\npartitioned, 18 rows\./);
+  assert.deepStrictEqual(q.sent.slice(before).map((m) => m[0]), [DOCUMENT]);
+  assert.strictEqual(opened.at(-1).language, "markdown");
+  // Not connected: it says so and sends nothing.
+  await stub.commands.get("q-lint.disconnectProcess")();
+  assert.strictEqual(await stub.commands.get(DB_COMMANDS.document)("html"), "not read");
+});
+
+test("the column manager is refused on a guarded process before its script is shown or sent", async (t) => {
+  const { opened } = capture();
+  const { q, live, tools } = await setUp(t, ["prod"]);
+  await live.connectTo("hdb");
+  const said = await stub.commands.get(DB_COMMANDS.manageColumn)("trade", { op: "delete", column: "px" });
+  assert.match(said, /does not change hdb, which the read-only guard guards/);
+  assert.ok(!q.sent.some((m) => m[0] === RUN_SCRIPT));
+  assert.strictEqual(opened.length, 0);
+  assert.strictEqual(tools.state.lastScript, undefined);
+});
+
+test("elsewhere the column manager shows its script and runs it only after Run", async (t) => {
+  const { opened } = capture();
+  const { q, live, tools } = await setUp(t);
+  await live.connectTo("hdb");
+  stub.picks.push(undefined);
+  assert.strictEqual(await stub.commands.get(DB_COMMANDS.manageColumn)("trade", { op: "rename", column: "px", to: "price" }), "not run");
+  assert.ok(!q.sent.some((m) => m[0] === RUN_SCRIPT));
+  assert.strictEqual(opened.at(-1).language, "q");
+  assert.match(opened.at(-1).content, /rename column px to price in trade on hdb/);
+  stub.picks.push("Run");
+  assert.match(await stub.commands.get(DB_COMMANDS.manageColumn)("trade", { op: "rename", column: "px", to: "price" }), /changed 3 of 3 directories/);
+  const run = q.sent.find((m) => m[0] === RUN_SCRIPT);
+  assert.ok(run[1].some((s) => s.includes(".qlint.cm.ren[`px;`price]")));
+  assert.strictEqual(tools.state.lastRun, "changed 3 of 3 directories");
+  // A column the table lacks is refused before anything is shown.
+  const n = q.sent.length;
+  assert.match(await stub.commands.get(DB_COMMANDS.manageColumn)("trade", { op: "delete", column: "nope" }), /no column nope/);
+  assert.ok(q.sent.slice(n).every((m) => m[0] === TABLE_INFO));
+});
+
+test("a dashboard runs its tiles' read-only queries, keeps a timer only with an interval, and stops when turned off", async (t) => {
+  const { panels } = capture();
+  const { live, context } = await setUp(t);
+  await context.workspaceState.update(SAVED_QUERIES_KEY, [{ name: "px", code: "select from trade" }, { name: "bad", code: "t:1" }]);
+  let runs = 0;
+  live.runApart = async () => (runs++, { ok: true, type: 98, text: [], grid: { count: 2, keys: 0, names: ["a", "b"], types: [7, 9], cells: [["1", "2"], ["3", "4"]], raw: [[1, 2], [3, 4]], rank: [[0, 1], [0, 1]] } });
+  const dashboards = new Dashboards(context, live);
+  assert.match(await stub.commands.get(DB_COMMANDS.addToDashboard)("bad", undefined, "hdb"), /cannot be a tile: a dashboard runs read-only queries only/);
+  stub.inputs.push("Desk");
+  stub.picks.push("$(add) New dashboard...");
+  const id = await stub.commands.get(DB_COMMANDS.addToDashboard)("px", undefined, "hdb");
+  assert.strictEqual(typeof id, "string");
+  assert.strictEqual(context.workspaceState.get(DASHBOARDS_KEY)[0].name, "Desk");
+  await stub.commands.get(DB_COMMANDS.openDashboard)("Desk");
+  await new Promise((r) => setTimeout(r, 20));
+  assert.strictEqual(runs, 1);
+  assert.strictEqual(dashboards.contents.get(id).kind, "table");
+  assert.strictEqual(dashboards.timerCount(), 0);
+  await dashboards.receive({ type: "refresh-interval", id, seconds: 5 });
+  assert.strictEqual(dashboards.timerCount(), 1);
+  await dashboards.receive({ type: "view", id, view: "line" });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.strictEqual(dashboards.contents.get(id).kind, "chart");
+  assert.ok(panels[0].posted.some((m) => m.type === "layout" && m.tiles[0].refresh === 5));
+  assert.match(panels[0].webview.html, /Content-Security-Policy/);
+  stub.config.user["dashboards.enable"] = false;
+  stub.changeConfig("q-lint.dashboards.enable");
+  assert.strictEqual(panels[0].disposed, true);
+  assert.strictEqual(dashboards.timerCount(), 0);
+  const before = runs;
+  await dashboards.runTile({ id, query: "px", process: "hdb", view: "table", refresh: 0 });
+  assert.strictEqual(runs, before);
+  assert.deepStrictEqual(tileContent({ ok: false, error: "type", trace: "" }, "table"), { kind: "error", text: "type" });
+});
+
+test("a chart is rendered from a file to the path given", async (t) => {
+  capture();
+  const { context, live } = await setUp(t);
+  void context;
+  void live;
+  vscode.workspace.fs = {
+    readFile: async (u) => fs.readFileSync(u.fsPath),
+    writeFile: async (u, data) => fs.writeFileSync(u.fsPath, data),
+  };
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-chartcmd-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(dir, "d.csv"), "x,y\n1,2\n2,3\n");
+  const svg = await stub.commands.get(DB_COMMANDS.renderChart)(path.join(dir, "d.csv"), "scatter", path.join(dir, "d.svg"));
+  assert.ok(svg.startsWith("<svg"));
+  assert.strictEqual(fs.readFileSync(path.join(dir, "d.svg"), "utf8"), svg);
+});
+
+const Q = process.env.QLINT_TEST_Q;
+
+test("the tickerplant log is read in a q of the extension's own, replayed there after asking, and goes when turned off", { skip: Q ? false : "QLINT_TEST_Q names no q binary" }, async (t) => {
+  const { panels } = capture();
+  stub.reset();
+  stub.config.user["terminal.qBinary"] = Q;
+  const context = stub.newContext();
+  const log = new TickerplantLog(context);
+  t.after(() => context.subscriptions.forEach((d) => d.dispose?.()));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-tplog-test-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  // A log written by a q of the test's own.
+  const make = path.join(dir, "make.q");
+  fs.writeFileSync(make, ['f:hsym`$"' + path.join(dir, "tp.log") + '";', ".[f;();:;()];", "h:hopen f;", "h enlist(`upd;`t;([]time:enlist 2026.01.05D09:00:00;x:enlist 1));", "h enlist(`upd;`t;([]time:enlist 2026.01.05D10:00:00;x:enlist 2));", "hclose h;", "exit 0;", ""].join("\n"));
+  require("node:child_process").execSync(`${Q} ${make}`, { stdio: "ignore", timeout: 15000 });
+  assert.strictEqual(await log.open(path.join(dir, "tp.log")), "2 messages");
+  const port = log.port;
+  assert.ok(port > 0);
+  await log.receive({ type: "ready" });
+  const page = log.posted.find((m) => m.type === "page");
+  assert.deepStrictEqual(page.rows.map((r) => r.table), ["t", "t"]);
+  await log.receive({ type: "page", table: "t", from: "09:30", to: "", offset: 0 });
+  assert.deepStrictEqual(log.posted.at(-1).rows.map((r) => r.index), [1]);
+  stub.picks.push(undefined);
+  assert.strictEqual(await log.replay(0, 1), "not replayed");
+  stub.picks.push("Replay");
+  assert.match(await log.replay(0, 1), /Replayed 2 messages\. The local q on port \d+ now holds t 2 rows/);
+  stub.config.user["tickerplantLog.enable"] = false;
+  stub.changeConfig("q-lint.tickerplantLog.enable");
+  assert.strictEqual(panels[0].disposed, true);
+  assert.strictEqual(log.port, undefined);
+  await new Promise((r) => setTimeout(r, 300));
+  const up = await new Promise((resolve) => {
+    const s = net.connect(port, "127.0.0.1", () => (s.destroy(), resolve(true)));
+    s.on("error", () => resolve(false));
+  });
+  assert.strictEqual(up, false);
+});

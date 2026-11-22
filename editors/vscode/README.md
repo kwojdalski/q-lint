@@ -1686,6 +1686,127 @@ Close it, and nothing happens. `q-lint.chat.englishToQsql.enable` off hides
 the command. Both need a language model in VS Code, such as GitHub
 Copilot's; without one they say so.
 
+### Databases, HDBs and dashboards
+
+Each of these has its own `enable` setting ([Database
+settings](#database-settings)); turned off, its commands are hidden and
+refuse, its panel closes, its timers stop, and it sends nothing. The ones
+that read a process read it as the Process Explorer does - a fixed lambda
+that defines nothing, on the query connection, waiting for a query rather
+than interrupting one - and open what they made in a new, unsaved editor:
+nothing is written into the workspace unless you save it.
+
+**Manage HDB Column...**, in the HDB Browser's title menu, on a table in
+the Process Explorer or in the palette, adds, deletes, renames or casts a
+column, or sets or removes its attribute, in every partition of a
+partitioned table (`.Q.par`, so segments are followed) or in a splayed
+table under the root. It writes the q first, with its helpers in it, in
+the way of KX's dbmaint.q - each changes one table directory's column
+files and `.d`, and a directory where the change cannot be made is left as
+it is and named in the answer - and opens it for review; a modal asks, and
+only **Run** runs it. The database is loaded again after (`\l .`), so the
+process sees what is on disk. A symbol default, and a cast to `s`, are
+enumerated against the root's `sym` file. Casting and setting an attribute
+read and write the whole column of each partition. A process the read-only
+guard guards is refused outright, before the script is shown, whatever is
+answered.
+
+**Document Database** writes the connected process's tables - columns with
+their types, attributes and foreign keys, keys, rows, partitions - and its
+functions with their parameters as a Markdown or HTML document, with the
+qDoc comment written above each function in the workspace where there is
+one.
+
+**Check Partition Consistency**, in the HDB Browser's title bar, reports
+what a partitioned database q would trip on or hide: weekdays missing from
+the date range, a table missing from a partition, a missing `.d` or column
+file, a column or type that differs from the table's other partitions, a
+symbol column enumerated against a domain the root has no file for, and a
+partition whose rows are empty or ten times from the median - each with
+its partitions. The quick check reads no column data (`.d` files, and each
+column file's header through `type get`); the full check also reads every
+symbol column, for an index past the end of its sym file. The newest 1000
+partitions are checked.
+
+**Inspect Sym File** gives the sym file's size and count, the distinct
+symbols each enumerated column uses (from 20 partitions spread over the
+range, and the splayed tables in the root, whose symbol columns it reads),
+how big the file was when each of those partitions was written (one more
+than the largest index it uses), and a warning above
+`q-lint.hdbBrowser.symInspector.warnAbove` symbols.
+
+**Advise Attributes**, on a table in the Process Explorer, suggests `s#`,
+`u#`, `p#` or `g#` per column - or none - with the reason and about what
+it costs in memory, from up to 100,000 rows (of a partitioned table, the
+first rows of its last partition, mapped from its directory) and from how
+many saved queries and Query History entries filter on the column. It
+never applies one. The costs are KX's figures - nothing for `s#`, about 16
+bytes a distinct value for `u#`, 24 for `p#`, 8 a row plus 16 a distinct
+value for `g#` - and kdb+ allocates in powers of two, so a real one can be
+up to twice that. A column no query filters on is suggested only `s#`, or
+the shape it already has when it is the table's first.
+
+**Write Schema Migration...**, on a table, compares its meta with another
+table's - on the same process, or on another saved process, read over a
+connection of its own - and writes the q that turns the first into the
+second, for review; nothing runs. A table in memory is assigned again
+(`delete`, `update`, a cast, `xcols`, `xkey`); a table on disk gets the
+column manager's script, every step in every partition. The metas cannot
+tell a rename from a drop and an add, and say so as that.
+
+**Generate Test Data...**, on a table, makes random rows shaped as its
+meta, with the number of rows, the symbols drawn from (names, or `50` for
+`sym1` to `sym50`), the range numbers are drawn from, and a column kept in
+ascending order chosen, as q code to run on a local process (it sets `\S`, so it
+makes the same rows each time) or as CSV, with the `0:` types that read it
+back.
+
+**Open Tickerplant Log...** starts a q of its own (`q-lint.terminal.qBinary`,
+in a new temporary directory, listening on the loopback only) and has it
+read the log with `-11!`. Its messages are listed by number with their
+function, table, rows and first time, filtered by table and time of day,
+and paged 200 at a time; the one picked is shown in full, and Previous and
+Next step through them. A log cut short is read to its last whole message,
+and the panel says how many bytes were left. **Replay** runs a range of
+messages in that q, after asking, with an `upd` that inserts into a table
+of that name (made from a first message that is a table); **Load
+Schema...** loads a q file - the tickerplant's schema and `upd` - into it
+first. Nothing is sent to any process of yours. The q stops, and its
+directory goes, when the panel closes.
+
+**Open Dashboard...** shows a panel of tiles, each a saved query run on a
+saved process, shown as a table (its first 200 rows) or as a line, bar,
+area, step or scatter chart, with its own **Refresh**, interval and view;
+**Add to Dashboard...**, on a saved query, adds one. A tile runs over a
+connection of its own, as **Query a Tag** does, when the panel opens, on
+**Refresh**, and every so many seconds only when you give it an interval:
+none has one until you do. A refresh due while the last is still out is
+skipped. Only a query the read-only guard reads as changing nothing can be
+a tile, and none with a `{{placeholder}}`. The layout - the tiles, their
+order, intervals and views, and how many a row - is kept in the
+workspace's storage, as saved queries are.
+
+**Render Chart from CSV or JSON File...**, in the Explorer's context menu
+on a `.csv`, `.tsv` or `.json` file, draws it as an SVG chart with the
+code the result panel saves its charts with, and writes the file you name.
+The same works from a shell, for a report or a CI job, with nothing but
+node and the extension's files:
+
+```sh
+node out/chartcli.js fills.csv -o fills.svg --kind line --title "Fills"
+node out/chartcli.js --host localhost --port 5000 \
+  --query "select avg px by 5 xbar time.minute from trade" -o px.svg --kind bar
+```
+
+Run it from the extension's directory (`~/.vscode/extensions/wojdalski.q-lint-*`,
+or `editors/vscode` in a checkout after `npm run compile`, where `npm run
+chart -- ...` does the same). `--x` and `--y` pick the columns, `--width`,
+`--height` and `--background` the picture; a CSV's first row names its
+columns, and JSON is an array of rows or an object of columns, as `.j.j`
+writes a table. A query's password is read from `QLINT_CHART_PASSWORD`, and
+a query the read-only guard reads as changing the process is refused. It
+writes SVG only: a PNG would need a rasterizer, and so a dependency.
+
 ## q notebooks
 
 A `.qnb` file opens as a notebook of q code cells and markdown cells;
@@ -2305,6 +2426,22 @@ Read when a cell runs or a command is used, so a change needs no reload. None re
 | `q-lint.processes.tagColors` | `{}` | A tag's colour in the Processes view, as a theme colour id: `{"eu": "charts.purple"}`. Over the built-in `prod`, `uat` and `dev` colours; a value that is not a colour id is ignored. Changing it recolours the view at once. | - |
 | `q-lint.processes.readOnlyGuard.enable` | `true` | Ask before sending code that would change a process carrying a guarded tag; refuse an agent's. Off, code is sent unasked. | - |
 | `q-lint.processes.readOnlyGuard.tags` | `["prod","prd","production"]` | The tags the read-only guard guards, ignoring case; `[]` guards none. | - |
+
+### Database settings
+
+| Setting | Default | What it does | q-pro |
+| --- | --- | --- | --- |
+| `q-lint.hdbBrowser.columnManager.enable` | `true` | **Manage HDB Column...**. Off, the command is hidden and refuses. | - |
+| `q-lint.databaseDocumenter.enable` | `true` | **Document Database**. Off, the command is hidden and refuses. | - |
+| `q-lint.hdbBrowser.partitionCheck.enable` | `true` | **Check Partition Consistency**. Off, the command is hidden and refuses. | - |
+| `q-lint.hdbBrowser.symInspector.enable` | `true` | **Inspect Sym File**. Off, the command is hidden and refuses. | - |
+| `q-lint.hdbBrowser.symInspector.warnAbove` | `1000000` | **Inspect Sym File** warns when the sym file holds more symbols than this. | - |
+| `q-lint.processExplorer.attributeAdvisor.enable` | `true` | **Advise Attributes**. Off, the command is hidden and refuses. | - |
+| `q-lint.schemaMigration.enable` | `true` | **Write Schema Migration...**. Off, the command is hidden and refuses. | - |
+| `q-lint.testDataGenerator.enable` | `true` | **Generate Test Data...**. Off, the command is hidden and refuses. | - |
+| `q-lint.tickerplantLog.enable` | `true` | **Open Tickerplant Log...**. Off, the command is hidden and refuses, and an open log's panel and q are closed. | - |
+| `q-lint.dashboards.enable` | `true` | **Open Dashboard...** and **Add to Dashboard...**. Off, they are hidden and refuse, the panel closes and every refresh stops. A tile refreshes on its own only with an interval you give it. | - |
+| `q-lint.charts.commandLine.enable` | `true` | **Render Chart from CSV or JSON File...**. Off, the command is hidden and refuses; `out/chartcli.js` is yours to run or not. | - |
 
 ### Not here, and why
 
