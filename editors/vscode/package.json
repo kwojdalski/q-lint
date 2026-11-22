@@ -1310,6 +1310,12 @@
             "default": true,
             "order": 801,
             "markdownDescription": "Offer **Import Servers from qStudio...** and **Import Connections from KX Extension...**, on the Processes view's title menu and in the palette: they read qStudio's server list (its Copy Server List text, its XML, or its preferences file) or the KX kdb extension's `kdb.servers` or export file, and add the kdb processes named, after asking. A password is never imported, and a label already saved is kept. Off: the commands are hidden and refuse."
+          },
+          "q-lint.connection.credentialCommand.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 802,
+            "markdownDescription": "Offer **Set Credential Command**, on a saved process: a command run in a shell at each connect whose output (a JSON object with `password` or `token` and optionally `user`, or a line: the password, or `user:password`) is the handshake's user and password - for Kerberos, a vault or a token service. What it prints is used for that connect only: never stored, logged or put in settings. Read from a shared list only in a trusted workspace. Off: the command is hidden and refuses, and processes connect with their stored password."
           }
         }
       }
@@ -2308,6 +2314,11 @@
         "command": "q-lint.importKxConnections",
         "title": "Import Connections from KX Extension...",
         "category": "q-lint"
+      },
+      {
+        "command": "q-lint.setCredentialCommand",
+        "title": "Set Credential Command",
+        "category": "q-lint"
       }
     ],
     "views": {
@@ -2833,6 +2844,11 @@
           "command": "q-lint.newQueryForProcess",
           "when": "view == q-lint.processes && viewItem =~ /^(process|discovered)/ && config.q-lint.processes.newQuery.enable",
           "group": "1_connect@4"
+        },
+        {
+          "command": "q-lint.setCredentialCommand",
+          "when": "view == q-lint.processes && viewItem =~ /^process/ && config.q-lint.connection.credentialCommand.enable",
+          "group": "2_edit@8"
         }
       ],
       "editor/title/run": [
@@ -3579,6 +3595,10 @@
         {
           "command": "q-lint.importKxConnections",
           "when": "config.q-lint.processes.importOther.enable"
+        },
+        {
+          "command": "q-lint.setCredentialCommand",
+          "when": "config.q-lint.connection.credentialCommand.enable"
         }
       ],
       "editor/title": [

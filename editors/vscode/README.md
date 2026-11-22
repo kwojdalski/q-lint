@@ -507,6 +507,22 @@ already in the list is kept as it is, and no password is ever imported,
 even where the source holds one: each is asked for on the first connect.
 `q-lint.processes.importOther.enable` off hides both commands.
 
+**Set Credential Command**, on a saved process, gives it a command run in
+a shell at each connect, whose output is the user and password sent in the
+handshake - for a Kerberos ticket, a vault or a token service. It prints a
+JSON object with `password` (or `token`) and optionally `user` (or
+`username`), or a line: the password when the process has a user, else
+`user:password`, else the password alone. It runs in the workspace folder
+(or your home), with `QLINT_PROCESS_LABEL`, `QLINT_PROCESS_HOST`,
+`QLINT_PROCESS_PORT` and `QLINT_PROCESS_USER` set, and is given 30 seconds.
+What it prints is used for that one connect and kept nowhere - not in
+secret storage, settings, the process list or a log - and a failure says
+only how it ended (its exit code, or the timeout), never its output. The
+command itself is kept with the process, like a launch definition, and in
+a shared `.qlint/processes.json` it is read only in a trusted workspace.
+`q-lint.connection.credentialCommand.enable` off hides the command, and
+processes connect with their stored password instead.
+
 **Querying.** With a q file open:
 - **Query Current Line**, `ctrl+q`.
 - **Query Current Selection**, `ctrl+r`: the current line when nothing is
@@ -2152,6 +2168,7 @@ applies at once, without a reload. None reaches the language server.
 | --- | --- | --- | --- |
 | `q-lint.processes.bulkAdd.enable` | `true` | **Add Many Processes...**: paste lines or CSV, checked and added. Off, the command is hidden and refuses, and an open form closes. | - |
 | `q-lint.processes.importOther.enable` | `true` | **Import Servers from qStudio...** and **Import Connections from KX Extension...**, never a password. Off, both are hidden and refuse. | - |
+| `q-lint.connection.credentialCommand.enable` | `true` | **Set Credential Command**, and running a process's command at each connect for its user and password, never kept. Off, the command is hidden and refuses, and the stored password is used. | - |
 
 ### Terminal settings
 
