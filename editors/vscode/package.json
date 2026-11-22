@@ -1349,6 +1349,12 @@
             "default": true,
             "order": 806,
             "markdownDescription": "Offer **Interrupt Query on Local Process**: for a connected process started from the Processes view (**Start Process**), send it SIGINT, so q stops the running query with `'stop` and the connection stays. Off: the command is hidden and refuses."
+          },
+          "q-lint.query.async.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 807,
+            "markdownDescription": "Offer **Run Query Asynchronously**, in a q editor's context menu and the palette: the selection or statement at the cursor is sent as an async message, the connection stays free for other queries, and the result opens in the result panel when the process sends it back. Read by the read-only guard first. **Show Pending Async Queries** lists those still to answer. Off: the commands are hidden and refuse, and pending results are dropped."
           }
         }
       }
@@ -2363,6 +2369,17 @@
         "title": "Interrupt Query on Local Process",
         "category": "q-lint",
         "icon": "$(debug-pause)"
+      },
+      {
+        "command": "q-lint.queryAsync",
+        "title": "Run Query Asynchronously",
+        "category": "q-lint",
+        "icon": "$(run-below)"
+      },
+      {
+        "command": "q-lint.showPendingAsyncQueries",
+        "title": "Show Pending Async Queries",
+        "category": "q-lint"
       }
     ],
     "views": {
@@ -3168,6 +3185,11 @@
           "command": "q-lint.runFileWithArguments",
           "when": "editorLangId == q && resourceScheme == file && config.q-lint.terminal.runWithArguments.enable",
           "group": "q-lint@11"
+        },
+        {
+          "command": "q-lint.queryAsync",
+          "when": "editorLangId == q && config.q-lint.query.async.enable",
+          "group": "q-lint@26"
         }
       ],
       "testing/item/context": [
@@ -3656,6 +3678,14 @@
         {
           "command": "q-lint.interruptQuery",
           "when": "q-lint.connected && config.q-lint.query.cancelLocal.enable"
+        },
+        {
+          "command": "q-lint.queryAsync",
+          "when": "config.q-lint.query.async.enable"
+        },
+        {
+          "command": "q-lint.showPendingAsyncQueries",
+          "when": "config.q-lint.query.async.enable"
         }
       ],
       "editor/title": [

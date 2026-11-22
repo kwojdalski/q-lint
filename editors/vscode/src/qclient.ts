@@ -37,6 +37,7 @@ export const CONNECT_TIMEOUT_MS = 10_000;
 /// Compression, timestamps and timespans, and GUIDs: what a kdb+ 3 client
 /// announces.
 const CAPABILITY = 3;
+const ASYNC = 0;
 const SYNC = 1;
 const RESPONSE = 2;
 /// The response to a sync request from the process: a q error.
@@ -199,6 +200,19 @@ export class QConnection {
     const message: Buffer = serialize(sent.length === 0 ? expression : [expression, ...sent]);
     message.writeUInt8(SYNC, 1);
     return this.send(message);
+  }
+
+  /// Send `expression` applied to `args` as an async message (#1037): q
+  /// runs it and answers nothing, so this connection is not busy meanwhile;
+  /// what the expression sends back with `neg[.z.w]` reaches `whenAsync`.
+  sendAsync(expression: string, ...args: unknown[]): void {
+    if (this.closed) {
+      throw new Error("the connection is closed");
+    }
+    const sent = args.map(statementsOut);
+    const message: Buffer = serialize(sent.length === 0 ? expression : [expression, ...sent]);
+    message.writeUInt8(ASYNC, 1);
+    this.socket.write(message);
   }
 
   private send(message: Buffer): Promise<unknown> {

@@ -548,6 +548,21 @@ the next query, where Abort can only stop waiting and reconnect. For any
 other process it says so and sends nothing. Their switches are
 `q-lint.query.processTimeout.enable` and `q-lint.query.cancelLocal.enable`.
 
+**Run Query Asynchronously**, in a q editor's context menu, sends the
+selection or the statement at the cursor as an async message: the command
+returns at once, the connection stays free for other queries (which the
+process runs after it, one message at a time), and when the process is done
+the result opens in the result panel - a table as a grid, any other value as
+its lines - and goes into Query History. The query is wrapped in a lambda
+that shapes the value as a grid query does and sends it back on your handle
+(`neg[.z.w]`); nothing is kept on the process. It is read by the read-only
+guard first, as any query is. While results are due, the status bar counts
+them; **Show Pending Async Queries** lists them and can forget one (q runs
+it to the end anyway: it cannot cancel a running query). A connection that
+closes takes its pending results with it, and says so.
+`q-lint.query.async.enable` off hides both commands and drops what is
+pending.
+
 **Querying.** With a q file open:
 - **Query Current Line**, `ctrl+q`.
 - **Query Current Selection**, `ctrl+r`: the current line when nothing is
@@ -2198,6 +2213,7 @@ applies at once, without a reload. None reaches the language server.
 | `q-lint.processes.environmentColor.colors` | prod, prd, production red; uat amber | Tag to colour: `red`, `amber`, `yellow`, `purple`, `blue`, `green` or `#rrggbb`. | - |
 | `q-lint.query.processTimeout.enable` | `true` | **Set Process Timeout**, and each process's own timeout over `q-lint.query.timeout`. Off, the command is hidden and refuses, and `q-lint.query.timeout` applies everywhere. | - |
 | `q-lint.query.cancelLocal.enable` | `true` | **Interrupt Query on Local Process**: SIGINT to a process started from here. Off, the command is hidden and refuses. | - |
+| `q-lint.query.async.enable` | `true` | **Run Query Asynchronously** and **Show Pending Async Queries**. Off, both are hidden and refuse, and pending results are dropped. | - |
 
 ### Terminal settings
 
