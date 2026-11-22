@@ -1,0 +1,1032 @@
+//! qSQL to functional form and back: `select n:count i by sym from t where
+//! px>2` and `?[t;enlist(>;`px;2);(enlist`sym)!enlist`sym;(enlist`n)!enlist(count;`i)]`
+//! are the same query, and either can be rewritten as the other where the
+//! text settles every part.
+//!
+//! Neither direction runs anything. An expression is read the way q reads
+//! one - right to left, a dyad taking everything to its right, a noun next
+//! to a noun an application - into the parse tree `parse` gives for it, and
+//! a tree is written back as the text that reads to it. A name in a query
+//! becomes a symbol (`` `px ``), as in `parse`: whether it is a column or a
+//! global is the query's to settle when it runs, and the functional form
+//! settles it the same way. A symbol literal is enlisted, the one thing a
+//! hand-written functional form most often gets wrong.
+//!
+//! What this cannot read it refuses, with the reason, rather than guess: an
+//! adverb (`f'`, `,/`), an assignment inside an expression, a projection
+//! (`f[x;]`), `select[n]`, a glyph used as a monad (q refuses `-px` too:
+//! `neg px` is the monad), and
+//! anything else the small reader below does not know. A select column with
+//! no name is named the way q names it - from the first name its tree reads
+//! from, `x` where that is a literal (see `derived`), refused where this is
+//! not sure of it - and duplicates get `1`, `2`, ... after them; `tests/functional.rs` holds the
+//! cases, each compared with `~` against the qSQL it came from in KDB-X.
+//! PeachQ refuses one shape KDB-X runs: a where clause that is a bare name
+//! (`where flag`, `enlist`flag`).
+use super::layout;
+
+/// A rewrite of the query at the cursor: the bytes `start..end` replaced by
+/// `text`.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Conversion {
+    pub start: usize,
+    pub end: usize,
+    pub text: String,
+}
+
+/// A parse tree, as `parse` would give it.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub(crate) enum Node {
+    /// A literal written as is: a number or a vector of them, a boolean, a
+    /// string, a temporal, a lambda, `()`.
+    Leaf(String),
+    /// A name: a column or a global, a symbol in the tree.
+    Name(String),
+    /// A symbol literal, one or several, enlisted in the tree.
+    Sym(Vec<String>),
+    /// A primitive or a keyword in function position: `>`, `count`, `in`.
+    Verb(String),
+    /// A function applied to its arguments: `(f;x;y)`.
+    Apply(Box<Node>, Vec<Node>),
+    /// A general list, `(a;b)`: `(enlist;a;b)` in the tree.
+    List(Vec<Node>),
+}
+
+/// The keywords q applies infix, beyond the ones the catalogue writes as
+/// `x kw y`: the `.q` functions of two arguments.
+const MORE_INFIX: [&str; 18] = [
+    "fby", "each", "peach", "over", "scan", "prior", "xasc", "xdesc", "xgroup", "xkey", "lj",
+    "ljf", "ij", "ijf", "uj", "ujf", "pj", "asof",
+];
+
+fn infix(word: &str) -> bool {
+    MORE_INFIX.contains(&word)
+        || crate::builtin(word).is_some_and(|b| {
+            b.syntax
+                .strip_prefix("x ")
+                .and_then(|s| s.strip_prefix(word))
+                .is_some_and(|s| s.starts_with(" y"))
+        })
+}
+
+/// Whether `word` is one of q's own, so a function rather than a name.
+fn keyword(word: &str) -> bool {
+    crate::is_reserved(word) || MORE_INFIX.contains(&word)
+}
+
+#[derive(Clone, PartialEq, Debug)]
+enum Tok {
+    Leaf(String),
+    Sym(Vec<String>),
+    Name(String),
+    Op(String),
+    Open(u8),
+    Close(u8),
+    Semi,
+}
+
+const GLYPHS: &[u8] = b"=<>+-*%&|,^#_~$!?@.";
+
+/// `text` as tokens, or why it cannot be read here.
+fn tokens(text: &str) -> Result<Vec<Tok>, String> {
+    let b = text.as_bytes();
+    let mut out: Vec<Tok> = vec![];
+    let mut i = 0;
+    // Whether the token before ends a noun, so a `-` next to it, with no
+    // blank between, is the dyad rather than a sign.
+    let noun_end = |out: &Vec<Tok>, i: usize| {
+        i > 0
+            && !b[i - 1].is_ascii_whitespace()
+            && matches!(
+                out.last(),
+                Some(Tok::Leaf(_) | Tok::Sym(_) | Tok::Name(_) | Tok::Close(_))
+            )
+    };
+    while i < b.len() {
+        let c = b[i];
+        let next = b.get(i + 1).copied();
+        if c.is_ascii_whitespace() {
+            i += 1;
+            continue;
+        }
+        let number_start = c.is_ascii_digit()
+            || (c == b'.' && next.is_some_and(|n| n.is_ascii_digit()))
+            || (c == b'-'
+                && (next.is_some_and(|n| n.is_ascii_digit())
+                    || (next == Some(b'.') && b.get(i + 2).is_some_and(|n| n.is_ascii_digit())))
+                && !noun_end(&out, i));
+        if number_start {
+            let start = i;
+            i += 1;
+            while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'.' || b[i] == b':') {
+                i += 1;
+            }
+            let atom = text[start..i].to_string();
+            // A vector: numbers separated by blanks are one literal.
+            match out.last_mut() {
+                Some(Tok::Leaf(prev))
+                    if start > 0
+                        && b[start - 1] == b' '
+                        && prev
+                            .bytes()
+                            .next()
+                            .is_some_and(|f| f.is_ascii_digit() || f == b'-' || f == b'.') =>
+                {
+                    prev.push(' ');
+                    prev.push_str(&atom);
+                }
+                _ => out.push(Tok::Leaf(atom)),
+            }
+            continue;
+        }
+        match c {
+            b'`' => {
+                let mut syms = vec![];
+                while i < b.len() && b[i] == b'`' {
+                    let start = i + 1;
+                    i += 1;
+                    while i < b.len()
+                        && (b[i].is_ascii_alphanumeric()
+                            || matches!(b[i], b'_' | b'.' | b':' | b'/'))
+                    {
+                        i += 1;
+                    }
+                    syms.push(text[start..i].to_string());
+                }
+                out.push(Tok::Sym(syms));
+            }
+            b'"' => {
+                let start = i;
+                i += 1;
+                while i < b.len() && b[i] != b'"' {
+                    i += if b[i] == b'\\' { 2 } else { 1 };
+                }
+                if i >= b.len() {
+                    return Err("an unterminated string".into());
+                }
+                i += 1;
+                out.push(Tok::Leaf(text[start..i].to_string()));
+            }
+            b'{' => {
+                let start = i;
+                let mut depth = 0i32;
+                let mut string = false;
+                while i < b.len() {
+                    match b[i] {
+                        b'\\' if string => i += 1,
+                        b'"' => string = !string,
+                        b'{' if !string => depth += 1,
+                        b'}' if !string => {
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                    i += 1;
+                }
+                if i >= b.len() {
+                    return Err("an unclosed lambda".into());
+                }
+                i += 1;
+                out.push(Tok::Leaf(text[start..i].to_string()));
+            }
+            b'(' | b'[' => {
+                out.push(Tok::Open(c));
+                i += 1;
+            }
+            b')' | b']' => {
+                out.push(Tok::Close(c));
+                i += 1;
+            }
+            b';' => {
+                out.push(Tok::Semi);
+                i += 1;
+            }
+            b'\'' | b'/' | b'\\' => return Err("an adverb".into()),
+            b':' => return Err("an assignment inside an expression".into()),
+            _ if c.is_ascii_alphabetic()
+                || (c == b'.' && next.is_some_and(|n| n.is_ascii_alphabetic())) =>
+            {
+                let start = i;
+                i += 1;
+                while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'_' || b[i] == b'.')
+                {
+                    i += 1;
+                }
+                out.push(Tok::Name(text[start..i].to_string()));
+            }
+            _ if GLYPHS.contains(&c) => {
+                let two = matches!((c, next), (b'<', Some(b'=' | b'>')) | (b'>', Some(b'=')));
+                let n = if two { 2 } else { 1 };
+                if matches!(b.get(i + n), Some(b'\'' | b'/' | b'\\' | b':')) {
+                    return Err("an adverb or an assignment".into());
+                }
+                out.push(Tok::Op(text[i..i + n].to_string()));
+                i += n;
+            }
+            _ => return Err(format!("`{}`", c as char)),
+        }
+    }
+    Ok(out)
+}
+
+/// A reader of an expression's tokens into its tree.
+struct Reader {
+    toks: Vec<Tok>,
+    at: usize,
+}
+
+impl Reader {
+    fn peek(&self) -> Option<&Tok> {
+        self.toks.get(self.at)
+    }
+
+    fn ends(&self) -> bool {
+        matches!(self.peek(), None | Some(Tok::Close(_) | Tok::Semi))
+    }
+
+    /// An expression: a term, then a dyad and everything to its right, or a
+    /// noun applied to everything to its right.
+    fn expr(&mut self) -> Result<Node, String> {
+        let left = self.term()?;
+        if self.ends() {
+            return Ok(left);
+        }
+        match self.peek().cloned() {
+            Some(Tok::Op(op)) => {
+                if matches!(left, Node::Verb(_)) {
+                    return Err(format!("`{op}` after a function"));
+                }
+                self.at += 1;
+                if self.ends() {
+                    return Err(format!("`{op}` with nothing on its right"));
+                }
+                let right = self.expr()?;
+                Ok(Node::Apply(Box::new(Node::Verb(op)), vec![left, right]))
+            }
+            Some(Tok::Name(word)) if infix(&word) => {
+                self.at += 1;
+                if self.ends() {
+                    return Err(format!("`{word}` with nothing on its right"));
+                }
+                let right = self.expr()?;
+                Ok(Node::Apply(Box::new(Node::Verb(word)), vec![left, right]))
+            }
+            _ => {
+                let right = self.expr()?;
+                Ok(Node::Apply(Box::new(left), vec![right]))
+            }
+        }
+    }
+
+    /// A noun or a function, with any bracketed arguments after it.
+    fn term(&mut self) -> Result<Node, String> {
+        let tok = self.peek().cloned().ok_or("an empty expression")?;
+        self.at += 1;
+        let mut node = match tok {
+            Tok::Leaf(t) => Node::Leaf(t),
+            Tok::Sym(s) => Node::Sym(s),
+            Tok::Name(n) if keyword(&n) => Node::Verb(n),
+            Tok::Name(n) => Node::Name(n),
+            Tok::Op(op) if matches!(self.peek(), Some(Tok::Open(b'['))) => Node::Verb(op),
+            Tok::Op(op) => return Err(format!("`{op}` used as a monad")),
+            Tok::Open(b'(') => {
+                let items = self.items(b')')?;
+                match items.len() {
+                    0 => Node::Leaf("()".into()),
+                    1 => items.into_iter().next().unwrap_or(Node::Leaf("()".into())),
+                    _ => Node::List(items),
+                }
+            }
+            Tok::Open(_) => return Err("a bracket with nothing before it".into()),
+            Tok::Close(_) | Tok::Semi => return Err("an unbalanced bracket".into()),
+        };
+        while matches!(self.peek(), Some(Tok::Open(b'['))) {
+            self.at += 1;
+            let args = self.items(b']')?;
+            if args.is_empty() {
+                return Err("a call with no arguments".into());
+            }
+            node = Node::Apply(Box::new(node), args);
+        }
+        Ok(node)
+    }
+
+    /// The items up to the closing `close`, split at `;`.
+    fn items(&mut self, close: u8) -> Result<Vec<Node>, String> {
+        let mut items = vec![];
+        if self.peek() == Some(&Tok::Close(close)) {
+            self.at += 1;
+            return Ok(items);
+        }
+        loop {
+            if matches!(self.peek(), Some(Tok::Semi | Tok::Close(_))) {
+                return Err("an empty argument (a projection)".into());
+            }
+            items.push(self.expr()?);
+            match self.peek() {
+                Some(Tok::Semi) => self.at += 1,
+                Some(Tok::Close(c)) if *c == close => {
+                    self.at += 1;
+                    return Ok(items);
+                }
+                _ => return Err("an unbalanced bracket".into()),
+            }
+        }
+    }
+}
+
+/// The tree of the expression `text`.
+pub(crate) fn tree(text: &str) -> Result<Node, String> {
+    let toks = tokens(text)?;
+    if toks.is_empty() {
+        return Err("an empty expression".into());
+    }
+    let mut r = Reader { toks, at: 0 };
+    let node = r.expr()?;
+    if r.at != r.toks.len() {
+        return Err("an unbalanced bracket".into());
+    }
+    Ok(node)
+}
+
+/// A tree written as functional-form text.
+pub(crate) fn functional(node: &Node) -> String {
+    match node {
+        Node::Leaf(t) => t.clone(),
+        Node::Name(n) => format!("`{n}"),
+        Node::Sym(s) => format!("enlist{}", symbols(s)),
+        Node::Verb(v) => v.clone(),
+        Node::Apply(f, args) => {
+            let mut parts = vec![functional(f)];
+            parts.extend(args.iter().map(functional));
+            format!("({})", parts.join(";"))
+        }
+        Node::List(items) => {
+            let mut parts = vec!["enlist".to_string()];
+            parts.extend(items.iter().map(functional));
+            format!("({})", parts.join(";"))
+        }
+    }
+}
+
+fn symbols(s: &[String]) -> String {
+    s.iter().map(|s| format!("`{s}")).collect()
+}
+
+/// The name q gives a select column that has none, as far as this is sure
+/// of it. q takes it from one argument of the tree, all the way down: the
+/// only one of a monad; the first of `+ - * % | &`, `and` and `or`; the last
+/// of `= ^ #`, of the other keywords (`2 xbar size` is `size`, `size mod 3`
+/// is `x`) and of a general list. A literal, and the virtual `i`, give `x`.
+/// Other glyphs and a bracketed call of several arguments are not known
+/// here. Checked in KDB-X; PeachQ takes a list's first item instead.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub(crate) enum Derived {
+    Name(String),
+    X,
+    Unknown,
+}
+
+pub(crate) fn derived(node: &Node) -> Derived {
+    match node {
+        Node::Name(n) if n == "i" => Derived::X,
+        Node::Name(n) => Derived::Name(n.clone()),
+        Node::Leaf(_) | Node::Sym(_) => Derived::X,
+        Node::Verb(_) => Derived::Unknown,
+        Node::List(items) => items.last().map_or(Derived::X, derived),
+        Node::Apply(_, args) if args.len() == 1 => derived(&args[0]),
+        Node::Apply(f, args) if args.len() == 2 => match &**f {
+            Node::Verb(v) if ["+", "-", "*", "%", "|", "&", "and", "or"].contains(&v.as_str()) => {
+                derived(&args[0])
+            }
+            Node::Verb(v) if ["=", "^", "#"].contains(&v.as_str()) => derived(&args[1]),
+            Node::Verb(v) if v.bytes().all(|c| c.is_ascii_alphanumeric()) => derived(&args[1]),
+            _ => Derived::Unknown,
+        },
+        Node::Apply(..) => Derived::Unknown,
+    }
+}
+
+/// An item of a select or by list: its name, where it is written `n:e`,
+/// and its expression.
+fn named(item: &str) -> (Option<String>, &str) {
+    let b = item.as_bytes();
+    let mut i = 0;
+    if b.first().is_some_and(|c| c.is_ascii_alphabetic()) {
+        while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'_') {
+            i += 1;
+        }
+        let mut j = i;
+        while j < b.len() && b[j] == b' ' {
+            j += 1;
+        }
+        if b.get(j) == Some(&b':') && !matches!(b.get(j + 1), Some(b':' | b'/' | b'\\' | b'\'')) {
+            return (Some(item[..i].to_string()), item[j + 1..].trim());
+        }
+    }
+    (None, item)
+}
+
+/// The columns of a select, by or update list: each one's name and tree,
+/// named as q names them.
+fn columns(items: &[String]) -> Result<Vec<(String, Node)>, String> {
+    let mut out: Vec<(String, Node)> = vec![];
+    let mut seen: Vec<String> = vec![];
+    for item in items {
+        let (name, expr) = named(item);
+        let node = tree(expr)?;
+        let name = match name {
+            Some(name) => name,
+            None => {
+                let base = match derived(&node) {
+                    Derived::Name(n) => n,
+                    Derived::X => "x".into(),
+                    Derived::Unknown => {
+                        return Err(format!(
+                            "a column with no name whose name q would choose is not certain here: write it `name:{expr}`"
+                        ));
+                    }
+                };
+                let mut name = base.clone();
+                let mut n = 0;
+                while seen.contains(&name) {
+                    n += 1;
+                    name = format!("{base}{n}");
+                }
+                name
+            }
+        };
+        seen.push(name.clone());
+        out.push((name, node));
+    }
+    Ok(out)
+}
+
+/// A dictionary of names to trees, as functional-form text.
+fn dict(cols: &[(String, Node)]) -> String {
+    match cols {
+        [(name, node)] => format!("(enlist`{name})!enlist {}", functional(node)),
+        _ => {
+            let keys: String = cols.iter().map(|(n, _)| format!("`{n}")).collect();
+            let vals: Vec<String> = cols.iter().map(|(_, v)| functional(v)).collect();
+            format!("{keys}!({})", vals.join(";"))
+        }
+    }
+}
+
+/// The where list, as functional-form text.
+fn constraints(items: &[String]) -> Result<String, String> {
+    let trees = items
+        .iter()
+        .map(|i| tree(i))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(match &trees[..] {
+        [] => "()".into(),
+        [one] => format!("enlist {}", functional(one)),
+        many => format!(
+            "({})",
+            many.iter().map(functional).collect::<Vec<_>>().join(";")
+        ),
+    })
+}
+
+/// The query around byte `at` in its functional form; `None` outside a
+/// query, and the reason where one cannot be rewritten.
+pub(crate) fn to_functional_at(
+    code: &str,
+    comments: &str,
+    source: &str,
+    at: usize,
+) -> Option<Result<Conversion, String>> {
+    let parts = layout::parts_at(code, comments, source, at)?;
+    let text = to_functional(&parts);
+    Some(text.map(|text| Conversion {
+        start: parts.start,
+        end: parts.end,
+        text,
+    }))
+}
+
+fn to_functional(p: &layout::Parts) -> Result<String, String> {
+    let clause = |w: &str| p.clauses.iter().find(|(c, _)| *c == w).map(|(_, i)| i);
+    let from = clause("from")
+        .and_then(|i| i.first())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .ok_or("a query with no table")?;
+    let wheres = clause("where").cloned().unwrap_or_default();
+    let by = clause("by").cloned().unwrap_or_default();
+    let mut head = p.head.clone();
+    if head.first().is_some_and(|h| h.starts_with('[')) {
+        return Err(format!(
+            "`{}[...]`, whose functional form takes more arguments",
+            p.lead
+        ));
+    }
+    let mut distinct = false;
+    if p.lead == "select"
+        && let Some(first) = head.first_mut()
+        && let Some(rest) = first.strip_prefix("distinct")
+        && (rest.is_empty() || rest.starts_with(' '))
+    {
+        distinct = true;
+        *first = rest.trim().to_string();
+        if first.is_empty() {
+            head.remove(0);
+        }
+    }
+    let c = constraints(&wheres)?;
+    let from = if from.contains([' ', '[', '(']) && !from.starts_with('(') {
+        format!("({from})")
+    } else {
+        from.to_string()
+    };
+    match p.lead {
+        "select" | "update" => {
+            if distinct && !by.is_empty() {
+                return Err("`select distinct` with a by clause".into());
+            }
+            let cols = columns(&head)?;
+            if p.lead == "update" && cols.is_empty() {
+                return Err("an update with no columns".into());
+            }
+            let b = if distinct {
+                "1b".to_string()
+            } else if by.is_empty() {
+                "0b".to_string()
+            } else {
+                dict(&columns(&by)?)
+            };
+            let a = if cols.is_empty() {
+                "()".to_string()
+            } else {
+                dict(&cols)
+            };
+            let verb = if p.lead == "select" { "?" } else { "!" };
+            Ok(format!("{verb}[{from};{c};{b};{a}]"))
+        }
+        "exec" => {
+            let b = match &by[..] {
+                [] => "()".to_string(),
+                [one] => match tree(one)? {
+                    Node::Name(n) => format!("`{n}"),
+                    other => functional(&other),
+                },
+                _ => dict(&columns(&by)?),
+            };
+            let a = match &head[..] {
+                [] => return Err("an exec with no columns".into()),
+                [one] if named(one).0.is_none() => functional(&tree(one)?),
+                _ => dict(&columns(&head)?),
+            };
+            Ok(format!("?[{from};{c};{b};{a}]"))
+        }
+        "delete" => {
+            if !by.is_empty() {
+                return Err("a delete with a by clause".into());
+            }
+            match (&head[..], wheres.is_empty()) {
+                ([], true) => Err("a delete with neither columns nor a where clause".into()),
+                ([], false) => Ok(format!("![{from};{c};0b;`symbol$()]")),
+                (cols, true) => {
+                    let mut names = String::new();
+                    for col in cols {
+                        match tree(col)? {
+                            Node::Name(n) => names.push_str(&format!("`{n}")),
+                            _ => return Err("a delete of something other than column names".into()),
+                        }
+                    }
+                    Ok(format!("![{from};();0b;{names}]"))
+                }
+                (_, false) => Err("a delete with both columns and a where clause".into()),
+            }
+        }
+        _ => Err("an unknown query".into()),
+    }
+}
+
+// The other direction: functional-form text read back into trees.
+
+/// A value as a functional form writes it.
+#[derive(Clone, PartialEq, Debug)]
+enum Data {
+    /// `(a;b;c)`; `()` is an empty one.
+    List(Vec<Data>),
+    /// `enlist x` or `,x`.
+    Enlist(Box<Data>),
+    /// `k!v`.
+    Dict(Box<Data>, Box<Data>),
+    Sym(Vec<String>),
+    Leaf(String),
+    /// A name: `count`, `enlist`, a glyph, a global.
+    Word(String),
+    /// `` `symbol$() ``, the empty column list of a row delete.
+    NoSymbols,
+}
+
+struct DataReader {
+    toks: Vec<Tok>,
+    at: usize,
+}
+
+impl DataReader {
+    fn value(&mut self) -> Result<Data, String> {
+        let left = self.primary()?;
+        if matches!(self.toks.get(self.at), Some(Tok::Op(o)) if o == "!") {
+            self.at += 1;
+            let right = self.value()?;
+            return Ok(Data::Dict(Box::new(left), Box::new(right)));
+        }
+        Ok(left)
+    }
+
+    fn primary(&mut self) -> Result<Data, String> {
+        let tok = self.toks.get(self.at).cloned().ok_or("an empty argument")?;
+        self.at += 1;
+        Ok(match tok {
+            Tok::Name(n) if n == "enlist" && !self.at_end() => {
+                Data::Enlist(Box::new(self.value()?))
+            }
+            Tok::Op(o) if o == "," && !self.at_end() => Data::Enlist(Box::new(self.value()?)),
+            Tok::Sym(s)
+                if s == ["symbol"]
+                    && self.toks.get(self.at) == Some(&Tok::Op("$".into()))
+                    && self.toks.get(self.at + 1) == Some(&Tok::Open(b'('))
+                    && self.toks.get(self.at + 2) == Some(&Tok::Close(b')')) =>
+            {
+                self.at += 3;
+                Data::NoSymbols
+            }
+            Tok::Sym(s) => Data::Sym(s),
+            Tok::Leaf(l) => Data::Leaf(l),
+            Tok::Name(n) => Data::Word(n),
+            Tok::Op(o) => Data::Word(o),
+            Tok::Open(b'(') => {
+                let mut items = vec![];
+                if self.toks.get(self.at) == Some(&Tok::Close(b')')) {
+                    self.at += 1;
+                    return Ok(Data::List(items));
+                }
+                loop {
+                    items.push(self.value()?);
+                    match self.toks.get(self.at) {
+                        Some(Tok::Semi) => self.at += 1,
+                        Some(Tok::Close(b')')) => {
+                            self.at += 1;
+                            break;
+                        }
+                        _ => return Err("an unbalanced bracket".into()),
+                    }
+                }
+                // A parenthesised value is that value.
+                if items.len() == 1 {
+                    return Ok(items.remove(0));
+                }
+                Data::List(items)
+            }
+            _ => return Err("something a functional form does not hold".into()),
+        })
+    }
+
+    fn at_end(&self) -> bool {
+        matches!(
+            self.toks.get(self.at),
+            None | Some(Tok::Semi | Tok::Close(_))
+        )
+    }
+}
+
+/// Functional-form text as data. Glyphs alone in a list (`(>;...)`) are
+/// tokens the expression reader refuses, so they are read here.
+fn data(text: &str) -> Result<Data, String> {
+    let toks = data_tokens(text)?;
+    let mut r = DataReader { toks, at: 0 };
+    let d = r.value()?;
+    if r.at != r.toks.len() {
+        return Err("more than one value in an argument".into());
+    }
+    Ok(d)
+}
+
+/// Tokens of functional-form text: as `tokens`, but a glyph followed by
+/// `:` (`-:`, the monad) is one glyph, and `0b` stays a literal.
+fn data_tokens(text: &str) -> Result<Vec<Tok>, String> {
+    // The glyph-colon monads `parse` writes, renamed to their keywords so
+    // the reader below needs no second spelling.
+    let mut t = text.to_string();
+    for (from, to) in [
+        ("-:", "neg"),
+        ("#:", "count"),
+        ("~:", "not"),
+        ("^:", "null"),
+    ] {
+        t = t.replace(from, to);
+    }
+    tokens(&t)
+}
+
+/// A tree from functional-form data.
+fn node(d: &Data) -> Result<Node, String> {
+    Ok(match d {
+        Data::Sym(s) if s.len() == 1 => Node::Name(s[0].clone()),
+        Data::Sym(_) => return Err("a symbol vector where a tree was expected".into()),
+        Data::Enlist(inner) => match &**inner {
+            Data::Sym(s) => Node::Sym(s.clone()),
+            other => Node::List(vec![node(other)?]),
+        },
+        Data::Leaf(l) => Node::Leaf(l.clone()),
+        Data::Word(w) => Node::Verb(w.clone()),
+        Data::List(items) if items.is_empty() => Node::Leaf("()".into()),
+        Data::List(items) => match &items[0] {
+            Data::Word(w) if w == "enlist" => {
+                Node::List(items[1..].iter().map(node).collect::<Result<_, _>>()?)
+            }
+            f => {
+                let f = match f {
+                    Data::Word(w) => Node::Verb(w.clone()),
+                    Data::Sym(s) if s.len() == 1 => Node::Name(s[0].clone()),
+                    Data::Leaf(l) if l.starts_with('{') => Node::Leaf(l.clone()),
+                    _ => return Err("a list whose first item is no function".into()),
+                };
+                let args = items[1..].iter().map(node).collect::<Result<Vec<_>, _>>()?;
+                if args.is_empty() {
+                    return Err("a function with no arguments".into());
+                }
+                Node::Apply(Box::new(f), args)
+            }
+        },
+        Data::Dict(..) | Data::NoSymbols => return Err("a dictionary inside a tree".into()),
+    })
+}
+
+/// A tree written as the q expression that reads to it.
+pub(crate) fn infix_text(n: &Node) -> Result<String, String> {
+    Ok(match n {
+        Node::Leaf(t) => t.clone(),
+        Node::Name(n) => n.clone(),
+        Node::Sym(s) => symbols(s),
+        Node::Verb(v) => v.clone(),
+        Node::List(items) => format!(
+            "({})",
+            items
+                .iter()
+                .map(infix_text)
+                .collect::<Result<Vec<_>, _>>()?
+                .join(";")
+        ),
+        Node::Apply(f, args) => {
+            let left = |x: &Node| -> Result<String, String> {
+                let t = infix_text(x)?;
+                Ok(if matches!(x, Node::Apply(..)) {
+                    format!("({t})")
+                } else {
+                    t
+                })
+            };
+            match (&**f, &args[..]) {
+                (Node::Verb(v), [x, y]) if v.bytes().all(|c| GLYPHS.contains(&c)) => {
+                    format!("{}{v}{}", left(x)?, infix_text(y)?)
+                }
+                (Node::Verb(v), [x, y]) if infix(v) => {
+                    format!("{} {v} {}", left(x)?, infix_text(y)?)
+                }
+                (Node::Verb(v), [_]) if v.bytes().all(|c| GLYPHS.contains(&c)) => {
+                    return Err(format!("`{v}` applied as a monad"));
+                }
+                (Node::Verb(_) | Node::Name(_) | Node::Leaf(_), [x]) => {
+                    format!("{} {}", infix_text(f)?, infix_text(x)?)
+                }
+                (Node::Verb(_) | Node::Name(_) | Node::Leaf(_), many) => format!(
+                    "{}[{}]",
+                    infix_text(f)?,
+                    many.iter()
+                        .map(infix_text)
+                        .collect::<Result<Vec<_>, _>>()?
+                        .join(";")
+                ),
+                _ => return Err("a function that is itself an application".into()),
+            }
+        }
+    })
+}
+
+/// The trees a functional form's where argument lists.
+fn where_list(d: &Data) -> Result<Vec<Node>, String> {
+    match d {
+        Data::List(items) if items.is_empty() => Ok(vec![]),
+        Data::Enlist(one) => Ok(vec![node(one)?]),
+        Data::List(items) => items.iter().map(node).collect(),
+        _ => Err("a where argument that is not a list of constraints".into()),
+    }
+}
+
+/// The names and trees of a functional form's dictionary argument.
+fn dict_items(d: &Data) -> Result<Vec<(String, Node)>, String> {
+    let Data::Dict(k, v) = d else {
+        return Err("a column argument that is not a dictionary".into());
+    };
+    let keys = match &**k {
+        Data::Sym(s) if s.len() > 1 => s.clone(),
+        Data::Enlist(one) => match &**one {
+            Data::Sym(s) if s.len() == 1 => s.clone(),
+            _ => return Err("dictionary keys that are not symbols".into()),
+        },
+        _ => return Err("dictionary keys that are not symbols".into()),
+    };
+    let vals: Vec<Node> = match &**v {
+        Data::Enlist(one) => vec![node(one)?],
+        Data::Sym(s) => s.iter().map(|s| Node::Name(s.clone())).collect(),
+        Data::List(items) => items.iter().map(node).collect::<Result<_, _>>()?,
+        _ => return Err("dictionary values that are not a list".into()),
+    };
+    if keys.len() != vals.len() {
+        return Err("a dictionary whose keys and values differ in count".into());
+    }
+    Ok(keys.into_iter().zip(vals).collect())
+}
+
+/// Column items written back: `n:e`, or `e` alone where q would name it
+/// `n` anyway.
+fn column_text(cols: &[(String, Node)]) -> Result<String, String> {
+    let mut seen: Vec<String> = vec![];
+    let mut out = vec![];
+    for (name, n) in cols {
+        let text = infix_text(n)?;
+        let implied = match derived(n) {
+            Derived::Name(n) => Some(n),
+            Derived::X => Some("x".into()),
+            Derived::Unknown => None,
+        };
+        if implied.as_ref() == Some(name) && !seen.contains(name) {
+            out.push(text);
+        } else {
+            out.push(format!("{name}:{text}"));
+        }
+        seen.push(name.clone());
+    }
+    Ok(out.join(", "))
+}
+
+/// The functional form around byte `at` as qSQL; `None` where there is no
+/// `?[...]` or `![...]` of four arguments around it, and the reason where
+/// one cannot be written as qSQL.
+pub(crate) fn to_qsql_at(
+    code: &str,
+    source: &str,
+    at: usize,
+) -> Option<Result<Conversion, String>> {
+    let b = code.as_bytes();
+    // The innermost `?[` or `![` whose bracket closes at or after `at`.
+    let mut best: Option<(usize, usize)> = None;
+    let mut i = (at + 2).min(b.len());
+    while i > 0 {
+        i -= 1;
+        if b[i] == b'['
+            && i > 0
+            && matches!(b[i - 1], b'?' | b'!')
+            && let Some(close) = closing(b, i)
+            && close + 1 >= at
+        {
+            best = Some((i - 1, close));
+            break;
+        }
+        // Stop at the start of the statement.
+        if b[i] == b'\n' && !code[i + 1..].starts_with([' ', '\t', '\r']) {
+            break;
+        }
+    }
+    let (start, close) = best?;
+    let args = split_args(&source[start + 2..close]);
+    if args.len() != 4 {
+        return None;
+    }
+    let verb = b[start];
+    Some(from_functional(verb, &args).map(|text| Conversion {
+        start,
+        end: close + 1,
+        text,
+    }))
+}
+
+/// The bracket that closes the one at `open`, in the code view.
+fn closing(b: &[u8], open: usize) -> Option<usize> {
+    let mut depth = 0i32;
+    for (i, &c) in b.iter().enumerate().skip(open) {
+        match c {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// `text` split at its top-level semicolons.
+fn split_args(text: &str) -> Vec<&str> {
+    let mut out = vec![];
+    let (mut depth, mut start, mut string) = (0i32, 0, false);
+    let b = text.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'\\' if string => i += 1,
+            b'"' => string = !string,
+            b'(' | b'[' | b'{' if !string => depth += 1,
+            b')' | b']' | b'}' if !string => depth -= 1,
+            b';' if !string && depth == 0 => {
+                out.push(text[start..i].trim());
+                start = i + 1;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    out.push(text[start..].trim());
+    out
+}
+
+fn from_functional(verb: u8, args: &[&str]) -> Result<String, String> {
+    let table = args[0];
+    if table.is_empty() {
+        return Err("a functional form with no table".into());
+    }
+    let table = table
+        .strip_prefix('(')
+        .and_then(|t| t.strip_suffix(')'))
+        .filter(|t| !t.contains(['(', ')']))
+        .unwrap_or(table);
+    let wheres = where_list(&data(args[1])?)?
+        .iter()
+        .map(infix_text)
+        .collect::<Result<Vec<_>, _>>()?;
+    let b = data(args[2])?;
+    let a = data(args[3])?;
+    let tail = if wheres.is_empty() {
+        String::new()
+    } else {
+        format!(" where {}", wheres.join(", "))
+    };
+    let by_text = |b: &Data| -> Result<String, String> {
+        Ok(match b {
+            Data::Leaf(l) if l == "0b" => String::new(),
+            Data::List(items) if items.is_empty() => String::new(),
+            Data::Sym(s) if s.len() == 1 => format!(" by {}", s[0]),
+            other => format!(" by {}", column_text(&dict_items(other)?)?),
+        })
+    };
+    match verb {
+        b'?' => {
+            let exec = matches!(&b, Data::List(items) if items.is_empty())
+                || matches!(&b, Data::Sym(s) if s.len() == 1)
+                || !matches!(a, Data::Dict(..) | Data::List(_));
+            if exec {
+                let cols = match &a {
+                    Data::Dict(..) => column_text(&dict_items(&a)?)?,
+                    other => infix_text(&node(other)?)?,
+                };
+                return Ok(format!("exec {cols}{} from {table}{tail}", by_text(&b)?));
+            }
+            let distinct = matches!(&b, Data::Leaf(l) if l == "1b");
+            let cols = match &a {
+                Data::List(items) if items.is_empty() => String::new(),
+                other => column_text(&dict_items(other)?)?,
+            };
+            let lead = if distinct {
+                "select distinct"
+            } else {
+                "select"
+            };
+            let by = if distinct {
+                String::new()
+            } else {
+                by_text(&b)?
+            };
+            let gap = if cols.is_empty() { "" } else { " " };
+            Ok(format!("{lead}{gap}{cols}{by} from {table}{tail}"))
+        }
+        _ => match &a {
+            Data::NoSymbols => Ok(format!("delete from {table}{tail}")),
+            Data::Sym(s) if wheres.is_empty() => Ok(format!("delete {} from {table}", s.join(","))),
+            Data::Enlist(one)
+                if wheres.is_empty() && matches!(&**one, Data::Sym(s) if s.len() == 1) =>
+            {
+                let Data::Sym(s) = &**one else { unreachable!() };
+                Ok(format!("delete {} from {table}", s[0]))
+            }
+            Data::Dict(..) => Ok(format!(
+                "update {}{} from {table}{tail}",
+                column_text(&dict_items(&a)?)?,
+                by_text(&b)?
+            )),
+            _ => Err("a `![...]` that is neither an update nor a delete".into()),
+        },
+    }
+}

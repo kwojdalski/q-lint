@@ -16,7 +16,9 @@ fn showcase_reports_exactly_the_marked_lines_in_every_profile() {
             if let Some(codes) = line.trim_start().strip_prefix("/ expect-next: ") {
                 for code in codes.split_whitespace() {
                     let rule = RULES.iter().find(|r| r.code == code).expect("known marker");
-                    if profile.allows_scope(&rule.scope) {
+                    // A QK rule reports only for a configuration's target
+                    // version, which no profile is.
+                    if profile.allows_scope(&rule.scope) && !code.starts_with("QK") {
                         expected.insert((i + 2, code.to_string()));
                     }
                 }

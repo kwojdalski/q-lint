@@ -254,6 +254,49 @@ read as a global when some file happens to define a global of that name, and
 a `\l` whose path only exists relative to a directory q was started in
 elsewhere.
 
+### A lint baseline: `--write-baseline` and `--baseline`
+
+A tree with hundreds of findings today can still keep new ones out.
+`qlinter --write-baseline qlinter-baseline.json src/` writes every finding of
+the run to that file (replacing it) and reports none; a later
+`qlinter --baseline qlinter-baseline.json src/` reports only the findings that
+are not in it, says on standard error how many it passed over, and exits 0
+when nothing is new. Name the file in a configuration, `baseline =
+"qlinter-baseline.json"`, and every run under it - the language server's
+included - uses it without the flag; `--write-baseline` reads no baseline, so
+it always writes everything.
+
+A finding is matched on its file, its code and the text of its line with
+the blanks at either end trimmed, never its line number: lines added above
+it, or the line moved, leave it matched. Several findings of one code on
+lines of the same text are counted, and one more than the baseline holds is
+new. A line that is edited is new, which is the point. Paths are written
+relative to the baseline file, so it means the same in every checkout. A
+baseline that is missing or is not one is an error (exit 2), not a run that
+silently reports everything; the language server says so once and shows
+every finding.
+
+### The q version check: `--target-version`
+
+`target-version = "4.0"` in a configuration (per folder, as every key is), or
+`--target-version 4.0`, reports what does not run on that release: `3.6`,
+`4.0`, `4.1` or `kdbx`. With neither, these rules report nothing.
+
+| rule | construct | runs on |
+|---|---|---|
+| QK001 | a dictionary literal, `([a:1;b:2])` | 4.1 and later |
+| QK002 | a pattern assignment, `(a;b):x`, `([k:v]):d` | 4.1 and later |
+| QK003 | a typed or filtered parameter, `{[x:`j] ...}`, `{[(a;b)] ...}` | 4.1 and later |
+| QK004 | `-30!`, the deferred response | 3.6 and later |
+| QK005 | `.Q.Xf` or `.Q.Cf` | before 4.1, which removed them |
+
+Each fact is from KX's release notes (ChangesIn3.6, 4.0 and 4.1 on
+code.kx.com). Only the newest side was run here: KDB-X runs every 4.1
+construct above and has neither `.Q.Xf` nor `.Q.Cf`. No 3.6, 4.0 or 4.1
+binary was at hand, so the older side is the release notes' word, not a
+test's. PeachQ runs the dictionary literal and `(a;b):`, and refuses
+`([k:v]):` ('nyi) and a filtered parameter ('parse).
+
 ### Configuration
 
 Settings are found the way Ruff finds its own. For each file, qlinter walks up
@@ -278,6 +321,11 @@ extend-select = ["QS001"]            # added to whatever is selected
 ignore = ["QF016"]
 per-file-ignores = { "tests/*" = ["QS"] }
 ```
+
+Two more top-level keys, both opt-in: `target-version = "4.0"` (see
+[The q version check](#the-q-version-check---target-version)) and
+`baseline = "qlinter-baseline.json"`, relative to the file (see
+[A lint baseline](#a-lint-baseline---write-baseline-and---baseline)).
 
 `exclude`, `extend-exclude`, `--exclude` and the keys of `per-file-ignores`
 are globs read the way Ruff reads them. A pattern with a `/` anywhere in it -
@@ -711,6 +759,29 @@ q-lint/affectedTests  {"changed": [uri]}
                        "changed": [uri], "unindexed": [uri]}
 ```
 
+Three more, also under `capabilities.experimental`, read the indexed files'
+definitions and answer from the source alone:
+
+```
+q-lint/definitions    {}
+                   -> [{"name": N, "namespace": ".ns" or ".", "kind": "function" | "variable",
+                        "uri": uri, "range": R}]   each global once per file that assigns it
+q-lint/deadCode       {} or {"textDocument": {"uri": U}}
+                   -> {"functions": [{"name": N, "uri": uri, "range": R}], "dynamic": count}
+q-lint/testsReaching  {"textDocument": {"uri": U}, "previous": "the text before the save"}
+                   -> {"changed": [name], "tests": [{"uri": uri, "name": N}]}
+```
+
+`deadCode` lists the functions no indexed file reads. A name counts as read
+when a file reads it as code, and also when its last part is spelled in a
+symbol or a string anywhere (`` `f ``, `value "f[]"`), since q reaches a
+function by a computed name too; `.z` handlers and tests are never listed,
+and `dynamic` counts the places a name is reached by a value computed at run
+time, which make the list a list of candidates. `testsReaching` compares the
+document's top-level function statements with `previous`, and answers the
+ones that changed and every test whose body names one of them, or names a
+function that does, and so on.
+
 `affectedTests` lists the test files that reach a changed file along the
 graph, a changed test among them. Which files changed is the client's to
 say: the server starts no process and so never asks git - the VS Code
@@ -867,6 +938,9 @@ Every key is optional, and these are the defaults:
  "organiseLoads": {"enable": true}, "performanceLints": {"enable": true},
  "formatChangedLines": {"enable": false},
  "qsqlLayout": {"enable": true, "onFormat": false, "lineLength": 80},
+ "functionalForm": {"enable": true}, "qsqlExplain": {"enable": true},
+ "versionCheck": {"enable": true}, "baseline": {"enable": true},
+ "typeLints": {"enable": true},
  "workspaceIndex": {"enable": true, "exclude": []}}
 ```
 
@@ -890,6 +964,12 @@ adds loads to completions, when completion is on.
 `organiseLoads.enable: false` Organise loads and its kind, and
 `performanceLints.enable: false` ignores the QV rules as `lint.ignore`
 would. `formatChangedLines.enable: true` answers `q-lint/formatChangedLines`.
+`functionalForm.enable: false` withdraws the two rewrites between a qSQL
+query and its functional form, and `qsqlExplain.enable: false` the query in
+words on hover. `versionCheck.enable: false` ignores the QK rules and
+`typeLints.enable: false` QT033-QT035, as `lint.ignore` would;
+`baseline.enable: false` shows every finding, whatever baseline the
+configuration names.
 `workspaceIndex.exclude`
 holds globs relative to each workspace folder that the index does not read.
 The index stops after 20,000 `.q` files or 500,000 directory entries of any
@@ -962,7 +1042,7 @@ language server driven over real LSP framing as a real process.
 
 ### Rule and multiline regression corpus
 
-The taxonomy contains 126 codes. Ten literal-call rules cover excess builtin
+The taxonomy contains 134 codes. Ten literal-call rules cover excess builtin
 arguments (QA010), invalid literal types/shapes (QT008–QT014), and negative
 `til`/`where` counts (QD001–QD002). These checks leave unknown expressions
 unresolved and account for projections, seeded scans and variadic `enlist`.
@@ -971,7 +1051,7 @@ unresolved and account for projections, seeded scans and variadic `enlist`.
 `tests/showcase.rs` checks exact code/line pairs under every profile, including
 silence in the clean section. Together with the three companion examples -
 `syntax-error.q`, `byte-order-mark.q` and `query-injection.q`, each holding
-a rule that would hide or stop the others - it covers all 124 rules available
+a rule that would hide or stop the others - it covers all 132 rules available
 in this build; QF006 and QLS001 are excluded.
 
 Multiline fixtures cover nested lambdas, split argument lists, comments,

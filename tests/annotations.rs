@@ -466,8 +466,10 @@ fn a_qdoc_block_is_written_above_a_function_from_its_parameters() {
 #[test]
 fn generating_qdoc_can_be_turned_off() {
     let dir = tempfile::tempdir().unwrap();
-    // The qSQL layout is a rewrite too, so it is off here as well.
-    let options = json!({"generateQdoc": {"enable": false}, "qsqlLayout": {"enable": false}});
+    // The qSQL layout and the functional-form rewrite are rewrites too, so
+    // they are off here as well.
+    let options = json!({"generateQdoc": {"enable": false}, "qsqlLayout": {"enable": false},
+        "functionalForm": {"enable": false}});
     let (mut server, reply) = Server::over(dir.path(), &[], client(), options);
     assert_eq!(
         reply["result"]["capabilities"]["codeActionProvider"]["codeActionKinds"],
@@ -873,4 +875,288 @@ fn the_qsql_layout_can_be_turned_off() {
         json!({"options": {"tabSize": 4, "insertSpaces": true}}),
     );
     assert_eq!(reply["result"], json!([]), "{reply}");
+}
+
+/// The functional-form rewrite among `actions` with `title`: its new text,
+/// or its reason where it is offered disabled.
+fn rewrite(actions: &[Value], uri: &str, title: &str) -> Option<String> {
+    let action = actions.iter().find(|a| a["title"] == title)?;
+    assert_eq!(action["kind"], "refactor.rewrite");
+    if let Some(reason) = action["disabled"]["reason"].as_str() {
+        return Some(format!("disabled: {reason}"));
+    }
+    Some(
+        action["edit"]["changes"][uri][0]["newText"]
+            .as_str()
+            .unwrap()
+            .to_string(),
+    )
+}
+
+const TO_FUNCTIONAL: &str = "Rewrite qSQL query in functional form";
+const TO_QSQL: &str = "Rewrite functional form as qSQL";
+
+#[test]
+fn a_qsql_query_and_its_functional_form_rewrite_each_other() {
+    let dir = tempfile::tempdir().unwrap();
+    let text = "r:select n:count i by sym from t where px>1\ns:?[t;enlist (>;`px;1);0b;()]\nu:select[2] from t\n";
+    let mut server = Server::start(dir.path(), &[]);
+    let uri = server.open(dir.path(), "q.q", text);
+    let actions = actions_at(&mut server, &uri, 0, 5, None);
+    assert_eq!(
+        rewrite(&actions, &uri, TO_FUNCTIONAL).as_deref(),
+        Some("?[t;enlist (>;`px;1);(enlist`sym)!enlist `sym;(enlist`n)!enlist (count;`i)]"),
+        "{actions:?}"
+    );
+    let actions = actions_at(&mut server, &uri, 1, 3, None);
+    assert_eq!(
+        rewrite(&actions, &uri, TO_QSQL).as_deref(),
+        Some("select from t where px>1"),
+        "{actions:?}"
+    );
+    // One that cannot be rewritten is left out of the lightbulb, and shown
+    // disabled with the reason to a menu that asks for refactors.
+    let actions = actions_at(&mut server, &uri, 2, 5, None);
+    assert_eq!(rewrite(&actions, &uri, TO_FUNCTIONAL), None, "{actions:?}");
+}
+
+#[test]
+fn a_refused_rewrite_says_why_to_a_client_that_shows_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let client = json!({"textDocument": {"codeAction": {"disabledSupport": true,
+        "codeActionLiteralSupport": {"codeActionKind": {"valueSet": ["quickfix", "refactor"]}}}}});
+    let (mut server, _) = Server::over(dir.path(), &[], client, Value::Null);
+    let uri = server.open(dir.path(), "q.q", "u:select[2] from t\n");
+    let actions = actions_at(&mut server, &uri, 0, 5, Some(json!(["refactor"])));
+    let got = rewrite(&actions, &uri, TO_FUNCTIONAL).unwrap();
+    assert!(
+        got.starts_with("disabled: Not rewritten: `select[...]`"),
+        "{got}"
+    );
+}
+
+#[test]
+fn the_functional_form_rewrite_can_be_turned_off() {
+    let dir = tempfile::tempdir().unwrap();
+    let options = json!({"functionalForm": {"enable": false}});
+    let (mut server, _) = Server::over(dir.path(), &[], client(), options);
+    let uri = server.open(
+        dir.path(),
+        "q.q",
+        "r:select from t where px>1\ns:?[t;();0b;()]\n",
+    );
+    for line in [0, 1] {
+        let actions = actions_at(&mut server, &uri, line, 3, Some(json!(["refactor"])));
+        assert_eq!(rewrite(&actions, &uri, TO_FUNCTIONAL), None, "{actions:?}");
+        assert_eq!(rewrite(&actions, &uri, TO_QSQL), None, "{actions:?}");
+    }
+}
+
+fn hover_text(server: &mut Server, uri: &str, line: u64, character: u64) -> String {
+    let reply = server.request(
+        "textDocument/hover",
+        json!({"textDocument": {"uri": uri}, "position": {"line": line, "character": character}}),
+    );
+    reply["result"]["contents"]["value"]
+        .as_str()
+        .unwrap_or("")
+        .to_string()
+}
+
+#[test]
+fn a_hover_on_a_query_says_it_in_words_unless_turned_off() {
+    let dir = tempfile::tempdir().unwrap();
+    let text = "r:select from t where px>1\ns:?[t;();0b;()]\n";
+    let client = json!({"textDocument": {"hover": {"contentFormat": ["markdown"]}}});
+    let (mut server, _) = Server::over(dir.path(), &[], client.clone(), Value::Null);
+    let uri = server.open(dir.path(), "q.q", text);
+    let words = hover_text(&mut server, &uri, 0, 4);
+    assert!(
+        words.contains("Keeps the rows where `px` is greater than `1`."),
+        "{words}"
+    );
+    let words = hover_text(&mut server, &uri, 1, 2);
+    assert!(
+        words.contains("The functional form of `select from t`."),
+        "{words}"
+    );
+    // Not on a column inside it.
+    let words = hover_text(&mut server, &uri, 0, 23);
+    assert!(!words.contains("In words"), "{words}");
+    let options = json!({"qsqlExplain": {"enable": false}});
+    let (mut server, _) = Server::over(dir.path(), &[], client, options);
+    let uri = server.open(dir.path(), "q.q", text);
+    for (line, character) in [(0, 4), (1, 2)] {
+        let words = hover_text(&mut server, &uri, line, character);
+        assert!(!words.contains("In words"), "{words}");
+    }
+}
+
+impl Server {
+    /// The codes of the next diagnostics published for `uri`.
+    fn codes_for(&mut self, uri: &str) -> Vec<String> {
+        loop {
+            let message = self
+                .messages
+                .recv_timeout(Duration::from_secs(30))
+                .expect("the server publishes");
+            if message["method"] == "textDocument/publishDiagnostics"
+                && message["params"]["uri"] == uri
+            {
+                return message["params"]["diagnostics"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|d| d["code"].as_str().unwrap_or("").to_string())
+                    .collect();
+            }
+        }
+    }
+}
+
+const TYPED: &str = "f:{s:`a; s+1}\nd:([a:1;b:2])\n";
+
+#[test]
+fn the_target_version_and_type_lints_reach_the_editor_unless_turned_off() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("qlinter.toml"),
+        "target-version = \"4.0\"\n",
+    )
+    .unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let uri = server.open(dir.path(), "t.q", TYPED);
+    let codes = server.codes_for(&uri);
+    assert!(codes.contains(&"QT035".to_string()), "{codes:?}");
+    assert!(codes.contains(&"QK001".to_string()), "{codes:?}");
+    let options = json!({"versionCheck": {"enable": false}, "typeLints": {"enable": false}});
+    let (mut server, _) = Server::over(dir.path(), &[], client(), options);
+    let uri = server.open(dir.path(), "t.q", TYPED);
+    let codes = server.codes_for(&uri);
+    assert!(
+        !codes.iter().any(|c| c == "QT035" || c.starts_with("QK")),
+        "{codes:?}"
+    );
+}
+
+#[test]
+fn a_configured_baseline_hides_its_findings_in_the_editor_unless_turned_off() {
+    let dir = tempfile::tempdir().unwrap();
+    let text = "f:{[desc] desc}\n";
+    std::fs::write(dir.path().join("b.q"), text).unwrap();
+    let written = std::process::Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .current_dir(dir.path())
+        .args(["--profile", "style", "--write-baseline", "base.json", "b.q"])
+        .output()
+        .unwrap();
+    assert!(written.status.success(), "{written:?}");
+    std::fs::write(
+        dir.path().join("qlinter.toml"),
+        "baseline = \"base.json\"\n",
+    )
+    .unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let uri = server.open(dir.path(), "b.q", text);
+    assert_eq!(server.codes_for(&uri), Vec::<String>::new());
+    let (mut server, _) = Server::over(
+        dir.path(),
+        &[],
+        client(),
+        json!({"baseline": {"enable": false}}),
+    );
+    let uri = server.open(dir.path(), "b.q", text);
+    assert_eq!(server.codes_for(&uri), vec!["QF001".to_string()]);
+}
+
+#[test]
+fn the_workspace_definitions_and_its_unused_functions_are_listed() {
+    let dir = tempfile::tempdir().unwrap();
+    let files = [
+        (
+            "a.q",
+            "\\d .util\nused:{x+1}\nunused:{x*2}\ncallback:{x}\nn:5\n\\d .\n.z.ts:{.util.used 1}\n",
+        ),
+        (
+            "b.q",
+            ".timer.add[`callback];\ntop:{x}\nr:top 2\nlonely:{x}\nby_string:{x}\nvalue \"by_string 1\";\n",
+        ),
+        ("test_a.q", "test_thing:{.util.used 2}\n"),
+    ];
+    let (mut server, reply) = Server::over(dir.path(), &files, client(), Value::Null);
+    assert_eq!(
+        reply["result"]["capabilities"]["experimental"]["q-lint/deadCode"],
+        true
+    );
+    let reply = server.request("q-lint/definitions", json!({}));
+    let got: Vec<(String, String, String)> = reply["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| {
+            (
+                d["namespace"].as_str().unwrap().to_string(),
+                d["name"].as_str().unwrap().to_string(),
+                d["kind"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    let has = |ns: &str, name: &str, kind: &str| {
+        got.contains(&(ns.to_string(), name.to_string(), kind.to_string()))
+    };
+    assert!(has(".util", ".util.used", "function"), "{got:?}");
+    assert!(has(".util", ".util.n", "variable"), "{got:?}");
+    assert!(has(".", "top", "function"), "{got:?}");
+    assert!(has(".z", ".z.ts", "function"), "{got:?}");
+    let reply = server.request("q-lint/deadCode", json!({}));
+    let mut dead: Vec<String> = reply["result"]["functions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["name"].as_str().unwrap().to_string())
+        .collect();
+    dead.sort();
+    // Not the ones read as code, by a symbol or in a string, nor a .z
+    // handler or a test.
+    assert_eq!(
+        dead,
+        vec![".util.unused".to_string(), "lonely".to_string()],
+        "{reply}"
+    );
+    assert!(reply["result"]["dynamic"].as_u64().unwrap() >= 1, "{reply}");
+}
+
+#[test]
+fn the_tests_reaching_the_functions_a_save_changed_are_listed() {
+    let dir = tempfile::tempdir().unwrap();
+    let lib = "add:{x+y}\ntwice:{add[x;x]}\nother:{x}\n";
+    let files = [
+        ("lib.q", lib),
+        (
+            "test_lib.q",
+            "test_twice:{twice 2}\ntest_other:{other 1}\ntest_add:{add[1;2]}\n",
+        ),
+    ];
+    let (mut server, _) = Server::over(dir.path(), &files, client(), Value::Null);
+    let edited = "add:{x+y+0}\ntwice:{add[x;x]}\nother:{x}\n";
+    let uri = server.open(dir.path(), "lib.q", edited);
+    let reply = server.request(
+        "q-lint/testsReaching",
+        json!({"textDocument": {"uri": uri}, "previous": lib}),
+    );
+    assert_eq!(reply["result"]["changed"], json!(["add"]), "{reply}");
+    let mut names: Vec<&str> = reply["result"]["tests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap())
+        .collect();
+    names.sort();
+    // Through `twice`, and directly; not the test of `other`.
+    assert_eq!(names, ["test_add", "test_twice"], "{reply}");
+    // Nothing changed, nothing to run.
+    let reply = server.request(
+        "q-lint/testsReaching",
+        json!({"textDocument": {"uri": uri}, "previous": edited}),
+    );
+    assert_eq!(reply["result"]["tests"], json!([]), "{reply}");
 }

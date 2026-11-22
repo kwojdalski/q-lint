@@ -1,0 +1,299 @@
+//! Two inventories of the workspace's definitions, both read from the
+//! source and nothing else:
+//!
+//! - `q-lint/definitions`: every global a workspace file assigns, with its
+//!   namespace, kind and where it is first assigned - what a namespace tree
+//!   draws.
+//! - `q-lint/deadCode`: the functions a workspace file defines that no
+//!   workspace file reads. A name is counted as read when any file reads it
+//!   as code, and - since q also reaches a function by a name it computes -
+//!   when its last part is spelled in any symbol or string literal
+//!   (`` `f ``, `value "f[]"`, `.z.ts:`f`), so a callback is not reported.
+//!   The `.z` handlers q calls itself, and tests, are never reported. Each
+//!   answer says how many places in the workspace reach a name by a value
+//!   computed at run time, which no reading can follow.
+//!
+//! - `q-lint/testsReaching`: the functions a document's save changed -
+//!   their statements differ from the text the client last saw - and the
+//!   tests that reach one of them through the call graph: a test that
+//!   names a function that names a changed one, and so on.
+//!
+//! Like the rest of the server, none runs anything; the VS Code client
+//! asks them only while its view or command is on.
+use super::annotate::runnables;
+use super::navigate::{Sources, range};
+use super::{Lines, file_key, path_of};
+use q_lint_rs::mentions;
+use serde_json::{Value, json};
+use std::collections::{BTreeMap, HashSet};
+
+pub(super) fn announce(capabilities: &mut Value) {
+    for method in [
+        "q-lint/definitions",
+        "q-lint/deadCode",
+        "q-lint/testsReaching",
+    ] {
+        capabilities["experimental"][method] = json!(true);
+    }
+}
+
+pub(super) fn answer(method: &str, params: &Value, sources: &Sources) -> Value {
+    match method {
+        "q-lint/definitions" => definitions(sources),
+        "q-lint/deadCode" => dead_code(params, sources),
+        "q-lint/testsReaching" => tests_reaching(params, sources),
+        _ => Value::Null,
+    }
+}
+
+/// The namespace a global name is in: `.a.b` for `.a.b.f`, `.` for a name
+/// at the root.
+fn namespace(name: &str) -> &str {
+    match name.rfind('.') {
+        Some(i) if i > 0 && name.starts_with('.') => &name[..i],
+        _ => ".",
+    }
+}
+
+/// `q-lint/definitions`: `[{name, namespace, kind, uri, range}]`, each
+/// global once per file that assigns it, at its first assignment there,
+/// sorted by namespace and name. `kind` is `function` or `variable`.
+fn definitions(sources: &Sources) -> Value {
+    let mut out: BTreeMap<(String, String, String), Value> = BTreeMap::new();
+    for key in sources.keys() {
+        let Some((uri, text)) = sources.text(key) else {
+            continue;
+        };
+        let lines = Lines::new(&text);
+        let mut seen = HashSet::new();
+        for m in &mentions(&text) {
+            let Some(d) = &m.definition else {
+                continue;
+            };
+            if !seen.insert(m.name.clone()) {
+                continue;
+            }
+            out.insert(
+                (namespace(&m.name).to_string(), m.name.clone(), uri.clone()),
+                json!({
+                    "name": m.name,
+                    "namespace": namespace(&m.name),
+                    "kind": if d.function { "function" } else { "variable" },
+                    "uri": uri,
+                    "range": range(&lines, m.at, m.len),
+                }),
+            );
+        }
+    }
+    json!(out.into_values().collect::<Vec<_>>())
+}
+
+/// The words spelled in a file's symbol and string literals: the names a
+/// value computed at run time could reach.
+fn spelled(text: &str, words: &mut HashSet<String>) {
+    let b = text.as_bytes();
+    let mut i = 0;
+    let mut in_string = false;
+    let mut in_symbol = false;
+    let mut word = String::new();
+    let flush = |word: &mut String, words: &mut HashSet<String>| {
+        if !word.is_empty() {
+            let w = std::mem::take(word);
+            // `.a.b.f` and its last part.
+            if let Some(leaf) = w.rsplit('.').next().filter(|l| !l.is_empty()) {
+                words.insert(leaf.to_string());
+            }
+            words.insert(w);
+        }
+    };
+    while i < b.len() {
+        let c = b[i];
+        if in_string {
+            match c {
+                b'\\' => i += 1,
+                b'"' => {
+                    in_string = false;
+                    flush(&mut word, words);
+                }
+                _ if c.is_ascii_alphanumeric() || c == b'_' || c == b'.' => word.push(c as char),
+                _ => flush(&mut word, words),
+            }
+        } else if in_symbol {
+            if c.is_ascii_alphanumeric() || c == b'_' || c == b'.' {
+                word.push(c as char);
+            } else {
+                flush(&mut word, words);
+                in_symbol = c == b'`';
+            }
+        } else if c == b'"' {
+            in_string = true;
+        } else if c == b'`' {
+            in_symbol = true;
+        }
+        i += 1;
+    }
+    flush(&mut word, words);
+}
+
+/// `q-lint/deadCode`: `{functions: [{name, uri, range}], dynamic}` - the
+/// functions defined in the workspace (or, given `textDocument`, in that
+/// document) that nothing in the workspace reads, sorted by file and line;
+/// and how many places reach a name by a computed value.
+fn dead_code(params: &Value, sources: &Sources) -> Value {
+    let only = params["textDocument"]["uri"]
+        .as_str()
+        .map(|uri| file_key(&path_of(uri)));
+    let mut read: HashSet<String> = HashSet::new();
+    let mut words: HashSet<String> = HashSet::new();
+    let mut tests: HashSet<String> = HashSet::new();
+    let mut defined: Vec<(String, String, String, Value)> = vec![];
+    let mut dynamic = 0;
+    for key in sources.keys() {
+        let Some((uri, text)) = sources.text(key) else {
+            continue;
+        };
+        let lines = Lines::new(&text);
+        for m in &mentions(&text) {
+            match &m.definition {
+                Some(d) if d.function => defined.push((
+                    key.to_string(),
+                    uri.clone(),
+                    m.name.clone(),
+                    range(&lines, m.at, m.len),
+                )),
+                Some(_) => {}
+                None => {
+                    read.insert(m.name.clone());
+                    // Written without a dot, it may be read in a context
+                    // the file is loaded in, or in `.q`.
+                    let spelled = &text[m.at..m.at + m.len];
+                    if !spelled.starts_with('.') {
+                        read.insert(spelled.to_string());
+                    }
+                }
+            }
+        }
+        spelled(&text, &mut words);
+        for run in runnables(&text) {
+            if run.test.is_some() {
+                tests.insert(text[run.at..run.at + run.len].to_string());
+            }
+        }
+        dynamic += q_lint_rs::references(&text, false).dynamic.len();
+    }
+    let mut seen = HashSet::new();
+    let mut out = vec![];
+    for (key, uri, name, at) in defined {
+        if only.as_ref().is_some_and(|o| *o != key) || !seen.insert((key.clone(), name.clone())) {
+            continue;
+        }
+        let leaf = name.rsplit('.').next().unwrap_or(&name);
+        let used = read.contains(&name)
+            || read.contains(leaf)
+            || words.contains(&name)
+            || words.contains(leaf)
+            || name.starts_with(".z.")
+            || tests.contains(&name)
+            || tests.contains(leaf);
+        if used {
+            continue;
+        }
+        out.push(json!({"name": name, "uri": uri, "range": at}));
+    }
+    json!({"functions": out, "dynamic": dynamic})
+}
+
+/// Each top-level function a text defines, by name, with its statement.
+fn statements(text: &str) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    for m in &mentions(text) {
+        if let Some(d) = &m.definition
+            && d.function
+            && m.at == d.start
+        {
+            out.entry(m.name.clone())
+                .or_insert_with(|| text[d.start..d.end].trim_end().to_string());
+        }
+    }
+    out
+}
+
+/// `q-lint/testsReaching`: given `textDocument` and the `previous` text the
+/// client saw of it, `{changed: [names], tests: [{uri, name}]}` - the
+/// functions whose statements differ or are new, and every test that
+/// reaches one of them, the changed tests themselves included.
+fn tests_reaching(params: &Value, sources: &Sources) -> Value {
+    let Some((_, now)) = sources.document(params) else {
+        return Value::Null;
+    };
+    let previous = params["previous"].as_str().unwrap_or("");
+    let before = statements(previous);
+    let changed: Vec<String> = statements(now)
+        .into_iter()
+        .filter(|(name, text)| before.get(name) != Some(text))
+        .map(|(name, _)| name)
+        .collect();
+    // Who names whom: each name read inside a top-level function's
+    // statement is an edge from that function to it, the name as q
+    // resolves it and as written.
+    let mut callers: BTreeMap<String, HashSet<String>> = BTreeMap::new();
+    let mut tests: Vec<(String, String, String)> = vec![];
+    for key in sources.keys() {
+        let Some((uri, text)) = sources.text(key) else {
+            continue;
+        };
+        let mut span: Option<(usize, String)> = None;
+        let all = mentions(&text);
+        for m in &all {
+            match &m.definition {
+                Some(d) if d.function && m.at == d.start => {
+                    span = Some((d.end, m.name.clone()));
+                }
+                None => {
+                    if let Some((end, caller)) = &span
+                        && m.at < *end
+                    {
+                        let spelled = &text[m.at..m.at + m.len];
+                        for callee in [m.name.as_str(), spelled] {
+                            callers
+                                .entry(callee.to_string())
+                                .or_default()
+                                .insert(caller.clone());
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        for run in runnables(&text) {
+            if run.test.is_some() {
+                let spelled = text[run.at..run.at + run.len].to_string();
+                let resolved = all
+                    .iter()
+                    .find(|m| m.at == run.at)
+                    .map_or(spelled.clone(), |m| m.name.clone());
+                tests.push((uri.clone(), spelled, resolved));
+            }
+        }
+    }
+    // Everything that reaches a changed function, breadth first; each name
+    // once, so a cycle ends.
+    let mut reached: HashSet<String> = changed.iter().cloned().collect();
+    let mut queue: Vec<String> = changed.clone();
+    while let Some(name) = queue.pop() {
+        let leaf = name.rsplit('.').next().unwrap_or(&name).to_string();
+        for key in [name, leaf] {
+            for caller in callers.get(&key).into_iter().flatten() {
+                if reached.insert(caller.clone()) {
+                    queue.push(caller.clone());
+                }
+            }
+        }
+    }
+    let found: Vec<Value> = tests
+        .into_iter()
+        .filter(|(_, spelled, resolved)| reached.contains(resolved) || reached.contains(spelled))
+        .map(|(uri, name, _)| json!({"uri": uri, "name": name}))
+        .collect();
+    json!({"changed": changed, "tests": found})
+}

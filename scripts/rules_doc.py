@@ -36,6 +36,7 @@ CATEGORIES = {
     "security": "Security - q that lets its input decide what it runs, or carries secrets",
     "simplification": "Simplification - doing by hand what a q primitive already does",
     "performance": "Performance - q that gives the right answer slower than it has to",
+    "compatibility": "Compatibility - q that does not run on the q release a configuration targets",
     "leftovers": "Leftovers - things left in q that were never meant to ship",
     "policy": "Policy - one repository's conventions",
     "style-guide": "Style guide - conventions from published q guidance",

@@ -105,6 +105,9 @@ pub(super) fn announce(capabilities: &mut Value, help: bool, completion: bool) {
 pub(super) struct More {
     pub(super) inferred_types: bool,
     pub(super) auto_load: bool,
+    /// Add the query in words on hover over a qSQL lead word or the `?`/`!`
+    /// of a functional form (`q_lint_rs::explain_qsql`).
+    pub(super) qsql_explain: bool,
 }
 
 pub(super) fn answer(
@@ -351,6 +354,10 @@ fn hover(params: &Value, sources: &Sources, client: Client, more: More) -> Value
             },
         }
     };
+    let mut sections = sections;
+    if more.qsql_explain && explains(cursor.text, at, len) {
+        sections.extend(q_lint_rs::explain_qsql(cursor.text, at));
+    }
     if sections.is_empty() {
         return Value::Null;
     }
@@ -367,6 +374,14 @@ fn hover(params: &Value, sources: &Sources, client: Client, more: More) -> Value
 /// The hover on a local whose assignments settle its type: the type, as
 /// q's `type` names it. Not at a place in a qSQL phrase, where the name may
 /// be a column of the table.
+/// Whether the word or glyph at `at` leads a query the hover says in words:
+/// `select`, `exec`, `update` or `delete`, or the `?` or `!` before a `[`.
+fn explains(text: &str, at: usize, len: usize) -> bool {
+    let word = &text[at..at + len];
+    ["select", "exec", "update", "delete"].contains(&word)
+        || (matches!(word, "?" | "!") && text[at + len..].starts_with('['))
+}
+
 fn local_type(cursor: &Cursor, local: &q_lint_rs::Local, markdown: bool) -> Value {
     let Some(place) = local
         .places
