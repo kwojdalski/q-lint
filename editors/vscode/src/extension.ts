@@ -73,6 +73,13 @@ import { registerFunctionProfile } from "./profileview";
 import { registerFormatChanged } from "./formatchangedview";
 import { registerOrganiseLoads } from "./organiseloads";
 import { registerProblemsDashboard } from "./problemsview";
+import { registerQsqlTools } from "./qsqltools";
+import { registerErrorExplainer } from "./errorexplainview";
+import { registerBaseline } from "./baselineview";
+import { registerDeadCode } from "./deadcodeview";
+import { registerNamespaces } from "./namespaceview";
+import { registerAffectedOnSave } from "./affectedonsave";
+import { registerSql } from "./sqlview";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -104,6 +111,9 @@ let relations: Relations | undefined;
 /// The Test Explorer integration, which asks the running `client` for the
 /// tests and is told when it changes.
 let testExplorer: ReturnType<typeof registerTestExplorer> | undefined;
+/// The q Namespaces view, which asks the running `client` and is told when
+/// it changes.
+let namespaces: ReturnType<typeof registerNamespaces> | undefined;
 
 /// The server's requests, while one runs.
 const running = () => (client?.isRunning() ? client : undefined);
@@ -112,6 +122,7 @@ const running = () => (client?.isRunning() ? client : undefined);
 function serverChanged(): void {
   relations?.serverChanged();
   testExplorer?.serverChanged();
+  namespaces?.serverChanged();
 }
 
 /// The server this extension was packaged with, if it was packaged with one.
@@ -190,6 +201,12 @@ export async function activate(
     functionProfile: ReturnType<typeof registerFunctionProfile>;
     formatChanged: ReturnType<typeof registerFormatChanged>;
     problemsDashboard: ReturnType<typeof registerProblemsDashboard>;
+    languageTools: {
+      errorExplainer: ReturnType<typeof registerErrorExplainer>;
+      namespaces: ReturnType<typeof registerNamespaces>;
+      affectedOnSave: ReturnType<typeof registerAffectedOnSave>;
+      sql: ReturnType<typeof registerSql>;
+    };
   }
 > {
   // Replacing the binary does not restart the server, and a window reload is
@@ -307,6 +324,22 @@ export async function activate(
     const command = settings.serverPath || bundledServer(context) || "qlinter";
     return { command, args: settings.args.filter((a) => a !== "--lsp") };
   });
+  // The language and linter features of #1052-#1061.
+  registerQsqlTools(context);
+  const errorExplainer = registerErrorExplainer(context, live);
+  registerBaseline(context, () => {
+    const settings = launch(workspace.getConfiguration("q-lint"), workspace.workspaceFolders?.[0]?.uri.fsPath);
+    const command = settings.serverPath || bundledServer(context) || "qlinter";
+    return { command, args: settings.args.filter((a) => a !== "--lsp") };
+  });
+  registerDeadCode(context, live, running);
+  namespaces = registerNamespaces(context, running);
+  const affectedOnSave = registerAffectedOnSave(context, running, {
+    discover: async () => testExplorer?.discover(),
+    items: () => testExplorer?.items() ?? [],
+    run: async (ids) => testExplorer?.run(ids),
+  });
+  const sql = registerSql(context, live);
   // Not awaited: nothing above needs the server, and a slow or hung one
   // would hold up every command of the extension until it answered.
   void serial.run(() => start(context)).then(() => serverChanged());
@@ -364,6 +397,7 @@ export async function activate(
     functionProfile,
     formatChanged,
     problemsDashboard,
+    languageTools: { errorExplainer, namespaces, affectedOnSave, sql },
   };
 }
 

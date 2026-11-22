@@ -350,6 +350,7 @@ test("package.json declares exactly the commands the extension registers", () =>
     NEW_QUERY_COMMAND,
     RUN_ARGS_COMMAND,
     ...Object.values(LOG_COMMANDS),
+    ...Object.values(require("../out/languagefeatures.js").LANGUAGE_COMMANDS),
   ].sort();
   assert.deepStrictEqual(declared, registered);
 });

@@ -56,6 +56,11 @@ test("the defaults start the server as it was started before settings", () => {
     performanceLints: { enable: true },
     formatChangedLines: { enable: false },
     qsqlLayout: { enable: true, onFormat: false, lineLength: 80 },
+    functionalForm: { enable: true },
+    qsqlExplain: { enable: true },
+    versionCheck: { enable: true },
+    baseline: { enable: true },
+    typeLints: { enable: true },
     workspaceIndex: { enable: true, exclude: [] },
   });
 });
@@ -124,6 +129,11 @@ test("every editor-only setting reaches the server's options", () => {
       "qsqlLayout.enable": false,
       "qsqlLayout.onFormat": true,
       "qsqlLayout.lineLength": 100,
+      "functionalForm.enable": false,
+      "qsqlExplain.enable": false,
+      "versionCheck.enable": false,
+      "baseline.enable": false,
+      "typeLints.enable": false,
       "workspaceIndex.enable": false,
       "workspaceIndex.exclude": ["vendor/**"],
     }),
@@ -155,6 +165,11 @@ test("every editor-only setting reaches the server's options", () => {
     performanceLints: { enable: false },
     formatChangedLines: { enable: true },
     qsqlLayout: { enable: false, onFormat: true, lineLength: 100 },
+    functionalForm: { enable: false },
+    qsqlExplain: { enable: false },
+    versionCheck: { enable: false },
+    baseline: { enable: false },
+    typeLints: { enable: false },
     workspaceIndex: { enable: false, exclude: ["vendor/**"] },
   });
 });

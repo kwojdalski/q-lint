@@ -135,6 +135,13 @@ function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir
     "./organiseloads": { registerOrganiseLoads() {} },
     "./problemsview": { registerProblemsDashboard: () => ({ panelOpen: () => false }) },
     "./logview": { LogViewer: class { state() { return undefined; } } },
+    "./qsqltools": { registerQsqlTools() {} },
+    "./errorexplainview": { registerErrorExplainer: () => ({ registered: () => false }) },
+    "./baselineview": { registerBaseline() {} },
+    "./deadcodeview": { registerDeadCode() {} },
+    "./namespaceview": { registerNamespaces: () => ({ registered: () => false, serverChanged() {} }) },
+    "./affectedonsave": { registerAffectedOnSave: () => ({ registered: () => false }) },
+    "./sqlview": { registerSql: () => ({ registered: () => false }) },
   };
   const file = require.resolve("../out/extension.js");
   delete require.cache[file];
