@@ -165,6 +165,7 @@ test("the partition check finds missing dates, files, differing types and outlie
 const { SYM_INSPECT, readSym, symReport } = require("../out/syminspect.js");
 const { ATTRIBUTE_SAMPLE, readAttributeSample, advise } = require("../out/attradvice.js");
 const { TABLE_INFO, readTableInfo } = require("../out/tableinfo.js");
+const { testDataQ, testDataCsv, loadTypes } = require("../out/testdata.js");
 const { migrationScript } = require("../out/migrate.js");
 
 test("the sym inspector counts the file, its columns' shares and its growth", { skip }, async (t) => {
@@ -205,6 +206,27 @@ test("the attribute advisor samples a table's columns without changing it", { sk
   assert.deepStrictEqual(p.columns.map((c) => c.name), ["sym", "px", "sz"]);
   assert.strictEqual(advise(p, new Map([["sym", 1]]))[0].suggest, "s");
   assert.strictEqual(await connection.call("{(attr m`sym)~`}", 0), true);
+});
+
+test("the test data generator's q makes the rows asked for, and its CSV loads back", { skip }, async (t) => {
+  const { connection, dir } = await connect(t, "t:([k:`symbol$()] time:`timestamp$(); px:`float$(); qty:`long$(); d:`date$(); note:())\n");
+  const info = readTableInfo(await connection.call(TABLE_INFO, "t", 100));
+  info.columns.find((c) => c.name === "note").type = "C";
+  const options = { rows: 50, symbols: ["AAPL", "MSFT"], low: 10, high: 20, sorted: "time", seed: 7 };
+  const q = testDataQ(info, "gen", options);
+  const ran = readRun(await connection.call(RUN_SCRIPT, statements(q)));
+  assert.ok(ran.ok, ran.error);
+  assert.deepStrictEqual(await connection.call("{exec t from meta gen}", 0), "spfjdC");
+  assert.strictEqual(await connection.call('{"f"$count gen}', 0), 50);
+  assert.strictEqual(await connection.call("{all 10<=exec px from gen}", 0), true);
+  assert.strictEqual(await connection.call("{(exec time from gen)~asc exec time from gen}", 0), true);
+  assert.deepStrictEqual(await connection.call("{asc distinct exec k from gen}", 0), ["AAPL", "MSFT"]);
+  fs.writeFileSync(path.join(dir, "gen.csv"), testDataCsv(info, options));
+  const loaded = await connection.call(`{c:("${loadTypes(info)}";enlist",")0:\`:gen.csv; (count c;exec t from meta c;all 10<=c\`px;c[\`time]~asc c\`time)}`, 0);
+  assert.strictEqual(Number(loaded[0]), 50);
+  assert.strictEqual(loaded[1], "spfjdC");
+  assert.strictEqual(loaded[2], true);
+  assert.strictEqual(loaded[3], true);
 });
 
 test("a schema migration's q turns one table into the other, in memory and on disk", { skip }, async (t) => {

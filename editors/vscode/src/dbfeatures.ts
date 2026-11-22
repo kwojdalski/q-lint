@@ -15,6 +15,7 @@ export const DB_SETTINGS = {
   symInspector: { key: "hdbBrowser.symInspector.enable", fallback: true, name: "The sym file inspector" },
   attributeAdvisor: { key: "processExplorer.attributeAdvisor.enable", fallback: true, name: "The attribute advisor" },
   schemaMigration: { key: "schemaMigration.enable", fallback: true, name: "Schema migration" },
+  testData: { key: "testDataGenerator.enable", fallback: true, name: "The test data generator" },
   chartCli: { key: "charts.commandLine.enable", fallback: true, name: "Charts from a file" },
 } as const;
 
@@ -28,6 +29,7 @@ export const DB_COMMANDS = {
   inspectSym: "q-lint.inspectSymFile",
   adviseAttributes: "q-lint.adviseAttributes",
   migrateSchema: "q-lint.writeSchemaMigration",
+  testData: "q-lint.generateTestData",
   renderChart: "q-lint.renderChartFromFile",
 } as const;
 

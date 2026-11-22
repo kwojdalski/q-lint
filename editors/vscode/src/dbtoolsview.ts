@@ -29,6 +29,7 @@ import { parseSaved, SAVED_QUERIES_KEY } from "./savedqueries";
 import { statements } from "./statements";
 import { SYM_INSPECT, SYM_PARTITIONS, readSym, symReport } from "./syminspect";
 import { TABLE_INFO, readTableInfo, type TableInfo } from "./tableinfo";
+import { loadTypes, rangeOf, symbolPool, testDataCsv, testDataQ, type TestDataOptions } from "./testdata";
 
 const settings = <T>(key: string, fallback: T): T => workspace.getConfiguration("q-lint").get(key, fallback);
 const on = (feature: DbFeature): boolean => dbOn(settings, feature);
@@ -295,6 +296,24 @@ export function registerDbTools(context: ExtensionContext, live: Live): { state:
     return script;
   };
 
+  /// Test data generator (#1028). `given`: the options, for tests.
+  const testData = async (arg?: TableArg, given?: Partial<TestDataOptions> & { format?: "q" | "csv" }): Promise<string> => {
+    if (off("testData")) return dbOff("testData");
+    const table = await pickTable(live, arg, "Generate test data shaped as which table?");
+    if (table === undefined) return "no table";
+    const got = await tableInfo(live, table);
+    if (got === undefined) return "not read";
+    const options = given !== undefined ? fillOptions(got.info, given) : await askTestData(got.info);
+    if (options === undefined) return "cancelled";
+    const format = given?.format ?? (await window.showQuickPick(["q code", "CSV"], { title: "Make the rows as" }))?.toLowerCase();
+    if (format === undefined) return "cancelled";
+    const short = table.replace(/^.*\./, "");
+    const text = format === "csv" ? testDataCsv(got.info, options) : testDataQ(got.info, short, options);
+    await openDocument(text, format === "csv" ? "csv" : "q");
+    if (format === "csv") say(`q-lint: load it back with ("${loadTypes(got.info)}";enlist",")0:\`:file.csv`);
+    return text;
+  };
+
   /// Chart from a CSV or JSON file (#1031), as the command line draws one.
   const renderChart = async (file?: unknown, kind?: unknown, out?: unknown): Promise<string> => {
     if (off("chartCli")) return dbOff("chartCli");
@@ -328,6 +347,7 @@ export function registerDbTools(context: ExtensionContext, live: Live): { state:
   register(DB_COMMANDS.inspectSym, () => inspectSym());
   register(DB_COMMANDS.adviseAttributes, (arg?: TableArg) => adviseAttributes(arg));
   register(DB_COMMANDS.migrateSchema, (arg?: TableArg, target?: unknown) => migrate(arg, target));
+  register(DB_COMMANDS.testData, (arg?: TableArg, options?: Partial<TestDataOptions> & { format?: "q" | "csv" }) => testData(arg, options));
   register(DB_COMMANDS.renderChart, (file?: unknown, kind?: unknown, out?: unknown) => renderChart(file, kind, out));
   return { state, registered: () => registered };
 }
@@ -369,4 +389,31 @@ async function askOp(columns: string[]): Promise<ColumnOp | undefined> {
       return attr === undefined ? undefined : { op: "attr", column, attr: attr === "none" ? "" : (attr as "s" | "u" | "p" | "g") };
     }
   }
+}
+
+function fillOptions(info: TableInfo, given: Partial<TestDataOptions>): TestDataOptions {
+  return {
+    rows: given.rows ?? 1000,
+    symbols: given.symbols ?? ["A", "B", "C"],
+    low: given.low ?? 0,
+    high: given.high ?? 100,
+    sorted: given.sorted ?? info.columns.find((c) => "pzntv".includes(c.type) && c.type !== "")?.name,
+    seed: given.seed ?? 42,
+  };
+}
+
+/// Ask for the rows, the symbols, the range and the sorted column.
+async function askTestData(info: TableInfo): Promise<TestDataOptions | undefined> {
+  const rows = await window.showInputBox({ title: "How many rows?", value: "1000", validateInput: (v) => (/^\d+$/.test(v.trim()) && +v > 0 && +v <= 10_000_000 ? undefined : "A number of rows, 1 to 10,000,000") });
+  if (rows === undefined) return undefined;
+  const pool = await window.showInputBox({ title: "The symbols a symbol column takes", value: "AAPL MSFT IBM", prompt: "Names, or a number n for sym1 to symn.", validateInput: (v) => (symbolPool(v) ? undefined : "Names separated by spaces, or a number") });
+  if (pool === undefined) return undefined;
+  const range = await window.showInputBox({ title: "The range numbers are drawn from", value: "0 100", validateInput: (v) => (rangeOf(v) ? undefined : "Two numbers, low and high: 0 100") });
+  if (range === undefined) return undefined;
+  const none = "(none)";
+  const fallback = fillOptions(info, {}).sorted;
+  const sorted = await window.showQuickPick([...(fallback ? [fallback] : []), ...info.columns.map((c) => c.name).filter((c) => c !== fallback), none], { title: "Keep which column in ascending order?" });
+  if (sorted === undefined) return undefined;
+  const [low, high] = rangeOf(range)!;
+  return { rows: Number(rows), symbols: symbolPool(pool)!, low, high, sorted: sorted === none ? undefined : sorted, seed: 42 };
 }

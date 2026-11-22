@@ -19,6 +19,7 @@ const { missingWeekdays, partitionProblems, partitionReport, readPartitions } = 
 const { readSym, symReport } = require("../out/syminspect.js");
 const { advise, filterCounts, adviceReport, readAttributeSample } = require("../out/attradvice.js");
 const { schemaDiff, migrationScript, nullOf, castOf } = require("../out/migrate.js");
+const { symbolPool, rangeOf, generator, testDataQ, testDataCsv, loadTypes, random } = require("../out/testdata.js");
 const { gridFromCsv, gridFromJson, chartFromGrid } = require("../out/chartfile.js");
 const { parseArgs, main, USAGE } = require("../out/chartcli.js");
 const { guardCheck } = require("../out/guard.js");
@@ -211,6 +212,32 @@ test("a schema diff names adds, drops, casts and order, and the script turns one
   assert.match(disk, /\.qlint\.cm\.add\[`ex;`\]/);
   assert.match(disk, /\.qlint\.cm\.cast\[`px;"j"\]/);
   assert.doesNotMatch(disk, /del\[`date\]/);
+});
+
+test("test data: pools, ranges, a q generator per type, and CSV that sorts and repeats by seed", () => {
+  assert.deepStrictEqual(symbolPool("3"), ["sym1", "sym2", "sym3"]);
+  assert.deepStrictEqual(symbolPool("AAPL, `MSFT IBM"), ["AAPL", "MSFT", "IBM"]);
+  assert.strictEqual(symbolPool("a-b"), undefined);
+  assert.deepStrictEqual(rangeOf("0 100"), [0, 100]);
+  assert.deepStrictEqual(rangeOf("-1.5..2"), [-1.5, 2]);
+  assert.strictEqual(rangeOf("5 1"), undefined);
+  const o = { rows: 20, symbols: ["A"], low: 10, high: 20, sorted: "px", seed: 3 };
+  assert.strictEqual(generator("s", o), "n?enlist`A");
+  assert.strictEqual(generator("f", o), "10+n?10f");
+  const info = { kind: "keyed", rows: 0, bytes: null, partitions: null, keys: ["k"], ncols: 3, columns: [{ name: "k", type: "s", fkey: "", attr: "" }, { name: "px", type: "f", fkey: "", attr: "" }, { name: "t", type: "p", fkey: "", attr: "" }] };
+  const q = testDataQ(info, "gen", o);
+  assert.match(q, /\\S 3\nn:20\ngen:`k xkey \(\[\] k:n\?enlist`A; px:asc 10\+n\?10f; t:2026\.01\.02D\+n\?1D\)/);
+  const csv = testDataCsv(info, o);
+  assert.strictEqual(csv, testDataCsv(info, o));
+  const lines = csv.trim().split("\n");
+  assert.strictEqual(lines[0], "k,px,t");
+  assert.strictEqual(lines.length, 21);
+  const px = lines.slice(1).map((l) => Number(l.split(",")[1]));
+  assert.deepStrictEqual(px, [...px].sort((a, b) => a - b));
+  assert.ok(px.every((x) => x >= 10 && x < 20));
+  assert.match(lines[1].split(",")[2], /^2026\.01\.0[23]D\d\d:\d\d:\d\d\.\d{9}$/);
+  assert.strictEqual(loadTypes(info), "SFP");
+  assert.notStrictEqual(random(1)(), random(2)());
 });
 
 test("a chart is drawn from CSV and JSON tables, and the command line writes it", async () => {

@@ -1342,6 +1342,12 @@
             "order": 7,
             "markdownDescription": "**Write Schema Migration...**: compare two tables' metas, on one process or two, and write the q that turns the first into the second, for review. Runs nothing. Off, the command is hidden and refuses."
           },
+          "q-lint.testDataGenerator.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 8,
+            "markdownDescription": "**Generate Test Data...**: random rows shaped as a table's meta, as q code to run locally or as CSV. Off, the command is hidden and refuses."
+          },
           "q-lint.charts.commandLine.enable": {
             "type": "boolean",
             "default": true,
@@ -2370,6 +2376,12 @@
         "enablement": "q-lint.connected"
       },
       {
+        "command": "q-lint.generateTestData",
+        "title": "Generate Test Data...",
+        "category": "q-lint",
+        "enablement": "q-lint.connected"
+      },
+      {
         "command": "q-lint.renderChartFromFile",
         "title": "Render Chart from CSV or JSON File...",
         "category": "q-lint"
@@ -2923,6 +2935,11 @@
           "command": "q-lint.writeSchemaMigration",
           "when": "view == q-lint.processExplorer && viewItem == explorer.table && config.q-lint.schemaMigration.enable",
           "group": "3_database@3"
+        },
+        {
+          "command": "q-lint.generateTestData",
+          "when": "view == q-lint.processExplorer && viewItem == explorer.table && config.q-lint.testDataGenerator.enable",
+          "group": "3_database@4"
         }
       ],
       "editor/title/run": [
@@ -3686,6 +3703,10 @@
         {
           "command": "q-lint.writeSchemaMigration",
           "when": "config.q-lint.schemaMigration.enable"
+        },
+        {
+          "command": "q-lint.generateTestData",
+          "when": "config.q-lint.testDataGenerator.enable"
         },
         {
           "command": "q-lint.renderChartFromFile",

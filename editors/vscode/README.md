@@ -1641,6 +1641,13 @@ second, for review; nothing runs. A table in memory is assigned again
 column manager's script, every step in every partition. The metas cannot
 tell a rename from a drop and an add, and say so as that.
 
+**Generate Test Data...**, on a table, makes random rows shaped as its
+meta, with the number of rows, the symbols drawn from (names, or `50` for
+`sym1` to `sym50`), the range numbers are drawn from, and a column kept in
+ascending order chosen, as q code to run on a local process (it sets `\S`, so it
+makes the same rows each time) or as CSV, with the `0:` types that read it
+back.
+
 **Render Chart from CSV or JSON File...**, in the Explorer's context menu
 on a `.csv`, `.tsv` or `.json` file, draws it as an SVG chart with the
 code the result panel saves its charts with, and writes the file you name.
@@ -2283,6 +2290,7 @@ Read when a cell runs or a command is used, so a change needs no reload. None re
 | `q-lint.hdbBrowser.symInspector.warnAbove` | `1000000` | **Inspect Sym File** warns when the sym file holds more symbols than this. | - |
 | `q-lint.processExplorer.attributeAdvisor.enable` | `true` | **Advise Attributes**. Off, the command is hidden and refuses. | - |
 | `q-lint.schemaMigration.enable` | `true` | **Write Schema Migration...**. Off, the command is hidden and refuses. | - |
+| `q-lint.testDataGenerator.enable` | `true` | **Generate Test Data...**. Off, the command is hidden and refuses. | - |
 | `q-lint.charts.commandLine.enable` | `true` | **Render Chart from CSV or JSON File...**. Off, the command is hidden and refuses; `out/chartcli.js` is yours to run or not. | - |
 
 ### Not here, and why
