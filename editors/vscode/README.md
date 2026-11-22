@@ -481,6 +481,115 @@ password. `q-lint.processes.shared.enable` off stops reading the file,
 removes the group, closes a connection to one of its processes, and hides
 the command.
 
+**Add Many Processes...**, on the Processes view's title menu, opens a form
+to paste processes into: a line each, `host:port[:label[:tags]]` (an IPv6
+host in brackets, `[::1]:5000:local`), or CSV whose header row names
+`host`, `port` and any of `label`, `tags`, `user` and `tls`. As you type, a
+table under it shows what each line gives - a process, why not, or a
+duplicate - and **Add** adds the processes, after the saved ones. A label
+already in the list, or on an earlier line, is skipped; one at the address
+of a saved process is added, and the table says which. A label left out is
+`host:port`. No password is read from what is pasted (a `password` column
+is ignored and masked in the table): each is asked for on the first
+connect. `q-lint.processes.bulkAdd.enable` off hides the command.
+
+**Import Servers from qStudio...** and **Import Connections from KX
+Extension...**, on the Processes view's title menu, bring in the
+processes another tool knows. From qStudio: the text its **Copy Server
+List** puts on the clipboard (`name@host:port:user`, a folder before a `/`
+taken as a tag), its `<serverlist>` XML, or the preferences it keeps them in
+(on Linux `~/.java/.userPrefs/com/timestored/qstudio/prefs.xml`, offered
+when it is there); only kdb servers are taken. From KX's kdb extension: its
+`kdb.servers` in your settings, with `kdb.labelsConnectionMap`'s labels as
+tags, or a file its **Export Connections** wrote; kdb Insights connections
+are left out. You are shown what will be added and asked first. A label
+already in the list is kept as it is, and no password is ever imported,
+even where the source holds one: each is asked for on the first connect.
+`q-lint.processes.importOther.enable` off hides both commands.
+
+**Set Credential Command**, on a saved process, gives it a command run in
+a shell at each connect, whose output is the user and password sent in the
+handshake - for a Kerberos ticket, a vault or a token service. It prints a
+JSON object with `password` (or `token`) and optionally `user` (or
+`username`), or a line: the password when the process has a user, else
+`user:password`, else the password alone. It runs in the workspace folder
+(or your home), with `QLINT_PROCESS_LABEL`, `QLINT_PROCESS_HOST`,
+`QLINT_PROCESS_PORT` and `QLINT_PROCESS_USER` set, and is given 30 seconds.
+What it prints is used for that one connect and kept nowhere - not in
+secret storage, settings, the process list or a log - and a failure says
+only how it ended (its exit code, or the timeout), never its output. The
+command itself is kept with the process, like a launch definition, and in
+a shared `.qlint/processes.json` it is read only in a trusted workspace.
+`q-lint.connection.credentialCommand.enable` off hides the command, and
+processes connect with their stored password instead.
+
+**Environment colour.** With `q-lint.processes.environmentColor.enable` on
+(off by default, as it recolours the window), while the connected process
+carries a coloured tag a status bar item names the tag in its colour -
+production red and `uat` amber unless
+`q-lint.processes.environmentColor.colors` says otherwise (`red`, `amber`,
+`yellow`, `purple`, `blue`, `green` or `#rrggbb` per tag) - and each q
+editor has a border of it down its left side. A process with tags of two
+colours takes the most cautious. VS Code lets a status bar item have only
+an error (red) or warning (amber, yellow) background, so the other colours
+colour its text. The title bar is left as your theme draws it: colouring it
+would mean writing `workbench.colorCustomizations` into your settings,
+which q-lint does not do. Nothing is sent to the process.
+
+**Set Process Timeout**, on a saved process, gives queries on it a timeout
+of their own, in seconds, over `q-lint.query.timeout`: when it passes, the
+query's connection is dropped as **Abort Current Query** drops it, the
+history records a timeout, and the message names the process's timeout.
+Empty goes back to `q-lint.query.timeout`. **Interrupt Query on Local
+Process**, in the palette while connected, stops the running query on a
+process started from the Processes view (**Start Process**) by sending it
+SIGINT: q ends the query with `'stop` and the connection stays, ready for
+the next query, where Abort can only stop waiting and reconnect. For any
+other process it says so and sends nothing. Their switches are
+`q-lint.query.processTimeout.enable` and `q-lint.query.cancelLocal.enable`.
+
+**Run Query Asynchronously**, in a q editor's context menu, sends the
+selection or the statement at the cursor as an async message: the command
+returns at once, the connection stays free for other queries (which the
+process runs after it, one message at a time), and when the process is done
+the result opens in the result panel - a table as a grid, any other value as
+its lines - and goes into Query History. The query is wrapped in a lambda
+that shapes the value as a grid query does and sends it back on your handle
+(`neg[.z.w]`); nothing is kept on the process. It is read by the read-only
+guard first, as any query is. While results are due, the status bar counts
+them; **Show Pending Async Queries** lists them and can forget one (q runs
+it to the end anyway: it cannot cancel a running query). A connection that
+closes takes its pending results with it, and says so.
+`q-lint.query.async.enable` off hides both commands and drops what is
+pending.
+
+**Copy Query Link**, in a q editor's context menu, copies a link to the
+selection or the statement at the cursor, aimed at a process by its label
+(the file's process, else the connected one, else one you pick):
+`vscode://wojdalski.q-lint/query?process=...&code=...`, both in base64url,
+placeholders left as written. Opening the link - from chat, a ticket, a
+wiki - opens the query in a new q editor bound to *your* process of that
+label, and asks before running it; run, it goes as a query from that
+editor goes, read by the read-only guard. A label not in your Processes
+list opens the query unbound and runs nothing. Nothing in the link is a
+password. `q-lint.query.links.enable` off hides the command and stops
+opening links.
+
+**Scheduled exports.** With `q-lint.export.schedule.enable` on (off by
+default, as it runs queries on its own), **Add Scheduled Export...** (on
+the Saved Queries view's title menu) schedules a saved query on a process:
+daily at given times (`09:00, 17:30`) or every N minutes (`+15`), its
+result written as CSV, Parquet or Excel to the file you choose - replaced
+each run, or written anew with the run's time in its name, as you choose
+then. Each runs while VS Code is open, on a connection of its own, so the
+connected process and your queries are left alone; the grid's row limit
+(`q-lint.query.gridLimit`) applies. Only a read-only query is run - one in
+which the read-only guard's reading finds no write, on any process - and
+one with no `{{name}}` placeholder, since nobody is there to fill it in; a
+run that cannot be made says why. **Manage Scheduled Exports...** lists
+them with how each last ran, and runs one now or removes it. They are kept
+per workspace, as saved queries are.
+
 **Querying.** With a q file open:
 - **Query Current Line**, `ctrl+q`.
 - **Query Current Selection**, `ctrl+r`: the current line when nothing is
@@ -814,11 +923,13 @@ is sent; Escape sends nothing. A change is: assigning a global (`a:1`,
 `a+:1`, `t[0]:5`, `a::b` - and, inside a lambda, `a::` or a dotted
 `.ns.v:`, as q makes those global; a column named in `select a:x from t` or
 `([] a:1 2)` is not one), `update` or `delete` from a table named by a
-symbol (`` from `t ``), `set`, `upsert`, `insert`, `hdel`, `exit`, `system`,
-`.Q.dpft`, `.Q.dpfts`, `.Q.hdpf`, `.Q.en`, `0:` or `1:` to a file handle,
-`2:`, an amend in place (`` @[`t;i;:;v] ``), `value` or `eval` of a string,
-and a system command other than one that reads a setting (`\c`, `\d`, `\P`
-alone) - `\t` and `\ts` are read for their expression. It holds for every
+symbol (`` from `t ``), `set`, `upsert`, `insert`, `hdel`, `exit`, `hclose`,
+`system`, `.Q.dpft`, `.Q.dpfts`, `.Q.hdpf`, `.Q.en`, `0:` or `1:` to a file
+handle, `2:`, replaying a log with `-11!` (not `-11!(-1;..)` or `(-2;..)`,
+which only count and check it), an amend in place (`` @[`t;i;:;v] ``),
+`value` or `eval` of a string, and a system command other than one that
+reads a setting (`\c`, `\d`, `\P` alone) - `\t` and `\ts` are read for their
+expression, except `\t 500`, which sets the timer. It holds for every
 path that sends code: a query (line, selection, block, file, a Run lens, a
 rerun, Preview, a saved query, a watched one, asked once when it starts),
 **Query a Tag** and **Compare Query** (asked once, for every guarded
@@ -1095,9 +1206,9 @@ applies. The previous run can be on another process, which the bar names.
 
 **Export as...** in the bar (or **Export Results As...**) saves the rows
 shown, in the order shown, as Excel (`.xlsx`), Parquet, JSON, a Markdown
-table or q; **Copy Results As...** puts JSON, Markdown or q on the
-clipboard. Both take the format (`xlsx`, `parquet`, `json`, `markdown`,
-`q`) as an argument, and Export the file's `Uri` too. Markdown shows the
+table, q or an HTML page; **Copy Results As...** puts JSON, Markdown, q or
+HTML on the clipboard. Both take the format (`xlsx`, `parquet`, `json`,
+`markdown`, `q`, `html`) as an argument, and Export the file's `Uri` too. Markdown shows the
 cells as the grid does. The others write what the process sent rather than
 what the grid shows: a float's every digit, a long past 2^53 exactly, a null
 as a null.
@@ -1116,6 +1227,8 @@ as a null.
 - **JSON**: an array of row objects; a number (a byte too) is a number, a
   boolean a boolean, a null `null`, and the rest - temporals, symbols, an
   infinity, which JSON has no number for - q's text.
+- **HTML**: a page of one table, the cells as the grid shows them, each
+  cell a conditional format matches coloured as in the grid.
 - **q**: an expression that rebuilds the table, keyed as it was:
   `([sym:`a`b] px:(1.5f;0n))`, or `flip` of a dictionary when a column's
   name is one q reserves (`count`, a dictionary's `key` and `value`). A
@@ -1257,10 +1370,121 @@ is sent to the connected process only on **Run**, through the read-only
 guard, as it assigns a global. The process reads the file by its path, so it
 must run on this machine, or the path be changed in the editor first.
 
+**Column formats.** A column whose name ends in one of these suffixes (any
+case, after the last `_`) is shown formatted, so the query decides how its
+result looks. The header shows the name without the suffix, which stays in
+its tooltip, and a cell's tooltip is q's own text:
+
+| Suffix | Shown as |
+| --- | --- |
+| `_PCT` | a fraction as a percent: `0.0123` is `1.23%` |
+| `_BPS` | a fraction in basis points: `0.0123` is `123.0 bp` |
+| `_CCY` | an amount: thousands separated, two decimals |
+| `_NUM` | thousands separated, the decimals as q wrote them |
+| `_BG`, `_FG` | the value is a colour (`` `red ``, `"#ff8800"`): the background or the text of the column the rest of the name names (`px_BG` colours `px`), or of the whole row when there is none |
+| `_CODE` | monospace |
+| `_BAR` | a data bar scaled to the column's range |
+
+A number format can end in a digit, its decimals: `ret_PCT1`, `pnl_CCY0`.
+It applies to a numeric column only, and a null or an infinity is shown as
+q writes it. A colour is a name or `#` and three, four, six or eight hex
+digits; anything else colours nothing. Copy and the exports write the
+cells as q sent them.
+
+```q
+select sym, ret_PCT:ret, spread_BPS:spread, pnl_CCY:pnl, sym_BG:?[pnl>0;`green;`red] from book
+```
+
+**Conditional formats.** **Add Conditional Format...** on a column header's
+right-click menu asks for a comparison - greater than, at least, less than,
+at most, equal, not equal, the top or bottom N, or containing some text (a
+column that is not numeric is offered equal, not equal and contains) - its
+value, and a background colour, a text colour or bold, and colours the
+cells that match. Rules add up, the later's colour winning on a cell; top
+and bottom N count the rows the grid holds, ties included, and a null
+matches nothing. **Clear Conditional Formats** drops a column's rules. The
+rules stay with the result's tab, go to the next run of the same query in
+the window, and are kept with the saved query the result came from. The
+Excel export writes them as Excel's own conditional formatting, so they stay
+live in the sheet; the HTML export colours the cells; the other formats
+cannot hold them.
+
+**Sparklines and data bars.** A column of numeric lists (`1 2 3f` in each
+cell) is drawn as a sparkline in each cell, the list in its tooltip;
+**Toggle Sparkline** on its header's menu shows the text again. **Toggle
+Data Bar**, on a numeric column's menu, draws each value as a bar scaled to
+the column's range, from zero, so a negative value goes left of it. Both are
+kept as the rules are.
+
+**Column layout.** Drag a column's header to move it, or its right edge to
+resize it; **Hide Column**, **Freeze Columns up to Here** (they stay at the
+left as the grid scrolls across) and **Unfreeze Columns** are on the
+header's menu. The bar says how many are hidden, and its button, or **Show
+Hidden Result Columns**, shows them; **Reset Result Column Layout** puts
+everything back. The layout is kept by column name with the result's tab,
+the next run of the same query in the window, and the saved query the
+result came from: run from **Saved Queries**, it opens as it was left.
+Hidden columns are still in Copy and the exports.
+
+**Depth chart.** An order book is drawn as its depth: the cumulative size at
+each price either side of the mid, the bid side green and stepping down to
+the best bid, the ask side red and stepping up from the best ask, with the
+mid and the spread above. The book is read from bid and ask price and size
+columns, one level a row (`bidPx`, `bidSize`, `askPx`, `askSize`; also
+`bid`/`ask`, `bp`/`bs`/`ap`/`as`, `bidQty`, `offer`, ...); from columns of
+lists in one row (`bids`, `bidSizes`, `asks`, `askSizes`: the first row
+shown); or from `side`, `price` and `size` (or `qty`) columns, a side
+`buy`/`bid`/`b` or `sell`/`ask`/`offer`/`a`. A result whose columns fit opens
+as a depth chart by itself.
+
+**Map.** A result with numeric `lat` (or `latitude`) and `lon` (`lng`,
+`long`, `longitude`) columns can be drawn on a plain outline of the world:
+each row a point, **size** by a numeric column (its square root) and
+**colour** by any column, a numeric one from blue to red and any other one
+colour per value. The outline is Natural Earth's 1:110m land, public
+domain, bundled with the extension: nothing is fetched. A row with no
+position, or one off the map, is left out, and the chart says how many.
+
+**Linked panes.** Draws each series ticked in its own pane, stacked, on one
+x axis (the first column, a time or a number, or the row). Move over any
+pane and a crosshair follows in every pane while the line above reads each
+series at that x, as the grid shows it; drag across a pane to zoom every
+pane to that range, and double-click to show all again. Save SVG stacks the
+panes in one image.
+
+**Chart presets.** While a chart is drawn, **Save with Query** (or **Save
+Result Chart with Query**) keeps it with the saved query the result came
+from: its kind, series, right axis, bins, map columns and colours - each
+series has a colour box beside its tick to choose its own. Running the
+saved query again opens its chart as it was saved. A result of a query not
+saved is offered **Save Query...** first. **Forget Result Chart Preset**
+drops it.
+
+**Correlation.** The **Correlation** view (or **Show Result Correlation
+Matrix**) shows the Pearson correlation of every pair of numeric columns
+over the rows shown, computed in the panel: a matrix coloured blue for a
+positive correlation and red for a negative one, stronger the nearer to 1
+or -1, then the pairs from the strongest. Each pair uses the rows where
+both are not null, as q's `cor` over those rows; key columns are left out.
+**Copy Matrix** copies it as CSV.
+
+**Send to a notebook or a report.** **Send to...** in the bar (or **Send
+Result to Notebook** and **Append Result to Markdown Report...**) writes the
+result as Markdown: where and when it ran, its query in a fenced block,
+the rows shown as a table (the first 500), and, if you choose **Table and
+chart**, the chart as the Chart view draws it. Into a q notebook it goes as
+a Markdown cell after the selected cell, the chart a PNG inside it. To a
+report it is added after the file's last line - the last report is offered
+first, or pick a file or start a new one - and the chart goes beside it as
+a new SVG file in `<report>-images/`, never over one there. Before writing,
+it shows what it will write and asks.
+
 Each of these - the history, Compare, Stats, the heatmap, the tree, export,
-paging, the pivot, the new charts, drill-down, the Data Wrangler, cell edits
-and the plots - has its own `q-lint.results.<feature>.enable` setting, on by
-default but for paging.
+paging, the pivot, the new charts, drill-down, the Data Wrangler, cell edits,
+the plots, column formats, conditional formats, sparklines and data bars,
+the column layout, the depth chart, the map, linked panes, chart presets,
+correlation and Send to... - has its own `q-lint.results.<feature>.enable`
+setting, on by default but for paging.
 Turned off, its button and command are gone (the command, run anyway, says
 which setting turns it back on), and a change applies at once, without a
 reload.
@@ -1490,6 +1714,23 @@ partitions are `.Q.pv`, the rows `.Q.cn`, which reads each partition's count
 from a column file and caches it in `.Q.pn` as the explorer does, and the
 sym file's size `hcount`. The newest 1000 partitions are listed.
 
+**Connected Clients** shows the connected process's open handles
+(`.z.W`): each handle, what is queued on it, the kind of socket (TCP or a
+Unix socket, TLS, a WebSocket, where `-38!` tells) and, where TorQ's
+`.clients` records them, the user and host - q itself keeps no address for
+another client's handle, and the view says so. The handles include those
+the process opened itself; this extension's own is marked. **Close Client
+Handle**, on a row, asks first and sends `hclose`; on a process the
+read-only guard guards it is refused outright, not asked about. **Timers** shows the
+process's `\t` interval and `.z.ts`, and TorQ's `.timer.timer` jobs - each
+with its period, next and last run - the first 200. **Turn Timer On/Off**,
+on a job, sets its `active` flag; **Set Timer Interval (\t)** sends
+`system "t N"` (0 turns the timer off); both go through the read-only
+guard. Each view is read by a fixed read-only lambda when shown, on
+connect and on Refresh, sharing the query connection as the Monitor does,
+and has its own switch: `q-lint.connectedClients.enable` and
+`q-lint.timers.enable`.
+
 The Monitor, the HDB Browser, Open Function Source and Find Callers share
 the query connection as the explorer does: they never interrupt a query,
 and wait a moment for one to finish. Each of these features has its own
@@ -1572,6 +1813,235 @@ and **Insert at Cursor**, which puts it in the editor you started from.
 Close it, and nothing happens. `q-lint.chat.englishToQsql.enable` off hides
 the command. Both need a language model in VS Code, such as GitHub
 Copilot's; without one they say so.
+
+### Databases, HDBs and dashboards
+
+Each of these has its own `enable` setting ([Database
+settings](#database-settings)); turned off, its commands are hidden and
+refuse, its panel closes, its timers stop, and it sends nothing. The ones
+that read a process read it as the Process Explorer does - a fixed lambda
+that defines nothing, on the query connection, waiting for a query rather
+than interrupting one - and open what they made in a new, unsaved editor:
+nothing is written into the workspace unless you save it.
+
+**Manage HDB Column...**, in the HDB Browser's title menu, on a table in
+the Process Explorer or in the palette, adds, deletes, renames or casts a
+column, or sets or removes its attribute, in every partition of a
+partitioned table (`.Q.par`, so segments are followed) or in a splayed
+table under the root. It writes the q first, with its helpers in it, in
+the way of KX's dbmaint.q - each changes one table directory's column
+files and `.d`, and a directory where the change cannot be made is left as
+it is and named in the answer - and opens it for review; a modal asks, and
+only **Run** runs it. The database is loaded again after (`\l .`), so the
+process sees what is on disk. A symbol default, and a cast to `s`, are
+enumerated against the root's `sym` file. Casting and setting an attribute
+read and write the whole column of each partition. A process the read-only
+guard guards is refused outright, before the script is shown, whatever is
+answered.
+
+**Document Database** writes the connected process's tables - columns with
+their types, attributes and foreign keys, keys, rows, partitions - and its
+functions with their parameters as a Markdown or HTML document, with the
+qDoc comment written above each function in the workspace where there is
+one.
+
+**Check Partition Consistency**, in the HDB Browser's title bar, reports
+what a partitioned database q would trip on or hide: weekdays missing from
+the date range, a table missing from a partition, a missing `.d` or column
+file, a column or type that differs from the table's other partitions, a
+symbol column enumerated against a domain the root has no file for, and a
+partition whose rows are empty or ten times from the median - each with
+its partitions. The quick check reads no column data (`.d` files, and each
+column file's header through `type get`); the full check also reads every
+symbol column, for an index past the end of its sym file. The newest 1000
+partitions are checked.
+
+**Inspect Sym File** gives the sym file's size and count, the distinct
+symbols each enumerated column uses (from 20 partitions spread over the
+range, and the splayed tables in the root, whose symbol columns it reads),
+how big the file was when each of those partitions was written (one more
+than the largest index it uses), and a warning above
+`q-lint.hdbBrowser.symInspector.warnAbove` symbols.
+
+**Advise Attributes**, on a table in the Process Explorer, suggests `s#`,
+`u#`, `p#` or `g#` per column - or none - with the reason and about what
+it costs in memory, from up to 100,000 rows (of a partitioned table, the
+first rows of its last partition, mapped from its directory) and from how
+many saved queries and Query History entries filter on the column. It
+never applies one. The costs are KX's figures - nothing for `s#`, about 16
+bytes a distinct value for `u#`, 24 for `p#`, 8 a row plus 16 a distinct
+value for `g#` - and kdb+ allocates in powers of two, so a real one can be
+up to twice that. A column no query filters on is suggested only `s#`, or
+the shape it already has when it is the table's first.
+
+**Write Schema Migration...**, on a table, compares its meta with another
+table's - on the same process, or on another saved process, read over a
+connection of its own - and writes the q that turns the first into the
+second, for review; nothing runs. A table in memory is assigned again
+(`delete`, `update`, a cast, `xcols`, `xkey`); a table on disk gets the
+column manager's script, every step in every partition. The metas cannot
+tell a rename from a drop and an add, and say so as that.
+
+**Generate Test Data...**, on a table, makes random rows shaped as its
+meta, with the number of rows, the symbols drawn from (names, or `50` for
+`sym1` to `sym50`), the range numbers are drawn from, and a column kept in
+ascending order chosen, as q code to run on a local process (it sets `\S`, so it
+makes the same rows each time) or as CSV, with the `0:` types that read it
+back.
+
+**Open Tickerplant Log...** starts a q of its own (`q-lint.terminal.qBinary`,
+in a new temporary directory, listening on the loopback only) and has it
+read the log with `-11!`. Its messages are listed by number with their
+function, table, rows and first time, filtered by table and time of day,
+and paged 200 at a time; the one picked is shown in full, and Previous and
+Next step through them. A log cut short is read to its last whole message,
+and the panel says how many bytes were left. **Replay** runs a range of
+messages in that q, after asking, with an `upd` that inserts into a table
+of that name (made from a first message that is a table); **Load
+Schema...** loads a q file - the tickerplant's schema and `upd` - into it
+first. Nothing is sent to any process of yours. The q stops, and its
+directory goes, when the panel closes.
+
+**Open Dashboard...** shows a panel of tiles, each a saved query run on a
+saved process, shown as a table (its first 200 rows) or as a line, bar,
+area, step or scatter chart, with its own **Refresh**, interval and view;
+**Add to Dashboard...**, on a saved query, adds one. A tile runs over a
+connection of its own, as **Query a Tag** does, when the panel opens, on
+**Refresh**, and every so many seconds only when you give it an interval:
+none has one until you do. A refresh due while the last is still out is
+skipped. Only a query the read-only guard reads as changing nothing can be
+a tile, and none with a `{{placeholder}}`. The layout - the tiles, their
+order, intervals and views, and how many a row - is kept in the
+workspace's storage, as saved queries are.
+
+**Render Chart from CSV or JSON File...**, in the Explorer's context menu
+on a `.csv`, `.tsv` or `.json` file, draws it as an SVG chart with the
+code the result panel saves its charts with, and writes the file you name.
+The same works from a shell, for a report or a CI job, with nothing but
+node and the extension's files:
+
+```sh
+node out/chartcli.js fills.csv -o fills.svg --kind line --title "Fills"
+node out/chartcli.js --host localhost --port 5000 \
+  --query "select avg px by 5 xbar time.minute from trade" -o px.svg --kind bar
+```
+
+Run it from the extension's directory (`~/.vscode/extensions/wojdalski.q-lint-*`,
+or `editors/vscode` in a checkout after `npm run compile`, where `npm run
+chart -- ...` does the same). `--x` and `--y` pick the columns, `--width`,
+`--height` and `--background` the picture; a CSV's first row names its
+columns, and JSON is an array of rows or an object of columns, as `.j.j`
+writes a table. A query's password is read from `QLINT_CHART_PASSWORD`, and
+a query the read-only guard reads as changing the process is refused. It
+writes SVG only: a PNG would need a rasterizer, and so a dependency.
+
+### Inspecting processes, and editor helpers
+
+Each of these has its own setting, listed under
+[Process tool settings](#process-tool-settings); off, its commands and views
+are gone and it sends nothing. Each reads only when you run its command or
+press its view's **Refresh**.
+
+**Tickerplant Subscribers**, a view in the q-lint panel, shows the
+connected tickerplant's subscriptions (`.u.w`) by table: each subscriber's
+handle, its output queue (`.z.W`, marked when bytes are waiting), the
+symbols it asked for, and its host where the process records one - TorQ's
+`.clients.clients` does; plain q keeps no host for another handle, and the
+view says so. It reads nothing until **Refresh** is pressed, then sends one
+read-only lambda, as the Process Explorer reads, without interrupting a
+query. A process without `.u.w` is said to be no tickerplant.
+`q-lint.tickerplant.subscribers.enable` off removes the view.
+
+**System Settings**, a view in the q-lint panel, shows the connected
+process's `\c`, `\s`, `\P`, `\T`, `\g`, `\o`, `\z` and `\w`, each with a
+note on what it does (hover the row), read when **Refresh** is pressed.
+**Edit System Setting...** (the pencil on a row) asks for a new value,
+checks it against what the setting takes - digits, a sign, `0N` and spaces
+only ever reach `system` - and asks before sending `\x value`; on a process
+the read-only guard guards, the guard asks instead, with its warning. `\w`
+is shown, not edited: kdb+ changes the limit only for a process started
+with `-w`, and PeachQ not at all. `q-lint.processes.systemSettings.enable`
+off removes the view and its commands.
+
+**Process Files**, a view in the q-lint panel, browses the q host's
+directories through the connected process, as qStudio's remote folder does,
+for a host you reach only over q. **Browse Process Files...** (the view's
+folder button, or the palette) starts at a path you type, or the process's
+working directory; each directory is listed (`key` on its path, at most 1,000
+entries) when it is expanded. A file opens read-only, its first 1 MB only
+(`read1`), with a last line saying when it was cut; a binary file is not
+shown. Every read is a fixed read-only lambda; nothing is written.
+`q-lint.processes.fileBrowser.enable` off removes the view.
+
+**Diff Function Across Processes...** (a q editor's context menu, or
+the palette) reads a function's definition - the name under the cursor, or
+one typed - on two processes you pick and opens VS Code's side-by-side diff
+of them. **Diff Namespace Across Processes...** reads every function
+directly in a namespace on both and lists the ones that differ or are on
+one side only; the one picked opens the same diff. Each process is read
+over a connection of its own, closed after, with a read-only lambda, so the
+active connection is left as it is. `q-lint.processes.functionDiff.enable`
+off hides both.
+
+**Find in Processes...** (on a tag row in Processes, the view's title,
+or the palette) searches the function definitions - and, when you ask,
+the variable names - of every process with a tag, ignoring case, in the
+root and every namespace but q's own. The hits land in the **Find in
+Processes** view: each process, its functions, each matching line; a line
+opens the function's live source, read again from that process, at the
+line. Each process is searched over a connection of its own, eight at a
+time, with a read-only lambda, at most 500 hits each; one that cannot be
+reached is shown as failed. `q-lint.processes.findInProcesses.enable` off
+removes the view and the command.
+
+**Inline results.** After **Run Line** or **Run Selection**, the
+result's short form - q's console text on one line, cut at 80 characters, or
+the error - shows after the end of the line it came from (the selection's
+last line), in the code lens colour, with the whole result and its time on
+hover. It stays until that line is edited; **Clear Inline Results** clears
+them all. It draws what the query answered and sends nothing more.
+`q-lint.query.inlineResults.enable` off clears them and draws none.
+
+**Benchmark Expression** (a q editor's context menu, or the palette)
+times the selection, or the statement at the cursor, on the connected
+process with `\ts:N`, repeated K times - and, when you give a second
+expression, that one too, to compare. The panel shows a table (min,
+median, mean and max time per run, the space, and the second against the
+first) and a chart of each. It runs only when you run the command, and the
+expressions go as a query does: the read-only guard reads them as
+`\ts:N expression` and asks first when one would change a guarded process.
+`q-lint.query.benchmark.enable` off hides the command and closes the
+panel.
+
+**Join Assistant...** (a q editor's context menu, or the palette) asks
+for two tables - one of the connected process's, the query behind the
+result on show, or an expression you type - reads their columns, types,
+attributes and keys (`meta`, so a partitioned table is not read), and
+offers the joins they allow: `lj` and `ij` on the right table's keys (or the
+symbol columns both share, with the `xkey` written in), `aj` and `wj` on a
+time column both have, with the `xasc` they need unless the right table is
+already sorted or grouped, and `uj` for tables alike. Each comes with why;
+the one you pick is inserted at the cursor - after the selection, never
+over it - or in a new q editor. The two expressions are sent through the
+read-only guard. `q-lint.query.joinAssistant.enable` off hides it.
+
+**Explain aj Match...** (a q editor's context menu, or the palette)
+finds the `aj` or `aj0` call in the selection or the statement at the
+cursor, asks for a row of its left table, and re-runs the match for that row
+on the connected process: the right table's rows with that row's keys, then
+the last of them at or before its time, found by `bin` as `aj` finds it. It
+shows the row matched, or why none was - no right row has that key, or the
+earliest one is after the row's time - and warns when those right rows are
+not in time order, as `aj` assumes. The call's arguments go through the
+read-only guard. `q-lint.query.ajExplainer.enable` off hides it.
+
+**Open Scratch Buffer** (a process's context menu in Processes, or the
+palette) opens that process's own q file, kept in the extension's storage -
+so it is there in the next session, in any workspace, and never in your
+repository - and binds it to the process, as **Choose Connection for File**
+does, so what you run from it goes there. It sends nothing itself, and
+never writes over what you wrote. `q-lint.processes.scratchBuffer.enable`
+off hides it.
 
 ## q notebooks
 
@@ -2018,7 +2488,7 @@ nothing.
 | `q-lint.results.statistics.enable` | `true` | Offer the **Stats** view and **Show Column Statistics**. | - |
 | `q-lint.results.heatmap.enable` | `true` | Offer the **Heatmap** button and **Toggle Result Heatmap**. Off, nothing is coloured, whatever `q-lint.query.gridHeatmap` says. | - |
 | `q-lint.results.tree.enable` | `true` | Offer the **Tree** view and **Show Result as Tree**. Off, the process is not asked for the tree. | - |
-| `q-lint.results.export.enable` | `true` | Offer **Export as...**, **Export Results As...** and **Copy Results As...**: Excel, Parquet, JSON, Markdown and q. CSV is always offered. | - |
+| `q-lint.results.export.enable` | `true` | Offer **Export as...**, **Export Results As...** and **Copy Results As...**: Excel, Parquet, JSON, Markdown, q and HTML. CSV is always offered. | - |
 | `q-lint.results.paging.enable` | `false` | Hold a result cut at `gridLimit` on the process as `.qlint.held`, and fetch more of it as the grid scrolls. Never on a production process. | - |
 | `q-lint.results.pivot.enable` | `true` | Offer the **Pivot** view and **Show Result as Pivot**. | - |
 | `q-lint.results.charts.enable` | `true` | Offer area, step and candle charts, a right axis, **Save PNG**, **Save SVG** and **Save Result Chart as Image**. | - |
@@ -2026,6 +2496,16 @@ nothing.
 | `q-lint.results.drilldownTemplates` | `[]` | The drill-down queries: `label`, `query` with `{{value}}`, `{{column}}` and `{{row.name}}`, and the `columns` each is offered for. | - |
 | `q-lint.results.wrangler.enable` | `true` | Offer the Data Wrangler: **Wrangle Result...** and a column header's **Wrangle Column...**, each step recorded as q and run over the result's query. | - |
 | `q-lint.results.editCells.enable` | `true` | Offer a cell's **Edit Cell...**: the `update` that sets it, shown and sent only on **Run**, through the read-only guard. | - |
+| `q-lint.results.columnFormats.enable` | `true` | Format a column by its name's suffix: `_PCT`, `_BPS`, `_CCY`, `_NUM`, `_BG`, `_FG`, `_CODE`, `_BAR`. Off, every column is shown as q writes it. | - |
+| `q-lint.results.conditionalFormats.enable` | `true` | Offer **Add Conditional Format...** and **Clear Conditional Formats** on a column header's menu; rules kept per tab and saved query, and written to Excel and HTML exports. | - |
+| `q-lint.results.cellCharts.enable` | `true` | Draw numeric lists as sparklines, and offer **Toggle Data Bar** and **Toggle Sparkline** on a column header's menu. | - |
+| `q-lint.results.columnLayout.enable` | `true` | Move, resize, hide and freeze columns, the layout kept per tab, for the query's next run and with its saved query. | - |
+| `q-lint.results.depthChart.enable` | `true` | Offer the **Depth** chart for an order book, chosen by itself when the columns fit. | - |
+| `q-lint.results.mapChart.enable` | `true` | Offer the **Map** chart for latitude and longitude columns, on a bundled world outline. | - |
+| `q-lint.results.linkedCharts.enable` | `true` | Offer **Linked panes**: one pane per series, a shared crosshair and zoom. | - |
+| `q-lint.results.chartPresets.enable` | `true` | Offer **Save with Query**, **Save Result Chart with Query** and **Forget Result Chart Preset**, and series colours; a saved query's chart is drawn again when it runs. | - |
+| `q-lint.results.correlation.enable` | `true` | Offer the **Correlation** view and **Show Result Correlation Matrix**. | - |
+| `q-lint.results.sendResult.enable` | `true` | Offer **Send to...**, **Send Result to Notebook** and **Append Result to Markdown Report...**, each showing what it writes first. | - |
 | `q-lint.query.progress.enable` | `true` | Count a running query's time in the status bar, and notify a long one's end. | - |
 | `q-lint.query.notifyAfter` | `10` | Seconds a query must run for its end to be notified while the window is not focused; `0` never. | - |
 | `q-lint.query.placeholders.enable` | `true` | Ask for a value for each `{{name}}` in the code a query sends, and put it in place. | - |
@@ -2117,6 +2597,26 @@ Each applies at once, without a reload. None reaches the language server.
 | `q-lint.processes.logViewer.maxLines` | `10000` | The most entries a log view keeps, the last that pass its filter; 100 to 1,000,000. | - |
 | `q-lint.processes.shared.enable` | `true` | Read, watch and list `.qlint/processes.json`, and offer **Add to Shared Process List**. Off, the file is not read and the group is removed. | - |
 
+### Process admin settings
+
+The connection and process-admin features, each with its own switch. Each
+applies at once, without a reload. None reaches the language server.
+
+| Setting | Default | What it does | q-pro |
+| --- | --- | --- | --- |
+| `q-lint.processes.bulkAdd.enable` | `true` | **Add Many Processes...**: paste lines or CSV, checked and added. Off, the command is hidden and refuses, and an open form closes. | - |
+| `q-lint.processes.importOther.enable` | `true` | **Import Servers from qStudio...** and **Import Connections from KX Extension...**, never a password. Off, both are hidden and refuse. | - |
+| `q-lint.connection.credentialCommand.enable` | `true` | **Set Credential Command**, and running a process's command at each connect for its user and password, never kept. Off, the command is hidden and refuses, and the stored password is used. | - |
+| `q-lint.processes.environmentColor.enable` | `false` | A status bar item and an editor border in the connected process's tag colour. Off, neither is drawn and nothing listens. | - |
+| `q-lint.processes.environmentColor.colors` | prod, prd, production red; uat amber | Tag to colour: `red`, `amber`, `yellow`, `purple`, `blue`, `green` or `#rrggbb`. | - |
+| `q-lint.query.processTimeout.enable` | `true` | **Set Process Timeout**, and each process's own timeout over `q-lint.query.timeout`. Off, the command is hidden and refuses, and `q-lint.query.timeout` applies everywhere. | - |
+| `q-lint.query.cancelLocal.enable` | `true` | **Interrupt Query on Local Process**: SIGINT to a process started from here. Off, the command is hidden and refuses. | - |
+| `q-lint.query.async.enable` | `true` | **Run Query Asynchronously** and **Show Pending Async Queries**. Off, both are hidden and refuse, and pending results are dropped. | - |
+| `q-lint.query.links.enable` | `true` | **Copy Query Link**, and opening such links: shown, bound to the process of their label, run only when you say so. Off, the command is hidden and refuses, and links are not opened. | - |
+| `q-lint.export.schedule.enable` | `false` | **Add Scheduled Export...** and **Manage Scheduled Exports...**, and running read-only saved queries on a schedule to CSV, Parquet or Excel. Off, no timer runs, nothing is sent, and the commands are hidden and refuse. | - |
+| `q-lint.connectedClients.enable` | `true` | The **Connected Clients** view, and **Close Client Handle** (asked first, refused on a guarded process). Off, the view and its commands are hidden and nothing is read. | - |
+| `q-lint.timers.enable` | `true` | The **Timers** view, **Turn Timer On/Off** and **Set Timer Interval (\\t)**, through the read-only guard. Off, the view and its commands are hidden and nothing is read. | - |
+
 ### Terminal settings
 
 Read when a q terminal starts, so a change applies to the next one. None
@@ -2182,6 +2682,37 @@ Read when a cell runs or a command is used, so a change needs no reload. None re
 | `q-lint.processes.tagColors` | `{}` | A tag's colour in the Processes view, as a theme colour id: `{"eu": "charts.purple"}`. Over the built-in `prod`, `uat` and `dev` colours; a value that is not a colour id is ignored. Changing it recolours the view at once. | - |
 | `q-lint.processes.readOnlyGuard.enable` | `true` | Ask before sending code that would change a process carrying a guarded tag; refuse an agent's. Off, code is sent unasked. | - |
 | `q-lint.processes.readOnlyGuard.tags` | `["prod","prd","production"]` | The tags the read-only guard guards, ignoring case; `[]` guards none. | - |
+
+### Database settings
+
+| Setting | Default | What it does | q-pro |
+| --- | --- | --- | --- |
+| `q-lint.hdbBrowser.columnManager.enable` | `true` | **Manage HDB Column...**. Off, the command is hidden and refuses. | - |
+| `q-lint.databaseDocumenter.enable` | `true` | **Document Database**. Off, the command is hidden and refuses. | - |
+| `q-lint.hdbBrowser.partitionCheck.enable` | `true` | **Check Partition Consistency**. Off, the command is hidden and refuses. | - |
+| `q-lint.hdbBrowser.symInspector.enable` | `true` | **Inspect Sym File**. Off, the command is hidden and refuses. | - |
+| `q-lint.hdbBrowser.symInspector.warnAbove` | `1000000` | **Inspect Sym File** warns when the sym file holds more symbols than this. | - |
+| `q-lint.processExplorer.attributeAdvisor.enable` | `true` | **Advise Attributes**. Off, the command is hidden and refuses. | - |
+| `q-lint.schemaMigration.enable` | `true` | **Write Schema Migration...**. Off, the command is hidden and refuses. | - |
+| `q-lint.testDataGenerator.enable` | `true` | **Generate Test Data...**. Off, the command is hidden and refuses. | - |
+| `q-lint.tickerplantLog.enable` | `true` | **Open Tickerplant Log...**. Off, the command is hidden and refuses, and an open log's panel and q are closed. | - |
+| `q-lint.dashboards.enable` | `true` | **Open Dashboard...** and **Add to Dashboard...**. Off, they are hidden and refuse, the panel closes and every refresh stops. A tile refreshes on its own only with an interval you give it. | - |
+| `q-lint.charts.commandLine.enable` | `true` | **Render Chart from CSV or JSON File...**. Off, the command is hidden and refuses; `out/chartcli.js` is yours to run or not. | - |
+
+### Process tool settings
+
+| Setting | Default | What it does | q-pro |
+| --- | --- | --- | --- |
+| `q-lint.tickerplant.subscribers.enable` | `true` | The **Tickerplant Subscribers** view, read only on **Refresh**. Off, the view is gone and nothing is read. | - |
+| `q-lint.processes.systemSettings.enable` | `true` | The **System Settings** view and **Edit System Setting...**, which asks first. Off, the view is gone, its commands hidden and refusing. | - |
+| `q-lint.processes.fileBrowser.enable` | `true` | The **Process Files** view: the q host's files through the process, read-only and capped. Off, the view is gone and its commands refuse. | - |
+| `q-lint.processes.functionDiff.enable` | `true` | **Diff Function** and **Diff Namespace Across Processes**. Off, both are hidden and refuse. | - |
+| `q-lint.processes.findInProcesses.enable` | `true` | **Find in Processes...** and its view. Off, the view is gone and the command hidden and refusing. | - |
+| `q-lint.query.inlineResults.enable` | `true` | The result's short form at the end of a line after **Run Line** or **Run Selection**. Off, none is drawn and those shown are cleared. | - |
+| `q-lint.query.benchmark.enable` | `true` | **Benchmark Expression**, run only on the command. Off, it is hidden and refuses, and the panel closes. | - |
+| `q-lint.query.joinAssistant.enable` | `true` | **Join Assistant...**. Off, it is hidden and refuses. | - |
+| `q-lint.query.ajExplainer.enable` | `true` | **Explain aj Match...**. Off, it is hidden and refuses. | - |
+| `q-lint.processes.scratchBuffer.enable` | `true` | **Open Scratch Buffer**. Off, it is hidden and refuses. | - |
 
 ### Not here, and why
 

@@ -60,6 +60,18 @@ export class Launcher {
     return [...this.started].map(([label, s]) => ({ label, pid: s.child.pid, port: s.port }));
   }
 
+  /// Interrupt what `label`, started from here, is running (#1036): SIGINT,
+  /// which q answers by stopping the call it is in with 'stop and running
+  /// on. The pid sent it, or undefined when `label` is not running from here.
+  interrupt(label: string): number | undefined {
+    const child = this.started.get(label)?.child;
+    if (child === undefined || child.exitCode !== null || child.signalCode !== null || child.pid === undefined) {
+      return undefined;
+    }
+    child.kill("SIGINT");
+    return child.pid;
+  }
+
   private enabled(say = false): boolean {
     const configuration = workspace.getConfiguration("q-lint");
     const { enabled } = readLauncher((key, fallback) => configuration.get(key, fallback));

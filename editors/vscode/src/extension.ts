@@ -34,6 +34,7 @@ import { SavedQueries } from "./savedqueriesview";
 import { TableStreams } from "./streamview";
 import { Launcher } from "./launcherview";
 import { NewQuery } from "./newqueryview";
+import { registerProcessAdmin } from "./processadmin";
 import { RunWithArguments } from "./runargsview";
 import { LogViewer } from "./logview";
 import { registerNotebookGit, type NotebookDiff, type NotebookStrip } from "./notebookgit";
@@ -73,6 +74,10 @@ import { registerFunctionProfile } from "./profileview";
 import { registerFormatChanged } from "./formatchangedview";
 import { registerOrganiseLoads } from "./organiseloads";
 import { registerProblemsDashboard } from "./problemsview";
+import { registerDbTools } from "./dbtoolsview";
+import { Dashboards } from "./dashboardview";
+import { TickerplantLog } from "./tplogview";
+import { registerProcessTools } from "./processtoolsview";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -161,6 +166,7 @@ export async function activate(
     tableStreams: TableStreams["state"];
     launchedProcesses: Launcher["running"];
     newQueryForProcess: (label?: string) => ReturnType<NewQuery["open"]>;
+    processAdmin: ReturnType<typeof registerProcessAdmin>;
     runFileWithArguments: () => ReturnType<RunWithArguments["pick"]>;
     logViewer: () => ReturnType<LogViewer["state"]>;
     testExplorer: Omit<ReturnType<typeof registerTestExplorer>, "serverChanged">;
@@ -190,6 +196,10 @@ export async function activate(
     functionProfile: ReturnType<typeof registerFunctionProfile>;
     formatChanged: ReturnType<typeof registerFormatChanged>;
     problemsDashboard: ReturnType<typeof registerProblemsDashboard>;
+    dbTools: ReturnType<typeof registerDbTools>;
+    dashboards: Dashboards;
+    tickerplantLog: TickerplantLog;
+    processTools: ReturnType<typeof registerProcessTools>;
   }
 > {
   // Replacing the binary does not restart the server, and a window reload is
@@ -271,6 +281,7 @@ export async function activate(
   const streams = new TableStreams(context, live);
   const launcher = new Launcher(context, live);
   const newQuery = new NewQuery(context, live);
+  const processAdmin = registerProcessAdmin(context, live, launcher);
   const runWithArguments = new RunWithArguments(context, live.runFileWith);
   const logViewer = new LogViewer(context);
   const notebookRestart = new NotebookRestart(context, live, launcher, notebook);
@@ -307,6 +318,10 @@ export async function activate(
     const command = settings.serverPath || bundledServer(context) || "qlinter";
     return { command, args: settings.args.filter((a) => a !== "--lsp") };
   });
+  const dbTools = registerDbTools(context, live);
+  const dashboards = new Dashboards(context, live);
+  const tickerplantLog = new TickerplantLog(context);
+  const processTools = registerProcessTools(context, live);
   // Not awaited: nothing above needs the server, and a slow or hung one
   // would hold up every command of the extension until it answered.
   void serial.run(() => start(context)).then(() => serverChanged());
@@ -328,6 +343,7 @@ export async function activate(
     tableStreams: () => streams.state(),
     launchedProcesses: () => launcher.running(),
     newQueryForProcess: (label?: string) => newQuery.open(label),
+    processAdmin,
     runFileWithArguments: () => runWithArguments.pick(),
     logViewer: () => logViewer.state(),
     testExplorer: {
@@ -364,6 +380,10 @@ export async function activate(
     functionProfile,
     formatChanged,
     problemsDashboard,
+    dbTools,
+    dashboards,
+    tickerplantLog,
+    processTools,
   };
 }
 

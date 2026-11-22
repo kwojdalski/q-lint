@@ -134,7 +134,12 @@ function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir
     "./formatchangedview": { registerFormatChanged: () => ({ registered: () => false }) },
     "./organiseloads": { registerOrganiseLoads() {} },
     "./problemsview": { registerProblemsDashboard: () => ({ panelOpen: () => false }) },
+    "./dbtoolsview": { registerDbTools: () => ({ state: {}, registered: () => [] }) },
+    "./dashboardview": { Dashboards: class {} },
+    "./tplogview": { TickerplantLog: class {} },
     "./logview": { LogViewer: class { state() { return undefined; } } },
+    "./processadmin": { registerProcessAdmin: () => ({}) },
+    "./processtoolsview": { registerProcessTools: () => ({}) },
   };
   const file = require.resolve("../out/extension.js");
   delete require.cache[file];

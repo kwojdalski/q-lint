@@ -118,7 +118,7 @@ test("Markdown shows the cells as the grid does, escapes pipes, and aligns numbe
 });
 
 test("every format is offered with its extension, and says how many rows the grid held of a cut result", () => {
-  assert.deepStrictEqual(EXPORT_FORMATS.map((f) => FORMAT_INFO[f].extension), ["xlsx", "parquet", "json", "md", "q"]);
+  assert.deepStrictEqual(EXPORT_FORMATS.map((f) => FORMAT_INFO[f].extension), ["xlsx", "parquet", "json", "md", "q", "html"]);
   const cut = { ...typed(), count: 10 };
   for (const f of EXPORT_FORMATS) {
     const out = exportResult(f, cut, -1, [0, 2]);

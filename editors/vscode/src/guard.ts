@@ -18,16 +18,19 @@
 //   an assignment;
 // - `update` or `delete` from a table named by a symbol (`` from `t ``),
 //   which changes it in place;
-// - `set`, `upsert`, `insert`, `hdel`, `exit`, `system`, `.Q.dpft`,
-//   `.Q.dpfts`, `.Q.hdpf` and `.Q.en`, and `0:` or `1:` to a file handle
-//   (`` `:f 0: ``), and `2:`;
+// - `set`, `upsert`, `insert`, `hdel`, `exit`, `hclose`, `system`,
+//   `.Q.dpft`, `.Q.dpfts`, `.Q.hdpf` and `.Q.en`, and `0:` or `1:` to a
+//   file handle (`` `:f 0: ``), and `2:`;
+// - `-11!`, which replays a log through `upd`, except `-11!(-1;..)` and
+//   `-11!(-2;..)`, which only count and check one;
 // - `@[` or `.[` on a variable named by a symbol, with four arguments: an
 //   amend in place (three is as often a trap, `.[`f;args;handler]`, and
 //   is not taken for one);
 // - `value` or `eval` applied to a string;
 // - a system command (`\l`, `\cd x`, `\\`), except one that only reads a
 //   setting (`\c`, `\d`, `\P` without an argument) and `\t` or `\ts`, whose
-//   expression is read by these rules;
+//   expression is read by these rules - but `\t 500`, a whole number with
+//   no `:N`, sets the timer;
 // - any of these in a string given to a TorQ gateway's `.gw.syncexec` or
 //   `.gw.asyncexec`, which runs it on the gateway's servers (#909).
 import type { Process } from "./processes";
@@ -74,7 +77,7 @@ const NAME_START = /[A-Za-z.]/;
 const NAME = /[A-Za-z0-9_.]/;
 /// The characters that make a compound assignment with `:` after them.
 const OPERATORS = new Set([..."+-*%&|^=<>$,#_~!?@."]);
-const WRITERS = new Set(["set", "upsert", "insert", "hdel", "exit", "system", ".Q.dpft", ".Q.dpfts", ".Q.hdpf", ".Q.en"]);
+const WRITERS = new Set(["set", "upsert", "insert", "hdel", "exit", "hclose", "system", ".Q.dpft", ".Q.dpfts", ".Q.hdpf", ".Q.en"]);
 /// System commands that only read a setting when they are given no argument.
 const READS_BARE = new Set([..."abBcCdefgoOpPsSTvwWz", "cd"]);
 
@@ -158,7 +161,9 @@ function readStatement(statement: string, found: Set<string>): void {
     const command = /^\\(\\|[A-Za-z_]+)(?::\d+)?\s*([\s\S]*)$/.exec(text);
     const name = command?.[1] ?? "";
     const argument = (command?.[2] ?? "").trim();
-    if (name === "t" || name === "ts") {
+    if (name === "t" && !text.startsWith("\\t:") && /^\d+$/.test(argument)) {
+      found.add("sets the timer with \\t");
+    } else if (name === "t" || name === "ts") {
       readStatement(argument, found);
     } else if (!(argument === "" && READS_BARE.has(name))) {
       found.add(`runs the system command \\${name}`);
@@ -270,6 +275,11 @@ function readStatement(statement: string, found: Set<string>): void {
       if (lambdas === 0 || global || k.text.includes(".")) {
         found.add(`assigns ${k.text}`);
       }
+      continue;
+    }
+    // `-11!` replays a log; `-11!(-1;..)` and `(-2;..)` only count and check it.
+    if (k.kind === "num" && k.text === "-11" && next?.text === "!" && touching(k, next) && !(t[i + 2]?.text === "(" && /^-[12]$/.test(t[i + 3]?.text ?? ""))) {
+      found.add("replays a log with -11!");
       continue;
     }
     if (k.kind === "num" && (k.text === "0" || k.text === "1" || k.text === "2") && next?.text === ":" && touching(k, next)) {

@@ -1,0 +1,193 @@
+// The database documenter (#1023): a process's tables - columns, types,
+// attributes, keys, foreign keys, partitions and rows - and its functions
+// with their parameters, as a Markdown or an HTML document, with the qDoc
+// comment written above a function in the workspace where there is one.
+// Free of any `vscode` import, so node tests it; `dbtoolsview.ts` asks the
+// process and opens the document.
+//
+// One read, defining nothing: `meta` of each table in the root (a
+// partitioned one's reads its last partition's schema), its rows counted as
+// the explorer counts them (`.Q.cn` for a partitioned table), and the
+// functions of the root and of every namespace that is not q's own, at most
+// `lim` of each. Works on kdb+ (KDB-X) and PeachQ; held there by
+// dbtools_q.test.js.
+import { definitions } from "./definitions";
+
+export const DOCUMENT = [
+  "{[lim]",
+  " m:\"j\"$lim;",
+  " ts:m sublist tables`.;",
+  " one:{[t] v:get t;p:.Q.qp v;part:1b~p;disk:part|0b~p;mt:0!meta v;",
+  "  `name`kind`rows`keys`cols`types`fkeys`attrs!(string t;",
+  "   string$[part;`partitioned;disk;`splayed;99h=type v;`keyed;`table];",
+  "   \"f\"$$[part;@[{sum .Q.cn x};v;0n];count v];",
+  "   string$[99h=type v;(),keys v;`$()];",
+  "   string mt`c;{$[null x;enlist\" \";enlist x]}each mt`t;string mt`f;string mt`a)};",
+  " ns:(key`)except`q`Q`h`j`o`z`m`qlint;",
+  " ns:ns where not null ns;ns:ns where{99h=type get` sv`,x}each ns;",
+  " fs:m sublist(system\"f\"),raze{` sv'(` sv`,x),/:system\"f \",string` sv`,x}each ns;",
+  " `pf`parts`tables`fnames`fparams!(",
+  "  $[@[{0<count .Q.pv};::;0b];string .Q.pf;\"\"];",
+  "  \"f\"$@[{count .Q.pv};::;0];",
+  "  one each ts;",
+  "  string fs;{@[{string(value get x)1};x;()]}each fs)}",
+].join("\n");
+
+/// Tables and functions a document covers at most.
+export const DOCUMENT_LIMIT = 2000;
+
+export interface DocTable {
+  name: string;
+  kind: string;
+  rows: number | null;
+  keys: string[];
+  columns: { name: string; type: string; fkey: string; attr: string }[];
+}
+
+export interface DbDoc {
+  field: string;
+  partitions: number;
+  tables: DocTable[];
+  functions: { name: string; params: string[] }[];
+}
+
+const strings = (v: unknown): string[] => (Array.isArray(v) ? v.map((s) => (s === null || s === undefined ? "" : String(s))) : typeof v === "string" ? [v] : []);
+const number = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+/// A table of one row can come as one dictionary, and a list of one string
+/// as the string: both read as lists.
+const rowsOf = (v: unknown): Record<string, unknown>[] =>
+  Array.isArray(v) ? (v as Record<string, unknown>[]) : v !== null && typeof v === "object" ? [v as Record<string, unknown>] : [];
+
+/// What `DOCUMENT` answered. Throws when it is not that.
+export function readDoc(raw: unknown): DbDoc {
+  const r = raw as Record<string, unknown> | null;
+  if (r === null || typeof r !== "object" || !("tables" in r) || !("fnames" in r)) {
+    throw new Error(`the process answered something other than its tables: ${JSON.stringify(raw)?.slice(0, 200)}`);
+  }
+  const tables = rowsOf(r.tables).map((t): DocTable => {
+    const names = strings(t.cols);
+    const types = strings(t.types);
+    const fkeys = strings(t.fkeys);
+    const attrs = strings(t.attrs);
+    return {
+      name: strings(t.name).join(""),
+      kind: strings(t.kind).join(""),
+      rows: number(t.rows),
+      keys: strings(t.keys),
+      columns: names.map((name, i) => ({ name, type: (types[i] ?? "").trim(), fkey: fkeys[i] ?? "", attr: attrs[i] ?? "" })),
+    };
+  });
+  const fnames = strings(r.fnames);
+  const params = Array.isArray(r.fparams) ? r.fparams : [];
+  return {
+    field: strings(r.pf).join(""),
+    partitions: number(r.parts) ?? 0,
+    tables,
+    functions: fnames.map((name, i) => ({ name, params: fnames.length === 1 && !Array.isArray(params[0]) ? strings(params) : strings(params[i]) })),
+  };
+}
+
+/// The comment block written right above each function a q file defines,
+/// its comment characters taken off: `/// text`, `/ text`, and a `/` ...
+/// `\` block. By name, as `definitions` names them.
+export function qdocs(source: string): Map<string, string> {
+  const lines = source.split(/\r?\n/);
+  const out = new Map<string, string>();
+  for (const def of definitions(source)) {
+    const above: string[] = [];
+    for (let i = def.line - 1; i >= 0; i--) {
+      const line = lines[i].trim();
+      if (line === "\\") {
+        // A block comment: back to its opening `/`.
+        let j = i - 1;
+        while (j >= 0 && lines[j].trim() !== "/") j--;
+        if (j < 0) break;
+        above.unshift(...lines.slice(j + 1, i).map((l) => l.trim()));
+        i = j;
+        continue;
+      }
+      if (!line.startsWith("/") || line === "/") break;
+      above.unshift(line.replace(/^\/+\s?/, ""));
+    }
+    if (above.length > 0) {
+      out.set(def.name, above.join("\n").trim());
+    }
+  }
+  return out;
+}
+
+const TYPE_NAMES: Record<string, string> = {
+  b: "boolean", g: "guid", x: "byte", h: "short", i: "int", j: "long", e: "real", f: "float", c: "char", s: "symbol",
+  p: "timestamp", m: "month", d: "date", z: "datetime", n: "timespan", u: "minute", v: "second", t: "time",
+};
+const ATTRS: Record<string, string> = { s: "sorted", u: "unique", p: "parted", g: "grouped" };
+
+/// A type character as people read it: `j` long, `C` list of char.
+export function typeName(t: string): string {
+  if (t === "" || t === " ") return "mixed";
+  const name = TYPE_NAMES[t.toLowerCase()];
+  return name === undefined ? t : t === t.toUpperCase() ? `list of ${name}` : name;
+}
+
+const md = (s: string) => s.replace(/([\\`*_{}[\]<>|#])/g, "\\$1");
+const html = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const rowsText = (n: number | null) => (n === null ? "not counted" : n.toLocaleString("en-US"));
+
+/// The document as Markdown. `docs`: each function's qDoc, by name.
+export function docMarkdown(doc: DbDoc, process: string, at: string, docs: Map<string, string> = new Map()): string {
+  const out = [`# ${md(process)}`, "", `Documented by q-lint on ${md(at)}.`, ""];
+  if (doc.field !== "") {
+    out.push(`A partitioned database by ${md(doc.field)}, ${doc.partitions.toLocaleString("en-US")} partitions.`, "");
+  }
+  out.push("## Tables", "");
+  if (doc.tables.length === 0) out.push("No tables.", "");
+  for (const t of doc.tables) {
+    out.push(`### ${md(t.name)}`, "", `${md(t.kind)}, ${rowsText(t.rows)} rows${t.keys.length ? `, keyed by ${t.keys.map(md).join(", ")}` : ""}.`, "");
+    out.push("| column | type | attribute | foreign key |", "| --- | --- | --- | --- |");
+    for (const c of t.columns) {
+      out.push(`| ${md(c.name)}${t.keys.includes(c.name) ? " (key)" : ""} | ${md(typeName(c.type))} | ${ATTRS[c.attr] ?? ""} | ${md(c.fkey)} |`);
+    }
+    out.push("");
+  }
+  out.push("## Functions", "");
+  if (doc.functions.length === 0) out.push("No functions.", "");
+  for (const f of doc.functions) {
+    out.push(`### ${md(f.name)}[${f.params.map(md).join(";")}]`, "");
+    const d = docs.get(f.name);
+    out.push(d === undefined ? "No qDoc in the workspace." : d.split("\n").map(md).join("  \n"), "");
+  }
+  return out.join("\n");
+}
+
+/// The document as one HTML page, with no script and nothing fetched.
+export function docHtml(doc: DbDoc, process: string, at: string, docs: Map<string, string> = new Map()): string {
+  const out = [
+    "<!DOCTYPE html>",
+    `<html lang="en"><head><meta charset="UTF-8"><title>${html(process)}</title>`,
+    "<style>body{font-family:sans-serif;max-width:60em;margin:2em auto;padding:0 1em}table{border-collapse:collapse}td,th{border:1px solid #ccc;padding:2px 8px;text-align:left}pre{white-space:pre-wrap}</style>",
+    "</head><body>",
+    `<h1>${html(process)}</h1>`,
+    `<p>Documented by q-lint on ${html(at)}.</p>`,
+  ];
+  if (doc.field !== "") {
+    out.push(`<p>A partitioned database by ${html(doc.field)}, ${doc.partitions.toLocaleString("en-US")} partitions.</p>`);
+  }
+  out.push("<h2>Tables</h2>");
+  if (doc.tables.length === 0) out.push("<p>No tables.</p>");
+  for (const t of doc.tables) {
+    out.push(`<h3 id="t-${html(t.name)}">${html(t.name)}</h3>`, `<p>${html(t.kind)}, ${rowsText(t.rows)} rows${t.keys.length ? `, keyed by ${t.keys.map(html).join(", ")}` : ""}.</p>`);
+    out.push("<table><tr><th>column</th><th>type</th><th>attribute</th><th>foreign key</th></tr>");
+    for (const c of t.columns) {
+      out.push(`<tr><td>${html(c.name)}${t.keys.includes(c.name) ? " (key)" : ""}</td><td>${html(typeName(c.type))}</td><td>${ATTRS[c.attr] ?? ""}</td><td>${html(c.fkey)}</td></tr>`);
+    }
+    out.push("</table>");
+  }
+  out.push("<h2>Functions</h2>");
+  if (doc.functions.length === 0) out.push("<p>No functions.</p>");
+  for (const f of doc.functions) {
+    const d = docs.get(f.name);
+    out.push(`<h3>${html(f.name)}[${f.params.map(html).join(";")}]</h3>`, d === undefined ? "<p>No qDoc in the workspace.</p>" : `<pre>${html(d)}</pre>`);
+  }
+  out.push("</body></html>");
+  return out.join("\n");
+}

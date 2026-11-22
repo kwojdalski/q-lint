@@ -44,6 +44,7 @@ import {
   withQuery,
   type SavedQuery,
 } from "./savedqueries";
+import { SAVED_LOOKS_KEY, parseLooks, renamedLook, withoutLook } from "./resultlook";
 
 /// What a command is given: a view row, a query's name, or nothing.
 type QueryArg = SavedQuery | string | undefined;
@@ -209,7 +210,7 @@ export class SavedQueries implements TreeDataProvider<SavedQuery> {
     }
     const query = await this.chosen(arg, "Run which saved query?");
     if (query !== undefined) {
-      await this.live.runFilledIn(query.code);
+      await this.live.runFilledIn(query.code, query.name);
     }
   }
 
@@ -248,6 +249,8 @@ export class SavedQueries implements TreeDataProvider<SavedQuery> {
       return;
     }
     await this.store(renamed(now, query.name, name), [query.name, name]);
+    // Its result's look (#1015, #1019) goes with it.
+    await this.context.workspaceState.update(SAVED_LOOKS_KEY, renamedLook(parseLooks(this.context.workspaceState.get<unknown>(SAVED_LOOKS_KEY, {})), query.name, name));
   }
 
   async remove(arg?: QueryArg): Promise<void> {
@@ -263,6 +266,7 @@ export class SavedQueries implements TreeDataProvider<SavedQuery> {
       return;
     }
     await this.store(this.queries().filter((q) => q.name !== query.name), [query.name]);
+    await this.context.workspaceState.update(SAVED_LOOKS_KEY, withoutLook(parseLooks(this.context.workspaceState.get<unknown>(SAVED_LOOKS_KEY, {})), query.name));
   }
 }
 

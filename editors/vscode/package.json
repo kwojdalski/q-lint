@@ -3,7 +3,7 @@
   "displayName": "q-lint",
   "description": "q/kdb+ for VS Code: linting, Quick Fixes, navigation and help from the source, and connections to q processes to run code on.",
   "icon": "icon.png",
-  "version": "0.31.1",
+  "version": "0.32.0",
   "publisher": "wojdalski",
   "license": "MIT",
   "engines": {
@@ -16,7 +16,8 @@
   "activationEvents": [
     "onLanguage:q",
     "onNotebook:q-lint-notebook",
-    "onTaskType:q"
+    "onTaskType:q",
+    "onUri"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -506,7 +507,7 @@
             "type": "boolean",
             "default": true,
             "order": 123,
-            "markdownDescription": "Offer **Export as...** in the result panel, **q-lint: Export Results As...** and **q-lint: Copy Results As...**: the rows shown as Excel, Parquet, JSON, a Markdown table or a q expression that rebuilds the table. Export to CSV is always offered."
+            "markdownDescription": "Offer **Export as...** in the result panel, **q-lint: Export Results As...** and **q-lint: Copy Results As...**: the rows shown as Excel, Parquet, JSON, a Markdown table, a q expression that rebuilds the table, or an HTML page. Export to CSV is always offered."
           },
           "q-lint.results.paging.enable": {
             "type": "boolean",
@@ -572,6 +573,66 @@
             "default": true,
             "order": 130,
             "markdownDescription": "Offer **Edit Cell...** on a grid cell's menu: it writes the `update` that sets the cell in the table the result came from (`` update c:v from `t where ... ``), shows it, and sends it only when you choose **Run**, through the read-only guard. Off, the menu item is hidden and nothing is written or sent."
+          },
+          "q-lint.results.columnFormats.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 130,
+            "markdownDescription": "Format a grid column by the suffix its name ends in (#1012): `_PCT` a fraction as a percent, `_BPS` in basis points, `_CCY` an amount with thousands separated and two decimals, `_NUM` thousands separated (each may end in a digit, the decimals: `_PCT1`), `_BG` and `_FG` a colour taken from the value for the column the rest of the name names (or the row), `_CODE` monospace, `_BAR` a data bar. The header shows the name without its suffix, which stays in its tooltip. Off, every column is shown as q writes it."
+          },
+          "q-lint.results.conditionalFormats.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 130,
+            "markdownDescription": "Offer **Add Conditional Format...** and **Clear Conditional Formats** on a grid column header's menu (#1013): a comparison (`>`, `>=`, `<`, `<=`, `=`, `<>`, top or bottom N, contains) against a value, and a background, a text colour or bold. Rules are kept per result tab and with the saved query the result came from, and go into the Excel export (as Excel's own conditional formatting) and the HTML export. Off, the items are hidden and no rule is drawn or exported."
+          },
+          "q-lint.results.cellCharts.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 130,
+            "markdownDescription": "Draw a column of numeric lists as sparklines, and offer **Toggle Data Bar** (on a numeric column) and **Toggle Sparkline** (on a column of numeric lists) on a grid column header's menu (#1014). A data bar is scaled to the column's range, from zero. Off, every cell is text."
+          },
+          "q-lint.results.columnLayout.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 130,
+            "markdownDescription": "Remember the grid's column layout (#1015): drag a header to move its column or its right edge to resize it, and **Hide Column**, **Freeze Columns up to Here** and **Unfreeze Columns** on a header's menu, with **Show Hidden Result Columns** and **Reset Result Column Layout** in the palette. Kept per result tab, for the next run of the same code, and with the saved query the result came from, restored when it runs again. Off, the grid draws every column in its order, nothing is kept."
+          },
+          "q-lint.results.depthChart.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 130,
+            "markdownDescription": "Offer a **Depth** chart for an order book (#1016): bid and ask price and size columns by level (`bidPx`, `bidSize`, `askPx`, `askSize`, ...), as lists in a row, or `side`, `price` and `size` columns. Cumulative size either side of the mid, chosen by itself when the columns fit. Off, it is not offered."
+          },
+          "q-lint.results.mapChart.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 130,
+            "markdownDescription": "Offer a **Map** chart for a result with latitude and longitude columns (#1017): the rows as points on a plain outline of the world, bundled with the extension, sized and coloured by optional columns. Nothing is fetched. Off, it is not offered."
+          },
+          "q-lint.results.linkedCharts.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 130,
+            "markdownDescription": "Offer **Linked panes** (#1018): each series in its own pane on one x axis; a crosshair reads every series at the cursor, a drag zooms every pane, a double-click shows all again. Off, it is not offered."
+          },
+          "q-lint.results.chartPresets.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 130,
+            "markdownDescription": "Offer **Save with Query** on the chart, **Save Result Chart with Query** and **Forget Result Chart Preset** (#1019), and a colour for each series: the chart's kind, series, right axis, bins, colours and map columns are kept with the saved query, and running it again draws the same chart. Off, nothing is kept and a kept chart is not drawn."
+          },
+          "q-lint.results.correlation.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 130,
+            "markdownDescription": "Offer the **Correlation** view and **Show Result Correlation Matrix** (#1020): the Pearson correlation of every pair of numeric columns over the rows shown, computed here, as a heatmap and a list of pairs. Off, it is not offered."
+          },
+          "q-lint.results.sendResult.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 130,
+            "markdownDescription": "Offer **Send to...** on the result, **Send Result to Notebook** and **Append Result to Markdown Report...** (#1021): the query, the rows shown as a Markdown table and, if you like, the chart as an image, inserted into a q notebook as a Markdown cell or added to the end of a Markdown file, after showing what it will write. Off, they are hidden and nothing is written."
           },
           "q-lint.query.gridHeatmap": {
             "type": "boolean",
@@ -1295,6 +1356,219 @@
             "markdownDescription": "Define `.qlint.view` and `.qlint.plot` on each process as it is connected to. Never on a process the read-only guard guards. Needs `#q-lint.view.enable#`."
           }
         }
+      },
+      {
+        "title": "q-lint: databases",
+        "properties": {
+          "q-lint.hdbBrowser.columnManager.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 1,
+            "markdownDescription": "**Manage HDB Column...**: add, delete, rename or cast a column, or set its attribute, in every partition of a partitioned or splayed table on disk. The q script opens for review and runs only when you choose **Run**; a process the read-only guard guards is refused. Off, the command is hidden and refuses."
+          },
+          "q-lint.databaseDocumenter.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 2,
+            "markdownDescription": "**Document Database**: the connected process's tables (columns, types, attributes, keys, foreign keys, partitions, rows) and functions, with their qDoc from the workspace, as a Markdown or HTML document. Reads only. Off, the command is hidden and refuses."
+          },
+          "q-lint.hdbBrowser.partitionCheck.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 3,
+            "markdownDescription": "**Check Partition Consistency**: missing dates, tables, `.d` and column files, columns and types that differ between partitions, symbol enumeration problems and row-count outliers, as a report. Reads only. Off, the command is hidden and refuses."
+          },
+          "q-lint.hdbBrowser.symInspector.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 4,
+            "markdownDescription": "**Inspect Sym File**: the sym file's size and count, the columns that use most of it, and its growth across partitions. Reads only. Off, the command is hidden and refuses."
+          },
+          "q-lint.hdbBrowser.symInspector.warnAbove": {
+            "type": "number",
+            "default": 1000000,
+            "minimum": 0,
+            "order": 5,
+            "markdownDescription": "**Inspect Sym File** warns when the sym file holds more symbols than this."
+          },
+          "q-lint.processExplorer.attributeAdvisor.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 6,
+            "markdownDescription": "**Advise Attributes**: for each column of a table, whether `s#`, `u#`, `p#` or `g#` would help, why and about what it costs, from a sample of its rows and the columns your saved and recent queries filter on. Never applies one. Off, the command is hidden and refuses."
+          },
+          "q-lint.schemaMigration.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 7,
+            "markdownDescription": "**Write Schema Migration...**: compare two tables' metas, on one process or two, and write the q that turns the first into the second, for review. Runs nothing. Off, the command is hidden and refuses."
+          },
+          "q-lint.testDataGenerator.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 8,
+            "markdownDescription": "**Generate Test Data...**: random rows shaped as a table's meta, as q code to run locally or as CSV. Off, the command is hidden and refuses."
+          },
+          "q-lint.tickerplantLog.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 9,
+            "markdownDescription": "**Open Tickerplant Log...**: read a tickerplant log in a q of its own, list, filter and step through its messages, and replay a range into that q only. Off, the command is hidden and refuses, and an open log's panel and q are closed."
+          },
+          "q-lint.dashboards.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 10,
+            "markdownDescription": "**Open Dashboard...** and **Add to Dashboard...**: a panel of saved queries shown as tables or charts, each refreshed on its own interval only if you give it one. Read-only queries only. Off, the commands are hidden and refuse, the panel closes and every refresh stops."
+          },
+          "q-lint.charts.commandLine.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 11,
+            "markdownDescription": "**Render Chart from CSV or JSON File...**: draw a table file as an SVG chart, as `node out/chartcli.js` does from a shell. Off, the command is hidden and refuses; the command-line script is yours to run or not."
+          }
+        }
+      },
+      {
+        "title": "q-lint: process admin",
+        "properties": {
+          "q-lint.processes.bulkAdd.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 800,
+            "markdownDescription": "Offer **Add Many Processes**, on the Processes view's title bar and in the palette: a form to paste `host:port[:label[:tags]]` lines or CSV into, which checks each line, shows duplicates, and adds the processes. Never reads a password. Off: the command is hidden and refuses, and an open form closes."
+          },
+          "q-lint.processes.importOther.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 801,
+            "markdownDescription": "Offer **Import Servers from qStudio...** and **Import Connections from KX Extension...**, on the Processes view's title menu and in the palette: they read qStudio's server list (its Copy Server List text, its XML, or its preferences file) or the KX kdb extension's `kdb.servers` or export file, and add the kdb processes named, after asking. A password is never imported, and a label already saved is kept. Off: the commands are hidden and refuse."
+          },
+          "q-lint.connection.credentialCommand.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 802,
+            "markdownDescription": "Offer **Set Credential Command**, on a saved process: a command run in a shell at each connect whose output (a JSON object with `password` or `token` and optionally `user`, or a line: the password, or `user:password`) is the handshake's user and password - for Kerberos, a vault or a token service. What it prints is used for that connect only: never stored, logged or put in settings. Read from a shared list only in a trusted workspace. Off: the command is hidden and refuses, and processes connect with their stored password."
+          },
+          "q-lint.processes.environmentColor.enable": {
+            "type": "boolean",
+            "default": false,
+            "order": 803,
+            "markdownDescription": "While the connected process carries a tag `q-lint.processes.environmentColor.colors` colours (production red and `uat` amber by default), show a status bar item in that colour naming the tag, and a border of it down the left of each q editor. Nothing is written to your settings and nothing is sent to the process. Off (the default): neither is drawn."
+          },
+          "q-lint.processes.environmentColor.colors": {
+            "type": "object",
+            "default": {
+              "prod": "red",
+              "prd": "red",
+              "production": "red",
+              "uat": "amber"
+            },
+            "additionalProperties": {
+              "type": "string",
+              "pattern": "^(red|amber|yellow|purple|blue|green|#[0-9a-fA-F]{6})$"
+            },
+            "order": 804,
+            "markdownDescription": "The environment colour of each tag: `red`, `amber`, `yellow`, `purple`, `blue`, `green` or `#rrggbb`. A process with tags of two colours takes the most cautious, in that order. Only red, amber and yellow colour the status bar item's background (VS Code allows only those two backgrounds); the rest colour its text. Used while `q-lint.processes.environmentColor.enable` is on."
+          },
+          "q-lint.query.processTimeout.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 805,
+            "markdownDescription": "Offer **Set Process Timeout**, on a saved process: seconds a query on it may run before its connection is dropped and you are told, over `q-lint.query.timeout`. Off: the command is hidden and refuses, and `q-lint.query.timeout` applies to every process."
+          },
+          "q-lint.query.cancelLocal.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 806,
+            "markdownDescription": "Offer **Interrupt Query on Local Process**: for a connected process started from the Processes view (**Start Process**), send it SIGINT, so q stops the running query with `'stop` and the connection stays. Off: the command is hidden and refuses."
+          },
+          "q-lint.query.async.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 807,
+            "markdownDescription": "Offer **Run Query Asynchronously**, in a q editor's context menu and the palette: the selection or statement at the cursor is sent as an async message, the connection stays free for other queries, and the result opens in the result panel when the process sends it back. Read by the read-only guard first. **Show Pending Async Queries** lists those still to answer. Off: the commands are hidden and refuse, and pending results are dropped."
+          },
+          "q-lint.query.links.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 808,
+            "markdownDescription": "Offer **Copy Query Link**, in a q editor's context menu and the palette: a `vscode://` link to the selection or statement at the cursor, aimed at a process by its label, and open such links: the query opens in a new q editor bound to your process of that label, and runs only if you say so, through the read-only guard. Off: the command is hidden and refuses, and links are not opened."
+          },
+          "q-lint.export.schedule.enable": {
+            "type": "boolean",
+            "default": false,
+            "order": 809,
+            "markdownDescription": "Offer **Add Scheduled Export** and **Manage Scheduled Exports**, and run each schedule when due while VS Code is open: a saved query run on a process on a connection of its own, its result written to CSV, Parquet or Excel at the file chosen, replaced or written anew each run as chosen. Only a read-only query with no placeholders is run. Off (the default): no timer runs, nothing is sent, and the commands are hidden and refuse."
+          },
+          "q-lint.connectedClients.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 810,
+            "markdownDescription": "Show the **Connected Clients** view: the connected process's open handles (`.z.W`) with what is queued on each, the kind of socket, and - where TorQ's `.clients` records them - user and host, read by a fixed read-only lambda. **Close Client Handle** asks first, and is refused on a process the read-only guard guards. Off: the view and its commands are hidden, and nothing is read."
+          },
+          "q-lint.timers.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 811,
+            "markdownDescription": "Show the **Timers** view: the connected process's `\\t` interval and `.z.ts`, and TorQ's `.timer.timer` jobs with their period and next run, read by a fixed read-only lambda. **Turn Timer On/Off** and **Set Timer Interval** go through the read-only guard. Off: the view and its commands are hidden, and nothing is read."
+          }
+        }
+      },
+      {
+        "title": "q-lint: process tools",
+        "properties": {
+          "q-lint.tickerplant.subscribers.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Show the **Tickerplant Subscribers** view: the connected tickerplant's `.u.w` by table, each subscriber's handle, host (where the process records one) and output queue, read only when **Refresh** is pressed. Off, the view is gone and nothing is read."
+          },
+          "q-lint.processes.systemSettings.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Show the **System Settings** view: the connected process's `\\c`, `\\s`, `\\P`, `\\T`, `\\g`, `\\o`, `\\z` and `\\w`, with what each does, read when **Refresh** is pressed; **Edit Setting** changes one after asking (through the read-only guard on a guarded process). Off, the view is gone, its commands refuse and nothing is sent."
+          },
+          "q-lint.processes.fileBrowser.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Show the **Process Files** view and **Browse Process Files...**: the q host's directories read through the connected process (`key` on a path), and a file opened read-only, its first 1 MB only (`read1`). Off, the view is gone, its commands refuse and nothing is sent."
+          },
+          "q-lint.processes.functionDiff.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Offer **Diff Function Across Processes** and **Diff Namespace Across Processes**: a function's definition on two processes side by side, or every function of a namespace that differs, each read over a connection of its own with a read-only lambda. Off, the commands are hidden and refuse, and nothing is sent."
+          },
+          "q-lint.processes.findInProcesses.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Offer **Find in Processes...** and its view: search the function definitions (and, when asked, variable names) of every process with a tag; a hit opens the function's live source at the line. Each process is read over a connection of its own with a read-only lambda. Off, the view is gone, the commands refuse and nothing is sent."
+          },
+          "q-lint.query.inlineResults.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "After **Run Line** or **Run Selection**, show the result's short form at the end of the line, until the line is edited. It draws only what the query answered; nothing more is sent. Off, the results are cleared and nothing is drawn."
+          },
+          "q-lint.query.benchmark.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Offer **Benchmark Expression**: time the selection (and, if given, a second expression to compare) with `\\ts:N` repeated K times on the connected process, shown as a table and a chart of time and space. It runs only when the command is run, through the read-only guard. Off, the command is hidden and refuses, and the panel closes."
+          },
+          "q-lint.query.joinAssistant.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Offer **Join Assistant...**: pick two tables (or the result on show) and get `lj`, `ij`, `uj`, `aj` or `wj` written with the keys and sorts it needs, at the cursor. The tables' shapes are read through the read-only guard. Off, the command is hidden and refuses, and nothing is sent."
+          },
+          "q-lint.query.ajExplainer.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Offer **Explain aj Match**: for one row of the `aj` call at the cursor, show which right-hand row it matched, or why none did, by re-running the match for that row on the connected process (through the read-only guard). Off, the command is hidden and refuses, and nothing is sent."
+          },
+          "q-lint.processes.scratchBuffer.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Offer **Open Scratch Buffer**: a q file of each process's own, kept in the extension's storage between sessions and bound to the process. It sends nothing. Off, the command is hidden and refuses."
+          }
+        }
       }
     ],
     "commands": [
@@ -1594,6 +1868,90 @@
         "title": "Edit Cell...",
         "category": "q-lint",
         "icon": "$(edit)"
+      },
+      {
+        "command": "q-lint.addResultConditionalFormat",
+        "title": "Add Conditional Format...",
+        "category": "q-lint",
+        "icon": "$(symbol-color)"
+      },
+      {
+        "command": "q-lint.clearResultConditionalFormats",
+        "title": "Clear Conditional Formats",
+        "category": "q-lint",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "q-lint.toggleResultDataBar",
+        "title": "Toggle Data Bar",
+        "category": "q-lint",
+        "icon": "$(graph-left)"
+      },
+      {
+        "command": "q-lint.toggleResultSparkline",
+        "title": "Toggle Sparkline",
+        "category": "q-lint",
+        "icon": "$(pulse)"
+      },
+      {
+        "command": "q-lint.hideResultColumn",
+        "title": "Hide Column",
+        "category": "q-lint",
+        "icon": "$(eye-closed)"
+      },
+      {
+        "command": "q-lint.showHiddenResultColumns",
+        "title": "Show Hidden Result Columns",
+        "category": "q-lint",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "q-lint.freezeResultColumns",
+        "title": "Freeze Columns up to Here",
+        "category": "q-lint",
+        "icon": "$(pinned)"
+      },
+      {
+        "command": "q-lint.unfreezeResultColumns",
+        "title": "Unfreeze Columns",
+        "category": "q-lint",
+        "icon": "$(pin)"
+      },
+      {
+        "command": "q-lint.resetResultColumnLayout",
+        "title": "Reset Result Column Layout",
+        "category": "q-lint",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "q-lint.saveResultChartWithQuery",
+        "title": "Save Result Chart with Query",
+        "category": "q-lint",
+        "icon": "$(save)"
+      },
+      {
+        "command": "q-lint.forgetResultChartPreset",
+        "title": "Forget Result Chart Preset",
+        "category": "q-lint",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "q-lint.showResultCorrelation",
+        "title": "Show Result Correlation Matrix",
+        "category": "q-lint",
+        "icon": "$(symbol-numeric)"
+      },
+      {
+        "command": "q-lint.sendResultToNotebook",
+        "title": "Send Result to Notebook",
+        "category": "q-lint",
+        "icon": "$(notebook)"
+      },
+      {
+        "command": "q-lint.appendResultToReport",
+        "title": "Append Result to Markdown Report...",
+        "category": "q-lint",
+        "icon": "$(markdown)"
       },
       {
         "command": "q-lint.openDataFile",
@@ -2275,6 +2633,246 @@
         "title": "Follow or Pause Log",
         "category": "q-lint",
         "icon": "$(debug-pause)"
+      },
+      {
+        "command": "q-lint.manageHdbColumn",
+        "title": "Manage HDB Column...",
+        "category": "q-lint",
+        "icon": "$(edit)",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.documentDatabase",
+        "title": "Document Database",
+        "category": "q-lint",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.checkPartitions",
+        "title": "Check Partition Consistency",
+        "category": "q-lint",
+        "icon": "$(checklist)",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.inspectSymFile",
+        "title": "Inspect Sym File",
+        "category": "q-lint",
+        "icon": "$(symbol-key)",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.adviseAttributes",
+        "title": "Advise Attributes",
+        "category": "q-lint",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.writeSchemaMigration",
+        "title": "Write Schema Migration...",
+        "category": "q-lint",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.generateTestData",
+        "title": "Generate Test Data...",
+        "category": "q-lint",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.openTickerplantLog",
+        "title": "Open Tickerplant Log...",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.openDashboard",
+        "title": "Open Dashboard...",
+        "category": "q-lint",
+        "icon": "$(dashboard)"
+      },
+      {
+        "command": "q-lint.addToDashboard",
+        "title": "Add to Dashboard...",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.renderChartFromFile",
+        "title": "Render Chart from CSV or JSON File...",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.addManyProcesses",
+        "title": "Add Many Processes...",
+        "category": "q-lint",
+        "icon": "$(list-unordered)"
+      },
+      {
+        "command": "q-lint.importQStudioServers",
+        "title": "Import Servers from qStudio...",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.importKxConnections",
+        "title": "Import Connections from KX Extension...",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.setCredentialCommand",
+        "title": "Set Credential Command",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.setProcessTimeout",
+        "title": "Set Process Timeout",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.interruptQuery",
+        "title": "Interrupt Query on Local Process",
+        "category": "q-lint",
+        "icon": "$(debug-pause)"
+      },
+      {
+        "command": "q-lint.queryAsync",
+        "title": "Run Query Asynchronously",
+        "category": "q-lint",
+        "icon": "$(run-below)"
+      },
+      {
+        "command": "q-lint.showPendingAsyncQueries",
+        "title": "Show Pending Async Queries",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.copyQueryLink",
+        "title": "Copy Query Link",
+        "category": "q-lint",
+        "icon": "$(link)"
+      },
+      {
+        "command": "q-lint.addScheduledExport",
+        "title": "Add Scheduled Export...",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.manageScheduledExports",
+        "title": "Manage Scheduled Exports...",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.refreshConnectedClients",
+        "title": "Refresh Connected Clients",
+        "category": "q-lint",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "q-lint.closeClientHandle",
+        "title": "Close Client Handle",
+        "category": "q-lint",
+        "icon": "$(close)"
+      },
+      {
+        "command": "q-lint.refreshTimers",
+        "title": "Refresh Timers",
+        "category": "q-lint",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "q-lint.toggleTimer",
+        "title": "Turn Timer On/Off",
+        "category": "q-lint",
+        "icon": "$(debug-pause)"
+      },
+      {
+        "command": "q-lint.setTimerInterval",
+        "title": "Set Timer Interval (\\t)",
+        "category": "q-lint",
+        "icon": "$(clock)"
+      },
+      {
+        "command": "q-lint.refreshTickerplantSubscribers",
+        "title": "Refresh Tickerplant Subscribers",
+        "category": "q-lint",
+        "icon": "$(refresh)",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.refreshSystemSettings",
+        "title": "Refresh System Settings",
+        "category": "q-lint",
+        "icon": "$(refresh)",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.editSystemSetting",
+        "title": "Edit System Setting...",
+        "category": "q-lint",
+        "icon": "$(edit)",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.browseProcessFiles",
+        "title": "Browse Process Files...",
+        "category": "q-lint",
+        "icon": "$(folder-opened)",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.openProcessFile",
+        "title": "Open Process File (Read-only)",
+        "category": "q-lint",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "q-lint.diffFunctionAcrossProcesses",
+        "title": "Diff Function Across Processes...",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.diffNamespaceAcrossProcesses",
+        "title": "Diff Namespace Across Processes...",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.findInProcesses",
+        "title": "Find in Processes...",
+        "category": "q-lint",
+        "icon": "$(search)"
+      },
+      {
+        "command": "q-lint.openFoundSource",
+        "title": "Open Found Source",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.clearInlineResults",
+        "title": "Clear Inline Results",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.benchmarkExpression",
+        "title": "Benchmark Expression",
+        "category": "q-lint",
+        "icon": "$(dashboard)",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.joinAssistant",
+        "title": "Join Assistant...",
+        "category": "q-lint",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.explainAjMatch",
+        "title": "Explain aj Match...",
+        "category": "q-lint",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.openScratchBuffer",
+        "title": "Open Scratch Buffer",
+        "category": "q-lint",
+        "icon": "$(notebook)"
       }
     ],
     "views": {
@@ -2349,6 +2947,54 @@
           "name": "q Cheat Sheet",
           "when": "config.q-lint.cheatSheet.enable",
           "icon": "media/view-cheatsheet.svg"
+        },
+        {
+          "id": "q-lint.connectedClients",
+          "name": "Connected Clients",
+          "icon": "media/view-explorer.svg",
+          "contextualTitle": "q-lint",
+          "visibility": "collapsed",
+          "when": "config.q-lint.connectedClients.enable"
+        },
+        {
+          "id": "q-lint.timers",
+          "name": "Timers",
+          "icon": "media/view-explorer.svg",
+          "contextualTitle": "q-lint",
+          "visibility": "collapsed",
+          "when": "config.q-lint.timers.enable"
+        },
+        {
+          "id": "q-lint.tickerplantSubscribers",
+          "name": "Tickerplant Subscribers",
+          "icon": "media/view-explorer.svg",
+          "contextualTitle": "q-lint",
+          "visibility": "collapsed",
+          "when": "config.q-lint.tickerplant.subscribers.enable"
+        },
+        {
+          "id": "q-lint.systemSettings",
+          "name": "System Settings",
+          "icon": "media/view-explorer.svg",
+          "contextualTitle": "q-lint",
+          "visibility": "collapsed",
+          "when": "config.q-lint.processes.systemSettings.enable"
+        },
+        {
+          "id": "q-lint.processFiles",
+          "name": "Process Files",
+          "icon": "media/view-explorer.svg",
+          "contextualTitle": "q-lint",
+          "visibility": "collapsed",
+          "when": "config.q-lint.processes.fileBrowser.enable"
+        },
+        {
+          "id": "q-lint.findInProcesses",
+          "name": "Find in Processes",
+          "icon": "media/view-explorer.svg",
+          "contextualTitle": "q-lint",
+          "visibility": "collapsed",
+          "when": "config.q-lint.processes.findInProcesses.enable"
         }
       ],
       "q-lint-results": [
@@ -2381,6 +3027,46 @@
         {
           "command": "q-lint.wrangleResultColumn",
           "when": "(webviewId == 'q-lint.result' || webviewId == 'q-lint.results') && webviewSection == 'column' && config.q-lint.results.wrangler.enable"
+        },
+        {
+          "command": "q-lint.addResultConditionalFormat",
+          "when": "(webviewId == 'q-lint.result' || webviewId == 'q-lint.results') && webviewSection == 'column' && config.q-lint.results.conditionalFormats.enable",
+          "group": "2_format@1"
+        },
+        {
+          "command": "q-lint.clearResultConditionalFormats",
+          "when": "(webviewId == 'q-lint.result' || webviewId == 'q-lint.results') && webviewSection == 'column' && config.q-lint.results.conditionalFormats.enable",
+          "group": "2_format@2"
+        },
+        {
+          "command": "q-lint.toggleResultDataBar",
+          "when": "(webviewId == 'q-lint.result' || webviewId == 'q-lint.results') && webviewSection == 'column' && columnKind == 'numeric' && config.q-lint.results.cellCharts.enable",
+          "group": "2_format@3"
+        },
+        {
+          "command": "q-lint.toggleResultSparkline",
+          "when": "(webviewId == 'q-lint.result' || webviewId == 'q-lint.results') && webviewSection == 'column' && columnKind == 'list' && config.q-lint.results.cellCharts.enable",
+          "group": "2_format@4"
+        },
+        {
+          "command": "q-lint.hideResultColumn",
+          "when": "(webviewId == 'q-lint.result' || webviewId == 'q-lint.results') && webviewSection == 'column' && config.q-lint.results.columnLayout.enable",
+          "group": "3_layout@1"
+        },
+        {
+          "command": "q-lint.freezeResultColumns",
+          "when": "(webviewId == 'q-lint.result' || webviewId == 'q-lint.results') && webviewSection == 'column' && config.q-lint.results.columnLayout.enable",
+          "group": "3_layout@2"
+        },
+        {
+          "command": "q-lint.unfreezeResultColumns",
+          "when": "(webviewId == 'q-lint.result' || webviewId == 'q-lint.results') && webviewSection == 'column' && config.q-lint.results.columnLayout.enable",
+          "group": "3_layout@3"
+        },
+        {
+          "command": "q-lint.showHiddenResultColumns",
+          "when": "(webviewId == 'q-lint.result' || webviewId == 'q-lint.results') && webviewSection == 'column' && config.q-lint.results.columnLayout.enable",
+          "group": "3_layout@4"
         }
       ],
       "view/title": [
@@ -2538,6 +3224,96 @@
           "command": "q-lint.clearPlots",
           "when": "view == q-lint.plots && config.q-lint.results.plots.enable",
           "group": "navigation@4"
+        },
+        {
+          "command": "q-lint.checkPartitions",
+          "when": "view == q-lint.hdbBrowser && config.q-lint.hdbBrowser.partitionCheck.enable",
+          "group": "navigation@2"
+        },
+        {
+          "command": "q-lint.inspectSymFile",
+          "when": "view == q-lint.hdbBrowser && config.q-lint.hdbBrowser.symInspector.enable",
+          "group": "navigation@3"
+        },
+        {
+          "command": "q-lint.manageHdbColumn",
+          "when": "view == q-lint.hdbBrowser && config.q-lint.hdbBrowser.columnManager.enable",
+          "group": "2_database@1"
+        },
+        {
+          "command": "q-lint.documentDatabase",
+          "when": "view == q-lint.hdbBrowser && config.q-lint.databaseDocumenter.enable",
+          "group": "2_database@2"
+        },
+        {
+          "command": "q-lint.documentDatabase",
+          "when": "view == q-lint.processExplorer && config.q-lint.databaseDocumenter.enable",
+          "group": "2_database@1"
+        },
+        {
+          "command": "q-lint.openDashboard",
+          "when": "view == q-lint.savedQueries && config.q-lint.dashboards.enable",
+          "group": "navigation@2"
+        },
+        {
+          "command": "q-lint.addManyProcesses",
+          "when": "view == q-lint.processes && config.q-lint.processes.bulkAdd.enable",
+          "group": "1_processes@4"
+        },
+        {
+          "command": "q-lint.importQStudioServers",
+          "when": "view == q-lint.processes && config.q-lint.processes.importOther.enable",
+          "group": "1_processes@5"
+        },
+        {
+          "command": "q-lint.importKxConnections",
+          "when": "view == q-lint.processes && config.q-lint.processes.importOther.enable",
+          "group": "1_processes@6"
+        },
+        {
+          "command": "q-lint.addScheduledExport",
+          "when": "view == q-lint.savedQueries && config.q-lint.export.schedule.enable",
+          "group": "2_schedule@1"
+        },
+        {
+          "command": "q-lint.manageScheduledExports",
+          "when": "view == q-lint.savedQueries && config.q-lint.export.schedule.enable",
+          "group": "2_schedule@2"
+        },
+        {
+          "command": "q-lint.refreshConnectedClients",
+          "when": "view == q-lint.connectedClients && config.q-lint.connectedClients.enable",
+          "group": "navigation@1"
+        },
+        {
+          "command": "q-lint.refreshTimers",
+          "when": "view == q-lint.timers && config.q-lint.timers.enable",
+          "group": "navigation@1"
+        },
+        {
+          "command": "q-lint.setTimerInterval",
+          "when": "view == q-lint.timers && q-lint.connected && config.q-lint.timers.enable",
+          "group": "navigation@2"
+        },
+        {
+          "command": "q-lint.refreshTickerplantSubscribers",
+          "when": "view == q-lint.tickerplantSubscribers && config.q-lint.tickerplant.subscribers.enable",
+          "group": "navigation@1"
+        },
+        {
+          "command": "q-lint.refreshSystemSettings",
+          "when": "view == q-lint.systemSettings && config.q-lint.processes.systemSettings.enable",
+          "group": "navigation@1"
+        },
+        {
+          "command": "q-lint.browseProcessFiles",
+          "when": "view == q-lint.processFiles && config.q-lint.processes.fileBrowser.enable",
+          "group": "navigation@1"
+        },
+        {
+          "command": "q-lint.findInProcesses",
+          "when": "view == q-lint.findInProcesses && config.q-lint.processes.findInProcesses.enable",
+          "group": "navigation@1"
         }
       ],
       "view/item/context": [
@@ -2785,6 +3561,91 @@
           "command": "q-lint.newQueryForProcess",
           "when": "view == q-lint.processes && viewItem =~ /^(process|discovered)/ && config.q-lint.processes.newQuery.enable",
           "group": "1_connect@4"
+        },
+        {
+          "command": "q-lint.manageHdbColumn",
+          "when": "view == q-lint.processExplorer && viewItem == explorer.table && config.q-lint.hdbBrowser.columnManager.enable",
+          "group": "3_database@1"
+        },
+        {
+          "command": "q-lint.adviseAttributes",
+          "when": "view == q-lint.processExplorer && viewItem == explorer.table && config.q-lint.processExplorer.attributeAdvisor.enable",
+          "group": "3_database@2"
+        },
+        {
+          "command": "q-lint.writeSchemaMigration",
+          "when": "view == q-lint.processExplorer && viewItem == explorer.table && config.q-lint.schemaMigration.enable",
+          "group": "3_database@3"
+        },
+        {
+          "command": "q-lint.generateTestData",
+          "when": "view == q-lint.processExplorer && viewItem == explorer.table && config.q-lint.testDataGenerator.enable",
+          "group": "3_database@4"
+        },
+        {
+          "command": "q-lint.addToDashboard",
+          "when": "view == q-lint.savedQueries && viewItem == savedQuery && config.q-lint.dashboards.enable && config.q-lint.savedQueries.enable",
+          "group": "2_dashboard@1"
+        },
+        {
+          "command": "q-lint.setCredentialCommand",
+          "when": "view == q-lint.processes && viewItem =~ /^process/ && config.q-lint.connection.credentialCommand.enable",
+          "group": "2_edit@8"
+        },
+        {
+          "command": "q-lint.setProcessTimeout",
+          "when": "view == q-lint.processes && viewItem =~ /^process/ && config.q-lint.query.processTimeout.enable",
+          "group": "2_edit@9"
+        },
+        {
+          "command": "q-lint.closeClientHandle",
+          "when": "view == q-lint.connectedClients && viewItem == client && config.q-lint.connectedClients.enable",
+          "group": "inline"
+        },
+        {
+          "command": "q-lint.closeClientHandle",
+          "when": "view == q-lint.connectedClients && viewItem == client && config.q-lint.connectedClients.enable",
+          "group": "1_client@1"
+        },
+        {
+          "command": "q-lint.toggleTimer",
+          "when": "view == q-lint.timers && viewItem =~ /^torqTimer/ && config.q-lint.timers.enable",
+          "group": "inline"
+        },
+        {
+          "command": "q-lint.toggleTimer",
+          "when": "view == q-lint.timers && viewItem =~ /^torqTimer/ && config.q-lint.timers.enable",
+          "group": "1_timer@1"
+        },
+        {
+          "command": "q-lint.setTimerInterval",
+          "when": "view == q-lint.timers && viewItem == qTimer && config.q-lint.timers.enable",
+          "group": "inline"
+        },
+        {
+          "command": "q-lint.editSystemSetting",
+          "when": "view == q-lint.systemSettings && viewItem == systemSetting && config.q-lint.processes.systemSettings.enable",
+          "group": "inline"
+        },
+        {
+          "command": "q-lint.editSystemSetting",
+          "when": "view == q-lint.systemSettings && viewItem == systemSetting && config.q-lint.processes.systemSettings.enable",
+          "group": "1_edit@1"
+        },
+        {
+          "command": "q-lint.openProcessFile",
+          "when": "view == q-lint.processFiles && viewItem == processFile && config.q-lint.processes.fileBrowser.enable",
+          "group": "inline"
+        },
+        {
+          "command": "q-lint.findInProcesses",
+          "when": "view == q-lint.processes && viewItem == tag && config.q-lint.processes.findInProcesses.enable",
+          "group": "1_query@2"
+        },
+        {
+          "command": "q-lint.openScratchBuffer",
+          "when": "view == q-lint.processes && viewItem =~ /^(process|discovered)/ && config.q-lint.processes.scratchBuffer.enable",
+          "group": "1_connect@5"
         }
       ],
       "editor/title/run": [
@@ -2913,6 +3774,11 @@
           "command": "q-lint.stripNotebookOutputs",
           "when": "resourceExtname =~ /^\\.qnb$/i && config.q-lint.notebook.stripOutputs.enable",
           "group": "q-lint"
+        },
+        {
+          "command": "q-lint.renderChartFromFile",
+          "when": "resourceExtname =~ /^\\.(csv|tsv|json)$/ && config.q-lint.charts.commandLine.enable",
+          "group": "q-lint@20"
         }
       ],
       "editor/context": [
@@ -3055,6 +3921,36 @@
           "command": "q-lint.runFileWithArguments",
           "when": "editorLangId == q && resourceScheme == file && config.q-lint.terminal.runWithArguments.enable",
           "group": "q-lint@11"
+        },
+        {
+          "command": "q-lint.queryAsync",
+          "when": "editorLangId == q && config.q-lint.query.async.enable",
+          "group": "q-lint@26"
+        },
+        {
+          "command": "q-lint.copyQueryLink",
+          "when": "editorLangId == q && config.q-lint.query.links.enable",
+          "group": "q-lint@27"
+        },
+        {
+          "command": "q-lint.diffFunctionAcrossProcesses",
+          "when": "editorLangId == q && config.q-lint.processes.functionDiff.enable",
+          "group": "q-lint@50"
+        },
+        {
+          "command": "q-lint.benchmarkExpression",
+          "when": "editorLangId == q && config.q-lint.query.benchmark.enable",
+          "group": "q-lint@51"
+        },
+        {
+          "command": "q-lint.joinAssistant",
+          "when": "editorLangId == q && config.q-lint.query.joinAssistant.enable",
+          "group": "q-lint@52"
+        },
+        {
+          "command": "q-lint.explainAjMatch",
+          "when": "editorLangId == q && config.q-lint.query.ajExplainer.enable",
+          "group": "q-lint@53"
         }
       ],
       "testing/item/context": [
@@ -3305,6 +4201,62 @@
           "when": "false"
         },
         {
+          "command": "q-lint.addResultConditionalFormat",
+          "when": "false"
+        },
+        {
+          "command": "q-lint.clearResultConditionalFormats",
+          "when": "false"
+        },
+        {
+          "command": "q-lint.toggleResultDataBar",
+          "when": "false"
+        },
+        {
+          "command": "q-lint.toggleResultSparkline",
+          "when": "false"
+        },
+        {
+          "command": "q-lint.hideResultColumn",
+          "when": "false"
+        },
+        {
+          "command": "q-lint.showHiddenResultColumns",
+          "when": "q-lint.result.shown && config.q-lint.results.columnLayout.enable"
+        },
+        {
+          "command": "q-lint.freezeResultColumns",
+          "when": "false"
+        },
+        {
+          "command": "q-lint.unfreezeResultColumns",
+          "when": "q-lint.result.shown && config.q-lint.results.columnLayout.enable"
+        },
+        {
+          "command": "q-lint.resetResultColumnLayout",
+          "when": "q-lint.result.shown && config.q-lint.results.columnLayout.enable"
+        },
+        {
+          "command": "q-lint.saveResultChartWithQuery",
+          "when": "q-lint.result.shown && config.q-lint.results.chartPresets.enable"
+        },
+        {
+          "command": "q-lint.forgetResultChartPreset",
+          "when": "q-lint.result.shown && config.q-lint.results.chartPresets.enable"
+        },
+        {
+          "command": "q-lint.showResultCorrelation",
+          "when": "q-lint.result.shown && config.q-lint.results.correlation.enable"
+        },
+        {
+          "command": "q-lint.sendResultToNotebook",
+          "when": "q-lint.result.shown && config.q-lint.results.sendResult.enable"
+        },
+        {
+          "command": "q-lint.appendResultToReport",
+          "when": "q-lint.result.shown && config.q-lint.results.sendResult.enable"
+        },
+        {
           "command": "q-lint.openDataFile",
           "when": "config.q-lint.dataFiles.open.enable"
         },
@@ -3519,6 +4471,170 @@
         {
           "command": "q-lint.restartNotebookAndRunAll",
           "when": "q-lint.notebookActive && config.q-lint.notebook.restartRunAll.enable"
+        },
+        {
+          "command": "q-lint.manageHdbColumn",
+          "when": "config.q-lint.hdbBrowser.columnManager.enable"
+        },
+        {
+          "command": "q-lint.documentDatabase",
+          "when": "config.q-lint.databaseDocumenter.enable"
+        },
+        {
+          "command": "q-lint.checkPartitions",
+          "when": "config.q-lint.hdbBrowser.partitionCheck.enable"
+        },
+        {
+          "command": "q-lint.inspectSymFile",
+          "when": "config.q-lint.hdbBrowser.symInspector.enable"
+        },
+        {
+          "command": "q-lint.adviseAttributes",
+          "when": "config.q-lint.processExplorer.attributeAdvisor.enable"
+        },
+        {
+          "command": "q-lint.writeSchemaMigration",
+          "when": "config.q-lint.schemaMigration.enable"
+        },
+        {
+          "command": "q-lint.generateTestData",
+          "when": "config.q-lint.testDataGenerator.enable"
+        },
+        {
+          "command": "q-lint.openTickerplantLog",
+          "when": "config.q-lint.tickerplantLog.enable"
+        },
+        {
+          "command": "q-lint.openDashboard",
+          "when": "config.q-lint.dashboards.enable"
+        },
+        {
+          "command": "q-lint.addToDashboard",
+          "when": "config.q-lint.dashboards.enable && config.q-lint.savedQueries.enable"
+        },
+        {
+          "command": "q-lint.renderChartFromFile",
+          "when": "config.q-lint.charts.commandLine.enable"
+        },
+        {
+          "command": "q-lint.addManyProcesses",
+          "when": "config.q-lint.processes.bulkAdd.enable"
+        },
+        {
+          "command": "q-lint.importQStudioServers",
+          "when": "config.q-lint.processes.importOther.enable"
+        },
+        {
+          "command": "q-lint.importKxConnections",
+          "when": "config.q-lint.processes.importOther.enable"
+        },
+        {
+          "command": "q-lint.setCredentialCommand",
+          "when": "config.q-lint.connection.credentialCommand.enable"
+        },
+        {
+          "command": "q-lint.setProcessTimeout",
+          "when": "config.q-lint.query.processTimeout.enable"
+        },
+        {
+          "command": "q-lint.interruptQuery",
+          "when": "q-lint.connected && config.q-lint.query.cancelLocal.enable"
+        },
+        {
+          "command": "q-lint.queryAsync",
+          "when": "config.q-lint.query.async.enable"
+        },
+        {
+          "command": "q-lint.showPendingAsyncQueries",
+          "when": "config.q-lint.query.async.enable"
+        },
+        {
+          "command": "q-lint.copyQueryLink",
+          "when": "config.q-lint.query.links.enable"
+        },
+        {
+          "command": "q-lint.addScheduledExport",
+          "when": "config.q-lint.export.schedule.enable"
+        },
+        {
+          "command": "q-lint.manageScheduledExports",
+          "when": "config.q-lint.export.schedule.enable"
+        },
+        {
+          "command": "q-lint.refreshConnectedClients",
+          "when": "config.q-lint.connectedClients.enable"
+        },
+        {
+          "command": "q-lint.closeClientHandle",
+          "when": "false"
+        },
+        {
+          "command": "q-lint.refreshTimers",
+          "when": "config.q-lint.timers.enable"
+        },
+        {
+          "command": "q-lint.toggleTimer",
+          "when": "false"
+        },
+        {
+          "command": "q-lint.setTimerInterval",
+          "when": "q-lint.connected && config.q-lint.timers.enable"
+        },
+        {
+          "command": "q-lint.refreshTickerplantSubscribers",
+          "when": "config.q-lint.tickerplant.subscribers.enable"
+        },
+        {
+          "command": "q-lint.refreshSystemSettings",
+          "when": "config.q-lint.processes.systemSettings.enable"
+        },
+        {
+          "command": "q-lint.editSystemSetting",
+          "when": "config.q-lint.processes.systemSettings.enable"
+        },
+        {
+          "command": "q-lint.browseProcessFiles",
+          "when": "config.q-lint.processes.fileBrowser.enable"
+        },
+        {
+          "command": "q-lint.openProcessFile",
+          "when": "false"
+        },
+        {
+          "command": "q-lint.diffFunctionAcrossProcesses",
+          "when": "config.q-lint.processes.functionDiff.enable"
+        },
+        {
+          "command": "q-lint.diffNamespaceAcrossProcesses",
+          "when": "config.q-lint.processes.functionDiff.enable"
+        },
+        {
+          "command": "q-lint.findInProcesses",
+          "when": "config.q-lint.processes.findInProcesses.enable"
+        },
+        {
+          "command": "q-lint.openFoundSource",
+          "when": "false"
+        },
+        {
+          "command": "q-lint.clearInlineResults",
+          "when": "config.q-lint.query.inlineResults.enable && editorLangId == q"
+        },
+        {
+          "command": "q-lint.benchmarkExpression",
+          "when": "config.q-lint.query.benchmark.enable && editorLangId == q"
+        },
+        {
+          "command": "q-lint.joinAssistant",
+          "when": "config.q-lint.query.joinAssistant.enable"
+        },
+        {
+          "command": "q-lint.explainAjMatch",
+          "when": "config.q-lint.query.ajExplainer.enable && editorLangId == q"
+        },
+        {
+          "command": "q-lint.openScratchBuffer",
+          "when": "config.q-lint.processes.scratchBuffer.enable"
         }
       ],
       "editor/title": [
@@ -3629,6 +4745,32 @@
       {
         "view": "q-lint.cheatSheet",
         "contents": "Iterators, joins, temporal casts and attributes, each inserted at the cursor when chosen.\n[Show Help for q Builtin](command:q-lint.showHelp)"
+      },
+      {
+        "view": "q-lint.connectedClients",
+        "contents": "Connect to a q process to see its open handles.\n[Connect to Process](command:q-lint.connectProcess)",
+        "when": "!q-lint.connected"
+      },
+      {
+        "view": "q-lint.timers",
+        "contents": "Connect to a q process to see its timer and TorQ timer jobs.\n[Connect to Process](command:q-lint.connectProcess)",
+        "when": "!q-lint.connected"
+      },
+      {
+        "view": "q-lint.tickerplantSubscribers",
+        "contents": "Connect to a tickerplant, then read who subscribes to each table (.u.w): nothing is read until you ask.\n[Refresh](command:q-lint.refreshTickerplantSubscribers)"
+      },
+      {
+        "view": "q-lint.systemSettings",
+        "contents": "Read the connected process's system settings: \\c, \\s, \\P, \\T, \\g, \\o, \\z and \\w.\n[Refresh](command:q-lint.refreshSystemSettings)"
+      },
+      {
+        "view": "q-lint.processFiles",
+        "contents": "Browse the q host's files through the connected process, read-only.\n[Browse Process Files](command:q-lint.browseProcessFiles)"
+      },
+      {
+        "view": "q-lint.findInProcesses",
+        "contents": "Search the function definitions of every process with a tag.\n[Find in Processes](command:q-lint.findInProcesses)"
       }
     ],
     "keybindings": [
@@ -3910,7 +5052,8 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "package": "vsce package",
-    "test": "tsc -p ./ && node --test test/*.test.js"
+    "test": "tsc -p ./ && node --test test/*.test.js",
+    "chart": "node out/chartcli.js"
   },
   "dependencies": {
     "node-q": "^2.7.0",
