@@ -96,6 +96,7 @@ import { guardCheck, guardQuestion, guardRefusal, readGuard } from "./guard";
 import type { GridAnswer, GridPayload } from "./grid";
 import { WATCH, WATCHING, intervalProblem, readWatch, watchText } from "./watch";
 import { guardedBy } from "./guard";
+import type { Answered } from "./inlineresult";
 
 const PROCESSES_KEY = "q-lint.processes";
 /// The address of each process the shared list held when last read (#955).
@@ -512,6 +513,13 @@ export class Live {
   /// Fired when a connection opens or closes, and when a query has finished:
   /// what the process explorer refreshes on.
   readonly onDidChange = this.changed.event;
+  /// Fired with the answer to a query run from an editor's line or
+  /// selection, and where it came from: what inline results (#1047) draw.
+  private readonly answered = new EventEmitter<Answered>();
+  readonly onDidAnswer = this.answered.event;
+  /// The line a Run Line or Run Selection is running from, until `run`
+  /// takes it.
+  private origin: { uri: string; line: number } | undefined;
   private readonly status: StatusBarItem;
   private readonly output: OutputChannel;
   private readonly processesView: ProcessesView;
@@ -1856,7 +1864,15 @@ export class Live {
     if (code === undefined) {
       return;
     }
-    await this.queryCode(code, editor.document.uri, serverTypes);
+    const { selection } = editor;
+    // The last line of a selection that ends at a line's start is the one before.
+    const last = selection.isEmpty ? selection.active.line : selection.end.character === 0 && selection.end.line > selection.start.line ? selection.end.line - 1 : selection.end.line;
+    this.origin = from === "line" || from === "selection" ? { uri: editor.document.uri.toString(), line: last } : undefined;
+    try {
+      await this.queryCode(code, editor.document.uri, serverTypes);
+    } finally {
+      this.origin = undefined;
+    }
   }
 
   /// Run `code` from the document `uri` as a query from the editor is run:
@@ -2335,6 +2351,8 @@ export class Live {
   /// reads it as written. `mode` shows the result as a grid or a chart
   /// whatever q-lint.query.mode is: a data file opened in the grid (#962).
   async run(written: string, as?: "watch" | "watched", serverTypes?: string[], mode?: QueryMode): Promise<void> {
+    const origin = as === undefined ? this.origin : undefined;
+    this.origin = undefined;
     let ready = await this.ready();
     if (ready === undefined) {
       return;
@@ -2394,6 +2412,9 @@ export class Live {
         outcome: answer.ok ? "ok" : "error",
         ...(answer.ok ? {} : { error: answer.error }),
       };
+      if (origin !== undefined) {
+        this.answered.fire({ process: process.label, answer, millis, ...origin });
+      }
       if (!this.modes.show({ process: process.label, code, answer, millis, held: hold }, settings, as === "watched")) {
         this.show(render({ process: process.label, code, answer, millis }, settings), settings.autoClear || as === "watched");
       }

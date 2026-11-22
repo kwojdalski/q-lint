@@ -14,6 +14,7 @@ export const PROCESS_TOOL_SETTINGS = {
   fileBrowser: { key: "processes.fileBrowser.enable", fallback: true, name: "The process file browser" },
   functionDiff: { key: "processes.functionDiff.enable", fallback: true, name: "Function diff between processes" },
   findInProcesses: { key: "processes.findInProcesses.enable", fallback: true, name: "Find in processes" },
+  inlineResults: { key: "query.inlineResults.enable", fallback: true, name: "Inline results" },
 } as const;
 
 export type ProcessTool = keyof typeof PROCESS_TOOL_SETTINGS;
@@ -29,6 +30,7 @@ export const PROCESS_TOOL_COMMANDS = {
   diffNamespace: "q-lint.diffNamespaceAcrossProcesses",
   findInProcesses: "q-lint.findInProcesses",
   openFoundSource: "q-lint.openFoundSource",
+  clearInlineResults: "q-lint.clearInlineResults",
 } as const;
 
 /// Whether `feature` is on, read with `get` as the other settings are read.

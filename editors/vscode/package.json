@@ -1323,6 +1323,11 @@
             "type": "boolean",
             "default": true,
             "markdownDescription": "Offer **Find in Processes...** and its view: search the function definitions (and, when asked, variable names) of every process with a tag; a hit opens the function's live source at the line. Each process is read over a connection of its own with a read-only lambda. Off, the view is gone, the commands refuse and nothing is sent."
+          },
+          "q-lint.query.inlineResults.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "After **Run Line** or **Run Selection**, show the result's short form at the end of the line, until the line is edited. It draws only what the query answered; nothing more is sent. Off, the results are cleared and nothing is drawn."
           }
         }
       }
@@ -2359,6 +2364,11 @@
       {
         "command": "q-lint.openFoundSource",
         "title": "Open Found Source",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.clearInlineResults",
+        "title": "Clear Inline Results",
         "category": "q-lint"
       }
     ],
@@ -3717,6 +3727,10 @@
         {
           "command": "q-lint.openFoundSource",
           "when": "false"
+        },
+        {
+          "command": "q-lint.clearInlineResults",
+          "when": "config.q-lint.query.inlineResults.enable && editorLangId == q"
         }
       ],
       "editor/title": [

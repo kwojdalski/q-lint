@@ -9,6 +9,7 @@ import { registerSystemSettings } from "./syssettingsview";
 import { registerFileBrowser } from "./remotefilesview";
 import { registerFunctionDiff } from "./fndiffview";
 import { registerFindInProcesses } from "./procsearchview";
+import { registerInlineResults } from "./inlineresultview";
 
 export function registerProcessTools(context: ExtensionContext, live: Live) {
   return {
@@ -17,5 +18,6 @@ export function registerProcessTools(context: ExtensionContext, live: Live) {
     fileBrowser: registerFileBrowser(context, live),
     functionDiff: registerFunctionDiff(context, live),
     findInProcesses: registerFindInProcesses(context, live),
+    inlineResults: registerInlineResults(context, live),
   };
 }
