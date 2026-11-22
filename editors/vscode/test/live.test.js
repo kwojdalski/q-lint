@@ -354,6 +354,7 @@ test("package.json declares exactly the commands the extension registers", () =>
     ...Object.values(require("../out/dbfeatures.js").DB_COMMANDS),
     // Group V (#1032-#1041), as each is declared.
     ...[ADMIN_COMMANDS.bulkAdd, ADMIN_COMMANDS.importQStudio, ADMIN_COMMANDS.importKx, ADMIN_COMMANDS.setCredentialCommand, ADMIN_COMMANDS.setTimeout, ADMIN_COMMANDS.interrupt, ADMIN_COMMANDS.runAsync, ADMIN_COMMANDS.pendingAsync, ADMIN_COMMANDS.copyLink, ADMIN_COMMANDS.addSchedule, ADMIN_COMMANDS.manageSchedules, ADMIN_COMMANDS.refreshClients, ADMIN_COMMANDS.closeClient, ADMIN_COMMANDS.refreshTimers, ADMIN_COMMANDS.toggleTimer, ADMIN_COMMANDS.setTimerInterval],
+    ...Object.values(require("../out/processtools.js").PROCESS_TOOL_COMMANDS),
   ].sort();
   assert.deepStrictEqual(declared, registered);
 });
@@ -363,7 +364,13 @@ test("the views live in their own container, and every menu names a declared com
   assert.strictEqual(container.id, VIEWS.container);
   assert.deepStrictEqual(
     pkg.contributes.views[VIEWS.container].map((v) => v.id),
-    [VIEWS.processes, EXPLORER.view, VIEWS.history, ONBOARDING.helpView, INFO.monitor, INFO.hdb, NOTEBOOK.variablesView, SAVED_QUERIES.view, CHEAT_SHEET.view, ...Object.values(ADMIN_VIEWS)],
+    [
+      ...[VIEWS.processes, EXPLORER.view, VIEWS.history, ONBOARDING.helpView, INFO.monitor, INFO.hdb, NOTEBOOK.variablesView, SAVED_QUERIES.view, CHEAT_SHEET.view, ...Object.values(ADMIN_VIEWS)],
+      "q-lint.tickerplantSubscribers",
+      "q-lint.systemSettings",
+      "q-lint.processFiles",
+      "q-lint.findInProcesses",
+    ],
   );
   const declared = new Set(pkg.contributes.commands.map((c) => c.command));
   for (const [where, items] of Object.entries(pkg.contributes.menus)) {

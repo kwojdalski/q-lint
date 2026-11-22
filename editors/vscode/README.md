@@ -1934,6 +1934,114 @@ writes a table. A query's password is read from `QLINT_CHART_PASSWORD`, and
 a query the read-only guard reads as changing the process is refused. It
 writes SVG only: a PNG would need a rasterizer, and so a dependency.
 
+### Inspecting processes, and editor helpers
+
+Each of these has its own setting, listed under
+[Process tool settings](#process-tool-settings); off, its commands and views
+are gone and it sends nothing. Each reads only when you run its command or
+press its view's **Refresh**.
+
+**Tickerplant Subscribers**, a view in the q-lint panel, shows the
+connected tickerplant's subscriptions (`.u.w`) by table: each subscriber's
+handle, its output queue (`.z.W`, marked when bytes are waiting), the
+symbols it asked for, and its host where the process records one - TorQ's
+`.clients.clients` does; plain q keeps no host for another handle, and the
+view says so. It reads nothing until **Refresh** is pressed, then sends one
+read-only lambda, as the Process Explorer reads, without interrupting a
+query. A process without `.u.w` is said to be no tickerplant.
+`q-lint.tickerplant.subscribers.enable` off removes the view.
+
+**System Settings**, a view in the q-lint panel, shows the connected
+process's `\c`, `\s`, `\P`, `\T`, `\g`, `\o`, `\z` and `\w`, each with a
+note on what it does (hover the row), read when **Refresh** is pressed.
+**Edit System Setting...** (the pencil on a row) asks for a new value,
+checks it against what the setting takes - digits, a sign, `0N` and spaces
+only ever reach `system` - and asks before sending `\x value`; on a process
+the read-only guard guards, the guard asks instead, with its warning. `\w`
+is shown, not edited: kdb+ changes the limit only for a process started
+with `-w`, and PeachQ not at all. `q-lint.processes.systemSettings.enable`
+off removes the view and its commands.
+
+**Process Files**, a view in the q-lint panel, browses the q host's
+directories through the connected process, as qStudio's remote folder does,
+for a host you reach only over q. **Browse Process Files...** (the view's
+folder button, or the palette) starts at a path you type, or the process's
+working directory; each directory is listed (`key` on its path, at most 1,000
+entries) when it is expanded. A file opens read-only, its first 1 MB only
+(`read1`), with a last line saying when it was cut; a binary file is not
+shown. Every read is a fixed read-only lambda; nothing is written.
+`q-lint.processes.fileBrowser.enable` off removes the view.
+
+**Diff Function Across Processes...** (a q editor's context menu, or
+the palette) reads a function's definition - the name under the cursor, or
+one typed - on two processes you pick and opens VS Code's side-by-side diff
+of them. **Diff Namespace Across Processes...** reads every function
+directly in a namespace on both and lists the ones that differ or are on
+one side only; the one picked opens the same diff. Each process is read
+over a connection of its own, closed after, with a read-only lambda, so the
+active connection is left as it is. `q-lint.processes.functionDiff.enable`
+off hides both.
+
+**Find in Processes...** (on a tag row in Processes, the view's title,
+or the palette) searches the function definitions - and, when you ask,
+the variable names - of every process with a tag, ignoring case, in the
+root and every namespace but q's own. The hits land in the **Find in
+Processes** view: each process, its functions, each matching line; a line
+opens the function's live source, read again from that process, at the
+line. Each process is searched over a connection of its own, eight at a
+time, with a read-only lambda, at most 500 hits each; one that cannot be
+reached is shown as failed. `q-lint.processes.findInProcesses.enable` off
+removes the view and the command.
+
+**Inline results.** After **Run Line** or **Run Selection**, the
+result's short form - q's console text on one line, cut at 80 characters, or
+the error - shows after the end of the line it came from (the selection's
+last line), in the code lens colour, with the whole result and its time on
+hover. It stays until that line is edited; **Clear Inline Results** clears
+them all. It draws what the query answered and sends nothing more.
+`q-lint.query.inlineResults.enable` off clears them and draws none.
+
+**Benchmark Expression** (a q editor's context menu, or the palette)
+times the selection, or the statement at the cursor, on the connected
+process with `\ts:N`, repeated K times - and, when you give a second
+expression, that one too, to compare. The panel shows a table (min,
+median, mean and max time per run, the space, and the second against the
+first) and a chart of each. It runs only when you run the command, and the
+expressions go as a query does: the read-only guard reads them as
+`\ts:N expression` and asks first when one would change a guarded process.
+`q-lint.query.benchmark.enable` off hides the command and closes the
+panel.
+
+**Join Assistant...** (a q editor's context menu, or the palette) asks
+for two tables - one of the connected process's, the query behind the
+result on show, or an expression you type - reads their columns, types,
+attributes and keys (`meta`, so a partitioned table is not read), and
+offers the joins they allow: `lj` and `ij` on the right table's keys (or the
+symbol columns both share, with the `xkey` written in), `aj` and `wj` on a
+time column both have, with the `xasc` they need unless the right table is
+already sorted or grouped, and `uj` for tables alike. Each comes with why;
+the one you pick is inserted at the cursor - after the selection, never
+over it - or in a new q editor. The two expressions are sent through the
+read-only guard. `q-lint.query.joinAssistant.enable` off hides it.
+
+**Explain aj Match...** (a q editor's context menu, or the palette)
+finds the `aj` or `aj0` call in the selection or the statement at the
+cursor, asks for a row of its left table, and re-runs the match for that row
+on the connected process: the right table's rows with that row's keys, then
+the last of them at or before its time, found by `bin` as `aj` finds it. It
+shows the row matched, or why none was - no right row has that key, or the
+earliest one is after the row's time - and warns when those right rows are
+not in time order, as `aj` assumes. The call's arguments go through the
+read-only guard. `q-lint.query.ajExplainer.enable` off hides it.
+
+**Open Scratch Buffer** (a process's context menu in Processes, or the
+palette) opens that process's own q file, kept in the extension's storage -
+so it is there in the next session, in any workspace, and never in your
+repository - and binds it to the process, as **Choose Connection for File**
+does, so what you run from it goes there. It sends nothing itself, and
+never writes over what you wrote. `q-lint.processes.scratchBuffer.enable`
+off hides it.
+
 ## q notebooks
 
 A `.qnb` file opens as a notebook of q code cells and markdown cells;
@@ -2589,6 +2697,21 @@ Read when a cell runs or a command is used, so a change needs no reload. None re
 | `q-lint.tickerplantLog.enable` | `true` | **Open Tickerplant Log...**. Off, the command is hidden and refuses, and an open log's panel and q are closed. | - |
 | `q-lint.dashboards.enable` | `true` | **Open Dashboard...** and **Add to Dashboard...**. Off, they are hidden and refuse, the panel closes and every refresh stops. A tile refreshes on its own only with an interval you give it. | - |
 | `q-lint.charts.commandLine.enable` | `true` | **Render Chart from CSV or JSON File...**. Off, the command is hidden and refuses; `out/chartcli.js` is yours to run or not. | - |
+
+### Process tool settings
+
+| Setting | Default | What it does | q-pro |
+| --- | --- | --- | --- |
+| `q-lint.tickerplant.subscribers.enable` | `true` | The **Tickerplant Subscribers** view, read only on **Refresh**. Off, the view is gone and nothing is read. | - |
+| `q-lint.processes.systemSettings.enable` | `true` | The **System Settings** view and **Edit System Setting...**, which asks first. Off, the view is gone, its commands hidden and refusing. | - |
+| `q-lint.processes.fileBrowser.enable` | `true` | The **Process Files** view: the q host's files through the process, read-only and capped. Off, the view is gone and its commands refuse. | - |
+| `q-lint.processes.functionDiff.enable` | `true` | **Diff Function** and **Diff Namespace Across Processes**. Off, both are hidden and refuse. | - |
+| `q-lint.processes.findInProcesses.enable` | `true` | **Find in Processes...** and its view. Off, the view is gone and the command hidden and refusing. | - |
+| `q-lint.query.inlineResults.enable` | `true` | The result's short form at the end of a line after **Run Line** or **Run Selection**. Off, none is drawn and those shown are cleared. | - |
+| `q-lint.query.benchmark.enable` | `true` | **Benchmark Expression**, run only on the command. Off, it is hidden and refuses, and the panel closes. | - |
+| `q-lint.query.joinAssistant.enable` | `true` | **Join Assistant...**. Off, it is hidden and refuses. | - |
+| `q-lint.query.ajExplainer.enable` | `true` | **Explain aj Match...**. Off, it is hidden and refuses. | - |
+| `q-lint.processes.scratchBuffer.enable` | `true` | **Open Scratch Buffer**. Off, it is hidden and refuses. | - |
 
 ### Not here, and why
 

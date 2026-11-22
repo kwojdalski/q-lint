@@ -77,6 +77,7 @@ import { registerProblemsDashboard } from "./problemsview";
 import { registerDbTools } from "./dbtoolsview";
 import { Dashboards } from "./dashboardview";
 import { TickerplantLog } from "./tplogview";
+import { registerProcessTools } from "./processtoolsview";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -198,6 +199,7 @@ export async function activate(
     dbTools: ReturnType<typeof registerDbTools>;
     dashboards: Dashboards;
     tickerplantLog: TickerplantLog;
+    processTools: ReturnType<typeof registerProcessTools>;
   }
 > {
   // Replacing the binary does not restart the server, and a window reload is
@@ -319,6 +321,7 @@ export async function activate(
   const dbTools = registerDbTools(context, live);
   const dashboards = new Dashboards(context, live);
   const tickerplantLog = new TickerplantLog(context);
+  const processTools = registerProcessTools(context, live);
   // Not awaited: nothing above needs the server, and a slow or hung one
   // would hold up every command of the extension until it answered.
   void serial.run(() => start(context)).then(() => serverChanged());
@@ -380,6 +383,7 @@ export async function activate(
     dbTools,
     dashboards,
     tickerplantLog,
+    processTools,
   };
 }
 

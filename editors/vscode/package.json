@@ -1514,6 +1514,61 @@
             "markdownDescription": "Show the **Timers** view: the connected process's `\\t` interval and `.z.ts`, and TorQ's `.timer.timer` jobs with their period and next run, read by a fixed read-only lambda. **Turn Timer On/Off** and **Set Timer Interval** go through the read-only guard. Off: the view and its commands are hidden, and nothing is read."
           }
         }
+      },
+      {
+        "title": "q-lint: process tools",
+        "properties": {
+          "q-lint.tickerplant.subscribers.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Show the **Tickerplant Subscribers** view: the connected tickerplant's `.u.w` by table, each subscriber's handle, host (where the process records one) and output queue, read only when **Refresh** is pressed. Off, the view is gone and nothing is read."
+          },
+          "q-lint.processes.systemSettings.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Show the **System Settings** view: the connected process's `\\c`, `\\s`, `\\P`, `\\T`, `\\g`, `\\o`, `\\z` and `\\w`, with what each does, read when **Refresh** is pressed; **Edit Setting** changes one after asking (through the read-only guard on a guarded process). Off, the view is gone, its commands refuse and nothing is sent."
+          },
+          "q-lint.processes.fileBrowser.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Show the **Process Files** view and **Browse Process Files...**: the q host's directories read through the connected process (`key` on a path), and a file opened read-only, its first 1 MB only (`read1`). Off, the view is gone, its commands refuse and nothing is sent."
+          },
+          "q-lint.processes.functionDiff.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Offer **Diff Function Across Processes** and **Diff Namespace Across Processes**: a function's definition on two processes side by side, or every function of a namespace that differs, each read over a connection of its own with a read-only lambda. Off, the commands are hidden and refuse, and nothing is sent."
+          },
+          "q-lint.processes.findInProcesses.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Offer **Find in Processes...** and its view: search the function definitions (and, when asked, variable names) of every process with a tag; a hit opens the function's live source at the line. Each process is read over a connection of its own with a read-only lambda. Off, the view is gone, the commands refuse and nothing is sent."
+          },
+          "q-lint.query.inlineResults.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "After **Run Line** or **Run Selection**, show the result's short form at the end of the line, until the line is edited. It draws only what the query answered; nothing more is sent. Off, the results are cleared and nothing is drawn."
+          },
+          "q-lint.query.benchmark.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Offer **Benchmark Expression**: time the selection (and, if given, a second expression to compare) with `\\ts:N` repeated K times on the connected process, shown as a table and a chart of time and space. It runs only when the command is run, through the read-only guard. Off, the command is hidden and refuses, and the panel closes."
+          },
+          "q-lint.query.joinAssistant.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Offer **Join Assistant...**: pick two tables (or the result on show) and get `lj`, `ij`, `uj`, `aj` or `wj` written with the keys and sorts it needs, at the cursor. The tables' shapes are read through the read-only guard. Off, the command is hidden and refuses, and nothing is sent."
+          },
+          "q-lint.query.ajExplainer.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Offer **Explain aj Match**: for one row of the `aj` call at the cursor, show which right-hand row it matched, or why none did, by re-running the match for that row on the connected process (through the read-only guard). Off, the command is hidden and refuses, and nothing is sent."
+          },
+          "q-lint.processes.scratchBuffer.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Offer **Open Scratch Buffer**: a q file of each process's own, kept in the extension's storage between sessions and bound to the process. It sends nothing. Off, the command is hidden and refuses."
+          }
+        }
       }
     ],
     "commands": [
@@ -2733,6 +2788,91 @@
         "title": "Set Timer Interval (\\t)",
         "category": "q-lint",
         "icon": "$(clock)"
+      },
+      {
+        "command": "q-lint.refreshTickerplantSubscribers",
+        "title": "Refresh Tickerplant Subscribers",
+        "category": "q-lint",
+        "icon": "$(refresh)",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.refreshSystemSettings",
+        "title": "Refresh System Settings",
+        "category": "q-lint",
+        "icon": "$(refresh)",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.editSystemSetting",
+        "title": "Edit System Setting...",
+        "category": "q-lint",
+        "icon": "$(edit)",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.browseProcessFiles",
+        "title": "Browse Process Files...",
+        "category": "q-lint",
+        "icon": "$(folder-opened)",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.openProcessFile",
+        "title": "Open Process File (Read-only)",
+        "category": "q-lint",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "q-lint.diffFunctionAcrossProcesses",
+        "title": "Diff Function Across Processes...",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.diffNamespaceAcrossProcesses",
+        "title": "Diff Namespace Across Processes...",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.findInProcesses",
+        "title": "Find in Processes...",
+        "category": "q-lint",
+        "icon": "$(search)"
+      },
+      {
+        "command": "q-lint.openFoundSource",
+        "title": "Open Found Source",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.clearInlineResults",
+        "title": "Clear Inline Results",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.benchmarkExpression",
+        "title": "Benchmark Expression",
+        "category": "q-lint",
+        "icon": "$(dashboard)",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.joinAssistant",
+        "title": "Join Assistant...",
+        "category": "q-lint",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.explainAjMatch",
+        "title": "Explain aj Match...",
+        "category": "q-lint",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.openScratchBuffer",
+        "title": "Open Scratch Buffer",
+        "category": "q-lint",
+        "icon": "$(notebook)"
       }
     ],
     "views": {
@@ -2823,6 +2963,38 @@
           "contextualTitle": "q-lint",
           "visibility": "collapsed",
           "when": "config.q-lint.timers.enable"
+        },
+        {
+          "id": "q-lint.tickerplantSubscribers",
+          "name": "Tickerplant Subscribers",
+          "icon": "media/view-explorer.svg",
+          "contextualTitle": "q-lint",
+          "visibility": "collapsed",
+          "when": "config.q-lint.tickerplant.subscribers.enable"
+        },
+        {
+          "id": "q-lint.systemSettings",
+          "name": "System Settings",
+          "icon": "media/view-explorer.svg",
+          "contextualTitle": "q-lint",
+          "visibility": "collapsed",
+          "when": "config.q-lint.processes.systemSettings.enable"
+        },
+        {
+          "id": "q-lint.processFiles",
+          "name": "Process Files",
+          "icon": "media/view-explorer.svg",
+          "contextualTitle": "q-lint",
+          "visibility": "collapsed",
+          "when": "config.q-lint.processes.fileBrowser.enable"
+        },
+        {
+          "id": "q-lint.findInProcesses",
+          "name": "Find in Processes",
+          "icon": "media/view-explorer.svg",
+          "contextualTitle": "q-lint",
+          "visibility": "collapsed",
+          "when": "config.q-lint.processes.findInProcesses.enable"
         }
       ],
       "q-lint-results": [
@@ -3122,6 +3294,26 @@
           "command": "q-lint.setTimerInterval",
           "when": "view == q-lint.timers && q-lint.connected && config.q-lint.timers.enable",
           "group": "navigation@2"
+        },
+        {
+          "command": "q-lint.refreshTickerplantSubscribers",
+          "when": "view == q-lint.tickerplantSubscribers && config.q-lint.tickerplant.subscribers.enable",
+          "group": "navigation@1"
+        },
+        {
+          "command": "q-lint.refreshSystemSettings",
+          "when": "view == q-lint.systemSettings && config.q-lint.processes.systemSettings.enable",
+          "group": "navigation@1"
+        },
+        {
+          "command": "q-lint.browseProcessFiles",
+          "when": "view == q-lint.processFiles && config.q-lint.processes.fileBrowser.enable",
+          "group": "navigation@1"
+        },
+        {
+          "command": "q-lint.findInProcesses",
+          "when": "view == q-lint.findInProcesses && config.q-lint.processes.findInProcesses.enable",
+          "group": "navigation@1"
         }
       ],
       "view/item/context": [
@@ -3429,6 +3621,31 @@
           "command": "q-lint.setTimerInterval",
           "when": "view == q-lint.timers && viewItem == qTimer && config.q-lint.timers.enable",
           "group": "inline"
+        },
+        {
+          "command": "q-lint.editSystemSetting",
+          "when": "view == q-lint.systemSettings && viewItem == systemSetting && config.q-lint.processes.systemSettings.enable",
+          "group": "inline"
+        },
+        {
+          "command": "q-lint.editSystemSetting",
+          "when": "view == q-lint.systemSettings && viewItem == systemSetting && config.q-lint.processes.systemSettings.enable",
+          "group": "1_edit@1"
+        },
+        {
+          "command": "q-lint.openProcessFile",
+          "when": "view == q-lint.processFiles && viewItem == processFile && config.q-lint.processes.fileBrowser.enable",
+          "group": "inline"
+        },
+        {
+          "command": "q-lint.findInProcesses",
+          "when": "view == q-lint.processes && viewItem == tag && config.q-lint.processes.findInProcesses.enable",
+          "group": "1_query@2"
+        },
+        {
+          "command": "q-lint.openScratchBuffer",
+          "when": "view == q-lint.processes && viewItem =~ /^(process|discovered)/ && config.q-lint.processes.scratchBuffer.enable",
+          "group": "1_connect@5"
         }
       ],
       "editor/title/run": [
@@ -3714,6 +3931,26 @@
           "command": "q-lint.copyQueryLink",
           "when": "editorLangId == q && config.q-lint.query.links.enable",
           "group": "q-lint@27"
+        },
+        {
+          "command": "q-lint.diffFunctionAcrossProcesses",
+          "when": "editorLangId == q && config.q-lint.processes.functionDiff.enable",
+          "group": "q-lint@50"
+        },
+        {
+          "command": "q-lint.benchmarkExpression",
+          "when": "editorLangId == q && config.q-lint.query.benchmark.enable",
+          "group": "q-lint@51"
+        },
+        {
+          "command": "q-lint.joinAssistant",
+          "when": "editorLangId == q && config.q-lint.query.joinAssistant.enable",
+          "group": "q-lint@52"
+        },
+        {
+          "command": "q-lint.explainAjMatch",
+          "when": "editorLangId == q && config.q-lint.query.ajExplainer.enable",
+          "group": "q-lint@53"
         }
       ],
       "testing/item/context": [
@@ -4342,6 +4579,62 @@
         {
           "command": "q-lint.setTimerInterval",
           "when": "q-lint.connected && config.q-lint.timers.enable"
+        },
+        {
+          "command": "q-lint.refreshTickerplantSubscribers",
+          "when": "config.q-lint.tickerplant.subscribers.enable"
+        },
+        {
+          "command": "q-lint.refreshSystemSettings",
+          "when": "config.q-lint.processes.systemSettings.enable"
+        },
+        {
+          "command": "q-lint.editSystemSetting",
+          "when": "config.q-lint.processes.systemSettings.enable"
+        },
+        {
+          "command": "q-lint.browseProcessFiles",
+          "when": "config.q-lint.processes.fileBrowser.enable"
+        },
+        {
+          "command": "q-lint.openProcessFile",
+          "when": "false"
+        },
+        {
+          "command": "q-lint.diffFunctionAcrossProcesses",
+          "when": "config.q-lint.processes.functionDiff.enable"
+        },
+        {
+          "command": "q-lint.diffNamespaceAcrossProcesses",
+          "when": "config.q-lint.processes.functionDiff.enable"
+        },
+        {
+          "command": "q-lint.findInProcesses",
+          "when": "config.q-lint.processes.findInProcesses.enable"
+        },
+        {
+          "command": "q-lint.openFoundSource",
+          "when": "false"
+        },
+        {
+          "command": "q-lint.clearInlineResults",
+          "when": "config.q-lint.query.inlineResults.enable && editorLangId == q"
+        },
+        {
+          "command": "q-lint.benchmarkExpression",
+          "when": "config.q-lint.query.benchmark.enable && editorLangId == q"
+        },
+        {
+          "command": "q-lint.joinAssistant",
+          "when": "config.q-lint.query.joinAssistant.enable"
+        },
+        {
+          "command": "q-lint.explainAjMatch",
+          "when": "config.q-lint.query.ajExplainer.enable && editorLangId == q"
+        },
+        {
+          "command": "q-lint.openScratchBuffer",
+          "when": "config.q-lint.processes.scratchBuffer.enable"
         }
       ],
       "editor/title": [
@@ -4462,6 +4755,22 @@
         "view": "q-lint.timers",
         "contents": "Connect to a q process to see its timer and TorQ timer jobs.\n[Connect to Process](command:q-lint.connectProcess)",
         "when": "!q-lint.connected"
+      },
+      {
+        "view": "q-lint.tickerplantSubscribers",
+        "contents": "Connect to a tickerplant, then read who subscribes to each table (.u.w): nothing is read until you ask.\n[Refresh](command:q-lint.refreshTickerplantSubscribers)"
+      },
+      {
+        "view": "q-lint.systemSettings",
+        "contents": "Read the connected process's system settings: \\c, \\s, \\P, \\T, \\g, \\o, \\z and \\w.\n[Refresh](command:q-lint.refreshSystemSettings)"
+      },
+      {
+        "view": "q-lint.processFiles",
+        "contents": "Browse the q host's files through the connected process, read-only.\n[Browse Process Files](command:q-lint.browseProcessFiles)"
+      },
+      {
+        "view": "q-lint.findInProcesses",
+        "contents": "Search the function definitions of every process with a tag.\n[Find in Processes](command:q-lint.findInProcesses)"
       }
     ],
     "keybindings": [
