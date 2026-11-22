@@ -3,7 +3,7 @@
 // hits as a tree: process, then function, then each line. A line opens the
 // function's live source, read again from that process, at that line, in a
 // `q-lint-found:` document VS Code never lets one type into. Each process
-// is searched over a connection of its own (`Live.openSeparate`), closed
+// is searched over a connection of its own (`Live.callSeparate`), closed
 // after, with one fixed read-only lambda (`procsearch.ts`), at most
 // `AT_ONCE` at a time. Off (q-lint.processes.findInProcesses.enable), the
 // view is gone, the commands refuse and nothing is sent.

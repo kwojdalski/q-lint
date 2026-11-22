@@ -1371,3 +1371,41 @@ fn a_column_counts_utf16_code_units_as_the_readme_says() {
     let qe004 = found.iter().find(|f| f.code == "QE004").expect("QE004");
     assert_eq!(qe004.column, Some(9));
 }
+
+/// The lints from inferred types read every local of a lambda, and the QK
+/// rules every bracket: one long lambda of typed locals, compared and
+/// joined, and many parenthesised assignments, must cost time linear in
+/// its length (the ratio of two sizes, as above).
+#[test]
+fn typed_locals_and_version_rules_lint_in_bounded_time() {
+    let time = |n: usize| {
+        // One long lambda (past the locals the type lints read) and many
+        // short ones (each read).
+        let body: String = (0..n)
+            .map(|i| format!("s{i}:`a; n{i}:1 2; r{i}:s{i}=`b; q{i}:n{i},3 4; (a{i};b{i}):1 2;\n "))
+            .collect();
+        let short: String = (0..n)
+            .map(|i| format!("g{i}:{{s:`a; n:1 2; r:s=`b; q:n,3 4; (a;b):1 2; r}}\n"))
+            .collect();
+        let source = format!("f:{{[x] {body} x}}\n{short}d:([a:1;b:2])\n");
+        (0..3)
+            .map(|_| {
+                let started = std::time::Instant::now();
+                std::hint::black_box(q_lint_rs::lint_every_rule(
+                    &source,
+                    "t.q",
+                    &q_lint_rs::Workspace::default(),
+                    true,
+                ));
+                started.elapsed()
+            })
+            .min()
+            .unwrap()
+    };
+    time(500);
+    let (small, large) = (time(500), time(4000));
+    assert!(
+        large < small * 12,
+        "500 statements took {small:?} and 4000 took {large:?}"
+    );
+}

@@ -25,6 +25,9 @@
 //! extend-exclude = ["scratch"]          # no `/`: a name at any depth
 //!                                       # (added to exclude, or its default)
 //!
+//! target-version = "4.0"          # 3.6 | 4.0 | 4.1 | kdbx: report what does not run there (QK)
+//! baseline = "qlinter-baseline.json" # report only findings not in it (`--write-baseline`)
+//!
 //! [lint]
 //! select = ["QE", "QF"]             # codes or prefixes; replaces the profile's set
 //! extend-select = ["QS001"]         # added to whatever is selected
@@ -40,7 +43,10 @@
 //!
 //! Nothing here reads q source; a configuration is TOML and is only parsed.
 
-use q_lint_rs::{Finding, Profile, RULES, Workspace, lint_every_rule};
+use crate::baseline::Baseline;
+use q_lint_rs::{
+    Finding, Profile, RULES, Target, Workspace, lint_every_rule, version_reported_for,
+};
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
@@ -64,7 +70,7 @@ const DEFAULT_EXCLUDE: [&str; 7] = [
     "target",
 ];
 const KEYS: &str = "profile, select, extend-select, ignore, per-file-ignores, exclude, \
-                    extend-exclude, extend and [lint]";
+                    extend-exclude, extend, target-version, baseline and [lint]";
 
 /// One step of rule selection: a configuration file's, or the command line's.
 #[derive(Clone, Debug, Default)]
@@ -92,6 +98,12 @@ pub struct Settings {
     extend_exclude: Vec<Glob>,
     /// Replaced, not added to, by a file that sets its own, as in Ruff.
     per_file_ignores: Vec<(Glob, Vec<String>)>,
+    /// `target-version`: the release the QK rules check against. None, and
+    /// they report nothing.
+    target: Option<Target>,
+    /// `baseline`: the findings file a run reports only what is new
+    /// against, absolute.
+    baseline: Option<PathBuf>,
     /// Every file read to make this: `file` and each it extends, whatever
     /// they are called - so a language server knows to re-read when a base
     /// changes (#419).
@@ -109,6 +121,13 @@ pub struct Overrides {
     pub exclude: Vec<Glob>,
     pub config: Option<PathBuf>,
     pub isolated: bool,
+    /// `--target-version`, over the configuration's.
+    pub target: Option<Target>,
+    /// `--baseline FILE`, over the configuration's.
+    pub baseline: Option<PathBuf>,
+    /// Use no baseline at all: `--write-baseline`, which writes every
+    /// finding, and an editor that turned baselines off.
+    pub no_baseline: bool,
 }
 
 /// Settings for any file, found once per directory and remembered.
@@ -126,6 +145,12 @@ pub struct Policy {
     /// client's settings narrow what a repository's configuration - the one
     /// CI reads - turns on, without being able to widen it.
     narrowing: RefCell<Option<Layer>>,
+    /// Each baseline file read, or why it could not be.
+    baselines: RefCell<HashMap<PathBuf, Rc<Result<Baseline, String>>>>,
+    /// An editor's switch for the baseline, over everything else.
+    baseline_off: std::cell::Cell<bool>,
+    /// Findings a baseline passed over in this run.
+    pub baselined: std::cell::Cell<usize>,
 }
 
 impl Policy {
@@ -136,7 +161,43 @@ impl Policy {
             lenient,
             warned: RefCell::default(),
             narrowing: RefCell::default(),
+            baselines: RefCell::default(),
+            baseline_off: std::cell::Cell::new(false),
+            baselined: std::cell::Cell::new(0),
         }
+    }
+
+    /// Turn every baseline off, or back on: an editor's setting.
+    pub fn use_baseline(&self, on: bool) {
+        self.baseline_off.set(!on);
+    }
+
+    /// The release the QK rules check `settings`' files against.
+    pub fn target(&self, settings: &Settings) -> Option<Target> {
+        self.overrides.target.or(settings.target)
+    }
+
+    /// The baseline file in force for `settings`' files, if any.
+    pub fn baseline_file(&self, settings: &Settings) -> Option<PathBuf> {
+        if self.overrides.no_baseline || self.baseline_off.get() {
+            return None;
+        }
+        self.overrides
+            .baseline
+            .as_ref()
+            .map(|b| absolute(b))
+            .or_else(|| settings.baseline.clone())
+    }
+
+    fn baseline(&self, file: &Path) -> Rc<Result<Baseline, String>> {
+        if let Some(b) = self.baselines.borrow().get(file) {
+            return b.clone();
+        }
+        let b = Rc::new(Baseline::read(file));
+        self.baselines
+            .borrow_mut()
+            .insert(file.to_path_buf(), b.clone());
+        b
     }
 
     /// Narrow every file's selection by `layer`, resolved the way a
@@ -149,6 +210,7 @@ impl Policy {
     /// Forget every file read, after one of them changed on disk.
     pub fn reset(&self) {
         self.cache.borrow_mut().clear();
+        self.baselines.borrow_mut().clear();
     }
 
     /// Whether `path` is the file `--config` names, which governs every file
@@ -165,6 +227,7 @@ impl Policy {
     pub fn read_from(&self, path: &Path) -> bool {
         let path = absolute(path);
         self.is_explicit_config(&path)
+            || self.baselines.borrow().contains_key(&path)
             || self
                 .cache
                 .borrow()
@@ -182,6 +245,7 @@ impl Policy {
         let mut files: Vec<PathBuf> = cache
             .values()
             .flat_map(|settings| settings.sources.iter().cloned())
+            .chain(self.baselines.borrow().keys().cloned())
             .collect();
         let mut dirs = vec![];
         match &self.overrides.config {
@@ -387,12 +451,31 @@ impl Policy {
             other => other.map(|()| false)?,
         };
         let mut found = lint_every_rule(source, path, ws, structure);
+        let target = self.target(&settings);
         found.retain(|f| {
             !(conflict && OPPOSITE.contains(&f.code.as_str()))
+                && version_reported_for(&f.code, target)
                 && self.selected(&settings, &f.code)
                 && !per_file_ignored(&settings, &f.code, file)
                 && !self.test_exempt(&settings, &f.code, file)
         });
+        if let Some(file) = self.baseline_file(&settings) {
+            match &*self.baseline(&file) {
+                Ok(b) => {
+                    let n = b.filter(path, source, &mut found);
+                    self.baselined.set(self.baselined.get() + n);
+                }
+                // A missing or broken baseline is the run's error: reporting
+                // everything instead would bury what is new. A language
+                // server says so once and reports everything.
+                Err(e) if self.lenient => {
+                    if self.warned.borrow_mut().insert(e.clone()) {
+                        eprintln!("qlinter: {e}; reporting every finding");
+                    }
+                }
+                Err(e) => return Err(e.clone()),
+            }
+        }
         Ok(found)
     }
 
@@ -708,6 +791,8 @@ fn load(
             "extend-exclude",
             "extend",
             "lint",
+            "target-version",
+            "baseline",
         ]
         .contains(&key.as_str())
         {
@@ -777,6 +862,22 @@ fn load(
             })
             .transpose()
     };
+    if let Some(v) = table.get("target-version") {
+        let target = v.as_str().and_then(Target::parse).ok_or_else(|| {
+            format!(
+                "{shown}: target-version must be one of {}",
+                Target::NAMES.join(", ")
+            )
+        })?;
+        settings.target = Some(target);
+    }
+    if let Some(v) = table.get("baseline") {
+        let file = v
+            .as_str()
+            .filter(|s| !s.trim().is_empty())
+            .ok_or_else(|| format!("{shown}: baseline must be a path"))?;
+        settings.baseline = Some(absolute(&root.join(file)));
+    }
     settings.layers.push(Layer {
         select: selectors("select")?,
         extend_select: selectors("extend-select")?.unwrap_or_default(),

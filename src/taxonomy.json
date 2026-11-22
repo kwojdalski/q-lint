@@ -784,6 +784,27 @@
     "scope": "builtin"
   },
   {
+    "code": "QT033",
+    "name": "inferred-symbol-comparison",
+    "category": "types-and-shapes",
+    "summary": "A local that is always a symbol compared with a number, boolean, temporal, char or string, or one that is never a symbol compared with a symbol: 'type",
+    "scope": "style"
+  },
+  {
+    "code": "QT034",
+    "name": "inferred-mixed-join",
+    "category": "types-and-shapes",
+    "summary": "Two lists of different types joined with `,`, one of them a typed local: the result is a general list, not a simple one",
+    "scope": "style"
+  },
+  {
+    "code": "QT035",
+    "name": "inferred-symbol-arithmetic",
+    "category": "types-and-shapes",
+    "summary": "Arithmetic on a local that is always a symbol: 'type",
+    "scope": "style"
+  },
+  {
     "code": "QP006",
     "name": "juxtaposed-application",
     "category": "policy",
@@ -880,5 +901,40 @@
     "category": "leftovers",
     "summary": "A lambda definition kept as a comment rather than deleted",
     "scope": "styleq"
+  },
+  {
+    "code": "QK001",
+    "name": "target-dictionary-literal",
+    "category": "compatibility",
+    "summary": "A dictionary literal, ([a:1;b:2]), which q reads from 4.1 on: reported only for an older target-version",
+    "scope": "builtin"
+  },
+  {
+    "code": "QK002",
+    "name": "target-pattern-assignment",
+    "category": "compatibility",
+    "summary": "A pattern assignment, (a;b):x, which q runs from 4.1 on: reported only for an older target-version",
+    "scope": "builtin"
+  },
+  {
+    "code": "QK003",
+    "name": "target-typed-parameter",
+    "category": "compatibility",
+    "summary": "A typed or filtered lambda parameter, {[x:`j] ...}, which q runs from 4.1 on: reported only for an older target-version",
+    "scope": "builtin"
+  },
+  {
+    "code": "QK004",
+    "name": "target-deferred-response",
+    "category": "compatibility",
+    "summary": "-30!, the deferred response, which q has from 3.6 on: reported only for an older target-version",
+    "scope": "builtin"
+  },
+  {
+    "code": "QK005",
+    "name": "target-removed-q-function",
+    "category": "compatibility",
+    "summary": ".Q.Xf or .Q.Cf, removed in q 4.1: reported only for a target-version of 4.1 or KDB-X",
+    "scope": "builtin"
   }
 ]

@@ -16,6 +16,19 @@ export function effectiveTimeout(process: Pick<Process, "timeout"> | undefined, 
   return enabled && process?.timeout !== undefined ? process.timeout : global;
 }
 
+/// The seconds a call on `process` may run where only its own timeout
+/// holds (0: no limit): the calls of `Live.runOnActive` and
+/// `Live.callSeparate`, which `q-lint.query.timeout` never covered.
+export function ownTimeout(process: Pick<Process, "timeout"> | undefined, enabled: boolean): number {
+  return effectiveTimeout(process, 0, enabled);
+}
+
+/// What the user is told when a call over a connection of its own to
+/// `process` timed out and the connection was closed.
+export function timeoutDropped(process: Pick<Process, "label" | "timeout">, seconds: number, enabled: boolean): string {
+  return `q-lint: the call to ${process.label} timed out after ${seconds} s (${timeoutSource(process, enabled)}), and its connection was closed. ${process.label} may still be running it.`;
+}
+
 /// What names the timeout that applied, for the message a timeout gives.
 export function timeoutSource(process: Pick<Process, "label" | "timeout"> | undefined, enabled: boolean): string {
   return enabled && process?.timeout !== undefined ? `${process.label}'s own timeout` : "q-lint.query.timeout";

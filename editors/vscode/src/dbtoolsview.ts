@@ -278,12 +278,8 @@ export function registerDbTools(context: ExtensionContext, live: Live): { state:
         const name = await window.showInputBox({ title: `Migrate ${table} to the schema of which table on ${process.label}?`, value: table, validateInput: (v) => (/^\.?[A-Za-z][\w.]*$/.test(v.trim()) ? undefined : "A table's name") });
         if (name === undefined) return "cancelled";
         try {
-          const connection = await live.openSeparate(process);
-          try {
-            to = { info: readTableInfo(await connection.call(TABLE_INFO, name.trim(), META_COLUMNS)), where: `${name.trim()} on ${process.label}` };
-          } finally {
-            void connection.close();
-          }
+          const info = readTableInfo(await live.callSeparate(process, (connection) => connection.call(TABLE_INFO, name.trim(), META_COLUMNS)));
+          to = { info, where: `${name.trim()} on ${process.label}` };
         } catch (error) {
           return say(`q-lint: could not read ${name.trim()} on ${process.label}: ${error instanceof Error ? error.message : String(error)}`);
         }

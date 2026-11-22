@@ -316,6 +316,32 @@ pub fn qsql_layout_at(source: &str, at: usize, width: usize) -> Option<QsqlLayou
     semantics::layout::layout_at(&v.code, &v.comments, source, at, width)
 }
 
+pub use semantics::functional::Conversion as QsqlConversion;
+
+/// The qSQL query around byte `at` rewritten in its functional form
+/// (`?[t;c;b;a]`, `![t;c;b;a]`); `None` outside a query, and the reason
+/// where the text does not settle one (see `semantics::functional`).
+pub fn qsql_to_functional(source: &str, at: usize) -> Option<Result<QsqlConversion, String>> {
+    let v = views(source);
+    semantics::functional::to_functional_at(&v.code, &v.comments, source, at)
+}
+
+/// The functional form (`?[...]` or `![...]` of four arguments) around byte
+/// `at` written as qSQL; `None` where there is none, and the reason where
+/// it has no qSQL spelling this can write.
+pub fn functional_to_qsql(source: &str, at: usize) -> Option<Result<QsqlConversion, String>> {
+    let v = views(source);
+    semantics::functional::to_qsql_at(&v.code, source, at)
+}
+
+/// The qSQL query or functional form around byte `at` said in words, as
+/// Markdown: what it reads, keeps, groups and returns
+/// (`semantics::explain`). `None` outside one.
+pub fn explain_qsql(source: &str, at: usize) -> Option<String> {
+    let v = views(source);
+    semantics::explain::explain_at(&v.code, &v.comments, source, at)
+}
+
 /// For each of `offsets` in `source`, the qSQL clause it is written in -
 /// `select`, `by`, `from`, `where` and so on - or `None` outside a query,
 /// where a name is no column.
@@ -426,6 +452,7 @@ pub fn word_at(source: &str, offset: usize) -> Option<(usize, usize)> {
 /// A local whose assignments settle its type, and that type as `type`
 /// returns it: see `semantics::infer`.
 pub use semantics::infer::{Typed, literal_type};
+pub use semantics::version::{Target, reported_for as version_reported_for};
 
 /// Each local of each lambda in `source` whose every assignment is a plain
 /// one of a literal of the same type, in order of where it is first named.
@@ -5376,6 +5403,12 @@ fn lint_rules(
         &v.foreign_offsets,
     ));
     out.extend(refusals::check(path, source, code, &v.comments));
+    out.extend(semantics::typelint::check(path, code, source, &v.comments));
+    // The QK rules report for a configuration's target version, which only
+    // a configuration names: `lint_every_rule` is how one asks.
+    if opt_in {
+        out.extend(semantics::version::check(path, code, source));
+    }
     if let Some(at) = v.open_block {
         out.push(Finding::at(
             path,
