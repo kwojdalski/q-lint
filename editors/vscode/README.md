@@ -1651,6 +1651,18 @@ expressions go as a query does: the read-only guard reads them as
 `q-lint.query.benchmark.enable` off hides the command and closes the
 panel.
 
+**Join Assistant...** (a q editor's context menu, or the palette) asks
+for two tables - one of the connected process's, the query behind the
+result on show, or an expression you type - reads their columns, types,
+attributes and keys (`meta`, so a partitioned table is not read), and
+offers the joins they allow: `lj` and `ij` on the right table's keys (or the
+symbol columns both share, with the `xkey` written in), `aj` and `wj` on a
+time column both have, with the `xasc` they need unless the right table is
+already sorted or grouped, and `uj` for tables alike. Each comes with why;
+the one you pick is inserted at the cursor - after the selection, never
+over it - or in a new q editor. The two expressions are sent through the
+read-only guard. `q-lint.query.joinAssistant.enable` off hides it.
+
 ## q notebooks
 
 A `.qnb` file opens as a notebook of q code cells and markdown cells;
@@ -2272,6 +2284,7 @@ Read when a cell runs or a command is used, so a change needs no reload. None re
 | `q-lint.processes.findInProcesses.enable` | `true` | **Find in Processes...** and its view. Off, the view is gone and the command hidden and refusing. | - |
 | `q-lint.query.inlineResults.enable` | `true` | The result's short form at the end of a line after **Run Line** or **Run Selection**. Off, none is drawn and those shown are cleared. | - |
 | `q-lint.query.benchmark.enable` | `true` | **Benchmark Expression**, run only on the command. Off, it is hidden and refuses, and the panel closes. | - |
+| `q-lint.query.joinAssistant.enable` | `true` | **Join Assistant...**. Off, it is hidden and refuses. | - |
 
 ### Not here, and why
 

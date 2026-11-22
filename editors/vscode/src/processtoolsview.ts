@@ -11,6 +11,7 @@ import { registerFunctionDiff } from "./fndiffview";
 import { registerFindInProcesses } from "./procsearchview";
 import { registerInlineResults } from "./inlineresultview";
 import { registerBenchmark } from "./benchmarkview";
+import { registerJoinAssistant } from "./joinassistview";
 
 export function registerProcessTools(context: ExtensionContext, live: Live) {
   return {
@@ -21,5 +22,6 @@ export function registerProcessTools(context: ExtensionContext, live: Live) {
     findInProcesses: registerFindInProcesses(context, live),
     inlineResults: registerInlineResults(context, live),
     benchmark: registerBenchmark(context, live),
+    joinAssistant: registerJoinAssistant(context, live),
   };
 }

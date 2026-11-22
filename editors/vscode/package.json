@@ -1333,6 +1333,11 @@
             "type": "boolean",
             "default": true,
             "markdownDescription": "Offer **Benchmark Expression**: time the selection (and, if given, a second expression to compare) with `\\ts:N` repeated K times on the connected process, shown as a table and a chart of time and space. It runs only when the command is run, through the read-only guard. Off, the command is hidden and refuses, and the panel closes."
+          },
+          "q-lint.query.joinAssistant.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Offer **Join Assistant...**: pick two tables (or the result on show) and get `lj`, `ij`, `uj`, `aj` or `wj` written with the keys and sorts it needs, at the cursor. The tables' shapes are read through the read-only guard. Off, the command is hidden and refuses, and nothing is sent."
           }
         }
       }
@@ -2382,6 +2387,12 @@
         "category": "q-lint",
         "icon": "$(dashboard)",
         "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.joinAssistant",
+        "title": "Join Assistant...",
+        "category": "q-lint",
+        "enablement": "q-lint.connected"
       }
     ],
     "views": {
@@ -3244,6 +3255,11 @@
           "command": "q-lint.benchmarkExpression",
           "when": "editorLangId == q && config.q-lint.query.benchmark.enable",
           "group": "q-lint@51"
+        },
+        {
+          "command": "q-lint.joinAssistant",
+          "when": "editorLangId == q && config.q-lint.query.joinAssistant.enable",
+          "group": "q-lint@52"
         }
       ],
       "testing/item/context": [
@@ -3752,6 +3768,10 @@
         {
           "command": "q-lint.benchmarkExpression",
           "when": "config.q-lint.query.benchmark.enable && editorLangId == q"
+        },
+        {
+          "command": "q-lint.joinAssistant",
+          "when": "config.q-lint.query.joinAssistant.enable"
         }
       ],
       "editor/title": [
