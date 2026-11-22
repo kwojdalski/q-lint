@@ -2133,10 +2133,16 @@ export class Live {
 
   /// Run `code` as a query from the editor is run, its placeholders asked
   /// for first: a saved query (#912).
-  async runFilledIn(code: string): Promise<void> {
+  /// `saved`: the saved query's name, whose look its result keeps (#1015).
+  async runFilledIn(code: string, saved?: string): Promise<void> {
     const filled = await this.filledIn(code);
     if (filled !== undefined) {
-      await this.run(filled);
+      this.modes.expectSaved(saved, filled);
+      try {
+        await this.run(filled);
+      } finally {
+        this.modes.expectSaved(undefined);
+      }
     }
   }
 

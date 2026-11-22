@@ -19,6 +19,7 @@
 import { deflateRawSync } from "node:zlib";
 import type { GridPayload } from "./grid";
 import { plainItem, rawColumn, textNull } from "./qliteral";
+import { xlsxRules, type FormatRule } from "./resultlook";
 
 /// One file of a zip: its name and its bytes.
 export interface ZipEntry {
@@ -239,7 +240,8 @@ const MAX_ROWS = 1048576;
 const MAX_COLUMNS = 16384;
 
 /// The rows `order` of the payload as an xlsx workbook.
-export function toXlsx(payload: GridPayload, order: number[]): { data: Buffer; rows: number; notes: string[] } {
+/// `rules`: conditional formatting rules (#1013), written as Excel's own.
+export function toXlsx(payload: GridPayload, order: number[], rules: FormatRule[] = []): { data: Buffer; rows: number; notes: string[] } {
   const notes: string[] = [];
   const width = Math.min(payload.names.length, MAX_COLUMNS);
   if (width < payload.names.length) {
@@ -266,7 +268,8 @@ export function toXlsx(payload: GridPayload, order: number[]): { data: Buffer; r
     });
     sheet.push(`<row r="${line}">${cells.join("")}</row>`);
   });
-  sheet.push("</sheetData></worksheet>");
+  const formats = xlsxRules(rules, payload.names.slice(0, width), payload.types.slice(0, width).map((t) => t >= 5 && t <= 9), columnName, rows.length + 1);
+  sheet.push("</sheetData>", ...formats.formatting, "</worksheet>");
   const xml = (lines: string[]) => Buffer.from(lines.join(""), "utf8");
   const data = zip([
     {
@@ -311,7 +314,10 @@ export function toXlsx(payload: GridPayload, order: number[]): { data: Buffer; r
       ]),
     },
     { name: "xl/worksheets/sheet1.xml", data: xml(sheet) },
-    { name: "xl/styles.xml", data: Buffer.from(STYLES, "utf8") },
+    {
+      name: "xl/styles.xml",
+      data: Buffer.from(formats.dxfs.length === 0 ? STYLES : STYLES.replace("</styleSheet>", `<dxfs count="${formats.dxfs.length}">${formats.dxfs.join("")}</dxfs></styleSheet>`), "utf8"),
+    },
   ]);
   return { data, rows: rows.length, notes };
 }

@@ -85,7 +85,7 @@ function loadPage(saved, globals = {}) {
   sandbox.self = sandbox;
   sandbox.window = { addEventListener: (type, f) => (windowListeners[type] ??= []).push(f) };
   vm.createContext(sandbox);
-  for (const file of ["chartspec.js", "result.js"]) {
+  for (const file of ["chartspec.js", "gridlook.js", "worldoutline.js", "chartmore.js", "result.js"]) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "media", file), "utf8"), sandbox, { filename: file });
   }
   page.body = body;
@@ -407,8 +407,9 @@ test("a cell carries its menu context for Edit Cell, and a column header for Wra
   // Edit Cell is a menu item only: a double-click still drills down, and that is off.
   assert.strictEqual((page.body.all((e) => e.tagName === "TBODY")[0].listeners.dblclick ?? []).length, 0);
   const header = page.body.all((e) => e.tagName === "TH" && e.attributes?.["data-vscode-context"] !== undefined)[0];
-  assert.deepStrictEqual(JSON.parse(header.attributes["data-vscode-context"]), { webviewSection: "column", column: 0, preventDefaultContextMenuItems: false });
-  page.send({ ...result("s.2", 3), features: { drilldown: false, editCells: false, wrangler: false } });
+  assert.deepStrictEqual(JSON.parse(header.attributes["data-vscode-context"]), { webviewSection: "column", column: 0, columnKind: "numeric", preventDefaultContextMenuItems: false });
+  // The header's menu also offers conditional formats, cell charts and the layout (#1013-#1015).
+  page.send({ ...result("s.2", 3), features: { drilldown: false, editCells: false, wrangler: false, conditionalFormats: false, cellCharts: false, columnLayout: false } });
   assert.strictEqual(page.rows()[0].children[0].attributes, undefined);
   assert.strictEqual(page.body.all((e) => e.tagName === "TH" && e.attributes?.["data-vscode-context"] !== undefined).length, 0);
 });
@@ -428,13 +429,13 @@ test("the chart offers area, step and candles, a right axis and image buttons on
   };
   page.send(twoSeries);
   const options = () => page.body.all((e) => e.tagName === "SELECT")[0].children.map((o) => o.value);
-  assert.deepStrictEqual(options(), ["line", "bar", "scatter", "histogram", "area", "step", "candlestick"]);
+  assert.deepStrictEqual(options(), ["line", "bar", "scatter", "histogram", "area", "step", "candlestick", "linked"]);
   assert.ok(button(page, "Save PNG") && button(page, "Save SVG"));
   assert.strictEqual(page.body.all((e) => e.tagName === "SELECT").length, 2);
   // A request for an image, with no chart drawn here (no Chart.js), answers empty.
   page.send({ ...twoSeries, control: { key: "k.1", action: "image", format: "svg" } });
   assert.deepStrictEqual(page.posted.at(-1), { type: "image", id: "s.1", format: "svg", data: "", key: "k.1" });
-  page.send({ ...twoSeries, features: { charts: false } });
+  page.send({ ...twoSeries, features: { charts: false, linkedCharts: false } });
   assert.deepStrictEqual(options(), ["line", "bar", "scatter", "histogram"]);
   assert.strictEqual(button(page, "Save PNG"), undefined);
   assert.strictEqual(page.body.all((e) => e.tagName === "SELECT").length, 1);

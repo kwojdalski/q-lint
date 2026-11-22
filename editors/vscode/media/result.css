@@ -328,3 +328,97 @@ ul.tree {
   font-style: italic;
   line-height: 22px;
 }
+
+/* A column frozen at the left (#1015): it stays as the grid scrolls across,
+   on an opaque ground so the columns scrolled under it do not show. */
+th.frozen,
+td.frozen {
+  position: sticky;
+  z-index: 1;
+  background-color: var(--vscode-editor-background);
+}
+
+thead th.frozen {
+  z-index: 2;
+  background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background));
+}
+
+/* A header's right edge, to drag to resize its column. */
+th .resize {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 5px;
+  height: 100%;
+  cursor: col-resize;
+}
+
+th .resize:hover {
+  background: var(--vscode-sash-hoverBorder, var(--vscode-focusBorder));
+}
+
+/* A _CODE column (#1012). */
+td.code {
+  font-family: var(--vscode-editor-font-family), monospace;
+  color: var(--vscode-textPreformat-foreground, inherit);
+}
+
+/* A series' colour, beside its box (#1019). */
+.controls input.swatch {
+  width: 22px;
+  height: 18px;
+  padding: 0;
+  margin-left: 4px;
+  border: 0;
+  background: transparent;
+  vertical-align: middle;
+}
+
+/* The map keeps its shape (#1017). */
+.canvas.map {
+  flex: 0 1 auto;
+}
+
+/* Linked panes (#1018): what the crosshair reads, then the panes. */
+.readout {
+  padding: 2px 8px;
+  min-height: 18px;
+  font-family: var(--vscode-editor-font-family);
+  color: var(--vscode-descriptionForeground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.linked {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0 8px 8px;
+}
+
+.linked .pane {
+  position: relative;
+  flex: 1;
+  min-height: 120px;
+  cursor: crosshair;
+}
+
+/* The correlation matrix (#1020). */
+.corr-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+table.corr,
+table.corr-pairs {
+  width: auto;
+  table-layout: auto;
+}
+
+.corr-view h4 {
+  margin: 12px 8px 4px;
+}

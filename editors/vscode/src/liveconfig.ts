@@ -73,6 +73,26 @@ export const RESULT_VIEW = {
   wrangleColumn: "q-lint.wrangleResultColumn",
   /// A cell edit (#964), from a cell's menu.
   editCell: "q-lint.editResultCell",
+  /// Conditional formatting (#1013), from a column's menu.
+  addFormat: "q-lint.addResultConditionalFormat",
+  clearFormats: "q-lint.clearResultConditionalFormats",
+  /// Data bars and sparklines (#1014), from a column's menu.
+  toggleBar: "q-lint.toggleResultDataBar",
+  toggleSpark: "q-lint.toggleResultSparkline",
+  /// The column layout (#1015).
+  hideColumn: "q-lint.hideResultColumn",
+  showColumns: "q-lint.showHiddenResultColumns",
+  freezeColumns: "q-lint.freezeResultColumns",
+  unfreezeColumns: "q-lint.unfreezeResultColumns",
+  resetLayout: "q-lint.resetResultColumnLayout",
+  /// Chart presets (#1019).
+  saveChartPreset: "q-lint.saveResultChartWithQuery",
+  forgetChartPreset: "q-lint.forgetResultChartPreset",
+  /// The correlation matrix (#1020).
+  correlation: "q-lint.showResultCorrelation",
+  /// Send a result to a notebook or a report (#1021).
+  toNotebook: "q-lint.sendResultToNotebook",
+  toReport: "q-lint.appendResultToReport",
 } as const;
 
 /// Context keys the result panel sets, for its commands' `when` clauses.
@@ -142,7 +162,11 @@ export function readLive(get: <T>(key: string, fallback: T) => T): LiveSettings 
 }
 
 /// The result panel's features, each with its own `q-lint.results.<feature>.enable`.
-export const RESULT_FEATURES = ["history", "diff", "statistics", "heatmap", "tree", "export", "paging", "pivot", "charts", "drilldown", "wrangler", "editCells", "plots"] as const;
+export const RESULT_FEATURES = [
+  "history", "diff", "statistics", "heatmap", "tree", "export", "paging", "pivot", "charts", "drilldown", "wrangler", "editCells", "plots",
+  // The grid and charts of #1012-#1021.
+  "columnFormats", "conditionalFormats", "cellCharts", "columnLayout", "depthChart", "mapChart", "linkedCharts", "chartPresets", "correlation", "sendResult",
+] as const;
 export type ResultFeature = (typeof RESULT_FEATURES)[number];
 
 /// The features off unless turned on: paging keeps a result on the process

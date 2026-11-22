@@ -506,7 +506,7 @@
             "type": "boolean",
             "default": true,
             "order": 123,
-            "markdownDescription": "Offer **Export as...** in the result panel, **q-lint: Export Results As...** and **q-lint: Copy Results As...**: the rows shown as Excel, Parquet, JSON, a Markdown table or a q expression that rebuilds the table. Export to CSV is always offered."
+            "markdownDescription": "Offer **Export as...** in the result panel, **q-lint: Export Results As...** and **q-lint: Copy Results As...**: the rows shown as Excel, Parquet, JSON, a Markdown table, a q expression that rebuilds the table, or an HTML page. Export to CSV is always offered."
           },
           "q-lint.results.paging.enable": {
             "type": "boolean",
@@ -572,6 +572,66 @@
             "default": true,
             "order": 130,
             "markdownDescription": "Offer **Edit Cell...** on a grid cell's menu: it writes the `update` that sets the cell in the table the result came from (`` update c:v from `t where ... ``), shows it, and sends it only when you choose **Run**, through the read-only guard. Off, the menu item is hidden and nothing is written or sent."
+          },
+          "q-lint.results.columnFormats.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 130,
+            "markdownDescription": "Format a grid column by the suffix its name ends in (#1012): `_PCT` a fraction as a percent, `_BPS` in basis points, `_CCY` an amount with thousands separated and two decimals, `_NUM` thousands separated (each may end in a digit, the decimals: `_PCT1`), `_BG` and `_FG` a colour taken from the value for the column the rest of the name names (or the row), `_CODE` monospace, `_BAR` a data bar. The header shows the name without its suffix, which stays in its tooltip. Off, every column is shown as q writes it."
+          },
+          "q-lint.results.conditionalFormats.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 130,
+            "markdownDescription": "Offer **Add Conditional Format...** and **Clear Conditional Formats** on a grid column header's menu (#1013): a comparison (`>`, `>=`, `<`, `<=`, `=`, `<>`, top or bottom N, contains) against a value, and a background, a text colour or bold. Rules are kept per result tab and with the saved query the result came from, and go into the Excel export (as Excel's own conditional formatting) and the HTML export. Off, the items are hidden and no rule is drawn or exported."
+          },
+          "q-lint.results.cellCharts.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 130,
+            "markdownDescription": "Draw a column of numeric lists as sparklines, and offer **Toggle Data Bar** (on a numeric column) and **Toggle Sparkline** (on a column of numeric lists) on a grid column header's menu (#1014). A data bar is scaled to the column's range, from zero. Off, every cell is text."
+          },
+          "q-lint.results.columnLayout.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 130,
+            "markdownDescription": "Remember the grid's column layout (#1015): drag a header to move its column or its right edge to resize it, and **Hide Column**, **Freeze Columns up to Here** and **Unfreeze Columns** on a header's menu, with **Show Hidden Result Columns** and **Reset Result Column Layout** in the palette. Kept per result tab, for the next run of the same code, and with the saved query the result came from, restored when it runs again. Off, the grid draws every column in its order, nothing is kept."
+          },
+          "q-lint.results.depthChart.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 130,
+            "markdownDescription": "Offer a **Depth** chart for an order book (#1016): bid and ask price and size columns by level (`bidPx`, `bidSize`, `askPx`, `askSize`, ...), as lists in a row, or `side`, `price` and `size` columns. Cumulative size either side of the mid, chosen by itself when the columns fit. Off, it is not offered."
+          },
+          "q-lint.results.mapChart.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 130,
+            "markdownDescription": "Offer a **Map** chart for a result with latitude and longitude columns (#1017): the rows as points on a plain outline of the world, bundled with the extension, sized and coloured by optional columns. Nothing is fetched. Off, it is not offered."
+          },
+          "q-lint.results.linkedCharts.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 130,
+            "markdownDescription": "Offer **Linked panes** (#1018): each series in its own pane on one x axis; a crosshair reads every series at the cursor, a drag zooms every pane, a double-click shows all again. Off, it is not offered."
+          },
+          "q-lint.results.chartPresets.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 130,
+            "markdownDescription": "Offer **Save with Query** on the chart, **Save Result Chart with Query** and **Forget Result Chart Preset** (#1019), and a colour for each series: the chart's kind, series, right axis, bins, colours and map columns are kept with the saved query, and running it again draws the same chart. Off, nothing is kept and a kept chart is not drawn."
+          },
+          "q-lint.results.correlation.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 130,
+            "markdownDescription": "Offer the **Correlation** view and **Show Result Correlation Matrix** (#1020): the Pearson correlation of every pair of numeric columns over the rows shown, computed here, as a heatmap and a list of pairs. Off, it is not offered."
+          },
+          "q-lint.results.sendResult.enable": {
+            "type": "boolean",
+            "default": true,
+            "order": 130,
+            "markdownDescription": "Offer **Send to...** on the result, **Send Result to Notebook** and **Append Result to Markdown Report...** (#1021): the query, the rows shown as a Markdown table and, if you like, the chart as an image, inserted into a q notebook as a Markdown cell or added to the end of a Markdown file, after showing what it will write. Off, they are hidden and nothing is written."
           },
           "q-lint.query.gridHeatmap": {
             "type": "boolean",
@@ -1596,6 +1656,90 @@
         "icon": "$(edit)"
       },
       {
+        "command": "q-lint.addResultConditionalFormat",
+        "title": "Add Conditional Format...",
+        "category": "q-lint",
+        "icon": "$(symbol-color)"
+      },
+      {
+        "command": "q-lint.clearResultConditionalFormats",
+        "title": "Clear Conditional Formats",
+        "category": "q-lint",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "q-lint.toggleResultDataBar",
+        "title": "Toggle Data Bar",
+        "category": "q-lint",
+        "icon": "$(graph-left)"
+      },
+      {
+        "command": "q-lint.toggleResultSparkline",
+        "title": "Toggle Sparkline",
+        "category": "q-lint",
+        "icon": "$(pulse)"
+      },
+      {
+        "command": "q-lint.hideResultColumn",
+        "title": "Hide Column",
+        "category": "q-lint",
+        "icon": "$(eye-closed)"
+      },
+      {
+        "command": "q-lint.showHiddenResultColumns",
+        "title": "Show Hidden Result Columns",
+        "category": "q-lint",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "q-lint.freezeResultColumns",
+        "title": "Freeze Columns up to Here",
+        "category": "q-lint",
+        "icon": "$(pinned)"
+      },
+      {
+        "command": "q-lint.unfreezeResultColumns",
+        "title": "Unfreeze Columns",
+        "category": "q-lint",
+        "icon": "$(pin)"
+      },
+      {
+        "command": "q-lint.resetResultColumnLayout",
+        "title": "Reset Result Column Layout",
+        "category": "q-lint",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "q-lint.saveResultChartWithQuery",
+        "title": "Save Result Chart with Query",
+        "category": "q-lint",
+        "icon": "$(save)"
+      },
+      {
+        "command": "q-lint.forgetResultChartPreset",
+        "title": "Forget Result Chart Preset",
+        "category": "q-lint",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "q-lint.showResultCorrelation",
+        "title": "Show Result Correlation Matrix",
+        "category": "q-lint",
+        "icon": "$(symbol-numeric)"
+      },
+      {
+        "command": "q-lint.sendResultToNotebook",
+        "title": "Send Result to Notebook",
+        "category": "q-lint",
+        "icon": "$(notebook)"
+      },
+      {
+        "command": "q-lint.appendResultToReport",
+        "title": "Append Result to Markdown Report...",
+        "category": "q-lint",
+        "icon": "$(markdown)"
+      },
+      {
         "command": "q-lint.openDataFile",
         "title": "Open Data File in Grid",
         "category": "q-lint",
@@ -2381,6 +2525,46 @@
         {
           "command": "q-lint.wrangleResultColumn",
           "when": "(webviewId == 'q-lint.result' || webviewId == 'q-lint.results') && webviewSection == 'column' && config.q-lint.results.wrangler.enable"
+        },
+        {
+          "command": "q-lint.addResultConditionalFormat",
+          "when": "(webviewId == 'q-lint.result' || webviewId == 'q-lint.results') && webviewSection == 'column' && config.q-lint.results.conditionalFormats.enable",
+          "group": "2_format@1"
+        },
+        {
+          "command": "q-lint.clearResultConditionalFormats",
+          "when": "(webviewId == 'q-lint.result' || webviewId == 'q-lint.results') && webviewSection == 'column' && config.q-lint.results.conditionalFormats.enable",
+          "group": "2_format@2"
+        },
+        {
+          "command": "q-lint.toggleResultDataBar",
+          "when": "(webviewId == 'q-lint.result' || webviewId == 'q-lint.results') && webviewSection == 'column' && columnKind == 'numeric' && config.q-lint.results.cellCharts.enable",
+          "group": "2_format@3"
+        },
+        {
+          "command": "q-lint.toggleResultSparkline",
+          "when": "(webviewId == 'q-lint.result' || webviewId == 'q-lint.results') && webviewSection == 'column' && columnKind == 'list' && config.q-lint.results.cellCharts.enable",
+          "group": "2_format@4"
+        },
+        {
+          "command": "q-lint.hideResultColumn",
+          "when": "(webviewId == 'q-lint.result' || webviewId == 'q-lint.results') && webviewSection == 'column' && config.q-lint.results.columnLayout.enable",
+          "group": "3_layout@1"
+        },
+        {
+          "command": "q-lint.freezeResultColumns",
+          "when": "(webviewId == 'q-lint.result' || webviewId == 'q-lint.results') && webviewSection == 'column' && config.q-lint.results.columnLayout.enable",
+          "group": "3_layout@2"
+        },
+        {
+          "command": "q-lint.unfreezeResultColumns",
+          "when": "(webviewId == 'q-lint.result' || webviewId == 'q-lint.results') && webviewSection == 'column' && config.q-lint.results.columnLayout.enable",
+          "group": "3_layout@3"
+        },
+        {
+          "command": "q-lint.showHiddenResultColumns",
+          "when": "(webviewId == 'q-lint.result' || webviewId == 'q-lint.results') && webviewSection == 'column' && config.q-lint.results.columnLayout.enable",
+          "group": "3_layout@4"
         }
       ],
       "view/title": [
@@ -3303,6 +3487,62 @@
         {
           "command": "q-lint.editResultCell",
           "when": "false"
+        },
+        {
+          "command": "q-lint.addResultConditionalFormat",
+          "when": "false"
+        },
+        {
+          "command": "q-lint.clearResultConditionalFormats",
+          "when": "false"
+        },
+        {
+          "command": "q-lint.toggleResultDataBar",
+          "when": "false"
+        },
+        {
+          "command": "q-lint.toggleResultSparkline",
+          "when": "false"
+        },
+        {
+          "command": "q-lint.hideResultColumn",
+          "when": "false"
+        },
+        {
+          "command": "q-lint.showHiddenResultColumns",
+          "when": "q-lint.result.shown && config.q-lint.results.columnLayout.enable"
+        },
+        {
+          "command": "q-lint.freezeResultColumns",
+          "when": "false"
+        },
+        {
+          "command": "q-lint.unfreezeResultColumns",
+          "when": "q-lint.result.shown && config.q-lint.results.columnLayout.enable"
+        },
+        {
+          "command": "q-lint.resetResultColumnLayout",
+          "when": "q-lint.result.shown && config.q-lint.results.columnLayout.enable"
+        },
+        {
+          "command": "q-lint.saveResultChartWithQuery",
+          "when": "q-lint.result.shown && config.q-lint.results.chartPresets.enable"
+        },
+        {
+          "command": "q-lint.forgetResultChartPreset",
+          "when": "q-lint.result.shown && config.q-lint.results.chartPresets.enable"
+        },
+        {
+          "command": "q-lint.showResultCorrelation",
+          "when": "q-lint.result.shown && config.q-lint.results.correlation.enable"
+        },
+        {
+          "command": "q-lint.sendResultToNotebook",
+          "when": "q-lint.result.shown && config.q-lint.results.sendResult.enable"
+        },
+        {
+          "command": "q-lint.appendResultToReport",
+          "when": "q-lint.result.shown && config.q-lint.results.sendResult.enable"
         },
         {
           "command": "q-lint.openDataFile",

@@ -6,6 +6,13 @@
 // before this script, which the notebook's chart renderer draws with too.
 // The helpers at the top touch no DOM, and test/grid.test.js runs them
 // under node; the rest runs in the webview.
+//
+// How a column is dressed - a format its name asks for, conditional
+// formatting rules, data bars and sparklines, the column layout - is
+// gridlook.js's, and the depth, map and linked charts are chartmore.js's,
+// both loaded before this script (#1012-#1021). Their look comes from the
+// extension with the result (`look`), which keeps it per result tab and per
+// saved query; a layout changed here is sent back to it.
 (function (root) {
   "use strict";
 
@@ -347,12 +354,17 @@
 
   const vscode = acquireVsCodeApi();
   const C = root.qlintChart;
+  const LOOK = root.qlintLook;
+  const MORE = root.qlintChartMore;
+  const WORLD = root.qlintWorld;
   const BASE_KINDS = ["line", "bar", "scatter", "histogram"];
   /// The kinds q-lint.results.charts.enable adds.
   const MORE_KINDS = ["area", "step", "candlestick"];
-  const VIEWS = { grid: "Grid", chart: "Chart", stats: "Stats", tree: "Tree", pivot: "Pivot" };
+  /// What a kind is called in the chart's menu, where it is not its name.
+  const KIND_NAMES = { candlestick: "Candlestick", depth: "Depth (order book)", map: "Map", linked: "Linked panes" };
+  const VIEWS = { grid: "Grid", chart: "Chart", stats: "Stats", tree: "Tree", pivot: "Pivot", corr: "Correlation" };
   const state = Object.assign(
-    { id: 0, view: "grid", sort: null, filters: [], kind: "line", columns: null, bins: C.BINS, top: 0, compare: false, open: [""], saved: {}, control: null, pivot: null, y2: -1 },
+    { id: 0, view: "grid", sort: null, filters: [], kind: "line", columns: null, bins: C.BINS, top: 0, compare: false, open: [""], saved: {}, control: null, pivot: null, y2: -1, colours: {}, mapSize: -1, mapColour: -1, zoom: null },
     vscode.getState() || {},
   );
   let result = null;
@@ -365,6 +377,11 @@
   let moreAsked = false;
   /// What the chart last drew: its data and theme, for an image of it.
   let drawnChart = null;
+  /// The linked panes' charts, while they are drawn.
+  let panes = [];
+  /// What paint() last dressed, for rendered(): cells formatted, styled by
+  /// a rule, drawn as a data bar or a sparkline.
+  let dress = null;
 
   const el = function (tag, cls, text) {
     const e = document.createElement(tag);
@@ -386,7 +403,8 @@
   const statsView = el("main", "stats-view");
   const treeView = el("main", "tree-view");
   const pivotView = el("main", "pivot-view");
-  document.body.append(tabs, bar, gridView, chartView, statsView, treeView, pivotView);
+  const corrView = el("main", "corr-view");
+  document.body.append(tabs, bar, gridView, chartView, statsView, treeView, pivotView, corrView);
   // Until a result arrives: what fills the page, as a view's welcome would.
   gridView.append(el("p", "note", "No result yet. Run a query in grid or chart mode (q-lint: Switch Query Mode) to show it here."));
 
@@ -409,6 +427,16 @@
     if (comparing()) {
       const d = result.diff;
       more.diff = { changed: d.changed, added: d.addedRows.length, removed: d.removed.count, matchedBy: d.matchedBy };
+    }
+    if (state.view === "grid" && dressing && dress) {
+      more.dressed = {
+        headers: dressing.display.map(function (i) { return headerText(grid, i); }),
+        formatted: dress.formatted,
+        ruled: dress.ruled,
+        bars: dress.bars,
+        sparks: dress.sparks,
+        frozen: dressing.frozen,
+      };
     }
     if (state.view === "grid" && result.heatmap) {
       more.heat = heat.reduce(function (n, levels) {
@@ -440,12 +468,45 @@
 
   /// Whether the page offers view `v` for the result on show.
   function offered(v) {
+    if (v === "corr") {
+      return feature("correlation") && LOOK.correlation(result.grid, []).columns.length >= 2;
+    }
     return v === "tree" ? !!result.tree : v === "stats" ? feature("statistics") : v === "pivot" ? feature("pivot") : true;
   }
 
-  /// The chart kinds offered: the extra ones only while charts are on.
+  /// The chart kinds offered: the extra ones only while charts are on; a
+  /// depth chart for an order book and a map for positions only while they
+  /// are on and the columns fit; linked panes while they are on.
   function kinds() {
-    return feature("charts") ? BASE_KINDS.concat(MORE_KINDS) : BASE_KINDS;
+    let out = feature("charts") ? BASE_KINDS.concat(MORE_KINDS) : BASE_KINDS;
+    if (feature("depthChart") && MORE.depthColumns(result.grid)) {
+      out = out.concat(["depth"]);
+    }
+    if (feature("mapChart") && MORE.mapColumns(result.grid)) {
+      out = out.concat(["map"]);
+    }
+    if (feature("linkedCharts")) {
+      out = out.concat(["linked"]);
+    }
+    return out;
+  }
+
+  /// The result's look, its parts for the features on: {rules, cellCharts,
+  /// layout, chart}.
+  function look() {
+    return result.look || {};
+  }
+
+  /// The column layout in force: none while the feature is off.
+  function layout() {
+    return feature("columnLayout") && look().layout ? look().layout : { order: [], hidden: [], widths: {}, frozen: 0 };
+  }
+
+  /// Change the layout: kept with the result here, and sent to the
+  /// extension, which keeps it for the result tab and its saved query.
+  function setLayout(next) {
+    result.look = Object.assign({}, look(), { layout: Object.assign({ order: [], hidden: [], widths: {}, frozen: 0 }, next) });
+    vscode.postMessage({ type: "look", id: result.id, layout: result.look.layout });
   }
 
   /// Whether Compare with Previous Run is on, for a result that has one.
@@ -540,10 +601,28 @@
       });
       extras.push(heatmap);
     }
+    const hidden = layout().hidden.filter(function (name) { return grid.columns.some(function (c) { return c.name === name; }); });
+    if (state.view === "grid" && hidden.length > 0) {
+      const show = el("button", "", hidden.length + " hidden");
+      show.title = "Show the hidden columns: " + hidden.join(", ");
+      show.addEventListener("click", function () {
+        setLayout(Object.assign({}, layout(), { hidden: [] }));
+        draw();
+      });
+      extras.push(show);
+    }
     const tail = [meta, copy, exporter];
+    if (feature("sendResult")) {
+      const send = el("button", "", "Send to...");
+      send.title = "Insert the rows shown, and the chart if you like, into a q notebook, or append them to a Markdown report";
+      send.addEventListener("click", function () {
+        vscode.postMessage({ type: "send", id: result.id, rows: rows });
+      });
+      tail.push(send);
+    }
     if (feature("export")) {
       const as = el("button", "", "Export as...");
-      as.title = "Save the rows shown as Excel, Parquet, JSON, Markdown or q";
+      as.title = "Save the rows shown as Excel, Parquet, JSON, Markdown, q or HTML";
       as.addEventListener("click", function () {
         vscode.postMessage({ type: "exportAs", id: result.id, rows: rows });
       });
@@ -573,30 +652,116 @@
   /// The column headers drawn, by place.
   let headers = [];
 
+  /// How the grid dresses the result on show (#1012-#1015): the columns
+  /// drawn, in order; each column's format, rule styles and cell chart; the
+  /// colour columns; the frozen columns and how far from the left each sits.
+  let dressing = null;
+  /// A header being dragged to another place, by its place among those
+  /// drawn; a column being resized; a resize just ended, whose click on the
+  /// header is no sort.
+  let dragFrom = null;
+  let resizing = null;
+  let resized = false;
+
+  function dressGrid() {
+    const grid = result.grid;
+    const lay = layout();
+    const display = feature("columnLayout") ? LOOK.displayColumns(grid, lay) : grid.columns.map(function (_, i) { return i; });
+    const formats = feature("columnFormats") ? LOOK.columnFormats(grid) : grid.columns.map(function () { return null; });
+    const rules = feature("conditionalFormats") ? LOOK.ruleStyles(grid, look().rules || []) : grid.columns.map(function () { return null; });
+    const charts = look().cellCharts || {};
+    const cells = grid.columns.map(function (c, i) {
+      const f = formats[i];
+      if ((feature("cellCharts") && c.numeric && charts[c.name] === "bar") || (f && f.kind === "bar")) {
+        return { kind: "bar", levels: LOOK.barLevels(grid.values[i]) };
+      }
+      if (feature("cellCharts") && charts[c.name] !== "text" && LOOK.isNumericList(grid, i)) {
+        return { kind: "spark" };
+      }
+      return null;
+    });
+    const paints = [];
+    formats.forEach(function (f, i) {
+      if (f && (f.kind === "bg" || f.kind === "fg")) {
+        paints.push({ from: i, target: f.target, kind: f.kind });
+      }
+    });
+    dressing = {
+      display: display,
+      formats: formats,
+      rules: rules,
+      cells: cells,
+      paints: paints,
+      frozen: feature("columnLayout") ? Math.min(lay.frozen || 0, display.length) : 0,
+      lefts: [],
+      colour: cssVar("--vscode-charts-blue", "#3794ff"),
+    };
+  }
+
+  /// What column `i`'s header shows: its name without the suffix of its
+  /// format, unless that names another column (a `px_BG` beside `px`).
+  function headerText(grid, i) {
+    const f = dressing.formats[i];
+    return f && !grid.columns.some(function (c, j) { return j !== i && c.name === f.base; }) ? f.base : grid.columns[i].name;
+  }
+
+  /// What a column header's menu knows of its column, for the commands it
+  /// offers: a numeric column takes a data bar, a list of numbers a
+  /// sparkline.
+  function columnKind(grid, i) {
+    return grid.columns[i].numeric ? "numeric" : LOOK.isNumericList(grid, i) ? "list" : "other";
+  }
+
   function drawGrid() {
     const grid = result.grid;
+    dressGrid();
+    const d = dressing;
+    const lay = layout();
     gridView.replaceChildren();
     scroller = el("div", "scroller");
     const table = el("table");
     const cols = el("colgroup");
-    grid.columns.forEach(function (c, i) {
-      let width = c.name.length + 2;
-      const cells = grid.cells[i];
-      for (let r = 0; r < Math.min(cells.length, 500); r++) {
-        width = Math.max(width, cells[r].length);
+    const widths = [];
+    const colEls = [];
+    d.display.forEach(function (i) {
+      const c = grid.columns[i];
+      let css;
+      if (feature("columnLayout") && lay.widths && lay.widths[c.name]) {
+        css = lay.widths[c.name] + "px";
+      } else {
+        let width = headerText(grid, i).length + 2;
+        const cells = grid.cells[i];
+        for (let r = 0; r < Math.min(cells.length, 500); r++) {
+          width = Math.max(width, cells[r].length);
+        }
+        css = Math.min(width + 2, 60) + "ch";
       }
+      widths.push(css);
       const col = el("col");
-      col.style.width = Math.min(width + 2, 60) + "ch";
+      col.style.width = css;
+      colEls.push(col);
       cols.append(col);
     });
+    d.lefts = LOOK.frozenOffsets(widths, d.frozen);
     const head = el("thead");
     const names = el("tr");
     const filters = el("tr", "filters");
     headers = [];
-    grid.columns.forEach(function (c, i) {
+    // A header's right-click menu: the Data Wrangler (#961), conditional
+    // formats (#1013), data bars and sparklines (#1014), the layout (#1015).
+    const menu = feature("wrangler") || feature("conditionalFormats") || feature("cellCharts") || feature("columnLayout");
+    const ruleTexts = feature("conditionalFormats") ? (look().rules || []).map(function (rule) { return [rule.column, LOOK.ruleText(rule)]; }) : [];
+    d.display.forEach(function (i, k) {
+      const c = grid.columns[i];
+      const f = d.formats[i];
       const sorted = state.sort && state.sort.column === i ? (state.sort.descending ? " ▼" : " ▲") : "";
-      const th = el("th", (c.key ? "key" : "") + (c.numeric ? " num" : ""), c.name + sorted);
-      th.title = c.name + ": " + c.typeName + ". Click to sort.";
+      const frozen = k < d.frozen;
+      const th = el("th", (c.key ? "key" : "") + (c.numeric ? " num" : "") + (frozen ? " frozen" : ""), headerText(grid, i) + sorted);
+      const said = ruleTexts.filter(function (t) { return t[0] === c.name; }).map(function (t) { return t[1]; });
+      th.title = c.name + ": " + c.typeName + "." + (f ? " Shown as " + f.label + " (_" + f.suffix + ")." : "") + (said.length ? "\n" + said.join("\n") : "") + "\nClick to sort.";
+      if (frozen) {
+        th.style.left = d.lefts[k];
+      }
       // A keyboard sorts it too: Tab to it, then Enter or Space.
       th.tabIndex = 0;
       th.setAttribute("aria-sort", sorted === "" ? "none" : state.sort.descending ? "descending" : "ascending");
@@ -610,10 +775,55 @@
         drawBar();
         rendered();
       };
-      th.addEventListener("click", sort);
-      if (feature("wrangler")) {
-        // Right-click for the editor's menu: Wrangle Column (#961).
-        th.setAttribute("data-vscode-context", JSON.stringify({ webviewSection: "column", column: i, preventDefaultContextMenuItems: false }));
+      th.addEventListener("click", function () {
+        if (resized) {
+          resized = false;
+          return;
+        }
+        sort();
+      });
+      if (menu) {
+        th.setAttribute("data-vscode-context", JSON.stringify({ webviewSection: "column", column: i, columnKind: columnKind(grid, i), preventDefaultContextMenuItems: false }));
+      }
+      if (feature("columnLayout")) {
+        // Drag a header to move its column; drag its right edge to resize it.
+        th.draggable = true;
+        th.addEventListener("dragstart", function (event) {
+          dragFrom = k;
+          if (event.dataTransfer) {
+            event.dataTransfer.effectAllowed = "move";
+            event.dataTransfer.setData("text/plain", c.name);
+          }
+        });
+        th.addEventListener("dragover", function (event) {
+          if (dragFrom !== null) {
+            event.preventDefault();
+          }
+        });
+        th.addEventListener("drop", function (event) {
+          event.preventDefault();
+          const from = dragFrom;
+          dragFrom = null;
+          if (from === null || from === k) {
+            return;
+          }
+          setLayout(Object.assign({}, lay, { order: LOOK.moveColumn(grid, lay, from, k) }));
+          drawGrid();
+          rendered();
+        });
+        th.addEventListener("dragend", function () { dragFrom = null; });
+        const handle = el("span", "resize");
+        handle.title = "Drag to resize the column";
+        handle.addEventListener("mousedown", function (event) {
+          event.preventDefault();
+          if (event.stopPropagation) {
+            event.stopPropagation();
+          }
+          const from = th.offsetWidth || 80;
+          resizing = { col: colEls[k], name: c.name, start: event.clientX, from: from, width: from };
+        });
+        th.addEventListener("mousedown", function () { resized = false; });
+        th.append(handle);
       }
       headers.push(th);
       th.addEventListener("keydown", function (event) {
@@ -621,11 +831,14 @@
           event.preventDefault();
           sort();
           // The header was drawn again: the focus stays on it.
-          headers[i].focus();
+          headers[k].focus();
         }
       });
       names.append(th);
-      const ft = el("th", c.key ? "key" : "");
+      const ft = el("th", (c.key ? "key" : "") + (frozen ? " frozen" : ""));
+      if (frozen) {
+        ft.style.left = d.lefts[k];
+      }
       const input = el("input");
       input.type = "search";
       input.placeholder = "filter";
@@ -673,6 +886,26 @@
       paint();
     }
   }
+
+  /// A resized column follows the mouse, and its width is kept once let go.
+  window.addEventListener("mousemove", function (event) {
+    if (resizing) {
+      resizing.width = Math.max(24, resizing.from + event.clientX - resizing.start);
+      resizing.col.style.width = resizing.width + "px";
+    }
+  });
+  window.addEventListener("mouseup", function () {
+    if (!resizing || !result) {
+      return;
+    }
+    const widths = Object.assign({}, layout().widths);
+    widths[resizing.name] = Math.round(resizing.width);
+    resizing = null;
+    resized = true;
+    setLayout(Object.assign({}, layout(), { widths: widths }));
+    drawGrid();
+    rendered();
+  });
 
   /// The rows the previous run had and this one has not, below the grid.
   function removedRows(removed) {
@@ -813,6 +1046,11 @@
     rendered({ tree: { drawn: drawn, open: state.open.length, labels: labels } });
   }
 
+  /// A rule's colour as a cell's background: translucent, so the text reads.
+  function tint(colour) {
+    return "color-mix(in srgb, " + colour + " 45%, transparent)";
+  }
+
   /// Draw the rows in view, and spacers for the rest: a grid holds up to
   /// q-lint.query.gridLimit rows, too many to put in the page at once.
   function paint() {
@@ -820,6 +1058,7 @@
       return;
     }
     const grid = result.grid;
+    const d = dressing;
     const at = span(scroller.scrollTop, scroller.clientHeight || 600, rows.length);
     const start = at.start;
     const end = at.end;
@@ -832,7 +1071,7 @@
     const spacer = function (px) {
       const tr = el("tr", "spacer");
       const td = el("td");
-      td.colSpan = Math.max(1, grid.columns.length);
+      td.colSpan = Math.max(1, d.display.length);
       td.style.height = px + "px";
       tr.append(td);
       return tr;
@@ -841,6 +1080,7 @@
     const drill = feature("drilldown");
     // A cell's menu offers Edit Cell (#964) as well as Drill Down.
     const cellMenu = drill || feature("editCells");
+    const counts = { formatted: 0, ruled: 0, bars: 0, sparks: 0 };
     if (at.before > 0) {
       out.push(spacer(at.before));
     }
@@ -851,9 +1091,32 @@
       if (added) {
         tr.className = "added";
       }
-      grid.columns.forEach(function (c, ci) {
-        const text = grid.cells[ci][r];
-        let cls = (c.key ? "key" : "") + (c.numeric || c.temporal ? " num" : "");
+      // The colours a _BG or _FG column gives this row: its target
+      // column's cell, or every cell (-1).
+      const painting = {};
+      d.paints.forEach(function (p) {
+        const colour = LOOK.cssColour(grid.cells[p.from][r]);
+        if (colour) {
+          const to = painting[p.target] || (painting[p.target] = {});
+          to[p.kind] = colour;
+          if (p.target >= 0) {
+            const own = painting[p.from] || (painting[p.from] = {});
+            own[p.kind] = colour;
+          }
+        }
+      });
+      d.display.forEach(function (ci, k) {
+        const c = grid.columns[ci];
+        const raw = grid.cells[ci][r];
+        const f = d.formats[ci];
+        let text = raw;
+        if (f && c.numeric) {
+          text = LOOK.formatNumber(f, grid.values[ci][r], raw);
+          if (text !== raw) {
+            counts.formatted++;
+          }
+        }
+        let cls = (c.key ? "key" : "") + (c.numeric || c.temporal ? " num" : "") + (f && f.kind === "code" ? " code" : "") + (k < d.frozen ? " frozen" : "");
         const was = marks && !added ? marks.changed.get(ci + ":" + r) : undefined;
         if (was !== undefined) {
           cls += " changed";
@@ -861,7 +1124,10 @@
           cls += " added";
         }
         const td = el("td", cls, text);
-        td.title = was !== undefined ? text + "\nwas: " + (was === "" ? "(null)" : was) : text;
+        td.title = was !== undefined ? raw + "\nwas: " + (was === "" ? "(null)" : was) : raw;
+        if (k < d.frozen) {
+          td.style.left = d.lefts[k];
+        }
         if (cellMenu) {
           // Double-click, or right-click for the editor's menu, to drill down
           // or to edit the cell.
@@ -869,8 +1135,54 @@
           td.setAttribute("data-r", r);
           td.setAttribute("data-vscode-context", JSON.stringify({ webviewSection: "cell", column: ci, row: r, preventDefaultContextMenuItems: false }));
         }
-        // A cell the diff marks keeps the diff's colour.
-        const level = heat[ci] && was === undefined && !added ? heat[ci][r] : null;
+        // A cell the diff marks keeps the diff's colour; then a rule's, a
+        // colour column's, and the heatmap's.
+        const marked = was !== undefined || added;
+        let filled = false;
+        const rule = d.rules[ci] ? d.rules[ci].get(r) : undefined;
+        if (rule) {
+          counts.ruled++;
+          if (rule.background && !marked) {
+            td.style.backgroundColor = tint(rule.background);
+            filled = true;
+          }
+          if (rule.color) {
+            td.style.color = rule.color;
+          }
+          if (rule.bold) {
+            td.style.fontWeight = "bold";
+          }
+        }
+        const given = painting[ci] || painting[-1];
+        if (given) {
+          if (given.bg && !filled && !marked) {
+            td.style.backgroundColor = given.bg;
+            filled = true;
+          }
+          if (given.fg && !(rule && rule.color)) {
+            td.style.color = given.fg;
+          }
+        }
+        const chart = d.cells[ci];
+        if (chart && chart.kind === "bar") {
+          const level = chart.levels[r];
+          if (level) {
+            td.style.backgroundImage = LOOK.barBackground(level, d.colour);
+            counts.bars++;
+          }
+        } else if (chart && chart.kind === "spark") {
+          const values = LOOK.parseNumbers(raw);
+          const url = values ? LOOK.sparkUrl(values, d.colour) : null;
+          if (url) {
+            td.style.backgroundImage = url;
+            td.style.backgroundSize = "100% 100%";
+            td.style.backgroundRepeat = "no-repeat";
+            td.textContent = "";
+            td.className += " spark";
+            counts.sparks++;
+          }
+        }
+        const level = heat[ci] && !marked && !filled ? heat[ci][r] : null;
         if (level !== null && level !== undefined) {
           td.style.backgroundColor = heatColour(level);
         }
@@ -882,6 +1194,7 @@
       out.push(spacer(at.after));
     }
     body.replaceChildren.apply(body, out);
+    dress = counts;
     // Near the end of the rows held: ask the process for the next page.
     if (result.more && !moreAsked && rows.length > 0 && end >= rows.length - 10) {
       moreAsked = true;
@@ -960,13 +1273,88 @@
 
   // --- chart
 
-  function drawChart() {
+  /// The colours the chart draws its datasets in: the theme's, in turn, or
+  /// the one chosen for a series' column (#1019).
+  function seriesColours(grid, datasets, theme) {
+    return datasets.map(function (d, i) {
+      const name = d.column !== undefined && grid.columns[d.column] ? grid.columns[d.column].name : null;
+      return (feature("chartPresets") && name && state.colours[name]) || theme.colours[i % theme.colours.length];
+    });
+  }
+
+  /// The chart drawn, as a preset a saved query keeps (#1019): its kind,
+  /// series, right axis, bins, colours and map columns, by name.
+  function currentPreset(picked) {
     const grid = result.grid;
-    chartView.replaceChildren();
+    const name = function (c) { return c >= 0 && grid.columns[c] ? grid.columns[c].name : undefined; };
+    // A depth chart and a map find their own columns.
+    const series = state.kind === "depth" || state.kind === "map" ? [] : picked.map(name);
+    const colours = {};
+    series.forEach(function (n) {
+      if (state.colours[n]) {
+        colours[n] = state.colours[n];
+      }
+    });
+    const out = { kind: state.kind, series: series, bins: state.bins, colours: colours };
+    if (picked.indexOf(state.y2) >= 0) {
+      out.y2 = name(state.y2);
+    }
+    if (state.kind === "map") {
+      if (name(state.mapSize)) {
+        out.size = name(state.mapSize);
+      }
+      if (name(state.mapColour)) {
+        out.colour = name(state.mapColour);
+      }
+    }
+    return out;
+  }
+
+  /// Draw a preset kept with a saved query: the chart view, its kind and
+  /// series by name.
+  function applyPreset(grid, preset) {
+    const at = function (n) { return grid.columns.findIndex(function (c) { return c.name === n; }); };
+    state.view = "chart";
+    state.kind = preset.kind;
+    state.columns = (preset.series || []).map(at).filter(function (i) { return i >= 0; });
+    state.y2 = preset.y2 ? at(preset.y2) : -1;
+    if (preset.bins) {
+      state.bins = preset.bins;
+    }
+    state.colours = Object.assign({}, preset.colours || {});
+    state.mapSize = preset.size ? at(preset.size) : -1;
+    state.mapColour = preset.colour ? at(preset.colour) : -1;
+  }
+
+  /// The chart drawn as SVG: chartmore.js's for its kinds, chartspec.js's
+  /// for the rest.
+  function svgOf(drawn, opts) {
+    if (drawn.kind === "depth") {
+      return MORE.depthSvg(drawn.data, drawn.look, opts);
+    }
+    if (drawn.kind === "map") {
+      return MORE.mapSvg(drawn.data, drawn.look, opts, WORLD);
+    }
+    if (drawn.kind === "linked") {
+      return MORE.linkedSvg(result.grid, drawn.data, drawn.look, drawn.colours, Object.assign({ range: state.zoom }, opts));
+    }
+    return C.chartSvg(result.grid, rows, drawn.kind, drawn.data, Object.assign({}, drawn.look, { colours: drawn.colours }), Object.assign({ y2: drawn.y2 }, opts));
+  }
+
+  function destroyCharts() {
     if (chart) {
       chart.destroy();
       chart = null;
     }
+    panes.forEach(function (p) { p.destroy(); });
+    panes = [];
+  }
+
+  function drawChart() {
+    const grid = result.grid;
+    chartView.replaceChildren();
+    destroyCharts();
+    const theme = C.theme(cssVar);
     const controls = el("div", "controls");
     const kind = el("select");
     const KINDS = kinds();
@@ -974,7 +1362,7 @@
       state.kind = "line";
     }
     KINDS.forEach(function (k) {
-      const o = el("option", "", k[0].toUpperCase() + k.slice(1));
+      const o = el("option", "", KIND_NAMES[k] || k[0].toUpperCase() + k.slice(1));
       o.value = k;
       o.selected = k === state.kind;
       kind.append(o);
@@ -985,11 +1373,13 @@
       drawChart();
     });
     controls.append(kind);
-    const can = C.chartable(grid, state.kind);
+    // A depth chart and a map find their columns by name.
+    const own = state.kind === "depth" || state.kind === "map";
+    const can = C.chartable(grid, state.kind === "linked" ? "line" : state.kind);
     const chosen = chartColumns(can, state.columns);
     const picked = chosen.columns;
     // A candle chart's columns are its open, high, low and close.
-    (state.kind === "candlestick" ? [] : can).forEach(function (c) {
+    (state.kind === "candlestick" || own ? [] : can).forEach(function (c, i) {
       const label = el("label");
       const box = el("input");
       box.type = "checkbox";
@@ -1001,8 +1391,44 @@
         drawChart();
       });
       label.append(box, document.createTextNode(" " + grid.columns[c].name));
+      if (feature("chartPresets") && box.checked) {
+        // A series' own colour, kept with a chart preset.
+        const name = grid.columns[c].name;
+        const colour = el("input", "swatch");
+        colour.type = "color";
+        colour.title = "The colour of " + name;
+        colour.value = state.colours[name] || (/^#[0-9a-f]{6}$/i.test(theme.colours[picked.indexOf(c) % theme.colours.length]) ? theme.colours[picked.indexOf(c) % theme.colours.length] : "#3794ff");
+        colour.addEventListener("change", function () {
+          state.colours[name] = colour.value;
+          save();
+          drawChart();
+        });
+        label.append(colour);
+      }
       controls.append(label);
     });
+    if (state.kind === "map") {
+      const cols = MORE.mapColumns(grid);
+      const choose = function (title, key, test) {
+        const label = el("label", "", title + " ");
+        const select = el("select");
+        [[-1, "(none)"]].concat(grid.columns.map(function (c, i) { return [i, c.name]; }).filter(function (o) { return o[0] !== cols.lat && o[0] !== cols.lon && test(grid.columns[o[0]]); })).forEach(function (o) {
+          const opt = el("option", "", o[1]);
+          opt.value = String(o[0]);
+          opt.selected = o[0] === state[key];
+          select.append(opt);
+        });
+        select.addEventListener("change", function () {
+          state[key] = Number(select.value);
+          save();
+          drawChart();
+        });
+        label.append(select);
+        controls.append(label);
+      };
+      choose("size", "mapSize", function (c) { return c.numeric; });
+      choose("colour", "mapColour", function () { return true; });
+    }
     if (state.kind === "histogram") {
       const label = el("label", "", "bins ");
       const bins = el("input");
@@ -1018,7 +1444,7 @@
       label.append(bins);
       controls.append(label);
     }
-    const second = feature("charts") && state.kind !== "histogram" && state.kind !== "candlestick" && picked.length >= 2;
+    const second = feature("charts") && ["histogram", "candlestick", "depth", "map", "linked"].indexOf(state.kind) < 0 && picked.length >= 2;
     if (second) {
       const label = el("label", "", "right axis ");
       const y2 = el("select");
@@ -1044,76 +1470,296 @@
         controls.append(b);
       });
     }
-    chartView.append(controls);
-    const data = chosen.note && state.kind !== "candlestick" ? { type: "bar", datasets: [], note: chosen.note } : C.chartData(grid, rows, state.kind, picked, state.bins);
-    const summary = C.summary(state.kind, data);
-    const y2 = second && picked.indexOf(state.y2) >= 0 ? state.y2 : -1;
-    if (y2 >= 0) {
-      summary.y2 = grid.columns[y2].name;
+    if (feature("chartPresets")) {
+      const keep = el("button", "", "Save with Query");
+      keep.title = result.saved
+        ? "Keep this chart with the saved query " + result.saved + ", to draw again when it runs"
+        : "Save this result's query to Saved Queries with this chart, to draw again when it runs";
+      keep.addEventListener("click", function () {
+        vscode.postMessage({ type: "chartPreset", id: result.id, preset: currentPreset(picked) });
+      });
+      controls.append(keep);
     }
+    chartView.append(controls);
+    let data;
+    let summary;
+    const y2 = second && picked.indexOf(state.y2) >= 0 ? state.y2 : -1;
+    if (state.kind === "depth") {
+      data = MORE.depthData(grid, rows);
+      summary = C.summary("depth", data);
+      summary.datasets = data.datasets.map(function (d) { return { label: d.label, points: d.levels }; });
+      if (data.mid !== undefined) {
+        summary.mid = data.mid;
+        summary.spread = data.spread;
+      }
+    } else if (state.kind === "map") {
+      data = MORE.mapData(grid, rows, { size: state.mapSize, colour: state.mapColour }, theme);
+      summary = C.summary("map", data);
+      summary.dropped = data.dropped || 0;
+      if (data.dropped) {
+        chartView.append(el("p", "note", data.dropped.toLocaleString("en-US") + " row" + (data.dropped === 1 ? "" : "s") + " with no latitude and longitude on the map left out."));
+      }
+    } else if (state.kind === "linked") {
+      data = chosen.note ? { x: -1, panes: [], note: chosen.note } : MORE.linkedData(grid, rows, picked);
+      summary = { kind: "linked", datasets: data.panes.map(function (p) { return { label: p.label, points: p.data.length }; }) };
+      if (data.note) {
+        summary.note = data.note;
+      }
+    } else {
+      data = chosen.note && state.kind !== "candlestick" ? { type: "bar", datasets: [], note: chosen.note } : C.chartData(grid, rows, state.kind, picked, state.bins);
+      summary = C.summary(state.kind, data);
+      if (y2 >= 0) {
+        summary.y2 = grid.columns[y2].name;
+      }
+    }
+    const preset = feature("chartPresets") ? currentPreset(picked) : undefined;
     drawnChart = null;
     if (data.note || typeof Chart !== "function") {
       const note = data.note || "The chart library did not load.";
       chartView.append(el("p", "note", note));
       summary.note = note;
-      rendered({ chart: summary });
+      rendered({ chart: summary, preset: preset });
       return;
     }
-    const box = el("div", "canvas");
+    C.applyTheme(Chart, theme);
+    if (state.kind === "linked") {
+      drawLinked(data, theme, summary, preset);
+      return;
+    }
+    const box = el("div", "canvas" + (state.kind === "map" ? " map" : ""));
     const canvas = el("canvas");
     box.append(canvas);
     chartView.append(box);
-    const look = C.theme(cssVar);
-    C.applyTheme(Chart, look);
-    chart = new Chart(canvas, C.chartConfig(grid, rows, state.kind, data, look, undefined, { y2: y2 }));
-    drawnChart = { data: data, look: look, y2: y2, canvas: canvas };
-    // Kept in the q Plots view (#970), as the SVG Save SVG writes.
-    if (feature("plots")) {
-      vscode.postMessage({
-        type: "plotted",
-        id: result.id,
-        format: state.kind,
-        // At least 640 by 360: a plot drawn in a narrow panel is still one
-        // to read, and to save.
-        data: C.chartSvg(grid, rows, state.kind, data, look, {
-          width: Math.max(640, Math.round(canvas.clientWidth || 800)),
-          height: Math.max(360, Math.round(canvas.clientHeight || 450)),
-          background: cssVar("--vscode-editor-background", "#ffffff"),
-          y2: y2,
-        }),
-      });
+    let colours = theme.colours;
+    let config;
+    if (state.kind === "depth") {
+      config = MORE.depthConfig(data, theme);
+    } else if (state.kind === "map") {
+      config = MORE.mapConfig(grid, data, theme, WORLD);
+    } else {
+      config = C.chartConfig(grid, rows, state.kind, data, theme, undefined, { y2: y2 });
+      if (state.kind !== "candlestick") {
+        colours = seriesColours(grid, data.datasets, theme);
+        config.data.datasets.forEach(function (d, i) {
+          if (colours[i] !== theme.colours[i % theme.colours.length]) {
+            d.borderColor = colours[i];
+            d.backgroundColor = state.kind === "line" || state.kind === "step" ? colours[i] : colours[i] + "99";
+          }
+        });
+      }
     }
-    rendered({ chart: summary });
+    chart = new Chart(canvas, config);
+    drawnChart = { kind: state.kind, data: data, look: theme, colours: colours, y2: y2, canvas: canvas };
+    plotted();
+    rendered({ chart: summary, preset: preset });
+  }
+
+  /// Keep the chart drawn in the q Plots view (#970), as the SVG Save SVG
+  /// writes.
+  function plotted() {
+    if (!feature("plots") || !drawnChart) {
+      return;
+    }
+    const canvas = drawnChart.canvas;
+    vscode.postMessage({
+      type: "plotted",
+      id: result.id,
+      format: state.kind,
+      // At least 640 by 360: a plot drawn in a narrow panel is still one
+      // to read, and to save.
+      data: svgOf(drawnChart, {
+        width: Math.max(640, Math.round(canvas.clientWidth || 800)),
+        height: Math.max(360, Math.round(canvas.clientHeight || 450)),
+        background: cssVar("--vscode-editor-background", "#ffffff"),
+      }),
+    });
+  }
+
+  /// Linked panes (#1018): one chart per series, stacked on one x axis. A
+  /// crosshair follows the mouse over any of them and the line above reads
+  /// every series where it is; a drag zooms all of them to its range, and a
+  /// double-click goes back to the whole.
+  function drawLinked(data, theme, summary, preset) {
+    const grid = result.grid;
+    const colours = seriesColours(grid, data.panes, theme);
+    const view = { range: state.zoom, cursor: null, drag: null };
+    const hint = "Move over a pane to read every series; drag to zoom, double-click to show all.";
+    const readoutEl = el("div", "readout", hint);
+    const box = el("div", "linked");
+    chartView.append(readoutEl, box);
+    let read = null;
+    const canvases = [];
+    const report = function () {
+      rendered({ chart: summary, preset: preset, linked: { panes: data.panes.map(function (p) { return p.label; }), range: state.zoom, readout: read } });
+    };
+    const redraw = function () { panes.forEach(function (p) { p.draw(); }); };
+    const show = function (x) {
+      read = x === null ? null : MORE.readout(grid, data, x);
+      readoutEl.textContent = read ? read.x + "   " + read.values.map(function (v) { return v.label + " " + v.text; }).join("  ·  ") : hint;
+    };
+    const full = function () {
+      if (view.range) {
+        return view.range.max - view.range.min;
+      }
+      let lo = Infinity;
+      let hi = -Infinity;
+      data.panes.forEach(function (p) { p.data.forEach(function (pt) { lo = Math.min(lo, pt.x); hi = Math.max(hi, pt.x); }); });
+      return hi - lo;
+    };
+    const zoom = function (range) {
+      state.zoom = range;
+      view.range = range;
+      save();
+      panes.forEach(function (p) {
+        p.options.scales.x.min = range ? range.min : undefined;
+        p.options.scales.x.max = range ? range.max : undefined;
+        p.update("none");
+      });
+      report();
+    };
+    data.panes.forEach(function (p, k) {
+      const holder = el("div", "pane");
+      const canvas = el("canvas");
+      holder.append(canvas);
+      box.append(holder);
+      canvases.push(canvas);
+      const pane = new Chart(canvas, MORE.linkedConfig(grid, data, p, colours[k], theme, view, k === data.panes.length - 1));
+      panes.push(pane);
+      const xAt = function (event) {
+        const v = pane.scales && pane.scales.x ? pane.scales.x.getValueForPixel(event.offsetX) : null;
+        return typeof v === "number" && isFinite(v) ? v : null;
+      };
+      canvas.addEventListener("mousemove", function (event) {
+        const x = xAt(event);
+        view.cursor = x;
+        if (view.drag && x !== null) {
+          view.drag.to = x;
+        }
+        show(x);
+        redraw();
+      });
+      canvas.addEventListener("mouseleave", function () {
+        view.cursor = null;
+        show(null);
+        redraw();
+      });
+      canvas.addEventListener("mousedown", function (event) {
+        const x = xAt(event);
+        view.drag = x === null ? null : { from: x, to: x };
+      });
+      canvas.addEventListener("mouseup", function (event) {
+        const drag = view.drag;
+        view.drag = null;
+        if (!drag) {
+          return;
+        }
+        const x = xAt(event);
+        const range = MORE.zoomRange(drag.from, x === null ? drag.to : x, full());
+        if (range) {
+          zoom(range);
+        } else {
+          redraw();
+          report();
+        }
+      });
+      canvas.addEventListener("dblclick", function () { zoom(null); });
+    });
+    drawnChart = { kind: "linked", data: data, look: theme, colours: colours, y2: -1, canvas: canvases[0] || null, canvases: canvases };
+    if (drawnChart.canvas) {
+      plotted();
+    }
+    report();
   }
 
   /// Send the chart drawn as `format` to the extension to save: a PNG of
-  /// the canvas on the editor's background, or chartSvg's SVG of the same
-  /// data. An empty image when no chart is drawn. `key`: the command's
-  /// request it answers.
+  /// the canvas (linked panes stacked) on the editor's background, or the
+  /// SVG of the same data. An empty image when no chart is drawn. `key`:
+  /// the command's request it answers.
   function sendImage(format, key) {
     let data = "";
-    if (drawnChart) {
+    if (drawnChart && drawnChart.canvas) {
       const background = cssVar("--vscode-editor-background", "#ffffff");
+      const canvases = drawnChart.canvases && drawnChart.canvases.length ? drawnChart.canvases : [drawnChart.canvas];
       const canvas = drawnChart.canvas;
       if (format === "png") {
         const out = document.createElement("canvas");
-        out.width = canvas.width;
-        out.height = canvas.height;
+        out.width = Math.max.apply(null, canvases.map(function (c) { return c.width || 0; }));
+        out.height = canvases.reduce(function (h, c) { return h + (c.height || 0); }, 0);
         const ctx = out.getContext("2d");
         ctx.fillStyle = background;
         ctx.fillRect(0, 0, out.width, out.height);
-        ctx.drawImage(canvas, 0, 0);
+        let y = 0;
+        canvases.forEach(function (c) {
+          ctx.drawImage(c, 0, y);
+          y += c.height || 0;
+        });
         data = out.toDataURL("image/png");
       } else {
-        data = C.chartSvg(result.grid, rows, state.kind, drawnChart.data, drawnChart.look, {
+        data = svgOf(drawnChart, {
           width: Math.round(canvas.clientWidth || 800),
-          height: Math.round(canvas.clientHeight || 450),
+          height: Math.round(canvases.reduce(function (h, c) { return h + (c.clientHeight || 0); }, 0) || 450),
           background: background,
-          y2: drawnChart.y2,
         });
       }
     }
     vscode.postMessage({ type: "image", id: result.id, format: format, data: data, key: key });
+  }
+
+  // --- correlation (#1020)
+
+  function drawCorr() {
+    const grid = result.grid;
+    corrView.replaceChildren();
+    const corr = LOOK.correlation(grid, rows);
+    const fixed = function (r) { return r === null ? "" : r.toFixed(3); };
+    const controls = el("div", "controls");
+    const copy = el("button", "", "Copy Matrix");
+    copy.title = "The correlation matrix as CSV";
+    const csv = function (t) { return /[",\r\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; };
+    copy.addEventListener("click", function () {
+      const lines = [[""].concat(corr.names).map(csv).join(",")].concat(corr.names.map(function (n, i) { return [n].concat(corr.r[i].map(function (r) { return r === null ? "" : String(r); })).map(csv).join(","); }));
+      vscode.postMessage({ type: "copyText", id: result.id, text: lines.join("\n") + "\n" });
+    });
+    controls.append(copy);
+    corrView.append(controls);
+    corrView.append(el("p", "note", "Pearson correlation of the numeric columns over the " + rows.length.toLocaleString("en-US") + " row" + (rows.length === 1 ? "" : "s") + " shown; each pair over the rows where both are not null. Key columns are left out."));
+    const scroll = el("div", "scroller");
+    const matrix = el("table", "corr");
+    const head = el("tr");
+    head.append(el("th", "key", ""));
+    corr.names.forEach(function (n) { head.append(el("th", "num", n)); });
+    const thead = el("thead");
+    thead.append(head);
+    const tbody = el("tbody");
+    corr.names.forEach(function (n, i) {
+      const tr = el("tr");
+      tr.append(el("td", "key", n));
+      corr.r[i].forEach(function (r, j) {
+        const td = el("td", "num", fixed(r));
+        td.title = n + " and " + corr.names[j] + ": " + (r === null ? "no correlation (too few rows, or a column that does not vary)" : fixed(r)) + " over " + corr.n[i][j] + " row" + (corr.n[i][j] === 1 ? "" : "s");
+        if (r !== null) {
+          td.style.backgroundColor = heatColour(r);
+        }
+        tr.append(td);
+      });
+      tbody.append(tr);
+    });
+    matrix.append(thead, tbody);
+    const pairs = el("table", "corr-pairs");
+    const ph = el("tr");
+    ["column", "with", "correlation", "rows"].forEach(function (h, i) { ph.append(el("th", i >= 2 ? "num" : "", h)); });
+    const pthead = el("thead");
+    pthead.append(ph);
+    const pbody = el("tbody");
+    LOOK.correlationPairs(corr).forEach(function (p) {
+      const tr = el("tr");
+      [[p.a, ""], [p.b, ""], [fixed(p.r), "num"], [String(p.n), "num"]].forEach(function (cell) { tr.append(el("td", cell[1], cell[0])); });
+      pbody.append(tr);
+    });
+    pairs.append(pthead, pbody);
+    scroll.append(matrix, el("h4", "", "Pairs, strongest first"), pairs);
+    corrView.append(scroll);
+    rendered({ corr: { names: corr.names, r: corr.r } });
   }
 
   function draw() {
@@ -1131,6 +1777,10 @@
     statsView.hidden = state.view !== "stats";
     treeView.hidden = state.view !== "tree";
     pivotView.hidden = state.view !== "pivot";
+    corrView.hidden = state.view !== "corr";
+    if (state.view !== "chart") {
+      destroyCharts();
+    }
     if (state.view === "grid") {
       drawGrid();
       rendered();
@@ -1140,13 +1790,15 @@
       drawTree();
     } else if (state.view === "pivot") {
       drawPivot();
+    } else if (state.view === "corr") {
+      drawCorr();
     } else {
       drawChart();
     }
   }
 
   /// What is kept of a result's page when another is chosen from the tabs.
-  const PER_RESULT = ["view", "sort", "filters", "columns", "top", "open", "names", "pivot", "y2"];
+  const PER_RESULT = ["view", "sort", "filters", "columns", "top", "open", "names", "pivot", "y2", "colours", "mapSize", "mapColour", "zoom"];
 
   window.addEventListener("message", function (event) {
     const m = event.data;
@@ -1175,11 +1827,23 @@
         if (names !== state.names) {
           state.pivot = null;
           state.y2 = -1;
+          state.colours = {};
+          state.mapSize = -1;
+          state.mapColour = -1;
+          state.zoom = null;
+          // An order book is drawn as its depth (#1016) when its columns fit.
+          if ((!m.features || m.features.depthChart !== false) && MORE.depthColumns(m.grid)) {
+            state.kind = "depth";
+          }
         }
         state.view = m.view;
         state.top = 0;
         state.open = [""];
         state.names = names;
+        // A saved query's chart, kept with it (#1019), is drawn again.
+        if (m.look && m.look.chart && (!m.features || m.features.chartPresets !== false)) {
+          applyPreset(m.grid, m.look.chart);
+        }
       }
       state.id = m.id;
     }

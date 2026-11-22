@@ -633,6 +633,8 @@
     ohlcColumns: ohlcColumns,
     chartSvg: chartSvg,
     ticks: ticks,
+    short: short,
+    xml: xml,
   };
   if (typeof module !== "undefined" && module.exports) {
     module.exports = helpers;

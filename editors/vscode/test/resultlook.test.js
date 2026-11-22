@@ -1,0 +1,269 @@
+// How a result is dressed, as data (#1012-#1015, #1020, #1021): the page's
+// pure helpers (media/gridlook.js), the look kept per result and saved
+// query (src/resultlook.ts), the Excel and HTML exports that keep the
+// rules, and the Markdown a result is sent as (src/resultreport.ts).
+const test = require("node:test");
+const assert = require("node:assert");
+const zlib = require("node:zlib");
+const L = require("../media/gridlook.js");
+const look = require("../out/resultlook.js");
+const { exportResult, toHtml } = require("../out/resultexport.js");
+const report = require("../out/resultreport.js");
+
+const col = (name, type, extra = {}) => ({ name, type, typeName: "t", key: false, numeric: [5, 6, 7, 8, 9].includes(type), temporal: false, ...extra });
+
+/// A grid of named columns, each [name, type, cells, values?].
+function grid(columns) {
+  return {
+    columns: columns.map(([name, type]) => col(name, type)),
+    cells: columns.map(([, , cells]) => cells),
+    rank: columns.map(() => null),
+    values: columns.map(([, type, cells, values]) => ([5, 6, 7, 8, 9].includes(type) ? values ?? cells.map((c) => (c === "" ? null : Number(c))) : null)),
+    total: columns[0][2].length,
+  };
+}
+
+test("a column's suffix names its format, in any case, with decimals, and the base name is what the header shows (#1012)", () => {
+  assert.deepStrictEqual(L.columnFormat("ret_PCT"), { base: "ret", suffix: "PCT", kind: "pct", digits: 2, label: L.SUFFIXES.PCT.label });
+  assert.strictEqual(L.columnFormat("ret_pct1").digits, 1);
+  assert.strictEqual(L.columnFormat("spread_bps").kind, "bps");
+  assert.strictEqual(L.columnFormat("a_b_CCY").base, "a_b");
+  assert.strictEqual(L.columnFormat("px_BG").kind, "bg");
+  assert.strictEqual(L.columnFormat("px_BG2"), null, "a colour takes no decimals");
+  assert.strictEqual(L.columnFormat("px_avg"), null);
+  assert.strictEqual(L.columnFormat("_PCT"), null);
+  assert.strictEqual(L.columnFormat("PCT"), null);
+  const f = (name) => L.columnFormat(name);
+  assert.strictEqual(L.formatNumber(f("x_PCT"), 0.0123, "0.0123"), "1.23%");
+  assert.strictEqual(L.formatNumber(f("x_PCT0"), 0.5, "0.5"), "50%");
+  assert.strictEqual(L.formatNumber(f("x_BPS"), 0.0123, "0.0123"), "123.0 bp");
+  assert.strictEqual(L.formatNumber(f("x_CCY"), -1234567.891, "-1234567.891"), "-1,234,567.89");
+  assert.strictEqual(L.formatNumber(f("x_NUM"), 1234567, "1234567"), "1,234,567");
+  // As q wrote it, digit for digit: a long past 2^53 keeps its digits.
+  assert.strictEqual(L.formatNumber(f("x_NUM"), 9007199254740993, "9007199254740993"), "9,007,199,254,740,993");
+  assert.strictEqual(L.formatNumber(f("x_NUM2"), 1234.5, "1234.5"), "1,234.50");
+  // A null or an infinity is shown as q writes it.
+  assert.strictEqual(L.formatNumber(f("x_PCT"), null, ""), "");
+  assert.strictEqual(L.formatNumber(f("x_PCT"), null, "0w"), "0w");
+});
+
+test("a colour column's value reaches a style only as a hex colour or a name; its target is the column it names, or the row", () => {
+  assert.strictEqual(L.cssColour("red"), "red");
+  assert.strictEqual(L.cssColour(" #ff8800 "), "#ff8800");
+  assert.strictEqual(L.cssColour("#f80c"), "#f80c");
+  for (const bad of ["red;background:url(x)", "expression(1)", "#ff888", "rgb(1,2,3)", "", "a"]) {
+    assert.strictEqual(L.cssColour(bad), null, bad);
+  }
+  const g = grid([["px", 9, ["1", "2"]], ["px_BG", 11, ["red", "green"]], ["row_FG", 11, ["blue", ""]], ["sym_PCT", 11, ["a", "b"]]]);
+  const formats = L.columnFormats(g);
+  assert.strictEqual(formats[0], null);
+  assert.strictEqual(formats[1].target, 0);
+  assert.strictEqual(formats[2].target, -1);
+  // A number format on a column that is no number is no format.
+  assert.strictEqual(formats[3], null);
+});
+
+test("a rule matches by number on a numeric column, by text on another, top and bottom N with ties, never a null (#1013)", () => {
+  const g = grid([["px", 9, ["1", "5", "", "5", "9"]], ["sym", 11, ["ab", "AB", "", "c", "abc"]]]);
+  const rows = (rule) => [...L.ruleRows(g, rule)].sort();
+  assert.deepStrictEqual(rows({ column: "px", op: ">", value: 4 }), [1, 3, 4]);
+  assert.deepStrictEqual(rows({ column: "px", op: "<=", value: 5 }), [0, 1, 3]);
+  assert.deepStrictEqual(rows({ column: "px", op: "=", value: 5 }), [1, 3]);
+  assert.deepStrictEqual(rows({ column: "px", op: "<>", value: 5 }), [0, 4]);
+  assert.deepStrictEqual(rows({ column: "px", op: "top", value: 2 }), [1, 3, 4], "ties with the second greatest are in");
+  assert.deepStrictEqual(rows({ column: "px", op: "bottom", value: 1 }), [0]);
+  assert.deepStrictEqual(rows({ column: "sym", op: "=", value: "ab" }), [0]);
+  assert.deepStrictEqual(rows({ column: "sym", op: "contains", value: "ab" }), [0, 1, 4]);
+  assert.deepStrictEqual(rows({ column: "sym", op: ">", value: "a" }), [], "a text column takes no comparison of numbers");
+  assert.deepStrictEqual(rows({ column: "nope", op: ">", value: 1 }), []);
+  const styles = L.ruleStyles(g, [
+    { column: "px", op: ">", value: 4, style: { background: "red" } },
+    { column: "px", op: "top", value: 1, style: { background: "green", bold: true } },
+    { column: "px", op: ">", value: 0, style: { background: "not-a-colour" } },
+  ]);
+  assert.strictEqual(styles[1], null);
+  assert.deepStrictEqual(styles[0].get(1), { background: L.PALETTE.red });
+  assert.deepStrictEqual(styles[0].get(4), { background: L.PALETTE.green, bold: true }, "the later rule's colour wins");
+  assert.strictEqual(styles[0].has(2), false);
+  assert.strictEqual(L.ruleText({ column: "px", op: "top", value: 3, style: { color: "red", bold: true } }), "px top 3: red text, bold");
+});
+
+test("q's text of a numeric vector is read as its numbers, as KDB-X and PeachQ write it (#1014)", () => {
+  // Each as `-3!` writes it on both (checked against both interpreters).
+  assert.deepStrictEqual(L.parseNumbers("1 2 3"), [1, 2, 3]);
+  assert.deepStrictEqual(L.parseNumbers("1 2 3f"), [1, 2, 3]);
+  assert.deepStrictEqual(L.parseNumbers("1.5 2.5"), [1.5, 2.5]);
+  assert.deepStrictEqual(L.parseNumbers(",1.5"), [1.5]);
+  assert.deepStrictEqual(L.parseNumbers(",4i"), [4]);
+  assert.deepStrictEqual(L.parseNumbers("0N 7"), [null, 7]);
+  assert.deepStrictEqual(L.parseNumbers("0n 1 2"), [null, 1, 2]);
+  assert.deepStrictEqual(L.parseNumbers("1 2 3h"), [1, 2, 3]);
+  assert.deepStrictEqual(L.parseNumbers("1 0W -0W"), [1, null, null]);
+  assert.deepStrictEqual(L.parseNumbers("1e-05 2e+10"), [1e-5, 2e10]);
+  assert.deepStrictEqual(L.parseNumbers("`float$()"), []);
+  // Cut at \c (`..`) or at 200 characters (`...`): the last number may be part of one.
+  assert.deepStrictEqual(L.parseNumbers("6 27 28 .."), [6, 27]);
+  assert.deepStrictEqual(L.parseNumbers("1 2 34..."), [1, 2]);
+  for (const not of ["2026.01.01 2026.01.02", "`a`b", "101b", "0x0102", "(1;`a)", "abc"]) {
+    assert.strictEqual(L.parseNumbers(not), null, not);
+  }
+  const g = grid([["v", 0, ["1 2 3", ",4", ""]], ["w", 0, ["1 2", "`a`b", ""]], ["x", 9, ["1", "2", "3"]]]);
+  assert.strictEqual(L.isNumericList(g, 0), true);
+  assert.strictEqual(L.isNumericList(g, 1), false);
+  assert.strictEqual(L.isNumericList(g, 2), false);
+});
+
+test("a sparkline is an SVG data URL broken at nulls; a data bar spans from zero (#1014)", () => {
+  const url = L.sparkUrl([1, null, 3, 2], "#3794ff");
+  assert.match(url, /^url\("data:image\/svg\+xml,/);
+  const svg = decodeURIComponent(url.slice('url("data:image/svg+xml,'.length, -2));
+  assert.match(svg, /<path d="M0\.00 18\.00M66\.67 2\.00L100\.00 10\.00"/);
+  assert.match(svg, /stroke="#3794ff"/);
+  assert.strictEqual(L.sparkUrl([null, null], "#000"), null);
+  assert.ok(!/["]/.test(url.slice(5, -2)), "no quote in the URL breaks the CSS");
+  assert.deepStrictEqual(L.barLevels([0, 5, 10, null]), [[0, 0], [0, 0.5], [0, 1], null]);
+  assert.deepStrictEqual(L.barLevels([-5, 5]), [[0, 0.5], [0.5, 1]]);
+  assert.deepStrictEqual(L.barLevels([0, 0]), [null, null]);
+  assert.match(L.barBackground([0.25, 0.5], "#3794ff"), /^linear-gradient\(to right, transparent 25\.0%, color-mix\(in srgb, #3794ff 45%, transparent\) 25\.0%/);
+});
+
+test("the layout orders, hides and freezes columns by name, a name twice taking its next column (#1015)", () => {
+  const g = grid([["a", 7, ["1"]], ["b", 7, ["1"]], ["a", 7, ["1"]], ["c", 7, ["1"]]]);
+  assert.deepStrictEqual(L.displayColumns(g, undefined), [0, 1, 2, 3]);
+  assert.deepStrictEqual(L.displayColumns(g, { order: ["c", "a", "gone"], hidden: [] }), [3, 0, 1, 2]);
+  assert.deepStrictEqual(L.displayColumns(g, { order: ["c", "a", "a"], hidden: ["b"] }), [3, 0, 2]);
+  assert.deepStrictEqual(L.moveColumn(g, { order: [], hidden: [] }, 3, 0), ["c", "a", "b", "a"]);
+  // Hidden columns keep their place after the ones moved.
+  assert.deepStrictEqual(L.moveColumn(g, { order: [], hidden: ["b"] }, 0, 2), ["a", "c", "a", "b"]);
+  assert.deepStrictEqual(L.displayColumns(g, { order: L.moveColumn(g, { order: [], hidden: ["b"] }, 0, 2), hidden: ["b"] }).map((i) => g.columns[i].name), ["a", "c", "a"]);
+  assert.deepStrictEqual(L.frozenOffsets(["10ch", "80px", "5ch"], 3), ["0px", "10ch", "calc(10ch + 80px)"]);
+  assert.deepStrictEqual(L.frozenOffsets(["10ch"], 0), []);
+});
+
+test("the correlation matrix is Pearson's over the rows where both values are there, keys left out (#1020)", () => {
+  const g = grid([["x", 9, ["1", "2", "3", "4"]], ["y", 9, ["2", "4", "6", "9"]], ["z", 9, ["4", "3", "", "1"]], ["k", 9, ["1", "1", "1", "1"]], ["s", 11, ["a", "b", "c", "d"]]]);
+  const c = L.correlation(g, [0, 1, 2, 3]);
+  assert.deepStrictEqual(c.names, ["x", "y", "z", "k"]);
+  assert.strictEqual(c.r[0][0], 1);
+  assert.ok(Math.abs(c.r[0][1] - 0.9943767126843689) < 1e-12, String(c.r[0][1]));
+  assert.strictEqual(c.r[1][0], c.r[0][1]);
+  assert.strictEqual(c.n[0][2], 3, "the null row is left out of the pair");
+  assert.ok(Math.abs(c.r[0][2] - -1) < 1e-12, String(c.r[0][2]));
+  assert.strictEqual(c.r[0][3], null, "a column that does not vary has no correlation");
+  assert.deepStrictEqual(L.correlation(g, [0]).r[0][1], null, "one row is too few");
+  const keyed = { ...g, columns: g.columns.map((col, i) => (i === 0 ? { ...col, key: true } : col)) };
+  assert.deepStrictEqual(L.correlation(keyed, [0, 1, 2, 3]).names, ["y", "z", "k"]);
+  const pairs = L.correlationPairs(c);
+  assert.strictEqual(`${pairs[0].a}-${pairs[0].b}`, "x-z", "the strongest first, by its size");
+  assert.strictEqual(pairs.at(-1).r, null);
+});
+
+test("a stored look keeps only what it can hold, and moves with a renamed saved query (#1013-#1015, #1019)", () => {
+  const stored = {
+    trades: {
+      rules: [{ column: "px", op: ">", value: 1, style: { background: "red" } }, { column: "px", op: "top", value: 1.5, style: { bold: true } }, { column: "px", op: "~", value: 1, style: { bold: true } }, { column: "px", op: "=", value: 1, style: { background: "url(x)" } }],
+      cellCharts: { px: "bar", v: "spark", w: "pie" },
+      layout: { order: ["b", 1], hidden: ["c"], widths: { a: 120, b: 3, c: "9" }, frozen: 2 },
+      chart: { kind: "line", series: ["px"], colours: { px: "#ff0000", qty: "red" }, bins: 900 },
+    },
+    junk: "x",
+    empty: {},
+  };
+  const looks = look.parseLooks(stored);
+  assert.deepStrictEqual(Object.keys(looks), ["trades"]);
+  assert.deepStrictEqual(looks.trades.rules, [{ column: "px", op: ">", value: 1, style: { background: "red" } }]);
+  assert.deepStrictEqual(looks.trades.cellCharts, { px: "bar", v: "spark" });
+  assert.deepStrictEqual(looks.trades.layout, { order: ["b"], hidden: ["c"], widths: { a: 120 }, frozen: 2 });
+  assert.deepStrictEqual(looks.trades.chart, { kind: "line", series: ["px"], colours: { px: "#ff0000" } });
+  const renamed = look.renamedLook(looks, "trades", "fills");
+  assert.deepStrictEqual(Object.keys(renamed), ["fills"]);
+  assert.deepStrictEqual(look.withoutLook(renamed, "fills"), {});
+  assert.deepStrictEqual(look.withLook({ a: { layout: looks.trades.layout } }, "a", {}), {});
+  assert.deepStrictEqual(look.lookParts(looks.trades, { rules: false, cellCharts: true, layout: false, chart: false }), { cellCharts: { px: "bar", v: "spark" } });
+  let l = look.withRule({}, { column: "a", op: "<", value: 0, style: { color: "red" } });
+  l = look.withRule(l, { column: "b", op: "<", value: 0, style: { color: "red" } });
+  assert.deepStrictEqual(look.withoutRules(l, "a").rules.map((r) => r.column), ["b"]);
+  assert.deepStrictEqual(look.withoutRules(look.withoutRules(l, "a"), "b"), {});
+  assert.deepStrictEqual(look.withCellChart(look.withCellChart({}, "a", "bar"), "a", undefined), {});
+  assert.strictEqual(look.ruleValueProblem("top", "0", true), "A count: a whole number from 1.");
+  assert.strictEqual(look.ruleValueProblem(">", "abc", true), "A number, such as 100 or -0.5.");
+  assert.strictEqual(look.ruleValueProblem(">", "-0.5", true), undefined);
+  assert.strictEqual(look.ruleValueProblem("=", "AAPL", false), undefined);
+  assert.strictEqual(look.ruleValue(">", " 2.5 ", true), 2.5);
+  assert.strictEqual(look.ruleValue("=", "a b", false), "a b");
+});
+
+/// The files of a zip, by name.
+function unzip(buffer) {
+  const out = {};
+  const end = buffer.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  const count = buffer.readUInt16LE(end + 10);
+  let at = buffer.readUInt32LE(end + 16);
+  for (let i = 0; i < count; i++) {
+    const method = buffer.readUInt16LE(at + 10);
+    const size = buffer.readUInt32LE(at + 20);
+    const nameLength = buffer.readUInt16LE(at + 28);
+    const extra = buffer.readUInt16LE(at + 30);
+    const comment = buffer.readUInt16LE(at + 32);
+    const local = buffer.readUInt32LE(at + 42);
+    const name = buffer.toString("utf8", at + 46, at + 46 + nameLength);
+    const start = local + 30 + buffer.readUInt16LE(local + 26) + buffer.readUInt16LE(local + 28);
+    const data = buffer.subarray(start, start + size);
+    out[name] = (method === 8 ? zlib.inflateRawSync(data) : data).toString("utf8");
+    at += 46 + nameLength + extra + comment;
+  }
+  return out;
+}
+
+const PAYLOAD = { count: 3, keys: 0, names: ["sym", "px"], types: [11, 9], cells: [["a", "b<c", "c"], ["1", "5", "9"]], raw: [[], [1, 5, 9]], rank: [[0, 1, 2], [0, 1, 2]] };
+
+test("the Excel export writes each rule as Excel's own conditional formatting, the later rule first (#1013)", () => {
+  const rules = [
+    { column: "px", op: ">", value: 4, style: { background: "red" } },
+    { column: "px", op: "bottom", value: 1, style: { color: "green", bold: true } },
+    { column: "sym", op: "contains", value: 'b"<', style: { background: "blue" } },
+    { column: "sym", op: ">", value: 1, style: { background: "blue" } },
+    { column: "gone", op: "=", value: 1, style: { bold: true } },
+  ];
+  const files = unzip(exportResult("xlsx", PAYLOAD, -1, undefined, rules).data);
+  const sheet = files["xl/worksheets/sheet1.xml"];
+  assert.match(sheet, /<\/sheetData><conditionalFormatting sqref="B2:B4"><cfRule type="cellIs" dxfId="0" priority="5" operator="greaterThan"><formula>4<\/formula><\/cfRule><\/conditionalFormatting>/);
+  assert.match(sheet, /<cfRule type="top10" dxfId="1" priority="4" rank="1" bottom="1"\/>/);
+  assert.match(sheet, /<conditionalFormatting sqref="A2:A4"><cfRule type="containsText" dxfId="2" priority="3" operator="containsText" text="b&quot;&lt;"><formula>NOT\(ISERROR\(SEARCH\(&quot;b&quot;&quot;&lt;&quot;,A2\)\)\)<\/formula>/);
+  assert.strictEqual((sheet.match(/<conditionalFormatting /g) || []).length, 3, "a comparison of numbers on text, and a missing column, are left out");
+  assert.match(files["xl/styles.xml"], /<dxfs count="3"><dxf><fill><patternFill patternType="solid"><bgColor rgb="FFF14C4C"\/><\/patternFill><\/fill><\/dxf><dxf><font><b\/><color rgb="FF89D185"\/><\/font><\/dxf>/);
+  assert.match(files["xl/styles.xml"], /<\/cellStyles><dxfs /, "dxfs come after cellStyles, as the schema orders them");
+  // With no rules, the workbook is as before.
+  const plain = unzip(exportResult("xlsx", PAYLOAD, -1).data);
+  assert.ok(!/conditionalFormatting|dxfs/.test(plain["xl/worksheets/sheet1.xml"] + plain["xl/styles.xml"]));
+});
+
+test("the HTML export is one escaped table, the cells a rule matches styled as the grid styles them (#1013)", () => {
+  const html = toHtml(PAYLOAD, -1, [2, 1], [{ column: "px", op: ">", value: 4, style: { background: "red", bold: true } }]);
+  assert.match(html, /^<!DOCTYPE html>/);
+  assert.match(html, /<th>sym<\/th><th class="n">px<\/th>/);
+  assert.match(html, /<tr><td>c<\/td><td class="n" style="background:#f14c4c;font-weight:bold">9<\/td><\/tr>\n<tr><td>b&lt;c<\/td><td class="n" style="background:#f14c4c;font-weight:bold">5<\/td><\/tr>/);
+  assert.ok(!/<script/i.test(toHtml({ ...PAYLOAD, cells: [["<script>x</script>", "b", "c"], ["1", "2", "3"]] }, -1)));
+  assert.strictEqual(exportResult("html", PAYLOAD, -1).rows, 3);
+});
+
+test("a result sent to a notebook or a report is its query in a fence it cannot close, its rows as a table, and its chart (#1021)", () => {
+  assert.strictEqual(report.fenceFor("select from t"), "```");
+  assert.strictEqual(report.fenceFor("a:\"```\" , \"````\""), "`````");
+  assert.strictEqual(report.markdownText("my*proc_1"), "my\\*proc\\_1");
+  const out = report.resultMarkdown({ process: "rdb", code: "select from t\n", at: Date.UTC(2026, 10, 22, 9, 30, 5), payload: PAYLOAD, rows: [2, 0], decimals: -1 }, "img/c.svg");
+  assert.strictEqual(out.rows, 2);
+  assert.strictEqual(
+    out.text,
+    "**Result** from rdb at 2026-11-22 09:30:05 UTC\n\n```q\nselect from t\n```\n\n| sym | px |\n| --- | ---: |\n| c | 9 |\n| a | 1 |\n\n![chart](img/c.svg)\n\n",
+  );
+  const html = report.resultMarkdown({ process: "p", code: "t", at: 0, payload: { ...PAYLOAD, cells: [["<img src=x onerror=alert(1)>", "a&b", "c"], ["1", "2", "3"]] }, decimals: -1 });
+  assert.match(html.text, /\| &lt;img src=x onerror=alert\(1\)&gt; \| 1 \|\n\| a&amp;b \| 2 \|/);
+  const many = { ...PAYLOAD, count: 600, cells: [Array(600).fill("a"), Array(600).fill("1")], raw: [[], Array(600).fill(1)], rank: [[], []] };
+  const cut = report.resultMarkdown({ process: "p", code: "t", at: 0, payload: many, decimals: -1 });
+  assert.strictEqual(cut.rows, report.MAX_ROWS);
+  assert.match(cut.text, /_The first 500 of 600 rows\._/);
+  const taken = new Set(["daily-images/chart-20261122-093005.svg"]);
+  assert.strictEqual(report.imagePath("/r/daily.md", Date.UTC(2026, 10, 22, 9, 30, 5), (p) => taken.has(p)), "daily-images/chart-20261122-093005-2.svg");
+  assert.strictEqual(report.linkTarget("a b/(c).svg"), "a%20b/%28c%29.svg");
+});
