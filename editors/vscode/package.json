@@ -1308,6 +1308,11 @@
             "type": "boolean",
             "default": true,
             "markdownDescription": "Show the **System Settings** view: the connected process's `\\c`, `\\s`, `\\P`, `\\T`, `\\g`, `\\o`, `\\z` and `\\w`, with what each does, read when **Refresh** is pressed; **Edit Setting** changes one after asking (through the read-only guard on a guarded process). Off, the view is gone, its commands refuse and nothing is sent."
+          },
+          "q-lint.processes.fileBrowser.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Show the **Process Files** view and **Browse Process Files...**: the q host's directories read through the connected process (`key` on a path), and a file opened read-only, its first 1 MB only (`read1`). Off, the view is gone, its commands refuse and nothing is sent."
           }
         }
       }
@@ -2311,6 +2316,19 @@
         "category": "q-lint",
         "icon": "$(edit)",
         "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.browseProcessFiles",
+        "title": "Browse Process Files...",
+        "category": "q-lint",
+        "icon": "$(folder-opened)",
+        "enablement": "q-lint.connected"
+      },
+      {
+        "command": "q-lint.openProcessFile",
+        "title": "Open Process File (Read-only)",
+        "category": "q-lint",
+        "icon": "$(go-to-file)"
       }
     ],
     "views": {
@@ -2401,6 +2419,14 @@
           "contextualTitle": "q-lint",
           "visibility": "collapsed",
           "when": "config.q-lint.processes.systemSettings.enable"
+        },
+        {
+          "id": "q-lint.processFiles",
+          "name": "Process Files",
+          "icon": "media/view-explorer.svg",
+          "contextualTitle": "q-lint",
+          "visibility": "collapsed",
+          "when": "config.q-lint.processes.fileBrowser.enable"
         }
       ],
       "q-lint-results": [
@@ -2599,6 +2625,11 @@
         {
           "command": "q-lint.refreshSystemSettings",
           "when": "view == q-lint.systemSettings && config.q-lint.processes.systemSettings.enable",
+          "group": "navigation@1"
+        },
+        {
+          "command": "q-lint.browseProcessFiles",
+          "when": "view == q-lint.processFiles && config.q-lint.processes.fileBrowser.enable",
           "group": "navigation@1"
         }
       ],
@@ -2857,6 +2888,11 @@
           "command": "q-lint.editSystemSetting",
           "when": "view == q-lint.systemSettings && viewItem == systemSetting && config.q-lint.processes.systemSettings.enable",
           "group": "1_edit@1"
+        },
+        {
+          "command": "q-lint.openProcessFile",
+          "when": "view == q-lint.processFiles && viewItem == processFile && config.q-lint.processes.fileBrowser.enable",
+          "group": "inline"
         }
       ],
       "editor/title/run": [
@@ -3603,6 +3639,14 @@
         {
           "command": "q-lint.editSystemSetting",
           "when": "config.q-lint.processes.systemSettings.enable"
+        },
+        {
+          "command": "q-lint.browseProcessFiles",
+          "when": "config.q-lint.processes.fileBrowser.enable"
+        },
+        {
+          "command": "q-lint.openProcessFile",
+          "when": "false"
         }
       ],
       "editor/title": [
@@ -3721,6 +3765,10 @@
       {
         "view": "q-lint.systemSettings",
         "contents": "Read the connected process's system settings: \\c, \\s, \\P, \\T, \\g, \\o, \\z and \\w.\n[Refresh](command:q-lint.refreshSystemSettings)"
+      },
+      {
+        "view": "q-lint.processFiles",
+        "contents": "Browse the q host's files through the connected process, read-only.\n[Browse Process Files](command:q-lint.browseProcessFiles)"
       }
     ],
     "keybindings": [

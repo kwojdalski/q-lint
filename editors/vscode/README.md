@@ -1601,6 +1601,16 @@ is shown, not edited: kdb+ changes the limit only for a process started
 with `-w`, and PeachQ not at all. `q-lint.processes.systemSettings.enable`
 off removes the view and its commands.
 
+**Process Files**, a view in the q-lint panel, browses the q host's
+directories through the connected process, as qStudio's remote folder does,
+for a host you reach only over q. **Browse Process Files...** (the view's
+folder button, or the palette) starts at a path you type, or the process's
+working directory; each directory is listed (`key` on its path, at most 1,000
+entries) when it is expanded. A file opens read-only, its first 1 MB only
+(`read1`), with a last line saying when it was cut; a binary file is not
+shown. Every read is a fixed read-only lambda; nothing is written.
+`q-lint.processes.fileBrowser.enable` off removes the view.
+
 ## q notebooks
 
 A `.qnb` file opens as a notebook of q code cells and markdown cells;
@@ -2217,6 +2227,7 @@ Read when a cell runs or a command is used, so a change needs no reload. None re
 | --- | --- | --- | --- |
 | `q-lint.tickerplant.subscribers.enable` | `true` | The **Tickerplant Subscribers** view, read only on **Refresh**. Off, the view is gone and nothing is read. | - |
 | `q-lint.processes.systemSettings.enable` | `true` | The **System Settings** view and **Edit System Setting...**, which asks first. Off, the view is gone, its commands hidden and refusing. | - |
+| `q-lint.processes.fileBrowser.enable` | `true` | The **Process Files** view: the q host's files through the process, read-only and capped. Off, the view is gone and its commands refuse. | - |
 
 ### Not here, and why
 

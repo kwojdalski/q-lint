@@ -11,6 +11,7 @@
 export const PROCESS_TOOL_SETTINGS = {
   tickerplantSubscribers: { key: "tickerplant.subscribers.enable", fallback: true, name: "The tickerplant subscribers view" },
   systemSettings: { key: "processes.systemSettings.enable", fallback: true, name: "The system settings view" },
+  fileBrowser: { key: "processes.fileBrowser.enable", fallback: true, name: "The process file browser" },
 } as const;
 
 export type ProcessTool = keyof typeof PROCESS_TOOL_SETTINGS;
@@ -20,6 +21,8 @@ export const PROCESS_TOOL_COMMANDS = {
   refreshSubscribers: "q-lint.refreshTickerplantSubscribers",
   refreshSystemSettings: "q-lint.refreshSystemSettings",
   editSystemSetting: "q-lint.editSystemSetting",
+  browseFiles: "q-lint.browseProcessFiles",
+  openProcessFile: "q-lint.openProcessFile",
 } as const;
 
 /// Whether `feature` is on, read with `get` as the other settings are read.
