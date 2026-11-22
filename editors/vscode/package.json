@@ -1328,6 +1328,11 @@
             "type": "boolean",
             "default": true,
             "markdownDescription": "After **Run Line** or **Run Selection**, show the result's short form at the end of the line, until the line is edited. It draws only what the query answered; nothing more is sent. Off, the results are cleared and nothing is drawn."
+          },
+          "q-lint.query.benchmark.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Offer **Benchmark Expression**: time the selection (and, if given, a second expression to compare) with `\\ts:N` repeated K times on the connected process, shown as a table and a chart of time and space. It runs only when the command is run, through the read-only guard. Off, the command is hidden and refuses, and the panel closes."
           }
         }
       }
@@ -2370,6 +2375,13 @@
         "command": "q-lint.clearInlineResults",
         "title": "Clear Inline Results",
         "category": "q-lint"
+      },
+      {
+        "command": "q-lint.benchmarkExpression",
+        "title": "Benchmark Expression",
+        "category": "q-lint",
+        "icon": "$(dashboard)",
+        "enablement": "q-lint.connected"
       }
     ],
     "views": {
@@ -3227,6 +3239,11 @@
           "command": "q-lint.diffFunctionAcrossProcesses",
           "when": "editorLangId == q && config.q-lint.processes.functionDiff.enable",
           "group": "q-lint@50"
+        },
+        {
+          "command": "q-lint.benchmarkExpression",
+          "when": "editorLangId == q && config.q-lint.query.benchmark.enable",
+          "group": "q-lint@51"
         }
       ],
       "testing/item/context": [
@@ -3731,6 +3748,10 @@
         {
           "command": "q-lint.clearInlineResults",
           "when": "config.q-lint.query.inlineResults.enable && editorLangId == q"
+        },
+        {
+          "command": "q-lint.benchmarkExpression",
+          "when": "config.q-lint.query.benchmark.enable && editorLangId == q"
         }
       ],
       "editor/title": [

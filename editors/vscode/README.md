@@ -1640,6 +1640,17 @@ hover. It stays until that line is edited; **Clear Inline Results** clears
 them all. It draws what the query answered and sends nothing more.
 `q-lint.query.inlineResults.enable` off clears them and draws none.
 
+**Benchmark Expression** (a q editor's context menu, or the palette)
+times the selection, or the statement at the cursor, on the connected
+process with `\ts:N`, repeated K times - and, when you give a second
+expression, that one too, to compare. The panel shows a table (min,
+median, mean and max time per run, the space, and the second against the
+first) and a chart of each. It runs only when you run the command, and the
+expressions go as a query does: the read-only guard reads them as
+`\ts:N expression` and asks first when one would change a guarded process.
+`q-lint.query.benchmark.enable` off hides the command and closes the
+panel.
+
 ## q notebooks
 
 A `.qnb` file opens as a notebook of q code cells and markdown cells;
@@ -2260,6 +2271,7 @@ Read when a cell runs or a command is used, so a change needs no reload. None re
 | `q-lint.processes.functionDiff.enable` | `true` | **Diff Function** and **Diff Namespace Across Processes**. Off, both are hidden and refuse. | - |
 | `q-lint.processes.findInProcesses.enable` | `true` | **Find in Processes...** and its view. Off, the view is gone and the command hidden and refusing. | - |
 | `q-lint.query.inlineResults.enable` | `true` | The result's short form at the end of a line after **Run Line** or **Run Selection**. Off, none is drawn and those shown are cleared. | - |
+| `q-lint.query.benchmark.enable` | `true` | **Benchmark Expression**, run only on the command. Off, it is hidden and refuses, and the panel closes. | - |
 
 ### Not here, and why
 
