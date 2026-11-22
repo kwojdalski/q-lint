@@ -1611,6 +1611,16 @@ entries) when it is expanded. A file opens read-only, its first 1 MB only
 shown. Every read is a fixed read-only lambda; nothing is written.
 `q-lint.processes.fileBrowser.enable` off removes the view.
 
+**Diff Function Across Processes...** (a q editor's context menu, or
+the palette) reads a function's definition - the name under the cursor, or
+one typed - on two processes you pick and opens VS Code's side-by-side diff
+of them. **Diff Namespace Across Processes...** reads every function
+directly in a namespace on both and lists the ones that differ or are on
+one side only; the one picked opens the same diff. Each process is read
+over a connection of its own, closed after, with a read-only lambda, so the
+active connection is left as it is. `q-lint.processes.functionDiff.enable`
+off hides both.
+
 ## q notebooks
 
 A `.qnb` file opens as a notebook of q code cells and markdown cells;
@@ -2228,6 +2238,7 @@ Read when a cell runs or a command is used, so a change needs no reload. None re
 | `q-lint.tickerplant.subscribers.enable` | `true` | The **Tickerplant Subscribers** view, read only on **Refresh**. Off, the view is gone and nothing is read. | - |
 | `q-lint.processes.systemSettings.enable` | `true` | The **System Settings** view and **Edit System Setting...**, which asks first. Off, the view is gone, its commands hidden and refusing. | - |
 | `q-lint.processes.fileBrowser.enable` | `true` | The **Process Files** view: the q host's files through the process, read-only and capped. Off, the view is gone and its commands refuse. | - |
+| `q-lint.processes.functionDiff.enable` | `true` | **Diff Function** and **Diff Namespace Across Processes**. Off, both are hidden and refuse. | - |
 
 ### Not here, and why
 

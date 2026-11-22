@@ -1313,6 +1313,11 @@
             "type": "boolean",
             "default": true,
             "markdownDescription": "Show the **Process Files** view and **Browse Process Files...**: the q host's directories read through the connected process (`key` on a path), and a file opened read-only, its first 1 MB only (`read1`). Off, the view is gone, its commands refuse and nothing is sent."
+          },
+          "q-lint.processes.functionDiff.enable": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Offer **Diff Function Across Processes** and **Diff Namespace Across Processes**: a function's definition on two processes side by side, or every function of a namespace that differs, each read over a connection of its own with a read-only lambda. Off, the commands are hidden and refuse, and nothing is sent."
           }
         }
       }
@@ -2329,6 +2334,16 @@
         "title": "Open Process File (Read-only)",
         "category": "q-lint",
         "icon": "$(go-to-file)"
+      },
+      {
+        "command": "q-lint.diffFunctionAcrossProcesses",
+        "title": "Diff Function Across Processes...",
+        "category": "q-lint"
+      },
+      {
+        "command": "q-lint.diffNamespaceAcrossProcesses",
+        "title": "Diff Namespace Across Processes...",
+        "category": "q-lint"
       }
     ],
     "views": {
@@ -3163,6 +3178,11 @@
           "command": "q-lint.runFileWithArguments",
           "when": "editorLangId == q && resourceScheme == file && config.q-lint.terminal.runWithArguments.enable",
           "group": "q-lint@11"
+        },
+        {
+          "command": "q-lint.diffFunctionAcrossProcesses",
+          "when": "editorLangId == q && config.q-lint.processes.functionDiff.enable",
+          "group": "q-lint@50"
         }
       ],
       "testing/item/context": [
@@ -3647,6 +3667,14 @@
         {
           "command": "q-lint.openProcessFile",
           "when": "false"
+        },
+        {
+          "command": "q-lint.diffFunctionAcrossProcesses",
+          "when": "config.q-lint.processes.functionDiff.enable"
+        },
+        {
+          "command": "q-lint.diffNamespaceAcrossProcesses",
+          "when": "config.q-lint.processes.functionDiff.enable"
         }
       ],
       "editor/title": [
